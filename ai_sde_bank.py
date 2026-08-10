@@ -44366,119 +44366,734 @@ for _e in ENTRIES:
 _EX_P0G = {}
 
 _EX_P0G["Search in Rotated Sorted Array"] = [
-    """The textbook case, traced.
-nums = [4,5,6,7,0,1,2], target = 0. lo=0, hi=6.
-mid=3, nums[3]=7 != 0. Is the left half sorted? nums[0]=4 <= 7 -> yes.
-Is 0 inside [4,7)? No -> the target must be in the right half: lo=4.
-mid=5, nums[5]=1 != 0. Left half of the CURRENT range: nums[4]=0 <= 1 -> sorted.
-Is 0 in [0,1)? Yes -> hi=4.
-mid=4, nums[4]=0 -> return 4.""",
+    """1. THE GOAL, in plain English.
 
-    """The same array, a target in the other half.
-target = 6. lo=0,hi=6, mid=3 -> 7 != 6. Left sorted (4 <= 7); is 6 in [4,7)?
-Yes -> hi=2.
-mid=1, nums[1]=5 != 6. Left sorted (4 <= 5); is 6 in [4,5)? No -> lo=2.
-mid=2, nums[2]=6 -> return 2.
-Two traces in opposite directions is the check that convinces you the four
-branches are right - most bugs here only show up on one side.""",
+You are given a list that WAS sorted from smallest to largest, but someone rotated
+it - took a chunk from the front and moved it to the back. Find a target value in
+it, and do so by halving rather than scanning.
 
-    """A target that is absent.
-nums = [4,5,6,7,0,1,2], target = 3. Every step eliminates a half; eventually
-lo > hi and the loop exits, returning -1.
-Walk it: mid=3 (7), left sorted, 3 not in [4,7) -> lo=4. mid=5 (1), left sorted
-[0,1), 3 not in it -> lo=6. mid=6 (2), left "half" is nums[6..6], sorted; 3 not
-in [2,2) -> lo=7 > hi. Return -1.""",
+Here is the rotation happening:
 
-    """The non-rotated case, and why `nums[lo] <= nums[mid]` uses <=.
-nums = [1,2,3,4,5], target = 5. mid=2, nums[0]=1 <= 3 -> left sorted; 5 not in
-[1,3) -> lo=3. mid=3, nums[3]=4 <= 4 (single-element half) -> sorted; 5 not in
-[4,4) -> lo=4. mid=4 -> found.
-The <= matters when lo == mid, which happens on a two-element range: with a
-strict < the code would take the 'right half is sorted' branch on a range that
-is actually sorted left-to-right and search the wrong side. One character, and
-it fails only on ranges of size 2 - the classic hidden-test bug.""",
+    originally sorted:   [0, 1, 2, 4, 5, 6, 7]
+    rotate by 4:         [4, 5, 6, 7, 0, 1, 2]
+    position              0  1  2  3  4  5  6
 
-    """Duplicates break it (LeetCode 81).
-nums = [1,0,1,1,1], target = 0. mid=2, nums[0]=1 <= nums[2]=1 suggests the LEFT
-half is sorted - but it is not; the rotation is hiding inside a run of equal
-values. The search goes right and misses the 0.
-Fix: when nums[lo] == nums[mid] == nums[hi] you cannot tell, so shrink both ends
-by one (lo += 1; hi -= 1). The worst case degrades to O(n) - on all-equal values
-there is no information to bisect on, which is provable, not a weakness of the
-implementation.""",
+Searching for 0 should return position 4. Searching for 3 should return -1, since 3
+is not there.
 
-    """The two-search alternative, and which to write.
-Alternative: find the rotation index with the Find-Minimum binary search, then
-run an ordinary binary search on the half that must contain the target (or on
-the whole array using rotated index arithmetic: (i + pivot) % n).
-Same O(log n), two simple loops instead of one loop with four branches.
-Under time pressure the two-search version is easier to get right and to
-explain; the single-pass version is what the interviewer usually has in mind.
-Say both, then write the one you can produce bug-free - and trace a size-2 range
-before you claim it works.""",
+The shape is what matters. The list is TWO sorted runs:
+
+    [4, 5, 6, 7]  then  [0, 1, 2]
+
+The left run is entirely larger than the right run, and the join between them is
+where the values "drop".
+
+Ordinary binary search compares the middle against the target and confidently
+discards a half. Here that reasoning breaks, because the list is not sorted as a
+whole - the middle being smaller than the target no longer means the target must be
+to the right.
+
+The fix is not to abandon halving but to work out, at each step, WHICH HALF IS
+PROPERLY SORTED - and then use ordinary reasoning inside that half. Section 2
+explains why one of the two halves always is.
+
+One assumption to state: the problem normally promises the values are all DIFFERENT.
+Duplicates break the method, and section 4 says exactly how.""",
+
+    """2. THE INTUITION - one half is always properly sorted.
+
+Cut the list at the middle. Here is the observation that makes everything work:
+
+    AT LEAST ONE of the two halves is a clean, unbroken sorted run.
+
+Why? Because there is only ONE drop in the whole list - the join between the two
+runs. The middle position falls either before that drop or after it, so the drop can
+lie in only one of the two halves. The other half contains no drop at all, which
+means it is properly sorted.
+
+    [4, 5, 6, 7, 0, 1, 2]      middle is position 3, holding 7
+     \\--------/  \\-----/
+      left half   right half
+      4..7 - sorted, no drop
+                  7..2 - contains the drop
+
+How do you tell which one? Compare the FIRST element with the MIDDLE element.
+
+    if nums[lo] <= nums[mid]:   the left half rises smoothly - it is sorted
+    otherwise:                  the drop is in the left half, so the right is sorted
+
+Now, having identified a properly sorted half, you can use ordinary binary-search
+reasoning on it: does the target lie between that half's two ends? If yes, search
+that half. If no, search the other one.
+
+That "if no, search the other one" is the crucial move. You do not need to know
+anything about the messy half - you only need to be sure the target is not in the
+tidy one, and then by elimination it must be in the other.
+
+Each round halves the range, so it is O(log n) - about 20 steps for a million items,
+the same as ordinary binary search.""",
+
+    """3. THE FOUR-WAY DECISION, spelled out.
+
+Every round makes two decisions in sequence, and writing them out removes the
+confusion.
+
+DECISION ONE - which half is sorted?
+
+    nums[lo] <= nums[mid]   ->  the LEFT half is sorted
+    otherwise               ->  the RIGHT half is sorted
+
+Note the "or equal". When the range narrows to two elements, mid equals lo, so
+nums[lo] equals nums[mid] and the left half - a single element - is trivially
+sorted. Using strict "less than" would misclassify that case.
+
+DECISION TWO - is the target inside the sorted half?
+
+    If the LEFT is sorted, it spans nums[lo] to nums[mid]. Ask:
+        nums[lo] <= target < nums[mid]
+    If yes, the target can only be in the left half - discard the right.
+    If no, discard the left.
+
+    If the RIGHT is sorted, it spans nums[mid] to nums[hi]. Ask:
+        nums[mid] < target <= nums[hi]
+    If yes, search the right. If no, search the left.
+
+THE BOUNDARIES ARE ASYMMETRIC ON PURPOSE. Look at where the "or equal" sits in each
+test: on the LO side for the left half, on the HI side for the right half. That is
+because nums[mid] has already been checked against the target at the top of the
+loop, so it is known not to be the answer and must be excluded from both ranges.
+Including it would be harmless for correctness but would let the range fail to
+shrink in edge cases.
+
+Once the decision is made, the range is narrowed with mid + 1 or mid - 1 - excluding
+the middle, exactly as in ordinary binary search, because the middle has been
+examined and ruled out. That is a genuine difference from Find Minimum in Rotated
+Sorted Array, where the middle might BE the answer and so is kept. Two nearly
+identical-looking problems, opposite conventions - worth knowing which is which.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - checking the target against the sorted half's range but forgetting one
+boundary. If you write nums[lo] < target < nums[mid] instead of using "or equal" on
+the lo side, then a target sitting exactly at nums[lo] is wrongly sent to the other
+half and never found. Test by searching for the first element of the list.
+
+CASE 2 - using "<" instead of "<=" when identifying the sorted half. On a range of
+two elements, mid equals lo, so the comparison must allow equality or the code takes
+the wrong branch.
+
+CASE 3 - the list is not rotated at all. [0, 1, 2, 4, 5, 6, 7]. The left half always
+looks sorted, the ordinary reasoning applies every time, and the code behaves exactly
+like a plain binary search. Correct, with no special case.
+
+CASE 4 - the target is absent. The range shrinks until lo passes hi, the loop ends,
+and -1 is returned. The empty range IS the not-found condition.
+
+CASE 5 - a single element, or an empty list. With one element the loop runs once and
+either finds it or returns -1. With none, hi starts at -1, so lo is already greater
+and the loop never runs. Both correct with no guard.
+
+CASE 6 - DUPLICATES break it. Consider [3, 1, 3, 3, 3] searching for 1. With lo = 0,
+hi = 4, mid = 2: nums[0] is 3 and nums[2] is 3, so nums[lo] <= nums[mid] says the
+left half is sorted - but it is not, the drop is inside it. The code then searches
+the wrong half and misses the 1. When equal values appear, the comparison carries no
+information. The standard repair is to shrink lo by one when nums[lo] equals
+nums[mid], which is safe but degrades the worst case to O(n). Say this if the problem
+allows duplicates.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+ROTATED SORTED ARRAY: a sorted list with a chunk moved from the front to the back,
+producing two sorted runs where the left run is entirely larger than the right.
+Section 1.
+
+THE DROP (or pivot): the single place where the values stop rising and fall back.
+There is exactly one, which is why at most one half can contain it.
+
+BINARY SEARCH: halving the range each round. What it really needs is a rule that
+safely discards half - sortedness is the usual source of such a rule, and here the
+rule is built from whichever half happens to be sorted.
+
+lo and hi: the ends of the stretch still being searched, INCLUSIVE at both ends.
+Unlike Find Minimum in Rotated Sorted Array, this range may not contain the answer at
+all - the target might be absent - which is why the loop uses "lo <= hi" and returns
+-1 when the range empties.
+
+(lo + hi) // 2: the middle, with whole-number division rounding DOWN.
+
+The chained comparison nums[lo] <= target < nums[mid] is Python's way of writing two
+conditions at once: the target is at least nums[lo] AND strictly less than nums[mid].
+It reads exactly like the mathematics.
+
+O(log n) and O(1): the costs, where n is the length of the list. O(log n) means the
+work grows like the number of times you can halve n - about 20 for a million items.
+O(1) means the extra memory does not grow at all: three variables.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: at each step work out which half is properly sorted,
+check whether the target lies inside that half's range, and search it if so or the
+other half if not.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+The loop ends when the range empties, which is also the not-found answer.
+
+The steps:
+
+  1. Put one marker at the first position and one at the last.
+
+  2. Repeat while the markers have not crossed - that is, while the range still holds
+     at least one position. Allow them to be equal, because a one-position range may
+     hold the target.
+
+  3. Take the middle position. If the value there IS the target, return it - done.
+
+  4. Otherwise decide which half is properly sorted, by comparing the value at the
+     left marker with the value at the middle. If the left value is less than or
+     equal to the middle value, the left half rises smoothly and is sorted;
+     otherwise the drop is in the left half, so the right half is sorted.
+
+  5. IF THE LEFT HALF IS SORTED: ask whether the target lies at or after the left
+     value and strictly before the middle value. If yes, the target can only be in
+     the left half, so move the right marker to just before the middle. If no,
+     search the right half instead by moving the left marker past the middle.
+
+  6. IF THE RIGHT HALF IS SORTED: the mirror image. Ask whether the target lies
+     strictly after the middle value and at or before the right value. If yes, move
+     the left marker past the middle; if no, move the right marker to just before it.
+
+  7. If the loop ends without a match, the target is not present. Return -1.
+
+Both narrowing moves exclude the middle, because step 3 already ruled it out.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The list is two sorted runs joined end to end, so it is not sorted as a whole - which
+means the usual reason for throwing away half the list does not apply directly.
+
+The code gets around this with one observation. Because there is only one place where
+the values drop, that drop can sit in only one half of whatever stretch it is looking
+at. The other half must therefore be a clean, unbroken rising run.
+
+So each round it first works out which half is the tidy one, by checking whether the
+values rise smoothly from the left end to the middle. If they do, the left half is
+tidy; if they do not, the drop is on the left and so the right half is tidy.
+
+Having found a tidy half, ordinary reasoning applies to it: the code simply asks
+whether the target lies between that half's two end values. If it does, the target
+can only be in there, so it discards the other half. If it does not, the target
+cannot be in the tidy half, so by elimination it must be in the messy one - and the
+tidy half is discarded instead.
+
+That elimination step is what makes the method work. The code never has to reason
+about the messy half at all; it only has to be sure the target is not in the clean
+one.
+
+Each round throws away half the remaining stretch, so a million items take about
+twenty rounds. If the stretch shrinks away to nothing without a match, the target is
+not in the list.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [4, 5, 6, 7, 0, 1, 2] beside you, searching for 0 - the answer is
+position 4.
+
+    lo, hi = 0, len(nums) - 1
+The ends of the stretch being searched, inclusive at both ends.
+
+    while lo <= hi:
+"Or equal", because a one-position range may still hold the target. Note this differs
+from Find Minimum in Rotated Sorted Array, where the range always contains the answer
+and the loop stops when the markers meet. Here the target may be absent, so the loop
+must run until the range is genuinely empty.
+
+    mid = (lo + hi) // 2
+The middle, rounding down.
+
+    if nums[mid] == target:
+        return mid
+Found it. This check comes FIRST, which is what lets both narrowing moves below
+exclude the middle - it has been examined and ruled out.
+
+    if nums[lo] <= nums[mid]:
+DECISION ONE: is the LEFT half sorted? If the value at the left marker is at or below
+the middle value, that half rises smoothly with no drop in it.
+
+The "or equal" matters: when the range is two positions, mid equals lo, so the two
+values are the same and the left half - a single element - is trivially sorted.
+Strict "less than" would take the wrong branch there.
+
+    if nums[lo] <= target < nums[mid]:
+        hi = mid - 1
+    else:
+        lo = mid + 1
+DECISION TWO for a sorted left half. The chained comparison asks whether the target
+lies inside that half's range - at or after its first value, strictly before the
+middle. If it does, the target can only be there, so discard the right. If it does
+not, the target cannot be in the tidy half, so by elimination search the messy one.
+
+Note the boundaries: "or equal" on the lo side so the very first element is
+reachable, strict on the mid side because the middle is already ruled out.
+
+    else:
+        if nums[mid] < target <= nums[hi]:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+The mirror image for a sorted RIGHT half, which spans the middle to the right marker.
+Strict on the mid side, "or equal" on the hi side - the asymmetry flipped, for the
+same reason.
+
+    return -1
+The loop ended, meaning the range emptied without a match. The target is absent.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    nums = [4, 5, 6, 7, 0, 1, 2]
+    pos     0  1  2  3  4  5  6
+
+SEARCHING FOR 0:
+
+    lo = 0, hi = 6
+    ROUND 1: mid = 3.  nums[3] = 7.  Is 7 == 0?  No.
+        Is nums[0] = 4 <= nums[3] = 7?  YES -> the left half is sorted (4,5,6,7).
+        Is 4 <= 0 < 7?  No - 0 is below 4, so it is not in the left half.
+        So search the right: lo = 4.        range is now 4..6
+
+    ROUND 2: mid = (4+6)//2 = 5.  nums[5] = 1.  Is 1 == 0?  No.
+        Is nums[4] = 0 <= nums[5] = 1?  YES -> the left half of this range (0,1) is
+        sorted.
+        Is 0 <= 0 < 1?  YES -> the target is in this half.
+        hi = mid - 1 = 4.                   range is now 4..4
+
+    ROUND 3: mid = 4.  nums[4] = 0.  Is 0 == 0?  YES -> return 4.
+
+Correct.
+
+SEARCHING FOR 3 (absent):
+
+    lo = 0, hi = 6
+    ROUND 1: mid = 3, nums[3] = 7.  Not 3.
+        Left half sorted (4 <= 7).  Is 4 <= 3 < 7?  No - 3 is below 4.
+        lo = 4.                              range 4..6
+    ROUND 2: mid = 5, nums[5] = 1.  Not 3.
+        Is nums[4] = 0 <= nums[5] = 1?  Yes -> left of this range is sorted.
+        Is 0 <= 3 < 1?  No - 3 is not below 1.
+        lo = 6.                              range 6..6
+    ROUND 3: mid = 6, nums[6] = 2.  Not 3.
+        Is nums[6] = 2 <= nums[6] = 2?  Yes -> "left half" is the single element.
+        Is 2 <= 3 < 2?  No.
+        lo = 7.                              range 7..6 - empty
+    CHECK: is 7 <= 6?  No -> loop ends.
+    return -1.  Correct.
+
+A CASE WHERE THE RIGHT HALF IS THE SORTED ONE, searching for 6:
+
+    lo = 0, hi = 6.  mid = 3, nums[3] = 7.  Not 6.
+        Is 4 <= 7?  Yes -> left sorted.  Is 4 <= 6 < 7?  YES -> hi = 2.
+    lo = 0, hi = 2.  mid = 1, nums[1] = 5.  Not 6.
+        Is nums[0] = 4 <= 5?  Yes -> left sorted.  Is 4 <= 6 < 5?  No -> lo = 2.
+    lo = 2, hi = 2.  mid = 2, nums[2] = 6.  Found -> return 2.  Correct.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(log n). Each round halves the stretch, so about 20 rounds for a million items
+and 30 for a billion - the same as an ordinary binary search, despite the list not
+being sorted. That is the whole point of the problem: the rotation costs nothing
+asymptotically.
+
+SPACE: O(1) - constant. Three variables, whatever the length of the list.
+
+THE TWO-PASS ALTERNATIVE worth mentioning: first binary-search for the drop (that is
+the Find Minimum in Rotated Sorted Array problem), then binary-search the appropriate
+run normally. It is two clean, familiar searches instead of one fiddly one, at the
+same O(log n) cost. Some people find it much easier to get right, and saying so is a
+legitimate answer - the single-pass version is shorter but has more places to slip.
+
+THE #1 MISTAKE - getting the boundary conditions of the range test wrong. The target
+test needs "or equal" on the outer end and strict on the middle end -
+nums[lo] <= target < nums[mid] for a sorted left half, and
+nums[mid] < target <= nums[hi] for a sorted right half. Drop the "or equal" and a
+target sitting exactly on the outer boundary is sent to the wrong half and never
+found. The test case that exposes it is searching for the very first or very last
+element.
+
+A close second: using strict "less than" when deciding which half is sorted. On a
+two-element range, mid equals lo, so the values are equal and the wrong branch is
+taken.
+
+A third, conceptual: confusing this with Find Minimum in Rotated Sorted Array. There
+the range always contains the answer, so the loop stops when the markers meet and the
+middle is kept with "hi = mid". Here the target may be absent, so the loop runs until
+the range empties and the middle is excluded with "hi = mid - 1". Same-looking
+problems, opposite conventions.
+
+ONE-SENTENCE TAKEAWAY: one half is always properly sorted because there is only one
+drop - so identify that half, check whether the target lies between its two ends, and
+search it if so or the other half by elimination if not.""",
 ]
 
 _EX_P0G["Sliding Window — recognize & apply"] = [
-    """The textbook case, traced.
-s = "abcabcbb". seen = {}, left = 0, best = 0.
-r=0 'a': not in window -> seen[a]=0, best=1.
-r=1 'b': best=2. r=2 'c': best=3.
-r=3 'a': seen[a]=0 >= left=0, so 'a' IS in the window -> left = 0+1 = 1.
-  seen[a]=3, window "bca", best stays 3.
-r=4 'b': seen[b]=1 >= 1 -> left=2. seen[b]=4, window "cab", best 3.
-r=5 'c': seen[c]=2 >= 2 -> left=3. window "abc", best 3.
-r=6 'b': seen[b]=4 >= 3 -> left=5. window "cb", best 3.
-r=7 'b': seen[b]=6 >= 5 -> left=7. window "b".
-Answer 3.""",
+    """1. THE GOAL, in plain English.
 
-    """Why the check is `seen[ch] >= left` and not just `ch in seen`.
-s = "abba".
-r=0 'a' -> seen[a]=0. r=1 'b' -> seen[b]=1. r=2 'b': seen[b]=1 >= left 0 ->
-left=2, seen[b]=2, best=2 so far.
-r=3 'a': 'a' IS in seen, at index 0 - but 0 < left=2, so it is OUTSIDE the
-current window and must be ignored. The window stays "ba", best=2.
-Drop the `>= left` guard and left would jump BACKWARDS to 1, silently corrupting
-the window. Answer would be wrong on this exact four-character string, which is
-why "abba" is the test everyone uses.""",
+This entry is about a TECHNIQUE rather than a single problem: the sliding window. It
+is the answer to a whole family of questions about unbroken stretches of a list or
+string, and the skill is recognising when it applies.
 
-    """Edge cases: empty, all identical, all distinct.
-"" -> the loop never runs, best=0.
-"bbbb" -> every step moves left up to right, window size stays 1, best=1.
-"abcdef" -> left never moves, best=6.
-Single char "a" -> 1. Those four confirm the window formula
-right - left + 1 is right; an off-by-one here shows up immediately as an answer
-that is one too small or one too large everywhere.""",
+The worked example is: find the length of the longest stretch of a string in which no
+character repeats.
 
-    """The two flavours of shrinking, and how to tell them apart.
-Shrink while INVALID, record on every step -> LONGEST valid window:
-this problem, Longest Repeating Character Replacement, Max Consecutive Ones III,
-Fruit Into Baskets, Longest Subarray with at most K distinct.
-Grow until VALID, then shrink as far as possible, record while valid ->
-SHORTEST valid window: Minimum Window Substring, Minimum Size Subarray Sum.
-FIXED size k -> Maximum Average Subarray, Permutation in String: add the
-incoming element, remove the outgoing one, no while loop at all.
-Naming which of the three you are in, out loud, before you code is the entire
-recognition skill.""",
+Our string: s = "abcabcbb".
 
-    """Why it is O(n) even though there is a loop inside a loop.
-Right advances exactly n times. Left only ever advances, never rewinds, so
-across the whole run it also moves at most n times. Total pointer movement <= 2n,
-so O(n) - the inner `while` does not multiply the cost.
-Compare with the brute force: check every substring for uniqueness is O(n^2)
-substrings times O(n) to check = O(n^3), or O(n^2) with incremental sets.
-On n = 10^5 that is the difference between 0.1 seconds and an hour. This
-amortised argument is the answer to 'what is the complexity?' - say 'each
-element enters and leaves the window at most once'.""",
+    a b c a b c b b
+    0 1 2 3 4 5 6 7
 
-    """A real-world flavour: rate limiting.
-'Allow at most 100 requests per user per 60 seconds.' Keep a queue of request
-timestamps; on each new request, pop from the front everything older than
-now - 60s (shrink the window), then check the size (the condition), then push.
-That is literally the sliding-window pattern with time as the axis - and it is
-the standard sliding-window-log rate limiter you would draw in a system-design
-round.
-Other sightings: rolling averages over the last N samples, detecting a burst of
-errors in a log stream, and computing a moving max with a monotonic deque.""",
+Starting at position 0: a, b, c are all different - then position 3 is another 'a',
+which repeats. Length 3.
+Starting at position 1: b, c, a - then 'b' repeats at position 4. Length 3.
+Starting at position 2: c, a, b - then 'c' repeats. Length 3.
+
+The answer is 3.
+
+An unbroken stretch is a SUBSTRING - the characters must sit next to each other. The
+question asks only for the LENGTH, not the text, which is typical of window problems
+and is part of why they can be answered in one pass.
+
+The obvious approach is to try every stretch and check each for repeats: about n x n
+/ 2 stretches, each costing up to n to check - O(n^3), or O(n^2) if you check
+cleverly. The window does it in O(n), and section 2 explains the shape.""",
+
+    """2. THE INTUITION - a window with two edges that never go backwards.
+
+Picture a window cut in a piece of card, laid over the string so you see only part of
+it:
+
+    a b c a b c b b
+    [     ]              the window covers positions 0 to 2, showing "abc"
+    ^     ^
+   left  right
+
+The window has a left edge and a right edge, and it obeys one rule that you choose to
+suit the problem. Here the rule is: THE CHARACTERS INSIDE ARE ALL DIFFERENT.
+
+The method is always the same three beats:
+
+    GROW - move the right edge one step right, taking in a new item.
+    REPAIR - if the rule is now broken, move the left edge right until it holds
+             again.
+    RECORD - measure the window and keep it if it is the best so far.
+
+The efficiency comes from one fact: NEITHER EDGE EVER MOVES BACKWARDS. The right edge
+walks the list once, and the left edge also walks it at most once across the whole
+run - not once per position. So the total work is about 2n steps, which is O(n).
+
+That is the whole technique. What changes between problems is only the rule and how
+you check it:
+
+    all characters different          -> a map of last-seen positions, or a set
+    at most k distinct characters     -> a map of counts, shrink while too many
+    sum at least k (positive numbers) -> a running total, shrink while too big
+    at most k replacements needed     -> counts plus the commonest-character count
+
+Section 3 is about when the technique applies at all, which is the part worth
+carrying away.""",
+
+    """3. WHEN A SLIDING WINDOW WORKS - and when it does not.
+
+The technique needs one property, and it is worth stating precisely because
+recognising its absence saves you from a wrong answer.
+
+    GROWING the window must only ever make the rule HARDER to satisfy, and
+    SHRINKING must only ever make it EASIER.
+
+That is called MONOTONICITY. When it holds, "the rule is broken, so shrink" is
+reliable advice: shrinking is guaranteed to move you toward validity, so you never
+need to reconsider.
+
+Check it on our problem. Adding a character to a window can introduce a repeat but
+can never remove one. Removing a character from the left can resolve a repeat but can
+never create one. Monotone, so the window works.
+
+NOW A CASE WHERE IT FAILS. "Find a stretch summing to exactly k, where the numbers may
+be negative." Growing the window might make the sum go DOWN, so a sum that has
+overshot k could come back to k after taking in more numbers - and shrinking would
+have thrown away a valid answer. Not monotone, so the window is wrong. That problem
+needs prefix sums and a hash map instead.
+
+THE RECOGNITION CHECKLIST, which is the transferable part of this entry:
+
+    Does the problem ask about an UNBROKEN stretch? If it allows skipping, it is a
+    subsequence problem and the window does not apply.
+
+    Is there a rule the stretch must satisfy?
+
+    Does growing only ever make that rule harder, and shrinking only easier?
+
+    If a sum is involved, are the numbers all positive? Negatives usually break
+    monotonicity.
+
+All four yes: sliding window, O(n). Any no: look elsewhere - usually prefix sums, a
+heap, or dynamic programming.""",
+
+    """4. THE TRICK IN THIS PARTICULAR VERSION - jump the left edge, do not crawl.
+
+Most sliding-window code repairs the window by moving the left edge one step at a
+time in a loop. This version does something faster: it JUMPS the left edge straight
+past the previous occurrence of the repeated character.
+
+To do that it stores, for each character, the LAST POSITION where it appeared. So
+when a repeat turns up, the code already knows exactly where the old copy is and can
+move the left edge to just past it in a single step.
+
+    a b c a b c b b
+          ^   the 'a' at position 3 repeats the 'a' at position 0,
+              so the left edge jumps to position 1 immediately
+
+But that introduces a subtlety, and it is the line people get wrong. The map
+remembers EVERY character ever seen, including ones the left edge has already passed.
+Those are outside the window and must be ignored.
+
+    s = "abba"
+
+    At position 3 the character is 'a', last seen at position 0. But by then the left
+    edge has already moved to position 2, so that 'a' is behind the window and is NOT
+    a repeat at all.
+
+So before jumping, the code checks that the remembered position is at or after the
+left edge. Without that check the left edge would move BACKWARDS - from 2 to 1 - and
+two things break at once: the window would contain a repeat, and the guarantee that
+edges only move forward would be gone, taking the O(n) argument with it.
+
+Many implementations write the jump as left = max(left, seen[ch] + 1), which says the
+same thing in one line: never move the left edge backwards.""",
+
+    """5. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - a stale position in the map. Section 4, and it is the main bug in this
+version. Test with "abba": the correct answer is 2, and without the check you get 3.
+
+CASE 2 - measuring the window as (right - left) instead of (right - left + 1). Both
+edges are INSIDE the window, so a window from position 3 to position 3 holds one
+character, and 3 - 3 + 1 = 1. Dropping the "+ 1" reports every answer as one too
+small.
+
+CASE 3 - the empty string. The loop never runs and best stays 0. Correct.
+
+CASE 4 - all characters the same, "bbbb". Every new character repeats the previous
+one, so the left edge jumps to keep the window one character wide. Answer 1. Correct -
+the longest stretch with no repeats is a single character.
+
+CASE 5 - all characters different, "abcdef". Nothing ever repeats, the left edge never
+moves, and the window grows to the whole string. Answer 6.
+
+CASE 6 - recording the best only at the end. The final window is not necessarily the
+widest - in "abcabcbb" the last window is just "b". The measurement has to happen on
+every step.
+
+CASE 7 - applying the technique when the rule is not monotone. Section 3. The window
+runs happily and returns a wrong answer, which is worse than failing.""",
+
+    """6. DEFINING THE TERMS the code uses.
+
+SLIDING WINDOW: a stretch defined by two edges that only ever move rightwards.
+Section 2.
+
+MONOTONICITY: growing only makes the rule harder, shrinking only makes it easier.
+Section 3, and the precondition for the whole technique.
+
+SUBSTRING: an unbroken stretch. Contrast with a SUBSEQUENCE, which may skip - and for
+which windows do not apply.
+
+seen: a dictionary mapping each character to the LAST position it appeared at. Note
+"last", not "first" - it is overwritten every time the character turns up again.
+
+enumerate(s): walks the string handing back both the position and the character at
+once, so the code has both without a separate counter.
+
+left: the window's left edge. It only ever increases.
+
+(right - left + 1): the window's width, with the "+ 1" because both edges are inside
+it.
+
+O(n) and O(k): the costs, where n is the length of the string and k the number of
+distinct characters possible. O(n) time because each edge crosses the string once.
+O(k) space for the map - at most 26 entries for lowercase letters, whatever the
+string's length, which many people write as O(1) for that reason.""",
+
+    """7. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: walk a window along the string, and whenever the new
+character is a repeat that is still inside the window, jump the left edge past its
+previous position.
+
+There is no recursion here - one loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Keep a table recording, for each character, the last position it was seen at.
+     Keep a left edge starting at the front, and a record of the widest window so
+     far.
+
+  2. Move the right edge along the string one character at a time, and at each step
+     you have both the position and the character.
+
+  3. Ask two things about the new character:
+       a. Have I seen it before at all?
+       b. Was that sighting at or after the left edge - that is, is it still inside
+          the window?
+
+     Only if BOTH are true is it a genuine repeat. If so, jump the left edge to one
+     position past that earlier sighting.
+
+     The second question is what stops the left edge moving backwards, which would
+     both admit a repeat into the window and destroy the efficiency argument.
+
+  4. Record the new character's position in the table, overwriting any older one.
+     This happens whether or not a jump occurred - every character read must have its
+     position updated.
+
+  5. Measure the window and keep it if it is the widest so far. Measure on every
+     step, not just at the end, because the widest window is often destroyed later.
+
+  6. When the right edge runs off the end, the best measurement is the answer.
+
+Step 3b is the subtle one, and step 4 sitting outside the if is easy to get wrong.""",
+
+    """8. THE CODE, line by line.
+
+Keep s = "abcabcbb" beside you; the answer is 3.
+
+    seen = {}
+The table mapping each character to the LAST position it appeared at. Empty at the
+start because nothing has been read.
+
+    left = 0
+The window's left edge, starting at the front of the string.
+
+    best = 0
+The widest window seen so far. Starting at 0 is what makes the empty string return 0
+with no special case.
+
+    for right, ch in enumerate(s):
+Walk the string, getting both the position and the character at once. right is the
+window's right edge, and it moves one step per turn - the only thing driving the
+process.
+
+    if ch in seen and seen[ch] >= left:
+The two-part question from section 4, and both halves are essential.
+
+  "ch in seen" - has this character ever been seen?
+  "seen[ch] >= left" - was that sighting still INSIDE the window?
+
+The second half is the one people omit. Without it, a character last seen long before
+the left edge would trigger a jump backwards - see the "abba" case in section 4.
+
+    left = seen[ch] + 1
+The jump. Move the left edge to just past the old copy, throwing that copy and
+everything before it out of the window in one move. This is what storing POSITIONS
+rather than mere presence buys: no crawling one step at a time.
+
+    seen[ch] = right
+Record where this character is NOW, overwriting any older position. Note this sits
+OUTSIDE the if - it must happen whether or not a jump occurred, because every
+character read needs its position kept current.
+
+    best = max(best, right - left + 1)
+Measure the window and keep it if it is the widest yet. The "+ 1" is because both
+edges are inside it: a window from position 2 to position 4 holds three characters,
+and 4 - 2 + 1 = 3.
+
+Measuring on EVERY step is what catches a wide window that appears in the middle and
+is later destroyed - in our string the final window is only one character wide.
+
+    return best
+The widest window ever measured.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    s = "a b c a b c b b"
+    pos   0 1 2 3 4 5 6 7
+
+Start: seen = {}, left = 0, best = 0
+
+right=0, ch='a'   'a' not in seen -> no jump.
+                  seen = {a:0}.  width = 0-0+1 = 1.  best = 1.
+right=1, ch='b'   not seen -> no jump.
+                  seen = {a:0, b:1}.  width = 2.  best = 2.
+right=2, ch='c'   not seen -> no jump.
+                  seen = {a:0, b:1, c:2}.  width = 3.  best = 3.
+right=3, ch='a'   seen at 0, and 0 >= left(0) -> inside the window. JUMP.
+                  left = 0 + 1 = 1.  seen[a] = 3.
+                  window is positions 1..3 = "bca".  width = 3.  best stays 3.
+right=4, ch='b'   seen at 1, and 1 >= left(1) -> inside. JUMP.
+                  left = 2.  seen[b] = 4.
+                  window = "cab".  width = 3.  best stays 3.
+right=5, ch='c'   seen at 2, and 2 >= left(2) -> inside. JUMP.
+                  left = 3.  seen[c] = 5.
+                  window = "abc".  width = 3.  best stays 3.
+right=6, ch='b'   seen at 4, and 4 >= left(3) -> inside. JUMP.
+                  left = 5.  seen[b] = 6.
+                  window = positions 5..6 = "cb".  width = 2.  best stays 3.
+right=7, ch='b'   seen at 6, and 6 >= left(5) -> inside. JUMP.
+                  left = 7.  seen[b] = 7.
+                  window = position 7 only.  width = 1.  best stays 3.
+
+return best = 3.  Correct.
+
+Read the two edges down the trace. right went 0,1,2,3,4,5,6,7 and never went back.
+left went 0,0,0,1,2,3,5,7 - also never back. That is the whole efficiency argument,
+visible: between them they took fifteen steps on an eight-character string.
+
+THE STALE-POSITION CASE, s = "abba":
+
+right=0, 'a'  not seen.  seen = {a:0}.  width 1.  best = 1.
+right=1, 'b'  not seen.  seen = {a:0, b:1}.  width 2.  best = 2.
+right=2, 'b'  seen at 1, and 1 >= left(0) -> inside. JUMP. left = 2.
+              seen[b] = 2.  width = 1.  best stays 2.
+right=3, 'a'  seen at 0.  Is 0 >= left(2)?  NO - that 'a' is behind the window,
+              so it is not a repeat.  NO JUMP.
+              seen[a] = 3.  window = positions 2..3 = "ba".  width = 2.
+              best stays 2.
+
+return 2.  Correct.
+
+Without the "seen[ch] >= left" check, that last step would have jumped left back to 1,
+the window would have become "bba" containing two b's, and the answer would have been
+3 - wrong, and with the left edge moving backwards.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). The right edge takes exactly n steps. The left edge only ever moves
+forward, so across the entire run it also takes at most n steps in total - not n per
+character. Everything inside the loop is a fixed amount of work: a lookup, a
+comparison, an assignment.
+
+SPACE: O(k), where k is the number of distinct characters possible - at most 26 for
+lowercase letters, whatever the string's length. Often written O(1) for that reason,
+or O(min(n, alphabet size)) to be exact.
+
+THE RECOGNITION SKILL is what to take away from this entry, more than the code. When
+you meet a problem about an unbroken stretch with a rule attached, ask the four
+questions from section 3. If growing only makes the rule harder and shrinking only
+easier, the window applies and the answer is O(n). If not - most often because
+negative numbers break the monotonicity of a sum - reach for prefix sums, a heap, or
+dynamic programming instead.
+
+THE #1 MISTAKE - letting the left edge move backwards. Omitting the "is that sighting
+still inside the window?" check does two kinds of damage at once: the window ends up
+containing a repeat, so the answer is wrong, and the forward-only guarantee is broken,
+so the O(n) argument no longer holds. Writing the jump as
+left = max(left, seen[ch] + 1) makes it impossible to get wrong.
+
+A close second: measuring the window as (right - left) rather than (right - left + 1),
+which reports every answer as one too small. Test it on a single character: a window
+from position 0 to position 0 holds one character, and only the "+ 1" version says
+so.
+
+ONE-SENTENCE TAKEAWAY: grow the window on the right, repair it from the left, and
+measure every step - and reach for the technique only when growing makes the rule
+harder and shrinking makes it easier, because that monotonicity is the whole reason
+the left edge never has to go back.""",
 ]
 
 _EX_P0G["Subsets (power set)"] = [
