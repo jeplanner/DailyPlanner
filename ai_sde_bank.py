@@ -29998,6 +29998,73 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P0LP[_e["title"]]
 
 
+# ── Fold the duplicate LP prompts into their coaching entries ─────────────
+# Each Amazon Leadership Principle existed TWICE: once as a coaching entry
+# ("STAR: <principle>" - what the LP means, what to show, what the probes are)
+# and once as a question prompt ("Tell me about a time you X (LP: Y)" -
+# carrying a ready-made worked STAR script). Complementary content, but two
+# separate study units for one principle: she would work Frugality twice under
+# two titles, paying prep_minutes for both.
+#
+# So the script becomes an extra worked example on the coaching entry, the
+# question phrasing survives as a searchable alias, and the duplicate entry is
+# dropped. Net: 13 fewer entries, no content lost, and the surviving entry
+# reads rubric -> model answer -> probes in one place.
+_LP_DUPLICATES = {
+    "Tell me about a time you put the user first (LP: Customer Obsession)":
+        "STAR: Customer obsession -- starting from the customer and working backward",
+    "Tell me about a time you took ownership beyond your role (LP: Ownership)":
+        "STAR: Earning trust after a mistake / owning an incident (Earn Trust / Ownership)",
+    "Tell me about a time you earned others' trust (LP: Earn Trust)":
+        "STAR: Earning trust after a mistake / owning an incident (Earn Trust / Ownership)",
+    "Tell me about a time you dug into details to solve a hard problem (LP: Dive Deep)":
+        "STAR: Diving deep to find a root cause others missed (Dive Deep)",
+    "Tell me about a time you moved fast with incomplete information (LP: Bias for Action)":
+        "STAR: Acting decisively with incomplete information (Bias for Action)",
+    "Tell me about a time you taught yourself something to deliver (LP: Learn and Be Curious)":
+        "STAR: Learning something hard and outside your expertise fast (Learn and Be Curious)",
+    "Tell me about a time you delivered under a tight deadline (LP: Deliver Results)":
+        "STAR: Delivering under a hard deadline with scope trade-offs "
+        "(Deliver Results / Bias for Action)",
+    "Tell me about a time you simplified something complex (LP: Invent and Simplify)":
+        "STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)",
+    "Tell me about a time you thought bigger than the immediate task (LP: Think Big)":
+        "STAR: Thinking big and influencing beyond your team (Think Big)",
+    "Tell me about a time you disagreed but committed (LP: Have Backbone; Disagree and Commit)":
+        "STAR: Disagreeing with a decision then fully committing "
+        "(Have Backbone; Disagree and Commit)",
+    "Tell me about a time you did more with less (LP: Frugality)":
+        "STAR: Being frugal / doing more with less (Frugality)",
+    "Tell me about a time you made a good call with limited data (LP: Are Right A Lot)":
+        "STAR: Insisting on the right long-term solution over a quick hack "
+        "(Are Right, A Lot / Insist on Highest Standards)",
+    "Tell me about a time you refused to lower the quality bar "
+    "(LP: Insist on the Highest Standards)":
+        "STAR: Insisting on the right long-term solution over a quick hack "
+        "(Are Right, A Lot / Insist on Highest Standards)",
+}
+
+_by_title = {_e["title"]: _e for _e in ENTRIES}
+_folded = []
+for _dup_title, _canon_title in _LP_DUPLICATES.items():
+    _dup, _canon = _by_title.get(_dup_title), _by_title.get(_canon_title)
+    if _dup is None or _canon is None:
+        continue                      # tolerate a retitle rather than crashing
+    _canon.setdefault("examples", [])
+    _canon["examples"].append(
+        f"A ready-made answer for the way this is usually asked - "
+        f'"{_dup_title.split(" (LP:")[0]}?"\n{_dup["answer"]}')
+    # Keep the question phrasing findable: searching the literal prompt should
+    # still land on the entry that now answers it.
+    _canon["tags"] = sorted(set(_canon.get("tags", [])) | set(_dup.get("tags", [])))
+    _canon.setdefault("aliases", []).append(_dup_title)
+    _folded.append(_dup_title)
+
+if _folded:
+    _drop = set(_folded)
+    ENTRIES[:] = [_e for _e in ENTRIES if _e["title"] not in _drop]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
