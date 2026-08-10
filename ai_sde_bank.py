@@ -27695,52 +27695,351 @@ number is ever used twice.""",
 ]
 
 _EX_P0C["Permutations (backtracking)"] = [
-    """The textbook case, traced.
-nums = [1,2,3].
-  choose 1 -> choose 2 -> choose 3 -> record [1,2,3], undo, undo
-             choose 3 -> choose 2 -> record [1,3,2], undo, undo
-  undo 1, choose 2 -> ... [2,1,3], [2,3,1]
-  undo 2, choose 3 -> ... [3,1,2], [3,2,1]
-Six results = 3!. The tree has 3 choices at the first level, 2 at the second, 1
-at the third.""",
+    """1. THE GOAL, in plain English.
 
-    """The copy bug, which produces six identical empty lists.
-Appending `path` instead of `path[:]` stores a REFERENCE. The path keeps
-mutating as the recursion continues, and by the end every stored reference
-points at the same, now-empty, list.
-Symptom: the right NUMBER of results, all identical. If you ever see that,
-this is the cause - and the identical bug appears in Subsets, Combination Sum
-and Path Sum II.""",
+You are given a list of distinct numbers. Produce every possible ORDERING of
+them.
 
-    """Single element and empty input.
-[1] -> one permutation [[1]].
-[] -> the base case fires immediately with an empty path, giving [[]] - one
-permutation, the empty one. That is mathematically correct (0! = 1) but confirm
-what the problem expects.""",
+An ordering is called a PERMUTATION. It uses every item exactly once - what
+changes between permutations is only the order.
 
-    """Why a used[] array rather than a start index.
-Subsets and Combinations pass a start index, so each element is considered once
-in order and [1,2] is the same set as [2,1].
-Permutations need ORDER to matter, so every index must be available at every
-level - which means loop over all of them and skip the ones already in the path.
-Choosing between "start index" and "used array" IS the problem; get that right
-and the code writes itself.""",
+Try it by hand with nums = [1, 2, 3]. Be systematic: decide what goes first,
+then what goes second, and the third is forced.
 
-    """Handling duplicates - Permutations II.
-nums = [1,1,2] would give 6 results with the plain algorithm, but only 3 are
-distinct.
-Fix: sort first, then inside the loop skip index i when nums[i] == nums[i-1] AND
-used[i-1] is False - meaning the identical earlier copy was NOT taken on this
-branch, so taking this one would repeat a branch already explored.
-That condition is fiddly; trace [1,1,2] by hand once to convince yourself.""",
+    first = 1:   1 2 3      1 3 2
+    first = 2:   2 1 3      2 3 1
+    first = 3:   3 1 2      3 2 1
 
-    """Complexity, and why it cannot be better.
-n! permutations each of length n, so O(n x n!) just to write the output. The
-algorithm is optimal because the output itself is that large.
-For n=10 that is 3.6 million results - already impractical. If a problem asks
-for permutations of a large n, it is really asking for something else, such as
-the k-th permutation in order, which is computed directly with factorial
-arithmetic rather than by enumeration.""",
+Six of them. And there is a pattern in the count: 3 choices for the first slot,
+then 2 remaining for the second, then 1 for the last, so 3 x 2 x 1 = 6. That is
+written 3! and read "three factorial".
+
+This grows terrifyingly fast. 5! = 120, 8! = 40,320, 10! = 3,628,800, and
+13! is over six billion. So there is no fast algorithm here and there never can
+be - the ANSWER itself is enormous. The job is simply to produce all of them
+without producing anything twice and without missing any.""",
+
+    """2. THE INTUITION - the picture is a tree of choices.
+
+Draw the decision as a tree. At the top you have chosen nothing. Each level
+down, you choose one more item from the ones still unused.
+
+                        ( )
+              /          |          \\
+            (1)         (2)         (3)
+           /   \\       /   \\       /   \\
+       (1,2) (1,3) (2,1) (2,3) (3,1) (3,2)
+         |     |     |     |     |     |
+     (1,2,3)(1,3,2)(2,1,3)(2,3,1)(3,1,2)(3,2,1)
+
+Every path from the top to the bottom is one permutation, and the six bottom
+nodes are exactly the six answers we found by hand.
+
+So the method is: walk this tree. At each node, try every item that is not
+already on the path; when the path is full, write it down.
+
+That method has a name - BACKTRACKING. It means: build a partial answer one
+piece at a time; at each step try every legal next piece; when you have gone as
+far as that choice allows, UNDO it and try the next one. It is how you explore
+a maze with chalk - walk down a corridor, and when it dead-ends, walk back and
+take a different one.
+
+There is no simpler-but-slower version worth showing here, because the honest
+alternatives are worse rather than simpler: generating random orderings until
+you have collected all n! of them is both slower and unreliable. Backtracking
+is the straightforward method; what section 3 explains is the one piece of
+bookkeeping it needs.""",
+
+    """3. THE TRICK - "choose, explore, un-choose", and why the undo is essential.
+
+Look at the tree again and follow the code's route. It goes down the leftmost
+path to (1,2,3), writes it down, and then needs to get back up to (1,2) and try
+3... no, (1,2) has nothing left. Back up to (1) and try 3 instead of 2, giving
+(1,3).
+
+That "back up" is not automatic. The path we are building lives in ONE list
+that is shared by every level of the walk. If we push 2 onto the path and then
+finish exploring below it, we must POP it off again before trying 3 - otherwise
+the path is still [1,2] when we try to make it [1,3], and we would end up with
+[1,2,3] again or worse.
+
+So every choice is made in three beats:
+
+  CHOOSE     mark the item as used, and push it onto the path
+  EXPLORE    recurse to fill the next slot
+  UN-CHOOSE  pop it off the path, and mark it unused again
+
+The un-choose beat must exactly undo the choose beat - both parts of it. Forget
+to pop the path and the answers come out too long. Forget to unmark the item
+and it stays unavailable for every later branch, so whole subtrees vanish
+silently.
+
+There is a second, quieter trap. When a full path is found and written down, it
+must be written as a COPY. The path list keeps being changed after that moment,
+so storing the list itself means storing a reference to something that will
+mutate - and at the end every answer in your results turns out to be the same
+empty list. Copying at the moment of recording is what freezes it.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - forgetting the copy. Recording the path itself instead of a copy gives
+a result that looks like [[], [], [], [], [], []] - six entries, all empty,
+because they are six references to the one path list which was emptied on the
+way back up. The count is right, which makes it especially confusing. Record a
+copy.
+
+CASE 2 - forgetting to un-choose. If the item is never marked unused again,
+then after the first full permutation everything is marked used and no other
+branch can pick anything. You get exactly one answer instead of six.
+
+CASE 3 - popping the path but not unmarking the item, or the reverse. The two
+undos are a pair. Doing one without the other gives answers that are the right
+length but contain repeats, or a run that quietly produces far too few results.
+
+CASE 4 - the empty list. nums = []. The path is length 0, which already equals
+len(nums), so the very first call records a copy of the empty path and returns.
+The answer is [[]] - a list containing one empty permutation. That is correct:
+there is exactly one way to arrange nothing. It matches 0! = 1.
+
+CASE 5 - duplicates in the input. This solution assumes the numbers are
+distinct. Given [1,1,2] it produces 6 answers, of which only 3 are actually
+different. The standard fix is a different problem (Permutations II): sort the
+input first, then within each level skip an item if it equals the previous item
+AND that previous item is currently unused - which means the previous copy was
+already tried at this same slot. Worth mentioning; do not attempt it unless
+asked.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+RECURSION: a function that solves a problem by calling itself on a smaller
+piece of the same problem. Here, "fill all the remaining slots" is done by
+choosing one item and then calling the same function to fill the slots after
+it.
+
+CALL STACK: when the function calls itself, the outer call pauses exactly where
+it is and the inner one runs. Those paused calls pile up, each waiting for the
+one below it. That pile is the call stack, and it is what makes "backing up"
+possible - when a call returns, the one above resumes on the very next line,
+which happens to be the un-choose step.
+
+BASE CASE: the situation where the function records an answer and returns
+instead of calling itself again. Here it is "the path is as long as the input".
+Without a base case, recursion never ends.
+
+path[:]: Python for "a copy of this list". The colon with nothing on either
+side means "from the start to the end". This is the copy from section 3.
+
+used: a list of true/false, one per input item, recording which items are
+already on the path. You could instead check "is this item already in the
+path?", but that costs a scan of the path each time; a lookup in used is
+instant.
+
+O(n! x n): the cost. There are n! permutations, and each one costs about n
+steps to build and to copy. In plain words: the work is dominated by the sheer
+number of answers. No algorithm can do better, because it has to produce them
+all.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: fill the slots left to right, at each slot
+trying every item not already used, and after exploring each choice undo it
+completely before trying the next.
+
+The mechanism, since this is recursion. The function's job is "fill the
+remaining slots, given what is already on the path". It picks an item, puts it
+on the path, and then calls ITSELF to fill the rest. That inner call pauses the
+outer one. When the inner call has explored everything below that choice, it
+returns - and the outer call wakes up on the very next line, which is the
+un-choose step. So the undo happens automatically at exactly the right moment,
+without you having to arrange it: it is simply the line after the recursive
+call.
+
+It stops because the path grows by one item per level, so after n levels the
+path is full and the base case fires.
+
+The steps:
+
+  1. Make an empty list for the results, an empty list for the path being built,
+     and a list of false values - one per input item - recording which items are
+     already used.
+
+  2. Write a function that fills the remaining slots:
+
+     a. BASE CASE. If the path is already as long as the input, then it is a
+        complete permutation: add a COPY of it to the results and return. A
+        copy, not the path itself - the path is about to change again.
+
+     b. Otherwise, go through every position in the input:
+          - If that item is already used, skip it.
+          - CHOOSE: mark it used, and append it to the path.
+          - EXPLORE: call this same function to fill the next slot.
+          - UN-CHOOSE: remove it from the end of the path, and mark it unused
+            again. Both undos, always, and in that order.
+
+  3. Call the function once with an empty path, and return the results.
+
+The loop in step (b) is what makes this a search over a tree rather than a
+single path: after one choice has been fully explored and undone, the loop
+simply moves on to the next candidate for that same slot.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code builds each ordering one slot at a time, and it uses the same working
+list for all of them.
+
+At any moment it holds a partial ordering - say it has decided the first item
+is 1 and it is now deciding the second. It looks at every item in the original
+input and asks a single question: have I already used this one? If yes, it
+skips past. If no, it takes it: marks it as used, adds it to the end of the
+working list, and then asks itself to fill the remaining slots the same way.
+
+When the working list is finally as long as the input, there is nothing left to
+decide - that is a complete ordering, so it saves a copy of it. A copy, because
+the working list is about to be dismantled and reused for the next ordering.
+
+Then comes the part that makes the whole thing work: after exploring everything
+that followed from a choice, it takes that choice back. It removes the item
+from the end of the working list and marks it unused again, leaving everything
+exactly as it was before the choice was made. Only then does it try the next
+candidate for that slot.
+
+That undo is what lets one working list produce every ordering in turn. Without
+it the list would keep growing and items would stay locked, and almost all the
+orderings would never be reached.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [1,2,3] and the tree from section 2 beside you.
+
+    res = []
+Where finished permutations are collected. Ours ends with six of them.
+
+    used = [False] * len(nums)
+One true/false per input item: "is this item currently on the path?" Starting
+all false because nothing has been chosen. Checking this list is instant,
+whereas searching the path each time would cost more at every step.
+
+    path = []
+The ordering being built right now. There is only ONE of these, shared by every
+level of the recursion - which is exactly why the undo below is necessary.
+
+    def backtrack():
+The recursive worker. It takes no arguments because everything it needs -
+path, used, res, nums - is visible from the enclosing function.
+
+    if len(path) == len(nums):
+        res.append(path[:])
+        return
+The base case. A path as long as the input is a complete permutation, so record
+it and stop. The [:] is the COPY from section 3: without it, res would fill up
+with six references to the same list, which is emptied on the way back up, and
+the final answer would be six empty lists. The return sends us back up the tree
+to try the choices we have not made yet.
+
+    for i in range(len(nums)):
+Try every position in the input as the candidate for the current slot. Looping
+over positions rather than values is what lets used be indexed by position.
+
+    if used[i]:
+        continue
+Skip anything already on the path - an item cannot appear twice in one
+permutation. In the tree, this is what makes the branches get narrower as you
+go down: three choices at the top, then two, then one.
+
+    used[i] = True
+    path.append(nums[i])
+CHOOSE. Both halves of the choice, together: mark it taken and put it on the
+path.
+
+    backtrack()
+EXPLORE. Fill the remaining slots. This call runs the ENTIRE subtree below this
+choice before returning - every permutation that starts with the current path
+is found in here.
+
+    path.pop()
+    used[i] = False
+UN-CHOOSE, and these two lines are the heart of backtracking. pop() removes the
+last item from the path; used[i] = False makes the item available again. Between
+them they restore the state to exactly what it was before the choose step, so
+the next turn of the loop starts from a clean slate.
+
+Notice WHERE they sit: immediately after the recursive call. When the call
+returns, execution resumes here - so the undo happens at precisely the moment
+the subtree is exhausted, with no bookkeeping needed.
+
+    backtrack()
+    return res
+Start the search with an empty path, then hand back everything collected.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [1,2,3]. Writing path and used side by side; used is shown as three
+letters, T for taken and . for free.
+
+start           path=[]        used=...
+ i=0 choose 1   path=[1]       used=T..
+   i=0 used -> skip
+   i=1 choose 2 path=[1,2]     used=TT.
+     i=0 used -> skip;  i=1 used -> skip
+     i=2 choose 3 path=[1,2,3] used=TTT
+       len(path)==3 -> RECORD a copy: res=[[1,2,3]]
+       return
+     UNDO   path=[1,2]         used=TT.
+     loop ends for this level -> return
+   UNDO           path=[1]     used=T..
+   i=2 choose 3   path=[1,3]   used=T.T
+     i=1 free, choose 2  path=[1,3,2]  used=TTT
+       RECORD -> res=[[1,2,3],[1,3,2]]
+     UNDO         path=[1,3]   used=T.T
+     return
+   UNDO           path=[1]     used=T..
+   return
+ UNDO             path=[]      used=...
+ i=1 choose 2     path=[2]     used=.T.
+   ... same shape, produces [2,1,3] then [2,3,1]
+ UNDO             path=[]      used=...
+ i=2 choose 3     path=[3]     used=..T
+   ... produces [3,1,2] then [3,2,1]
+ UNDO             path=[]      used=...
+
+res = [[1,2,3],[1,3,2],[2,1,3],[2,3,1],[3,1,2],[3,2,1]] - the same six we
+listed by hand in section 1, in the same order.
+
+Follow the "UNDO" lines down the left margin. Every one of them returns path
+and used to exactly the state they were in before the matching choose. That is
+the mechanism, visible.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n! x n). There are n! permutations, and each costs about n steps to
+build and another n to copy into the results. This cannot be improved, because
+the output itself has n! x n numbers in it - any algorithm must at minimum
+write them all down. Say that out loud when asked: "the cost is dominated by
+the size of the output, so this is optimal."
+
+To feel the scale: n = 8 gives 40,320 answers, n = 10 gives 3.6 million, and
+n = 13 gives over six billion. Anything past about 10 is impractical no matter
+how the code is written. If an interviewer gives you a large n, they are asking
+for something other than all the permutations - a count, or the k-th one, or a
+random one.
+
+SPACE: O(n) for the working path, the used list, and the call stack, which goes
+n levels deep. The results themselves are O(n! x n), but those are the answer
+rather than working space.
+
+THE #1 MISTAKE - appending path instead of path[:]. You get the right NUMBER of
+results, all of them empty, because they are all references to the same list
+that gets dismantled on the way back up. The count being right is what makes
+this so easy to miss.
+
+A close second: an incomplete undo. Popping the path but not clearing used, or
+clearing used but not popping. Both undos are a pair; they must exactly reverse
+both halves of the choose step.
+
+ONE-SENTENCE TAKEAWAY: fill the slots one at a time, trying every unused item
+at each slot, and after exploring a choice undo it completely - remove it from
+the path AND mark it unused - so the next branch starts from exactly the state
+you began with.""",
 ]
 
 _EX_P0C["Topological Sort (Kahn's algorithm)"] = [
@@ -27791,50 +28090,341 @@ reason about and naturally gives you the cycle check for free.""",
 ]
 
 _EX_P0C["Remove Nth Node From End of List"] = [
-    """The textbook case, traced.
-1->2->3->4->5, n=2. dummy->1->2->3->4->5. fast=slow=dummy.
-Advance fast 2 steps: fast is on node 2.
-Move both while fast.next exists:
-  fast 3, slow 1 | fast 4, slow 2 | fast 5, slow 3. fast.next is None -> stop.
-slow is on 3, which is the node BEFORE the target 4.
-slow.next = slow.next.next removes 4. Result 1->2->3->5.""",
+    """1. THE GOAL, in plain English.
 
-    """Removing the head - why the dummy is essential.
-1->2, n=2. The target IS the head.
-With the dummy: fast advances 2 to node 2; fast.next is None so the loop never
-runs; slow is still on dummy; dummy.next = dummy.next.next skips node 1.
-Return dummy.next = 2.
-Without a dummy, slow would have nothing in front of the head to reassign, and
-you would need a separate branch for this case.""",
+You are given a chain of items and a number n. Remove the item that is n places
+from the END of the chain, and hand back the chain.
 
-    """Single-node list.
-1, n=1. dummy->1. fast advances 1 step to node 1. fast.next is None, loop
-skipped. slow is dummy, slow.next = None. Return dummy.next = None - an empty
-list, correctly.""",
+The chain is a LINKED LIST. Think of a train: each carriage holds some cargo
+and is coupled to exactly one carriage behind it. To reach carriage 4 you must
+walk through 1, 2 and 3 - there is no way to jump straight there.
 
-    """The loop-condition bug.
-Stopping at `while fast:` instead of `while fast.next:` moves slow one step too
-far - it lands ON the target rather than before it. You then delete the WRONG
-node (the one after the target), and in a singly linked list you cannot recover,
-because you have no pointer to the predecessor.
-One character of difference; trace the first example to confirm which you
-need.""",
+    head
+     |
+     v
+    [1] -> [2] -> [3] -> [4] -> [5] -> None
 
-    """Why the gap makes it one pass.
-After the head start, the distance between fast and slow is fixed at n forever -
-both move at the same speed. So when fast reaches the end, slow is exactly n
-nodes behind, which is the definition of nth-from-the-end.
-The two-pass alternative (count the length, then walk to length - n) is equally
-correct and often clearer; the one-pass version is what the follow-up asks
-for.""",
+Vocabulary as it appears:
+- Each carriage is a NODE. It holds a value and a link to the next node.
+- HEAD is the first node - the only one you are handed.
+- The last node's link points at NOTHING, written None. That is how you know
+  the chain has ended.
 
-    """The family of gap and speed tricks.
-Fixed gap of n: this problem.
-Speed 1 and 2: find the middle, detect a cycle.
-Two pointers from opposite ends: sorted two-sum, palindrome check.
-All three are "two pointers", but the relationship between them differs - fixed
-distance, different speeds, or converging. Naming which one a problem needs is
-the recognition step.""",
+Now the question. n = 2 means "the 2nd node counting from the end". Count
+backwards: 5 is 1st from the end, 4 is 2nd. So we remove 4:
+
+    [1] -> [2] -> [3] -> [5] -> None
+
+The awkward part is that you cannot count from the end. You only have the head,
+and the links point forwards. You do not even know how long the chain is until
+you have walked it.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION - two passes. Walk the whole chain once, counting the nodes;
+say there are L of them. The node that is n from the end is the node at
+position L - n counting from the front (starting at 0). Now walk again, stop
+just before that position, and unlink.
+
+That is correct and perfectly reasonable. It walks the list twice.
+
+THE UPGRADE - one pass, using two pointers with a fixed GAP between them.
+
+A POINTER here just means a finger resting on a node. Put two fingers on the
+chain and open a gap of exactly n nodes between them. Then slide both forward
+together, keeping the gap fixed. When the leading finger reaches the end, the
+trailing finger is exactly n from the end - because the gap never changed.
+
+    [1] -> [2] -> [3] -> [4] -> [5] -> None
+     ^             ^
+   slow          fast          gap of 2
+
+    slide both:
+    [1] -> [2] -> [3] -> [4] -> [5] -> None
+            ^             ^
+    slide both:
+    [1] -> [2] -> [3] -> [4] -> [5] -> None
+                   ^             ^
+   fast is now on the last node, so slow is on 3 - which sits just before 4,
+   the node we want to remove.
+
+That is the whole idea, and it is worth stating as a principle you will reuse:
+to find something a fixed distance from an end you cannot see, open that
+distance between two pointers and let the leading one find the end for you.
+
+Careful with the stopping rule, though. To DELETE node 4 we do not want to be
+standing on it - we need to be standing on the node BEFORE it, so we can
+re-route its link. That is why the loop stops when fast is on the LAST node
+rather than past it.""",
+
+    """3. THE TRICK - the DUMMY HEAD, and the problem it solves.
+
+Try the plan above on this case: list = [1], n = 1. We are removing the only
+node, so the answer is an empty list.
+
+Slow starts on node 1. It needs to stop "just before" the node to remove - but
+there IS no node before node 1. There is nothing to stand on, and nothing whose
+link we can re-route. The plan collapses.
+
+The same trouble appears whenever the node to remove is the head: deleting a
+node means changing the link of the node in FRONT of it, and the head has
+nothing in front of it.
+
+The fix is delightfully cheap. Invent one extra node and put it in front of the
+real head:
+
+    [dummy] -> [1] -> [2] -> [3] -> [4] -> [5] -> None
+
+Now the real head has a node in front of it, exactly like every other node. The
+head is no longer a special case at all - the same three lines of code handle
+deleting the first node, a middle node, or the last node.
+
+Two details that make it work:
+- Start BOTH pointers at the dummy, not at the head. The gap is then measured
+  from a position one before the list, which is what makes slow land on the
+  node before the target rather than on the target itself.
+- Return dummy.next at the end, NOT the original head - because the original
+  head may well be the node you just removed. This is the single most common
+  slip in this problem.
+
+A dummy head (also called a sentinel node) is worth remembering far beyond this
+question: any time a linked-list operation has an awkward special case at the
+front, putting a throwaway node in front usually makes the special case
+disappear.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - removing the head. list = [1,2], n = 2. The node 2 from the end is
+node 1, the head itself. With the dummy in place: both pointers start on dummy,
+fast advances 2 steps to node 2, then the loop does not run because fast.next
+is None. slow is still on dummy, and dummy.next becomes node 2. Return
+dummy.next = node 2. Answer [2]. Without the dummy, slow would have nothing to
+stand on.
+
+CASE 2 - removing the only node. list = [1], n = 1. fast advances 1 step to
+node 1. fast.next is None so the loop does not run. slow is on dummy, and
+dummy.next becomes None. Return dummy.next = None - an empty list. Correct, and
+again only because of the dummy.
+
+CASE 3 - removing the last node. list = [1,2,3], n = 1. fast advances 1 step to
+node 1. Then the loop runs while fast.next exists: fast walks to 2 then 3, slow
+walks to 1 then 2. slow is on node 2, which is exactly the node before the last
+one. 2's link jumps over 3. Answer [1,2]. Correct.
+
+CASE 4 - the off-by-one that plagues this problem. If you advance fast n+1
+steps instead of n, or stop the loop with "while fast" instead of
+"while fast.next", slow ends up one place too far along and you delete the
+wrong node. There is no way to reason this out from the code alone - draw the
+list, put the two fingers on it, and step through by hand. Every time.
+
+CASE 5 - n bigger than the list. The problem usually promises this cannot
+happen. If it could, advancing fast n steps would run off the end and crash;
+you would guard by checking fast is not None after the first loop.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+LINKED LIST, NODE, HEAD: defined in section 1.
+
+node.next: the link a node holds - "the node after this one". Reading
+slow.next.next means "the node two after slow".
+
+UNLINK: you never really "delete" a node in a linked list. You simply make the
+node in front point PAST it. Nothing points at the removed node any more, so it
+is unreachable and the memory is reclaimed automatically. That is why the whole
+removal is one line: slow.next = slow.next.next.
+
+DUMMY HEAD (or sentinel node): a throwaway node placed in front of the real
+head so that the real head has a predecessor. Defined and motivated in
+section 3.
+
+TWO POINTERS: two positions in the same structure, moved under a rule. Here the
+rule is "keep a fixed gap". In other problems the rule is "move at different
+speeds" (finding the middle of a list) or "move toward each other" (3Sum).
+
+O(L): the cost, where L is the number of nodes. In plain words the work grows
+in step with the length of the list - double the list, double the work. Both
+the slow version and the fast version are O(L); the difference between them is
+the number of PASSES, which is a constant factor. That is worth being honest
+about in an interview: one pass is nicer, and it is not asymptotically faster.
+What one pass genuinely buys you is the ability to work on a stream you can
+only read once.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: open a gap of exactly n nodes between two
+pointers, slide them together until the leading one reaches the last node, and
+then the trailing one is sitting just before the node to remove.
+
+No recursion here - just two short loops - so nothing piles up on the call
+stack. The dummy node takes the place of a special case.
+
+The steps:
+
+  1. Make a dummy node whose link points at the real head, and treat that dummy
+     as the start of the list. This is what lets you delete the head without a
+     special case.
+
+  2. Put both pointers - call them fast and slow - on the dummy.
+
+  3. Advance fast n steps forward. There is now a gap of exactly n nodes
+     between slow and fast.
+
+  4. Now slide BOTH forward one step at a time, for as long as fast has
+     something after it. Stop when fast is on the LAST node.
+
+     Stopping there, rather than one step later, is what leaves slow on the
+     node BEFORE the one to remove - which is where you need to be, because
+     deleting a node means changing the link of the node in front of it.
+
+  5. Re-route slow's link to skip the next node: point it at the node two
+     places ahead instead of one. The target node is now unreachable.
+
+  6. Return the dummy's link, NOT the original head - the original head may be
+     the node you just removed.
+
+Worth pausing on why step 4's stopping rule gives the right answer. When fast
+is on the last node, the number of steps from slow to fast is still n, because
+both moved together. So there are n nodes strictly after slow. The first of
+those is the one that is n from the end, and slow is right in front of it.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code cannot count backwards along the chain, because the links only point
+forwards. So it does something cleverer: it measures the distance it wants
+FIRST, and then lets the end of the list come to it.
+
+It begins by putting a throwaway node in front of the list, so that the real
+first item has something in front of it just like every other item does. That
+one line removes every special case about deleting the first node.
+
+Then it places two markers on that throwaway node and pushes one of them
+forward by exactly n steps, opening a gap of the size we care about. From that
+moment the gap never changes: both markers move together, one step each, all
+the way along the chain.
+
+When the leading marker arrives at the last item, the trailing marker must be n
+items from the end - and specifically it is sitting just in FRONT of the item
+to be removed, which is precisely where it needs to be, because removing an
+item means changing the link of the item ahead of it.
+
+The removal itself is a single re-routing: the trailing marker's link is made
+to point past the doomed item to the one after it. Nothing points at the
+removed item any more, so it simply disappears from the chain.
+
+Finally it returns whatever the throwaway node points at - which is the real
+head of the list, whether or not the original head was the item removed.""",
+
+    """8. THE CODE, line by line.
+
+Keep [1,2,3,4,5] with n = 2 beside you; we are removing node 4.
+
+    dummy = ListNode(0, head)
+The throwaway node from section 3, holding value 0 and pointing at the real
+head. The value never matters - only the fact that it exists in front of
+everything. The list is now dummy -> 1 -> 2 -> 3 -> 4 -> 5 -> None.
+
+    fast = slow = dummy
+Both markers start on the DUMMY, not on the head. Starting them on the head
+would shift everything by one and make slow land on the target instead of in
+front of it.
+
+    for _ in range(n):
+        fast = fast.next
+Open the gap: advance fast exactly n steps. The underscore is Python's way of
+saying "I do not care about the loop counter, I just want to repeat this n
+times". For n = 2, fast moves dummy -> 1 -> 2.
+
+    while fast.next:
+        fast = fast.next
+        slow = slow.next
+Slide both together while fast still has something after it. The condition is
+"fast.next", NOT "fast" - and that one word is the whole off-by-one. Stopping
+while fast is on the LAST node leaves slow on the node just before the target.
+Using "while fast" would run one step further and slow would land ON the
+target, with no way to unlink it.
+
+For our list: fast goes 2 -> 3 -> 4 -> 5 and stops there (5.next is None); slow
+goes dummy -> 1 -> 2 -> 3.
+
+    slow.next = slow.next.next
+The removal, in one line. slow is node 3; slow.next is node 4, the one to
+remove; slow.next.next is node 5. So node 3's link is re-routed to point at
+node 5, jumping over node 4. Nothing points at node 4 any more, so it is gone.
+
+    return dummy.next
+Return what the dummy points at - the real head of the resulting list. Returning
+the original "head" variable instead would be wrong whenever the head itself was
+the node removed, because that variable still points at the node you just
+unlinked. This is the most common way to get this problem almost right.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+list = [1,2,3,4,5], n = 2.  After the dummy is added:
+
+    dummy -> 1 -> 2 -> 3 -> 4 -> 5 -> None
+
+Start:  fast = dummy, slow = dummy
+
+OPENING THE GAP - advance fast n = 2 steps:
+  step 1: fast = 1
+  step 2: fast = 2
+  Now:  slow = dummy, fast = 2.  There are 2 nodes between them.
+
+SLIDING TOGETHER - while fast.next exists:
+  fast.next is 3, exists -> fast = 3, slow = 1
+  fast.next is 4, exists -> fast = 4, slow = 2
+  fast.next is 5, exists -> fast = 5, slow = 3
+  fast.next is None -> stop.
+
+  fast = 5 (the last node), slow = 3.
+  Count from slow: after 3 come 4 and 5 - exactly 2 nodes. So 4 is 2nd from the
+  end, and slow is sitting right in front of it. Exactly as promised.
+
+REMOVING:
+  slow.next is 4;  slow.next.next is 5
+  slow.next = 5   ->   dummy -> 1 -> 2 -> 3 -> 5 -> None
+
+RETURN dummy.next = node 1.  Answer [1,2,3,5]. Correct.
+
+Now the case that needs the dummy - list = [1], n = 1:
+
+    dummy -> 1 -> None
+  fast = slow = dummy
+  advance fast 1 step: fast = 1
+  while fast.next: 1.next is None -> the loop never runs
+  slow is still dummy
+  slow.next = slow.next.next  ->  dummy.next = 1.next = None
+    dummy -> None
+  return dummy.next = None.  An empty list. Correct.
+
+Without the dummy, slow would have started on node 1 with nothing in front of
+it, and there would be no link to re-route at all.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(L) where L is the number of nodes. fast walks the whole list once; slow
+walks part of it. One pass. The two-pass version is also O(L) - honestly, the
+speed difference is a constant factor, not a change in growth. What one pass
+really buys is that you never need to know the length in advance, which matters
+when the data arrives as a stream you can only read once.
+
+SPACE: O(1) - constant. Two pointers and one dummy node, regardless of how long
+the list is. Nothing is copied.
+
+THE #1 MISTAKE - returning head instead of dummy.next. It works on every test
+where the removed node is somewhere in the middle, and fails the moment the
+head itself is removed, because the variable still points at the unlinked node.
+Always return dummy.next.
+
+A close second, and just as common: the off-by-one in the sliding loop. "while
+fast" instead of "while fast.next" puts slow ON the target instead of in front
+of it, and deletes the wrong node. There is no way to check this by staring at
+the code - draw five boxes, put two fingers on them, and walk it.
+
+ONE-SENTENCE TAKEAWAY: open a gap of exactly n between two pointers and slide
+them together until the leading one hits the last node - the trailing one is
+then sitting just before the node to remove, and a dummy node in front makes
+deleting the head no different from deleting anything else.""",
 ]
 
 _EX_P0C["Number of Connected Components"] = [
