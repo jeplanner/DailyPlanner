@@ -29995,6 +29995,188 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1H[_e["title"]]
 
 
+_EX_P1I = {}
+
+_EX_P1I["Backspace String Compare"] = [
+    """The examples, built out.
+s = 'ab#c' -> push a, push b, '#' pops b, push c -> ['a','c'] = "ac"
+t = 'ad#c' -> push a, push d, '#' pops d, push c -> ['a','c'] = "ac"  -> equal.
+s = 'a##c' -> push a, '#' pops a, '#' on an EMPTY stack does nothing, push c ->
+"c". That second '#' is the case people miss: a backspace with nothing to
+delete is a no-op, not an error.
+s = 'a#c', t = 'b' -> "c" vs "b" -> not equal.""",
+
+    """Why the stack is the natural structure.
+A backspace always removes the MOST RECENTLY kept character - last in, first
+out, which is a stack by definition. The `elif stack:` guard is what handles
+backspaces at the start of a string, where there is nothing to pop.
+Trying to do it with string slicing (`result = result[:-1]`) works but is O(n)
+per deletion in most languages, making the whole thing O(n^2) on a string of
+many backspaces; a list used as a stack keeps each pop O(1).""",
+
+    """The O(1)-space follow-up, which is the whole reason this problem is asked.
+Scan both strings BACKWARDS with two pointers. Reading right to left, you meet
+each '#' BEFORE the character it deletes, so you can carry a skip counter: on
+'#', increment skip; on a normal character, if skip > 0 decrement it and move
+on, otherwise this character survives and must be compared.
+    def next_valid(s, i):
+        skip = 0
+        while i >= 0:
+            if s[i] == '#':   skip += 1; i -= 1
+            elif skip:        skip -= 1; i -= 1
+            else:             break
+        return i
+Then advance both pointers with that helper and compare the surviving
+characters pairwise. O(1) extra space, same O(n + m) time.""",
+
+    """Why backwards and not forwards.
+Forwards you cannot know whether a character survives until you have seen the
+rest of the string - a '#' three positions later may delete it. Backwards, the
+deletions are already known by the time you reach the character they affect, so
+one pass suffices with a counter instead of a buffer.
+This 'process right to left so the modifier precedes its target' idea recurs -
+it is the same reason Trapping Rain Water's two-pointer version works and why
+some string-parsing problems are far easier in reverse. Worth naming as the
+transferable insight rather than as a trick for this problem.""",
+
+    """Edge cases.
+Both empty -> [] == [] -> True.
+'###' vs '' -> all backspaces on an empty stack are no-ops -> [] vs [] -> True.
+'a#' vs '' -> 'a' pushed then popped -> [] vs [] -> True. This is the case that
+catches two-pointer solutions that stop as soon as one pointer runs out - both
+strings must be exhausted, and a leftover unmatched character means unequal.
+'xywrrmp' vs 'xywrrmu#p' -> "xywrrmp" both ways -> True.""",
+
+    """Complexity and the family.
+Stack version: O(n + m) time, O(n + m) space. Two-pointer version: same time,
+O(1) space - and 'can you do it in O(1) space?' is the guaranteed follow-up, so
+have the backwards scan ready rather than only the stack.
+The family: Valid Parentheses and Min Stack (stack for LIFO structure),
+Simplify Path (a stack of directory names where '..' pops), Remove All Adjacent
+Duplicates in String, and Asteroid Collision. The cue for a stack is any rule
+of the form 'this element cancels or interacts with the most recent one'.""",
+]
+
+_EX_P1I["Check if Two Strings Are Almost Equivalent"] = [
+    """The definition, made concrete.
+'aaaa' vs 'bccb': a appears 4 vs 0 -> difference 4 > 3 -> False.
+'abcdeef' vs 'abaaacc': a is 1 vs 4 -> difference 3, which is allowed (the rule
+is at most 3); b 1 vs 1; c 1 vs 2; d 1 vs 0; e 2 vs 0; f 1 vs 0 -> all within
+3 -> True.
+Note the threshold is inclusive - 'differs by at most 3' means 3 passes and 4
+fails. Off-by-one on an inclusive bound is the single most likely way to get
+this wrong, so restate it before coding.""",
+
+    """Why the union of both character sets, not just one string's.
+Iterating `for ch in word1` misses letters that appear ONLY in word2 - and a
+letter appearing 4 times in word2 and 0 times in word1 is exactly the failing
+case you need to catch. `set(word1) | set(word2)` covers both.
+The alternative that also works: loop over all 26 letters of the alphabet,
+which is simpler to reason about and O(1) by definition since the alphabet is
+bounded. Counter's default of 0 for a missing key is what makes both versions
+read cleanly.""",
+
+    """Why the space is O(1) despite using two Counters.
+The alphabet is bounded at 26 lowercase letters, so each Counter holds at most
+26 entries regardless of how long the strings are. Constant space by the
+constraint, not by the algorithm.
+This distinction is worth stating explicitly in an interview: 'O(1) because the
+alphabet is bounded' shows you know WHY, whereas saying O(n) for two hash maps
+suggests you have not read the constraints. If the alphabet were unicode, the
+same code would genuinely be O(k) in the number of distinct characters.""",
+
+    """Edge cases.
+Both empty -> the union is empty, the loop never runs -> True.
+Identical strings -> every difference is 0 -> True.
+Equal lengths are guaranteed by most versions of the prompt, but the algorithm
+does not depend on it - 'aaa' vs 'aaaaaa' gives a difference of 3 -> True,
+which is correct under the stated rule even though the lengths differ.
+A single letter differing by exactly 3 -> True; by exactly 4 -> False. Test
+both sides of the boundary.""",
+
+    """The general shape: frequency comparison.
+This is one of a cluster where the whole problem is 'count characters, then
+compare the counts under some rule'. Valid Anagram requires every difference to
+be exactly 0. Find All Anagrams in a String slides a window and compares counts
+at each position. Permutation in String is the same sliding comparison.
+Ransom Note requires one count to be at most the other for every character.
+Once you recognise the shape, the only decision left is the comparison rule -
+which is why these are all easy problems that take two minutes each.""",
+
+    """Complexity, and the micro-optimisation worth knowing.
+Time O(n + m) to count, plus O(26) to compare - so linear. Space O(1) bounded.
+The array-instead-of-hashmap version replaces Counter with a 26-integer list
+indexed by ord(ch) - ord('a'), which is faster in practice (no hashing) and is
+what you would write in C++ or Java. Mentioning it shows you know a hash map is
+not free even when it is O(1) - the constant factor matters when the key space
+is small and dense.""",
+]
+
+_EX_P1I["Closest Binary Search Tree Value"] = [
+    """A trace, showing why one path is enough.
+BST 4 -> (2 -> (1, 3), 5), target 3.7.
+At 4: |4 - 3.7| = 0.3 -> closest = 4. 3.7 < 4 so go LEFT.
+At 2: |2 - 3.7| = 1.7, not better. 3.7 > 2 so go RIGHT.
+At 3: |3 - 3.7| = 0.7, not better than 0.3. 3.7 > 3 so go right -> None.
+Answer 4.
+Note the closest value was found at the ROOT and the walk still had to continue
+- you cannot stop early, because a nearer value could lie further down. But you
+never need to explore the other side.""",
+
+    """Why you only follow one root-to-leaf path.
+The BST invariant says everything in the left subtree is smaller and everything
+in the right is larger. If target < node.val, then every value in the RIGHT
+subtree is even further above the target than node.val is - so the right
+subtree cannot contain anything closer than what you already have. The same
+argument mirrored for the left.
+That is the whole justification for O(h) instead of O(n), and it is what the
+question is testing. A candidate who traverses the entire tree gets the right
+answer and misses the point.""",
+
+    """Why the comparison must run at EVERY node, not just at the leaf.
+The closest value is often an ancestor, as in the trace above where the root
+won. A solution that only checks the final node reached returns 3 instead of 4.
+The pattern - update the best as you descend, but keep descending - is the same
+one used in Search in a BST variants and in Insert into a BST. Track-and-
+continue, do not track-or-continue.""",
+
+    """Edge cases.
+Single node -> closest is initialised to root.val and the loop exits after one
+step -> that value.
+An exact match, target = 3.0 in a tree containing 3 -> the difference is 0,
+which is minimal, and the walk continues harmlessly to None. You could return
+early on an exact hit as a micro-optimisation.
+Ties: target exactly between two values, e.g. 2.5 between 2 and 3. The strict
+`<` in the comparison keeps the FIRST one found, which is the one encountered
+higher in the tree. Most prompts accept either; say which convention your code
+picks rather than leaving it implicit.
+Floats: the target is typically a double while node values are ints, so use
+abs() on the difference rather than any integer arithmetic.""",
+
+    """Complexity, and the shape that ruins it.
+Time O(h) - one comparison per level. For a balanced tree that is O(log n); for
+a degenerate tree that has become a linked list it is O(n), which is the
+standard caveat for every BST operation and the reason self-balancing trees
+(AVL, red-black) exist. Space O(1) with the iterative walk; the recursive
+version costs O(h) stack for no benefit, which is a small point in favour of
+the loop.""",
+
+    """The follow-up: Closest BST Value II (find the k closest).
+That version is genuinely harder and worth knowing the approach for: do an
+INORDER traversal, which yields values in sorted order, and either keep a
+sliding window of size k (dropping the front when a nearer value arrives) or
+use two stacks as predecessor and successor iterators and merge them - the
+latter gives O(h + k) without materialising the whole list.
+Knowing that inorder-on-a-BST equals sorted order is the single most useful BST
+fact; it also solves Kth Smallest Element, Validate BST, and Convert BST to a
+sorted list.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1I:
+        _e["examples"] = _EX_P1I[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
