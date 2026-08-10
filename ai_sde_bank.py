@@ -30756,6 +30756,181 @@ whenever a prompt bothers to tell you values are 0..100, it is pointing at
 counting sort.""",
 ]
 
+_EX_P1J["Intersection of Two Arrays II"] = [
+    """The example, traced.
+nums1 = [1,2,2,1], nums2 = [2,2]. counts = {1:2, 2:2}.
+Walk nums2: first 2 -> counts[2] is 2 > 0, so append 2 and decrement to 1.
+Second 2 -> counts[2] is 1 > 0, append 2, decrement to 0.
+Result [2,2].
+nums1 = [4,9,5], nums2 = [9,4,9,8,4]: counts = {4:1, 9:1, 5:1}. Walking nums2
+gives 9 (count -> 0), 4 (count -> 0), then the second 9 finds count 0 and is
+skipped, 8 is absent, the second 4 finds 0. Result [9,4].
+Each element appears min(count in A, count in B) times, which is exactly what
+decrementing enforces.""",
+
+    """Why this differs from Intersection of Two Arrays I.
+Version I returns the set intersection - each value once, order irrelevant, and
+`set(nums1) & set(nums2)` is the whole answer. Version II keeps MULTIPLICITY,
+which is why a Counter and a decrement replace the set.
+Confusing the two is the most common failure here, and the tell is in the
+prompt: 'each element should appear as many times as it shows in both'. Restate
+that clause before coding, because the two problems have nearly identical
+titles and completely different answers on [1,1] vs [1,1].""",
+
+    """Which array to count, and why it matters for space.
+Counting the SMALLER array and iterating the larger gives O(min(n, m)) space.
+The code counts nums1 unconditionally; adding `if len(nums1) > len(nums2):
+nums1, nums2 = nums2, nums1` first makes the bound explicit and costs one line.
+Interviewers ask 'what if nums1 is tiny and nums2 is enormous?' precisely to
+see whether you noticed the asymmetry - and the swap is the whole answer.""",
+
+    """The two classic follow-ups, which are the real content of this problem.
+(1) 'What if both arrays are SORTED?' Then use two pointers walking in
+lockstep: advance the smaller, and on a match append and advance both. O(1)
+extra space and no hash map at all.
+(2) 'What if nums2 is on DISK and too large for memory?' Load nums1 into a
+Counter (it fits), then STREAM nums2, emitting matches as you go - which is
+exactly the code above, and the reason to count the smaller array. If NEITHER
+fits, external-sort both and use the two-pointer merge, which is the
+map-reduce-shaped answer.""",
+
+    """Edge cases.
+No overlap [1,2] and [3,4] -> empty result.
+One array empty -> empty result; the loop body never runs.
+Duplicates only on one side: [1,1,1] and [1] -> [1], because min(3,1) = 1.
+Negative numbers and zeros work unchanged - the Counter is keyed by value.
+Order of the output is unspecified by the prompt, which is worth confirming:
+this code returns matches in nums2's order, and a set-based or sorted approach
+would return a different but equally valid ordering.""",
+
+    """Complexity and the family.
+O(n + m) time, O(min(n, m)) space with the swap. The sorting approach is
+O(n log n + m log m) time and O(1) extra space - better when memory is the
+constraint or when the inputs are already sorted.
+The family: Intersection of Two Arrays (set version), Find Common Characters
+(multiset intersection across many words), Ransom Note (containment rather than
+intersection), and Merge Sorted Array (the two-pointer merge in its purest
+form). All are multiset operations, and the choice between hash map and two
+pointers is always about whether the input is sorted and whether memory is
+tight.""",
+]
+
+_EX_P1J["Is Subsequence"] = [
+    """The greedy scan, traced.
+s = 'abc', t = 'ahbgdc'. i tracks how much of s is matched.
+'a' == s[0] -> i = 1. 'h' no. 'b' == s[1] -> i = 2. 'g' no. 'd' no.
+'c' == s[2] -> i = 3. i == len(s) -> True.
+s = 'axc', t = 'ahbgdc': 'a' matches -> i = 1. Nothing else matches 'x', so i
+stays 1 at the end -> False.
+One pass over t, never backtracking - which is the surprising part, since
+subsequence problems usually smell like DP.""",
+
+    """Why greedy is correct, which is the question behind the question.
+Claim: matching each character of s at its EARLIEST possible position in t is
+always safe. If some valid matching uses a later position for s[i], you can
+swap it to the earlier one without disturbing the rest - everything after was
+matched beyond the later position, so it is still beyond the earlier one.
+So there is never a reason to skip a match and hope for a better one. That
+exchange argument is why no backtracking is needed, and stating it turns a
+plausible-looking loop into a justified algorithm.""",
+
+    """The bounds check that must come first.
+`if i < len(s) and s[i] == ch` - the length guard has to precede the index, or
+you read past the end of s once every character has been matched. Python would
+raise IndexError; in C you would read garbage.
+An equivalent formulation avoids the issue entirely by iterating s with an
+iterator: `it = iter(t); return all(c in it for c in s)` - a genuinely elegant
+one-liner where `in` on an iterator consumes it, so the scan never restarts.
+Worth knowing, though the explicit loop is easier to explain.""",
+
+    """The follow-up that changes the algorithm completely.
+'What if you must check MANY strings s1, s2, ..., sk against the same t?'
+Rescanning t per string is O(k * len(t)). Instead PREPROCESS t: build, for each
+character, a sorted list of the positions where it occurs. Then for each s,
+binary-search for the smallest position greater than the current one -
+O(len(s) * log len(t)) per query after an O(len(t)) build.
+This is the actual point of the problem on LeetCode, and it is a good example
+of preprocessing paying off across repeated queries. Have it ready.""",
+
+    """Edge cases.
+s = '' -> i is already 0 == len(s) -> True. The empty string is a subsequence
+of everything, and the loop never needs to run.
+t = '' with non-empty s -> loop never runs, i stays 0 -> False.
+s longer than t -> cannot possibly match all of s -> False, and the code gets
+this without a length check because i can never reach len(s).
+s == t -> True. Repeated characters, s = 'aa' in t = 'aba' -> matches at
+positions 0 and 2 -> True; in t = 'ab' -> False.""",
+
+    """Complexity and the distinction to state.
+O(len(t)) time, O(1) space. Note it is linear in T, not in s - you always scan
+all of t in the worst case.
+The important distinction: SUBSEQUENCE (order preserved, gaps allowed - this
+problem, greedy, O(n)) versus SUBSTRING (contiguous - needs KMP or a sliding
+window) versus SUBSET (order irrelevant - a frequency comparison). Prompts use
+these words precisely and candidates often do not; getting the wrong one means
+solving a different problem entirely.""",
+]
+
+_EX_P1J["Isomorphic Strings"] = [
+    """Why TWO maps are needed - the case one map gets wrong.
+s = 'badc', t = 'baba'. Forward only: b->b, a->a, d->b, c->a. No forward
+conflict, so a single-map solution returns True. But it is WRONG: both d and b
+map to 'b', so the mapping is not one-to-one and the strings are not
+isomorphic.
+The reverse map catches it: when processing d->b, map_ts already has b->b, and
+b != d -> return False.
+'egg'/'add' is True (e->a, g->d, consistent both ways); 'foo'/'bar' is False
+(o->a then o->r conflicts forward). Have 'badc'/'baba' ready specifically,
+because it is the input that separates correct solutions from popular wrong
+ones.""",
+
+    """What isomorphic actually requires: a BIJECTION.
+Every character of s maps to exactly one character of t, AND every character of
+t is mapped from exactly one character of s. Order is preserved by construction
+since you walk both strings in lockstep with zip.
+The two-map check enforces both directions of the bijection. Some solutions
+instead compare the index-of-first-occurrence pattern of each string
+(`[s.index(c) for c in s] == [t.index(c) for c in t]`), which is elegant and
+O(n^2) because index() rescans - fine for short strings, and worth mentioning
+as the trick it is rather than the solution you would ship.""",
+
+    """The length guard, which is not optional.
+zip stops at the shorter string, so without `if len(s) != len(t): return False`
+the pair 'ab'/'abc' would report True - every zipped pair maps consistently and
+the trailing 'c' is never examined. Any time you use zip on two sequences that
+are supposed to be the same length, either check the lengths or use
+`zip(..., strict=True)` in Python 3.10+, which raises instead.
+This is a general zip hazard, not specific to this problem, and it is the kind
+of silent truncation that survives review.""",
+
+    """Edge cases.
+Both empty -> True vacuously.
+Single characters 'a'/'b' -> True; any single-character pair is isomorphic.
+Self-mapping 'ab'/'ab' -> True (a->a, b->b is a valid bijection - a character
+may map to itself).
+All same 'aaa'/'bbb' -> True. 'aaa'/'abb' -> False, because a would need to map
+to both a and b.
+Different lengths -> False by the guard.""",
+
+    """Complexity.
+O(n) time - one pass, constant-time dict operations. O(k) space for k distinct
+characters, which is O(1) under a bounded alphabet.
+The two-array version replaces the dicts with two fixed 256-integer arrays
+indexed by byte value, storing last-seen position + 1 (so 0 means unseen) - no
+hashing, and it is the standard C/Java formulation. Same idea, tighter constant
+factor.""",
+
+    """The family: structural pattern matching.
+Word Pattern is this problem with words instead of characters ('abba' and
+'dog cat cat dog') and has the identical two-map structure plus the same length
+trap. Find and Replace Pattern applies it across a list of words. Group
+Anagrams and Group Shifted Strings use a canonical FORM instead of a mapping -
+which is the alternative approach here too (normalise both strings to their
+first-occurrence-index pattern and compare).
+Cue: 'consistent one-to-one correspondence' in a prompt means two maps, or a
+canonical form. Both are correct; the two-map version is easier to defend.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1J:
         _e["examples"] = _EX_P1J[_e["title"]]
