@@ -25619,111 +25619,379 @@ end of the output, and when one list runs out attach all of the other in one mov
 ]
 
 _EX_P0["Subtree of Another Tree"] = [
-    """The question, with both trees drawn.
+    """1. THE GOAL, in plain English.
 
-You are given a BIG tree and a SMALL tree, and asked: does the small one appear
-inside the big one, exactly as it is?
+You are given two trees, a big one and a small one. Does the small tree appear
+somewhere inside the big one, exactly as it is?
 
-(Words as they appear: each circle is a NODE, the top one is the ROOT, the ones
-hanging below a node are its CHILDREN, and a node with nothing below it is a
-LEAF.)
+"Exactly as it is" is strict, and section 3 pins down what it means. Here are the
+two trees:
 
-    BIG tree:            SMALL tree:
-          3                    4
-         / \\                  / \\
-        4   5                1    2
-       / \\
-      1   2
+    the big tree:              the small tree:
 
-Look at the big tree's node 4. Below it sits exactly 4 with children 1 and 2 -
-which is the small tree. So the answer is TRUE.
+            3                          4
+           / \\                        / \\
+          4   5                      1   2
+         / \\
+        1   2
 
-The important word is EXACTLY. It is not enough for the values to appear
-somewhere; the shape below must match too, and nothing extra may hang off it.""",
+Look at the big tree's left child, node 4. It has children 1 and 2. The small
+tree is a 4 with children 1 and 2. Identical. So the answer is TRUE.
 
-    """Two separate jobs - and keeping them separate is the whole trick.
+Vocabulary, defined as it appears:
+- Each item is a NODE, holding a number. The top node is the ROOT.
+- The nodes hanging directly below a node are its CHILDREN.
+- A node with no children is a dead end, called a LEAF.
+- The SUBTREE at a node means that node PLUS EVERYTHING hanging below it. The
+  subtree at 4 is {4, 1, 2} - and crucially, that is the whole of it. You cannot
+  take a subtree and leave some of its descendants behind.
 
-This problem feels hard until you notice it is really two simple problems
-stacked:
+That last point is the one to hold onto, and section 3 shows why it decides
+several answers that look like they should go the other way.""",
 
-JOB 1 - 'are these two trees identical?' Compare two trees node for node: same
-value here, and identical on the left, and identical on the right.
+    """2. THE INTUITION - two jobs, not one.
 
-JOB 2 - 'does the small tree appear anywhere?' Walk the big tree, and at every
-node ask job 1: starting from HERE, are the two trees identical?
+It is tempting to look for a single clever rule. There isn't one - this problem is
+genuinely two separate questions stacked together, and seeing the split is most of
+the battle.
 
-Write them as two small functions, each doing one thing. People who try to do
-both in a single function end up passing flags around and tie themselves in
-knots. Two functions, and the solution almost writes itself.""",
+  JOB ONE: given two nodes, are the trees starting at them IDENTICAL? Same shape,
+  same numbers, all the way down.
 
-    """Job 1 in detail, because it has three cases.
+  JOB TWO: does ANY node in the big tree pass job one against the small tree's
+  root?
 
-Comparing two trees, at each pair of positions:
-  - BOTH empty -> identical so far, return true.
-  - ONE empty and the other not -> different shapes, return false.
-  - Both present but different values -> return false.
-  - Otherwise: same value, so check the left pair AND the right pair, and both
-    must come back true.
+Job two is a simple search. Walk every node of the big tree, and at each one ask
+job one. If any node says yes, the answer is yes.
 
-Notice the second case. That is what stops 'the values matched but the shape did
-not' from slipping through, and it is the case people forget - which produces a
-program that says yes far too often.""",
+Job one is its own small recursive question. Two trees are identical when:
+  - both are empty - trivially the same, and
+  - or both exist, hold the same value, AND their left sides match each other AND
+    their right sides match each other.
 
-    """The near-miss that catches sloppy code.
+Notice the word AND appearing twice in job one, and the word OR appearing in job
+two. That difference is not decoration:
 
-Change the big tree so its 2 has an extra child hanging below it:
+  Job one demands EVERYTHING agree - one mismatch anywhere and the whole
+  comparison fails.
+  Job two accepts ONE success - one matching position anywhere and the search is
+  over.
 
-    BIG:                 SMALL:
-          3                    4
-         / \\                  / \\
-        4   5                1    2
-       / \\
-      1   2
-           \\
-            0
+Getting those the wrong way round is the commonest structural error in this
+problem, and the two jobs sit only a few lines apart in the code.
 
-Now start comparing at node 4. Values match. The 1s match. Then compare the two
-2s: values match, so look at their children - the big tree's 2 has a child 0,
-while the small tree's 2 has nothing. One empty, one not, so FALSE.
+There is no simpler-but-slower version worth showing first. The naive approach and
+this one are the same shape; what makes this efficient enough is that job one
+usually fails on the very first value it compares, which section 10 explains.""",
 
-Correctly, the answer is now false. The small tree is not present exactly; it is
-present with something extra glued on. If your code says true here, you are
-comparing values without comparing shape.""",
+    """3. WHAT "IDENTICAL" REALLY MEANS - the near-miss that decides everything.
 
-    """The empty cases, which are worth asking about.
+Job one is stricter than it sounds. Watch what happens with one extra node.
 
-SMALL tree empty: conventionally true - 'nothing' fits inside anything. But
-confirm it, because some versions of the question promise the small tree is
-never empty and others expect false. Ten seconds of asking, and it changes the
-answer.
+    the big tree:              the small tree:
 
-BIG tree empty, small tree not: false. There is nowhere for it to be.
+            3                          4
+           / \\                        / \\
+          4   5                      1   2
+         / \\
+        1   2
+             \\
+              0        <- one extra node, hanging off the 2
 
-BOTH empty: true.
+Now ask job one at the big tree's node 4. Values match (4 and 4). Left sides match
+(1 and 1). Right sides: the big tree has a 2 WITH a child 0; the small tree has a
+2 with nothing below it. Comparing those, both values are 2 - but then the big
+side has a right child while the small side has None. One exists and the other
+does not, so they are NOT identical.
 
-These three lines are exactly where a rushed implementation crashes rather than
-returning a wrong answer, so they are worth writing first.""",
+The answer for this pair of trees is FALSE.
 
-    """How slow it can get, and the faster idea.
+That feels harsh - the small tree is "in there", visually. But a subtree means a
+node and ALL of its descendants. You may not take node 4 and quietly discard the
+0 hanging beneath it. If you were allowed to, the question would be a different
+and much harder one (subgraph matching), and almost every tree would contain
+almost every small tree.
 
-In the worst case you compare the small tree at nearly every position of the
-big one. If the big tree has n nodes and the small one has m, that is about
-n x m work - written O(n x m). It really happens: imagine a big tree of 1,000
-nodes that all hold the same value, so every position looks promising and every
-comparison runs deep before failing.
+The comparison therefore has exactly three outcomes at each pair of positions:
 
-The faster approach: write each tree out as a single line of text, then ask
-whether the small tree's text appears inside the big tree's text - a plain
-substring search, which is about O(n + m).
+  BOTH empty     -> identical so far, return true. This is the base case that
+                    lets a successful comparison finish.
+  ONE empty      -> different shapes, return false at once.
+  BOTH present   -> if the values differ, false; otherwise recurse into both
+                    sides and require both to agree.
 
-One catch, and it is a real one. You must write out the empty spots too, using
-a marker like '#'. Without markers, two different trees can produce the same
-text and you get false matches. With them, the text is unambiguous.
+That "one empty" line is what catches the extra 0, and it is the line people leave
+out.""",
 
-The family: 'are these two trees identical?' is itself the Same Tree problem.
-Symmetric Tree is the same two-tree comparison with the sides CROSSED. Merge Two
-Binary Trees walks two trees together but combines instead of comparing. One
-two-argument recursion underneath all four.""",
+    """4. THE OTHER CASES THAT CATCH PEOPLE.
+
+CASE 1 - matching only at the root. Checking whether the small tree equals the
+whole big tree, and stopping there, misses every match buried inside. In our
+example the match is at the big tree's left child, not at its root. The comparison
+has to be tried at EVERY node.
+
+CASE 2 - the empty small tree. Conventionally an empty tree is a subtree of
+anything, so the answer would be TRUE. This code returns FALSE when the big tree
+is empty regardless, so if the problem allows an empty small tree, say so and
+handle it explicitly. Most versions promise both trees are non-empty.
+
+CASE 3 - the empty big tree with a non-empty small tree. FALSE - there is nowhere
+for it to be. The first base case handles this.
+
+CASE 4 - repeated values. A big tree full of 4s means job one gets attempted at
+many nodes and gets further into each comparison before failing. That is the
+worst case for speed, and it is the input an interviewer uses to probe the
+complexity - see section 10.
+
+CASE 5 - comparing the two trees by their printed shape instead of node by node.
+A popular alternative is to serialise both trees to strings and ask whether one
+string contains the other. It works, but only if you serialise carefully: you must
+write out the empty spots too (as a marker like "#") and put a separator before
+every value, or a tree containing 12 will appear to contain a tree containing 2.
+Mention it as an alternative, and mention the trap in the same breath.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBTREE: a node plus ALL of its descendants. Defined in section 1 and made
+precise in section 3.
+
+RECURSION: a function that solves a problem by calling itself on smaller pieces of
+the same problem. Both jobs here are recursive: the identity check recurses into
+matching pairs of children, and the search recurses into the big tree's children.
+
+CALL STACK: when a function calls itself, the outer call PAUSES exactly where it
+is and the inner one runs. Those paused calls pile up, each waiting on the one
+below. That pile is the call stack, and it is what lets execution resume in the
+right place when a call returns.
+
+BASE CASE: the situation a function answers immediately without calling itself
+again. There are three here: both nodes empty (identical), one node empty
+(different), and the big tree empty (no match possible).
+
+"a and b" in Python: true only if both are true, and it stops at the first false -
+so a failed left-side comparison means the right side is never even examined.
+
+"a or b": true if either is true, and it stops at the first true - so a match
+found in the left part of the big tree means the right part is never searched.
+
+O(m x n) and O(h): the costs, where m is the number of nodes in the big tree, n
+the number in the small tree, and h the height of the big tree. Section 10
+explains why the real behaviour is far better than m x n suggests.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: write a strict "are these two trees identical?"
+check, then try it at every node of the big tree until one succeeds.
+
+The mechanism, since both jobs are recursive. When the identity check is called on
+a pair of nodes, it compares their values and then calls itself on the two left
+children - pausing the current call half-finished. That inner call may pause in
+turn. The paused calls pile up on the call stack. When one finally returns true or
+false, the call above wakes up exactly where it stopped: if it got false, it stops
+immediately without even looking at the right side; if true, it goes on to compare
+the right sides.
+
+Both jobs stop for the same reason: every route down a tree eventually reaches an
+empty spot, and the empty cases answer immediately without asking anything
+further.
+
+JOB ONE - are these two trees identical?
+
+  1. If BOTH nodes are empty, return true. Two absences match.
+  2. If exactly ONE is empty, return false. Different shapes.
+  3. If their values differ, return false.
+  4. Otherwise return: left sides identical AND right sides identical. Both must
+     hold - one mismatch anywhere sinks the whole comparison.
+
+JOB TWO - does the small tree appear anywhere?
+
+  5. If the big tree is empty, return false. Nothing left to search.
+  6. Run job one starting at this node against the small tree's root. If it says
+     yes, return true - we have found a match here.
+  7. Otherwise search the left child OR the right child, and return whether
+     either found a match.
+
+Step 4 uses AND; step 7 uses OR. That asymmetry is the heart of the structure: an
+identity check must agree everywhere, while a search needs to succeed only once.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code does two different things that are easy to confuse, so it keeps them in
+two separate functions.
+
+The inner one answers a very strict question: given two positions, one in each
+tree, are the trees hanging below them exactly the same? It compares the two
+numbers, and then asks the same question about their left branches and about their
+right branches - and it demands that everything agree. One different number, or
+one branch present on one side and absent on the other, and the whole answer is
+no. That strictness is deliberate: taking a subtree means taking a node and
+everything beneath it, so an extra node dangling anywhere makes the match fail.
+
+The outer one is a search. It walks the big tree node by node, and at each node it
+asks the inner question: does the small tree match starting right here? The moment
+one node says yes, the search is finished and the answer is yes. If no node ever
+says yes, the answer is no.
+
+The two functions pull in opposite directions, and that is the point. The inner
+one insists everything match; the outer one is satisfied by a single success.
+
+In practice the inner check is cheap almost everywhere, because it compares the
+two root values first and usually gives up straight away. It only does real work
+at the few nodes that happen to share the small tree's top value.""",
+
+    """8. THE CODE, line by line.
+
+Keep the two trees from section 1 beside you.
+
+    def same(a, b):
+JOB ONE. a is a position in the big tree, b the matching position in the small
+tree. Returns true only if the trees below them are identical.
+
+    if a is None and b is None:
+        return True
+Both positions are empty, so they match. This is the base case that lets a
+successful comparison actually finish - without it, a comparison that agreed all
+the way down would keep recursing past the leaves and never return true.
+
+    if a is None or b is None or a.val != b.val:
+        return False
+Three ways to fail, in one line, and each matters.
+
+  "a is None or b is None" - exactly one is empty, so the shapes differ. This is
+  the line that catches the extra 0 from section 3. Note it is reached only after
+  the both-empty case above has been ruled out, so "one of them is empty" here
+  really does mean exactly one.
+
+  "a.val != b.val" - both exist but hold different numbers. Reading a.val is safe
+  because the two emptiness checks in front of it have already passed, and Python
+  stops evaluating an "or" chain at the first true condition.
+
+    return same(a.left, b.left) and same(a.right, b.right)
+Both sides must match. The "and" is doing real work: if the left comparison comes
+back false, Python never even calls the right one. That is both a speed-up and the
+correct meaning - identity is not negotiable.
+
+    if root is None:
+        return False
+JOB TWO's base case. An empty big tree contains nothing, so no match is possible.
+This also protects the search below, which walks into children without checking
+whether they exist.
+
+    if same(root, sub):
+        return True
+Try the strict comparison starting HERE. This is the line that makes the search
+work at every node rather than only at the top - see case 1 in section 4.
+
+    return is_subtree(root.left, sub) or is_subtree(root.right, sub)
+Search both children, and succeed if either does. The "or" stops as soon as the
+left side returns true, so a match found early means the right half of the big
+tree is never examined at all.
+
+Compare this line with the last line of same(). Same shape, opposite connective:
+AND for identity, OR for search. Swapping them is the classic structural bug -
+"and" here would demand the small tree appear in BOTH halves.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    big:            3                small:      4
+                   / \\                          / \\
+                  4   5                        1   2
+                 / \\
+                1   2
+
+is_subtree(3, small)
+  3 is not None
+  same(3, small-4)?
+        both present; 3 != 4  ->  return False
+        (one comparison and it is over - this is why the search is cheap)
+  so try the children:
+  is_subtree(4, small)
+        4 is not None
+        same(4, small-4)?
+              both present, 4 == 4 -> compare both sides
+              same(1, small-1):
+                    both present, 1 == 1 -> compare both sides
+                    same(None, None) -> True      (1's left, small-1's left)
+                    same(None, None) -> True
+                    True and True -> True
+              left matched, so now the right:
+              same(2, small-2):
+                    both present, 2 == 2
+                    same(None, None) -> True
+                    same(None, None) -> True
+                    True and True -> True
+              True and True -> True
+        same said True -> return True
+  the left child returned True, so the "or" stops - node 5 is NEVER visited.
+  return True
+
+Answer: True.
+
+NOW THE NEAR-MISS from section 3, with an extra 0 under the big tree's 2:
+
+is_subtree(3, small)
+  same(3, small-4)? -> 3 != 4 -> False
+  is_subtree(4, small)
+        same(4, small-4)?
+              4 == 4 -> compare sides
+              same(1, small-1) -> True, as before
+              same(2, small-2):
+                    both present, 2 == 2 -> compare sides
+                    same(None, None) -> True        (left sides)
+                    same(0, None):                  (right sides)
+                          both empty? No - a is node 0, b is None.
+                          exactly one is empty -> return False
+                    True and False -> False
+              True and False -> False
+        same said False, so keep searching below node 4:
+        is_subtree(1, small): same(1, small-4)? 1 != 4 -> False;
+                              both children empty -> False or False -> False
+        is_subtree(2, small): same(2, small-4)? 2 != 4 -> False;
+                              searches 0, which also fails -> False
+        return False
+  is_subtree(5, small): 5 != 4 -> False; no children -> False
+  return False
+
+Answer: False - exactly as section 3 argued. The single line that produced it is
+"a is None or b is None", comparing node 0 against nothing.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(m x n) in the worst case, where m is the number of nodes in the big tree
+and n in the small one - the identity check is attempted at each of m nodes, and
+each attempt can walk up to n nodes.
+
+But that worst case needs a tree deliberately built from repeated values, like a
+big tree of all 4s against a small tree of all 4s. On ordinary input the identity
+check compares the two root values first and gives up immediately at almost every
+node - so the real cost is close to O(m) plus a little. Saying both things, and
+naming the input that forces the bad case, is a much better answer than quoting
+O(m x n) alone.
+
+SPACE: O(h), where h is the height of the big tree - the call stack holds one
+paused call per level. For a bushy tree that is about log m; for a chain it is m,
+and Python's recursion limit of roughly 1,000 would stop it.
+
+THE ALTERNATIVE worth mentioning: serialise both trees to strings and ask whether
+the big string contains the small one. With a linear-time string search that is
+O(m + n), genuinely better in the worst case. The catch is the serialisation - you
+must write out empty spots as an explicit marker and prefix every value with a
+separator, or a tree containing 12 appears to contain a tree containing 2. Naming
+that trap is what shows you have actually thought about it.
+
+THE #1 MISTAKE - forgetting the "exactly one is empty" line in the identity check.
+Without it, the comparison walks off the end of one tree and either crashes
+reading a missing node's value, or - if written slightly differently - happily
+declares a match while ignoring extra nodes hanging below. The near-miss in
+section 9 is precisely the case that exposes it.
+
+A close second: using "and" instead of "or" in the search line, which demands the
+small tree appear in both halves of the big tree rather than in either.
+
+ONE-SENTENCE TAKEAWAY: this is two questions - a strict "are these identical all
+the way down?" that must agree everywhere, and a search that tries it at every
+node and needs to succeed only once - so the identity check uses AND and the
+search uses OR.""",
 ]
 
 
@@ -32872,61 +33140,391 @@ always safe.""",
 ]
 
 _EX_P0D["Palindrome Linked List"] = [
-    """The even-length textbook case, traced.
-1->2->2->1.
-Find the middle: slow=1,fast=1 -> slow=2(index1), fast=2(index2) -> fast.next is
-the last node 1, so both move again: slow = the second 2 (index 2), fast=None.
-Reverse from slow: the tail 2->1 becomes 1->2, and prev points at the last node.
-Compare: left=1 vs right=1, left=2 vs right=2, then right runs off the end.
-True. Note the loop condition is `while right:` not `while left:` - the first
-half may be one node longer, and comparing that extra node would be wrong.""",
+    """1. THE GOAL, in plain English.
 
-    """An odd-length non-palindrome.
-1->2->3. slow ends on 2 (the middle), fast on 3.
-Reverse from 2: 3->2, prev=3.
-Compare left=1 (head) with right=3 -> mismatch, return False immediately.
-Notice the middle element never has to be compared in the odd case - it is its
-own mirror. The `while right` condition handles that for free.""",
+You are given a chain of values. Is it the same read forwards as backwards?
 
-    """An odd-length palindrome, where the middle is shared.
-1->2->1. slow ends on 2, fast on the last 1.
-Reversing from slow gives 1->2, prev = the last node (1).
-Compare left=1 with right=1 -> match. Then left=2, right=2 -> match. right
-advances to None, loop ends, True.
-Both halves visit the middle node 2 here, and comparing it to itself is
-harmless. That is why the same code handles odd and even lengths with no
-branch.""",
+A sequence that reads the same both ways is a PALINDROME. "racecar" is one;
+"hello" is not.
 
-    """Edge cases: empty and single node.
-head=None: the middle loop never runs, slow=None, the reverse loop never runs,
-prev=None, so right=None and the compare loop is skipped. Returns True - an
-empty list is vacuously a palindrome.
-head=1: slow=1, reversing gives prev=1 and slow=None. left=head=1, right=1,
-values match, right advances to None. True.
-Both fall out of the same code, which is the usual sign a linked-list solution
-is structured correctly.""",
+The chain is a LINKED LIST. Picture a train: each carriage holds a value and is
+coupled to exactly one carriage BEHIND it. To reach carriage 4 you must walk
+through 1, 2 and 3 - there is no jumping ahead, and crucially, no walking
+backwards.
 
-    """The three approaches, and what each costs.
-1. Copy values into a Python list and compare with `vals == vals[::-1]`:
-   O(n) time, O(n) space, four lines. Perfectly acceptable as a first answer.
-2. Recursion, comparing the front pointer against the unwinding stack:
-   O(n) space in call frames, and harder to explain.
-3. Reverse the second half in place: O(n) time, O(1) space. This is what the
-   follow-up 'can you do it in O(1) space?' is fishing for.
-Say approach 1 out loud, then say 'the O(1) space version reverses the second
-half' and write that. You get credit for both.""",
+    [1] -> [2] -> [2] -> [1] -> None      forwards 1,2,2,1
+                                          backwards 1,2,2,1   -> palindrome
 
-    """The production caveat: this MUTATES the list.
-After the compare, the second half is still reversed - if any other code holds a
-pointer into that list, it now sees garbage. In a threaded or shared-structure
-setting that is a real bug, not a nitpick.
-The fix is to reverse the second half back before returning, which most
-interviewers will ask about as the follow-up:
-    tail = prev
-    # ...do the comparison...
-    # then reverse `tail` again and reattach it after slow.
-Mentioning the mutation unprompted is a strong signal; it shows you are thinking
-about the caller and not just the return value.""",
+    [1] -> [2] -> [3] -> None             forwards 1,2,3
+                                          backwards 3,2,1     -> not
+
+Vocabulary as it appears:
+- Each carriage is a NODE, holding a value and a link to the next node.
+- HEAD is the first node - the only one you are handed.
+- The last node's link points at NOTHING, written None.
+
+Here is what makes this harder than the same question about an ordinary list. To
+check a palindrome you naturally want to compare the first item with the last, the
+second with the second-last, and so on - which needs you to walk BACKWARDS from
+the end. A linked list has no backwards. Every link points one way.
+
+So the whole problem is: how do you compare front against back when you can only
+ever move forwards?""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SIMPLE VERSION. Walk the chain once, copying every value into an ordinary
+list. Now you have something you CAN index freely, so compare position 0 against
+the last, position 1 against the second-last, and so on - or simply compare the
+list against its own reverse.
+
+That is completely correct and it is three lines. Describe it first, because it
+shows you have solved the problem before you start optimising. Its cost is the
+copy: memory proportional to the length of the chain, written O(n) space.
+
+THE UPGRADE - do it with no extra memory at all, by rearranging the chain itself.
+
+The plan has three stages, and each one is a small problem you already know:
+
+  STAGE 1: find the MIDDLE of the chain.
+  STAGE 2: REVERSE the second half, in place.
+  STAGE 3: walk the first half forwards and the reversed second half forwards,
+           comparing as you go.
+
+After stage 2 the picture looks like this - two chains that both start at the
+outside and run inwards:
+
+    original:   1 -> 2 -> 2 -> 1 -> None
+
+    after:      1 -> 2 -> None        and        1 -> 2 -> None
+                ^ from the head                  ^ from the old tail
+
+Walking both forwards now compares the first value against the last, the second
+against the second-last - exactly the comparison we wanted, without ever moving
+backwards.
+
+That is the trick worth remembering in general: when you need to traverse
+something in the wrong direction and cannot, reverse the thing instead.""",
+
+    """3. STAGE 1 AND 2, made precise - and why the halves line up.
+
+FINDING THE MIDDLE. Send two markers along the chain, one moving a single node per
+step and the other moving two. When the fast one runs out of chain, the slow one
+has covered exactly half the ground, so it is standing at the middle. This is the
+tortoise-and-hare technique.
+
+Where exactly does slow land? With the loop condition "while fast and fast.next":
+
+    ODD length,  1 2 3 4 5:   slow ends on 3, the exact middle.
+    EVEN length, 1 2 2 1:     slow ends on the THIRD node - the first node of the
+                              second half.
+
+REVERSING FROM THERE. Reverse the chain starting at slow. The second half now
+runs backwards from the old tail, and the variable holding its new front is what
+we compare against.
+
+Now the important part: WHY DOES THE COMPARISON COME OUT RIGHT IN BOTH CASES?
+
+Even length, 1 2 2 1. Slow lands on the third node, so the reversed half is
+1 -> 2 (from the old tail inwards) and the first half is still 1 -> 2 -> ... Two
+comparisons: 1 against 1, 2 against 2. Both halves have exactly 2 nodes. Perfect.
+
+Odd length, 1 2 3 2 1. Slow lands on the middle 3, so the reversed half is
+1 -> 2 -> 3 and the first half runs 1 -> 2 -> 3 -> ... The middle node 3 ends up
+in BOTH halves and gets compared against itself, which always passes. Harmless -
+and it is why the middle element of an odd-length palindrome needs no special
+handling. It simply does not matter what it is.
+
+That is the small piece of luck that makes this code shorter than you would
+expect: you never have to ask whether the length is odd or even.
+
+The comparison loop is then driven by the REVERSED half, which is never longer
+than the first half - so it can never walk off the end of the first one.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the input is destroyed. This is the honest cost of the O(1) approach: the
+second half of the caller's chain is left reversed. If the caller looks at their
+list afterwards, it is mangled. The polite fix is to reverse the second half back
+again before returning, which costs one more pass and no extra memory. Say this
+out loud - "my solution modifies the input; shall I restore it?" is exactly the
+kind of thing an interviewer is listening for.
+
+CASE 2 - driving the comparison loop with the wrong half. The loop must run while
+the REVERSED half still has nodes. On an odd-length chain the two halves differ by
+one, and looping on the first half instead would walk one step past the end of the
+reversed one and crash.
+
+CASE 3 - the empty list. head is None, so the middle-finding loop never runs, the
+reversal loop never runs, and the comparison loop never runs. The function returns
+true. An empty sequence reads the same both ways, so that is correct - and it
+needs no special case.
+
+CASE 4 - a single node. slow ends on it, the "reversed half" is just that node,
+and it is compared against itself. True. Correct: any one-element sequence is a
+palindrome.
+
+CASE 5 - two nodes. [1,2]: slow ends on the second node, the reversed half is just
+[2], and the single comparison is 2 against 1 - false. [1,1] gives true. Both
+right.
+
+CASE 6 - the three-in-one assignment in the reversal. The reversal loop here is
+written as a single line assigning three variables at once. It works because
+Python evaluates the entire right-hand side before assigning anything. Written as
+three separate statements in that order, it destroys the chain - see section 8.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+LINKED LIST, NODE, HEAD, None: defined in section 1.
+
+PALINDROME: a sequence that reads the same forwards and backwards.
+
+node.next: the link a node holds - "the node after this one". Assigning to it
+changes the chain; assigning to a variable like slow or prev only moves your own
+bookmark. Keeping that distinction clear is most of the skill in linked-list
+problems.
+
+TWO POINTERS AT DIFFERENT SPEEDS (tortoise and hare): the middle-finding technique
+from section 3.
+
+IN PLACE: modifying the existing structure rather than building a new one. That is
+what gets the memory down to a fixed few variables - and what destroys the input,
+per case 1.
+
+Simultaneous assignment, "a, b, c = x, y, z": Python works out the whole right-hand
+side FIRST, using the old values of everything, and only then performs all three
+assignments. This is what lets the reversal happen in one line with no temporary
+variable.
+
+O(n) and O(1): the costs, where n is the number of nodes. O(n) means the work
+grows in step with the length - each of the three stages walks part of the chain
+once. O(1) means the extra memory does not grow at all, because it is only ever a
+handful of variables. That O(1) is the entire reason this version exists; the copy
+version from section 2 is O(n) space.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: you cannot walk a linked list backwards, so
+reverse its second half and then walk both halves forwards side by side.
+
+There is no recursion here - three straight loops - so nothing piles up on the
+call stack.
+
+The steps:
+
+  1. FIND THE MIDDLE. Put two markers on the head. Repeat while the fast marker
+     is on a node AND that node has something after it: move the slow marker one
+     node forward and the fast marker two. When it stops, the slow marker is at
+     the middle.
+
+  2. REVERSE FROM THE MIDDLE. Set a "reversed part" marker to nothing. Then, while
+     the slow marker is on a node, do four things in this order: remember the node
+     after it, point its link backwards at the reversed part, move the reversed
+     part marker onto it, and step forward onto the remembered node.
+
+     Saving the next node BEFORE flipping the link is essential - that link is the
+     only route to the rest of the chain.
+
+     When this finishes, the reversed-part marker is on the OLD LAST NODE of the
+     chain, which is now the front of a chain running backwards toward the middle.
+
+  3. COMPARE. Put one marker on the head and one on the front of the reversed
+     half. While the reversed-half marker is on a node, compare the two values -
+     if they ever differ, answer no immediately. Otherwise step both forward.
+
+     Drive the loop from the REVERSED half, not the first half. On an odd-length
+     chain the first half is one node longer, and looping on it would walk past
+     the end of the reversed one.
+
+  4. If the comparison never found a mismatch, answer yes.
+
+Stage 3 works because after stage 2 both halves start at the OUTSIDE of the
+original chain and run inwards - so walking them forwards together compares first
+against last, second against second-last, and so on.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The difficulty is that checking a palindrome means comparing the front against the
+back, and a linked list has no way of walking backwards - every link points one
+way only. So the code changes the chain to suit the question rather than fighting
+it.
+
+It happens in three passes.
+
+First it finds the middle, without knowing the length in advance. It sends two
+markers along at once, one taking single steps and the other taking double steps.
+When the fast one runs out of chain, the slow one has covered exactly half of it,
+so it is standing at the halfway point.
+
+Then it turns the second half around. Starting at that halfway point, it walks
+forward flipping each link to point at the node behind instead of the node ahead.
+When it is done, the back half of the chain runs from the original last node
+inwards toward the middle.
+
+Now the two halves both start at the OUTSIDE of the original chain and run toward
+the centre. So the code puts one marker on the front of the original and one on
+the front of the reversed half, and walks them forward together, comparing as it
+goes. That comparison is first-against-last, second-against-second-last, which is
+exactly what a palindrome check needs - and it never once had to move backwards.
+
+On an odd-length chain the middle value ends up in both halves and gets compared
+against itself, which always passes - so no special handling is needed for odd
+lengths.
+
+One consequence to be aware of: the chain the caller handed in has been
+rearranged, and the second half is left reversed.""",
+
+    """8. THE CODE, line by line.
+
+Keep [1, 2, 2, 1] beside you.
+
+    slow = fast = head
+Both markers start on the first node. They will immediately diverge.
+
+    while fast and fast.next:
+        slow = slow.next
+        fast = fast.next.next
+STAGE 1 - find the middle. Both halves of the condition matter: "fast" catches the
+even-length case where fast runs past the end and becomes None, and "fast.next"
+catches the odd-length case where fast lands exactly on the last node. Checking
+"fast" first is what makes it safe to read fast.next afterwards - Python stops an
+"and" at the first false condition.
+
+Reading fast.next.next is safe precisely because the condition just proved both
+fast and fast.next exist.
+
+    prev = None
+STAGE 2 begins. prev is the reversed part, starting empty - which is what makes the
+middle node correctly end up pointing at nothing once it becomes the tail of the
+reversed half.
+
+    while slow:
+        slow.next, prev, slow = prev, slow, slow.next
+The entire reversal in one line. Python computes the whole right-hand side FIRST,
+using the OLD values, then makes all three assignments. Unpacked, using the old
+values throughout:
+
+    slow.next = prev        flip this node's link to point backwards
+    prev      = slow        this node becomes the front of the reversed part
+    slow      = slow.next   step forward onto the node that WAS next
+
+Note the third assignment uses the ORIGINAL slow.next - the value it had before
+the first assignment overwrote it. That is only true because everything on the
+right is evaluated before anything on the left is written. Split into three
+ordinary statements in that order and the third line would read the link we just
+overwrote, sending slow backwards into prev and looping forever.
+
+When this loop ends, slow is None and prev is on the OLD LAST NODE of the chain.
+
+    left, right = head, prev
+STAGE 3. left starts at the front of the original chain; right starts at the front
+of the reversed half, which is the original chain's tail. Both now run inwards.
+
+    while right:
+Drive the loop from the REVERSED half. On an odd-length chain the first half is
+one node longer, so looping on left instead would step past the end of right and
+crash - see case 2 in section 4.
+
+    if left.val != right.val:
+        return False
+One mismatch is enough to settle it - return immediately without checking the
+rest.
+
+    left = left.next
+    right = right.next
+Step both inwards by one.
+
+    return True
+No mismatch was ever found, so the chain reads the same both ways.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+EVEN LENGTH: [1] -> [2] -> [2] -> [1] -> None.  Call the nodes A(1) B(2) C(2) D(1).
+
+STAGE 1, find the middle:
+  start:  slow = A, fast = A
+  fast is A, fast.next is B -> run:  slow = B, fast = C
+  fast is C, fast.next is D -> run:  slow = C, fast = None
+  fast is None -> stop.
+  slow = C, the first node of the second half.
+
+STAGE 2, reverse from C:
+  prev = None
+  round 1: slow = C.  C.next = None;  prev = C;  slow = D
+           reversed so far:  C -> None
+  round 2: slow = D.  D.next = C;     prev = D;  slow = None
+           reversed so far:  D -> C -> None
+  slow is None -> stop.  prev = D, the original last node.
+
+  The chain is now two pieces:   A -> B -> None     and     D -> C -> None
+                                 (1)  (2)                   (1)  (2)
+
+STAGE 3, compare:
+  left = A(1), right = D(1)
+  right exists: 1 == 1, step both.  left = B(2), right = C(2)
+  right exists: 2 == 2, step both.  left = None, right = None
+  right is None -> stop.
+  return True.  Correct - 1,2,2,1 is a palindrome.
+
+ODD LENGTH: [1] -> [2] -> [3] -> [2] -> [1].  Nodes A B C D E.
+
+STAGE 1:
+  slow = A, fast = A
+  run: slow = B, fast = C
+  run: slow = C, fast = E
+  fast is E, fast.next is None -> stop.  slow = C, the exact middle.
+
+STAGE 2, reversing from C gives:   E -> D -> C -> None,  prev = E.
+  And the first half still reads   A -> B -> C ...
+
+STAGE 3:
+  left = A(1), right = E(1)  ->  1 == 1, step
+  left = B(2), right = D(2)  ->  2 == 2, step
+  left = C(3), right = C(3)  ->  the MIDDLE NODE compared against ITSELF.
+                                 Always equal, so it always passes. Step.
+  right = None -> stop.  return True.
+
+That third comparison is the small piece of luck from section 3: the middle of an
+odd-length chain lands in both halves and compares with itself, so odd lengths
+need no special code at all.
+
+A FAILING CASE: [1] -> [2] -> [3].  Nodes A B C.
+  Stage 1: slow = A, fast = A; run once -> slow = B, fast = C; fast.next is None,
+           stop.  slow = B.
+  Stage 2: reversing from B gives C -> B -> None, prev = C.
+  Stage 3: left = A(1), right = C(3).  1 != 3 -> return False. Correct.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) where n is the number of nodes. Three passes - half a pass to find the
+middle, half a pass to reverse, half a pass to compare - which together touch each
+node a constant number of times. Three halves is still proportional to n.
+
+SPACE: O(1) - constant. A handful of markers, no matter how long the chain. This
+is the whole reason for the extra complexity; the copy-into-a-list version from
+section 2 is just as fast at O(n) time but uses O(n) memory. If an interviewer
+does not ask for constant space, the simple version is the better answer - say so
+and offer this one as the follow-up.
+
+THE #1 MISTAKE - driving the comparison loop from the first half instead of the
+reversed half. On an even-length chain the halves are equal and it works; on an
+odd-length chain the first half is one node longer, so the loop takes one step too
+many and crashes reading a missing node. Loop on the reversed half, which is never
+the longer of the two.
+
+A close second: splitting the three-way assignment in the reversal into three
+ordinary statements in the same order. The third statement then reads the link
+that the first one just overwrote, so slow walks backwards into prev and the loop
+never ends. Either keep the one-line form or save the next node in a temporary
+first.
+
+Also worth saying out loud: this destroys the caller's chain. Reversing the second
+half back again before returning costs one more pass and no extra memory.
+
+ONE-SENTENCE TAKEAWAY: a linked list cannot be walked backwards, so find the
+middle with two markers at different speeds, reverse the second half in place, and
+then walk both halves forwards together - which compares first against last
+without ever moving backwards.""",
 ]
 
 _EX_P0D["Squares of a Sorted Array"] = [
