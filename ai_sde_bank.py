@@ -30474,6 +30474,177 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1I[_e["title"]]
 
 
+_EX_P1J = {}
+
+_EX_P1J["Find Lucky Integer in an Array"] = [
+    """The definition, which is easy to misread.
+A value is 'lucky' when its FREQUENCY equals its own VALUE - not its index, not
+its position. So the value 2 is lucky only if 2 appears exactly twice.
+arr = [2,2,3,4] -> counts {2:2, 3:1, 4:1}. 2 appears twice -> lucky. 3 appears
+once -> not. 4 appears once -> not. Answer 2.
+arr = [1,2,2,3,3,3] -> 1 appears once (lucky), 2 appears twice (lucky), 3
+appears three times (lucky). All three qualify, and the answer is the LARGEST:
+3.""",
+
+    """Why 'largest' matters and how it changes the code.
+Several values can be lucky at once, so you cannot return on the first match.
+The comprehension collects every qualifying value and max() picks the winner -
+or you track a running maximum in one pass, which avoids building the list.
+Returning the first lucky value found is the standard bug, and because dict
+iteration order in Python follows insertion order it will often return the
+SMALLEST on typical inputs - a wrong answer that looks stable and reproducible,
+which makes it harder to spot than a random one.""",
+
+    """The -1 sentinel, and why `max(lucky) if lucky else -1` is the safe form.
+`max([])` raises ValueError, so the guard is not optional. Some solutions use
+`max(lucky, default=-1)`, which is tidier and does the same thing.
+Alternatively iterate 1..500 downwards (the usual value constraint) and return
+the first value whose count matches, which gets the largest for free with no
+list and no guard - a nice option to mention when asked to reduce space.""",
+
+    """Edge cases.
+No lucky integer, e.g. [2,2,2,3,3] -> 2 appears three times, 3 appears twice,
+neither matches -> -1.
+Single element [1] -> 1 appears once -> lucky -> 1.
+Single element [2] -> 2 appears once, not twice -> -1. That pair is the fastest
+way to check you have read the definition correctly.
+Note the value 0 can never be lucky: a value that appears zero times is not in
+the array at all, so it is never a key in the counter.""",
+
+    """Complexity, and the bounded-value alternative.
+Counter is O(n) time and O(k) space for k distinct values. With the usual
+constraint that values are 1..500, a fixed 501-integer array replaces the hash
+map, giving O(1) space by the bounded argument and a faster constant factor -
+the same counting-sort idea used in How Many Numbers Are Smaller Than the
+Current.
+Whenever a prompt states a small value range, a plain array beats a hash map:
+no hashing, better cache behaviour, and the space bound becomes constant.""",
+
+    """The family: frequency-map problems.
+Top K Frequent Elements, First Unique Character, Majority Element, Degree of an
+Array, Sort Characters By Frequency. All start with one counting pass and
+differ only in what you then ask of the counts - the maximum, the first with
+count 1, the one exceeding n/2, the one whose count equals its value.
+The habit worth forming: when a prompt mentions 'how many times', build the
+counter first and then think, rather than trying to reason about the array
+directly.""",
+]
+
+_EX_P1J["Find the Highest Altitude"] = [
+    """The example, traced.
+gain = [-5,1,5,0,-7]. Start at altitude 0, which is already a candidate.
+-5 -> altitude -5, highest still 0.
++1 -> -4, highest 0.
++5 -> 1, highest 1.
++0 -> 1, highest 1.
+-7 -> -6, highest 1.
+Answer 1. Note the starting altitude of 0 must be included as a candidate,
+which is why `highest` is initialised to 0 rather than to -infinity or to the
+first prefix sum.""",
+
+    """Why initialising highest to 0 rather than -inf.
+The trip STARTS at altitude 0, and that counts as an altitude reached. If every
+gain is negative, e.g. [-4,-3,-2], the altitudes visited are -4, -7, -9 and the
+highest point of the whole trip is the starting point, 0.
+Initialise to -inf or to gain[0] and you return -4 instead, which is a wrong
+answer on exactly the input an interviewer will hand you. The lesson
+generalises: when a problem has an implicit starting state, decide whether it
+is a candidate before you write the initialisation.""",
+
+    """What this problem actually is: a running maximum of a prefix sum.
+altitude after step i = gain[0] + ... + gain[i], which is the prefix sum. The
+answer is the maximum over all prefixes, including the empty one.
+Naming it that way is worth doing out loud, because it connects a trivial
+problem to Maximum Subarray (Kadane), Running Sum of 1d Array, and Find Pivot
+Index - all of which are 'accumulate and ask something about the accumulation'.
+Recognising the family is the only durable thing this problem teaches.""",
+
+    """Edge cases.
+All positive [1,2,3] -> altitudes 1, 3, 6 -> 6.
+All negative [-1,-2] -> highest stays 0.
+Single element [0] -> altitude 0, highest 0.
+Empty gain (if allowed) -> the loop never runs -> 0, the starting altitude.
+The problem guarantees the road returns to sea level in some variants; that
+guarantee is irrelevant here, and noticing that a stated constraint does NOT
+affect your algorithm is also worth a sentence.""",
+
+    """Complexity and the in-place variant.
+O(n) time, O(1) space - two integers. There is nothing to optimise.
+The variant worth knowing: if asked to return ALL the altitudes rather than the
+maximum, that is itertools.accumulate(gain) prefixed with 0, and it is O(n)
+space by necessity because the output is that large. Distinguishing 'the
+algorithm needs O(n)' from 'the OUTPUT is O(n)' is a small precision that comes
+up repeatedly in complexity discussions.""",
+
+    """The family, stated as a recipe.
+Any problem phrased as 'running total, and then something about the running
+total' is a prefix-sum problem: the maximum (this one), the total (Running
+Sum), the point where two sides balance (Find Pivot Index), the best contiguous
+window (Kadane), or how many earlier prefixes had a given value (Subarray Sum
+Equals K, using a hash map).
+The step that unlocks all of them is the same: stop thinking about subarrays
+and start thinking about the difference between two prefix sums.""",
+]
+
+_EX_P1J["First Unique Character in a String"] = [
+    """The two passes, traced.
+s = 'leetcode'. Pass 1 counts: l:1, e:3, t:1, c:1, o:1, d:1.
+Pass 2 scans left to right: 'l' has count 1 -> return index 0.
+s = 'loveleetcode': counts l:2, o:2, v:1, e:4, t:1, c:1, d:1. Scan: l is 2, o
+is 2, v is 1 -> return index 2.
+The order of the two passes is what gives 'first': counting must complete
+before scanning, because a character's uniqueness depends on the ENTIRE string,
+including positions you have not reached yet.""",
+
+    """Why two passes and not one.
+In a single pass you cannot know whether the character you are looking at will
+reappear later. Any one-pass attempt has to buffer candidates and revisit them,
+which is really two passes with extra bookkeeping.
+The honest framing for an interview: 'this is inherently two passes over the
+string, but both are O(n), so it is O(n) overall'. Candidates sometimes twist
+themselves trying to make it one pass; recognising that two linear passes is
+already optimal saves that effort.""",
+
+    """Why scanning the STRING beats scanning the counter.
+The second loop iterates the string, not the frequency map. Iterating the map
+would give you characters with count 1 but in insertion order - which happens
+to match first-appearance order in modern Python, but only by implementation
+detail, and it is a genuinely unsafe thing to rely on. In Java a HashMap gives
+no order at all and the same approach breaks outright.
+Scanning the original string makes 'first' explicit rather than accidental.""",
+
+    """Edge cases.
+Empty string -> the loop never runs -> -1.
+All repeating 'aabb' -> no count is 1 -> -1.
+All unique 'abc' -> returns 0.
+Single character 'z' -> count 1 -> 0.
+Case sensitivity: 'Aa' has two distinct characters under normal comparison, so
+the answer is 0. If the prompt means case-insensitive, lowercase first - and
+ask, because it changes the answer on a very short input.""",
+
+    """Complexity, and the array-instead-of-map version.
+O(n) time (two linear passes), O(k) space for k distinct characters - O(1) by
+the bounded-alphabet argument when the input is lowercase ASCII.
+The interview-standard optimisation is a fixed 26-integer array indexed by
+ord(ch) - ord('a'), avoiding hashing entirely. It is the same trick as in
+Almost Equivalent and Find Words That Can Be Formed; once you have written it
+once, it is the default for any lowercase-letters problem.""",
+
+    """The follow-up worth preparing: a STREAM.
+'What if characters arrive one at a time and you must report the first unique
+so far at any moment?' The two-pass approach is impossible - there is no second
+pass over a stream. The answer is a queue of candidate characters plus a
+frequency map: push each new character, and before answering, pop from the
+front while the front character's count exceeds 1. Amortised O(1) per query.
+That is the Design a First-Unique-Number problem, and it is a natural
+escalation an interviewer reaches for when this one goes quickly.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1J:
+        _e["examples"] = _EX_P1J[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
