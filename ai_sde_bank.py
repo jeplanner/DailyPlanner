@@ -26452,76 +26452,553 @@ numbers to begin with.
 """.strip("\n")
 
 _EXAMPLES_ML2["What is an embedding?"] = [
-    """The classic demonstration, and what it actually shows.
-With word2vec vectors:
-  vec("king") - vec("man") + vec("woman")  ->  nearest neighbour is "queen"
-  vec("Paris") - vec("France") + vec("Italy")  ->  "Rome"
-What this reveals is that RELATIONSHIPS are directions in the space. The
-"capital of" relation is roughly a consistent offset vector, so subtracting and
-adding moves you along it. Nobody encoded a capital-of feature; it emerged
-because predicting context words well required representing that relationship.
-Worth knowing the caveat too: these analogies are cherry-picked and work far
-less cleanly than the popular presentation suggests.""",
+    """1. THE GOAL - turning things into positions so that "similar" becomes "close".
 
-    """A concrete retrieval case - why it beats keyword matching.
-Query: "how do I reset my password"
-Document title: "Credential recovery procedure"
-Keyword overlap: zero. BM25 scores this near nothing.
-Cosine similarity between their embeddings: about 0.82 - a strong match,
-because both texts occupy the same region of meaning-space.
-Now the reverse case: query "error E4021". The embedding of a rare alphanumeric
-code is close to meaningless, while keyword search nails it exactly. That
-asymmetry is the entire argument for HYBRID search - vectors for meaning,
-BM25 for identifiers, fused. Being able to give one example of each direction
-is what shows you have actually built retrieval.""",
+A computer cannot compare the words "cat" and "dog" directly. They are just different
+symbols, and every pair of different symbols is equally different.
 
-    """The numbers, so the storage cost is concrete.
-1 million documents, embedded with a 1536-dimension model at 4 bytes per float:
-  1,000,000 x 1536 x 4 bytes = about 6.1 GB of raw vectors.
-Exact nearest-neighbour search over that means 1 million dot products of length
-1536 per query - far too slow interactively. Hence approximate indexes such as
-HNSW, which trade a small amount of recall for roughly logarithmic search time.
-Dimension reduction matters too: many models now support shortening (Matryoshka
-embeddings), so you can cut to 512 dimensions and a third of the storage with
-modest recall loss. These are the trade-offs a vector-database question is
-really about.""",
+An EMBEDDING fixes that by giving each item a POSITION - a list of numbers - chosen so that
+items with similar meanings end up near each other:
 
-    """The failure case - domain mismatch.
-A team used a general-purpose embedding model for retrieval over internal
-engineering tickets. Recall was poor on exactly the queries that mattered.
-Cause: their vocabulary - service code names, internal acronyms, severity
-conventions - carried meaning the model had never seen. "SEV2 on
-edge-router-fleet" embedded near generic networking text rather than near their
-actual incident reports.
-Fixes, in order of cost: hybrid search with BM25 to catch the exact tokens;
-adding a glossary expansion step to the query; and fine-tuning the embedding
-model on a few thousand of their own query-document pairs, which is the real
-solution when the jargon is central.""",
+              maleness
+                 ^
+             0.9 |   man          king
+                 |    *            *
+                 |
+                 |
+             0.1 |   woman        queen
+                 |    *            *
+                 +----------------------> royalty
+                    0.1           0.9
 
-    """Contrast against the sibling representations, which interviewers probe.
-* ONE-HOT: sparse, huge, all pairs equidistant. No notion of similarity.
-* TF-IDF / BM25: sparse, based on word overlap, excellent for exact terms,
-  blind to synonyms.
-* EMBEDDING: dense, learned, captures meaning and synonymy, weak on rare exact
-  tokens and unable to explain itself.
-* LLM hidden state: a contextual embedding - the same word gets a different
-  vector depending on its sentence, which fixes word2vec's inability to handle
-  "bank" meaning two things.
-That last distinction - static versus contextual embeddings - is the most
-commonly asked follow-up, so have it ready.""",
+Now "similar" has a precise meaning: CLOSE TOGETHER. And distance is arithmetic, which a
+computer can do a billion times a second.
 
-    """The interview application.
-"You have 10 million products. Build 'customers also viewed'."
-Embedding-based answer: represent each product by an embedding learned from
-co-view behaviour rather than from its description - two products are similar
-if the same users viewed them, which captures substitutes far better than text
-does. Index with HNSW for fast nearest-neighbour lookup, precompute the top 50
-neighbours offline for the head of the catalogue, and serve the tail live.
-The important caveats to raise unprompted: cold-start products have no
-co-view signal, so fall back to text embeddings until behaviour accumulates;
-and a pure co-view model recommends things the user has already seen or
-already bought, so you need business filters on top. Naming the cold-start
-problem before being asked is what lands this.""",
+That single move - SEMANTIC SIMILARITY BECOMES GEOMETRIC CLOSENESS - is what makes modern
+search, recommendation and retrieval work. It is why a search for "how do I reset my
+password" can find a document titled "Credential recovery procedure" that shares not one
+word with the query.
+
+The positions are LEARNED from data, not assigned by hand. Nobody decided that the second
+dimension means maleness. The model was trained on a task - predict the surrounding words,
+or predict which documents answer which queries - and positions that make that task easier
+turn out to encode meaning, because meaning is what makes the task predictable.
+
+WHAT THIS ENTRY OWNS: what an embedding is, the arithmetic of comparing two of them, and
+what to watch for in practice. Its siblings: "WHAT IS RAG" owns the retrieval pipeline these
+feed; "HOW DOES SELF-ATTENTION WORK" owns what happens to embeddings inside a transformer;
+"WHAT IS A LARGE LANGUAGE MODEL" owns where the embedding table sits in the whole model.""",
+
+    """2. THE INTUITION - the arrows, and the famous subtraction.
+
+Take the four positions from section 1 and read them as arrows from the origin. Something
+striking falls out:
+
+    king  = [0.9, 0.9]        royalty 0.9,  maleness 0.9
+    man   = [0.1, 0.9]        royalty 0.1,  maleness 0.9
+    woman = [0.1, 0.1]        royalty 0.1,  maleness 0.1
+    queen = [0.9, 0.1]        royalty 0.9,  maleness 0.1
+
+Now do the arithmetic that made embeddings famous:
+
+    king - man + woman
+      = [0.9 - 0.1 + 0.1,  0.9 - 0.9 + 0.1]
+      = [0.9, 0.1]
+      = queen        EXACTLY
+
+Look at what each step did. Subtracting "man" from "king" removed the maleness and left the
+royalty - the DIFFERENCE between two vectors isolated the thing that distinguishes them.
+Adding "woman" put back a different gender. The relationship "male version of" turned out to
+be a DIRECTION you can travel in, the same direction for every pair.
+
+    king  ------- minus man -------> [0.8, 0.0]  = "royalty, gender removed"
+                                          |
+                                     plus woman
+                                          v
+                                     [0.9, 0.1]  = queen
+
+That is what the famous demonstration actually shows: not that the model "knows" about
+royalty, but that consistent relationships in the data become consistent DIRECTIONS in the
+space. Paris minus France plus Italy lands near Rome for the same reason.
+
+Real embeddings have 300 to 3,072 dimensions rather than 2, and no dimension has a name you
+could write down - "maleness" is spread across hundreds of them. But the geometry is exactly
+this, and the arithmetic works the same way.
+
+The practical consequence: to find things similar to X, you do not search for matching words.
+You find the vectors NEAREST to X's vector.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EMBEDDING / VECTOR / REPRESENTATION. A list of numbers standing for one item - a word, a
+sentence, a document, a user, a product. Also called a DENSE vector, because most entries
+are non-zero.
+
+DIMENSION. How many numbers are in the list. 300 for classic word vectors, 384 to 1,536 for
+modern sentence models, up to 3,072 for large ones.
+
+DENSE vs SPARSE. Dense means most entries carry information (embeddings). Sparse means
+almost all entries are zero (one-hot, TF-IDF).
+
+ONE-HOT ENCODING. The naive alternative: a vector as long as the vocabulary, with a single 1
+in the item's slot and zeros everywhere else. Section 5 proves why it cannot express
+similarity at all.
+
+SEMANTIC. About meaning rather than spelling. "Car" and "automobile" are semantically close
+and share no letters.
+
+COSINE SIMILARITY. The standard way to measure closeness: multiply the two vectors element by
+element, add up, and divide by both lengths. It measures the ANGLE between them, ignoring
+their magnitudes. 1 means identical direction, 0 means unrelated, -1 means opposite.
+
+DOT PRODUCT. The multiply-and-add part on its own. Equal to cosine similarity when both
+vectors have been scaled to length 1, which is why embeddings are usually NORMALISED - it
+makes the cheap operation the correct one.
+
+NEAREST NEIGHBOUR SEARCH. Finding the vectors closest to a query vector. The operation every
+embedding system is built around.
+
+ANN (APPROXIMATE NEAREST NEIGHBOUR). Index structures like HNSW or IVF that find ALMOST the
+closest vectors far faster than checking all of them. Necessary above roughly a hundred
+thousand vectors.
+
+word2vec / GloVe. The classic word-embedding methods. One vector per word, no matter the
+context - so "bank" gets a single vector covering both the river and the money sense.
+
+CONTEXTUAL EMBEDDINGS. Modern transformer-produced vectors, where the same word gets a
+DIFFERENT vector depending on its sentence. This is the main advance over word2vec.
+
+EMBEDDING TABLE. The lookup inside a model mapping each vocabulary entry to its starting
+vector. Trained along with everything else.
+
+QUANTISATION. Storing each number in fewer bytes - 1 instead of 4 - to cut memory by 4x at
+some cost in precision.
+
+DOMAIN MISMATCH. Using an embedding model trained on general text for a specialised corpus,
+where the terms that matter most are exactly the ones it understands least. Section 4.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE THAT SILENTLY RUINS PRODUCTION SYSTEMS: DOMAIN MISMATCH.
+
+A team used a general-purpose embedding model for retrieval over internal engineering
+tickets. Recall was poor, and poor in the worst possible way: it failed on exactly the
+specialised terms that mattered most.
+
+Why. The model learned its geometry from general web text, where the internal service names,
+error codes and team acronyms either never appeared or appeared in unrelated contexts. Two
+tickets about the same subsystem are near-identical to an engineer and unrelated to the
+model, because it has no idea the subsystem exists.
+
+The tell is that performance is FINE on ordinary questions and terrible on the domain-specific
+ones - so an evaluation set of generic queries will show everything working. Test on the
+vocabulary that actually distinguishes your documents.
+
+Fixes, in ascending order of effort: hybrid search so exact keyword matching catches the
+identifiers the embedding blurs; a domain-adapted or fine-tuned embedding model; or, most
+cheaply, checking whether the terms are even in the tokenizer before assuming they carry
+meaning.
+
+TRAP 2: mixing embedding models. Vectors from two different models occupy DIFFERENT SPACES.
+Comparing them does not raise an error - it returns confident nonsense. If you switch models,
+you must re-embed the entire corpus, and that is a migration rather than a config change.
+
+TRAP 3: assuming cosine similarity of 0.8 means "quite similar". Similarity scores are only
+meaningful RELATIVE to the distribution the model produces. Some models put almost everything
+between 0.7 and 0.9, so 0.8 there is average and means nothing. Always look at the SPREAD -
+the gap between the top result and the tenth - rather than the absolute number.
+
+TRAP 4: forgetting embeddings encode the biases in their training data. If the corpus
+associates certain occupations with certain genders, the geometry will too, and any ranking
+built on it inherits that. The famous analogy arithmetic that produces "queen" also produces
+uglier results, and this has been demonstrated repeatedly in the literature.
+
+TRAP 5: treating word2vec-era word embeddings as current. One vector per word means "bank"
+has a single position covering the river and the financial institution - a compromise that is
+wrong for both. Modern contextual embeddings give a different vector per occurrence, which is
+a genuine advance worth naming in an interview.
+
+TRAP 6: embedding a whole long document as one vector. Meaning gets averaged away - a
+forty-page policy becomes one blurry point that is near everything and specific to nothing.
+Chunk first, which is what the RAG sibling covers.
+
+TRAP 7: not normalising, then using dot product. Dot product equals cosine similarity ONLY
+when both vectors have length 1. Without normalising, long vectors score higher regardless of
+direction, so your ranking partly measures vector magnitude - which usually correlates with
+nothing you care about.""",
+
+    """5. THE NAIVE REPRESENTATION FIRST, THEN THE REAL ONE.
+
+THE NAIVE VERSION - ONE-HOT ENCODING.
+
+Give every word a slot. A word is a vector of all zeros with a single 1 in its own slot:
+
+    vocabulary of 50,000 words
+
+    cat        = [0, 0, ..., 1, ..., 0, 0]     50,000 numbers, one 1
+    dog        = [0, 0, ..., 0, ..., 1, 0]
+    democracy  = [0, 1, ..., 0, ..., 0, 0]
+
+It is simple, exact, and it has a fatal property that is worth PROVING rather than asserting,
+because the proof is two lines and it is the entire motivation for embeddings.
+
+    Take any two DIFFERENT one-hot vectors. They have a 1 in different slots and zeros
+    everywhere else. So:
+
+        their DOT PRODUCT is 0 - there is no position where both are non-zero.
+        therefore their COSINE SIMILARITY is 0.
+        and their squared distance is 1 + 1 = 2, so the distance is the square root of 2.
+
+    That is true for EVERY pair of distinct words. Cat and dog: similarity 0, distance 1.414.
+    Cat and democracy: similarity 0, distance 1.414. Identical.
+
+ONE-HOT ENCODING CANNOT EXPRESS THAT CAT IS MORE LIKE DOG THAN LIKE DEMOCRACY. Not "does it
+badly" - cannot express it at all, by construction. Every word is exactly as different from
+every other word.
+
+It is also enormous: 50,000 numbers per word, 49,999 of them zero.
+
+UPGRADE 1 - TF-IDF AND BM25. Weight words by how informative they are and represent documents
+by which words they contain. A real improvement, still sparse, and still fundamentally about
+WORD OVERLAP - so "reset my password" and "credential recovery" remain unrelated.
+
+UPGRADE 2 - LEARNED DENSE EMBEDDINGS. Give each word a short list of real numbers, and LEARN
+those numbers from a task.
+
+THE TRICK, EXPLAINED FROM SCRATCH: how do you learn positions that encode meaning, when
+nobody labels meaning?
+
+You do not try to. You pick a task whose answer is already in the text, and let the positions
+be whatever makes that task easy. word2vec's task was: given a word, predict the words around
+it.
+
+Now think about what that forces. "Cat" and "dog" appear in overlapping company - fed, vet,
+pet, tail, barked, purred. To predict neighbours well, the model must give them similar
+vectors, because similar vectors produce similar predictions. "Democracy" appears near
+election, parliament, vote - a different crowd - so it must sit elsewhere.
+
+THE DISTRIBUTIONAL HYPOTHESIS, which is the idea underneath all of this: WORDS THAT APPEAR IN
+SIMILAR CONTEXTS HAVE SIMILAR MEANINGS. Nobody labelled anything. Meaning fell out of
+predicting context, because meaning is exactly what makes context predictable.
+
+That is also why the same trick scales to anything with co-occurrence: products bought
+together, songs in the same playlist, users clicking the same items.
+
+UPGRADE 3 - CONTEXTUAL EMBEDDINGS. word2vec gives one vector per word forever, so "bank" is a
+single compromise between two meanings. A transformer produces a vector per OCCURRENCE, built
+from the whole sentence, so "river bank" and "savings bank" land in different places. The
+attention siblings cover the mechanism.
+
+UPGRADE 4 - EMBEDDING WHOLE SENTENCES AND DOCUMENTS, which is what retrieval actually needs -
+and what the RAG sibling is built on.""",
+
+    """6. HOW IT WORKS - the steps, in plain English.
+
+The one sentence that holds the whole idea: GIVE EVERY ITEM A POSITION IN A SHARED SPACE,
+LEARNED SO THAT ITEMS APPEARING IN SIMILAR CONTEXTS END UP NEAR EACH OTHER - THEN "FIND
+SIMILAR THINGS" BECOMES "FIND NEARBY POINTS", WHICH IS ARITHMETIC.
+
+THERE ARE TWO PHASES, at completely different times, and confusing them is the main
+misunderstanding:
+
+    TRAINING (once, by whoever built the model) - the loop that learns the positions. Each
+    pass takes items and their contexts, predicts one from the other, and nudges the vectors
+    to make the prediction better. WHAT MAKES IT STOP is the ordinary training stopping rule -
+    a fixed number of passes, or validation loss ceasing to improve. Most people never run
+    this; they download the result.
+
+    USE (constantly, by you) - no loop at all. Look up or compute a vector, compare it against
+    others, return the nearest. A fixed amount of arithmetic per query.
+
+THE STEPS, for using them:
+
+  1. CHOOSE AN EMBEDDING MODEL, and check it knows your vocabulary. This is where trap 1
+     lives - a general model on specialised text fails precisely on the terms that matter.
+
+  2. CHUNK ANYTHING LONG. A whole document averaged into one vector is near everything and
+     specific to nothing. A few hundred tokens per chunk.
+
+  3. EMBED EVERY ITEM ONCE, offline, and store the vectors alongside their identifiers and
+     metadata.
+
+  4. NORMALISE the vectors to length 1. This makes the cheap dot product exactly equal to
+     cosine similarity, so ranking measures direction rather than magnitude.
+
+  5. BUILD AN INDEX if there are many. Below about a hundred thousand vectors, comparing
+     against all of them is fast enough. Above that, an approximate index trades a little
+     accuracy for a large speed gain.
+
+  6. AT QUERY TIME, embed the query with THE SAME MODEL. Different models give incomparable
+     spaces, and mixing them produces confident nonsense rather than an error.
+
+  7. FIND THE NEAREST VECTORS by cosine similarity.
+
+  8. LOOK AT THE SPREAD, not just the top score. A clear gap between first and tenth means the
+     match is real; a flat distribution means nothing in the corpus is a good answer, which is
+     worth surfacing rather than hiding.
+
+  9. RETURN THE ORIGINAL ITEMS the vectors point at - the vector was only ever an address.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a vast library where books are not shelved alphabetically or by subject code, but by
+what they are ABOUT - and "about" is decided by how they are used rather than by what is
+printed on the spine.
+
+Books that get borrowed together, cited together and talked about together are placed near
+each other. Over years, the shelving arranges itself so that walking a few metres in any
+direction moves you gently from one topic to a related one.
+
+Now somebody arrives asking a question. You do not look up keywords in an index. You work out
+where in the building that QUESTION belongs - which shelf it would sit on if it were a book -
+and you walk there and pick up whatever is nearest.
+
+The person asked "how do I reset my password" and you hand them a book called "Credential
+recovery procedure". Those phrases share no words at all. But the two things get used in the
+same situations, so over the years they ended up on the same shelf, and proximity is what you
+searched by.
+
+Two properties of this library follow, and both matter.
+
+Directions mean things. If you walk from the biography of a king to the biography of a
+commoner, you have moved in some particular direction. Start at a queen's biography and walk
+the same direction and distance, and you arrive near a commoner woman. The relationship has
+become a movement you can repeat anywhere in the building.
+
+And the shelving reflects the borrowers, faithfully. If for decades certain subjects were
+borrowed mostly by certain groups, the shelving records that - and anyone using proximity to
+make decisions inherits it, without ever having decided to.
+
+One warning about the library: it was arranged by people reading general books. If you bring
+in ten thousand documents full of internal jargon, the shelving has no idea where they go.
+They will be scattered, and searching will fail on exactly the specialised terms you cared
+about most - while continuing to work perfectly for ordinary questions, so your testing may
+never notice.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code in this entry, so what follows is each piece of the machinery - what it holds, what it
+decides.
+
+--- THE VECTOR ---
+
+    THE NUMBERS
+        HOLD: a position in a high-dimensional space. Individually meaningless - no single
+        number is "maleness" in a real model.
+        DECIDE: everything, but only through comparisons with OTHER vectors. A vector on its
+        own says nothing; it is a coordinate, and coordinates only matter relative to others.
+
+    THE DIMENSION COUNT
+        HOLDS: how many numbers. 384, 768, 1,536, 3,072.
+        DECIDES: capacity versus cost. More dimensions can express finer distinctions and cost
+        proportionally more memory and comparison time. Storage is dimensions x 4 bytes per
+        item - section 9 does the arithmetic.
+
+    NORMALISATION (scaling to length 1)
+        DECIDES: whether the dot product equals cosine similarity. Skip it and long vectors
+        rank higher regardless of direction, so your search partly sorts by magnitude - which
+        usually means nothing.
+
+--- THE COMPARISON ---
+
+    COSINE SIMILARITY = (a . b) / (|a| x |b|)
+
+        NUMERATOR (the dot product): multiply the two vectors element by element and add.
+        Large when they point the same way.
+        DENOMINATOR: the two lengths, which divide the magnitude out so only the ANGLE
+        remains.
+        RANGE: -1 to 1. In practice, most embedding models produce values clustered in a
+        narrow positive band, which is why the absolute number is less informative than the
+        SPREAD between the top result and the rest.
+
+    EUCLIDEAN DISTANCE
+        The straight-line distance. Equivalent to cosine similarity for ranking IF vectors are
+        normalised - which is another reason to normalise.
+
+--- THE SEARCH ---
+
+    EXACT SEARCH
+        HOLDS: every vector.
+        DECIDES: correctness. Compares the query against all of them.
+        COSTS: linear in the number of items. Fine to about a hundred thousand.
+
+    APPROXIMATE INDEX (HNSW, IVF)
+        HOLDS: a navigable structure over the vectors.
+        DECIDES: the speed/accuracy trade, explicitly - you choose how approximate.
+        COSTS: build time and extra memory, in exchange for sub-linear search.
+
+--- WHAT SITS AROUND IT ---
+
+    THE ITEM IDENTIFIER AND METADATA
+        HOLD: what the vector actually points at, plus anything you need to filter by.
+        DECIDE: whether you can restrict the search before comparing - by date, permission,
+        product line. Filtering before search is what prevents the "right kind of document,
+        wrong segment" failure covered in the RAG sibling.
+
+    THE MODEL ITSELF
+        HOLDS: the learned mapping from item to vector.
+        DECIDES: what "similar" means in your system. Changing it invalidates every stored
+        vector, because the new vectors live in a different space.""",
+
+    """9. WORKED WITH REAL NUMBERS.
+
+THE ANALOGY, computed exactly. Using the two-dimensional toy space from section 2:
+
+    king  = [0.9, 0.9]
+    man   = [0.1, 0.9]
+    woman = [0.1, 0.1]
+    queen = [0.9, 0.1]
+
+    king - man   = [0.9 - 0.1,  0.9 - 0.9]  = [0.8, 0.0]
+                                                  ^
+                             royalty kept, gender cancelled to exactly zero
+
+    + woman      = [0.8 + 0.1,  0.0 + 0.1]  = [0.9, 0.1]  =  queen
+
+    The subtraction isolated the RELATIONSHIP - "royal, minus whatever gender was there" - and
+    the addition applied it to a different starting point. That is what makes the demonstration
+    interesting: relationships became directions.
+
+COSINE SIMILARITY, computed by hand:
+
+    Two related items:      a = [0.6, 0.8]     b = [0.8, 0.6]
+
+        dot product = 0.6 x 0.8 + 0.8 x 0.6 = 0.48 + 0.48 = 0.96
+        |a| = square root of (0.36 + 0.64) = square root of 1.00 = 1
+        |b| = square root of (0.64 + 0.36) = 1
+        cosine = 0.96 / (1 x 1) = 0.96          very similar
+
+    An unrelated item:      c = [-0.8, 0.6]
+
+        dot with a  = 0.6 x (-0.8) + 0.8 x 0.6 = -0.48 + 0.48 = 0.00
+        |c| = square root of (0.64 + 0.36) = 1
+        cosine = 0.00                            perpendicular - unrelated
+
+    Note both a and b and c have length exactly 1, which is what normalisation guarantees. With
+    all vectors normalised, the dot product IS the cosine, so the expensive division can be
+    skipped entirely - that is why systems normalise once at write time.
+
+RETRIEVAL BEATING KEYWORD SEARCH, concretely:
+
+    Query:            "how do I reset my password"
+    Document title:   "Credential recovery procedure"
+
+    KEYWORD OVERLAP: zero. Not one word in common. BM25 and every keyword search score this
+    at nothing, and it will never be returned.
+
+    EMBEDDING SIMILARITY: high - somewhere around 0.83 for a decent model - because the two
+    phrases occur in the same situations, so training placed them near each other.
+
+    THIS IS THE ENTIRE CASE FOR SEMANTIC SEARCH, and it is also the case for HYBRID search:
+    keyword matching is unbeatable on exact identifiers like error codes and product SKUs,
+    which embeddings blur together. Different failure modes, so running both and merging beats
+    either.
+
+STORAGE, so the cost is concrete:
+
+    1,000,000 documents, embedded at 1,536 dimensions, 4 bytes per number:
+
+        per vector:  1,536 x 4 = 6,144 bytes  ~ 6 KB
+        total:       1,000,000 x 6,144 = 6,144,000,000 bytes  ~ 6.1 GB
+
+    That fits on one machine, comfortably. Now change one parameter:
+
+        10,000,000 documents  ->  61 GB      needs a real vector database
+        3,072 dimensions      ->  12.3 GB    doubling dimensions doubles storage
+        quantised to 1 byte   ->  1.5 GB     a 4x saving for a small accuracy cost
+
+    THE INVERSION WORTH NOTICING: at a million documents this is a library you import. At ten
+    million with 3,072 dimensions it is 123 GB, which is an infrastructure decision with a
+    budget attached. Same technique, different engineering problem, and the switch happens
+    somewhere in between - which is why "how many items?" is the first question to ask about
+    any embedding proposal.
+
+WHY ONE-HOT CANNOT DO ANY OF THIS - the two-line proof again, with numbers:
+
+    vocabulary of 50,000.  cat is 1 in slot 8,412.  dog is 1 in slot 12,003.
+    democracy is 1 in slot 3,150.
+
+        cat . dog        = 0    (no overlapping non-zero position)
+        cat . democracy  = 0    (likewise)
+
+        cosine(cat, dog) = 0    cosine(cat, democracy) = 0
+
+    Identical. And the distance between any two distinct one-hot vectors is always the square
+    root of 2. There is no setting of anything that makes cat closer to dog - the
+    representation has no room for the idea.
+
+    A 300-dimension embedding replaces 50,000 numbers per word with 300, and gains the ability
+    to express the one thing that mattered.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - EMBEDDING: one model call per item, once, offline. Cheap per item and real at scale -
+    ten million documents is a pipeline with a budget, not a script.
+  - STORAGE: dimensions x 4 bytes per item. 6 KB per vector at 1,536 dimensions. Section 9
+    has the arithmetic and where it stops being free.
+  - SEARCH: linear in the number of items if exact, sub-linear with an approximate index. The
+    crossover is around a hundred thousand vectors.
+  - RE-EMBEDDING: changing the model means redoing everything. Vectors from two models are not
+    comparable, so a model upgrade is a corpus migration.
+
+WHERE EMBEDDINGS SIT AGAINST THE ALTERNATIVES - the comparison interviewers probe:
+
+    ONE-HOT:      sparse, enormous, and all pairs equidistant. No notion of similarity is
+                  representable at all.
+    TF-IDF/BM25:  sparse, weights informative words, still fundamentally word OVERLAP. Superb
+                  on exact identifiers, blind to paraphrase.
+    EMBEDDINGS:   dense, compact, similarity is geometric. Superb on paraphrase, blurry on
+                  exact identifiers.
+    HYBRID:       both, merged. Usually the right production answer, because the two fail in
+                  different places.
+
+THE INTERVIEW QUESTION, worked:
+
+    "You have 10 million products. Build 'customers also viewed'."
+
+The embedding answer: represent each product by a vector learned from CO-VIEW BEHAVIOUR -
+products viewed in the same session end up near each other, exactly as words in the same
+context do. Then "also viewed" is a nearest-neighbour query.
+
+Then the parts that show engineering judgement:
+
+  - 10 million vectors at 1,536 dimensions is 61 GB - so an approximate index is mandatory,
+    and this is an infrastructure decision.
+  - Precompute the top 50 neighbours per product offline and cache them; the query path then
+    does no vector search at all for the common case.
+  - COLD START: a brand-new product has no co-view history, so it has no useful vector. Fall
+    back to content-based embedding of its title and description until behaviour accumulates.
+    This is the follow-up they are waiting for.
+  - Filter by availability and region BEFORE the similarity search, not after.
+  - Refresh as behaviour drifts - what was viewed together last Christmas is not what is
+    viewed together now.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why cosine rather than Euclidean distance?" Cosine ignores magnitude and compares
+    direction, which is what you want when vector length reflects word frequency or document
+    size rather than meaning. With normalised vectors the two give identical rankings anyway.
+  - "What does a similarity of 0.8 mean?" On its own, very little - models differ in how
+    they spread their scores. Look at the gap between the top result and the tenth.
+  - "How do embeddings handle a word with two meanings?" word2vec cannot - one vector per word
+    is a compromise between the senses. Contextual embeddings from a transformer give a
+    different vector per occurrence, which is the main advance.
+  - "Can you interpret the dimensions?" No, not individually. Concepts are spread across many
+    dimensions, and no single one is "maleness" outside toy examples.
+
+THE #1 MISTAKE: using a general-purpose embedding model on specialised text without checking
+it knows the vocabulary. It fails precisely on the domain terms that distinguish your
+documents, while working fine on generic queries - so a casual evaluation shows everything
+healthy and production quietly does not work.
+
+RUNNER-UP: comparing vectors from two different models, which returns plausible numbers and is
+meaningless.
+
+TAKEAWAY: an embedding turns an item into a POSITION chosen so that things used in similar
+contexts sit close together - which converts "find me something similar" from a hard language
+problem into arithmetic on lists of numbers.""",
 ]
 
 

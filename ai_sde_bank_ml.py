@@ -1868,7 +1868,8 @@ dL_db = dL_dz                             # -0.5987
 # UPDATE (learning rate 0.1)
 w_new = w - 0.1 * dL_dw                   # [0.6197, -0.3204]
 b_new = b - 0.1 * dL_db                   # 0.1599
-# Check: the new forward pass gives a = 0.4741 - closer to the target of 1.
+# Check: the new forward pass gives z = 0.4382 and a = 0.6078 - closer to the
+# target of 1, and the loss falls from 0.9131 to 0.4979 in this single step.
 # Note dL_dz simplified to (a - y). That cancellation is exactly why sigmoid is
 # paired with cross-entropy rather than MSE.
 
@@ -1899,12 +1900,607 @@ def softmax_ce_grad(logits, y_onehot):
 '''),
           example="Gradient checking is the practical skill worth knowing: compare your analytic gradient to (loss(w+eps) - loss(w-eps)) / (2*eps) with eps around 1e-5. If they agree to about six decimal places your derivation is right. Every framework has this built in, and it is how you debug a hand-written layer.",
           examples=[
-              "The full single-neuron update, with every number. x = [2,3], w = [0.5,-0.5], b = 0.1, target y = 1, sigmoid activation, binary cross-entropy. FORWARD: z = 0.5*2 + (-0.5)*3 + 0.1 = -0.4; a = sigmoid(-0.4) = 0.4013; loss = -ln(0.4013) = 0.9130. BACKWARD: dL/da = -1/0.4013 = -2.4917; da/dz = a(1-a) = 0.2403; dL/dz = -0.5987, which equals (a - y) exactly. dL/dw = dL/dz * x = [-1.1974, -1.7961]; dL/db = -0.5987. UPDATE with lr = 0.1: w becomes [0.6197, -0.3204], b becomes 0.1599. CHECK: the new z is 0.6197*2 - 0.3204*3 + 0.1 = -0.1218, so a = 0.4696 - closer to 1 than 0.4013. The loss went down; the update was correct.",
-              "Why it is computed BACKWARD, which is the efficiency argument. A network with a million weights could be differentiated by perturbing each weight and re-running the forward pass - a million forward passes per training step, which is hopeless. Reverse-mode differentiation computes ALL million gradients in one backward pass costing about the same as one forward pass, because each layer's delta is reused for every weight in that layer. That factor of a million is the entire reason deep learning is feasible, and it is a much better answer to 'what is backprop?' than 'the chain rule'.",
-              "The chain rule as blame assignment, in words you can say aloud. 'The loss changed because the output changed. The output changed because the last layer's pre-activation changed. That changed because its weights and its inputs changed. Its inputs were the previous layer's outputs, so the previous layer is partly to blame too.' Each arrow in that sentence is one multiplication in the chain, and delta is literally 'how much of the blame lands on this layer's pre-activation'. Framing it as blame flowing backward is what makes the recursion memorable.",
-              "Vanishing gradients, quantified so the fix is obvious. Sigmoid's derivative peaks at 0.25 and is far smaller away from zero. Through 10 sigmoid layers the gradient reaching layer 1 is scaled by AT MOST 0.25^10 = 9.5e-7, and realistically far less - so the early layers receive essentially no learning signal and stay near their random initialisation. ReLU's derivative is exactly 1 for positive inputs, so 1^10 = 1: nothing shrinks. That single number is why networks went from about 5 layers to hundreds, and residual connections (which add an identity path with gradient 1) extend the same idea further.",
-              "Gradient checking, which is how you actually debug a hand-written layer. Compare your analytic gradient with the numerical one: (loss(w + eps) - loss(w - eps)) / (2 * eps) with eps around 1e-5. Use the CENTRAL difference, not the one-sided version, because its error is O(eps^2) rather than O(eps). They should agree to about six decimal places; a relative difference above 1e-4 means a real bug. This is slow (one pair of forward passes per weight) so you run it once on a tiny network with a handful of weights, not during training - but it will find a sign error or a transposed matrix in minutes.",
-              "Why training needs so much more memory than inference, which follows directly. The backward pass needs each layer's INPUT to compute that layer's weight gradient, so every intermediate activation from the forward pass must be kept alive until the backward pass consumes it. For a large model with a big batch, those activations dominate GPU memory - often more than the weights themselves. The standard mitigation, gradient checkpointing, stores only every k-th activation and RECOMPUTES the others during the backward pass: roughly 30% more compute for a large memory saving. Inference keeps nothing, which is why it fits in a fraction of the memory.",
+              r"""1. THE GOAL - working out who is to blame.
+
+A network makes a guess. The guess is wrong by some amount. Now you must decide, for every
+single weight in the network - possibly billions of them - HOW MUCH THIS PARTICULAR WEIGHT
+CONTRIBUTED TO THAT ERROR, and therefore which way and how far to move it.
+
+That is the only job backpropagation does. It is not the learning rule - the sibling entry
+"HOW GRADIENT DESCENT WORKS" owns the update step, w minus learning-rate times gradient. This
+page owns where the gradient COMES FROM.
+
+    forward:   inputs  ->  layer 1  ->  layer 2  ->  output  ->  loss
+    backward:  loss    ->  who caused this?  <-  <-  <-  <-  <-
+
+The name says it exactly: the error propagates BACKWARD through the layers, and each layer
+hands its share of the blame to the layer beneath it.
+
+And the mechanism is nothing more exotic than the CHAIN RULE from calculus:
+
+    the loss changed because the output changed
+    the output changed because the pre-activation changed
+    the pre-activation changed because this weight changed
+
+Multiply those three sensitivities together and you have how much the loss changes with that
+weight. That is the whole idea. The cleverness is not in the calculus, it is in the ORDER:
+computing backward lets every intermediate result be reused, which is why training a
+billion-parameter network costs about the same as two forward passes rather than a billion of
+them. Section 5 proves that.""",
+              r"""2. THE INTUITION - blame flowing backward through a chain.
+
+Take the smallest possible network - one neuron, two inputs - and follow the chain both ways.
+
+    FORWARD:
+
+        x1 = 2.0 --\
+                    w1 = 0.5
+                       \
+                        (+) --> z = -0.4 --> [sigmoid] --> a = 0.4013 --> loss = 0.913
+                       /                                     (target y = 1)
+                    w2 = -0.5
+        x2 = 3.0 --/
+                          bias b = 0.1
+
+    BACKWARD - the same path, in reverse, carrying blame:
+
+        how much does the loss change if a changes?         dL/da = -2.4917
+        how much does a change if z changes?                da/dz =  0.2403
+        so how much does the loss change if z changes?      dL/dz = -0.5987
+        how much does z change if w1 changes?               dz/dw1 = x1 = 2.0
+        so how much does the loss change if w1 changes?     dL/dw1 = -1.1974
+
+Each arrow backward is a MULTIPLICATION by one local sensitivity. Nothing more.
+
+The quantity that matters most is the middle one, dL/dz - the blame attached to a neuron's
+PRE-ACTIVATION. It has a name, DELTA, and once you have it for a layer, the weight gradients
+are almost free:
+
+    gradient for a weight  =  (the input that weight multiplied)  x  (this neuron's delta)
+
+Which makes intuitive sense: a weight is more to blame when the input it was multiplying was
+large. A weight sitting on an input of 0 could not have affected anything, and indeed its
+gradient is 0.
+
+    dL/dw1 = x1 x delta = 2.0 x (-0.5987) = -1.1974
+    dL/dw2 = x2 x delta = 3.0 x (-0.5987) = -1.7961
+
+Note w2's gradient is larger, purely because x2 was larger. Same delta, different share of the
+blame.
+
+For a deeper network, delta for one layer is computed from the delta of the layer ABOVE it -
+blame flows down through the weights and then through the activation's slope. That recursion
+is the whole algorithm, and section 8 writes it out.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+FORWARD PASS. Running inputs through the network to produce an output and a loss.
+
+BACKWARD PASS. Working out every weight's gradient, starting from the loss and moving toward
+the inputs.
+
+PRE-ACTIVATION (z). The weighted sum plus bias, BEFORE the activation function.
+
+ACTIVATION (a). The value after the activation function. This is what the next layer receives.
+
+ACTIVATION FUNCTION. The non-linear bend applied to z - sigmoid, ReLU, tanh. Without one, a
+stack of layers collapses into a single linear layer, so it is what makes depth meaningful.
+
+SIGMOID. 1 / (1 + e-to-the-minus-z). Squashes anything into (0, 1). Its derivative is
+a x (1 - a), which peaks at 0.25 - a number that turns out to matter enormously (section 5).
+
+ReLU. max(0, z). Its derivative is exactly 1 for positive z and 0 otherwise. That exact 1 is
+the single biggest reason deep networks became trainable.
+
+LOSS. One number saying how wrong the output is.
+
+GRADIENT. The derivative of the loss with respect to something. "How much would the loss
+change if I nudged this?"
+
+CHAIN RULE. If a depends on b and b depends on c, then how a changes with c is (how a changes
+with b) times (how b changes with c). Backprop is this, applied repeatedly.
+
+DELTA. The gradient of the loss with respect to a layer's PRE-ACTIVATION. The central quantity
+- once you have it, weight gradients are one multiplication away.
+
+PARTIAL DERIVATIVE, written dL/dw. How much L changes per unit change in w, holding everything
+else fixed.
+
+CACHED ACTIVATIONS. The intermediate values the forward pass stores because the backward pass
+needs them. This is why TRAINING uses far more memory than INFERENCE, and section 10 quantifies
+it.
+
+VANISHING GRADIENT. Gradients shrinking toward zero as they travel back through many layers,
+so early layers stop learning. Section 5 puts a number on it.
+
+EXPLODING GRADIENT. The opposite - gradients growing until the weights become NaN. Fixed by
+gradient clipping.
+
+GRADIENT CHECKING. Verifying a hand-written gradient against a numerical estimate. How you
+debug a custom layer.
+
+AUTOMATIC DIFFERENTIATION (AUTOGRAD). What PyTorch and TensorFlow do: build a graph of
+operations during the forward pass and apply these rules automatically. You will rarely write
+backprop by hand - but you will be asked to explain it.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE THAT KILLED DEEP LEARNING FOR TWENTY YEARS: VANISHING GRADIENTS.
+
+Sigmoid's derivative is a(1 - a), which is at most 0.25 - and that maximum only occurs at
+a = 0.5, right at the middle. Away from there it is far smaller.
+
+Now stack ten sigmoid layers. The gradient reaching layer 1 has been multiplied by that
+derivative once per layer:
+
+    0.25 to the power of 10  =  0.00000095  -  about one in a million
+
+    even in the BEST case, at every layer's most favourable point
+
+So the first layer receives a gradient a million times weaker than the last. It effectively
+does not learn at all, while the top layers train normally. The network appears to be training
+- the loss goes down - and its early layers, which are supposed to learn the basic features
+everything else builds on, are frozen.
+
+THE FIX, and why it worked: ReLU's derivative is EXACTLY 1 for positive inputs. Ten layers
+multiply by 1 ten times, which is 1. Nothing shrinks. That single change - along with residual
+connections, which give gradients a path that skips layers entirely - is the main reason
+networks went from about 5 layers to hundreds.
+
+TRAP 2: pairing sigmoid with squared error. The gradient dL/dz then carries an extra factor of
+the sigmoid's slope, which collapses toward zero exactly when the model is most confidently
+wrong. With cross-entropy that factor CANCELS and dL/dz becomes simply (a - y). Section 9 shows
+the cancellation happening in the trace. The logistic regression sibling quantifies it - about
+203 times weaker at z = -6.
+
+TRAP 3: forgetting that the forward pass must CACHE its activations. The weight gradient for a
+layer is "that layer's INPUT times its delta" - so you need the input, which is the previous
+layer's activation, computed during the forward pass. That is why training a model needs far
+more memory than running it, and why batch size is limited by memory rather than by principle.
+
+TRAP 4: initialising all weights to zero. Every neuron in a layer then computes the same thing,
+receives the same gradient, and updates identically - forever. They stay identical, so the layer
+has the effective capacity of one neuron. Small random values break the symmetry. (Note this is
+the opposite of linear and logistic regression, where zero initialisation is perfectly safe
+because there is no symmetry to break.)
+
+TRAP 5: thinking backprop is the learning algorithm. It computes gradients. Gradient descent
+uses them. Adam, momentum and RMSProp are all variations on the USE, not the computation - so
+"we use Adam instead of backprop" is a confusion worth avoiding out loud.
+
+TRAP 6: not gradient-checking a hand-written layer. The numerical estimate
+(loss(w + eps) - loss(w - eps)) / (2 x eps) should match your analytic gradient to about seven
+digits. If it does not, your derivative is wrong, and a wrong gradient does not crash - it
+trains slowly to a worse answer, which is far harder to notice.""",
+              r"""5. THE NAIVE METHOD FIRST, THEN THE REAL ONE - AND WHY BACKWARD.
+
+THE NAIVE VERSION - NUMERICAL DIFFERENTIATION. Nudge each weight and see what happens.
+
+    for each weight:
+        add a tiny amount to it
+        run the whole network forward and record the loss
+        subtract the tiny amount instead, run forward again
+        the gradient is (loss_up - loss_down) / (2 x tiny amount)
+
+This is completely correct, and it is what gradient checking uses. It is also unusable for
+training, and the arithmetic shows why:
+
+    a network with 1,000,000 weights
+    each gradient needs 2 forward passes
+    -> 2,000,000 forward passes to compute ONE gradient step
+
+    if a forward pass takes 10 milliseconds, that is 20,000 seconds - about 5.5 HOURS
+    for a single update. And you need thousands of updates.
+
+BACKPROPAGATION COMPUTES ALL 1,000,000 GRADIENTS IN ROUGHLY ONE FORWARD PASS'S WORTH OF EXTRA
+WORK - typically about twice the cost of a forward pass. Call it 30 milliseconds instead of
+20,000 seconds, a speed-up of around 600,000 times.
+
+WHY GOING BACKWARD IS WHAT BUYS THAT - the argument, because this is the actual content of the
+algorithm:
+
+Consider a chain: the loss depends on layer 3, which depends on layer 2, which depends on layer
+1. To get the gradient for a weight in layer 1, you need the product of every sensitivity along
+the path from that weight up to the loss.
+
+    GOING FORWARD, you would start at each weight and multiply your way up to the loss. Every
+    weight's path passes through layers 2 and 3, so you recompute those same upper sensitivities
+    once per weight. A million weights means a million recomputations of the same numbers.
+
+    GOING BACKWARD, you start at the loss and compute the sensitivity of the loss to layer 3
+    ONCE. Then to layer 2 once. Then to layer 1 once. Every weight in layer 1 reuses the same
+    already-computed chain, and only needs its own final multiplication by its input.
+
+THE SHARED PART IS COMPUTED ONCE INSTEAD OF ONCE PER WEIGHT. That is the whole efficiency
+argument, and it is why the algorithm has "back" in its name - the direction is not
+incidental, it is the entire point.
+
+THE RECURSION THAT MAKES IT WORK. Define delta for a layer as the gradient of the loss with
+respect to that layer's pre-activation. Then:
+
+    delta for the last layer  =  comes directly from the loss function
+    delta for layer L         =  (the layer above's delta, sent back through the weights)
+                                 times (this layer's activation slope)
+
+    and once you have delta:      weight gradient  =  this layer's INPUT  x  delta
+                                  bias gradient    =  delta
+
+Two multiplications per layer, reusing everything from the layer above.
+
+THE UPGRADE THAT MADE IT PRACTICAL AT DEPTH: choosing activations whose slope is 1 rather than
+at most 0.25 (ReLU), and adding residual connections so gradients have a direct path that skips
+layers entirely. Both attack the multiplication chain from trap 1.""",
+              r"""6. HOW TO DO IT - the steps, in plain English.
+
+The one sentence that holds the whole idea: RUN FORWARD KEEPING EVERY INTERMEDIATE VALUE, THEN
+WALK BACKWARD MULTIPLYING BY ONE LOCAL SENSITIVITY PER STEP, SO THAT EACH LAYER'S BLAME IS
+COMPUTED ONCE AND REUSED BY EVERY WEIGHT BENEATH IT.
+
+THE LOOP HERE IS THE WALK BACKWARD THROUGH THE LAYERS, and it is worth being precise:
+
+  - It is not recursion in the call-stack sense, though it is often written that way. It is a
+    fixed walk from the last layer to the first.
+  - Each step consumes the delta from the layer ABOVE and produces the delta for the layer
+    BELOW. Nothing else crosses between steps.
+  - WHAT MAKES IT STOP: reaching the input layer. There is nothing below it to blame, and the
+    inputs are not parameters. The trip count is exactly the number of layers - known in
+    advance, so termination is guaranteed.
+  - WHAT IT NEEDS FROM THE FORWARD PASS: every layer's input. If those were not cached, the
+    weight gradients cannot be formed and you would have to recompute the forward pass, which
+    is exactly the trade some memory-saving techniques make deliberately.
+
+THE STEPS:
+
+  1. FORWARD PASS. For each layer in order: compute the weighted sum plus bias, apply the
+     activation, pass it on. CACHE each layer's input and pre-activation as you go - the
+     backward pass needs them.
+
+  2. COMPUTE THE LOSS from the final output and the target.
+
+  3. START THE BACKWARD PASS at the output: work out how much the loss changes with the final
+     pre-activation. For the standard pairings - sigmoid with binary cross-entropy, softmax with
+     cross-entropy - this collapses to simply (prediction minus target), which is why those
+     pairings are used everywhere.
+
+  4. FOR EACH LAYER, FROM LAST TO FIRST:
+
+     a. FORM THE WEIGHT GRADIENTS: this layer's cached INPUT times this layer's delta. That is
+        the whole formula, and it says a weight is blamed in proportion to the input it was
+        multiplying.
+
+     b. FORM THE BIAS GRADIENT: just the delta, since the bias multiplies a constant 1.
+
+     c. SEND THE BLAME DOWN: multiply the delta by this layer's weights, which distributes the
+        blame across the neurons below in proportion to how strongly each was connected.
+
+     d. PASS IT THROUGH THE ACTIVATION: multiply by the slope of the layer below's activation
+        at its cached pre-activation. This is where vanishing gradients happen - if that slope
+        is small, everything below shrinks.
+
+     e. That product is the layer below's delta. Continue.
+
+  5. HAND EVERY GRADIENT TO THE OPTIMISER, which does the actual updating - the gradient
+     descent sibling.
+
+  6. IF YOU WROTE THE LAYER BY HAND, GRADIENT-CHECK IT before trusting it. A wrong gradient does
+     not crash; it silently trains to a worse answer.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A parcel arrives at a customer three days late. A manager wants to know who needs to change
+what.
+
+The naive way: go to every single person in the chain - all thousand of them - and for each,
+ask "if you had worked slightly faster, how much earlier would the parcel have arrived?" To
+answer even one of those, you would have to re-run the entire delivery in your head from that
+person all the way to the customer. A thousand people, a thousand full re-runs. It would take
+longer than the delivery did.
+
+The clever way runs backward, once.
+
+Start at the customer. Three days late. Ask the final courier: how much of this was yours? She
+says one day was hers - and, crucially, she can also say how much of the remaining two days
+came from each of the three depots that fed her, in proportion to how much she depended on
+each.
+
+So each depot receives its share of the blame. Now each depot does the same thing for its own
+suppliers, dividing its share among them.
+
+Each person in the chain is asked exactly ONCE. And here is the saving: when a depot works out
+its own share, it does not need to re-run the rest of the journey to the customer, because the
+courier already worked that part out and handed the number down. The expensive shared part of
+the calculation was done once, at the top, and everybody below inherits it.
+
+Two details that come straight from the story.
+
+To answer "how much was yours", each person has to remember what they were handed and when.
+If nobody kept records of the delivery, you would have to re-run it just to ask. That is why
+training keeps every intermediate value in memory, and why it needs so much more memory than
+simply making a delivery.
+
+And there is a way this goes wrong. Suppose every person in the chain, when passing blame
+down, keeps three-quarters of it and passes only a quarter. After ten links, the person at the
+very start receives about a millionth of the original blame - effectively nothing. They never
+learn they were part of the problem, and they keep doing exactly what they were doing. Fixing
+that meant finding links that pass blame down undiminished.""",
+              r"""8. THE CODE, LINE BY LINE, in the real variable names.
+
+    x = np.array([2.0, 3.0]); w = np.array([0.5, -0.5]); b = 0.1; y = 1.0
+
+Two inputs, two weights, one bias, and a target of 1. Small enough that every number below can
+be checked by hand, which is the point of the example.
+
+    # FORWARD
+    z = w @ x + b                      # 0.5*2 + (-0.5)*3 + 0.1 = -0.4
+
+The PRE-ACTIVATION: the dot product of weights and inputs, plus the bias. z can be any number
+- it is not yet a probability. This value must be REMEMBERED, because the backward pass needs
+it.
+
+    a = 1 / (1 + np.exp(-z))           # sigmoid(-0.4) = 0.4013
+
+The ACTIVATION: squash z into (0, 1). The neuron's output. Also cached.
+
+    loss = -(y * np.log(a) + (1 - y) * np.log(1 - a))     # 0.9130
+
+Binary cross-entropy. With y = 1 the second term vanishes, so the loss is just -log(a). The
+model said 0.4013 for something that was 1, and is charged 0.913 for it.
+
+    # BACKWARD - three chain-rule links
+    dL_da = -(y / a) + (1 - y) / (1 - a)      # dLoss/da   = -2.4917
+
+LINK ONE: how much does the loss change if the OUTPUT changes? Differentiating -log(a) gives
+-1/a, which at a = 0.4013 is -2.4917. Negative, meaning increasing a would DECREASE the loss -
+correct, since the target is 1 and we are below it.
+
+    da_dz = a * (1 - a)                       # dsigmoid   =  0.2403
+
+LINK TWO: how much does the output change if the pre-activation changes? The sigmoid's
+derivative has the tidy form a(1-a) - one reason sigmoid was popular. Note the value: 0.2403,
+already below the theoretical maximum of 0.25, and this is a SINGLE layer. Trap 1 is this
+number raised to the power of the depth.
+
+    dL_dz = dL_da * da_dz                     # = a - y    = -0.5987  <- the shortcut
+
+LINK THREE, and the most important line here. Multiply the two sensitivities - the chain rule -
+and you get the DELTA: how much the loss changes with the pre-activation.
+
+But look at the comment: the answer equals (a - y). That is not a coincidence, it is an exact
+cancellation. The -1/a from the logarithm cancels against the a(1-a) from the sigmoid, leaving
+(a - y). Verified in section 9.
+
+THAT CANCELLATION IS WHY SIGMOID IS PAIRED WITH CROSS-ENTROPY. With squared error the a(1-a)
+factor survives, and it collapses toward zero exactly when the model is most confidently wrong.
+The same cancellation happens for softmax with cross-entropy, which is why that pairing is
+universal.
+
+    dL_dw = dL_dz * x                         # [-1.1974, -1.7961]
+
+THE WEIGHT GRADIENTS: delta times the INPUT. One line, and it carries the whole idea of blame
+assignment - w2's gradient is larger only because x2 (3.0) was larger than x1 (2.0). A weight
+that multiplied a bigger input had more influence, so it gets more blame.
+
+    dL_db = dL_dz                             # -0.5987
+
+The bias multiplies a constant 1, so its gradient IS the delta. No input factor.
+
+    w_new = w - 0.1 * dL_dw                   # [0.6197, -0.3204]
+    b_new = b - 0.1 * dL_db                   # 0.1599
+
+The update - and note this is the gradient descent sibling's rule, not backprop's. Backprop's
+job finished when the gradients were computed.
+
+    def backward_layer(dz_next, W_next, z, activation_grad, a_prev):
+        da   = dz_next @ W_next.T              # blame flows back through the weights
+
+THE RECURSION, one step. dz_next is the delta of the layer ABOVE. Multiplying by that layer's
+weights transposed distributes its blame down to this layer's outputs, in proportion to how
+strongly each connection carried influence upward.
+
+        dz   = da * activation_grad(z)         # through the activation
+
+Then through this layer's activation slope, evaluated at the CACHED pre-activation z. This
+single multiplication is where vanishing gradients occur - if activation_grad returns 0.25
+here, everything below is quartered.
+
+        dW   = a_prev.T @ dz                   # INPUT to this layer times its delta
+
+The same rule as the single neuron: input times delta. a_prev is the cached activation of the
+layer below, which is this layer's input - the reason the forward pass had to store it.
+
+        db   = dz.sum(axis=0)
+
+Summed over the batch, because every example in the batch contributes to the same bias.
+
+    relu_grad = lambda z: (z > 0).astype(float)
+
+ReLU's derivative: exactly 1 where z is positive, 0 elsewhere. That EXACT 1 is the fix for trap
+1 - ten layers multiply by 1 ten times and nothing shrinks.
+
+    def softmax_ce_grad(logits, y_onehot):
+        e = np.exp(logits - logits.max(axis=1, keepdims=True))   # stable softmax
+
+Subtracting the row maximum before exponentiating prevents overflow and provably does not change
+the result - the common factor cancels top and bottom. The self-attention sibling proves it.
+
+        return (probs - y_onehot) / len(logits)      # that is the WHOLE gradient
+
+The multi-class version of the same cancellation: predictions minus one-hot targets, averaged
+over the batch. No activation-derivative factor anywhere. This is why softmax and cross-entropy
+are always used together.
+
+    0.25 ** 10
+
+Vanishing gradients as a single expression: 9.5e-7. Section 9.""",
+              r"""9. TRACED WITH REAL NUMBERS.
+
+THE COMPLETE SINGLE-NEURON UPDATE.
+
+    SETUP:  x = [2.0, 3.0],  w = [0.5, -0.5],  b = 0.1,  target y = 1
+            sigmoid activation, binary cross-entropy loss, learning rate 0.1
+
+    FORWARD:
+
+        z = 0.5 x 2.0 + (-0.5) x 3.0 + 0.1
+          = 1.0 - 1.5 + 0.1
+          = -0.4
+
+        a = 1 / (1 + e-to-the-0.4) = 1 / (1 + 1.49182) = 1 / 2.49182 = 0.401312
+
+        loss = -[1 x ln(0.401312) + 0 x ln(0.598688)]
+             = -ln(0.401312)
+             = 0.913081
+
+    BACKWARD:
+
+        dL/da = -(y/a) = -(1 / 0.401312) = -2.491825
+
+        da/dz = a(1 - a) = 0.401312 x 0.598688 = 0.240262
+
+        dL/dz = -2.491825 x 0.240262 = -0.598690
+
+    THE CANCELLATION, CHECKED:
+
+        a - y = 0.401312 - 1 = -0.598688
+
+        The chain-rule product gave -0.598690; the shortcut gives -0.598688. Identical to five
+        decimal places, the difference being rounding in the intermediate values. The -1/a and
+        the a(1-a) cancelled exactly, as they must.
+
+    WEIGHT GRADIENTS:
+
+        dL/dw1 = dL/dz x x1 = -0.598688 x 2.0 = -1.197376
+        dL/dw2 = dL/dz x x2 = -0.598688 x 3.0 = -1.796064
+        dL/db  = dL/dz                        = -0.598688
+
+        w2's gradient is exactly 1.5 times w1's, because x2 is 1.5 times x1. Same delta,
+        blame split by input size.
+
+    UPDATE, learning rate 0.1:
+
+        w1_new = 0.5  - 0.1 x (-1.197376) = 0.5  + 0.119738 = 0.619738
+        w2_new = -0.5 - 0.1 x (-1.796064) = -0.5 + 0.179606 = -0.320394
+        b_new  = 0.1  - 0.1 x (-0.598688) = 0.1  + 0.059869 = 0.159869
+
+    DID IT HELP? Run the forward pass again with the new parameters:
+
+        z_new = 0.619738 x 2.0 + (-0.320394) x 3.0 + 0.159869
+              = 1.239476 - 0.961182 + 0.159869
+              = 0.438163
+
+        a_new = 1 / (1 + e-to-the-minus-0.438163) = 1 / (1 + 0.645244) = 0.607813
+
+        loss_new = -ln(0.607813) = 0.497948
+
+    The output moved from 0.4013 to 0.6078 - toward the target of 1 - and the loss fell from
+    0.9131 to 0.4979, roughly halving in a single step. (Note the pre-activation crossed zero,
+    from -0.4 to +0.438, so this one step flipped the prediction from "class 0" to "class 1".)
+
+VANISHING GRADIENTS, QUANTIFIED - why depth was impossible for so long:
+
+    sigmoid's derivative a(1-a), at its very best, is 0.25 (at a = 0.5). Through a stack:
+
+        1 layer:    0.25                       gradient reduced 4x
+        2 layers:   0.0625                     16x
+        5 layers:   0.000977                   about 1,000x
+        10 layers:  0.00000095                 about 1,000,000x
+        20 layers:  0.00000000000091           about a trillion x
+
+    And that is the BEST case. In the trace above the derivative was 0.2403, already below the
+    maximum, and a neuron sitting at a = 0.9 has a derivative of 0.09 - which through ten layers
+    gives 3.5e-11.
+
+    THE FIX, in the same units:
+
+        ReLU's derivative is exactly 1 for positive inputs.
+
+        1 layer:    1
+        10 layers:  1
+        100 layers: 1
+
+    NOTHING SHRINKS. That is the entire reason the field moved from sigmoid to ReLU, and it is
+    a one-line comparison worth being able to produce.
+
+THE EFFICIENCY ARGUMENT, in the same style:
+
+    a network with 1,000,000 weights, forward pass 10 milliseconds
+
+        NUMERICAL:  2 forward passes per weight
+                    = 2,000,000 passes x 10 ms = 20,000 seconds = about 5.5 HOURS per update
+
+        BACKPROP:   about 2 forward passes TOTAL
+                    = roughly 30 ms per update
+
+        Ratio: about 600,000 times faster - and the gap widens with every weight you add,
+        because numerical differentiation scales with the parameter count while backprop does
+        not.
+
+GRADIENT CHECKING, the numbers to expect:
+
+    numerical estimate = (loss(w + 1e-5) - loss(w - 1e-5)) / (2 x 1e-5)
+
+    Compare with the analytic gradient using RELATIVE error:
+
+        |analytic - numerical| / (|analytic| + |numerical|)
+
+        below 1e-7   ->  correct
+        around 1e-5  ->  suspicious, possibly a subtle bug
+        above 1e-3   ->  your derivative is wrong
+
+    Use it on a tiny network only - it costs two forward passes per weight, which is exactly
+    what makes it unusable for training and perfectly fine for debugging.""",
+              r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - TIME: the backward pass is roughly twice the forward pass, so a training step is about
+    three times an inference step. Crucially this is INDEPENDENT of the parameter count in the
+    sense that matters - it does not scale with the number of weights the way numerical
+    differentiation does.
+  - MEMORY: this is the real cost, and it follows directly from the algorithm. The weight
+    gradient for a layer is "that layer's INPUT times its delta", so every layer's input must
+    be kept alive from the forward pass until the backward pass reaches it. Training therefore
+    holds activations for the entire depth, for every example in the batch.
+
+    THIS IS WHY TRAINING NEEDS FAR MORE MEMORY THAN INFERENCE, and why batch size is capped by
+    memory rather than by any principle. Inference can discard each layer's output as soon as
+    the next layer has consumed it; training cannot.
+
+  - GRADIENT CHECKPOINTING is the standard trade: cache only some layers' activations and
+    recompute the rest during the backward pass. Roughly 30% more time for a large memory
+    saving - and knowing this trade exists is a good signal in an interview.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why is it computed backward rather than forward?" Because the sensitivities near the output
+    are shared by every weight below them. Backward computes each shared piece once; forward
+    would recompute it once per weight. Section 5 has the 600,000x arithmetic.
+  - "What causes vanishing gradients and how do you fix them?" Multiplying by activation slopes
+    at every layer. Sigmoid's peaks at 0.25, so ten layers give 0.25^10, about one in a million.
+    Fix with ReLU (slope exactly 1), residual connections (a path that skips layers entirely),
+    and normalisation layers.
+  - "Why does training use more memory than inference?" Cached activations, needed because each
+    weight gradient is input times delta.
+  - "Why softmax with cross-entropy?" The gradient collapses to (predictions minus one-hot),
+    with no activation-derivative factor to vanish. The same cancellation as sigmoid with binary
+    cross-entropy, demonstrated in section 9.
+  - "How would you debug a custom layer?" Gradient checking against the numerical estimate, with
+    relative error below 1e-7.
+  - "Is backprop how the brain learns?" No, and it is worth saying so plainly - it requires
+    symmetric weights for the backward path and a global error signal, neither of which biology
+    appears to have. It is an efficient algorithm, not a model of neuroscience.
+
+WHERE THIS SITS: backprop COMPUTES the gradients; "HOW GRADIENT DESCENT WORKS" owns what is done
+with them, including learning rates and Adam. The logistic regression sibling owns why the
+sigmoid/cross-entropy pairing matters, quantified.
+
+THE #1 MISTAKE: confusing backpropagation with gradient descent, and saying things like "we use
+Adam rather than backprop". Backprop produces the gradients; Adam consumes them. They are
+different stages, and every optimiser in existence still needs backprop underneath.
+
+RUNNER-UP: initialising all weights to zero, which makes every neuron in a layer identical
+forever, since identical weights receive identical gradients and update identically.
+
+TAKEAWAY: backpropagation is the chain rule walked backward so that each layer's blame is
+computed once and reused by every weight beneath it - which turns a calculation that would take
+hours per step into one costing about two forward passes.""",
           ],
           pitfalls="Forgetting to cache forward activations, so the backward pass recomputes everything; applying the activation's derivative to the post-activation value instead of the pre-activation z; averaging over the batch in one place and not another, which silently scales your effective learning rate by the batch size; using MSE with a sigmoid output and then wondering why learning stalls when the model is confidently wrong.",
           followups="'Why does training use so much more memory than inference?' Every intermediate activation is retained for the backward pass; gradient checkpointing trades compute to recompute them instead. 'What is automatic differentiation?' The generalisation frameworks implement - build a graph of primitive operations during the forward pass and apply the chain rule mechanically in reverse, so nobody derives gradients by hand any more."),
