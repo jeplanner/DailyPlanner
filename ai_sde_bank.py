@@ -10741,73 +10741,556 @@ between them; the costs of FP and FN decide where to stand.
 """.strip("\n")
 
 _EXAMPLES_ML["Precision vs Recall (and the 95%-accuracy trap)"] = [
-    """The textbook confusion matrix, computed end to end.
-Disease screening, 10,000 patients, 100 actually sick. Model flags 180:
-  TP = 90, FP = 90, FN = 10, TN = 9,810
-  precision = 90/180 = 0.50   half the alarms are false
-  recall    = 90/100 = 0.90   nine out of ten sick people caught
-  accuracy  = 9900/10000 = 0.99 - and predicting 'healthy' for everyone scores
-              0.99 too, while catching nobody. The two models are equally
-              'accurate' and wildly different in value.
-For a screening test 0.50 precision is fine - flagged patients get a cheap
-confirmatory test - while the 10 missed patients are the real cost. Right metric,
-right decision.""",
+    """1. THE GOAL - two questions that sound alike and are not.
 
-    """A second case where the answer flips - same maths, opposite conclusion.
-Email spam filter, 10,000 emails, 2,000 spam. Aggressive model:
-  TP = 1,960, FP = 300, FN = 40  ->  precision 0.87, recall 0.98
-That looks great until you ask what the 300 FPs were: 300 real emails in the spam
-folder, and one of them was a job offer. Users forgive spam in the inbox; they
-never forgive losing real mail. Raising the threshold gives TP 1,500, FP 15 ->
-precision 0.99, recall 0.75. You now let 500 spam through and users are happier.
-Identical trade-off structure to the screening example, opposite optimum, purely
-because the cost of a false positive changed.""",
+A model says yes or no about each item. Two different questions can be asked about how
+well it did, and confusing them is one of the most common mistakes in applied machine
+learning:
 
-    """The edge case that exposes a broken metric.
-A model predicts the majority class for everything on a 99.9%/0.1% imbalance
-(rare-defect detection, 1 defect per 1000 parts).
-  accuracy = 0.999   -> looks near-perfect
-  precision = 0/0    -> undefined, it flagged nothing
-  recall = 0/1 = 0   -> caught nothing
-  F1 = 0
-This is why you always print the confusion matrix, never one number. Also note
-precision is undefined (not zero) when nothing is flagged - libraries silently
-return 0.0 with a warning, and teams have shipped models after mistaking that
-for a real score.""",
+    PRECISION:  "Of the ones I flagged, how many were actually right?"
+    RECALL:     "Of all the ones that were actually there, how many did I catch?"
 
-    """The case that breaks threshold-tuning done naively.
-A team tunes the threshold to maximise F1 and lands at 0.42, giving precision
-0.71 / recall 0.68. In production, each false positive costs Rs 200 (manual
-review) and each false negative costs Rs 9,000 (chargeback). Plugging the real
-costs in, the loss-minimising threshold is 0.18, giving precision 0.31 / recall
-0.94 - a far worse F1 and roughly a third of the money lost. F1 implicitly
-assumes FP and FN cost the same; when they do not, optimise expected cost
-directly. Expected cost = FP_count*200 + FN_count*9000, evaluated at every
-threshold - it is five lines of code and it is the correct objective.""",
+Same model, same predictions, two completely different numbers - because they have
+DIFFERENT DENOMINATORS. Precision divides by what you FLAGGED. Recall divides by what
+actually EXISTS.
 
-    """A numeric look at precision@k, the version search and recsys actually use.
-A retrieval system returns 10 documents for a query; 4 are relevant, and there
-are 20 relevant documents in the whole corpus.
-  precision@10 = 4/10 = 0.40   - what the user sees on page one
-  recall@10    = 4/20 = 0.20   - how much of what exists you surfaced
-Users only look at the first page, so precision@10 is the metric that maps to
-satisfaction. But a RAG pipeline feeding an LLM cares about recall@10 - if the
-answer-bearing chunk is not in the 10 you retrieved, the LLM cannot possibly
-answer, no matter how good the model is. Same system, same numbers, different
-metric because the CONSUMER of the results changed from a human to a model.""",
+A concrete pair to hold onto:
 
-    """The interview version, with the follow-up they always ask.
-'Our fraud model is 99.5% accurate. Is it good?' Correct response: ask for the
-base rate. If 0.5% of transactions are fraud, a model that flags nothing is
-99.5% accurate, so the number carries zero information. Ask for the confusion
-matrix, then precision and recall, then the cost of each error type.
-The follow-up: 'We need to catch more fraud. What do you do?' Answer in order of
-cost: (1) lower the threshold - free, immediate, and quantify the precision you
-lose; (2) if the resulting false-alarm rate is unacceptable, that is a MODEL
-problem, not a threshold problem, so improve features/model; (3) consider a
-two-stage system - a high-recall cheap model to filter, then a high-precision
-expensive model or a human on the survivors. That staging is how real fraud
-systems get both, and saying it out loud is what lands the answer.""",
+    A spam filter that sends every email to the spam folder has RECALL 1.0 - it caught
+    every spam message. Its precision is terrible, and it is useless.
+
+    A spam filter that flags only the one message it is absolutely certain about has
+    PRECISION 1.0. Its recall is near zero, and it is also useless.
+
+So neither number alone tells you anything. You need both, and more importantly you need
+to know WHICH ONE MATTERS FOR THIS PROBLEM - which is a question about the cost of being
+wrong, not a question about mathematics.
+
+And the reason this topic is asked in almost every ML interview is the third number:
+
+    ACCURACY - "what fraction did I get right overall" - is the one everybody reaches
+    for first, and on imbalanced data it is actively misleading. Section 5 shows a model
+    with 99% accuracy that catches zero sick patients, and another model with EXACTLY
+    the same accuracy that catches 90 of them. Accuracy cannot tell them apart.""",
+
+    """2. THE INTUITION - one table, four boxes, two different denominators.
+
+Everything here comes from one 2x2 table called the CONFUSION MATRIX. Rows are what was
+true; columns are what the model said.
+
+                          MODEL SAYS YES        MODEL SAYS NO
+                       +---------------------+---------------------+
+    ACTUALLY YES       |  TP  true positive  |  FN false negative  |
+                       |  caught it          |  MISSED it          |
+                       +---------------------+---------------------+
+    ACTUALLY NO        |  FP false positive  |  TN true negative   |
+                       |  FALSE ALARM        |  correctly ignored  |
+                       +---------------------+---------------------+
+
+Now draw the two metrics as which boxes they divide by, because that is the entire
+difference:
+
+    PRECISION  =  TP / (TP + FP)      the MODEL SAYS YES column
+                                      "of my alarms, how many were real?"
+
+                       +---------------------+
+                       |  TP                 |
+                       +---------------------+
+                       |  FP                 |
+                       +---------------------+
+                        ^^^^^^^^^^ this column
+
+    RECALL     =  TP / (TP + FN)      the ACTUALLY YES row
+                                      "of the real cases, how many did I catch?"
+
+                       +---------------------+---------------------+
+                       |  TP                 |  FN                 |
+                       +---------------------+---------------------+
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this row
+
+Precision reads DOWN the column of things you flagged. Recall reads ACROSS the row of
+things that were really there. Once you can picture which direction each one reads, you
+will never mix them up again - and mixing them up is the single most common error on
+this topic.
+
+And ACCURACY = (TP + TN) / everything, which includes that enormous TN box. When one
+class dominates, TN is so large that it drowns out every other number. That is the whole
+of the 95%-accuracy trap.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIVE / NEGATIVE. The "positive" class is the thing you are trying to detect - spam,
+fraud, disease. It is not "good"; a positive cancer test is bad news. Getting this
+labelling backwards flips every metric, so state it explicitly before you compute
+anything.
+
+TRUE POSITIVE (TP). Model said yes, and it was yes. A caught fraud.
+
+FALSE POSITIVE (FP). Model said yes, but it was no. A FALSE ALARM. Also called a Type I
+error.
+
+FALSE NEGATIVE (FN). Model said no, but it was yes. A MISS. Also called a Type II error.
+
+TRUE NEGATIVE (TN). Model said no, and it was no. Correctly ignored.
+
+CONFUSION MATRIX. The 2x2 table of those four counts. Everything on this page is
+arithmetic on it.
+
+PRECISION = TP / (TP + FP). Of everything flagged, the fraction that was right. Falls
+when you raise false alarms.
+
+RECALL = TP / (TP + FN). Of everything actually positive, the fraction caught. Also
+called SENSITIVITY or TRUE POSITIVE RATE. Falls when you miss cases.
+
+ACCURACY = (TP + TN) / (TP + FP + FN + TN). Fraction correct overall. Dominated by TN
+when the negative class is large.
+
+F1 SCORE = 2 x (precision x recall) / (precision + recall). The HARMONIC MEAN of the
+two. Harmonic rather than ordinary mean because it punishes imbalance: with precision
+1.0 and recall 0.0, the ordinary average is a respectable 0.5 while F1 is 0. That is the
+behaviour you want from a summary number - a model that is useless on one axis should
+not score at the halfway mark.
+
+CLASS IMBALANCE. When one class massively outnumbers the other - 0.1% fraud, 1% disease.
+This is the normal case in real applications and the case where accuracy fails.
+
+BASE RATE. The fraction of items that are actually positive. The first thing to ask
+about any classification claim, and section 10 explains why.
+
+BASELINE. The score achieved by a trivial strategy, usually "always predict the majority
+class". Your model must beat this or it has learned nothing.
+
+PRECISION@k. In search and recommendations, precision measured on just the top k results
+- because a user only sees the first page.
+
+THRESHOLD. Most models output a probability, and you turn it into yes/no by comparing
+against a cutoff. Moving the cutoff trades precision against recall. This is the subject
+of the sibling entry on ROC and AUC; here just note that precision and recall are always
+quoted AT some threshold.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE 95%-ACCURACY TRAP, which is what this entry is named after.
+
+A model reports 95% accuracy and everybody is pleased. Then you ask what fraction of the
+data is positive, and it is 5%.
+
+The model that predicts "negative" for every single item - a model with no logic in it
+at all, one line of code - also scores 95%. Your model may have learned nothing
+whatsoever and it is indistinguishable by accuracy.
+
+ALWAYS COMPARE ACCURACY TO THE BASE RATE. If accuracy is not clearly above "always
+predict the majority class", the number is meaningless. This is the single most useful
+habit on this page.
+
+TRAP 2: not asking which error is more expensive. Precision and recall trade against
+each other, so you MUST decide which one matters, and that is a business question:
+
+    SPAM FILTER          -> favour PRECISION. A false positive means a real email is
+                            deleted, possibly a job offer. Spam in the inbox is mildly
+                            annoying. Missing spam is cheap; losing mail is expensive.
+
+    CANCER SCREENING     -> favour RECALL. A false positive means an unnecessary follow-
+                            up test, which is unpleasant and survivable. A false negative
+                            means an untreated cancer.
+
+    FRAUD DETECTION      -> usually RECALL, but see the cost arithmetic in the sibling
+                            ROC entry, because a flood of false alarms has a real cost
+                            too and the balance can flip.
+
+Same mathematics, opposite conclusions. Section 9 works both.
+
+TRAP 3: precision is UNDEFINED when nothing is flagged. If TP + FP = 0, precision is
+0/0. Most libraries report 0.0 and emit a warning. A model that flags nothing does not
+have perfect precision - it has no precision, and reporting 0 rather than 1 is the
+correct convention.
+
+TRAP 4: maximising F1 without asking whether balance is what you want. F1 treats
+precision and recall as equally important. That is an assumption about your business, not
+a mathematical fact, and it is usually wrong for exactly the applications where the
+metrics matter. Section 9 of the ROC entry shows the F1-optimal threshold and the
+cost-optimal threshold landing in different places on the same model.
+
+TRAP 5: quoting precision and recall without the threshold. They are not properties of
+the model, they are properties of the model AT A CUTOFF. "Recall is 0.9" is incomplete;
+"recall is 0.9 at threshold 0.3, where precision is 0.15" is a statement.
+
+TRAP 6: mixing up which is which under pressure. Use the picture from section 2:
+precision reads DOWN the flagged column, recall reads ACROSS the actual-positives row.""",
+
+    """5. THE NAIVE METRIC FIRST, THEN THE REAL ONES.
+
+THE NAIVE METRIC: accuracy. "What fraction did the model get right?"
+
+It is the first thing anyone reaches for, it is intuitive, and on BALANCED data it is
+perfectly reasonable. The problem is that real detection problems are almost never
+balanced - fraud, disease, defects and spam are all rare by definition, and rarity is
+exactly what makes them worth detecting.
+
+WHY IT FAILS - the demonstration, with the numbers, because this is the part to be able
+to reproduce on a whiteboard:
+
+    Disease screening. 10,000 patients. 100 are actually ill (a 1% base rate).
+
+    MODEL A - a real model. It flags 180 patients.
+        TP = 90    (of the 100 ill, it caught 90)
+        FN = 10    (it missed 10)
+        FP = 90    (90 healthy people were flagged)
+        TN = 9,810
+        check: 90 + 10 + 90 + 9,810 = 10,000
+
+        accuracy = (90 + 9,810) / 10,000 = 9,900 / 10,000 = 0.99
+
+    MODEL B - one line of code: "predict healthy for everyone".
+        TP = 0
+        FN = 100   (every ill patient missed)
+        FP = 0
+        TN = 9,900
+        check: 0 + 100 + 0 + 9,900 = 10,000
+
+        accuracy = (0 + 9,900) / 10,000 = 9,900 / 10,000 = 0.99
+
+TWO MODELS. IDENTICAL ACCURACY - 99% each. One catches 90 of the 100 ill patients; the
+other catches none of them and contains no logic at all.
+
+Accuracy cannot distinguish a useful medical screening tool from a piece of string. That
+is not a subtle statistical point; it is a complete failure of the metric on the exact
+problems where it is most often quoted.
+
+WHY IT HAPPENS, stated as the mechanism: accuracy's numerator includes TN, and when 99%
+of the data is negative, TN alone is 99% of the total. The interesting boxes - TP, FP,
+FN - are a rounding error inside it. The metric is measuring the wrong thing so
+overwhelmingly that the right thing is invisible.
+
+THE REAL METRICS - precision and recall, which EXCLUDE TN ENTIRELY.
+
+Look back at the formulas: TP/(TP+FP) and TP/(TP+FN). Neither contains TN. That is
+precisely why they survive imbalance - the enormous, uninformative box is simply not in
+either calculation.
+
+    MODEL A: precision = 90/180 = 0.50    recall = 90/100 = 0.90
+    MODEL B: precision = 0/0 (undefined, reported 0)   recall = 0/100 = 0.00
+
+Now the two models are trivially distinguishable, and the trade-off is visible: Model A
+catches 90% of illness at the cost of half its alarms being false.
+
+THE FURTHER UPGRADE - F1, when you need one number.
+
+F1 = 2PR/(P+R). For Model A: 2(0.50)(0.90)/(0.50+0.90) = 0.90/1.40 = 0.643.
+For Model B: precision 0, recall 0, F1 = 0.
+
+Why the HARMONIC mean rather than the ordinary one: a model with precision 1.0 and recall
+0.0 would score 0.5 on an ordinary average - respectable-looking for something useless.
+The harmonic mean gives 0. It refuses to let a good score on one axis rescue a zero on
+the other, which is the behaviour a summary metric needs.
+
+BUT USE F1 KNOWINGLY: it asserts that precision and recall matter equally. For cancer
+screening they do not, and optimising F1 there is optimising the wrong thing.""",
+
+    """6. HOW TO USE THESE - the procedure, step by step.
+
+The one sentence that holds the whole idea: BUILD THE FOUR-BOX TABLE, COMPARE ACCURACY
+AGAINST THE MAJORITY-CLASS BASELINE TO SEE WHETHER IT MEANS ANYTHING, THEN CHOOSE
+BETWEEN PRECISION AND RECALL BY ASKING WHICH MISTAKE COSTS MORE.
+
+THERE IS A LOOP HERE - threshold tuning - and it needs an explicit stopping rule:
+
+  - Each pass picks a threshold, computes the four boxes at that threshold, and scores
+    them against your chosen objective.
+  - WHAT MAKES IT STOP: the objective must be fixed BEFORE the sweep - either a cost
+    function in real units, or a constraint like "recall must be at least 0.90, maximise
+    precision subject to that". Then the loop stops at the best point under that
+    objective.
+  - Without an objective fixed in advance, the loop does not terminate: every threshold
+    looks better on one metric and worse on another, and you will keep moving it forever
+    while feeling productive.
+  - And tune on a VALIDATION set, not the test set, or the threshold is fitted to the
+    data you were going to use to report your honest number.
+
+THE STEPS:
+
+  1. STATE WHICH CLASS IS POSITIVE, out loud. "Positive means fraudulent." Everything
+     inverts if this is wrong, and it is silently wrong surprisingly often.
+
+  2. GET THE BASE RATE - what fraction of items are actually positive. Before looking at
+     any model output.
+
+  3. COMPUTE THE MAJORITY-CLASS BASELINE ACCURACY. If 1% are positive, the baseline is
+     99%. Write it down; it is what every accuracy claim must be compared against.
+
+  4. BUILD THE CONFUSION MATRIX at your current threshold. Four counts. Check they sum
+     to the total - this catches most arithmetic errors immediately.
+
+  5. COMPUTE PRECISION AND RECALL. Precision divides by the flagged column, recall by the
+     actual-positive row.
+
+  6. DECIDE WHICH ERROR IS MORE EXPENSIVE, in real terms - money, harm, time. Not in the
+     abstract. If you can put numbers on the two error types, do it, and then the
+     threshold choice becomes arithmetic rather than taste.
+
+  7. CHOOSE THE METRIC TO OPTIMISE. Favour precision when false alarms are expensive;
+     favour recall when misses are expensive; use F1 only if they genuinely trade evenly.
+     Better than all three: state a constraint and optimise subject to it.
+
+  8. SWEEP THE THRESHOLD on validation data and pick the operating point under that
+     objective.
+
+  9. REPORT PRECISION AND RECALL TOGETHER, WITH THE THRESHOLD. Never one alone, and never
+     without saying where the cutoff was.
+
+ 10. RE-CHECK WHEN THE BASE RATE MOVES. Precision depends on the base rate - the same
+     model on a population with half as much fraud has worse precision at the same
+     threshold, with no change to the model at all. This is why models degrade in
+     production without anyone touching them.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a security guard at a gate, watching for the few people who should not be let in.
+Say a thousand people come through a day and two of them are trouble.
+
+At the end of the day you could ask: how many decisions did you get right? The answer is
+about 998 out of 1000, which sounds excellent. But a guard who is fast asleep also gets
+998 out of 1000 right, because almost everybody is fine. That number cannot tell the two
+guards apart, and it is the number everybody quotes.
+
+The useful questions are different, and there are two of them.
+
+The first: of the people you stopped, how many were actually trouble? If the guard
+stopped forty people to catch the two, then thirty-eight innocent people were pulled
+aside. That is a real cost - their time, their irritation, and the staff who had to
+process them.
+
+The second: of the people who actually were trouble, how many did you stop? If the guard
+caught one of the two, half of them walked straight in.
+
+Those two questions pull against each other. Tell the guard to stop anyone suspicious and
+they will catch both troublemakers - and detain a hundred innocent people. Tell them to
+stop only when they are certain and they will detain almost nobody - and miss most of the
+trouble.
+
+There is no setting that is right in general. It depends entirely on what it costs to
+wrongly stop someone versus what it costs to let the wrong person through. A gate at a
+music venue and a gate at a nuclear facility should be tuned differently, and neither is
+being tuned wrongly.
+
+And notice the one thing you can never learn from the overall right-answer rate: it counts
+all those thousands of correct wave-throughs, which nobody cares about, and buries the
+handful of decisions that actually mattered.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each quantity taken apart - what it holds, what it
+decides, and what makes it move.
+
+--- THE FOUR COUNTS ---
+
+    TP (TRUE POSITIVE)
+        HOLDS: cases the model flagged that really were positive.
+        DECIDES: the numerator of BOTH precision and recall. It is the only box that
+        appears in both, which is why improving TP is the only unambiguously good move.
+
+    FP (FALSE POSITIVE) - the false alarm
+        HOLDS: cases flagged that were actually negative.
+        DECIDES: precision, and nothing else. Rises as you lower the threshold.
+        REAL-WORLD MEANING: a real email in the spam folder; an innocent transaction
+        blocked; a healthy patient sent for a biopsy.
+
+    FN (FALSE NEGATIVE) - the miss
+        HOLDS: real cases the model let through.
+        DECIDES: recall, and nothing else. Rises as you raise the threshold.
+        REAL-WORLD MEANING: the fraud that went through; the cancer not caught.
+
+    TN (TRUE NEGATIVE)
+        HOLDS: correctly ignored negatives.
+        DECIDES: accuracy - and it appears in NO other metric on this page. On
+        imbalanced data it is enormous, which is exactly why it corrupts accuracy and
+        why precision and recall, which exclude it, survive.
+
+--- THE METRICS, NUMERATOR AND DENOMINATOR ---
+
+    PRECISION = TP / (TP + FP)
+        NUMERATOR:   correct alarms.
+        DENOMINATOR: ALL alarms - the whole "model says yes" column.
+        READS: down the flagged column.
+        ANSWERS: "when this thing fires, should I believe it?"
+        MOVES WITH: the threshold (up as you raise it) AND with the base rate - the same
+        model scores worse precision on a population with fewer positives, without
+        changing at all.
+        UNDEFINED WHEN: nothing was flagged (0/0). Convention is to report 0.
+
+    RECALL = TP / (TP + FN)
+        NUMERATOR:   cases caught.
+        DENOMINATOR: ALL real cases - the whole "actually yes" row.
+        READS: across the actual-positives row.
+        ANSWERS: "what fraction of the real problem am I catching?"
+        MOVES WITH: the threshold (down as you raise it). Does NOT depend on the base
+        rate, which is a genuinely useful property - it is stable when the population
+        changes.
+
+    ACCURACY = (TP + TN) / (TP + FP + FN + TN)
+        NUMERATOR:   everything correct, including the huge TN box.
+        DENOMINATOR: everything.
+        ANSWERS: almost nothing useful when classes are imbalanced.
+        MUST BE COMPARED AGAINST: the majority-class baseline, every single time.
+
+    F1 = 2 x (precision x recall) / (precision + recall)
+        WHAT IT IS: the harmonic mean of the two.
+        DECIDES: a single ranking number when precision and recall matter equally.
+        WHY HARMONIC: it goes to 0 if either input is 0, so a perfect score on one axis
+        cannot disguise a zero on the other.
+        ASSUMES: equal weighting. That is a business claim. If it is false, F-beta lets
+        you weight recall beta times more than precision.
+
+--- WHAT IS NOT IN ANY OF THIS ---
+
+    The COST of each error type. None of these metrics knows that a missed cancer is
+    worse than an unnecessary scan. That information has to come from you, and section
+    9 of the ROC entry shows what happens when you supply it.""",
+
+    """9. WORKED WITH REAL NUMBERS - AND THE CASE WHERE THE ANSWER FLIPS.
+
+CASE 1 - DISEASE SCREENING. 10,000 patients, 100 actually ill. The model flags 180.
+
+                          MODEL SAYS ILL      MODEL SAYS HEALTHY
+                       +------------------+---------------------+
+    ACTUALLY ILL       |   TP = 90        |   FN = 10           |    100
+                       +------------------+---------------------+
+    ACTUALLY HEALTHY   |   FP = 90        |   TN = 9,810        |  9,900
+                       +------------------+---------------------+
+                             180                9,820             10,000
+
+    precision = 90 / 180   = 0.50      half of all alarms are false
+    recall    = 90 / 100   = 0.90      nine of every ten ill patients caught
+    accuracy  = 9,900 / 10,000 = 0.99
+    F1        = 2(0.50)(0.90) / (0.50 + 0.90) = 0.90 / 1.40 = 0.643
+
+    BASELINE CHECK: predicting "healthy" for everyone gives TP 0, FP 0, FN 100,
+    TN 9,900, and accuracy 9,900/10,000 = 0.99 - IDENTICAL. So the 0.99 tells you
+    nothing at all. The recall of 0.90 versus 0.00 is what distinguishes the models.
+
+    VERDICT: for screening, this is a good model. Fifty per cent of alarms being false
+    means 90 healthy people get a follow-up test they did not need - unpleasant,
+    survivable. Ten missed illnesses is the number that matters, and pushing recall
+    higher at the cost of more false alarms would be the right direction.
+
+CASE 2 - SPAM FILTERING. Same mathematics, and the verdict INVERTS.
+
+    10,000 emails, 2,000 of them spam.
+
+    AGGRESSIVE MODEL                       CONSERVATIVE MODEL
+       TP = 1,960   FN = 40                   TP = 1,600   FN = 400
+       FP = 300     TN = 7,700                FP = 20      TN = 7,980
+       check: 2,000 spam, 8,000 real         check: 2,000 spam, 8,000 real
+
+       precision = 1,960/2,260 = 0.867       precision = 1,600/1,620 = 0.988
+       recall    = 1,960/2,000 = 0.980       recall    = 1,600/2,000 = 0.800
+
+       300 REAL EMAILS IN THE SPAM FOLDER    20 REAL EMAILS IN THE SPAM FOLDER
+       40 spam in the inbox                  400 spam in the inbox
+
+    In case 1, the model with higher RECALL was clearly better. Here, the model with
+    higher recall is clearly WORSE. The conservative filter loses 20 real emails instead
+    of 300, and the price is 400 pieces of spam the user has to delete - which takes
+    about a minute.
+
+    Three hundred lost emails might include an interview invitation. Four hundred spam
+    messages in the inbox is a mild irritation.
+
+    SAME METRICS. SAME ARITHMETIC. OPPOSITE CONCLUSION - because the COST of a false
+    positive relative to a false negative is reversed between the two applications. That
+    reversal is the whole lesson, and it is why "which metric should I optimise?" can
+    never be answered without knowing what the errors cost.
+
+CASE 3 - THE EXTREME IMBALANCE THAT BREAKS EVERYTHING.
+
+    Rare-defect detection. 1,000,000 items, 1,000 defective (0.1%).
+    A model predicts "no defect" for every item.
+
+       TP = 0    FN = 1,000    FP = 0    TN = 999,000
+
+       accuracy  = 999,000 / 1,000,000 = 0.999    <- looks superb
+       recall    = 0 / 1,000 = 0.00               <- catches nothing
+       precision = 0 / 0     = undefined, reported as 0
+
+    A 99.9% accurate model that has never once detected a defect. If a report quotes
+    accuracy on a problem like this, the number is not merely weak evidence - it is
+    evidence of nothing.
+
+CASE 4 - PRECISION@k, the version search and recommendations actually use.
+
+    A retrieval system returns 10 documents for a query. 4 are relevant. There are 20
+    relevant documents in the whole corpus.
+
+       precision@10 = 4 / 10 = 0.40      of what I showed, 40% was useful
+       recall@10    = 4 / 20 = 0.20      of what exists, I surfaced 20%
+
+    Why precision@k rather than plain precision: the user sees one page. Whether the
+    system could eventually have found the other 16 documents is irrelevant to the
+    experience of looking at ten results, four of which are useful.""",
+
+    """10. THE LIMITS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHICH METRIC, AS A DECISION RULE:
+
+    FALSE ALARMS EXPENSIVE            -> favour PRECISION
+    (spam filtering, content removal, blocking transactions, anything that inconveniences
+     an innocent user)
+
+    MISSES EXPENSIVE                  -> favour RECALL
+    (disease screening, fraud, security, safety-critical detection)
+
+    GENUINELY BALANCED                -> F1, but check that "balanced" is true rather
+                                         than assumed
+
+    IMBALANCED DATA                   -> precision, recall, F1, and PR-AUC.
+                                         NEVER accuracy, and prefer the PR curve over the
+                                         ROC curve (see the sibling ROC entry for why the
+                                         false-positive rate hides the problem)
+
+    BETTER THAN ANY OF THESE, when you can get it: state a CONSTRAINT and optimise
+    subject to it. "Recall must be at least 0.95; among thresholds meeting that, take the
+    highest precision." This encodes the actual requirement instead of hoping a summary
+    statistic happens to represent it.
+
+THE INTERVIEW QUESTION AND THE FOLLOW-UP THAT SEPARATES CANDIDATES:
+
+    "Our fraud model is 99.5% accurate. Is it good?"
+
+The weak answer says yes, or asks about the training data. The strong answer asks ONE
+question first: WHAT IS THE BASE RATE?
+
+    If 0.5% of transactions are fraudulent, then "approve everything" scores 99.5% too,
+    and the model may have learned nothing. Ask for precision and recall at the operating
+    threshold, and the confusion matrix if they have it.
+
+    If fraud is 30% of transactions, 99.5% accuracy is genuinely remarkable and the next
+    question is whether the test set leaked.
+
+The same number means opposite things depending on a fact the question did not include -
+which is why asking for it is the answer.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Precision went down in production and we didn't change the model. Why?" The base
+    rate moved. Precision depends on it; recall does not. Fewer positives in the
+    population means a larger share of your alarms are false, with an identical model.
+  - "Can you have high precision and high recall?" Yes, if the model is genuinely good -
+    they only trade against each other along a fixed model's threshold curve. Improving
+    the model itself moves both. Confusing the trade-off along one curve with the
+    trade-off between models is a common error.
+  - "Why not just always optimise F1?" Because it asserts the two errors cost the same,
+    which is false in most applications where these metrics matter.
+
+THE #1 MISTAKE: quoting accuracy on imbalanced data without comparing it to the
+majority-class baseline. It is the mistake this entry is named after, it appears in real
+production dashboards constantly, and the fix is one subtraction you can do in your head.
+
+RUNNER-UP: reporting precision or recall alone. Either can be driven to 1.0 by a useless
+model, so a single number is not evidence of anything.
+
+TAKEAWAY: precision divides by what you FLAGGED and recall by what actually EXISTS - so
+before choosing between them, ask what a false alarm costs and what a miss costs, and
+always check whether your accuracy is beating the majority-class baseline.""",
 ]
 
 
@@ -25077,73 +25560,540 @@ operating point from the cost of each error, not from F1.
 """.strip("\n")
 
 _EXAMPLES_ML2["ROC curve, AUC & choosing a threshold"] = [
-    """Reading a curve concretely.
-A fraud model, 10,000 transactions, 100 fraudulent.
-  threshold 0.9: TP 40,  FP 10   -> TPR 0.40, FPR 0.001, precision 0.80
-  threshold 0.5: TP 80,  FP 200  -> TPR 0.80, FPR 0.020, precision 0.29
-  threshold 0.2: TP 95,  FP 1200 -> TPR 0.95, FPR 0.121, precision 0.07
-Same model at all three points - only the threshold moved. Going from 0.9 to
-0.2 more than doubles the fraud caught and destroys precision. Which point is
-right depends entirely on whether a missed fraud costs more than twelve
-wrongly-blocked customers.""",
+    """1. THE GOAL - the model gives you a number, not a decision.
 
-    """The probabilistic reading of AUC, made concrete.
-Model A has AUC 0.85, model B has 0.72.
-Interpretation: take a random fraudulent transaction and a random legitimate
-one. Model A ranks the fraud higher 85% of the time; model B 72%.
-That framing immediately tells you what AUC does NOT tell you: nothing about
-calibration (whether a score of 0.8 means an 80% chance), and nothing about
-performance at the operating point you will actually use. A model can have
-better AUC overall and be worse in the high-precision region you care about -
-which is why you plot the curve rather than quoting one number.""",
+Most classifiers do not output "fraud" or "not fraud". They output a PROBABILITY - 0.83,
+0.12, 0.51. Turning that into an action requires a second decision that has nothing to do
+with the model:
 
-    """The imbalance trap, with the numbers that expose it.
-Disease screening, 1,000,000 people, 1,000 actually ill (0.1%).
-Model flags 6,000; 1,000 of them are the genuine cases... no - it catches 500 of
-them and 5,500 are false alarms.
-  TPR = 500/1000 = 0.50
-  FPR = 5500/999000 = 0.0055  -> the ROC curve looks superb
-  precision = 500/6000 = 0.083 -> 11 out of 12 flagged people are healthy
-ROC-AUC might read 0.93 and the system is unusable. PR-AUC would have shown it
-immediately, because precision is the number that reacts to a large negative
-class. This example alone is usually enough to answer "when would you not use
-ROC-AUC?".""",
+    WHERE DO YOU PUT THE CUTOFF?
 
-    """Choosing the threshold by cost rather than by F1.
-Fraud model. A false positive costs Rs 200 (manual review plus customer
-irritation). A false negative costs Rs 9,000 (the chargeback).
-  F1-optimal threshold 0.42: FP 300, FN 120
-      cost = 300x200 + 120x9000 = 60,000 + 1,080,000 = Rs 1,140,000
-  Cost-optimal threshold 0.18: FP 1,400, FN 30
-      cost = 1,400x200 + 30x9000 = 280,000 + 270,000 = Rs 550,000
-The F1-optimal point loses roughly twice as much money. F1 treats the two errors
-as equally bad; the business does not. Sweeping thresholds against the real cost
-function is five lines of code and it is the correct objective.""",
+    score >= threshold  ->  act on it
+    score <  threshold  ->  ignore it
 
-    """Contrast: ROC versus PR, stated as a rule.
-* Classes roughly balanced, and both error types matter -> ROC-AUC is fine and
-  is the conventional report.
-* Positives rare (fraud, disease, defects, click-through) -> PR-AUC, because
-  precision reacts to false positives while FPR does not.
-* Baselines differ: a random model always scores ROC-AUC 0.5, but PR-AUC equal
-  to the base rate. So on a 1% problem, PR-AUC of 0.3 is a strong model - you
-  must compare against the base rate, not against 0.5.
-* Ranking quality matters more than the cut point -> AUC of either kind. A
-  specific operating point matters -> quote precision AT a fixed recall.""",
+The default is 0.5, and the default is almost never right. It is an arbitrary number that
+happens to be halfway, and nothing about your problem knows or cares about halfway.
 
-    """The interview application, including the follow-up.
-"Our model has 0.94 AUC. Ship it?"
-Correct response: ask for the base rate first. If positives are 0.5% of the
-data, 0.94 ROC-AUC tells me the ranking is decent but says nothing about
-whether the product is usable - I would want PR-AUC and precision at the recall
-we intend to operate at.
-Then: what does a false positive cost and what does a false negative cost? Show
-me the threshold sweep against expected cost.
-Then: is the model CALIBRATED? AUC is invariant to any monotonic
-transformation of the scores, so a model with excellent AUC can still have
-meaningless probabilities - which matters the moment anything downstream
-multiplies the score by an amount of money. Raising calibration unprompted is
-the detail that separates candidates here.""",
+Move the threshold down and you catch more real cases and raise more false alarms. Move
+it up and the reverse. So a single model is not one classifier - it is a whole FAMILY of
+classifiers, one for each threshold, and choosing among them is a separate piece of
+engineering.
+
+That gives two distinct questions, and keeping them apart is the substance of this topic:
+
+  1. HOW GOOD IS THE MODEL'S RANKING? Does it tend to give higher scores to real cases
+     than to fakes? This is a property of the model alone and does not depend on any
+     threshold. AUC measures it.
+
+  2. WHERE SHOULD THE CUTOFF GO? This is a business decision, not a modelling one, and
+     it depends entirely on what a false alarm costs relative to a miss.
+
+Section 9 shows the second question having its answer CHANGE - same model, same data,
+different cost assumption, different optimal threshold. That is the part worth
+understanding, because it is where the engineering actually happens.""",
+
+    """2. THE INTUITION - slide the cutoff and watch both numbers move.
+
+Picture every item scored by the model, laid out from 0 to 1, with real positives marked
+X and negatives marked o. A good model pushes the X's rightward:
+
+    0.0                                                              1.0
+     |  o o oo ooo ooooo oo ooo  o o   o  X o  X X  o X  XX X  X X    |
+                                             ^
+                                         threshold
+
+    Everything RIGHT of the line gets flagged.
+
+Now slide the line and watch what happens:
+
+    THRESHOLD HIGH (0.9)      flag very few    -> few false alarms, many misses
+                                                  high precision, low recall
+    THRESHOLD LOW  (0.1)      flag almost all  -> catch nearly everything, drown in
+                                                  false alarms
+                                                  low precision, high recall
+
+Every threshold gives one confusion matrix, so a threshold sweep gives a whole curve of
+them. The ROC curve is that sweep, plotted:
+
+    TPR                                   Perfect model hugs the top-left corner:
+    1.0 |          ______________         it catches everything (TPR 1) with no
+        |        _/                       false alarms (FPR 0).
+        |      _/
+        |    _/         . . . . .         The dotted diagonal is random guessing.
+        |  _/      . . .                  A model on that line has learned nothing.
+        | /   . . .
+        |/. .                             AUC is the AREA under your curve.
+    0.0 +----------------------- 1.0      1.0 = perfect. 0.5 = coin flip.
+        0.0        FPR
+
+    TPR = TP/(TP+FN)  = recall            "of the real cases, how many did I catch?"
+    FPR = FP/(FP+TN)  = false alarm rate  "of the innocent ones, how many did I bother?"
+
+Because the curve covers EVERY threshold, the area under it says something about the
+model that does not depend on where you eventually put the cutoff. That is what makes
+AUC the number people quote - and section 4 explains the trap that comes with it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SCORE / PROBABILITY. The model's output before any decision is made - a number between 0
+and 1. Higher means more confident it is positive.
+
+THRESHOLD / CUTOFF / OPERATING POINT. The value at which you convert score into action.
+"Operating point" is the term for the specific threshold you chose to run in production.
+
+TRUE POSITIVE RATE (TPR). TP/(TP+FN). Identical to RECALL and to SENSITIVITY - three
+names for one quantity, which is a genuine source of confusion. Denominator: all real
+positives.
+
+FALSE POSITIVE RATE (FPR). FP/(FP+TN). Of all the actual NEGATIVES, the fraction wrongly
+flagged. Denominator: all real negatives - and that denominator is the source of the trap
+in section 4, because on imbalanced data it is enormous.
+
+SPECIFICITY. TN/(TN+FP) = 1 - FPR. The fraction of negatives correctly ignored. Used in
+medicine more than in engineering.
+
+ROC CURVE. "Receiver Operating Characteristic" - the name is a leftover from Second World
+War radar operators and means nothing useful today. It plots TPR against FPR as the
+threshold sweeps from 1 down to 0.
+
+AUC / ROC-AUC. Area Under the ROC Curve. One number from 0 to 1 summarising the whole
+sweep. 1.0 perfect, 0.5 random. Below 0.5 means your model is anti-correlated and you
+have probably flipped a label.
+
+THE PROBABILISTIC READING OF AUC - the thing to actually remember: AUC is the probability
+that the model gives a randomly chosen POSITIVE a higher score than a randomly chosen
+NEGATIVE. AUC 0.85 means that in 85 out of 100 such random pairs, the positive scores
+higher. This is a real fact about the number, not an analogy, and it is the clearest way
+to explain it in an interview.
+
+THRESHOLD-INDEPENDENT. AUC does not depend on where you set the cutoff, because it
+integrates over all of them. It measures RANKING QUALITY, not decision quality.
+
+PRECISION-RECALL (PR) CURVE. Precision plotted against recall across thresholds. PR-AUC
+is its area. Preferred over ROC on imbalanced data - section 4 shows why.
+
+CLASS IMBALANCE. One class vastly outnumbering the other. The condition under which ROC
+flatters and PR does not.
+
+BASE RATE. The fraction of items that are truly positive. The first question to ask about
+any AUC claim.
+
+F-BETA. F1 generalised, so recall can be weighted beta times as heavily as precision.
+Useful when you want a single number but the two errors are not equally costly.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE BIG ONE: ROC LOOKS WONDERFUL ON IMBALANCED DATA WHILE THE MODEL IS UNUSABLE.
+
+    Disease screening. 1,000,000 people. 1,000 actually ill (0.1%).
+    The model flags 6,000 people, and 900 of them are genuinely ill.
+
+        TP = 900        FN = 100
+        FP = 5,100      TN = 993,900
+        check: 900 + 100 = 1,000 ill;  5,100 + 993,900 = 999,000 healthy
+
+        TPR (recall) = 900 / 1,000     = 0.90     excellent
+        FPR          = 5,100 / 999,000 = 0.0051   excellent - half a per cent!
+        PRECISION    = 900 / 6,000     = 0.15     terrible
+
+    On the ROC curve this is a point near the top-left corner: 90% recall at a 0.5% false
+    positive rate. The AUC would be around 0.97. It looks like a triumph.
+
+    But 85% OF THE ALARMS ARE FALSE. Five thousand one hundred healthy people are being
+    called back for tests they do not need.
+
+    WHY ROC HIDES IT - the mechanism, and this is the sentence to be able to say: FPR
+    divides FP by the number of NEGATIVES, which here is 999,000. Five thousand false
+    alarms against a million healthy people rounds to nothing. Precision divides the same
+    FP by the number FLAGGED, which is 6,000. The identical 5,100 false positives are
+    invisible in one denominator and dominant in the other.
+
+    THE FIX: on imbalanced data, use the PRECISION-RECALL curve and PR-AUC. Precision has
+    the informative denominator, so the curve cannot flatter you the same way.
+
+TRAP 2: reporting AUC and stopping there. AUC measures RANKING. It says nothing about
+where you set the threshold, and you cannot ship a ranking - you ship a decision. A model
+with excellent AUC can be useless in production if the operating point is wrong.
+
+TRAP 3: leaving the threshold at 0.5. It is a default, not a recommendation. It is
+optimal only when the classes are balanced AND the two error types cost the same, which
+is almost never.
+
+TRAP 4: tuning the threshold on the test set. That fits the threshold to the data you are
+using to report your honest number, and the number is then not honest. Tune on a
+validation split.
+
+TRAP 5 - the subtle one: MAXIMISING F1 AND CALLING IT OPTIMAL. A team tunes for F1, lands
+at 0.42, and reports precision 0.71 and recall 0.68. But F1 assumes the two errors cost
+the same. If a miss actually costs twenty-five times a false alarm, the F1-optimal
+threshold is simply the wrong point, and section 9 shows the two answers landing in
+different places on identical data.
+
+TRAP 6: AUC below 0.5. This does not mean a bad model - it means an INVERTED one. Flip
+the sign and you have a model with AUC above 0.5. Usually it means the positive label got
+swapped somewhere in the pipeline.
+
+TRAP 7: comparing AUCs across different datasets. AUC depends on how separable that
+particular population is. A 0.90 on one dataset and 0.85 on another does not establish
+that the first model is better.""",
+
+    """5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE.
+
+THE NAIVE APPROACH: take the model's output, threshold at 0.5, report accuracy.
+
+This is what almost every first implementation does, because 0.5 is the default in every
+library and it feels neutral. Two things are wrong with it.
+
+First, 0.5 encodes an assumption nobody checked: that a false positive and a false
+negative are equally bad. For fraud, disease, or content moderation, they are not close
+to equal.
+
+Second, it throws away information. The model said 0.49 and 0.02, and you treated them
+identically. One of those is a near-miss worth reviewing; the other is not.
+
+THE FIRST UPGRADE: sweep the threshold and look at the whole curve.
+
+Instead of one confusion matrix, compute one at every threshold. Now you can see the
+trade-off rather than assuming a point on it, and you can pick your operating point
+deliberately.
+
+THE SECOND UPGRADE: separate MODEL QUALITY from THRESHOLD CHOICE.
+
+This is the conceptual move that makes the topic click, and it is worth stating plainly:
+
+    RANKING QUALITY is a property of the model. Does it score real positives above
+    negatives? Threshold-independent. Measured by AUC.
+
+    OPERATING POINT is a property of your business. Where do you cut? Depends entirely on
+    costs. Measured in currency, not in metrics.
+
+Improving the first requires better features or a better model. Improving the second
+requires a conversation with whoever owns the cost of the errors. Teams routinely try to
+fix an operating-point problem by retraining, which does not work.
+
+WHY AUC MEANS WHAT IT MEANS - the trick, explained from scratch.
+
+The claim is that AUC equals the probability that a random positive outscores a random
+negative. Why should an AREA equal a PROBABILITY?
+
+Sweep the threshold from 1 down to 0 and watch the curve get drawn. Each time the
+threshold passes a POSITIVE example's score, that example becomes flagged and TPR steps
+UP - the curve moves vertically. Each time it passes a NEGATIVE example's score, FPR
+steps RIGHT - the curve moves horizontally.
+
+So the curve is a staircase of up-steps (positives) and right-steps (negatives), in
+descending score order. The area under it accumulates whenever a right-step happens at
+some height - and the height at that moment is the fraction of positives already passed,
+which is exactly the fraction of positives scoring ABOVE that negative.
+
+Add that up over all negatives and you have counted, over every (positive, negative) pair,
+the fraction where the positive scored higher. Which is the probability.
+
+That is why AUC is threshold-independent: it is a statement about ORDER, and order does
+not change when you move a cutoff. It is also why AUC is insensitive to imbalance in a
+way that is a feature for measuring ranking and a trap for measuring usefulness - it
+counts pairs, not consequences.
+
+THE THIRD UPGRADE: choose the threshold by COST, not by a metric. Section 9.""",
+
+    """6. HOW TO CHOOSE A THRESHOLD - the procedure, step by step.
+
+The one sentence that holds the whole idea: THE MODEL GIVES YOU A RANKING AND AUC TELLS
+YOU HOW GOOD THAT RANKING IS - BUT WHERE TO CUT IT IS A SEPARATE DECISION THAT SHOULD BE
+MADE BY PUTTING REAL COSTS ON THE TWO KINDS OF ERROR.
+
+THE SWEEP IS A LOOP, and it has a stopping rule that must be fixed in advance:
+
+  - Each pass sets a candidate threshold, computes the confusion matrix at it, and scores
+    it against the objective.
+  - WHAT MAKES IT STOP: you evaluate a fixed grid of candidate thresholds and take the
+    best under the objective. Simple and finite.
+  - WHAT MAKES IT NOT TERMINATE: having no objective. Every threshold is better on one
+    metric and worse on another, so without a single agreed objective you can move it
+    forever and always feel you have improved something.
+  - The objective must be chosen BEFORE looking at results, or you will select the
+    objective that flatters the threshold you already liked.
+
+THE STEPS:
+
+  1. GET THE BASE RATE. What fraction of items are truly positive. Everything downstream
+     is interpreted against it.
+
+  2. SCORE A VALIDATION SET - not the test set. The threshold is a parameter you are
+     fitting, so it needs its own data.
+
+  3. SWEEP THE THRESHOLD across a grid - 0.95, 0.9, 0.8, ... 0.05 - and at each one
+     compute TP, FP, FN, TN. Check each matrix sums to the total.
+
+  4. FROM EACH MATRIX compute TPR, FPR, precision and recall. This table IS the ROC curve
+     and the PR curve; the plots are just pictures of it.
+
+  5. COMPUTE AUC to judge the model's ranking. If it is near 0.5, stop - no threshold
+     will save a model that cannot rank, and you need better features, not better tuning.
+     If it is below 0.5, check for a flipped label.
+
+  6. CHOOSE WHICH CURVE TO REPORT. Balanced classes and both errors mattering: ROC-AUC.
+     Rare positives and false alarms being the real problem: PR-AUC.
+
+  7. PUT REAL NUMBERS ON THE TWO ERRORS. What does one false positive cost - review time,
+     customer irritation, an unnecessary test? What does one false negative cost - the
+     loss, the harm, the fine? Currency, or any consistent unit.
+
+  8. COMPUTE TOTAL COST AT EVERY THRESHOLD: (FP x cost of a false positive) + (FN x cost
+     of a false negative). Pick the minimum. Now the choice is arithmetic and defensible
+     rather than a matter of taste.
+
+  9. IF COSTS ARE GENUINELY UNAVAILABLE, use a CONSTRAINT instead of a summary metric:
+     "recall must be at least 0.95; among thresholds meeting that, take the highest
+     precision". This is almost always closer to the real requirement than maximising F1.
+
+ 10. RE-CHECK PERIODICALLY. The base rate drifts, and precision moves with it even though
+     the model has not changed. A threshold set once and never revisited quietly decays.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a smoke alarm with a sensitivity dial rather than a fixed setting.
+
+Turn the dial all the way up and it shrieks at burnt toast, at steam from the kettle, at
+a candle. It will certainly catch a real fire. It will also go off so often that within a
+month somebody takes the battery out - and then it catches nothing at all.
+
+Turn it all the way down and it never troubles you. It also may not go off until the
+kitchen is well alight.
+
+Two separate things are going on here, and people conflate them constantly.
+
+The first is the QUALITY OF THE SENSOR. A good sensor genuinely distinguishes smoke from
+steam - so at any dial setting it does better than a bad one. If your sensor cannot tell
+steam from smoke at all, no dial position rescues it; you need a better sensor. That is
+what AUC measures: not how the alarm is set, but how well it can tell the two apart in
+principle.
+
+The second is WHERE YOU SET THE DIAL. And that has no correct answer in general. In a
+house, a few false alarms a year is a reasonable price for catching a fire. In a hospital
+operating theatre, an alarm that empties the room is genuinely dangerous, so you set it
+higher and accept a slower response. In a fireworks factory you set it lower than
+anywhere and staff simply expect the occasional evacuation.
+
+Same sensor. Three correct settings, because the cost of being woken unnecessarily and
+the cost of missing a fire are different in each building.
+
+So when someone says "our alarm is 94% accurate, should we install it?", the honest
+answer is a question: how often are there actually fires here, and what does it cost you
+each time it goes off for nothing?""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each quantity taken apart - what it holds, what it
+decides, and what moves it.
+
+--- THE INPUTS ---
+
+    THE SCORE
+        HOLDS: the model's confidence for one item, 0 to 1.
+        DECIDES: nothing yet. It is a ranking position, not a decision.
+
+    THE THRESHOLD
+        HOLDS: the cutoff you chose.
+        DECIDES: every count in the confusion matrix. This is the only knob here that is
+        not a property of the model.
+        NOTE: it belongs to your business, not to your model. Retraining will not fix a
+        badly chosen threshold, and moving the threshold will not fix a bad model.
+
+--- THE RATES, NUMERATOR AND DENOMINATOR ---
+
+    TPR (= RECALL = SENSITIVITY) = TP / (TP + FN)
+        NUMERATOR:   real cases caught.
+        DENOMINATOR: ALL real cases.
+        DECIDES: the vertical axis of the ROC curve.
+        MOVES: down as the threshold rises. Independent of the base rate.
+
+    FPR = FP / (FP + TN)
+        NUMERATOR:   false alarms.
+        DENOMINATOR: ALL true negatives - and on imbalanced data this is huge.
+        DECIDES: the horizontal axis of the ROC curve.
+        THE TRAP LIVES HERE: a denominator of 999,000 makes 5,100 false alarms look like
+        nothing. Precision, using the same numerator over the flagged count, does not.
+
+    PRECISION = TP / (TP + FP)
+        DENOMINATOR: everything flagged.
+        DECIDES: the vertical axis of the PR curve, and whether anyone will trust the
+        alerts.
+        MOVES: with the threshold AND with the base rate.
+
+--- THE CURVES ---
+
+    ROC CURVE
+        HOLDS: (FPR, TPR) at every threshold.
+        DECIDES: nothing by itself - it is a picture of the trade-off.
+        SHAPE: top-left corner is perfect; the diagonal is random guessing.
+        GOOD FOR: balanced classes, and when both error types matter.
+
+    AUC (area under it)
+        HOLDS: one number, 0 to 1.
+        DECIDES: how good the RANKING is. 1.0 perfect, 0.5 coin-flip, below 0.5 means a
+        flipped label.
+        MEANS, precisely: the probability a random positive outscores a random negative.
+        DOES NOT TELL YOU: where to cut, or whether the model is useful at your base rate.
+
+    PR CURVE and PR-AUC
+        HOLDS: (recall, precision) at every threshold.
+        DECIDES: the honest picture under imbalance.
+        NOTE: its baseline is not 0.5 - a random model's PR-AUC is roughly the base rate
+        itself, so on 0.1% positives a PR-AUC of 0.15 is genuinely good. This surprises
+        people who expect 0.5 to mean "random" as it does for ROC.
+
+--- WHAT YOU MUST SUPPLY THAT NONE OF THIS CONTAINS ---
+
+    THE COST OF A FALSE POSITIVE and THE COST OF A FALSE NEGATIVE. No curve knows them.
+    They convert the whole picture from a set of trade-offs into a single arithmetic
+    answer, which is what section 9 does.""",
+
+    """9. A THRESHOLD SWEEP WITH REAL NUMBERS - AND THE OPTIMUM MOVING.
+
+FRAUD MODEL. 10,000 transactions, 100 fraudulent, 9,900 legitimate.
+
+THE SWEEP - one confusion matrix per threshold:
+
+    threshold    TP    FP     FN    TPR(recall)   FPR      precision
+    ---------   ----  -----  ----   -----------  -------   ---------
+      0.9        40      10    60      0.40       0.0010     0.800
+      0.5        75     150    25      0.75       0.0152     0.333
+      0.2        92     800     8      0.92       0.0808     0.103
+      0.05       99   3,000     1      0.99       0.3030     0.032
+
+    (TPR = TP/100. FPR = FP/9,900. precision = TP/(TP+FP).)
+
+READ THE SHAPE. As the threshold falls, recall climbs from 0.40 to 0.99 - good. FPR stays
+small throughout, never exceeding 0.30 - which on an ROC curve looks entirely acceptable.
+But precision collapses from 0.80 to 0.032. At threshold 0.05 the model catches 99 of 100
+frauds and 97% of its alerts are false.
+
+That divergence between a comfortable FPR and a collapsing precision is trap 1 made
+visible: FPR divides by 9,900 and precision divides by the flagged count.
+
+NOW CHOOSE THE THRESHOLD BY COST.
+
+    A FALSE POSITIVE costs Rs 200  - manual review plus an irritated customer.
+    A FALSE NEGATIVE costs Rs 5,000 - the fraud is written off.
+
+    total cost = FP x 200 + FN x 5,000
+
+      threshold 0.9:     10 x 200 +  60 x 5,000 =    2,000 + 300,000 = Rs 302,000
+      threshold 0.5:    150 x 200 +  25 x 5,000 =   30,000 + 125,000 = Rs 155,000   <-- min
+      threshold 0.2:    800 x 200 +   8 x 5,000 =  160,000 +  40,000 = Rs 200,000
+      threshold 0.05: 3,000 x 200 +   1 x 5,000 =  600,000 +   5,000 = Rs 605,000
+
+    OPTIMAL THRESHOLD: 0.5, costing Rs 155,000.
+
+NOW THE INVERSION. Same model, same data, same sweep - only the cost of a miss changes.
+Suppose the business enters a regulated market where each undetected fraud also carries a
+penalty, so a false negative now costs Rs 50,000 instead of Rs 5,000.
+
+      threshold 0.9:     10 x 200 +  60 x 50,000 =   2,000 + 3,000,000 = Rs 3,002,000
+      threshold 0.5:    150 x 200 +  25 x 50,000 =  30,000 + 1,250,000 = Rs 1,280,000
+      threshold 0.2:    800 x 200 +   8 x 50,000 = 160,000 +   400,000 = Rs   560,000  <-- min
+      threshold 0.05: 3,000 x 200 +   1 x 50,000 = 600,000 +    50,000 = Rs   650,000
+
+    OPTIMAL THRESHOLD: 0.2, costing Rs 560,000.
+
+THE MODEL DID NOT CHANGE. THE DATA DID NOT CHANGE. THE AUC DID NOT CHANGE. The right
+operating point moved from 0.5 to 0.2 purely because one cost assumption changed - and
+the model now accepts 800 false alarms instead of 150 because each miss became ten times
+more expensive.
+
+That is the whole argument for treating the threshold as a business decision rather than
+a modelling one, and it is what an interviewer is looking for.
+
+AND COMPARE WHAT F1 WOULD HAVE CHOSEN:
+
+      threshold 0.9:  P 0.800, R 0.40  ->  F1 = 2(0.800)(0.40)/1.200 = 0.533   <-- max
+      threshold 0.5:  P 0.333, R 0.75  ->  F1 = 2(0.333)(0.75)/1.083 = 0.462
+      threshold 0.2:  P 0.103, R 0.92  ->  F1 = 2(0.103)(0.92)/1.023 = 0.185
+
+    F1 is maximised at threshold 0.9 - which cost Rs 302,000 under the first cost model
+    and Rs 3,002,000 under the second. It is the WORST choice in both.
+
+    F1 is not wrong; it is answering a different question. It assumes precision and recall
+    matter equally, and here a miss costs 25 to 250 times a false alarm. Optimising F1
+    here optimises an assumption nobody made deliberately.
+
+THE IMBALANCE CASE, for contrast - disease screening, 1,000,000 people, 1,000 ill:
+
+    TP = 900, FP = 5,100, FN = 100, TN = 993,900
+
+    TPR = 0.90, FPR = 5,100/999,000 = 0.0051   -> an ROC point near the perfect corner
+    precision = 900/6,000 = 0.15               -> 85% of alarms are false
+
+    ROC-AUC would be about 0.97 and would be reported as excellent. PR-AUC would show the
+    precision problem immediately. Same model, two summaries, opposite impressions -
+    which is why the choice of curve is itself a decision worth making deliberately.""",
+
+    """10. THE LIMITS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+ROC OR PR - as a rule you can state:
+
+    CLASSES ROUGHLY BALANCED, both error types matter
+        -> ROC-AUC is fine and is the conventional report.
+
+    POSITIVES RARE, and false alarms are the real operational problem
+        -> PR curve and PR-AUC. ROC will flatter you, because FPR's denominator is the
+           huge negative class.
+
+    REMEMBER THE PR BASELINE IS NOT 0.5. A random model's PR-AUC is approximately the base
+    rate, so at a 0.1% base rate a PR-AUC of 0.15 is a genuinely strong result. Comparing
+    it mentally against 0.5 will make good models look terrible.
+
+WHAT AUC IS AND IS NOT:
+
+    IS:     a measure of RANKING quality. Threshold-independent. The probability a random
+            positive outscores a random negative.
+    IS NOT: a measure of whether the model is useful. It says nothing about the operating
+            point, and on rare-positive problems a superb AUC coexists comfortably with
+            unusable precision.
+
+THE INTERVIEW QUESTION AND THE FOLLOW-UP:
+
+    "Our model has 0.94 AUC. Should we ship it?"
+
+The correct first move is to ask for the BASE RATE, and then for precision and recall at
+the intended operating threshold.
+
+    If positives are 0.5% of traffic, 0.94 AUC is entirely consistent with precision
+    around 0.10 - meaning nine of every ten alerts are false, and whoever handles the
+    alert queue will stop trusting it within a fortnight. Ask for the PR curve.
+
+    If classes are near balanced, 0.94 is strong and the next questions are about the
+    threshold and the cost of each error type.
+
+Then ask the question nobody expects: what does a false positive cost, and what does a
+false negative cost? If nobody knows, that is the finding - the threshold is currently
+being set by a library default.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "AUC is 0.45. What happened?" Almost certainly an inverted label. Flip it and you have
+    0.55.
+  - "Our precision dropped in production, but the model is unchanged." The base rate
+    moved. Precision depends on it; recall and AUC do not.
+  - "Should we just maximise F1?" Only if the two errors genuinely cost the same. Section
+    9 shows F1 choosing the worst of four thresholds when they do not.
+  - "How do you pick a threshold with no cost data?" Use a constraint - "recall at least
+    0.95, then maximise precision" - which encodes the actual requirement instead of
+    hoping a summary statistic represents it.
+
+THE #1 MISTAKE: reporting AUC as though it settled the question. AUC measures ranking;
+you ship a decision. The threshold is a separate choice, it belongs to the business rather
+than the model, and leaving it at the library default of 0.5 means it was never made at
+all.
+
+RUNNER-UP: using ROC on heavily imbalanced data, where a tiny FPR conceals a precision
+catastrophe.
+
+TAKEAWAY: a classifier is a whole family of classifiers, one per threshold - AUC tells you
+how well the underlying ranking separates the classes, but where to cut is arithmetic on
+the cost of a false alarm versus the cost of a miss, and that arithmetic can move the
+answer even when the model does not change at all.""",
 ]
 
 
