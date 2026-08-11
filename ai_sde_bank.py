@@ -69365,131 +69365,929 @@ ready to explain the case where the same instinct would have been wrong.""",
 ]
 
 _EX_P0LP["STAR: Being frugal / doing more with less (Frugality)"] = [
-    """A full student-scale answer.
-SITUATION: Our capstone needed to fine-tune a model, and the department GPU
-queue had a three-day wait; the team wanted to expense cloud GPU time we did
-not have a budget for.
-TASK: I had four days before the checkpoint demo.
-ACTION: Instead of buying compute, I attacked the requirement. I checked
-whether we needed full fine-tuning at all - LoRA on a smaller base model gave
-us 95% of the quality at about 3% of the trainable parameters, which fit on the
-free Colab tier. I also cut the training set to a stratified 20% sample and
-confirmed on a holdout that the accuracy difference was inside the noise band.
-RESULT: Trained in 40 minutes on free hardware, demo hit its date, and the
-team's cloud spend stayed at zero. The 20% sample also made our iteration loop
-fast enough that we tried six configurations instead of two.""",
+    """1. THE GOAL - the constraint made the solution better, not just cheaper.
 
-    """What frugality actually means at Amazon, which is not stinginess.
-The LP is 'constraints breed resourcefulness, self-sufficiency and invention -
-there are no extra points for growing headcount, budget size or fixed expense'.
-So the story is not 'I saved money by working harder' or 'I did without'. It is
-'the constraint made me find a better solution'. In the example above, the
-sampling did not just save compute - it made the iteration loop faster, which
-produced a better result. That second-order benefit is the signal.
-If your story ends with 'so it took me longer but we spent nothing', that is
-not frugality, that is a bad trade.""",
+    AMAZON LEADERSHIP PRINCIPLE - FRUGALITY: "Accomplish more with less. Constraints breed
+    resourcefulness, self-sufficiency and invention. There are no extra points for growing
+    headcount, budget size or fixed expense."
 
-    """The weak version.
-'We didn't have money for cloud GPUs so I waited for the department queue and
-started training three days later.' No invention, no ownership, no result -
-the constraint simply happened to the candidate.
-Equally weak: 'I worked nights and weekends to avoid asking for help.' Amazon
-does not reward burning yourself as a substitute for resources; that reads as
-poor judgement about when to escalate, and it is the opposite of the
-self-sufficiency the LP means.""",
+The sentence that matters is the middle one, and it is a claim about causation rather than a
+consolation: CONSTRAINTS BREED INVENTION. So the story is not "we had no money so we managed" -
+it is:
 
-    """Student-scale material that works, since nobody expects a budget story.
-Using free tiers deliberately rather than by accident (Colab, a student cloud
-credit) and designing the work to fit them. Cutting a dataset intelligently
-rather than randomly. Replacing a paid API with a small local model where the
-quality difference did not matter. Reusing an existing internal tool instead of
-building one. Finding that a 30-line script replaced a service someone proposed
-building. The common thread: you questioned the RESOURCE REQUIREMENT itself,
-rather than accepting it and finding a way to pay for it.""",
+    THE CONSTRAINT FORCED ME TO FIND A SOLUTION THAT WAS BETTER, NOT JUST CHEAPER - AND I CAN
+    SHOW IT WAS BETTER.
 
-    """The probe to expect, and the trap in it.
-'What would you have done with an unlimited budget?' The trap is answering 'the
-same thing' (which sounds like you cannot use resources well) or 'I'd have
-bought the GPUs' (which concedes the frugal solution was worse). The honest
-answer names what money would genuinely have bought and what it would not:
-'I'd have run the full fine-tune in parallel to check the sample was
-representative - but I'd still have started with the small version, because the
-fast loop is what got us six configurations.'
-Second probe: 'did the cheaper approach cost quality?' Have the number - 'inside
-the noise band on a holdout' - or admit the trade honestly.""",
+That is a high bar and it is the right one. A story where the constrained solution was simply
+worse and you coped demonstrates endurance, not frugality.
 
-    """How this LP pairs with others in the same story.
-Frugality rarely stands alone; interviewers accept one story mapped to two or
-three principles as long as you are explicit. The example above is also INVENT
-AND SIMPLIFY (LoRA instead of full fine-tuning) and BIAS FOR ACTION (started
-in hours rather than waiting three days). When asked for frugality, lead with
-the constraint and the invention; when asked for invent-and-simplify, lead with
-the technique and mention the constraint as context. That is the story-bank
-re-angling skill applied to the LP set.""",
+Four things the answer needs:
+
+    1. a REAL constraint - no budget, no hardware, no people, no time
+    2. the expensive solution you did NOT take, named, so the comparison exists
+    3. what you did instead, and WHY IT WAS BETTER rather than merely affordable
+    4. a number
+
+THIS ENTRY IS AN INDEX over the story bank, drawing on the DELIVERY shape, and reuses the same
+capstone as the cluster. Its siblings own the other angles: "STAR: Delivering under a hard
+deadline" owns what was protected and the evaluation statistics, "STAR: Acting decisively with
+incomplete information" owns reversibility, "STAR: Diving deep" owns the profiling.
+
+WHAT THIS ENTRY OWNS: THE COMPARISON WITH THE EXPENSIVE OPTION - the compute she could have
+bought and did not, and the arithmetic showing the free fix beat it.""",
+
+    """2. THE INTUITION - two ways out of the same corner.
+
+The capstone's problem: a full re-index took nine hours, so one experiment a day, with ten
+working days left.
+
+There were two exits, and only one of them cost money:
+
+    THE EXPENSIVE EXIT - BUY SPEED
+        rent a faster GPU, roughly 4x the throughput
+        9 hours -> about 2.25 hours per re-index
+        an 8-hour day / 2.25 = about 3.5 experiments a day
+        cost: real money, a cloud account, and a day of setup
+
+    THE FREE EXIT - DO LESS WORK
+        cut from twelve item categories to four
+        9 hours -> 40 minutes
+        an 8-hour day / 40 minutes = about 8 experiments+ a day (capped at 8 by attention,
+        not by the machine)
+        cost: nothing, and about half a day of work
+
+    THE FREE EXIT WAS BETTER BY A FACTOR OF ABOUT 2.3, and it was available immediately.
+
+That is the shape of a real frugality story. Not "we could not afford the GPU so we made do" -
+the cheaper option was genuinely superior, and the reason is worth naming: BUYING SPEED
+MULTIPLIES THE WORK YOU ARE ALREADY DOING, WHILE REMOVING WORK CHANGES HOW MUCH THERE IS TO DO.
+A 4x machine on twelve categories still rebuilds twelve indexes. Four categories rebuilds four
+on the machine you already have.
+
+    buying speed   ->  same task, faster machine    ->  linear gain, recurring cost
+    removing work  ->  smaller task, same machine   ->  structural gain, no cost
+
+AND AN HONEST NOTE, which section 5 develops: there was a THIRD exit that was more frugal still
+- a single index with a metadata filter, which would have kept all twelve categories AND been
+fast. She did not take it, for reasons that were about risk rather than about frugality. Saying
+so is stronger than pretending the chosen answer was optimal.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FRUGALITY. The Amazon principle: accomplish more with less; constraints breed invention; no
+extra points for spending.
+
+CONSTRAINT. The thing you did not have - budget, hardware, people, time, data.
+
+RESOURCEFULNESS. Finding a route the constraint does not block, rather than waiting for the
+constraint to lift.
+
+THE EXPENSIVE OPTION. What a well-funded team would have done. Naming it is what makes the
+comparison real; without it, "we were frugal" is unfalsifiable.
+
+STRUCTURAL FIX vs BOUGHT CAPACITY. Reducing the amount of work versus buying a bigger machine
+to do the same work. The first compounds and costs nothing recurring; the second is linear and
+recurs.
+
+THROUGHPUT. How much work per unit time. What buying hardware improves.
+
+ITERATION RATE. Experiments per day - the quantity that mattered here, and the one both exits
+were competing to raise.
+
+RE-INDEX. Rebuilding the searchable index from scratch. Nine hours before, forty minutes after.
+
+FREE TIER / STUDENT CREDIT. Deliberately using free capacity rather than expensing something.
+Legitimate student-scale frugality material, though weaker than a structural fix.
+
+OPPORTUNITY COST. What else the money or time could have bought. A day spent setting up cloud
+billing is a day not spent experimenting.
+
+STAR. Situation, Task, Action, Result.
+
+THE STAGING PLAN. The written plan for re-adding the eight cut categories. Relevant here
+because it is what stopped the frugal choice from being a permanent loss.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE WEAK VERSION, which is very common:
+
+    "We did not have money for cloud GPUs, so I waited for the department queue and started
+     training three days later."
+
+There is no invention in that, no ownership, and no better outcome. It is a story about
+ACCEPTING a constraint, and the principle is explicitly about constraints producing something.
+Waiting is what happens when frugality does not.
+
+TRAP 2 - CONFUSING FRUGALITY WITH STINGINESS. The principle is not "spend nothing". A team that
+refuses to buy a tool everyone needs, and loses a week to that refusal, has not been frugal -
+they have converted money into time at a terrible rate. Frugality is about OUTCOME PER UNIT OF
+RESOURCE, and a story where the saving cost more than it saved fails on its own terms.
+
+TRAP 3 - NOT NAMING THE EXPENSIVE OPTION. If you never say what the well-funded solution would
+have been, the interviewer has no way to judge whether you were resourceful or simply had a
+small problem. Name it, and if possible price it.
+
+TRAP 4 - THE PROBE THAT CATCHES PEOPLE: "What would you have done with an unlimited budget?"
+
+    THE TRAP IS ANSWERING "THE SAME THING". It sounds principled and it reads as inflexibility -
+    as though you cannot recognise when spending IS the right answer.
+
+    THE GOOD ANSWER names something you would genuinely have done differently, and then says
+    what you would still have kept. For the capstone: with unlimited budget and time she would
+    have built the metadata-filter fix and kept all twelve categories - but she would still have
+    profiled first, because the two wasted days were not a budget problem.
+
+TRAP 5 - CLAIMING THE CONSTRAINED SOLUTION WAS BETTER WHEN IT WAS NOT. Sometimes the cheap
+option really is worse and you shipped it anyway because that was the choice available. Say so.
+"It was the right call under the constraint and I would not choose it with more time" is a
+credible sentence; pretending otherwise invites a follow-up you cannot survive.
+
+TRAP 6 - NO NUMBER. Frugality claims are comparative, so they need two numbers - what the
+expensive route would have given, and what yours gave.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE - WITH THE ARITHMETIC.
+
+THE NAIVE VERSION: "we had no budget, so we used free tools and worked harder."
+
+Every student says this and it demonstrates nothing, because the outcome was worse than the
+funded version and the only variable was effort.
+
+THE REAL VERSION: the constrained route produced a BETTER outcome, and here is the comparison.
+
+    THE PROBLEM: nine hours per re-index, one experiment a day, ten working days left.
+
+    OPTION A - BUY THROUGHPUT. Rent a GPU roughly 4x faster.
+
+        9 hours / 4              = 2.25 hours per re-index
+        8-hour working day       / 2.25 = about 3.5 experiments per day
+        over 10 days             = about 35 experiments
+        cost                     = cloud spend, plus roughly a day of account and pipeline
+                                   setup, which reduces it to about 31 experiments
+
+    OPTION B - REMOVE WORK. Cut twelve categories to four.
+
+        9 hours -> 40 minutes
+        about 8 experiments per day (limited by working hours, not the machine)
+        setup                    = about half a day
+        over the remaining 9.5 days = about 76 experiments
+        cost                     = nothing
+
+    OPTION B DELIVERS ROUGHLY 76 EXPERIMENTS AGAINST OPTION A'S 31 - about 2.4 times as many -
+    FOR NO MONEY.
+
+WHY THE FREE OPTION WON, stated as a principle rather than as luck:
+
+    BUYING SPEED MULTIPLIES THE WORK YOU ARE ALREADY DOING. A 4x machine rebuilding twelve
+    indexes is still rebuilding twelve indexes.
+
+    REMOVING WORK CHANGES HOW MUCH THERE IS TO DO. Four indexes on the existing machine beat
+    twelve on a machine four times faster, because 12/4 = 3 and the machine only offered 4x on a
+    problem that had grown far more than 4x beyond what it needed to be.
+
+    THE GENERAL FORM: WHEN THE WORK ITSELF IS THE PROBLEM, BUYING CAPACITY IS THE EXPENSIVE WAY
+    TO POSTPONE ASKING WHY THERE IS SO MUCH WORK.
+
+NOW THE HONEST PART, and it is what makes this answer better than a tidy one.
+
+    THERE WAS A THIRD OPTION THAT WAS MORE FRUGAL STILL: a single index with a category METADATA
+    FILTER, checked at query time. That keeps all twelve categories AND gets the speed, because
+    the twelve separate index builds were the entire problem.
+
+    That is the genuinely frugal answer - full scope, no money, no scope loss. She did not take
+    it. The reason was not frugality but RISK: it required changing the query path, which Arun
+    owned, mid-project, with a fixed deadline and no slack. The sibling entry "STAR: Insisting on
+    the right long-term solution" owns that decision in full.
+
+    SAYING THIS OUT LOUD IS STRONGER THAN OMITTING IT. It shows you can identify the ideal
+    solution and explain why you took a different one - which is a more senior behaviour than
+    having chosen correctly by accident.
+
+THE INVERSION - when frugality would have been the WRONG instinct:
+
+    Suppose the deadline had been six months rather than two weeks. Then the metadata fix
+    becomes obviously correct - three days of work for permanent full-scope speed - and cutting
+    scope to avoid it would be false economy, trading a lasting fix for a temporary one.
+
+    FRUGALITY IS A RESPONSE TO A CONSTRAINT, NOT A VIRTUE IN ITSELF. Remove the constraint and
+    the frugal answer stops being the right one.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: NAME THE CONSTRAINT, NAME THE EXPENSIVE SOLUTION YOU
+DID NOT TAKE, AND SHOW WITH TWO NUMBERS THAT WHAT YOU DID INSTEAD WAS BETTER RATHER THAN MERELY
+CHEAPER.
+
+THE LOOP HERE is the search for a route the constraint does not block, and its stopping rule
+matters:
+
+  - Each pass proposes a solution and asks whether the constraint blocks it.
+  - WHAT MAKES IT STOP: finding a route that is not blocked AND is at least as good. Not the
+    first unblocked route - the first good one.
+  - WHAT MAKES IT STOP TOO EARLY: accepting a worse outcome because it is affordable. That is
+    coping, and it produces the weak version in trap 1.
+  - THE QUESTION THAT UNBLOCKS IT: not "how do I afford this?" but "WHY IS THERE SO MUCH WORK?"
+    Buying capacity answers the first; removing work answers the second, and only the second is
+    free.
+
+THE STEPS:
+
+  1. STATE THE CONSTRAINT PLAINLY, with what it blocked. "No cloud budget, and the department
+     GPU queue was three days."
+
+  2. NAME THE EXPENSIVE SOLUTION and roughly what it would have delivered. Without this there
+     is no comparison and the claim is unfalsifiable.
+
+  3. ASK WHY THE WORK IS SO LARGE, rather than how to do it faster. This is the move that
+     produces structural fixes rather than bought capacity.
+
+  4. FIND THE ROUTE THE CONSTRAINT DOES NOT BLOCK.
+
+  5. COMPARE THEM WITH NUMBERS. 31 experiments against 76.
+
+  6. SAY WHAT THE BETTER SOLUTION WOULD HAVE BEEN if you did not take it. Honesty here reads as
+     judgement, not weakness.
+
+  7. GIVE THE RESULT WITH A NUMBER.
+
+  8. PREPARE THE UNLIMITED-BUDGET PROBE. Name something you would genuinely have done
+     differently, and something you would have kept regardless.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have to move house and you have one small car and one weekend.
+
+The obvious answer is to hire a van. That is the expensive exit, and it works - a van holds
+maybe four times what the car holds, so the weekend becomes possible.
+
+But there is a question you have not asked, and it is the interesting one. Not "how do I move
+all this faster?" but "why is there this much to move?"
+
+Because when you actually look, half of it is things you have not touched in three years. If you
+give those away, what remains fits in the car in three trips, this afternoon, for nothing. And
+you are not just moved - you are moved with a smaller amount of stuff, which stays true next
+year and the year after.
+
+The van would have moved the problem faster. Giving things away made the problem smaller. Only
+one of those keeps paying.
+
+Now the honest bit, because the tidy version of this story is not the true one.
+
+There was a third option. Some of what you were moving was in boxes that were far bigger than
+their contents. Repacking properly would have fitted everything - all of it, nothing given away -
+into the car in four trips. That is the best answer, and you did not take it, because repacking
+meant unpacking somebody else's carefully sealed boxes on the day of the move, and if it went
+badly there was no time to recover.
+
+That is a real reason and it is worth saying. It shows you saw the best option and chose a
+safer one deliberately, which is different from not having seen it.
+
+And one more thing. If you had a month instead of a weekend, giving things away to fit the car
+would be silly. You would repack properly. The cheap answer was right because of the weekend,
+not because cheap answers are right.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the goal and THE CONSTRAINT, named specifically.
+        DECIDES: whether frugality was forced or optional. "We had no cloud budget and the
+        department GPU queue was three days" is a constraint; "we wanted to be efficient" is a
+        preference.
+
+    TASK (1 sentence)
+        HOLDS: what you owned and what the constraint blocked you from doing.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: four beats:
+            (a) THE EXPENSIVE SOLUTION you did not take, with what it would have delivered
+            (b) THE QUESTION YOU ASKED INSTEAD - why is there so much work, rather than how do
+                I do it faster
+            (c) WHAT YOU DID, and why it was structurally better rather than merely affordable
+            (d) THE BETTER SOLUTION YOU ALSO DID NOT TAKE, if there was one, and why
+        DECIDES: everything. (a) creates the comparison; (b) is the move that distinguishes
+        invention from coping; (d) is what makes the answer sound senior.
+
+    RESULT (2-3 sentences)
+        HOLDS: TWO numbers - what the expensive route would have given and what yours gave.
+        DECIDES: whether "better, not just cheaper" is a claim or a demonstration.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would do with more resource, which pre-empts the standard probe.
+
+--- THE TWO KINDS OF SOLUTION, and why one is free ---
+
+    BUYING CAPACITY
+        HOLDS: the same work, on a faster machine.
+        GIVES: a linear improvement, bounded by what you buy.
+        COSTS: money, recurring, plus setup time.
+        4x hardware on twelve indexes still builds twelve indexes.
+
+    REMOVING WORK
+        HOLDS: less work, on the machine you have.
+        GIVES: a structural improvement that does not depend on what you can afford.
+        COSTS: usually scope, or an architectural change.
+        Four indexes on the existing machine beat twelve on a 4x machine.
+
+--- THE PROBE, AND ITS TRAP ---
+
+    "What would you have done with an unlimited budget?"
+
+    WRONG:  "The same thing." Sounds principled, reads as inflexible.
+    RIGHT:  name something you would genuinely have changed - here, building the metadata-filter
+            fix and keeping all twelve categories - AND something you would have kept regardless,
+            here profiling before optimising, because the two wasted days were never a money
+            problem.""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - WITH BOTH NUMBERS.
+
+THE PROMPT: "Tell me about a time you did more with less."
+
+OPEN WITH: "The cheapest option turned out to be more than twice as effective as the one we
+would have paid for, and it was available the same afternoon."
+
+THE ANSWER (about 100 seconds):
+
+    SITUATION: "Four-person capstone, six weeks, fixed demo date with external examiners. I
+    owned the indexing pipeline. At week four a full re-index took nine hours - one experiment a
+    day with ten working days left. We had no cloud budget and the department GPU queue was
+    three days deep."
+
+    TASK: "I had to raise how fast we could iterate, without money."
+
+    ACTION: "The obvious answer was to buy throughput - rent a GPU roughly four times faster.
+    That would have taken re-index from nine hours to about two and a quarter, which is around
+    three and a half experiments a day. Minus roughly a day of setup and billing, about
+    thirty-one experiments before the demo.
+
+    Instead I asked a different question: not how do we do this work faster, but why is there so
+    much work. Profiling showed the index build was about 80% of the nine hours, and we were
+    building twelve separate indexes, one per item category.
+
+    So I cut to four categories. Re-index went to forty minutes - about eight experiments a day
+    - and the change took half a day. About seventy-six experiments before the demo.
+
+    The free option beat the paid one by roughly two and a half times, and the reason is that
+    buying speed multiplies the work you are already doing, while removing work changes how much
+    there is."
+
+    RESULT: "We shipped on the demo date at 87% retrieval accuracy on 200 hand-labelled queries,
+    and spent nothing."
+
+    REFLECTION: "There was a better answer I did not take - a single index with a category
+    metadata filter would have kept all twelve categories and been just as fast. I did not take
+    it because it meant changing the query path Arun owned, mid-project, with no slack in the
+    schedule. Under a longer deadline that is clearly the right fix."
+
+THE ARITHMETIC, ready for the follow-up:
+
+    BUY A 4x GPU:     9h / 4 = 2.25h per re-index
+                      8-hour day / 2.25h  = about 3.5 experiments/day
+                      10 days minus 1 day setup = 9 days x 3.5 = about 31 experiments
+                      cost: cloud spend
+
+    CUT SCOPE:        9h -> 40 minutes
+                      about 8 experiments/day
+                      10 days minus half a day = 9.5 x 8 = about 76 experiments
+                      cost: nothing
+
+    RATIO: 76 / 31 = about 2.5 times more experiments, for no money.
+
+THE PROBE - "What would you have done with an unlimited budget?"
+
+    "I would have built the metadata-filter fix and kept all twelve categories - with budget AND
+     time, that is straightforwardly the better system. What I would NOT have changed is
+     profiling before optimising. The two days I lost to guessing that the model was the
+     bottleneck were not a money problem, and no amount of hardware would have fixed them."
+
+    That answer names a real change and a real constant, which is what the probe is testing.
+
+THE INVERSION - when the frugal instinct would have been wrong:
+
+    "If the deadline had been six months rather than two weeks, cutting scope would have been
+     false economy. Three days of work on the metadata filter buys permanent full-scope speed;
+     cutting scope buys temporary speed and loses two thirds of the product. Frugality was the
+     right answer because of the constraint, not because the cheap option is generally better."
+
+AND THE WEAK VERSION, for contrast:
+
+    "We did not have money for cloud GPUs so I waited for the department queue and started three
+     days later."
+
+    No invention, no ownership, no better outcome. That is accepting a constraint, and the
+    principle is explicitly about constraints producing something.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: under an hour, since the story exists - this is an INDEX over
+material. The hour goes on computing the two comparison numbers so the "better, not just
+cheaper" claim is a demonstration, and preparing the unlimited-budget answer.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns THE COMPARISON WITH THE EXPENSIVE OPTION. Its
+siblings own the other angles on the same capstone - "STAR: Delivering under a hard deadline"
+owns what was protected and the evaluation statistics, "STAR: Acting decisively with incomplete
+information" owns reversibility, "STAR: Diving deep" owns the profiling that made any of it
+possible, and "STAR: Insisting on the right long-term solution" owns the metadata fix she did not
+build.
+
+STUDENT-SCALE MATERIAL THAT WORKS, since nobody expects a budget story:
+  - using free tiers deliberately rather than by accident, and knowing their limits
+  - reducing a problem so it fits the hardware you have, rather than waiting for better hardware
+  - reusing an existing component instead of building a new one
+  - cutting a dataset intelligently so labelling stays affordable
+
+THE FOLLOW-UPS, with what to say:
+
+  - "What would you have done with an unlimited budget?" Name a genuine change AND a genuine
+    constant. Answering "the same thing" reads as inflexibility.
+  - "Was the cheaper solution actually worse?" If it was, say so - "it was right under the
+    constraint and I would not choose it with more time" is credible and complete.
+  - "How did you know the expensive option would only give 3.5 experiments a day?" Because you
+    can compute it: nine hours divided by four, against an eight-hour day. Being able to produce
+    the estimate is most of the point.
+  - "Where does frugality stop?" When the saving costs more than it saves. Refusing a tool the
+    team needs and losing a week to it is not frugality, it is converting money into time at a
+    bad rate.
+
+THE #1 MISTAKE: telling a story about coping with a constraint rather than being changed by one.
+"We had no money so we waited / worked harder / accepted less" contains no invention, and the
+principle is a claim that constraints PRODUCE something. If the constrained outcome was simply
+worse, that is a story about endurance and it belongs somewhere else.
+
+RUNNER-UP: never naming the expensive option, which leaves the interviewer no way to tell
+resourcefulness from a small problem.
+
+TAKEAWAY: frugality is the claim that a constraint made you find a BETTER answer - so name the
+expensive option you did not take, show with two numbers that yours won, and ask "why is there so
+much work?" rather than "how do I do this faster?", because only the first question has a free
+answer.""",
 ]
 
 _EX_P0LP["STAR: Customer obsession -- starting from the customer and working backward"] = [
-    """A full student-scale answer, where the customer is a real user.
-SITUATION: I built a document Q&A bot over my university's 400-page course
-handbook and put it in front of eight classmates.
-TASK: My instinct was to improve the model; I wanted to know what actually made
-it useless to them.
-ACTION: I sat with four of them while they used it rather than sending a
-survey. Every one of them stopped trusting it the moment it gave a confident
-answer with no source - not because it was wrong more often than they expected,
-but because they had no way to CHECK it. That was not the problem I had
-planned to solve. So I worked backward from 'I need to verify this in ten
-seconds': citations with section links on every answer, and an explicit 'I
-could not find this in the handbook' rather than a guess.
-RESULT: Repeat use went from two of eight to six of eight over the following
-fortnight, on the same underlying model.""",
+    """1. THE GOAL - starting at the person, not at the system.
 
-    """'Working backward' is the actual technique being tested.
-Amazon's method is to start from the customer experience and reason back to the
-build - famously by writing the press release and FAQ before writing code. The
-story must show that direction of travel: customer pain -> desired experience ->
-what to build. The failure mode is the reverse, where you build something and
-then look for a customer benefit to justify it.
-In the example, the giveaway sentence is 'that was not the problem I had
-planned to solve'. It proves the customer changed the plan, which is the whole
-LP in six words.""",
+    AMAZON LEADERSHIP PRINCIPLE - CUSTOMER OBSESSION: "Leaders start with the customer and work
+    backwards. They work vigorously to earn and keep customer trust. Although leaders pay
+    attention to competitors, they obsess over customers."
 
-    """The weak version.
-'I wanted users to have a better experience, so I improved the model's accuracy
-from 68% to 91%.' It sounds strong and it is not a customer-obsession story -
-it is a technical-improvement story with the word 'users' attached. Nobody was
-observed, no pain was identified, and the metric is internal.
-The tell an interviewer listens for: does the candidate name a SPECIFIC
-customer behaviour they observed, or do they only talk in aggregates? 'Four of
-eight stopped using it after one wrong answer' is customer obsession.
-'Engagement was low' is a dashboard.""",
+The phrase being tested is WORK BACKWARDS, and it is a specific technique rather than an
+attitude. It means:
 
-    """When there is no external customer - which is most student work.
-Your customer can be internal and the LP still applies: the teammates who
-consume your module, the TA who marks the submission, the next student who
-inherits the repo. A genuine example: 'the three people using my data loader
-kept hitting the same setup failure, so I watched one of them do it, found the
-undocumented environment variable, and wrote a ten-line SETUP.md - onboarding
-went from days to an hour.' Small, real, and it demonstrates observing a user
-rather than guessing at one.""",
+    BEGIN WITH THE EXPERIENCE THE PERSON SHOULD HAVE, AND REASON BACK TO WHAT YOU BUILD -
+    RATHER THAN BEGINNING WITH WHAT YOU BUILT AND HOPING SOMEBODY WANTS IT.
 
-    """The probes, and what they are checking.
-'How did you know that was what customers wanted?' - they are testing whether
-you have evidence or a hunch; name the method (sat with four users, read the
-forum, logged the drop-off point). 'What did you have to say no to?' - customer
-obsession implies choosing the customer's priority over your own preferred
-work, so have the thing you dropped. 'How did you measure the outcome?' - the
-number should be a CUSTOMER behaviour (repeat use, task completion, complaints)
-rather than a model metric.""",
+The distinction sounds slight and produces completely different decisions. Working forward, you
+ask "how do I make my system better?" Working backward, you ask "what does this person need to
+happen, and what is the smallest thing that makes it happen?"
 
-    """The distinction Amazon draws explicitly, and expects you to draw.
-The LP says leaders 'pay attention to competitors, but they obsess over
-customers'. So an answer built on 'the competing product had this feature so we
-added it' scores badly - it is competitor-led. The same feature reached by
-'three users asked how to do X and could not' scores well. If your story
-involves matching something another product does, reframe it around the
-underlying customer need that product happened to be serving, and say why you
-believed the need was real.""",
+The trap here is subtler than in most of these principles, so it is worth stating early:
+
+    A STORY ABOUT IMPROVING A METRIC IS NOT A CUSTOMER-OBSESSION STORY.
+
+"I improved accuracy from 68% to 91%" sounds strong and answers a different question. It is
+about the system. The customer-obsession version explains WHICH CUSTOMER, WHAT THEY WERE TRYING
+TO DO, HOW YOU FOUND OUT, and what changed FOR THEM.
+
+THIS ENTRY IS AN INDEX over the story bank, drawing on the DELIVERY shape, and reuses the same
+capstone. Its siblings own the other angles: "STAR: Delivering under a hard deadline" owns what
+was protected and the evaluation statistics, "STAR: Being frugal" owns the comparison with the
+expensive option.
+
+WHAT THIS ENTRY OWNS: WORKING BACKWARD FROM THE ACTUAL USER - and the discovery that four
+categories covered most of what people actually lose.""",
+
+    """2. THE INTUITION - who is the customer, and what do they actually do?
+
+For the capstone there were two candidate customers, and it matters which you work backward
+from:
+
+    THE EXAMINING PANEL          they want to see something that works and can be trusted
+    THE STUDENT WHO LOST A       they want their water bottle back
+    WATER BOTTLE
+
+The panel is the person grading you. The STUDENT is the customer, and confusing the two is the
+mistake - building to impress an examiner is working forward from a system, dressed up.
+
+So work backward from the student:
+
+    WHAT SHOULD HAPPEN:  they photograph a bottle like theirs, and their bottle appears
+    THEREFORE:           the system must return the right item near the top
+    THEREFORE:           it must be accurate on THE KINDS OF THING PEOPLE ACTUALLY LOSE
+    THEREFORE:           the categories that matter are the ones with items in them
+
+And now the question stops being "how many categories can we support?" and becomes "WHAT DO
+PEOPLE ACTUALLY LOSE?" - which is a question you can answer by looking.
+
+    a term of the campus lost-property log, 340 items:
+
+        bottles      92   ################################
+        bags         71   #########################
+        phones       51   ##################
+        keys         28   ##########
+        --------------------------------------------- 242 items in FOUR categories
+        umbrellas    23   ########
+        headphones   19   #######
+        cards        16   ######
+        glasses      13   #####
+        books        11   ####
+        chargers      8   ###
+        jewellery     5   ##
+        other         3   #
+        --------------------------------------------- 98 items in EIGHT categories
+
+    FOUR CATEGORIES OUT OF TWELVE - a third of the list - COVER 242 OF 340 ITEMS, which is 71%.
+
+That changes what the scope cut means entirely. It is not "we dropped two thirds of the
+product". It is "we kept the two thirds of the actual demand that four categories carry, and
+made it work properly."
+
+    dropped:  67% of the CATEGORIES
+    kept:     71% of the ACTUAL LOSSES
+
+The list of categories and the distribution of what people lose are different things, and only
+one of them is the customer.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CUSTOMER OBSESSION. The Amazon principle: start with the customer, work backwards, earn and keep
+trust.
+
+WORKING BACKWARDS. Amazon's actual method: begin from the customer experience and reason back to
+the build. Famously done by writing the press release and the FAQ FIRST, before any code, and
+discarding the idea if the press release is not compelling.
+
+THE CUSTOMER. The person whose problem you are solving. Not your manager, not the examiner, not
+yourself. When there is no external user - which is most student work - it can be internal: the
+teammates who consume your module, the marker who reads your report, the next person to maintain
+your code.
+
+PRESS RELEASE / FAQ. The working-backwards artefact. Write the announcement as if it shipped;
+if you cannot make it sound worth having, do not build it.
+
+CUSTOMER PAIN. The specific thing that is bad for them now. "The search is slow" is a system
+observation; "I gave up and asked at the front desk" is a customer pain.
+
+EVIDENCE vs HUNCH. Whether your claim about the customer comes from data - logs, a survey, a
+conversation - or from imagination. The probe in section 10 is aimed exactly here.
+
+USAGE DISTRIBUTION. How demand is actually spread across the things you support. Almost never
+uniform, and the whole argument in section 5 rests on that.
+
+HEAD AND TAIL. The few things that account for most of the demand (head) and the many that
+account for little (tail). Recognising which you are serving is most of a prioritisation
+decision.
+
+TRUST. Earned by the system doing what it says. A search that returns confident wrong answers
+loses it faster than one that returns nothing.
+
+STAR. Situation, Task, Action, Result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE WEAK VERSION, and it is the most common failure on this principle:
+
+    "I wanted users to have a better experience, so I improved the model's accuracy from 68% to
+     91%."
+
+It SOUNDS like a strong answer. It is a system-improvement story with the word "users" in it.
+Nothing in it says which customer, what they were trying to do, how you found out, or what
+changed for them. Accuracy went up; whether anybody's day got better is not addressed.
+
+    THE TEST: COULD YOU TELL THIS STORY WITHOUT MENTIONING A HUMAN BEING? If yes, it is not a
+    customer-obsession story.
+
+TRAP 2 - MISTAKING THE GRADER FOR THE CUSTOMER. In a student project the examiner feels like the
+customer because they hold the marks. They are not. Building to impress an examiner is working
+forward from a system with extra steps, and interviewers notice when "the user" in a story never
+does anything.
+
+TRAP 3 - ASSUMING THE USAGE DISTRIBUTION IS UNIFORM. This is the substantive one. Treating
+twelve categories as twelve equal things is a system view; looking at what people actually lose
+is a customer view, and the two give opposite answers about what to cut. Section 5 shows the
+whole argument turning on this.
+
+TRAP 4 - NO EVIDENCE. "I knew users wanted X" invites "how did you know?" and the honest answer
+had better involve looking at something - a log, a survey, five conversations. A hunch that
+happened to be right is still a hunch, and the principle is about working from the customer
+rather than from your model of them.
+
+TRAP 5 - COMPETITOR-LED REASONING. The principle explicitly says leaders "pay attention to
+competitors, but obsess over customers". An answer that reasons "the other group's project had
+twelve categories so we needed twelve" fails on exactly the distinction Amazon draws in the
+wording.
+
+TRAP 6 - CONFUSING MORE FEATURES WITH MORE VALUE. Twelve categories is more product and less
+value if none of them can be trusted. The customer does not experience your feature list; they
+experience whether their bottle came back.""",
+
+    """5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE - WITH THE DISTRIBUTION.
+
+THE NAIVE APPROACH: build what was specified, then try to make it better.
+
+Twelve categories were in the proposal, so twelve categories is the target, and the work is to
+make twelve categories as good as possible in the time available. That is working FORWARD from
+the specification.
+
+It produces the wrong decision here, and the reason is that the specification was written before
+anybody looked at what people lose.
+
+THE REAL APPROACH: work backward from the person, and look at what they actually do.
+
+    START:      a student has lost a water bottle
+    THEY NEED:  to photograph a similar bottle and see theirs
+    SO:         the system must be reliable on bottles
+    QUESTION:   what do people actually lose?
+    LOOK:       the lost-property log
+
+THE DISTRIBUTION - and this is the whole argument:
+
+    340 items logged over a term, across twelve categories.
+
+        FOUR categories - bottles, bags, phones, keys  =  242 items
+        EIGHT categories - everything else             =   98 items
+
+        242 / 340 = 71.2%
+
+    SO: KEEPING A THIRD OF THE CATEGORIES KEEPS 71% OF THE ACTUAL LOSSES.
+
+    Combine that with the evaluation argument from the sibling entry - 200 test queries across
+    four categories gives 50 each and a defensible 87%, against 17 each and a meaningless number
+    - and the customer-backward answer is unambiguous:
+
+        TWELVE CATEGORIES:  100% of losses covered, at an accuracy nobody can trust
+        FOUR CATEGORIES:     71% of losses covered, at 87% you can state and defend
+
+    For the student who lost the bottle, the second system works and the first is a lottery. The
+    29% whose umbrella is not covered are told so plainly, which is better than being told
+    "no match found" by a system that might simply have missed it - because a system that admits
+    its limits keeps trust, and one that fails silently spends it.
+
+THE INVERSION - and this is what shows the reasoning was real:
+
+    SUPPOSE THE DISTRIBUTION HAD BEEN UNIFORM. 340 items spread evenly over twelve categories is
+    about 28 each, so four categories would cover 4 x 28 = 113 items, which is 33%.
+
+        four categories would then cover only a THIRD of the losses
+        the customer argument for cutting COLLAPSES - you would be abandoning two thirds of the
+        people to make the remaining third measurable
+
+    Same project, same deadline, same evaluation budget. The distribution alone decides whether
+    cutting scope serves the customer or abandons them.
+
+    THAT IS WHY THE LOOKING MATTERED. Not because looking is virtuous, but because the answer
+    genuinely depended on something nobody had checked.
+
+THE UPGRADE THAT COSTS NOTHING: tell the 29% honestly. "We currently cover bottles, bags, phones
+and keys" is a system that keeps trust. Silently returning nothing for umbrellas is a system
+that looks broken.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: NAME THE ACTUAL PERSON, SAY WHAT THEY WERE TRYING TO
+DO AND HOW YOU FOUND OUT, REASON BACKWARD FROM THE EXPERIENCE THEY NEEDED TO THE SMALLEST THING
+THAT DELIVERS IT, AND MEASURE WHAT CHANGED FOR THEM.
+
+THE LOOP IS WORKING BACKWARDS, and it has a definite stopping point:
+
+  - Start from the experience and ask "what must be true for that to happen?" repeatedly.
+  - Each answer becomes the next thing that must be true.
+  - WHAT MAKES IT STOP: reaching something you can actually build this week. If you are still at
+    "we would need a bigger dataset", keep going backward until you reach an action.
+  - WHAT MAKES IT GO WRONG: starting from the system. "We have a model, how do we make it
+    better?" is the forward direction and it never reaches the customer, because the customer
+    was never in the chain.
+
+THE STEPS:
+
+  1. NAME THE CUSTOMER, specifically. Not "users" - "a student who has lost a water bottle". If
+     there is no external user, name the internal one: the teammate who consumes your module.
+
+  2. NAME THE PAIN IN THEIR WORDS. What they do today, and why it is bad. "They give up and ask
+     at the front desk."
+
+  3. SAY HOW YOU KNOW. A log, a survey, five conversations. This pre-empts the main probe and it
+     is where most answers are weakest.
+
+  4. WORK BACKWARD from the experience to what must be true, until you reach something buildable.
+
+  5. LOOK AT THE DISTRIBUTION. What do people actually do, and how unevenly? This is the step
+     that produces non-obvious decisions, and it is skipped almost universally.
+
+  6. CHOOSE THE SMALLEST THING that delivers the experience, rather than the most complete thing
+     that might.
+
+  7. BE HONEST ABOUT THE GAP. Tell the customers you do not serve that you do not serve them.
+     Trust is cheaper to keep than to rebuild.
+
+  8. MEASURE WHAT CHANGED FOR THEM, not for the system. Not "accuracy rose" but "of the items
+     people actually lose, 71% are now searchable at 87% accuracy".""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine opening a small sandwich shop near a station, and you have planned a menu of twelve
+things.
+
+The forward way to run it is to spend the morning making all twelve as well as you can. By
+lunchtime some are good, some are not quite ready, and the queue is out of the door with eleven
+minutes before people's trains.
+
+The backward way starts somewhere else entirely: with the person in the queue. What do they
+need? To get something good, quickly, and make their train. Work back from that, and the
+question is no longer "how do I make twelve things?" but "what do these people actually buy?"
+
+So you look at last term's till roll. And it turns out four of the twelve account for seven out
+of every ten sandwiches sold. The other eight share what is left.
+
+Now the decision makes itself. Make four properly, every day, ready before the rush. Seven in ten
+customers get exactly what they wanted, quickly. And you put a small honest sign up saying which
+four you do - so the person who wanted the eighth thing finds out in two seconds instead of
+queueing for six minutes to be disappointed.
+
+Two things about this are worth keeping.
+
+The first is that you looked at the till roll. If you had guessed, you might have kept your own
+favourites, and the numbers would not have followed. The looking is what made the decision
+different from a preference.
+
+The second is that the answer depended entirely on what the till roll said. If sales had been
+spread evenly across all twelve, then making four would serve only a third of the queue and turn
+away the rest - and the right answer would have been something else completely. The lesson is not
+"do fewer things". It is "find out where the demand actually is, because it is almost never
+spread evenly, and that is what tells you which fewer things."
+
+And the sign matters more than it looks. A shop that says what it sells is trusted. A shop where
+you queue and then discover they do not have it is one you do not go back to.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the context AND THE NAMED CUSTOMER, with what they were trying to do.
+        DECIDES: whether a human being appears in this answer at all. "Users" is not a customer;
+        "a student who has lost a water bottle" is.
+
+    TASK (1 sentence)
+        HOLDS: what you owned, and what the customer's experience was going to be if nothing
+        changed.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats:
+            (a) HOW YOU FOUND OUT what the customer needed - the log, the survey, the
+                conversations
+            (b) THE BACKWARD CHAIN - the experience, then what must be true for it, then what
+                must be true for that
+            (c) THE DISTRIBUTION - what people actually do, and how unevenly
+            (d) THE DECISION that follows, which is usually smaller than the plan
+            (e) THE HONESTY about who you do not serve
+        DECIDES: everything. (a) separates evidence from hunch, (c) is where the non-obvious
+        decision comes from, and (e) is what earns trust rather than spending it.
+
+    RESULT (2-3 sentences)
+        HOLDS: what changed FOR THE CUSTOMER, in customer units.
+        DECIDES: whether this was a customer story or a system story. "71% of actual losses now
+        searchable at 87%" is customer units; "accuracy rose to 87%" is system units.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would learn about the customer next.
+
+--- THE TWO DIRECTIONS ---
+
+    WORKING FORWARD
+        starts at: the system you have
+        asks: how do I make this better?
+        produces: more features, better metrics, and no guarantee anyone benefits
+
+    WORKING BACKWARDS
+        starts at: the experience the person should have
+        asks: what must be true for that, and what is the smallest thing that makes it true?
+        produces: usually a SMALLER build than planned, aimed at what people actually do
+
+--- THE NUMBERS THAT MAKE IT CUSTOMER-SHAPED ---
+
+    SYSTEM UNITS        "we support twelve categories", "accuracy is 87%"
+    CUSTOMER UNITS      "71% of the things people actually lose are searchable, at an accuracy
+                        we can state"
+
+    The second is the same work described from the other end, and only one of them answers the
+    question being asked.""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - WITH THE DISTRIBUTION.
+
+THE PROMPT: "Tell me about a time you put the user first."
+
+OPEN WITH: "We were about to build twelve categories nobody could trust, until I looked at what
+students actually lose and found that four of them covered seven cases in ten."
+
+THE ANSWER (about 110 seconds):
+
+    SITUATION: "Final-year capstone - a campus lost-and-found image search. A student photographs
+    something like what they lost and the system shows matching found items. We had planned
+    twelve item categories because that is what our proposal said."
+
+    TASK: "I owned the indexing pipeline, and at week four we had a decision to make about scope
+    with a fixed demo date."
+
+    ACTION: "Instead of asking how many categories we could support, I asked what a student who
+    has lost something actually needs - which is that their thing appears when they search. So I
+    looked at the campus lost-property log for the previous term: 340 items.
+
+    The distribution was heavily uneven. Bottles, bags, phones and keys accounted for 242 of the
+    340 - about 71%. The other eight categories shared 98 items between them.
+
+    So four of the twelve categories - a third of the list - covered seven out of ten actual
+    losses. And with our evaluation budget of 200 hand-labelled queries, four categories meant
+    fifty test queries each, which gives an accuracy figure you can defend, where twelve
+    categories would have meant seventeen each and a number that means nothing.
+
+    We shipped four categories, and we put the covered list on the search page, so somebody who
+    lost an umbrella found out in two seconds instead of searching and getting nothing."
+
+    RESULT: "71% of what students actually lose is searchable at 87% accuracy, measured on 200
+    queries. The alternative was 100% coverage at an accuracy nobody could state."
+
+    REFLECTION: "I should have looked at that log in week one. We planned twelve categories from
+    the proposal rather than from the data, and the data was available the whole time."
+
+THE DISTRIBUTION, ready for the follow-up:
+
+        bottles 92, bags 71, phones 51, keys 28        =  242
+        the other eight categories                     =   98
+        total                                          =  340
+
+        242 / 340 = 71.2% of losses,  from 4 / 12 = 33% of the categories
+
+THE INVERSION, which shows the reasoning rather than the conclusion:
+
+    "If losses had been spread evenly - about 28 per category - then four categories would have
+     covered 113 of 340, which is 33%. At that point cutting scope abandons two thirds of the
+     people to make the remaining third measurable, and the customer argument runs the other way.
+     The decision depended entirely on the distribution, which is why looking at the log was the
+     part that mattered."
+
+THE PROBES:
+
+    "How did you know that was what users wanted?" - "I looked at the lost-property log for the
+     previous term - 340 items - rather than guessing. That is where the 71% comes from."
+
+    "What about the users you did not serve?" - "We told them. The covered categories are listed
+     on the search page, so somebody who lost an umbrella knows in two seconds. A system that
+     silently returns nothing looks broken; one that says what it covers keeps trust."
+
+    "Is this not just scope cutting?" - "The scope cut is the same action. What makes it a
+     customer decision is that WHICH categories we kept came from what people actually lose,
+     rather than from which were easiest to build. Had we picked the four easiest, the coverage
+     would have been much lower."
+
+AND THE WEAK VERSION, for contrast:
+
+    "I wanted users to have a better experience, so I improved retrieval accuracy from 68% to
+     87%."
+
+    Same project, and no customer in it. No person, no pain, no evidence, and no statement of
+    what changed for anybody.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: under an hour, as an INDEX over the existing story. Most of it goes
+on the distribution numbers, because they are what convert "we put the user first" from a claim
+into a decision that could have gone the other way.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns WORKING BACKWARD FROM THE ACTUAL USER and the
+usage distribution. Its siblings own the other angles - "STAR: Delivering under a hard deadline"
+owns what was protected and the evaluation statistics, "STAR: Being frugal" owns the comparison
+with buying compute, "STAR: Diving deep" owns the profiling.
+
+WHEN THERE IS NO EXTERNAL CUSTOMER - which is most student work - the LP still applies with an
+internal one: the teammates who consume your module, the marker who reads your report, the next
+person to maintain the code. Working backward from "what does the person reading this need?" is
+the same technique.
+
+THE FOLLOW-UPS, with what to say:
+
+  - "How did you know that was what customers wanted?" THE probe. Name the evidence - a log, a
+    survey, conversations - and the number it produced. A hunch that happened to be right is
+    still a hunch.
+  - "What about the customers you did not serve?" Say what you told them. Honesty about coverage
+    keeps trust; silent failure spends it.
+  - "How did you measure the improvement for the customer?" In customer units, not system units.
+  - "What would you do next?" Something that learns more about the customer - watch which
+    searches return nothing, since that is a free list of what to add next.
+  - "Is that not just prioritisation?" It is prioritisation DERIVED FROM THE CUSTOMER rather
+    than from convenience, and the difference shows in which four you kept.
+
+THE #1 MISTAKE: telling a system-improvement story with the word "users" attached. "I improved
+accuracy from 68% to 91% so users would have a better experience" contains no person, no
+evidence and no customer outcome. The test is whether you could tell the story without mentioning
+a human being - if you could, it is not this principle.
+
+RUNNER-UP: assuming demand is spread evenly across whatever you support. It almost never is, and
+the whole non-obvious part of this answer comes from looking.
+
+TAKEAWAY: working backwards means starting from the experience a named person should have and
+reasoning back to the smallest thing that delivers it - so find out what they actually do rather
+than what your specification says, because the distribution is almost never uniform and it
+usually changes the answer.""",
 ]
 
 _EX_P0LP["STAR: Delivering under a hard deadline with scope trade-offs (Deliver Results / Bias for Action)"] = [
