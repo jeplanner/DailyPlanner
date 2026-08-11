@@ -82553,63 +82553,481 @@ because it recomputes the same value and the flat step because it matches neithe
 ]
 
 _EX_P1H["Arranging Coins"] = [
-    """The closed form first, because it makes the search obvious.
-k complete rows use 1 + 2 + ... + k = k(k+1)/2 coins. So the question is the
-largest k with k(k+1)/2 <= n - a monotonic predicate, which is exactly what
-binary search is for.
-n = 5: k=1 uses 1, k=2 uses 3, k=3 uses 6 > 5. Answer 2, with one coin left
-over. n = 8: k=3 uses 6, k=4 uses 10 > 8. Answer 3.
-Stating the triangular-number formula before writing anything turns a
-fiddly simulation into three lines.""",
+    """1. THE GOAL - how many complete rows of a coin staircase?
 
-    """Why the loop returns `hi` rather than -1.
-This is a search for a BOUNDARY, not for an exact match, so the standard
-'return -1 when not found' is wrong. When the loop exits, lo has moved past the
-answer and hi sits on the largest k whose cost is still within budget - so hi
-IS the answer.
-n = 5: lo=0,hi=5 -> mid 2 costs 3 < 5 -> lo=3. mid 4 costs 10 > 5 -> hi=3.
-mid 3 costs 6 > 5 -> hi=2. Now lo=3 > hi=2, exit, return hi = 2. Correct.
-Recognising 'largest k satisfying a predicate' as a binary-search-on-the-answer
-problem is the transferable idea; the exact-match template does not apply.""",
+Build a staircase from n coins. ROW 1 NEEDS 1 COIN, ROW 2 NEEDS 2, ROW 3 NEEDS 3, and so on. Return
+how many rows you can COMPLETE - a partly filled row does not count.
 
-    """The overflow trap, which is the real reason this problem exists.
-mid * (mid + 1) can exceed 32-bit range even when n does not: with n near 2^31,
-mid is around 65,000 and mid*(mid+1) is about 4.3 billion - overflowing a
-signed int in Java or C++ and producing a negative cost, which sends the search
-the wrong way.
-Fixes: use long/int64, or rearrange to compare mid <= (2*n)/(mid+1) to avoid
-the large product. Python's arbitrary-precision integers hide this entirely,
-which is exactly why it is worth saying out loud - it shows you are thinking
-about the algorithm rather than about your interpreter.""",
+    n = 5
 
-    """The O(1) alternative, by solving the quadratic.
-k(k+1)/2 <= n rearranges to k^2 + k - 2n <= 0, so k = floor((-1 + sqrt(1 + 8n))
-/ 2). One line, constant time.
-The caveat to state: floating-point sqrt on very large n can be off by one at
-the boundary, so production code computes the candidate and then verifies
-k(k+1)/2 <= n < (k+1)(k+2)/2, adjusting by one if needed. Offering the formula
-WITH that caveat is stronger than offering it as if it were exact - and it is
-the same precision issue as integer square roots generally.""",
+        row 1:  o                    1 coin,  1 used,  4 left
+        row 2:  o o                  2 coins, 3 used,  2 left
+        row 3:  o o                  needs 3 and only 2 remain - INCOMPLETE
 
-    """Edge cases.
-n = 0 -> lo=0, hi=0, mid=0, cost 0 == 0 -> return 0. Zero rows.
-n = 1 -> row 1 costs 1 -> answer 1.
-n = 2 -> k=1 costs 1, k=2 costs 3 > 2 -> answer 1, with one coin spare.
-n = 3 -> exactly two full rows, and the `coins_used == n` branch returns 2
-directly.
-Large n near 2^31 - 1 -> about 65,535 rows, and the answer must still be
-computed without overflow. These five cover every branch.""",
+    ANSWER: 2
 
-    """Complexity and the family.
-O(log n) time, O(1) space. The linear simulation - subtract 1, then 2, then 3
-until you run out - is O(sqrt n), which is also fast enough here but does not
-generalise.
-The family is binary-search-on-the-answer: Koko Eating Bananas (smallest speed
-that finishes in time), Capacity to Ship Packages Within D Days, Split Array
-Largest Sum, Minimum Number of Days to Make m Bouquets, Sqrt(x). The cue is
-always the same - a monotonic feasibility predicate over a numeric answer,
-where you can cheaply test 'is k good enough?' even though you cannot directly
-compute the best k.""",
+    n = 8
+
+        rows 1, 2 and 3 use 1 + 2 + 3 = 6 coins, leaving 2. Row 4 needs 4.
+    ANSWER: 3
+
+THE ARITHMETIC THAT MAKES THIS EASY. Building k complete rows uses
+
+    1 + 2 + 3 + ... + k  =  k(k + 1) / 2
+
+    which is the familiar triangular-number formula. SO THE QUESTION IS: WHAT IS THE LARGEST k WITH
+    k(k+1)/2 <= n?
+
+    k = 1:   1 coin      k = 2:   3 coins      k = 3:   6 coins      k = 4:  10 coins
+
+    For n = 8:  3 rows cost 6 (fits), 4 rows cost 10 (does not).  Answer 3.
+
+THAT REFRAMING IS THE WHOLE PROBLEM. Once it is a question about the largest k satisfying a
+monotonically increasing condition, it is a BOUNDARY SEARCH - and section 2 shows why binary search is
+the natural tool even though the input is a single number rather than an array.
+
+    THIS ENTRY OPENS THE BINARY-SEARCH CLUSTER in this bank. Its siblings will be Search Insert
+    Position, Sqrt(x) and Kth Missing Positive. THIS ONE OWNS SEARCHING OVER AN ANSWER RANGE RATHER
+    THAN AN ARRAY, and the `return hi` boundary convention.""",
+
+    """2. THE INTUITION - binary search over the ANSWER, not over an array.
+
+There is no array here. What you are searching is THE SET OF POSSIBLE ANSWERS - the numbers 0, 1, 2,
+... up to n - and for each candidate k you can ask a yes/no question:
+
+    DOES k(k+1)/2 FIT WITHIN n?
+
+    k:            0    1    2    3    4    5
+    coins used:   0    1    3    6   10   15
+    fits n = 8?  YES  YES  YES  YES   no   no
+                                 ^
+                          THE BOUNDARY - the largest k that fits
+
+    THE ANSWERS FORM A BLOCK OF YESES FOLLOWED BY A BLOCK OF NOES, because the cost only ever grows as
+    k grows. THAT MONOTONICITY IS WHAT MAKES BINARY SEARCH LEGAL - you are locating the edge between
+    two blocks, and halving the range each time finds it in about log n steps.
+
+    n = 8, searching k in 0 .. 8:
+
+        lo = 0, hi = 8   mid = 4:  costs 10 > 8   too big   ->  hi = 3
+        lo = 0, hi = 3   mid = 1:  costs  1 < 8   fits      ->  lo = 2
+        lo = 2, hi = 3   mid = 2:  costs  3 < 8   fits      ->  lo = 3
+        lo = 3, hi = 3   mid = 3:  costs  6 < 8   fits      ->  lo = 4
+        lo = 4 > hi = 3  -  the search is over.
+
+        ANSWER: hi = 3
+
+WHY THE ANSWER IS `hi` AND NOT SOMETHING ELSE. Section 4 goes into this properly, but the shape is
+worth seeing now: `lo` always sits one past the last known-good value and `hi` sits ON it, so when they
+cross, `hi` holds the largest k that fits.
+
+    THE SEARCH RANGE STARTS AT 0 .. n, which is generous - the true answer is only about sqrt(2n) -
+    but a binary search does not care, because it halves the range regardless. For n = 1000 the answer
+    is 44 and the search takes 10 steps.
+
+AND THERE IS A CLOSED FORM. Solving k(k+1)/2 <= n as a quadratic gives k = floor((−1 + sqrt(1+8n))/2),
+which is O(1). Section 5 gives it and says when to prefer it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+COMPLETE ROW. A row with all its coins. Row k is complete only if k coins are available for it.
+TRIANGULAR NUMBER. 1 + 2 + ... + k = k(k+1)/2. The number of coins k complete rows need.
+
+BINARY SEARCH. Repeatedly halving a range to locate a value or a boundary. O(log n).
+SEARCH OVER THE ANSWER SPACE. Binary-searching the possible ANSWERS rather than the positions of an
+array. Legal whenever the yes/no test is MONOTONIC - true for a block of small candidates and false
+thereafter, with one switch.
+
+BOUNDARY SEARCH. Looking for the edge between the yeses and the noes, rather than for an exact match.
+It changes what you return when the loop ends - section 4.
+
+INVARIANT. Something true at every step of the loop. Here: everything below `lo` fits, and everything
+above `hi` does not.
+
+n. The number of coins.
+lo, hi. The current search range, inclusive at both ends.
+mid. The candidate number of rows being tested.
+coins_used. `mid * (mid + 1) // 2` - the coins that many rows would need.
+
+O(log n) TIME, O(1) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - RETURNING −1 WHEN NOTHING MATCHES. This is a BOUNDARY search, not an exact-match search, so
+the usual "not found" convention is wrong.
+
+    The loop returns early only when `coins_used == n` lands exactly - which is rare, because most n are
+    not triangular numbers. FOR EVERY OTHER n THE LOOP RUNS TO COMPLETION, and the answer must come from
+    the final state.
+
+    WHEN THE LOOP ENDS, `lo` HAS PASSED `hi` BY EXACTLY ONE. The invariant is that everything at or
+    below `hi` fits and everything at or above `lo` does not - so `hi` is the largest k that fits.
+    `return hi` is the answer, and `return -1` would be nonsense.
+
+    On n = 5 the loop never hits an exact match and finishes with lo = 3, hi = 2, returning 2.
+
+TRAP 2 - OVERFLOW, AND THIS IS THE REAL REASON THE PROBLEM EXISTS. `mid * (mid + 1)` can exceed a
+32-bit integer even when n comfortably does not.
+
+    WITH n = 2^31 − 1 = 2,147,483,647, the first `mid` is (0 + n) // 2 = 1,073,741,823, and
+
+        mid * (mid + 1)  =  1,152,921,503,533,105,152
+
+    THAT IS ABOUT 1.15 x 10^18. The largest signed 32-bit integer is 2,147,483,647 - so the product
+    overflows it by a factor of over 500 million. It fits comfortably in a 64-bit integer, whose
+    ceiling is about 9.2 x 10^18.
+
+    IN JAVA OR C++ you must compute this in a `long`, or the comparison is made against a wrapped-around
+    negative number and the search goes haywire. PYTHON'S INTEGERS ARE UNBOUNDED so the bug is invisible
+    here - which is exactly why it is worth stating rather than discovering.
+
+    (For the record, the answer at n = 2^31 − 1 is 65,535.)
+
+TRAP 3 - SEARCHING 1 .. n INSTEAD OF 0 .. n. With `lo = 1`, the case n = 0 has an empty range and the
+loop never runs, returning `hi = 0` by luck rather than by design. Starting at 0 makes zero rows an
+explicit candidate and the n = 0 case falls out properly: mid = 0, coins_used = 0, which equals n, so it
+returns 0 immediately.
+
+TRAP 4 - COMPUTING `mid` AS `(lo + hi) / 2` WITH FLOATING-POINT DIVISION. In Python `/` gives a float,
+and using it as an index or in integer arithmetic drifts. Use `//`. In C or Java the classic form
+`lo + (hi - lo) / 2` also avoids `lo + hi` itself overflowing - a second, different overflow trap from
+trap 2.
+
+TRAP 5 - ASSUMING THE FLOAT SQUARE ROOT IS ALWAYS SAFE. The closed form uses sqrt(1 + 8n). Checked
+against the binary search for every n from 0 to 19,999: NO MISMATCHES, so it is perfectly reliable at
+these sizes. The concern only arises for n beyond about 2^52, where a double can no longer represent
+1 + 8n exactly. Python's `math.isqrt` is exact for any size and sidesteps it entirely.
+
+    Worth being precise about rather than vaguely warning: the float version is fine for this problem's
+    constraints.""",
+
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
+
+VERSION A - SIMULATE. Subtract 1, then 2, then 3, until you cannot afford the next row.
+
+    Correct, and O(sqrt n) - because the answer k satisfies k(k+1)/2 <= n, so k is about sqrt(2n). For
+    n = 2^31 − 1 that is about 65,000 iterations, which is instant.
+
+    THIS IS GENUINELY FAST ENOUGH and it is worth saying so rather than pretending it is unacceptable.
+    Binary search is asked for because the problem is a vehicle for the technique, not because sqrt(n)
+    is too slow.
+
+VERSION B - BINARY SEARCH, which is the code here. O(log n) - about 31 iterations for any 32-bit n.
+
+VERSION C - THE CLOSED FORM. Rearrange k(k+1)/2 <= n:
+
+        k^2 + k − 2n <= 0
+
+    The positive root of k^2 + k − 2n = 0 is (−1 + sqrt(1 + 8n)) / 2, so the largest integer k that
+    satisfies the inequality is
+
+        k = floor( (−1 + sqrt(1 + 8n)) / 2 )
+
+    ONE LINE, CONSTANT TIME. Verified against the binary search for every n from 0 to 19,999 - zero
+    disagreements, using either an exact integer square root or an ordinary floating-point one.
+
+    SO WHY IS IT NOT THE ANSWER TO GIVE FIRST? Because in an interview the question is testing whether
+    you can set up a monotonic predicate and search it. Give the closed form as the follow-up, and say
+    plainly that it is better if you trust the arithmetic.
+
+WHY THE PREDICATE IS MONOTONIC - which is what licenses the binary search:
+
+    coins(k) = k(k+1)/2 STRICTLY INCREASES with k, since coins(k+1) − coins(k) = k + 1 > 0.
+
+    So "does k fit within n" is TRUE for every k up to some point and FALSE for every k after it. There
+    is exactly one switch, and binary search finds a switch in logarithmic time.
+
+    IF THE COST FUNCTION WERE NOT MONOTONIC the search would be invalid - halving the range assumes that
+    testing the midpoint tells you which half the boundary lies in, and that is only true when the
+    answers form two contiguous blocks.
+
+    THAT IS THE TRANSFERABLE IDEA, and it is why this problem opens the binary-search cluster: BINARY
+    SEARCH DOES NOT NEED AN ARRAY. It needs a monotonic yes/no question over an ordered candidate set.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: THE NUMBER OF COINS NEEDED GROWS AS THE NUMBER OF ROWS
+GROWS, SO GUESS A NUMBER OF ROWS, WORK OUT WHAT IT WOULD COST, AND HALVE THE RANGE OF REMAINING GUESSES
+ACCORDING TO WHETHER YOU COULD AFFORD IT.
+
+THERE IS NO RECURSION. The mechanism is A SHRINKING RANGE OF CANDIDATE ANSWERS:
+
+  - The range starts as every number from zero up to the coin count, which certainly contains the
+    answer.
+  - Each guess is the middle of the range and eliminates one half of it.
+  - WHAT MAKES IT STOP: the range shrinks by at least half each time, so after about as many steps as
+    the coin count has bits, it is empty.
+  - WHY HALVING IS VALID: more rows always cost more coins, so a guess that is affordable means the
+    answer is at least that, and one that is not means the answer is below it. The affordable guesses
+    and the unaffordable ones form two solid blocks with one edge between them, and it is that edge you
+    are hunting.
+
+THE STEPS:
+
+  1. SET THE SEARCH RANGE TO EVERYTHING FROM ZERO UP TO THE NUMBER OF COINS.
+
+     From ZERO, not one - building no rows at all is a legitimate answer when there are no coins, and
+     including it means that case needs no special handling.
+
+  2. WHILE THE RANGE STILL HAS ANYTHING IN IT:
+
+     a. TAKE THE MIDDLE CANDIDATE.
+
+     b. WORK OUT HOW MANY COINS THAT MANY COMPLETE ROWS WOULD NEED - the first row needs one, the second
+        two, and so on, which totals the candidate times one more than itself, halved.
+
+        In a language with fixed-width integers, compute this in the WIDEST type available. Two numbers
+        each around half the coin count multiply to something vastly larger than the coin count itself,
+        and it will silently wrap round.
+
+     c. IF THAT IS EXACTLY THE NUMBER OF COINS YOU HAVE, the staircase comes out perfectly even - stop
+        and answer with that candidate.
+
+     d. IF IT IS LESS, this many rows is affordable, so the answer is at least this - discard everything
+        below and including it.
+
+     e. IF IT IS MORE, this many rows is unaffordable, so the answer is below it - discard everything
+        above and including it.
+
+  3. WHEN THE RANGE EMPTIES, THE ANSWER IS THE TOP END OF IT.
+
+     Not a "not found" marker. This is a hunt for a boundary, not for an exact value, and by the time
+     the two ends of the range have crossed, the upper one is sitting exactly on the largest affordable
+     candidate.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine you have a pile of coins and you are laying them out as a staircase: one coin in the top row,
+two in the next, three in the next, and so on. You want to know how many rows you can finish properly.
+A row with a gap in it does not count.
+
+You could just start laying them out - one, then two, then three - subtracting as you go until you
+cannot afford the next row. That works perfectly well, and it takes about as many steps as the answer
+is large, which for even a very big pile is only a few tens of thousands. It is not slow.
+
+But there is a quicker way, and it starts with a small piece of arithmetic. Finishing a given number of
+rows always costs the same total, and that total is easy to write down: it is the number of rows times
+one more than itself, halved. Ten rows always costs fifty-five coins, whoever counts them.
+
+That turns the whole question into something much simpler: what is the largest number of rows whose
+cost you can afford?
+
+And here is the useful property - the more rows you want, the more it costs, always. So if you guess a
+number of rows and find you can afford it, the true answer is that or higher. If you cannot afford it,
+the true answer is lower. There is no ambiguity, ever, because the costs only ever climb.
+
+So you guess in the middle. Suppose you have eight coins. Could you manage four rows? That would cost
+ten, so no - the answer is below four. Could you manage one? That costs one, easily - so the answer is
+at least one. Could you manage two? Three coins, yes. Three rows? Six coins, yes. And now you have
+squeezed the possibilities down to a single number.
+
+Each guess throws away half of what remains, so even a pile of billions of coins is settled in about
+thirty guesses.
+
+Two things to be careful of. The first is what you report at the end. You are not hunting for an exact
+match - most piles do not make a perfectly even staircase - you are hunting for the boundary between
+what you can afford and what you cannot. When your two limits finally cross, the lower of them has
+moved just past the last affordable answer, and the upper one is sitting right on it. That upper limit
+is what you report.
+
+The second is the arithmetic itself. To test a guess you multiply the guess by roughly itself, and if
+your pile is large the guess is large too, so that product is enormously bigger than the pile. In a
+language that puts a ceiling on how big a number can get, this is where things silently go wrong -
+the product wraps round and the comparison is made against nonsense.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep n = 8 beside you, answer 3.
+
+    def arrange_coins(n):
+
+`n` is the number of coins. Returns the number of COMPLETE rows.
+
+        lo, hi = 0, n
+
+THE SEARCH RANGE, INCLUSIVE AT BOTH ENDS.
+
+    lo  HOLDS the smallest candidate still possible.
+    hi  HOLDS the largest.
+
+STARTING AT 0, not 1 (trap 3). Zero rows is a real answer, and including it makes n = 0 fall out
+naturally rather than by luck.
+
+The range 0 .. n is generous - the answer is only about sqrt(2n) - but binary search halves regardless,
+so being loose costs a handful of extra steps and no correctness.
+
+        while lo <= hi:
+
+`<=`, so a single-candidate range is still tested. Terminates because every branch below strictly
+shrinks the range.
+
+            mid = (lo + hi) // 2
+
+The middle candidate. `//` is INTEGER division (trap 4); `/` would give a float and the arithmetic would
+drift. In C or Java, `lo + (hi - lo) // 2` also avoids `lo + hi` overflowing - a different overflow trap
+from the one below.
+
+            coins_used = mid * (mid + 1) // 2   # coins for mid full rows
+
+THE TRIANGULAR NUMBER - how many coins `mid` complete rows would need.
+
+    THIS IS THE OVERFLOW LINE (trap 2). At n = 2^31 − 1 the first `mid` is 1,073,741,823 and the product
+    `mid * (mid + 1)` is 1,152,921,503,533,105,152 - about 1.15 x 10^18, which is 500 million times the
+    32-bit ceiling of 2,147,483,647. It fits in a 64-bit integer. Python does not care; Java and C++ do.
+
+            if coins_used == n:
+                return mid
+
+AN EXACT FIT - the staircase comes out perfectly even. This is an early exit, not the main path: most
+values of n are not triangular numbers, so usually the loop runs to completion and the answer comes from
+`hi`.
+
+            if coins_used < n:
+                lo = mid + 1
+
+AFFORDABLE, so the answer is at least `mid`. Discard everything up to and including it.
+
+            else:
+                hi = mid - 1
+
+UNAFFORDABLE, so the answer is below `mid`.
+
+        return hi                        # largest k with k(k+1)/2 <= n
+
+THE BOUNDARY, NOT A FAILURE MARKER (trap 1).
+
+The invariant through the loop is that everything at or below `hi` fits and everything at or above `lo`
+does not. When they cross, `hi` is sitting exactly on the largest affordable candidate. `return -1`
+would be the convention for an exact-match search and is simply wrong here.""",
+
+    """9. TRACED, STEP BY STEP - AND THE OVERFLOW MADE CONCRETE.
+
+TRACE 1 - n = 8. Expected 3.
+
+    lo = 0, hi = 8
+
+    STEP 1:  mid = (0 + 8) // 2 = 4
+             coins_used = 4 * 5 // 2 = 10.   10 == 8?  no.   10 < 8?  no.
+             UNAFFORDABLE  ->  hi = 3
+
+    STEP 2:  lo = 0, hi = 3.  mid = 1
+             coins_used = 1 * 2 // 2 = 1.    1 == 8? no.   1 < 8?  YES.
+             AFFORDABLE  ->  lo = 2
+
+    STEP 3:  lo = 2, hi = 3.  mid = 2
+             coins_used = 2 * 3 // 2 = 3.    3 < 8  ->  lo = 3
+
+    STEP 4:  lo = 3, hi = 3.  mid = 3
+             coins_used = 3 * 4 // 2 = 6.    6 < 8  ->  lo = 4
+
+    LOOP CHECK: lo = 4 is not <= hi = 3.  Stop.
+
+    RETURN hi = 3.
+
+    FOUR STEPS, AND NO EXACT MATCH WAS EVER FOUND - 8 is not a triangular number, so the `== n` branch
+    never fired and the answer came entirely from `hi` (trap 1). Check by hand: 1 + 2 + 3 = 6 coins for
+    three rows, and a fourth would need 4 more when only 2 remain.
+
+TRACE 2 - n = 5. Expected 2.
+
+    lo = 0, hi = 5.
+    STEP 1:  mid = 2,  coins_used = 3.   3 < 5  ->  lo = 3
+    STEP 2:  lo = 3, hi = 5.  mid = 4,  coins_used = 10.   10 > 5  ->  hi = 3
+    STEP 3:  lo = 3, hi = 3.  mid = 3,  coins_used = 6.    6 > 5   ->  hi = 2
+    lo = 3 is not <= hi = 2.  RETURN 2.
+
+    Again no exact match. And note `hi` finished at 2 while `lo` finished at 3 - one apart, with the
+    answer on the `hi` side.
+
+TRACE 3 - AN EXACT FIT. n = 3, which IS a triangular number (1 + 2).
+
+    lo = 0, hi = 3.
+    STEP 1:  mid = 1,  coins_used = 1.  1 < 3  ->  lo = 2
+    STEP 2:  lo = 2, hi = 3.  mid = 2,  coins_used = 3.   3 == 3  ->  RETURN 2 immediately.
+
+    THE EARLY EXIT FIRES. It saves a step and is not required for correctness - without it the loop
+    would set lo = 3, then test mid = 3 (cost 6 > 3) giving hi = 2, and return 2 anyway.
+
+TRACE 4 - THE OVERFLOW, IN NUMBERS (trap 2). n = 2^31 − 1 = 2,147,483,647.
+
+    lo = 0, hi = 2,147,483,647
+    STEP 1:  mid = 1,073,741,823
+             mid * (mid + 1)  =  1,152,921,503,533,105,152
+
+        int32 ceiling:  2,147,483,647            the product exceeds it by a factor of ~537,000,000
+        int64 ceiling:  9,223,372,036,854,775,807  the product fits comfortably
+
+    In Python this is simply a large integer and the search proceeds normally, arriving at 65,535 after
+    about thirty steps. In Java with `int` arithmetic the product wraps to a meaningless value - very
+    likely negative - and the comparison `coins_used < n` gives the wrong branch.
+
+TRACE 5 - THE SMALL INPUTS.
+
+    n = 0:  lo = 0, hi = 0.  mid = 0, coins_used = 0.  0 == 0  ->  RETURN 0.
+            Zero rows from zero coins. THIS IS WHY THE RANGE STARTS AT 0 (trap 3) - with lo = 1 the loop
+            would not run at all and the answer would come out right only by accident.
+
+    n = 1:  lo = 0, hi = 1.  mid = 0, cost 0 < 1  ->  lo = 1.
+            mid = 1, cost 1 == 1  ->  RETURN 1.
+
+    n = 2:  mid = 1, cost 1 < 2  ->  lo = 2.  mid = 2, cost 3 > 2  ->  hi = 1.  RETURN 1.
+            One row costs 1 and two rows cost 3, so with 2 coins you finish exactly one row.
+
+CROSS-CHECKED AGAINST THE CLOSED FORM for every n from 0 to 19,999 - the binary search and
+floor((−1 + sqrt(1+8n))/2) agree on all 20,000 values, using either an exact integer square root or an
+ordinary floating-point one (trap 5).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(log n). The range starts at n + 1 candidates and halves every step, so about 31 steps for any
+32-bit n. For n = 1000 the search takes 10 steps to reach the answer 44.
+
+SPACE: O(1) - three integers.
+
+THE OTHER TWO APPROACHES, HONESTLY RANKED:
+
+    SIMULATION      O(sqrt n) - subtract 1, then 2, then 3, until you run out. For n = 2^31 − 1 that is
+                    about 65,000 iterations, which IS FAST ENOUGH. Binary search is asked for because
+                    the problem is a vehicle for the technique, not because this is too slow.
+    BINARY SEARCH   O(log n). The expected answer.
+    CLOSED FORM     O(1) - floor((−1 + sqrt(1 + 8n)) / 2). STRICTLY BETTER, verified against the search
+                    on 20,000 values. Give it as the follow-up.
+
+THE BINARY-SEARCH CLUSTER, AND WHO OWNS WHAT:
+
+    ARRANGING COINS          owns SEARCHING OVER AN ANSWER RANGE rather than an array, and the
+                             `return hi` boundary convention.                     <- this entry
+    SEARCH INSERT POSITION   owns the classic array search and where an absent value belongs.
+    SQRT(X)                  owns the same answer-range search with a different monotonic predicate.
+    KTH MISSING POSITIVE     owns searching on a DERIVED quantity - how many are missing so far.
+
+    THE IDEA THAT GENERALISES BEYOND ALL OF THEM: BINARY SEARCH DOES NOT NEED AN ARRAY. It needs an
+    ordered set of candidates and a yes/no test that switches from true to false exactly once. When you
+    can phrase a problem as "what is the largest k such that ...", and the condition only gets harder as
+    k grows, you can binary-search it - which is how problems like Koko Eating Bananas, Split Array
+    Largest Sum and Capacity To Ship Packages are solved.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Can you do it in O(1)?" The quadratic - k = floor((−1 + sqrt(1 + 8n)) / 2).
+  - "What about overflow?" `mid * (mid + 1)` reaches ~1.15 x 10^18 for a 32-bit n; use a 64-bit type.
+  - "Why does it return `hi`?" It is a boundary search, and `hi` ends on the largest affordable
+    candidate (trap 1).
+  - "Is the float square root safe?" At these sizes yes - checked on 20,000 values. It degrades only
+    beyond about 2^52, where a double cannot represent 1 + 8n exactly.
+  - "How many coins are left over?" n − k(k+1)/2, once you have k.
+
+THE #1 BEGINNER MISTAKE: returning −1 when the loop finds no exact match. Most n are not triangular
+numbers, so the exact-match branch almost never fires - the answer comes from the final value of `hi`,
+and a habit borrowed from exact-match binary search produces −1 on nearly every input.
+
+RUNNER-UP: computing the triangular number in a 32-bit integer. The product is astronomically larger
+than n itself, so it wraps round long before n does - invisible in Python and fatal in Java.
+
+TAKEAWAY: turn "how many rows" into "what is the largest k with k(k+1)/2 <= n", and because that cost
+only ever grows, the affordable and unaffordable candidates form two solid blocks with one edge between
+them - so binary search applies even though there is no array in sight, and the answer is the boundary
+value `hi` rather than any exact match.""",
 ]
 
 for _e in ENTRIES:
@@ -82620,118 +83038,896 @@ for _e in ENTRIES:
 _EX_P1I = {}
 
 _EX_P1I["Backspace String Compare"] = [
-    """The examples, built out.
-s = 'ab#c' -> push a, push b, '#' pops b, push c -> ['a','c'] = "ac"
-t = 'ad#c' -> push a, push d, '#' pops d, push c -> ['a','c'] = "ac"  -> equal.
-s = 'a##c' -> push a, '#' pops a, '#' on an EMPTY stack does nothing, push c ->
-"c". That second '#' is the case people miss: a backspace with nothing to
-delete is a no-op, not an error.
-s = 'a#c', t = 'b' -> "c" vs "b" -> not equal.""",
+    """1. THE GOAL - type both strings out, backspaces and all, and see if they match.
 
-    """Why the stack is the natural structure.
-A backspace always removes the MOST RECENTLY kept character - last in, first
-out, which is a stack by definition. The `elif stack:` guard is what handles
-backspaces at the start of a string, where there is nothing to pop.
-Trying to do it with string slicing (`result = result[:-1]`) works but is O(n)
-per deletion in most languages, making the whole thing O(n^2) on a string of
-many backspaces; a list used as a stack keeps each pop O(1).""",
+Each string is what somebody typed, where '#' means THE BACKSPACE KEY. Work out what actually appears
+on screen for each, and say whether the two results are the same.
 
-    """The O(1)-space follow-up, which is the whole reason this problem is asked.
-Scan both strings BACKWARDS with two pointers. Reading right to left, you meet
-each '#' BEFORE the character it deletes, so you can carry a skip counter: on
-'#', increment skip; on a normal character, if skip > 0 decrement it and move
-on, otherwise this character survives and must be compared.
-    def next_valid(s, i):
+    s = "ab#c"        type a, type b, backspace (removes the b), type c   ->  "ac"
+    t = "ad#c"        type a, type d, backspace (removes the d), type c   ->  "ac"
+
+    ANSWER: True - the two typists produced the same text by different routes.
+
+    s = "ab##"        a, b, backspace removes b, backspace removes a      ->  ""
+    t = "c#d#"        c, backspace removes c, d, backspace removes d      ->  ""
+
+    ANSWER: True - both ended up with nothing.
+
+    s = "a#c"         a, backspace, c                                     ->  "c"
+    t = "b"                                                               ->  "b"
+
+    ANSWER: False.
+
+TWO RULES THAT DECIDE EVERY EDGE CASE:
+
+    A BACKSPACE DELETES THE MOST RECENTLY TYPED SURVIVING CHARACTER - not the character immediately to
+        its left in the input, but the last one still standing. In "ab##" the second '#' removes the a,
+        because the b has already gone.
+    A BACKSPACE ON AN EMPTY SCREEN DOES NOTHING. "###" produces the empty string, not an error. Section
+        4 shows this is the one guard in the function that genuinely earns its place.
+
+WHAT THE PROBLEM IS ACTUALLY FOR. Building the two strings and comparing them is easy and takes extra
+memory. THE INTERVIEW QUESTION IS ALWAYS THE FOLLOW-UP: can you do it in O(1) space? Section 5 gives
+that version, and section 4 explains why it has to scan backwards.
+
+    THIS ENTRY OPENS THE TWO-POINTER STRING CLUSTER in this bank alongside Is Subsequence, Reverse
+    String and Sort Array By Parity. THIS ONE OWNS THE BACKWARD SCAN and why direction matters.""",
+
+    """2. THE INTUITION - a backspace removes the most recent survivor, which is exactly a stack.
+
+A STACK is a pile where you add and remove at the same end - LAST IN, FIRST OUT. That is precisely the
+behaviour of a backspace: it removes whatever you most recently typed and kept.
+
+So walk the string once, and for each character:
+
+    AN ORDINARY CHARACTER  ->  push it on the pile.
+    A '#'                  ->  pop the top of the pile, if there is one.
+
+    s = "ab#c"
+
+        a     push        pile: a
+        b     push        pile: a b
+        #     pop         pile: a
+        c     push        pile: a c
+
+        RESULT "ac"
+
+    s = "ab##"
+
+        a     push        pile: a
+        b     push        pile: a b
+        #     pop         pile: a
+        #     pop         pile: (empty)
+
+        RESULT ""
+
+Do that for both strings and compare the piles. There is nothing more to it.
+
+THE PILE IS ALREADY IN THE RIGHT ORDER. A stack built by pushing left to right holds the characters
+bottom-to-top in the order they were typed, so reading it from the bottom gives the on-screen text - no
+reversing is needed. Comparing the two lists directly compares the two screens.
+
+WHY THIS IS THE NATURAL STRUCTURE rather than a clever choice: the problem's own rule is "undo the most
+recent thing", and last-in-first-out is the definition of a stack. If you find yourself scanning
+backwards through what you have kept, looking for the last survivor, you have written a stack by hand.
+
+THE COST IS THE EXTRA MEMORY - one pile per string, up to the length of the input. Section 5 removes it
+by scanning from the other end, which is the version the question exists to ask for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BACKSPACE. The '#' character, which deletes the most recently kept character.
+SURVIVING / KEPT CHARACTER. One that has not been deleted by a later backspace.
+
+STACK. A structure where you add and remove at the same end. LAST IN, FIRST OUT. A Python list with
+`append` and `pop` is one.
+    `append(x)`  push onto the top.
+    `pop()`      remove and return the top. RAISES on an empty list, which is why section 4's guard
+                 exists.
+
+TWO POINTERS. Two indices walking through two sequences. Here, in the O(1)-space version, they walk
+BACKWARDS through the two strings.
+
+SKIP COUNT. In the backward version, how many characters are still owed deletion by backspaces already
+seen.
+
+s, t. The two input strings. NEITHER IS MODIFIED - strings are immutable in Python and the function only
+reads them.
+build(string). The helper that returns the finished pile.
+stack. The pile being built.
+ch. The character being processed.
+
+n, m. The two lengths.
+O(n + m) TIME, O(n + m) SPACE for this version.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - POPPING AN EMPTY STACK. The code says `elif stack: stack.pop()` - the pop happens ONLY IF
+something is there. THIS GUARD IS GENUINELY LOAD-BEARING, and it is easy to check:
+
+    build("###") WITHOUT the guard raises   IndexError: pop from empty list
+
+    A backspace on an empty screen is a no-op, not an error. Typing "###" into an empty text box leaves
+    it empty; it does not crash your editor.
+
+    (Worth contrasting with guards that are NOT load-bearing - the Unique Paths II entry in this bank has
+    one that can simply be deleted. Test by deleting, rather than assuming.)
+
+TRAP 2 - PROCESSING FORWARDS IN THE O(1)-SPACE VERSION. If you try to scan the two strings forwards with
+two pointers and no stack, you cannot decide whether the character you are looking at survives - a '#'
+three positions later might delete it, and a second one after that might delete its predecessor too.
+
+    YOU DO NOT KNOW A CHARACTER'S FATE UNTIL YOU HAVE SEEN EVERYTHING AFTER IT.
+
+    Scanning BACKWARDS fixes it: reading right to left you meet each '#' BEFORE the character it
+    deletes, so you can carry a count of pending deletions and skip that many characters as you pass
+    them. Section 5 gives the code.
+
+TRAP 3 - COMPARING LENGTHS OR COUNTS INSTEAD OF CONTENTS. Two strings can produce screens of the same
+length that differ - "a#c" gives "c" and "b" gives "b", both length 1 and not equal. The comparison must
+be of the actual characters.
+
+TRAP 4 - ASSUMING A '#' DELETES THE CHARACTER IMMEDIATELY BEFORE IT IN THE INPUT. It deletes the most
+recent SURVIVOR. In "ab##" the second '#' removes the a, which is two positions away in the input. The
+stack handles this automatically; a solution that indexes backwards by hand usually does not.
+
+TRAP 5 - THE EMPTY AND ALL-BACKSPACE CASES. All of these come out True and none needs special handling:
+
+        ""      vs ""       ->  [] == []      True
+        "###"   vs ""       ->  [] == []      True   (every backspace is a no-op)
+        "a#"    vs ""       ->  [] == []      True   (pushed then popped)
+
+TRAP 6 - MUTATING THE INPUTS. Nothing here does - Python strings are immutable and `build` only reads
+them, returning a fresh list. Worth stating because several entries in this bank do modify their
+arguments.""",
+
+    """5. THE O(1)-SPACE FOLLOW-UP, WHICH IS THE WHOLE REASON THIS PROBLEM IS ASKED.
+
+VERSION A - BUILD BOTH STRINGS WITH A STACK, then compare. The code here. O(n + m) time and space,
+obviously correct, and about six lines.
+
+VERSION B - REPEATEDLY APPLY THE DELETIONS IN PLACE. Scan for a '#', remove it and the character before
+it, and start again. Correct and O(n^2) in the worst case - "aaaa####" rescans from the beginning each
+time.
+
+VERSION C - TWO POINTERS FROM THE END, O(1) SPACE:
+
+    i, j = len(s) - 1, len(t) - 1
+    while i >= 0 or j >= 0:
         skip = 0
-        while i >= 0:
-            if s[i] == '#':   skip += 1; i -= 1
-            elif skip:        skip -= 1; i -= 1
-            else:             break
-        return i
-Then advance both pointers with that helper and compare the surviving
-characters pairwise. O(1) extra space, same O(n + m) time.""",
+        while i >= 0 and (s[i] == '#' or skip):
+            skip += 1 if s[i] == '#' else -1
+            i -= 1
+        skip = 0
+        while j >= 0 and (t[j] == '#' or skip):
+            skip += 1 if t[j] == '#' else -1
+            j -= 1
+        if i >= 0 and j >= 0:
+            if s[i] != t[j]: return False
+        elif i >= 0 or j >= 0:
+            return False
+        i -= 1
+        j -= 1
+    return True
 
-    """Why backwards and not forwards.
-Forwards you cannot know whether a character survives until you have seen the
-rest of the string - a '#' three positions later may delete it. Backwards, the
-deletions are already known by the time you reach the character they affect, so
-one pass suffices with a counter instead of a buffer.
-This 'process right to left so the modifier precedes its target' idea recurs -
-it is the same reason Trapping Rain Water's two-pointer version works and why
-some string-parsing problems are far easier in reverse. Worth naming as the
-transferable insight rather than as a trick for this problem.""",
+    Each inner loop walks back to the next SURVIVING character: every '#' adds one to the debt, and
+    every ordinary character while a debt is outstanding pays one off. When the debt is zero and the
+    character is not a '#', you have found a survivor.
 
-    """Edge cases.
-Both empty -> [] == [] -> True.
-'###' vs '' -> all backspaces on an empty stack are no-ops -> [] vs [] -> True.
-'a#' vs '' -> 'a' pushed then popped -> [] vs [] -> True. This is the case that
-catches two-pointer solutions that stop as soon as one pointer runs out - both
-strings must be exhausted, and a leftover unmatched character means unequal.
-'xywrrmp' vs 'xywrrmu#p' -> "xywrrmp" both ways -> True.""",
+    The `elif i >= 0 or j >= 0: return False` catches one string running out while the other still has
+    characters - different lengths on screen.
 
-    """Complexity and the family.
-Stack version: O(n + m) time, O(n + m) space. Two-pointer version: same time,
-O(1) space - and 'can you do it in O(1) space?' is the guaranteed follow-up, so
-have the backwards scan ready rather than only the stack.
-The family: Valid Parentheses and Min Stack (stack for LIFO structure),
-Simplify Path (a stack of directory names where '..' pops), Remove All Adjacent
-Duplicates in String, and Asteroid Collision. The cue for a stack is any rule
-of the form 'this element cancels or interacts with the most recent one'.""",
+    CHECKED AGAINST THE STACK VERSION on eight pairs including all the awkward ones - "ab#c"/"ad#c",
+    "ab##"/"c#d#", "###"/"", "bxj##tw"/"bxo#j##tw", "nzp#o#g"/"b#nzp#o#g" - IDENTICAL ANSWERS
+    THROUGHOUT.
+
+WHY BACKWARDS AND NOT FORWARDS - the argument, since this is the insight the problem tests:
+
+    FORWARDS, a character's fate is decided by what comes AFTER it. Standing on the 'b' in "ab#c" you
+    cannot say whether it survives without looking ahead - and looking ahead an unbounded distance is
+    just building the string by another name.
+
+    BACKWARDS, a character's fate is decided by what you have ALREADY SEEN. Every '#' is encountered
+    before the character it will delete, so a single running count is enough to know whether the
+    character under your finger survives.
+
+    THE INFORMATION FLOWS RIGHT TO LEFT, SO READ RIGHT TO LEFT. That is the whole trick, and it recurs
+    whenever a later element modifies an earlier one.
+
+WHICH TO WRITE IN AN INTERVIEW: the stack version first, because it is short and obviously correct, then
+offer the two-pointer version when asked to reduce the space. Saying "the stack is O(n) space, and I can
+do it in O(1) by scanning from the end" before being asked is stronger still.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WORK OUT WHAT EACH STRING ACTUALLY LEAVES ON SCREEN BY
+KEEPING A PILE OF SURVIVING CHARACTERS - ADDING EACH ORDINARY CHARACTER TO THE TOP AND REMOVING THE TOP
+ONE WHENEVER A BACKSPACE APPEARS - THEN COMPARE THE TWO PILES.
+
+THERE IS NO RECURSION. The mechanism is A PILE THAT GROWS AND SHRINKS AS YOU READ:
+
+  - Adding and removing both happen at the same end, which is exactly what a backspace needs: it always
+    removes the most recent survivor.
+  - The pile ends up holding the on-screen text in the correct order, bottom to top, so no reversal is
+    needed.
+  - WHAT MAKES IT STOP: one pass per string, a count fixed before it starts.
+
+THE STEPS:
+
+  FOR EACH OF THE TWO STRINGS, WORK OUT WHAT IT LEAVES ON SCREEN:
+
+  1. START WITH AN EMPTY PILE.
+
+  2. GO THROUGH THE CHARACTERS FROM LEFT TO RIGHT. FOR EACH ONE:
+
+     a. IF IT IS AN ORDINARY CHARACTER, PUT IT ON TOP OF THE PILE.
+
+     b. IF IT IS A BACKSPACE AND THE PILE HAS SOMETHING IN IT, TAKE THE TOP ITEM OFF.
+
+     c. IF IT IS A BACKSPACE AND THE PILE IS EMPTY, DO NOTHING AT ALL.
+
+        Not an error - pressing backspace in an empty box simply does nothing. Omitting this check makes
+        the program fail outright on a string that begins with backspaces, which is the one place in
+        this function where a guard genuinely matters.
+
+  3. THE PILE, READ FROM THE BOTTOM, IS THE TEXT ON SCREEN.
+
+  THEN COMPARE THE TWO PILES ELEMENT BY ELEMENT. They match exactly when the two strings produce the
+  same text.
+
+     Compare the CONTENTS, not the sizes. Two screens can be the same length and hold different
+     characters.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine two people each typing a message into a text box, and you have a transcript of every key they
+pressed - including the backspace key. You want to know whether the two of them ended up with the same
+message on screen, even though they may have taken very different routes to get there.
+
+The obvious approach is simply to replay what each of them did.
+
+You keep a pile of letters, face up, growing towards you. Every time the transcript shows an ordinary
+letter, you put it on top of the pile. Every time it shows a backspace, you take the top letter off
+again.
+
+That pile behaves exactly the way a backspace does, which is the reason it is the right tool. A
+backspace never removes some letter from the middle of what is on screen - it always removes whatever
+was typed most recently and is still there. Adding and removing at the same end is precisely that
+behaviour.
+
+And it handles the awkward case without any thought. If somebody types two letters and then presses
+backspace twice, the first backspace takes off the second letter, and the second backspace then takes
+off the first - even though in the transcript that first letter is nowhere near the backspace that
+kills it. The pile does not care about positions in the transcript; it only knows what is still
+standing.
+
+The one thing you must decide in advance is what happens when somebody presses backspace with nothing
+on screen. The answer is: nothing at all. It is not a mistake and it is not an error - an empty text box
+stays empty. Forget to allow for it and your replay falls over the moment a transcript begins with a
+backspace, which is exactly the sort of input a test will contain.
+
+When you have replayed both transcripts, you have two piles. Read each from the bottom up and you have
+the two messages, in order. Compare them letter by letter - not merely their lengths, because two
+different messages can easily be the same length.
+
+There is a cleverer way that avoids the piles entirely, and it comes from noticing which direction the
+information travels. Reading forwards you can never be sure whether a letter survives, because a
+backspace further along might still delete it. Reading BACKWARDS you meet each backspace before the
+letter it destroys, so you can simply carry a running count of how many letters you still owe deletion
+to and skip them as you pass. Work from the end of both transcripts at once and you need no piles at
+all.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep s = "ab#c" and t = "ad#c" beside you, answer True.
+
+    def backspace_compare(s, t):
+
+`s` and `t` are the two typed strings. Returns True if they produce the same on-screen text. NEITHER IS
+MODIFIED - Python strings are immutable and the code only reads them (trap 6).
+
+        def build(string):
+
+The helper that replays one transcript and returns what is left on screen. Defined inside so it can be
+applied to both strings without repeating the logic.
+
+            stack = []
+
+    stack  HOLDS the surviving characters, in typing order, with the most recent at the end.
+
+A plain list is a perfectly good stack: `append` adds to the end and `pop` removes from the end, both in
+constant time.
+
+            for ch in string:
+
+One pass, left to right.
+
+                if ch != '#':
+                    stack.append(ch)
+
+AN ORDINARY CHARACTER - it goes on the pile. It may be removed later by a backspace, but for now it
+survives.
+
+                elif stack:
+                    stack.pop()      # backspace removes the last kept char
+
+A BACKSPACE, AND ONLY WHEN THERE IS SOMETHING TO DELETE.
+
+    `stack.pop()`  removes the MOST RECENT SURVIVOR - which is what a backspace does, and why the
+                   structure fits the problem exactly. In "ab##" the second pop removes the 'a',
+                   two positions away in the input, without any index arithmetic (trap 4).
+
+    `elif stack`   IS LOAD-BEARING (trap 1). Without it, `build("###")` raises
+                   `IndexError: pop from empty list`. A backspace on an empty screen is a no-op, not an
+                   error - verified by deleting the guard and running it.
+
+            return stack
+
+The pile, bottom to top, IS the on-screen text in order - no reversal needed, because pushing left to
+right preserves typing order.
+
+        return build(s) == build(t)
+
+Replay both and compare the LISTS element by element (trap 3). Comparing lengths or character counts
+would pass "a#c" against "b", which both leave one character on screen but different ones.
+
+Returning the lists rather than joined strings is fine - Python compares lists element-wise - and saves
+building two more strings.""",
+
+    """9. TRACED, KEYSTROKE BY KEYSTROKE.
+
+TRACE 1 - THE WORKED EXAMPLE. s = "ab#c", t = "ad#c". Expected True.
+
+    build("ab#c"):
+        'a'   not '#'   ->  push        stack = ['a']
+        'b'   not '#'   ->  push        stack = ['a', 'b']
+        '#'   stack is non-empty  ->  pop      stack = ['a']
+        'c'   not '#'   ->  push        stack = ['a', 'c']
+        RETURNS ['a', 'c']   -   the screen reads "ac"
+
+    build("ad#c"):
+        'a'  push        ['a']
+        'd'  push        ['a', 'd']
+        '#'  pop         ['a']
+        'c'  push        ['a', 'c']
+        RETURNS ['a', 'c']   -   also "ac"
+
+    ['a','c'] == ['a','c']  ->  RETURN True.
+
+    Two different typists, two different deleted letters, the same screen.
+
+TRACE 2 - THE BACKSPACE THAT REACHES PAST ITS NEIGHBOUR (trap 4). s = "ab##", t = "c#d#". Expected True.
+
+    build("ab##"):
+        'a'  push   ['a']
+        'b'  push   ['a', 'b']
+        '#'  pop    ['a']            removes the 'b'
+        '#'  pop    []               REMOVES THE 'a' - which sits TWO positions away in the input
+        RETURNS []
+
+    build("c#d#"):
+        'c'  push   ['c']
+        '#'  pop    []
+        'd'  push   ['d']
+        '#'  pop    []
+        RETURNS []
+
+    [] == []  ->  RETURN True.
+
+    The second '#' in "ab##" deletes the 'a', not the character immediately before it in the string -
+    because the 'b' has already gone. The stack gets that right with no index arithmetic at all.
+
+TRACE 3 - THE EMPTY POP (trap 1). build("###"):
+
+    '#'  the stack is empty  ->  `elif stack` is FALSE  ->  NOTHING HAPPENS
+    '#'  the same
+    '#'  the same
+    RETURNS []
+
+    So "###" compared against "" gives [] == [] -> True.
+
+    WITHOUT THE GUARD, using a plain `else: stack.pop()`, the very first '#' raises
+    `IndexError: pop from empty list`. Verified by running it. The guard is doing real work.
+
+TRACE 4 - THE FALSE CASE (trap 3). s = "a#c", t = "b".
+
+    build("a#c"):  push 'a', pop it, push 'c'  ->  ['c']
+    build("b"):    ['b']
+
+    ['c'] == ['b']  ->  RETURN False.
+
+    BOTH SCREENS HAVE LENGTH 1. Comparing sizes, or counting how many characters survived, would report
+    True. Only comparing contents gets it right.
+
+TRACE 5 - THE TWO-POINTER VERSION AGREES. Running the O(1)-space backward scan from section 5 on eight
+pairs - including "bxj##tw" against "bxo#j##tw" (both give "btw") and "nzp#o#g" against "b#nzp#o#g"
+(both give "nzg") - gives IDENTICAL RESULTS to the stack version on every one.
+
+THE TINY INPUTS:
+    ""    vs ""    ->  [] == []  ->  True.
+    "a#"  vs ""    ->  pushed then popped, so []  ->  True.
+    "###" vs ""    ->  every backspace a no-op, so []  ->  True.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n + m). Each string is scanned once, and each character causes at most one push or one pop -
+both constant time. The final list comparison is another O(n).
+
+SPACE: O(n + m) for the two piles.
+
+    THE TWO-POINTER VERSION IS O(1) SPACE at the same O(n + m) time - and "can you do it in O(1) space?"
+    is the follow-up this problem exists to ask. Volunteering it unprompted is the strongest answer.
+
+THE TWO-POINTER STRING CLUSTER, AND WHO OWNS WHAT:
+
+    BACKSPACE STRING COMPARE   owns THE BACKWARD SCAN - reading right to left because a character's
+                               fate is decided by what comes after it.            <- this entry
+    IS SUBSEQUENCE             owns the forward two-pointer walk over two strings at different speeds.
+    REVERSE STRING             owns the in-place swap from both ends inward.
+    SORT ARRAY BY PARITY       owns partitioning from both ends.
+
+    THE DIRECTION RULE THIS ENTRY CONTRIBUTES: SCAN IN THE DIRECTION THE INFORMATION FLOWS. Here a later
+    '#' determines an earlier character's fate, so information flows right to left and the scan must
+    too. The same reasoning appears in Daily Temperatures, Next Greater Element and Trapping Rain Water -
+    whenever a later element modifies the meaning of an earlier one.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it in O(1) space." The backward two-pointer scan (section 5), carrying a skip count.
+  - "Why backwards?" Forwards you cannot know whether a character survives without looking arbitrarily
+    far ahead; backwards you meet each '#' before its victim.
+  - "What if '#' deleted TWO characters?" The stack version changes by one line (pop twice if possible);
+    the backward version adds 2 to the skip count instead of 1.
+  - "What if there were also a 'redo' key?" A second stack - the standard undo/redo pair.
+  - "Return the resulting strings, not just whether they match." Join the piles; the work is already
+    done.
+
+THE #1 BEGINNER MISTAKE: popping without checking the pile is empty, which crashes outright on any
+string starting with backspaces. It is one of the few guards in this bank that genuinely cannot be
+removed - `build("###")` raises IndexError without it, verified by deleting it and running.
+
+RUNNER-UP: attempting the O(1)-space version FORWARDS. It cannot work, because a character's survival
+depends on backspaces that have not been read yet - and no fixed amount of lookahead is enough.
+
+TAKEAWAY: a backspace removes the most recent survivor, which is the definition of a stack, so push
+ordinary characters and pop on '#' with a guard for the empty pile - and if asked to drop the extra
+memory, scan BACKWARDS, because that is the direction in which a character's fate is already known.""",
 ]
 
 _EX_P1I["Check if Two Strings Are Almost Equivalent"] = [
-    """The definition, made concrete.
-'aaaa' vs 'bccb': a appears 4 vs 0 -> difference 4 > 3 -> False.
-'abcdeef' vs 'abaaacc': a is 1 vs 4 -> difference 3, which is allowed (the rule
-is at most 3); b 1 vs 1; c 1 vs 2; d 1 vs 0; e 2 vs 0; f 1 vs 0 -> all within
-3 -> True.
-Note the threshold is inclusive - 'differs by at most 3' means 3 passes and 4
-fails. Off-by-one on an inclusive bound is the single most likely way to get
-this wrong, so restate it before coding.""",
+    """1. THE GOAL - do the two strings use every letter about equally often?
 
-    """Why the union of both character sets, not just one string's.
-Iterating `for ch in word1` misses letters that appear ONLY in word2 - and a
-letter appearing 4 times in word2 and 0 times in word1 is exactly the failing
-case you need to catch. `set(word1) | set(word2)` covers both.
-The alternative that also works: loop over all 26 letters of the alphabet,
-which is simpler to reason about and O(1) by definition since the alphabet is
-bounded. Counter's default of 0 for a missing key is what makes both versions
-read cleanly.""",
+Two strings are ALMOST EQUIVALENT if, FOR EVERY LETTER OF THE ALPHABET, the number of times it appears
+in one differs from the number of times it appears in the other BY AT MOST 3.
 
-    """Why the space is O(1) despite using two Counters.
-The alphabet is bounded at 26 lowercase letters, so each Counter holds at most
-26 entries regardless of how long the strings are. Constant space by the
-constraint, not by the algorithm.
-This distinction is worth stating explicitly in an interview: 'O(1) because the
-alphabet is bounded' shows you know WHY, whereas saying O(n) for two hash maps
-suggests you have not read the constraints. If the alphabet were unicode, the
-same code would genuinely be O(k) in the number of distinct characters.""",
+    word1 = "aaaa"        word2 = "bccb"
 
-    """Edge cases.
-Both empty -> the union is empty, the loop never runs -> True.
-Identical strings -> every difference is 0 -> True.
-Equal lengths are guaranteed by most versions of the prompt, but the algorithm
-does not depend on it - 'aaa' vs 'aaaaaa' gives a difference of 3 -> True,
-which is correct under the stated rule even though the lengths differ.
-A single letter differing by exactly 3 -> True; by exactly 4 -> False. Test
-both sides of the boundary.""",
+        letter    in word1    in word2    difference
+        a            4           0            4        TOO BIG
+        b            0           2            2
+        c            0           2            2
 
-    """The general shape: frequency comparison.
-This is one of a cluster where the whole problem is 'count characters, then
-compare the counts under some rule'. Valid Anagram requires every difference to
-be exactly 0. Find All Anagrams in a String slides a window and compares counts
-at each position. Permutation in String is the same sliding comparison.
-Ransom Note requires one count to be at most the other for every character.
-Once you recognise the shape, the only decision left is the comparison rule -
-which is why these are all easy problems that take two minutes each.""",
+    ONE LETTER IS ENOUGH TO FAIL IT.  ANSWER: False
 
-    """Complexity, and the micro-optimisation worth knowing.
-Time O(n + m) to count, plus O(26) to compare - so linear. Space O(1) bounded.
-The array-instead-of-hashmap version replaces Counter with a 26-integer list
-indexed by ord(ch) - ord('a'), which is faster in practice (no hashing) and is
-what you would write in C++ or Java. Mentioning it shows you know a hash map is
-not free even when it is O(1) - the constant factor matters when the key space
-is small and dense.""",
+    word1 = "abcdeef"     word2 = "abaaacc"
+
+        a: 1 vs 4  ->  difference 3      allowed - "at most 3" includes 3
+        b: 1 vs 1  ->  0
+        c: 1 vs 2  ->  1
+        d: 1 vs 0  ->  1
+        e: 2 vs 0  ->  2
+        f: 1 vs 0  ->  1
+
+    EVERY DIFFERENCE IS 3 OR LESS.  ANSWER: True
+
+THREE THINGS THE DEFINITION IS SAYING:
+
+    EVERY LETTER, NOT JUST THE ONES PRESENT. A letter appearing four times in one string and not at all
+        in the other has a difference of 4, and that fails. The zero counts matter just as much as the
+        non-zero ones - which is exactly the trap in section 4.
+    AT MOST 3 MEANS 3 IS FINE. The `a: 1 vs 4` case above is allowed. The test is `> 3`, not `>= 3`.
+    ORDER IS IRRELEVANT. "abc" and "cba" are identical for this purpose. Only counts matter, so this is
+        a pure frequency question.
+
+WHY IT IS EASY AND STILL WORTH DOING PROPERLY. Counting characters is a one-liner in most languages, and
+the whole difficulty is in deciding WHICH letters to check. Section 4 shows that all three of the
+problem's own examples fail to catch the natural mistake.
+
+    THIS ENTRY OPENS THE FREQUENCY-COMPARISON CLUSTER in this bank, alongside Ransom Note, Find Words
+    That Can Be Formed by Characters and Sum of Unique Elements. THIS ONE OWNS THE UNION OF BOTH KEY
+    SETS - the question of which letters you must actually iterate.""",
+
+    """2. THE INTUITION - count both, then compare the counts letter by letter.
+
+There are only two steps and no cleverness in either.
+
+    STEP ONE: TALLY EACH STRING. Walk it once and record how many times each letter appears.
+
+        "abcdeef"   ->   a:1  b:1  c:1  d:1  e:2  f:1
+        "abaaacc"   ->   a:4  b:1  c:2
+
+    STEP TWO: FOR EVERY LETTER THAT APPEARS IN EITHER TALLY, compare the two counts. If any pair differs
+    by more than 3, the answer is False. If you get through them all, it is True.
+
+        letter:      a    b    c    d    e    f
+        word1:       1    1    1    1    2    1
+        word2:       4    1    2    0    0    0
+        difference:  3    0    1    1    2    1
+                     ^
+              the largest gap, and it is exactly 3 - allowed
+
+    ANSWER: True
+
+THE ONE DECISION THAT MATTERS IS WHICH LETTERS TO WALK. Look at `d`, `e` and `f`: they appear only in
+word1, and their counts in word2 are zero. Look at what would happen if a letter appeared only in
+word2 - the same situation mirrored, and if you only iterate the letters of word1 YOU WILL NEVER LOOK
+AT IT.
+
+    word1 = "abcd"     word2 = "eeee"
+
+        Iterating word1's letters:  a, b, c, d - each 1 vs 0, difference 1.  All fine.  ANSWER True.
+        Iterating BOTH:             also e - 0 vs 4, difference 4.           ANSWER False.
+
+    THE LETTER THAT BREAKS IT IS INVISIBLE FROM ONE SIDE. That is the whole content of this problem, and
+    section 4 shows that none of the standard examples exposes it.
+
+AN ALTERNATIVE WAY TO SEE IT: instead of choosing letters, just walk ALL 26 of them. A letter absent
+from both tallies has counts 0 and 0, a difference of 0, which passes harmlessly. That is simpler to
+reason about and is what section 5 recommends.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FREQUENCY / COUNT. How many times a character appears in a string.
+ALMOST EQUIVALENT. Every letter's two counts differ by at most 3.
+
+Counter. Python's dictionary subclass that tallies occurrences in one call. `Counter("aab")` gives
+`{'a': 2, 'b': 1}`.
+    A KEY PROPERTY: reading a MISSING key returns 0 rather than raising. That is what lets `c1[ch]` be
+    written for a letter that appears only in the other string.
+
+SET. An unordered collection with no duplicates. `set("aab")` is `{'a', 'b'}` - the DISTINCT characters.
+SET UNION. `A | B` - everything in either. Here, every letter appearing in either string.
+
+abs(x). Distance from zero, ignoring sign. `abs(1 - 4)` is 3. It is what makes the comparison symmetric,
+so it does not matter which string has more.
+
+word1, word2. The two inputs. NEITHER IS MODIFIED - `Counter` and `set` both build new objects.
+c1, c2. The two tallies.
+ch. The letter being compared.
+
+n, m. The two string lengths. The alphabet is 26 lowercase letters.
+O(n + m) TIME, O(1) SPACE.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and none of the official examples catches it.
+
+TRAP 1 - ITERATING ONLY ONE STRING'S LETTERS. This is the mistake, and what makes it dangerous is that
+the problem's own test cases do not reveal it.
+
+    `for ch in word1` misses any letter appearing ONLY in word2 - and a letter appearing four times in
+    word2 and never in word1 has a difference of 4, which must fail.
+
+        word1 = "abcd"     word2 = "eeee"        (equal lengths, as the problem guarantees)
+
+            ITERATING word1 ONLY:   a, b, c, d each give |1 − 0| = 1.  ANSWER True.
+            ITERATING THE UNION:    also e, giving |0 − 4| = 4 > 3.    ANSWER False.
+
+        THE CORRECT ANSWER IS False.
+
+    NOW CHECK THE THREE OFFICIAL EXAMPLES against both versions:
+
+        "aaaa"      vs "bccb"        union False,  word1-only False    AGREE
+        "abcdeef"   vs "abaaacc"     union True,   word1-only True     AGREE
+        "cccddabba" vs "babababab"   union True,   word1-only True     AGREE
+
+    ALL THREE AGREE. The bug is invisible on every example the problem supplies, because in the one
+    failing case the offending letter happens to live in word1. A solution with this bug passes the
+    samples and fails a hidden test.
+
+TRAP 2 - USING `>= 3` INSTEAD OF `> 3`. "At most 3" permits a difference of exactly 3. The second
+official example turns on this - `a` is 1 vs 4, a gap of exactly 3 - so `>= 3` would return False where
+the answer is True. This one the examples DO catch.
+
+TRAP 3 - COMPARING LENGTHS OR TOTAL COUNTS. Equal lengths are guaranteed by the problem's constraints
+and tell you nothing: "aaaa" and "bccb" are both length 4 and not almost equivalent. The comparison must
+be per letter.
+
+TRAP 4 - FORGETTING THAT A MISSING KEY MUST READ AS ZERO. `c1[ch]` where `ch` never appears in word1
+returns 0 because `c1` is a `Counter`. With a plain `dict` it would raise KeyError, and the whole
+approach depends on absent letters counting as zero.
+
+TRAP 5 - THINKING THE TWO COUNTERS MAKE THE SPACE LINEAR. They do not. The alphabet is bounded at 26
+lowercase letters, so each `Counter` holds at most 26 entries no matter how long the strings are.
+O(1) SPACE, not O(n) - section 10.
+
+TRAP 6 - THE EMPTY STRINGS. Both empty gives an empty union, the loop never runs, and the answer is
+True. Correct - every letter differs by 0 - and it needs no special case.""",
+
+    """5. THE ALTERNATIVES, AND THE SIMPLEST FIX FOR THE TRAP.
+
+VERSION A - COMPARE SORTED STRINGS. Sorting both and checking equality answers a DIFFERENT question -
+whether they are anagrams, meaning every difference is exactly 0. Too strict; "abcdeef" and "abaaacc"
+are not anagrams and are almost equivalent.
+
+VERSION B - COUNT WITH TWO DICTIONARIES AND ITERATE THE UNION, which is the code here. O(n + m).
+
+VERSION C - WALK ALL 26 LETTERS. Rather than working out which keys to visit, simply loop over the whole
+alphabet:
+
+    for ch in "abcdefghijklmnopqrstuvwxyz":
+        if abs(c1[ch] - c2[ch]) > 3:
+            return False
+    return True
+
+    THIS IS ARGUABLY BETTER, and it is worth saying so rather than defending the union. A letter absent
+    from both has counts 0 and 0, a difference of 0, which passes harmlessly - so the extra iterations
+    cost nothing and THE TRAP IN SECTION 4 CANNOT ARISE AT ALL. You are not choosing keys, so you cannot
+    choose them wrongly.
+
+    The union version is fine and slightly tighter; the alphabet version is impossible to get wrong.
+    Either is a good answer, and knowing why is better than knowing one.
+
+VERSION D - TWO FIXED ARRAYS OF 26 COUNTERS instead of hash maps. Index by `ord(ch) - ord('a')`, and
+compare the arrays position by position.
+
+    THE MICRO-OPTIMISATION WORTH KNOWING: an array of 26 integers avoids hashing entirely, so the
+    constant factor is smaller than a dictionary's. It is also the natural form in C or Java, where
+    `int[26]` is cheaper than a `HashMap`. Same O(n + m) time and O(1) space - a constant-factor
+    improvement, not an asymptotic one, and worth being honest about that.
+
+WHY A SINGLE PASS OVER BOTH STRINGS IS ENOUGH. You cannot decide a letter's fate while counting, because
+the very last character of word2 might push some count over the edge. So the two phases are genuinely
+separate: TALLY EVERYTHING FIRST, THEN COMPARE. Any attempt to short-circuit during the counting would
+be wrong.
+
+    (Contrast with Ransom Note in the same cluster, where you CAN fail early while scanning, because
+    each note character is checked against a finished tally.)""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: TALLY HOW OFTEN EACH LETTER APPEARS IN EACH STRING, THEN GO
+THROUGH EVERY LETTER THAT APPEARS IN EITHER ONE AND CHECK THAT THE TWO TALLIES ARE NEVER MORE THAN THREE
+APART.
+
+THERE IS NO RECURSION. The mechanism is TWO SEPARATE PHASES, and they cannot be merged:
+
+  - The first phase reads both strings and records counts. Nothing can be decided during it, because
+    the very last character read might be the one that pushes a count over the limit.
+  - The second phase walks a fixed set of letters and compares. It can stop the moment one fails.
+  - WHAT MAKES IT STOP: the counting is one pass per string; the comparison runs over at most 26
+    letters.
+
+THE STEPS:
+
+  1. TALLY THE FIRST STRING - for each letter, how many times it appears. Do the same for the second.
+
+  2. WORK OUT WHICH LETTERS TO CHECK: EVERY LETTER APPEARING IN EITHER STRING.
+
+     IN EITHER, NOT JUST THE FIRST. A letter that appears only in the second string still has a
+     difference - its count in the first is zero - and if it appears four or more times there, that
+     difference breaks the rule. Checking only the first string's letters means never looking at it.
+
+     A simpler alternative that cannot go wrong: just check all twenty-six letters of the alphabet. A
+     letter missing from both has zero on each side, a difference of zero, which passes and costs
+     nothing.
+
+  3. FOR EACH LETTER YOU ARE CHECKING, TAKE THE SIZE OF THE GAP BETWEEN THE TWO TALLIES - ignoring which
+     side is larger, since the rule is symmetric.
+
+     A letter missing from a string must count as zero there rather than being skipped or causing an
+     error.
+
+  4. IF ANY GAP IS BIGGER THAN THREE, ANSWER NO AND STOP - one bad letter is enough.
+
+     BIGGER THAN three. A gap of exactly three is permitted, and one of the problem's own examples
+     hinges on that.
+
+  5. IF EVERY LETTER PASSES, ANSWER YES.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine two people have each written out a long line of letters, and you want to know whether they used
+the alphabet in roughly the same proportions - close enough that no single letter appears far more often
+in one than the other. "Far more" here means a gap of more than three.
+
+The order they wrote them in does not matter at all. Somebody who wrote the letters in reverse has used
+exactly the same letters as often, so this is purely a question of tallies.
+
+So you go through the first line keeping a tally sheet - a mark against A each time you see an A, and
+so on - and then do the same for the second line on its own sheet.
+
+Now you compare the two sheets, letter by letter, and ask whether any letter's two totals are more than
+three apart. If one is, you can stop immediately - a single letter out of proportion is enough to
+settle it. If you get to the end without finding one, the two lines are close enough.
+
+The one genuinely important decision is WHICH letters you check, and it is easy to get wrong in a way
+that looks perfectly reasonable.
+
+The temptation is to walk through the first person's tally sheet and look up each of those letters on
+the second. That covers every letter the first person used - but it completely ignores any letter the
+second person used and the first did not. And that is precisely where the problem hides. If the second
+person wrote four Es and the first wrote none, the gap is four and the answer should be no. Checking
+only the first sheet, you would never think to look up E at all, and you would confidently say yes.
+
+What makes this worth dwelling on is that the examples the problem gives you do not catch it. In the one
+example that is supposed to fail, the offending letter happens to belong to the first line, so the
+lazy method gets the right answer for the wrong reason. Test with those examples and everything looks
+fine.
+
+The fix is either to check every letter that appears on EITHER sheet, or - simpler and impossible to get
+wrong - to walk the entire alphabet from A to Z. A letter neither person used has a tally of nothing on
+both sheets, a gap of zero, and passes without a murmur.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep word1 = "abcdeef", word2 = "abaaacc" beside you, answer True.
+
+    def check_almost_equivalent(word1, word2):
+        from collections import Counter
+
+`Counter` tallies characters in one call and - crucially - returns 0 for a key it has never seen rather
+than raising (trap 4).
+
+        c1, c2 = Counter(word1), Counter(word2)
+
+    c1  HOLDS each letter of word1 mapped to how many times it appears.
+    c2  HOLDS the same for word2.
+
+For the example: `c1` is {a:1, b:1, c:1, d:1, e:2, f:1} and `c2` is {a:4, b:1, c:2}.
+
+NEITHER INPUT IS MODIFIED - `Counter` builds a new object and only reads the string.
+
+Each holds at most 26 entries whatever the input length, which is why the space is O(1) (trap 5).
+
+        for ch in set(word1) | set(word2):
+
+THE LINE THIS PROBLEM IS ABOUT.
+
+    `set(word1)`  the DISTINCT letters of word1.
+    `|`           SET UNION - every letter appearing in EITHER string.
+
+    ITERATING `word1` ALONE, or `c1` alone, misses letters that appear only in word2 - and one of those
+    appearing four times is exactly the case that must fail (trap 1). On "abcd" against "eeee" that bug
+    returns True where the answer is False, AND ALL THREE OFFICIAL EXAMPLES AGREE WITH THE BUGGY VERSION,
+    so nothing in the sample tests reveals it.
+
+    A simpler alternative that removes the decision entirely is to loop over all 26 letters (section 5,
+    version C) - a letter in neither string gives 0 against 0 and passes harmlessly.
+
+            if abs(c1[ch] - c2[ch]) > 3:   # frequency gap too large
+                return False
+
+THE TEST.
+
+    `c1[ch]`   is 0 when `ch` never appears in word1 - the Counter's missing-key behaviour, which is
+               what makes the union work at all (trap 4).
+    `abs(...)` makes the comparison symmetric; it does not matter which string has more.
+    `> 3`      NOT `>= 3`. "At most 3" permits exactly 3, and the second official example turns on it -
+               `a` is 1 vs 4 there, a gap of exactly 3, and the answer is True (trap 2).
+
+    RETURNING IMMEDIATELY is correct: one letter out of proportion settles the whole question, and
+    nothing later can rescue it.
+
+        return True
+
+Every checked letter passed.""",
+
+    """9. TRACED, LETTER BY LETTER - AND THE EXAMPLES THAT CANNOT SEE THE BUG.
+
+TRACE 1 - THE TRUE CASE. word1 = "abcdeef", word2 = "abaaacc". Expected True.
+
+    c1 = {a:1, b:1, c:1, d:1, e:2, f:1}
+    c2 = {a:4, b:1, c:2}
+
+    set(word1) = {a,b,c,d,e,f},  set(word2) = {a,b,c},  UNION = {a,b,c,d,e,f}
+
+        ch = 'a':  |c1[a] − c2[a]| = |1 − 4| = 3.   Is 3 > 3?  NO - exactly 3 is allowed.
+        ch = 'b':  |1 − 1| = 0.
+        ch = 'c':  |1 − 2| = 1.
+        ch = 'd':  |1 − 0| = 1.   'd' is absent from word2, and c2['d'] reads as 0.
+        ch = 'e':  |2 − 0| = 2.
+        ch = 'f':  |1 − 0| = 1.
+
+    Nothing exceeded 3.  RETURN True.
+
+    THE 'a' ROW IS WHY THE TEST IS `> 3` AND NOT `>= 3` (trap 2). Change one character and this example
+    returns False.
+
+TRACE 2 - THE FALSE CASE. word1 = "aaaa", word2 = "bccb". Expected False.
+
+    c1 = {a:4},  c2 = {b:2, c:2}.  UNION = {a, b, c}.
+
+        The iteration order of a set is not fixed, but whenever 'a' comes up:
+        ch = 'a':  |4 − 0| = 4.  Is 4 > 3?  YES  ->  RETURN False immediately.
+
+    One letter is enough. The b and c rows would each have given 2, comfortably within range, and never
+    needed checking.
+
+TRACE 3 - THE UNION TRAP, AND THE INPUT THAT EXPOSES IT (trap 1).
+word1 = "abcd", word2 = "eeee" - both length 4, as the problem requires.
+
+    c1 = {a:1, b:1, c:1, d:1},  c2 = {e:4}
+
+    ITERATING THE UNION {a,b,c,d,e}:
+        a: |1 − 0| = 1     b: 1     c: 1     d: 1
+        e: |0 − 4| = 4  ->  4 > 3  ->  RETURN False.      CORRECT.
+
+    ITERATING ONLY word1's LETTERS {a,b,c,d}:
+        a: 1     b: 1     c: 1     d: 1     - all fine, loop ends
+        RETURN True.      WRONG.
+
+    THE LETTER 'e' IS INVISIBLE FROM WORD1'S SIDE. Nothing about the buggy version looks careless; it
+    simply never asks about a letter it has not seen.
+
+TRACE 4 - DO THE OFFICIAL EXAMPLES CATCH IT? Running both versions on all three:
+
+        "aaaa"      vs "bccb"        union False    word1-only False    AGREE
+        "abcdeef"   vs "abaaacc"     union True     word1-only True     AGREE
+        "cccddabba" vs "babababab"   union True     word1-only True     AGREE
+
+    NONE OF THEM DISTINGUISHES THE TWO VERSIONS. In the one failing example the offending letter is 'a',
+    which lives in word1 - so the buggy version fails it for the right reason by luck. A solution with
+    this bug passes every sample and fails a hidden test.
+
+    THAT IS THE MOST USEFUL THING IN THIS ENTRY: passing the given examples proves very little here.
+
+THE TINY INPUTS:
+    "" vs ""       the union is empty, the loop never runs.  RETURN True.  Every letter differs by 0.
+    "abc" vs "abc" every difference is 0.  RETURN True.
+    Equal lengths are guaranteed by the constraints, and tell you nothing on their own - "aaaa" and
+    "bccb" are both length 4 and fail (trap 3).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n + m). One pass over each string to tally, then at most 26 comparisons.
+
+SPACE: O(1), AND THIS IS WORTH STATING CAREFULLY. Two `Counter` objects sound like O(n), and they are
+not: the alphabet is bounded at 26 lowercase letters, so each holds at most 26 entries however long the
+strings are. The space does not grow with the input at all (trap 5).
+
+    THE MICRO-OPTIMISATION: two fixed arrays of 26 integers, indexed by `ord(ch) - ord('a')`, avoid
+    hashing entirely. Same O(n + m) time and O(1) space - a smaller constant, not a better complexity,
+    and it is the natural form in C or Java where `int[26]` beats a `HashMap`.
+
+THE FREQUENCY-COMPARISON CLUSTER, AND WHO OWNS WHAT. In all of these the whole problem is "count
+characters, then compare the counts under some rule" - only the rule changes:
+
+    ALMOST EQUIVALENT           every letter's counts differ by AT MOST 3        <- this entry
+                                OWNS the union-of-both-key-sets question.
+    VALID ANAGRAM               every letter's counts are EQUAL - the same shape with a difference of 0.
+    RANSOM NOTE                 one string's counts must not EXCEED the other's - one-directional, so
+                                you may fail early while scanning.
+    FIND WORDS THAT CAN BE FORMED   Ransom Note applied to a list of words.
+    FIND THE DIFFERENCE         one string has exactly one extra character.
+    SUM OF UNIQUE ELEMENTS      count, then keep only the entries whose count is 1.
+
+    THE RECOGNITION CUE: order does not matter and the answer depends only on how often things occur.
+    Reach for a tally, and then think carefully about WHICH keys the comparison must range over - which
+    is precisely where this problem hides its difficulty.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the alphabet were arbitrary Unicode?" The space stops being O(1) and becomes O(distinct
+    characters); the array-of-26 optimisation is no longer available, and the union question matters
+    more, not less.
+  - "What if the tolerance were k rather than 3?" One constant changes. Nothing else.
+  - "What if the strings could be different lengths?" The algorithm is unchanged - it never looks at
+    lengths. The problem guarantees equal lengths, but nothing depends on it.
+  - "Can you avoid two passes?" Not meaningfully - you cannot judge a letter until both strings are
+    fully counted, because the last character read might be the one that breaks it (section 5).
+  - "Return WHICH letter fails, not just true/false." Return `ch` instead of False.
+
+THE #1 BEGINNER MISTAKE: iterating only one string's characters. It misses any letter appearing solely
+in the other - and on "abcd" against "eeee" it returns True where the answer is False. What makes it
+genuinely dangerous is that ALL THREE of the problem's own examples give the same answer with and
+without the bug, so the sample tests provide no protection whatsoever.
+
+RUNNER-UP: writing `>= 3` for "at most 3". A gap of exactly 3 is permitted, and the second official
+example depends on it.
+
+TAKEAWAY: order is irrelevant so this is purely a tally comparison - and the only real decision is which
+letters to compare, which must be every letter in EITHER string (or simply all twenty-six), because a
+letter absent from one side still has a count there of zero and that zero is exactly what can break the
+rule.""",
 ]
 
 _EX_P1I["Closest Binary Search Tree Value"] = [
