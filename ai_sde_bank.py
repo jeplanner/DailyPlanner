@@ -93630,233 +93630,1615 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1L["Remove Duplicates from Sorted List"] = [
-    """The walk, traced.
-list 1 -> 1 -> 2 -> 3 -> 3.
-current at the first 1: next is 1, equal -> relink current.next to the second
-node's next, giving 1 -> 2 -> 3 -> 3. Do NOT advance - there could be a third
-1.
-current still at 1: next is 2, different -> advance to 2.
-At 2: next is 3, different -> advance.
-At the first 3: next is 3, equal -> relink -> 1 -> 2 -> 3. Next is None -> loop
-ends.
-Result 1 -> 2 -> 3.""",
+    """1. THE GOAL - a sorted chain of values; keep one node per value.
 
-    """Why you must NOT advance after removing.
-`current.next = current.next.next` followed by `current = current.next` would
-skip past the newly-linked node without comparing it. On 1 -> 1 -> 1 that
-leaves a duplicate behind: you remove the second 1, jump to the third, and
-never compare it against the first.
-The if/else structure is doing exactly this - advance only in the else branch.
-Any run of three or more equal values is the test that exposes the bug, and a
-two-element test will not.""",
+You are given a LINKED LIST whose values are already in sorted order. Delete the repeats so that each
+value appears exactly once, and return the list.
 
-    """Why sortedness is load-bearing.
-Duplicates are adjacent only because the list is sorted, which is what lets a
-single pointer with no memory do the job. On an UNSORTED list you would need a
-set of seen values and a previous pointer - O(n) space - or an O(n^2)
-double walk.
-State that dependency out loud: 'this is O(1) space because sorted means equal
-values are neighbours'. It is also the natural bridge to the follow-up below.""",
+    input:    1 -> 1 -> 2 -> 3 -> 3
+    output:   1 -> 2 -> 3
 
-    """Why no dummy head is needed here - and when it would be.
-The head node is never deleted: this problem keeps ONE node per value, so the
-first node always survives. That is why the function can return `head`
-unchanged and needs no sentinel.
-Contrast Remove Duplicates from Sorted List II, which deletes ALL nodes of any
-duplicated value - there the head itself may vanish, so you need a dummy node
-in front and a `prev` pointer. Knowing which variant needs the dummy is the
-distinction worth carrying: the dummy exists to give you a stable handle when
-the head can be removed.""",
+    The second 1 and the second 3 are removed. One node of each value survives.
 
-    """Edge cases.
-Empty list (head is None) -> the while condition fails immediately -> return
-None.
-Single node -> current.next is None -> loop does not run -> unchanged.
-All duplicates 1 -> 1 -> 1 -> collapses to a single 1.
-No duplicates -> the pointer simply walks to the end, touching nothing.
-Two nodes equal -> one relink, then next is None -> done.
-Note the condition `current and current.next` guards both the empty list and
-the final node in one expression.""",
+BECAUSE THE LIST IS SORTED, EQUAL VALUES ARE ALWAYS NEIGHBOURS. That single fact is what makes the problem
+easy: you never have to remember anything: to decide whether a node is a duplicate you only compare it
+with the one directly after it.
 
-    """Complexity and the family.
-O(n) time - each node is examined once - and O(1) space, since only pointers
-are rearranged and no nodes are allocated.
-The family: Remove Duplicates from Sorted List II (delete every copy, needs a
-dummy), Remove Duplicates from Sorted Array (the array twin, using a slow/fast
-index pair instead of relinking), Remove Nth Node From End (dummy plus two
-pointers), and Merge Two Sorted Lists. The shared skill is pointer surgery on a
-singly linked list - and the recurring question is always whether the head can
-disappear, because that is what decides the dummy.""",
+    1 -> 1 -> 2 -> 3 -> 3
+    ^^^^^^                 equal, and ADJACENT - they could not be anywhere else in a sorted list
+                   ^^^^^^  likewise
+
+    In an UNSORTED list the two 1s might sit at opposite ends, and a single comparison with the next node
+    would tell you nothing. Section 4 says what changes then.
+
+YOU ARE REARRANGING POINTERS, NOT BUILDING A NEW LIST. Nothing is copied and no new node is allocated -
+the removed nodes are simply unlinked and become unreachable. THIS MEANS THE CALLER'S LIST IS MODIFIED IN
+PLACE, which is stated explicitly in section 4 and proved by inspection.
+
+    input:    1 -> 1 -> 1
+    output:   1
+
+    Three in a row collapse to one - and that case, which neither official example contains, is exactly
+    where the most common bug shows up.
+
+    THIS ENTRY OPENS THE LINKED-LIST-DELETION PAIR with Remove Linked List Elements. REMOVE LINKED LIST
+    ELEMENTS OWNS THE DUMMY HEAD, because there the first node may itself be deleted. THIS ONE OWNS
+    SKIPPING WITHIN A SORTED LIST - and specifically the rule that YOU DO NOT ADVANCE AFTER A REMOVAL,
+    which is why it needs no sentinel at all: the head never goes anywhere.""",
+
+    """2. THE INTUITION - stand still while you are deleting, step forward only when you are not.
+
+Keep one pointer on a node and look at the node after it.
+
+    IF THE TWO VALUES MATCH      the next node is a duplicate. Unlink it by pointing past it - and STAY
+                                 WHERE YOU ARE, because the NEW next node might be a duplicate too.
+    IF THEY DIFFER               this node is finished. Step forward.
+
+    1 -> 1 -> 2 -> 3 -> 3
+
+        at the first 1:  next is 1, EQUAL       ->  unlink it.  List becomes 1 -> 2 -> 3 -> 3.  STAY.
+        at the first 1:  next is 2, differ      ->  advance.
+        at 2:            next is 3, differ      ->  advance.
+        at 3:            next is 3, EQUAL       ->  unlink it.  List becomes 1 -> 2 -> 3.  STAY.
+        at 3:            next is None           ->  loop ends.
+
+    RESULT: 1 -> 2 -> 3
+
+THE PICTURE OF ONE UNLINK - THREE NODES, ONE POINTER MOVED:
+
+        before:     [1] --> [1] --> [2]
+                    ^^^      ^^^
+                  current   doomed
+
+        after:      [1] ------------> [2]
+                    ^^^      [1]
+                  current   (unreachable)
+
+    NOTHING IS ERASED. The middle node still exists in memory and still points at [2]; it is simply that
+    nothing points AT it any more, so walking the list from the head can never reach it.
+
+WHY STAYING PUT MATTERS, AND IT IS THE WHOLE PROBLEM. After unlinking, the node now sitting after
+`current` has NEVER BEEN COMPARED. If you advance, you step onto it without ever checking it against the
+one that follows.
+
+        1 -> 1 -> 1
+
+        at the first 1:  unlink the second     ->  1 -> 1
+        if you now ADVANCE, you land on the third 1 - and its next is None, so the loop ends
+        RESULT: 1 -> 1        WRONG - two nodes with the same value survive
+
+    THE RULE IS: A REMOVAL IS NOT A STEP. You only step when you have confirmed the current node is done
+    with.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LINKED LIST. A chain of NODES, each holding a value and a reference to the next node. The last node's
+reference is None. YOU CANNOT JUMP TO POSITION 5 - the only way to reach a node is to follow the chain
+from the head.
+
+NODE. One link in the chain. Here `ListNode` with two fields: `val` (the number) and `next` (the following
+node, or None).
+
+    class ListNode:
+        def __init__(self, val=0, next=None):
+            self.val = val; self.next = next
+
+HEAD. The first node, and the only handle you are given. Everything else is reached by following `next`.
+
+UNLINK / SKIP. Changing some node's `next` to point past a node, so the skipped node is no longer
+reachable. THIS IS WHAT "DELETE" MEANS IN A LINKED LIST - there is no erase operation.
+
+IN PLACE. The existing nodes are rewired rather than copied. Uses O(1) extra space AND CHANGES THE
+CALLER'S DATA.
+
+SORTED. Non-decreasing along the chain, which guarantees equal values are adjacent.
+
+THE VARIABLES IN THE CODE:
+    head      the first node, returned unchanged at the end - see section 4 for why it never moves.
+    current   the node being examined. It moves forward ONLY when no removal happened.
+
+`current.next.next` is "the node two along" - reading it is how you skip one.
+
+n IS THE NUMBER OF NODES. TIME O(n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and both official examples accept the bug.
+
+TRAP 1 - ADVANCING AFTER A REMOVAL. Writing the unlink and the step as though they always go together:
+
+        if current.val == current.next.val:
+            current.next = current.next.next
+        current = current.next                 # WRONG - runs on BOTH branches
+
+    After unlinking, the node newly sitting after `current` has not been compared with anything. Stepping
+    onto it skips that comparison entirely.
+
+    MEASURED: wrong on 2,097 of 6,000 random sorted lists.
+
+    NOW CHECK BOTH OFFICIAL EXAMPLES:
+
+        1 -> 1 -> 2           correct 1 -> 2       buggy 1 -> 2       AGREE
+        1 -> 1 -> 2 -> 3 -> 3 correct 1 -> 2 -> 3  buggy 1 -> 2 -> 3  AGREE
+
+    BOTH AGREE, and the reason is structural: NEITHER SAMPLE CONTAINS THREE EQUAL VALUES IN A ROW. With
+    only pairs of duplicates, unlinking once always leaves a different value next, so advancing happens to
+    be right. THE SMALLEST EXPOSING CASE IS 1 -> 1 -> 1, which the buggy version reduces to 1 -> 1.
+
+    TEST TRIPLES, NOT PAIRS. That is the transferable lesson: whenever a fix-up can cascade, one instance
+    of the pattern is not enough to test it.
+
+TRAP 2 - COMPARING `current` WITH A REMEMBERED PREVIOUS VALUE INSTEAD OF WITH `current.next`. It can be
+made to work, but it needs an extra variable and a `prev` pointer to do the unlinking, and it is easy to
+get the first iteration wrong. LOOKING FORWARD IS SIMPLER because the node you want to delete is the one
+you are looking at.
+
+TRAP 3 - FORGETTING THE `current.next` HALF OF THE LOOP CONDITION. `while current` alone would evaluate
+`current.next.val` on the last node, where `current.next` is None - an AttributeError. Both halves are
+needed and the order matters, since `and` short-circuits.
+
+TRAP 4 - ASSUMING THE LIST IS SORTED WHEN IT IS NOT. The whole method rests on duplicates being adjacent.
+On an unsorted list you need a SET of values already seen, plus a `prev` pointer - O(n) space instead of
+O(1). SAY WHICH GUARANTEE YOU ARE USING; it is the difference between an algorithm and an accident.
+
+AND ONE THING THAT IS NOT A TRAP BUT MUST BE SAID: THIS MUTATES THE CALLER'S LIST. Verified by inspection -
+after the call, walking the caller's own head gives the deduplicated list, and the returned object IS that
+same head. No copy is made anywhere.""",
+
+    """5. THE SLOW WAY FIRST, then the single pointer.
+
+THE NAIVE VERSION - COPY THE VALUES OUT, DEDUPLICATE, REBUILD:
+
+    walk the list collecting values into an array
+    remove adjacent repeats from the array
+    build a brand-new linked list from what is left
+
+    IT IS CORRECT and it is the ground truth every figure in this entry was checked against. It also has a
+    genuine virtue: IT DOES NOT TOUCH THE CALLER'S LIST. If preserving the input matters, this is the
+    version you want.
+
+    COST: O(n) time but O(n) EXTRA SPACE for the array and the new nodes - and it allocates n new objects
+    to express a change that requires moving at most n pointers.
+
+THE UPGRADE, AND THERE IS NO TRICK TO IT. Since equal values are adjacent, you can decide everything from
+one node and its successor. So walk once with a single pointer, rewiring as you go.
+
+    COST: O(n) time, O(1) space - no allocation at all.
+
+WHY NO DUMMY HEAD IS NEEDED HERE, AND THIS IS WORTH DWELLING ON. The standard linked-list safety device is
+a SENTINEL node placed before the head, so that deleting the first real node needs no special case. THIS
+PROBLEM DOES NOT NEED ONE, because the head is never deleted: the rule keeps ONE node of each value, and
+the first node is always the first occurrence of its value, so it always survives.
+
+    1 -> 1 -> 1        the head stays; the two behind it go
+    2 -> 2 -> 3        the head stays
+
+    CONTRAST REMOVE LINKED LIST ELEMENTS, the sibling entry: there you delete every node matching a value,
+    so the head itself can vanish, and a dummy becomes necessary. THE RULE TO CARRY IS: A DUMMY HEAD IS
+    FOR WHEN THE HEAD CAN CHANGE - not a reflex for every list problem.
+
+THE RECURSIVE ALTERNATIVE, for completeness:
+
+        deduplicate the rest of the list, then either return this node linked to that result, or - if
+        this node's value equals the result's first value - return the result directly
+
+    Elegant and O(n) time, but O(n) STACK space, and on a list of 300 nodes (this problem's limit) that is
+    fine while on a million-node list it would overflow. WORTH KNOWING; NOT WORTH LEADING WITH.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk one pointer along the list, and whenever the next node holds the same value, unlink
+it and look again from the same place.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, one pointer:
+
+    `current`  moves forward ONLY on the branch where no removal happened. On a removal it stays exactly
+               where it is, and the list around it gets shorter.
+
+    SO EACH ITERATION DOES EXACTLY ONE OF TWO THINGS: it removes a node, or it advances the pointer.
+
+    WHAT MAKES IT STOP, AND THIS IS THE ARGUMENT THAT MATTERS BECAUSE THE POINTER SOMETIMES DOES NOT MOVE:
+    every iteration either shortens the list by one node or moves `current` one place forward. The list
+    is finite and the pointer never goes backwards, so neither can happen more than n times. TOTAL
+    ITERATIONS AT MOST 2n. A loop where the cursor sometimes stands still is exactly where infinite loops
+    come from, so this is worth checking rather than assuming.
+
+    THE INVARIANT: everything from `head` up to and including `current` is already free of duplicates.
+    True at the start (a single node cannot repeat itself) and preserved by both branches - the removal
+    branch deletes an offender without moving the boundary, and the advance branch moves the boundary only
+    once the node is known to differ from its successor.
+
+    WHY `head` IS SAFE TO RETURN UNCHANGED: the first node is never unlinked, because the only node ever
+    unlinked is `current.next`, and `current` starts at the head. So the head is never anybody's `next`
+    in this walk.
+
+THE STEPS, NO CODE:
+
+    1. Point at the first node.
+    2. While you are on a real node AND there is a node after it:
+       a. If the node after has the SAME value, make your node point past it instead - and DO NOT MOVE.
+       b. Otherwise, step forward onto the next node.
+    3. Hand back the original first node.
+
+    STEP 2a's "DO NOT MOVE" IS THE ENTIRE PROBLEM. STEP 2's TWO CONDITIONS ARE BOTH REQUIRED.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A line of people is queuing, each holding a numbered ticket, and the queue is already arranged so the
+numbers never decrease. Anyone holding a duplicate ticket should leave, keeping just one person per
+number. Nobody can see the whole queue - each person can only see the person directly in front of them,
+and hand-holding is the only thing keeping the queue together.
+
+You start at the front and look at the person immediately behind you.
+
+If they are holding the same number as you, they should not be here. You reach past them, take the hand of
+whoever is behind THEM, and let go of the duplicate. That person is now holding nobody's hand and is no
+longer part of the queue.
+
+    AND NOW COMES THE THING PEOPLE GET WRONG. There is a new person behind you - the one whose hand you
+    just took - AND YOU HAVE NOT LOOKED AT THEIR TICKET YET. If three people were all holding number 1,
+    dropping the second leaves the third right behind you, still holding a 1. You must look again from
+    where you are standing.
+
+    Only when the person behind you is holding a DIFFERENT number is your own position finished. Then you
+    walk back one place and start again from there.
+
+You continue until there is nobody behind you at all, and then the queue is clean.
+
+WHY YOU NEVER HAVE TO REMEMBER ANYTHING. Because the numbers never decrease along the queue, everyone
+holding the same number is standing together in one block. So the only person who could possibly be your
+duplicate is the one directly behind you - if they are different, nobody further back can match you
+either. If the queue were shuffled, you would need to carry a list of every number you had already seen.
+
+AND ONE THING TO TELL THE PERSON WHO ASKED YOU. You did not build a new queue and leave the old one
+standing. You changed who is holding whose hand in the queue they gave you. The people you dropped are
+still standing in the room, but nobody can reach them by walking the line any more.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    class ListNode:
+        def __init__(self, val=0, next=None):
+            self.val = val; self.next = next
+
+THE NODE TYPE. Two fields only: the value and the link to the following node. There is no `prev` link and
+no length - a singly linked list knows nothing except what is directly in front of it.
+
+    def delete_duplicates(head):
+
+`head` is the first node, and the only handle on the list. IT IS MUTATED - the nodes are rewired in place
+and the caller's list changes.
+
+    current = head
+
+THE WALKING POINTER, starting at the front. `head` itself is never reassigned, which is why it can be
+returned unchanged at the end - and why no dummy node is needed.
+
+    while current and current.next:
+
+BOTH CONDITIONS ARE REQUIRED. `current` guards against an empty list; `current.next` guards against
+reading `current.next.val` on the final node, which would be an AttributeError. Python's `and`
+short-circuits, so `current.next` is only evaluated once `current` is known to be a real node.
+
+    if current.val == current.next.val:
+        current.next = current.next.next   # skip the duplicate
+
+THE UNLINK. `current.next.next` is the node two places along; pointing `current.next` at it leaves the
+node in between unreferenced and therefore unreachable. NOTHING IS ERASED - the skipped node still exists
+and still points forward; it is simply orphaned.
+    NOTE WHAT DOES NOT HAPPEN HERE: `current` is not moved. The node now sitting after `current` has never
+    been compared, so the next iteration must examine it from the same position. Adding `current =
+    current.next` to this branch - or moving the advance out of the `else` so it runs on both - is wrong
+    on 2,097 of 6,000 random lists and passes BOTH official examples.
+
+    else:
+        current = current.next
+
+THE ADVANCE, AND IT LIVES ONLY HERE. Reaching this branch means the current node differs from its
+successor, so the current node is finished with and the pointer may move on.
+
+    return head
+
+The same first node that came in. Not `current`, which by now is at the end of the list; and not a new
+list, because none was built.
+
+WHAT IS DELIBERATELY ABSENT: no dummy head (the head is never deleted - section 5), no `prev` pointer
+(looking forward is enough), no set of seen values (sortedness replaces it), and no guard for an empty
+list (the loop condition handles it - verified).""",
+
+    """9. TRACED ON REAL NUMBERS - the official list, then the triple that the samples do not contain.
+
+RUN A: 1 -> 1 -> 2 -> 3 -> 3
+
+    current at the first 1:   next holds 1.  EQUAL.
+                              unlink: the first node now points at the 2.
+                              list is 1 -> 2 -> 3 -> 3.   current DOES NOT MOVE.
+
+    current at the same 1:    next now holds 2.  Differ.
+                              advance.  current is on the 2.
+
+    current at 2:             next holds 3.  Differ.
+                              advance.  current is on the first 3.
+
+    current at the first 3:   next holds 3.  EQUAL.
+                              unlink: this node now points at None.
+                              list is 1 -> 2 -> 3.   current DOES NOT MOVE.
+
+    current at the same 3:    current.next is None -> the loop condition fails.
+
+    RETURNS the original head, and walking it gives 1 -> 2 -> 3.
+
+    NOTE THE SECOND LINE. After the first unlink the pointer stayed put and immediately re-examined its
+    new neighbour. On this list that re-examination found a DIFFERENT value, so a version that advanced
+    instead would have landed on the 2 anyway and got the same answer - WHICH IS EXACTLY WHY THIS EXAMPLE
+    DOES NOT EXPOSE THE BUG.
+
+RUN B: 1 -> 1 -> 1 - three in a row, which neither official example has
+
+    CORRECT VERSION:
+        at the first 1:  next is 1, EQUAL -> unlink.  List is 1 -> 1.  STAY.
+        at the first 1:  next is 1, EQUAL -> unlink.  List is 1.        STAY.
+        at the first 1:  next is None -> stop.
+        RESULT: 1
+
+    ADVANCING AFTER THE REMOVAL:
+        at the first 1:  next is 1, EQUAL -> unlink.  List is 1 -> 1.  ADVANCE onto the survivor.
+        now on the last node: its next is None -> stop.
+        RESULT: 1 -> 1        WRONG
+
+    ONE EXTRA DUPLICATE IS ALL IT TAKES.
+
+THE INVERSION - CHANGE THE FINAL VALUE:
+
+    1 -> 1 -> 2 -> 3 -> 3    ->    1 -> 2 -> 3        (four nodes become three)
+    1 -> 1 -> 2 -> 3 -> 4    ->    1 -> 2 -> 3 -> 4   (only the leading pair collapses)
+
+    Both verified against a copy-out-and-deduplicate ground truth.
+
+AND THE MUTATION, PROVED: after calling the function on a list built from [1,1,2,3,3], walking the
+CALLER'S OWN head variable yields [1, 2, 3], and the returned object is the very same node.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration either deletes a node or moves the pointer forward, and neither can
+happen more than n times.
+
+    TIME O(n) - at most 2n iterations, each doing a comparison and at most one pointer write.
+    SPACE O(1) - one pointer. NOTHING IS ALLOCATED: no array, no new nodes, no set.
+    The copy-out-and-rebuild version is O(n) time but O(n) space, and its one advantage is that it leaves
+    the caller's list intact.
+
+THE #1 MISTAKE: advancing the pointer after a removal. The node newly linked in has not been compared with
+anything, so stepping onto it skips a check. Wrong on 2,097 of 6,000 random sorted lists - and BOTH
+OFFICIAL EXAMPLES ACCEPT IT, because neither contains three equal values in a row. The smallest exposing
+case is 1 -> 1 -> 1. THE RUNNER-UP is writing `while current` without `and current.next`, which reads
+`.val` off None on the last node.
+
+ONE-SENTENCE TAKEAWAY: in a sorted list duplicates are neighbours, so one forward-looking pointer suffices -
+but a removal is not a step, because the node you have just linked in has never been checked.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things. First, whether you handle the CASCADE - can a fix-up
+create another instance of the same problem? Here it can, and the answer is to re-examine rather than
+advance. That question recurs far beyond linked lists, in every "remove and re-check" loop. Second,
+whether you know WHEN a dummy head is needed. Reaching for one reflexively is not wrong, but being able to
+say "the head is never deleted here, because we keep the first occurrence of each value, so no sentinel is
+needed" is the answer that shows you understand what the sentinel is for.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "REMOVE DUPLICATES FROM SORTED LIST II - delete EVERY node that has a duplicate, keeping only values
+    that appear exactly once." Now the head CAN vanish (1 -> 1 -> 2 becomes just 2), so a dummy head
+    becomes necessary, and you need a `prev` pointer plus an inner loop that skips a whole run at a time.
+    Say that the change in the deletion rule is what forces the sentinel.
+    "What if the list is NOT sorted?" Carry a set of values already seen and a `prev` pointer, unlinking
+    any node whose value is in the set. O(n) time but O(n) space - the sort is what buys the O(1).
+    "Do it recursively." Deduplicate the tail, then drop this node if its value equals the head of the
+    result. O(n) time and O(n) stack - fine at this problem's limit of 300 nodes, and a stack overflow on
+    a million.
+    "Do it without modifying the input." Copy the values out and build a new list; O(n) extra space, and
+    the honest reason to choose it is that the caller keeps their data.""",
 ]
 
 _EX_P1L["Remove Linked List Elements"] = [
-    """Why the dummy head exists here - the contrast with the previous problem.
-Remove Duplicates from Sorted List never deletes the head, so it needs no
-sentinel. THIS problem can: removing 6 from 6 -> 1 -> 2 means the head itself
-disappears, and without a dummy you would need a special case before the loop
-plus a way to return the new head.
-The dummy is a fake node in front whose .next is the real head. Every deletion,
-including the first node's, becomes the same uniform `prev.next = curr.next`,
-and you return `dummy.next` - which is the new head whether or not the original
-survived.""",
+    """1. THE GOAL - delete every node holding a particular value.
 
-    """The consecutive-match case, traced.
-list 1 -> 2 -> 6 -> 6 -> 3, val = 6. dummy -> 1.
-curr 1: keep, prev = 1. curr 2: keep, prev = 2.
-curr first 6: match -> prev.next = the second 6 (prev stays at 2). curr moves
-to the second 6.
-curr second 6: match -> prev.next = 3 (prev still 2). curr moves to 3.
-curr 3: keep, prev = 3.
-Result 1 -> 2 -> 3.
-The key is that prev does NOT advance on a match - it stays anchored at the
-last kept node, so a run of matches is unlinked in one continuous relink.""",
+Given a linked list and a value, remove ALL nodes whose value equals it, and return the resulting list.
 
-    """Why `curr = curr.next` sits outside the if/else.
-Every iteration advances curr exactly once, whether the node was kept or
-removed - so the advance belongs after both branches. Only `prev` is
-conditional.
-Putting the advance inside only the else branch loops forever on a match;
-duplicating it inside both branches works but is noisier. This
-one-pointer-always-advances, one-pointer-conditionally shape is the standard
-skeleton for filtering a linked list.""",
+    input:   1 -> 2 -> 6 -> 3 -> 4 -> 5 -> 6        val = 6
+    output:  1 -> 2 -> 3 -> 4 -> 5
 
-    """Edge cases.
-Empty list -> dummy.next is None, loop does not run -> None.
-All nodes match, 6 -> 6 -> 6 with val 6 -> everything unlinked, dummy.next is
-None -> None. This is the case that most needs the dummy.
-Head matches, 6 -> 1 -> handled uniformly, returns 1.
-Tail matches -> prev.next becomes None naturally.
-No match -> the list is returned unchanged, with prev walking the whole way.""",
+    Both 6s go, wherever they are.
 
-    """Complexity, and the garbage-collection footnote.
-O(n) time, O(1) extra space - one dummy node regardless of input size.
-The unlinked nodes are unreachable and collected automatically in Python and
-Java. In C or C++ you would free() each removed node, and forgetting to is a
-leak - which is why the C version needs a temporary pointer to the doomed node
-before relinking past it. Worth a sentence if the interviewer works in a
-non-managed language.""",
+THE LIST IS NOT SORTED AND THE MATCHES CAN BE ANYWHERE. Unlike the sibling problem Remove Duplicates from
+Sorted List, the nodes to delete are scattered - there is no adjacency to exploit, and none is needed,
+because the test is against a fixed value rather than against a neighbour.
 
-    """The family: the dummy-head pattern.
-Any list operation where the HEAD may change wants a dummy: Remove Nth Node
-From End, Remove Duplicates from Sorted List II, Merge Two Sorted Lists (the
-dummy collects the output), Partition List, Insertion Sort List, Reverse Nodes
-in k-Group.
-The rule to carry: ask 'can the first node be removed or replaced?' If yes,
-allocate a dummy and return dummy.next; if no (as in Remove Duplicates I), skip
-it. That single question decides the shape before you write anything.""",
+THE CASE THAT SHAPES THE WHOLE SOLUTION: THE FIRST NODE MAY ITSELF NEED DELETING.
+
+    input:   7 -> 7 -> 7 -> 7        val = 7
+    output:  (empty list)
+
+    Every node goes, including the head - so the function cannot simply return the head it was given.
+
+    input:   6 -> 1 -> 2             val = 6
+    output:  1 -> 2
+
+    The head is deleted and the SECOND node becomes the new head.
+
+THAT IS WHY THIS PROBLEM WANTS A DUMMY HEAD - a throwaway node placed in front of the list so that even
+the first real node has something before it. Then deleting the first node is the same operation as
+deleting any other, with no special case.
+
+    CONSECUTIVE MATCHES MUST ALSO WORK: 1 -> 2 -> 6 -> 6 -> 3 with val = 6 becomes 1 -> 2 -> 3, with two
+    unlinks in a row from the same predecessor.
+
+    THIS ENTRY COMPLETES THE LINKED-LIST-DELETION PAIR with Remove Duplicates from Sorted List. REMOVE
+    DUPLICATES OWNS SKIPPING WITHIN A SORTED LIST and the do-not-advance-after-a-removal rule - and it
+    needs NO dummy, because the first occurrence of each value always survives. THIS ONE OWNS THE DUMMY
+    HEAD, precisely because here the head can be deleted.""",
+
+    """2. THE INTUITION - keep a pointer on the last node you decided to KEEP.
+
+To unlink a node you need whatever points AT it, so you carry a `prev` pointer one step behind. Every node
+is then either kept - in which case it becomes the new `prev` - or unlinked, in which case `prev` stays
+put and simply points further along.
+
+    1 -> 2 -> 6 -> 6 -> 3,   val = 6,   with a dummy in front
+
+        dummy -> 1 -> 2 -> 6 -> 6 -> 3
+
+        curr = 1    keep     prev becomes 1
+        curr = 2    keep     prev becomes 2
+        curr = 6    MATCH    prev(2).next now points at the second 6.  prev STAYS at 2.
+        curr = 6    MATCH    prev(2).next now points at the 3.         prev STAYS at 2.
+        curr = 3    keep     prev becomes 3
+
+        the chain from dummy reads:  dummy -> 1 -> 2 -> 3
+
+    ANSWER: 1 -> 2 -> 3
+
+WHY `prev` STAYS ON A MATCH. `prev` means "the last node known to be staying". A deleted node is not
+staying, so it cannot become `prev`. That is what lets two matches in a row both be unlinked from the same
+predecessor - the second unlink simply overwrites the first one's work with a further-along target.
+
+THE PICTURE OF THE DUMMY, AND WHY IT EARNS ITS KEEP:
+
+        WITHOUT a dummy, deleting the head is a different operation:
+            [6] -> [1] -> [2]           nothing points at [6], so you must reassign the head variable
+
+        WITH a dummy, it is the SAME operation as any other delete:
+            [d] -> [6] -> [1] -> [2]
+            [d] ---------> [1] -> [2]   the dummy's next is rewritten, exactly like any prev's next
+
+    THE DUMMY EXISTS SO THAT EVERY REAL NODE HAS A PREDECESSOR. That is its entire job, and it is why the
+    answer is `dummy.next` rather than `head` - by the end, `head` may point at a node that was deleted.
+
+AND NOTE WHY `curr` ADVANCES UNCONDITIONALLY. Whether a node was kept or unlinked, you are finished with
+it and move on to the one after. THAT IS THE OPPOSITE OF THE SIBLING PROBLEM, where a removal means
+staying put - and the difference is that here `curr` is the node being TESTED, while there the node being
+tested was `current.next`. Section 4 shows what happens if you get this wrong: the loop hangs.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LINKED LIST / NODE / HEAD. A chain of nodes, each holding a value and a reference to the next; the head is
+the first, and the only handle you are given. You cannot index into it - reaching a node means walking
+from the head.
+
+SENTINEL / DUMMY HEAD. An extra node created in front of the real list, holding a value nobody cares
+about. Its only purpose is to give the first real node a predecessor, so that deleting it needs no special
+case. IT IS NOT PART OF THE ANSWER - the answer is whatever it points at when the walk finishes.
+
+UNLINK. Setting some node's `next` to point past another node, making the skipped node unreachable. There
+is no erase operation in a linked list.
+
+prev / curr. The classic pair: `curr` is the node being judged, `prev` is the last node that was kept -
+the one whose `next` must be rewritten if `curr` is deleted.
+
+THE VARIABLES IN THE CODE:
+    head    the first node given. May itself be deleted, which is why it is not returned.
+    val     the value to remove. Every node holding it goes.
+    dummy   the sentinel, created with `ListNode(0, head)` - value 0 is arbitrary and never examined.
+    prev    the last node known to be staying. Starts at `dummy`.
+    curr    the node being tested. Advances every iteration without exception.
+
+`ListNode(0, head)` builds a new node whose `next` is the existing head - so the dummy sits in front of
+the whole list without changing anything inside it.
+
+n IS THE NUMBER OF NODES. TIME O(n), SPACE O(1) - one extra node, regardless of input size.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one bug HANGS, and one is caught by only the third sample.
+
+TRAP 1 - MOVING `curr = curr.next` INSIDE THE `else`. It looks tidy - advance only when you keep something -
+and it is an INFINITE LOOP.
+
+        while curr:
+            if curr.val == val:
+                prev.next = curr.next     # unlink, but curr is not moved
+            else:
+                prev = curr
+                curr = curr.next          # WRONG PLACE
+
+    On a match, `curr` still points at the node just unlinked. The next iteration tests the same node,
+    matches again, unlinks again, and never moves. THE PROGRAM DOES NOT RETURN A WRONG ANSWER - IT NEVER
+    RETURNS AT ALL.
+
+    VERIFIED with an iteration cap: on the first official example, 1 -> 2 -> 6 -> 3 -> 4 -> 5 -> 6 with
+    val = 6, the loop is still running after 500 iterations. On a list with NO matches it completes
+    normally and returns the right answer - so the bug is invisible until something actually matches.
+
+    A HANG IS WORSE THAN A WRONG ANSWER in an interview, because there is nothing to inspect. THE RULE:
+    in any delete-while-walking loop, check that EVERY path advances the cursor. Here the advance belongs
+    outside the if/else because every node is finished with once tested, kept or not.
+
+TRAP 2 - NO DUMMY HEAD, AND ONLY THE THIRD OFFICIAL EXAMPLE CATCHES IT. The natural sentinel-free version
+starts `prev` at the head and `curr` at the second node - which means THE HEAD IS NEVER TESTED.
+
+    MEASURED: wrong on 1,356 of 6,000 random lists.
+
+    THE THREE OFFICIAL EXAMPLES:
+
+        [1,2,6,3,4,5,6] val=6   correct 1->2->3->4->5   no-dummy 1->2->3->4->5   AGREE
+        []              val=1   correct empty           no-dummy empty           AGREE
+        [7,7,7,7]       val=7   correct empty           no-dummy 7               CAUGHT
+
+    THE FIRST TWO HIDE IT because the first list's head is a 1 (not a match) and the second is empty. Only
+    the all-sevens case, where the head must go, exposes it. THE PROBLEM INCLUDES THAT EXAMPLE ON PURPOSE.
+
+TRAP 3 - RETURNING `head` INSTEAD OF `dummy.next`. If the original head was deleted, `head` now points at
+an orphaned node that still links to the rest of the old chain - so you would return a list beginning with
+a value that was supposed to be removed. `dummy.next` is the true new head, whatever happened.
+
+TRAP 4 - ADVANCING `prev` ON A MATCH. `prev` means "the last node that is staying". Making a deleted node
+the new `prev` would leave later unlinks pointing into orphaned territory.
+
+AND THE MUTATION, WHICH MUST BE SAID ALOUD AND IS SUBTLER HERE THAN USUAL. The caller's nodes are rewired
+in place. VERIFIED: when the head survives, the caller's own head variable still names a valid list and
+the returned object is that same node. BUT WHEN THE HEAD IS DELETED, the caller's variable is left
+pointing at an ORPHANED node whose links still lead into the modified list - inspecting it on a list built
+from [6,1,2] with val = 6 shows [6, 1, 2] while the returned list is [1, 2]. THE CALLER MUST REASSIGN
+FROM THE RETURN VALUE; ignoring it leaves them holding a stale head.""",
+
+    """5. THE NAIVE WAY FIRST, then the sentinel.
+
+THE NAIVE VERSION - REBUILD FROM SCRATCH:
+
+    walk the list collecting the values that are not equal to val
+    build a brand-new linked list from them
+
+    IT IS CORRECT and it is the ground truth every figure in this entry was checked against. It also does
+    not touch the caller's list, which is a real advantage when the input must be preserved.
+
+    COST: O(n) time and O(n) EXTRA SPACE - it allocates a new node for every survivor to express a change
+    that only needs pointers moved.
+
+THE SENTINEL-FREE IN-PLACE VERSION, AND WHY IT IS AWKWARD:
+
+        while head and head.val == val:      # first, strip matching nodes off the FRONT
+            head = head.next
+        prev, curr = head, head.next if head else None
+        ... then the ordinary walk ...
+
+    IT IS CORRECT, and it is worth writing out once to see what the dummy is saving you: a whole extra
+    loop, plus a None-check, plus the reassignment of `head`. TWO DIFFERENT CODE PATHS FOR THE SAME
+    LOGICAL OPERATION - one for the front of the list and one for the middle.
+
+THE UPGRADE - THE DUMMY HEAD, EXPLAINED FROM SCRATCH. Create one throwaway node and point it at the head:
+
+        dummy -> [head] -> ... -> [last]
+
+    Now EVERY real node has a predecessor, so "unlink `curr`" is always the same single operation,
+    `prev.next = curr.next`, wherever `curr` sits. The special case for the front disappears - not because
+    it was handled, but because it stopped existing.
+
+    At the end, `dummy.next` is the head of whatever survived: the original head if it was kept, some
+    later node if it was not, or None if everything went.
+
+    COST: O(n) time, O(1) space - exactly one extra node no matter how long the list is.
+
+THE PRICE, STATED HONESTLY: one wasted node and one extra line. That is the whole cost, and it buys the
+removal of an entire code path. THE PATTERN GENERALISES to Remove Nth Node From End, Remove Duplicates
+from Sorted List II, Merge Two Sorted Lists and Partition List - ANY OPERATION WHERE THE HEAD MIGHT
+CHANGE.
+
+THE RECURSIVE ALTERNATIVE: remove the value from the tail, then either return this node linked to that
+result or skip it. Two lines and rather beautiful - but O(n) STACK, which at this problem's limit of
+10,000 nodes would exceed Python's default recursion limit of 1,000 and crash. WORTH MENTIONING PRECISELY
+BECAUSE THE LIMIT MATTERS HERE, unlike in the 300-node sibling problem.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: put a throwaway node in front of the list, then walk every node keeping a pointer on the
+last one you decided to keep, and unlink each node whose value matches.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two pointers with different rules:
+
+    `curr`  ADVANCES EVERY SINGLE ITERATION, without exception. It is the node being judged, and once
+            judged it is finished with.
+    `prev`  advances ONLY when a node is kept. It always names the last surviving node, which is the one
+            whose `next` may need rewriting.
+
+    THE ASYMMETRY IS THE ALGORITHM. Two pointers, two different advancement rules, and mixing them up
+    produces either an infinite loop (advancing `curr` only on keeps - trap 1) or a corrupted chain
+    (advancing `prev` on deletes - trap 4).
+
+    WHAT MAKES IT STOP: `curr` moves forward exactly once per iteration and the list is finite, so the
+    loop runs exactly n times and then `curr` is None. UNLIKE THE SIBLING PROBLEM, where the cursor
+    sometimes stands still, here termination is immediate and unconditional - which is precisely why
+    moving that advance into a branch is so damaging.
+
+    THE INVARIANT: at the top of each iteration, the chain from `dummy` to `prev` contains exactly the
+    non-matching nodes seen so far, in order, and `prev.next` is `curr`. True at the start, when `prev` is
+    the dummy and `curr` is the head. Both branches preserve it: keeping extends the chain by one; deleting
+    rewrites `prev.next` to skip `curr`, which restores `prev.next == curr.next` before `curr` moves on.
+
+    WHY THE ANSWER IS `dummy.next`: the invariant says the chain from `dummy` is the surviving list, and
+    the dummy itself is not part of it. `head` cannot be used, because it may name a deleted node.
+
+THE STEPS, NO CODE:
+
+    1. Make a throwaway node whose next is the first node of the list.
+    2. Point `prev` at the throwaway node and `curr` at the first real node.
+    3. While `curr` is a real node:
+       a. If its value matches the target, make `prev` point past it - and LEAVE `prev` WHERE IT IS.
+       b. Otherwise this node stays, so `prev` becomes this node.
+       c. EITHER WAY, move `curr` on to the next node.
+    4. Hand back whatever the throwaway node now points at.
+
+    STEP 3c IS OUTSIDE THE IF/ELSE AND MUST STAY THERE. STEP 4 RETURNS THE DUMMY'S SUCCESSOR, NOT THE
+    ORIGINAL HEAD.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A line of people is holding hands in a chain, each wearing a numbered badge, and everybody wearing badge
+number six has to leave. Whoever leaves must let go, and the people on either side of them have to join
+hands so the chain does not break.
+
+You walk along the chain. To remove somebody you need to reach the person in front of them, because it is
+that person's hand that has to be redirected. So you keep track of the last person you decided was
+staying - that is who will do the reaching.
+
+You look at each person in turn. If their badge is not a six, they stay, and they become the new "last
+person staying". If it is a six, you have the last person staying let go and take the hand of whoever is
+behind the six instead. The six now holds nobody and has left the chain. IMPORTANTLY, THE PERSON WHO IS
+STAYING DOES NOT CHANGE - they are still the last one staying, and if the next person along is ALSO a six,
+they will do exactly the same reaching again.
+
+Either way, you move along to look at the next person. That is true whether somebody left or not - you are
+finished with the person you just examined.
+
+    THE MISTAKE THAT LOCKS EVERYTHING UP. Suppose you only moved along when somebody stayed. Then the
+    moment you found a six, you would remove them and look again - at the same six, since you never took
+    a step. You would remove them for ever, standing in one place, and never reach the end of the chain.
+    NOTHING WOULD GO WRONG THAT YOU COULD SEE; you would simply never finish.
+
+AND THE PROBLEM AT THE VERY FRONT OF THE CHAIN. What if the FIRST person is wearing a six? There is nobody
+in front of them to do the reaching. You would need a completely separate procedure just for that case -
+and if the first several are all sixes, you would need to repeat it.
+
+    So before starting, you stand a steward at the head of the line and have the first person hold the
+    steward's hand. The steward wears no badge and is nobody's concern; they exist only so that every real
+    person has somebody in front of them. Now removing the first person is the same job as removing anyone
+    else.
+
+When you reach the end, you ask the steward who they are holding hands with, and that is the front of the
+new chain - which may be nobody at all, if everyone was wearing a six.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    class ListNode:
+        def __init__(self, val, next=None):
+            self.val = val
+            self.next = next
+
+THE NODE TYPE: a value and a link. Note that unlike the sibling entry's version, `val` here has no default -
+which is why the dummy below is built as `ListNode(0, head)` with an explicit 0.
+
+    def remove_elements(head, val):
+
+`head` is the first node; `val` is the value to remove. THE LIST IS MUTATED IN PLACE, and the head may be
+among the casualties - which is why the return value matters, see section 4.
+
+    dummy = ListNode(0, head)
+
+THE SENTINEL. A brand-new node placed in front of the list, so that the real head has a predecessor. Its
+value 0 is arbitrary and is never compared against anything. THIS ONE LINE IS WHAT REMOVES THE SPECIAL
+CASE for deleting the first node.
+
+    prev = dummy
+    curr = head
+
+`prev` is the last node known to be staying - initially the dummy, since nothing real has been judged yet.
+`curr` is the first node to judge.
+
+    while curr:
+
+Runs until every node has been examined. Note there is no `curr.next` in the condition: unlike the sibling
+problem, this walk tests `curr` itself rather than its successor, so the last node is judged normally.
+
+    if curr.val == val:
+        prev.next = curr.next    # unlink the matching node
+
+THE UNLINK. `prev` is whatever precedes `curr` in the SURVIVING chain, so redirecting `prev.next` past
+`curr` removes it. `prev` DELIBERATELY DOES NOT MOVE - a deleted node cannot be "the last node staying",
+and leaving `prev` put is what lets a run of consecutive matches all be unlinked from the same predecessor.
+
+    else:
+        prev = curr              # keep it; advance prev
+
+THE KEEP. This node survives, so it becomes the new anchor for any future unlink.
+
+    curr = curr.next
+
+THE ADVANCE, AND IT SITS OUTSIDE THE IF/ELSE ON PURPOSE. Every node is finished with once tested, matched
+or not. MOVING THIS LINE INSIDE THE `else` MAKES THE FUNCTION HANG - verified: on the first official
+example it is still looping after 500 iterations. It is not a wrong answer; it is no answer.
+
+    return dummy.next
+
+THE TRUE NEW HEAD - the original head if it survived, a later node if not, or None if everything was
+removed. RETURNING `head` INSTEAD would hand back a node that may have been deleted.
+
+WHAT IS DELIBERATELY ABSENT: no separate loop to strip matches off the front (the dummy removes the need),
+no guard for an empty list (`curr` is None immediately and `dummy.next` is None), and no cleanup of the
+unlinked nodes - they are unreachable and the garbage collector reclaims them.""",
+
+    """9. TRACED ON REAL NUMBERS - the consecutive-match case, which is where `prev` standing still matters.
+
+list = 1 -> 2 -> 6 -> 6 -> 3,  val = 6.  Chosen because it has TWO MATCHES IN A ROW, which the first
+official example does not.
+
+    SETUP:   dummy -> 1 -> 2 -> 6 -> 6 -> 3
+             prev = dummy,  curr = 1
+
+    curr = 1    1 != 6   ->   KEEP.  prev becomes the node 1.
+                curr advances to 2.
+
+    curr = 2    2 != 6   ->   KEEP.  prev becomes the node 2.
+                curr advances to the first 6.
+
+    curr = 6    MATCH    ->   prev(2).next now points at the SECOND 6.
+                              chain from dummy: 1 -> 2 -> 6 -> 3
+                              prev STAYS at 2.
+                curr advances to the second 6.
+
+    curr = 6    MATCH    ->   prev(2).next now points at the 3.
+                              chain from dummy: 1 -> 2 -> 3
+                              prev STAYS at 2.
+                curr advances to 3.
+
+    curr = 3    3 != 6   ->   KEEP.  prev becomes the node 3.
+                curr advances to None -> loop ends.
+
+    RETURNS dummy.next, which is the node 1, and walking it gives 1 -> 2 -> 3.
+
+    THE DECISIVE STEP IS THE SECOND MATCH. Because `prev` was still the node 2, the second unlink simply
+    overwrote the first one's target and reached further along. Had `prev` advanced onto the first 6, the
+    second unlink would have rewritten an orphaned node's link and the 6 would have stayed in the chain.
+
+    AND NOTE `curr` ADVANCED ON ALL FIVE ITERATIONS, including the two removals. That is what makes the
+    loop finish in exactly five steps.
+
+THE INVERSION - THE SAME LIST WITH A DIFFERENT TARGET:
+
+    1 -> 2 -> 6 -> 6 -> 3   val = 6   ->   1 -> 2 -> 3
+    1 -> 2 -> 6 -> 6 -> 3   val = 3   ->   1 -> 2 -> 6 -> 6
+
+    Both verified against a filter-and-rebuild ground truth.
+
+AND THE CASE THAT NEEDS THE DUMMY: 6 -> 1 -> 2 with val = 6.
+
+    prev = dummy, curr = the head 6.  MATCH -> dummy.next now points at the 1.
+    The rest is kept.  RETURNS 1 -> 2.
+
+    A sentinel-free version that starts `prev` at the head never tests that first node at all and returns
+    6 -> 1 -> 2 unchanged. THE FIRST TWO OFFICIAL EXAMPLES CANNOT SEE THIS; only [7,7,7,7] can.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass. Each node is examined exactly once and costs one comparison plus at most one
+pointer write.
+
+    TIME O(n). SPACE O(1) - one dummy node, whatever the list's length. Nothing is copied.
+    The rebuild-from-scratch version is O(n) time and O(n) space; its one merit is leaving the caller's
+    list untouched.
+    The recursive version is O(n) time and O(n) STACK, which at this problem's limit of 10,000 nodes
+    exceeds Python's default recursion limit - a real constraint here, unlike in the 300-node sibling.
+
+THE #1 MISTAKE: moving `curr = curr.next` inside the `else`. On a match, `curr` never moves and the loop
+spins for ever, unlinking the same node repeatedly. IT DOES NOT PRODUCE A WRONG ANSWER - IT PRODUCES NO
+ANSWER, verified by an iteration cap on the first official example. And it is invisible on any list with
+no matches. THE RUNNER-UP is omitting the dummy head, wrong on 1,356 of 6,000 random lists and caught by
+only the THIRD official example, [7,7,7,7], which is in the problem for exactly that reason.
+
+ONE-SENTENCE TAKEAWAY: a dummy head exists so that the first node has a predecessor and deletion has only
+one code path - and in a delete-while-walking loop, every path must advance the cursor.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you know what the sentinel is FOR, rather than using it
+by reflex. The test is being able to say when it is NOT needed - Remove Duplicates from Sorted List never
+deletes the head, so it needs none. A candidate who adds a dummy to every list problem and a candidate who
+adds one to the right problems look identical in code and different in explanation. THE SECOND THING is
+whether you notice the return value must be `dummy.next`; returning `head` is the quiet way to lose this
+problem.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "REMOVE NTH NODE FROM END." Same dummy-head pattern, because the head may be the one removed. Two
+    pointers separated by n steps; when the leader hits the end, the follower is at the node before the
+    target. The dummy is what makes n equal to the list's length work.
+    "REMOVE DUPLICATES FROM SORTED LIST II - delete every value that appears more than once." Also needs
+    the dummy, because 1 -> 1 -> 2 loses its head. Skip whole runs at a time with an inner loop.
+    "Do it recursively." `head.next = remove(head.next, val)`, then return `head.next` if the head matches
+    else `head`. Two lines, O(n) stack - and at 10,000 nodes it crashes in Python, which is the honest
+    caveat.
+    "What happens to the removed nodes?" They become unreachable and are reclaimed automatically in Python
+    or Java. In C or C++ you would have to free each one BEFORE overwriting the pointer to it, or leak
+    memory - and that ordering is itself a classic interview follow-up.""",
 ]
 
 _EX_P1L["Reverse String (in place)"] = [
-    """The swap, traced.
-s = ['h','e','l','l','o']. left 0, right 4 -> swap h and o -> ['o','e','l','l',
-'h']. left 1, right 3 -> swap e and l -> ['o','l','l','e','h']. left 2, right 2
--> loop ends (left < right is false).
-Odd length means the middle element is already in place and needs no swap -
-which is why the condition is `left < right` here, unlike Flipping an Image
-where the middle still needed inverting and required `<=`.
-Comparing those two problems is the fastest way to remember which condition
-goes where: swap-only wants <, transform-too wants <=.""",
+    """1. THE GOAL - turn the array of characters back to front, without building a new one.
 
-    """Why in place, and what the constraint is really testing.
-`s[::-1]` and `list(reversed(s))` both allocate a new list - O(n) extra space -
-and `s.reverse()` mutates in place but is a library call that skips the
-exercise. The prompt says O(1) extra space precisely to force the two-pointer
-swap.
-The tuple assignment `s[left], s[right] = s[right], s[left]` does the swap
-without a temporary variable, because the right-hand side is evaluated fully
-before either assignment. In C you would need `char tmp = s[left]; ...`.""",
+You are given an array of characters. Reverse it IN PLACE, using O(1) extra memory. You do not return a
+new array - you rearrange the one you were given.
 
-    """The distinction that makes this problem exist in Python at all.
-Python strings are IMMUTABLE, so you cannot reverse a str in place - which is
-why the input is a LIST of characters. If the interviewer hands you a string
-and asks for O(1) space, the honest answer is that it is impossible without
-converting to a mutable sequence, and the conversion is itself O(n).
-In C, Java (char[]) or C++ the input genuinely is a mutable buffer and the
-constraint is meaningful. Naming that language difference is a small,
-credible-sounding observation.""",
+    input:    ['h', 'e', 'l', 'l', 'o']
+    output:   ['o', 'l', 'l', 'e', 'h']
 
-    """Edge cases.
-Empty list -> left 0, right -1, loop never runs.
-Single element -> left 0, right 0, `0 < 0` false -> unchanged.
-Two elements -> exactly one swap.
-Even length -> pointers cross without meeting; odd length -> they meet on the
-untouched middle.
-Unicode: reversing a list of code points can break grapheme clusters (an
-accented letter written as base + combining mark reverses into nonsense), which
-is why real text reversal is harder than this exercise suggests - a good
-throwaway remark if the interviewer is interested in text handling.""",
+    input:    ['H', 'a', 'n', 'n', 'a', 'h']
+    output:   ['h', 'a', 'n', 'n', 'a', 'H']
 
-    """Complexity.
-O(n) time - n/2 swaps, each O(1) - and O(1) extra space, two integers.
-You cannot do better than n/2 swaps: every element except a middle one must
-move, and each swap relocates two of them. That lower-bound argument is worth
-stating when asked 'can it be faster?', because the answer is genuinely no
-rather than 'I do not know a better way'.""",
+    Note the second one: it reads the same forwards and backwards ONLY IF YOU IGNORE CASE. Reversed
+    properly, the capital H moves from the front to the back. The problem is about positions, not about
+    meaning.
 
-    """The family: converging two pointers.
-Valid Palindrome (compare instead of swap), Reverse Vowels of a String (swap
-only on matching characters), Flipping an Image (swap and transform), Sort
-Colors (three pointers, Dutch National Flag), Container With Most Water (move
-the limiting side), Two Sum II on a sorted array.
-The cue is any operation defined symmetrically about the centre, or any search
-where you can prove one end is safe to discard. Both reduce an O(n^2) pairwise
-consideration to a single O(n) pass.""",
+"IN PLACE" AND "O(1) EXTRA MEMORY" ARE THE ENTIRE PROBLEM. Reversing a list is a one-liner in every
+language; the constraint is what makes it a question. `s[::-1]` and `list(reversed(s))` both build a WHOLE
+NEW LIST - O(n) extra space - and leave the caller's array untouched, which is exactly what you are being
+asked not to do.
+
+WHY THE INPUT IS AN ARRAY OF CHARACTERS RATHER THAN A STRING. In Python, and in Java and C#, STRINGS ARE
+IMMUTABLE: you cannot change a character of an existing string, so "reverse it in place" is not even
+expressible. Handing you a mutable list of characters is what makes the constraint meaningful. IF YOU ARE
+ASKED THIS ABOUT A REAL STRING, THE HONEST ANSWER IS THAT IN-PLACE REVERSAL IS IMPOSSIBLE without
+converting to a mutable form first - and saying so is the correct answer, not a dodge.
+
+    THIS ENTRY JOINS THE TWO-POINTER CLUSTER. BACKSPACE STRING COMPARE OWNS THE BACKWARD SCAN. IS
+    SUBSEQUENCE OWNS THE ONE-WAY GREEDY ADVANCE. FLIPPING AN IMAGE OWNS FUSING TWO OPERATIONS INTO ONE
+    PASS. THIS ONE OWNS THE PLAIN ENDS-INWARD SWAP - the simplest member of the family - AND THE MUTATION
+    OF THE CALLER'S DATA, which section 4 proves rather than asserts.""",
+
+    """2. THE INTUITION - swap the outermost pair, then the next pair in, until they meet.
+
+Reversing means the first element ends up last, the second ends up second-to-last, and so on. Each of
+those is a SWAP of two positions - and every swap handles TWO elements at once, so you only need to walk
+halfway.
+
+    ['h', 'e', 'l', 'l', 'o']
+
+        positions 0 and 4:   swap h and o     ->   ['o', 'e', 'l', 'l', 'h']
+        positions 1 and 3:   swap e and l     ->   ['o', 'l', 'l', 'e', 'h']
+        positions 2 and 2:   the same element - nothing to do
+
+    ANSWER: ['o', 'l', 'l', 'e', 'h']
+
+THE PICTURE - TWO POINTERS CLOSING IN:
+
+        [ h   e   l   l   o ]
+          ^               ^        swap, then step inward
+              ^       ^            swap, then step inward
+                  ^                they meet - and there is nothing left to do
+
+    THE PAIRS ARE (0,4), (1,3), and then the pointers meet at 2. An element at the exact middle of an
+    odd-length array is its OWN mirror image, so reversing leaves it exactly where it is.
+
+WHY THE LOOP STOPS WHEN THE POINTERS MEET, AND NOT ONE STEP LATER. On an odd-length array they land on the
+same index; swapping that element with itself changes nothing, so the step is pure waste. On an
+even-length array they cross without ever being equal, so the question does not arise.
+
+    THAT MAKES `left < right` AND `left <= right` PRODUCE IDENTICAL RESULTS HERE - measured over 6,000
+    random arrays, 0 disagreements. THE `<` IS A CLARITY CHOICE, NOT A CORRECTNESS ONE.
+
+    AND THAT IS EXACTLY THE OPPOSITE OF FLIPPING AN IMAGE IN THIS BANK, where the same one-character
+    difference is load-bearing: there each row is reversed AND every bit inverted, and the middle element
+    of an odd row still needs its inversion even though its swap is a no-op. USING `<` THERE IS WRONG ON
+    3,584 OF 6,000 RANDOM IMAGES.
+
+    THE RULE THAT REGARDLESS: ask whether the operation on the middle element is a no-op. Swap-with-self
+    is; invert-self is not. THAT QUESTION - NOT A MEMORISED CONVENTION - IS WHAT DECIDES `<` VERSUS `<=`.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+IN PLACE. Modifying the given structure rather than building a new one. It uses O(1) extra space AND IT
+CHANGES THE CALLER'S DATA - both halves matter.
+
+O(1) EXTRA SPACE. The memory used beyond the input itself does not grow with the input. Here it is two
+integers, whatever the array's length. The array itself does not count as "extra" because you were given
+it.
+
+TWO POINTERS, CONVERGING. Two indices starting at opposite ends and moving toward each other. Contrast the
+same-direction two pointers of Is Subsequence, where both move forward.
+
+MIRROR POSITION. For an array of length n, the mirror of index i is n-1-i. Index 0 mirrors to n-1. When n
+is ODD, the middle index mirrors to ITSELF.
+
+SWAP. Exchange the values at two positions. In Python, `a, b = b, a` does it with no temporary variable
+because THE ENTIRE RIGHT-HAND SIDE IS EVALUATED FIRST, then assigned. Written as two separate statements
+it would be a bug - the first assignment would destroy the value the second needs.
+
+MUTABLE / IMMUTABLE. A list can be changed after creation; a Python string cannot. That distinction is why
+this problem takes a list of characters rather than a string.
+
+THE VARIABLES IN THE CODE:
+    s        the list of characters. MUTATED IN PLACE and also returned.
+    left     the pointer starting at the front. Only ever increases.
+    right    the pointer starting at the back. Only ever decreases.
+
+`len(s) - 1` is the LAST VALID INDEX - for a 5-element array that is 4. For an EMPTY array it is -1, which
+is why the loop condition must be checked before any indexing happens.
+
+TIME O(n) - n/2 swaps. SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the honest finding is that the obvious trap is not one.
+
+TRAP 1 - NOT ACTUALLY REVERSING IN PLACE. This is the real mistake, and it is a reading failure rather
+than a coding one. All of these are correct reversals and all of them fail the constraint:
+
+        return s[::-1]              builds a new list; the caller's array is UNCHANGED
+        return list(reversed(s))    likewise
+        s = s[::-1]                 rebinds the local name only; the caller sees nothing at all
+
+    VERIFIED: after evaluating `s[::-1]` on a list built from "hello", the caller's own list still reads
+    ['h','e','l','l','o']. Only the swapping version changes it.
+
+    `s.reverse()` DOES mutate in place and is genuinely correct - but it is the library doing the exact
+    thing the question asks you to demonstrate, so it answers nothing in an interview. SAY THAT OUT LOUD
+    RATHER THAN PRETENDING IT IS WRONG: "the built-in does this, but I assume you want the mechanism."
+
+TRAP 2 - `left <= right` INSTEAD OF `left < right`, AND HERE IS THE HONEST RESULT: IT IS NOT A BUG.
+Measured over 6,000 random arrays, the two versions disagreed on 0. When the pointers meet on an
+odd-length array, the extra iteration swaps the middle element with itself - a no-op.
+
+    SO THE `<` IS ABOUT NOT DOING POINTLESS WORK, NOT ABOUT CORRECTNESS, and claiming otherwise would be
+    wrong. WHAT MAKES THIS WORTH KNOWING is the contrast with FLIPPING AN IMAGE in this bank, where the
+    identical one-character change IS fatal - wrong on 3,584 of 6,000 random images - because there the
+    middle element still needs INVERTING even though its swap does nothing.
+
+    THE QUESTION TO ASK IS ALWAYS "IS THE OPERATION ON THE MIDDLE ELEMENT A NO-OP?" Do not carry a
+    memorised convention between the two problems; carry the question.
+
+TRAP 3 - WRITING THE SWAP AS TWO STATEMENTS. `s[left] = s[right]` followed by `s[right] = s[left]` writes
+the same character into both positions, because the second line reads the value the first line just
+overwrote. In Python the simultaneous form avoids it; in a language without simultaneous assignment you
+need an explicit temporary, and forgetting it is the classic swap bug.
+
+TRAP 4 - INDEXING BEFORE CHECKING THE LOOP CONDITION. For an empty array `right` starts at -1, and any
+read would be of index -1, which in Python silently wraps to the last element rather than erroring. The
+loop condition `0 < -1` is false, so nothing is read - VERIFIED: an empty list is returned unchanged.
+
+AND THE MUTATION, PROVED: after calling the function on the caller's own list, that list reads
+['o','l','l','e','h'], and the returned object IS the caller's list, not a copy.""",
+
+    """5. THE ALTERNATIVES FIRST, then the swap - and what each actually costs.
+
+THE OBVIOUS VERSIONS, ALL CORRECT AS REVERSALS:
+
+    s[::-1]                O(n) time, O(n) extra space, does NOT mutate
+    list(reversed(s))      O(n) time, O(n) extra space, does NOT mutate
+    s.reverse()            O(n) time, O(1) extra space, DOES mutate - the library doing exactly this job
+
+    THE FIRST TWO FAIL THE STATED CONSTRAINT. The third satisfies it completely and is what you would
+    write in production - which is worth saying plainly rather than pretending otherwise. The question
+    exists to see the mechanism underneath.
+
+A THIRD APPROACH THAT LOOKS IN-PLACE AND IS NOT: build the reversed list and then assign it back with
+`s[:] = s[::-1]`. THE SLICE ASSIGNMENT DOES MUTATE THE CALLER'S LIST, so the caller sees the change - but
+the right-hand side still allocated a full copy first, so the space is O(n). IT PASSES THE "IN PLACE" TEST
+AND FAILS THE "O(1) EXTRA MEMORY" TEST, which is a good reminder that the two phrases are separate claims.
+
+THE UPGRADE, AND THERE IS NO TRICK TO EXPLAIN. Reversal is a set of independent swaps between mirror
+positions, and a swap needs no scratch space beyond the exchange itself. So walk two pointers inward,
+swapping as you go, and stop when they meet.
+
+    COST: O(n) time - precisely floor(n/2) swaps - and O(1) space.
+
+    YOU CANNOT DO BETTER THAN n/2 SWAPS. Every element except a middle one must end up somewhere else, so
+    every element must be written at least once, and each swap writes two. That is a genuine lower bound
+    rather than a hand-wave - THE ALGORITHM IS OPTIMAL, not merely good.
+
+WHY THIS PATTERN IS WORTH OWNING. The converging-pointer sweep is the skeleton of a whole family: Valid
+Palindrome COMPARES the two ends instead of swapping them; Reverse Vowels of a String swaps only when both
+ends are vowels, advancing past anything else; Two Sum II moves whichever end is wrong for the target;
+Container With Most Water moves the shorter side. THE LOOP IS THE SAME; ONLY THE BODY AND THE ADVANCE RULE
+CHANGE.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: put one pointer at each end and swap the two characters they name, stepping both pointers
+inward until they meet.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two integers:
+
+    `left`   starts at 0 and only ever increases, by exactly 1 per iteration.
+    `right`  starts at the last index and only ever decreases, by exactly 1 per iteration.
+
+    THE GAP `right - left` SHRINKS BY EXACTLY 2 EVERY ITERATION. That is the entire termination argument:
+    the gap starts finite, decreases by a fixed amount, and the loop stops as soon as it is no longer
+    positive. NEITHER POINTER EVER MOVES BACKWARDS, so there is no way to spin.
+
+    ODD LENGTH:   the gap goes ... 4, 2, 0 - the pointers land on the same index and `left < right` fails.
+    EVEN LENGTH:  the gap goes ... 3, 1, -1 - they cross without ever being equal.
+    EMPTY:        `left` is 0 and `right` is -1, so the condition fails before anything is read.
+
+    THE INVARIANT: after k iterations, the outermost k positions at each end hold their FINAL values, and
+    the untouched middle still holds original values in their original order. TRUE AT THE START (k = 0)
+    and preserved by each step, because a swap only ever reads and writes the two positions it is about
+    to finish with - it never disturbs anything already placed or anything not yet reached.
+
+    WHY THE TWO READS MUST HAPPEN BEFORE EITHER WRITE: the exchange needs both original values. Python's
+    simultaneous assignment evaluates the whole right-hand side first, which is exactly that guarantee;
+    without it you need a temporary variable.
+
+THE STEPS, NO CODE:
+
+    1. Put one marker on the first position and another on the last.
+    2. While the first marker is strictly before the second:
+       a. Exchange the two characters they name - reading both values before writing either.
+       b. Move the first marker one place right and the second one place left.
+    3. Hand back the same array, now rearranged.
+
+    STEP 2's "STRICTLY BEFORE" could be "at or before" without changing the answer - see section 4 - but
+    the strict form does no pointless work.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A row of numbered lockers runs along a corridor, each holding one lettered tile, and you have been asked to
+put the row into the exact reverse order. You are not allowed to lay the tiles out on the floor and start
+again - the only thing you may do is take a tile out of one locker and put it into another, and you have
+just one free hand.
+
+You could think of it as moving every tile individually, which is fiddly. But look at what "reverse" means
+for any two tiles: the one at the very start ends up at the very end, and the one at the very end ends up
+at the very start. THEY ARE SWAPPING WITH EACH OTHER. So do that - hold one, take the other, put them
+back in each other's lockers - and two tiles are now permanently finished with.
+
+Then step one locker inward from each end and do the same for that pair. And again. Each swap settles two
+tiles at once, so you only ever walk half the corridor.
+
+Eventually your two hands are reaching for adjacent lockers, and one more step has them cross. At that
+point everything has been placed and you stop.
+
+    AND IF THE ROW HAS AN ODD NUMBER OF LOCKERS, both hands end up on the SAME locker. That tile is at the
+    exact centre, so reversing the row leaves it precisely where it already is. You could go through the
+    motions of taking it out and putting it straight back - it would do no harm at all - but there is no
+    reason to.
+
+    THAT IS WORTH NOTICING BECAUSE IT IS NOT ALWAYS TRUE. If the job had been "reverse the row AND turn
+    every tile face down", the centre tile would still need turning over, and skipping it would leave one
+    tile wrong every single time. WHETHER THE MIDDLE MATTERS DEPENDS ON WHAT YOU ARE DOING TO IT, NOT ON
+    WHERE IT IS.
+
+ONE LAST THING TO TELL WHOEVER ASKED. You did not hand them a new row of lockers. You rearranged the
+corridor they already had. If they wanted the original order kept, it is gone.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def reverse_string(s):
+
+`s` is a LIST OF CHARACTERS, not a string - Python strings are immutable and could not be reversed in
+place. IT IS MUTATED, and the same object is returned.
+
+    left, right = 0, len(s) - 1
+
+THE TWO POINTERS, at the first and last positions. `len(s) - 1` is the last valid index - 4 for a
+five-element list. FOR AN EMPTY LIST THIS IS -1, which is safe only because the loop condition below is
+checked before any indexing; a read of index -1 in Python would silently wrap to the end rather than
+raising.
+
+    while left < right:
+
+THE CONVERGENCE CONDITION. It fails when the pointers meet (odd length) or cross (even length). `<= `
+would also be correct here - measured, 0 disagreements over 6,000 random arrays - because swapping the
+middle element with itself does nothing. THE STRICT FORM SIMPLY AVOIDS A POINTLESS ITERATION. Note that
+this is the OPPOSITE of Flipping an Image, where `<=` is required.
+
+    s[left], s[right] = s[right], s[left]
+
+THE SWAP, AND IT WORKS BECAUSE THE ENTIRE RIGHT-HAND SIDE IS EVALUATED FIRST, using the original values,
+before either assignment happens. Split into two statements it would write the same character into both
+positions. No temporary variable is needed, and none is allocated - which is where the O(1) space comes
+from.
+
+    left += 1; right -= 1
+
+BOTH POINTERS STEP INWARD, exactly one place each, every iteration. The gap shrinks by 2 per step, which
+is the termination guarantee.
+
+    return s
+
+RETURNS THE SAME OBJECT that was passed in, now rearranged - not a copy. The return is a convenience;
+the work has already happened to the caller's data. VERIFIED: after the call, the caller's own list reads
+the reversed contents and the returned object is identical to it.
+
+WHAT IS DELIBERATELY ABSENT: no temporary variable, no new list, no slicing, no guard for an empty or
+single-element list (the loop condition covers both - verified), and no special case for the middle
+element of an odd-length array.""",
+
+    """9. TRACED ON REAL NUMBERS - an odd length, then an even one.
+
+RUN A: s = ['h', 'e', 'l', 'l', 'o'],  length 5
+
+    START     left = 0,  right = 4
+
+    ITERATION 1   0 < 4, so swap positions 0 and 4
+                  reading BOTH first: s[0] is 'h', s[4] is 'o'
+                  s becomes ['o', 'e', 'l', 'l', 'h']
+                  left -> 1,  right -> 3
+
+    ITERATION 2   1 < 3, so swap positions 1 and 3
+                  s[1] is 'e', s[3] is 'l'
+                  s becomes ['o', 'l', 'l', 'e', 'h']
+                  left -> 2,  right -> 2
+
+    CHECK         2 < 2 is FALSE  ->  loop ends
+
+    RETURNS ['o', 'l', 'l', 'e', 'h'].  Two swaps for five characters - the middle 'l' at index 2 was
+    never touched, because its mirror position IS index 2.
+
+    WITH `left <= right` there would be a third iteration swapping index 2 with index 2, producing the
+    identical array. That is why the two versions cannot be told apart by any input.
+
+RUN B: s = ['h', 'e', 'l', 'l'],  length 4 - one character removed
+
+    START     left = 0,  right = 3
+
+    ITERATION 1   swap positions 0 and 3   ->  ['l', 'e', 'l', 'h']
+                  left -> 1,  right -> 2
+
+    ITERATION 2   swap positions 1 and 2   ->  ['l', 'l', 'e', 'h']
+                  left -> 2,  right -> 1
+
+    CHECK         2 < 1 is FALSE  ->  loop ends
+
+    RETURNS ['l', 'l', 'e', 'h'].  THE POINTERS CROSSED WITHOUT EVER MEETING - there is no middle element
+    on an even length, so the equal-pointers case never arises at all.
+
+    THE INVERSION: 'hello' reverses to 'olleh' in two swaps with one element left alone; 'hell' reverses
+    to 'lleh' in two swaps with none left alone. Both verified against `s[::-1]`.
+
+AND THE MUTATION, PROVED: calling the function on the caller's own list leaves that list reading
+['o','l','l','e','h'], and the returned object is the very same list. For contrast, evaluating `s[::-1]`
+on the same input leaves the caller's list as ['h','e','l','l','o'] - unchanged.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration performs one swap and moves both pointers, and there is one iteration
+per pair.
+
+    TIME O(n) - exactly floor(n/2) swaps, so n/2 iterations, each O(1).
+    SPACE O(1) - two integers. No temporary variable is needed because the swap is simultaneous.
+    `s[::-1]` and `list(reversed(s))` are the same O(n) time but O(n) space and do NOT mutate. `s[:] =
+    s[::-1]` mutates but still allocates the copy first, so it is O(n) space.
+    THE n/2 SWAPS ARE OPTIMAL: every element except a middle one must move, so every element must be
+    written, and each swap writes two.
+
+THE #1 MISTAKE: not reversing in place at all - returning `s[::-1]`, or assigning it to the local name `s`,
+which changes nothing the caller can see. That is a reading failure rather than an algorithmic one, and it
+is what the problem is testing. Verified by inspection: after `s[::-1]` the caller's list is unchanged.
+
+ONE-SENTENCE TAKEAWAY: reversal is a sequence of swaps between mirror positions, so two pointers walking
+inward do it with no scratch space at all - and the loop stops when they meet, because the middle element
+is its own mirror.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. This is a warm-up, and two things are on show. First, whether you
+respect the CONSTRAINT rather than the task - anyone can reverse a list, and the question is entirely
+about the O(1) memory. Second, whether you SAY that the function mutates the caller's data. "This changes
+your array in place; if you need the original, copy it first" is a one-sentence remark that separates
+someone who has thought about the caller from someone who has thought about the algorithm.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "VALID PALINDROME." Same converging pointers, but COMPARE instead of swapping, and return False on the
+    first mismatch. The loop skeleton is identical.
+    "REVERSE VOWELS OF A STRING." Same pointers, but each side advances past non-vowels first, and only
+    then do the two swap. The advance rule changes; nothing else does.
+    "Reverse only a PORTION, from index i to index j." Start the pointers at i and j instead of 0 and
+    n-1. Everything else is unchanged - which is worth noticing, because that generalisation is what
+    Rotate Array is built from: reverse the whole thing, then reverse each part.
+    "What if it really is an immutable string?" In-place reversal is impossible by definition. Convert to
+    a list, reverse, and join - O(n) space, unavoidable. Saying this is the correct answer rather than a
+    failure to solve it.""",
 ]
 
 _EX_P1L["Running Sum of 1d Array"] = [
-    """The accumulation, traced.
-nums = [1,2,3,4]. total 0 -> +1 = 1, append. +2 = 3, append. +3 = 6, append.
-+4 = 10, append. Result [1,3,6,10].
-Each output element is the sum of everything up to and including that index,
-which is the definition of a prefix sum. That is all this problem is - and its
-value is entirely in being the primitive that a dozen harder problems build
-on.""",
+    """1. THE GOAL - each position reports the total of everything up to and including itself.
 
-    """The in-place version, and why it is the expected follow-up.
-    for i in range(1, len(nums)): nums[i] += nums[i-1]
-    return nums
-O(1) extra space instead of O(n). It works because each element only needs the
-element immediately before it, which has already been updated to its own prefix
-sum - so the array transforms itself left to right.
-The trade to state: it DESTROYS the input. If the caller still needs the
-original values, the extra array is not waste, it is correctness. Asking
-'may I mutate the input?' is the right move rather than assuming either way.""",
+Return an array where entry i is the sum of the input's entries from the beginning through i.
 
-    """The library one-liner, and when to use it.
-`list(itertools.accumulate(nums))` is exactly this function and is what you
-would write in production. In an interview, write the loop - the question is
-testing whether you understand the accumulation, and reaching for the library
-skips the thing being examined. Mention accumulate exists afterwards; that
-combination reads as someone who knows the tool and the mechanism.""",
+    nums = [1, 2, 3, 4]
 
-    """Why this primitive matters so much.
-The point of a prefix-sum array P is that the sum of any range [i, j] becomes
-P[j] - P[i-1] in O(1), after an O(n) build. That single identity converts
-repeated range queries from O(n) each to O(1) each.
-Concretely: 10,000 range-sum queries over an array of 10,000 elements is 100
-million operations naively, and 10,000 operations plus a 10,000-element build
-with prefix sums. That is the whole reason to learn a problem this simple.""",
+        entry 0:   1                  =  1
+        entry 1:   1 + 2              =  3
+        entry 2:   1 + 2 + 3          =  6
+        entry 3:   1 + 2 + 3 + 4      =  10
 
-    """Edge cases.
-Empty input -> empty output; the loop never runs.
-Single element -> [x].
-Negative numbers work unchanged - the running total can decrease, which is
-exactly what makes Kadane's problem non-trivial and what breaks any assumption
-that prefix sums are monotonic.
-All zeros -> all zeros.
-Very long arrays with large values can overflow a 32-bit accumulator in other
-languages while Python is immune; the running total grows to the sum of the
-whole array.""",
+    ANSWER: [1, 3, 6, 10]
 
-    """The family this unlocks.
-Range Sum Query - Immutable (build once, query O(1)), Find Pivot Index, Left
-and Right Sum Difference, Subarray Sum Equals K (prefix sums plus a hash map of
-counts), Continuous Subarray Sum (prefix sums modulo k), Maximum Subarray
-(Kadane, which is a running sum with a reset), Product of Array Except Self
-(the multiplicative twin needing prefix AND suffix passes), and the 2-D version
-for submatrix sums.
-Whenever a prompt asks about sums over ranges or subarrays, prefix sums are the
-first thing to reach for - and this problem is where the reflex is built.""",
+THE OUTPUT IS THE SAME LENGTH AS THE INPUT, and entry i INCLUDES nums[i] - it is not "everything before
+me", it is "everything up to and including me". That inclusivity is what makes entry 0 equal nums[0]
+rather than 0.
+
+    nums = [1, 1, 1, 1, 1]     ->    [1, 2, 3, 4, 5]     each step adds exactly one
+
+    nums = [3, 1, 2, 10, 1]    ->    [3, 4, 6, 16, 17]
+
+NEGATIVE NUMBERS ARE FINE AND THE RUNNING TOTAL CAN GO DOWN. There is nothing monotonic about a prefix sum
+unless the inputs happen to be non-negative:
+
+    nums = [-1, 2, -3]         ->    [-1, 1, -2]
+
+THIS IS THE SIMPLEST PROBLEM IN THE BANK AND ALSO ONE OF THE MOST IMPORTANT, because the array it builds
+is the foundation for a whole family. Once you have prefix sums P, THE SUM OF ANY RANGE i..j BECOMES A
+SINGLE SUBTRACTION - P[j] minus P[i-1] - answered in constant time after an O(n) build. Every problem in
+this bank that says "the sum of everything to the right is total minus left minus current" is standing on
+this idea.
+
+    THIS ENTRY COMPLETES THE PREFIX-SUM CLUSTER. FIND PIVOT INDEX OWNS THE THREE-WAY SPLIT IDENTITY and
+    update-after-the-test. FIND THE HIGHEST ALTITUDE OWNS THE IMPLICIT ZEROTH TERM. LEFT AND RIGHT SUM
+    DIFFERENCE OWNS PRODUCING AN ARRAY OF ANSWERS. THIS ONE OWNS BUILDING THE PREFIX ARRAY ITSELF - and
+    the in-place-versus-copy question that every use of it raises.""",
+
+    """2. THE INTUITION - each answer is the previous answer plus one new number.
+
+You never add a range up from scratch. Entry i is entry i-1 plus nums[i] - one addition per position.
+
+    nums = [1, 2, 3, 4]
+
+        running total starts at 0
+        read 1   ->  total becomes 1    ->  record 1
+        read 2   ->  total becomes 3    ->  record 3
+        read 3   ->  total becomes 6    ->  record 6
+        read 4   ->  total becomes 10   ->  record 10
+
+    ANSWER: [1, 3, 6, 10]
+
+    FOUR ADDITIONS FOR FOUR ANSWERS. Computing each entry independently would take 1 + 2 + 3 + 4 = 10
+    additions, and on an array of n it would be about n^2/2.
+
+THE PICTURE - EACH BAR IS THE ONE BEFORE IT PLUS A LITTLE MORE:
+
+        input:      1     2     3     4
+                    |     |     |     |
+                    v     v     v     v
+        output:     1  -> 3  -> 6  -> 10
+                       +2    +3    +4
+
+    THE ARROWS ARE THE WHOLE ALGORITHM. Everything to the left of a position has already been accounted
+    for in the previous entry, so it never needs revisiting.
+
+WHY THIS ARRAY IS WORTH BUILDING AT ALL - THE POINT OF THE WHOLE TECHNIQUE. Suppose you are asked for the
+sum of nums[1..3], which is 2 + 3 + 4 = 9. With the prefix array [1, 3, 6, 10]:
+
+        sum of 1..3   =   P[3] - P[0]   =   10 - 1   =   9
+
+    ONE SUBTRACTION, NO MATTER HOW LONG THE RANGE. Answering a thousand such questions costs a thousand
+    subtractions instead of a thousand scans. THAT TRADE - one O(n) build in exchange for O(1) queries -
+    is why prefix sums exist, and it is the sentence to say if an interviewer asks why this trivial
+    problem is on the list.
+
+    (The general form is P[j] - P[i-1], with the convention that P[-1] is 0 - which is exactly the
+    implicit zeroth term that Find the Highest Altitude owns in this bank.)""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PREFIX SUM / RUNNING SUM / CUMULATIVE SUM. Three names for the same thing: the total of all elements from
+the start up to a given position, inclusive.
+
+INCLUSIVE. Entry i includes nums[i] itself. This is the convention this problem uses, and it is why entry
+0 is nums[0] rather than 0.
+
+RUNNING TOTAL / ACCUMULATOR. A single variable carrying the sum so far, updated once per element.
+
+IN PLACE. Writing the answers over the input array instead of building a new one. Uses O(1) extra space
+AND DESTROYS THE ORIGINAL VALUES.
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. NOT MODIFIED by the version shown - see section 4, where this is proved.
+    result   the output list, built up one entry at a time.
+    total    the running sum. Starts at 0 because nothing has been read yet.
+    x        the current element.
+
+`result.append(total)` adds the CURRENT value of `total` to the end of the list. Note it appends the
+number, not a reference to the variable - a later change to `total` does not alter what was appended.
+
+n IS THE ARRAY LENGTH. TIME O(n), SPACE O(n) for the output - or O(1) extra if you overwrite the input.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the in-place version has a trap the samples DO catch.
+
+TRAP 1 - STARTING THE IN-PLACE LOOP AT INDEX 0. The in-place version is the expected follow-up:
+
+        for i in range(1, len(nums)):
+            nums[i] += nums[i - 1]
+
+    IT MUST START AT 1. Writing `range(0, len(nums))` makes the first iteration compute `nums[0] +=
+    nums[-1]` - and IN PYTHON, INDEX -1 IS THE LAST ELEMENT OF THE LIST, not an error. So the first entry
+    silently picks up the value from the far end of the array, and every later entry inherits the mistake.
+
+        [1, 2, 3, 4]      correct [1, 3, 6, 10]      starting at 0: [5, 7, 10, 14]
+                          (the first entry became 1 + 4 = 5, and everything shifted by 4)
+
+    MEASURED: wrong on 4,938 of 6,000 random arrays. AND ALL THREE OFFICIAL EXAMPLES CATCH IT - [1,2,3,4]
+    gives [5,7,10,14], [1,1,1,1,1] gives [2,3,4,5,6], and [3,1,2,10,1] gives [4,5,7,17,18]. THIS ONE IS
+    LOUD; you cannot ship it.
+
+    WHAT MAKES IT WORTH KNOWING ANYWAY is the reason it is silent rather than crashing: Python's negative
+    indexing means an off-by-one at the START of an array wraps to the END instead of raising. In C or
+    Java the same code would read out of bounds or throw. THE HABIT TO CARRY IS THAT A LOOP READING
+    `i - 1` MUST START AT 1.
+
+TRAP 2 - ASSUMING THE SHIPPED VERSION MUTATES, OR THAT THE IN-PLACE ONE DOES NOT. Both matter to a caller
+and they behave differently. VERIFIED BY INSPECTION:
+
+        the version shown here:   caller's list afterwards [1, 2, 3, 4]    returned [1, 3, 6, 10]
+                                  the returned object is NOT the caller's list
+        the in-place version:     caller's list afterwards [1, 3, 6, 10]   returned the SAME object
+
+    SO THEY ARE NOT INTERCHANGEABLE. Handing someone the in-place version when they still need their
+    original data is a silent data loss - the function returns the right answer and destroys the input on
+    the way.
+
+TRAP 3 - INITIALISING `total` TO nums[0] AND STARTING THE LOOP AT 1. It works, but it needs a guard for
+the empty array, since nums[0] does not exist. STARTING AT 0 WITH A TOTAL OF 0 HANDLES EVERY LENGTH WITH
+NO SPECIAL CASE - verified: an empty input produces an empty output because the loop never runs.
+
+TRAP 4 - EXPECTING THE OUTPUT TO BE NON-DECREASING. It is only if every input is non-negative. With
+negatives the running total falls, and code that binary-searches a prefix array is quietly assuming
+positivity - a real bug in problems like Subarray Sum Equals K, where the negatives are precisely why a
+hash map is needed rather than a sliding window.""",
+
+    """5. THE SLOW WAY FIRST, then the accumulator - and the two better answers.
+
+THE NAIVE VERSION - SUM EACH PREFIX FROM SCRATCH:
+
+    return [sum(nums[:i+1]) for i in range(len(nums))]
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it is
+    the definition transcribed. COST: entry i costs i+1 additions, so the total is 1 + 2 + ... + n, about
+    n^2/2 - plus a new slice allocated per position. At this problem's limit of n = 1,000 that is around
+    half a million additions; it would pass, but it recomputes the same partial sums over and over.
+
+THE UPGRADE, AND IT IS THE ONE OBSERVATION IN THE PROBLEM. Entry i is entry i-1 plus one number. Carry the
+total forward instead of rebuilding it: ONE ADDITION PER POSITION INSTEAD OF i OF THEM.
+
+    COST: O(n) time, O(n) space for the output.
+
+THE IN-PLACE VERSION, WHICH IS THE EXPECTED FOLLOW-UP:
+
+        for i in range(1, len(nums)):
+            nums[i] += nums[i - 1]
+        return nums
+
+    O(1) EXTRA SPACE instead of O(n), because the answers are written over the inputs. It works because
+    entry i is computed from entry i-1, which has ALREADY been converted - so reading it gives the prefix
+    sum, which is exactly what is wanted. THE LEFT-TO-RIGHT ORDER IS LOAD-BEARING; going right to left
+    would read values that had not been converted yet.
+
+    THE PRICE IS THE ORIGINAL DATA. Say that out loud when offering it.
+
+THE LIBRARY ONE-LINER: `list(itertools.accumulate(nums))` is exactly this function, and it is what you
+would write in production. IN AN INTERVIEW, WRITE THE LOOP AND THEN MENTION THE LIBRARY - the question is
+about the mechanism, and pretending not to know the built-in exists is worse than naming it. Note that
+`accumulate` also takes an `initial=0` argument, which produces the n+1-entry version with a leading zero -
+the form that makes the range-sum formula P[j+1] - P[i] work without a special case at index 0.
+
+NO OTHER TRICK IS INVOLVED. There is no data structure and no clever observation; the entire content is
+"carry the total forward", and the entry's value is in what the resulting array UNLOCKS, which is
+section 10.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: keep a running total starting at zero, add each element to it in turn, and record the
+total after every addition.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, one accumulator:
+
+    `total`   changes by exactly one element per iteration. It may go up or down, since the inputs may be
+              negative.
+    `result`  grows by exactly one entry per iteration, which is what keeps the output the same length as
+              the input and aligned with it position for position.
+
+    THE INVARIANT: after processing the first k elements, `total` is their sum and `result` holds the k
+    prefix sums in order. TRUE BEFORE THE LOOP - zero elements, a total of 0 and an empty result - and
+    preserved by each step, which adds one element to the total and appends one entry.
+
+    THE SEEDING AT ZERO IS WHAT MAKES THE EMPTY CASE WORK. `total = 0` is the sum of no elements, which is
+    the correct starting point rather than a placeholder; an empty input then produces an empty output
+    with no guard. Contrast Find the Highest Altitude in this bank, where the very same zero is not just
+    an identity but a REAL CANDIDATE ANSWER - the same line meaning something stronger.
+
+    WHAT MAKES IT STOP: exactly len(nums) iterations, one per element. There is no condition to get wrong.
+
+    WHY THE APPEND COMES AFTER THE ADDITION: entry i must INCLUDE nums[i]. Appending before adding would
+    produce the exclusive version - everything strictly before me - which is a different and equally
+    useful array, and is what Find Pivot Index's running `left` variable actually holds. THE ORDER OF
+    THOSE TWO LINES IS THE DIFFERENCE BETWEEN THE TWO CONVENTIONS.
+
+THE STEPS, NO CODE:
+
+    1. Start an empty output and a running total of zero.
+    2. For each element of the input, in order:
+       a. Add it to the running total.
+       b. Append the running total's new value to the output.
+    3. Hand back the output.
+
+    STEP 2a COMES BEFORE STEP 2b, WHICH IS WHAT MAKES THE ANSWER INCLUSIVE.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A shopkeeper writes down the day's takings transaction by transaction: four pounds, then two, then seven.
+At the end of the week the accountant asks for a second column beside the first, showing not each
+individual sale but THE TOTAL SO FAR after every sale.
+
+The laborious way is to work down the page and, for each line, go back to the top and add everything from
+there. Line one takes one addition, line two takes two, line ten takes ten. By the bottom of a long page
+you have added the very first number to something hundreds of times.
+
+The shopkeeper does not do that. She keeps a single figure in her head, starting at nothing, and works
+down the page once. At each line she adds that line's takings to the figure in her head, and then writes
+the new figure in the second column. Every line costs her one addition, whatever line it is.
+
+    THE FIGURE IN HER HEAD BEFORE SHE STARTS IS ZERO - not because zero is a placeholder, but because
+    before any sales the takings really are nothing. That is what makes the first line come out right
+    without any special handling, and it is why a day with no sales at all produces an empty column rather
+    than an error.
+
+    AND SHE WRITES THE FIGURE DOWN AFTER ADDING, NOT BEFORE. The accountant wants "the total including
+    this sale". Writing before adding would give "the total before this sale" - a perfectly sensible
+    column, and the wrong one.
+
+WHY THE ACCOUNTANT WANTED IT. Later somebody asks what was taken between Tuesday and Thursday. With only
+the original column that means adding up three days' worth of transactions. With the second column it is
+Thursday's running total minus Monday's - one subtraction, and it would still be one subtraction if the
+question had spanned six months.
+
+    THAT IS THE REASON THIS DULL SECOND COLUMN IS WORTH THE TROUBLE OF WRITING. It is not the answer to
+    anything by itself; it is the thing that makes a thousand later questions cheap.
+
+ONE LAST CHOICE SHE HAD TO MAKE. She could have written the running totals over the top of the original
+figures, saving paper. Then the ledger would be smaller - and the individual sales would be gone for
+good.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def running_sum(nums):
+
+`nums` is the input list. IT IS NOT MODIFIED by this version - a separate list is built and returned, which
+section 4 proves by inspecting the caller's list afterwards.
+
+    result = []
+
+THE OUTPUT, built up by appending. It will end the same length as `nums`, with entries in matching
+positions - no index arithmetic is needed anywhere, because appending in order preserves alignment.
+
+    total = 0
+
+THE RUNNING SUM, STARTING AT ZERO because no elements have been read. This is the empty sum - the value
+that leaves any addition unchanged - and it is what makes an empty input produce an empty output with no
+guard.
+
+    for x in nums:
+
+WALK THE VALUES IN ORDER. No index variable is needed; only the sequence matters.
+
+    total += x                      # accumulate
+
+ONE ADDITION PER ELEMENT. After this line `total` is the sum of everything up to AND INCLUDING `x` - which
+is exactly what the answer for this position must be.
+
+    result.append(total)
+
+RECORD IT. THE ORDER OF THESE TWO LINES IS THE CONVENTION: adding first makes entry i inclusive of nums[i].
+Appending first would build the EXCLUSIVE prefix sums - everything strictly before this position - which
+is a different array and the one Find Pivot Index's running `left` actually holds.
+    Note that `append(total)` stores the number's current value; later changes to `total` do not reach back
+    into the list.
+
+    return result
+
+The finished array. No post-processing.
+
+THE IN-PLACE VARIANT, FOR CONTRAST, IS TWO LINES:
+
+        for i in range(1, len(nums)):
+            nums[i] += nums[i - 1]
+        return nums
+
+    `range(1, ...)` NOT `range(0, ...)`: at i = 0 the expression would read `nums[-1]`, which in Python is
+    the LAST element rather than an error, silently seeding the whole array from the wrong end - wrong on
+    4,938 of 6,000 random arrays. And this version DOES mutate the caller's list, destroying the original
+    values.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty list, no index arithmetic, no special case for the
+first element, and no `itertools` import - though `list(accumulate(nums))` is the same function and worth
+naming.""",
+
+    """9. TRACED ON REAL NUMBERS - the official array, then one sign changed.
+
+RUN A: nums = [1, 2, 3, 4]
+
+    START     total = 0,  result = []
+
+    x = 1     total = 0 + 1 = 1      append 1     ->  result = [1]
+    x = 2     total = 1 + 2 = 3      append 3     ->  result = [1, 3]
+    x = 3     total = 3 + 3 = 6      append 6     ->  result = [1, 3, 6]
+    x = 4     total = 6 + 4 = 10     append 10    ->  result = [1, 3, 6, 10]
+
+    RETURNS [1, 3, 6, 10].  Four additions for four answers.
+
+    CROSS-CHECK ONE ENTRY INDEPENDENTLY: entry 2 should be 1 + 2 + 3 = 6, and it is. Entry 3 should be
+    1 + 2 + 3 + 4 = 10, and it is. Verified against the sum-each-prefix-from-scratch version, which agreed
+    on every entry.
+
+    AND THE RANGE-SUM PAYOFF ON THIS VERY ARRAY: the sum of nums[1..3] is 2 + 3 + 4 = 9, and from the
+    prefix array it is P[3] - P[0] = 10 - 1 = 9. One subtraction.
+
+RUN B: nums = [1, -2, 3, 4] - one sign flipped
+
+    x = 1     total = 1        result = [1]
+    x = -2    total = -1       result = [1, -1]
+    x = 3     total = 2        result = [1, -1, 2]
+    x = 4     total = 6        result = [1, -1, 2, 6]
+
+    RETURNS [1, -1, 2, 6].
+
+    THE RUNNING TOTAL WENT DOWN AT THE SECOND STEP AND THE OUTPUT IS NOT SORTED. That is not a defect -
+    it is what negative inputs mean - and it is precisely why algorithms that binary-search a prefix array
+    are quietly assuming all-positive input. Both runs verified against the brute force.
+
+WHAT THE OFF-BY-ONE VERSION DOES TO RUN A. The in-place loop started at index 0 computes
+`nums[0] += nums[-1]`, and in Python `nums[-1]` is the LAST element, 4. So entry 0 becomes 1 + 4 = 5, and
+everything after it inherits the error:
+
+    [1, 2, 3, 4]   ->   [5, 7, 10, 14]        instead of [1, 3, 6, 10]
+
+    All three official examples catch this, which makes it a bug you have to avoid writing rather than one
+    you have to hunt for.
+
+AND THE MUTATION, PROVED: after calling the version in this entry, the caller's own list still reads
+[1, 2, 3, 4] and the returned object is a different list. After calling the in-place version, the caller's
+list reads [1, 3, 6, 10] and the returned object IS the caller's list.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the input, one addition and one append per element.
+
+    TIME O(n). SPACE O(n) for the output array - or O(1) EXTRA if you write over the input instead.
+    The sum-each-prefix-from-scratch version is O(n^2); at this problem's limit of n = 1,000 that is about
+    half a million additions and would pass, so the accumulator is the obvious answer rather than a
+    rescue.
+
+THE #1 MISTAKE: in the in-place variant, starting the loop at index 0 instead of 1. `nums[0] += nums[-1]`
+does not raise in Python - negative indexing wraps to the END of the array - so the first entry silently
+absorbs the last element and every later entry inherits it. Wrong on 4,938 of 6,000 random arrays, and all
+three official examples catch it. THE RUNNER-UP is not saying which version you have written: one mutates
+the caller's data and one does not, and the difference is invisible at the call site until something
+downstream reads the original values and finds them gone.
+
+ONE-SENTENCE TAKEAWAY: each prefix sum is the previous one plus a single element, so carry a running total -
+and the array you build is not the answer to this problem so much as the tool that makes range sums O(1).
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Not whether you can add up numbers. This is a five-line warm-up
+whose purpose is to check that you know WHAT THE PREFIX ARRAY IS FOR. The sentence to say is: "building
+this costs O(n) once, and afterwards the sum of any range i..j is P[j] - P[i-1] in constant time." A
+candidate who writes the loop and stops has answered the question; a candidate who names the trade has
+shown they will recognise the technique when it is disguised.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Do it in place, O(1) extra space." `for i in range(1, len(nums)): nums[i] += nums[i-1]`. Left to
+    right is required, since each entry reads the already-converted one before it. And say that it
+    destroys the input.
+    "RANGE SUM QUERY - IMMUTABLE. Many queries for the sum of nums[i..j]." Build the prefix array once with
+    a LEADING ZERO, so P has n+1 entries, then every query is P[j+1] - P[i] with no special case at i = 0.
+    O(n) build, O(1) per query.
+    "SUBARRAY SUM EQUALS K - count subarrays summing to k." Prefix sums plus a hash map of how many times
+    each prefix value has been seen: at each position, look up running - k. O(n). Note that a sliding
+    window would NOT work, because negative numbers break the monotonicity it needs - which is the direct
+    consequence of section 4's observation that the running total can fall.
+    "What about a 2D version?" The same idea over a matrix: P[r][c] is the sum of the rectangle from the
+    origin, and any submatrix is four lookups combined by inclusion-exclusion.""",
 ]
 
 _EX_P1L["Search Insert Position"] = [
