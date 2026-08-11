@@ -8213,63 +8213,470 @@ missing total check usually blows up on a one-element array first.""",
 ]
 
 _EXAMPLES["Trapping Rain Water"] = [
-    """The textbook case, column by column.
-height = [0,1,0,2,1,0,1,3,2,1,2,1]  ->  answer 6
-Apply water[i] = min(tallest left, tallest right) - height[i] at each index:
-  i=2 : left max 1, right max 3 -> min 1, minus height 0 = 1
-  i=4 : left max 2, right max 3 -> min 2, minus height 1 = 1
-  i=5 : left max 2, right max 3 -> min 2, minus height 0 = 2
-  i=6 : left max 2, right max 3 -> min 2, minus height 1 = 1
-  i=9 : left max 3, right max 2 -> min 2, minus height 1 = 1
-  every other column comes out 0 or negative (clamped to 0)
-  total = 1+1+2+1+1 = 6""",
+    """1. THE GOAL, in plain English.
 
-    """A second ordinary case with a deeper basin.
-height = [4,2,0,3,2,5]  ->  answer 9
-  i=1 : min(4,5) - 2 = 2
-  i=2 : min(4,5) - 0 = 4
-  i=3 : min(4,5) - 3 = 1
-  i=4 : min(4,5) - 2 = 2
-  i=0 and i=5 are the walls themselves and hold nothing.
-  total = 2+4+1+2 = 9
-Notice the bar of height 3 at index 3 sits INSIDE the basin and still has 1
-unit on top of it. Water does not care about the bars in between; only the
-two tallest walls on either side matter.""",
+You are given the heights of a row of bars standing side by side, each one unit wide.
+Rain falls. Water settles in the dips between taller bars. How much water is held?
 
-    """Nothing is trapped - the two monotonic cases.
-height = [1,2,3,4,5]  ->  answer 0
-height = [5,4,3,2,1]  ->  answer 0
-A staircase has no dip, so there is no place for water to pool. Check it with
-the formula on the ascending case at i=2: the tallest bar to its left is 2,
-so min(2, 5) - 3 = -1, which clamps to 0. Every column does the same.
-Any correct solution must return 0 here; a common bug is forgetting the clamp
-and accumulating negative water.""",
+    height = [1, 0, 2]
 
-    """The simplest possible basin, and the flat case.
-height = [3,0,3]  ->  answer 3.  min(3,3) - 0 = 3 units sitting in the gap.
-height = [2,2,2]  ->  answer 0.  min(2,2) - 2 = 0 everywhere, no dip at all.
-height = [3,0,2]  ->  answer 2.  The SHORTER wall (2) caps the level, not the
-taller one, so only 2 units are held and the rest spills over the right side.
-That last one is the whole reason the formula uses min() and not max().""",
+        #
+        # ~ #          the ~ is one unit of trapped water
+        # # #
+        0 1 2
 
-    """Several separate puddles, not one big pool.
-height = [2,1,2,1,2]  ->  answer 2
-  i=1 : min(2,2) - 1 = 1
-  i=3 : min(2,2) - 1 = 1
-  total 2
-Two independent one-unit puddles. This is why thinking column by column beats
-trying to identify basins: you never have to detect where one puddle ends and
-the next begins - the formula handles it automatically.""",
+Bar 1 has height 0. To its left stands a bar of height 1, to its right a bar of height
+2. Water fills the gap up to the level of the SHORTER of those two walls - height 1 -
+so one unit of water sits above bar 1. Answer: 1.
 
-    """Do not confuse this with Container With Most Water.
-height = [5,1,1,1,5]
-  Trapping Rain Water  -> 12. Each of the three middle bars holds
-  min(5,5) - 1 = 4 units, and 4 x 3 = 12. The bars in between are real and
-  displace water.
-  Container With Most Water -> 20. It picks the two walls of height 5, treats
-  everything between them as if it were glass, and computes 5 x 4 = 20.
-Same input, different answers, because one problem fills around the bars and
-the other ignores them entirely. Interviewers use this pair deliberately.""",
+Why the shorter wall? Because water pours out over the lower side. A basin is only as
+deep as its lowest rim. If you fill it past that, the excess runs off.
+
+Water can only ever sit ABOVE a bar, never inside it, and the water level above any
+particular bar is decided entirely by the tallest wall on each side of it:
+
+    water above bar i  =  min( tallest bar to the left, tallest bar to the right )
+                          minus height[i]
+
+If that comes out negative - which happens when bar i is itself taller than one of
+those walls - the answer is zero, no water. That single formula is the whole problem.
+Everything after this is about computing it fast.
+
+    height = [4, 2, 0, 3, 2, 5]   ->  answer 9
+
+      i=1:  min(4, 5) - 2 = 2
+      i=2:  min(4, 5) - 0 = 4
+      i=3:  min(4, 5) - 3 = 1
+      i=4:  min(4, 5) - 2 = 2       total 9""",
+
+    """2. THE INTUITION - the shorter wall decides, so chase the shorter wall.
+
+Start with the two outermost bars. One of them is shorter. Say it is the LEFT one.
+
+    height = [1, 0, 3, 0, 2]
+
+      left end: height 1        right end: height 2
+
+Here is the thought that makes the whole algorithm work. The left bar is shorter than
+the right bar. So for the leftmost bar, the wall on the RIGHT is at least height 2 -
+we can see it standing there. The right side is therefore NOT the limiting factor for
+anything on the left; whatever bounds the water over there, it is the left-hand wall,
+because the left-hand wall is smaller.
+
+And that means: WE CAN SETTLE THE WATER ABOVE THE LEFT BAR RIGHT NOW, using only what
+we have seen on the left, without ever knowing what the tallest bar on the right
+turns out to be. We do not need the exact right-hand maximum. We only need to know it
+is bigger, and the comparison just told us that.
+
+So: process the shorter side, move that pointer inward, and repeat.
+
+    [1, 0, 3, 0, 2]
+     ^           ^
+     L           R      1 < 2, so the left side is bounded by the left. Settle it.
+
+    [1, 0, 3, 0, 2]
+        ^        ^
+        L        R      0 < 2, left is still the shorter side. Settle bar 1:
+                        the tallest thing seen on the left is 1, bar is 0,
+                        so 1 unit of water.
+
+    [1, 0, 3, 0, 2]
+           ^     ^
+           L     R      3 < 2 is false - now the RIGHT side is the shorter one.
+                        Switch sides and start settling from the right instead.
+
+Each step permanently finishes one bar. Two pointers, one pass, no extra arrays.
+
+The alternative picture worth holding: you are walking in from both ends carrying a
+running record of the tallest wall you have passed on your side. The side whose wall
+is shorter is the side whose water you are allowed to settle.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BAR / HEIGHT. height[i] is how tall the bar at position i is. Every bar is one unit
+wide, so the water above a bar is measured in units too - depth times width one.
+
+TRAPPED WATER. Water that stays put after the rain stops. Water at the far ends
+always runs off, so the first and last bars never hold anything.
+
+RUNNING MAXIMUM. The tallest value seen so far as you scan. left_max is the tallest
+bar from position 0 up to wherever the left pointer has reached; right_max is the
+tallest from the right end inward.
+
+TWO POINTERS. Two positions, left and right, starting at the two ends and moving
+toward each other. Each step advances exactly one of them, so the two together take n
+steps in total.
+
+O(n) - "LINEAR TIME". Work proportional to the number of bars. One pass.
+
+O(1) - "CONSTANT SPACE". The extra memory used does not grow with the input. Here it
+is five numbers, whether the input has ten bars or ten million.
+
+PREFIX / SUFFIX ARRAY. The intermediate solution in section 5 builds two arrays -
+"tallest bar at or before i" and "tallest bar at or after i". They are called prefix
+and suffix maximum arrays. They cost O(n) memory, which is exactly what the
+two-pointer version removes.
+
+INVARIANT. A statement that stays true every time you return to the top of the loop.
+The one that makes this algorithm correct is stated and proved in section 5, and it
+is what an interviewer will push on.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - including the problem this is NOT.
+
+TRAP 1 - the big one: CONFUSING THIS WITH CONTAINER WITH MOST WATER. The two
+problems use the same picture and the same two-pointer move, and they are different
+questions.
+
+    height = [5, 1, 1, 1, 5]
+
+    TRAPPING RAIN WATER   -> 12. The bars are solid. Each of the three middle bars
+                            holds min(5,5) - 1 = 4 units above it. 4 + 4 + 4 = 12.
+
+    CONTAINER WITH MOST   -> 20. The bars are thin walls with no floor between them;
+    WATER                   you pick TWO of them and the water spans the gap.
+                            Width 4 times height min(5,5) = 20. The middle bars are
+                            ignored entirely - they do not displace anything.
+
+Read the problem statement for whether the bars have thickness. Trapping Rain Water
+sums water over EVERY bar; Container With Most Water picks the best PAIR. Saying this
+distinction out loud is worth real credit, because interviewers deliberately ask them
+back to back.
+
+TRAP 2: forgetting that a bar displaces water. The water above bar i is
+min(left, right) MINUS height[i], not min(left, right). Leaving the subtraction out
+gives an answer that is far too large and looks plausible.
+
+TRAP 3: the monotonic cases. A staircase traps nothing.
+
+    height = [1,2,3,4,5]  ->  0
+    height = [5,4,3,2,1]  ->  0
+    height = [2,2,2]      ->  0
+
+There is no dip, so there is nothing to hold water. If your code returns anything but
+zero on these, the subtraction or the running maximum is wrong. These are the fastest
+tests to run in your head.
+
+TRAP 4: separate puddles, not one pool.
+
+    height = [2,1,2,1,2]  ->  2
+
+Two independent one-unit puddles, at positions 1 and 3. Nothing about this algorithm
+assumes the water forms a single connected pool - each bar is settled on its own
+terms - but people sometimes try to find "the basin" as a single region and then get
+stuck on inputs like this one.
+
+TRAP 5: updating the running maximum AFTER computing the water. The code updates
+left_max first, then subtracts:
+
+    left_max = max(left_max, height[left])
+    water += left_max - height[left]
+
+Doing it the other way round can make left_max smaller than height[left], producing a
+negative contribution and an undercount. Updating first also guarantees the
+subtraction is never negative, since left_max is now at least height[left]. That is
+why no max(0, ...) guard is needed anywhere in this code.""",
+
+    """5. THE SLOW VERSIONS FIRST, THEN THE UPGRADE - AND THE PROOF.
+
+SLOW VERSION A - apply the formula literally. O(n^2).
+
+    total = 0
+    for each i:
+        l = tallest bar in height[0..i]
+        r = tallest bar in height[i..n-1]
+        total += min(l, r) - height[i]
+
+Correct, and it is precisely the formula from section 1, so it is the right thing to
+say first in an interview. Its cost is that it re-scans the whole array for every
+single bar: n bars times n work.
+
+UPGRADE 1 - precompute the two maximum arrays. O(n) time, O(n) space.
+
+The wasted work above is recomputing the same maxima over and over. Compute them once
+instead:
+
+    left_max[i]  = tallest bar in height[0..i]     (one left-to-right pass)
+    right_max[i] = tallest bar in height[i..n-1]   (one right-to-left pass)
+    total = sum over i of  min(left_max[i], right_max[i]) - height[i]
+
+Three passes, O(n) time. This is a perfectly good answer and easy to defend. Its only
+weakness is the two extra arrays - O(n) memory.
+
+UPGRADE 2 - the two-pointer version. O(n) time, O(1) space.
+
+Now the interesting question: how can you possibly settle a bar without knowing the
+true maximum on both of its sides? The answer is that you often do not NEED the true
+maximum - you only need to know which side is smaller, and a single comparison tells
+you that.
+
+THE PROOF, spelled out, because this is what gets probed.
+
+The claim is: when height[left] < height[right], it is safe to settle bar left using
+left_max alone, ignoring whatever the true right-hand maximum turns out to be.
+
+To settle bar left correctly we need min(true left max, true right max) = left_max.
+The first part is easy: left_max IS the true maximum of height[0..left], by
+construction. So all we need is that the true right maximum is at least left_max -
+because then the minimum of the two is left_max.
+
+THE INVARIANT: at the top of every iteration, there is a bar somewhere in
+height[left..n-1] that is at least as tall as left_max. (And symmetrically for the
+right side.)
+
+Why it holds at the start: left is 0 and left_max is 0, so anything satisfies it.
+
+Why each step preserves it: the left pointer only ever steps over a bar when
+height[left] < height[right] - that is the branch condition. So at the moment left
+steps forward, there is a bar at position right, strictly to the right of left, that
+is strictly TALLER than the bar being stepped over. That taller bar is still to the
+right of the new left. So whatever left_max becomes, something on the right side
+matches or exceeds it.
+
+Therefore the true right maximum never limits the water on the left, min(left, right)
+resolves to left_max, and the settlement is exact - not an approximation that gets
+corrected later. Once water is added for a bar, that bar is finished forever.
+
+The mirror argument covers the else branch. And since every iteration moves exactly
+one pointer inward, the loop runs at most n times.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK IN FROM BOTH ENDS, ALWAYS ADVANCING
+THE SIDE WHOSE BAR IS SHORTER, AND SETTLE THE WATER ABOVE EACH BAR YOU LEAVE BEHIND
+USING ONLY THE TALLEST BAR SEEN SO FAR ON THAT SIDE.
+
+THERE IS NO RECURSION HERE. Nothing calls itself, so there is no call stack and no
+base case. The mechanism to understand instead is THE TWO CLOSING POINTERS:
+
+  - left and right mark the bars not yet settled.
+  - Every pass through the loop settles exactly one bar and moves exactly one pointer
+    inward, so the gap between them shrinks every time.
+  - The loop stops when they meet. Since each pass shrinks the gap by one, it cannot
+    run more than n times - that is the termination guarantee.
+  - Each bar is settled exactly once, and once settled it is never revisited, because
+    the proof in section 5 says the value computed was already final.
+
+The steps:
+
+  1. Put one pointer at the far left and one at the far right.
+
+  2. Start two running maximums at zero - the tallest bar seen so far from the left,
+     and the tallest seen so far from the right. Start the water total at zero.
+
+  3. Repeat while the two pointers have not met:
+
+     a. Compare the bar under the left pointer with the bar under the right pointer.
+
+     b. IF THE LEFT BAR IS SHORTER: the left side is the limiting wall here, so this
+        bar can be settled with left-hand information alone.
+        - Update the left running maximum to include this bar.
+        - Add (left running maximum minus this bar's height) to the water total. This
+          is never negative, because the running maximum was just updated to be at
+          least this bar's height.
+        - Move the left pointer one step right.
+
+     c. OTHERWISE: mirror image. Update the right running maximum, add
+        (right running maximum minus this bar's height), and move the right pointer
+        one step left.
+
+  4. When the pointers meet, every bar has been settled. Return the total.
+
+The detail beginners get wrong is the order inside step 3b: update the running maximum
+BEFORE subtracting. Do it the other way round and the subtraction can go negative.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Two surveyors start at opposite ends of a long uneven wall and walk toward each other.
+Each carries a notebook recording the height of the tallest section they have passed
+so far on their own side.
+
+At each moment they shout their current section's height to each other and compare.
+Whoever is standing at the SHORTER section is the one who acts. The reasoning is
+simple: if my section is shorter than yours, then somewhere behind you there is
+definitely something at least as tall as anything I have seen - so the far side will
+never be what limits the water here. My own notebook is the only thing that matters.
+
+So that surveyor looks at their notebook, works out how deep the water would stand at
+their feet - the tallest section they have passed, minus the height where they are
+standing - writes it into the running total, and takes one step forward.
+
+The other surveyor does not move at all. They are still the taller side, still just
+providing the guarantee that the shorter side needs.
+
+Then they compare again. Whoever is now shorter acts. The roles swap back and forth as
+the terrain changes, and neither surveyor ever backtracks.
+
+When they meet in the middle, every section of wall has been surveyed exactly once, by
+exactly one of them, and the total is exact. Neither ever needed to know the full
+shape of the other half.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def trap(height):
+
+height is the list of bar heights. The function returns a single number - the total
+units of water. It never modifies height; the caller's list comes back untouched.
+
+    left, right = 0, len(height) - 1   # two pointers at the ends
+
+The two surveyors. left starts at the first bar, right at the last. len(height) - 1
+is the last valid position.
+
+    left_max = right_max = 0           # tallest wall seen from each side
+
+The two notebooks, both empty. Starting at 0 is safe because heights are never
+negative: the first time each is updated it will take the value of the bar under its
+pointer.
+
+    water = 0
+
+The running total.
+
+    while left < right:
+
+Keep going until the surveyors meet. Strictly less-than, so they never process the
+same bar twice. This is also the termination guarantee - one pointer moves every pass,
+so the gap always shrinks.
+
+        if height[left] < height[right]:
+
+The comparison that decides everything. If the left bar is shorter, the left side is
+the limiting wall, and by the proof in section 5 there is guaranteed to be something
+at least as tall as left_max somewhere to the right. So bar left can be settled now
+using only left-hand information.
+
+Note this compares the BARS THEMSELVES, not the two running maxima. Comparing the
+maxima also works and is a common variant; comparing the bars is what this code does
+and the proof above is written for it.
+
+            left_max = max(left_max, height[left])
+
+Update the notebook FIRST. After this line, left_max is the true tallest bar in
+height[0..left], and it is guaranteed to be at least height[left].
+
+            water += left_max - height[left]   # trapped above this bar
+
+Settle bar left. Because left_max was just updated, this quantity is never negative -
+no max(0, ...) guard is needed. If bar left is itself the tallest so far, this adds
+exactly 0, which is correct: a bar at the high-water mark holds nothing above it.
+
+            left += 1
+
+Step inward. Bar left is finished forever; it will never be looked at again.
+
+        else:
+            right_max = max(right_max, height[right])
+            water += right_max - height[right]
+            right -= 1
+
+The mirror image. This branch runs when the right bar is shorter, or when the two are
+EQUAL. Equality can go to either branch - if both walls are the same height, either
+side may be treated as the limiting one, and the answer is the same. That is why there
+is no third case for ties.
+
+    return water
+
+The pointers met, so every bar has been settled exactly once. The total is exact.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    height = [1, 0, 3, 0, 2]
+
+Expected answer, from the formula in section 1:
+    i=1: min(1, 3) - 0 = 1
+    i=3: min(3, 2) - 0 = 2
+    total 3.
+
+START.  left = 0, right = 4, left_max = 0, right_max = 0, water = 0.
+
+PASS 1.
+  left = 0, right = 4. Is 0 < 4? Yes.
+  height[0] = 1, height[4] = 2. Is 1 < 2? Yes -> LEFT branch.
+  left_max = max(0, 1) = 1.
+  water += 1 - 1 = 0.  water = 0.
+  left = 1.
+
+PASS 2.
+  left = 1, right = 4. Is 1 < 4? Yes.
+  height[1] = 0, height[4] = 2. Is 0 < 2? Yes -> LEFT branch.
+  left_max = max(1, 0) = 1.
+  water += 1 - 0 = 1.  water = 1.
+  left = 2.
+
+PASS 3.
+  left = 2, right = 4. Is 2 < 4? Yes.
+  height[2] = 3, height[4] = 2. Is 3 < 2? No -> RIGHT branch.
+  right_max = max(0, 2) = 2.
+  water += 2 - 2 = 0.  water = 1.
+  right = 3.
+  The sides have swapped: the right is now the shorter wall.
+
+PASS 4.
+  left = 2, right = 3. Is 2 < 3? Yes.
+  height[2] = 3, height[3] = 0. Is 3 < 0? No -> RIGHT branch.
+  right_max = max(2, 0) = 2.
+  water += 2 - 0 = 2.  water = 3.
+  right = 2.
+
+CHECK THE CONDITION. left = 2, right = 2. Is 2 < 2? No. The loop ends.
+
+return 3.  Matches the formula.
+
+Two things to notice. Bar 3 was settled using right_max = 2, and the true tallest bar
+to its left is 3 - the code never needed that 3, because min(3, 2) is 2, which is
+exactly what it used. And bar 1 was settled using left_max = 1, while the true tallest
+to its right is 3 - again, min(1, 3) is 1. In both cases the shorter side was the one
+doing the work, which is the whole design.
+
+A SECOND TRACE, the all-flat case, to see zero come out cleanly:
+
+    height = [2, 2, 2]
+
+  left=0, right=2. height[0]=2 < height[2]=2? No -> right branch.
+      right_max = 2, water += 2 - 2 = 0, right = 1.
+  left=0, right=1. height[0]=2 < height[1]=2? No -> right branch.
+      right_max = 2, water += 2 - 2 = 0, right = 0.
+  0 < 0 is false. return 0. Correct - a flat surface holds nothing.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n) - one pass.
+
+In plain words: every trip through the loop settles exactly one bar and moves exactly
+one pointer inward. There are n bars, so there are n trips. Compare the literal
+formula version, which re-scans the array for every bar and costs n^2 - for 100,000
+bars that is ten billion operations versus 100,000.
+
+SPACE: O(1) - constant. Five numbers: left, right, left_max, right_max, water. The
+prefix/suffix array version is also O(n) time but needs two extra arrays of length n;
+this version needs nothing that grows. That trade - same time, less memory - is the
+entire reason the two-pointer version is the one interviewers want.
+
+THE THREE SOLUTIONS, ranked for an interview answer: state the formula version first
+(shows you understand the problem), then the prefix/suffix version (shows you can
+remove repeated work), then the two-pointer version (shows you can remove the memory
+too). Working up through them is a better answer than jumping straight to the last
+one, because the last one's correctness is only convincing once the formula is on the
+table.
+
+THE #1 BEGINNER MISTAKE: solving Container With Most Water instead. Same picture, same
+two-pointer sweep, different question - one sums water over every bar, the other picks
+the single best pair of walls. Check whether the bars have thickness before you write
+anything.
+
+Runner-up: subtracting before updating the running maximum, which lets the
+contribution go negative and quietly undercounts.
+
+THE OTHER FAMOUS FOLLOW-UP: "what about a 2D grid - Trapping Rain Water II?" The
+two-pointer trick does not generalise, because in two dimensions water can escape in
+any direction, so there is no single "shorter side" to chase. The answer there is a
+min-heap: push all the boundary cells, repeatedly pop the LOWEST boundary cell, and
+flood inward from it, since the lowest point on the current rim is what sets the water
+level. Different technique, same underlying idea that the lowest rim decides the level.
+
+TAKEAWAY: the water above any bar is set by the shorter of its two tallest walls - so
+walk in from both ends, always process the side that is currently shorter, and you
+never need to know the far side exactly, only that it is bigger.""",
 ]
 
 _EXAMPLES["Maximum Subarray (Kadane's algorithm)"] = [
@@ -48461,64 +48868,504 @@ flows through it, and that is what lets this run on data far too big for memory.
 ]
 
 _EX_P0G["Minimum Window Substring (sliding window)"] = [
-    """The textbook case, traced at the key moments.
-s = "ADOBECODEBANC", t = "ABC". need = {A:1, B:1, C:1}, missing = 3.
-r=0 'A': need[A] was 1 > 0 -> missing 2, need[A] = 0.
-r=3 'B': missing 1. r=5 'C': missing 0 -> the window "ADOBEC" (0..5) covers t.
-  Shrink: record (0,5), length 6. Drop s[0]='A' -> need[A] back to 1 > 0 ->
-  missing 1, left=1. Loop exits.
-r=10 'B' brings missing to 0 again with window (1..10) "DOBECODEBA"? Shrinking
-  moves left forward to 9, giving "BA"... not yet covering C, so it stops as soon
-  as a required char is dropped.
-r=12 'C': missing 0, window (9..12) = "BANC", length 4 < 6 -> new best.
-Answer "BANC".""",
+    """1. THE GOAL, in plain English.
 
-    """Why need[] is allowed to go negative.
-For every character, need[ch] -= 1 runs unconditionally - even for characters
-not in t, and even for extra copies of characters already covered.
-A negative count means 'we have surplus of this character'. When shrinking, the
-test `if need[s[left]] > 0` fires only when removing that character makes us
-genuinely short again - a surplus copy can be dropped for free.
-That is what lets the window shrink past redundant characters without
-recomputing anything. It looks like a bug and it is the core of the
-algorithm.""",
+You are given a long string s and a short string t. Find the SHORTEST piece of s -
+one continuous run of characters - that contains every character of t.
 
-    """Duplicates in t - the multiplicity case.
-s = "aa", t = "aa". need = {a:2}, missing = 2.
-r=0 'a': need[a]=2 > 0 -> missing 1, need[a]=1.
-r=1 'a': need[a]=1 > 0 -> missing 0, need[a]=0. Window (0,1) recorded.
-Shrink: need[a] back to 1 > 0 -> missing 1, left=1. Done.
-Answer "aa", not "a". A set-based implementation would wrongly return "a" -
-which is exactly why the counts are a Counter and not a set.""",
+    s = "ADOBECODEBANC"
+    t = "ABC"
+    answer = "BANC"
 
-    """No valid window, and empty inputs.
-s = "a", t = "b": missing never reaches 0, end stays infinity, return "".
-s = "", t = "a" or t = "": the guard returns "" up front.
-s = "a", t = "aa": only one 'a' exists, missing stops at 1, return "".
-The `end = float('inf')` sentinel doubles as the 'never found' flag, which is why
-the return line tests it rather than keeping a separate boolean.""",
+Check it: "BANC" contains a B, an A and a C. It is four characters long, and no
+three-character run of s contains all of A, B and C.
 
-    """Why it is O(|s| + |t|) and not quadratic.
-The inner `while` looks nested, but left only ever moves forward. Across the
-whole run, right advances |s| times and left advances at most |s| times, so the
-total work is linear. Counting t costs O(|t|).
-Brute force - check every substring for coverage - is O(|s|^2 x |t|). On a
-10^5-character string that is astronomically worse.
-The phrase to say: 'each character enters the window once and leaves once, so
-the amortised cost is O(1) per character'.""",
+Three details that decide whether your solution is right:
 
-    """The template this belongs to, and its siblings.
-This is the SHRINK-WHILE-VALID flavour: grow until the window satisfies the
-condition, then shrink as far as possible while it still does, recording the
-MINIMUM.
-Siblings: Minimum Size Subarray Sum (sum >= target), Smallest window containing
-all distinct characters of s itself.
-Contrast with shrink-while-INVALID, which finds the LONGEST window (Longest
-Substring Without Repeating Characters, Longest Repeating Character
-Replacement).
-Same two pointers; the difference is whether you record inside the while loop or
-after it. Getting that backwards is the single most common way this problem is
-failed.""",
+  - CONTIGUOUS. The answer must be an unbroken stretch of s. You cannot pick letters
+    from here and there.
+
+  - ORDER DOES NOT MATTER. "BANC" contains A, B and C even though they appear in a
+    different order than in t.
+
+  - MULTIPLICITY MATTERS. If t is "AABC", the window must contain TWO As, not one.
+    This is the detail people miss, and it is why the code counts rather than using a
+    set.
+
+  - EXTRA CHARACTERS ARE FINE. "BANC" contains an N, which is not in t at all. That
+    does not disqualify it. The window must contain AT LEAST t, not EXACTLY t.
+
+If no such window exists, return the empty string.
+
+The naive approach checks every possible piece of s: for a string of length 100,000
+that is five billion pieces, each needing to be checked. The method here does it in a
+single pass.""",
+
+    """2. THE INTUITION - a rubber band that grows until it works, then squeezes.
+
+Think of a window over s with a left edge and a right edge, and run two alternating
+moves:
+
+  GROW: while the window does not yet contain everything from t, push the RIGHT edge
+        further right. Growing can only ever help - adding a character never removes
+        one you already had.
+
+  SHRINK: the moment the window DOES contain everything, stop growing and pull the
+          LEFT edge inward as far as you can while it still contains everything. Every
+          step inward makes the window smaller, and smaller is what you want.
+
+Then resume growing. Repeat to the end of s.
+
+Watch it on s = "ADOBECODEBANC", t = "ABC":
+
+    A D O B E C O D E B A N C
+    [-----------]                 grows to "ADOBEC" - now it has A, B, C. Valid.
+     ^
+     shrink: dropping A breaks it, so this window is as small as it gets. Record
+     "ADOBEC", length 6.
+
+    A D O B E C O D E B A N C
+      [---------------]           keep growing... at "DOBECODEBA" it is valid again
+        [-------------]           shrink: drop D, still valid
+          [-----------]           drop O, still valid... down to "ODEBANC" and so on
+
+    A D O B E C O D E B A N C
+                    [-----]       eventually "BANC", length 4. Nothing smaller works.
+
+The reason this is one pass and not a re-scan: THE LEFT EDGE NEVER MOVES BACKWARDS.
+Once a character has been dropped off the left, it is gone for good. So across the
+entire run, the right edge takes at most |s| steps forward and the left edge takes at
+most |s| steps forward. Two counters, each bounded by |s|. That is why the nested-
+looking loop is still linear - a point section 10 returns to, because it is the
+favourite follow-up question.
+
+The remaining problem is the check "does the window contain everything from t?" Doing
+that by comparing two tables at every step would be slow. Section 5 replaces it with a
+single number.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBSTRING. A contiguous run of characters from a string. "OBE" is a substring of
+"ADOBE"; "ADE" is not, because the characters are not adjacent.
+
+WINDOW. The stretch of s currently under consideration, marked by its left and right
+edges. Here left and right are index positions, and the window is everything from
+left to right inclusive.
+
+SLIDING WINDOW. The technique: move the edges over the string instead of re-examining
+every possible substring from scratch.
+
+MULTIPLICITY. How many copies. t = "AABC" needs two As. A SET would forget that; a
+COUNT remembers it. This is why need is a Counter and not a set.
+
+Counter. Python's counting dictionary. Counter("ABC") gives {A:1, B:1, C:1}. Asking a
+Counter for a key it has never seen returns 0 rather than raising an error - a
+property this code relies on when it meets a character not in t at all.
+
+need. The central bookkeeping. need[ch] means "how many more copies of ch this window
+still requires". It starts as the counts of t. It goes DOWN as characters enter the
+window and UP as they leave. Crucially, it is allowed to go NEGATIVE - see section 5.
+
+missing. A single number: how many required characters the window still lacks, counting
+multiplicity. When missing hits 0, the window is valid. Keeping this one number is what
+avoids comparing whole tables.
+
+enumerate. Walks the string handing you both the position and the character, so
+`for right, ch in enumerate(s)` gives right = 0 with ch = s[0], and so on.
+
+float('inf'). Positive infinity - a number larger than any real value. Used as the
+starting "best window size" so that the very first valid window always beats it.
+
+O(|s| + |t|). Linear in the two input lengths. |s| means the length of s.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the one that ruins most first attempts: USING A SET INSTEAD OF COUNTS.
+
+    s = "aa",  t = "aa"      correct answer: "aa"
+
+With a set, the window "a" already contains "every character of t", so you would return
+"a". Wrong. t needs two copies. The count in need is what tracks that: need[a] starts
+at 2, and missing starts at len(t) = 2, not at the number of distinct characters.
+
+TRAP 2: not understanding why need is allowed to go NEGATIVE. The line
+`need[ch] -= 1` runs for EVERY character entering the window, including characters
+that are not in t at all and extra copies beyond what is required. So need['O'] goes to
+-1 the first time an O enters, and need['A'] goes to -1 when a second A arrives for a t
+that needs only one. That is intentional and section 5 explains why it is exactly the
+right bookkeeping.
+
+TRAP 3 - the subtle one: incrementing missing when a SURPLUS character leaves.
+Inside the shrink loop:
+
+    need[s[left]] += 1
+    if need[s[left]] > 0:
+        missing += 1
+
+The check is `> 0`, not `>= 0`. If need was -1 (a surplus copy), adding one makes it 0,
+which means "we now have exactly what we need, none spare" - the window is still valid,
+so missing must NOT go up and the shrinking should continue. Only when need becomes
+strictly positive has a genuinely required character been lost. Writing `>= 0` here
+stops shrinking one character too early and returns windows that are too long.
+
+TRAP 4: recording the best window at the wrong moment. The record happens INSIDE the
+shrink loop, before removing anything - at the moment the window is valid and at its
+current smallest. Recording after the removal records an invalid window.
+
+TRAP 5: the comparison `right - left < end - start`. These are differences of indices,
+not lengths - a window from 2 to 5 has length 4 but the difference is 3. Comparing
+differences is fine because it is consistent on both sides, and the final slice
+compensates with `end + 1`. Mixing lengths and differences is where off-by-one errors
+come from.
+
+TRAP 6: empty inputs. `if not s or not t: return ""` handles both up front. Without it,
+an empty t gives missing = 0 immediately and the shrink loop runs before anything has
+entered the window.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADES.
+
+THE SLOW VERSION - try every substring. O(|s|^2 x |t|) or so.
+
+    best = None
+    for i in range(len(s)):
+        for j in range(i, len(s)):
+            if s[i..j] contains all of t:
+                keep it if it is the shortest so far
+
+Correct, and worth stating first. There are about |s|^2 / 2 substrings and checking
+each one costs another scan. For |s| = 100,000 this is hopeless.
+
+UPGRADE 1 - the sliding window. O(|s|) positions instead of O(|s|^2) substrings.
+
+The waste above is that s[i..j+1] is checked from scratch even though s[i..j] was just
+checked and differs by one character. Slide instead of re-scan: keep the window's
+contents in a table, adjust the table by one character per move.
+
+This alone brings it to about O(|s|) moves - but each move still needs the question
+"is this window valid?" answered, and answering it by comparing the window's table
+against t's table costs O(number of distinct characters) every single time.
+
+UPGRADE 2 - THE TRICK: collapse the whole validity check into ONE integer.
+
+Here is the idea from scratch. Keep need[ch] = "how many more copies of ch we still
+require", starting at the counts of t. Keep missing = "how many required copies we
+still lack in total", starting at len(t).
+
+When a character ch ENTERS the window, do two things in this order:
+
+    if need[ch] > 0:  missing -= 1        # this copy was actually needed
+    need[ch] -= 1                         # record that we now hold one more
+
+Why the condition on the first line but not the second? Because need[ch] > 0 means
+"we were still short of ch", so this arriving copy genuinely reduces the shortfall.
+If need[ch] is already 0 or negative, we had enough ch already, and this copy is a
+SURPLUS - it does not reduce the shortfall, so missing must not change.
+
+The second line runs unconditionally. That is what lets need go negative, and the
+negative value is not junk - IT IS THE COUNT OF SURPLUS COPIES. need['A'] == -2 means
+"the window holds two more As than required". That surplus count is exactly the
+information needed when characters start leaving.
+
+When a character leaves from the left, mirror it:
+
+    need[ch] += 1                         # we hold one fewer now
+    if need[ch] > 0:  missing += 1        # and now we are genuinely short
+
+If ch was in surplus, need goes from, say, -2 to -1: still not positive, so the window
+is still valid and missing stays 0. Only when need crosses into positive territory has
+a required copy actually been lost.
+
+WHY missing == 0 EXACTLY MEANS VALID - the proof. missing counts required copies not
+yet covered. It starts at len(t), which is every required copy. It decreases by one
+exactly when a copy arrives that was still needed, and increases by one exactly when a
+still-needed copy departs. So at every moment, missing equals the number of required
+copies the window lacks. It reaches 0 precisely when the window holds at least the
+required count of every character of t - which is the definition of a valid window.
+Checking one integer against zero has replaced comparing two whole tables.
+
+Cost: O(|t|) to build need, O(|s|) for the right edge, O(|s|) for the left edge.
+O(|s| + |t|) in total, with O(distinct characters) memory.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SLIDE A WINDOW RIGHTWARDS OVER s, KEEPING
+ONE COUNTER OF HOW MANY REQUIRED CHARACTERS ARE STILL MISSING - AND EVERY TIME THAT
+COUNTER HITS ZERO, SHRINK THE WINDOW FROM THE LEFT AS FAR AS POSSIBLE, RECORDING THE
+SMALLEST VALID WINDOW YOU EVER SEE.
+
+THERE IS NO RECURSION HERE. Nothing calls itself, so there is no call stack and no base
+case. The mechanism to understand instead is THE TWO FORWARD-ONLY EDGES:
+
+  - The right edge advances once per character of s, in the outer loop. It never goes
+    back.
+  - The left edge advances only inside the shrink loop, and it never goes back either.
+  - So although the shrink loop is written INSIDE the outer loop and looks nested, the
+    left edge cannot advance more than |s| times in the entire run. Total work is
+    |s| + |s|, not |s| times |s|.
+  - Termination: the outer loop is bounded by the length of s, and the inner loop must
+    stop because each pass moves the left edge right, and the left edge cannot pass the
+    right edge without emptying the window and making missing positive again.
+
+The steps:
+
+  1. If either string is empty, there is nothing to find - return the empty string.
+
+  2. Build a table of how many of each character t requires. Set the missing counter to
+     the total length of t - every required copy is currently absent.
+
+  3. Put the left edge at position 0. Remember no best window yet, using a
+     deliberately impossible size so that the first real window beats it.
+
+  4. Move the right edge across s one character at a time. For the character entering:
+
+     a. If the table still says this character is required, one fewer is missing.
+
+     b. Either way, record that the window now holds one more of it - so the table
+        entry drops, going negative for surplus copies.
+
+  5. Whenever the missing counter is zero, the window is valid. While it stays zero:
+
+     a. If this window is smaller than the best seen, record its two edges as the new
+        best. Do this BEFORE removing anything.
+
+     b. Remove the character at the left edge: put one back into the table.
+
+     c. If that table entry has now become strictly positive, a genuinely required copy
+        just left, so the window is no longer valid - increase the missing counter,
+        which will end this shrinking phase.
+
+     d. Move the left edge one step right, whether or not the window is still valid.
+
+  6. At the end, if no valid window was ever recorded, return the empty string.
+     Otherwise return the slice of s between the recorded edges.
+
+The step people get wrong is 5c: the test is "strictly positive", not "zero or more".""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+You have a shopping list, and you are walking down a very long aisle picking up items
+into a trolley. You must end up with a stretch of aisle - a start point and an end
+point - within which everything on your list can be found. And you want that stretch to
+be as short as possible.
+
+You walk forward, dropping every item you pass into the trolley - even items not on
+your list, because you are not sorting as you go. Beside you, you keep a single tally:
+HOW MANY LISTED ITEMS AM I STILL SHORT OF? Every time you pick something up that you
+were genuinely short of, that tally drops by one. Picking up a second tin of something
+you already have does not change the tally at all - it just means you now carry a
+spare.
+
+The moment the tally hits zero, you have everything. Now you stop walking forward and
+start walking your STARTING POINT forward instead, throwing items out of the trolley
+from the back end. Each item you throw out, you check: was that a spare, or was it my
+only one? If it was a spare, nothing changes - you still have everything, so you keep
+tightening. If it was your only one, you are short again, the tally goes back up, and
+you stop tightening.
+
+Just before each throw-out, you note how long your stretch of aisle currently is, and
+if it is the shortest you have managed, you write down where it started and ended.
+
+Then you go back to walking forward, and the whole thing repeats.
+
+Two things make this fast. You never walk backwards - not your front foot, not your
+back foot. And you never audit the trolley; the single tally beside you always tells
+you whether your list is satisfied.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    from collections import Counter
+    def min_window(s, t):
+
+s is the long string to search; t is the set of required characters with their counts.
+Returns the shortest valid substring of s, or "". Neither input is modified.
+
+    if not s or not t:
+        return ""
+
+Empty either way means there is nothing to find. This also prevents the shrink loop
+from running before anything has entered the window, which is what an empty t would
+cause.
+
+    need = Counter(t)                   # counts of chars still required
+
+The shopping list. need['A'] = 2 means the window still needs two As. As characters
+arrive this drops, going negative for surplus. Being a Counter, asking about a
+character not in t returns 0 rather than raising KeyError - which is what makes the
+unconditional decrement below safe.
+
+    missing = len(t)                    # total required chars not yet covered
+
+The single tally. LEN of t, not the number of distinct characters - that is what makes
+multiplicity work. For t = "AABC" this starts at 4, not 3.
+
+    left = start = 0
+    end = float('inf')
+
+left is the window's left edge. start and end will hold the best window found. end
+starts at infinity so that the very first valid window wins the comparison below - a
+sentinel that also doubles as the "nothing found" marker at the end.
+
+    for right, ch in enumerate(s):
+
+The right edge walks the whole string, once. right is the position, ch is the
+character entering the window.
+
+        if need[ch] > 0:
+            missing -= 1                # covered one required char
+
+Was this character still required? If yes, the shortfall shrinks by one. If need[ch] is
+0 or negative, this is a surplus copy and the tally must not move.
+
+        need[ch] -= 1                   # (can go negative for extras)
+
+Unconditional. The window now holds one more of ch. For characters not in t this goes
+to -1, -2 and so on, and those negatives are the surplus counts that section 5
+explained - they are load-bearing, not junk.
+
+        while missing == 0:             # window covers all of t
+
+The window is valid. Tighten it as far as possible. This loop is what makes the answer
+minimal rather than merely valid.
+
+            if right - left < end - start:
+                start, end = left, right   # record a smaller window
+
+Record BEFORE removing anything, because right now the window is valid. Comparing
+index DIFFERENCES rather than lengths is consistent on both sides. On the first valid
+window, end - start is infinity, so any real window wins.
+
+            need[s[left]] += 1
+
+The leftmost character is leaving, so put one back on the shopping list.
+
+            if need[s[left]] > 0:
+                missing += 1            # dropped a required char -> stop
+
+Strictly greater than zero. If need went from -1 to 0, the departing copy was a spare
+and the window is still valid - keep shrinking. Only a jump into positive territory
+means a genuinely required copy has gone. This single comparison is the one from trap
+3, and getting it wrong produces windows that are valid but not minimal.
+
+            left += 1
+
+Move the left edge in, whether or not the window is still valid. When it is not, the
+loop condition fails on the next check and the outer loop resumes growing.
+
+    return "" if end == float('inf') else s[start:end + 1]
+
+If end is still infinity, no valid window was ever found. Otherwise slice from start to
+end inclusive - Python slices exclude the upper bound, hence the + 1.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    s = "ACBA"
+    t = "AB"
+
+Expected answer: "BA" - positions 2 to 3, length 2. ("ACB" also works but is longer.)
+
+SETUP.  need = {A:1, B:1}.  missing = 2.  left = 0, start = 0, end = infinity.
+
+right = 0, ch = 'A'
+  need['A'] is 1, which is > 0 -> missing = 1.
+  need['A'] = 0.
+  missing is 1, not 0 -> the while loop does not run.
+
+right = 1, ch = 'C'
+  need['C'] is 0 (Counter returns 0 for an unseen key), not > 0 -> missing unchanged.
+  need['C'] = -1.                      <- a surplus character, exactly as expected
+  missing is 1 -> no shrinking.
+
+right = 2, ch = 'B'
+  need['B'] is 1, which is > 0 -> missing = 0.
+  need['B'] = 0.
+  missing is 0 -> ENTER the shrink loop.
+
+    Shrink pass 1:
+      right - left = 2 - 0 = 2.  end - start = infinity - 0 = infinity.
+      2 < infinity -> record: start = 0, end = 2.   (the window "ACB")
+      s[left] = s[0] = 'A'. need['A'] = 0 + 1 = 1.
+      Is need['A'] > 0? 1 > 0, yes -> missing = 1. A required character just left.
+      left = 1.
+    Loop condition: missing is 1, not 0 -> stop shrinking.
+
+right = 3, ch = 'A'
+  need['A'] is 1, which is > 0 -> missing = 0.
+  need['A'] = 0.
+  missing is 0 -> ENTER the shrink loop.
+
+    Shrink pass 1:
+      right - left = 3 - 1 = 2.  end - start = 2 - 0 = 2.
+      Is 2 < 2? No -> do not record. The current best stays "ACB".
+      s[left] = s[1] = 'C'. need['C'] = -1 + 1 = 0.
+      Is need['C'] > 0? 0 > 0 is FALSE -> missing stays 0.
+      This is trap 3 in action: C was a surplus, so the window is STILL VALID and
+      shrinking must continue. Writing >= 0 here would have stopped now and returned
+      "ACB".
+      left = 2.
+    Loop condition: missing is still 0 -> continue.
+
+    Shrink pass 2:
+      right - left = 3 - 2 = 1.  end - start = 2.
+      1 < 2 -> record: start = 2, end = 3.   (the window "BA")
+      s[left] = s[2] = 'B'. need['B'] = 0 + 1 = 1.
+      Is need['B'] > 0? Yes -> missing = 1.
+      left = 3.
+    Loop condition: missing is 1 -> stop shrinking.
+
+The string is exhausted. end is 3, not infinity, so return s[2:4] = "BA".
+
+Correct. Note what the trace demonstrates: the surplus 'C' going from -1 back to 0
+WITHOUT ending the shrink is precisely what allowed the window to tighten from "ACB"
+down to "BA". That single comparison is the difference between a valid answer and the
+minimal one.
+
+Count the pointer movements: right advanced 4 times, left advanced 3 times. Seven
+steps for a 4-character string - linear, not quadratic, even though the loops look
+nested.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(|s| + |t|).
+
+In plain words, and this is THE follow-up question for this problem: the while loop
+sits inside the for loop, so it looks quadratic - but it is not, because LEFT ONLY EVER
+MOVES FORWARD. Across the entire run, right advances at most |s| times and left
+advances at most |s| times. The inner loop's total work over the whole execution is
+bounded by |s|, not by |s| per outer iteration. Building need costs O(|t|). This
+"amortised" argument is the thing to say out loud; it is what separates people who
+memorised the code from people who understand it.
+
+SPACE: O(distinct characters in t) for the need table - at most 128 entries for ASCII,
+so effectively constant. No copy of s is made.
+
+THE FAMILY THIS BELONGS TO - the sliding-window templates, because recognising which
+one you are in is the transferable skill:
+
+  - SHRINK WHILE VALID (this problem). Grow until the window satisfies the condition,
+    then shrink as far as possible, recording the MINIMUM. Also: Minimum Size Subarray
+    Sum.
+
+  - SHRINK WHILE INVALID. Grow, and whenever the window breaks the condition, shrink
+    until it is legal again, recording the MAXIMUM. This is Longest Substring Without
+    Repeating Characters, and Longest Repeating Character Replacement.
+
+  - FIXED SIZE. The window never changes length; it just steps along. This is Find All
+    Anagrams in a String, and Permutation in String.
+
+  - WHEN IT DOES NOT APPLY. Sliding window needs monotonicity: growing must only ever
+    make the condition easier to satisfy, and shrinking only harder. With negative
+    numbers in a sum, growing can make the sum go DOWN, the rule breaks, and you need
+    prefix sums with a hash map instead - that is Subarray Sum Equals K.
+
+THE #1 BEGINNER MISTAKE: using a set instead of counts, which silently fails on any t
+with a repeated character - "aa" returns "a". Runner-up, and harder to spot: writing
+`if need[s[left]] >= 0` instead of `> 0` in the shrink loop, which stops tightening one
+character early and returns a valid but non-minimal window. It passes the simple test
+cases and fails the ones with surplus characters.
+
+TAKEAWAY: replace the question "does this window contain everything?" with a single
+counter of what is still missing, and then the whole problem is just two forward-only
+edges - grow until missing hits zero, squeeze while it stays zero.""",
 ]
 
 
