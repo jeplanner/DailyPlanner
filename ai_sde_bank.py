@@ -61519,186 +61519,1560 @@ questions.""",
 ]
 
 _EX_P0H["Assign Cookies"] = [
-    """The textbook case, traced.
-g (greed) = [1,2,3], s (cookies) = [1,1]. Both already sorted.
-child=0, cookie=0: s[0]=1 >= g[0]=1 -> satisfy child 0. child=1, cookie=1.
-cookie=1: s[1]=1 >= g[1]=2? No -> only cookie advances. cookie=2, loop ends.
-Answer 1 child content. The second cookie is too small for every remaining
-child, and no assignment could do better - there is only one cookie of size 1
-and only one child that small.""",
+    """1. THE GOAL, exactly as it sounds.
 
-    """A case where the greedy choice clearly matters.
-g = [1,2], s = [1,2,3].
-Greedy: cookie 1 -> child with greed 1; cookie 2 -> child with greed 2. Both
-content, answer 2.
-A wasteful alternative: give cookie 3 to the child with greed 1. Then cookie 1
-and 2 are left; cookie 2 satisfies greed 2, so you still get 2 - here it does
-not bite. Make it g = [1,2] and s = [2] instead: giving the 2 to greed-1 leaves
-greed-2 unfed (1 child); giving it to greed-2 also feeds 1. Now g = [1,3],
-s = [2]: only greed 1 can be fed, and only the greedy rule finds it.
-The invariant: spending the SMALLEST sufficient cookie on the LEAST greedy child
-never blocks a child that could otherwise have been fed.""",
+You have some children and some cookies.
 
-    """Why cookie advances every iteration but child does not.
-If the cookie satisfies the child, both move on - that cookie is used and that
-child is done.
-If it does not, the cookie is too small for this child and therefore too small
-for every LATER (greedier) child as well, so it is useless: discard it by
-advancing cookie only.
-That is the exchange argument in two sentences, and it is what makes the single
-pass correct.""",
+    EACH CHILD has a GREED FACTOR - the smallest cookie they will accept.
+    EACH COOKIE has a SIZE.
 
-    """Edge cases: nobody can be fed, everyone can, empty inputs.
-g = [10,20], s = [1,2]: no cookie ever satisfies a child; cookie runs to the end
-and the answer is 0.
-g = [1,1], s = [5,5,5]: both children are satisfied by the first two cookies ->
-2, and the loop exits because child reached len(g).
-g = [] or s = []: the while condition fails immediately -> 0.
-Note the answer is capped by min(len(g), len(s)), which is a useful sanity check
-on any implementation.""",
+    A child is CONTENT if the cookie they get is at least as big as their greed factor.
+    Each child gets AT MOST ONE cookie, and each cookie goes to AT MOST ONE child.
 
-    """Duplicates and ties.
-g = [1,1,1], s = [1,1]: each cookie feeds one child -> 2. Ties are handled by
->=, so a cookie exactly equal to the greed counts as satisfying - read the
-problem statement for that, because a strict > would change the answer here from
-2 to 0.
-This is the kind of one-character detail worth restating back to the interviewer
-before you write the loop.""",
+    MAXIMISE THE NUMBER OF CONTENT CHILDREN.
 
-    """The pattern: greedy matching between two sorted lists.
-Same shape as:
-- Boats to Save People: sort, then pair the lightest with the heaviest.
-- Advantage Shuffle: sort both, then assign the smallest card that still beats
-  the opponent's.
-- Maximum Number of Events That Can Be Attended.
-- Task/worker assignment where a worker can do any task at or below their skill.
-Recognition cue: two lists, a one-directional 'fits' relation, and a count to
-maximise. Sort both, sweep once, and be ready to give the exchange argument -
-interviewers ask 'why is greedy optimal here?' precisely because greedy is wrong
-for many neighbouring problems.""",
+    g (greed)   = [1, 2, 3]        three children, wanting at least 1, 2 and 3
+    s (cookies) = [1, 1]           two cookies, both of size 1
+
+    The size-1 cookie satisfies the child wanting 1. The other size-1 cookie satisfies nobody
+    else - the remaining children want 2 and 3.
+
+    ANSWER: 1
+
+    g = [1, 2]                     two children, wanting 1 and 2
+    s = [1, 2, 3]                  three cookies
+
+    ANSWER: 2 - both children can be fed, and a cookie is left over. Leftover cookies do not
+    matter; only the count of content children does.
+
+WHAT THE PROBLEM DOES NOT ASK. It does not ask which cookie went to whom, and it does not reward
+you for using large cookies well or for having few left over. ONE NUMBER: how many children ended
+up happy.
+
+THE OBVIOUS INSTINCT IS TO MATCH THEM UP SOMEHOW - and the whole question is which "somehow".
+Section 4 shows two plausible matchings, one of which is wrong on a four-number input.""",
+
+    """2. THE INTUITION - sort both, and sweep with two fingers.
+
+Line the children up by how greedy they are, and the cookies up by size:
+
+    children (greed):    1     2     3
+    cookies (size):      1  1
+
+Put one finger on the least greedy child and one on the smallest cookie, and ask ONE question over
+and over:
+
+    DOES THIS COOKIE SATISFY THIS CHILD?
+
+    YES  ->  feed them. Both fingers move on - the cookie is used up, the child is done.
+    NO   ->  this cookie is too small for the LEAST greedy child left, so it is too small for
+             EVERY child left. Throw it away and move only the cookie finger.
+
+    child finger:   v                    v                 v
+    greed:          1     2     3        1  [2]  3         1   2  [3]
+    size:           1  1                    1                   1
+    cookie finger:  ^                       ^                      ^
+
+    step 1:  cookie 1 vs greed 1.  1 >= 1  YES  ->  fed. child -> 2, cookie -> the second 1.
+    step 2:  cookie 1 vs greed 2.  1 >= 2  NO   ->  discard. cookie finger runs off the end.
+    no cookies left.  ANSWER: 1
+
+TWO THINGS TO NOTICE, and they are the whole algorithm:
+
+    THE COOKIE FINGER MOVES EVERY SINGLE STEP. Either the cookie was eaten, or it was useless to
+    everybody remaining. Either way it is gone.
+
+    THE CHILD FINGER MOVES ONLY ON A SUCCESS. A child who was not fed by this cookie stays put and
+    waits for a bigger one.
+
+WHY DISCARDING IS SAFE - and this is the one claim worth being sure about. The children are sorted
+by greed, so the child at the finger is the LEAST demanding one left. If this cookie cannot satisfy
+them, then it certainly cannot satisfy anyone behind them, who want more. There is nobody else it
+could have gone to. Throwing it away costs nothing.
+
+That is a proof, not a hope, and it is what makes a single forward sweep correct.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GREED FACTOR. The minimum cookie size a child will accept. Stored in `g`.
+COOKIE SIZE. How big a cookie is. Stored in `s`.
+CONTENT / SATISFIED. A child whose cookie is at least their greed factor: `s[cookie] >= g[child]`.
+
+GREEDY ALGORITHM. One that makes the locally best-looking choice at each step and never goes back
+to reconsider. The word "greedy" here is doubly apt but means the ALGORITHM, not the children.
+
+    A greedy algorithm is only correct if you can ARGUE that the local choice never blocks a
+    better global outcome. Section 5 gives that argument. Coin Change is the entry where greedy is
+    the WRONG instinct - the two make a useful pair.
+
+TWO POINTERS. Two indices walking through two sorted lists, each advancing under its own rule.
+This is the "merge-like" flavour of two pointers, not the "opposite ends" flavour.
+
+EXCHANGE ARGUMENT. The standard way to prove a greedy choice is safe: take any optimal answer,
+show you can swap it into one that agrees with the greedy choice without getting worse.
+
+g. The list of greed factors. SORTED IN PLACE by this function - it mutates the caller's list.
+s. The list of cookie sizes. Also sorted in place.
+child. Index into `g`. Also, at every moment, THE NUMBER OF CHILDREN FED SO FAR - which is why it
+       is the return value.
+cookie. Index into `s`. Advances every iteration.
+
+O(n log n). The cost of sorting. It dominates the sweep, which is only O(n + m).""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - GIVING THE BIGGEST COOKIE TO THE LEAST GREEDY CHILD. It sounds generous, and it is the
+most common wrong greedy. Four numbers kill it:
+
+    g = [1, 2],   s = [1, 2]
+
+    BIGGEST-FIRST:  give cookie 2 to the child wanting 1.  Now cookie 1 is left for the child
+                    wanting 2.  1 >= 2 is false.  ONE CHILD FED.
+    SMALLEST-FIRST: give cookie 1 to the child wanting 1.  Then cookie 2 to the child wanting 2.
+                    TWO CHILDREN FED.
+
+    The big cookie was WASTED on a child who would have been happy with a small one - and the only
+    child who needed a big cookie went without. Always spend the smallest cookie that will do; save
+    the big ones for the children who actually need them.
+
+TRAP 2 - SORTING ONLY ONE OF THE TWO LISTS. Both must be sorted, and forgetting one is silent:
+
+    g = [3, 1],   s = [1, 3]        (correct answer: 2 - the 1 feeds the greed-1 child, the 3
+                                     feeds the greed-3 child)
+
+    SORT ONLY s (so g stays [3, 1], s becomes [1, 3]):
+        child=0, cookie=0:  s[0]=1 >= g[0]=3?  NO.  cookie -> 1.
+        child=0, cookie=1:  s[1]=3 >= g[0]=3?  YES. child -> 1, cookie -> 2.
+        cookie is off the end.  RETURNS 1.
+
+    ONE INSTEAD OF TWO. The sweep's whole justification - "if this cookie fails the least greedy
+    child, it fails everyone" - is false the moment `g` is unsorted, because the child at the
+    finger is no longer the least greedy.
+
+TRAP 3 - THE FUNCTION MUTATES BOTH ARGUMENTS. `g.sort()` and `s.sort()` reorder THE CALLER'S
+lists in place. Pass in [3, 1] and afterwards your variable holds [1, 3]. Same class of surprise as
+3Sum's `nums.sort()` and Insert Interval's `new[]`. If the caller needs the original order, sort
+copies: `g = sorted(g)`.
+
+TRAP 4 - ADVANCING THE CHILD POINTER ON A FAILURE. If the `child += 1` is written outside the `if`,
+a child who was merely unlucky with a small cookie is skipped forever, even though a big enough
+cookie is sitting right there:
+
+    g = [1, 5],  s = [1, 9]
+        correct:  cookie 1 feeds greed 1; cookie 9 feeds greed 5.  ANSWER 2.
+        with child advancing every step: cookie 1 feeds greed 1 (child -> 1, cookie -> 1), then
+        cookie 9 vs greed 5 succeeds too - this input does not expose it.
+    g = [5, 6],  s = [1, 9]
+        correct:  cookie 1 fails greed 5, discard; cookie 9 feeds greed 5.  ANSWER 1.
+        with child advancing every step: cookie 1 vs greed 5 fails but child moves to 1 anyway;
+        cookie 9 vs greed 6 succeeds.  ANSWER 1 as well - but the child who was fed is the WRONG
+        one, and on g = [5, 100], s = [1, 9] it returns 0 instead of 1.
+
+TRAP 5 - RETURNING `cookie` INSTEAD OF `child`. `cookie` counts cookies LOOKED AT, including the
+discarded ones. On the first example it would return 2 instead of 1. `child` only ever increases on
+a success, which is exactly what makes it the answer.
+
+TRAP 6 - EMPTY INPUTS. `g = []` or `s = []` makes the `while` condition false immediately and the
+function returns 0. Correct with no special case - but check it, because a version that peeks at
+`s[0]` before the loop crashes.""",
+
+    """5. THE SLOWER VERSIONS FIRST, AND THE PROOF THAT GREEDY IS SAFE.
+
+VERSION A - TRY EVERY ASSIGNMENT. For each way of matching children to cookies, count the content
+ones and keep the best. Guaranteed correct and hopelessly slow: with m cookies and n children the
+number of matchings is astronomically large - for 10 children and 10 cookies it is already 10!
+= 3,628,800 orderings, and the problem allows tens of thousands of each.
+
+VERSION B - MAXIMUM BIPARTITE MATCHING. Model it as a graph: an edge from every child to every
+cookie big enough for them, then find the largest matching. This is CORRECT and it is the general
+tool for "match these to those" problems. It is also enormously heavier - building the graph alone
+is O(n x m) edges, which for 30,000 of each is 900,000,000 edges.
+
+    Worth naming in an interview, because the follow-up "what if the rule were more complicated
+    than a single threshold?" is exactly when you would need it. The threshold structure is what
+    lets us do better.
+
+VERSION C - SORT BOTH AND SWEEP, which is the code here. O(n log n + m log m) and eight lines.
+
+THE EXCHANGE ARGUMENT - why "smallest sufficient cookie to the least greedy child" is safe.
+
+Let child A be the least greedy child, and let X be the smallest cookie that satisfies A. Take ANY
+optimal assignment and show it can be turned into one that gives X to A, without feeding fewer
+children:
+
+    CASE 1 - THE OPTIMAL SOLUTION LEAVES A UNFED, and gives X to nobody.
+        Then just give X to A. One more child is fed, so the original was not optimal after all.
+
+    CASE 2 - THE OPTIMAL SOLUTION LEAVES A UNFED, and gives X to some other child B.
+        A is the LEAST greedy child, so g[A] <= g[B] <= X. Hand X to A instead and leave B unfed.
+        The count is unchanged - still optimal - and now A has X.
+
+    CASE 3 - THE OPTIMAL SOLUTION FEEDS A WITH SOME OTHER COOKIE Y, and gives X to child B.
+        X is the SMALLEST cookie that satisfies A, so X <= Y. Swap them: A gets X (which satisfies
+        A by definition), and B gets Y. Does Y satisfy B? Yes - B was satisfied by X, so g[B] <= X,
+        and X <= Y, so g[B] <= Y. Both children stay fed. The count is unchanged.
+
+    CASE 4 - THE OPTIMAL SOLUTION FEEDS A WITH Y, and X is unused. Swap A onto X; Y becomes spare.
+        Count unchanged.
+
+    IN EVERY CASE there is an optimal solution that makes the greedy choice. Remove A and X and
+    repeat the argument on what is left. THE GREEDY CHOICE NEVER COSTS YOU ANYTHING.
+
+That is the difference between this problem and COIN CHANGE, where the greedy instinct is wrong
+and no such argument exists - coins [1,3,4] with amount 6 gives 3 greedily and 2 optimally. Being
+able to say WHY greedy works here and not there is the actual content of both questions.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SORT BOTH LISTS, THEN WALK THEM TOGETHER FROM THE
+SMALLEST END - HANDING EACH COOKIE TO THE LEAST GREEDY CHILD LEFT IF IT FITS, AND THROWING IT AWAY
+IF IT DOES NOT, BECAUSE A COOKIE TOO SMALL FOR THE LEAST GREEDY CHILD IS TOO SMALL FOR EVERYONE.
+
+THERE IS NO RECURSION. The mechanism is TWO INDICES MOVING FORWARD AT DIFFERENT RATES:
+
+  - Both start at zero and neither ever moves backwards.
+  - The COOKIE index advances on every iteration without exception - a cookie is either eaten or
+    discarded, and there is no third option.
+  - The CHILD index advances only when a child is fed.
+  - WHAT MAKES IT STOP: because the cookie index advances every single iteration, the loop runs at
+    most as many times as there are cookies. It cannot spin.
+  - WHY IT NEVER NEEDS TO BACKTRACK: section 5's exchange argument - the greedy choice is
+    provably never worse than any alternative, so there is nothing to reconsider.
+
+THE STEPS:
+
+  1. SORT THE CHILDREN BY GREED, LEAST GREEDY FIRST. Sort the cookies by size, smallest first.
+     BOTH. Sorting one and not the other quietly breaks the reasoning (section 4).
+
+  2. START ONE INDEX AT THE LEAST GREEDY CHILD AND ANOTHER AT THE SMALLEST COOKIE.
+
+  3. WHILE THERE ARE STILL CHILDREN LEFT AND STILL COOKIES LEFT:
+
+     a. IF THIS COOKIE IS AT LEAST AS BIG AS THIS CHILD'S GREED, the child is content. MOVE TO THE
+        NEXT CHILD.
+
+        "At least as big" - a cookie exactly equal to the greed factor counts. A child wanting 3
+        is happy with a size-3 cookie.
+
+     b. MOVE TO THE NEXT COOKIE - WHETHER OR NOT IT WAS EATEN. If it fed someone, it is gone. If it
+        did not, it was too small for the least demanding child remaining, so it is useless to
+        everybody and can be discarded.
+
+  4. THE ANSWER IS HOW MANY TIMES THE CHILD INDEX MOVED - which is simply the child index itself,
+     since it started at zero and only ever moved on a success.
+
+Note step 3a does not move the cookie index on its own; step 3b does that for both outcomes. That
+is why the code has one `child += 1` inside an `if` and one `cookie += 1` outside it.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a queue of children waiting for cookies, and a tray of cookies of different sizes.
+
+Before you start, you do two pieces of tidying. You ask the children to line up with the least
+fussy at the front and the fussiest at the back. And you arrange the cookies on the tray from
+smallest to largest.
+
+Now you work through the tray from the small end, and you deal with exactly one cookie at a time.
+
+You hold up the cookie and look at the child at the front of the queue - the least fussy child
+left. If the cookie is big enough for them, you hand it over. They are happy, they leave the queue,
+and the next child steps forward.
+
+If the cookie is not big enough for them, you throw it away. This feels wasteful, and it is
+absolutely the right thing to do, and the reason is worth pausing on: the child at the front is
+the least fussy person in the entire queue. If this cookie will not do for them, it certainly will
+not do for anyone standing behind them, who all want more. There is nobody it could possibly
+please. Keeping it would only clutter the tray.
+
+Either way - handed over or thrown away - that cookie is finished with, and you pick up the next
+one. The tray only ever gets smaller, so you are guaranteed to finish.
+
+You stop when you run out of cookies, or when the queue empties. The answer is simply how many
+children walked away happy.
+
+The tidying at the start is what makes all of this work, and it has to be BOTH lines. Order the
+cookies but not the children and the child at the front is no longer the least fussy, so throwing
+a cookie away is no longer safe - you might be discarding exactly the cookie somebody further back
+was waiting for.
+
+And one thing to be generous about: giving away the smallest cookie that will do, rather than the
+biggest. Handing a large cookie to a child who would have been happy with a small one leaves the
+genuinely demanding children with nothing.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep g = [1,2,3], s = [1,1] beside you, answer 1.
+
+    def find_content_children(g, s):
+
+`g` is the list of greed factors, `s` the list of cookie sizes. Returns the number of content
+children. BOTH ARGUMENTS ARE MODIFIED - see the next two lines.
+
+        g.sort()
+        s.sort()
+
+THE SETUP THE WHOLE ALGORITHM RESTS ON. Both ascending.
+
+`.sort()` sorts IN PLACE and returns None, so it reorders the caller's own lists (trap 3). The
+non-mutating version is `g = sorted(g)`, at the cost of one copy of each list.
+
+Sorting BOTH is not decoration. Sorting only `s` breaks the "least greedy child left" guarantee
+that justifies discarding, and section 4 shows it returning 1 where 2 is possible.
+
+        child = cookie = 0
+
+    child   HOLDS the index of the least greedy child not yet fed - AND, at the same time, the
+            count of children fed so far. Those two happen to be the same number because the index
+            starts at 0 and only ever moves on a success, which is why the last line can just
+            return it (trap 5).
+    cookie  HOLDS the index of the smallest cookie not yet dealt with.
+
+        while child < len(g) and cookie < len(s):
+
+Stop when either list runs out. There is no point continuing with no children left to feed or no
+cookies left to give.
+
+Both conditions are needed, and either running out is a legitimate end - it is not an error.
+
+            if s[cookie] >= g[child]:      # this cookie satisfies this child
+                child += 1
+
+THE MATCH. `>=`, not `>`: a cookie exactly the size of the greed factor satisfies the child.
+
+    the comparison  DECIDES whether this child leaves happy.
+    `child += 1`    moves on to the next-least-greedy child AND increments the answer, in one
+                    statement. It is INSIDE the `if` - moving it outside skips children who were
+                    merely unlucky with a small cookie (trap 4).
+
+            cookie += 1                    # move to the next cookie regardless
+
+OUTSIDE THE `if`, AND THAT IS THE POINT. The cookie is finished with either way:
+
+    it was eaten                ->  it is gone.
+    it was too small for `g[child]`, THE LEAST GREEDY CHILD REMAINING  ->  it is too small for
+                                    every child behind them too, so nobody can use it.
+
+This single line is where the sorting pays off. Without `g` sorted, "too small for this child"
+would not imply "too small for all the rest", and discarding would be a bug.
+
+        return child
+
+The number of successes. Not `cookie`, which also counts the discards (trap 5).""",
+
+    """9. TRACED, POINTER BY POINTER - INCLUDING THE CASE THAT KILLS THE OTHER GREEDY.
+
+TRACE 1 - THE TEXTBOOK CASE. g = [1,2,3], s = [1,1]. Both already sorted. Expected 1.
+
+    child = 0, cookie = 0
+
+    ITERATION 1:  child 0 < 3 and cookie 0 < 2 - enter.
+        s[0] = 1,  g[0] = 1.   Is 1 >= 1?  YES  ->  child = 1
+        cookie = 1
+    ITERATION 2:  child 1 < 3 and cookie 1 < 2 - enter.
+        s[1] = 1,  g[1] = 2.   Is 1 >= 2?  NO   ->  child stays 1
+        cookie = 2       <- the cookie is DISCARDED. It is too small for the child wanting 2,
+                            and therefore also for the child wanting 3.
+    LOOP CHECK: cookie 2 is not < 2.  Stop.
+
+    return child = 1.   One child fed, one cookie wasted. Correct.
+
+TRACE 2 - THE INPUT THAT KILLS "BIGGEST COOKIE FIRST". g = [1,2], s = [1,2]. Expected 2.
+
+    child = 0, cookie = 0
+
+    ITERATION 1:  s[0] = 1,  g[0] = 1.  Is 1 >= 1?  YES  ->  child = 1.  cookie = 1
+    ITERATION 2:  s[1] = 2,  g[1] = 2.  Is 2 >= 2?  YES  ->  child = 2.  cookie = 2
+    LOOP CHECK: child 2 is not < 2.  Stop.
+
+    return 2.   BOTH children fed.
+
+    THE INVERSION. Run the same four numbers with "give the biggest cookie to the least greedy
+    child" instead:
+        cookie 2 -> the child wanting 1.  Fed.
+        cookie 1 -> the child wanting 2.  1 >= 2 is false.  NOT fed.
+        ANSWER 1.
+
+    Same input, same sorting, and the answer halves - because the size-2 cookie was spent on a
+    child who only needed a 1, leaving the child who needed a 2 with the leftover. This is the
+    concrete reason section 5's exchange argument insists on the SMALLEST sufficient cookie.
+
+TRACE 3 - THE DISCARD DOING ITS JOB. g = [5, 6], s = [1, 9]. Expected 1.
+
+    ITERATION 1:  s[0] = 1,  g[0] = 5.  Is 1 >= 5?  NO.  child stays 0.  cookie = 1
+                  The size-1 cookie is thrown away, and correctly so: the LEAST greedy child left
+                  wants 5, so nothing in the queue can use a 1.
+    ITERATION 2:  s[1] = 9,  g[0] = 5.  Is 9 >= 5?  YES  ->  child = 1.  cookie = 2
+    LOOP CHECK: cookie 2 is not < 2.  Stop.
+
+    return 1.
+
+    NOTE WHAT WOULD HAVE HAPPENED WITH `child += 1` OUTSIDE THE `if` (trap 4). Iteration 1 would
+    have moved child to 1 despite the failure, and iteration 2 would compare s[1]=9 against
+    g[1]=6 - still a success, so this input returns 1 either way. Change it to g = [5, 100]:
+        AS WRITTEN:  cookie 1 fails greed 5, discard; cookie 9 >= 5, fed.  ANSWER 1.
+        CHILD ALWAYS ADVANCING: cookie 1 fails but child moves to 1; cookie 9 vs greed 100 fails.
+                                ANSWER 0.
+    The child who could have been fed was skipped because one small cookie happened to come first.
+
+TRACE 4 - SORTING ONLY ONE LIST (trap 2). g = [3, 1] left unsorted, s sorted to [1, 3].
+    ITERATION 1:  s[0] = 1,  g[0] = 3.  Is 1 >= 3?  NO.  cookie = 1.
+                  The size-1 cookie is discarded - but the child wanting 1 is standing at index 1,
+                  BEHIND the child wanting 3. The discard threw away exactly the cookie that child
+                  needed.
+    ITERATION 2:  s[1] = 3,  g[0] = 3.  Is 3 >= 3?  YES  ->  child = 1.  cookie = 2.
+    return 1, where the correct answer is 2.
+
+THE TINY INPUTS:
+    g = [10,20], s = [1,2]     every comparison fails; the cookie index runs to the end.  RETURNS 0.
+    g = [1], s = [1,2,3]       fed on the first iteration; child reaches 1 and the loop stops with
+                               two cookies untouched.  RETURNS 1 - leftover cookies do not matter.
+    g = [] or s = []           the while condition is false at once.  RETURNS 0, no special case.
+    g = [1,1,1], s = [1,1]     each cookie feeds one child; the loop ends when cookies run out.
+                               RETURNS 2. Ties are fine - `>=` treats an exact match as a success.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n + m log m), where n is the number of children and m the number of cookies.
+
+In plain words: THE SORTING IS THE ENTIRE COST. The sweep afterwards is one pass that advances at
+least one index every iteration, so it is O(n + m) - and next to the sorting that is free. If
+somebody handed you both lists already sorted, this would be a linear-time problem.
+
+SPACE: O(1) beyond the input, since `.sort()` sorts in place. (O(n) if you sort copies to avoid
+mutating the caller's lists - a trade worth naming.)
+
+WHY GREEDY IS CORRECT HERE AND WRONG IN COIN CHANGE - this is what the question is really testing,
+and the answer is not "because it works on the examples":
+
+    HERE   an exchange argument works (section 5): any optimal solution can be rearranged, without
+           losing anyone, so that the least greedy child gets the smallest sufficient cookie.
+    THERE  no such argument exists, and coins [1,3,4] with amount 6 is the counterexample - greedy
+           takes 4+1+1 for three coins where 3+3 does it in two.
+
+    THE HABIT TO BUILD: when you propose a greedy algorithm, either produce the exchange argument
+    or produce a counterexample. Never propose one and hope.
+
+THE PATTERN - GREEDY MATCHING BETWEEN TWO SORTED LISTS. The family:
+
+    BOATS TO SAVE PEOPLE          sort, then pair the LIGHTEST with the HEAVIEST - two pointers
+                                  from OPPOSITE ends, because the constraint is a sum not a
+                                  threshold.
+    ADVANTAGE SHUFFLE             sort both, and beat each of their cards with your smallest card
+                                  that can beat it - the identical "smallest sufficient" idea.
+    TWO CITY SCHEDULING           sort by the difference in cost, then take the cheaper half.
+    MINIMUM ARROWS TO BURST       sort by end point and sweep.
+    TASK / MEETING SCHEDULING     sort by finish time and take greedily.
+
+    In every one, THE SORT IS THE ALGORITHM and the sweep is bookkeeping. If you find yourself
+    unable to see the greedy rule, ask what order would make the right choice obvious.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if a child could get more than one cookie?" Different problem - now it is about summing
+    cookies to reach a threshold, and greedy no longer applies cleanly.
+  - "What if the lists arrive already sorted?" O(n + m). Say this; it shows you know where the
+    cost is.
+  - "What if the eligibility rule were arbitrary rather than a threshold?" Then the sorting buys
+    nothing and you need bipartite matching (section 5, version B).
+  - "Can you avoid mutating the inputs?" `sorted(g)` and `sorted(s)`, at O(n + m) extra space.
+  - "What if you wanted to MINIMISE wasted cookie size as well?" The count is no longer the only
+    objective, and the greedy is no longer obviously safe - you would need to state the tie-break.
+
+THE #1 BEGINNER MISTAKE: giving the LARGEST sufficient cookie rather than the smallest, or
+equivalently pairing the biggest cookies with the front of the queue. g = [1,2] with s = [1,2]
+gives 1 instead of 2 - four numbers, and the whole strategy is refuted.
+
+RUNNER-UP: advancing the child pointer on a failed match, which permanently skips a child who
+simply met a small cookie first. g = [5,100] with s = [1,9] then returns 0 instead of 1.
+
+TAKEAWAY: sort both lists and sweep from the small end, spending the SMALLEST cookie that will
+satisfy the LEAST greedy child - and discard any cookie that fails that child, because if it is too
+small for the least demanding person left it is too small for everybody left.""",
 ]
 
 _EX_P0H["Average of Levels in Binary Tree"] = [
-    """The textbook tree, traced.
-        3
-      /   \\
-     9     20
-          /  \\
-        15     7
-Pass 1: n=1, sum 3 -> average 3.0. Children 9 and 20 queued.
-Pass 2: n=2, sum 9+20=29 -> 14.5. Children 15 and 7 queued.
-Pass 3: n=2, sum 15+7=22 -> 11.0.
-Answer [3.0, 14.5, 11.0].
-The `n = len(queue)` snapshot taken BEFORE the inner loop is what defines a
-level - it also doubles as the divisor, which is why this problem is such a neat
-fit for the level-order template.""",
+    """1. THE GOAL, in one picture.
 
-    """A skewed tree - every level has one node.
-1 -> 2 -> 3 (only right children). Each pass has n=1, so the averages are the
-values themselves: [1.0, 2.0, 3.0].
-Worth tracing because it confirms the divisor is the level's node count and not
-some running total - a surprisingly common slip.""",
+Given a binary tree, return the AVERAGE VALUE OF THE NODES ON EACH LEVEL, top to bottom.
 
-    """Negative values and integer division.
-Tree [1, -2, 3]: level 1 average 1.0; level 2 sum -2+3 = 1 over 2 nodes -> 0.5.
-In Python 3 the `/` operator returns a float, so 1/2 is 0.5. In Python 2, or with
-`//`, it would be 0 - and in Java `level_sum / n` with int types truncates the
-same way.
-Fix in a typed language: accumulate the sum as a long (to avoid overflow when
-every node is 2^31-1) and cast to double before dividing. LeetCode 637 has a test
-case built specifically around that overflow.""",
+            3
+          /   \\
+         9     20
+              /  \\
+            15    7
 
-    """The empty-tree crash.
-root = None: `deque([None])` is a queue of length 1, so the loop runs, pops None
-and raises AttributeError on node.val.
-Guard with `if not root: return []`. Alternatively seed the queue conditionally.
-Every BFS-on-tree solution needs this guard; it is the single most common runtime
-error on the whole family.""",
+    level 0:  3                ->  3 / 1   =  3.0
+    level 1:  9, 20            ->  29 / 2  =  14.5
+    level 2:  15, 7            ->  22 / 2  =  11.0
 
-    """The DFS alternative, and why it is less natural here.
-You can do it with DFS by carrying the depth and accumulating (sum, count) per
-depth in two arrays, then dividing at the end:
-    def dfs(node, d):
-        if not node: return
-        if d == len(sums): sums.append(0); counts.append(0)
-        sums[d] += node.val; counts[d] += 1
-        dfs(node.left, d+1); dfs(node.right, d+1)
-Same O(n), O(height) space instead of O(width). It wins on a very wide, shallow
-tree; BFS wins on readability and on a deep skewed tree where recursion would
-blow the stack.""",
+    ANSWER: [3.0, 14.5, 11.0]
 
-    """The family this belongs to.
-Every one of these is the same loop with one line changed after `level` is built:
-- Level Order Traversal: append the list.
-- Right Side View: take the last value.
-- Maximum value per level, or the level with the largest sum.
-- Zigzag: reverse on alternate levels.
-- Minimum Depth: return the depth of the first level containing a leaf.
-Learn the template once and five problems collapse into it - which is exactly
-what you should say when an interviewer asks 'have you seen this one before?'""",
+One number per level, in order, and each is a genuine mean - the sum of that level's values divided
+by how many nodes are on it.
+
+WATCH OUT FOR SOMETHING THAT LOOKS LIKE A SHORTCUT. The average of ALL the nodes is
+(3+9+20+15+7)/5 = 54/5 = 10.8, which is not any of the three answers and is not their average
+either ((3.0 + 14.5 + 11.0)/3 = 9.5). AN AVERAGE OF AVERAGES IS NOT AN AVERAGE - levels with more
+nodes carry more weight in the overall mean and equal weight in the list of level means. The
+problem wants per level, and there is no way to get there without knowing which nodes are on which
+level.
+
+So the real question is the one every level-order problem asks: HOW DO YOU GET ONE WHOLE ROW AT A
+TIME, when the tree only ever hands you a node and its two children?
+
+THIS ENTRY IS ONE OF A CLUSTER, and it is worth knowing who owns what:
+
+    BINARY TREE RIGHT SIDE VIEW    owns the frozen-level-size mechanism in full detail.
+    THIS ENTRY                     owns what you do with a level once you have it - summing,
+                                   dividing, and the two things that go wrong when you divide.
+
+Section 2 recaps the mechanism briefly; if you want the long version it is in the Right Side View
+entry.""",
+
+    """2. THE INTUITION - a queue plus one frozen number.
+
+A QUEUE is a waiting line: join the back, leave the front. Put the root in one and repeatedly take
+from the front, pushing each node's children onto the back:
+
+    queue: [3]                take 3, push 9 and 20      ->  queue: [9, 20]
+    queue: [9, 20]            take 9, no children        ->  queue: [20]
+                              take 20, push 15 and 7     ->  queue: [15, 7]
+    queue: [15, 7]            take 15, take 7            ->  queue: []
+
+The nodes come out in level order all by themselves - 3, then 9 20, then 15 7 - because shallower
+nodes joined the line earlier.
+
+BUT THE QUEUE DOES NOT TELL YOU WHERE A LEVEL ENDS. Look at the middle state, [20]: at that instant
+the queue holds only part of level 1, and a moment later it holds 15 and 7, which are level 2. The
+boundary is invisible.
+
+THE FIX IS ONE LINE, and it is the whole technique:
+
+    n = len(queue)        <- BEFORE processing the row, write down how many are in it
+
+Whatever is in the queue at that instant IS exactly one complete level, because the only nodes ever
+added are the children of the previous level. Take exactly n nodes, and everything you push during
+those n steps belongs to the next row.
+
+NOW THE PART THIS ENTRY IS ABOUT. That same frozen `n` is used TWICE:
+
+    n = len(queue)          <- how many nodes to take
+    ...take n nodes, adding their values to a running total...
+    result.append(total / n)   <- AND the divisor
+
+    level 1:  n = 2.  take 9 and 20.  total = 29.  29 / 2 = 14.5
+
+    THE DIVISOR IS FREE. You already had to count the row to know when to stop taking, and that
+    count is precisely the number you divide by. No second pass, no separate counter.
+
+That is a small, pleasing thing, and it is why this problem is a natural companion to the frozen-n
+loop rather than an extra chore on top of it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY TREE. Each node has a value and up to two children, `left` and `right`.
+ROOT. The top node - the only thing you are given.
+LEVEL / DEPTH. All nodes the same number of steps from the root. The root is level 0.
+
+BFS (BREADTH-FIRST SEARCH) / LEVEL-ORDER TRAVERSAL. Visiting the tree row by row, top to bottom.
+
+QUEUE. First in, first out. Join the back, leave the front.
+deque. Python's double-ended queue, from `collections`. `popleft()` removes from the front in
+constant time. A plain list with `pop(0)` also works and is O(n) per removal because everything
+shifts down - turning the traversal into O(n^2).
+
+THE FROZEN LEVEL SIZE. Recording `len(queue)` BEFORE processing a row. Both the stopping condition
+and the divisor.
+
+MEAN / AVERAGE. Sum divided by count. Here, per level.
+
+TRUE DIVISION vs FLOOR DIVISION. In Python 3, `/` always produces a float (29 / 2 is 14.5) and `//`
+throws away the fractional part (29 // 2 is 14). Section 4 is about why that distinction decides
+this problem.
+
+result. The output list, one float per level.
+queue. The waiting line of nodes.
+n. The frozen size of the current level - and its divisor.
+level_sum. The running total of this level's values.
+node. The node currently being processed.
+_. Python's convention for a loop variable that is never used - here the loop counts, it does not
+   index anything.
+
+O(n) - LINEAR TIME. Work proportional to the number of nodes: each is enqueued once and dequeued
+once.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - and one of them is a bug in the code as written.
+
+TRAP 1 - THE EMPTY TREE CRASHES. THIS IS A REAL DEFECT IN THE CODE BELOW, not a hypothetical.
+
+    root = None
+
+    `deque([root])` builds a queue containing one element - the value None. That is a queue of
+    LENGTH 1, so `while queue` is TRUE. The loop runs, `n` is 1, `node = queue.popleft()` gives
+    None, and `level_sum += node.val` raises:
+
+        AttributeError: 'NoneType' object has no attribute 'val'
+
+    The empty tree is not filtered out by `while queue`, because a queue containing None is not an
+    empty queue. THE FIX IS ONE LINE at the top:
+
+        if not root:
+            return []
+
+    Note the difference from Right Side View, whose published code DOES carry this guard. Two
+    entries in the same cluster, one of them missing it - which is exactly how this class of bug
+    survives review.
+
+TRAP 2 - INTEGER DIVISION. In Python 3, `level_sum / n` gives a float, so 29 / 2 is 14.5 and the
+answer is right. Change it to `//` and 29 // 2 is 14 - silently wrong, and it looks fine on any
+level whose sum happens to divide evenly.
+
+    IN JAVA OR C++ THIS IS THE DEFAULT, not an opt-in. `sum / n` with both as ints truncates. You
+    must cast: `(double) sum / n`. This is the single most common way this problem is failed in a
+    typed language, and it fails on the very first tree in the problem statement: level 1 of the
+    example gives 14 instead of 14.5.
+
+TRAP 3 - OVERFLOW WHEN SUMMING, in a language with fixed-width integers. LeetCode's constraints
+allow node values up to 2^31 - 1 and up to 10^4 nodes, so one level's sum can reach about
+2.1 x 10^13 - roughly TEN THOUSAND TIMES the largest value an int32 can hold. In Java you must sum
+into a `long` or a `double`. Python's integers are arbitrary precision, so this cannot happen here
+- but say it, because the interviewer's mental version of the problem is usually Java.
+
+TRAP 4 - NOT FREEZING THE LEVEL SIZE. If you decide where the row ends by looking at the queue
+DURING the row, children you just pushed get counted as part of the current level. On the example
+tree: at level 1 you start with [9, 20], and the moment 20 is processed the queue holds [15, 7] -
+level 2 nodes, mixed in if you are not careful. Only the number captured beforehand knows that
+level 1 has exactly two nodes. And here it would corrupt the DIVISOR as well as the membership,
+so the averages would be wrong twice over.
+
+TRAP 5 - APPENDING CHILDREN WITHOUT CHECKING THEY EXIST. `queue.append(node.left)` when `node.left`
+is None puts a None in the queue, and the next `node.val` crashes - the same failure as trap 1,
+arriving from a different direction. Hence the two `if` guards.
+
+TRAP 6 - AVERAGING THE AVERAGES. Mentioned in section 1 and worth repeating because it comes up in
+follow-ups: the mean of the level means is not the mean of the tree. On the example they are 9.5
+and 10.8.""",
+
+    """5. THE ALTERNATIVES, AND WHY BFS IS THE NATURAL FIT.
+
+VERSION A - COMPUTE THE HEIGHT, THEN WALK THE TREE ONCE PER LEVEL. For each depth d, traverse the
+whole tree collecting nodes at depth d. Correct and wasteful: a tree of height h costs O(n) per
+level, so O(n x h) overall - for a skewed tree of 10,000 nodes that is 100,000,000 operations
+against BFS's 10,000.
+
+VERSION B - COLLECT EVERY LEVEL INTO A LIST OF LISTS, then average each. Perfectly correct, one
+extra pass, and O(n) extra memory holding values you only wanted a summary of. A reasonable first
+answer to state before improving it.
+
+VERSION C - BFS ACCUMULATING AS YOU GO, which is the code here. The row's values are added into a
+running total and thrown away immediately; only the average survives.
+
+VERSION D - DFS CARRYING THE DEPTH. Walk depth-first, and for each node add its value to
+`sums[depth]` and 1 to `counts[depth]`, growing both arrays when you reach a new depth. At the end,
+divide element-wise.
+
+    Also O(n), and genuinely correct - but notice what it costs in clarity: you need TWO parallel
+    arrays and a rule for extending them, where BFS gets the count for free from the frozen `n`. It
+    also uses stack space proportional to the tree's HEIGHT rather than its WIDTH:
+
+        BFS  space O(WIDTH)   - worst on a bushy tree; a complete tree's bottom level holds about
+                                half the nodes
+        DFS  space O(HEIGHT)  - worst on a long thin tree, where the height approaches n
+
+    So the DFS version is the one to reach for on a very wide tree, and the BFS version on a very
+    deep one. On anything ordinary, BFS reads better here because the problem is stated per level
+    and BFS visits per level.
+
+WHY THE FROZEN COUNT IS EXACTLY THE DIVISOR - the argument, since it is the neat part.
+
+At the moment `n = len(queue)` runs, the queue contains every node of the current level and nothing
+else. Why nothing else? The only way a node enters the queue is as somebody's child, and the only
+nodes processed so far are from the PREVIOUS level - whose children are exactly this level.
+
+So the first `n` dequeues take precisely this level, and `n` is precisely how many nodes it has.
+The same number that tells the loop when to stop is the number the sum must be divided by. Nothing
+extra needs counting.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE TREE ONE WHOLE ROW AT A TIME USING A QUEUE,
+FREEZING THE ROW'S SIZE BEFORE YOU START IT, AND USE THAT SAME FROZEN NUMBER BOTH TO KNOW WHEN THE
+ROW HAS ENDED AND AS THE DIVISOR FOR THE ROW'S TOTAL.
+
+THERE IS NO RECURSION. The mechanism is TWO NESTED LOOPS OVER A QUEUE THAT SHRINKS AND GROWS:
+
+  - The outer loop runs once per LEVEL, while anything remains in the queue.
+  - The inner loop runs exactly the frozen number of times.
+  - WHAT MAKES IT STOP: every node is enqueued exactly once and dequeued exactly once, and a tree
+    has no cycles, so the queue must eventually empty.
+  - WHY IT CANNOT LOOP FOREVER: each inner iteration removes one node and adds at most two, but
+    those two are strictly deeper, and the depth is bounded by the height of the tree.
+
+THE STEPS:
+
+  1. IF THE TREE IS EMPTY, RETURN AN EMPTY LIST IMMEDIATELY. This step is missing from the code as
+     published, and without it the very first node taken from the queue is nothing at all and the
+     program crashes - section 4.
+
+  2. MAKE AN EMPTY ANSWER LIST, AND A QUEUE HOLDING JUST THE ROOT.
+
+  3. WHILE THE QUEUE IS NOT EMPTY - each pass handles one complete row:
+
+     a. WRITE DOWN HOW MANY NODES ARE IN THE QUEUE RIGHT NOW. This number is the row's size, and it
+        must be captured BEFORE anything is added. Keep it; you will need it twice.
+
+     b. START A RUNNING TOTAL AT ZERO.
+
+     c. TAKE EXACTLY THAT MANY NODES FROM THE FRONT, one at a time:
+
+        - ADD THE NODE'S VALUE TO THE RUNNING TOTAL.
+        - PUSH ITS LEFT CHILD ONTO THE BACK, IF IT HAS ONE.
+        - PUSH ITS RIGHT CHILD ONTO THE BACK, IF IT HAS ONE.
+
+        The two "if it has one" checks matter: pushing a missing child puts nothing-at-all into the
+        queue, and the next node taken out will have no value to read.
+
+     d. DIVIDE THE RUNNING TOTAL BY THE NUMBER YOU WROTE DOWN, and add the result to the answer.
+
+        Use real division, not the kind that throws away the fraction. In a language where
+        whole-number division is the default, this is where you convert.
+
+  4. WHEN THE QUEUE EMPTIES, every level has contributed exactly one number. Return the list.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a family tree drawn on a large board, and you have been asked for the average age of each
+generation - the grandparents' average, then the parents', then the children's.
+
+You keep a waiting line. At the start the only person in it is the person at the top of the tree.
+
+Now you work in rounds, one round per generation. At the start of each round you count how many
+people are standing in the line and write that number on your hand. That number matters enormously,
+for two separate reasons, and people usually only remember the first.
+
+The first reason is that people are about to join the line while you work. As you call each person
+forward you also ask them to send their children to the back of the queue, so the line grows under
+you. Without the number on your hand you would have no idea where this generation ended and the
+next began.
+
+The second reason is that the number on your hand is exactly how many people are in this
+generation - which is precisely what you must divide by to get an average. You had to count them
+anyway to know when to stop; the divisor comes free.
+
+So you call forward exactly that many people, one at a time, writing each of their ages into a
+running total and sending their children to the back of the line. When you have called the last of
+them, you divide your running total by the number on your hand, write the result down, and start a
+new round.
+
+Two things will spoil this. The first is dividing in a way that throws away the fractional part -
+an average of twenty-nine across two people is fourteen and a half, and reporting fourteen is
+simply wrong. The second is starting when there is nobody at all: if you begin by putting an
+absence into the line, the line is not empty, so you dutifully call that absence forward and ask
+it its age. There is nobody there to answer.
+
+When the line finally empties, you have exactly one number per generation, in order from the top.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 3 / 9, 20 / 15, 7 beside you, and the answer [3.0, 14.5, 11.0].
+
+    from collections import deque
+
+A queue with constant-time removal from the front. A plain list with `pop(0)` also works and is
+O(n) per removal, which turns the whole traversal into O(n^2).
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None.
+
+    def average_of_levels(root):
+
+`root` is the top node. Returns a list of floats, one per level. The tree is never modified.
+
+        result = []
+
+Where the answers accumulate - one float per level, in order.
+
+        queue = deque([root])
+
+The waiting line, starting with just the root.
+
+    THIS IS THE LINE WITH THE BUG. If `root` is None, this builds a queue containing one element -
+    the value None - so `while queue` below is True and the first `node.val` raises AttributeError.
+    A `if not root: return []` guard belongs immediately above this line (trap 1).
+
+        while queue:
+
+One pass per LEVEL. Continues while anything remains. It terminates because every node enters the
+queue once and leaves once, and a tree has no cycles.
+
+            n = len(queue)
+
+THE FROZEN LEVEL SIZE - the line the whole technique rests on, AND the divisor.
+
+At this instant the queue holds every node of the current level and nothing else (section 5).
+Capturing it here is what stops children pushed below from being counted as part of this row.
+
+            level_sum = 0
+
+    level_sum  HOLDS the running total of this row's values. Reset each row - it is a per-level
+               quantity, not a per-tree one.
+
+            for _ in range(n):
+
+Take exactly `n` nodes. `range(n)` is built once from the frozen value, so appends during the loop
+cannot extend it - exactly the behaviour needed.
+
+The variable is `_` because nothing uses it; the loop is counting, not indexing.
+
+                node = queue.popleft()
+
+Take from the FRONT. First in, first out, which is what produces level order.
+
+                level_sum += node.val
+
+The only thing this problem does with a node. Right Side View, its cluster sibling, instead checks
+whether this is the last node of the row - the loop is otherwise identical, which is the point of
+learning it once.
+
+                if node.left: queue.append(node.left)
+                if node.right: queue.append(node.right)
+
+Push the children onto the BACK, left first. The two guards are trap 5: appending None would crash
+on the next `node.val`.
+
+Left before right keeps each row in left-to-right order. For an average that is irrelevant - addition
+does not care about order - but it matters for the siblings in this family, and it costs nothing.
+
+            result.append(level_sum / n)     # mean of this level
+
+THE DIVISION, AND THE SECOND USE OF THE FROZEN `n`.
+
+    `level_sum`  HOLDS the row's total.
+    `n`          DECIDES the divisor - the same number that decided how many nodes to take.
+    `/`          is TRUE division in Python 3, so 29 / 2 is 14.5. `//` would give 14 (trap 2), and
+                 in Java or C++ integer division is the DEFAULT and must be cast away.
+
+        return result
+
+The queue emptied, so every level has been processed and contributed exactly one average.""",
+
+    """9. TRACED, LEVEL BY LEVEL - INCLUDING THE DIVISION THAT EXPOSES THE TRAP.
+
+TRACE 1 - THE TEXTBOOK TREE.
+
+            3
+          /   \\
+         9     20
+              /  \\
+            15    7
+
+    START:  result = [],  queue = [3]
+
+    OUTER PASS 1 (level 0)
+        n = len(queue) = 1
+        level_sum = 0
+        i = 0:  node = 3.  queue = []
+                level_sum = 0 + 3 = 3
+                node.left is 9   ->  queue = [9]
+                node.right is 20 ->  queue = [9, 20]
+        result.append(3 / 1) = 3.0        ->  result = [3.0]
+
+    OUTER PASS 2 (level 1)
+        n = len(queue) = 2          <- FROZEN HERE, before any child is added
+        level_sum = 0
+        i = 0:  node = 9.  queue = [20]
+                level_sum = 0 + 9 = 9
+                9 has no children -> nothing pushed
+        i = 1:  node = 20.  queue = []
+                level_sum = 9 + 20 = 29
+                node.left is 15  ->  queue = [15]
+                node.right is 7  ->  queue = [15, 7]
+
+                LOOK AT THE QUEUE NOW: [15, 7] - both level 2. Had the row's end been decided by
+                looking at the queue at this moment rather than by the frozen n, these two would
+                have been swept into level 1, and the divisor would have been wrong as well as the
+                membership. THIS IS TRAP 4, VISIBLE.
+
+        result.append(29 / 2) = 14.5      ->  result = [3.0, 14.5]
+
+        AND THIS IS TRAP 2, VISIBLE. 29 / 2 is 14.5 in Python 3. Written as 29 // 2 it is 14, and
+        in Java with two ints it is 14 by default. The very first example in the problem statement
+        fails on this line if the division is not a real one.
+
+    OUTER PASS 3 (level 2)
+        n = 2, level_sum = 0
+        i = 0:  node = 15.  level_sum = 15.  no children.
+        i = 1:  node = 7.   level_sum = 22.  no children.  queue = []
+        result.append(22 / 2) = 11.0      ->  result = [3.0, 14.5, 11.0]
+
+    queue is empty  ->  the while loop ends.
+
+    return [3.0, 14.5, 11.0].
+
+    CHECK AGAINST SECTION 1: the mean of ALL five nodes is 54 / 5 = 10.8, and the mean of the three
+    level means is (3.0 + 14.5 + 11.0) / 3 = 9.5. Neither equals any level's answer, and neither is
+    what was asked. Three different numbers from the same tree.
+
+TRACE 2 - NEGATIVE VALUES AND A FRACTIONAL ANSWER. Tree [1, -2, 3]:
+
+            1
+          /   \\
+        -2     3
+
+    PASS 1:  n = 1, level_sum = 1.  result = [1.0].  queue = [-2, 3]
+    PASS 2:  n = 2, level_sum = -2 + 3 = 1.  1 / 2 = 0.5.  result = [1.0, 0.5]
+
+    return [1.0, 0.5].
+
+    Negatives need no special handling at all - the sum is just a sum. But note the answer 0.5: a
+    level whose values are -2 and 3 has a positive average smaller than either... no, smaller than
+    one of them and larger than the other, which is what a mean does. The point is that `//` here
+    would give 0, and 0 is not obviously wrong-looking, which is exactly what makes trap 2
+    dangerous.
+
+TRACE 3 - THE SKEWED TREE. 1 -> 2 -> 3, right children only:
+
+    PASS 1:  n = 1, sum 1  ->  1.0.  queue = [2]
+    PASS 2:  n = 1, sum 2  ->  2.0.  queue = [3]
+    PASS 3:  n = 1, sum 3  ->  3.0.  queue = []
+
+    return [1.0, 2.0, 3.0] - each level has one node, so each average is that node's value.
+    The queue never holds more than one node, which is BFS's best case for memory (O(width) = 1)
+    and DFS's worst case for stack depth.
+
+TRACE 4 - THE EMPTY TREE, AS THE CODE IS WRITTEN. root = None.
+
+    queue = deque([None])            <- a queue of LENGTH 1, holding None
+    while queue:                     <- TRUE. len is 1, not 0.
+        n = 1
+        level_sum = 0
+        i = 0:  node = queue.popleft()  ->  node is None
+                level_sum += node.val   ->  AttributeError: 'NoneType' object has no attribute 'val'
+
+    IT CRASHES. Not a wrong answer - an exception, on the simplest possible input. The one-line
+    guard `if not root: return []` at the top fixes it, and it is the first thing to add if this
+    code is ever used.
+
+THE TINY INPUT THAT WORKS:
+    A SINGLE NODE, value 5.  queue = [5], n = 1, level_sum = 5, no children, result = [5.0], queue
+    empties. Correct.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: every node is added to the queue exactly once and removed exactly once, and the
+work per node - one addition, two child checks - is constant. The divisions cost one per LEVEL,
+which is at most n. So the total is proportional to the number of nodes, whatever shape the tree is.
+
+SPACE: O(w), where w is the tree's maximum WIDTH - the most nodes on any one level. For a complete
+tree the bottom level holds about half the nodes, so roughly n/2 in the worst case; for a skewed
+tree, 1. The output list adds O(h), one float per level.
+
+    THE OPPOSITE TRADE against the DFS alternative from section 5: BFS space is O(WIDTH), DFS space
+    is O(HEIGHT). Bushy tree - BFS expensive, DFS cheap. Long thin tree - the reverse. Naming which
+    one your tree is likely to be is a good interview answer.
+
+THE FAMILY THIS UNLOCKS, and the real value of the frozen-size loop - each of these is the SAME
+loop with one line changed at the point where you decide what to record:
+
+    LEVEL ORDER TRAVERSAL        collect every node of the row into a sub-list
+    AVERAGE OF LEVELS            sum the row and divide by n            <- this entry
+    MAXIMUM IN EACH LEVEL        keep the largest of the row
+    RIGHT SIDE VIEW              record when i == n - 1                 <- the cluster sibling that
+                                                                          owns the mechanism
+    LEFT SIDE VIEW               record when i == 0
+    ZIGZAG LEVEL ORDER           reverse alternate rows before appending
+    MINIMUM DEPTH                return the level number the first leaf appears at
+
+Six problems, one loop. Say that in an interview - it shows you recognised a pattern rather than a
+puzzle.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Could you do it depth-first?" Yes - carry the depth and keep parallel sums and counts arrays.
+    O(n) time, O(height) space. Prefer it on a very wide tree.
+  - "What if the values are large?" In a fixed-width-integer language, sum into a long or a double:
+    10^4 nodes at 2^31 - 1 each is about 2.1 x 10^13, ten thousand times an int32's ceiling.
+  - "What about the median of each level instead of the mean?" You now need to KEEP the row's
+    values rather than accumulate them, so version B from section 5 becomes the right shape - and
+    the space goes from O(1) per row to O(width).
+  - "What if the tree is enormous and you only need the first few levels?" Stop after k rows; BFS
+    naturally supports that, DFS does not without extra bookkeeping.
+
+THE #1 BEGINNER MISTAKE: integer division. In Python you have to opt in to it with `//`, but in
+Java and C++ `sum / n` on two ints truncates BY DEFAULT, and the example tree in the problem
+statement fails immediately - 14 instead of 14.5. Cast one operand to a double.
+
+RUNNER-UP, AND IT IS A LIVE DEFECT IN THIS ENTRY'S CODE: the empty tree. `deque([None])` is a queue
+of length one, so `while queue` does not save you; the loop runs, pops None, and crashes on
+`node.val`. One line at the top - `if not root: return []` - fixes it.
+
+TAKEAWAY: freeze the queue's length before each row, and use that one number twice - as the count
+of nodes to take AND as the divisor for their total - so the average of each level costs nothing
+beyond the traversal you were already doing.""",
 ]
 
 _EX_P0H["Binary Tree Tilt"] = [
-    """The textbook tree, traced bottom-up.
-        1
-      /   \\
-     2     3
-subtree_sum(2): leaf, left=right=0 -> tilt |0-0| = 0, returns 2.
-subtree_sum(3): tilt 0, returns 3.
-subtree_sum(1): left=2, right=3 -> tilt |2-3| = 1, total becomes 1; returns
-1+2+3 = 6.
-Answer 1. Only the root has a non-zero tilt because the leaves have no
-subtrees.""",
+    """1. THE GOAL - a made-up word, defined carefully.
 
-    """A deeper tree where several tilts add up.
-        4
-      /   \\
-     2     9
-    / \\      \\
-   3   5      7
-subtree_sum(3)=3 (tilt 0); subtree_sum(5)=5 (tilt 0).
-subtree_sum(2): left 3, right 5 -> tilt 2; returns 2+3+5 = 10.
-subtree_sum(7)=7 (tilt 0).
-subtree_sum(9): left 0, right 7 -> tilt 7; returns 9+7 = 16.
-subtree_sum(4): left 10, right 16 -> tilt 6; returns 4+10+16 = 30.
-Total tilt = 0+0+2+0+7+6 = 15.""",
+The problem invents a word, so getting it exactly right is most of the battle.
 
-    """The two quantities, and why mixing them up is the whole difficulty.
-The function RETURNS the subtree SUM (what the parent needs) while it
-ACCUMULATES the tilt into a variable outside the recursion (what the answer
-needs).
-Return the tilt instead and the parent gets the wrong number; accumulate the sum
-instead and you compute the tree total rather than the tilt total.
-This is the identical shape as Binary Tree Maximum Path Sum and Diameter of a
-Binary Tree - postorder DFS that returns one thing and scores another. Once you
-see that, three separate problems become one pattern.""",
+    A NODE'S TILT is the ABSOLUTE DIFFERENCE between the SUM OF ITS LEFT SUBTREE and the SUM OF
+    ITS RIGHT SUBTREE.
 
-    """Negative values, and single-node / empty trees.
-Tree [1, -2, 3]: tilt at the root is |-2 - 3| = 5; the leaves contribute 0.
-Answer 5. The absolute value is what makes the sign irrelevant - a common slip is
-to write left - right and let negatives cancel across the tree.
-Single node [7]: tilt 0 (both subtrees are empty).
-Empty tree: subtree_sum(None) returns 0 immediately and the answer is 0 - the
-None base case makes this work with no extra guard.""",
+    THE ANSWER IS THE SUM OF EVERY NODE'S TILT.
 
-    """Why it is O(n) and not O(n^2).
-The naive reading - 'for each node, sum its left subtree and its right subtree' -
-recomputes the same sums over and over: O(n) work per node, O(n^2) total, which
-on a 10^5-node tree is 10^10 operations.
-The postorder version computes each subtree sum exactly ONCE and passes it up, so
-every node is visited once: O(n) time, O(height) stack.
-That is the general lesson of postorder DFS: information flows UP the tree, so
-never ask for it a second time.""",
+Three details hide in that sentence, and each one trips somebody:
 
-    """The pattern's other members.
-- Diameter: return height, score left_height + right_height.
-- Maximum Path Sum: return the best downward gain, score the turn.
-- Count Good Nodes, Sum of Left Leaves, House Robber III, Longest Univalue Path:
-  all 'return one value, accumulate another'.
-Write the skeleton once - None base case, recurse both children, combine, update
-the accumulator, return the parent's value - and each of these is a two-line
-change. In an interview, naming the skeleton before you code makes the solution
-look inevitable rather than clever.""",
+    "SUBTREE SUM" means ALL the values in that whole subtree, not just the child's value.
+    THE NODE'S OWN VALUE IS NOT PART OF ITS OWN TILT. Only what hangs below it.
+    A MISSING SUBTREE COUNTS AS ZERO, not as "skip this node".
+
+Worked on the smallest interesting tree:
+
+            1
+          /   \\
+         2     3
+
+    node 2 - a leaf.  Left subtree sum 0, right subtree sum 0.  TILT |0 - 0| = 0
+    node 3 - a leaf.  Same.                                     TILT 0
+    node 1 - left subtree is just {2}, so its sum is 2.
+             right subtree is just {3}, so its sum is 3.        TILT |2 - 3| = 1
+             (The root's own value, 1, plays no part in its own tilt.)
+
+    ANSWER: 0 + 0 + 1 = 1
+
+EVERY LEAF HAS TILT ZERO, always - both its subtrees are empty. So all the answer's weight comes
+from the internal nodes, and a tree of n nodes has at most about n/2 of those.
+
+THE SHAPE OF THE DIFFICULTY. Every node needs to know its two subtree sums, and every node's PARENT
+needs to know this node's subtree sum. The naive reading - "for each node, go and add up its left
+subtree, then its right" - recomputes the same sums over and over. Section 5 puts a number on how
+bad that is. The fix is to compute each subtree sum ONCE, on the way back up.""",
+
+    """2. THE INTUITION - one walk that returns one thing and records another.
+
+Do it BOTTOM-UP. You cannot know a node's tilt until you know what is below it, so finish the
+children before touching the parent. That is a POST-ORDER walk: left, then right, then me.
+
+            4
+          /   \\
+         2     9
+        / \\      \\
+       3   5      7
+
+Work upward, and at each node write down TWO facts:
+
+                                        RETURNS to parent      ADDS to the answer
+    node 3 (leaf):   sums 0 and 0        3 + 0 + 0 = 3          |0 - 0| = 0
+    node 5 (leaf):   sums 0 and 0        5 + 0 + 0 = 5          |0 - 0| = 0
+    node 2:          sums 3 and 5        2 + 3 + 5 = 10         |3 - 5| = 2
+    node 7 (leaf):   sums 0 and 0        7 + 0 + 0 = 7          |0 - 0| = 0
+    node 9:          sums 0 and 7        9 + 0 + 7 = 16         |0 - 7| = 7
+    node 4:          sums 10 and 16      4 + 10 + 16 = 30       |10 - 16| = 6
+
+    TOTAL TILT: 0 + 0 + 2 + 0 + 7 + 6 = 15
+
+LOOK AT THE TWO COLUMNS. They are DIFFERENT QUANTITIES and they never mix:
+
+    THE RETURNED VALUE is the SUBTREE SUM - what the parent needs in order to do its own job.
+    THE RECORDED VALUE is the TILT - what the answer needs, and which nobody above ever reads.
+
+    Node 2 returns 10 and contributes 2. Node 9 returns 16 and contributes 7. A single function
+    call produces both, and confusing them is the entire difficulty of this problem (section 4).
+
+WHY EACH SUM IS COMPUTED ONLY ONCE. When node 4 asks for its left subtree's sum, node 2 has
+ALREADY computed it - as part of doing its own tilt - and simply hands the number up. Nothing is
+recalculated. The sum for {2,3,5} is worked out once, at node 2, and travels upward as a single
+number.
+
+    node 3 -> 3 ---\\
+                    +--> node 2 -> 10 ---\\
+    node 5 -> 5 ---/                      +--> node 4 -> 30
+                       node 9 -> 16 -----/
+    node 7 -> 7 -----/
+
+Every arrow carries one number, and there are exactly as many arrows as nodes.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBTREE. A node together with everything hanging below it. Node 2's subtree in the picture is
+{2, 3, 5}.
+
+SUBTREE SUM. The total of all values in that subtree - the node's own value INCLUDED. Node 2's
+subtree sum is 2 + 3 + 5 = 10.
+
+TILT (of one node). |sum of left subtree - sum of right subtree|. The node's OWN value is excluded.
+An empty subtree contributes 0.
+
+TOTAL TILT. The sum of every node's tilt - the answer.
+
+LEAF. A node with no children. Its tilt is always |0 - 0| = 0.
+
+ABSOLUTE VALUE, `abs`. Distance from zero, ignoring sign. |−7| = 7. It is what makes "difference"
+symmetric - a node leaning left counts the same as one leaning right - and it is why negative node
+values cannot cancel the answer out.
+
+POST-ORDER DFS. Visit left, then right, then the node itself. THE ONLY ORDER THAT WORKS HERE,
+because a node's work needs both children's results already in hand.
+
+RECURSION. A function calling itself. Each call PAUSES at the call site and resumes there when the
+inner call returns.
+
+THE CALL STACK. The pile of paused calls. Each holds its own `node`, `left` and `right`, which is
+what lets the walk go down and come back up correctly.
+
+CLOSURE / nonlocal. `subtree_sum` is defined inside `find_tilt`, so it can see `total_tilt`. The
+`nonlocal` declaration is what lets it ASSIGN to it rather than create a local shadow - section 4
+shows the crash without it.
+
+total_tilt. The running answer, accumulated across every call.
+subtree_sum(node). The recursive helper. Returns the subtree sum; accumulates the tilt as a side
+effect.
+left, right. Inside one call: the two children's SUBTREE SUMS - not the child nodes themselves.
+
+O(n). Work proportional to the number of nodes; each is visited exactly once.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - two quantities, and one keyword.
+
+TRAP 1 - RETURNING THE TILT INSTEAD OF THE SUM. This is the mistake, and it is silent.
+
+The function has to produce two different things, and the tilt is the one you were asked for - so
+returning it feels natural. It destroys the algorithm. Trace the deeper tree from section 2 with
+`return abs(left - right)` in place of `return node.val + left + right`:
+
+    subtree_sum(3):  leaf.  left = 0, right = 0.  total_tilt += 0.  RETURNS |0 - 0| = 0
+    subtree_sum(5):  same.  RETURNS 0
+    subtree_sum(2):  left = 0, right = 0        <- it thinks BOTH subtrees are empty
+                     total_tilt += |0 - 0| = 0  <- should have been 2
+                     RETURNS 0
+    subtree_sum(7):  RETURNS 0
+    subtree_sum(9):  left = 0, right = 0.  total_tilt += 0.  <- should have been 7.  RETURNS 0
+    subtree_sum(4):  left = 0, right = 0.  total_tilt += 0.  <- should have been 6.  RETURNS 0
+
+    TOTAL: 0, where the correct answer is 15.
+
+    EVERY LEAF IS HONEST - a leaf's tilt and its "sum of nothing" both happen to be 0 - so the
+    corruption starts one level up and never announces itself. The function still returns an
+    integer, still runs in O(n), and answers 0 for every tree whose leaves are its only nodes with
+    tilt 0, which is every tree. That is why this bug survives casual testing.
+
+TRAP 2 - PUTTING THE NODE'S OWN VALUE INTO ITS TILT. The tilt is |left - right|, NOT
+|(node.val + left) - right| or anything similar. On the tree 1 / 2, 3 the root's tilt is |2 - 3| = 1
+and the 1 never appears. Note the CONTRAST with the return value, where `node.val` IS included -
+the same two numbers, combined differently, one line apart.
+
+TRAP 3 - FORGETTING `nonlocal`. Without it, `total_tilt += abs(left - right)` makes `total_tilt` a
+LOCAL variable of `subtree_sum`, and `+=` has to read it before writing it:
+
+    UnboundLocalError: local variable 'total_tilt' referenced before assignment
+
+    A crash rather than a wrong answer, which is a mercy. The alternatives are to carry the total
+    in a one-element list (`total = [0]`, then `total[0] += ...`), which needs no declaration
+    because the list is mutated rather than reassigned, or to return a PAIR (sum, tilt) from every
+    call and add them up on the way back.
+
+TRAP 4 - NEGATIVE VALUES. Tree [1, -2, 3]:
+
+            1
+          /   \\
+        -2     3
+
+    Root tilt |−2 − 3| = |−5| = 5. The leaves contribute 0.  ANSWER 5.
+
+    The `abs` is what stops the two sides cancelling. Without it the root would contribute −5, and
+    a tree could report a NEGATIVE total tilt - which is meaningless, since a tilt is a magnitude.
+    Also note |−2 − 3| is 5, not 1: it is the difference between −2 and 3, which is a gap of five.
+
+TRAP 5 - THE EMPTY TREE AND THE SINGLE NODE.
+    root = None:  `subtree_sum(None)` returns 0 immediately, nothing is accumulated, answer 0.
+    A single node: both children are None, so left = right = 0, tilt |0 − 0| = 0, answer 0. The
+    node's own value is irrelevant - a one-node tree has zero tilt however large that node is.
+    Both correct with no special case, because the `if node is None: return 0` base case handles
+    absent subtrees and the absent tree with the same line.""",
+
+    """5. THE NAIVE VERSION FIRST, AND THE NUMBER THAT RULES IT OUT.
+
+VERSION A - THE LITERAL READING. "For each node, sum its left subtree and sum its right subtree,
+take the difference, and add it up."
+
+    for each node:
+        l = sum_of(node.left)      # walks that whole subtree
+        r = sum_of(node.right)     # walks that whole subtree
+        total += abs(l - r)
+
+Correct, and it recomputes the same sums enormously many times. A node's subtree gets re-summed
+once for every ancestor it has.
+
+    PUT A NUMBER ON IT. Take a RIGHT-SKEWED CHAIN of n nodes - 1 -> 2 -> 3 -> ... -> n. The node at
+    depth i has a subtree of n − i nodes, and summing it costs that much. The total is
+
+        n + (n−1) + (n−2) + ... + 1  =  n(n+1)/2
+
+    FOR n = 1000 THAT IS 500,500 OPERATIONS. The post-order version does 1,000.
+    FIVE HUNDRED TIMES THE WORK, and the gap widens linearly - at n = 10,000 it is 50,005,000
+    against 10,000, a factor of 5,000.
+
+    For a BALANCED tree it is gentler: each level re-sums the whole tree once, and there are log n
+    levels, so O(n log n). Better, still worse than necessary, and still the wrong answer to give.
+
+VERSION B - PRECOMPUTE EVERY SUBTREE SUM INTO A DICTIONARY, then walk again to compute the tilts.
+Two passes, O(n) time, O(n) extra memory for the dictionary. Correct, and it shows the right
+instinct - compute each sum once - but it stores every sum when only the two immediately below a
+node are ever needed at one time.
+
+VERSION C - ONE POST-ORDER WALK THAT RETURNS THE SUM AND ACCUMULATES THE TILT, which is the code
+here. O(n) time, O(1) extra memory beyond the call stack. Each sum is produced once and consumed
+immediately by the parent.
+
+THE PATTERN THIS BELONGS TO - and it is worth naming, because half a dozen tree problems are the
+same trick:
+
+    RETURN THE THING THE PARENT NEEDS. ACCUMULATE THE THING THE ANSWER NEEDS.
+
+    BINARY TREE TILT     return the subtree SUM        score |left − right|
+    DIAMETER OF A TREE   return the subtree HEIGHT     score left_height + right_height
+    MAXIMUM PATH SUM     return the best DOWNWARD gain score left + right + node.val (the "turn")
+    BALANCED BINARY TREE return the HEIGHT             score whether |lh − rh| > 1
+    COUNT UNIVALUE SUBTREES  return whether the subtree is uniform, score 1 if so
+    HOUSE ROBBER III     return a PAIR (rob, skip)     score the max of the root's pair
+
+    In every one, the returned value and the scored value are DIFFERENT, and mixing them up is the
+    bug. Balanced Binary Tree is the exemplar of this family and is worth reading beside this entry;
+    it owns the height version, this one owns the sum version.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE TREE BOTTOM-UP, AND AT EVERY NODE USE ITS TWO
+CHILDREN'S SUBTREE TOTALS TWICE - ONCE TO ADD THEIR DIFFERENCE INTO A RUNNING ANSWER, AND ONCE TO
+BUILD THIS NODE'S OWN TOTAL TO HAND UPWARD.
+
+THIS VERSION IS RECURSIVE, and the mechanism is the whole point:
+
+  - The helper calls itself on the left child, then on the right child, and only then does any work
+    of its own. Each call PAUSES at the call site, holding its own node and, once they return, the
+    two numbers that came back.
+  - Those paused calls are the CALL STACK. It gets as deep as the tree is TALL - which for a
+    balanced tree of a million nodes is about 20 frames, and for a long thin chain of a million
+    nodes is a million frames, well past Python's default limit of 1,000.
+  - WHAT MAKES IT STOP: the base case. An absent node returns zero without recursing, and every
+    path downward reaches absence eventually because the tree is finite and has no cycles.
+  - WHY IT MUST BE POST-ORDER: a node cannot compute anything until BOTH children have reported
+    back. Doing the node's work before recursing would use numbers that do not exist yet.
+
+THE STEPS:
+
+  1. START A RUNNING ANSWER AT ZERO. It lives OUTSIDE the walk, because every node adds to the same
+     total.
+
+  2. DEFINE THE WALK, which takes one node and hands back that node's subtree total:
+
+     a. IF THERE IS NO NODE, HAND BACK ZERO. An absent subtree contributes nothing, and this is
+        also what stops the recursion.
+
+     b. RUN THE SAME WALK ON THE LEFT CHILD and keep the number it hands back. That number is the
+        LEFT SUBTREE'S TOTAL - not the child's value.
+
+     c. RUN THE SAME WALK ON THE RIGHT CHILD and keep its number too.
+
+     d. ADD THE SIZE OF THE GAP BETWEEN THOSE TWO NUMBERS TO THE RUNNING ANSWER. The SIZE of the
+        gap - ignore which side is bigger, because a tree leaning left is just as tilted as one
+        leaning right, and without ignoring the sign the two directions would cancel out.
+
+        THIS NODE'S OWN VALUE DOES NOT APPEAR IN THIS STEP.
+
+     e. HAND BACK THIS NODE'S OWN VALUE PLUS BOTH CHILDREN'S TOTALS. THIS NODE'S OWN VALUE DOES
+        APPEAR HERE.
+
+        Steps d and e use the same two numbers and combine them differently. Handing back the gap
+        from step d instead of the total from step e is the mistake that quietly returns zero for
+        every tree.
+
+  3. RUN THE WALK FROM THE ROOT. Throw away what it returns - the root's subtree total is the whole
+     tree's total, which nobody asked for.
+
+  4. THE ANSWER IS THE RUNNING TOTAL.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture a company org chart, where every person has a number written against their name - say the
+sales they personally brought in - and at most two direct reports.
+
+You want to know, for the whole company, how lopsided it is: for each manager, how different are
+the totals of their two reporting branches, and what do all those differences add up to?
+
+You cannot start at the top. The chief executive's two branches have totals you do not know yet.
+So you go all the way down to the people with nobody reporting to them and work upward.
+
+At each person you do exactly two things, and it is worth being clear that they are two different
+things, because the whole exercise falls apart if they get muddled.
+
+The first thing: you take the totals reported up from the two branches beneath this person and you
+note down the GAP between them - just the size of the gap, not which side is bigger, because a
+company leaning left is exactly as lopsided as one leaning right, and if you kept the signs the two
+directions would cancel and you would end up reporting that a wildly unbalanced company is
+perfectly even. You add that gap to a tally you have been keeping for the whole company. This
+person's own sales figure has nothing to do with this gap - the question is about the branches
+below them.
+
+The second thing: you work out this person's branch total, which IS their own figure plus both
+branches beneath them, and you report THAT upward to their manager.
+
+So each person passes one number up and writes a different number in the tally. Somebody with
+branches totalling ten and sixteen adds six to the tally and reports thirty upward if their own
+figure is four. Those two numbers, six and thirty, have nothing to do with each other, and passing
+the six upward instead of the thirty is the way this goes wrong - because then their manager
+believes the branch below them is worth six, and the manager above that believes something smaller
+still, and by the time it reaches the top every branch appears to be worth nothing and the tally
+comes out as zero for a company that is plainly lopsided.
+
+Somebody with nobody beneath them has two empty branches. The gap between nothing and nothing is
+nothing, so they add zero to the tally, and they report their own figure upward.
+
+When you finally reach the top, the tally is the answer. The chief executive's branch total - the
+whole company's sales - is a number you happen to have computed and do not need.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the deeper tree beside you: 4 with children 2 and 9; 2 with children 3 and 5; 9 with right
+child 7. Answer 15.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None.
+
+    def find_tilt(root):
+        total_tilt = 0
+
+    total_tilt  HOLDS the running answer - the sum of every node's tilt so far. It lives OUT HERE,
+                outside the helper, because every node contributes to the same total and no single
+                call owns it.
+
+        def subtree_sum(node):
+
+THE HELPER, and its name is the honest one: IT RETURNS A SUBTREE SUM. The tilt is a side effect. If
+this were named `tilt_of` the trap in section 4 would be almost guaranteed.
+
+Defined inside `find_tilt` so it can see `total_tilt`.
+
+            nonlocal total_tilt
+
+The declaration that makes `total_tilt += ...` below modify the OUTER variable rather than creating
+a local one. Without it Python treats `total_tilt` as local to `subtree_sum`, and `+=` reads it
+before it exists: UnboundLocalError (trap 3).
+
+            if node is None:
+                return 0
+
+THE BASE CASE, doing two jobs. It stops the recursion, and it defines an absent subtree's sum as
+ZERO - which is exactly right, and is why a node with one missing child needs no special handling
+anywhere else. It also makes `find_tilt(None)` return 0 without a separate guard.
+
+            left = subtree_sum(node.left)
+            right = subtree_sum(node.right)
+
+THE TWO RECURSIVE CALLS, and note what the variables hold:
+
+    left   HOLDS the SUM OF THE ENTIRE LEFT SUBTREE - not `node.left`, and not `node.left.val`.
+           For node 4 in the traced tree this is 10, the total of {2, 3, 5}.
+    right  HOLDS the same for the right subtree. For node 4 this is 16, the total of {9, 7}.
+
+Both must complete BEFORE the next two lines run - that is what makes this post-order, and it is
+not optional: the node's work is defined in terms of these two numbers.
+
+            total_tilt += abs(left - right)   # this node's tilt
+
+THE ACCUMULATION - the answer's half of the job.
+
+    `left - right`  is the signed lean.
+    `abs(...)`      DECIDES that direction does not matter, so a left-heavy node and a right-heavy
+                    one count the same. It is also what stops a total tilt from ever being negative
+                    (trap 4).
+    `+=`            adds this node's contribution to the running total, which is why every node in
+                    the tree gets counted exactly once.
+
+`node.val` DOES NOT APPEAR ON THIS LINE. The tilt is about what hangs below the node, not the node
+(trap 2).
+
+            return node.val + left + right    # subtree total for the parent
+
+THE RETURN - the parent's half of the job, and the line the whole algorithm depends on.
+
+`node.val` DOES appear here. Same two numbers as the line above, combined differently, one line
+apart - which is precisely why they get confused.
+
+Return `abs(left - right)` here instead and the function still compiles, still runs in O(n), and
+answers 0 for every tree. Section 4 traces that.
+
+        subtree_sum(root)
+
+Kick the walk off at the root. THE RETURN VALUE IS DISCARDED - it is the whole tree's sum, which is
+not what was asked. The useful output arrived as a side effect on `total_tilt`.
+
+        return total_tilt""",
+
+    """9. TRACED, CALL BY CALL - AND THE SAME TREE WITH THE WRONG RETURN.
+
+TRACE 1 - THE SMALL TREE. 1 with children 2 and 3. Expected 1.
+
+    total_tilt = 0
+
+    subtree_sum(1)
+        left  = subtree_sum(2)
+            left = subtree_sum(None) = 0
+            right = subtree_sum(None) = 0
+            total_tilt += |0 - 0| = 0            ->  total_tilt = 0
+            return 2 + 0 + 0 = 2
+        right = subtree_sum(3)
+            same shape.  total_tilt += 0  ->  still 0.  return 3
+        total_tilt += |2 - 3| = 1                ->  total_tilt = 1
+        return 1 + 2 + 3 = 6                     <- discarded by the caller
+
+    return total_tilt = 1.   Correct.
+
+    NOTE THE ROOT'S TWO NUMBERS: it contributed 1 to the answer and returned 6. Neither is the
+    other, and the root's own value 1 is in the 6 and not in the 1.
+
+TRACE 2 - THE DEEPER TREE, where several tilts add up.
+
+            4
+          /   \\
+         2     9
+        / \\      \\
+       3   5      7
+
+    subtree_sum(4)
+      subtree_sum(2)
+        subtree_sum(3):  leaf.  left = 0, right = 0.  total_tilt += 0  ->  0.   RETURNS 3
+        subtree_sum(5):  leaf.  total_tilt += 0  ->  0.                        RETURNS 5
+        left = 3, right = 5
+        total_tilt += |3 - 5| = 2                ->  total_tilt = 2
+        RETURNS 2 + 3 + 5 = 10
+      subtree_sum(9)
+        subtree_sum(None) = 0                    <- node 9 has NO left child
+        subtree_sum(7):  leaf.  total_tilt += 0  ->  2.                        RETURNS 7
+        left = 0, right = 7
+        total_tilt += |0 - 7| = 7                ->  total_tilt = 9
+        RETURNS 9 + 0 + 7 = 16
+
+        THIS IS THE MISSING-CHILD CASE, AND NOTHING SPECIAL HAPPENED. The base case turned the
+        absent left subtree into a 0, and |0 - 7| = 7 is a genuinely large tilt - node 9 is
+        strongly lopsided, which is exactly what the answer should say.
+
+      left = 10, right = 16
+      total_tilt += |10 - 16| = 6                ->  total_tilt = 15
+      RETURNS 4 + 10 + 16 = 30                   <- discarded
+
+    return 15.
+
+    CHECK BY HAND: tilts are 0 (node 3) + 0 (node 5) + 2 (node 2) + 0 (node 7) + 7 (node 9)
+    + 6 (node 4) = 15. And the returned 30 is 4 + 2 + 9 + 3 + 5 + 7 = 30, the whole tree's sum -
+    correct, and unused.
+
+    COUNT THE WORK: six real nodes, six calls that did work, plus one call per missing child. Every
+    subtree sum was computed exactly once. The naive version would have re-summed {3,5} once at
+    node 2 and again at node 4.
+
+TRACE 3 - THE SAME TREE WITH `return abs(left - right)` INSTEAD (trap 1).
+
+    subtree_sum(3):  RETURNS |0-0| = 0     (a leaf's tilt and its sum-of-nothing are both 0 - the
+    subtree_sum(5):  RETURNS 0              corruption is invisible at this level)
+    subtree_sum(2):  left = 0, right = 0   <- it now believes both branches are EMPTY
+                     total_tilt += |0-0| = 0        (should have been 2)
+                     RETURNS |0-0| = 0
+    subtree_sum(7):  RETURNS 0
+    subtree_sum(9):  left = 0, right = 0.  total_tilt += 0    (should have been 7).  RETURNS 0
+    subtree_sum(4):  left = 0, right = 0.  total_tilt += 0    (should have been 6).  RETURNS 0
+
+    return 0, where the correct answer is 15.
+
+    ONE LINE CHANGED, and every non-leaf node's contribution silently vanished. The function did
+    not crash, did not slow down, and returned a plausible-looking integer.
+
+TRACE 4 - NEGATIVE VALUES (trap 4). Tree 1 with children −2 and 3.
+
+    subtree_sum(-2):  leaf.  total_tilt += 0.  RETURNS -2 + 0 + 0 = -2
+    subtree_sum(3):   leaf.  total_tilt += 0.  RETURNS 3
+    subtree_sum(1):   left = -2, right = 3
+                      total_tilt += |-2 - 3| = |-5| = 5   ->  total_tilt = 5
+                      RETURNS 1 + (-2) + 3 = 2
+
+    return 5.
+
+    THE `abs` IS DOING REAL WORK HERE. Without it the root would contribute −5 and the function
+    would return −5 - a negative total tilt, which is meaningless. And note the gap between −2 and
+    3 is FIVE, not one: it is a distance, not a subtraction you eyeball.
+
+THE TINY INPUTS:
+    root = None      subtree_sum(None) returns 0 at once, total_tilt is never touched.  RETURNS 0.
+    A SINGLE NODE    both children are None, so left = right = 0, tilt |0 - 0| = 0.  RETURNS 0
+                     regardless of the node's value - a one-node tree cannot lean.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: `subtree_sum` is called exactly once per node (plus once per missing child, which
+returns immediately), and each call does a fixed amount of work - one subtraction, one absolute
+value, two additions. Nothing is recomputed, because each node's sum is produced once and consumed
+straight away by its parent.
+
+    AGAINST THE NAIVE VERSION: O(n^2) on a skewed tree, O(n log n) on a balanced one. Section 5's
+    number - 500,500 operations against 1,000 on a 1,000-node chain - is the one to quote.
+
+SPACE: O(h), where h is the tree's HEIGHT, for the recursion stack. Nothing else is stored.
+
+    That is O(log n) for a balanced tree - about 20 frames for a million nodes - and O(n) for a
+    skewed one. Python's default recursion limit is 1,000, so a chain of more than about a thousand
+    nodes raises RecursionError. The fix is an explicit stack, or Morris-style threading, and it is
+    worth mentioning unprompted.
+
+THE PATTERN, WHICH IS THE REAL PRIZE - "RETURN WHAT THE PARENT NEEDS, ACCUMULATE WHAT THE ANSWER
+NEEDS". Six problems, one shape:
+
+    BINARY TREE TILT          return SUBTREE SUM            score |left − right|
+    DIAMETER OF A TREE        return HEIGHT                 score left_height + right_height
+    MAXIMUM PATH SUM          return the best DOWNWARD gain score the "turn" through the node
+    BALANCED BINARY TREE      return HEIGHT                 score whether |lh − rh| > 1
+    COUNT UNIVALUE SUBTREES   return "is this uniform"      score 1 when it is
+    HOUSE ROBBER III          return a PAIR (rob, skip)     score max of the root's pair
+
+    Balanced Binary Tree is the exemplar of the family - read it beside this one. It owns the
+    HEIGHT version of the trick; this entry owns the SUM version. Once you have seen two of them,
+    the rest are the same function with two lines swapped.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it without `nonlocal`." Return a PAIR from every call - (subtree_sum, tilt_so_far) - and
+    combine them on the way up. Slightly more code, no shared state, and it generalises to
+    languages without closures.
+  - "Do it iteratively." Post-order with an explicit stack, or reverse a pre-order walk. Needed
+    once the tree can be deeper than the recursion limit.
+  - "Return the tilt of every node, not just the total." Same walk; append to a list instead of
+    adding to a running number.
+  - "What if a node had k children?" The definition of tilt stops making sense - "the difference
+    between two sides" needs exactly two sides. Say so; it is a good question to push back on.
+  - "What is the maximum possible tilt of a tree with n nodes?" One long chain puts everything on
+    one side of the root, so the tilt can be as large as the sum of all values.
+
+THE #1 BEGINNER MISTAKE: returning the tilt instead of the subtree sum. The function is asked for
+tilts, so returning one feels right - and because a leaf's tilt and its empty-subtree sum are both
+zero, the corruption starts one level up and produces 0 for every tree, with no crash and no
+warning.
+
+RUNNER-UP: forgetting `abs`, so a left-leaning node and a right-leaning one cancel out and a
+strongly lopsided tree reports a small or negative total.
+
+TAKEAWAY: walk post-order so both children have reported before the parent acts, then use their two
+subtree sums twice - their absolute difference goes into the running answer, and their sum plus the
+node's own value goes back to the parent - because those are two different numbers and returning
+the wrong one collapses the whole tree to zero.""",
 ]
 
 _EX_P0H["Count Pairs Whose Sum is Less than Target"] = [
