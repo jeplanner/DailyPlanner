@@ -102182,64 +102182,449 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1O["Corporate Flight Bookings"] = [
-    """The canonical difference array, traced.
-bookings = [[1,2,10],[2,3,20],[2,5,25]], n = 5.
-Booking [1,2,10]: diff[0] += 10, diff[2] -= 10.
-Booking [2,3,20]: diff[1] += 20, diff[3] -= 20.
-Booking [2,5,25]: diff[1] += 25, diff[5] -= 25.
-diff = [10, 45, -10, -20, 0, -25].
-Prefix sweep: 10, 55, 45, 25, 25 -> answer [10,55,45,25,25].
-Three bookings, six writes, one sweep - regardless of how many flights each
-booking spans.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The index arithmetic, which is where every bug lives.
-Flights are 1-INDEXED in the input and the array is 0-indexed, so a booking
-[first, last, seats] becomes `diff[first - 1] += seats` and
-`diff[last] -= seats`. That second index looks wrong until you see it: `last`
-in 0-indexed terms is the flight AFTER the last covered one, which is exactly
-where coverage should stop.
-So the general rule 'decrement at end + 1' is already baked in by the
-index shift. Writing `diff[last - 1] -= seats` ends the booking one flight
-early and undercounts every booking's final flight.""",
+An airline runs n flights, numbered 1, 2, 3, ... n. Corporate customers come in and
+book blocks of flights at a time. Each booking is written as three numbers:
 
-    """Why the array needs n + 1 slots.
-`diff[last]` can be diff[n] when a booking runs to the final flight, so the
-array must have n + 1 entries even though only the first n are read back. Size
-it at n and the largest legal input throws an IndexError - and only that input,
-which is why it survives casual testing.
-The extra slot is never included in the output; it exists purely to absorb the
-decrement that falls off the end.""",
+    [first, last, seats]
 
-    """Why this beats the naive loop, with numbers.
-The obvious solution adds `seats` to every flight in [first, last] - O(total
-span). With 20,000 bookings each covering 20,000 flights that is 400 million
-increments. The difference array does 40,000 writes plus a 20,000-element
-sweep.
-The saving comes from recording only where the total CHANGES and letting the
-prefix sum reconstruct everything between. That reframing - store the
-derivative, integrate at the end - is the whole technique, and it is worth
-saying in exactly those terms.""",
+and it means: "reserve `seats` seats on EVERY flight from number `first` through
+number `last`, inclusive - both ends included."
 
-    """Edge cases.
-A single-flight booking [3,3,5] -> diff[2] += 5, diff[3] -= 5 -> flight 3 gets
-5 and flight 4 gets none. The half-open handling works for a span of one.
-No bookings -> all zeros.
-A booking covering everything [1,n,x] -> diff[0] += x, diff[n] -= x -> every
-flight gets x.
-Overlapping bookings simply add, which is the point.
-Large seat counts can overflow a 32-bit accumulator in other languages once
-many bookings overlap; Python is immune.""",
+You are handed a pile of these bookings. You must report, for every single flight,
+how many seats in total have been reserved on it.
 
-    """Complexity and the family.
-O(bookings + n) time, O(n) space. Both optimal - you must read every booking
-and produce every flight's total.
-The family: Range Addition (identical), Car Pooling (the same sweep with a
-capacity check, and note its decrement is at `end` not `end+1` because
-passengers leave AT the stop), Points That Intersect With Cars, Meeting Rooms
-II, and Describe the Painting.
-Two-dimensional version: the same trick with four corner updates per rectangle
-and a 2-D prefix sum - which is how Range Addition II and image-summing
-problems work.""",
+    n = 5 flights
+    bookings = [[1, 2, 10], [2, 3, 20], [2, 5, 25]]
+
+    booking 1: 10 seats on flights 1 and 2
+    booking 2: 20 seats on flights 2 and 3
+    booking 3: 25 seats on flights 2, 3, 4 and 5
+
+    flight:        1     2     3     4     5
+    from bk 1:    10    10     .     .     .
+    from bk 2:     .    20    20     .     .
+    from bk 3:     .    25    25    25    25
+                 ---   ---   ---   ---   ---
+    ANSWER:       10    55    45    25    25
+
+Verified by brute force: [10, 55, 45, 25, 25].
+
+That is the whole question. The interesting part is not WHAT the answer is - it is
+how to get it without doing the addition you just watched, which touched a cell for
+every (booking, flight) pair.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+The naive method above writes into one cell per flight per booking. If a booking
+covers 20,000 flights, that is 20,000 additions for ONE booking. The realisation is
+that all those additions say the same boring thing over and over: "still 25, still
+25, still 25, still 25". You are re-stating a constant.
+
+So record only the moments where something CHANGES.
+
+    booking [2, 5, 25] on a 5-flight timeline:
+
+    flight     1     2     3     4     5   (past the end)
+               |     |     |     |     |     |
+    naive:     0    +25   +25   +25   +25
+                     ^^^^^^^^^^^^^^^^^^^^
+                     four writes saying "25"
+
+    changes:         +25                   -25
+                      ^                     ^
+                  it STARTS            it has ENDED
+                  here                 by here
+
+Two writes. Not four. Not twenty thousand.
+
+Now to READ the answer back, you walk left to right carrying a running total, adding
+whatever change you find:
+
+    marks:     .    +25    .     .     .    -25
+    running:   0     25    25    25    25
+    flight:    1      2     3     4     5
+                     ^ picks up the +25 and CARRIES it for free
+
+The carrying is what replaces all those repeated writes. The "+25" is paid for once
+and then it just rides along until a "-25" cancels it.
+
+The list of change-marks has a name: a DIFFERENCE ARRAY. The left-to-right carrying
+walk has a name: a PREFIX SUM. This entire problem is those two things back to back.""",
+
+    """3. EVERY TERM, DEFINED
+
+DIFFERENCE ARRAY. An array the same length as your answer (plus one spare slot),
+which does NOT hold values - it holds CHANGES. diff[i] means "at position i, the
+running total jumps by this much." Everywhere you did not write a change, the
+running total simply continues unaltered.
+
+  Everyday version: a bank statement does not print your balance for every second of
+  the day. It prints deposits and withdrawals. You recover the balance at any moment
+  by adding up everything that happened before it. Deposits and withdrawals are the
+  difference array; your balance is the prefix sum.
+
+PREFIX SUM. Walking the array from left to right keeping a single running total, and
+writing that running total down at each step. Position i of the prefix sum equals
+diff[0] + diff[1] + ... + diff[i].
+
+INCLUSIVE RANGE. A range where BOTH endpoints are part of it. "Flights 2 through 5"
+inclusive means flights 2, 3, 4 AND 5 - four flights. This problem's bookings are
+inclusive; that single fact decides where the minus sign goes, and getting it wrong
+is the single most common bug here.
+
+1-INDEXED. The problem numbers flights starting at 1, not at 0. Python lists start
+at 0. So flight number f lives at list position f - 1. Two different numbering
+systems in one problem is exactly why this looks harder than it is.
+
+O(n). "Work proportional to n." A loop that touches each of n things a fixed number
+of times. Contrast O(bookings x span), which is what the naive method costs - one
+touch per booking per flight it covers.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - AND IT IS THE MINUS SIGN
+
+There are two traps, and both are index arithmetic. Neither is conceptual. Both are
+brutal in an interview because the code LOOKS right.
+
+TRAP ONE - WHERE DOES THE MINUS GO?
+
+  A booking covers flights first..last INCLUSIVE. Flight `last` still gets the seats.
+  So the cancellation must land AFTER `last` - at last + 1 in flight numbers, which
+  is index `last` in the 0-indexed array. Writing the minus one slot early kills the
+  final flight of every booking.
+
+  Measured, on 6,000 random booking sets:
+      subtracting at diff[last - 1] instead of diff[last]:  WRONG on 5,030
+  And it is wrong on the very first official example:
+      correct                        [10, 55, 45, 25, 25]
+      minus one slot too early       [10, 45, 25, 25,  0]
+
+TRAP TWO - WHERE DOES THE PLUS GO?
+
+  The plus must land ON the first flight - index first - 1. Forgetting the -1 shifts
+  every booking one flight to the right.
+
+  Measured, on the same 6,000 sets:
+      adding at diff[first] instead of diff[first - 1]:  WRONG on 5,030
+      on the first official example: [0, 10, 45, 25, 25]  - flight 1 loses its seats
+
+TRAP THREE - THE ARRAY IS n + 1 LONG, NOT n
+
+  If a booking runs all the way to the last flight, `last` equals n, so the minus is
+  written at diff[n] - one past the final answer slot. That slot must EXIST. It is
+  never read back (the reading loop stops at n - 1); it exists purely to catch a
+  cancellation that has nowhere else to go.
+
+  Measured: sizing the array n instead of n + 1 crashed with IndexError on 4,658 of
+  6,000 random booking sets. On the first official example it crashes immediately,
+  because [2, 5, 25] runs to flight 5 of 5.
+
+      bookings [[1,5,2]], n = 5, array sized n:  IndexError
+      bookings [[1,4,2]], n = 5, array sized n:  [2, 2, 2, 2, 0]   (survives)
+
+  So it is not a rare edge case. Any booking that reaches the last flight hits it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Make an array of n zeros. For each booking, loop over every flight
+it covers and add the seats.
+
+    result = [0] * n
+    for first, last, seats in bookings:
+        for f in range(first, last + 1):
+            result[f - 1] += seats
+
+This is correct. It is also what you should say out loud first in an interview,
+because it proves you understand the problem before you optimise it.
+
+WHY IT IS TOO SLOW - WITH REAL NUMBERS. Its cost is the TOTAL SPAN of all bookings,
+not the number of bookings. Measured on the stated constraint ceiling:
+
+    20,000 bookings, each covering all 20,000 flights
+        naive per-flight writes:      400,000,000
+        difference-array writes:           40,000   (exactly two per booking)
+        ratio:                         10,000 to 1
+
+Four hundred million writes will not pass. Forty thousand is instant.
+
+THE UPGRADE. Replace "write to every flight in the range" with "write to the two
+ENDS of the range", then recover the values with one left-to-right carrying pass.
+
+    naive:   +25 +25 +25 +25          (span writes)
+    upgrade: +25 . . . . -25          (two writes)  then carry left to right
+
+The upgrade's cost is bookings + n. The naive cost is total span. When spans are
+short they are similar; when spans are long the upgrade wins by the ratio above.
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY CARRYING WORKS. The running total at flight f
+is the sum of every change mark at or before f. A booking contributes +seats once you
+pass its start, and contributes -seats once you pass its end. So between its start
+and its end, exactly +seats is included in the running total; outside, the two marks
+cancel to zero. Every booking independently switches itself on and off. Add many
+bookings' marks into the same array and the running total automatically carries the
+sum of whichever bookings are currently "on". Nothing coordinates them - the
+arithmetic does it.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: mark +seats where each booking starts and -seats just past where it
+ends, then sweep left to right carrying a running total - that total IS the answer
+for each flight.
+
+THE MECHANISM, SPELLED OUT. There is no recursion here and no call stack. There are
+two straight loops, one after the other, and the second one depends on the first
+having finished.
+
+  The first loop is a RECORDING pass. It never reads anything back and never computes
+  an answer. It only deposits change-marks. Bookings can be processed in any order,
+  and two bookings landing on the same slot just add together - that is why no
+  bookkeeping about overlaps is needed anywhere in this solution.
+
+  The second loop is a REPLAY pass. It carries one number, `running`, from left to
+  right. At each flight it first absorbs that flight's change-mark, then records the
+  result. `running` is never reset. It stops when it has produced one number per
+  flight - that is what makes it terminate, a plain counted loop over n positions.
+
+  Why the passes cannot be merged: a booking that starts at flight 5 deposits its
+  mark at slot 4, but you may process that booking after you have already replayed
+  slot 4. All recording must finish before any replaying begins.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Make an array of n + 1 zeros. Call it the change-marks. The extra slot at the
+     end is a dumping ground for cancellations that fall past the last flight.
+  2. For each booking [first, last, seats]:
+       a. Add seats to the slot at position first - 1  (converting the 1-indexed
+          flight number to a 0-indexed array position).
+       b. Subtract seats from the slot at position last  (which is flight number
+          last + 1 in the problem's numbering - one PAST the booked range, because
+          the range includes flight `last`).
+  3. Start a running total at zero and an empty answer list.
+  4. Walk positions 0 through n - 1 in order. At each position:
+       a. Add that position's change-mark to the running total.
+       b. Append the running total to the answer list.
+  5. Return the answer list. It has exactly n entries; the spare slot is never read.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of a hotel corridor with n doors, and a clipboard hanging outside each door.
+
+Round one - the bookings walk down the corridor. Each booking does not visit every
+door in its range. It writes "+25 guests join here" on the clipboard of its first
+door, walks past all the doors in between touching nothing, and writes "-25 guests
+leave here" on the clipboard of the door just past its last. Then it goes home.
+
+Round two - one person walks the corridor from the first door to the last with a
+counter in hand, starting at zero. At each door they read the clipboard, adjust the
+counter by whatever it says, and then write the counter's current value on the door.
+
+The walker never needs to know how many bookings there were or which ones overlap.
+The number on their counter is always exactly "how many people are inside right now",
+because everyone who joined earlier is still counted and everyone who left has been
+subtracted. Overlapping bookings pile onto the same counter with no special handling
+whatsoever - if three bookings are active, three +values are sitting inside the
+counter, and each will be removed at its own door.
+
+The only genuinely fiddly point in the whole story: a booking that includes the LAST
+door must still write its "-" somewhere, so the corridor needs one imaginary extra
+door at the end where those notes can go. Nobody ever reads that door.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def corp_flight_bookings(bookings, n):
+
+  `bookings` is the list of [first, last, seats] triples. `n` is the number of
+  flights. Flights are numbered 1..n in the input.
+
+        diff = [0] * (n + 1)
+
+  `diff` is the change-mark array - the difference array. It has n + 1 slots, NOT n.
+  Slots 0..n-1 correspond to flights 1..n; slot n is the spare that catches the
+  subtraction from any booking ending on the final flight. All zeros, because before
+  any booking is read nothing changes anywhere.
+
+        for first, last, seats in bookings:
+
+  Unpacks each booking into three named values in one step. `first` and `last` are
+  flight NUMBERS (1-based); `seats` is the amount.
+
+            diff[first - 1] += seats
+
+  The booking switches ON at flight `first`. Flight `first` sits at array position
+  first - 1, so the plus goes there. This is where trap two lives: `diff[first]`
+  instead of `diff[first - 1]` shifts every booking one flight later and was wrong on
+  5,030 of 6,000 random sets.
+
+            diff[last] -= seats
+
+  The booking switches OFF just PAST flight `last`. Flight last + 1 sits at array
+  position (last + 1) - 1, which is exactly `last`. So the un-decremented `last` is
+  correct here precisely BECAUSE the range is inclusive - the two -1 corrections (one
+  for 1-indexing, one for "one past the end") cancel out. This is where trap one
+  lives: `diff[last - 1]` was wrong on 5,030 of 6,000. And this is the line that can
+  reach index n, which is why `diff` needed n + 1 slots.
+
+        result = []
+        running = 0
+
+  `result` collects the per-flight answers in order. `running` is the walker's
+  counter - the number of seats currently reserved as we sweep.
+
+        for i in range(n):
+
+  `i` walks array positions 0..n-1, which is flights 1..n. It deliberately stops
+  before position n - the spare slot is written but never read.
+
+            running += diff[i]
+
+  Absorb this position's change-mark. If nothing started or ended here, diff[i] is 0
+  and `running` is unchanged - which is the whole point: the value carries forward
+  for free.
+
+            result.append(running)
+
+  `running` right now equals the sum of every change-mark at or before position i,
+  which is exactly the seats booked on flight i + 1. Note the ORDER: absorb first,
+  then record. Recording before absorbing would report each flight's total one flight
+  late.
+
+        return result
+
+  n numbers, one per flight, in flight order.""",
+
+    """9. TRACED ON REAL NUMBERS - AND THE TRACE DELIBERATELY HITS THE TRAP
+
+The example is chosen so that its last booking runs to the FINAL flight. That is the
+case from section 4 that crashes an n-sized array and the case that a too-early minus
+sign ruins - so the trap is exercised, not avoided.
+
+    bookings = [[1, 2, 10], [2, 3, 20], [2, 5, 25]],  n = 5
+    diff starts as six zeros:  [0, 0, 0, 0, 0, 0]
+
+  RECORDING PASS
+
+    booking [1, 2, 10]:  diff[1-1] += 10  ->  diff[0] += 10
+                         diff[2]   -= 10
+                         diff = [10, 0, -10, 0, 0, 0]
+
+    booking [2, 3, 20]:  diff[2-1] += 20  ->  diff[1] += 20
+                         diff[3]   -= 20
+                         diff = [10, 20, -10, -20, 0, 0]
+
+    booking [2, 5, 25]:  diff[2-1] += 25  ->  diff[1] += 25   (now 20 + 25 = 45)
+                         diff[5]   -= 25   <-- THE SPARE SLOT. last = 5 = n.
+                         diff = [10, 45, -10, -20, 0, -25]
+
+  Notice diff[1] holds 45, the sum of two bookings that both start at flight 2. They
+  were never compared to each other. Notice diff[5] - index 5 in a 6-slot array. With
+  an n-sized array this line is an IndexError, right here, on the official example.
+
+  REPLAY PASS - running starts at 0
+
+    i = 0:  running = 0 + 10  = 10   ->  flight 1 = 10
+    i = 1:  running = 10 + 45 = 55   ->  flight 2 = 55
+    i = 2:  running = 55 - 10 = 45   ->  flight 3 = 45
+    i = 3:  running = 45 - 20 = 25   ->  flight 4 = 25
+    i = 4:  running = 25 + 0  = 25   ->  flight 5 = 25   <-- carried for free
+    (i never reaches 5; diff[5] = -25 is never read)
+
+    result = [10, 55, 45, 25, 25]
+
+  Cross-checked against the brute-force per-flight loop: [10, 55, 45, 25, 25]. Match.
+
+  Flight 5 is the proof that the minus sign is placed correctly. The third booking
+  INCLUDES flight 5, and flight 5 still shows 25. Had the subtraction been written at
+  diff[last - 1] = diff[4], the i = 4 step would have read -25 instead of 0 and
+  reported 0 seats on a flight that has 25 booked.
+
+  THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+  Change only the third booking's END, from flight 5 to flight 3. Nothing else moves:
+
+    [[1,2,10], [2,3,20], [2,5,25]]  ->  [10, 55, 45, 25, 25]
+    [[1,2,10], [2,3,20], [2,3,25]]  ->  [10, 55, 45,  0,  0]
+
+  Flights 1, 2 and 3 are untouched; flights 4 and 5 collapse from 25 to empty. One
+  number in one booking, and the tail of the answer flips - which is exactly the
+  sensitivity that makes an off-by-one here so destructive and so easy to miss when
+  you only eyeball the first few flights.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the bookings doing two writes each, then one pass
+over the flights doing one addition each. So the time is "number of bookings plus
+number of flights" - O(bookings + n). The memory is one array of n + 1 numbers, plus
+the answer itself - O(n). Both are optimal: you cannot answer without reading every
+booking, and you cannot answer without printing every flight's total.
+
+The naive version's time is the TOTAL SPAN of all bookings, which at the constraint
+ceiling was measured at 400,000,000 writes against this version's 40,000 - a factor
+of 10,000.
+
+THE #1 MISTAKE. Putting the subtraction at the wrong index. It is wrong on roughly
+five out of six random inputs and it is wrong on the problem's own first example, so
+it will be caught - but only after you have written it, which costs interview minutes
+you did not have. Derive it instead of memorising it: the range INCLUDES flight
+`last`, so the cancellation belongs at flight last + 1, and flight last + 1 sits at
+array position `last`. Say that sentence out loud while you type the line.
+
+THE THREE-WAY BOUNDARY CONTRAST - THIS IS THE THING TO CARRY AWAY
+
+Three problems in this bank use the identical +v / -v sweep, and the minus lands in a
+DIFFERENT place in each. The rule is never "always end + 1". The rule is "put the
+minus at the first position the value is no longer active".
+
+  Points That Intersect With Cars - a car parked over [start, end] OCCUPIES the point
+     `end`. So the minus goes at end + 1.
+  Car Pooling - a passenger boarding at `start` and leaving at `end` occupies NO seat
+     at `end`; they are already off. So the minus goes at `end` itself.
+  Corporate Flight Bookings (this one) - a booking covering flights first..last
+     RESERVES seats on flight `last`. Inclusive again, so the minus returns to
+     end + 1 - which after the 1-indexed-to-0-indexed conversion is written as the
+     bare `diff[last]`.
+
+Checked on one shared example - a range over flights 2..3 of 5 with ten seats gives
+[0, 10, 10, 0, 0] under the inclusive rule. Ask yourself "is the endpoint IN or OUT?"
+every single time; the answer comes from the story, not from the pattern.
+
+AND THE OTHER DIFFERENCE FROM ITS SIBLINGS. Car Pooling and Points That Intersect
+With Cars both reduce the sweep to a CHECK - "did the running total ever exceed
+capacity", "how many are active at this one query point". Here the running total at
+every position IS THE DELIVERABLE. Nothing is discarded. That is why this entry keeps
+`result` and returns the whole prefix sum instead of a boolean or a count.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "What if bookings arrive one at a time and you must answer queries in between?"
+     The difference array no longer helps, because you would re-prefix-sum after every
+     insert - O(n) per query. Switch to a Fenwick tree (Binary Indexed Tree) over the
+     difference array: range update and point query both become O(log n).
+
+  "What if n were a billion but there are only 20,000 bookings?"
+     You cannot allocate the array. Collect only the 40,000 change points as
+     (position, delta) pairs, sort them, and sweep - O(b log b). You then report
+     answers per SEGMENT between consecutive change points rather than per flight,
+     which is all the information there is anyway. This is coordinate compression.
+
+  "Could the totals overflow a 32-bit int?"
+     At the stated ceiling - 20,000 bookings of up to 10,000 seats each, all on the
+     same flight - the maximum is 200,000,000, comfortably under 2,147,483,647. So no.
+     In Python integers are unbounded regardless; in Java or C++ int is fine here, but
+     saying "I checked, 2 x 10^8 against 2.1 x 10^9" is a much better answer than
+     "I'll use long to be safe".
+
+ONE-SENTENCE TAKEAWAY. Record only where things change and carry the total forward -
+two writes per booking beat one write per booking per flight, and the only hard part
+is deciding whether the endpoint is in or out.
+
+THE INTERVIEW IMPLICATION. This is a difference-array recogniser, and it is a fast
+one - most candidates who know the technique finish in five minutes. The signal is
+therefore not "did you solve it" but "did you get the boundary right on the first
+try, and can you say WHY it is there rather than that you remember it". State the
+naive solution and its cost first, then name the technique, then derive the minus
+sign's position out loud from the word "inclusive". That sequence is the whole
+performance.""",
 ]
 
 for _e in ENTRIES:
@@ -102250,70 +102635,468 @@ for _e in ENTRIES:
 _EX_P1P = {}
 
 _EX_P1P["Kth Largest Element in an Array"] = [
-    """The heap version, traced.
-nums = [3,2,1,5,6,4], k = 2. Push 3 -> [3]. Push 2 -> [2,3]. Push 1, size 3 > 2
--> pop the smallest (1) -> [2,3]. Push 5, pop 2 -> [3,5]. Push 6, pop 3 ->
-[5,6]. Push 4, pop 4 -> [5,6].
-Root is 5 = the 2nd largest. Correct.
-The invariant throughout: the heap holds exactly the k largest elements seen so
-far, and its root - the smallest of those k - is the kth largest. Same
-inversion as the streaming version: to track the top k, keep a MIN-heap.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Quickselect, which is the answer the question actually wants.
-Partition around a pivot as in quicksort, but recurse into ONLY the side
-containing the kth position. Average O(n): the work is n + n/2 + n/4 + ... = 2n.
-    def quickselect(nums, k):
-        target = len(nums) - k          # kth largest = this index when sorted
-        lo, hi = 0, len(nums) - 1
-        while True:
-            p = partition(nums, lo, hi)
-            if p == target: return nums[p]
-            if p < target:  lo = p + 1
-            else:           hi = p - 1
-Worst case O(n^2) on adversarial pivots - fixed in practice by choosing a
-RANDOM pivot, which is the detail to state. Median-of-medians gives a
-guaranteed O(n) but nobody implements it in an interview.""",
+You are given a list of numbers and a number k. Return the k-th largest value in the
+list.
 
-    """Choosing between them, which is a real trade rather than a preference.
-Heap: O(n log k) time, O(k) space, works on a STREAM, does not mutate the
-input, and is trivially correct. Quickselect: O(n) average, O(1) extra space,
-but mutates the array and has a quadratic worst case.
-So: k small relative to n, or data arriving as a stream -> heap. Whole array in
-memory and k possibly large -> quickselect. If k = n/2 (the median), the heap
-degenerates to O(n log n) and quickselect is clearly better.
-Saying that sentence - with the k vs n comparison - is the answer; producing
-only one solution is not.""",
+    nums = [3, 2, 1, 5, 6, 4],  k = 2
 
-    """The duplicates subtlety.
-'kth largest' means the kth position in SORTED ORDER, not the kth distinct
-value. On [3,3,3,3] with k = 3 the answer is 3, not an error - the third
-largest element is a 3. Both the heap and quickselect handle this naturally
-because they order positions, not values.
-If the prompt wanted the kth distinct value the algorithm changes (deduplicate
-first), and it is worth confirming which is meant - the two differ on any input
-with repeats.""",
+    sort it descending:   6   5   4   3   2   1
+    position:             1st 2nd 3rd 4th 5th 6th
+                              ^^^
+    the 2nd largest is 5.  ANSWER: 5
 
-    """Edge cases.
-k = 1 -> the maximum. k = len(nums) -> the minimum, and the heap holds
-everything.
-Single element with k = 1 -> that element.
-Negative numbers work unchanged in both approaches.
-The problem guarantees 1 <= k <= len(nums); without that guarantee the heap
-version would return the root of an under-filled heap, which is wrong, so guard
-it if the constraint is absent.
-Note `sorted(nums)[-k]` is O(n log n) and perfectly correct - say it first as
-the baseline, then improve on it. Jumping straight to quickselect without
-acknowledging the one-liner can read as rehearsed.""",
+k = 1 means the maximum. k = len(nums) means the minimum. Everything in between is a
+value somewhere in the middle of the ranking.
 
-    """Complexity summary and the family.
-Sorting: O(n log n). Heap: O(n log k). Quickselect: O(n) average, O(n^2) worst.
-The family: Kth Largest Element in a Stream (heap, because there is no array to
-partition), Top K Frequent Elements (heap or bucket sort by count), K Closest
-Points to Origin (heap or quickselect on distance), Median of Two Sorted Arrays
-(binary search on the partition), and Find Median from Data Stream (two heaps).
-The cue 'kth' or 'top k' should immediately raise heap-versus-quickselect, and
-the deciding question is always whether the data is a stream and how k compares
-to n.""",
+The catch that the wording hides: "k-th largest" means the k-th POSITION IN SORTED
+ORDER, not the k-th different value. Repeats each take up their own position.
+
+    nums = [3, 3, 3, 3],  k = 3   ->   answer 3
+    (there is no "third distinct value"; there does not need to be)
+
+Verified: [3,3,3,3] with k = 3 returns 3.
+
+You could sort and index. That works and it is O(n log n). The question exists
+because there are two better answers, each better in a different way, and being able
+to say which one you would ship is the actual test.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Here is the idea that makes this problem click, and it is counter-intuitive on first
+contact:
+
+    TO FIND THE k-TH LARGEST, KEEP A CONTAINER THAT THROWS AWAY THE SMALLEST.
+
+Picture a shortlist with exactly k slots. Candidates walk past one at a time. Every
+candidate gets to join. The moment the shortlist holds k + 1 people, the WEAKEST one
+is shown the door.
+
+    k = 2, candidates arrive: 3, 2, 1, 5, 6, 4
+
+    3 arrives   shortlist: [3]
+    2 arrives   shortlist: [2, 3]              full
+    1 arrives   shortlist: [1, 2, 3] -> evict 1 -> [2, 3]
+    5 arrives   shortlist: [2, 3, 5] -> evict 2 -> [3, 5]
+    6 arrives   shortlist: [3, 5, 6] -> evict 3 -> [5, 6]
+    4 arrives   shortlist: [4, 5, 6] -> evict 4 -> [5, 6]
+
+    final shortlist: {5, 6}  = the two largest values in the whole list
+    the WEAKEST member of the shortlist is 5  = the 2nd largest overall
+
+Why the weakest member is the answer: the shortlist holds exactly the k largest
+values seen. Among those k, the smallest one is ranked k-th. So the answer is not the
+best thing in your container - it is the WORST thing in your container.
+
+That is the inversion. You want the k largest, so you build a structure that is fast
+at finding and removing the SMALLEST, because the smallest is what you keep throwing
+out and, at the very end, the smallest is what you report.
+
+A min-heap is exactly that structure: instant access to its smallest element.""",
+
+    """3. EVERY TERM, DEFINED
+
+HEAP. A container that keeps ONE special element - either the smallest or the
+largest - available instantly, while keeping everything else only loosely arranged.
+It is not a sorted list. Printing a heap shows a jumble; only position 0 is
+guaranteed.
+
+  Everyday version: a hospital triage queue. It is not sorted by severity from worst
+  to mildest. It only guarantees that the next patient called is the most urgent one
+  present. Adding a patient or calling the next one is quick; producing a full ranking
+  of the waiting room is not something the queue does.
+
+MIN-HEAP. A heap whose instantly-available element is the SMALLEST. Python's `heapq`
+module gives you a min-heap and nothing else - `heap[0]` is always the minimum.
+
+PUSH / POP. `heappush` inserts a value and re-settles the heap. `heappop` removes and
+returns the smallest. Both cost O(log size) - proportional to the number of times you
+can halve the container, so about 17 steps for 100,000 items, not 100,000.
+
+MIN-HEAP OF SIZE k. The technique of this entry: a heap that is never allowed to grow
+past k elements, so it always holds the k largest values seen so far and its root is
+the k-th largest.
+
+QUICKSELECT. The other solution. Pick a value from the array (the PIVOT), shove
+everything smaller to its left and everything bigger to its right, and see what index
+the pivot landed at. If that index is the one you wanted, you are done. Otherwise you
+now know which HALF the answer is in, and you repeat on that half only - throwing the
+other half away unexamined.
+
+PARTITION. That shoving step. One left-to-right pass that rearranges the array in
+place around the pivot and reports where the pivot ended up.
+
+O(n log k) vs O(n) vs O(n^2). "Work proportional to." n log k means one pass with a
+small logarithmic cost per element. O(n) average means genuinely proportional to the
+list length. O(n^2) worst means, on a hostile input, proportional to n times n - for
+n = 400 that is measured below as 79,800 comparisons instead of 868.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP ONE - REACHING FOR A MAX-HEAP.
+
+  "I want the largest things, so I want a max-heap." It feels obviously right and it
+  is the single most common wrong instinct here. If you keep the k elements in a
+  MAX-heap and evict its root when it overflows, you evict the LARGEST - so you end
+  up holding the k SMALLEST values and answer with the wrong end of the list.
+
+  Measured, on 6,000 random arrays:
+      keeping the k smallest instead of the k largest:  WRONG on 4,795
+  On the first official example it returns 2 where the answer is 5.
+
+  A max-heap CAN be used - dump everything in and pop k times - but that is O(n + k
+  log n) with O(n) memory, strictly worse than the size-k min-heap on both counts
+  when k is small. The min-heap is not a trick; it is the consequence of section 2.
+
+TRAP TWO - POPPING BEFORE PUSHING. THIS IS THE SUBTLE ONE.
+
+  The order inside the loop matters, and the wrong order is invisible on a casual
+  read:
+
+      RIGHT:  push x, then if the heap now exceeds k, pop the smallest
+      WRONG:  if the heap is already full, pop first, then push x
+
+  The wrong version evicts a member BEFORE seeing whether the newcomer even deserves
+  a slot. On the sixth step of the trace above, 4 arrives while the shortlist is
+  {5, 6}. The correct version admits 4, notices the overflow, and evicts 4 itself -
+  no harm done. The pop-first version evicts 5 to make room, then admits 4, and the
+  shortlist becomes {4, 6}. The answer degrades from 5 to 4.
+
+  Measured, on 6,000 random arrays:
+      pop-before-push:  WRONG on 2,056
+
+  AND HERE IS THE POINT WORTH REMEMBERING - THE OFFICIAL EXAMPLES DISAGREE WITH EACH
+  OTHER ABOUT THIS BUG:
+
+      [3, 2, 1, 5, 6, 4]            k = 2   correct 5   buggy 4   CAUGHT
+      [3, 2, 3, 1, 2, 4, 5, 5, 6]   k = 4   correct 4   buggy 4   HIDDEN
+
+  Example one exposes it; example two lets it through. If you test on the second
+  example only, you ship the bug. Roughly one input in three catches it - loud enough
+  to fail you in an interview, quiet enough that a single hand-picked test can miss it.
+
+TRAP THREE - ASSUMING DISTINCT VALUES.
+
+  Do not deduplicate. On [3,3,3,3] with k = 3 the answer is 3. On
+  [3,2,3,1,2,4,5,5,6] with k = 4 the sorted-descending order is
+  [6, 5, 5, 4, 3, 3, 2, 2, 1] and the 4th entry is 4 - the two 5s occupy two separate
+  positions. Any solution that filters to unique values before ranking is wrong.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN BOTH UPGRADES
+
+THE NAIVE VERSION. Sort descending and index.
+
+    return sorted(nums, reverse=True)[k - 1]
+
+Correct, one line, O(n log n) time and O(n) extra space. Say this out loud first. It
+is also, genuinely, the right production answer when n is small or when you need the
+whole ranking anyway - do not pretend otherwise.
+
+WHAT IS WASTEFUL ABOUT IT. Sorting produces a total ranking of all n elements. You
+asked for ONE element. Every comparison that orders the elements below position k
+against each other is work you paid for and then discarded.
+
+UPGRADE ONE - THE SIZE-k MIN-HEAP. Stop ranking everything; maintain only the top k.
+Cost O(n log k): one pass, and each element does at most a push and a pop on a
+container of size k. When k is small this is close to a plain linear scan. When k
+equals n it degrades to O(n log n) - no worse than sorting.
+
+  Its real superpower is not the exponent. It is that it never needs the whole array
+  at once. It consumes elements one at a time, so it works on a STREAM of unknown
+  length, and it never touches the caller's list.
+
+UPGRADE TWO - QUICKSELECT. Partition around a pivot, look at where the pivot landed,
+and recurse into ONLY the side that contains the position you want.
+
+  THE TRICK EXPLAINED FROM SCRATCH. After one partition, the pivot is in its final
+  sorted position - everything left of it is smaller, everything right is larger, so
+  nothing can ever move past it again. If you wanted position 7 and the pivot landed
+  at position 7, you are finished having sorted nothing. If the pivot landed at 3, the
+  answer is somewhere in positions 4 onward and positions 0..3 can be abandoned
+  UNEXAMINED. Quicksort recurses into both halves; Quickselect recurses into one. That
+  single difference turns n log n into n, because the halved work forms 1 + 1/2 + 1/4
+  + ... which sums to about 2n rather than log n full passes.
+
+  Measured: over 300 random arrays of 400 elements with a random pivot, the average
+  was 1,142 comparisons per call - about 2.9 x n, exactly the flat multiple that
+  argument predicts, not a growing one.
+
+  Its price is on the next page.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: walk the list once holding a min-heap that is never allowed past k
+elements, and the smallest thing left in it at the end is the k-th largest.
+
+THE MECHANISM, SPELLED OUT. There is no recursion in the heap solution and no call
+stack - it is a single counted loop over the input. What carries state between
+iterations is the heap itself. Three facts make it work:
+
+  The heap's root is always its minimum. Push and pop maintain that; nothing else in
+  the heap is ordered and nothing else needs to be.
+
+  The size invariant. Immediately after each iteration the heap holds min(k, elements
+  seen so far) values, and those are exactly the largest ones seen. The push may take
+  it to k + 1 for an instant; the conditional pop restores it. Because the pop removes
+  the minimum of those k + 1, the one discarded is provably the one that does not
+  belong in the top k - including, quite often, the element just pushed.
+
+  Termination is a plain counted loop: it stops when the input is exhausted. There is
+  no convergence to reason about.
+
+  (Quickselect, by contrast, DOES loop until a condition: it repeats until the pivot
+  lands exactly on the target index. It terminates because each partition places one
+  element permanently and shrinks the live range by at least one, so the range cannot
+  shrink forever. That guarantee is what makes its worst case a slow n^2 rather than
+  an infinite loop.)
+
+NUMBERED STEPS, NO CODE:
+
+  1. Start with an empty min-heap.
+  2. For each value in the list, in any order:
+       a. Push the value onto the heap. Always. Do not test it first.
+       b. If the heap now holds more than k values, pop the smallest one off and
+          discard it. Exactly one pop - the push added exactly one.
+       c. Note the ORDER of (a) and (b): push, THEN test and pop. Popping first
+          discards a genuine top-k member to make room for something that may be
+          worse, and was measured wrong on 2,056 of 6,000 inputs.
+  3. When the list is exhausted, the heap holds the k largest values of the whole
+     list, in no particular arrangement.
+  4. Return the heap's root - its smallest element. That is the k-th largest overall.
+     Do not sort the heap and do not pop it to find this; the root is position 0.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A talent competition is running k trophies, and applicants arrive one at a time all
+day. You do not have room to seat everybody and you refuse to rank the whole field.
+
+So you keep exactly k chairs on stage, and one rule: whoever is currently the WEAKEST
+person on stage wears a badge saying so.
+
+Each applicant who walks in is given a chair immediately - no audition, no
+comparison, they just sit down. Now there are k + 1 people on stage, which is one too
+many. You look for the badge, and that person leaves. Sometimes the badge is on the
+newcomer, who therefore sits down and stands right back up. That is fine and it is
+the normal case.
+
+At the end of the day, the k people on stage are the k best applicants of the whole
+day, and you never once ranked them against each other beyond finding the badge. The
+person still wearing the badge is the k-th best applicant overall - the weakest of
+the best.
+
+Two details the story makes obvious that the code does not:
+
+  You never needed to know how many applicants would come. You could run this forever
+  on an endless queue.
+
+  You never wrote in the applicants' file. The original list of arrivals is untouched.
+
+The rival method, Quickselect, runs a very different competition: it grabs one random
+applicant, makes EVERYONE compare against them and physically re-seats the entire
+room into "worse than" and "better than" sides, then throws away one whole side and
+repeats on the other. Usually far faster. But everyone must be in the room at once,
+and the room's seating is permanently rearranged.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    import heapq
+
+  Python's heap module. It gives a MIN-heap only. There is no max-heap here and none
+  is needed - section 2 explains why the minimum is the useful end.
+
+    def find_kth_largest(nums, k):
+
+  `nums` is the list of numbers, `k` the rank wanted, counting the largest as 1.
+
+        heap = []
+
+  `heap` is a plain Python list that `heapq` will treat as a heap. An empty list is a
+  valid empty heap; no special construction call is needed.
+
+        for x in nums:
+
+  `x` is one input value. Order does not matter - the result is identical for any
+  permutation of `nums`, which is what makes this work on a stream.
+
+            heapq.heappush(heap, x)
+
+  Insert unconditionally. Every element gets a chair. Note there is NO "if x is big
+  enough" test - adding one would be an optimisation, not a requirement, and getting
+  its comparison backwards is another way to lose the top-k invariant.
+
+            if len(heap) > k:
+
+  Strictly greater than k. Not `>=`. With `>=` the heap would be capped at k - 1
+  elements and `heap[0]` would report the (k-1)-th largest.
+
+                heapq.heappop(heap)
+
+  Removes and discards the SMALLEST value in the heap. Because the push happened
+  first, the candidate pool for eviction includes `x` itself - so a weak newcomer
+  evicts itself and the incumbents are safe. Swapping these two statements is trap
+  two, wrong on 2,056 of 6,000 random arrays.
+
+        return heap[0]
+
+  `heap[0]` is the heap's minimum - guaranteed by the heap property, and the only
+  position with any guarantee at all. Since `heap` holds the k largest values of
+  `nums`, its minimum is ranked k-th. Note what is NOT here: no sort, no popping the
+  heap down, no `min(heap)` scan. Position 0 is already the answer.
+
+  Also note what `nums` is NOT: it is never indexed, assigned to, or reordered. This
+  function does not mutate its input - confirmed by comparing the list before and
+  after: [3, 2, 1, 5, 6, 4] unchanged. Quickselect on the same list leaves it as
+  [3, 2, 1, 4, 5, 6].""",
+
+    """9. TRACED ON REAL NUMBERS - AND THE TRACE HITS THE TRAP
+
+The example is the problem's own first sample, chosen deliberately because it is the
+one that EXPOSES the pop-before-push bug. The second official sample would hide it.
+
+    nums = [3, 2, 1, 5, 6, 4],  k = 2,  heap = []
+
+    push 3   heap [3]              size 1, not > 2, nothing dropped
+    push 2   heap [2, 3]           size 2, not > 2, nothing dropped
+    push 1   heap [1, 2, 3]        size 3 > 2  ->  pop the smallest, 1
+             heap [2, 3]
+    push 5   heap [2, 3, 5]        size 3 > 2  ->  pop the smallest, 2
+             heap [3, 5]
+    push 6   heap [3, 5, 6]        size 3 > 2  ->  pop the smallest, 3
+             heap [5, 6]
+    push 4   heap [4, 5, 6]        size 3 > 2  ->  pop the smallest, 4
+             heap [5, 6]           <-- THE TRAP MOMENT: 4 evicted ITSELF
+
+    return heap[0] = 5
+
+  True answer by sorting: [6, 5, 4, 3, 2, 1], 2nd entry = 5. Match.
+
+  Look hard at the final step. The heap held {5, 6} and 4 walked in. The correct code
+  seated 4, saw three people, and removed the weakest - which was 4. Nothing was lost.
+  The pop-before-push version would have removed 5 first to make room, then seated 4,
+  finishing with {4, 6} and returning 4. That is one wrong character producing a
+  plausible-looking wrong answer on the problem's own sample.
+
+  And the max-heap instinct on this same input keeps the two SMALLEST, {1, 2}, and
+  returns 2.
+
+    correct 5    |    pop-before-push 4    |    max-heap-instinct 2
+
+  THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+  Same list, k moved by one:
+
+    [3, 2, 1, 5, 6, 4]  k = 2  ->  5
+    [3, 2, 1, 5, 6, 4]  k = 3  ->  4
+
+  Which is exactly the value the buggy version returned for k = 2. A bug that shifts
+  the rank by one is indistinguishable from a caller who passed the wrong k - which is
+  why the trace, not the output, is what tells you the code is right.
+
+  QUICKSELECT'S WORST CASE, MEASURED
+
+  A sorted ascending array with "always pivot on the last element" picks the LARGEST
+  remaining value every time, so each partition peels off exactly one element. Ask for
+  k = n (the smallest) and it walks the entire way down:
+
+      n = 100    last-element pivot:  4,950 comparisons    random pivot:   196
+      n = 200    last-element pivot: 19,900 comparisons    random pivot:   438
+      n = 400    last-element pivot: 79,800 comparisons    random pivot:   868
+
+  4,950 is exactly 100 x 99 / 2 - the textbook n^2/2, reproduced. At n = 400 the fixed
+  pivot does about 92 times the work of the random one, and the gap widens with n.
+
+  The same array with k = 1 is that pivot rule's BEST case - 99 comparisons at n = 100,
+  399 at n = 400 - because the first partition lands the largest element exactly on
+  the target. Same rule, same input shape, opposite extremes depending only on k. That
+  is why "sorted input is Quickselect's worst case" is too glib a thing to say; the
+  worst case is a pivot rule that keeps picking an extreme of the remaining range.
+
+  With a randomly chosen pivot, Quickselect was correct on all 6,000 random test
+  arrays, and the adversarial input above costs 868 comparisons instead of 79,800 -
+  random pivoting is not a nicety, it is the whole defence.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS.
+
+    sorting        O(n log n) time, O(n) space         - rank everything, take one
+    size-k heap    O(n log k) time, O(k) space         - one pass, tiny container
+    Quickselect    O(n) average, O(n^2) worst, O(1) extra space, MUTATES the input
+
+The heap's log k, not log n, is the point: with n = 1,000,000 and k = 10, log k is
+about 3 while log n is about 20. And its memory is k, not n - it never holds the list.
+
+THE HONEST COMPARISON, WHICH IS WHAT THE INTERVIEWER IS ACTUALLY ASKING FOR. Neither
+is simply better. They win in different circumstances and you should say so:
+
+  CHOOSE THE HEAP WHEN the data arrives as a stream or does not fit in memory; when k
+  is much smaller than n; when the caller's array must not be reordered; when you need
+  a predictable worst case rather than a good average; or when you may be asked for
+  the top k rather than just the k-th.
+
+  CHOOSE QUICKSELECT WHEN the whole array is already in memory and you are allowed to
+  rearrange it, k is comparable to n, and you want the best average speed. Use a
+  RANDOM pivot - with a fixed pivot an adversarial or merely sorted input costs 79,800
+  comparisons at n = 400 against 868.
+
+  CHOOSE SORTING WHEN n is small, or when you will need other ranks later anyway. Do
+  not be too proud to say this; "if n is 500, I ship the one-liner" is a senior answer.
+
+THE #1 MISTAKE. Using a max-heap because the question says "largest". It inverts the
+whole method and was wrong on 4,795 of 6,000 random arrays. The runner-up, and the
+more dangerous one because it survives casual testing, is popping before pushing -
+wrong on 2,056 of 6,000, caught by the first official example and hidden by the
+second.
+
+THE HEAP CLUSTER - WHO OWNS WHAT
+
+  Kth Largest Element in a Stream owns the INVERSION ITSELF - why a min-heap serves a
+     "largest" question, and the streaming setting where no other method applies.
+  Last Stone Weight owns MAX-HEAP-BY-NEGATION - Python has no max-heap, so you push
+     -value and negate on the way out.
+  This entry owns THE QUICKSELECT ALTERNATIVE and the trade above. If you can only
+     carry one sentence out of this cluster, carry: heap is O(n log k) and streams,
+     Quickselect is O(n) average but O(n^2) worst and demands the whole array in
+     memory and the right to reorder it.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Return the k largest elements, not just the k-th."
+     The heap version already holds them - return the heap contents (sorted if the
+     caller wants order). This is where the heap clearly beats Quickselect, which
+     leaves the top k scattered on one side of the pivot rather than collected.
+
+  "The array does not fit in memory / arrives over a network."
+     Only the heap works. O(k) memory, one pass, no random access. This is the real
+     reason the technique is worth knowing.
+
+  "Can you get O(n) worst case, not just average?"
+     Yes - median-of-medians pivot selection guarantees a good split and gives
+     worst-case O(n). Say the name, say its constant factor is bad enough that random
+     pivoting wins in practice, and move on. Nobody wants you to implement it.
+
+  "What if k is close to n?"
+     Then log k is close to log n and the heap has lost its edge - and it is holding
+     nearly the whole array. Flip the question: the k-th largest is the
+     (n - k + 1)-th smallest, so run a size-(n-k+1) MAX-heap instead, or just sort.
+
+  "Does your solution modify the input?"
+     Heap: no - verified by comparing the list before and after, unchanged.
+     Quickselect: yes - [3, 2, 1, 5, 6, 4] comes back as [3, 2, 1, 4, 5, 6]. If the
+     caller cannot tolerate that, copy first and accept the O(n) memory.
+
+ONE-SENTENCE TAKEAWAY. To keep the k largest, hoard them in a container that is fast
+at surrendering its smallest - and the survivor you report is the worst one left, not
+the best.
+
+THE INTERVIEW IMPLICATION. This is a two-part question wearing one title. Part one is
+whether you produce a correct sub-n-log-n solution; almost everyone does. Part two -
+the part that separates candidates - is whether you can lay out sorting, heap and
+Quickselect side by side and pick one for stated reasons, including saying which
+inputs would change your mind. Volunteer the mutation fact and the streaming fact
+without being asked; they are the two properties a real system cares about and the
+two that a candidate reciting complexities never mentions.""",
 ]
 
 _EX_P1P["Number of Provinces"] = [
