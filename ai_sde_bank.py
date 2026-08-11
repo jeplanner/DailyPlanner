@@ -33204,256 +33204,483 @@ making the squeeze valid.""",
 ]
 
 _EX_P0B["Binary Tree Right Side View"] = [
-    """Picture the question literally - it is the whole trick.
+    """1. THE GOAL, in plain English - and the picture IS the trick.
 
-Imagine the tree is drawn on a wall and you walk around to stand at the RIGHT
-edge of it, looking sideways across. Some nodes are hidden behind others. Which
-ones can you still see?
+Imagine the tree drawn on a wall. Walk around and stand at the RIGHT edge of it, looking
+sideways. Some nodes are hidden behind others. Which ones can you still see?
 
-Here is our tree:
+            1
+           / \\
+          2   3          from the right you see:  1, then 3, then 5
+           \\   \\
+            5   4                                 wait - look again
 
-        1
-       / \\
-      2   3
-       \\   \\
-        5   4
+Be careful with that picture. At the bottom row there are two nodes, 5 and 4, and 4 is further
+right, so you see 4 rather than 5. The answer is [1, 3, 4].
 
-Vocabulary as it appears:
-- Each circled item is a NODE. 1 sits at the top; the top node is the ROOT.
-- The nodes hanging directly below a node are its CHILDREN.
-- A LEVEL is one horizontal row: level 0 is just {1}, level 1 is {2, 3},
-  level 2 is {5, 4}.
+THE RULE, stated precisely: RETURN THE LAST NODE OF EACH LEVEL, top to bottom.
 
-Standing on the right and looking left, on each row you see the RIGHTMOST node
-of that row and nothing behind it. Row by row:
-- Level 0: only 1 is there, so you see 1.
-- Level 1: 2 and 3 are there; 3 is further right, so 3 blocks 2. You see 3.
-- Level 2: 5 and 4 are there; 4 is further right. You see 4.
+    level 0:  1              ->  1
+    level 1:  2, 3           ->  3
+    level 2:  5, 4           ->  4
 
-Answer: [1, 3, 4].
+    answer = [1, 3, 4]
 
-So the question is not really about trees at all. It is: for each row, give me
-the last node in that row.""",
+Note what the question is NOT asking. It is not "walk down the right-hand children". Section 4
+is entirely about why that tempting shortcut fails, and it fails on trees that look perfectly
+ordinary.
 
-    """How do we get "one whole row at a time"? A QUEUE.
+So the real problem is: HOW DO YOU GET ONE WHOLE ROW AT A TIME? A tree gives you a node and its
+children; nothing about the structure hands you a level. Section 2 is about the tool that does.""",
 
-A QUEUE is a waiting line, exactly like a queue at a shop: whoever joins first
-gets served first. Two operations - push (join the back) and pop (serve the
-front).
+    """2. THE INTUITION - a queue gives you the rows.
 
-The walk is called LEVEL-ORDER traversal, or BREADTH-FIRST SEARCH (BFS). The
-idea in one sentence: serve the nodes of the current row, and as you serve each
-one, push its children onto the back of the line. By the time the current row is
-fully served, the line contains exactly the next row, in left-to-right order.
+A QUEUE is a waiting line, exactly like a queue at a shop: whoever joins first gets served first.
+Two operations, and that is all:
 
-Why left-to-right order is preserved: you serve the row left to right, and each
-node pushes its left child then its right child, so children enter the line in
-the same left-to-right order their parents had.
+    JOIN THE BACK    (enqueue)
+    LEAVE THE FRONT  (dequeue)
 
-Now the one detail that makes this work, and it is the line people get wrong.
-You are pushing into the same line you are popping from, so its length keeps
-growing while you work. If you ask "how long is the line?" in the middle of
-serving a row, you get a mixture of this row and the next one, the rows smear
-together, and you get one flat list instead of rows.
+Now watch what happens if you put the root in a queue and repeatedly take from the front,
+adding each node's children to the back:
 
-The fix: BEFORE serving a row, write down how long the line is right now. That
-frozen number is exactly the size of this row. Serve exactly that many nodes,
-no more. Then the boundary between rows is exact.
+    queue: [1]                take 1, add its children  ->  queue: [2, 3]
+    queue: [2, 3]             take 2, add its children  ->  queue: [3, 5]
+                              take 3, add its children  ->  queue: [5, 4]
+    queue: [5, 4]             take 5, no children       ->  queue: [4]
+                              take 4, no children       ->  queue: []
 
-That single frozen-size line is the backbone of every level-by-level tree
-problem you will meet.""",
+THE NODES COME OUT IN LEVEL ORDER, all by themselves: 1, then 2 3, then 5 4. That is the whole
+reason a queue is the right container here - first-in-first-out naturally means shallower nodes,
+which joined earlier, come out before deeper ones.
 
-    """The trace, one row at a time, with the reason on every line.
+But the queue does not TELL you where one row ends and the next begins. Look at the middle state:
+[3, 5]. That holds one node from level 1 and one from level 2, mixed together.
 
-        1
-       / \\
-      2   3
-       \\   \\
-        5   4
+THE FIX IS ONE LINE, and it is the whole technique: BEFORE PROCESSING A ROW, WRITE DOWN HOW MANY
+NODES ARE IN THE QUEUE. Whatever is in there right now is exactly one complete level - nothing
+from the next level has been added yet.
 
-Start: queue = [1], answer = [].
+    n = len(queue)        <- freeze the row size
+    then take exactly n nodes, adding children as you go
 
-ROW 0. Freeze size = 1 (the line holds one node, so this row has one node).
-  Serve 1. It is the 1st of 1, so it is the LAST of the row -> record 1.
-  Push its children: 2, then 3. queue = [2, 3].
-  answer = [1].
+Everything you add during those n steps belongs to the NEXT row and will be counted when its turn
+comes. The last of the n you take is the rightmost node of this row - which is the answer for
+this level.
 
-ROW 1. Freeze size = 2.
-  Serve 2. It is the 1st of 2 - not last, so record nothing.
-    Push its children: 2 has no left child; its right child is 5. queue = [3, 5].
-  Serve 3. It is the 2nd of 2 - this IS the last -> record 3.
-    Push its child 4. queue = [5, 4].
-  answer = [1, 3].
+That frozen count is called the LEVEL-SIZE loop, and it is worth learning once because section 10
+lists six problems that are the same walk with one line changed.""",
 
-ROW 2. Freeze size = 2.
-  Serve 5. 1st of 2, not last.  Push nothing - 5 is a dead end (a LEAF, a node
-    with no children).
-  Serve 4. 2nd of 2, last -> record 4. Push nothing.
-  answer = [1, 3, 4]. queue is empty.
+    """3. EVERY TERM, defined the first time you meet it.
 
-Loop ends because the queue is empty. Answer [1, 3, 4] - matching what we saw
-by eye at the start.""",
+BINARY TREE. A structure where each node has a value and up to two children, called left and
+right. A node with no children is a LEAF.
 
-    """The case that kills the tempting shortcut.
+ROOT. The node at the top, with nothing above it. The only entry point you are given.
 
-The obvious first guess is: "just start at the root and keep walking to the
-right child." It gives the right answer on the tree above, so it looks correct.
-Now try it here:
+LEVEL / DEPTH / ROW. All nodes the same number of steps from the root. The root is level 0.
 
-        1
-       /
-      2
-     /
-    3
+BFS (BREADTH-FIRST SEARCH). Visiting a tree level by level, top to bottom. The opposite is DFS
+(depth-first), which goes as deep as possible before backing up.
 
-Walking right from 1: there IS no right child. The shortcut returns just [1].
+LEVEL-ORDER TRAVERSAL. Another name for BFS on a tree.
 
-But stand on the right and look: nothing is in front of 2 or 3, so you can see
-the entire left-leaning chain. The true answer is [1, 2, 3].
+QUEUE. A first-in-first-out line. Join the back, leave the front.
 
-The lesson: "visible from the right" does not mean "reached by going right". It
-means "last node in its row" - and a node is last in its row simply because
-nothing else is in that row, no matter which side of the tree it lives on.
+deque. Python's double-ended queue, from the collections module. `popleft()` removes from the
+front in constant time. Using a plain list and `pop(0)` also works and is O(n) per removal,
+because every remaining element shifts down - which turns the whole traversal into O(n^2). That
+is a real and common performance bug.
 
-Here is a third tree where the visible node jumps sides between rows:
+ENQUEUE / DEQUEUE. Add to the back / remove from the front.
 
-        1
-       / \\
-      2   3
-     /
-    4
+THE FROZEN LEVEL SIZE. Capturing `len(queue)` BEFORE processing a row, so children added during
+the row are not mistaken for part of it. The heart of the technique.
 
-Row 0 -> 1. Row 1 -> 3 (the rightmost). Row 2 -> 4, because 4 is the ONLY node
-on that row, so it is trivially the rightmost. Answer [1, 3, 4]. The visible
-node moved from the right subtree back to the left subtree - which no
-follow-the-right-pointer walk can ever produce.""",
+n and i. In the code, n is the frozen row size and i counts position within the row. `i == n - 1`
+identifies the LAST node of the row - the one visible from the right.
 
-    """The two tiny inputs, and why they need no special handling.
+result. The list of answers, one per level, built top to bottom.
 
-The EMPTY tree (no nodes at all). If you start the loop with an empty queue,
-there is no first row to freeze a size for - the loop body simply never runs and
-you return an empty list. The only guard you genuinely need is at the very top:
-if the root is missing, return an empty list before you try to push it, because
-pushing "nothing" onto the queue would make the first row look like it has one
-node.
+O(n) - "LINEAR TIME". Work proportional to the number of nodes. Each node is enqueued once and
+dequeued once.""",
 
-The SINGLE node. queue = [1], freeze size 1, serve 1, it is the last of its row,
-record it, no children to push, queue empties, loop ends. Answer [1].
+    """4. THE CASE THAT KILLS THE TEMPTING SHORTCUT.
 
-Both fall out of the ordinary skeleton once that one root check is in place.
+The obvious first guess is: START AT THE ROOT AND KEEP WALKING TO THE RIGHT CHILD.
 
-Cost: every node is pushed once and served once, so the time is O(n) for n
-nodes - you touch each node a constant number of times. The extra memory is the
-queue, which at its fullest holds one entire row. In a wide, bushy tree the
-widest row can hold about half the nodes, so the space is O(n) in the worst
-case; in a thin, chain-like tree it never holds more than a node or two.""",
+    root -> root.right -> root.right.right -> ...
 
-    """Learn the frozen-size loop once, get six problems for free.
+It gives the right answer on plenty of trees, which is exactly what makes it dangerous. Here is
+where it breaks:
 
-Every one of these is the same walk with one line changed at the point where
-you decide what to record:
+            1
+           / \\
+          2   3
+         /
+        4
 
-- Left side view: record the FIRST node of each row instead of the last.
-- Average of each level: add up the row and divide by the frozen size - which
-  is precisely why freezing the size is convenient, you already have the count.
-- Largest value in each row: take the maximum as you serve the row.
-- Zigzag / spiral order: build each row as a list and reverse every other one
-  before adding it to the answer.
-- Level order (just the rows themselves): collect each row into its own list.
-- Minimum depth: stop the moment you serve a node with no children - the row
-  number you are on is the answer, and BFS reaches it before any deeper node.
+    THE CORRECT ANSWER IS [1, 3, 4].
 
-In plain words, the takeaway: the right side view is "the last node of every
-row". Walk the tree row by row with a queue, freeze the row's size before you
-start serving it, and keep the last node you serve. Time O(n), space O(width of
-the widest row).""",
+    Level 0:  1              ->  1
+    Level 1:  2, 3           ->  3   (3 is rightmost)
+    Level 2:  4              ->  4   (the ONLY node on this level, so it is visible)
 
-    """What the code does, in plain language - read this before the line-by-line.
+    THE RIGHT-ONLY WALK gives [1, 3] and stops, because 3 has no right child.
 
-The code walks the tree one horizontal ROW at a time, from the top down, and
-keeps the last node of each row.
+    It MISSES 4 ENTIRELY - and 4 is genuinely visible from the right, because there is nothing
+    beside it to hide behind. It is the only node at its depth.
 
-It manages the rows using a waiting line. At the start, the line contains just
-the top node - that is row 0. Then it repeats this until the line is empty:
+WHY THE SHORTCUT IS WRONG IN PRINCIPLE, not just on this input: "visible from the right" means
+LAST AT ITS DEPTH, and depth is a property of the whole tree. The right spine is only the answer
+when the tree happens to be deepest on its right-hand side. A left subtree that reaches deeper
+than the right one breaks it every time - and nothing about the problem promises that will not
+happen.
 
-  Count how many nodes are waiting RIGHT NOW. That count is exactly the size of
-  the current row, because nothing from the next row has joined yet.
+TRAP 2: NOT FREEZING THE LEVEL SIZE. If you decide where the row ends by looking at the queue
+DURING the row, children you just added get counted as part of the current level. Trace the tree
+above at level 1: you start with [2, 3], and the moment you process 2 the queue becomes [3, 4] -
+which mixes level 1's node 3 with level 2's node 4. Only the number captured beforehand knows
+that level 1 has exactly two nodes. Section 9 shows this happening.
 
-  Serve exactly that many nodes, taking them from the front of the line. As each
-  one is served, put its children on the BACK of the line - left child first,
-  then right - so they queue up in order for the next row.
+TRAP 3: using a list with `pop(0)` instead of a deque. It works and it is O(n) per removal
+because every remaining element shifts down one position, making the whole traversal O(n^2). On
+a 100,000-node tree that is the difference between instant and unusable.
 
-  The very last node served in that count is the rightmost one in its row, so
-  write its value down.
+TRAP 4: forgetting the empty tree. If root is None there is no first node to enqueue, and
+`deque([None])` would put a None in the queue and crash on `node.val`. The guard at the top
+returns [] immediately.
 
-By the time those nodes have been served, the line holds exactly the next row,
-in left-to-right order, and the whole thing repeats one level lower.
+TRAP 5: appending children without checking they exist. `queue.append(node.left)` when
+node.left is None puts None in the queue, and the next dequeue crashes. Hence the two `if`
+guards.""",
 
-The single line that everything depends on is the one that counts the waiting
-nodes BEFORE serving any of them. The line keeps growing while you work, because
-you are adding children to it at the same time as you are taking parents off it.
-Freeze the count first and the boundary between one row and the next is exact.
-Ask for the length again in the middle and the two rows blur into one.
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
 
-In one sentence: walk the tree row by row using a waiting line, freeze how many
-are waiting before you start on a row, and keep the last one you serve.""",
+VERSION A - THE RIGHT-ONLY WALK. Covered in section 4. Fast, simple, and wrong. Worth mentioning
+in an interview only to say why you rejected it - showing you considered and dismissed it is
+better than never raising it.
 
-    """Now the code, line by line, against the trace we just did by hand.
+VERSION B - COLLECT EVERY LEVEL, THEN TAKE THE LAST OF EACH.
 
-Keep the traced tree beside you: 1 on top, 2 and 3 below it, then 5 and 4.
+    do a full level-order traversal, building a list of lists
+    then take the last element of each inner list
+
+Completely correct and easy to reason about. It costs O(n) extra space to hold all the values,
+when you only ever wanted one per level. A reasonable first answer to state, then improve.
+
+VERSION C - THE FROZEN-SIZE BFS, which is the code here. Same traversal, but record only the last
+node of each row as you go, so nothing is stored that you do not need.
+
+VERSION D - RIGHT-FIRST DFS. Go depth-first, visiting the RIGHT child before the left, and keep
+track of the current depth. The FIRST node you reach at any new depth is the rightmost one at
+that depth, because right-first means you always arrive from the right.
+
+    if depth == len(result): result.append(node.val)
+    then recurse right, then left
+
+Also O(n), and it uses stack space proportional to the tree's HEIGHT rather than its WIDTH -
+which matters in the opposite direction from BFS. Worth naming as the alternative, because the
+space trade is genuine:
+
+    BFS   space is O(WIDTH)   - worst on a bushy tree; the bottom level of a complete tree
+                                holds about half the nodes
+    DFS   space is O(HEIGHT)  - worst on a long thin tree, where height approaches n
+
+WHY THE FROZEN SIZE IS SAFE - the argument, since this is the one thing an interviewer probes:
+
+At the moment you write down `n = len(queue)`, the queue contains every node of the current level
+and nothing else. Why nothing else? Because the only way a node enters the queue is as somebody's
+child, and the only nodes processed so far are from the PREVIOUS level - whose children are
+exactly this level.
+
+So the first n dequeues take precisely this level, in left-to-right order, and everything
+enqueued during those n steps belongs to the next level. The (n-1)th of them - the last - is the
+rightmost node of this row.
+
+That argument is what makes `i == n - 1` correct, and it is why the count must be taken before
+the first child is added rather than during.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE TREE ONE WHOLE ROW AT A TIME USING A QUEUE,
+AND FROM EACH ROW KEEP ONLY THE LAST NODE - FREEZING THE ROW'S SIZE BEFORE YOU START IT SO THAT
+CHILDREN ADDED DURING THE ROW ARE NOT COUNTED AS PART OF IT.
+
+THERE IS NO RECURSION IN THIS VERSION, which is deliberate - the DFS alternative in section 5 is
+recursive and uses stack space proportional to the tree's height. The mechanism here is TWO
+NESTED LOOPS OVER A SHRINKING-AND-GROWING QUEUE:
+
+  - The outer loop runs once per LEVEL, and continues while the queue holds anything.
+  - The inner loop runs exactly n times, where n was frozen before it started.
+  - WHAT MAKES IT STOP: every node is enqueued exactly once and dequeued exactly once, so the
+    queue must eventually empty. A tree has no cycles, so no node can be added twice.
+  - WHY IT CANNOT LOOP FOREVER: each iteration of the inner loop removes one node and adds at
+    most two, but those two are strictly deeper - and depth is bounded by the height of the tree.
+
+THE STEPS:
+
+  1. IF THE TREE IS EMPTY, return an empty list immediately. Everything below assumes there is at
+     least one node.
+
+  2. MAKE AN EMPTY ANSWER LIST, and a queue holding just the root.
+
+  3. WHILE THE QUEUE IS NOT EMPTY - each pass handles one complete row:
+
+     a. WRITE DOWN HOW MANY NODES ARE IN THE QUEUE RIGHT NOW. That number is this row's size, and
+        it must be captured BEFORE anything is added.
+
+     b. TAKE EXACTLY THAT MANY NODES FROM THE FRONT, one at a time, counting as you go:
+
+        - IF THIS IS THE LAST ONE OF THE ROW, record its value. It is the rightmost node at this
+          depth and therefore visible.
+
+        - ADD ITS LEFT CHILD TO THE BACK, if it has one.
+        - ADD ITS RIGHT CHILD TO THE BACK, if it has one.
+
+        Left before right, so the next row comes out in left-to-right order too - which is what
+        makes "last of the row" mean "rightmost".
+
+  4. WHEN THE QUEUE EMPTIES, every level has contributed exactly one value. Return the list.
+
+The step people get wrong is 3a - capturing the size during the row rather than before it. The
+step people get wrong second is adding children without checking they exist.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a family tree drawn on a large board, and you are photographing it one horizontal row at
+a time from the side.
+
+You keep a waiting line. At the start the only person in it is the person at the top.
+
+Now you work in rounds. At the beginning of each round you count how many people are standing in
+the line and write that number on your hand. That number is important, and the reason is that
+people are about to join the line while you work.
+
+Then you call exactly that many people forward, one at a time. As each person steps up, you ask
+them to send their children to the BACK of the line - which is why the line grows while you are
+working, and why the number on your hand matters. Without it you would keep calling people
+forward and never know where the generation ended.
+
+The last person you call in each round is the one furthest right in that generation. You
+photograph them, and only them.
+
+When the line is finally empty, you have exactly one photograph per generation, taken from the
+right-hand side, top to bottom.
+
+And the shortcut that does not work: you might think you could just start at the top and keep
+asking each person for their rightmost child. That works right up until somebody has no children
+on the right but their sibling's family carries on for another generation on the left. Then you
+stop early and miss a whole generation - one where the only person present is plainly visible,
+because there is nobody beside them to stand in the way.
+
+The counting is what makes this work, and the counting has to happen before anybody new joins.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the traced tree beside you: 1 at the top, 2 and 3 below it, 4 below 2.
 
     from collections import deque
-A deque ("deck") is Python's ready-made waiting line. We need to take from the
-FRONT, and a plain list is slow at that - removing the front of a list shuffles
-every remaining item along. A deque removes from the front in one step.
 
-    if not root:
-        return []
-The empty-tree guard from the previous example. Without it, we would push
-"nothing" into the queue and the first row would look like it has one node.
+A queue with fast removal from the front. See trap 3 for why a plain list is a performance bug
+here rather than a style choice.
 
-    result = []
-Where the visible values collect. Ours ended as [1, 3, 4].
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
 
-    queue = deque([root])
-The line starts with just the root. That is row 0, and it is why the first
-frozen size is 1.
+The node shape the problem gives you. Three fields: a value and two child links, either of which
+may be None.
 
-    while queue:
-Keep going while anyone is still waiting. In the trace this ended after row 2,
-when 5 and 4 were served and neither had children to push.
+    def right_side_view(root):
 
-    n = len(queue)
-THE critical line. Freeze how many are waiting RIGHT NOW - that is exactly the
-size of the current row, before any of this row's children join the back. In the
-trace this was 1, then 2, then 2.
+root is the top node, or None for an empty tree. Returns a list of values, top to bottom. The
+tree itself is never modified.
 
-    for i in range(n):
-Serve exactly n nodes and no more. This is what stops the rows smearing
-together. If you wrote "while queue" here instead, you would keep eating into
-the next row and get one flat traversal.
+        if not root:
+            return []
 
-    node = queue.popleft()
-Serve the front of the line. In row 1 this gave 2 first, then 3 - left to right,
-because that is the order their parent pushed them in.
+Trap 4. Without this, `deque([root])` would put None in the queue and the first `node.val` would
+crash. Returning the empty list is also the correct answer for an empty tree.
 
-    if i == n - 1:
-        result.append(node.val)
-i counts 0, 1, 2, ... within the row, so i == n - 1 means "this is the last one
-of this row" - the rightmost, the one you can see. In row 1, node 2 had i = 0
-(skipped) and node 3 had i = 1 == n - 1 (recorded). This single line is what you
-change for every variant: use i == 0 for the LEFT side view.
+        result = []
 
-    if node.left:  queue.append(node.left)
-    if node.right: queue.append(node.right)
-Push this node's children onto the BACK of the line - left first, then right, so
-the next row keeps its left-to-right order. The "if" checks skip missing
-children: node 2 in our tree has no left child, so only 5 was pushed. Note the
-children join behind everyone still in the current row, which is exactly why the
-frozen n still describes the current row correctly.
+Where the answers accumulate - exactly one per level, in order.
 
-    return result
-[1, 3, 4] - the values you would see standing at the right edge of the wall.""",
+        queue = deque([root])
+
+The waiting line, starting with just the root. This is the only node that has no parent to add
+it.
+
+        while queue:
+
+One pass per LEVEL. Continues while anything remains. It terminates because every node enters the
+queue once and leaves once, and a tree has no cycles.
+
+            n = len(queue)
+
+THE LINE THE WHOLE TECHNIQUE RESTS ON. At this instant the queue holds every node of the current
+level and nothing else - the argument is in section 5. Freezing it here is what stops children
+added below from being counted as part of this row.
+
+            for i in range(n):
+
+Take exactly n nodes. `range(n)` is evaluated once with the frozen value, so appends during the
+loop cannot extend it - which is precisely the behaviour needed.
+
+                node = queue.popleft()
+
+Take from the FRONT. First in, first out, which is what produces level order.
+
+                if i == n - 1:               # last node of this level = rightmost
+                    result.append(node.val)
+
+The one line that makes this problem different from a plain level-order traversal. Because
+children are always added left before right, each row comes out left-to-right - so the LAST of
+the row is the rightmost node at that depth, which is the one visible from the side.
+
+                if node.left: queue.append(node.left)
+                if node.right: queue.append(node.right)
+
+Add the children to the BACK, left first. The two guards are trap 5 - appending None would crash
+on the next dequeue.
+
+Left before right matters: it is what makes "position n-1 within the row" mean "rightmost".
+Reversing them would still visit every node, and `i == n - 1` would then pick the LEFTMOST, which
+is the answer to a different question.
+
+        return result
+
+The queue emptied, so every level has been processed and has contributed exactly one value.""",
+
+    """9. TRACED, VARIABLE BY VARIABLE - ON THE TREE THAT BREAKS THE SHORTCUT.
+
+            1
+           / \\
+          2   3
+         /
+        4
+
+    Correct answer: [1, 3, 4].  The right-only walk gives [1, 3] and misses 4.
+
+    START:  result = [], queue = [1]
+
+    OUTER PASS 1 (level 0)
+        n = len(queue) = 1
+        i = 0:  node = 1.  queue = []
+                i == n - 1?  0 == 0  YES  ->  result = [1]
+                node.left is 2   ->  queue = [2]
+                node.right is 3  ->  queue = [2, 3]
+
+    OUTER PASS 2 (level 1)
+        n = len(queue) = 2          <- FROZEN HERE, before any child is added
+        i = 0:  node = 2.  queue = [3]
+                i == n - 1?  0 == 1  no  ->  record nothing
+                node.left is 4   ->  queue = [3, 4]
+                node.right is None -> nothing
+
+                LOOK AT THE QUEUE NOW: [3, 4]. That is level 1's node 3 and level 2's node 4,
+                sitting together. If the row's end were decided by looking at the queue at this
+                moment, 4 would be treated as part of level 1. Only the frozen n = 2 knows that
+                level 1 has exactly two nodes. THIS IS TRAP 2, VISIBLE.
+
+        i = 1:  node = 3.  queue = [4]
+                i == n - 1?  1 == 1  YES  ->  result = [1, 3]
+                node.left is None, node.right is None -> nothing added
+
+    OUTER PASS 3 (level 2)
+        n = len(queue) = 1
+        i = 0:  node = 4.  queue = []
+                i == n - 1?  0 == 0  YES  ->  result = [1, 3, 4]
+                no children
+
+    queue is empty  ->  while loop ends.
+
+    return [1, 3, 4]
+
+    NOTE WHAT HAPPENED AT LEVEL 2. Node 4 is a LEFT child, and it is recorded - because it is the
+    only node at its depth, so it is trivially the last one. "Rightmost" does not mean "reached by
+    going right"; it means "last at this depth". That distinction is exactly what the right-only
+    shortcut gets wrong.
+
+SECOND TRACE - the original tree, where the bottom row has two nodes:
+
+            1
+           / \\
+          2   3
+           \\   \\
+            5   4
+
+    queue = [1].            n = 1.  i=0: node 1, last -> result = [1]. queue = [2, 3].
+    queue = [2, 3].         n = 2.  i=0: node 2, not last. 2.right = 5 -> queue = [3, 5].
+                                    i=1: node 3, LAST -> result = [1, 3]. 3.right = 4 -> queue = [5, 4].
+    queue = [5, 4].         n = 2.  i=0: node 5, not last. no children.
+                                    i=1: node 4, LAST -> result = [1, 3, 4]. no children.
+    queue = []  ->  ends.
+
+    return [1, 3, 4].  Node 5 is hidden behind 4, and the code never records it - correctly.
+
+THE TINY INPUTS, needing no special handling:
+
+    EMPTY TREE (root is None)     the guard returns [] before the loop.
+    SINGLE NODE                   queue = [root], n = 1, i = 0 is last -> result = [root.val],
+                                  no children, queue empties. Returns one value. Correct.
+    A LONG LEFT CHAIN 1-2-3-4     every level has exactly one node, so every node is "last" and
+                                  the answer is all of them - correct, since nothing hides
+                                  anything.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: every node is added to the queue exactly once and removed exactly once, and
+everything done per node - the comparison, the append, the two child checks - is constant. So
+the total is proportional to the number of nodes, however the tree is shaped.
+
+SPACE: O(w), where w is the tree's maximum WIDTH - the most nodes on any one level. For a
+complete tree the bottom level holds about half the nodes, so this is about n/2 in the worst
+case. For a long thin tree it is 1.
+
+    NOTE THE OPPOSITE TRADE with the DFS alternative from section 5: BFS space is O(WIDTH) and
+    DFS space is O(HEIGHT). A bushy tree is expensive for BFS and cheap for DFS; a long thin
+    tree is the reverse. Saying which one your tree is likely to be is a good interview answer.
+
+THE FAMILY THIS UNLOCKS - and this is the real value of learning the frozen-size loop, because
+each of these is the SAME walk with one line changed at the point where you decide what to
+record:
+
+    LEVEL ORDER TRAVERSAL        collect every node of the row into a sub-list
+    AVERAGE OF LEVELS            sum the row and divide by n
+    MAXIMUM IN EACH LEVEL        keep the largest of the row
+    LEFT SIDE VIEW               record when i == 0 instead of i == n - 1
+    ZIGZAG LEVEL ORDER           reverse alternate rows before appending
+    MINIMUM DEPTH                return the level number the first leaf appears at
+
+Six problems, one loop. That is worth saying in an interview - it shows you recognised a pattern
+rather than a puzzle.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Could you do it depth-first?" Yes - visit right before left and record the first node seen at
+    each new depth, since right-first means you arrive from the right. O(n) time, O(height) space.
+  - "What if the tree is very wide?" BFS space becomes a problem - about n/2 for a complete tree.
+    The DFS version uses O(height) instead, so prefer it there.
+  - "What if the tree is very deep?" The reverse: DFS risks a stack overflow, BFS does not.
+  - "Why a deque rather than a list?" `pop(0)` on a list is O(n) because everything shifts down,
+    turning the traversal into O(n^2).
+
+THE #1 BEGINNER MISTAKE: walking down the right children. It gives the right answer on plenty of
+trees, which is what makes it so hard to catch, and it fails whenever a left subtree reaches
+deeper than the right one - as in section 9's first trace, where node 4 is plainly visible and
+the shortcut never reaches it.
+
+RUNNER-UP: not freezing the level size before the row starts, so children added mid-row get
+counted as part of it. The trace shows the queue holding [3, 4] mid-level - one node from each
+of two levels - which is exactly the moment the frozen count earns its keep.
+
+TAKEAWAY: "visible from the right" means LAST AT ITS DEPTH rather than reached by going right -
+so walk level by level with a queue, freeze the row size before you start the row, and keep the
+final node of each one.""",
 ]
 
 _EX_P0B["Clone Graph (DFS)"] = [
@@ -33719,245 +33946,473 @@ is why there is no separate visited set anywhere in this code.""",
 ]
 
 _EX_P0B["Coin Change (fewest coins)"] = [
-    """The question, as a thing that happens at a shop counter.
+    """1. THE GOAL, as a thing that happens at a shop counter.
 
-You have an unlimited supply of coins in a few denominations - say 1, 2 and 5.
-A customer needs 11 back. What is the SMALLEST number of coins you can hand
-over?
+You have an unlimited supply of coins in a few denominations - say 1, 2 and 5. A customer needs
+11 back. What is the FEWEST coins you can hand over?
 
-Try it yourself: 5 + 5 + 1 is three coins. Could you do it in two? The largest
-two coins are 5 + 5 = 10, which is short. So no - three is the best possible,
-and 3 is the answer.
+    coins = [1, 2, 5],  amount = 11    ->    3      (5 + 5 + 1)
 
-Note carefully what is being counted. Not the number of ways to make 11, and not
-which coins - just HOW MANY coins, at minimum. If the amount cannot be made at
-all, the answer is -1.
+    coins = [2],        amount = 3     ->   -1      (impossible - every coin is even,
+                                                     and 3 is odd)
 
-Two things make this harder than it looks:
-- Coins can be reused as often as you like.
-- The obvious "always grab the biggest coin that fits" strategy is WRONG, and
-  the next example shows exactly why.""",
+Two things the problem promises, and both matter:
 
-    """Why "grab the biggest coin first" fails - keep this counterexample ready.
+  - UNLIMITED SUPPLY of each denomination. You can use 5 as many times as you like. (This is what
+    makes it an "unbounded" problem; if each coin could be used once it would be a different and
+    harder one.)
 
-That strategy has a name: GREEDY. A greedy method makes the choice that looks
-best right now and never reconsiders.
+  - RETURN THE COUNT, not the coins themselves. Just how many. (Recovering the actual coins is a
+    small extension - section 10.)
 
-Coins 1, 3, 4 and an amount of 6.
+  - IF IT CANNOT BE MADE AT ALL, return -1. Not zero, not infinity - minus one. That is a
+    convention the problem sets, and section 4 shows how the code arrives at it cleanly.
 
-Greedy: take 4 (the biggest that fits). 2 left. Take 1. 1 left. Take 1. Done -
-THREE coins: 4 + 1 + 1.
+The tempting approach is "hand over the biggest coin that fits, repeatedly". It is fast, it is
+obvious, and section 4 has the counterexample that kills it - which is worth memorising, because
+the interviewer will ask for exactly that.""",
 
-But 3 + 3 = 6 is TWO coins. Greedy lost.
+    """2. THE INTUITION - build the answer upward from nothing.
 
-Why did it lose? Because taking the 4 left a remainder of 2, and 2 happens to be
-awkward with these coins - it needs two 1s. The big coin looked good in
-isolation and was bad in context. Greedy never looks back to find out.
+DYNAMIC PROGRAMMING sounds grand; the idea is small. SOLVE THE TINY VERSIONS OF THE PROBLEM
+FIRST, WRITE THE ANSWERS DOWN, AND USE THEM TO SOLVE THE BIGGER ONES.
 
-(With everyday currencies - 1, 2, 5, 10, 20 - greedy happens to work, which is
-why the failure feels surprising. It is a property of those particular coin
-sets, not a general truth.)
+Make a table with one slot per amount, from 0 up to the target. Each slot will eventually hold
+the fewest coins needed to make that amount.
 
-So we need a method that considers EVERY choice rather than guessing. That
-method is DYNAMIC PROGRAMMING, and the next example builds it from scratch.""",
+    amount:  0   1   2   3   4   5   6   7   8   9  10  11
+    coins:   0   ?   ?   ?   ?   ?   ?   ?   ?   ?   ?   ?
 
-    """Building the answer from the bottom up.
+Slot 0 is free: to make nothing, hand over nothing. ZERO COINS. That is the only answer you know
+without thinking, and everything else is built from it.
 
-DYNAMIC PROGRAMMING sounds grand; the idea is small. Solve the tiny versions of
-the problem first, write the answers down, and build the bigger answers out of
-the ones you already wrote down. "Written down" is just a list - here we call it
-dp, where
+Now the recurrence, which is one sentence: TO MAKE AMOUNT a, THE LAST COIN YOU HAND OVER IS ONE
+OF YOUR DENOMINATIONS - SO TRY EACH ONE, AND ASK HOW FEW COINS MADE UP THE REST.
 
-    dp[k] = the fewest coins needed to make exactly k
+    to make 11 with coins [1, 2, 5]:
+        last coin was 1  ->  1 + (fewest coins for 10)
+        last coin was 2  ->  1 + (fewest coins for 9)
+        last coin was 5  ->  1 + (fewest coins for 6)
+        take the best of those three
 
-Start with the only thing we know for certain: dp[0] = 0. Making zero takes zero
-coins. That is the BASE CASE - the fact the whole table rests on.
+And "fewest coins for 10", "for 9", "for 6" are already in the table, because you filled the
+table from 0 upward and all of them are smaller than 11.
 
-Now the key question, asked at every amount k: what was the LAST coin I handed
-over? It has to be one of my coins. If the last coin was 5, then before it I had
-to make k - 5, and I already know the cheapest way to do that - it is sitting in
-dp[k-5]. So that route costs dp[k-5] + 1.
+    amount:  0   1   2   3   4   5   6   7   8   9  10  11
+    answer:  0   1   1   2   2   1   2   2   3   3   2   3
+                                                        ^
+                                       11 = 5 + 5 + 1, three coins
 
-Try every coin as the last coin and keep the smallest:
+THAT IS THE ENTIRE ALGORITHM. Fill left to right; each slot looks only at slots already filled.
+Section 9 fills this exact table by hand.
 
-    dp[k] = 1 + min( dp[k - c] ) over every coin c that is not bigger than k
+Why building UPWARD works: every slot you need has a SMALLER amount than the one you are
+computing, and you filled smaller amounts first. So the answer is always already there, and you
+never compute anything twice.""",
 
-That is the entire algorithm. Now the trace, coins 1, 2, 5, amount 11:
+    """3. EVERY TERM, defined the first time you meet it.
 
-  dp[0] = 0   base case
-  dp[1] = 1   only coin 1 fits: 1 + dp[0] = 1
-  dp[2] = 1   coin 2 gives 1 + dp[0] = 1; coin 1 gives 1 + dp[1] = 2; take 1
-  dp[3] = 2   coin 1 -> 1+dp[2]=2; coin 2 -> 1+dp[1]=2; take 2   (2+1)
-  dp[4] = 2   coin 2 -> 1+dp[2]=2                                (2+2)
-  dp[5] = 1   coin 5 -> 1+dp[0]=1                                (5)
-  dp[6] = 2   coin 5 -> 1+dp[1]=2                                (5+1)
-  dp[7] = 2   coin 5 -> 1+dp[2]=2                                (5+2)
-  dp[8] = 3   coin 5 -> 1+dp[3]=3                                (5+2+1)
-  dp[9] = 3   coin 5 -> 1+dp[4]=3                                (5+2+2)
-  dp[10]= 2   coin 5 -> 1+dp[5]=2                                (5+5)
-  dp[11]= 3   coin 5 -> 1+dp[6]=3                                (5+5+1)
+DENOMINATION. One coin value you are allowed to use - 1, 2 and 5 here.
 
-Answer dp[11] = 3. Every cell was computed once, using only cells to its left,
-which is why the loop runs left to right.""",
+UNBOUNDED. Each denomination may be used any number of times. If each could be used once, this
+would be a different problem (the 0/1 knapsack).
 
-    """When the amount is impossible, and the INFINITY trick.
+GREEDY. A method that takes the choice looking best right now and never reconsiders. "Biggest
+coin that fits" is greedy, and section 4 shows it failing.
 
-Coins = [2] only, amount = 3. Three is odd and every coin is even, so it cannot
-be made. The answer must be -1.
+DYNAMIC PROGRAMMING (DP). Solving small versions first, storing the answers, and combining them.
+The two ingredients are OVERLAPPING SUBPROBLEMS (the same smaller amounts are needed repeatedly)
+and OPTIMAL SUBSTRUCTURE (the best answer for 11 is built from the best answer for 6).
 
-Watch how the table handles it if we start every unknown cell at INFINITY
-(in practice a number larger than any real answer could be, such as amount + 1):
+BOTTOM-UP. Filling a table from the smallest case upward, which is what this code does. The
+alternative is TOP-DOWN (recursion with memoisation), which computes the same values in a
+different order.
 
-  dp[0] = 0        base case
-  dp[1] = infinity  the only coin, 2, is bigger than 1 - nothing fits, so the
-                    cell is never improved and stays at its starting value
-  dp[2] = 1         coin 2 -> 1 + dp[0] = 1
-  dp[3] = ?         coin 2 -> 1 + dp[1] = 1 + infinity, which is still
-                    effectively infinity. Nothing else fits.
+dp. The table. `dp[a]` holds the fewest coins that make amount a.
 
-At the end, dp[3] is still infinity, meaning "never reached". Translate that to
--1 on the way out and you are done.
+BASE CASE. `dp[0] = 0`. The one answer known without computation, and everything else is derived
+from it.
 
-Why infinity and not -1 as the "unknown" marker? Because infinity behaves
-CORRECTLY under the operations we do. Taking the minimum with infinity always
-picks the real number, and adding 1 to infinity keeps it infinite - so an
-unreachable amount stays unreachable automatically. If you seeded unknown cells
-with -1 instead, then min(-1, 3) would pick -1, and a nonsense value would
-spread through the whole table. You would need an "if this cell is -1, skip it"
-guard on every single lookup.
+RECURRENCE. The rule linking a slot to earlier slots: `dp[a] = min over coins c of dp[a - c] + 1`.
 
-Choosing a sentinel value that behaves properly under your own arithmetic, so
-you need no guards, is a genuinely reusable idea.""",
+float('inf'). Positive infinity. Used to mark "not reachable yet". Section 5 explains why this
+particular sentinel is the right one and a large integer is not.
 
-    """Amount zero, and why dp[0] = 0 carries everything.
+STATE. One cell of the table - here, one amount.
 
-If the amount is 0, the answer is 0 - hand over no coins. The table gives this
-directly, since dp[0] is the base case, and the loop over amounts never has to
-run.
+TRANSITION. One way of moving between states - here, using one coin.
 
-But the more important point is what dp[0] does for every OTHER cell. Look at
-where dp[5] = 1 came from: coin 5, then dp[0]. And dp[2] = 1 came from coin 2,
-then dp[0]. Every single-coin answer traces straight back to dp[0], and every
-multi-coin answer traces back through those. The base case is the floor the
-whole tower stands on.
+PSEUDO-POLYNOMIAL. A cost that depends on the VALUE of a number in the input rather than on how
+many digits it has. Section 10 explains why that matters here.""",
 
-Set it wrong and everything is wrong in a way that is hard to spot. Seed
-dp[0] = 1 and every answer is one too many. Seed dp[0] = infinity and no cell is
-ever reachable, so every answer becomes -1. When a DP answer is uniformly off by
-a constant, the base case is the first place to look.
+    """4. THE CASE THAT KILLS THE OBVIOUS METHOD - keep this counterexample ready.
 
-If you also want to know WHICH coins were used, keep a second list recording, at
-each amount, the coin that produced the winning value. Then walk backwards from
-the amount, subtracting the recorded coin each time, until you land on 0. The
-table already contains the answer - you are just reading it back out.""",
+The natural first idea: HAND OVER THE BIGGEST COIN THAT FITS, REPEATEDLY. That strategy has a
+name - GREEDY - and it takes the choice that looks best right now without reconsidering.
 
-    """The cost, the catch in the cost, and the sibling problem.
+    coins = [1, 3, 4],  amount = 6
 
-Time: for each amount from 1 up to the target you try every coin, so the work is
-(amount x number of coins). Memory: one list of length amount + 1, so O(amount).
-For amount 10,000 and 10 coins that is 100,000 steps - instant.
+    GREEDY:   biggest coin that fits is 4     ->  6 - 4 = 2 remaining
+              biggest that fits is 1          ->  2 - 1 = 1
+              biggest that fits is 1          ->  0
+              TOTAL: 4 + 1 + 1 = THREE COINS
 
-Now the catch, and it is the part interviewers listen for. The running time
-depends on the amount's VALUE, not on how long the input is. An amount of one
-billion is only ten characters to write down, but it demands a table with a
-billion cells. An algorithm whose cost scales with the numeric value of an input
-rather than the size of the input is called PSEUDO-POLYNOMIAL. It looks
-efficient and is not, once the numbers get large. Saying that phrase and being
-able to explain what it means is a strong signal.
+    OPTIMAL:  3 + 3 = TWO COINS
 
-The sibling problem, Coin Change II, asks for the number of WAYS to make the
-amount rather than the fewest coins - and there the ORDER of the two loops
-decides the answer. Coins on the outside counts unordered combinations
-(5+1 and 1+5 are the same); amounts on the outside counts ordered sequences
-(they are different). For THIS problem either loop order works, because a
-minimum does not care what order you handed the coins over in. Knowing which
-problems are order-sensitive, and why, is exactly what the pairing tests.
+Greedy gives 3 where 2 is possible. It never considered taking 3 first, because 4 was available
+and looked better at that moment.
 
-In plain words, the takeaway: do not guess with the biggest coin. Ask "what was
-the last coin?", try every possibility, and reuse the answers you already
-computed for smaller amounts. Time O(amount x coins), space O(amount).""",
+WHY GREEDY WORKS ON REAL CURRENCY AND FAILS HERE - this is the part worth understanding rather
+than memorising. British and Euro coin systems are deliberately designed so that greedy IS
+optimal (they are "canonical" systems). The problem does not promise you a sensible coin system;
+[1, 3, 4] is perfectly legal input and it is not canonical. So the algorithm must not assume it.
 
-    """What the code does, in plain language - read this before the line-by-line.
+    THE ONE-LINE ANSWER FOR AN INTERVIEW: "Greedy is optimal for canonical coin systems like
+    real currency, but the problem allows arbitrary denominations - [1,3,4] with amount 6 gives
+    3 coins greedily and 2 optimally - so it needs DP."
 
-The code fills in a table of answers, one row per amount, working upward from
-zero.
+TRAP 2: THE IMPOSSIBLE CASE. coins = [2], amount = 3. Every coin is even and 3 is odd, so it
+cannot be made. The answer must be -1, and the code must not report some large number instead.
+Section 5 explains how the infinity sentinel makes this fall out for free.
 
-Think of it as a price list you are writing by hand. The first line is free:
-making 0 costs 0 coins. Then you work out the cost of making 1, then 2, then 3,
-and so on, all the way up to the amount you actually care about - and crucially,
-by the time you reach any amount, every smaller amount is already written down
-in front of you.
+TRAP 3: AMOUNT ZERO. The answer is 0 - hand over no coins. The table gives this directly because
+`dp[0]` is initialised to 0 and the loop starts at 1, so it is never overwritten. No special case
+needed, and getting it wrong (returning -1 for zero) is a common off-by-one.
 
-To fill in the line for some amount, ask one question: WHAT WAS THE LAST COIN I
-HANDED OVER? It has to have been one of your coins. So try each coin in turn: if
-the last coin was a 5, then before handing it over you must have made
-(this amount minus 5), and the cheapest way to do that is already sitting on the
-list - so that route costs "what is written for amount minus 5" plus one more
-coin. Do that for every coin that is not too big, and keep the smallest total.
+TRAP 4: USING A LARGE INTEGER INSTEAD OF INFINITY as the "unreachable" marker. With a sentinel
+like 999999, an unreachable state plus one is 1000000 - still a number, still comparable, and it
+can be selected as a minimum and propagate silently. With `float('inf')`, inf + 1 is still inf,
+so unreachable states stay unreachable and can never masquerade as an answer. In languages with
+fixed-width integers, the large-sentinel version can also OVERFLOW and become negative, which
+turns "impossible" into "zero coins".
 
-That is the whole method. No cleverness, no guessing - it simply tries every
-possible last coin at every amount and keeps the best.
+TRAP 5: FORGETTING THE `c <= a` GUARD. Without it, `dp[a - c]` with c larger than a indexes
+negatively - and in Python a negative index silently wraps to the END of the list, reading a
+completely unrelated slot. No crash, just wrong answers.""",
 
-Two details make it tidy. Every amount starts out marked "infinity", meaning "no
-way to make this has been found yet"; because adding one to infinity is still
-infinity, and the smallest of a real number and infinity is always the real
-number, unreachable amounts stay unreachable with no extra checks. And the very
-first line, zero costs zero, is the floor that every other line is ultimately
-built on - get it wrong and every answer in the table is wrong with it.
+    """5. THE NAIVE VERSIONS FIRST, THEN THE REAL ONE.
 
-At the end you read off the line for your amount. If it still says infinity, the
-amount could not be made at all, so you report -1.
+VERSION A - GREEDY. Section 4. Fast, wrong on [1,3,4] with amount 6. State it and reject it with
+the counterexample; that exchange alone is often what the question is for.
 
-In one sentence: work out the cheapest way to make every amount from 0 upward,
-and get each one by asking "what was the last coin?" and reusing the answer you
-already wrote down for the leftover.""",
+VERSION B - PLAIN RECURSION. "The fewest coins for a is one plus the fewest for a minus each
+coin, take the best."
 
-    """Now the code, line by line, against the table we just filled in by hand.
+    fewest(a) = 1 + min over c of fewest(a - c)
+
+Correct, and exponentially slow - it recomputes the same amounts enormously many times. For
+coins [1,2,5] and amount 30 the same subproblems are re-solved millions of times, because
+fewest(25) is reached by many different paths.
+
+VERSION C - RECURSION WITH MEMOISATION (top-down DP). Same recursion, but remember each answer
+the first time you compute it. Now every amount is solved once. Same complexity as version D, and
+it uses recursion stack proportional to the amount - which can overflow for large targets.
+
+VERSION D - BOTTOM-UP DP, which is the code here. Fill the table from 0 upward, so every value
+you need is already present and no recursion is involved at all.
+
+THE INFINITY TRICK, EXPLAINED FROM SCRATCH - because it is doing more work than it looks:
+
+    dp = [0] + [float('inf')] * amount
+
+Every slot except 0 starts at infinity, meaning "I do not yet know any way to make this amount".
+Three things then follow automatically, with no special-case code anywhere:
+
+  1. A REAL ANSWER ALWAYS BEATS INFINITY. `min(inf, something_real)` is the real value, so the
+     first genuine way of making an amount replaces the placeholder immediately.
+
+  2. UNREACHABLE STAYS UNREACHABLE. If `dp[a - c]` is infinity, then `dp[a - c] + 1` is ALSO
+     infinity - because infinity plus one is infinity. So an amount that can only be reached
+     through an impossible amount stays impossible. It cannot be quietly turned into a number.
+
+  3. THE FINAL CHECK IS ONE COMPARISON. If `dp[amount]` is still infinity at the end, no route
+     was ever found, and you return -1.
+
+    WATCH POINT 2 IN ACTION: coins = [2], amount = 3.
+        dp[1]: the only coin is 2, and 2 > 1, so the guard skips it. dp[1] stays inf.
+        dp[2]: 2 <= 2, so dp[0] + 1 = 1. dp[2] = 1.
+        dp[3]: 2 <= 3, so dp[1] + 1 = inf + 1 = inf. min(inf, inf) = inf. dp[3] stays inf.
+        return -1.
+
+    THE IMPOSSIBILITY PROPAGATED CORRECTLY WITHOUT A SINGLE LINE OF SPECIAL HANDLING. That is
+    what the sentinel buys, and it is why `float('inf')` rather than a big integer (trap 4).
+
+WHY dp[0] = 0 CARRIES EVERYTHING: it is the only value not derived from another. Every answer in
+the table traces back to it through a chain of "+1"s - the number in `dp[11]` is literally the
+length of the shortest chain from 11 back down to 0. Set it wrong and every single slot is wrong.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: MAKE A TABLE WITH ONE SLOT PER AMOUNT FROM ZERO TO
+THE TARGET, PUT ZERO IN SLOT ZERO AND "IMPOSSIBLE" EVERYWHERE ELSE, THEN FILL LEFT TO RIGHT BY
+TRYING EVERY COIN AS THE LAST ONE HANDED OVER.
+
+THERE IS NO RECURSION HERE, which is deliberate - the top-down version in section 5 recurses to a
+depth proportional to the amount and can overflow the stack on large targets. The mechanism is
+TWO NESTED SWEEPS OVER A TABLE THAT ONLY EVER LOOKS BACKWARDS:
+
+  - The outer loop walks the amount from 1 up to the target.
+  - The inner loop tries each denomination as the final coin.
+  - EVERY LOOKUP IS AT A SMALLER AMOUNT than the one being filled, and smaller amounts were
+    filled earlier - so the value needed is always already there. That is the property that
+    makes bottom-up work, and it is why the outer loop must go upward rather than downward.
+  - WHAT MAKES IT STOP: both loops have fixed trip counts, known before the code runs. Nothing
+    depends on convergence.
+
+THE STEPS:
+
+  1. MAKE A TABLE with one slot for every amount from 0 to the target inclusive - that is
+     target + 1 slots.
+
+  2. PUT ZERO IN SLOT ZERO. Making nothing takes no coins. Put "impossible" - a value larger than
+     any real answer could be - in every other slot.
+
+  3. WALK THE AMOUNT UPWARD FROM 1 to the target. For each amount:
+
+     a. TRY EACH DENOMINATION IN TURN as the last coin handed over.
+
+     b. SKIP ANY COIN LARGER THAN THE CURRENT AMOUNT - you cannot hand over a 5 to make 3.
+
+     c. FOR EACH COIN THAT FITS, look up the answer for (this amount minus that coin) and add
+        one. That is what this amount would cost if that coin were the last one.
+
+     d. KEEP THE SMALLEST such total found across all the coins.
+
+  4. AT THE END, look at the slot for the target. If it is still "impossible", no combination
+     works - return -1. Otherwise return it.
+
+The step people get wrong is 3b - without it, the lookup goes to a negative index, which in
+Python silently reads from the wrong end of the table instead of raising.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a long shelf with a numbered slot for every amount from zero up to eleven, and a card to
+put in each slot saying how few coins that amount needs.
+
+Slot zero gets a card immediately: ZERO. To hand over nothing takes no coins, and that is the one
+thing you know without working anything out.
+
+Every other slot starts with a card saying IMPOSSIBLE - not because it is, but because you have
+not yet found a way, and it is honest to start there.
+
+Now you work along the shelf from left to right, and at each slot you ask one question: WHAT WAS
+THE LAST COIN?
+
+At slot eleven, with coins of 1, 2 and 5, there are only three possibilities. If the last coin
+was a 1, the rest was ten - and slot ten already has a card, so you can read it. If the last was
+a 2, the rest was nine, and slot nine has a card. If the last was a 5, the rest was six. Each
+time you take the number on that earlier card and add one for the coin in your hand, and you keep
+the smallest.
+
+The crucial thing is that you never have to look FORWARD. Every slot you consult is to the left
+of where you are standing, and you have already been there. That is why working left to right
+means the answer is always waiting for you.
+
+And the IMPOSSIBLE cards behave sensibly all by themselves. If the only route into a slot passes
+through an impossible one, then impossible-plus-one is still impossible, and the card stays as it
+was. Nothing has to check for this specially - it simply cannot turn into a number.
+
+At the end you look at slot eleven. If it still says IMPOSSIBLE, then no combination of your
+coins makes that amount, and you say so. Otherwise the card is the answer.
+
+One warning about the obvious shortcut. It is tempting to just grab the biggest coin that fits
+and repeat. With coins of 1, 3 and 4 and a target of six, that gives you a 4, then a 1, then a 1
+- three coins - when two threes would have done. The greedy instinct takes what looks best now
+and never looks back, and the shelf exists precisely because looking back is what finds the
+better answer.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
 
 Keep the trace beside you: coins [1, 2, 5], amount 11, answer 3.
 
-    dp = [0] + [float('inf')] * amount
-Build the table in one line. The [0] at the front is dp[0] = 0 - the base case,
-"making zero costs zero coins". Everything after it starts at float('inf'),
-Python's infinity, meaning "no way to make this amount has been found yet". The
-list has amount + 1 slots because we need positions 0 through 11 inclusive.
+    def coin_change(coins, amount):
 
-    for a in range(1, amount + 1):
-Walk the amounts upward: 1, 2, 3, ... , 11. Upward matters. When we compute
-dp[11] we look back at dp[6], and dp[6] must already be finished - which it is,
-because 6 came earlier in this loop. This is the "build small answers first"
-promise made concrete.
+coins is the list of denominations; amount is the target. Returns the fewest coins, or -1.
+Neither argument is modified.
 
-    for c in coins:
-For this amount, try every coin as the LAST coin handed over. At a = 3 in our
-trace this tried c = 1, then c = 2, then c = 5.
+        dp = [0] + [float('inf')] * amount   # dp[a] = min coins to make a
 
-    if c <= a:
-Only coins that actually fit. At a = 3 this rejected c = 5, because you cannot
-hand over a 5 as part of making 3. Without this check, a - c would go negative
-and Python would happily read from the wrong end of the list.
+The table, built in one expression. `[0]` is slot zero - the base case - and
+`[float('inf')] * amount` creates the remaining slots, all marked unreachable.
 
-    dp[a] = min(dp[a], dp[a - c] + 1)
-The heart of it. "dp[a - c] + 1" reads as: the cheapest way to make the leftover
-amount, plus the one coin I am handing over now. min(...) keeps whichever last
-coin turned out cheapest.
+Note the LENGTH: 1 + amount slots, indexed 0 through amount. Writing `[float('inf')] * amount`
+alone would give one slot too few and the final lookup would fail.
 
-Read it against a = 3 from the trace:
-  c = 1: dp[3] = min(inf, dp[2] + 1) = min(inf, 1 + 1) = 2
-  c = 2: dp[3] = min(2,   dp[1] + 1) = min(2,   1 + 1) = 2
-  c = 5: skipped, does not fit.
-So dp[3] = 2, which is the 2 + 1 we wrote down. And at a = 11:
-  c = 5: dp[11] = min(inf, dp[6] + 1) = min(inf, 2 + 1) = 3.
+And note the SENTINEL. It is `float('inf')` rather than a large integer for the reason in trap 4:
+infinity plus one is still infinity, so an unreachable amount cannot silently become a number.
 
-Notice this line never needs a "have I reached this amount yet?" guard. If
-dp[a-c] is still infinity, then infinity + 1 is infinity, min leaves dp[a]
-alone, and the unreachable amount stays unreachable all by itself. That is the
-infinity sentinel earning its place.
+        for a in range(1, amount + 1):
 
-    return dp[amount] if dp[amount] != float('inf') else -1
-Read the final answer out of the table. If it is still infinity, the amount was
-never reachable - translate that to the -1 the problem asked for. This is the
-line that turns the [2]-coins-amount-3 case into -1.""",
+Walk the amounts upward, starting at 1 because slot 0 is already correct and must not be
+overwritten. `amount + 1` so the target itself is included.
+
+UPWARD IS ESSENTIAL. Every lookup below is at a SMALLER amount, so those slots must already hold
+their final values.
+
+            for c in coins:
+
+Try each denomination as the last coin handed over. The order of the coins does not matter - the
+`min` takes the best regardless.
+
+                if c <= a:
+
+Trap 5. You cannot hand over a coin larger than the amount you are making. Without this guard,
+`dp[a - c]` with c > a gives a negative index, and Python silently wraps to the END of the list -
+reading an unrelated slot and producing wrong answers with no error at all.
+
+                    dp[a] = min(dp[a], dp[a - c] + 1)
+
+THE RECURRENCE, and the whole algorithm in one line. Read it as: "the best I have found so far
+for a" against "one coin, plus however few coins made up the remainder".
+
+`dp[a - c]` is the answer for what is left after handing over this coin - already computed,
+because a - c is smaller than a. The `+ 1` counts the coin in your hand.
+
+If `dp[a - c]` is infinity, `dp[a - c] + 1` is infinity, and the min leaves dp[a] unchanged -
+which is how impossibility propagates without any special handling.
+
+        return dp[amount] if dp[amount] != float('inf') else -1
+
+The final check. If the target's slot was never improved from its starting value, no route was
+ever found and the convention is to return -1. Otherwise the slot holds the answer.
+
+Note this reads dp[amount], not dp[-1] - they are the same slot here, but naming it explicitly is
+clearer and survives someone later changing the table's length.""",
+
+    """9. THE TABLE, FILLED BY HAND - AND THE CASE WHERE GREEDY LOSES.
+
+TRACE 1 - coins = [1, 2, 5], amount = 11.
+
+    dp starts as:  [0, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf]
+                    0   1    2    3    4    5    6    7    8    9   10   11
+
+    a = 1:  c=1 (1<=1): dp[0] + 1 = 1   ->  dp[1] = 1
+            c=2 (2>1): skipped.  c=5: skipped.
+    a = 2:  c=1: dp[1] + 1 = 2  ->  dp[2] = 2
+            c=2: dp[0] + 1 = 1  ->  dp[2] = 1     (better)
+            c=5: skipped
+    a = 3:  c=1: dp[2] + 1 = 2  ->  dp[3] = 2
+            c=2: dp[1] + 1 = 2  ->  no change
+    a = 4:  c=1: dp[3] + 1 = 3  ->  dp[4] = 3
+            c=2: dp[2] + 1 = 2  ->  dp[4] = 2     (better)
+    a = 5:  c=1: dp[4] + 1 = 3  ->  dp[5] = 3
+            c=2: dp[3] + 1 = 3  ->  no change
+            c=5: dp[0] + 1 = 1  ->  dp[5] = 1     (much better)
+    a = 6:  c=1: dp[5] + 1 = 2  ->  dp[6] = 2
+            c=2: dp[4] + 1 = 3  ->  no change
+            c=5: dp[1] + 1 = 2  ->  no change
+    a = 7:  c=1: dp[6] + 1 = 3  ->  dp[7] = 3
+            c=2: dp[5] + 1 = 2  ->  dp[7] = 2
+            c=5: dp[2] + 1 = 2  ->  no change
+    a = 8:  c=1: dp[7] + 1 = 3  ->  dp[8] = 3
+            c=2: dp[6] + 1 = 3  ->  no change
+            c=5: dp[3] + 1 = 3  ->  no change
+    a = 9:  c=1: dp[8] + 1 = 4  ->  dp[9] = 4
+            c=2: dp[7] + 1 = 3  ->  dp[9] = 3
+            c=5: dp[4] + 1 = 3  ->  no change
+    a = 10: c=1: dp[9] + 1 = 4  ->  dp[10] = 4
+            c=2: dp[8] + 1 = 4  ->  no change
+            c=5: dp[5] + 1 = 2  ->  dp[10] = 2
+    a = 11: c=1: dp[10] + 1 = 3 ->  dp[11] = 3
+            c=2: dp[9] + 1 = 4  ->  no change
+            c=5: dp[6] + 1 = 3  ->  no change
+
+    final:  [0, 1, 1, 2, 2, 1, 2, 2, 3, 3, 2, 3]
+
+    dp[11] = 3, not infinity  ->  return 3.   (5 + 5 + 1)
+
+TRACE 2 - THE INPUT WHERE GREEDY FAILS. coins = [1, 3, 4], amount = 6.
+
+    dp starts as:  [0, inf, inf, inf, inf, inf, inf]
+
+    a = 1:  c=1: dp[0] + 1 = 1  ->  dp[1] = 1.   c=3, c=4 skipped.
+    a = 2:  c=1: dp[1] + 1 = 2  ->  dp[2] = 2.   c=3, c=4 skipped.
+    a = 3:  c=1: dp[2] + 1 = 3  ->  dp[3] = 3
+            c=3: dp[0] + 1 = 1  ->  dp[3] = 1
+    a = 4:  c=1: dp[3] + 1 = 2  ->  dp[4] = 2
+            c=3: dp[1] + 1 = 2  ->  no change
+            c=4: dp[0] + 1 = 1  ->  dp[4] = 1
+    a = 5:  c=1: dp[4] + 1 = 2  ->  dp[5] = 2
+            c=3: dp[2] + 1 = 3  ->  no change
+            c=4: dp[1] + 1 = 2  ->  no change
+    a = 6:  c=1: dp[5] + 1 = 3  ->  dp[6] = 3
+            c=3: dp[3] + 1 = 2  ->  dp[6] = 2      <- THE GREEDY ANSWER IS BEATEN HERE
+            c=4: dp[2] + 1 = 3  ->  no change
+
+    return 2.
+
+    GREEDY WOULD HAVE ANSWERED 3 (4 + 1 + 1). The table finds 2 (3 + 3), and the exact moment it
+    happens is at a = 6 with c = 3, where dp[3] + 1 = 2 undercuts the 3 that the "take a 4 first"
+    route produced. Greedy never tried 3 first, because 4 looked better at that instant.
+
+TRACE 3 - THE IMPOSSIBLE CASE. coins = [2], amount = 3.
+
+    dp starts as:  [0, inf, inf, inf]
+
+    a = 1:  c=2 (2 > 1)  ->  skipped.  dp[1] stays inf.
+    a = 2:  c=2 (2 <= 2) ->  dp[0] + 1 = 1  ->  dp[2] = 1
+    a = 3:  c=2 (2 <= 3) ->  dp[1] + 1 = inf + 1 = inf  ->  min(inf, inf) = inf, no change.
+
+    dp[3] is still inf  ->  return -1.
+
+    THE IMPOSSIBILITY PROPAGATED THROUGH dp[1] WITHOUT A SINGLE SPECIAL CASE. That is exactly
+    what the infinity sentinel buys, and it is why a large integer would have been wrong - 999999
+    + 1 is 1000000, a perfectly ordinary number that could have been selected and returned.
+
+AMOUNT ZERO:  dp = [0], the loop `range(1, 1)` never runs, dp[0] = 0 is not infinity, return 0.
+Correct, with no special case.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(amount x number of coins).
+
+In plain words: for every amount from 1 up to the target you try every denomination once. With
+amount 11 and 3 coins that is 33 checks; with amount 10,000 and 5 coins, 50,000.
+
+SPACE: O(amount) - one slot per amount. Note this does NOT depend on the number of coins.
+
+THE CATCH IN THAT COST, and it is worth naming because it surprises people: this is
+PSEUDO-POLYNOMIAL. The work depends on the VALUE of `amount`, not on how many digits it takes to
+write it. An amount of 1,000,000,000 with three coins is three billion operations, even though
+the input is about a dozen characters long. A genuinely polynomial algorithm would depend on the
+INPUT SIZE - here about 10 digits - rather than on the number itself. This is why very large
+targets need a different approach entirely.
+
+THE SIBLING PROBLEM, and the difference is one line: COIN CHANGE II asks HOW MANY WAYS there are
+to make the amount, rather than the fewest coins. Same table, but THE LOOP ORDER MATTERS:
+
+    coins outer, amount inner   ->  counts COMBINATIONS   (1+2 and 2+1 are the same)
+    amount outer, coins inner   ->  counts PERMUTATIONS   (1+2 and 2+1 are different)
+
+For "fewest coins" the order does not matter, because a minimum does not care about ordering. For
+counting it decides the answer. Being able to say that is a strong signal in an interview.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why not greedy?" [1,3,4] with amount 6: greedy gives 3, optimal is 2. Add that real currency
+    is designed so greedy works, but the problem allows arbitrary denominations.
+  - "How would you return the actual coins, not just the count?" Keep a second table recording
+    which coin was chosen at each amount, then walk backwards from the target.
+  - "What if each coin could only be used once?" Different problem - the 0/1 knapsack. The fix is
+    to iterate the amounts DOWNWARD in the inner loop so each coin is used at most once.
+  - "Could you do it top-down?" Yes - the same recurrence with memoisation. Same complexity, and
+    it uses recursion depth proportional to the amount, which can overflow the stack.
+  - "What if the amount is a billion?" The pseudo-polynomial cost bites. You need number-theoretic
+    methods rather than a table.
+
+THE #1 BEGINNER MISTAKE: reaching for greedy. It is the natural instinct, it is correct for real
+money, and it is wrong on the arbitrary denominations the problem allows. Have [1,3,4] with amount
+6 ready - producing the counterexample immediately is worth more than describing the DP, because
+it shows you know WHY the DP is needed.
+
+RUNNER-UP: using a large integer instead of infinity as the unreachable marker. It works until an
+impossible amount plus one becomes a perfectly ordinary number that gets selected as a minimum -
+and in fixed-width-integer languages it can overflow to negative, turning "impossible" into "zero
+coins".
+
+TAKEAWAY: fill a table from zero upward, and for each amount ask what the last coin was - every
+answer you need is at a smaller amount and therefore already written down, which is what turns an
+exponential search into one pass.""",
 ]
 
 _EX_P0B["Decode Ways (DP)"] = [
