@@ -70429,60 +70429,543 @@ you put them.""",
 ]
 
 _EX_P1D["Bipartite Graph Check (BFS 2-coloring)"] = [
-    """A bipartite graph, coloured.
-graph = {0:[1,3], 1:[0,2], 2:[1,3], 3:[0,2]}  (a 4-cycle)
-Start at 0, colour 0. Neighbours 1 and 3 get colour 1.
-From 1: neighbour 0 is already colour 0, which differs from 1's colour - fine.
-Neighbour 2 is uncoloured -> colour 0.
-From 3: neighbour 2 is already colour 0, and 3 is colour 1 - fine.
-No conflict, so it is bipartite: {0,2} on one side, {1,3} on the other.
-A 4-cycle is an EVEN cycle, and even cycles always 2-colour.""",
+    """1. THE GOAL - can you split everyone into two camps?
 
-    """The failing case, and the theorem behind it.
-graph = {0:[1,2], 1:[0,2], 2:[0,1]}  (a triangle)
-Colour 0 -> 0. Colour 1 and 2 -> 1. Now examine edge 1-2: both are colour 1,
-same colour across an edge -> return False.
-The theorem: a graph is bipartite if and only if it contains NO ODD-LENGTH
-CYCLE. Walking around an odd cycle forces alternating colours to collide when
-you return to the start. Stating that equivalence is what turns a coding answer
-into a graph-theory answer, and it is the standard follow-up.""",
+You are given a graph: some nodes, and edges joining pairs of them. THE QUESTION: CAN YOU SPLIT THE
+NODES INTO TWO GROUPS SO THAT EVERY EDGE GOES BETWEEN THE GROUPS AND NEVER WITHIN ONE?
 
-    """Why the OUTER loop over all nodes is mandatory.
-graph = {0:[1], 1:[0], 2:[3], 3:[2]} - two disconnected edges.
-A single BFS from node 0 colours only 0 and 1 and returns True, having never
-looked at the second component. If that component contained a triangle you
-would report bipartite for a graph that is not.
-So the loop `for start in range(len(graph)): if start in color: continue` is
-not boilerplate - it is correctness. The same requirement appears in Number of
-Connected Components, Course Schedule and any graph problem where the input is
-not promised to be connected.""",
+Equivalently, and this is the phrasing the algorithm uses: CAN YOU PAINT EVERY NODE ONE OF TWO
+COLOURS SO THAT NO EDGE JOINS TWO NODES OF THE SAME COLOUR?
 
-    """Colouring at ENQUEUE time, not at dequeue time.
-`color[nbr] = 1 - color[node]` happens when the neighbour is pushed. If you
-instead coloured nodes when popping them, a node could be enqueued twice by two
-different parents before either is processed - so it gets coloured twice,
-possibly inconsistently, and the conflict check is skipped.
-The `1 - color[node]` trick itself is worth noting: with colours 0 and 1, the
-opposite colour is one minus the current one, which avoids an if/else and makes
-the invariant obvious.""",
+    A graph that can is called BIPARTITE.
 
-    """Edge cases.
-An empty graph or a graph of isolated nodes -> trivially bipartite (True); each
-node is its own component and gets coloured with no edges to violate.
-A single self-loop (node 0 has itself as a neighbour) -> when processing 0, its
-neighbour 0 is already coloured the same, so it returns False. Correct: a
-self-loop is an odd cycle of length 1, and no graph with one is bipartite.
-A tree -> ALWAYS bipartite, because a tree has no cycles at all. Colour by
-depth parity and you are done, which is a nice sanity check.""",
+    A SQUARE - four nodes in a cycle:            A TRIANGLE:
 
-    """Complexity and the DFS variant.
-Time O(V + E) - each node is coloured once and each edge examined at most twice
-(once from each endpoint). Space O(V) for the colour map plus the queue.
-DFS works identically: recurse, colouring each neighbour with the opposite
-colour and returning False on a conflict. BFS is usually preferred because a
-deep graph can overflow the recursion stack, and because the level structure of
-BFS makes the colouring visibly a parity-of-distance argument - a node's colour
-is just the parity of its distance from the start.""",
+        0 ─── 1                                       0
+        │     │                                      ╱ ╲
+        3 ─── 2                                     1 ─ 2
+
+        Paint 0 and 2 red, 1 and 3 blue.            Paint 0 red. Then 1 and 2 must both be blue,
+        Every edge joins a red to a blue.           because both touch 0. But 1 and 2 touch EACH
+        BIPARTITE.                                  OTHER, and they are the same colour.
+                                                    NOT BIPARTITE.
+
+WHERE THIS ACTUALLY MATTERS. "Two groups with no edges inside a group" is a real question:
+
+    Can these people be split into two teams so that no two enemies are on the same team?
+    Can these tasks be scheduled into two shifts so that no two conflicting tasks share a shift?
+    Is this a "jobs versus applicants" style graph, where matching algorithms apply?
+
+THE DEEPER FACT, which section 4 proves: A GRAPH IS BIPARTITE EXACTLY WHEN IT CONTAINS NO CYCLE OF
+ODD LENGTH. The triangle is a 3-cycle and fails; the square is a 4-cycle and passes. So this
+algorithm is really an odd-cycle detector wearing a colouring costume.
+
+    Note also that a graph with NO cycles at all - a tree, or a forest - is always bipartite. There
+    is nothing to force a contradiction.""",
+
+    """2. THE INTUITION - paint as you walk, and check every edge you meet.
+
+You do not have to be clever about which colour to use. ONCE YOU PAINT THE FIRST NODE, EVERY OTHER
+COLOUR IN ITS COMPONENT IS FORCED - each neighbour must be the opposite of what it touches, and so
+on outward.
+
+So: walk the graph, painting each newly-discovered node the opposite colour to the node you came
+from. Whenever you look at an edge leading to a node that is ALREADY painted, check it. If the two
+ends match, you have found the contradiction.
+
+    THE SQUARE:  0─1, 1─2, 2─3, 3─0
+
+    start at 0, paint it 0 (say, red)          colours: {0:red}
+    from 0, its neighbours are 1 and 3         both unpainted -> paint both BLUE
+                                               colours: {0:red, 1:blue, 3:blue}
+    from 1, its neighbours are 0 and 2         0 is painted red, 1 is blue - DIFFERENT, fine
+                                               2 is unpainted -> paint it RED
+    from 3, its neighbours are 0 and 2         0 is red vs blue - fine.  2 is red vs blue - fine.
+    from 2, its neighbours are 1 and 3         both blue, and 2 is red - fine.
+
+    nothing left.  BIPARTITE.
+
+        0(red) ─── 1(blue)
+          │           │
+        3(blue) ─── 2(red)
+
+    THE TRIANGLE:  0─1, 0─2, 1─2
+
+    start at 0, paint RED
+    from 0: 1 and 2 are unpainted -> paint both BLUE
+    from 1: its neighbours are 0 and 2.
+            0 is red, 1 is blue - fine.
+            2 IS ALREADY PAINTED, AND IT IS BLUE. SO IS 1.  EDGE 1─2 JOINS TWO BLUES.
+            NOT BIPARTITE.
+
+TWO THINGS THE WALK MUST GET RIGHT, and both are section 4:
+
+    IT MUST START AFRESH FROM EVERY UNPAINTED NODE, because the graph may be in disconnected
+    pieces and one walk only reaches one piece.
+
+    IT MUST PAINT A NODE THE MOMENT IT IS DISCOVERED, not when it is later taken off the queue -
+    the paint is doing double duty as the "already seen" marker.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRAPH. Nodes joined by edges.
+UNDIRECTED. Edges have no direction - if 0 lists 1 as a neighbour then 1 lists 0. This code assumes
+it, and section 4 says what changes if not.
+
+ADJACENCY LIST. The input format: `graph[i]` is the list of nodes joined to node i. So
+`graph = [[1,3],[0,2],[1,3],[0,2]]` is the square from section 2.
+
+BIPARTITE. The nodes can be split into two groups with every edge crossing between them.
+2-COLOURING. The same thing said with colours: paint each node one of two colours so no edge joins
+two of the same.
+
+COMPONENT. A maximal group of nodes reachable from one another. A graph can be several disconnected
+components, which is why the outer loop exists.
+
+CYCLE. A path returning to where it started. ODD CYCLE means an odd number of edges - a triangle is
+an odd cycle of length 3.
+
+BFS (BREADTH-FIRST SEARCH). Exploring outward ring by ring, using a QUEUE. DFS would work equally
+well here; section 5 gives it.
+
+QUEUE / deque. First in, first out. `popleft()` removes from the front in constant time.
+
+color. A dictionary from node to 0 or 1. IT IS ALSO THE VISITED SET - `nbr not in color` means
+"not yet discovered". One structure doing two jobs, exactly as in Clone Graph.
+start. The node the outer loop is considering as a fresh starting point.
+node. The node taken off the queue.
+nbr. One of `node`'s neighbours.
+
+`1 - color[node]`. The colour flip: 1 − 0 is 1, and 1 − 1 is 0. A compact way to say "the other one".
+
+O(V + E). Work proportional to nodes plus edges.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - and the theorem behind the failure.
+
+TRAP 1 - ONLY SEARCHING FROM NODE 0. The outer loop over every node is MANDATORY, and leaving it out
+does not merely miss some colours - it can return the wrong answer.
+
+    graph = [[1], [0], [3,4], [2,4], [2,3]]
+
+        component A:  0 ─── 1                    (a single edge)
+        component B:      2
+                         ╱ ╲                     (a triangle)
+                        3 ─ 4
+
+    WITH THE OUTER LOOP:
+        start = 0: paints 0 and 1 - no conflict.
+        start = 1: already coloured, skipped.
+        start = 2: NOT coloured, so a fresh BFS begins. Paint 2 red, then 3 and 4 blue. Edge 3─4
+                   joins two blues.  RETURNS False.  Correct - there is a triangle.
+
+    WITHOUT IT (one BFS from node 0 only):
+        Colours 0 and 1, finds no conflict, and never looks at 2, 3 or 4 at all.
+        RETURNS True.  WRONG.
+
+    ONE LOOP, AND A GRAPH CONTAINING A TRIANGLE IS DECLARED BIPARTITE. And note the trap is silent -
+    the answer is a plausible True, not a crash.
+
+TRAP 2 - COLOURING AT DEQUEUE TIME INSTEAD OF ENQUEUE TIME. The line `color[nbr] = 1 - color[node]`
+runs when the neighbour is PUSHED. Move the colouring to where nodes are popped and two things break
+at once:
+
+    A node can be pushed many times before it is ever popped, because `nbr not in color` stays true
+    until it is popped - so the queue grows far beyond the number of nodes.
+    And the `elif color[nbr] == color[node]` branch reads `color[nbr]` for a node that is in the
+    queue but has no colour yet - a KeyError.
+
+    THE COLOUR IS THE VISITED MARKER. Assigning it at discovery is what makes the walk terminate,
+    and it is exactly the same discipline as Clone Graph's "register the clone in the map BEFORE
+    recursing".
+
+TRAP 3 - CHECKING ONLY NEW NEIGHBOURS AND NOT OLD ONES. The `elif` is the whole test. A version
+that only paints unpainted neighbours and never compares against already-painted ones NEVER FINDS A
+CONFLICT AT ALL and returns True for every graph, including the triangle. The conflict can only
+show up on an edge to a node you have already seen.
+
+TRAP 4 - THE ODD-CYCLE THEOREM, which is the "why" behind every failure. A GRAPH IS BIPARTITE IF AND
+ONLY IF IT HAS NO ODD-LENGTH CYCLE.
+
+    WHY AN ODD CYCLE IS IMPOSSIBLE TO COLOUR: walk around the cycle from a node coloured 0. Each
+    step flips the colour, so after k steps the colour is k mod 2. Coming back to the start means
+    k steps returned you to the same node, which must still be colour 0 - so k mod 2 must be 0, and
+    k MUST BE EVEN. An odd cycle contradicts this.
+
+    Triangle: k = 3, odd  ->  impossible.     Square: k = 4, even  ->  fine.
+
+    So this algorithm is an odd-cycle detector. Saying that unprompted is the strongest thing you
+    can offer on this question.
+
+TRAP 5 - ASSUMING A DIRECTED GRAPH BEHAVES THE SAME. The code treats `graph[node]` as "everything
+adjacent". If edges were one-way and only listed in one direction, an edge would be examined from
+one end only and a conflict could be missed. Bipartiteness is a property of the UNDIRECTED graph;
+if you are handed directed edges, add both directions first.
+
+TRAP 6 - EMPTY OR EDGE-FREE GRAPHS. A graph with no nodes returns True (the outer loop never runs).
+A graph of isolated nodes returns True - each is its own component, gets a colour, and has no edges
+to violate anything. Both correct with no special case.""",
+
+    """5. THE ALTERNATIVES, AND WHY NO CLEVERNESS IS NEEDED.
+
+VERSION A - TRY EVERY POSSIBLE 2-COLOURING. With V nodes there are 2^V assignments; check each one
+against every edge. For 30 nodes that is 1,073,741,824 assignments. Correct, and absurd.
+
+VERSION B - FIND ALL CYCLES AND CHECK THEIR LENGTHS. Correct by the theorem in section 4, and much
+harder than the problem: enumerating cycles is exponential in general. The colouring walk detects an
+odd cycle WITHOUT ever enumerating one, which is the whole trick.
+
+VERSION C - BFS COLOURING, which is the code here.
+
+VERSION D - DFS COLOURING. Identical logic, recursion instead of a queue:
+
+    def is_bipartite(graph):
+        color = {}
+        def paint(node, c):
+            color[node] = c
+            for nbr in graph[node]:
+                if nbr not in color:
+                    if not paint(nbr, 1 - c): return False
+                elif color[nbr] == c:
+                    return False
+            return True
+        return all(paint(i, 0) for i in range(len(graph)) if i not in color)
+
+    SAME O(V + E). The trade is the familiar one: BFS holds a frontier, so its memory is O(WIDTH);
+    DFS holds a path, so its memory is O(LONGEST PATH) on the call stack. Python's default recursion
+    limit is 1,000, so a graph that is a chain of more than about a thousand nodes makes the DFS
+    version raise RecursionError while BFS finishes comfortably.
+
+VERSION E - UNION-FIND. Possible, and awkward: you would union each node with the "opposite" copy of
+its neighbours, effectively doubling the node set. It is the right tool when the graph arrives
+edge-by-edge over time and you must answer after each addition; for a static graph the colouring
+walk is simpler and faster.
+
+WHY NO SEARCH OR BACKTRACKING IS NEEDED - the argument, since "just paint greedily" sounds too easy.
+
+    ONCE ONE NODE IN A COMPONENT IS COLOURED, EVERY OTHER COLOUR IN THAT COMPONENT IS FORCED. Each
+    neighbour must be the opposite of it, each of THEIR neighbours the opposite again, and so on.
+    There is no choice to make anywhere, so there is nothing to backtrack over.
+
+    The only freedom is which of the two colours the FIRST node gets - and that choice is symmetric:
+    swapping both colours throughout turns any valid colouring into another valid one. So starting
+    with 0 loses nothing.
+
+    THEREFORE: if the forced colouring ever contradicts itself, no valid colouring exists at all -
+    it is not that this particular attempt failed. That is why a single greedy pass is a proof and
+    not a heuristic.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: PAINT EVERY NODE THE OPPOSITE COLOUR TO THE ONE YOU
+ARRIVED FROM, AND WHENEVER AN EDGE LEADS TO A NODE THAT ALREADY HAS A COLOUR, CHECK IT - IF THE TWO
+ENDS MATCH, NO VALID SPLIT EXISTS.
+
+THERE IS NO RECURSION IN THIS VERSION. The mechanism is A QUEUE-DRIVEN WALK, RESTARTED ONCE PER
+DISCONNECTED PIECE:
+
+  - An outer sweep tries every node as a possible fresh starting point, skipping any that already
+    have a colour. This is what covers graphs that come in several separate pieces.
+  - An inner walk spreads outward from one starting node, colouring as it goes.
+  - THE COLOUR RECORD IS ALSO THE "ALREADY SEEN" RECORD. A node with a colour has been discovered; a
+    node without one has not. One structure, two jobs.
+  - WHAT MAKES IT STOP: every node is coloured at most once, and only newly-coloured nodes join the
+    queue - so the queue can receive each node only once and must drain.
+  - WHY NO BACKTRACKING IS EVER NEEDED: once the first node of a piece is coloured, every other
+    colour in that piece is forced, so there is no choice to reconsider (section 5).
+
+THE STEPS:
+
+  1. START WITH NOTHING PAINTED.
+
+  2. FOR EVERY NODE IN TURN:
+
+     a. IF IT ALREADY HAS A COLOUR, SKIP IT - it belongs to a piece already dealt with.
+
+     b. OTHERWISE PAINT IT THE FIRST COLOUR AND PUT IT IN A WAITING LINE. Which of the two colours
+        you choose does not matter; swapping both throughout gives an equally valid answer.
+
+     c. WHILE THE WAITING LINE IS NOT EMPTY, TAKE THE NODE AT THE FRONT AND LOOK AT EACH OF ITS
+        NEIGHBOURS:
+
+        - IF THE NEIGHBOUR HAS NO COLOUR YET, PAINT IT THE OPPOSITE COLOUR AND ADD IT TO THE BACK OF
+          THE LINE.
+
+          PAINT IT NOW, AS IT JOINS THE LINE - not later when it comes off. The paint is what
+          records that it has been discovered, so delaying it lets the same node be added over and
+          over.
+
+        - OTHERWISE IT ALREADY HAS A COLOUR, SO COMPARE. IF IT MATCHES THE COLOUR OF THE NODE YOU
+          ARE STANDING ON, THIS EDGE JOINS TWO OF THE SAME - ANSWER NO AND STOP ENTIRELY.
+
+          This comparison is the only place a failure can ever be detected. A version that just
+          paints new neighbours and never checks old ones will happily declare every graph valid.
+
+  3. IF EVERY NODE HAS BEEN PAINTED WITHOUT A SINGLE CLASH, ANSWER YES.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a room of people, and a list of which pairs of them cannot stand each other. You want to
+seat everybody at two long tables so that no two enemies end up at the same table.
+
+You could try every possible way of splitting the room, but you do not need to, because the moment
+you seat one person the rest of their social circle is decided for you.
+
+Pick anybody and sit them at the first table. Now every one of their enemies must go to the second
+table - there is no choice about it. And every enemy of THOSE people must come back to the first
+table. And so on outward through the room.
+
+So you work through the circle methodically, keeping a list of people whose enemies you have not yet
+dealt with. You take the person at the front of your list and go through their enemies one at a
+time.
+
+If an enemy has not been seated yet, you seat them at the opposite table to the person you are
+holding, and you add them to the back of your list so you will deal with their enemies later. You
+seat them the moment you decide on them - not later when their turn comes up. The fact that somebody
+has a seat is exactly how you remember you have already dealt with them, so if you leave them
+standing you will keep deciding about them again and again.
+
+If the enemy HAS already been seated, you look at where. If they are at the opposite table, fine -
+that is what you wanted. But if they are at the SAME table as the person you are holding, you have
+found two enemies who must sit together, and you can stop right there. Not just this seating plan
+but every possible one is impossible, because every seat you assigned was forced on you the moment
+you seated the very first person.
+
+That comparison is the whole test. If you only ever seat unseated people and never look at where the
+already-seated ones are, you will never notice a problem at all, and you will cheerfully announce
+that any room can be split.
+
+One more thing. When the circle is exhausted, you are not finished - you are only finished with the
+people who know somebody who knows somebody who knows the person you started with. There may be
+another clique on the far side of the room who have never met any of them. So you look for anybody
+still standing, seat them, and begin again. Skip that and a room containing a perfectly obvious
+three-way feud will be declared fine, simply because you never walked over to that corner.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the square graph = [[1,3],[0,2],[1,3],[0,2]] beside you.
+
+    from collections import deque
+
+A queue with constant-time removal from the front. A plain list's `pop(0)` shifts every remaining
+element and would make the walk quadratic.
+
+    def is_bipartite(graph):
+        # graph: adjacency list (list of lists) over nodes 0..n-1
+
+`graph[i]` is the list of nodes adjacent to node i. Returns True or False. Nothing is modified.
+
+        color = {}
+
+    color  HOLDS the colour of every node discovered so far - 0 or 1.
+           AND IT IS ALSO THE VISITED SET: `nbr not in color` means "not yet discovered". One
+           structure answering both "have I seen this?" and "which side is it on?", exactly as Clone
+           Graph's map answers both "have I been here?" and "which clone is it?".
+
+        for start in range(len(graph)):
+
+THE OUTER LOOP, AND IT IS MANDATORY (trap 1). A graph may be several disconnected pieces, and one
+walk only reaches one of them. Without this, a triangle sitting in a component you never visit is
+never examined.
+
+            if start in color:
+                continue
+
+Already coloured, so it belongs to a piece already handled. Skip it - do not restart a walk inside a
+component that has been done.
+
+            color[start] = 0
+
+Paint the first node of this piece. Which colour is arbitrary: swapping 0 and 1 throughout turns any
+valid colouring into another valid one, so choosing 0 loses nothing (section 5).
+
+            queue = deque([start])
+
+The waiting line for this component.
+
+            while queue:
+
+Spread outward until this component is exhausted. It terminates because a node is only ever pushed
+at the moment it is first coloured, and it can only be coloured once.
+
+                node = queue.popleft()
+
+Take from the front.
+
+                for nbr in graph[node]:
+
+Every neighbour, whether or not it has been seen. Both branches below matter.
+
+                    if nbr not in color:
+                        color[nbr] = 1 - color[node]   # opposite color
+                        queue.append(nbr)
+
+THE DISCOVERY BRANCH.
+
+    `1 - color[node]`  is the flip: 1 − 0 is 1, and 1 − 1 is 0.
+    THE COLOUR IS ASSIGNED HERE, AT ENQUEUE TIME (trap 2). It marks the node as discovered, which is
+    what stops it being pushed again by another neighbour - and what stops the `elif` below from
+    reading a colour that does not exist yet.
+
+                    elif color[nbr] == color[node]:
+                        return False       # same color across an edge -> not bipartite
+
+THE ONLY PLACE A FAILURE CAN BE DETECTED. The neighbour already has a colour, and it matches the
+node we are standing on - so this edge joins two nodes on the same side.
+
+Removing this branch makes the function return True for every graph, including a triangle (trap 3).
+
+Returning immediately is safe: by the argument in section 5 the colouring was forced, so a
+contradiction here means no valid colouring exists at all - not merely that this attempt failed.
+
+        return True
+
+Every node was coloured and no edge ever joined two of the same colour.""",
+
+    """9. TRACED, NODE BY NODE - INCLUDING THE COMPONENT THAT WOULD BE MISSED.
+
+TRACE 1 - A BIPARTITE GRAPH. graph = [[1,3],[0,2],[1,3],[0,2]] - the 4-cycle 0─1─2─3─0.
+
+    color = {}
+
+    start = 0:  not in color.  color[0] = 0.  queue = [0]
+        pop 0.  neighbours graph[0] = [1, 3]
+            nbr 1: not in color  ->  color[1] = 1 - 0 = 1.  queue = [1]
+            nbr 3: not in color  ->  color[3] = 1 - 0 = 1.  queue = [1, 3]
+        pop 1.  neighbours graph[1] = [0, 2]
+            nbr 0: IN color.  color[0] = 0, color[1] = 1.  0 != 1  ->  fine, no action.
+            nbr 2: not in color  ->  color[2] = 1 - 1 = 0.  queue = [3, 2]
+        pop 3.  neighbours graph[3] = [0, 2]
+            nbr 0: color[0] = 0 vs color[3] = 1  ->  fine.
+            nbr 2: color[2] = 0 vs color[3] = 1  ->  fine.
+        pop 2.  neighbours graph[2] = [1, 3]
+            nbr 1: color[1] = 1 vs color[2] = 0  ->  fine.
+            nbr 3: color[3] = 1 vs color[2] = 0  ->  fine.
+        queue empty.
+
+    start = 1, 2, 3:  all already in color  ->  skipped.
+
+    RETURN True.   Final colours {0:0, 1:1, 2:0, 3:1} - sides {0,2} and {1,3}.
+
+    NOTE HOW OFTEN THE `elif` RAN WITHOUT FIRING. Every edge was examined from BOTH ends, so the
+    second examination always found a coloured neighbour and compared. That is where the "each edge
+    is looked at twice" in the complexity comes from.
+
+TRACE 2 - THE TRIANGLE. graph = [[1,2],[0,2],[0,1]].
+
+    start = 0:  color[0] = 0.  queue = [0]
+        pop 0.  neighbours [1, 2]
+            nbr 1: not in color  ->  color[1] = 1.  queue = [1]
+            nbr 2: not in color  ->  color[2] = 1.  queue = [1, 2]
+        pop 1.  neighbours graph[1] = [0, 2]
+            nbr 0: color[0] = 0 vs color[1] = 1  ->  fine.
+            nbr 2: IN color.  color[2] = 1.  color[1] = 1.  EQUAL.
+                   RETURN False.
+
+    Node 2 is never popped. The conflict was found on the edge 1─2, which is the edge that closes the
+    triangle - and by the theorem in section 4, a 3-cycle is odd and therefore uncolourable.
+
+TRACE 3 - THE INVERSION: THE COMPONENT YOU NEVER VISIT (trap 1).
+
+    graph = [[1], [0], [3,4], [2,4], [2,3]]
+
+        0 ─── 1          and, disconnected from it,        2
+                                                          ╱ ╲
+                                                         3 ─ 4
+
+    WITH THE OUTER LOOP:
+        start = 0: color[0] = 0.  pop 0, nbr 1 uncoloured  ->  color[1] = 1.
+                   pop 1, nbr 0 coloured, 0 vs 1  ->  fine.  queue empty.
+        start = 1: in color  ->  skipped.
+        start = 2: NOT in color  ->  A SECOND WALK BEGINS.  color[2] = 0.  queue = [2]
+                   pop 2, neighbours [3, 4]:  color[3] = 1, color[4] = 1.  queue = [3, 4]
+                   pop 3, neighbours [2, 4]:  2 is 0 vs 1  ->  fine.
+                                              4 IS COLOURED 1, AND 3 IS 1.  EQUAL.
+                   RETURN False.
+
+    WITHOUT THE OUTER LOOP (a single walk from node 0):
+        Colours 0 and 1, finds no clash, and stops. Nodes 2, 3 and 4 are never examined at all.
+        RETURN True.
+
+    THE SAME GRAPH, ONE LOOP, AND A TRIANGLE IS DECLARED BIPARTITE. Nothing crashes and nothing looks
+    suspicious - it simply answers the wrong question about a graph it only half read.
+
+TRACE 4 - TWO DISCONNECTED EDGES, which the outer loop handles correctly.
+graph = [[1], [0], [3], [2]]
+
+    start = 0: color[0] = 0, color[1] = 1.  No clash.
+    start = 1: skipped.
+    start = 2: fresh walk.  color[2] = 0, color[3] = 1.  No clash.
+    start = 3: skipped.
+    RETURN True.   Colours {0:0, 1:1, 2:0, 3:1}.
+
+    Note that the second component started again from colour 0. Components are independent - there is
+    no requirement that they agree with each other, because no edge joins them.
+
+THE TINY INPUTS:
+    graph = []            the outer loop never runs.  RETURN True.  An empty graph is bipartite.
+    graph = [[], [], []]  three isolated nodes. Each becomes its own component, gets colour 0, and
+                          has no neighbours to check.  RETURN True.
+    graph = [[1],[0]]     a single edge: colours 0 and 1.  RETURN True. A graph with no cycles at all
+                          is always bipartite - there is nothing to force a contradiction.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(V + E) - nodes plus edges.
+
+In plain words: every node is coloured exactly once and enters the queue exactly once. Every edge is
+examined at most twice - once from each of its two endpoints - and each examination is a dictionary
+lookup and a comparison. Nothing is done more than a constant number of times per node or per edge.
+
+SPACE: O(V) for the colour dictionary, plus O(V) in the worst case for the queue - a graph where one
+node touches every other pushes them all at once.
+
+    THE DFS VARIANT is the same O(V + E) but stores its pending work on the CALL STACK instead, so
+    its space is O(longest path) rather than O(widest frontier). A chain of more than about a
+    thousand nodes exceeds Python's default recursion limit and raises RecursionError, where the BFS
+    version is untroubled.
+
+THE THEOREM WORTH STATING UNPROMPTED: A GRAPH IS BIPARTITE IF AND ONLY IF IT CONTAINS NO ODD-LENGTH
+CYCLE. Walking a cycle flips the colour at every step, so returning to the start after k steps
+requires k to be even. This algorithm is an odd-cycle detector that never has to enumerate a cycle -
+which is why it is linear where cycle enumeration is exponential.
+
+    Corollary worth knowing: every TREE and every FOREST is bipartite, because it has no cycles at
+    all. So is any graph whose cycles are all even.
+
+WHERE THIS SHOWS UP:
+
+    TEAM / SHIFT SPLITTING       two groups with no conflicting pair inside either.
+    POSSIBLE BIPARTITION         the same problem phrased as "these people dislike each other".
+    JOB-APPLICANT MATCHING       maximum bipartite matching needs the graph to BE bipartite first;
+                                 this is the precondition check.
+    CONFLICT / INTERVAL GRAPHS   two-colouring as the simplest case of graph colouring generally.
+    ODD-CYCLE DETECTION          any question phrased that way is this algorithm.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it with DFS." Section 5, version D - and name the stack-depth trade.
+  - "Return the two groups, not just True/False." The `color` dictionary already is the answer:
+    collect the nodes with colour 0 and those with colour 1.
+  - "What if edges arrive one at a time and you must answer after each?" Union-find with a doubled
+    node set, or a dynamic connectivity structure - the static walk would have to be re-run.
+  - "What about 3 colours?" A completely different problem - graph 3-colouring is NP-complete. The
+    two-colour case is easy precisely because each colour choice is FORCED; with three there is real
+    choice and therefore real search.
+  - "What if the graph is directed?" Bipartiteness is undirected; symmetrise the edges first (trap 5).
+
+THE #1 BEGINNER MISTAKE: running a single search from node 0 and forgetting that a graph can be
+disconnected. It gives the right answer whenever the graph happens to be connected - which is most
+hand-written test cases - and silently declares a graph bipartite when the offending odd cycle sits
+in a component that was never visited.
+
+RUNNER-UP: colouring nodes when they are popped rather than when they are discovered, which breaks
+the colour's second job as the visited marker - the same discipline as Clone Graph's
+register-before-you-recurse.
+
+TAKEAWAY: paint the first node of each component arbitrarily and every other colour in that component
+is FORCED, so one greedy pass is a proof rather than an attempt - and the only two things that can go
+wrong are forgetting to start a fresh pass in every disconnected component, and forgetting to compare
+against neighbours that are already painted, which is the only place a conflict can ever appear.""",
 ]
 
 for _e in ENTRIES:
@@ -70493,126 +70976,1021 @@ for _e in ENTRIES:
 _EX_P1E = {}
 
 _EX_P1E["Boats to Save People"] = [
-    """The example, traced.
-people = [3,2,2,1], limit = 3 -> sorted [1,2,2,3].
-light=0 (1), heavy=3 (3): 1+3 = 4 > 3, so 3 rides ALONE. heavy=2, boats=1.
-light=0 (1), heavy=2 (2): 1+2 = 3 <= 3, they pair. light=1, heavy=1, boats=2.
-light=1, heavy=1: same person, 2+2 = 4 > 3, so rides alone. heavy=0, boats=3.
-Loop ends (light > heavy). Answer 3.
-Note `light <= heavy` rather than `<`: when the two pointers land on the same
-person, that person still needs a boat.""",
+    """1. THE GOAL - two to a boat, and a weight limit.
 
-    """Why the greedy is optimal, as an exchange argument.
-Claim: pairing the heaviest with the lightest is never worse than any other
-pairing. Suppose the heaviest person H can fit with the lightest L. In some
-optimal solution, if H is alone, then L is either alone or with someone else X.
-Swap so that H rides with L; X is no heavier than H, so whoever L was with can
-absorb X, and the boat count does not increase.
-And if H cannot fit with L, H cannot fit with anyone, so H must ride alone -
-which is exactly what the code does. Both branches are forced, which is why
-there is no DP here.""",
+Everybody in a list has a weight. Each boat carries AT MOST TWO PEOPLE, and their combined weight
+must not exceed a given limit. USE AS FEW BOATS AS POSSIBLE.
 
-    """Why `heavy` decrements unconditionally.
-Read the loop again: `heavy -= 1` sits OUTSIDE the if. That encodes the key
-insight - the heaviest remaining person boards a boat on every iteration, with
-or without a companion. Only `light` is conditional.
-A very common bug is putting both pointer moves inside the if/else, which
-double-counts or loops forever. The one-line version of the algorithm is: 'each
-boat takes the heaviest person, plus the lightest if there is room'.""",
+    people = [3, 2, 2, 1],   limit = 3
 
-    """Edge cases.
-Single person [5], limit 5 -> light == heavy, 5+5 = 10 > 5, so alone -> 1 boat.
-Everyone pairs: [1,1,1,1], limit 2 -> pairs each time -> 2 boats.
-Nobody pairs: [3,3,3], limit 3 -> each alone -> 3 boats.
-The problem guarantees every individual weight is at most the limit, so no
-person is unrescuable. If that guarantee were removed you would need an
-explicit check, and returning -1 or raising would be the honest answer - worth
-asking about.""",
+    Can the two 2s share? 2 + 2 = 4 > 3.  No.
+    Can 1 and 2 share?     1 + 2 = 3 <= 3.  Yes.
+    Can 1 and 3 share?     1 + 3 = 4 > 3.  No.
 
-    """Complexity, and the counting-sort follow-up.
-Sorting dominates: O(n log n) time, O(1) extra space (or O(n) depending on the
-sort). The two-pointer scan is O(n).
-Follow-up: 'weights are integers between 1 and 30,000' - then counting sort
-makes it O(n + W), effectively linear, which is the standard optimisation for
-bounded integer inputs. Mentioning that you can drop below n log n when the
-value range is bounded is a nice extra, and it applies to Sort Colors, H-Index
-and Top K Frequent as well.""",
+    BEST PLAN:   boat 1:  1 and 2        (weight 3)
+                 boat 2:  2 alone
+                 boat 3:  3 alone
 
-    """The family: sorted two-pointer greedy.
-The shape 'sort, then close in from both ends making a forced local choice'
-solves a cluster: Two Sum on a sorted array, 3Sum, Container With Most Water
-(move the shorter wall), Divide Players Into Teams of Equal Skill (pair
-smallest with largest), Assign Cookies, and Minimum Number of Arrows.
-The recognition cue is a problem about PAIRING or MATCHING elements under a
-constraint where the extremes are the constrained ones. If the greedy pairing
-has an exchange argument, you get O(n log n); if it does not, you are usually
-looking at DP or flow.""",
+    ANSWER: 3
+
+TWO CONSTRAINTS, AND THEY PULL IN DIFFERENT DIRECTIONS. The "at most two people" rule caps how much
+you can save; the weight limit decides which pairs are legal. Everybody must be carried - this is not
+an optimisation over WHO goes, only over HOW THEY ARE GROUPED.
+
+    A USEFUL FLOOR: with n people and at most 2 per boat, you can never do better than ceil(n/2)
+    boats. And you can never need more than n. The answer always lies between those.
+
+THE QUESTION IS REALLY "HOW MANY PAIRS CAN I FORM?" Every pair formed saves exactly one boat, so
+minimising boats is the same as maximising pairs. That reframing is what makes the greedy in section
+2 feel obvious rather than lucky.
+
+    n people, p pairs  ->  boats = n − p.   Maximise p, minimise boats.""",
+
+    """2. THE INTUITION - sort, then always deal with the heaviest person.
+
+Sort everybody by weight and put a finger at each end.
+
+    sorted:   1    2    2    3
+              ^              ^
+            light          heavy
+
+NOW THINK ABOUT THE HEAVIEST PERSON REMAINING. They have to get on a boat sooner or later, and their
+options are limited: they can travel alone, or with exactly one other person. Which other person?
+
+    IF THEY CAN TRAVEL WITH ANYBODY AT ALL, THEY CAN TRAVEL WITH THE LIGHTEST PERSON - because the
+    lightest is the easiest possible companion. So there is never a reason to pair the heaviest with
+    somebody in the middle: it uses up a more useful companion for no gain.
+
+    IF THEY CANNOT TRAVEL WITH THE LIGHTEST, THEY CANNOT TRAVEL WITH ANYONE, so they go alone.
+
+Either way, THE HEAVIEST PERSON BOARDS THIS BOAT. That is the key, and it is why the heavy finger
+moves every single time.
+
+    1 + 3 = 4 > 3       ->  3 goes ALONE.        boats = 1.  heavy moves in.
+    1 + 2 = 3 <= 3      ->  1 rides with 2.      boats = 2.  BOTH fingers move.
+    2 + 2 = 4 > 3       ->  2 goes ALONE.        boats = 3.  heavy moves in.
+                            (both fingers are now on the same person, and that person still
+                             needs a boat)
+    fingers have crossed - everybody is aboard.
+
+    ANSWER: 3
+
+    the two fingers, step by step:
+
+        [1] 2  2 [3]     3 alone            ->  boats 1
+        [1] 2 [2]        1 rides with 2     ->  boats 2
+             [2]         2 alone            ->  boats 3
+                         (light and heavy met on the same person)
+
+NOTICE WHAT THE `if` DOES AND DOES NOT CONTROL. The heavy finger moves unconditionally - the heaviest
+always boards. The light finger moves ONLY when a pairing happened. So the condition is not "does
+anybody board?" but "does anybody get to come WITH them?".
+
+That asymmetry is the entire algorithm, and section 4 is about the two ways people get it wrong.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LIMIT. The maximum combined weight of one boat.
+CAPACITY. Two people, always - that is fixed by the problem and is not the same as the weight limit.
+
+GREEDY. Making the locally obvious choice and never reconsidering. Here it is provably optimal, and
+section 5 gives the exchange argument. (Contrast Coin Change, where the greedy instinct is wrong.)
+
+EXCHANGE ARGUMENT. The standard way to prove a greedy safe: take any optimal solution and show you
+can rearrange it into one that agrees with the greedy choice, without getting worse.
+
+TWO POINTERS (OPPOSITE ENDS). Two indices starting at the two ends of a SORTED list and moving toward
+each other.
+
+people. The list of weights. SORTED IN PLACE by this function - it mutates the caller's list.
+limit. The weight cap per boat.
+light. Index of the lightest person not yet aboard.
+heavy. Index of the heaviest person not yet aboard.
+boats. The running count.
+
+`light <= heavy`. The loop condition, and the `=` is load-bearing - section 4. When the two indices
+land on the SAME person, that person still needs a boat.
+
+O(n log n). The cost of the sort, which dominates the O(n) sweep.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - WRITING `while light < heavy` INSTEAD OF `<=`. This is the mistake, and it loses exactly one
+person - the last one - whenever an odd number of people remain unpaired.
+
+    people = [5],  limit = 5
+
+        WITH `<=`:  light = 0, heavy = 0.  The condition holds.  5 + 5 = 10 > 5, so no pairing;
+                    heavy becomes −1, boats = 1.  RETURNS 1.  Correct - one person, one boat.
+        WITH `<`:   0 < 0 is false.  The loop never runs.  RETURNS 0.
+                    ZERO BOATS FOR A PERSON WHO IS STANDING ON THE DOCK.
+
+    And on the worked example, people = [3,2,2,1] with limit 3:
+
+        WITH `<=`:  3.        WITH `<`:  2.
+
+    The middle 2 never boards. THE BUG IS QUIET - the answer is merely one too small, which looks
+    like a slightly better solution rather than an invalid one.
+
+    WHY THE `=` MATTERS: when `light` and `heavy` land on the same index, there is one person left.
+    They still need a boat. The body handles it correctly - `people[light] + people[heavy]` is that
+    person's weight doubled, which exceeds the limit unless they weigh at most half of it, so they
+    usually board alone; and if the doubled weight does fit, `light` also advances and the loop ends
+    the same way. Either path counts exactly one boat for them.
+
+TRAP 2 - PUTTING `heavy -= 1` INSIDE THE `if`. Read the loop again: the decrement sits OUTSIDE.
+
+    THE HEAVIEST REMAINING PERSON BOARDS THIS BOAT NO MATTER WHAT - alone if nobody can join them,
+    accompanied if the lightest fits. There is no branch in which they stay behind.
+
+    Move the decrement inside the `if` and a heavy person who cannot be paired is never removed, the
+    same comparison is made again, and the loop spins forever.
+
+TRAP 3 - PAIRING THE HEAVIEST WITH THE HEAVIEST THEY CAN CARRY. It feels efficient - "fill each boat
+as full as possible" - and it is wrong, because it spends a useful middleweight companion on
+somebody who would have been just as well served by the lightest person. Section 5's exchange
+argument shows the lightest is never a worse choice.
+
+TRAP 4 - THE FUNCTION MUTATES ITS INPUT. `people.sort()` reorders the CALLER'S list in place. Pass in
+[3,2,2,1] and afterwards your variable holds [1,2,2,3]. The same surprise as 3Sum's `nums.sort()`,
+Assign Cookies' `g.sort()`, Meeting Rooms' `intervals.sort()` and Count Pairs' `nums.sort()`. Use
+`people = sorted(people)` if the caller's order matters.
+
+TRAP 5 - FORGETTING THAT EVERYBODY MUST BE CARRIED. This is not "how many people can I rescue with k
+boats" - every person boards, and the only question is the grouping. A solution that skips somebody
+who cannot be paired is answering a different question.
+
+TRAP 6 - ASSUMING SOMEBODY MIGHT NOT FIT AT ALL. The problem guarantees every individual weight is at
+most the limit, so everyone can always travel alone. Without that guarantee the answer could be
+"impossible", and the code as written would silently give a number instead.""",
+
+    """5. THE NAIVE VERSIONS FIRST, THEN THE PROOF.
+
+VERSION A - TRY EVERY PAIRING. Consider every way of splitting the people into pairs and singletons,
+keep the legal ones, take the fewest boats. Correct, and factorial - the number of ways to pair up 20
+people is already 654,729,075.
+
+VERSION B - GREEDY FROM THE HEAVY END, PAIRING WITH THE HEAVIEST POSSIBLE COMPANION. Trap 3. Feels
+like it packs boats fuller, and wastes companions.
+
+VERSION C - SORT AND CLOSE IN FROM BOTH ENDS, which is the code here.
+
+THE EXCHANGE ARGUMENT - why pairing the heaviest with the lightest is never worse. This is what turns
+the greedy from a hunch into a proof, and it is what an interviewer is listening for.
+
+    Let H be the heaviest person and L the lightest. Take ANY optimal arrangement O.
+
+    CASE 1 - H CANNOT TRAVEL WITH L, that is H + L > limit.
+        Since L is the lightest, H + x >= H + L > limit for every other person x. SO H CANNOT
+        TRAVEL WITH ANYBODY. In O, H must be alone - and the greedy also puts H alone. They agree.
+
+    CASE 2 - H CAN TRAVEL WITH L, and in O they already do. They agree; nothing to prove.
+
+    CASE 3 - H CAN TRAVEL WITH L, but in O, H travels with somebody else P, and L travels with Q.
+        Rearrange: put H with L, and P with Q.
+
+        IS H + L LEGAL?   L is the lightest, so L <= P, so H + L <= H + P <= limit.  YES.
+        IS P + Q LEGAL?   H is the heaviest, so Q <= H, so P + Q <= P + H <= limit.  YES.
+
+        Both boats remain legal, and the number of boats is unchanged. So there is an optimal
+        arrangement in which H travels with L.
+
+    CASE 4 - H CAN TRAVEL WITH L, but in O, H travels with P while L travels ALONE.
+        Put H with L, and P alone. H + L <= H + P <= limit, and a lone P is always legal. The boat
+        count is unchanged.
+
+    IN EVERY CASE, an optimal arrangement exists that makes the greedy choice. Remove H and whoever
+    joined them, and repeat the argument on the remainder. THE GREEDY NEVER COSTS ANYTHING.
+
+    THE STEP WORTH REREADING IS CASE 3's SECOND LINE. It works only because H is the HEAVIEST -
+    Q <= H is what makes P + Q fit in the boat that was carrying P + H. Remove that fact and the
+    swap could be illegal, and the whole argument collapses.
+
+WHY THIS IS A COUNTING PROBLEM UNDERNEATH. Every boat carries one or two people, so
+boats = n − (number of pairs). Minimising boats is exactly maximising pairs, and the greedy forms a
+maximum matching by always spending the cheapest available companion on the person who is hardest to
+accommodate.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SORT EVERYBODY BY WEIGHT, THEN REPEATEDLY PUT THE
+HEAVIEST REMAINING PERSON ON A BOAT - TAKING THE LIGHTEST REMAINING PERSON ALONG IF THE TWO OF THEM
+FIT TOGETHER, AND SENDING THEM ALONE IF NOT.
+
+THERE IS NO RECURSION. The mechanism is TWO INDICES CLOSING IN ON EACH OTHER:
+
+  - One index sits on the lightest person left, one on the heaviest.
+  - THE HEAVY INDEX MOVES ON EVERY SINGLE PASS, because the heaviest person always boards. The light
+    index moves only when a pairing actually happened.
+  - EVERY PASS LAUNCHES EXACTLY ONE BOAT, which is why the count goes up once per pass.
+  - WHAT MAKES IT STOP: the heavy index decreases every pass and the light index never decreases, so
+    they must meet and cross. The loop runs at most once per person.
+
+THE STEPS:
+
+  1. SORT THE WEIGHTS FROM LIGHTEST TO HEAVIEST.
+
+  2. PUT ONE MARKER ON THE LIGHTEST PERSON AND ANOTHER ON THE HEAVIEST. START THE BOAT COUNT AT ZERO.
+
+  3. WHILE THE TWO MARKERS HAVE NOT PASSED EACH OTHER - INCLUDING WHEN THEY ARE ON THE SAME PERSON,
+     because that person still needs a boat:
+
+     a. IF THE LIGHTEST AND THE HEAVIEST TOGETHER ARE WITHIN THE LIMIT, THE LIGHTEST TRAVELS WITH
+        THEM. Move the light marker up one.
+
+        If they do not fit, nobody accompanies the heaviest - and there is no point trying anybody
+        else, because the lightest person is the easiest possible companion. If they will not do,
+        nobody will.
+
+     b. MOVE THE HEAVY MARKER DOWN ONE, WHETHER OR NOT A PAIRING HAPPENED. The heaviest person is on
+        this boat either way. This step is outside the decision above, and putting it inside makes
+        the loop spin forever on anyone who cannot be paired.
+
+     c. COUNT ONE BOAT.
+
+  4. RETURN THE COUNT.
+
+Note that step 3a moves one marker and step 3b moves the other, so exactly one boat leaves per pass
+and between one and two people are aboard it.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture a queue of people waiting to be taken off an island, and a single small boat that can carry
+at most two of them, and only if their combined weight is within a limit. You want to make as few
+crossings as possible.
+
+The first thing you do is line everybody up by weight, lightest at one end, heaviest at the other.
+Then you stand at both ends at once, so to speak, keeping track of the lightest person still waiting
+and the heaviest still waiting.
+
+Now you think about the heaviest person, because they are the hardest to accommodate and everything
+else follows from what happens to them. They are getting on this boat regardless - there is no
+version of events where they stay behind. The only question is whether anybody can go with them.
+
+And if anybody can go with them, the lightest person can. There is no sense in sending the heaviest
+person off with somebody from the middle of the queue: that middleweight will be much harder to pair
+with anybody later, whereas the lightest person is the easiest companion there is and will be easy to
+place regardless. So you offer the seat to the lightest person.
+
+If the two of them fit, they go together, and both leave the queue. If they do not fit, then nobody
+fits, because the lightest is the best case - so the heaviest person makes the crossing alone.
+
+Either way the boat leaves, and either way the heaviest person is gone. That is the part to hold on
+to: the heavy end of the queue always shrinks. Only the light end stays put when a pairing was
+impossible.
+
+You keep going until the two ends of the queue meet. And they must be allowed to meet on the same
+person, not merely to pass each other - because when one person is left standing there, they still
+need a crossing of their own. Stop a moment too early and you will have counted every boat except the
+last, and reported a number that looks like a slightly better answer rather than an impossible one.
+
+Count the crossings and that is your answer.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep people = [3,2,2,1], limit = 3 beside you, answer 3.
+
+    def num_rescue_boats(people, limit):
+
+`people` is the list of weights, `limit` the weight cap per boat. Returns the minimum number of
+boats. THE ARGUMENT IS MODIFIED - the next line reorders it.
+
+        people.sort()
+
+THE SETUP THE WHOLE ALGORITHM RESTS ON. Ascending, so `people[light]` is the lightest remaining and
+`people[heavy]` the heaviest.
+
+Both halves of section 5's exchange argument cite this ordering - one uses "L is the lightest", the
+other "H is the heaviest".
+
+`.sort()` sorts IN PLACE (trap 4). `people = sorted(people)` avoids mutating the caller's list, at
+the cost of one copy.
+
+        light, heavy = 0, len(people) - 1
+
+    light  HOLDS the index of the lightest person not yet aboard.
+    heavy  HOLDS the index of the heaviest person not yet aboard.
+
+For an empty list `heavy` is −1, so the loop condition below is false at once and the answer is 0.
+
+        boats = 0
+
+The running count. Every pass of the loop launches exactly one boat.
+
+        while light <= heavy:
+
+`<=`, NOT `<` (trap 1). When both indices land on the SAME person, that person is still waiting and
+still needs a boat. Writing `<` drops them and returns an answer one too small - 0 for a single
+person, 2 instead of 3 on the worked example.
+
+The loop terminates because `heavy` decreases on every pass without exception.
+
+            if people[light] + people[heavy] <= limit:
+                light += 1                 # lightest rides with the heaviest
+
+THE PAIRING TEST.
+
+    the comparison  DECIDES whether anybody can accompany the heaviest person. Testing against the
+                    LIGHTEST is not an approximation - it is the best case, so a failure here means
+                    no companion exists at all.
+    `light += 1`    is INSIDE the `if`, because the lightest person only boards when the pairing
+                    actually worked.
+
+            heavy -= 1                     # heaviest always boards
+
+OUTSIDE THE `if`, AND THAT IS THE HEART OF IT (trap 2). The heaviest remaining person boards this
+boat whatever happens - alone, or with company. There is no branch where they wait.
+
+Move this line inside the `if` and an unpairable heavy person is never removed, the same comparison
+repeats, and the loop never ends.
+
+            boats += 1
+
+One boat per pass, carrying one person or two.
+
+        return boats""",
+
+    """9. TRACED, PASS BY PASS - AND THE ANSWER INVERTING ON ONE CHARACTER.
+
+TRACE 1 - THE WORKED EXAMPLE. people = [3,2,2,1], limit = 3.
+
+    After people.sort():  [1, 2, 2, 3]
+                           0  1  2  3      <- indices
+
+    light = 0, heavy = 3, boats = 0
+
+    PASS 1:  light 0 <= heavy 3 - enter.
+        people[0] + people[3] = 1 + 3 = 4.  Is 4 <= 3?  NO - no companion for the 3.
+        light stays 0.
+        heavy = 2.   boats = 1.        <- the 3 sails alone
+
+    PASS 2:  light 0 <= heavy 2 - enter.
+        people[0] + people[2] = 1 + 2 = 3.  Is 3 <= 3?  YES.
+        light = 1.
+        heavy = 1.   boats = 2.        <- the 1 and a 2 sail together
+
+    PASS 3:  light 1 <= heavy 1 - ENTER. Both markers are on the SAME person, the remaining 2.
+        people[1] + people[1] = 2 + 2 = 4.  Is 4 <= 3?  NO.
+        light stays 1.
+        heavy = 0.   boats = 3.        <- the last 2 sails alone
+
+    LOOP CHECK: light 1 is not <= heavy 0.  Stop.
+
+    RETURN 3.
+
+    PASS 3 IS THE ONE THE `<=` EXISTS FOR. Both markers sat on the last remaining person, and that
+    person still needed a boat. Note the comparison there is that person's weight doubled, which is
+    a harmless way of asking "can they pair with themselves" - the answer is no, so they sail alone,
+    which is correct.
+
+    THE INVERSION - THE SAME INPUT WITH `while light < heavy`:
+        PASS 1: 1 + 3 = 4 > 3.  heavy = 2, boats = 1.
+        PASS 2: 1 + 2 = 3 <= 3.  light = 1, heavy = 1, boats = 2.
+        LOOP CHECK: 1 < 1 is FALSE.  Stop.
+        RETURN 2.
+
+    ONE CHARACTER, AND A PERSON IS LEFT ON THE ISLAND. The answer 2 is not obviously broken - it
+    simply looks like a better solution than 3.
+
+TRACE 2 - EVERYBODY PAIRS. people = [1,1,1,1], limit = 2.
+
+    sorted [1,1,1,1].  light = 0, heavy = 3, boats = 0
+
+    PASS 1:  1 + 1 = 2 <= 2  YES  ->  light = 1.  heavy = 2.  boats = 1.
+    PASS 2:  light 1 <= heavy 2 - enter.  1 + 1 = 2 <= 2  YES  ->  light = 2.  heavy = 1.  boats = 2.
+    LOOP CHECK: light 2 is not <= heavy 1.  Stop.
+
+    RETURN 2.   Four people, two pairs, two boats - and ceil(4/2) = 2, which is the floor from
+    section 1, so this is provably optimal.
+
+TRACE 3 - NOBODY PAIRS. people = [3,3,3], limit = 3.
+
+    PASS 1:  3 + 3 = 6 > 3.  heavy = 1.  boats = 1.
+    PASS 2:  light 0 <= heavy 1.  people[0] + people[1] = 3 + 3 = 6 > 3.  heavy = 0.  boats = 2.
+    PASS 3:  light 0 <= heavy 0.  3 + 3 = 6 > 3.  heavy = −1.  boats = 3.
+    LOOP CHECK: 0 is not <= −1.  Stop.
+
+    RETURN 3.  One boat each - correct, since no two of them can share.
+
+    NOTE THAT `light` NEVER MOVED. It stayed at 0 for all three passes, because no pairing ever
+    succeeded. Only `heavy` walked down, one person per boat, which is exactly what trap 2 is about:
+    had the decrement been inside the `if`, this input would loop forever.
+
+    THE INVERSION HERE TOO: with `<`, this returns 2 instead of 3 - the loop stops when light and
+    heavy meet at index 0, stranding the last person.
+
+THE TINY INPUTS:
+    people = [5], limit = 5    light = heavy = 0.  5 + 5 = 10 > 5, so no pairing.  heavy = −1,
+                               boats = 1.  RETURNS 1 - correctly, one person in one boat.
+                               (With `<` this returns 0 - a person with no boat.)
+    people = [], limit = 5     heavy = −1, so `0 <= −1` is false at once.  RETURNS 0.
+    people = [1,2], limit = 3  1 + 2 = 3 <= 3  ->  light = 1, heavy = 0, boats = 1.  RETURNS 1.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n).
+
+In plain words: THE SORT IS THE ENTIRE COST. The sweep afterwards moves the heavy index on every
+single pass, so it runs at most n times - linear, and free next to the sort. If the weights arrived
+already sorted this would be an O(n) problem.
+
+SPACE: O(1) beyond the input, since `.sort()` sorts in place. O(n) if you sort a copy to leave the
+caller's list alone.
+
+THE COUNTING-SORT FOLLOW-UP, which is a real one here rather than a theoretical aside: the problem
+constrains each weight to at most the limit, and the limit to 30,000. So the values are BOUNDED, and
+counting sort applies:
+
+    tally how many people have each weight (an array of `limit + 1` counters), then walk that array
+    from both ends with the same two-pointer logic.
+
+    O(n + limit) instead of O(n log n), with NO comparison sort at all. For a million people and a
+    limit of 30,000 that is a genuine win. Contrast with Rank Transform in this bank, where the
+    values run to 10^9 and counting is useless - THE CONSTRAINT DECIDES, NOT THE TECHNIQUE.
+
+THE FAMILY - SORTED TWO-POINTER GREEDY. "Sort, then close in from both ends making a forced local
+choice":
+
+    BOATS TO SAVE PEOPLE          pair the lightest with the heaviest, or send the heaviest alone
+    TWO SUM II (sorted input)     move left in if the sum is too small, right in if too big
+    COUNT PAIRS BELOW A TARGET    count a whole block at once, then retire an end
+    CONTAINER WITH MOST WATER     always move the SHORTER wall inward
+    VALID PALINDROME              compare the two ends and step both inward
+    ASSIGN COOKIES                two sorted lists rather than one, same "retire what is finished"
+                                  reasoning
+    3SUM                          fix one element, then run a two-pointer sweep on the rest
+
+    THE COMMON THREAD IS NOT THE SHAPE, IT IS THE PROOF. In each one you can argue that an endpoint
+    can be retired on the basis of a single comparison. If you cannot state that argument, the sweep
+    is unjustified even when it happens to work - which is exactly the difference between this
+    problem and Coin Change, where the greedy instinct is wrong and [1,3,4] with amount 6 refutes it.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if a boat held three people?" The greedy breaks. Three-way packing is bin-packing, which is
+    NP-hard in general - the two-person case is special precisely because each boat has at most one
+    companion to choose.
+  - "Prove the greedy." Section 5's exchange argument, and the step that matters is Q <= H making
+    P + Q fit in the boat that was carrying P + H.
+  - "Can you beat O(n log n)?" Yes, with counting sort, because the weights are bounded - O(n + limit).
+  - "What if somebody exceeds the limit alone?" Then it is impossible; the problem guarantees this
+    cannot happen (trap 6), and without that guarantee you would need an explicit check.
+  - "Return the actual boat assignments." Record the pairs as you form them; the algorithm is
+    unchanged.
+
+THE #1 BEGINNER MISTAKE: writing `while light < heavy`, which strands the last person whenever an odd
+number remain unpaired. It returns 0 for a single person and 2 instead of 3 on the worked example -
+and because the answer is merely one too SMALL, it reads as a better solution rather than an invalid
+one.
+
+RUNNER-UP: putting `heavy -= 1` inside the `if`, so that an unpairable heavy person is never removed
+and the loop spins forever. Trace 3, where `light` never moves at all, is the input that exposes it.
+
+TAKEAWAY: sort, then keep asking one question about the HEAVIEST person left - they are boarding
+regardless, so the only decision is whether the lightest person can come too, and if the easiest
+possible companion will not fit then nobody will.""",
 ]
 
 _EX_P1E["Count Good Nodes in a Binary Tree"] = [
-    """The standard example, traced with the running max.
-        3
-       / \\
-      1   4
-     /   / \\
-    3   1   5
-dfs(3, -inf): 3 >= -inf -> GOOD. new_max = 3.
-  dfs(1, 3): 1 < 3 -> not good. new_max stays 3.
-    dfs(3, 3): 3 >= 3 -> GOOD (note the >=, not >). new_max 3.
-  dfs(4, 3): 4 >= 3 -> GOOD. new_max = 4.
-    dfs(1, 4): not good.
-    dfs(5, 4): 5 >= 4 -> GOOD.
-Total 4 good nodes: the root, the 3 under 1, the 4, and the 5.""",
+    """1. THE GOAL - who can see the sky?
 
-    """Why >= and not >, which is the detail that decides the answer.
-'Good' means no node on the path is GREATER than this one - so an EQUAL value
-on the path is fine. In the trace above, the leaf 3 under the root 3 counts.
-Change the comparison to `node.val > max_so_far` and that node is silently
-dropped, giving 3 instead of 4. Whenever a prompt says 'no greater' rather than
-'all smaller', check whether ties count and restate it before coding; this
-problem exists partly to see whether you notice.""",
+A node is called GOOD if NO NODE ON THE PATH FROM THE ROOT DOWN TO IT HAS A GREATER VALUE. Count how
+many good nodes the tree has.
 
-    """Why the max is passed DOWN rather than returned up.
-The property depends on the path from the ROOT, so the information flows
-downward - each node needs to know what its ancestors held. That makes this a
-PREORDER pattern: act on the node using inherited state, then recurse.
-Contrast Diameter or Maximum Path Sum, where the answer depends on the
-SUBTREE, so information flows upward and the shape is postorder. Being able to
-say 'root-to-node property means state flows down; subtree property means
-results flow up' is the transferable idea, and it decides the shape of most
-tree problems.""",
+Think of the values as heights and the path as a walk downhill from the root. A node is good if
+nothing you passed on the way was taller than it - so standing there, you can still see the sky.
 
-    """Edge cases.
-None -> 0.
-A single node -> its value is always >= -inf, so 1. The root is ALWAYS good, by
-definition, since its path contains only itself.
-A strictly decreasing chain 5 -> 4 -> 3 -> 2 -> only the root is good, answer 1.
-A strictly increasing chain 1 -> 2 -> 3 -> 4 -> every node is good, answer 4.
-All equal values [3,3,3] -> all good, because of the >=. These four cases
-between them exercise every branch.""",
+            3
+           / \\
+          1   4
+         /   / \\
+        3   1   5
 
-    """Why float('-inf') for the initial max.
-The initial sentinel must be smaller than any possible node value. Using 0 is a
-common shortcut that breaks the moment the tree contains negative values -
-a root of -5 would compare -5 >= 0 as false, and the root would not count,
-which is impossible by definition.
-The alternative that avoids sentinels entirely: seed with the root's own value,
-`dfs(root, root.val)`, which is also correct and arguably cleaner. Either way,
-state the assumption about the value range.""",
+    node 3 (the root)   path is just [3].  Nothing above it at all.        GOOD
+    node 1 (left)       path is [3, 1].  The 3 is taller.                  not good
+    node 3 (bottom left) path is [3, 1, 3].  The tallest so far is 3, and this node is 3.
+                        Nothing on the path is GREATER than 3.             GOOD
+    node 4              path is [3, 4].  Only the 3, which is smaller.     GOOD
+    node 1 (under 4)    path is [3, 4, 1].  Both are taller.               not good
+    node 5              path is [3, 4, 5].  Tallest so far is 4.           GOOD
 
-    """Complexity and the iterative version.
-Time O(n): every node is visited once and does O(1) work. Space O(h) for the
-recursion stack - O(log n) balanced, O(n) skewed.
-Iteratively, push (node, max_so_far) pairs onto a stack:
-    stack, count = [(root, float('-inf'))], 0
-    while stack:
-        node, mx = stack.pop()
-        if node is None: continue
-        if node.val >= mx: count += 1
-        nm = max(mx, node.val)
-        stack.append((node.left, nm)); stack.append((node.right, nm))
-Carrying the inherited state INSIDE the stack entry is the general technique
-for converting any downward-flowing recursion into a loop.""",
+    ANSWER: 4
+
+TWO THINGS TO PIN DOWN, because both decide the answer:
+
+    "GREATER", NOT "GREATER OR EQUAL". A node that TIES with the tallest thing on its path is still
+    good - nothing on the path is greater than it. The bottom-left 3 is the whole point of the
+    example, and section 4 shows the answer dropping to 3 if you get this backwards.
+
+    THE ROOT IS ALWAYS GOOD. Its path contains only itself, and nothing can be greater than it. Any
+    solution that reports a tree with 0 good nodes has a bug.
+
+WHAT MAKES IT INTERESTING. Whether a node is good depends entirely on ITS ANCESTORS - the nodes
+above it - and a node holds no information about them. So something has to travel DOWN the tree
+alongside the walk. Section 5 contrasts that with the tree problems where information travels UP,
+which is a distinction worth more than either problem alone.""",
+
+    """2. THE INTUITION - carry the tallest-so-far down with you.
+
+You do not need the whole path. You only need ONE NUMBER from it: THE LARGEST VALUE SEEN SO FAR.
+
+Because "is anything on my path greater than me?" is exactly "is the maximum of my path greater than
+me?" - and a maximum can be carried along in a single variable, updated as you descend.
+
+So walk down from the root, and hand each child a number: the biggest value on the path so far.
+
+            3                    arrive with max = -infinity
+           / \\                   3 >= -inf  ->  GOOD.  pass down max = 3
+          1   4
+         /   / \\
+        3   1   5
+
+    down the LEFT:                          down the RIGHT:
+
+      at 1, carrying max 3                    at 4, carrying max 3
+      1 >= 3?  no  ->  not good               4 >= 3?  yes  ->  GOOD
+      pass down max = max(3,1) = 3            pass down max = max(3,4) = 4
+
+        at 3, carrying max 3                    at 1, carrying max 4      at 5, carrying max 4
+        3 >= 3?  YES  ->  GOOD                  1 >= 4?  no               5 >= 4?  yes  ->  GOOD
+
+    good nodes: the root, the bottom-left 3, the 4, and the 5.   TOTAL 4.
+
+THE COMPARISON IS `>=`, and the bottom-left 3 is exactly why. The tallest thing on its path is 3, and
+it is 3 - equal, not greater, so nothing on its path is greater than it and it is good.
+
+WHAT EACH CALL DOES IS TINY: compare, update the running maximum, hand it to both children, and add
+up what they report. There is no bookkeeping of the path itself - one number replaces it entirely,
+which is what makes this O(1) work per node rather than O(depth).
+
+    THE STARTING VALUE MUST BE SMALLER THAN ANY POSSIBLE NODE VALUE, so that the root always passes
+    the test. Section 4 shows what breaks if you start at 0 and the tree contains negatives.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PATH FROM THE ROOT. The sequence of nodes from the root down to a given node, including both ends.
+ANCESTOR. Any node on that path above the one in question.
+GOOD NODE. A node no ancestor of which has a strictly greater value. Ties are allowed.
+
+DFS (DEPTH-FIRST SEARCH). Following one path as far as it goes before backing up. Natural here,
+because the property is about a path.
+
+RECURSION. A function calling itself on a smaller piece. Each call PAUSES at the call site and
+resumes when the inner call returns a number.
+
+THE CALL STACK. The pile of paused calls. Its depth here is the tree's HEIGHT.
+
+PARAMETER PASSED DOWN. A value handed to each recursive call - here the running maximum. This is the
+mechanism for properties that depend on ANCESTORS. Contrast with a RETURN VALUE, which carries
+information UP from descendants (section 5).
+
+RUNNING MAXIMUM. The largest value seen on the path so far.
+
+SENTINEL. A starting value chosen so that the first real comparison behaves correctly. Here
+`float('-inf')`, so the root is always good.
+
+float('-inf'). Negative infinity - smaller than every real number, so `anything >= -inf` is true.
+
+node. The node the current call is standing on.
+max_so_far. The largest value on the path ABOVE AND INCLUDING the ancestors - what this node is
+            compared against.
+new_max. The running maximum to hand to the children: the larger of `max_so_far` and this node's
+         value.
+good. 1 if this node is good, 0 if not - so the counting is a plain sum.
+
+O(n) TIME, O(h) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - WRITING `>` INSTEAD OF `>=`. The definition says no ancestor is GREATER, so a node EQUAL to
+the biggest ancestor is good. One character decides the answer.
+
+    On the tree from section 1:
+
+        WITH `>=`:  the bottom-left 3 is compared against a running maximum of 3.
+                    3 >= 3 is TRUE  ->  GOOD.
+                    Good nodes: root 3, bottom-left 3, the 4, the 5.   ANSWER 4.
+
+        WITH `>`:   3 > 3 is FALSE  ->  not good.
+                    Good nodes: root 3, the 4, the 5.                  ANSWER 3.
+
+    THE EXAMPLE IN THE PROBLEM STATEMENT IS BUILT TO CATCH THIS - the duplicate 3 is not decoration.
+    Read the definition twice: "no node on the path has a GREATER value" is a statement about strict
+    greatness, so equality is fine.
+
+TRAP 2 - STARTING THE MAXIMUM AT 0. It works on every tree of positive values, which is every tree
+anybody writes by hand, and it breaks the moment a value is negative.
+
+    A single node with value −5:
+
+        WITH float('-inf'):  −5 >= −inf is TRUE  ->  1 good node.  Correct - the root is always good.
+        WITH 0:              −5 >= 0 is FALSE   ->  0 good nodes.  WRONG.
+
+    THE ROOT IS GOOD BY DEFINITION - its path contains only itself. Any sentinel that can fail
+    against a real node value is wrong, and 0 fails against every negative one.
+
+    (An alternative that avoids sentinels entirely: start the walk with `dfs(root, root.val)`. Then
+    the root is compared against itself, `root.val >= root.val` is true, and it is good with no
+    special value needed. Equally correct; just be deliberate about which you choose.)
+
+TRAP 3 - PASSING THE NODE'S OWN VALUE AS THE CHILDREN'S MAXIMUM INSTEAD OF THE RUNNING MAXIMUM. The
+children must be compared against the largest value on the WHOLE path, not just against their parent.
+
+    On the path 3 → 1 → 3, if node 1 handed its children a maximum of 1 rather than 3, then a child
+    of value 2 would be judged against 1 and called good - when the 3 above it is greater. The line
+    `new_max = max(max_so_far, node.val)` is what keeps the maximum monotonically non-decreasing all
+    the way down.
+
+TRAP 4 - TRYING TO RETURN THE MAXIMUM UP THE TREE. The property depends on ANCESTORS, so the
+information flows DOWNWARD as a parameter. A version that computes something in the children and
+returns it upward is solving a different shape of problem - section 5 draws that contrast, because
+several sibling tree problems genuinely do work that way and mixing them up is the deeper error
+behind this one.
+
+TRAP 5 - THE EMPTY TREE. `dfs(None, ...)` returns 0 immediately, so an empty tree has no good nodes.
+Correct, and it needs no special case because the base case handles both "absent tree" and "absent
+child" with the same line.""",
+
+    """5. THE ALTERNATIVES, AND THE DISTINCTION WORTH MORE THAN THE PROBLEM.
+
+VERSION A - FOR EACH NODE, WALK BACK UP TO THE ROOT. If nodes had parent pointers you could, for each
+node, climb to the root checking for anything greater.
+
+    O(n × h) - for each of n nodes, a walk of up to h steps. On a skewed tree of 10,000 nodes that is
+    about 50,000,000 steps against the real solution's 10,000. And it needs parent pointers, which
+    the problem does not give you.
+
+VERSION B - CARRY THE WHOLE PATH DOWN AS A LIST. At each node, scan the list for anything greater.
+Correct, and it does O(h) work per node - the same O(n × h) - plus O(h) memory for the list. The
+insight that collapses it is that YOU ONLY EVER ASK FOR THE MAXIMUM, and a maximum can be maintained
+in one number.
+
+VERSION C - CARRY THE RUNNING MAXIMUM DOWN, which is the code here. O(1) work per node.
+
+VERSION D - ITERATIVE, WITH AN EXPLICIT STACK OF PAIRS:
+
+    def good_nodes(root):
+        if root is None: return 0
+        count, stack = 0, [(root, float('-inf'))]
+        while stack:
+            node, max_so_far = stack.pop()
+            if node.val >= max_so_far: count += 1
+            new_max = max(max_so_far, node.val)
+            if node.left:  stack.append((node.left, new_max))
+            if node.right: stack.append((node.right, new_max))
+        return count
+
+    THE STACK HOLDS PAIRS - a node and the maximum that applies to it. That is the same idea as the
+    parameter, made explicit. It matters concretely: a tree skewed 10,000 nodes deep makes the
+    recursive version 10,000 frames deep against PYTHON'S DEFAULT LIMIT OF 1,000, so it raises
+    RecursionError rather than running slowly.
+
+THE DISTINCTION THIS ENTRY REALLY TEACHES - WHICH WAY DOES THE INFORMATION FLOW?
+
+    DOWNWARD, AS A PARAMETER - when a node's answer depends on its ANCESTORS:
+
+        COUNT GOOD NODES          carry the running maximum                  <- this entry
+        PATH SUM                  carry the running total
+        SUM ROOT TO LEAF NUMBERS  carry the number built so far
+        BINARY TREE PATHS         carry the path string
+        MAXIMUM DEPTH             carry the depth (or return it - either works)
+
+    UPWARD, AS A RETURN VALUE - when a node's answer depends on its DESCENDANTS:
+
+        BINARY TREE TILT          return the subtree SUM, accumulate the tilt
+        DIAMETER OF A TREE        return the HEIGHT, score left + right
+        MAXIMUM PATH SUM          return the best downward gain, score the turn
+        BALANCED BINARY TREE      return the height, check the difference
+
+    THE QUESTION TO ASK OF ANY TREE PROBLEM: does this node need to know about what is ABOVE it or
+    about what is BELOW it? Above means a parameter going down. Below means a return value coming up.
+    Some problems need both - Maximum Path Sum returns a value up while some variants also carry
+    constraints down.
+
+    Getting that right first is most of the work, and it is why Binary Tree Tilt in this bank is
+    worth reading beside this one: it is the mirror image, returning a subtree sum upward while
+    accumulating a separate answer.
+
+WHY THE RUNNING MAXIMUM NEVER DECREASES. `new_max = max(max_so_far, node.val)` can only stay the same
+or grow, so the value handed downward is monotonically non-decreasing along any path. That is what
+makes "compare against one number" equivalent to "check every ancestor" - the single number is
+provably the maximum of everything above.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK DOWN FROM THE ROOT CARRYING THE LARGEST VALUE SEEN
+SO FAR ON THE PATH, COUNT THIS NODE IF IT IS AT LEAST AS BIG AS THAT NUMBER, AND HAND THE UPDATED
+LARGEST VALUE TO BOTH CHILDREN.
+
+THIS VERSION IS RECURSIVE, and the mechanism matters:
+
+  - The function calls itself once per child, and each call is given TWO things: which node to stand
+    on, and the largest value on the path down to it.
+  - Each call PAUSES at the call site until the child reports back a count, then adds it in. The
+    paused calls form the CALL STACK, whose depth is the tree's height.
+  - THE INFORMATION TRAVELS DOWNWARD AS A PARAMETER, because the property depends on what is ABOVE a
+    node. What comes back UP is only a count - a number to be added, carrying no information about
+    the path.
+  - WHAT MAKES IT STOP: an absent node returns zero immediately without recursing, and every path
+    downward reaches absence because the tree is finite and has no cycles.
+
+THE STEPS:
+
+  1. BEGIN AT THE ROOT, CARRYING A VALUE SMALLER THAN ANY POSSIBLE NODE VALUE.
+
+     Smaller than ANY - not zero. Zero works only if every value in the tree is positive, and it
+     wrongly rejects a negative root, which must always count.
+
+  THE WALK, given a node and the largest value on the path so far:
+
+  2. IF THERE IS NO NODE HERE, REPORT ZERO. This also stops the walk.
+
+  3. THIS NODE IS GOOD IF ITS VALUE IS AT LEAST AS LARGE AS THE NUMBER YOU ARE CARRYING. Count it as
+     one if so and zero if not.
+
+     AT LEAST AS LARGE - equal counts. The rule is that nothing above may be GREATER, so a node that
+     ties with the tallest ancestor is still good.
+
+  4. WORK OUT THE NUMBER TO HAND ONWARD: the larger of what you were carrying and this node's own
+     value.
+
+     This is what keeps the number meaning "the largest on the whole path" rather than "my parent's
+     value". Hand down the node's own value instead and a child is judged only against its parent,
+     ignoring anything taller further up.
+
+  5. REPORT THIS NODE'S COUNT PLUS WHATEVER THE LEFT CHILD REPORTS PLUS WHATEVER THE RIGHT CHILD
+     REPORTS, both of them given the updated number.
+
+  6. THE ANSWER IS WHAT THE ROOT REPORTS.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a mountain range laid out as a branching set of trails, with a peak at every junction. You
+start at the summit and walk downhill along every possible trail, and you want to count the peaks
+from which you can still see the sky - meaning nothing you passed on the way down was taller than the
+peak you are standing on.
+
+The obvious way is to stand on a peak and look back up the trail behind you, checking every peak you
+came past. That works, and it is a lot of looking back: on a long trail you re-examine the same
+peaks over and over, once for every peak below them.
+
+Instead you carry one number with you. As you walk, you remember only the height of the tallest peak
+you have passed. That single number is all you need, because the question "was anything behind me
+taller than this?" is just "was the tallest thing behind me taller than this?"
+
+So at each peak you do three small things. You compare your own height against the number you are
+carrying, and if you are at least as tall, this peak counts - you can see the sky. Then you update the
+number, taking whichever is bigger, your own height or the number you were already carrying. Then you
+carry that updated number onward down both trails leading away from you.
+
+Two details decide whether the count is right.
+
+The first is what "at least as tall" means. If a peak is exactly the same height as the tallest thing
+behind it, nothing behind it is TALLER, so the view is clear and it counts. Insisting on being
+strictly taller quietly loses every peak that ties, and ties are common.
+
+The second is what you carry onward. You must pass along the tallest thing seen on the whole walk so
+far, not merely your own height. If you hand on only your own height, a peak further down is judged
+against you alone and never learns about the enormous summit you both passed twenty minutes ago.
+
+The number you carry can only ever grow or stay the same as you descend, which is exactly why one
+number can stand in for the entire trail behind you.
+
+And the summit itself always counts. There is nothing above it at all, so the view is necessarily
+clear - which is why you must set out carrying a number lower than any peak could possibly be, rather
+than starting at sea level and accidentally disqualifying a summit that lies below it.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 3 / 1, 4 / (3 under 1; 1 and 5 under 4) beside you, answer 4.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None. Note there is no parent
+link - which is why the information about ancestors has to be carried downward.
+
+    def good_nodes(root):
+        def dfs(node, max_so_far):
+
+THE HELPER, AND ITS SECOND PARAMETER IS THE WHOLE DESIGN.
+
+    node         HOLDS the node currently being stood on.
+    max_so_far   HOLDS the largest value on the path from the root down to - but NOT including -
+                 this node. It is what this node is judged against.
+
+The parameter is how ancestor information reaches a node, since nothing in the node itself records
+what is above it (trap 4).
+
+            if node is None:
+                return 0
+
+THE BASE CASE. An absent subtree contains no good nodes, and this also stops the recursion. It covers
+both the empty tree and a missing child with the same line (trap 5).
+
+            good = 1 if node.val >= max_so_far else 0    # >= path max -> good
+
+THE TEST, AND `>=` IS LOAD-BEARING.
+
+    `node.val >= max_so_far`  DECIDES goodness. The definition says no ancestor may be GREATER, so an
+                              ancestor that is EQUAL is fine and this node still counts. Writing `>`
+                              drops every node that ties with its tallest ancestor - which on the
+                              worked example is one node, and turns 4 into 3 (trap 1).
+
+Counting as 1 or 0 rather than using a running total is what lets the final line be a plain sum.
+
+            new_max = max(max_so_far, node.val)
+
+THE UPDATE THAT KEEPS THE NUMBER MEANINGFUL.
+
+    `new_max`  HOLDS the largest value on the path INCLUDING this node - which is exactly what the
+               children must be judged against.
+
+It can only stay the same or grow, so the value travelling downward is monotonically non-decreasing
+along any path - which is why one number can stand in for every ancestor (section 5).
+
+Passing `node.val` here instead would judge each child against its parent alone, forgetting anything
+taller further up (trap 3).
+
+            return good + dfs(node.left, new_max) + dfs(node.right, new_max)
+
+THE SUM. This node's own contribution, plus everything the two subtrees report.
+
+BOTH CHILDREN GET `new_max` - the same number, because they share the same path down to this point.
+What travels DOWN is the maximum; what comes back UP is only a count, carrying no information about
+the path.
+
+        return dfs(root, float('-inf'))
+
+THE KICK-OFF, and the sentinel matters.
+
+    `float('-inf')`  is smaller than every real number, so `root.val >= -inf` is always true and THE
+                     ROOT IS ALWAYS GOOD - which is correct, since its path contains only itself.
+                     Using 0 would wrongly reject a negative root (trap 2).
+
+    (`dfs(root, root.val)` is an equally correct alternative that needs no sentinel at all, since
+    `root.val >= root.val` is true.)""",
+
+    """9. TRACED, CALL BY CALL - AND THE ANSWER INVERTING ON ONE CHARACTER.
+
+TRACE 1 - THE STANDARD EXAMPLE.
+
+            3
+           / \\
+          1   4
+         /   / \\
+        3   1   5
+
+    dfs(3, -inf)
+        node is not None.
+        3 >= -inf?  YES  ->  good = 1
+        new_max = max(-inf, 3) = 3
+        returns 1 + dfs(1, 3) + dfs(4, 3)
+
+        dfs(1, 3)                                   <- the left child
+            1 >= 3?  NO  ->  good = 0
+            new_max = max(3, 1) = 3                 <- stays 3; the 1 does not lower it
+            returns 0 + dfs(3, 3) + dfs(None, 3)
+
+            dfs(3, 3)                               <- THE NODE THE EXAMPLE EXISTS FOR
+                3 >= 3?  YES  ->  good = 1
+                Nothing on its path (3, 1, 3) is GREATER than 3 - the tallest is exactly 3.
+                new_max = max(3, 3) = 3
+                returns 1 + dfs(None, 3) + dfs(None, 3) = 1 + 0 + 0 = 1
+
+            dfs(None, 3) = 0
+            so dfs(1, 3) returns 0 + 1 + 0 = 1
+
+        dfs(4, 3)                                   <- the right child
+            4 >= 3?  YES  ->  good = 1
+            new_max = max(3, 4) = 4                 <- the bar rises for everything below
+            returns 1 + dfs(1, 4) + dfs(5, 4)
+
+            dfs(1, 4)
+                1 >= 4?  NO  ->  good = 0
+                returns 0 + 0 + 0 = 0
+
+            dfs(5, 4)
+                5 >= 4?  YES  ->  good = 1
+                returns 1 + 0 + 0 = 1
+
+            so dfs(4, 3) returns 1 + 0 + 1 = 2
+
+        TOTAL: 1 + 1 + 2 = 4
+
+    RETURN 4.   Good nodes: the root 3, the bottom-left 3, the 4, and the 5.
+
+    NOTE THE TWO BRANCHES CARRYING DIFFERENT NUMBERS. Down the left the running maximum stayed at 3;
+    down the right it rose to 4 at the node 4 and stayed there. Each path carries its own history,
+    which is exactly what a parameter gives you and what a shared variable would not.
+
+TRACE 2 - THE INVERSION, on the same tree with `>` instead of `>=` (trap 1).
+
+    dfs(3, -inf):  3 > -inf  ->  good = 1.  new_max = 3.
+        dfs(1, 3):  1 > 3?  no  ->  0.  new_max = 3.
+            dfs(3, 3):  3 > 3?  NO  ->  good = 0.        <- THE ONLY LINE THAT CHANGED
+                        returns 0.
+            so dfs(1, 3) returns 0.
+        dfs(4, 3):  4 > 3  ->  good = 1.  new_max = 4.
+            dfs(1, 4):  1 > 4?  no  ->  0.
+            dfs(5, 4):  5 > 4  ->  1.
+            returns 2.
+        TOTAL: 1 + 0 + 2 = 3.
+
+    RETURN 3, where the answer is 4. ONE CHARACTER, ONE NODE, AND THE DUPLICATE 3 IN THE PROBLEM'S OWN
+    EXAMPLE IS THERE TO CATCH IT.
+
+TRACE 3 - THE NEGATIVE ROOT (trap 2). A single node with value −5.
+
+    WITH float('-inf'):
+        dfs(-5, -inf):  −5 >= −inf?  YES  ->  good = 1.  Both children absent.
+        RETURN 1.   Correct - the root is always good.
+
+    WITH 0 AS THE STARTING MAXIMUM:
+        dfs(-5, 0):  −5 >= 0?  NO  ->  good = 0.
+        RETURN 0.   WRONG, and it would be wrong for any tree whose root is negative.
+
+TRACE 4 - THE TWO EXTREME SHAPES.
+
+    A STRICTLY DECREASING CHAIN 5 → 4 → 3 (right children):
+        dfs(5, -inf):  5 >= -inf  ->  1.  new_max = 5.
+        dfs(4, 5):     4 >= 5?  no  ->  0.  new_max = 5.
+        dfs(3, 5):     3 >= 5?  no  ->  0.
+        RETURN 1.   Only the root - every later node is overshadowed by it. This is the minimum
+        possible answer for a non-empty tree.
+
+    A STRICTLY INCREASING CHAIN 1 → 2 → 3:
+        dfs(1, -inf):  1 >= -inf  ->  1.  new_max = 1.
+        dfs(2, 1):     2 >= 1  ->  1.  new_max = 2.
+        dfs(3, 2):     3 >= 2  ->  1.
+        RETURN 3.   Every node - each one is taller than everything above it. The maximum possible.
+
+    SAME THREE NODES, SAME SHAPE, REVERSED VALUES: 1 good node versus 3.
+
+THE TINY INPUTS:
+    root = None       the base case returns 0 at once. No good nodes in an empty tree.
+    A SINGLE NODE     whatever its value, it is compared against −inf and counts.  RETURNS 1.
+    ALL EQUAL VALUES, say a tree of 7s
+                      every node ties with the running maximum, and `>=` makes every one of them
+                      good.  RETURNS the number of nodes. With `>` it would return 1, which is the
+                      most dramatic form of trap 1.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: `dfs` is called exactly once per node - plus once per missing child, which returns
+immediately - and each call does a FIXED amount of work: one comparison, one `max`, two additions.
+The whole path behind a node is represented by a single number, so nothing is re-examined.
+
+    AGAINST THE PATH-SCANNING VERSIONS in section 5, which do O(h) work per node: O(n × h), which on
+    a skewed tree of 10,000 nodes is about 50,000,000 steps against 10,000.
+
+SPACE: O(h) for the recursion stack, where h is the tree's HEIGHT - O(log n) for a balanced tree,
+O(n) for a skewed one. Nothing else is stored; the running maximum lives in the call frames.
+
+    Python's default recursion limit is 1,000, so a chain of more than about a thousand nodes raises
+    RecursionError. The explicit-stack version in section 5 pushes (node, maximum) PAIRS onto the
+    heap instead and has no such limit - volunteering it before being asked is the right move.
+
+THE TRANSFERABLE IDEA - WHICH WAY DOES THE INFORMATION FLOW? This is worth more than the problem:
+
+    DEPENDS ON ANCESTORS  ->  pass a PARAMETER DOWN
+        Count Good Nodes (the running maximum), Path Sum (the running total), Sum Root to Leaf
+        Numbers (the number built so far), Binary Tree Paths (the path string).
+
+    DEPENDS ON DESCENDANTS  ->  RETURN A VALUE UP
+        Binary Tree Tilt (the subtree sum), Diameter (the height), Maximum Path Sum (the best
+        downward gain), Balanced Binary Tree (the height).
+
+    Ask that question first and the shape of the solution follows. Binary Tree Tilt in this bank is
+    the mirror image of this entry and worth reading beside it.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it iteratively." A stack of (node, max_so_far) PAIRS - section 5 - and give the reason: a
+    10,000-deep chain exceeds Python's 1,000-frame limit.
+  - "Return the good nodes themselves, not the count." Collect them into a list instead of summing;
+    the walk is unchanged.
+  - "What if 'good' meant no ancestor is greater OR EQUAL?" Then use `>` and ties stop counting - and
+    a tree of identical values would have exactly one good node. Being able to say which comparison
+    goes with which wording is the point of trap 1.
+  - "Count nodes visible from a leaf looking up?" A different problem - the information would flow
+    the other way, upward from descendants.
+  - "Why -inf rather than 0?" Negative node values (trap 2). Or sidestep it with `dfs(root, root.val)`.
+
+THE #1 BEGINNER MISTAKE: using `>` instead of `>=`, which drops every node that ties with its tallest
+ancestor. The problem's own example contains a duplicate 3 specifically to expose it, and the answer
+falls from 4 to 3 - and on a tree of identical values it collapses from n to 1.
+
+RUNNER-UP: starting the running maximum at 0 rather than negative infinity. It is correct for every
+tree of positive values, which is every tree you would sketch by hand, and it silently reports the
+root of a negative-valued tree as not good - when the root is good by definition.
+
+TAKEAWAY: the property depends on a node's ANCESTORS, so the information has to travel DOWN as a
+parameter - and the entire path collapses into one number, the running maximum, because "is anything
+above me greater?" is the same question as "is the largest thing above me greater?".""",
 ]
 
 _EX_P1E["House Robber II (circular street)"] = [
