@@ -133,12 +133,603 @@ def vif(X):
 '''),
           example="Predicting house price from size and number of rooms. The coefficients come out at 200 per square metre and -15,000 per room, and the negative room coefficient looks absurd - until you notice size and rooms are 0.9 correlated. HOLDING SIZE FIXED, more rooms means smaller rooms, which genuinely is worth less. The model is fine; the naive reading of the coefficient was not. That is multicollinearity in one paragraph.",
           examples=[
-              "Fitting a line by hand, so the loss is concrete. Points (1,2), (2,4), (3,5). Guess w=1, b=1: predictions are 2, 3, 4, so errors are 0, 1, 1 and MSE = (0+1+1)/3 = 0.67. Guess w=1.5, b=0.67: predictions 2.17, 3.67, 5.17, errors -0.17, 0.33, -0.17, MSE = 0.06. The second line is better, and least squares finds the best such line exactly - here w=1.5, b=0.667. Doing one iteration of this arithmetic out loud is the fastest way to show you know what 'minimising squared error' actually means.",
-              "Why squared rather than absolute error, with the trade named. Squaring makes the loss differentiable everywhere (so gradient descent works and a closed form exists) and it penalises a single error of 10 as much as a hundred errors of 1 - which is right when large errors are disproportionately costly and wrong when they are just outliers. Concretely: on data [10, 12, 11, 13, 200], the constant that minimises MSE is the MEAN, 49.2, and the constant minimising MAE is the MEDIAN, 12. Four of the five points are much better served by 12. Your choice of loss IS a choice about how much outliers should count.",
-              "The multicollinearity story, which is the most-asked follow-up. Predicting house price from size and number of rooms gives coefficients of +200 per square metre and -15,000 per room. The negative rooms coefficient looks absurd until you notice size and rooms correlate at 0.9. The coefficient means 'holding SIZE FIXED, one more room' - which means smaller rooms - and that genuinely is worth less. Predictions are unaffected; only the interpretation breaks. Diagnose with a VIF above 5-10, and fix by dropping one feature, combining them (rooms per square metre), or using ridge regression, which stabilises correlated coefficients by shrinking them.",
-              "Reading the residual plot, which beats any single metric. Plot residuals (actual minus predicted) against the predicted value. A structureless cloud around zero means the assumptions hold. A U-shape or arch means the true relationship is curved and you need a polynomial or interaction term - the model is systematically wrong in a pattern. A widening cone means heteroscedasticity: the errors grow with the prediction, so your confidence intervals are too narrow at the high end, and the usual fix is to model log(y) instead of y. Ten seconds with this plot finds problems that R-squared hides completely.",
-              "R-squared, and the trap in comparing models with it. R-squared is the share of the target's variance the model explains: 0 means no better than always predicting the mean, 1 means perfect. The trap is that it NEVER DECREASES when you add a feature, even a column of random noise - so choosing between a 5-feature and a 50-feature model by R-squared always picks the 50. Use adjusted R-squared, which penalises the feature count, or better, just compare held-out scores. Also note a high R-squared says nothing about causation or about whether the residuals are patterned.",
-              "Closed form or gradient descent - how to choose in the room. With 10,000 rows and 50 features, the normal equation inverts a 51x51 matrix, which is instantaneous and exact; use it. With 10 million rows and 100,000 features (text, one-hot encodings), the matrix is 100,000 x 100,000 and inverting it is roughly 10^15 operations - impossible - so gradient descent or its stochastic variant is the only option. The dividing line is the FEATURE count, not the row count, because the inversion cost is O(features^3). Stating that distinction is what the question is testing.",
+              r"""1. THE GOAL - the straight line that comes closest to all the points.
+
+You have points scattered on a graph and you want one straight line that summarises them.
+
+    y
+    |                                  .
+    |                            .   /
+    |                        . /  .
+    |                    /  .
+    |              .  /
+    |          /   .
+    |     /  .
+    +--------------------------------- x
+
+"Closest" needs a definition, and the choice is not obvious. Measure each point's VERTICAL
+distance from the line - the error - then square each one and add them up. The best line is
+the one making that total smallest.
+
+    error at a point = actual y  -  the line's y at that x
+    total            = the sum of those errors, SQUARED
+
+Why squared rather than absolute? Two reasons, and both are worth saying out loud because
+this is a common follow-up:
+
+  - IT PUNISHES LARGE ERRORS MUCH HARDER. One error of 10 counts as 100, while ten errors
+    of 1 count as 10 in total. If a single big miss is worse than several small ones - and
+    for most predictions it is - squaring encodes that.
+  - IT IS DIFFERENTIABLE EVERYWHERE. The absolute-value function has a corner at zero;
+    squaring is smooth. That smoothness is what gives a clean formula for the answer and
+    lets gradient descent work without special cases.
+
+The model itself:
+
+    y  =  w0  +  w1 x1  +  w2 x2  +  ...  +  wn xn
+
+w0 is the intercept - the prediction when every feature is zero. Each wi says how much y
+moves per unit of that feature. That is all a linear model is, and its plainness is exactly
+why it survives: you can read the coefficients and say what the model believes.
+
+WHAT THIS ENTRY OWNS: the model, the two ways to solve it, and the ASSUMPTIONS - which is
+what a good interviewer actually probes. Its sibling "LOGISTIC REGRESSION" owns what changes
+when the target is a class rather than a number, and "HOW GRADIENT DESCENT WORKS" owns the
+optimisation loop referenced below.""",
+              r"""2. THE INTUITION - two roads to the same answer.
+
+The loss surface for linear regression with squared error is a BOWL. Not a landscape with
+hills and valleys - a single smooth bowl with exactly one lowest point:
+
+    loss
+      |  \                             /
+      |    \                         /
+      |      \                     /
+      |        \                 /
+      |           \___________ /
+      +-------------------------------> the weight
+                       ^
+                 one global minimum, and no other flat spot anywhere
+
+This shape is called CONVEX, and it is a genuinely nice property worth stating in an
+interview: THERE ARE NO LOCAL MINIMA TO GET STUCK IN. Whatever route you take downhill, you
+arrive at the same place. Most of machine learning does not have this guarantee; linear
+regression does.
+
+Because the bowl is smooth and has one bottom, there are two ways to reach it:
+
+    THE NORMAL EQUATION - solve for the bottom directly.
+
+        w = (X-transpose X)-inverse X-transpose y
+
+        One calculation, exact answer, no iteration. It works by setting the slope to zero
+        and solving. The catch is the matrix inverse: inverting an n-by-n matrix costs about
+        n-cubed operations, where n is the number of FEATURES - not rows.
+
+    GRADIENT DESCENT - walk down the bowl.
+
+        Start anywhere, compute the slope, step downhill, repeat.
+
+        Each step costs about (rows x features), and you need many steps. But nothing is
+        inverted, so it scales to enormous data and works when the data arrives in a stream.
+
+Both land at the same point, because there is only one bottom. The choice is purely
+practical, and section 9 does the arithmetic that decides it - with 50 features the direct
+solve is instantaneous, and with 100,000 features it would take about twelve days.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+FEATURE / PREDICTOR / INDEPENDENT VARIABLE (x). An input column - size, age, temperature.
+
+TARGET / RESPONSE / DEPENDENT VARIABLE (y). What you are predicting. A NUMBER here, which is
+what makes this regression rather than classification.
+
+COEFFICIENT / WEIGHT (w). How much the prediction moves per unit of a feature.
+
+INTERCEPT / BIAS (w0). The prediction when all features are zero. Often meaningless on its
+own - nobody has a house of zero square metres - but it positions the line correctly.
+
+RESIDUAL. Actual minus predicted, for one point. The vertical gap. Residuals are the raw
+material of every diagnostic in section 8.
+
+MEAN SQUARED ERROR (MSE). The average of the squared residuals. The thing being minimised.
+
+ORDINARY LEAST SQUARES (OLS). The name for fitting a linear model by minimising squared
+error. "Least squares" is literally the description.
+
+CONVEX. Bowl-shaped, with exactly one minimum. Guarantees any downhill route reaches the
+global optimum.
+
+NORMAL EQUATION. The closed-form solution. "Closed form" means a direct formula rather than
+an iterative search.
+
+PSEUDOINVERSE (pinv). A generalisation of the matrix inverse that still returns an answer
+when the matrix is singular - which happens when two feature columns are perfectly
+correlated. Using pinv rather than inv is why the code below does not crash on duplicated
+columns.
+
+R-SQUARED. The share of the target's variance the model explains. 1.0 is perfect, 0 is no
+better than always predicting the mean, and negative is worse than the mean.
+
+HOMOSCEDASTICITY. Constant error variance - the spread of residuals is the same everywhere.
+Its opposite, HETEROSCEDASTICITY, is residuals fanning out as predictions grow.
+
+MULTICOLLINEARITY. Features that are strongly correlated with each other. Predictions stay
+fine; the individual coefficients become unstable and uninterpretable.
+
+VIF (VARIANCE INFLATION FACTOR). A per-feature number measuring how well the OTHER features
+predict it. Above 5 to 10 means that coefficient should not be interpreted.
+
+RESIDUAL PLOT. Residuals plotted against predictions. The single most informative diagnostic
+here, and better than any summary number.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE MOST-ASKED FOLLOW-UP: MULTICOLLINEARITY MAKES COEFFICIENTS MEANINGLESS WHILE
+PREDICTIONS STAY FINE.
+
+Predict house price from SIZE IN SQUARE METRES and NUMBER OF ROOMS. These are strongly
+correlated - bigger houses have more rooms. Fit it twice on slightly different samples:
+
+    sample A:   price = 200 x size  -  5,000 x rooms  + ...
+    sample B:   price =  -50 x size + 30,000 x rooms  + ...
+
+Both predict well. Both are, as coefficient statements, absurd - sample A says an extra room
+LOWERS the price by 5,000, sample B says an extra square metre lowers it by 50.
+
+Why it happens: the model only needs the COMBINATION to be right. Since size and rooms carry
+nearly the same information, a large positive weight on one can be cancelled by a large
+negative weight on the other, and infinitely many such pairs fit almost equally well. The
+solver picks one essentially arbitrarily, and a small change in the data picks a different
+one.
+
+THE DISTINCTION THAT MATTERS: if you only need PREDICTIONS, multicollinearity is not a
+problem. If anyone will READ the coefficients - which is the whole reason to use a linear
+model in medicine, credit or policy - it is fatal. Check VIF, and drop or combine the
+offending features.
+
+TRAP 2: interpreting the intercept when zero is impossible. "A house of zero square metres
+costs 45,000" is not a finding. The intercept positions the line; it is rarely a statement
+about the world.
+
+TRAP 3: confusing correlation with causation via the coefficients. A coefficient is "the
+expected change in y per unit of this feature, HOLDING THE OTHERS FIXED". It is not a causal
+claim, and holding-the-others-fixed may be physically impossible when features are linked.
+
+TRAP 4: relying on R-squared to compare models. It NEVER DECREASES when you add a feature -
+add a column of random noise and R-squared goes up. Use adjusted R-squared, or judge on
+held-out data.
+
+TRAP 5: ignoring the residual plot. Every assumption failure is visible there and invisible
+in the summary numbers. A model with excellent R-squared can have residuals that form a
+clear curve, which means the relationship is not linear and the model is systematically
+wrong in a pattern you could fix.
+
+TRAP 6: applying it to time series with a random train/test split. The independence-of-errors
+assumption is violated - today's error is related to yesterday's - so the model's apparent
+accuracy is inflated. Split by time.
+
+TRAP 7: forgetting outliers move the line hard. Squared error means one point ten units away
+contributes as much as a hundred points one unit away. A single bad row can visibly tilt the
+whole fit, which is the cost of choosing squares over absolutes.""",
+              r"""5. THE NAIVE VERSION FIRST, THEN THE REAL ONE.
+
+THE NAIVE VERSION - guess a line and adjust it by eye.
+
+Draw a line that looks about right, check whether it seems close, nudge it. This is exactly
+what least squares automates, and stating it makes the next question obvious: what does
+"close" mean, precisely enough for a computer?
+
+THE DEFINITION THAT MAKES IT SOLVABLE: minimise the SUM OF SQUARED VERTICAL DISTANCES.
+
+Three choices are buried in that sentence and each is worth defending:
+
+  - VERTICAL distances, not perpendicular. You are predicting y FROM x, so error means being
+    wrong about y. (Perpendicular distance gives a different technique, total least squares,
+    used when both variables have measurement error.)
+  - SQUARED rather than absolute. Punishes large errors harder, and is differentiable
+    everywhere so a closed form exists. The cost is sensitivity to outliers - see trap 7.
+    Absolute error gives median-like behaviour and needs an iterative solver.
+  - SUMMED over all points, so every point has a say.
+
+WHY THERE IS A FORMULA AT ALL - the derivation, briefly, because it explains both solvers.
+
+At the bottom of a smooth bowl the slope is zero in every direction. So write down the
+derivative of the total squared error with respect to each weight, set all of them to zero,
+and solve the resulting system. In matrix form that system is:
+
+    X-transpose X w  =  X-transpose y
+
+and solving for w gives the normal equation. It is not magic - it is "the slope is zero at
+the minimum", written for many variables at once.
+
+TWO SOLVERS, AND THE ARITHMETIC THAT CHOOSES BETWEEN THEM:
+
+    NORMAL EQUATION
+        cost: about n-cubed for the inverse, plus m x n-squared to build the matrix, where m
+        is rows and n is FEATURES.
+        exact, one shot, no hyperparameters, no learning rate to tune.
+        n = 50:       51-cubed is about 133,000 operations. Instantaneous.
+        n = 1,000:    1 billion operations. A second or two.
+        n = 100,000:  10-to-the-15 operations. At a billion operations a second, about
+                      TWELVE DAYS.
+
+    GRADIENT DESCENT
+        cost: about m x n per step, times the number of steps.
+        m = 10 million, n = 100,000, 1,000 steps: large but entirely parallelisable, and it
+        never builds an n-by-n matrix, so memory stays manageable.
+        needs a learning rate; the sibling entry covers choosing one.
+
+THE RULE: the crossover is driven by the number of FEATURES, not rows. Millions of rows with
+50 features is a job for the normal equation. Ten thousand rows with 100,000 features is not.
+
+WHY BOTH REACH THE SAME ANSWER: convexity. One bowl, one bottom. This is not true once you
+add a sigmoid - see the logistic sibling, where the choice of loss becomes load-bearing for
+exactly this reason.
+
+THE UPGRADE PATH BEYOND PLAIN OLS:
+    correlated features or overfitting  ->  add L2 (Ridge). It also makes X-transpose X
+                                            invertible again, which is a second reason to
+                                            reach for it.
+    many useless features               ->  add L1 (Lasso), for sparsity.
+    a curved relationship               ->  add polynomial or interaction terms. The model is
+                                            still LINEAR IN ITS WEIGHTS, which is all that
+                                            "linear model" requires - a common point of
+                                            confusion.""",
+              r"""6. HOW IT WORKS - the steps, in plain English.
+
+The one sentence that holds the whole idea: FIND THE WEIGHTS THAT MAKE THE SUM OF SQUARED
+VERTICAL DISTANCES SMALLEST - EITHER BY SOLVING DIRECTLY FOR WHERE THE SLOPE IS ZERO, OR BY
+WALKING DOWNHILL UNTIL YOU REACH THE BOTTOM OF THE BOWL.
+
+THE NORMAL EQUATION HAS NO LOOP AT ALL - it is a single calculation, which is its main
+attraction. GRADIENT DESCENT does loop, and here is what governs it:
+
+  - Each pass computes predictions for every row, measures how wrong they are, and nudges
+    every weight.
+  - Because the surface is CONVEX, every pass strictly improves the loss provided the
+    learning rate is below the stability threshold - there is no local minimum to fall into.
+  - WHAT MAKES IT STOP: a fixed number of epochs, or the loss changing by less than some
+    tolerance between passes. The code below uses the first, which is simplest and always
+    terminates.
+  - WHAT MAKES IT FAIL: a learning rate above the stability threshold, in which case the loss
+    increases every pass and runs to infinity. The gradient descent sibling computes that
+    threshold.
+
+THE STEPS:
+
+  1. PUT THE DATA IN A MATRIX - one row per observation, one column per feature.
+
+  2. PREPEND A COLUMN OF ONES. This is the trick that lets the intercept be treated as just
+     another weight: a feature that is always 1 has a weight that is added to every
+     prediction, which is exactly what an intercept is. It saves handling it separately
+     everywhere.
+
+  3. SCALE THE FEATURES if you are using gradient descent. Features on wildly different
+     scales make the bowl a long thin ravine, and any learning rate safe for the steep
+     direction crawls along the shallow one. The normal equation does not care.
+
+  4. CHOOSE THE SOLVER by the number of FEATURES: up to a few thousand, the normal equation;
+     beyond that, or for streaming data, gradient descent.
+
+  5a. NORMAL EQUATION: multiply the data matrix by its own transpose, invert that, and
+      multiply through by the transpose times the targets. One shot. Use the PSEUDOINVERSE,
+      so perfectly correlated columns give an answer instead of an error.
+
+  5b. GRADIENT DESCENT: start every weight at zero, then repeatedly compute predictions, take
+      the average of (prediction minus actual) weighted by each feature, and step every weight
+      against it.
+
+  6. CHECK THE RESIDUALS. Plot residual against prediction. This is the step people skip and
+     it is where every assumption failure becomes visible - a curve means you need a
+     non-linear term, a widening cone means the error variance is not constant.
+
+  7. CHECK VIF before interpreting any coefficient. Above 5 to 10 and that number is not
+     a finding.
+
+  8. REPORT R-SQUARED WITH CARE, on held-out data, knowing it never decreases when features
+     are added.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a long straight stick and a board with nails hammered into it at various heights. You
+want to lay the stick across the board so it sits as close as possible to all the nails at
+once.
+
+Now attach a spring from each nail straight up or down to the stick. Each spring pulls the
+stick toward its nail, and a spring pulls harder the further it is stretched - twice as far
+means twice the pull.
+
+Let go, and the stick settles. Where it settles is the least-squares line.
+
+That is not an analogy; it is the same arithmetic. The energy stored in a stretched spring
+grows with the SQUARE of how far it is stretched, and the stick comes to rest where the total
+energy is smallest - which is exactly where the sum of squared distances is smallest. The
+reason large errors count so heavily is the same reason a spring stretched twice as far pulls
+twice as hard.
+
+Two consequences fall straight out of the picture.
+
+One nail far from the rest will visibly tilt the whole stick, because its spring is stretched
+so much further than the others. That is the outlier sensitivity, and it is inherent to
+choosing springs rather than something gentler.
+
+And if two nails are hammered in almost the same place, they pull almost identically. You
+cannot tell from the resting position how much of the pull came from each - and that is
+multicollinearity. The stick sits in the right place; the question of which nail did the work
+has no stable answer.
+
+The last thing you would do is look at how the stick sits relative to each nail - some above,
+some below. If the leftovers scatter with no pattern, a straight stick was the right shape. If
+they curve - low at both ends and high in the middle - then the nails lie on a curve and no
+straight stick will ever fit, however carefully you position it.""",
+              r"""8. THE CODE, LINE BY LINE, in the real variable names.
+
+    import numpy as np
+
+    def fit_normal_equation(X, y):
+
+X is the feature matrix (rows by features); y is the vector of targets. Returns the weights,
+intercept first. Neither input is modified.
+
+        X_b = np.c_[np.ones(len(X)), X]                    # prepend the intercept
+
+np.c_ concatenates by COLUMN. This puts a column of 1s at the front, so X_b has one more
+column than X. The reason is step 2 of section 6: a feature that is always 1 turns the
+intercept into an ordinary weight, so the formula below handles it with no special case. The
+name X_b is conventional - X with the bias column.
+
+        return np.linalg.pinv(X_b.T @ X_b) @ X_b.T @ y
+
+The normal equation, read right to left: X_b.T @ y correlates each feature with the target;
+X_b.T @ X_b captures how the features relate to each other; and the inverse of the second
+applied to the first is the answer.
+
+The important detail is PINV RATHER THAN INV. If two columns are perfectly correlated -
+duplicated by a data pipeline, or a one-hot encoding with every level kept - then X_b.T @ X_b
+is SINGULAR and has no inverse, so np.linalg.inv raises. pinv (the pseudoinverse) returns a
+valid answer anyway, choosing the minimum-norm solution among the infinitely many that fit
+equally well. It turns a crash into a usable result, at the cost of the coefficients being
+one arbitrary choice from many - which is trap 1 again.
+
+    def fit_gradient_descent(X, y, lr=0.01, epochs=1000):
+
+The iterative alternative. lr is the step size, epochs the number of passes - both
+hyperparameters the normal equation does not need.
+
+        X_b = np.c_[np.ones(len(X)), X]
+        m, n = X_b.shape
+
+m is the number of rows, n the number of columns INCLUDING the intercept. m is needed to
+average the gradient; n to size the weight vector.
+
+        w = np.zeros(n)
+
+Start every weight at zero. For linear regression this is safe - the surface is convex, so
+the starting point cannot change where you end up, only how long it takes. (In a neural
+network zero initialisation is a bug, because every neuron would receive identical gradients
+forever. Different situation, same-looking line of code.)
+
+        for _ in range(epochs):
+
+A fixed trip count. This is what guarantees termination: it is a sweep, not a search for
+convergence.
+
+            preds = X_b @ w
+
+One matrix multiply gives the prediction for every row at once.
+
+            grad = (2 / m) * X_b.T @ (preds - y)           # d/dw of MSE
+
+The gradient, and it is worth unpacking. (preds - y) is the residual for each row. Multiplying
+by X_b.T weights each residual by each feature's value - so a feature that was large where the
+error was large gets a large gradient, which is exactly the credit assignment you want. The
+2 comes from differentiating the square; dividing by m averages over rows so the step size
+does not depend on how much data you have.
+
+            w -= lr * grad
+
+The update from the gradient descent sibling: step against the gradient. Every weight moves
+simultaneously.
+
+        return w
+
+After the fixed number of epochs. Note the function does NOT check whether it converged - with
+a bad learning rate it will happily return diverged garbage, which is why watching the loss
+matters.
+
+    def r_squared(y, y_hat):
+        ss_res = ((y - y_hat) ** 2).sum()
+
+The squared error the model leaves behind.
+
+        ss_tot = ((y - y.mean()) ** 2).sum()
+
+The squared error of the DUMBEST reasonable model - always predicting the mean. This is the
+baseline R-squared measures against.
+
+        return 1 - ss_res / ss_tot        # 1.0 = perfect, 0.0 = no better than mean
+
+If the model's error equals the mean-model's error, the ratio is 1 and R-squared is 0. If the
+model is perfect, ss_res is 0 and R-squared is 1. If the model is WORSE than predicting the
+mean, the ratio exceeds 1 and R-squared goes NEGATIVE - possible, and a useful alarm.
+
+    def vif(X):
+
+Variance Inflation Factor - the multicollinearity check.
+
+        for j in range(X.shape[1]):
+            others = np.delete(X, j, axis=1)
+            w = fit_normal_equation(others, X[:, j])
+
+For each feature in turn, try to predict THAT FEATURE from all the others. This is the whole
+idea: if the other features can already reconstruct this one, it carries no independent
+information and its coefficient cannot be pinned down.
+
+            out.append(1 / max(1e-12, 1 - r_squared(X[:, j], pred)))
+
+VIF is 1 / (1 - R-squared of that regression). If the others explain 80% of this feature, that
+is 1 / 0.2 = 5. If they explain 99%, it is 1 / 0.01 = 100. The max(1e-12, ...) prevents a
+division by zero when a feature is perfectly predicted by the others - which would otherwise
+be VIF of infinity, and is itself the strongest possible warning.
+
+    RULE OF THUMB: VIF above 5 to 10 means do not interpret that coefficient.""",
+              r"""9. TRACED WITH REAL NUMBERS.
+
+FITTING A LINE BY HAND on three points: (1, 2), (2, 4), (3, 5).
+
+    A GUESS FIRST, so the loss is concrete. Try w = 1, b = 1, meaning y = x + 1:
+
+        x=1: predicted 2, actual 2  ->  residual  0
+        x=2: predicted 3, actual 4  ->  residual  1
+        x=3: predicted 4, actual 5  ->  residual  1
+
+        MSE = (0 + 1 + 1) / 3 = 0.6667
+
+    NOW THE LEAST-SQUARES ANSWER.
+
+        x-mean = (1 + 2 + 3) / 3 = 2
+        y-mean = (2 + 4 + 5) / 3 = 3.6667
+
+        the slope is the sum of (x - x-mean)(y - y-mean) divided by the sum of
+        (x - x-mean) squared:
+
+            numerator   = (1-2)(2-3.6667) + (2-2)(4-3.6667) + (3-2)(5-3.6667)
+                        = (-1)(-1.6667) + 0 + (1)(1.3333)
+                        = 1.6667 + 1.3333 = 3.0
+
+            denominator = (-1)^2 + 0^2 + 1^2 = 2
+
+            w = 3.0 / 2 = 1.5
+
+        the intercept keeps the line passing through the means:
+
+            b = 3.6667 - 1.5 x 2 = 0.6667
+
+    CHECK THE FIT:
+
+        x=1: 1.5(1) + 0.6667 = 2.1667,  residual  2 - 2.1667 = -0.1667
+        x=2: 1.5(2) + 0.6667 = 3.6667,  residual  4 - 3.6667 =  0.3333
+        x=3: 1.5(3) + 0.6667 = 5.1667,  residual  5 - 5.1667 = -0.1667
+
+        MSE = (0.02778 + 0.11111 + 0.02778) / 3 = 0.16667 / 3 = 0.05556
+
+    The guess scored 0.6667; the optimum scores 0.05556 - TWELVE TIMES better. And note the
+    residuals sum to almost exactly zero (-0.1667 + 0.3333 - 0.1667 = -0.0001, rounding),
+    which is always true when an intercept is fitted: the line passes through the mean of the
+    data.
+
+    R-SQUARED for this fit:
+
+        ss_res = 0.16667
+        ss_tot = (2-3.6667)^2 + (4-3.6667)^2 + (5-3.6667)^2
+               = 2.7778 + 0.1111 + 1.7778 = 4.6667
+        R-squared = 1 - 0.16667 / 4.6667 = 1 - 0.0357 = 0.964
+
+    The model explains 96.4% of the variation in y.
+
+THE SOLVER CHOICE, WITH THE ARITHMETIC THAT INVERTS IT.
+
+    The normal equation inverts an (n+1) by (n+1) matrix, costing about n-cubed operations,
+    where n is the number of FEATURES. At roughly a billion operations per second:
+
+        n =      50   ->  51^3      =         132,651  ->  instantaneous
+        n =     500   ->  501^3     =     125,751,501  ->  about 0.1 seconds
+        n =   5,000   ->  5001^3    = 125,075,015,001  ->  about 2 minutes
+        n = 100,000   ->  100001^3  = about 10^15      ->  about TWELVE DAYS
+
+    Meanwhile the number of ROWS barely matters to that cost - ten million rows with 50
+    features is still instantaneous, because rows only enter when building the matrix, which
+    is linear in them.
+
+    SO THE ANSWER INVERTS ON FEATURE COUNT, NOT DATA SIZE:
+
+        10,000 rows,      50 features  ->  normal equation. Exact, instant, no tuning.
+        10 million rows,  50 features  ->  STILL the normal equation.
+        10,000 rows, 100,000 features  ->  gradient descent. The direct solve would take
+                                           nearly a fortnight for a small dataset.
+
+    That is the point worth making in an interview: candidates reach for gradient descent when
+    the data is big, but the deciding quantity is the number of features.
+
+THE MULTICOLLINEARITY FAILURE, in coefficients.
+
+    Predicting house price from size (square metres) and rooms, which are 0.9 correlated.
+    Two samples from the same population:
+
+        sample A:  price = 45,000 + 200 x size  -  5,000 x rooms
+        sample B:  price = 45,000 -  50 x size  + 30,000 x rooms
+
+    For a 100 square metre, 4 room house:
+
+        sample A:  45,000 + 20,000 - 20,000 = 45,000
+        sample B:  45,000 -  5,000 + 120,000 = 160,000
+
+    The predictions diverge here because I have written two fits that agree on the training
+    cloud and not on this particular point - which is itself the warning. Within the range
+    where the data actually lives, both fit well; step outside it and they disagree wildly,
+    because they have split the shared signal differently.
+
+    VIF diagnoses it directly. Predict size from rooms alone and suppose it gets R-squared
+    0.81. Then VIF = 1 / (1 - 0.81) = 1 / 0.19 = 5.26 - at the threshold, and a signal not to
+    interpret either coefficient.""",
+              r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - NORMAL EQUATION: about n-cubed in FEATURES, plus m x n-squared to build the matrix.
+    Memory holds an n-by-n matrix. No hyperparameters at all, which is a genuine advantage -
+    nothing to tune, nothing to get wrong.
+  - GRADIENT DESCENT: about m x n per step. Scales to any size, needs a learning rate, and
+    needs the features scaled.
+  - PREDICTION: one multiply-and-add per feature. Effectively free, which is why linear models
+    remain the choice where latency matters.
+  - INTERPRETABILITY: essentially free, and the main reason to use this model at all - as long
+    as the multicollinearity check passes.
+
+THE ASSUMPTIONS, and what breaks when each fails - this is what a good interviewer probes:
+
+    LINEARITY. The relationship really is a straight line. Fails as a CURVE in the residual
+    plot. Fix with polynomial or interaction terms - the model stays linear in its weights.
+
+    INDEPENDENCE OF ERRORS. One row's error tells you nothing about the next. Violated by time
+    series and by repeated measures. Consequence: standard errors and confidence intervals are
+    wrong, and a random split inflates apparent accuracy.
+
+    HOMOSCEDASTICITY. Constant error variance. Fails as a WIDENING CONE in the residual plot.
+    Consequence: predictions are still unbiased, but confidence intervals are wrong. Often
+    fixed by predicting log(y) instead.
+
+    NORMALLY DISTRIBUTED RESIDUALS. Needed for INFERENCE - p-values and confidence intervals -
+    not for prediction. Worth saying explicitly, because candidates often claim linear
+    regression "requires normally distributed data", which is wrong twice over: it is the
+    residuals rather than the data, and only for inference.
+
+    NO SEVERE MULTICOLLINEARITY. Predictions survive it; coefficients do not.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why squared error rather than absolute?" Differentiable everywhere so there is a closed
+    form, and it punishes large errors harder. The cost is outlier sensitivity; absolute error
+    gives a median-like fit and needs an iterative solver.
+  - "Normal equation or gradient descent?" Decided by the number of FEATURES. Section 9 has the
+    numbers.
+  - "What if X-transpose X is not invertible?" Perfectly correlated columns. Use the
+    pseudoinverse, drop a column, or add L2 - which makes it invertible again as a side effect,
+    and is the tidiest of the three.
+  - "Can linear regression fit a curve?" Yes - add x-squared as a feature. "Linear" refers to
+    linearity in the WEIGHTS, not in the inputs. This one catches a lot of people.
+  - "R-squared went up when I added a feature. Better model?" Not necessarily; it never
+    decreases. Use adjusted R-squared or held-out data.
+
+THE #1 MISTAKE: interpreting coefficients without checking for multicollinearity. The model
+predicts perfectly well and the individual numbers are close to arbitrary - one sample says a
+room adds 30,000 and another says it subtracts 5,000. Since interpretability is the main
+reason to choose a linear model, this quietly destroys the thing you came for.
+
+RUNNER-UP: never plotting the residuals, so a curved relationship hides behind a respectable
+R-squared.
+
+TAKEAWAY: least squares finds the one line at the bottom of a convex bowl, so any route gets
+you there - and the interesting work is not the fitting but the assumptions, especially
+whether correlated features have made your coefficients unreadable.""",
           ],
           pitfalls="Reading a coefficient as causal; using R-squared to compare models with different feature counts (it never decreases when you add features - use adjusted R-squared or a held-out score); forgetting to scale features before gradient descent, which makes convergence crawl; fitting a straight line to an obviously curved relationship and reporting the R-squared anyway; ignoring outliers, which squared error weights enormously.",
           followups="'When would you use MAE instead of MSE?' When outliers are real data rather than errors - MSE chases them, MAE does not (and Huber loss sits between). 'How do you add regularisation?' Ridge adds lambda times the sum of squared weights (shrinks all), Lasso adds lambda times the sum of absolute weights (drives some to exactly zero, giving feature selection)."),
@@ -199,12 +790,590 @@ def predict(X, w, threshold=0.5):
 '''),
           example="Predicting loan default. Coefficient for 'debt-to-income ratio' is 0.7, so exp(0.7) = 2.0: each unit increase DOUBLES the odds of default. A regulator can read that sentence and audit it. A gradient-boosted model might score two points better on AUC and cannot be explained that way - which is why lending still runs on logistic regression.",
           examples=[
-              "Why a straight line fails at classification, concretely. Fit linear regression to predict 0/1 spam from word count. Most emails have 5-50 spam words and the line fits them fine. Then one email arrives with 500 spam words; least squares tilts the whole line to reduce that point's squared error, and emails that were comfortably classified now fall on the wrong side. One extreme point moved the DECISION BOUNDARY for everyone. Logistic regression is immune because the sigmoid saturates - a point at 500 words is already predicted at 0.999 and pushing it further costs almost nothing.",
-              "The sigmoid, computed at a few points, so the shape is real. z = w.x + b, and sigma(z) = 1/(1+e^-z). sigma(-4) = 0.018, sigma(-1) = 0.269, sigma(0) = 0.5, sigma(1) = 0.731, sigma(4) = 0.982. Note the boundary is where z = 0, not where the probability is 0 - and that the curve is steepest at z = 0 (gradient 0.25) and nearly flat beyond |z| = 4. That flatness is exactly the saturation that makes MSE a bad loss here: the gradient it produces vanishes when the model is confidently wrong.",
-              "Odds ratios, which is why the model survives in regulated industries. Coefficient 0.7 on debt-to-income ratio means exp(0.7) = 2.01: a one-unit increase DOUBLES the odds of default. Coefficient -0.3 on years-of-employment means exp(-0.3) = 0.74, so each extra year multiplies the odds by 0.74, a 26% reduction. A regulator, a doctor or a credit committee can read those sentences and audit them. A gradient-boosted model might beat this by two points of AUC and cannot produce that sentence, which is why lending and clinical risk scoring still run on logistic regression.",
-              "The threshold is a business decision, shown with numbers. A fraud model outputs probabilities. At threshold 0.5: 40 frauds caught, 10 missed, 20 false alarms. At 0.2: 48 caught, 2 missed, 150 false alarms. Which is better depends entirely on the cost ratio. If a missed fraud costs 500 euro and reviewing a false alarm costs 5, then 0.5 costs 10*500 + 20*5 = 5,100 and 0.2 costs 2*500 + 150*5 = 1,750 - so the lower threshold wins clearly. Compute this, do not leave the threshold at 0.5 because that is the default.",
-              "Why cross-entropy rather than MSE, stated as the gradient. With cross-entropy the derivative of the loss with respect to the pre-activation z is exactly (p - y). With MSE it is (p - y) * p * (1-p). Consider a confidently wrong prediction: y = 1 and p = 0.01. Cross-entropy gives a gradient of -0.99, the largest correction possible. MSE gives -0.99 * 0.01 * 0.99 = -0.0098, a hundred times smaller - the model learns most slowly exactly when it is most wrong. That is the answer to 'why not MSE?', and it is a real mechanical reason rather than a convention.",
-              "What logistic regression cannot do, and the fix. It draws a straight boundary, so on XOR-shaped data (positives at (0,0) and (1,1), negatives at (0,1) and (1,0)) it is stuck at 50% forever no matter how long you train. Adding the interaction feature x1*x2 makes the data linearly separable in the enlarged space and the model solves it instantly. That is the general escape hatch: logistic regression is linear in its FEATURES, not in the raw inputs, so engineered interactions and polynomial terms extend it substantially - which is also the manual version of what a kernel or a hidden layer does automatically.",
+              r"""1. THE GOAL - a probability, not a number.
+
+You want to predict a CLASS - spam or not, fraud or not, ill or not - and ideally a
+probability with it, so downstream decisions can weigh the cost of being wrong.
+
+The obvious idea is to code the classes as 0 and 1 and fit a straight line. It does not work,
+and the reasons are concrete:
+
+    a straight line predicts 1.4  ->  a probability of 140%, which is meaningless
+    a straight line predicts -0.3 ->  a probability of minus 30%, likewise
+    one far-away point tilts the whole line  ->  and tilting the line MOVES THE BOUNDARY,
+                                                 so predictions flip for points nowhere near
+                                                 the outlier
+
+So keep the linear part - it is interpretable and cheap - and BEND THE OUTPUT so it can only
+ever land between 0 and 1:
+
+    p  =  sigma( w . x  +  b )        where   sigma(z) = 1 / (1 + e-to-the-minus-z)
+
+That S-shaped function is the SIGMOID. It takes any number at all, however large or negative,
+and returns something strictly between 0 and 1.
+
+Note what has NOT changed: the model is still LINEAR IN ITS INPUTS. Only the output is
+squashed. That is why logistic regression is linear regression's classification sibling
+rather than a different animal, and why the decision boundary is still a straight line.
+
+WHAT THIS ENTRY OWNS: why the squashing is necessary, why the LOSS must change too - which is
+the part most explanations skip and section 5 derives with numbers - and how to read the
+coefficients as odds ratios. Its sibling "LINEAR REGRESSION FROM FIRST PRINCIPLES" owns the
+underlying linear model and its assumptions; "PRECISION VS RECALL" and "ROC, AUC & CHOOSING A
+THRESHOLD" own what to do with the probabilities once you have them.""",
+              r"""2. THE INTUITION - the S-curve, and where the boundary lives.
+
+    p
+    1.0 |                    ________________
+        |                _/
+        |              /
+    0.5 |- - - - - - -/- - - - - - - - - - -
+        |           /
+        |        _/
+    0.0 |_______/
+        +--------------------------------------> z = w.x + b
+       -6      -2    0    2       6
+
+Read off a few values so the shape is real:
+
+    sigma(-4) = 0.018        far below the boundary  ->  almost certainly class 0
+    sigma(-1) = 0.269
+    sigma( 0) = 0.500        exactly on the boundary ->  no information either way
+    sigma( 1) = 0.731
+    sigma( 4) = 0.982        far above                ->  almost certainly class 1
+
+Three properties that make this the right function:
+
+  - IT NEVER LEAVES (0, 1). Feed it a million and it returns 0.9999...; feed it minus a
+    million and it returns 0.0000...1. A probability is guaranteed by construction rather
+    than by hoping.
+  - IT SATURATES. Far from the boundary the curve flattens, so pushing a point further into
+    territory it already occupies barely changes its probability. That is what makes it
+    robust to the outlier that would have tilted a straight line.
+  - THE DECISION BOUNDARY IS WHERE z = 0, which is w . x + b = 0 - a straight line in two
+    dimensions, a plane in three, a hyperplane in general.
+
+That last point is the one to hold on to. The PROBABILITIES curve, but the BOUNDARY is
+straight. So logistic regression can separate classes lying on either side of a line, and
+cannot separate XOR-shaped data at all - section 4 shows the failure and the fix.
+
+And the flattening has a sting in the tail. Where the curve is flat, its SLOPE is nearly
+zero - and a slope of nearly zero means almost no gradient, which means almost no learning.
+That fact is what makes the choice of loss function load-bearing rather than cosmetic, and
+section 5 works it out with numbers.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+BINARY CLASSIFICATION. Predicting one of two classes, coded 0 and 1.
+
+SIGMOID / LOGISTIC FUNCTION. sigma(z) = 1 / (1 + e-to-the-minus-z). Maps any real number into
+(0, 1). Its S-shape is where "logistic" comes from.
+
+z / LOGIT / PRE-ACTIVATION. The linear part, w . x + b, before squashing. It can be any
+number.
+
+ODDS. Probability divided by its complement: p / (1 - p). A probability of 0.75 is odds of 3 -
+"three to one on".
+
+LOG-ODDS. The natural logarithm of the odds. This is exactly what z is, which is the single
+most useful fact for interpreting the model: the linear part outputs log-odds, and the sigmoid
+converts log-odds back to a probability.
+
+ODDS RATIO. e-to-the-w for a coefficient w. How much the ODDS are MULTIPLIED per unit increase
+in that feature. This is what makes the model reportable in medicine and credit.
+
+LOG LOSS / BINARY CROSS-ENTROPY. The loss used here: minus the average of
+y log(p) + (1-y) log(1-p). Punishes confident wrong answers enormously.
+
+CONVEX. Bowl-shaped with one minimum. Log loss with a sigmoid is convex; SQUARED ERROR with a
+sigmoid is not - which is half the reason for the choice.
+
+DECISION BOUNDARY. The set of points where the model is exactly undecided, p = 0.5, which is
+z = 0.
+
+THRESHOLD. The probability above which you act. 0.5 is a default, not a recommendation - it is
+a business decision, covered in the ROC sibling.
+
+CALIBRATION. Whether a predicted 0.7 really happens about 70% of the time. Logistic regression
+trained with log loss is naturally well calibrated, which is a genuine advantage over many
+fancier models.
+
+SOFTMAX REGRESSION / MULTINOMIAL LOGISTIC. The multi-class generalisation - one weight vector
+per class, outputs normalised to sum to 1.
+
+ONE-VS-REST. The other multi-class approach: train one binary classifier per class.
+
+NAT. The unit of log loss when using natural logarithms. Predicting 0.99 for something that
+was false costs -ln(0.01) = 4.6 nats.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE IN THE TITLE: fitting a straight line to 0/1 labels.
+
+Predict spam (1) or not (0) from the count of spammy words. Most emails have 5 to 50 such
+words, and a straight line through them is roughly sensible in that range. Then one email
+arrives with 500.
+
+To keep the squared error down at that far-right point, the line must TILT. But the line is a
+single global object - tilting it to accommodate one distant point moves it EVERYWHERE, so
+the crossing point where predictions pass 0.5 shifts, and emails in the ordinary 5-to-50 range
+that were correctly classified now flip.
+
+A single outlier changed the decisions for points nowhere near it. The sigmoid does not
+behave this way: at 500 spammy words it already outputs 0.9999, and pushing it further changes
+almost nothing, because the curve is flat there.
+
+TRAP 2 - THE SUBTLE ONE, and a favourite follow-up: USING SQUARED ERROR WITH A SIGMOID.
+
+It seems harmless - you have a probability and a target, so square the difference. Two things
+break, and section 5 derives both:
+
+    THE SURFACE IS NO LONGER CONVEX. Squared error composed with a sigmoid produces a loss with
+    multiple flat regions and local minima, so gradient descent can stall in a bad one. Log
+    loss with a sigmoid is convex - one bowl, one bottom.
+
+    THE GRADIENT VANISHES EXACTLY WHEN THE MODEL IS MOST WRONG. With squared error the gradient
+    carries a factor of the sigmoid's slope, which is nearly zero far from the boundary. So a
+    confidently wrong prediction - the case you most urgently need to fix - produces almost no
+    correction. With log loss that factor cancels exactly and the gradient is simply (p - y),
+    which is LARGEST when the model is most wrong. Section 9 puts a number on it: about 203
+    times larger at z = -6, and about 11,000 times at z = -10.
+
+TRAP 3: expecting a curved decision boundary. The probabilities curve; the boundary does not.
+On XOR-shaped data - positives at (0,0) and (1,1), negatives at (0,1) and (1,0) - no straight
+line separates the classes, and logistic regression cannot do better than chance. THE FIX is
+to add an INTERACTION FEATURE x1 times x2, after which the data IS linearly separable in the
+expanded space. Section 9 gives weights that work.
+
+TRAP 4: reading a coefficient as a change in probability. It is a change in LOG-ODDS. The
+effect on probability depends on where you start: moving z from 0 to 1 changes p from 0.500 to
+0.731 - 23 points - while moving from 4 to 5 changes it from 0.982 to 0.993, barely 1 point.
+Same coefficient, wildly different effect on probability. Report the odds ratio, which is
+constant.
+
+TRAP 5: leaving the threshold at 0.5. It is a default in the library, not a claim about your
+problem. It is optimal only when the classes are balanced AND the two error types cost the
+same.
+
+TRAP 6: regularising the intercept. It sets the base rate of the prediction; shrinking it
+toward zero biases everything toward p = 0.5 for no gain. Note the code below explicitly skips
+it with grad[1:].
+
+TRAP 7: computing the sigmoid naively. exp of a large positive number overflows. The code
+handles it with a branch - see section 8.""",
+              r"""5. THE NAIVE VERSION FIRST, THEN THE REAL ONE - WITH THE LOSS DERIVED.
+
+THE NAIVE VERSION: linear regression on 0/1 labels.
+
+Fit a straight line to targets that are 0 or 1, then call the output a probability and
+threshold it at 0.5. Trap 1 covers why it fails: unbounded outputs, and outliers that move the
+boundary for everyone.
+
+UPGRADE 1 - SQUASH THE OUTPUT. Keep the linear part, pass it through the sigmoid. Now outputs
+are always valid probabilities and distant points saturate instead of dominating.
+
+But this creates a NEW problem that most explanations skip, and it is the whole content of
+this section.
+
+UPGRADE 2 - CHANGE THE LOSS TOO. Here is why.
+
+    Write z for the linear part and p = sigma(z) for the prediction. The sigmoid's slope has a
+    tidy form:
+
+        sigma-prime(z)  =  p (1 - p)
+
+    Now compare the two candidate losses by how hard they push on z when the model is wrong.
+
+    WITH SQUARED ERROR, loss = (p - y)-squared:
+
+        d(loss)/dz  =  2 (p - y) x sigma-prime(z)  =  2 (p - y) x p (1 - p)
+
+        That p(1-p) factor is the problem. It is largest at p = 0.5 (where it equals 0.25) and
+        it COLLAPSES toward zero as p approaches 0 or 1.
+
+        Take the worst case: the true label is 1 and the model confidently says 0. At z = -6:
+
+            p               = sigma(-6)      = 0.002473
+            p (1 - p)       = 0.002473 x 0.997527 = 0.002467
+            (p - y)         = 0.002473 - 1   = -0.997527
+            d(loss)/dz      = 2 x (-0.997527) x 0.002467 = -0.004921
+
+        A gradient of 0.005. The model is as wrong as it is possible to be, and it is barely
+        being corrected.
+
+    WITH LOG LOSS, loss = -[ y log(p) + (1-y) log(1-p) ]:
+
+        d(loss)/dz  =  p - y
+
+        That is the whole thing. The p(1-p) from the sigmoid's slope CANCELS EXACTLY against
+        the 1/(p(1-p)) coming from differentiating the logarithm. At the same point:
+
+            d(loss)/dz  =  0.002473 - 1  =  -0.997527
+
+        A gradient of 0.998 - about 203 TIMES LARGER than squared error's 0.00492, at exactly
+        the moment the model most needs to move.
+
+    And it gets more extreme the more confidently wrong the model is. At z = -10:
+
+            squared error:  2 x (-0.9999546) x 0.0000454 = -0.0000908
+            log loss:       -0.9999546
+            ratio:          about 11,000 times larger
+
+    SO THE CHOICE OF LOSS IS NOT AESTHETIC. Squared error makes the model learn slowest
+    precisely where it is most wrong. Log loss makes the correction proportional to the error,
+    always.
+
+    THE SECOND REASON: squared error composed with a sigmoid is NON-CONVEX, so there are local
+    minima to get stuck in. Log loss with a sigmoid is convex - one bowl, one bottom, the same
+    happy property linear regression has.
+
+    THE THIRD REASON, worth mentioning: log loss punishes confident wrongness enormously.
+    Predicting 0.99 for something that turns out to be 0 costs -ln(0.01) = 4.6 nats, whereas
+    predicting 0.6 for it costs -ln(0.4) = 0.92. Five times the penalty for being confident
+    about it - which is exactly the incentive you want, and it is why models trained this way
+    come out CALIBRATED.
+
+AND THE ELEGANCE THAT FALLS OUT: because the gradient is (p - y), the update rule is
+
+    gradient  =  X-transpose (p - y) / m
+
+which is IDENTICAL IN FORM to linear regression's. Same code shape, different link function.
+That is what choosing cross-entropy buys you, and it generalises: the same cancellation is why
+softmax pairs with cross-entropy in every neural network classifier.""",
+              r"""6. HOW IT WORKS - the steps, in plain English.
+
+The one sentence that holds the whole idea: COMPUTE A LINEAR SCORE, SQUASH IT THROUGH AN
+S-CURVE TO GET A PROBABILITY, AND TRAIN BY MINIMISING LOG LOSS - WHICH IS CHOSEN SO THAT THE
+CORRECTION IS LARGEST EXACTLY WHEN THE MODEL IS MOST WRONG.
+
+THERE IS NO CLOSED FORM HERE - and this is a real difference from linear regression worth
+stating. The sigmoid makes the equations transcendental, so you cannot set the gradient to zero
+and solve. Iteration is mandatory, not merely convenient.
+
+THE LOOP:
+
+  - Each pass computes probabilities for every row, measures (p - y), and nudges every weight.
+  - Because log loss with a sigmoid is CONVEX, every pass improves things provided the learning
+    rate is sane, and there is no local minimum to fall into.
+  - WHAT MAKES IT STOP: a fixed number of epochs, or the loss changing by less than a tolerance.
+    The code uses a fixed count, which always terminates.
+  - ONE EDGE CASE WORTH KNOWING: if the classes are PERFECTLY SEPARABLE, the weights grow
+    without bound - the model keeps getting more confident forever and the loss keeps falling
+    toward zero. Regularisation stops this, which is a second reason to use it beyond
+    overfitting.
+
+THE STEPS:
+
+  1. PREPEND A COLUMN OF ONES, so the intercept is just another weight - the same trick as in
+     linear regression.
+
+  2. SCALE THE FEATURES. Gradient descent is the only option here, so unscaled features make a
+     ravine-shaped surface and slow everything down.
+
+  3. START ALL WEIGHTS AT ZERO. Safe here, because the surface is convex - the starting point
+     changes only the route, not the destination.
+
+  4. REPEAT for a fixed number of passes:
+
+     a. COMPUTE THE LINEAR SCORE for every row: the weighted sum of its features.
+
+     b. SQUASH each score through the sigmoid to get a probability.
+
+     c. COMPUTE THE ERROR as simply (probability minus label). No sigmoid-slope factor - that
+        is what choosing log loss bought you.
+
+     d. TURN THAT INTO A GRADIENT by weighting each row's error by its feature values and
+        averaging.
+
+     e. ADD THE REGULARISATION TERM to every weight EXCEPT the intercept.
+
+     f. STEP every weight against the gradient.
+
+  5. TO PREDICT, compute the probability and compare it against a threshold. The threshold is a
+     BUSINESS decision - the ROC sibling covers choosing it - and 0.5 is merely the default.
+
+  6. TO INTERPRET, exponentiate each coefficient to get an ODDS RATIO, which is the form a
+     non-specialist can actually use.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a doctor estimating how likely it is that a patient has a particular condition.
+
+She has several pieces of information - age, a blood measurement, whether a symptom is present
+- and she has learned roughly how much each one counts. So she adds up a score: so many points
+for each year of age, so many for the blood reading, a lump for the symptom. High score,
+worried. Low score, reassured.
+
+But a score is not an answer. Somebody wants a probability, and a raw score can be anything -
+minus forty, three hundred. So she needs a way to turn any score into a sensible chance.
+
+The conversion she uses has a particular shape. Around the middle - where the score is
+genuinely borderline - a small change in the score moves the probability a lot, because that is
+where she is most uncertain and most sensitive to evidence. Out at the extremes it barely moves
+at all: once she is at 98% confident, another few points of score takes her to 98.5%, and that
+is right. A patient who was already an obvious case does not become more obvious.
+
+That flattening at the extremes is what protects her from one bizarre reading dominating
+everything. In the straight-line version, an extreme value would drag her whole scale and make
+her rethink ordinary patients too.
+
+Now, how does she LEARN the points in the first place? By being scored on her past predictions,
+and the scoring rule matters enormously.
+
+Under a gentle rule, being confidently wrong is barely penalised - and worse, being
+confidently wrong teaches her almost nothing, because the rule barely registers it. She would
+keep making the same confident mistake.
+
+Under the rule she actually uses, confident wrongness is punished severely, and the correction
+she receives is proportional to how wrong she was. Say 99% certain about something that turns
+out false, and you get a large, sharp correction. That is exactly the feedback that fixes the
+belief, and it is why she ends up not merely accurate but honestly calibrated - when she says
+70%, it happens about seven times in ten.
+
+And the useful thing about her score being a simple sum: she can say what each piece
+contributed. "Each additional year of age multiplies the odds by 1.05." That sentence is why
+this method is still used where a decision has to be explained to a patient, a regulator, or a
+court.""",
+              r"""8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def sigmoid(z):
+        return np.where(z >= 0, 1 / (1 + np.exp(-z)),
+                        np.exp(z) / (1 + np.exp(z)))
+
+Two algebraically identical formulas, chosen by sign, and the reason is OVERFLOW. For a large
+NEGATIVE z, exp(-z) is exp of a large positive number, which overflows to infinity. So:
+
+    for z >= 0, use 1/(1 + exp(-z)) - here -z is negative, exp(-z) is small, safe.
+    for z <  0, use exp(z)/(1 + exp(z)) - here z is negative, exp(z) is small, also safe.
+
+Each branch only ever exponentiates a non-positive number. np.where evaluates both branches and
+selects, so the code is written to be safe in the branch that gets used.
+
+    def log_loss(y, p, eps=1e-15):
+        p = np.clip(p, eps, 1 - eps)         # never take log(0)
+
+log(0) is minus infinity. If the model ever outputs exactly 0 or exactly 1 - which floating
+point rounding will produce for large z - the loss becomes infinite and everything downstream
+becomes NaN. Clipping to 1e-15 caps the worst case at -log(1e-15), about 34.5, which is large
+enough to punish and finite enough to compute with.
+
+        return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+The log loss itself. Read the two terms as a switch: when y is 1 the second term is zero and the
+loss is -log(p), so it rewards p being near 1. When y is 0 the first term is zero and the loss is
+-log(1-p). Only one term is ever active per row. The leading minus makes it a quantity to
+MINIMISE.
+
+    def fit_logistic(X, y, lr=0.1, epochs=2000, l2=0.0):
+        X_b = np.c_[np.ones(len(X)), X]
+        w = np.zeros(X_b.shape[1])
+
+The intercept column and zero initialisation, exactly as in the linear sibling. Zeros are safe
+because the surface is convex.
+
+        for _ in range(epochs):
+            p = sigmoid(X_b @ w)
+
+One matrix multiply gives every row's score; the sigmoid turns them all into probabilities.
+
+            grad = X_b.T @ (p - y) / len(y)
+
+THE LINE THAT JUSTIFIES THE WHOLE CHOICE OF LOSS. (p - y) is the raw error per row - no
+sigmoid-slope factor anywhere, because it cancelled (section 5). X_b.T weights each row's error
+by its feature values, so a feature that was large where the error was large gets a large
+gradient. Dividing by len(y) averages over rows.
+
+Compare with linear regression's gradient: X_b.T @ (preds - y) x 2/m. IDENTICAL IN FORM. That is
+the elegance cross-entropy buys - the same update code with a different link function.
+
+            grad[1:] += l2 * w[1:]           # regularise weights, never the intercept
+
+The L2 penalty's contribution. The [1:] on both sides is deliberate and is trap 6: position 0
+is the intercept, which sets the model's base rate, and shrinking it toward zero would bias
+every prediction toward 0.5 for no benefit.
+
+            w -= lr * grad
+
+The standard update from the gradient descent sibling.
+
+        return w
+
+After a fixed epoch count. Note there is no convergence check - with a bad learning rate this
+returns diverged weights without complaint.
+
+    odds_ratios = np.exp(w[1:])
+
+THE INTERPRETATION STEP. A coefficient is a change in LOG-odds, which nobody can reason about
+directly. Exponentiating converts it to a multiplier on the ODDS. Again [1:] excludes the
+intercept, which has no odds-ratio reading. A value of 1.05 for "age" means each extra year
+multiplies the odds by 1.05 - a sentence you can say to a non-specialist.
+
+    def predict(X, w, threshold=0.5):
+        return (sigmoid(np.c_[np.ones(len(X)), X] @ w) >= threshold).astype(int)
+
+Probability, then compare to the threshold. The default of 0.5 is a convention, not a
+recommendation - it is optimal only when the classes are balanced and the two error types cost
+the same. Cancer screening lowers it; spam filtering raises it.""",
+              r"""9. TRACED WITH REAL NUMBERS.
+
+THE SIGMOID AND ITS SLOPE, tabulated - because the slope column is the whole argument:
+
+        z         p = sigma(z)      slope p(1-p)
+      ------      ------------      ------------
+       -10          0.0000454        0.0000454
+        -6          0.002473         0.002467
+        -4          0.017986         0.017663
+        -1          0.268941         0.196612
+         0          0.500000         0.250000
+         1          0.731059         0.196612
+         4          0.982014         0.017663
+
+    The slope peaks at 0.25 in the middle and collapses at the extremes. That collapse is what
+    kills squared error.
+
+THE GRADIENT COMPARISON, at the worst possible moment - true label y = 1, model says z = -6:
+
+    SQUARED ERROR:
+        p          = 0.002473
+        (p - y)    = 0.002473 - 1 = -0.997527
+        slope      = p(1-p)       =  0.002467
+        gradient   = 2 x (-0.997527) x 0.002467  =  -0.004921
+
+    LOG LOSS:
+        gradient   = p - y  =  0.002473 - 1  =  -0.997527
+
+    RATIO: 0.997527 / 0.004921  =  about 203 times larger.
+
+    AND AT z = -10, more confidently wrong still:
+
+        squared error:  2 x (-0.9999546) x 0.0000454  =  -0.0000908
+        log loss:       -0.9999546
+        RATIO:          about 11,000 times larger.
+
+    NOTICE THE DIRECTION OF THE EFFECT. The MORE confidently wrong the model is, the WEAKER
+    squared error's correction becomes - 203x behind at z = -6, 11,000x behind at z = -10. It
+    learns slowest exactly where it is most wrong. Log loss's correction converges to 1.0, its
+    maximum possible value, at the same point.
+
+    That is the derivation to give when asked "why cross-entropy rather than MSE?", and it beats
+    saying "because it is convex" - which is also true, and less vivid.
+
+THE COST OF CONFIDENT WRONGNESS, in log loss:
+
+        predicted    true label    loss = -ln(...)
+        ---------    ----------    ---------------
+        0.99             0          -ln(0.01) = 4.605
+        0.90             0          -ln(0.10) = 2.303
+        0.60             0          -ln(0.40) = 0.916
+        0.50             0          -ln(0.50) = 0.693
+        0.10             0          -ln(0.90) = 0.105
+
+    Being 99% sure and wrong costs FIVE TIMES what being 60% sure and wrong costs. That steep
+    penalty is what produces calibration - the model learns not to claim more confidence than it
+    has.
+
+ODDS RATIOS, worked:
+
+    A credit model gives coefficient 0.7 on debt-to-income ratio.
+
+        odds ratio = e-to-the-0.7 = 2.01
+
+        A one-unit increase in debt-to-income ratio DOUBLES the odds of default.
+
+    Converting to probability, to show why the odds ratio is the right thing to report:
+
+        starting at odds 0.25 (p = 0.20):  new odds 0.503  ->  p = 0.335   (+13.5 points)
+        starting at odds 4.00 (p = 0.80):  new odds 8.05   ->  p = 0.890   (+ 9.0 points)
+
+    THE SAME COEFFICIENT MOVES THE PROBABILITY BY DIFFERENT AMOUNTS depending on where you start
+    - which is exactly why a coefficient is not a change in probability, and why the odds ratio,
+    which IS constant, is the number to report.
+
+THE THRESHOLD AS A BUSINESS DECISION, with numbers:
+
+    A fraud model outputs probabilities. Sweeping the threshold:
+
+        threshold 0.5:  40 frauds caught, 10 missed,  20 false alarms
+        threshold 0.3:  47 frauds caught,  3 missed,  90 false alarms
+
+    Lowering it by 0.2 catches 7 more frauds and creates 70 more false alarms. Whether that is a
+    good trade is arithmetic on the cost of each - not a modelling question at all. The ROC
+    sibling does that arithmetic.
+
+WHAT IT CANNOT DO - XOR, and the fix:
+
+    positives at (0,0) and (1,1);  negatives at (0,1) and (1,0)
+
+        (0,1) N     (1,1) P
+             +-----------+
+             |           |
+             |           |
+             +-----------+
+        (0,0) P     (1,0) N
+
+    No straight line puts both P's on one side and both N's on the other - the positives are
+    diagonally opposite. Logistic regression is at chance here.
+
+    THE FIX: add an interaction feature, the product x1 times x2. Now with weights w1 = -1,
+    w2 = -1, w3 = +2 on the product, and b = 0.5:
+
+        (0,0):  0 + 0 + 0 + 0.5        = +0.5   ->  positive   correct
+        (1,1): -1 - 1 + 2 + 0.5        = +0.5   ->  positive   correct
+        (0,1):  0 - 1 + 0 + 0.5        = -0.5   ->  negative   correct
+        (1,0): -1 - 0 + 0 + 0.5        = -0.5   ->  negative   correct
+
+    All four correct. The boundary is still a straight hyperplane - it just lives in the
+    three-dimensional space {x1, x2, x1x2} rather than the two-dimensional one. This is the same
+    idea a kernel exploits, and it is why "linear model" is less limiting than it sounds.""",
+              r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - TRAINING: no closed form, so it is iterative - about (rows x features) per pass. Cheap by
+    any modern standard, and convex so it converges reliably.
+  - PREDICTION: one dot product and one exponential. Effectively free, which matters when you
+    are scoring millions of requests a second - and is why logistic regression is still running
+    in production under a lot of systems that also have a neural network somewhere.
+  - INTERPRETABILITY: free, and the main reason it survives. One number per feature, reportable
+    as an odds ratio.
+  - CALIBRATION: free, because log loss rewards honest probabilities. Many stronger models need
+    a separate calibration step to achieve this; logistic regression arrives calibrated.
+
+WHERE IT SITS AMONG THE ALTERNATIVES:
+    Use it as the FIRST model and the baseline everything else must beat. If a gradient-boosted
+    forest cannot beat it by a meaningful margin, ship the logistic regression - it is faster,
+    explainable, and will not surprise you.
+    Move on when the boundary is genuinely non-linear and you cannot engineer the features to
+    make it linear, or when interactions are numerous and unknown.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why not use MSE with a sigmoid?" Two reasons, and give the second one with numbers: the
+    surface is non-convex, AND the gradient vanishes exactly when the model is confidently
+    wrong - about 203 times weaker at z = -6, 11,000 times at z = -10. Log loss's gradient is
+    (p - y), largest when most wrong.
+  - "What does a coefficient mean?" A change in LOG-ODDS per unit. Exponentiate for the odds
+    ratio, which is the interpretable form. It is not a change in probability - that depends on
+    where you start.
+  - "Is logistic regression linear?" Linear in the inputs and in the log-odds; the decision
+    boundary is a hyperplane. Only the output is bent.
+  - "How do you handle more than two classes?" Softmax regression - one weight vector per class,
+    outputs normalised to sum to 1 - or one-vs-rest. Softmax is the direct generalisation and
+    pairs with cross-entropy for exactly the same gradient-cancellation reason.
+  - "What if the classes are perfectly separable?" The weights diverge, growing without bound as
+    the model becomes ever more confident. Regularisation fixes it, which is a reason to use it
+    beyond overfitting.
+  - "How do you deal with imbalanced classes?" Class weights in the loss, or move the threshold.
+    Do NOT reach for accuracy as the metric - see the Precision vs Recall sibling.
+
+THE #1 MISTAKE: pairing a sigmoid with squared error. It looks reasonable, it runs, and it
+trains badly for a reason that is invisible unless you differentiate it - the correction shrinks
+toward nothing precisely when the model is most confidently wrong. The pairing of sigmoid with
+cross-entropy is not convention; it is the cancellation that makes the gradient behave.
+
+RUNNER-UP: reporting coefficients as changes in probability rather than odds, which is wrong by
+an amount that depends on where the patient or customer started.
+
+TAKEAWAY: keep the linear score, squash it through an S-curve so it is always a probability, and
+train with log loss - because that specific pairing cancels the sigmoid's vanishing slope and
+makes the correction largest exactly when the model is most wrong.""",
           ],
           pitfalls="Using MSE as the loss; forgetting to scale features when regularising (L2 penalises large coefficients, and an unscaled feature gets an artificially small one); reporting accuracy on imbalanced data (99% accuracy by predicting 'no fraud' always); leaving the threshold at 0.5 without thinking about the cost of each error type; expecting it to learn XOR without interaction terms.",
           followups="'How do you extend it to multiple classes?' Softmax (multinomial) regression - one weight vector per class, normalised so the probabilities sum to one. 'Its probabilities are badly calibrated, what now?' Logistic regression is usually well calibrated already; if you regularise heavily or use a different model, apply Platt scaling or isotonic regression on a validation set."),
