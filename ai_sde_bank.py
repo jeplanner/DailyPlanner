@@ -68886,71 +68886,482 @@ for _e in ENTRIES:
 _EX_P0LP = {}
 
 _EX_P0LP["STAR: Acting decisively with incomplete information (Bias for Action)"] = [
-    """A full student-scale answer.
-SITUATION: Two weeks into a six-week internship, my task was 'improve the
-recommendations' and the product owner who could define 'better' was on leave.
-TASK: Waiting two weeks would have left four weeks to build, test and ship.
-ACTION: I separated what was genuinely unknown (the target metric) from what
-was not (the data, the model, the serving path). I asked the two engineers on
-the team what users complained about - the answer was repetitive results, not
-irrelevant ones - so I made the assumption explicit: 'better means more
-diverse', wrote it at the top of a one-page doc, and messaged the product owner
-so it was on the record. Then I built the smallest thing that would test it: a
-diversity re-ranker behind a feature flag, measuring both diversity and
-click-through offline.
-RESULT: Three days of work instead of six weeks of exposure. She confirmed the
-priority on her return; category coverage rose 40% with click-through flat, and
-it shipped behind the flag.""",
+    """1. THE GOAL - moving before you are certain, on purpose.
 
-    """The two-way door, which is the concept the LP is built on.
-Amazon splits decisions into ONE-WAY doors (hard to reverse - a data model, a
-public API, a vendor contract) and TWO-WAY doors (cheap to undo - a feature
-behind a flag, an experiment, an internal script). Bias for Action says move
-fast on two-way doors and reserve the careful analysis for one-way ones.
-So the sentence that scores is: 'this was reversible - the flag meant backing
-it out was a config change, so the cost of being wrong was about three days,
-which was worth it against two weeks of waiting.' You have shown you SIZED the
-risk rather than merely tolerated it, and that is the difference between bias
-for action and recklessness.""",
+    AMAZON LEADERSHIP PRINCIPLE - BIAS FOR ACTION: "Speed matters in business. Many decisions
+    and actions are reversible and do not need extensive study. We value calculated
+    risk-taking."
 
-    """The weak version, for contrast.
-'The requirements weren't clear so I asked my manager, and once she got back
-from leave I started building.' Everything in that sentence is defensible and
-it scores nothing: the candidate was blocked for two weeks, took no risk, made
-no decision, and produced no result. Asking for clarification is the FIRST half
-of the answer - the graded half is what you did when the answer was 'nobody
-knows yet'.
-Equally weak in the other direction: 'I just started building what I thought
-was right.' No stated assumption, no record, nothing checked - that is not bias
-for action, it is not listening.""",
+Read the middle clause again, because the whole principle turns on it: MANY DECISIONS ARE
+REVERSIBLE. Bias for Action is not "be reckless" and not "always move fast". It is:
 
-    """What the interviewer will probe, and the answers to have ready.
-'What if your assumption had been wrong?' - this is the whole point of the
-story, so answer with a COST: 'three days of work, and the flag meant nothing
-shipped to users.' 'How did you decide it was safe to proceed?' - reversibility
-plus the cheap test. 'Why not just ask someone else?' - say who you did ask and
-what you learned from them, because a story where you consulted nobody reads as
-a lone wolf. 'What would you do differently?' - 'I'd have written the
-assumption down on day one rather than day two.'""",
+    RECOGNISE WHICH DECISIONS ARE CHEAP TO UNDO, AND STOP TREATING THEM LIKE THE EXPENSIVE ONES.
 
-    """Where the LP flips into a negative signal.
-Bias for Action does NOT mean skipping review, ignoring a migration plan, or
-pushing to production on a Friday. If your story involves a one-way door taken
-fast - deleting data, changing a schema, publishing an API - the interviewer
-will hear recklessness, and the LP bar-raiser is specifically listening for
-whether you can tell the two apart. If the only fast decision you can think of
-was genuinely risky, say so and frame it as a lesson: 'I moved fast on
-something I should have treated as a one-way door, and here is what it cost.'
-A failure story told with that insight beats a success story without it.""",
+So the story you tell must show four things:
 
-    """The same story at Google, re-angled.
-Amazon wants the decision and the number: 'I decided X, it was reversible, it
-cost three days, here is the 40%.' Google wants the reasoning and the people:
-'I couldn't get the requirement, so I framed the ambiguity as a testable
-assumption rather than a blocker - and I checked it against the two engineers
-who talk to users, because they had information the spec didn't.' Same events,
-same three days. Prepare both openings; the body of the story does not
-change.""",
+    1. you had INCOMPLETE information and knew it
+    2. you judged the decision REVERSIBLE, and can say what reversing would have cost
+    3. you DE-RISKED it cheaply - a checkpoint, a stated assumption, a small test
+    4. you got a RESULT, with a number
+
+The fourth is easy. The second is the one that separates a strong answer from a story about
+being impatient - and section 5 shows how to make it arithmetic rather than assertion.
+
+THIS ENTRY IS AN INDEX over the story bank, not new material. It draws on the AMBIGUITY shape
+and uses the same capstone as the rest of the behavioural cluster - the four-person, six-week
+lost-and-found image search whose re-index took nine hours. Its siblings foreground the same
+events differently: "Tell me about your most challenging technical project" makes it a DEPTH
+story, and "STAR: Disagreeing with a decision then fully committing" makes it a CONFLICT story.
+
+WHAT THIS ENTRY OWNS: the two-way door, and how to price it.""",
+
+    """2. THE INTUITION - two kinds of door.
+
+Amazon's own framing, and it is genuinely useful:
+
+    ONE-WAY DOOR                            TWO-WAY DOOR
+    walk through and it locks behind you    walk through, look, walk back
+
+    a public API other teams build on       an internal implementation choice
+    a data model with a year of history     a feature flag
+    a vendor contract                       an experiment
+    deleting the only copy of something     a scope cut with a written plan to restore it
+
+    -> deserve care, review, and study      -> just decide. Deciding badly costs you the
+                                               reversal; deciding slowly costs you the delay,
+                                               every day, forever.
+
+The mistake almost everyone makes is applying one-way-door caution to two-way-door decisions -
+convening meetings, seeking approval and gathering data for something that could have been
+tried and undone in an afternoon.
+
+Drawn as the trade:
+
+    cost of being WRONG      =  what it takes to reverse it            (one-off)
+    cost of WAITING          =  what you lose per day, times the wait   (recurring)
+
+    ACT when reversal is cheap and waiting is expensive.
+    STUDY when reversal is expensive or impossible.
+
+That is not a slogan - it is a comparison you can actually compute, and doing so out loud is
+what makes the answer land. Section 9 computes it for the capstone: waiting five days would
+have cost 35 experiments; being wrong would have cost about 2 days of rework. Not close.
+
+And the same arithmetic, with one number changed, says WAIT - which is the inversion, and the
+thing that shows you understand the principle rather than reciting it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BIAS FOR ACTION. The Amazon principle: speed matters, most decisions are reversible, calculated
+risk-taking is valued.
+
+ONE-WAY DOOR / TYPE 1 DECISION. Hard or impossible to reverse. Deserves study.
+
+TWO-WAY DOOR / TYPE 2 DECISION. Cheap to reverse. Should be decided quickly by whoever is
+closest to it.
+
+REVERSAL COST. What it would take to undo. The number that decides which kind of door you are
+looking at, and the one candidates never quantify.
+
+COST OF DELAY. What you lose per unit of time while not deciding. Recurring, which is why it
+so often dominates.
+
+CALCULATED RISK. A risk whose downside you have actually estimated. The word "calculated" is
+doing real work in the principle and is usually ignored.
+
+EXPLICIT ASSUMPTION. A guess you have written down and told people about. The core de-risking
+move: a stated assumption is correctable, a silent one is a landmine.
+
+CHECKPOINT. A pre-agreed moment to look again, with a pre-agreed trigger for changing course.
+What converts "I guessed" into "I ran a controlled experiment".
+
+DE-RISKING. Making the downside smaller or more visible before committing - a small test, a
+flag, a staged rollout, a written revert plan.
+
+STAR. Situation, Task, Action, Result.
+
+TWO-MINUTE RULE. Behavioural answers should run 90 seconds to 2 minutes spoken.
+
+ITERATION RATE. Experiments per day - the quantity that made the capstone's decision
+computable.
+
+STAGING PLAN. The written plan for restoring what was cut. In the capstone, Arun wrote it, and
+its existence is precisely what made the scope cut a two-way door rather than a one-way one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - TELLING A STORY ABOUT BEING FAST WITHOUT MENTIONING REVERSIBILITY. "I did not have all
+the information so I just started building." That is not Bias for Action, it is impatience, and
+the interviewer cannot tell the difference unless you supply it. The distinguishing sentence is
+always about the cost of being wrong:
+
+    "It was reversible - restoring the other eight categories was about two days of work, and we
+     wrote down how - so waiting was more expensive than being wrong."
+
+TRAP 2 - THE WEAK VERSION, WHICH IS EXTREMELY COMMON:
+
+    "The requirements were not clear so I asked my manager, and once she got back from leave I
+     started building."
+
+Everything in that sentence is reasonable behaviour and it scores ZERO on this principle. You
+asked, you waited, you were blocked by someone else's calendar. There is no decision in it. The
+principle is specifically about what you did when the answer was "we do not know yet".
+
+TRAP 3 - WHERE THE PRINCIPLE FLIPS INTO A NEGATIVE SIGNAL. Bias for Action does NOT mean
+skipping code review, ignoring a migration plan, or deploying on a Friday afternoon. If your
+story involves bypassing a safeguard, it reads as recklessness and can actively fail the round.
+
+    THE TEST: was the thing you skipped a PROCESS THAT EXISTS TO CATCH ONE-WAY MISTAKES? If yes,
+    skipping it is not decisiveness. Show that you moved fast INSIDE the guardrails, or that you
+    deliberately built a cheap guardrail of your own.
+
+TRAP 4 - NO CHECKPOINT. A decision made under uncertainty with no plan to revisit it is a guess.
+A decision made under uncertainty WITH a trigger for changing course is an experiment. Same
+action; completely different signal. The checkpoint is the cheapest thing you can add to any
+version of this story, and it is usually missing.
+
+TRAP 5 - NOT SAYING WHAT YOU DID NOT KNOW. The question is about incomplete information, so name
+the gap explicitly. "What I did not know was whether four categories would be enough for a
+convincing demo - nobody could tell me that." Then the decision has something to be decisive
+ABOUT.
+
+TRAP 6 - HAVING NO ANSWER TO "WHAT IF YOUR ASSUMPTION HAD BEEN WRONG?" This is not a trap
+question, it is THE question - the whole principle is about calculated risk, so they are asking
+you to show the calculation. Answer with the reversal cost and the checkpoint, not with a
+defence of why you were right.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE - WITH THE ARITHMETIC.
+
+THE NAIVE VERSION: "I moved fast because the deadline was tight."
+
+Deadline pressure is a reason to hurry, not evidence of judgement. It says you were rushed, not
+that you decided well. Every candidate under a deadline moved fast; the ones who score are the
+ones who can say WHY IT WAS SAFE TO.
+
+THE REAL VERSION: price the two options.
+
+    COST OF WAITING          = what you lose per day  x  how long you would wait
+    COST OF BEING WRONG      = what it takes to reverse the decision
+
+    ACT if the first exceeds the second.
+
+FOR THE CAPSTONE, with real numbers:
+
+    THE SITUATION: week four of six. A full re-index took 9 hours, so 1 experiment per day. Ten
+    working days remained. The project advisor - the only person who could authoritatively
+    approve a scope change against the original proposal - was away for 5 days.
+
+    OPTION A - WAIT FOR THE ADVISOR:
+        5 days at the current rate = 5 days x 1 experiment/day  =   5 experiments
+        then 5 days at the improved rate = 5 x 8                =  40 experiments
+        total before the demo                                   =  45 experiments
+
+    OPTION B - CUT SCOPE NOW, TELL THE ADVISOR ON RETURN:
+        10 days at the improved rate = 10 x 8                   =  80 experiments
+
+    DIFFERENCE: 35 additional experiments - roughly 78% more learning before a fixed deadline.
+
+    COST OF BEING WRONG: if the advisor had said no, restoring the eight cut categories was
+    about 2 days of work, because the staging plan described exactly how. Two days out of ten.
+
+    SO: acting risked 2 days and gained 35 experiments. THE NUMBERS ARE NOT CLOSE, and that is
+    what makes it a calculated risk rather than a hopeful one.
+
+NOW THE INVERSION, WHICH IS THE PART THAT DEMONSTRATES JUDGEMENT.
+
+Change ONE thing - suppose the scope cut had also meant publishing a changed data format that
+two other student teams were already building against.
+
+    COST OF BEING WRONG: no longer 2 days. Now it is 2 days of your own work PLUS breaking two
+    other teams' code PLUS a coordination conversation with people whose deadlines you do not
+    control. Effectively unbounded, and not yours to bound.
+
+    THE SAME 35-EXPERIMENT GAIN DOES NOT JUSTIFY IT. That is a one-way door, and the correct
+    action inverts: wait the five days, or find a change that stays inside your own component.
+
+    IDENTICAL SPEED INSTINCT. OPPOSITE CORRECT ANSWER. The only thing that changed was the
+    reversal cost - which is exactly what the principle asks you to notice.
+
+THE THREE DE-RISKING MOVES worth naming in any version of this story, because each is nearly
+free:
+
+    1. STATE THE ASSUMPTION OUT LOUD AND IN WRITING. "I am assuming four categories is enough
+       for a convincing demo." A stated assumption gets corrected by whoever knows better; a
+       silent one does not.
+    2. SET A CHECKPOINT WITH A TRIGGER. "If we are not above 80% by day eight, we cut to two
+       categories." This turns the decision into an experiment with a defined failure response.
+    3. KEEP THE REVERSAL CHEAP AND WRITTEN DOWN. The staging plan is what made the door
+       two-way - without it, "we can add them back later" is a hope rather than a plan.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: SHOW THAT YOU IDENTIFIED WHAT YOU DID NOT KNOW,
+JUDGED THE DECISION CHEAP TO REVERSE AND CAN SAY WHAT REVERSING WOULD HAVE COST, MADE IT SAFER
+FOR ALMOST NOTHING, AND GOT A NUMBER.
+
+THE LOOP IN THIS STORY is decide - checkpoint - re-evaluate, and naming its stopping rule is
+part of what makes the answer strong:
+
+  - You act on an explicit assumption rather than a certainty.
+  - You set a trigger in advance for changing course.
+  - WHAT MAKES IT STOP: the checkpoint arrives and either the trigger fires (you revert, cheaply,
+    as planned) or it does not (you continue, now with evidence rather than a guess).
+  - WITHOUT THE CHECKPOINT the loop never closes and the decision stays a guess forever - which
+    is the difference between a calculated risk and an uncalculated one, and it is the thing the
+    principle's word "calculated" is pointing at.
+
+THE STEPS:
+
+  1. NAME WHAT YOU DID NOT KNOW, specifically. Not "requirements were vague" but "nobody could
+     tell me whether four categories would be convincing to the panel".
+
+  2. SEPARATE WHAT WAS ACTUALLY UNKNOWN FROM WHAT WAS MERELY UNASKED. Most ambiguity is partial.
+     Ask the two or three questions whose answers would change your approach - not twenty.
+
+  3. CLASSIFY THE DOOR. Reversible or not? Say what reversing would cost, in days or in work.
+     This single sentence is what most candidates omit and it is the heart of the principle.
+
+  4. IF IT IS ONE-WAY, SLOW DOWN - and say so. Showing you can tell the difference scores better
+     than a story where you always charged ahead.
+
+  5. IF IT IS TWO-WAY, DECIDE - and de-risk with the three cheap moves: state the assumption in
+     writing, set a checkpoint with a trigger, keep the reversal plan concrete.
+
+  6. TELL PEOPLE. A decision made under uncertainty and not communicated is a surprise waiting
+     to happen. In the capstone, telling the advisor on their return - with the arithmetic - is
+     part of the story, not an afterthought.
+
+  7. GET A NUMBER. 9 hours to 40 minutes. 1 experiment a day to 8. 87% retrieval accuracy.
+
+  8. PREPARE THE ANSWER TO "WHAT IF YOU HAD BEEN WRONG?" - reversal cost plus checkpoint. It is
+     the guaranteed follow-up and it is the actual question.
+
+  9. TIME IT. Ninety seconds to two minutes.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine you are cooking for people arriving at eight, and you cannot reach the one person who
+knows whether anyone is vegetarian.
+
+You could wait. Ring again at six, again at seven, and start cooking at half past - and now you
+are cooking in a rush, with no time to fix anything that goes wrong.
+
+Or you could think about what it would actually COST to be wrong. If you make the vegetable
+dish and somebody turns out to eat meat, that is fine - nobody minds. If you make the meat dish
+and somebody is vegetarian, you have a problem at eight o'clock with no time to solve it.
+
+So you start on the vegetable dish, immediately, and you leave a note on the counter saying
+"assuming vegetarian - tell me if not". If the call comes back at six, adding a meat dish
+alongside takes twenty minutes and everything is fine. The choice you made was easy to add to
+and easy to undo.
+
+That is the whole idea. You did not guess bravely; you noticed that ONE of the two mistakes was
+cheap and the other was not, and you chose the cheap one and made it visible.
+
+Now change one detail. Suppose instead of cooking, you were sending the invitations - and once
+they go out, they go out. You cannot un-invite anyone or quietly change the date. Same
+uncertainty, same missing person, and now the right answer is completely different: you wait,
+because the mistake is not fixable at any price.
+
+Same instinct to get on with it. Opposite correct action. And the only thing that changed was
+how expensive it was to be wrong - which is what you have to notice, and what you have to say
+out loud when somebody asks you why you moved.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle specifically:
+
+    SITUATION (2 sentences)
+        HOLDS: the context, and crucially THE GAP - what was not known and why it could not
+        simply be looked up.
+        DECIDES: whether there was any real uncertainty to be decisive about. Without a named
+        gap, the story is just "I worked quickly".
+        FOR THE CAPSTONE: week four of six, re-index nine hours, advisor away five days, and
+        nobody able to say whether four categories would satisfy the panel.
+
+    TASK (1 sentence)
+        HOLDS: what you specifically had to decide.
+        DECIDES: that this was YOUR call rather than something that happened around you.
+
+    ACTION (the bulk, ~60% of the answer)
+        HOLDS: four things, and all four should be audible:
+            (a) what you did NOT know, said plainly
+            (b) the reversibility judgement, WITH THE COST OF REVERSING
+            (c) the de-risking - the written assumption, the checkpoint and its trigger
+            (d) what you actually did
+        DECIDES: everything. (b) is the part that distinguishes this from impatience and the
+        part most candidates omit entirely.
+
+    RESULT (2-3 sentences)
+        HOLDS: the outcome, with a number, and ideally what happened at the checkpoint.
+        DECIDES: whether it was consequential.
+        FOR THE CAPSTONE: 40 minutes instead of 9 hours, 8 experiments a day instead of 1,
+        shipped on the demo date at 87%, checkpoint never triggered.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would do differently.
+        DECIDES: whether you look like someone who learns. Near-certain follow-up.
+
+--- THE THREE DE-RISKING MOVES, and what each buys ---
+
+    THE WRITTEN ASSUMPTION
+        HOLDS: your guess, made visible.
+        DECIDES: whether anyone can correct you. A stated assumption is reversible; a silent one
+        is a landmine.
+        THE SENTENCE: "I decided X assuming Y; if Y turns out false, the fix costs about a day."
+
+    THE CHECKPOINT AND ITS TRIGGER
+        HOLDS: when you will look again, and what would make you change course.
+        DECIDES: whether this was an experiment or a guess. The cheapest thing you can add.
+        THE SENTENCE: "If we were not above 80% by day eight, we would cut to two categories."
+
+    THE REVERSAL PLAN
+        HOLDS: concretely how to undo it, written down.
+        DECIDES: whether the door was genuinely two-way. "We can add them back later" without a
+        plan is a hope; Arun's staging plan is what made it real.
+
+--- THE ONE SENTENCE THAT CARRIES THE PRINCIPLE ---
+
+    "I decided X assuming Y; if Y turned out false the fix would cost about a day, so it was
+     worth starting rather than waiting."
+
+    It contains the decision, the assumption, the reversal cost and the comparison - which is
+    the entire principle in twenty-five words.""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - AND THE ARITHMETIC.
+
+THE PROMPT: "Tell me about a time you had to make a decision without all the information."
+
+OPEN WITH THIS SENTENCE - it names the gap and the decision immediately:
+
+    "At week four of a six-week project I cut two thirds of our scope without knowing whether
+     what was left would be enough for a convincing demo."
+
+THE FULL ANSWER (about 100 seconds):
+
+    SITUATION: "Four-person final-year capstone, six weeks, fixed demo date. I owned the
+    indexing pipeline. At week four I measured a full re-index at nine hours, which meant one
+    experiment a day with ten working days left."
+
+    TASK: "I had to decide whether to cut scope from twelve item categories to four. The person
+    who could authoritatively approve a change against our proposal - our advisor - was away for
+    five days."
+
+    ACTION: "What I did NOT know was whether four categories would be persuasive to the panel.
+    Nobody could tell me that.
+
+    What I DID know was measurable. At nine hours per re-index we had about ten experiments left
+    before the demo. At forty minutes we would have about eighty. And the decision was
+    reversible - restoring the other eight categories was roughly two days of work, and Arun
+    wrote out exactly how, so it was a plan rather than a hope.
+
+    So I decided on the thing I could measure rather than the thing I could only guess at. I
+    wrote the assumption down - 'assuming four categories is enough for the demo' - so it could
+    be challenged, and set a checkpoint: if we were not above 80% accuracy by day eight, we
+    would cut further to two categories. Then I told the advisor with the arithmetic the day
+    they returned."
+
+    RESULT: "Re-index went from nine hours to forty minutes, one experiment a day to eight. We
+    shipped on the demo date at 87% retrieval accuracy on four categories. The checkpoint never
+    triggered."
+
+    REFLECTION: "The checkpoint was the best part of that decision and I nearly did not set it.
+    I now try to make every irreversible-feeling decision reversible by attaching a measurable
+    trigger to it."
+
+THE ARITHMETIC, ready for the follow-up:
+
+    WAIT FIVE DAYS FOR THE ADVISOR:
+        5 days x 1 experiment/day   =  5
+        then 5 days x 8             = 40
+        total                       = 45 experiments
+
+    CUT NOW:
+        10 days x 8                 = 80 experiments
+
+    GAIN: 35 experiments, about 78% more.
+    RISK: 2 days of rework out of 10 if the advisor said no.
+
+    Acting risked two days to gain thirty-five experiments.
+
+THE GUARANTEED FOLLOW-UP - "What if your assumption had been wrong?"
+
+    "Then the advisor would have said no on the Monday, we would have spent about two days
+     restoring the categories using Arun's plan, and we would still have been ahead - because
+     those two days would have been spent at eight experiments a day rather than one. The
+     downside was bounded and I had measured it. That is why I was comfortable."
+
+    Note the shape of that answer: it does not defend the assumption. It prices the failure. That
+    is what "calculated risk-taking" means and it is what the question is asking for.
+
+THE INVERSION - the same instinct, the opposite correct action:
+
+    Suppose cutting scope had also changed a data format two other student teams were building
+    against.
+
+        REVERSAL COST: no longer two days of my own work. Now it breaks two other teams and
+        requires coordination with people whose deadlines I do not control - effectively
+        unbounded, and not mine to bound.
+
+        VERDICT: one-way door. The right answer flips to waiting the five days, or finding a
+        change confined to my own component.
+
+    THE 35-EXPERIMENT GAIN DID NOT CHANGE. Only the reversal cost did, and it reversed the
+    decision. Saying this unprompted is what shows you understand the principle rather than
+    having memorised a fast-moving story.
+
+AND FOR CONTRAST, THE WEAK VERSION:
+
+    "The requirements were not clear so I asked my manager, and once she got back from leave I
+     started building."
+
+    Reasonable behaviour. Scores nothing here - there is no decision in it, and the delay was
+    someone else's calendar rather than a judgement.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about an hour, and only because the story already exists in the bank
+- this is an INDEX over material, not new material. The hour goes on: identifying the
+reversibility judgement inside the story, computing the two costs so they can be produced on
+demand, and rehearsing the "what if you had been wrong" answer.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns THE TWO-WAY DOOR and how to price it. Its
+siblings tell the same capstone differently - "Tell me about your most challenging technical
+project" foregrounds technical DEPTH, "STAR: Disagreeing with a decision then fully committing"
+foregrounds the CONFLICT with Arun, and "Building a story bank" explains why one experience can
+serve all of them.
+
+THE FOLLOW-UPS, with what to say:
+
+  - "What if your assumption had been wrong?" THE question. Answer with the reversal cost and
+    the checkpoint - price the failure, do not defend the assumption.
+  - "How did you decide it was reversible?" Name the concrete cost of undoing it, and the
+    written plan that made that cost real.
+  - "Did you tell anyone?" Yes, and that is part of the answer - the written assumption and the
+    conversation with the advisor on their return.
+  - "When would you NOT move fast?" Have the one-way-door example ready. This question is asked
+    to check the principle is understood rather than parroted, and a candidate with no example of
+    deliberate caution looks reckless.
+  - "Was there a time this went wrong?" If you have one, use it - a two-way door you misjudged,
+    reversed, and learned from is a strong answer to this principle rather than a weak one.
+
+THE SAME STORY AT GOOGLE, re-angled: Amazon wants the decision and the number - "I decided X, it
+was reversible, it cost two days, here is the 78%". Google wants the reasoning and the effect on
+others - "here is how I framed the trade-off, here is the assumption I wrote down so it could be
+challenged, here is how Arun's plan is what made it safe". Same facts, different foreground; the
+Googleyness entry works this through properly.
+
+THE #1 MISTAKE: telling a story about moving fast without ever mentioning what being wrong would
+have cost. Without that, decisiveness and impatience are indistinguishable from the outside, and
+the interviewer has to assume the less flattering one. The word "calculated" is in the principle
+for a reason.
+
+RUNNER-UP: a story where the thing you skipped was a safeguard - review, a migration plan, a
+Friday deploy freeze. That reads as recklessness and can fail the round outright.
+
+TAKEAWAY: Bias for Action is not about speed, it is about noticing that most decisions are cheap
+to undo - so say what reversing would have cost, attach a checkpoint with a trigger, and be
+ready to explain the case where the same instinct would have been wrong.""",
 ]
 
 _EX_P0LP["STAR: Being frugal / doing more with less (Frugality)"] = [
@@ -69148,72 +69559,471 @@ forty-five minutes.""",
 ]
 
 _EX_P0LP["STAR: Disagreeing with a decision then fully committing (Have Backbone; Disagree and Commit)"] = [
-    """A full student-scale answer with BOTH halves.
-SITUATION: My project group voted to build our classifier on a transformer
-because it would 'look better to the examiners'. I thought a gradient-boosted
-baseline was the right call.
-TASK: I was outvoted three to one.
-ACTION (the disagree half): I did not argue from preference - I spent two hours
-building the boosted baseline and brought numbers: one point of F1 ahead, 40
-seconds to train against 25 minutes, and no dependence on the shared GPU we
-could not reliably book. I said my concern plainly, once, to the whole group.
-ACTION (the commit half): They still chose the transformer, judging that the
-report needed a deep-learning component. So I owned the training pipeline for
-it, and I did not re-litigate the decision in later meetings or tell the
-supervisor I had disagreed.
-RESULT: It shipped and scored well. I kept my baseline as the comparison row in
-the evaluation table, which the examiners specifically praised - so the dissent
-turned into a contribution rather than a grievance.""",
+    """1. THE GOAL - the principle has TWO halves, and most candidates tell only one.
 
-    """Both halves are required, and most answers only have one.
-Half the candidates tell a disagreement story where they WON, which does not
-test commitment at all. The other half tell a compliance story - 'I disagreed
-but I went along with it' - which is not backbone, it is acquiescence.
-The LP wants: you challenged respectfully, with reasoning, even though it was
-uncomfortable; and then, once the decision was made, you committed GENUINELY -
-no foot-dragging, no 'I told you so', no quietly building your version on the
-side. The example above earns it by having the candidate lose and then do real
-work for the winning option.""",
+    AMAZON LEADERSHIP PRINCIPLE - HAVE BACKBONE; DISAGREE AND COMMIT: "Leaders are obligated to
+    respectfully challenge decisions when they disagree, even when doing so is uncomfortable or
+    exhausting. Leaders have conviction and are tenacious. They do not compromise for the sake
+    of social cohesion. Once a decision is determined, they commit wholly."
 
-    """What 'disagreeing well' looks like mechanically.
-Disagree with DATA, not with taste - 'I built it and here are the numbers'
-beats 'I don't think that will work'. Do it ONCE and to the right audience;
-raising it in four separate meetings is not backbone, it is attrition. Separate
-the decision from the person. And state what would change your mind, which both
-proves you are reasoning and gives the other side a path.
-The uncomfortable part is required: if your story is 'I disagreed with a
-peer about a variable name', the LP is not being demonstrated. It should have
-cost you something to say.""",
+Read the last sentence separately, because it carries half the marks and gets a fraction of the
+airtime:
 
-    """What 'committing' actually requires, since this is where people fail.
-Committing means arguing FOR the decision afterwards, including to people who
-were not in the room. It means not building a shadow version of your preferred
-approach. It means that if it fails, you do not say 'well, I did warn you' -
-you help fix it.
-The interviewer's probe is usually exactly this: 'how did you behave
-afterwards?' A candidate who cannot name a concrete pro-decision action has
-told a disagreement story, not a disagree-and-commit story. 'I owned the
-training pipeline for the approach I had argued against' is the kind of
-sentence that settles it.""",
+    HAVE BACKBONE       you pushed back, respectfully, when it was uncomfortable
+    DISAGREE AND COMMIT once it was decided, you committed WHOLLY - including when you lost
 
-    """The probes, including the hardest one.
-'What if you had been right and it failed?' - the answer is that you help
-recover and run a blameless retrospective; the LP does not license
-I-told-you-so. 'When would you escalate instead of committing?' - the honest
-line is that commitment applies to reversible, judgement-call decisions, and
-that ethical, legal or safety concerns are a different category where you
-escalate rather than commit. Being able to draw that boundary is a maturity
-signal. 'Give me one where you disagreed with your MANAGER' - have it ready,
-because the peer version is considered easier.""",
+Almost every candidate tells a story about the first half. They pushed back, they were right,
+they won, everyone thanked them. That story scores about half of what it could, because the
+harder and rarer signal is the second half - and specifically:
 
-    """The Google framing of the same story.
-Google reads this as intellectual humility plus collaboration rather than as a
-named principle, so lead differently: 'I thought the baseline was right and I
-went and built it rather than arguing from opinion - and when the group weighed
-the report criteria differently, I could see that was a reasonable call I
-hadn't weighted properly, so I took on the pipeline.' Amazon wants backbone and
-commitment as distinct beats; Google wants to hear that you updated and that
-the team functioned. Same events, different emphasis.""",
+    THE STRONGEST VERSION OF THIS STORY IS ONE WHERE YOU LOST THE ARGUMENT AND COMMITTED
+    ANYWAY, WITHOUT SULKING, SANDBAGGING OR SAYING "I TOLD YOU SO" LATER.
+
+That is worth stating plainly because it changes which story you should pick. Section 5 explains
+why the losing version is more informative, and section 9 tells both.
+
+THIS ENTRY IS AN INDEX over the story bank, not new material. It draws on the CONFLICT shape and
+uses the same capstone as the rest of the cluster - the scope cut from twelve categories to four,
+and Arun who objected. Its siblings foreground the same events differently: "Tell me about your
+most challenging technical project" makes it a DEPTH story, "STAR: Acting decisively with
+incomplete information" makes it an AMBIGUITY story.
+
+WHAT THIS ENTRY OWNS: the disagreement itself - how to push back well, and what committing
+actually looks like from both sides of a decision.""",
+
+    """2. THE INTUITION - four ways a disagreement can end.
+
+                        YOU WON THE ARGUMENT        YOU LOST THE ARGUMENT
+
+    YOU COMMITTED       the common story             THE STRONGEST STORY
+                        scores: backbone             scores: backbone AND commitment,
+                        (half the principle)         which is rarer and harder
+
+    YOU DID NOT         "I was overruled and         the failure mode the principle
+    COMMIT              turned out to be right"      exists to prevent
+                        scores: negative -           scores: negative
+                        this reads as bitterness
+
+The top-right cell is what the principle is really about, and it is the one nobody brings.
+
+Why it is harder: committing after winning costs you nothing - you already believe in the plan.
+Committing after LOSING means executing something you argued against, with full effort, in a way
+that gives it a genuine chance to succeed. That is a real behaviour, it is visible to
+colleagues, and it is not something you can fake in the telling.
+
+The bottom-left cell is worth naming too, because candidates walk into it: a story that ends
+"...and later it turned out I had been right" is not the triumph it feels like. It reads as
+score-keeping. If the outcome genuinely vindicated you, the graceful version is to say what you
+learned about HOW YOU ARGUED, not that you were correct.
+
+And the shape of a good disagreement, whichever way it ends:
+
+    1. state the other position fairly, first
+    2. push back on the SUBSTANCE, with evidence, not on the person
+    3. find the frame you actually disagree in - often the argument is about different objectives
+    4. accept the decision when it is made, out loud
+    5. execute it properly, and be seen to""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HAVE BACKBONE. Challenging a decision you disagree with, respectfully, even when it is
+uncomfortable.
+
+DISAGREE AND COMMIT. Committing fully to a decision once made, regardless of which way you
+argued. The second half, and the harder one.
+
+RESPECTFULLY CHALLENGE. Pushing on the substance, not the person. "That approach costs us X"
+rather than "that is a bad idea".
+
+CONVICTION. Holding a position because of evidence, not stubbornness. The difference is whether
+new evidence can move you.
+
+SOCIAL COHESION. Agreeing to avoid friction. The principle explicitly names this as the thing
+NOT to compromise for, which is unusual and worth noticing.
+
+SANDBAGGING. Nominally complying while quietly under-delivering. The behaviour "commit wholly"
+is aimed at, and the reason interviewers probe what you did AFTER the decision.
+
+REFRAMING. Changing what the argument is about. In the capstone, the disagreement moved from
+"what did we promise?" to "how fast can we learn?" - and that reframe, not the evidence, is
+what resolved it.
+
+STATED OBJECTIVE. What each side is actually optimising for. Most technical disagreements are
+two people optimising different things and not saying so.
+
+STAR. Situation, Task, Action, Result.
+
+THE COMMITMENT SIGNAL. Something concrete you did to make the chosen path work, especially if
+you argued against it. Writing the plan, taking the hardest part, defending it to others.
+
+STAGING PLAN. In the capstone, the written plan for re-adding the eight cut categories. Arun
+wrote it after losing the argument - which is the clearest possible demonstration of commitment,
+and it is HIS behaviour, not hers.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - TELLING ONLY THE BACKBONE HALF. "I disagreed, I made my case, they agreed with me, we
+did it my way and it worked." Nothing wrong with it, and it demonstrates half the principle. The
+interviewer is specifically listening for the other half and will not hear it. If your story ends
+in winning, you must still show commitment behaviour - usually by describing how you brought the
+person who disagreed along, and what THEY then contributed.
+
+TRAP 2 - THE STORY THAT ENDS IN VINDICATION. "I was overruled, and three months later it failed
+exactly as I predicted." This feels like the strongest possible story and it is close to the
+weakest. It shows you kept score. If you were overruled and it went badly, the tellable part is
+what you did to make it work anyway, and what you learned about how to argue more persuasively -
+not that the record shows you were right.
+
+TRAP 3 - DISAGREEING WITH THE PERSON RATHER THAN THE DECISION. Any hint of "he did not really
+understand the problem" is fatal, because it answers a question about disagreement with evidence
+of contempt. State the other side's position FAIRLY, in their terms, before your own. If you
+cannot make their case honestly, you did not understand it, and that is the actual problem.
+
+TRAP 4 - NO EVIDENCE, JUST OPINION. "I felt strongly that..." carries no weight. Backbone with
+evidence is conviction; backbone without it is stubbornness, and the principle explicitly values
+the first. In the capstone the evidence was arithmetic: ten remaining experiments versus eighty.
+
+TRAP 5 - COMMITTING IN WORDS ONLY. "I said fine and got on with it" is the minimum, and it does
+not demonstrate anything. What demonstrates commitment is a concrete, visible act on behalf of
+the decision you argued against - writing the plan for it, taking the hardest piece of it,
+defending it to a third party. Interviewers probe exactly here.
+
+TRAP 6 - PICKING A DISAGREEMENT WITH NO STAKES. "We disagreed about a variable name." If nothing
+was at risk, there was no discomfort, and the principle is explicitly about acting when it IS
+uncomfortable. The disagreement needs a real cost attached to being wrong.
+
+TRAP 7 - AT GOOGLE, TELLING IT THE AMAZON WAY. Amazon wants conviction and the decision. Google
+scores intellectual humility and collaboration, so the same story wants the emphasis on what
+changed your mind, what the other person contributed, and how the group converged. The
+Googleyness entry works this through.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE.
+
+THE NAIVE VERSION: pick the time you were right and prevailed.
+
+It is the instinct, because it feels like the flattering story. It under-scores for a structural
+reason worth spelling out:
+
+    A STORY WHERE YOU WON TELLS THE INTERVIEWER ALMOST NOTHING ABOUT HOW YOU BEHAVE WHEN YOU DO
+    NOT GET YOUR WAY - which is the situation they are actually trying to predict. A new
+    engineer will be overruled regularly. What happens next is the thing worth knowing, and a
+    winning story is silent on it.
+
+    Put differently: committing to a plan you believe in is not evidence of anything. Everyone
+    does that. Committing to a plan you argued against IS evidence, because the alternative
+    behaviours - sulking, sandbagging, quiet non-compliance - are common and costly, and the
+    story is where they would show.
+
+THE REAL VERSION, in order of strength:
+
+    STRONGEST:  you disagreed, argued well with evidence, LOST, committed fully, and did
+                something concrete to make the chosen path work.
+    STRONG:     you disagreed, argued well, WON, and brought the other person along so
+                thoroughly that they contributed to the result.
+    WEAK:       you disagreed, argued, won, and the person who disagreed disappears from the
+                story.
+    NEGATIVE:   you disagreed, lost, and the story ends with you having been right.
+
+HOW TO ARGUE WELL - the five moves, and the third is the one that actually resolves things:
+
+    1. STATE THEIR POSITION FIRST, fairly, in their terms. This is not politeness; it proves you
+       understood, and it makes the rest audible rather than defensive.
+    2. DISAGREE ON THE SUBSTANCE, WITH EVIDENCE. Numbers if you have them.
+    3. FIND THE REAL DISAGREEMENT - usually you are optimising different things. This is the
+       move that resolves most technical arguments, and it is why the capstone conversation
+       turned.
+    4. PROPOSE SOMETHING THAT SERVES BOTH OBJECTIVES if one exists.
+    5. ACCEPT THE DECISION OUT LOUD when it comes, and then act like it.
+
+THE REFRAME, WHICH IS THE INTERESTING PART OF THE CAPSTONE:
+
+    Arun's position: we committed to twelve categories in the proposal. That is TRUE and it was
+    a real commitment.
+    Her position: we can only run ten more experiments at this speed.
+
+    They were not disagreeing about facts at all. He was optimising for KEEPING A COMMITMENT;
+    she was optimising for HOW MUCH THEY COULD LEARN BEFORE A FIXED DEADLINE. Both are legitimate
+    objectives, and no amount of arguing about categories would have settled it, because they
+    were arguing about different things.
+
+    What resolved it was naming that - and then finding the option serving both: ship four
+    categories, and write down exactly how the other eight get added, so the commitment becomes
+    DEFERRED rather than DROPPED.
+
+    That is worth extracting as a general move: WHEN A TECHNICAL DISAGREEMENT WILL NOT RESOLVE,
+    THE TWO SIDES ARE USUALLY OPTIMISING DIFFERENT THINGS AND HAVE NOT SAID SO.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: SHOW THAT YOU PUSHED BACK ON SUBSTANCE WITH EVIDENCE,
+STATED THE OTHER SIDE FAIRLY, FOUND WHAT THE ARGUMENT WAS REALLY ABOUT - AND THEN COMMITTED
+CONCRETELY TO WHATEVER WAS DECIDED, ESPECIALLY IF IT WAS NOT YOUR WAY.
+
+THE LOOP IS THE DISAGREEMENT ITSELF, and it needs a stopping rule, because a disagreement without
+one is just a running argument:
+
+  - Each round: one side states a position with evidence, the other responds on substance.
+  - WHAT MAKES IT STOP: a decision - either the evidence moves someone, or the person with the
+    authority decides.
+  - WHAT MAKES IT STOP BADLY: it does not stop, and the argument continues informally after the
+    decision. That is exactly the failure "commit wholly" is aimed at.
+  - THE MOMENT THE PRINCIPLE IS ABOUT is the instant AFTER the loop stops. Everything before is
+    backbone; everything after is commitment, and the second half is where the story becomes
+    unusual.
+
+THE STEPS:
+
+  1. CHOOSE THE STORY, preferring one where you LOST. Section 5 explains why. If you have no
+     losing story, use a winning one and make sure the person who disagreed is still present at
+     the end of it, contributing.
+
+  2. STATE THE STAKES. What went wrong if the decision was wrong. Without stakes there was no
+     discomfort, and the principle is about acting when it is uncomfortable.
+
+  3. STATE THE OTHER POSITION FIRST, fairly and in their terms, and say what was RIGHT about it.
+     "He was right that we had made that commitment in the proposal."
+
+  4. STATE YOUR EVIDENCE. Numbers where possible.
+
+  5. NAME THE REAL DISAGREEMENT - what each side was optimising for. This is usually the most
+     interesting sentence in the answer.
+
+  6. SAY HOW IT WAS DECIDED, and by whom.
+
+  7. SHOW THE COMMITMENT CONCRETELY. Not "I got on with it" but a specific act on behalf of the
+     decision: wrote the plan, took the hardest piece, defended it to someone else. This is the
+     part interviewers probe.
+
+  8. GIVE THE RESULT WITH A NUMBER.
+
+  9. REFLECT ON HOW YOU ARGUED, not on who was right. "I opened by arguing for my conclusion
+     instead of asking what he was optimising for; that cost us most of a day."
+
+ 10. PREPARE THE PROBE: "What did the other person think?" and "What if you had been overruled?"
+     Both are near-certain.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Two people are packing a car for a long drive, and they disagree about the route.
+
+One wants the motorway: faster, and they said they would arrive by six. The other wants the
+coast road: slower, but there is a fault with the car that gets worse at speed, and on the coast
+road you would find out about it near towns rather than in the middle of nowhere.
+
+The unhelpful version of this argument is each repeating their preference more firmly. It can go
+on for twenty minutes, because neither is wrong. The motorway IS faster. The car problem IS
+real.
+
+What actually breaks the deadlock is one of them saying: "Hang on - you are trying to keep the
+promise about six o'clock, and I am trying not to break down somewhere we cannot get help.
+Those are different problems."
+
+Once that is on the table, it is a different conversation. Perhaps you take the motorway but
+stop at the first services to check the fault. Perhaps you ring ahead and move the promise to
+seven. The disagreement was never really about roads.
+
+Now the part that matters more, and that people skip. Suppose the argument does not resolve
+neatly, and the one who wanted the motorway is driving, and they choose the motorway.
+
+The other person can spend the next three hours making small remarks about engine noise. Or they
+can accept it, and then do something useful for the plan they lost - work out where the services
+are, keep an eye on the temperature, plan what to do if it does fail.
+
+Both of those look like going along with it. Only one of them is actually helping. And everyone
+in the car can tell the difference within about ten minutes.
+
+That second behaviour is genuinely hard, because it means putting real effort behind something
+you argued against - which feels, from the inside, like conceding twice. It is also the thing
+that makes people want to drive with you again.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle specifically:
+
+    SITUATION (2 sentences)
+        HOLDS: the context and THE STAKES - what went wrong if the decision was wrong.
+        DECIDES: whether there was real discomfort. A disagreement with nothing at stake
+        demonstrates nothing, because the principle is explicitly about challenging when it IS
+        uncomfortable.
+
+    TASK (1 sentence)
+        HOLDS: what you specifically disagreed with, and your role in the decision.
+        DECIDES: whether you had standing to push back, which makes the pushing meaningful.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five things, and the order matters:
+            (a) THE OTHER POSITION, STATED FAIRLY AND FIRST - including what was right about it
+            (b) your evidence, ideally numeric
+            (c) THE REAL DISAGREEMENT - what each side was optimising for
+            (d) how it was decided, and by whom
+            (e) THE COMMITMENT - a concrete act on behalf of the outcome
+        DECIDES: everything. (a) prevents the contempt reading; (e) is the half of the principle
+        nobody supplies.
+
+    RESULT (2-3 sentences)
+        HOLDS: the outcome with a number, and what the other person contributed afterwards.
+        DECIDES: whether the relationship survived, which is quietly what is being assessed.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would change about HOW YOU ARGUED. Not about who was right.
+        DECIDES: whether you look like someone who learns or someone who keeps score.
+
+--- THE FIVE MOVES OF A GOOD DISAGREEMENT ---
+
+    1. STATE THEIR POSITION FIRST
+        BUYS: proof you understood it, and an audience that is not yet defensive.
+    2. DISAGREE ON SUBSTANCE, WITH EVIDENCE
+        BUYS: conviction rather than stubbornness. The difference is whether evidence could
+        move you.
+    3. FIND THE REAL DISAGREEMENT
+        BUYS: resolution. Most stuck technical arguments are two people optimising different
+        things without saying so.
+    4. PROPOSE SOMETHING SERVING BOTH OBJECTIVES
+        BUYS: an outcome rather than a winner.
+    5. ACCEPT OUT LOUD, THEN ACT
+        BUYS: the second half of the principle.
+
+--- WHAT COMMITMENT LOOKS LIKE, CONCRETELY ---
+
+    NOT: "I said fine and did the work." That is compliance and demonstrates nothing.
+    YES: you wrote the plan for the thing you argued against.
+         you took the hardest piece of it.
+         you defended it to a third party without caveats.
+         you did not raise it again after it was decided.
+
+    In the capstone, ARUN did this - he lost the argument and then wrote the staging plan for
+    re-adding the categories, and presented the cut as deliberate staging rather than shortfall.
+    That is the cleanest example of disagree-and-commit in the story, and it belongs to him,
+    which is worth saying out loud.""",
+
+    """9. THE CAPSTONE, TOLD BOTH WAYS.
+
+THE PROMPT: "Tell me about a time you disagreed with someone on your team."
+
+--- VERSION A: HER SIDE (she disagreed, and prevailed) ---
+
+OPEN WITH: "I pushed hard against a teammate who wanted to keep our full scope, and what changed
+the conversation was realising we were optimising for different things."
+
+    SITUATION: "Four-person capstone, six weeks, fixed demo date. At week four I proposed cutting
+    from twelve item categories to four, because a full re-index took nine hours and we could
+    only test one change a day."
+
+    TASK: "Arun objected strongly, and I had to either drop it or make the case properly."
+
+    ACTION: "First, his objection was legitimate and I want to be clear about that - twelve
+    categories was what we had written in our proposal, and going back on that mattered to him.
+    He was right that it was a real commitment.
+
+    My evidence was arithmetic. At nine hours per re-index we had about ten experiments left
+    before the demo. At forty minutes we would have about eighty. And we had not yet measured
+    accuracy on ANY category.
+
+    What actually moved the conversation was noticing we were not disagreeing about facts. He was
+    optimising for keeping a commitment; I was optimising for how much we could learn before a
+    fixed date. Once that was said out loud, we could look for something that served both - ship
+    four categories, and write down exactly how the other eight get added, so the commitment
+    becomes deferred rather than dropped.
+
+    He agreed to that, and he wrote the staging plan himself."
+
+    RESULT: "We shipped on the demo date at 87% retrieval accuracy. Arun presented the staging
+    plan to the panel as deliberate scoping rather than a shortfall, which was a better framing
+    than mine."
+
+    REFLECTION: "I opened by arguing for my conclusion instead of asking what he was optimising
+    for. That cost us most of a day, and it is the thing I would change."
+
+--- VERSION B: THE SAME EVENTS, TOLD FROM THE LOSING SIDE ---
+
+    If you have a story where YOU were Arun - where you argued, lost, and then committed - USE
+    THAT ONE for this prompt. It is the stronger answer, and section 5 explains why: a story
+    where you won says nothing about how you behave when you do not get your way, which is the
+    thing the interviewer is trying to predict.
+
+    The shape it should take:
+
+    "I argued against cutting our scope, because we had committed to twelve categories in our
+     proposal and I thought going back on that was worse than shipping something slower. I made
+     that case with the proposal document in front of us.
+
+     I did not win the argument. The iteration-speed numbers were stronger than mine - ten
+     experiments against eighty - and once it was framed that way I could see it.
+
+     What I did next is the part I would want to be judged on. I wrote the staging plan for
+     re-adding the other eight categories, so the commitment became deferred rather than
+     abandoned, and I presented the scope decision to the panel myself as deliberate staging. I
+     did not want it landing as something we failed to do, and I did not raise the disagreement
+     again."
+
+    WHY THIS VERSION SCORES HIGHER: it demonstrates BOTH halves. The backbone is in arguing with
+    the document in hand against a teammate with momentum. The commitment is concrete and
+    costly - writing the plan for the thing you opposed, and then advocating for it publicly.
+    Nobody has to take your word for it, because there is an artefact.
+
+--- THE PROBES, AND WHAT THEY ARE CHECKING ---
+
+    "What did Arun think afterwards?"
+        Checking the relationship survived. Answer with what he DID - he wrote the plan and
+        presented it - rather than with how he felt.
+
+    "What if you had been overruled?"
+        The disagree-and-commit half, asked directly. "I would have built twelve categories
+        properly and made sure we measured at least two of them, so we had a real number for the
+        panel rather than twelve unmeasured ones." Answer with what you would have DONE.
+
+    "Have you ever committed to something you still think was wrong?"
+        The hardest version, and the honest answer is the good one: yes, and describe what
+        committing looked like in practice. A candidate who has never disagreed-and-committed has
+        either never disagreed or never committed.
+
+    "How do you know when to stop pushing?"
+        When the decision is made by whoever owns it, or when you have given your evidence twice
+        and it has not moved anyone. Continuing past that is not backbone.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about an hour, since the story already exists in the bank - this is
+an INDEX over material rather than new material. The hour goes on finding a version where you
+LOST if you have one, working out what your concrete commitment act was, and rehearsing the
+other person's position so you can state it fairly and first.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns the DISAGREEMENT. Its siblings tell the same
+capstone from other angles - "Tell me about your most challenging technical project" foregrounds
+technical DEPTH, "STAR: Acting decisively with incomplete information" foregrounds the AMBIGUITY
+and the two-way door, and "Building a story bank" explains why one experience serves all three.
+
+THE FOLLOW-UPS, with what each is checking:
+
+  - "What did the other person think?" Whether the relationship survived. Answer with what they
+    DID afterwards, not with how they felt.
+  - "What if you had been overruled?" The commitment half, asked directly. Answer with a
+    concrete action you would have taken on behalf of the decision.
+  - "Have you ever had to commit to something you still disagreed with?" The real question. Say
+    yes and describe what commitment looked like in practice.
+  - "How do you know when to stop pushing?" When the person who owns the decision makes it, or
+    when your evidence has been heard twice without moving anyone. Continuing past that is not
+    backbone, it is friction.
+  - "Tell me about a time you changed your mind." Adjacent, frequently asked, and worth having -
+    it demonstrates that your conviction is evidence-based rather than positional.
+
+AT GOOGLE, RE-ANGLED: Amazon wants the conviction and the decision - "I argued it, here is the
+evidence, here is what we did". Google scores intellectual humility and collaboration, so lead
+with what was right about the other position, what changed your mind, and how the group
+converged. Same events; the Googleyness entry works the re-angling through in full.
+
+THE #1 MISTAKE: telling only the backbone half - a story where you disagreed, were right, and
+won. It demonstrates half the principle and leaves the interviewer without the information they
+came for, which is what you do when you DO NOT get your way. If your story ends in winning, you
+must still show commitment behaviour, usually by describing what the person who disagreed
+contributed afterwards.
+
+RUNNER-UP: the vindication ending - "and later it turned out I was right". It feels like the
+strongest possible close and reads as score-keeping, which is the opposite of committing wholly.
+
+TAKEAWAY: this principle has two halves and the second is the rare one - so choose a story where
+you argued well and LOST, state the other side fairly and first, and show one concrete thing you
+did to make the decision you opposed actually work.""",
 ]
 
 _EX_P0LP["STAR: Diving deep to find a root cause others missed (Dive Deep)"] = [

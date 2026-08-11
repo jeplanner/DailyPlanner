@@ -1008,12 +1008,460 @@ the next twenty minutes go where you prepared for them to go.""",
           mnemonic="Context (30s) -> what made it HARD -> what failed first -> what worked and why -> a number -> what you would change. Prepare five answers per project: why X over Y, where was the bottleneck, what breaks at 100x, what are you least happy with, what did you measure.",
           example="SITUATION: I built a question-answering system over my university's 400-page course handbook. TASK: The naive version - embed everything, retrieve the top 5, ask the model - was confidently wrong about a third of the time, which is worse than useless for something students would rely on. ACTION: I first assumed the model was the problem and tried a larger one, which barely moved the error rate - that was the wrong hypothesis and it cost me a week. So I built a small evaluation set instead: 60 real questions from the student forum with hand-checked answers, and I measured RETRIEVAL separately from GENERATION. Retrieval recall@5 was 61%, so in nearly 40% of cases the right passage was never in the prompt and no model could have answered. The fix was in the chunking, not the model: I had split on a fixed 1,000 characters, which cut tables in half and separated headings from their content. Chunking on section boundaries with a 15% overlap and prepending the section title to each chunk took recall@5 to 89%. RESULT: End-to-end accuracy went from 68% to 91% on the eval set, with no change of model and about a third of the token cost. What I would change: I built the evaluation set AFTER the first failed week, and it should have been the first thing.",
           examples=[
-              "The five questions to prepare per project, which IS the preparation. (1) Why did you choose X over Y? (2) Where was the bottleneck and how did you FIND it - profiling, or guessing? (3) What breaks at 100x the load? (4) What is the part you are least happy with? (5) What did you measure, and against what baseline? Those five cover most follow-ups, and writing the answers down for your two best projects is maybe ninety minutes of work that pays across every loop you sit.",
-              "The beat candidates omit: what failed first. A project narrative with no wrong turn reads as either trivial or rehearsed. 'I assumed the model was the problem and tried a larger one, which barely moved the error rate - that cost me a week' is the most credible sentence in the whole answer, because real work looks like that. It also sets up the recovery, which is where the actual skill shows.",
-              "Going two levels down, which is what 'depth' means. Say 'I used a vector database' and the follow-up is 'which index, and why?'. Say 'HNSW' and the next is 'what does M control, and what happens if you set efSearch too low?'. There is always another level, and the honest move when you hit your limit is to say so and reason out loud: 'I don't know the internals of the graph construction, but I'd expect a higher M to mean better recall and more memory, because...'. Reasoning from what you do know beats bluffing, and interviewers are testing for exactly that boundary.",
-              "For an AI/ML candidate, expect the evaluation question first. 'How did you know it was any good?' A project with no honest evaluation is the fastest way to lose this round, because it suggests you cannot tell whether your own work succeeded. Have the eval set, its size, how you built it, the baseline you beat, and the metric you chose WITH the reason. 'I built 60 hand-checked questions from the student forum and measured retrieval separately from generation' is worth more than any accuracy number.",
-              "Separating 'the team built' from 'I built', without diminishing anyone. Interviewers will explicitly probe this, and the clean pattern is: name the scope, then your slice. 'The four of us built the pipeline; I owned retrieval and evaluation.' Then keep every subsequent claim inside your slice. Vague 'we' throughout makes your contribution unscoreable, and claiming the whole thing is worse - it tends to collapse when they ask a detailed question about the part you did not do.",
-              "Choosing which project, using a test. Not the flashiest - the one where YOU made the hard decisions and can explain every dependency you name. If you cannot answer 'how does that library actually work?' about something in the story, either learn it before the interview or leave it out. A modest project you understand completely beats an impressive one you assembled from a tutorial, because the interview measures depth of understanding, not the size of the thing you touched.",
+              r"""1. THE GOAL - this is an ability probe wearing a behavioural costume.
+
+It sounds like a story question. It is not. It is the question your loop will spend the most
+time on, and three things are being measured:
+
+    TECHNICAL DEPTH   they will go two or three levels below whatever you say, so every claim
+                      you make must survive being pushed on.
+    YOUR ROLE         they will separate "the team built" from "I built", explicitly.
+    TRADE-OFFS        whether you understand why you chose X over Y, or merely that you chose
+                      X.
+
+The structure that works:
+
+    30 seconds   what the system is, so they can follow
+    then         the specific technical problem that made it hard
+    then         WHAT YOU TRIED THAT DID NOT WORK          <- the beat everyone omits
+    then         what did work, and why
+    then         the result, with a number
+    then         what you would change
+
+That third beat is the one candidates leave out and interviewers value most. A project
+narrative with no wrong turn reads as either trivial or rehearsed - and both readings hurt.
+
+THIS ENTRY IS AN INDEX over the story bank, not new material. It draws on the DELIVERY shape,
+and it uses the same capstone as every other behavioural entry: the four-person, six-week
+campus lost-and-found image search, where the indexing pipeline took nine hours per re-index
+until it was cut from twelve item categories to four. Its siblings own the other angles -
+"STAR: Acting decisively with incomplete information" tells the same events as an AMBIGUITY
+story, and "STAR: Disagreeing with a decision then fully committing" tells them as a CONFLICT
+story. Same facts, three different foregrounds.
+
+WHAT THIS ENTRY OWNS: the DEPTH question - how to choose a project you can defend, and how to
+survive being pushed three levels down.""",
+              r"""2. THE INTUITION - every noun you say is a trapdoor.
+
+Interviewers probe by following your own words downward. Say a thing, and the next question is
+about that thing:
+
+    "I used a vector database."
+        -> "Which index?"
+    "HNSW."
+        -> "What does the M parameter control, and what happens if you raise it?"
+        -> "How does that trade recall against memory?"
+
+Three levels, and level three is where the truth comes out. This happens for EVERY technical
+noun you utter, which produces a counterintuitive consequence:
+
+    MORE TECHNICAL DETAIL IS NOT BETTER. MORE UNDEFENDED DETAIL IS WORSE.
+
+Picture it as surface area:
+
+    a story naming 8 technologies                a story naming 3 technologies
+    you can defend 5 of them                     you can defend all 3
+
+    8 x 3 = 24 possible probe questions          3 x 3 = 9 possible probe questions
+    a probe lands on shaky ground often          every probe lands on solid ground
+
+The interviewer does not ask all twenty-four. They sample two or three. So the question is
+not "how much did I mention" but "what is the chance every sample lands somewhere I can
+defend" - and section 5 does that arithmetic, because it is genuinely startling.
+
+The rule that follows: NAME ONLY WHAT YOU CAN DEFEND THREE LEVELS DOWN. If you used something
+you cannot explain, either say so plainly ("we used a library for that; I did not implement
+it") or leave it out.
+
+That is the same steering idea as the "tell me about yourself" entry, applied to a technical
+narrative: whatever you name is what gets examined, so naming is a choice, not a description.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+DEPTH PROBE. The interviewer's habit of following a claim two or three levels down. The main
+mechanism of this question.
+
+TWO LEVELS DOWN. Not "what did you use" but "why that, and what breaks when you push it".
+
+STAR. Situation, Task, Action, Result - the standard structure. Used loosely here, because
+this question wants a technical narrative rather than a behavioural one, and the ACTION beat
+expands into "what failed, then what worked".
+
+THE "WHAT DID NOT WORK" BEAT. The failed attempt before the successful one. Its absence is a
+signal, which is why it is worth planning rather than improvising.
+
+SCOPE STATEMENT. One sentence naming what you personally owned, said before the detail, so
+that "I" and "we" are unambiguous for the rest of the answer.
+
+BOTTLENECK. The one part that limits everything else. Interviewers care far more about HOW YOU
+FOUND IT than about what it turned out to be.
+
+PROFILING / MEASUREMENT. Actually measuring where time goes, rather than guessing. "I profiled
+it and found..." is worth several times "I thought it was..."
+
+TRADE-OFF. What you gave up. Every real decision has one, and a candidate who cannot name what
+they sacrificed has usually not understood the decision.
+
+EVALUATION. How you knew it worked. For an AI or ML project this is the FIRST follow-up, and a
+project with no honest evaluation is the fastest way to lose the round.
+
+RETRIEVAL ACCURACY. In the capstone, the fraction of queries where the correct item appeared in
+the returned results. The number the project was judged on.
+
+RE-INDEX. Rebuilding the searchable index from scratch. In the capstone, nine hours before the
+change and forty minutes after.
+
+ITERATION RATE. How many experiments you can run per day. The quantity that actually governed
+the capstone, and the one that made the argument in section 9 work.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - CHOOSING THE FLASHIEST PROJECT RATHER THAN THE MOST DEFENSIBLE.
+
+The instinct is to pick whatever sounds most impressive. The correct test is different:
+
+    PICK THE PROJECT WHERE YOU MADE THE HARD DECISIONS, AND WHERE YOU CAN EXPLAIN EVERY
+    DEPENDENCY YOU NAME.
+
+If you cannot answer "and how does that library actually work?" about something central to the
+story, that project is a liability, however good it looks on the CV. A modest project defended
+completely beats an ambitious one that collapses at level three - and it collapses in front of
+someone who now has a specific reason to doubt everything else you said.
+
+TRAP 2 - NO FAILED ATTEMPT IN THE NARRATIVE. "I identified the problem and implemented the
+solution and it worked." Nothing real goes like that. The absence reads as rehearsal, or as
+the project being too small to have had a wrong turn. Plan the beat: "I assumed the model was
+the bottleneck and spent two days on it before profiling properly, which showed the indexing
+was the problem."
+
+That sentence does three jobs at once - it shows honesty, it shows you eventually MEASURED
+rather than guessed, and it makes the correct diagnosis land as a finding rather than an
+assumption.
+
+TRAP 3 - "WE" THROUGHOUT. Interviewers will explicitly probe this, so pre-empt it with a scope
+statement: "There were four of us; I owned the indexing pipeline end to end." After that, "I"
+is accurate rather than boastful, and you can still credit others specifically - which reads
+better than either extreme.
+
+TRAP 4 - FOR AN AI OR ML PROJECT, HAVING NO EVALUATION STORY. "How did you know it was any
+good?" arrives early and it is disqualifying if unanswered. Know your metric, your baseline,
+and your test set - and if the evaluation was weak, say what was weak about it. "We had 200
+hand-labelled queries, which is small, so the 87% has a wide error bar" is a much better answer
+than a confident 87% with no context.
+
+TRAP 5 - NAMING TECHNOLOGY YOU ONLY CONFIGURED. If you pip-installed it and called one
+function, saying "I implemented HNSW indexing" invites a question you cannot answer. "I used a
+library that implements HNSW; I chose it over a flat index because..." is honest AND still
+demonstrates the trade-off reasoning, which is the part being scored.
+
+TRAP 6 - DESCRIBING WHAT WITHOUT WHY. "I used a vector database" is a fact. "I used a vector
+database because keyword search missed paraphrases - a query for 'blue water bottle' had to
+match an item logged as 'navy flask'" is a decision. Only the second one is evidence of
+engineering.""",
+              r"""5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE - WITH THE ARITHMETIC.
+
+THE NAIVE APPROACH: describe the project thoroughly, mention everything you used.
+
+The reasoning feels sound - more detail shows more work. It fails because of how probing works,
+and the failure is quantifiable.
+
+    THE INTERVIEWER SAMPLES. They will not ask about all twenty of your claims; they will pick
+    two or three and follow each downward. So what matters is not the total, it is THE
+    PROBABILITY THAT EVERY SAMPLE LANDS ON SOLID GROUND.
+
+    Say you name 8 technologies and can genuinely defend 5 of them - a 62.5% hit rate. The
+    interviewer probes 3:
+
+        P(all three land on solid ground) = 0.625 x 0.625 x 0.625 = 0.244
+
+        About a one-in-four chance of getting through cleanly.
+
+    Now name 3 technologies, all of which you can defend, plus honest phrasing for the rest
+    ("we used a library for that part"). Effective defensible rate about 95%:
+
+        P(all three fine) = 0.95 x 0.95 x 0.95 = 0.857
+
+        About a six-in-seven chance.
+
+    THE SPARSER ANSWER IS ROUGHLY FOUR TIMES MORE LIKELY TO SURVIVE INTACT - 0.857 against
+    0.244 - while containing LESS information. That is the counterintuitive part, and it is
+    why "say less, defend all of it" is not modesty but strategy.
+
+THE REAL APPROACH: prepare five questions per project, and let those answers be the story.
+
+    (1) WHY DID YOU CHOOSE X OVER Y?
+        Not "I used a vector database" but "keyword search missed paraphrases, so I needed
+        semantic matching".
+
+    (2) WHERE WAS THE BOTTLENECK, AND HOW DID YOU FIND IT?
+        The "how did you find it" half is the part being scored. Profiled, measured, timed -
+        not assumed.
+
+    (3) WHAT WOULD BREAK AT 100x THE LOAD?
+        Shows you can think past the demo. For the capstone: 6,000 vectors compared exhaustively
+        is fine; 600,000 needs an approximate index.
+
+    (4) WHAT IS THE PART YOU ARE LEAST HAPPY WITH?
+        Tests honesty and self-assessment. Have a real answer.
+
+    (5) WHAT DID YOU MEASURE?
+        For anything ML, this arrives first and it is disqualifying if unanswered.
+
+Those five cover most follow-ups, and WRITING THEM DOWN IS THE ACTUAL PREPARATION. The narrative
+is easy once the five answers exist; without them, the narrative is a surface that cracks at the
+first push.
+
+THE UPGRADE THAT COSTS NOTHING: rehearse the story at two lengths - ninety seconds and four
+minutes. Interviewers vary in how much room they give you, and a four-minute answer delivered
+into a ninety-second gap gets interrupted, which loses you the ending you had planned.""",
+              r"""6. HOW TO PREPARE AND DELIVER IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: PICK THE PROJECT WHERE YOU MADE THE DECISIONS, WRITE
+DOWN THE ANSWERS TO FIVE PREDICTABLE QUESTIONS, AND TELL IT SO THAT EVERY TECHNICAL NOUN YOU
+UTTER IS ONE YOU CAN DEFEND THREE LEVELS DOWN.
+
+THE LOOP IS THE PROBE ITSELF - claim, question, deeper question - and it needs a stopping rule
+you control:
+
+  - Each level takes your last answer and asks why or how.
+  - WHAT MAKES IT STOP FAVOURABLY: you answer at a level below where they expected, so the
+    interviewer moves on satisfied. Getting to level three under your own power ends the probe.
+  - WHAT MAKES IT STOP BADLY: you reach a level where you have nothing. The probe stops there
+    too - and that is the moment they remember.
+  - THE CONTROLLED ANSWER when you hit your limit: "I do not know that in detail - I used the
+    library's default and did not investigate why." That closes the branch honestly and costs
+    far less than an invented answer, which invites one more question you also cannot survive.
+
+THE STEPS:
+
+  1. LIST YOUR TWO OR THREE CANDIDATE PROJECTS.
+
+  2. FOR EACH, WRITE ANSWERS TO THE FIVE QUESTIONS in section 5. This is the preparation; the
+     rest is delivery.
+
+  3. CHOOSE THE PROJECT where the five answers are strongest - not the one with the best title.
+
+  4. WRITE A SCOPE SENTENCE. "There were four of us; I owned the indexing pipeline end to end."
+     This goes early and settles the I-versus-we question before it is asked.
+
+  5. IDENTIFY THE ONE HARD TECHNICAL PROBLEM. Not the project's summary - the specific thing
+     that made it difficult. In the capstone: nine hours per re-index meant one experiment a
+     day with two weeks left.
+
+  6. PLAN THE FAILED ATTEMPT. What you tried first that did not work, and what made you change
+     course. If you cannot remember one, you have chosen a project you did not struggle with.
+
+  7. FIX THE NUMBERS. 9 hours to 40 minutes. 1 experiment a day to 8. 12 categories to 4. 87%
+     retrieval accuracy. Numbers make it concrete and they make follow-ups easier, because you
+     can compute rather than recall.
+
+  8. AUDIT YOUR TECHNICAL NOUNS. For each one, ask: can I answer two more questions about this?
+     If not, drop it or downgrade it to "we used a library for that".
+
+  9. PREPARE THE REFLECTION. "What would you change?" is near-certain. For the capstone: measure
+     iteration speed in week one rather than week four.
+
+ 10. REHEARSE AT TWO LENGTHS - ninety seconds and four minutes.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine describing a house you helped build to someone who builds houses for a living.
+
+You could list everything: the foundations, the wiring, the plumbing, the roof, the kind of
+insulation, the brand of boiler. It sounds thorough. And the moment you mention the boiler,
+they ask which model and why that one, and whether you sized it for the radiator load - because
+that is what a builder does with any detail you offer. Every item you name is an invitation.
+
+If you only helped with the walls, naming the boiler was a mistake. Not because mentioning it
+was dishonest, but because it opened a conversation you cannot have, in front of someone who
+now wonders what else you overstated.
+
+What works better is to say clearly which part was yours, then talk about that part properly -
+including the wall that had to come down and go back up because you got the alignment wrong the
+first time. That admission does not weaken the account. It is what makes it sound like somebody
+who was actually there, and it lets you explain how you noticed, which is the interesting part.
+
+And when they ask about the boiler, the honest answer costs almost nothing: "That was Priya's -
+I know we chose it for the flow rate but I could not tell you how it was sized." The
+conversation moves on immediately. An invented answer would not have; it would have produced
+one more question, and then the silence.
+
+The whole skill is understanding that they are not collecting facts about the house. They are
+finding out how deep your understanding goes, by picking a spot and digging. Which means you
+choose where they dig - by choosing what you mention.""",
+              r"""8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+The structure for this question is STAR with the ACTION beat split in two. Each part, what it
+holds and what it decides:
+
+    CONTEXT (30 seconds)
+        HOLDS: what the system was and who it was for, in two sentences.
+        DECIDES: whether the interviewer can follow anything that comes after. Nothing more.
+        FAILS WHEN: it runs to two minutes. This is the part that grows in every rehearsal and
+        should be cut first.
+
+    THE SCOPE SENTENCE
+        HOLDS: what YOU personally owned.
+        DECIDES: whether "I" is credible for the rest of the answer. Say it early, and the
+        I-versus-we probe never has to happen.
+        EXAMPLE: "There were four of us; I owned the indexing pipeline end to end."
+
+    THE HARD PROBLEM
+        HOLDS: the specific technical difficulty - not a summary of the project.
+        DECIDES: whether this counts as a CHALLENGING project at all. "It was a tight deadline"
+        is not a technical problem; "a full re-index took nine hours, so we could test one
+        change a day with two weeks left" is.
+
+    WHAT DID NOT WORK          <- the beat candidates omit
+        HOLDS: the wrong turn, and what made you abandon it.
+        DECIDES: whether the story sounds lived or rehearsed. Also creates the opening to show
+        you eventually MEASURED instead of guessing, which is the single most valuable habit
+        you can demonstrate here.
+
+    WHAT WORKED, AND WHY
+        HOLDS: the decision, and the alternative you rejected.
+        DECIDES: whether you understand trade-offs or merely outcomes. The "why" carries all
+        the weight; the "what" is nearly free.
+
+    THE RESULT, WITH A NUMBER
+        HOLDS: what changed, quantified.
+        DECIDES: whether this was consequential. 9 hours to 40 minutes. 1 experiment a day to
+        8. 87% retrieval accuracy on four categories.
+
+    THE REFLECTION
+        HOLDS: what you would do differently, specifically.
+        DECIDES: whether you look like someone who learns. Asked almost every time.
+
+--- THE FIVE PREPARED ANSWERS, which sit BEHIND the narrative ---
+
+    They are not part of the story you tell. They are what you draw on when probed, and having
+    written them is what makes the probing comfortable:
+
+    1. why X over Y            2. the bottleneck, and how you FOUND it
+    3. what breaks at 100x     4. the part you are least happy with
+    5. what you measured
+
+--- THE CONTROLLED ADMISSION ---
+
+    HOLDS: one sentence for the edge of your knowledge.
+    DECIDES: whether a probe you cannot answer ends cleanly or badly.
+    FORM: "I do not know that in detail - I used the default and did not investigate."
+    COSTS: almost nothing. An invented answer costs the round.""",
+              r"""9. THE CAPSTONE, TOLD FOR THIS QUESTION - AND THE PROBE, TRACED.
+
+THE ANSWER (about two minutes spoken):
+
+    CONTEXT: "Final-year project, four of us, six weeks with a fixed demo date. We built a
+    campus lost-and-found image search - you upload a photo of what you lost and it returns
+    matching found items."
+
+    SCOPE: "I owned the indexing pipeline end to end."
+
+    THE HARD PROBLEM: "At week four I realised a full re-index took nine hours. With two weeks
+    left that meant we could test one change a day - about ten experiments before the demo, for
+    a system we had not measured at all yet."
+
+    WHAT DID NOT WORK: "My first assumption was that the embedding model was too slow, and I
+    spent nearly two days trying smaller models. Then I actually profiled it and found the model
+    was a small fraction of the time - the cost was in the number of category-specific indexes
+    we were rebuilding. I had been optimising the wrong thing on a guess."
+
+    WHAT WORKED, AND WHY: "I proposed cutting from twelve item categories to four. That took
+    re-index to forty minutes, which is eight experiments a day instead of one. I argued it on
+    iteration speed rather than on scope - the alternative was twelve categories at an accuracy
+    nobody would have had time to measure."
+
+    RESULT: "We shipped on the demo date at 87% retrieval accuracy on four categories, measured
+    on 200 hand-labelled queries."
+
+    REFLECTION: "I should have measured iteration speed in week one. The cut was the right call;
+    needing it at week four was my planning failure."
+
+NOW THE PROBE, TRACED - three levels, which is what actually happens:
+
+    LEVEL 1: "How did you profile it?"
+        "I timed each stage of the pipeline separately - image loading, embedding, index build,
+        disk write. The index build was about 80% of the nine hours."
+
+    LEVEL 2: "Why did category count drive the index build time?"
+        "We built a separate index per category so queries could be filtered cheaply. Twelve
+        indexes meant twelve builds, and the build cost is roughly linear in the number of
+        indexes for a fixed corpus size."
+
+    LEVEL 3: "Could you have kept twelve categories and used one index with a metadata filter?"
+        "Yes - and in hindsight that was the better fix. I did not do it because filtering
+        before the similarity search would have needed changes to the query path that Arun
+        owned, and with two weeks left I chose the change that was entirely inside my own
+        component. That was a schedule decision rather than a technical one."
+
+    THAT THIRD ANSWER IS THE ONE THAT SCORES. It concedes a better alternative existed, explains
+    the real reason it was not taken, and names the constraint honestly. A candidate who defends
+    the choice as technically optimal would have been caught; a candidate who says "I do not
+    know" has stopped the conversation. This one keeps going and looks better for it.
+
+THE ARITHMETIC THAT MADE THE DECISION, and why having it ready helps:
+
+    at 9 hours per re-index:   1 experiment/day  x 10 working days = about 10 experiments
+    at 40 minutes:             8 experiments/day x 10 working days = about 80 experiments
+
+    An eight-fold increase in how much you can learn before a fixed deadline.
+
+    Being able to produce that on demand means the follow-up "was that worth the scope cut?"
+    is answered with a computation instead of an opinion.
+
+THE INVERSION - WHY A SPARSER ANSWER SURVIVES BETTER:
+
+    Suppose the same story were told naming eight technologies - the embedding model family, the
+    vector index type, the web framework, the storage layer, the augmentation library, and so on
+    - of which five could be defended.
+
+        3 probes, 62.5% defensible each:  0.625^3 = 0.244    about 1 chance in 4
+
+    Told as above, naming three technical things all fully defensible plus honest phrasing
+    elsewhere:
+
+        3 probes, 95% defensible each:    0.95^3  = 0.857    about 6 chances in 7
+
+    ROUGHLY FOUR TIMES MORE LIKELY TO SURVIVE, while saying LESS. The instinct to demonstrate
+    breadth is exactly backwards for this question.""",
+              r"""10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about three hours per project - one to write the five answers, one
+to build and time the narrative, one to rehearse and be probed by someone else. Do it for TWO
+projects, so that "do you have another example?" does not end the round.
+
+THE FOLLOW-UPS, essentially guaranteed, with what each is looking for:
+
+  - "How did you know it was any good?" EVALUATION. For an ML project this often comes FIRST.
+    Metric, baseline, test set size. For the capstone: 87% retrieval accuracy on 200
+    hand-labelled queries - and say the 200 is small, because volunteering the weakness is
+    worth more than being caught on it.
+  - "Why did you choose X over Y?" TRADE-OFFS. Name what you gave up.
+  - "Where was the bottleneck and how did you find it?" MEASUREMENT. The second half matters
+    more than the first.
+  - "What would break at 100x?" SCALE THINKING. For the capstone: 6,000 vectors compared
+    exhaustively is fine; 600,000 needs an approximate index, and the recall/latency trade
+    becomes a real decision.
+  - "What is the part you are least happy with?" HONESTY. Have a genuine answer prepared.
+  - "What would you do differently?" Near-certain. Be specific.
+  - "What did your teammates do?" They are checking you can credit others without diminishing
+    your own scope. Name people and their actual contributions.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns the DEPTH question. Its siblings tell the same
+capstone from other angles - "STAR: Acting decisively with incomplete information" foregrounds
+the AMBIGUITY, "STAR: Disagreeing with a decision then fully committing" foregrounds the
+CONFLICT with Arun, and "Building a story bank" explains why one experience can serve all
+three.
+
+THE #1 MISTAKE: choosing the most impressive project rather than the most defensible one. Depth
+is the thing being measured, so a project you can explain three levels down beats a grander one
+that collapses at level two - and the collapse does more damage than the smaller project would
+ever have cost you, because it gives the interviewer a concrete reason to discount everything
+else.
+
+RUNNER-UP: a narrative with no failed attempt, which reads as rehearsed and throws away the best
+opportunity you have to show that you measure rather than guess.
+
+TAKEAWAY: this question is a depth probe, and every technical noun you say is an invitation to
+dig there - so choose the project where you made the decisions, name only what you can defend
+three levels down, and make sure the story includes the thing you got wrong first.""",
           ],
           pitfalls="Choosing the flashiest project rather than the one you understand; 'we' throughout so your contribution is invisible; no numbers; no failed attempt; a claim you cannot defend two levels down (never say 'I used a transformer' if you cannot explain attention); no honest evaluation.",
           followups="'What would break if this had a million users?' Have a real answer - retrieval latency, index size, cost per query. 'What is the weakest part of your design?' Naming it yourself scores far better than being shown it."),
