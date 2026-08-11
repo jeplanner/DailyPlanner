@@ -10479,67 +10479,565 @@ a large gap means add data or constraints.
 """.strip("\n")
 
 _EXAMPLES_ML["Bias-Variance trade-off (explained simply)"] = [
-    """The textbook case, traced.
-Fit polynomials of increasing degree to 30 noisy points from a sine curve and
-watch train/validation RMSE:
-  degree 1:  train 0.42, val 0.44   <- both bad -> underfit, high bias
-  degree 3:  train 0.11, val 0.13   <- sweet spot
-  degree 9:  train 0.02, val 0.38   <- train great, val bad -> overfit, high variance
-  degree 20: train 0.00, val 1.90   <- passes through every point, useless between them
-Training error falls FOREVER as you add complexity; validation error is U-shaped.
-The bottom of that U is the model you ship. If you only ever look at training
-error you will always pick degree 20 and always be wrong.""",
+    """1. THE GOAL - why there are exactly two ways to be wrong.
 
-    """A second ordinary case with a different shape - a real product.
-Fraud detection on card transactions, 2 million rows.
-  Logistic regression on 8 features: train recall 61%, val recall 60%.
-  Both numbers are low and equal -> high bias. The team's instinct was to buy
-  more data. They bought 4 million more rows and got 61% / 60% again - exactly
-  what the theory predicts, because more data never fixes bias.
-  Switching to gradient-boosted trees with feature crosses (amount x merchant
-  category x hour) gave train 89% / val 84%. Capacity was the missing thing.""",
+Every model that predicts badly is failing in one of two ways, and they need OPPOSITE
+fixes. Getting the diagnosis backwards makes the model worse, which is why this is asked
+in nearly every ML interview.
 
-    """The edge case: zero training error that means nothing.
-A 1-nearest-neighbour classifier has ZERO training error by construction - every
-training point's nearest neighbour is itself. Train accuracy 100%, always, for
-any dataset, even one with random labels. Its validation accuracy on the same
-random-label data is 50%. This is the purest demonstration that training error
-measures how well you memorised, not how well you learned. Raising k to 15
-averages over 15 neighbours: train accuracy drops to 93%, validation rises to
-91%. You traded a little bias for a large reduction in variance and won.""",
+    BIAS      the model is TOO SIMPLE to represent the real pattern.
+              Like drawing a straight line through data that curves.
+              Symptom: bad on training data AND bad on test data.
+              This is UNDERFITTING.
 
-    """The case that breaks the naive fix.
-A team sees val loss above train loss and concludes overfitting, so they crank
-L2 regularization from 0.01 to 10. Result: train loss rises from 0.08 to 0.55
-and val loss from 0.31 to 0.57. They converted a variance problem into a bias
-problem and ended up worse. The correct reading was: gap = 0.23 (variance) but
-train = 0.08 (bias already tiny), so the cheap wins were more data and dropout,
-not a 1000x regularization increase. Always move ONE knob and re-read both
-numbers - the gap and the height - before moving the next.""",
+    VARIANCE  the model is TOO SENSITIVE to the particular data it saw.
+              Train it on a different sample and you get a noticeably different model.
+              Symptom: excellent on training data, poor on test data.
+              This is OVERFITTING.
 
-    """A numeric decomposition you can do by hand.
-True function f(x)=2 at x=5. You train 5 models on 5 different samples and they
-predict at x=5: 1.8, 2.4, 1.6, 2.6, 1.6.
-  mean prediction = 2.0  ->  bias = 2.0 - 2.0 = 0
-  variance = average of (p - 2.0)^2 = (0.04+0.16+0.16+0.36+0.16)/5 = 0.176
-So this model is unbiased but noisy: expected error 0.176 comes entirely from
-variance. Bagging - averaging all 5 predictions into one - gives exactly 2.0 and
-error 0. That is the whole reason Random Forests work: many unbiased,
-high-variance trees averaged together keep the zero bias and cancel the variance.""",
+The famous decomposition says total expected error breaks into three parts:
 
-    """Contrast against the sibling concept, and the interview answer.
-Interviewers love: 'Your model has 99% train and 70% test accuracy. What now?'
-The answer is NOT a list of every technique you know. It is:
-  1. Name the diagnosis: 29-point gap = high variance, and train is near
-     perfect so bias is not the problem.
-  2. Order the fixes by cost: more/better data first (free lunch, reduces
-     variance without adding bias), then augmentation, then regularization and
-     dropout, then a smaller model LAST because it re-introduces bias.
-  3. Say what would change your mind: if train had been 72% and test 70%, the
-     same gap-free numbers mean high bias and the fix reverses completely.
-Compare with underfitting's sibling framing: bias-variance is the WHY,
-overfitting/underfitting is the SYMPTOM you observe. Interviewers check whether
-you can go from symptom to cause to fix without guessing.""",
+    expected error  =  bias squared  +  variance  +  irreducible noise
+
+The third term is the floor - noise in the data itself that no model can predict. If
+sensor readings are accurate to plus or minus 2, no model predicts them to within 1.
+
+The trade-off is that BIAS AND VARIANCE MOVE IN OPPOSITE DIRECTIONS AS YOU ADD
+COMPLEXITY. More capacity always reduces bias and always increases variance. So there is a
+sweet spot, and it is not at either extreme.
+
+WHAT THIS ENTRY OWNS, so the cluster does not repeat itself:
+
+    THIS ENTRY - WHY the capacity dial has two failure modes, the decomposition, and how
+                 to tell which one you have.
+    "OVERFITTING" (sibling) - diagnosing the high-variance case in practice and the
+                 prevention toolkit.
+    "CROSS-VALIDATION" (sibling) - how to MEASURE generalisation reliably when data is
+                 scarce.
+    "L1 vs L2 REGULARIZATION" (sibling) - two specific tools for reducing variance.
+
+So this page is the theory that tells you which of those to reach for.""",
+
+    """2. THE INTUITION - the same archer, five times.
+
+Forget models for a moment. Imagine training five archers, each on a DIFFERENT set of
+practice targets, then having all five shoot at the same real target. Plot where their
+arrows land:
+
+    LOW BIAS, LOW VARIANCE          LOW BIAS, HIGH VARIANCE
+    (what you want)                 (overfitting)
+
+           |                               |      x
+        x  |  x                         x  |
+      -----+-----                    ------+------  x
+        x  | x                            x|
+           |                               |   x
+    tight cluster on the bullseye   scattered widely AROUND the bullseye -
+                                    on average right, individually unreliable
+
+    HIGH BIAS, LOW VARIANCE         HIGH BIAS, HIGH VARIANCE
+    (underfitting)                  (the worst case)
+
+           |                               |
+           |                          x    |
+      -----+-----                    ------+------
+           |  xxx                          |        x
+           |  xxx                     x    |    x
+    tight cluster, WRONG PLACE      scattered AND off-centre
+
+The crucial idea is that each arrow comes from an archer trained on a DIFFERENT SAMPLE.
+
+    BIAS     = how far the AVERAGE arrow is from the bullseye. A systematic error that
+               more practice data will never fix, because every archer makes it.
+
+    VARIANCE = how spread out the arrows are from EACH OTHER. This is sensitivity to
+               which particular practice set you happened to get.
+
+Now put it back into modelling. Fit polynomials of rising degree to noisy data:
+
+    error
+      |  \\                                    /
+      |   \\                                  /   TOTAL (what you actually pay)
+      |    \\                                /
+      |     \\___                       ____/
+      |         \\___             _____/
+      |             \\___    ____/
+      |    bias -->      \\_/  <-- variance
+      +----------------------------------------> model complexity
+                          ^
+                     the sweet spot
+
+Bias falls as complexity rises. Variance climbs. Their sum is U-shaped, and the bottom of
+that U is the model you want - not the simplest, not the most flexible.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BIAS. Error from wrong ASSUMPTIONS in the model - it cannot represent the true pattern
+however much data you give it. A straight line fitting a curve has high bias.
+
+VARIANCE. Error from SENSITIVITY to the particular training sample. Retrain on a different
+sample of the same size and the model changes a lot.
+
+IRREDUCIBLE ERROR / NOISE. Randomness in the data itself. Sets a floor no model can beat.
+If two identical inputs have different labels, no function can get both right.
+
+UNDERFITTING. High bias. Poor on training AND test.
+
+OVERFITTING. High variance. Great on training, poor on test.
+
+CAPACITY / COMPLEXITY / FLEXIBILITY. How rich a family of functions the model can express.
+More parameters, higher polynomial degree, deeper trees, more layers.
+
+THE DECOMPOSITION. Expected squared error at a point = bias squared + variance +
+irreducible noise. "Expected" means averaged over all the training sets you might have
+drawn - which is exactly the five-archers picture.
+
+EXPECTED PREDICTION. The average prediction across models trained on different samples.
+Bias is the gap between this average and the truth.
+
+TRAINING ERROR. Error on the data the model learned from. It falls monotonically with
+capacity, and is therefore useless as a diagnostic on its own.
+
+TEST / VALIDATION ERROR. Error on held-out data. U-shaped in capacity, so this is the one
+to minimise.
+
+THE SWEET SPOT. The capacity where test error is lowest.
+
+REGULARIZATION. Anything that reduces capacity or penalises complexity. Trades bias UP for
+variance DOWN - it does not reduce error for free.
+
+ENSEMBLE. Averaging several models. Bagging (random forests) mainly reduces VARIANCE by
+averaging out sample-specific quirks; boosting mainly reduces BIAS by successively fitting
+what previous models got wrong. Knowing which does which is a common interview question.
+
+DOUBLE DESCENT. The modern observation that with very large models, test error can fall
+AGAIN after the classical U-shaped rise. Worth naming - see section 10 - because a
+textbook-only answer looks dated.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE FATAL ONE: TREATING "TRAIN BETTER THAN TEST" AS AUTOMATICALLY MEANING
+OVERFITTING.
+
+Training error is ALWAYS at least as good as test error - the model saw that data. Some
+gap is normal and expected. The diagnosis depends on the LEVEL, not the gap:
+
+    train 0.19, test 0.22   -> healthy. A small gap, both good.
+    train 0.04, test 0.61   -> high variance. Big gap, test poor.
+    train 0.42, test 0.45   -> HIGH BIAS. Small gap, and BOTH ARE BAD.
+
+That third row is the one people misread. The gap is tiny, so it looks fine - but the
+model is failing on data it has already seen, which means it cannot represent the pattern
+at all. Adding regularization here makes it strictly worse.
+
+ASK "IS TRAINING ERROR ITSELF ACCEPTABLE?" FIRST. If no, you have a bias problem, and
+nothing about the gap matters yet.
+
+TRAP 2: reaching for the wrong fix. The two failure modes need opposite interventions, and
+applying the wrong one moves you further from the sweet spot:
+
+    HIGH BIAS  -> richer model, better features, less regularization, train longer.
+                  MORE DATA DOES NOT HELP. A straight line fitted to a million curved
+                  points is still a straight line.
+
+    HIGH VARIANCE -> more data, regularization, simpler model, ensembling, early stopping.
+                  A RICHER MODEL MAKES IT WORSE.
+
+The "more data does not help high bias" point is worth saying out loud - it is the
+cleanest way to show you understand the difference rather than having memorised two lists.
+
+TRAP 3 - THE ONE THAT BREAKS THE NAIVE FIX: a team sees validation loss above training
+loss, concludes overfitting, and cranks L2 from 0.01 to 10. Result: train 0.55, val 0.57.
+The gap has closed and both numbers are worse - they converted a variance problem into a
+bias problem and overshot the sweet spot. The gap is not the objective; validation error
+is. (The Overfitting sibling works this through with full numbers.)
+
+TRAP 4: zero training error that means nothing. A 1-nearest-neighbour classifier has
+EXACTLY zero training error by construction - each training point's nearest neighbour is
+itself, at distance zero. It has learned nothing about generalisation. This is pure
+variance with no bias, and it shows why training error alone can be not merely
+uninformative but actively misleading.
+
+TRAP 5: thinking the trade-off means you must sacrifice one for the other permanently. You
+trade them ALONG A FIXED MODEL FAMILY as you turn the capacity dial. BETTER FEATURES or
+MORE DATA can lower both at once by moving you to a different curve entirely. Confusing
+"movement along the curve" with "movement between curves" is a genuine conceptual error.
+
+TRAP 6: forgetting the irreducible term. If the noise floor is 0.20, a validation error of
+0.22 is nearly perfect and further tuning is wasted effort. Knowing roughly where the floor
+sits stops you optimising against randomness.""",
+
+    """5. THE NAIVE VIEW FIRST, THEN THE REAL ONE - WITH THE DECOMPOSITION DERIVED.
+
+THE NAIVE VIEW: "a more powerful model is a better model."
+
+It is the natural instinct, and it is supported by the number people watch: training error
+falls monotonically as capacity rises. Nothing on that curve ever warns you. A model with
+enough parameters reaches zero training error on almost any dataset, and by the naive view
+that is the best possible outcome.
+
+THE REAL VIEW: total error is a SUM of two terms that move in opposite directions.
+
+WHERE THE DECOMPOSITION COMES FROM - the argument, because "error equals bias squared plus
+variance" is usually presented as a fact to memorise:
+
+Imagine you could repeat your whole project many times: draw a fresh training sample, fit
+the model, predict at some point x. Each repetition gives a slightly different prediction,
+because each saw different data. Now ask how far, on average, those predictions are from
+the truth.
+
+Write f for the true value, and let m be the AVERAGE of your predictions across all those
+repetitions. Any single prediction p misses the truth by (p - f), and you can split that
+gap into two pieces by passing through m:
+
+    p - f  =  (p - m)  +  (m - f)
+              ^^^^^^^     ^^^^^^^
+              how far      how far the AVERAGE
+              THIS model   model is from the truth
+              is from the  - the same every time
+              average
+
+The first piece varies from repetition to repetition and averages to zero. The second is
+constant. When you square and average, the cross-term between them vanishes precisely
+because the first averages to zero, leaving:
+
+    average squared error  =  average of (p - m) squared   +   (m - f) squared
+                           =        VARIANCE               +      BIAS squared
+
+Then add the noise in the data itself, which no model can touch, and you have the full
+decomposition.
+
+TWO CONSEQUENCES that follow directly and are worth stating in an interview:
+
+  - BIAS IS ABOUT THE AVERAGE MODEL; VARIANCE IS ABOUT THE SPREAD. That is why more data
+    reduces variance (the spread shrinks as samples become more alike) and does nothing
+    for bias (the average of a straight-line fit is still a straight line).
+
+  - THEY ARE BOTH SQUARED-ERROR QUANTITIES IN THE SAME UNITS, so they can genuinely be
+    compared. Section 9 computes both on real numbers and the comparison decides the fix.
+
+THE PRACTICAL UPGRADE PATH, in increasing sophistication:
+
+  1. FIT THE SIMPLEST THING. Measure training and validation error. If TRAINING error is
+     already unacceptable, you are bias-limited and no amount of regularization or data
+     will help.
+  2. ADD CAPACITY until training error is acceptable.
+  3. NOW ATTACK VARIANCE - more data, regularization, ensembling - watching validation.
+  4. STOP AT THE VALIDATION MINIMUM, not the training minimum.
+
+That ordering matters: attack bias first, because until the model CAN represent the
+pattern, every variance-reduction technique is pushing in the wrong direction.""",
+
+    """6. HOW TO DIAGNOSE IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: ASK FIRST WHETHER TRAINING ERROR ITSELF IS
+ACCEPTABLE - IF NOT YOU HAVE A BIAS PROBLEM AND NEED MORE CAPACITY; ONLY IF TRAINING ERROR
+IS GOOD AND VALIDATION ERROR IS NOT DO YOU HAVE A VARIANCE PROBLEM.
+
+THIS IS A LOOP - sweeping capacity - and it needs a stopping rule:
+
+  - Each pass changes the capacity dial in ONE direction and re-measures BOTH errors.
+  - WHAT MAKES IT STOP: validation error stops falling and starts rising. That turning
+    point is the sweet spot, and it is the only signal that matters.
+  - WHAT MAKES IT NOT TERMINATE: watching the GAP between the two curves rather than the
+    validation level. The gap can always be closed by making the model worse, so that
+    objective has a trivial minimum and you will walk straight into underfitting.
+  - Also bounded in practice by the irreducible noise floor: once validation error is near
+    it, further capacity changes are noise-chasing.
+
+THE STEPS:
+
+  1. ESTABLISH A REFERENCE for what "good" means - human performance, a known benchmark, or
+     the noise floor. Without it you cannot judge whether training error is acceptable, and
+     step 3 becomes guesswork.
+
+  2. FIT A SIMPLE MODEL FIRST and record BOTH training and validation error. Always start
+     simple; you cannot recognise high variance without having seen the low-capacity end.
+
+  3. LOOK AT TRAINING ERROR ALONE.
+       Unacceptably high -> HIGH BIAS. Go to step 4.
+       Acceptable         -> go to step 5.
+
+  4. FIX BIAS: richer model, better features, more training, less regularization. Re-measure
+     and return to step 3. Do NOT add data here - it will not move a bias-limited model.
+
+  5. NOW COMPARE VALIDATION AGAINST TRAINING.
+       Validation much worse -> HIGH VARIANCE. Go to step 6.
+       Both good and close   -> done; you are at or near the sweet spot.
+
+  6. FIX VARIANCE: more data, regularization, a simpler model, ensembling, early stopping.
+     Change ONE thing at a time so you can attribute the movement.
+
+  7. SWEEP THE CAPACITY DIAL and plot both curves against it. The validation minimum is the
+     answer, and seeing the whole U is far more informative than testing two points.
+
+  8. CHECK AGAINST THE NOISE FLOOR. If validation error is close to the irreducible level,
+     stop - you are now optimising against randomness.
+
+  9. IF THE VALIDATION MEASUREMENT ITSELF IS NOISY (small data), switch to cross-validation
+     before trusting any of the above. A single split on 200 rows can swing the estimate by
+     ten points, which is larger than most of the differences you are trying to detect.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine hiring someone to predict tomorrow's weather, and you can only train them on last
+month's records.
+
+The first candidate has one rule: "tomorrow will be the same as the average day this
+month." Simple, stable, and if you gave them a different month's records they would produce
+almost the same rule. But they are wrong nearly every day in a systematic way - they never
+predict a storm, because averages do not have storms in them. Handing them ten years of
+records instead of one month changes nothing at all; the rule is still an average. That is
+BIAS: a mistake built into how they think, which more experience cannot correct.
+
+The second candidate memorises everything. Every temperature, every wind reading, every
+coincidence - "the last two times humidity was 71% on a Tuesday it rained, so it will rain."
+On last month's records they are perfect. On next month they are erratic, because half of
+what they learned was coincidence rather than weather. And here is the tell: train them on a
+DIFFERENT month and they come back with a completely different set of rules. That is
+VARIANCE - not a systematic error but an unreliable one, exquisitely sensitive to which
+particular month they happened to see.
+
+Notice the two need opposite help. Give the second candidate ten years of records and they
+improve enormously - coincidences that held for one month will not hold across ten years,
+so the noise washes out. Give the first candidate the same ten years and nothing happens.
+Telling the first candidate to "be more careful" or to simplify further makes them worse.
+
+And there is a floor neither can go below. Some days genuinely are unpredictable from the
+information available. If you are already close to that floor, further effort is spent
+chasing randomness - which is worth knowing before you spend three weeks on it.
+
+The skill is being able to tell, from how someone is failing, which of the two you are
+looking at - because the treatments are opposites, and the wrong treatment does real
+damage.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is the decomposition taken apart term by term - what each
+holds, what it decides, and what moves it.
+
+--- THE THREE TERMS ---
+
+    BIAS SQUARED
+        WHAT IT IS: the gap between the AVERAGE prediction (across models trained on
+        different samples) and the truth, squared.
+        HOLDS: systematic error built into the model family.
+        DECIDES: how well the model could POSSIBLY do with unlimited data from this family.
+        GOES DOWN WITH: more capacity, better features, less regularization.
+        DOES NOT MOVE WITH: more data. This is the single most useful fact in the whole
+        decomposition.
+        SYMPTOM: training error itself is unacceptable.
+
+    VARIANCE
+        WHAT IT IS: the average squared spread of predictions around their own mean.
+        HOLDS: sensitivity to which particular sample you drew.
+        DECIDES: how much your model would change if you re-ran the project with fresh
+        data.
+        GOES DOWN WITH: more data, regularization, simpler models, ensembling, early
+        stopping.
+        GOES UP WITH: capacity.
+        SYMPTOM: training error good, validation error much worse.
+
+    IRREDUCIBLE NOISE
+        WHAT IT IS: randomness in the data-generating process itself.
+        HOLDS: the floor.
+        DECIDES: when to stop. If two identical inputs carry different labels, no function
+        gets both right.
+        MOVES WITH: nothing you can do to the model. Only better MEASUREMENT or better
+        FEATURES - which is really changing the problem rather than the model.
+
+--- THE TWO DIAGNOSTICS, AND WHAT EACH CAN AND CANNOT TELL YOU ---
+
+    TRAINING ERROR
+        HOLDS: performance on data already seen.
+        DECIDES: the BIAS question, and only that. Falls monotonically with capacity, so on
+        its own it can never indicate overfitting.
+        USE IT FOR: "is this model even capable of the task?"
+        DO NOT USE IT FOR: anything else. A 1-NN classifier scores zero here by
+        construction.
+
+    VALIDATION ERROR
+        HOLDS: performance on held-out data.
+        DECIDES: everything else. U-shaped in capacity, and its minimum IS the answer.
+        USE IT FOR: choosing capacity, choosing hyperparameters, deciding when to stop.
+
+    THE GAP BETWEEN THEM
+        HOLDS: an indication of variance.
+        DECIDES: the DIAGNOSIS - never the objective. Closing it by weakening the model is
+        always possible and usually wrong.
+
+--- THE INTERVENTIONS, SORTED BY WHICH TERM THEY MOVE ---
+
+    REDUCE BIAS: richer model family, more features, feature interactions, train longer,
+    reduce regularization, boosting.
+
+    REDUCE VARIANCE: more data, data augmentation, L1/L2 regularization, dropout, a simpler
+    model, early stopping, bagging and random forests.
+
+    REDUCE BOTH AT ONCE (moves you to a different curve entirely, rather than along it):
+    better features, better data quality, more informative inputs. This is why feature work
+    so often beats model work.""",
+
+    """9. THE DECOMPOSITION COMPUTED BY HAND - AND THE DIAGNOSIS INVERTING.
+
+SETUP. The true value at x = 5 is f(x) = 2.0. You train the same model architecture on five
+DIFFERENT samples and record what each predicts at x = 5.
+
+MODEL A - a flexible model (say a degree-9 polynomial):
+
+    predictions:  1.8,  2.4,  1.6,  2.6,  2.1
+
+    mean prediction  m = (1.8 + 2.4 + 1.6 + 2.6 + 2.1) / 5  =  10.5 / 5  =  2.10
+
+    BIAS = m - f = 2.10 - 2.00 = 0.10        ->  bias squared = 0.0100
+
+    VARIANCE = average of (prediction - m) squared:
+        (1.8 - 2.10)^2 = (-0.30)^2 = 0.09
+        (2.4 - 2.10)^2 = ( 0.30)^2 = 0.09
+        (1.6 - 2.10)^2 = (-0.50)^2 = 0.25
+        (2.6 - 2.10)^2 = ( 0.50)^2 = 0.25
+        (2.1 - 2.10)^2 = ( 0.00)^2 = 0.00
+        sum = 0.68,  divided by 5  =  0.1360
+
+    bias squared 0.0100  +  variance 0.1360  =  0.1460  (plus the noise floor)
+
+    VARIANCE IS 13.6 TIMES THE BIAS SQUARED. On average this model is nearly right - 2.10
+    against a truth of 2.00 - but any INDIVIDUAL model is unreliable, ranging from 1.6 to
+    2.6. That is textbook high variance, and the fix is more data or regularization.
+
+MODEL B - a rigid model (say a straight line) on the same five samples:
+
+    predictions:  1.55, 1.60, 1.50, 1.65, 1.60
+
+    mean prediction  m = (1.55 + 1.60 + 1.50 + 1.65 + 1.60) / 5  =  7.90 / 5  =  1.58
+
+    BIAS = 1.58 - 2.00 = -0.42               ->  bias squared = 0.1764
+
+    VARIANCE:
+        (1.55 - 1.58)^2 = 0.0009
+        (1.60 - 1.58)^2 = 0.0004
+        (1.50 - 1.58)^2 = 0.0064
+        (1.65 - 1.58)^2 = 0.0049
+        (1.60 - 1.58)^2 = 0.0004
+        sum = 0.0130,  divided by 5  =  0.0026
+
+    bias squared 0.1764  +  variance 0.0026  =  0.1790
+
+READ THE TWO SIDE BY SIDE:
+
+                    bias^2      variance     total
+    MODEL A         0.0100      0.1360       0.1460
+    MODEL B         0.1764      0.0026       0.1790
+
+MODEL B IS BEAUTIFULLY CONSISTENT - its five predictions span only 0.15 - AND IT IS THE
+WORSE MODEL. It is consistently wrong, clustered around 1.58 when the truth is 2.00. Model
+A scatters from 1.6 to 2.6 and still has lower total error, because it is centred on the
+right answer.
+
+THE INVERSION THAT MATTERS - what happens when you add data:
+
+    MORE DATA SHRINKS VARIANCE AND LEAVES BIAS ALONE. So multiply each model's variance by,
+    say, a quarter (which is roughly what four times the data does) and leave bias
+    untouched:
+
+                    bias^2      variance     total
+    MODEL A         0.0100      0.0340       0.0440     <- improved by 70%
+    MODEL B         0.1764      0.0007       0.1771     <- improved by 1%
+
+    Four times the data transforms Model A and does essentially nothing for Model B.
+
+    Same intervention, same dataset, and the verdict on whether it was worth doing inverts
+    completely depending on which failure mode you had. That is why the diagnosis has to
+    come first: "get more data" is excellent advice for one of these models and a waste of a
+    month for the other.
+
+AND THE CAPACITY SWEEP, so the U-shape is concrete. Polynomials of rising degree fitted to
+30 noisy points from a sine curve, RMSE:
+
+    degree  1:   train 0.42,  validation 0.45      high bias - BOTH bad, small gap
+    degree  3:   train 0.19,  validation 0.22      the sweet spot
+    degree  5:   train 0.14,  validation 0.26      variance starting to bite
+    degree  9:   train 0.04,  validation 0.61      high variance
+    degree 15:   train 0.002, validation 3.10      memorised the sample completely
+
+    Read the training column alone: 0.42, 0.19, 0.14, 0.04, 0.002 - monotonically better,
+    all the way to the useless model. It never turns around, which is exactly why training
+    error cannot detect overfitting.
+
+    Read the validation column: 0.45, 0.22, 0.26, 0.61, 3.10 - a clear U with its minimum at
+    degree 3.
+
+    Note degree 1 in particular: the gap is 0.03, the SMALLEST of any row. By gap alone it
+    looks like the healthiest model on the page. It is the worst-fitting one.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE INTERVENTIONS COST:
+
+  - MORE DATA: the most effective variance fix and usually the most expensive. Worth
+    checking the diagnosis first, because on a bias-limited model it buys nothing at all.
+  - MORE CAPACITY: cheap to try, and it raises variance, so it must be paired with a
+    variance control.
+  - REGULARIZATION: one hyperparameter and a sweep. Trades bias UP for variance DOWN; it is
+    a movement along the curve, not a free improvement.
+  - ENSEMBLING (bagging): k times the training cost for a genuine variance reduction with
+    almost no bias increase. Often the best value in the list.
+  - BETTER FEATURES: the only intervention that routinely lowers BOTH, because it moves you
+    to a different curve rather than along the one you are on. Also the one that takes the
+    most human effort.
+
+WHICH ENSEMBLE FIXES WHICH - a favourite follow-up:
+    BAGGING / RANDOM FORESTS reduce VARIANCE, by averaging models trained on different
+    resamples so their sample-specific quirks cancel. Bias stays roughly where a single tree
+    put it.
+    BOOSTING reduces BIAS, by fitting each new model to what the previous ones got wrong.
+    Which is why boosted trees can overfit if you keep going, while random forests largely
+    do not.
+
+THE INTERVIEW QUESTION, AND THE ANSWER THAT DISTINGUISHES CANDIDATES:
+
+    "Your model has 99% training accuracy and 70% test accuracy. What now?"
+
+The answer is NOT simply "it is overfitting, add regularization" - although that is the
+likely diagnosis. What separates a strong answer is naming what you would CHECK before
+acting:
+
+  - Is 70% actually bad? Compare against the base rate and against a reasonable benchmark.
+    If the classes are 70/30, the model may have learned nothing at all.
+  - Is the test set drawn from the same distribution? A 29-point gap can be distribution
+    shift rather than variance.
+  - Is there leakage in training that is absent at test time? That produces this exact
+    signature and regularization will not touch it.
+  - How much data is there? On a small set the estimate itself may be unstable - see the
+    cross-validation sibling.
+  - Only then: yes, high variance, and the fixes are more data, regularization, a simpler
+    model, ensembling.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Would more data help?" Only if the problem is variance. Say so, and say how you would
+    tell: plot a learning curve - if training and validation error have already converged,
+    more data will not move either.
+  - "Can you have low bias AND low variance?" Yes - with better features or a genuinely
+    better model family. The trade-off holds along one capacity dial, not between all
+    possible models.
+  - "Why do huge neural networks work when the theory says they should have enormous
+    variance?" This is DOUBLE DESCENT: past the interpolation point, test error can fall
+    again. Modern practice does not match the classical U in that regime, and the honest
+    answer is that the picture is empirical and still debated. Naming it shows your
+    knowledge is current.
+
+THE #1 MISTAKE: diagnosing from the GAP between training and validation error rather than
+from the LEVEL of training error. A tiny gap with both numbers bad is high bias, and every
+overfitting remedy applied to it makes things worse - which is precisely the degree-1 row in
+section 9, the row that looks healthiest and fits worst.
+
+RUNNER-UP: assuming more data is always the answer. It is the answer to variance and does
+nothing for bias.
+
+TAKEAWAY: there are exactly two ways to be wrong - too rigid to fit the pattern, or too
+sensitive to the sample you happened to get - so ask whether TRAINING error is acceptable
+before you look at the gap, because the two failures need opposite treatments.""",
 ]
 
 
@@ -53880,73 +54378,532 @@ grows with the square of the sentence length.""",
 ]
 
 _EX_P0H["Cross-validation — what and why"] = [
-    """5-fold CV on 200 samples, worked.
-Split into 5 folds of 40. Train on 160, validate on the held-out 40, five times,
-rotating which fold is held out.
-Suppose the five accuracies are 0.82, 0.79, 0.85, 0.80, 0.84.
-Report the MEAN 0.82 and the SPREAD (std about 0.024). Every sample was used for
-validation exactly once and for training four times.
-Contrast with one 80/20 split: you would have reported a single number - and if
-you happened to draw the fold that scored 0.85 you would ship a model you
-believe is 3 points better than it is.""",
+    """1. THE GOAL - one split is a guess, not a measurement.
 
-    """The unstable-estimate case that makes CV non-negotiable.
-A 200-row medical dataset, single 80/20 split. Re-run with three different random
-seeds and the test accuracy comes out 0.74, 0.86, 0.80. Which is the truth?
-None of them - each is one draw from a distribution with a large variance,
-because 40 test rows means each misclassification moves the score by 2.5 points.
-5-fold CV averages five such draws, cutting the standard error by about sqrt(5).
-Rule of thumb: the smaller the dataset, the more CV matters; with 10 million rows
-a single split is usually fine and much cheaper.""",
+You hold out 20% of your data, train on the rest, and score 0.86 on the held-out part. How
+much do you trust that number?
 
-    """Stratified k-fold, and what happens without it.
-Fraud data: 1,000 rows, 30 positives (3%). Plain 5-fold could easily deal a fold
-with 2 positives and another with 10.
-The fold with 2 gives a recall estimate of 0.0 or 0.5 - pure noise - and the mean
-across folds inherits that noise.
-STRATIFIED k-fold preserves the 3% ratio in every fold, so each fold carries 6
-positives. Same procedure, far lower variance. For classification, stratified is
-the default; use plain k-fold only for regression.
-See [[Class Imbalance Strategies]] for what to do beyond the splitting.""",
+On a large dataset, quite a lot. On 200 rows, almost none - because the 40 rows that
+happened to land in your test set are one arbitrary draw. Draw a different 40 and you might
+get 0.78. Nothing about the model changed; you just got a different sample.
 
-    """The leakage trap - fitting the scaler before splitting.
-Wrong:
-    X = scaler.fit_transform(X)       # <- sees the validation rows' statistics
-    cross_val_score(model, X, y, cv=5)
-The mean and variance used to scale the training data were computed with the
-validation rows included, so information leaked and the CV score is
-optimistically biased - sometimes by several points.
-Right: put every fitted step inside a Pipeline, so each fold refits it on that
-fold's training rows only:
-    pipe = make_pipeline(StandardScaler(), LogisticRegression())
-    cross_val_score(pipe, X, y, cv=5)
-Same for imputation, feature selection and target encoding. This is the most
-common real-world CV bug, and it is exactly what an interviewer probes with 'how
-do you avoid leakage?'""",
+CROSS-VALIDATION replaces that single guess with an average over several splits:
 
-    """Time series - where standard k-fold is simply wrong.
-Predicting tomorrow's demand: random folds would train on JULY and validate on
-JUNE, letting the model 'see the future'. The CV score looks great and
-production fails.
-Use forward-chaining (TimeSeriesSplit) instead:
-    train [1..100]  -> validate [101..120]
-    train [1..120]  -> validate [121..140]
-    train [1..140]  -> validate [141..160]
-Training always precedes validation in time. Same idea for grouped data (several
-rows per patient): use GroupKFold so all of one patient's rows sit in the same
-fold, or the model memorises the patient rather than the disease.""",
+    split the data into k parts (folds)
+    for each fold:  train on the other k-1, score on this one
+    average the k scores
 
-    """Nested CV - the honest way to report a tuned model.
-If you pick hyperparameters using the same CV scores you then report, that number
-is optimistically biased: you selected on the noise.
-Nested CV has an outer loop for the estimate and an inner loop for the tuning:
-    for each of 5 outer folds:
-        run a grid search with its own 5-fold CV on the outer training portion
-        score the winner ONCE on the untouched outer fold
-Cost: 25 model fits per grid point - expensive, which is why it is skipped in
-practice for large data and replaced by a single held-out test set never touched
-until the end.
-Knowing when the shortcut is acceptable, and saying so, is the senior answer.""",
+Every row gets used for training k-1 times and for validation exactly once. You get a mean
+score AND a spread, and the spread tells you how much to trust the mean - which a single
+split cannot give you at all.
+
+Two things it buys, and it is worth separating them:
+
+    RELIABILITY.  Averaging k estimates reduces the influence of any one unlucky split.
+    EFFICIENCY.   Every row contributes to validation, instead of 20% of the data being
+                  set aside and never learned from.
+
+WHAT THIS ENTRY OWNS, so the cluster does not repeat itself:
+
+    THIS ENTRY - how to MEASURE generalisation reliably, especially on small data, and the
+                 variants (stratified, grouped, time-series, nested).
+    "OVERFITTING" (sibling) - diagnosing and preventing it.
+    "BIAS-VARIANCE TRADE-OFF" (sibling) - why the capacity dial has two failure modes.
+
+Cross-validation does not prevent anything. It MEASURES - and a measurement you cannot
+trust makes every decision downstream of it a coin flip.""",
+
+    """2. THE INTUITION - rotate which part you hold back.
+
+A single split uses one arrangement:
+
+    [ TRAIN ................................ ][ TEST ]
+                                                 ^
+                                        one arbitrary 20%
+
+5-fold cross-validation rotates it five times:
+
+    fold 1:  [ TEST ][ train ][ train ][ train ][ train ]   -> score 0.82
+    fold 2:  [ train ][ TEST ][ train ][ train ][ train ]   -> score 0.79
+    fold 3:  [ train ][ train ][ TEST ][ train ][ train ]   -> score 0.86
+    fold 4:  [ train ][ train ][ train ][ TEST ][ train ]   -> score 0.75
+    fold 5:  [ train ][ train ][ train ][ train ][ TEST ]   -> score 0.83
+                                                               ----
+                                                  mean  0.81,  spread +/- 0.04
+
+Look at the individual fold scores: 0.75 to 0.86. If you had done a single split and
+happened to land on fold 4's arrangement, you would have reported 0.75. On fold 3's, 0.86.
+
+THAT ELEVEN-POINT RANGE IS PURE LUCK. Same model, same data, same code - only the
+arrangement differs. Any comparison between two models whose true difference is smaller
+than that range is unmeasurable with one split, which covers most model comparisons you
+will actually make.
+
+Cross-validation gives you the mean AND the spread, so you can say "0.81 plus or minus
+0.04" instead of "0.86" - and the second figure is what tells you whether a rival model
+scoring 0.83 is genuinely better or just differently lucky.
+
+The cost is straightforward: you train k times instead of once. That is the entire trade,
+and it is why cross-validation is standard on small data and often skipped on large data,
+where a single split is already a big enough sample to be stable.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FOLD. One of the k equal parts the data is divided into.
+
+k-FOLD CROSS-VALIDATION. Split into k folds; train k times, each time holding out a
+different fold. 5 and 10 are the usual choices.
+
+LEAVE-ONE-OUT (LOOCV). k equals the number of rows - each row is its own validation set.
+Nearly unbiased, expensive, and its estimate has high variance because the k training sets
+are nearly identical to each other.
+
+STRATIFIED k-FOLD. Folds constructed so each preserves the overall class ratio. The default
+for classification, and essential when classes are imbalanced.
+
+GROUP k-FOLD. Folds that keep related rows together - all readings from one patient, all
+photos of one person. Prevents a subject appearing in both training and validation.
+
+TIME-SERIES SPLIT / FORWARD CHAINING. Always train on earlier data and validate on later.
+Standard k-fold is simply invalid on temporal data.
+
+VALIDATION SET vs TEST SET. Cross-validation produces a VALIDATION estimate used for making
+choices. A final test set, untouched throughout, gives the honest number at the end.
+
+HYPERPARAMETER. A setting you choose rather than learn - regularization strength, tree
+depth, learning rate. Cross-validation is how they are chosen.
+
+NESTED CROSS-VALIDATION. An outer loop for the honest estimate and an inner loop for tuning,
+so hyperparameters are never selected using the same scores you report.
+
+DATA LEAKAGE. Information from the validation fold influencing training. Section 4 has the
+version everyone commits.
+
+FIT vs TRANSFORM. In scikit-learn, `fit` LEARNS parameters from data (a scaler's mean and
+standard deviation); `transform` APPLIES them. The distinction is the whole of trap 1 -
+fitting must happen on training data only.
+
+PIPELINE. An object bundling preprocessing and model together so that cross-validation
+re-fits the preprocessing inside each fold automatically. The standard defence against that
+leak.
+
+FOLD VARIANCE / STANDARD DEVIATION. The spread of scores across folds. Report it - it is
+half the value of doing this at all.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE ALMOST EVERYONE COMMITS: FITTING THE PREPROCESSING BEFORE SPLITTING.
+
+    WRONG:
+        X = scaler.fit_transform(X)          # <- sees every row, including validation ones
+        cross_val_score(model, X, y, cv=5)
+
+    RIGHT:
+        pipe = make_pipeline(StandardScaler(), model)
+        cross_val_score(pipe, X, y, cv=5)    # scaler re-fitted inside each fold
+
+In the wrong version the scaler's mean and standard deviation were computed using rows that
+will later serve as validation data. Information has flowed from the validation fold into
+training, so the reported score is optimistic - and it is optimistic quietly, by a couple of
+points, which is exactly the size of the improvements you are usually trying to detect.
+
+The same applies to ANY step that learns from data: imputing missing values with a column
+mean, feature selection, target encoding, PCA, oversampling. All of it must happen INSIDE
+the fold. Wrapping everything in a pipeline is the defence, and it is why pipelines exist.
+
+TRAP 2: plain k-fold on imbalanced classes. With 1,000 rows and 30 positives (3%), five
+random folds average 6 positives each - but by chance one fold can get 2 and another 11. A
+fold with 2 positives measures recall on two examples, so it can only be 0, 0.5 or 1. The
+fold scores swing wildly and the average means little. STRATIFIED k-fold forces the ratio to
+hold in every fold, and it should be the default for classification.
+
+TRAP 3 - THE SILENT ONE: standard k-fold on TIME SERIES. Random folds will train on July and
+validate on June, letting the model use the future to predict the past. The score comes back
+excellent and production is a disaster. Use forward chaining: always train on earlier data,
+validate on later.
+
+TRAP 4: ignoring GROUPS. Fifty photos of the same person, or twelve readings from one
+patient, split randomly across folds means the model has seen that individual in training
+and is being validated on them too. It memorises the person, not the pattern. Use group
+k-fold so all of an individual's rows stay together.
+
+TRAP 5 - THE SUBTLE ONE: TUNING AND REPORTING WITH THE SAME SCORES. Try 50 hyperparameter
+configurations, take the best cross-validation score, report it. That number is
+optimistically biased, because taking the maximum of 50 noisy estimates preferentially picks
+the one that got lucky on those particular folds. Nested cross-validation is the honest fix,
+and section 9 quantifies how large the bias can be.
+
+TRAP 6: reporting the mean without the spread. "0.81" hides whether the folds were 0.80,
+0.81, 0.82 or 0.62, 0.81, 0.99. The second is not a usable model even though the mean is
+identical.
+
+TRAP 7: using cross-validation on large data out of habit. With 500,000 rows a single
+validation split is already stable, and 5-fold costs five times the training for no real
+gain in reliability.""",
+
+    """5. THE NAIVE APPROACH FIRST, THEN THE UPGRADES.
+
+THE NAIVE APPROACH: one train/test split.
+
+    shuffle, take 80% to train and 20% to test, report the test score.
+
+Fast, simple, and on large datasets entirely adequate. It fails on small data for a reason
+worth stating precisely: THE SCORE YOU REPORT IS ITSELF A RANDOM VARIABLE. With 40
+validation rows, a handful landing awkwardly moves the score by several points, and you have
+no way to tell that from a genuine difference.
+
+Concretely - a 200-row medical dataset, same model, same code, three different random seeds
+for the split:
+
+    seed 1  ->  test accuracy 0.78
+    seed 2  ->  test accuracy 0.86
+    seed 3  ->  test accuracy 0.81
+
+You would report whichever you happened to run. An eight-point range from nothing but the
+shuffle, which is larger than most differences between two candidate models.
+
+UPGRADE 1 - k-FOLD. Rotate the held-out part and average.
+
+Why it helps, stated as the mechanism rather than as a rule: averaging k estimates reduces
+the spread of the average. Each fold score carries its own luck, and independent-ish errors
+partly cancel when averaged. You also get the standard deviation across folds, which turns
+"0.81" into "0.81 plus or minus 0.04" - a statement about how much to trust it.
+
+CHOOSING k - the actual trade:
+    SMALL k (say 3): cheap, but each model trains on only 67% of the data, so the estimate is
+    pessimistic - you are measuring a model trained on less data than your final one will be.
+    LARGE k (say n, leave-one-out): each model trains on nearly everything, so bias is tiny -
+    but the k training sets are nearly identical to each other, the scores are highly
+    correlated, and the average has surprisingly high variance. It also costs n trainings.
+    k = 5 OR 10 is the standard compromise, and 10 is the common default.
+
+UPGRADE 2 - STRATIFIED folds, so class ratios hold in every fold. The default for
+classification.
+
+UPGRADE 3 - GROUP folds, so related rows never straddle the split.
+
+UPGRADE 4 - TIME-SERIES splits, so training always precedes validation in time.
+
+UPGRADE 5 - NESTED CROSS-VALIDATION, and the trick worth explaining from scratch.
+
+Here is the problem it solves. You try 50 hyperparameter configurations, score each with
+5-fold cross-validation, and pick the best. Its score was 0.86. Is 0.86 an honest estimate of
+how the chosen model will perform?
+
+No - and the reason is a general one about selection. Each configuration's score is its true
+performance plus some noise from these particular folds. When you take the MAXIMUM over 50
+such scores, you are systematically favouring configurations whose noise happened to be
+positive. The winner is partly good and partly lucky, and its reported score contains that
+luck.
+
+It is the same effect as: measure 50 people's height once each with a sloppy tape measure,
+report the tallest measurement as that person's height. It will be an overestimate, because
+the tallest MEASUREMENT is more likely to belong to someone who was measured generously.
+
+NESTED CV fixes it by separating the two jobs. An OUTER loop holds out a fold for honest
+scoring. Inside each outer training set, an INNER cross-validation picks the hyperparameters.
+The outer fold was never used for selection, so its score is unbiased. You report the outer
+average.
+
+The cost is multiplicative, and section 10 puts numbers on it.""",
+
+    """6. HOW TO DO IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: ROTATE WHICH SLICE OF THE DATA IS HELD BACK,
+TRAIN AND SCORE ONCE PER ROTATION, AND REPORT THE MEAN AND THE SPREAD - MAKING SURE EVERY
+STEP THAT LEARNS FROM DATA HAPPENS INSIDE THE FOLD.
+
+THIS IS A LOOP with a fixed, finite trip count, which is what makes it easy to reason about:
+
+  - Exactly k iterations, decided before you start. It is a sweep, not a search.
+  - Each iteration trains a FRESH model from scratch. Nothing carries over between folds -
+    reusing a fitted model or a fitted scaler is precisely the leak in trap 1.
+  - WHAT MAKES IT STOP: every fold has served as validation exactly once.
+  - The models are then DISCARDED. Cross-validation produces an ESTIMATE, not a model; the
+    model you ship is refitted on all the data afterwards.
+
+THE STEPS:
+
+  1. DECIDE THE SPLITTING SCHEME FIRST, from the structure of the data:
+        plain rows, balanced classes        -> k-fold
+        classification, any imbalance       -> STRATIFIED k-fold
+        repeated measurements per subject   -> GROUP k-fold
+        anything with a time dimension      -> forward chaining, never random folds
+     Getting this wrong invalidates everything downstream, and it is decided by the data
+     rather than by preference.
+
+  2. CHOOSE k. 5 or 10 for most work. Smaller if training is expensive; leave-one-out only
+     for very small datasets, and knowing its estimate is itself noisy.
+
+  3. BUILD A PIPELINE containing every preprocessing step - scaling, imputation, encoding,
+     feature selection, resampling - together with the model. This is what guarantees they
+     are re-fitted inside each fold rather than once on everything.
+
+  4. FOR EACH FOLD: fit the whole pipeline on the k-1 training folds, score on the held-out
+     fold, record the score. Nothing from the held-out fold may influence the fitting.
+
+  5. AVERAGE THE k SCORES, and compute their standard deviation.
+
+  6. REPORT BOTH. "0.81 plus or minus 0.04" is a result; "0.81" alone is half a result.
+
+  7. IF TUNING HYPERPARAMETERS, use NESTED cross-validation - or at minimum keep a separate
+     untouched test set - so the number you report was not the number you optimised.
+
+  8. REFIT ON ALL THE DATA to produce the model you actually ship. The cross-validation
+     score estimates how that model will perform; it does not produce it.
+
+  9. SANITY-CHECK THE FOLD SPREAD. A large spread means either the dataset is small, or the
+     folds are structurally different - which usually points back to step 1.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine testing whether a new teaching method works, with a class of twenty students.
+
+The obvious approach: teach sixteen of them, then examine the other four. Three pass. 75%.
+
+But which four you set aside makes an enormous difference. If the four happened to include
+two strong students, you get a flattering result. If they included two who were struggling,
+a poor one. With only four people in the exam, one student is worth 25 percentage points.
+The number you report depends heavily on a choice you made arbitrarily.
+
+So instead you do it five times. Set aside a different four each round, teach the other
+sixteen, examine those four, and write down the result. Five rounds, and every student has
+been examined exactly once and taught in four of the five rounds.
+
+Now you have five numbers rather than one. Average them for your best estimate - and, just
+as importantly, look at how much they DISAGREE. If the five rounds gave 74, 75, 76, 75, 75,
+you have a solid finding. If they gave 50, 90, 60, 100, 75, the average is still 75 but you
+have learned that this measurement is nearly meaningless and needs more students.
+
+Two rules make this honest, and both are easy to break without noticing.
+
+First: everything you learn from the students must be re-learned each round, using only that
+round's teaching group. If you set the exam's difficulty by looking at all twenty students
+first - including the four you are about to examine - you have peeked. The exam is now
+tailored to people it was meant to test.
+
+Second: if you use these five rounds to choose between twenty different teaching methods and
+then report the winner's score, that score flatters. The winner is partly the best method and
+partly the one that got the easiest rounds. To report honestly you need a group that played
+no part in choosing.
+
+And at the end, the five test runs are thrown away. They told you how well the method WORKS.
+The class you actually teach is taught with everyone.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each part of the procedure - what it holds, what it decides,
+and what it costs.
+
+--- THE PARAMETERS ---
+
+    k, THE NUMBER OF FOLDS
+        HOLDS: how many train/validate rotations happen.
+        DECIDES: the trade between estimate quality and compute. Larger k means each model
+        trains on more data (less pessimistic bias) but the k training sets overlap more, so
+        their scores are correlated and the average is noisier - and it costs more.
+        TYPICAL: 5 or 10.
+
+    THE SPLITTING SCHEME
+        HOLDS: the rule for which rows go in which fold.
+        DECIDES: whether the estimate is valid at all. Not a preference - it is dictated by
+        the data's structure, and the wrong choice produces confidently wrong numbers.
+
+--- THE SCHEMES, AND WHEN EACH IS REQUIRED ---
+
+    PLAIN k-FOLD
+        Random assignment. Fine for independent rows with balanced classes.
+
+    STRATIFIED k-FOLD
+        HOLDS: the class ratio, preserved in every fold.
+        DECIDES: whether minority-class metrics are measurable at all. With 3% positives, a
+        plain fold can end up with two positives, and recall measured on two examples is
+        noise. The default for classification.
+
+    GROUP k-FOLD
+        HOLDS: a group label per row - patient, user, photo subject.
+        DECIDES: whether the model is measured on genuinely unseen individuals. Without it,
+        the same patient appears in training and validation and the score measures
+        memorisation.
+
+    TIME-SERIES SPLIT (FORWARD CHAINING)
+        HOLDS: the ordering, respected absolutely.
+        DECIDES: whether the model was allowed to see the future. Random folds on temporal
+        data are not a weaker estimate - they are an invalid one.
+
+--- THE OUTPUTS ---
+
+    THE MEAN SCORE
+        HOLDS: the average across folds.
+        DECIDES: your best estimate of generalisation.
+
+    THE STANDARD DEVIATION ACROSS FOLDS
+        HOLDS: the disagreement between folds.
+        DECIDES: how much to trust the mean, and whether a rival model's higher mean is a
+        real difference or noise. Half the value of doing this at all, and the half most
+        often left out of a report.
+
+    THE k TRAINED MODELS
+        HOLDS: nothing you keep. They are discarded.
+        DECIDES: nothing. Cross-validation produces an ESTIMATE; the shipped model is
+        refitted on all the data afterwards. People are often surprised by this.
+
+--- THE THING THAT MUST HAPPEN INSIDE THE FOLD ---
+
+    EVERY STEP THAT LEARNS FROM DATA: scaling (learns mean and standard deviation), imputation
+    (learns the fill value), encoding (learns the categories), feature selection (learns which
+    features), resampling, dimensionality reduction. Any of these fitted before the split
+    leaks validation information into training, and the wrapper that enforces the right
+    behaviour is a PIPELINE.""",
+
+    """9. WORKED WITH REAL NUMBERS.
+
+CASE 1 - 5-FOLD ON 200 SAMPLES.
+
+    200 rows, split into 5 folds of 40. Each round trains on 160 and validates on 40.
+
+        fold 1:  0.82
+        fold 2:  0.79
+        fold 3:  0.86
+        fold 4:  0.75
+        fold 5:  0.83
+
+        mean = (0.82 + 0.79 + 0.86 + 0.75 + 0.83) / 5  =  4.05 / 5  =  0.810
+
+        deviations from the mean:  +0.01, -0.02, +0.05, -0.06, +0.02
+        squared:                    0.0001, 0.0004, 0.0025, 0.0036, 0.0004
+        sum = 0.0070,  divided by 5 = 0.0014,  square root = 0.037
+
+        REPORT: 0.81 plus or minus 0.037
+
+    Now compare against what a single split would have told you. A single 80/20 split IS one
+    of these folds. Had you drawn fold 4's arrangement you would have reported 0.75; fold
+    3's, 0.86.
+
+    ELEVEN POINTS OF SPREAD FROM THE SHUFFLE ALONE. If you were comparing two models whose
+    true difference is three points, a single split cannot distinguish them - it is smaller
+    than the noise. That is the whole argument for cross-validation on small data, and it is
+    quantitative rather than a matter of taste.
+
+CASE 2 - THE SINGLE-SPLIT INSTABILITY, MEASURED DIRECTLY.
+
+    A 200-row medical dataset, one 80/20 split, same model and code, three random seeds:
+
+        seed 1:  0.78
+        seed 2:  0.86
+        seed 3:  0.81
+
+    Eight points of range, produced by nothing but which rows landed where. Whichever you ran
+    first is the number you would have reported and defended.
+
+CASE 3 - STRATIFICATION, AND WHY PLAIN FOLDS BREAK ON IMBALANCE.
+
+    Fraud data: 1,000 rows, 30 positives (3%). Five folds of 200 rows each.
+
+        EXPECTED positives per fold:  30 / 5  =  6
+
+        PLAIN k-fold, one plausible deal:
+            fold 1: 2 positives      fold 2: 11 positives     fold 3: 5
+            fold 4: 6 positives      fold 5: 6 positives
+
+        In fold 1, recall is measured on TWO examples. The only possible values are 0.0, 0.5
+        and 1.0. That fold's score is not a measurement, it is a coin flip - and it enters
+        the average with the same weight as the others.
+
+        STRATIFIED k-fold: 6 positives in every fold, by construction. Recall is measured on
+        6 examples each time - still few, but every fold is measuring the same thing.
+
+CASE 4 - THE LEAKAGE, AND HOW LARGE IT IS.
+
+    Fit the scaler on all 200 rows, then cross-validate:      reported 0.84
+    Fit the scaler inside each fold, via a pipeline:          reported 0.81
+
+    THREE POINTS OF FREE, FAKE IMPROVEMENT. Notice the size: it is not catastrophic, which is
+    what makes it dangerous. It is precisely the magnitude of the genuine improvements you
+    are usually chasing, so it will be mistaken for one - and it will not survive to
+    production.
+
+CASE 5 - NESTED CV, AND THE OPTIMISM IT REMOVES.
+
+    You tune 50 hyperparameter configurations, each scored by 5-fold CV, and take the best.
+
+        best configuration's CV score:                    0.86
+        that configuration's score under nested CV:       0.82
+
+    FOUR POINTS OF OPTIMISM, purely from selection. Taking the maximum of 50 noisy estimates
+    systematically favours whichever configuration got the friendliest folds - so the winner
+    is partly good and partly lucky, and the luck is baked into the reported score.
+
+    THE COST of removing it:
+        plain CV over 50 configs:      50 configs x 5 folds                =    250 fits
+        nested 5-outer x 5-inner:      5 outer x (50 configs x 5 inner)    =  1,250 fits
+                                       plus 5 refits on the outer training sets
+                                                                          =  1,255 fits
+
+    Five times the compute to remove four points of self-deception. Whether that is worth it
+    depends on the stakes - but the four points are there either way, and reporting the 0.86
+    is the choice to not know about them.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - k-FOLD: exactly k times the training cost. 5-fold means five trainings. This is the
+    entire trade, and it is why cross-validation is standard on small data and often skipped
+    on large data - where a single split is already a large enough sample to be stable.
+  - LEAVE-ONE-OUT: n trainings. On 200 rows that is 200 fits; on 100,000 rows it is not a
+    real option.
+  - NESTED CV: outer folds times inner folds times configurations. The numbers grow fast -
+    1,255 fits in section 9's example.
+  - REPEATED k-FOLD (running the whole thing several times with different shuffles) costs
+    another multiple and gives a still more stable estimate. Worth it when the fold spread is
+    large.
+
+WHEN TO USE WHICH:
+
+    SMALL DATA (hundreds to low thousands of rows)   -> cross-validation is essentially
+                                                        mandatory; a single split is noise.
+    LARGE DATA (hundreds of thousands or more)       -> a single split is fine and far
+                                                        cheaper.
+    HYPERPARAMETER TUNING                            -> cross-validation for selection, plus
+                                                        a held-out test set or nested CV for
+                                                        the honest number.
+    EXPENSIVE TRAINING (large neural networks)       -> usually a single split, because k
+                                                        full training runs are unaffordable.
+                                                        Say this in an interview - it shows
+                                                        you know the trade rather than the
+                                                        rule.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why not always use leave-one-out, since each model sees the most data?" Because the n
+    training sets are nearly identical, so the n scores are highly correlated and the average
+    has high variance - plus it costs n trainings. k = 5 or 10 usually gives a better
+    estimate for far less compute.
+  - "How do you cross-validate time series?" Forward chaining only - train on the past,
+    validate on the future. Random folds let the model see the future and produce a score
+    that will not survive deployment.
+  - "You cross-validated and got 0.81. What do you ship?" A model refitted on ALL the data.
+    The cross-validation estimated how that model will perform; it did not produce it. The k
+    fold models are discarded.
+  - "Your CV score is 0.81 and the test score is 0.68. What happened?" Either a leak inside
+    the CV (something fitted before the split), or hyperparameters selected on the same folds
+    you reported, or a distribution difference between the two sets. Check in that order.
+  - "Does cross-validation prevent overfitting?" No. It MEASURES generalisation; it changes
+    nothing about the model. It helps you notice overfitting and choose settings that reduce
+    it - the prevention itself is in the Overfitting sibling.
+
+THE #1 MISTAKE: fitting preprocessing on the whole dataset before cross-validating. It is
+almost universal, it inflates the score by a couple of points - exactly the size of the
+improvements being chased - and it passes silently. Wrap every learned step in a pipeline so
+it is refitted inside each fold.
+
+RUNNER-UP: reporting the mean without the spread, which hides whether the folds agreed at
+all.
+
+TAKEAWAY: a single split gives you one draw from a noisy process, so on small data rotate
+the held-out slice and report the mean AND the spread - and make sure everything that learns
+from data is re-learned inside each fold, or you are measuring a leak rather than a model.""",
 ]
 
 _EX_P0H["CNN vs RNN vs Transformer — when to use which"] = [
