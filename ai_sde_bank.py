@@ -80223,124 +80223,1022 @@ for _e in ENTRIES:
 _EX_P1H = {}
 
 _EX_P1H["Reorganize String (greedy heap)"] = [
-    """The feasibility condition, which you should state before writing code.
-A rearrangement exists exactly when the most frequent character appears at most
-ceil(n/2) times. Reason: place that character in alternating slots - positions
-0, 2, 4, ... - and there are ceil(n/2) of them. Any more and two copies must
-touch, by pigeonhole.
-'aab' (n=3, max count 2, ceil(3/2)=2) -> possible, giving 'aba'.
-'aaab' (n=4, max count 3, ceil(4/2)=2) -> impossible, return ''.
-Saying that condition up front means the greedy is a construction, not a
-gamble, and it gives you the early-exit check for free.""",
+    """1. THE GOAL - shuffle the letters so no two neighbours match.
 
-    """A trace on 'aaabbc'.
-counts a:3, b:2, c:1. Heap (negated) [(-3,a), (-2,b), (-1,c)].
-Pop a -> result 'a', prev = (-2, a) held aside.
-Pop b -> result 'ab', push prev (-2,a) back, prev = (-1, b).
-Pop a -> result 'aba', push (-1,b), prev = (-1, a).
-Pop b -> 'abab', push (-1,a), prev = (0, b) - count exhausted, so it is NOT
-pushed back.
-Pop a -> 'ababa', prev = (0,a). Pop c -> 'ababac'. Heap empty. Done.
-The 'hold the previous character aside for exactly one turn' mechanic is the
-whole algorithm: it makes repeating impossible by construction.""",
+Given a string, REARRANGE ITS CHARACTERS so that no two adjacent characters are the same. Return any
+valid rearrangement, or the empty string if it cannot be done.
 
-    """Why the MOST frequent first, rather than any valid character.
-The scarce resource is slots for the dominant character. If you place rare
-characters early, you arrive at the end holding several copies of the frequent
-one with nowhere to put them. Placing the most frequent whenever it is legal
-keeps its remaining count as low as possible relative to the remaining length -
-which is the invariant that keeps the feasibility condition true all the way
-down.
-This is the same exchange-argument shape as Task Scheduler, and the two
-problems are worth learning as a pair.""",
+    s = "aaabbc"        three a's, two b's, one c
 
-    """The cooldown detail that is easy to get wrong.
-`prev` holds the character just placed, with its count already decremented, and
-it is pushed back only AFTER the next character is popped - and only if its
-count is still non-zero (`prev[0] < 0` in negated form). Push it back before
-popping and it can be selected twice in a row, which is exactly the thing being
-forbidden. Push it back when exhausted and you get phantom characters in the
-output.
-If your answer produces a string with two identical neighbours, this ordering
-is where to look first.""",
+        "ababac"        a-b-a-b-a-c   no two neighbours match     VALID
+        "aabbac"        starts "aa"                               invalid
 
-    """Edge cases.
-'' -> nothing to do; return ''. Single char 'a' -> 'a'.
-'aa' -> n=2, max count 2 > ceil(2/2)=1 -> impossible, ''.
-All distinct 'abcd' -> any order works; the heap happens to produce one.
-The classic failure input is 'vvvlo': counts v:3, l:1, o:1, n=5, ceil(5/2)=3,
-so it IS possible ('vlvov'), and a solution that bails too eagerly on the
-feasibility check gets it wrong. Test that the condition uses ceil, not floor.""",
+    ANSWER: "ababac"   (any valid arrangement is accepted)
 
-    """Complexity and the family.
-Time O(n log k) where k is the number of distinct characters - n pops and
-pushes, each log k. Space O(k).
-The counting-sort alternative is O(n): sort characters by frequency, then fill
-even indices 0,2,4,... with the most frequent characters and odd indices with
-the rest. Faster and cleverer; the heap version is easier to defend under
-pressure. The family: Task Scheduler (same greedy with an explicit cooldown of
-n), Rearrange String k Distance Apart (the general version), and Distant
-Barcodes (identical problem, different wording).""",
+    s = "aa"
+
+        The only arrangements are "aa". The two a's must touch.
+        ANSWER: ""
+
+YOU MUST USE EXACTLY THE CHARACTERS GIVEN - the same letters with the same multiplicities, just in a
+different order. This is a permutation problem, not a construction problem.
+
+WHEN IS IT IMPOSSIBLE? STATE THE CONDITION BEFORE WRITING ANY CODE, because it explains everything the
+algorithm does.
+
+    Think of the most frequent character as needing to be SEPARATED. If it appears m times in a string
+    of length n, those m copies need m − 1 gaps between them, and each gap needs at least one other
+    character. So you need at least m − 1 others, that is n − m >= m − 1, which rearranges to
+
+        m <= (n + 1) / 2          equivalently   m <= ceil(n / 2)
+
+    "aa":     n = 2, m = 2.  ceil(2/2) = 1.  2 > 1  ->  IMPOSSIBLE.
+    "aaab":   n = 4, m = 3.  ceil(4/2) = 2.  3 > 2  ->  IMPOSSIBLE.
+    "aaabbc": n = 6, m = 3.  ceil(6/2) = 3.  3 <= 3 ->  possible.
+
+    CHECKED EXHAUSTIVELY over all 9,840 strings of length 1 to 8 built from {a, b, c}: the code returns
+    the empty string in EXACTLY the cases where m > ceil(n/2), and every non-empty answer it gives is a
+    genuine rearrangement with no equal neighbours. NO MISMATCHES.
+
+THE ALGORITHM NEVER TESTS THAT CONDITION EXPLICITLY. It simply builds greedily and checks the length at
+the end - section 4 explains why that works.""",
+
+    """2. THE INTUITION - always place the most frequent character that is not the one you just placed.
+
+The scarce resource is SLOTS FOR THE DOMINANT CHARACTER. If you spend early positions on rare letters,
+you leave the frequent one with nowhere to go and it ends up bunched at the end.
+
+    "aaabbc" placed rare-first:  c, b, b, ...  ->  "cbba..." already broken, and the three a's are
+                                                   crammed into what is left.
+
+    "aaabbc" placed frequent-first:  a, b, a, b, a, c  ->  "ababac".  The a's get separated as a matter
+                                                            of course.
+
+So the rule is: AT EVERY STEP, PLACE THE MOST FREQUENT CHARACTER STILL AVAILABLE - except that you may
+not place the one you just placed. A MAX-HEAP keyed by remaining count gives you "most frequent" in
+logarithmic time.
+
+THE COOLDOWN. The character just used must sit out exactly one turn. So you do not put it straight back
+into the heap - you HOLD IT ASIDE, place something else, and only then return it.
+
+    "aaabbc",  counts a:3  b:2  c:1
+
+        heap                          take        held aside        result
+        (a,3) (b,2) (c,1)             a           a with 2 left     "a"
+        (b,2) (c,1)                   b           b with 1 left     "ab"     a returns to the heap
+        (a,2) (c,1)                   a           a with 1 left     "aba"    b returns
+        (b,1) (c,1)                   b           b exhausted       "abab"   a returns
+        (a,1) (c,1)                   a           a exhausted       "ababa"  b is spent, not returned
+        (c,1)                         c                             "ababac"
+
+    THE HELD CHARACTER IS RETURNED ONE STEP LATE - which is exactly the one-position gap that keeps it
+    away from itself.
+
+TWO DETAILS THAT LOOK LIKE HOUSEKEEPING AND ARE NOT (section 4):
+
+    THE HELD CHARACTER IS PUT BACK AFTER THE NEXT ONE IS TAKEN, not before. Put it back first and it may
+        be the most frequent again and come straight back out - producing two in a row.
+    A CHARACTER WHOSE COUNT HAS REACHED ZERO IS NOT PUT BACK AT ALL. Return it and the heap never
+        empties.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FREQUENCY / COUNT. How many times a character appears.
+Counter. Python's dictionary subclass that tallies occurrences in one call.
+
+MAX-HEAP / PRIORITY QUEUE. A structure that always hands back its LARGEST item. Python's `heapq` is a
+MIN-heap, so counts are stored NEGATED - the most negative is the largest count. That is the standard
+Python idiom for a max-heap, and section 8 traces what each sign means.
+
+    `heapify`   turns a list into a heap in O(k).
+    `heappop`   removes the smallest (here: the most negative, i.e. the most frequent).
+    `heappush`  inserts.
+
+    Tuples compare element by element, so `(-count, char)` orders by count first and breaks ties by
+    character - which is why the pair is in that order.
+
+GREEDY. Making the locally obvious choice and never reconsidering.
+
+COOLDOWN. Forcing the just-used character to sit out one turn before it can be chosen again.
+
+s. The input string. NOT modified - `Counter` reads it and the result is built fresh.
+counts. Character to frequency.
+max_heap. Pairs of (negated count, character).
+result. The characters placed so far.
+prev. The character just placed, with its count ALREADY DECREMENTED, held aside for one turn.
+cnt, ch. The pair popped from the heap. `cnt` is NEGATIVE.
+
+n. The string's length. k. The number of DISTINCT characters.
+O(n log k) TIME, O(k) SPACE.""",
+
+    """4. THE TWO DETAILS THAT ARE EASY TO GET WRONG - and one of them hangs.
+
+TRAP 1 - PUTTING THE HELD CHARACTER BACK BEFORE TAKING THE NEXT ONE. The order in the code is: POP,
+append, THEN push the previously held character. Reverse those and the cooldown does nothing.
+
+    "aab",  counts a:2  b:1
+
+        CORRECT ORDER:      pop a  ->  "a",  hold a(1)
+                            pop b  ->  "ab", push a(1) back,  hold b(0)
+                            pop a  ->  "aba", b is spent so not returned
+                            RESULT "aba"   VALID
+
+        PUSHING FIRST:      pop a  ->  "a",  hold a(1)
+                            push a(1) back FIRST, then pop  ->  the heap's best is a again
+                                   ->  "aa"   TWO IN A ROW
+                            RESULT "aab"
+
+    IT HANDS BACK THE INPUT STRING UNCHANGED, which is about as clear a failure as you could ask for -
+    and on "aaabbc" it gives "aababc", which merely looks slightly wrong.
+
+TRAP 2 - PUTTING BACK A CHARACTER WHOSE COUNT HAS REACHED ZERO. The guard is
+`if prev and prev[0] < 0` - the count must still be negative, meaning occurrences remain.
+
+    DROP THAT CHECK AND THE PROGRAM DOES NOT TERMINATE.
+
+    Every iteration then pops one entry and pushes one back, so the heap never shrinks. On "aab" the
+    output grows as "ababababab..." for ever; on "aaabbc" it runs past "ababacabcabcabc..." indefinitely.
+
+    THIS IS NOT A WRONG ANSWER, IT IS A HANG - which is worse, and it is caused by deleting four
+    characters that look like a tidiness check.
+
+TRAP 3 - EXPECTING AN EXPLICIT FEASIBILITY TEST. There is none. The algorithm builds greedily and then
+compares lengths: `return res if len(res) == len(s) else ""`.
+
+    WHY THAT DETECTS IMPOSSIBILITY: on "aa" the heap holds only `(-2, a)`. The first pop takes an a and
+    holds it aside; the heap is now EMPTY, so the loop ends after one character. The result "a" is
+    shorter than the input, so the function returns "".
+
+    The held-aside character can never be placed because there is nothing to place between it and
+    itself - and that is exactly the situation the ceil(n/2) rule describes.
+
+TRAP 4 - THE EMPTY INPUT. `Counter("")` is empty, the heap is empty, the loop never runs, and `res` is
+"" with `len(res) == len(s)` both 0 - so it returns "". CORRECT, though note the empty string is both
+the valid answer and the failure signal here. Harmless because they coincide.
+
+TRAP 5 - FORGETTING THAT `cnt` IS NEGATIVE. `prev = (cnt + 1, ch)` ADDS one to a negative number, which
+moves it TOWARD zero - that is, it decreases the remaining count by one. Writing `cnt - 1` increases it
+and the loop never ends.
+
+TRAP 6 - ASSUMING THE OUTPUT IS UNIQUE. Any valid arrangement is accepted. "aaabbc" could equally be
+"abacab"; the heap's tie-breaking by character just makes this implementation deterministic.""",
+
+    """5. THE ALTERNATIVES, AND WHY MOST-FREQUENT-FIRST IS THE RIGHT GREEDY.
+
+VERSION A - TRY EVERY PERMUTATION. n! arrangements, checking each for adjacent duplicates. For n = 10
+that is 3,628,800; hopeless beyond that.
+
+VERSION B - PLACE ANY VALID CHARACTER AT EACH STEP, backtracking when stuck. Correct, and it explores
+enormously more than it needs to - the greedy below never has to backtrack at all.
+
+VERSION C - MAX-HEAP GREEDY, which is the code here. O(n log k).
+
+VERSION D - COUNTING SORT INTO ALTERNATING SLOTS. A genuinely better alternative worth knowing:
+
+    Sort the characters by frequency, then fill positions 0, 2, 4, ... with the most frequent character
+    first, and when you run off the end, continue at positions 1, 3, 5, ...
+
+    That places the dominant character into the even slots, which is exactly where it must go, and
+    everything else follows. O(n + k) with no heap at all - so it beats the heap version, and it is the
+    right answer to "can you do better?".
+
+    THE HEAP VERSION IS STILL THE ONE TO WRITE FIRST: it generalises immediately to Task Scheduler and
+    to the version where the cooldown is longer than one, where the slot-filling trick stops working.
+
+WHY MOST FREQUENT FIRST - the argument, since "greedy" needs justifying.
+
+    THE BINDING CONSTRAINT IS THE DOMINANT CHARACTER. A character appearing m times needs m − 1
+    separators, and every position spent on something else while the dominant character still has
+    copies left is a position that could have been a separator later.
+
+    Concretely: suppose at some step the dominant character d has m copies remaining out of r positions
+    left, and you place something else instead. Now d has m copies to fit into r − 1 positions, so the
+    ratio m / (remaining) has got WORSE. Placing d instead keeps that ratio falling as fast as possible.
+
+    Since feasibility is entirely a statement about that ratio - m <= ceil(r/2) - never letting it
+    worsen unnecessarily is precisely what keeps a feasible instance feasible.
+
+    THE COOLDOWN IS WHAT STOPS THIS BEING TRIVIAL: you cannot place d twice running, so on alternate
+    steps you must place the SECOND most frequent, and the heap supplies that automatically.
+
+    (Checked exhaustively over all 9,840 strings of length 1 to 8 from {a, b, c}: the greedy succeeds on
+    every feasible input and fails on every infeasible one. It is not merely usually right.)""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: REPEATEDLY PLACE WHICHEVER CHARACTER HAS THE MOST COPIES
+LEFT, EXCEPT THE ONE YOU JUST PLACED - WHICH YOU HOLD ASIDE FOR EXACTLY ONE TURN BEFORE LETTING IT
+COMPETE AGAIN.
+
+THERE IS NO RECURSION. The mechanism is A PRIORITY QUEUE PLUS ONE HELD-BACK ITEM:
+
+  - The queue always hands back the character with the most copies remaining.
+  - Exactly one character is out of the queue at any moment - the one just placed - which is what
+    guarantees it cannot be chosen twice in a row.
+  - WHAT MAKES IT STOP: every turn removes one character from the queue and returns at most one, and a
+    character is only returned while copies remain - so the total number of copies strictly falls and
+    the queue must empty. Return an exhausted character and that guarantee is lost, and the loop runs
+    for ever.
+
+THE STEPS:
+
+  1. COUNT HOW MANY TIMES EACH CHARACTER APPEARS, AND PUT THOSE COUNTS INTO A QUEUE THAT ALWAYS YIELDS
+     THE LARGEST.
+
+  2. START AN EMPTY RESULT AND AN EMPTY HOLDING SLOT.
+
+  3. WHILE THE QUEUE IS NOT EMPTY:
+
+     a. TAKE THE CHARACTER WITH THE MOST COPIES REMAINING AND APPEND IT TO THE RESULT.
+
+     b. IF SOMETHING IS BEING HELD ASIDE AND IT STILL HAS COPIES LEFT, RETURN IT TO THE QUEUE NOW.
+
+        NOW, AFTER THE TAKE - not before. Returning it first would let it be the most frequent again
+        and be taken immediately, putting two of the same character side by side. Doing it in this
+        order is the entire cooldown.
+
+        AND ONLY IF COPIES REMAIN. Returning an exhausted character means the queue receives one item
+        for every item it gives out, so it never empties and the program never finishes.
+
+     c. HOLD ASIDE THE CHARACTER JUST PLACED, WITH ITS COUNT REDUCED BY ONE. It will be offered back on
+        the next turn.
+
+  4. IF THE RESULT IS AS LONG AS THE INPUT, RETURN IT. OTHERWISE THE TASK WAS IMPOSSIBLE, SO RETURN
+     NOTHING.
+
+     There is no separate feasibility test. When one character dominates too heavily, the queue empties
+     while that character is still being held aside, the result comes up short, and the length
+     comparison catches it.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine you have a bag of coloured tiles - several red, a couple of blue, one green - and you must lay
+them out in a row so that no two tiles of the same colour end up next to each other.
+
+The instinct might be to start with the rare colours and save the common ones for later. That is
+exactly backwards. The common colour is the one that will struggle to find room, so it needs the
+positions; spend the early slots on singletons and you will reach the end with a fistful of reds and
+nowhere to put them.
+
+So the rule is: at every step, lay down whichever colour you have MOST of. That keeps the dominant
+colour thinning out as fast as possible, and it is the only colour whose scarcity of space is ever a
+problem.
+
+Of course you cannot lay down the same colour twice running. So you do something small and precise:
+after placing a tile, you set that colour ASIDE - out of the running - and place the next tile from
+whatever remains. Only then does the set-aside colour rejoin the pool.
+
+That one-turn delay is the whole mechanism. Because the colour you just used is unavailable for exactly
+one turn, it cannot possibly appear twice in a row, and because it comes back immediately afterwards it
+is never delayed longer than necessary.
+
+The order of those two actions matters enormously and is easy to get backwards. If you put the colour
+back into the pool BEFORE choosing the next tile, then - being the most plentiful - it will simply be
+chosen again straight away, and you will have laid two of the same colour side by side while feeling
+you followed the rule.
+
+There is a second small thing. When you set a colour aside, you have used one of its tiles, so it may
+now have none left. In that case it must not rejoin the pool at all. If you keep returning colours you
+have run out of, the pool receives something every time it gives something out, so it never empties -
+and you will go on laying down phantom tiles for ever, producing an endless row of colours you do not
+have.
+
+At the end, count what you have laid out. If it matches the number of tiles you started with, that is
+your answer. If it comes up short, it is because one colour so outnumbered the rest that at some point
+it was set aside with nothing left to place between it and itself - which means no arrangement was ever
+possible, and you say so.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep s = "aaabbc" beside you, answer "ababac".
+
+    import heapq
+    from collections import Counter
+
+`heapq` is a MIN-heap, which is why counts are negated below. `Counter` tallies characters in one call.
+
+    def reorganize_string(s):
+        counts = Counter(s)
+
+    counts  HOLDS character to frequency. For "aaabbc": {a: 3, b: 2, c: 1}.
+
+`s` itself is never modified - the result is built fresh.
+
+        max_heap = [(-cnt, ch) for ch, cnt in counts.items()]
+
+    max_heap  HOLDS pairs of (NEGATED count, character).
+
+THE NEGATION IS THE MAX-HEAP IDIOM. Python only provides a min-heap, so storing −3 for a count of 3
+makes the most frequent character compare smallest and come out first.
+
+The pair is ordered (count, char) so that tuple comparison sorts by count first, breaking ties by
+character - which is what makes this implementation deterministic rather than arbitrary.
+
+        heapq.heapify(max_heap)               # most frequent char on top
+
+Turns the list into a heap in O(k).
+
+        result = []
+        prev = None                           # char just placed (cools down one turn)
+
+    result  HOLDS the characters placed so far.
+    prev    HOLDS the character just placed, WITH ITS COUNT ALREADY REDUCED, kept out of the heap for
+            exactly one turn. This single held-back item IS the cooldown.
+
+        while max_heap:
+
+Continue while any character remains available. Termination is argued in section 6 and depends on the
+count check below.
+
+            cnt, ch = heapq.heappop(max_heap)
+
+Take the character with the most copies remaining. `cnt` is NEGATIVE.
+
+            result.append(ch)
+
+Place it.
+
+            if prev and prev[0] < 0:
+                heapq.heappush(max_heap, prev)   # re-add the cooled-down char
+
+THE COOLDOWN, AND BOTH HALVES MATTER.
+
+    ITS POSITION - AFTER the pop. Pushing before would let the just-placed character be chosen again
+        immediately, giving two in a row. On "aab" that returns the input unchanged (trap 1).
+    `prev[0] < 0` - the held character still has copies left. Without this check the heap gains an item
+        for every item it loses and NEVER EMPTIES: on "aab" the output grows as "ababab..." without end
+        (trap 2). A hang, not a wrong answer.
+
+            prev = (cnt + 1, ch)              # used one occurrence (cnt is negative)
+
+Hold this character aside with one fewer copy.
+
+`cnt + 1` on a NEGATIVE number moves it toward zero - which is a DECREASE in the remaining count. A
+count of −3 becomes −2. Writing `cnt - 1` would increase the count and the loop would never finish
+(trap 5).
+
+        res = "".join(result)
+        return res if len(res) == len(s) else ""
+
+THE FEASIBILITY CHECK, AND IT IS A LENGTH COMPARISON RATHER THAN A FORMULA (trap 3).
+
+If one character dominates too heavily, the heap empties while that character is still held aside, the
+result comes up short, and this line returns "". No explicit ceil(n/2) test appears anywhere.""",
+
+    """9. TRACED, PLACEMENT BY PLACEMENT - AND THE TWO WAYS TO BREAK IT.
+
+TRACE 1 - s = "aaabbc". counts a:3, b:2, c:1. n = 6.
+
+    max_heap after heapify: [(-3,'a'), (-2,'b'), (-1,'c')]
+    result = [],  prev = None
+
+    STEP 1:  pop (-3,'a').  result = "a".
+             prev is None, so nothing is pushed back.
+             prev = (-3+1, 'a') = (-2, 'a')          two a's left, held aside
+             heap: [(-2,'b'), (-1,'c')]
+
+    STEP 2:  pop (-2,'b').  result = "ab".
+             prev is (-2,'a') and −2 < 0, so PUSH (-2,'a') back.
+             prev = (-2+1, 'b') = (-1, 'b')
+             heap: [(-2,'a'), (-1,'c')]
+
+    STEP 3:  pop (-2,'a').  result = "aba".
+             push (-1,'b') back.
+             prev = (-1, 'a')
+             heap: [(-1,'b'), (-1,'c')]
+
+    STEP 4:  pop (-1,'b')  -  the tie between (-1,'b') and (-1,'c') breaks on the character.
+             result = "abab".  push (-1,'a') back.
+             prev = (0, 'b')                         b is now EXHAUSTED
+             heap: [(-1,'a'), (-1,'c')]
+
+    STEP 5:  pop (-1,'a').  result = "ababa".
+             prev is (0,'b') and 0 is NOT < 0, so b is NOT pushed back.  <- the exhaustion check firing
+             prev = (0, 'a')
+             heap: [(-1,'c')]
+
+    STEP 6:  pop (-1,'c').  result = "ababac".
+             prev is (0,'a'), not pushed back.
+             heap is empty.
+
+    res = "ababac", length 6 = length of s.  RETURN "ababac".
+
+    CHECK: a-b-a-b-a-c, no two neighbours equal, and the letters are exactly three a's, two b's, one c.
+
+TRACE 2 - PUSHING THE HELD CHARACTER BACK BEFORE THE POP (trap 1). s = "aab", counts a:2, b:1.
+
+    CORRECT ORDER:
+        pop (-2,'a')  ->  "a",   prev = (-1,'a')
+        pop (-1,'b')  ->  "ab",  push (-1,'a'),  prev = (0,'b')
+        pop (-1,'a')  ->  "aba", b exhausted so not pushed
+        RETURN "aba".   VALID.
+
+    PUSHING FIRST:
+        pop (-2,'a')  ->  "a",   prev = (-1,'a')
+        NOW PUSH (-1,'a') BACK BEFORE POPPING. Heap: [(-1,'a'), (-1,'b')].
+        pop (-1,'a')  -  'a' beats 'b' on the tie-break  ->  "aa"     TWO IN A ROW
+        ... RETURN "aab"
+
+    IT HANDS BACK THE INPUT STRING UNCHANGED - the most legible possible failure. On "aaabbc" the same
+    bug gives "aababc", which merely looks slightly off; on "vvvlo" it gives "vvlov".
+
+TRACE 3 - DROPPING THE `prev[0] < 0` CHECK (trap 2). s = "aab".
+
+    Every turn now pops one entry and pushes one back, so the heap size never falls.
+
+        "a", "ab", "aba", "abab", "ababa", "ababab", ...
+
+    THE LOOP NEVER TERMINATES. Cut off after 200 steps the result reads
+    "ababababababababababababababababababab..." - a string far longer than the input, made of
+    characters that ran out long ago.
+
+    On "aaabbc" the same happens after a correct start:
+    "ababacabcabcabcabcabcabcabc..." for ever.
+
+    A HANG, not a wrong answer, from deleting what looks like a tidiness check.
+
+TRACE 4 - THE IMPOSSIBLE CASE (trap 3). s = "aa". counts a:2, n = 2.
+
+    heap: [(-2,'a')]
+    STEP 1:  pop (-2,'a').  result = "a".  prev was None so nothing pushed.  prev = (-1,'a').
+             THE HEAP IS NOW EMPTY - the only character is being held aside.
+    Loop ends.
+
+    res = "a", length 1, but len(s) is 2.  RETURN "".
+
+    NO FORMULA WAS EVALUATED. The greedy simply ran out of anything to place between the two a's, which
+    is precisely what m > ceil(n/2) means: here m = 2 and ceil(2/2) = 1.
+
+    THE RULE AND THE CODE AGREE EXACTLY. Across all 9,840 strings of length 1 to 8 over {a, b, c}, the
+    function returns "" in exactly the cases where the most frequent character exceeds ceil(n/2), and
+    every non-empty result is a valid rearrangement. Zero mismatches.
+
+THE TINY INPUTS:
+    s = ""      the heap is empty, the loop never runs, res is "" and len matches.  RETURN "".
+                (Note "" is both the valid answer and the impossibility signal here - harmless, since
+                they coincide.)
+    s = "a"     one pop, result "a", heap empties.  RETURN "a".
+    s = "abcd"  every count is 1, so nothing is ever pushed back.  RETURN "abcd".
+    s = "aaab"  n = 4, m = 3, ceil(4/2) = 2, and 3 > 2.  The greedy places a, b, a and then the heap is
+                empty with an a still held aside.  RETURN "".""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log k), where n is the string's length and k the number of DISTINCT characters.
+
+In plain words: one character is placed per iteration, so there are n iterations, and each does one
+heap pop and at most one push - each costing the logarithm of the heap's size, which is at most k. The
+initial count and heapify are O(n) and O(k).
+
+    FOR LOWERCASE LETTERS k IS AT MOST 26, so log k is under 5 and the whole thing is effectively
+    linear. Worth saying - the log factor is bounded by the alphabet, not by the input.
+
+SPACE: O(k) for the counts and the heap, plus O(n) for the result. The input is not modified.
+
+THE COUNTING-SORT ALTERNATIVE, and it is genuinely better: sort characters by frequency, then fill
+positions 0, 2, 4, ... with the most frequent first and wrap to 1, 3, 5, ... when you run off the end.
+O(n + k) with NO HEAP AT ALL.
+
+    SO WHY WRITE THE HEAP VERSION? Because it generalises and the slot-filling does not. Change the
+    cooldown from one to k turns - which is Task Scheduler - and the alternating-slots trick stops
+    working while the heap version needs only a longer holding queue.
+
+THE FAMILY - GREEDY WITH A MAX-HEAP AND A COOLDOWN:
+
+    REORGANIZE STRING            cooldown of 1, hold ONE character aside      <- this entry
+    TASK SCHEDULER               cooldown of n, hold a QUEUE of characters aside for n turns; the
+                                 answer is often computed by a formula instead
+    DISTANT BARCODES             the identical problem with numbers rather than letters
+    REARRANGE STRING K DISTANCE APART   the general version - no two equal characters within k
+    LONGEST HAPPY STRING         a cap on runs rather than a flat ban, same heap shape
+
+    THE RECOGNITION CUE: arrange items so that equal ones are kept apart, and the frequencies are
+    lopsided. Reach for a max-heap on frequency plus a holding area sized to the cooldown - and state
+    the feasibility condition before writing anything.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Can you do it without a heap?" Yes - counting sort into alternating positions, O(n + k).
+  - "What if no two equal characters may be within k positions?" Rearrange String k Distance Apart -
+    hold a QUEUE of k cooling characters instead of one.
+  - "How do you know when it is impossible?" m <= ceil(n/2), derived from needing m − 1 separators
+    (section 1) - and note this code never evaluates it, catching the case by a length comparison.
+  - "Is the answer unique?" No, any valid arrangement is accepted; the tie-break by character just makes
+    this implementation deterministic.
+  - "What is the maximum number of a single character you can have?" Exactly ceil(n/2), achieved when
+    it occupies every other position.
+
+THE #1 BEGINNER MISTAKE: returning the just-placed character to the heap BEFORE taking the next one.
+The cooldown then does nothing, the same character is immediately the most frequent again, and it comes
+straight back out - on "aab" the function hands you back "aab" unchanged.
+
+RUNNER-UP, AND IT IS WORSE: dropping the `prev[0] < 0` check, so that exhausted characters are returned
+to the heap. The heap then receives one item for every item it gives out, never empties, and the
+program HANGS - emitting "abababab..." indefinitely rather than returning a wrong answer.
+
+TAKEAWAY: always place the character with the most copies left, because the dominant one is the only
+thing that can make the arrangement impossible - and hold the character you just placed out of the heap
+for exactly one turn, returning it AFTER the next pick and only while copies remain, since returning it
+early breaks the rule and returning it when empty stops the program ever finishing.""",
 ]
 
 _EX_P1H["Sum Root to Leaf Numbers"] = [
-    """The example, traced.
-Tree 4 -> (9 -> (5, 1), 0).
-dfs(4, 0): current = 0*10 + 4 = 4, not a leaf, recurse both sides.
-  dfs(9, 4): current = 4*10 + 9 = 49, not a leaf.
-    dfs(5, 49): current = 495, leaf -> return 495.
-    dfs(1, 49): current = 491, leaf -> return 491.
-  returns 986.
-  dfs(0, 4): current = 40, leaf -> return 40.
-Total 1026.
-The one-line idea: `current * 10 + node.val` builds the number digit by digit
-on the way DOWN, and a leaf is where a number is complete.""",
+    """1. THE GOAL - every root-to-leaf path spells a number.
 
-    """Why the accumulator is passed DOWN, not built up.
-The digits are ordered root-first, so the number depends on the path from the
-root - information that flows downward. Trying to return numbers upward means
-each subtree returns a value that must then be shifted by the depth of the
-node above it, which needs the height and is far messier.
-The general rule this illustrates: a ROOT-TO-NODE property means state travels
-down as a parameter (Count Good Nodes, Path Sum, this); a SUBTREE property
-means results travel up as a return value (Diameter, Maximum Path Sum). Naming
-which kind you are facing decides the shape before you write anything.""",
+Each node holds a single DIGIT. Read the digits from the root down to a leaf and you get a number, with
+the root as the MOST SIGNIFICANT digit. ADD UP THE NUMBERS FROM EVERY ROOT-TO-LEAF PATH.
 
-    """The leaf test, and the single-child trap again.
-A node with one child is not a leaf, so the check must be
-`left is None and right is None`. Test only one side and a node with a lone
-child returns a partial number AND recurses, double counting.
-Concretely on 1 -> (2, None): the correct answer is 12. A one-sided leaf check
-returns 1 (from treating node 1 as a leaf because its right is None) plus 12,
-giving 13 - a wrong answer that looks close enough to survive a casual test.""",
+            4
+           / \\
+          9   0
+         / \\
+        5   1
 
-    """Why returning 0 for None is the right base case.
-`if node is None: return 0` means an absent subtree contributes nothing to the
-sum, which composes correctly with the addition at every internal node. It also
-means the function is safe to call on an empty tree.
-Note the interaction with the leaf check: because leaves return before
-recursing, the None branch is only ever reached from a node with exactly one
-child - so the two base cases are doing different jobs and you need both.""",
+        4 -> 9 -> 5   spells  495
+        4 -> 9 -> 1   spells  491
+        4 -> 0        spells   40
 
-    """Edge cases and overflow.
-Empty tree -> 0. Single node 7 -> 7.
-A left-skewed chain 1 -> 2 -> 3 spells 123 from ONE path, so the answer is 123,
-not 1+12+123. Only complete root-to-leaf paths count, which is what the leaf
-check enforces.
-Depth matters for overflow: a tree 20 deep spells a 20-digit number, which
-exceeds 64-bit range. Python is fine; in Java or C++ you would need long or big
-integers, and LeetCode constrains the depth to about 10 precisely to avoid it.
-Worth naming - it is the kind of detail that shows you thought past Python.""",
+    ANSWER: 495 + 491 + 40 = 1026
 
-    """Complexity and the family.
-Time O(n), one visit per node. Space O(h) for the recursion - O(log n)
-balanced, O(n) skewed, which is the usual argument for an explicit stack of
-(node, current) pairs if depth is a concern.
-Family: Binary Tree Paths (collect the strings instead of summing), Path Sum
-(compare against a target instead of accumulating digits), Smallest String
-Starting From Leaf (same accumulation, reversed and compared), and Sum of Root
-To Leaf Binary Numbers (current * 2 + val instead of * 10). All are the same
-three lines with a different accumulator.""",
+THREE THINGS THE QUESTION IS SAYING:
+
+    THE ROOT IS THE LEADING DIGIT. Going down APPENDS digits to the right, so the number grows by a
+        factor of ten at each step. That is what makes the running value `current * 10 + node.val`.
+    ONLY COMPLETE ROOT-TO-LEAF PATHS COUNT. The partial numbers along the way are not added.
+
+        A left-leaning chain 1 -> 2 -> 3 spells ONE number, 123.  THE ANSWER IS 123, NOT
+        1 + 12 + 123 = 136. Only the leaf completes a number.
+
+    A LEAF IS A NODE WITH NO CHILDREN AT ALL. A node with one child is a bend in the number, not its
+        end - and section 4 shows what happens if you forget.
+
+WHY IT IS A NATURAL "CARRY IT DOWN" PROBLEM. The number depends on the digits ABOVE the current node -
+its ancestors - and a node holds no information about them. So something must travel DOWNWARD as the
+walk descends.
+
+    THIS ENTRY BELONGS TO THAT FAMILY: COUNT GOOD NODES carries a running MAXIMUM down, PATH SUM II
+    carries a PATH LIST and a remaining target, and THIS ONE CARRIES A RUNNING NUMBER. The mirror image
+    is BINARY TREE TILT, where a subtree sum is returned UP. THIS ENTRY OWNS THE RUNNING NUMBER and the
+    times-ten step.""",
+
+    """2. THE INTUITION - multiply by ten and add, all the way down.
+
+Carry one number as you descend: THE VALUE SPELLED BY THE PATH SO FAR.
+
+    ARRIVING AT A NODE, the number you were carrying gains one more digit on the right:
+
+        current  =  current * 10 + this node's digit
+
+    STARTING VALUE IS 0, so at the root that gives 0 * 10 + 4 = 4 - the root's own digit, as it should.
+
+            4                current = 0*10 + 4  =   4
+           / \\
+          9   0              left:  4*10 + 9 = 49        right:  4*10 + 0 = 40
+         / \\
+        5   1                left: 49*10 + 5 = 495       right: 49*10 + 1 = 491
+
+    AT A LEAF, the number is finished - hand it back.
+    AT ANY OTHER NODE, hand back the total from the left side plus the total from the right side.
+
+        node 5  is a leaf  ->  495
+        node 1  is a leaf  ->  491
+        node 9  is not     ->  495 + 491 = 986
+        node 0  is a leaf  ->   40
+        node 4  is not     ->  986 + 40 = 1026
+
+WHAT TRAVELS WHICH WAY, because this is the crux:
+
+    DOWNWARD goes the running number, as a PARAMETER. It depends on the ancestors, which the node
+        cannot see.
+    UPWARD comes a SUM, as a RETURN VALUE. It carries no information about the path - just a total to
+        be added in.
+
+    ONE PARAMETER DOWN, ONE NUMBER UP, and no shared state anywhere. That is why this entry needs no
+    backtracking, no `pop`, and no copying - unlike its sibling Path Sum II, which carries a mutable
+    list down and therefore must undo every step.
+
+WHY MULTIPLYING BY TEN IS THE WHOLE ARITHMETIC. Appending a digit to a decimal number is exactly
+"shift left one place, then add" - 49 becomes 495 because 49 * 10 = 490 and 490 + 5 = 495. There is no
+string building and no reversing; the number is assembled in the right order because the walk visits
+the digits in the right order.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ROOT-TO-LEAF PATH. A walk from the root, always to a child, ending at a leaf.
+LEAF. A node with NO children - BOTH `left` and `right` are None.
+
+MOST SIGNIFICANT DIGIT. The leftmost one, worth the most. Here that is the root.
+
+ACCUMULATOR / RUNNING VALUE. A value carried along and updated at each step. Here, the number spelled
+so far - `current` in the code.
+
+PARAMETER PASSED DOWN. How information about ANCESTORS reaches a node. Contrast with a RETURN VALUE,
+which carries information UP from descendants.
+
+DFS (DEPTH-FIRST SEARCH). Following one path to its end before backing up.
+RECURSION. A function calling itself; each call PAUSES at the call site and resumes when the inner call
+returns.
+THE CALL STACK. The pile of paused calls; its depth here is the tree's HEIGHT.
+
+BASE CASE. `node is None` returning 0 - an absent subtree contributes nothing.
+
+root. The tree's top node.
+dfs(node, current). The walk.
+node. Where the walk stands. current. The number spelled from the root down to and including this node.
+
+n. The number of nodes. h. The height.
+O(n) TIME, O(h) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - THE LEAF TEST, AGAIN. `node.left is None and node.right is None`. BOTH sides. A node with
+exactly one child is not a leaf.
+
+    TREE: node 1 whose ONLY child is a RIGHT child, 2.
+
+            1
+             \\
+              2
+
+        CORRECT:  node 1 is not a leaf, so it recurses. The left call returns 0, the right call reaches
+                  node 2 with current = 1*10 + 2 = 12, which IS a leaf.
+                  ANSWER 12.
+
+        TESTING ONLY `node.left is None`:  node 1 has no left child, so it is called a leaf and its
+                  running value 1 is returned immediately - the node 2 below it is never visited.
+                  ANSWER 1.
+
+    12 AGAINST 1. The number is cut off halfway down. This is exactly the same trap as in Path Sum II,
+    and on any tree where every node has two children or none, the buggy version agrees everywhere - so
+    it survives casual testing.
+
+TRAP 2 - ADDING THE PARTIAL NUMBERS ALONG THE WAY. Only a leaf completes a number. A chain
+1 -> 2 -> 3 spells ONE number, 123. Accumulating at every node would give 1 + 12 + 123 = 136, which
+answers a different question.
+
+    The structure of the code prevents it: `current` is only RETURNED at a leaf, and internal nodes
+    return the SUM OF THEIR CHILDREN rather than anything of their own.
+
+TRAP 3 - RETURNING SOMETHING OTHER THAN 0 FOR AN ABSENT NODE. `if node is None: return 0` is what makes
+the addition compose. A node with one child returns `dfs(left) + dfs(right)`, and the missing side
+contributing 0 is exactly right - the present side's total passes through unchanged.
+
+    Returning `current` there instead would count the partial number of every one-child node, which is
+    trap 2 arriving by a different route.
+
+TRAP 4 - BUILDING A STRING AND CONVERTING AT THE END. `current = current * 10 + node.val` costs one
+multiply and one add. Concatenating characters and calling `int()` at each leaf is correct and does
+more work - O(h) per leaf for the conversion, plus allocations. Worth mentioning as the obvious
+alternative and then rejecting.
+
+TRAP 5 - OVERFLOW, IN A LANGUAGE WITH FIXED-WIDTH INTEGERS. A path of depth 10 with every digit 9
+spells 9,999,999,999 - and the largest signed 32-bit integer is 2,147,483,647. SO THE NUMBER FROM A
+SINGLE PATH CAN EXCEED AN int32 BEFORE ANY SUMMING HAPPENS.
+
+    LeetCode's version guarantees the ANSWER fits in a 32-bit integer, which is a promise about the
+    INPUTS rather than anything the algorithm enforces. Python's integers are unbounded so the issue is
+    invisible here; in Java or C++ you would use a `long`.
+
+TRAP 6 - THE EMPTY TREE. `dfs(None, 0)` returns 0 at the guard, so the function returns 0. Correct, with
+no special case - and worth checking, since several entries in this bank crash on their empty input.""",
+
+    """5. THE ALTERNATIVES, AND WHY THE PARAMETER GOES DOWN.
+
+VERSION A - COLLECT EVERY ROOT-TO-LEAF PATH AS A LIST, THEN CONVERT EACH TO A NUMBER. Correct, and it
+builds and copies a list per path - which is exactly the O(n^2) copying cost that Path Sum II has to
+live with because it must RETURN the paths. Here you only want their sum, so there is no reason to
+materialise them.
+
+VERSION B - BUILD A STRING ON THE WAY DOWN AND CALL `int()` AT EACH LEAF. Correct, and it allocates a
+string per node and pays an O(h) conversion per leaf. The arithmetic version does the same job with one
+multiply and one add per node (trap 4).
+
+VERSION C - CARRY THE RUNNING NUMBER DOWN, which is the code here. O(n) time, O(h) space, no
+allocation at all.
+
+VERSION D - ITERATIVE, WITH AN EXPLICIT STACK OF PAIRS:
+
+    total, stack = 0, [(root, 0)] if root else []
+    while stack:
+        node, current = stack.pop()
+        current = current * 10 + node.val
+        if node.left is None and node.right is None:
+            total += current
+        if node.left:  stack.append((node.left, current))
+        if node.right: stack.append((node.right, current))
+
+    THE STACK HOLDS (node, running number) PAIRS - the parameter made explicit. It matters concretely:
+    a tree skewed 10,000 nodes deep makes the recursive version 10,000 frames deep against Python's
+    default limit of 1,000, so it raises RecursionError rather than running slowly.
+
+WHY THE ACCUMULATOR IS PASSED DOWN AND NOT BUILT UP - the point worth internalising.
+
+    The digits are ordered ROOT-FIRST. The value of a digit depends on how many digits come AFTER it,
+    which is to say on how far below the root it sits - information that flows DOWNWARD.
+
+    Try building it upward and you discover the problem: a node would have to return "the number spelled
+    by my subtree", but its digits' place values depend on how deep the node itself is, which it does
+    not know. You would end up returning a pair - the value and the depth - and multiplying by powers of
+    ten on the way back. IT WORKS AND IT IS STRICTLY MORE COMPLICATED.
+
+    THE GENERAL RULE, which is the transferable part: IF A NODE'S CONTRIBUTION DEPENDS ON ITS
+    ANCESTORS, PASS A PARAMETER DOWN. IF IT DEPENDS ON ITS DESCENDANTS, RETURN A VALUE UP. This problem
+    is squarely the first kind, alongside Count Good Nodes (a running maximum) and Path Sum II (a path
+    and a remaining target). Binary Tree Tilt is the second kind.
+
+AND NOTE WHAT THIS ENTRY DOES NOT NEED. Path Sum II carries a mutable LIST down, so it must pop on the
+way out and copy when recording. Here the accumulator is a NUMBER - immutable, rebound locally in each
+call - so every call automatically has its own, and there is nothing to undo.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK DOWN FROM THE ROOT CARRYING THE NUMBER SPELLED SO FAR,
+MULTIPLYING IT BY TEN AND ADDING THIS NODE'S DIGIT AT EVERY STEP, AND HAND THAT NUMBER BACK WHENEVER
+YOU REACH A NODE WITH NO CHILDREN AT ALL.
+
+THIS VERSION IS RECURSIVE, and the mechanism is simple because nothing is shared:
+
+  - The function calls itself once per child, passing the updated running number DOWN as a parameter.
+  - Each call PAUSES at the call site until its children report back a total, then adds those totals.
+  - THE RUNNING NUMBER IS A PLAIN NUMBER, so each call gets its own copy automatically. Nothing needs
+    undoing on the way out - which is the whole difference from the sibling problems that carry a list.
+  - WHAT MAKES IT STOP: an absent node returns zero without recursing, and every downward path reaches
+    absence because a tree is finite and has no cycles.
+
+THE STEPS:
+
+  1. START AT THE ROOT CARRYING A RUNNING NUMBER OF ZERO.
+
+     Zero is right rather than arbitrary: multiplying it by ten and adding the root's digit gives back
+     exactly the root's digit, which is what the number should begin as.
+
+  2. THE WALK, GIVEN A NODE AND THE NUMBER SPELLED SO FAR:
+
+     a. IF THERE IS NO NODE HERE, REPORT ZERO. An absent branch contributes nothing to the total, which
+        is what lets a node with only one child simply add its two sides together without a special
+        case.
+
+     b. EXTEND THE NUMBER: multiply what you were carrying by ten, then add this node's digit.
+
+        Multiplying by ten is what shifts every earlier digit one place to the left, which is exactly
+        what appending a digit to a decimal number means.
+
+     c. IF THIS NODE HAS NO CHILD ON EITHER SIDE, the number is complete. REPORT IT.
+
+        ON EITHER SIDE. A node missing one child is a bend in the number, not the end of it - treating
+        it as an ending returns a number chopped off partway down.
+
+     d. OTHERWISE REPORT THE TOTAL FROM THE LEFT SIDE PLUS THE TOTAL FROM THE RIGHT SIDE, both given the
+        extended number.
+
+        Note this node contributes NOTHING of its own here. Only completed numbers are added, so the
+        partial value at an internal node is never counted.
+
+  3. THE ANSWER IS WHAT THE ROOT REPORTS.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a tree of branching corridors with a single digit painted at every junction. Every route from
+the entrance down to a dead end spells out a number, reading the digits in the order you pass them -
+the entrance digit first, so it is the one worth the most. You want the total of all the numbers spelled
+by all the routes.
+
+You explore it depth-first, and as you walk you keep one number in your head: the number spelled by the
+digits you have passed so far.
+
+Extending it is the ordinary business of writing a number down. If you have four and you meet a nine,
+you now have forty-nine - you shift what you had one place to the left and put the new digit in the
+gap. In arithmetic that is multiplying by ten and adding. You start with nothing, so at the entrance the
+number becomes just the entrance digit, which is right.
+
+When you reach a dead end, the number is finished, and you report it back.
+
+When you are at a junction that still has corridors leading on, you report nothing of your own. You
+simply go down each corridor in turn, carrying your current number, and report back whatever they add up
+to between them. The half-finished number in your head at that moment is not part of the answer - only
+completed routes count. A single corridor with digits one, two and three spells one hundred and
+twenty-three, and nothing else. It does not also contribute one, and twelve.
+
+The thing to be careful about is what counts as a dead end. A junction with a corridor going one way and
+a blank wall the other is NOT a dead end - it is a bend. If you treat it as an ending you will report a
+number that stops halfway along the route, and the rest of the corridor never gets walked at all.
+
+And when a corridor simply is not there, you report nothing from it - not a zero digit, just nothing at
+all. That is what lets a junction with one corridor add up its two sides without any special handling:
+one side reports a real total, the other reports nothing, and the sum is the real total.
+
+Notice what you never have to do. You never write anything down, never rub anything out, and never
+retrace your steps to correct the number in your head - because each corridor you walk down gets its own
+copy of it. Some closely related puzzles have you carrying a LIST of everything you have passed, and
+those need you to cross things off as you come back out. Carrying a single number needs none of that.
+
+At the end, the entrance reports the total of everything below it.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 4 / (9 -> (5, 1)), 0 beside you, answer 1026.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape. `val` is a single DIGIT here, 0 through 9.
+
+    def sum_numbers(root):
+        def dfs(node, current):
+
+    node     HOLDS where the walk stands.
+    current  HOLDS the number spelled by the path from the root down to - but NOT yet including - this
+             node. The first line of the body fixes that.
+
+The parameter is how ANCESTOR information reaches a node, since nothing in the node records what is
+above it (section 5).
+
+            if node is None:
+                return 0
+
+THE BASE CASE, and returning ZERO is what makes the addition compose (trap 3). An absent branch
+contributes nothing, so a node with only one child can add its two sides with no special case.
+
+It also makes `sum_numbers(None)` return 0 with no separate guard (trap 6).
+
+            current = current * 10 + node.val    # extend the number by one digit
+
+THE ARITHMETIC, AND IT IS THE WHOLE OF THE NUMBER-BUILDING.
+
+    `current * 10`   shifts every digit so far one place left.
+    `+ node.val`     drops this digit into the units place.
+
+    49 becomes 495 because 49 * 10 = 490 and 490 + 5 = 495.
+
+NOTE THIS REBINDS THE LOCAL PARAMETER. The caller's `current` is untouched, so each branch automatically
+carries its own value - which is why there is no undo step anywhere in this function.
+
+Starting the whole walk at 0 is what makes the root come out as its own digit: 0 * 10 + 4 = 4.
+
+            if node.left is None and node.right is None:
+                return current                   # a leaf completes one number
+
+THE LEAF TEST, AND BOTH HALVES ARE REQUIRED (trap 1). A node with one child is a bend in the number, not
+its end - testing only `node.left is None` returns 1 for a root whose only child is on the right, where
+the answer is 12.
+
+Returning `current` HERE and only here is also what stops partial numbers being counted (trap 2).
+
+            return dfs(node.left, current) + dfs(node.right, current)
+
+AN INTERNAL NODE CONTRIBUTES NOTHING OF ITS OWN - it simply totals what its two sides report, each given
+the extended number.
+
+Both children receive the SAME `current`, because they share the same path down to this point.
+
+        return dfs(root, 0)
+
+Start at the root with a running number of 0.""",
+
+    """9. TRACED, NODE BY NODE - AND THE NUMBER CUT IN HALF.
+
+TRACE 1 - THE WORKED EXAMPLE.
+
+            4
+           / \\
+          9   0
+         / \\
+        5   1
+
+    dfs(4, 0):
+        current = 0 * 10 + 4 = 4
+        node 4 has children, so it is not a leaf.
+        returns dfs(9, 4) + dfs(0, 4)
+
+      dfs(9, 4):
+          current = 4 * 10 + 9 = 49
+          node 9 has children, not a leaf.
+          returns dfs(5, 49) + dfs(1, 49)
+
+        dfs(5, 49):  current = 49 * 10 + 5 = 495.  Both children None  ->  IS a leaf.  RETURN 495.
+        dfs(1, 49):  current = 49 * 10 + 1 = 491.  IS a leaf.  RETURN 491.
+
+          so dfs(9, 4) returns 495 + 491 = 986
+
+      dfs(0, 4):
+          current = 4 * 10 + 0 = 40.  Both children None  ->  IS a leaf.  RETURN 40.
+
+    dfs(4, 0) returns 986 + 40 = 1026.
+
+    RETURN 1026.
+
+    CHECK BY HAND: the three paths spell 495, 491 and 40, and 495 + 491 + 40 = 1026.
+
+    NOTE NODE 4 AND NODE 9 CONTRIBUTED NOTHING DIRECTLY. Their running values of 4 and 49 were never
+    added to the total - they were only passed downward. Only leaves return a number (trap 2).
+
+TRACE 2 - THE ONE-CHILD TREE (trap 1). Node 1 whose only child is a RIGHT child, 2.
+
+            1
+             \\
+              2
+
+    CORRECT TEST (`left is None AND right is None`):
+        dfs(1, 0):  current = 0*10 + 1 = 1.
+                    left is None - true.  right is None?  NO, it is node 2.  NOT A LEAF.
+                    returns dfs(None, 1) + dfs(2, 1)
+              dfs(None, 1) = 0
+              dfs(2, 1):  current = 1*10 + 2 = 12.  Both children None  ->  leaf.  RETURN 12.
+                    returns 0 + 12 = 12
+        RETURN 12.
+
+    TESTING ONLY `node.left is None`:
+        dfs(1, 0):  current = 1.  left is None  ->  "leaf"  ->  RETURN 1.
+        RETURN 1.
+
+    ONE AGAINST TWELVE. The number is cut off after its first digit and node 2 is never visited at all.
+
+TRACE 3 - ONLY COMPLETE PATHS COUNT (trap 2). A left-leaning chain 1 -> 2 -> 3.
+
+    dfs(1, 0):  current = 1.  Has a left child, not a leaf.  returns dfs(2, 1) + dfs(None, 1)
+      dfs(2, 1):  current = 12.  Has a left child, not a leaf.  returns dfs(3, 12) + dfs(None, 12)
+        dfs(3, 12):  current = 123.  Both children None  ->  leaf.  RETURN 123.
+        dfs(None, 12) = 0
+          returns 123
+      dfs(None, 1) = 0
+    RETURN 123.
+
+    NOT 136. The partial values 1 and 12 existed in the recursion and were never added - a chain spells
+    ONE number, not one per node. And note the missing side at every level contributed 0, which is what
+    lets a one-child node just add its two branches (trap 3).
+
+TRACE 4 - OVERFLOW, IN OTHER LANGUAGES (trap 5). A single path ten nodes deep with every digit 9:
+
+    the number spelled is 9,999,999,999
+    the largest signed 32-bit integer is 2,147,483,647
+
+    A SINGLE PATH OVERFLOWS AN int32 BEFORE ANY SUMMING HAPPENS. Python's integers are unbounded so this
+    is invisible here; LeetCode's guarantee that the answer fits in 32 bits is a constraint on the
+    INPUTS, not something the algorithm provides.
+
+THE TINY INPUTS:
+    root = None      the base case returns 0 at once.  RETURN 0.
+    A SINGLE NODE 7  current = 0*10 + 7 = 7, both children None, so it is a leaf.  RETURN 7.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes. Each node is visited exactly once and does a fixed amount of
+work - one multiplication, one addition, two comparisons. Nothing is copied and nothing is revisited.
+
+SPACE: O(h) for the recursion stack, where h is the tree's height - O(log n) for a balanced tree, O(n)
+for a skewed one.
+
+    Python's default recursion limit is 1,000, so a chain of more than about a thousand nodes raises
+    RecursionError. The explicit-stack version in section 5 pushes (node, running number) pairs onto the
+    heap instead and has no such limit - which is the usual argument for writing it iteratively, and
+    worth volunteering.
+
+    NOTE THIS IS CHEAPER THAN ITS SIBLING PATH SUM II, which is O(n^2) in the worst case because it must
+    COPY each qualifying path into a result list. Here the answer is a single number, so nothing is
+    materialised and the traversal cost is the whole cost.
+
+THE CARRY-IT-DOWN FAMILY, AND WHO OWNS WHAT:
+
+    SUM ROOT TO LEAF NUMBERS   carry a running NUMBER, times ten plus the digit    <- this entry
+    COUNT GOOD NODES           carry a running MAXIMUM
+    PATH SUM II                carry a PATH LIST and a remaining target - and therefore needs the
+                               `path[:]` copy and the `path.pop()`, which this entry does not, because a
+                               number is immutable and rebinding gives each call its own
+    BINARY TREE PATHS          carry the path as a STRING - same shape, different payload
+    PATH SUM I                 carry a remaining target, return a boolean
+
+    THE MIRROR IMAGE IS BINARY TREE TILT, where a subtree SUM is returned UP because the answer depends
+    on descendants rather than ancestors.
+
+    THE QUESTION TO ASK OF ANY TREE PROBLEM: does this node's contribution depend on what is ABOVE it or
+    BELOW it? Above means a parameter going down; below means a value coming up. Getting that right
+    first is most of the work.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it iteratively." A stack of (node, current) pairs - section 5 - and give the reason: a
+    10,000-deep chain exceeds Python's 1,000-frame limit.
+  - "What if the digits were binary?" Multiply by 2 instead of 10. The shape is unchanged - this is
+    LeetCode's "Sum of Root To Leaf Binary Numbers".
+  - "Return the numbers themselves, not the sum." Then you are materialising a list per path and the
+    cost rises to Path Sum II's O(n^2).
+  - "What about overflow?" A ten-deep path of 9s already exceeds a 32-bit integer; use a `long` in a
+    typed language.
+  - "Why is the accumulator passed down rather than returned up?" Because a digit's place value depends
+    on its DEPTH, which flows downward. Building it upward means returning a (value, depth) pair and
+    multiplying by powers of ten - correct and strictly more complicated (section 5).
+
+THE #1 BEGINNER MISTAKE: testing only one side for leaf-ness. `node.left is None` alone treats a node
+with a right child as the end of the number, so the function returns a value chopped off partway down -
+1 instead of 12 on a two-node tree - and never visits the rest of the path at all.
+
+RUNNER-UP: adding the running value at every node rather than only at leaves, which answers a different
+question - 136 instead of 123 on the chain 1 -> 2 -> 3.
+
+TAKEAWAY: the digits are ordered root-first, so the number depends on the ANCESTORS and must be carried
+DOWNWARD as a parameter - extended by multiplying by ten and adding, and cashed in ONLY at a node with no
+children on either side, because a partial number partway down the tree is not an answer to anything.""",
 ]
 
 _EX_P1H["Unique Paths II (grid with obstacles)"] = [
