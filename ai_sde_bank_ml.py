@@ -67,12 +67,559 @@ y_made_up = X[:, mask_col]                  # target = the hidden one
 #           policy.update(reward)             # learn from the CONSEQUENCE
 '''),
           examples=[
-              "One dataset, four framings, so you can hear the difference. Customer transactions, one row per purchase. SUPERVISED: predict who churns next month - you need last year's churn labels, and 'churn' has to be defined precisely (no purchase in 90 days? cancelled subscription?). UNSUPERVISED: segment customers into groups nobody defined in advance - there is no right answer to check against, so you evaluate with a silhouette score and by whether marketing finds the segments actionable. SELF-SUPERVISED: mask a transaction in each customer's sequence and train the model to predict it, producing a general customer embedding you then fine-tune on your small labelled churn set. REINFORCEMENT: choose which offer to show, learn from whether they buy, and accept that today's offer changes tomorrow's state.",
-              "Why self-supervised learning changed everything, in one comparison. Labelling a million images costs real money and months - roughly a euro or two per image for careful annotation. But a million UNLABELLED images are free, and if you hide part of each image and train the model to reconstruct it, you have generated a million training signals at zero labelling cost. The model learns edges, textures and object structure from the pretext task, and then a few thousand labelled images are enough to fine-tune it for your actual classification task. That is the entire economics of foundation models: the expensive resource is labels, so invent a task where the data labels itself.",
-              "Semi-supervised in practice, and how it goes wrong. You have 500 labelled reviews and 50,000 unlabelled ones. Train on the 500, predict the 50,000, keep only predictions above 0.95 confidence as PSEUDO-LABELS, retrain on the enlarged set, repeat. This genuinely works - but note the failure mode: the model's confident mistakes become training labels, so it reinforces its own bias and the errors compound each round. The guards are a high confidence threshold, a cap on how many pseudo-labels you add per round, and always evaluating on a HUMAN-labelled holdout that never receives pseudo-labels.",
-              "Reinforcement learning's distinguishing feature is the DELAY and the FEEDBACK LOOP. In supervised learning the label for each example is fixed and independent. In RL the reward may arrive many actions later (you only learn the chess move was bad twenty moves on - the credit assignment problem), and your action changes what you see next, so the data distribution depends on your own policy. That is why RL needs exploration: if you always take the action you currently believe is best, you never discover a better one. Epsilon-greedy, UCB and Thompson sampling are the standard ways to balance that.",
-              "Where an LLM sits, which is the follow-up to expect. All three paradigms appear in one pipeline. PRETRAINING is self-supervised next-token prediction over trillions of tokens - no human labels at all. INSTRUCTION TUNING is supervised fine-tuning on human-written prompt/response pairs, typically tens of thousands of them. RLHF is reinforcement learning where the reward comes from a model trained on human preference comparisons. Being able to name which stage is which is a very common 2026 interview question, and the sequence explains why base models complete text while chat models answer questions.",
-              "The practical decision rule when someone hands you a problem. Do you have labels? If yes and they are plentiful, supervised. If you have a few, semi-supervised or transfer learning from a pretrained model - almost never train from scratch. If you have none and want structure, unsupervised. If you have none but can define a pretext task from the data itself, self-supervised pretraining. If there are no labels but there IS a feedback signal from actions taken, reinforcement learning - and be honest that RL in production is far harder than a supervised baseline, so it should be a considered choice rather than a default.",
+              r"""1. THE GOAL - five paradigms, told apart by ONE question.
+
+The five names sound like five unrelated fields. They are not. They differ on a single axis:
+
+    WHAT FEEDBACK DOES THE MODEL GET, AND WHERE DOES THAT FEEDBACK COME FROM?
+
+    SUPERVISED         a teacher gives the right answer for every example
+    UNSUPERVISED       no answers at all - "find the structure in this"
+    SEMI-SUPERVISED    a few answered examples and a mountain of unanswered ones
+    SELF-SUPERVISED    you MANUFACTURE the answer out of the input itself
+    REINFORCEMENT      no answers, just a score arriving after a whole sequence of actions
+
+Read the fourth one again, because it is the one that matters most and the one people
+understand least. SELF-SUPERVISED LEARNING INVENTS ITS OWN LABELS. Hide a word in a sentence
+and ask the model to predict it - the answer was in the text all along, so nobody has to write
+it down.
+
+That sounds like a technicality. It is the reason large language models exist.
+
+Supervised learning is capped by how many labels you can BUY. Self-supervised learning is
+capped by how much raw data EXISTS. Those two ceilings are not close to each other, and
+section 5 does the arithmetic.
+
+WHAT THIS ENTRY OWNS: the taxonomy and the decision - which paradigm your problem is, and why.
+It is a routing entry. Its siblings own the pieces: "WHAT IS A LARGE LANGUAGE MODEL" owns the
+self-supervised pretraining objective in detail, "PRETRAINING vs FINE-TUNING vs PROMPTING"
+owns how the stages combine in practice, and the metric entries own how each is evaluated.""",
+              r"""2. THE INTUITION - five kinds of feedback.
+
+    SUPERVISED - a teacher with an answer key
+
+        input: photo of an animal        ->  model guesses "dog"
+        teacher: "wrong, it was a cat"   ->  exact, immediate correction on EVERY example
+
+        Every example carries its own answer. The learning signal is dense and precise. The
+        catch is that somebody had to write down all those answers.
+
+    UNSUPERVISED - a pile of things and no instructions
+
+        input: 10,000 customer records   ->  "group these however seems natural"
+
+        No answers exist, so there is nothing to be right or wrong about. The output is
+        structure - clusters, directions of variation - and judging whether it is GOOD is
+        genuinely hard, because there is nothing to compare against.
+
+    SEMI-SUPERVISED - a few answers and a lot of silence
+
+        500 labelled reviews  +  50,000 unlabelled ones
+
+        Use the few to make a start, use the model's confident guesses on the many as if they
+        were labels, and retrain. Powerful, and section 4 shows how it eats itself.
+
+    SELF-SUPERVISED - hide part of the input and predict it
+
+        "The cat sat on the ___"   ->  predict "mat"
+
+        The answer was ALREADY IN THE DATA. You created a supervised problem out of unlabelled
+        text by covering something up. Nobody labelled anything, so the amount of training
+        data is limited only by how much text exists.
+
+    REINFORCEMENT - a score, long after the fact
+
+        move 1, move 2, ... move 40    ->  "you lost"
+
+        One number, at the end, for the whole sequence. Which of the forty moves was the
+        mistake? Nothing tells you. That is the CREDIT ASSIGNMENT problem, and it is what
+        makes reinforcement learning hard in a way the others are not.
+
+Drawn on one axis - how much the feedback costs, and how much of it you get:
+
+    feedback per example
+        dense, exact   SUPERVISED      but every label costs money
+        dense, exact   SELF-SUPERVISED and the labels are FREE          <- the breakthrough
+        none           UNSUPERVISED
+        sparse, delayed REINFORCEMENT""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+LABEL / TARGET / GROUND TRUTH. The correct answer for one example. The expensive ingredient in
+supervised learning.
+
+FEATURES (X). The inputs. LABEL (y). The output you want predicted.
+
+SUPERVISED LEARNING. Learning a mapping from X to a known y. Splits into CLASSIFICATION
+(discrete y - spam or not) and REGRESSION (continuous y - a price).
+
+UNSUPERVISED LEARNING. Finding structure in X with no y. Includes CLUSTERING (k-means, DBSCAN,
+hierarchical), DIMENSIONALITY REDUCTION (PCA, t-SNE, UMAP), density estimation and association
+rules.
+
+SILHOUETTE SCORE. An internal clustering measure - how much closer a point is to its own
+cluster than to the nearest other one. Used because there is no ground truth to compare with.
+
+SEMI-SUPERVISED LEARNING. A small labelled set plus a large unlabelled one.
+
+PSEUDO-LABELLING. The main semi-supervised technique: predict labels for the unlabelled data,
+keep the confident ones as if they were real, retrain.
+
+SELF-SUPERVISED LEARNING. Creating labels from the input itself.
+
+PRETEXT TASK. The invented task whose answer comes free - predict the hidden word, predict the
+next token, decide whether two crops came from the same image. You do not care about the
+pretext task's output; you care about the REPRESENTATION learned while solving it.
+
+MASKED LANGUAGE MODELLING. Hide tokens, predict them. BERT's objective.
+
+NEXT-TOKEN PREDICTION. Predict what follows. GPT's objective, and the one behind every modern
+LLM.
+
+CONTRASTIVE LEARNING. Push representations of related things together and unrelated things
+apart. Two crops of the same photo should embed close; crops of different photos should not.
+
+FOUNDATION MODEL. A large model pretrained self-supervised on broad data, then adapted to many
+tasks. The whole category exists because self-supervision removed the labelling ceiling.
+
+REINFORCEMENT LEARNING (RL). Learning from a reward signal produced by acting in an
+environment.
+
+AGENT, ENVIRONMENT, STATE, ACTION, REWARD, POLICY. The agent observes a STATE, takes an ACTION
+by its POLICY, the ENVIRONMENT returns a REWARD and a new state.
+
+CREDIT ASSIGNMENT. Working out which of many earlier actions caused a later reward. RL's
+central difficulty.
+
+EXPLORATION vs EXPLOITATION. Trying something new to learn versus doing the known-best thing to
+score. A trade-off unique to RL, because in RL your actions determine what data you see next.
+
+RLHF. Reinforcement Learning from Human Feedback - humans rank model outputs, those rankings
+train a reward model, and the model is optimised against it. The final stage of an LLM.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - HOW SEMI-SUPERVISED LEARNING EATS ITSELF.
+
+You have 500 labelled reviews and 50,000 unlabelled ones. Train on the 500, predict the rest,
+keep the predictions above 0.95 confidence as pseudo-labels, retrain on the enlarged set.
+
+    Suppose the 500 labelled reviews happen to skew positive - 350 positive, 150 negative.
+    The model learns that skew.
+    It then predicts confidently on the 50,000, and its confident predictions skew positive too.
+    Say 12,000 pass the 0.95 threshold, and 9,500 of them are labelled positive.
+    Retraining on 12,500 examples now reinforces the very bias that produced them.
+
+CONFIDENCE IS NOT CORRECTNESS. The model is most confident where it is most sure of what it
+already believes, so pseudo-labelling systematically amplifies existing bias rather than
+correcting it. Each round makes the model more certain and no more accurate.
+
+The guards: hold out a genuinely labelled validation set that is NEVER pseudo-labelled and
+check every round against it; add pseudo-labels gradually rather than all at once; and keep an
+eye on the class balance of what you are adding - if it drifts from the labelled set's balance,
+that is the failure happening.
+
+TRAP 2: calling self-supervised learning "unsupervised". They are genuinely different.
+Unsupervised has NO target - it finds structure. Self-supervised MANUFACTURES a target and then
+does ordinary supervised learning against it. Getting this wrong in an interview is common and
+noticeable, because the whole modern-AI story hinges on the distinction.
+
+TRAP 3: evaluating a clustering as though it had an answer. There is no ground truth, so
+"accuracy" is meaningless. You have internal measures like the silhouette score, stability
+across resamples, and human inspection - and the honest answer is that clustering evaluation is
+genuinely unsatisfying. Say so; pretending otherwise is worse.
+
+TRAP 4: thinking reinforcement learning is the natural choice for anything sequential. RL needs
+a reward signal, an environment you can act in, and usually a great many episodes. If you have
+labelled examples of the right behaviour, supervised learning is far cheaper and more stable.
+RL earns its keep when the right behaviour is unknown and only the OUTCOME can be scored -
+games, control, and preference optimisation.
+
+TRAP 5: forgetting that in RL your actions determine your data. Every other paradigm has a
+fixed dataset. In RL, a bad policy visits bad states and therefore learns from bad data - the
+distribution shifts under you as you learn. This is why RL is unstable in a way supervised
+learning is not, and it is the real reason it is hard.
+
+TRAP 6: assuming a modern LLM is one paradigm. It is three, in sequence - section 9 walks the
+pipeline. This is the follow-up to expect.""",
+              r"""5. THE NAIVE VIEW FIRST, THEN THE REAL ONE - AND THE ARITHMETIC THAT CHANGED EVERYTHING.
+
+THE NAIVE VIEW: "machine learning means collecting labelled examples and training on them."
+
+For most of the field's history this was simply true, and it created a hard ceiling that
+governed what was possible: YOU COULD ONLY LEARN FROM AS MUCH DATA AS YOU COULD AFFORD TO
+LABEL.
+
+    ImageNet - the dataset that launched modern computer vision - is about 14 million
+    hand-labelled images. At a realistic 1 to 2 euros per image for careful human labelling,
+    that is 14 to 28 MILLION EUROS of labelling effort, and it took years of coordinated work.
+
+    And 14 million images is a LARGE dataset by supervised standards.
+
+THE BREAKTHROUGH: notice that some data ALREADY CONTAINS ITS OWN ANSWERS.
+
+Take any sentence:
+
+    "The cat sat on the mat"
+
+Hide a word:
+
+    "The cat sat on the ___"     ->  the correct answer is "mat", and it was already there
+
+You have just created a labelled training example out of unlabelled text, at zero cost, and
+you can do it for EVERY WORD IN EVERY SENTENCE EVER WRITTEN.
+
+    THE COMPARISON THAT MATTERS:
+
+        supervised vision:   14,000,000 labelled images, years of work, tens of millions of
+                             euros - and the ceiling is your budget.
+
+        self-supervised text: hundreds of BILLIONS of tokens, zero labelling cost, and the
+                             ceiling is how much text exists.
+
+    Roughly four orders of magnitude more training signal, for none of the money.
+
+WHY THIS PRODUCES USEFUL MODELS RATHER THAN JUST A GOOD GAP-FILLER - the argument, because
+"predict the next word" sounds trivially useless:
+
+To predict the hidden word well you must, as a side effect, learn grammar, facts, coreference,
+arithmetic patterns and a great deal of world structure. Consider:
+
+    "Sarah put the book on the table. She then picked ___ up."
+
+Filling that blank with "it" requires tracking who "she" is and which object is pickable.
+Nothing asked the model to learn coreference; it learned coreference because coreference was
+NECESSARY to score well on the pretext task.
+
+THAT IS THE WHOLE TRICK: A NARROW, FREE OBJECTIVE, PURSUED AT ENORMOUS SCALE, FORCES GENERAL
+CAPABILITY. And the objective is free precisely because the answer was already in the data.
+
+THE UPGRADE PATH, in increasing sophistication:
+
+    1. SUPERVISED on whatever you can label. Works, and does not scale past your budget.
+    2. SEMI-SUPERVISED to stretch a small labelled set. Helps; carries the bias-amplification
+       risk in trap 1.
+    3. SELF-SUPERVISED PRETRAINING then supervised fine-tuning. Learn a general representation
+       for free from mountains of raw data, then adapt with a small labelled set. This is the
+       standard recipe for essentially everything now, and it is why "we only have 500 labelled
+       examples" stopped being fatal.
+    4. ADD REINFORCEMENT at the end when what you want cannot be written as a label - "be more
+       helpful" is not a target you can annotate, but humans can RANK two answers, and rankings
+       are a reward signal. That is RLHF.""",
+              r"""6. HOW TO CHOOSE - the procedure, step by step.
+
+The one sentence that holds the whole idea: ASK WHAT FEEDBACK YOU HAVE - EXACT ANSWERS FOR
+EVERY EXAMPLE, A FEW ANSWERS, NO ANSWERS, ANSWERS HIDDEN INSIDE THE DATA ITSELF, OR ONLY A
+SCORE AFTER THE FACT - AND THE PARADIGM FOLLOWS FROM THAT ANSWER ALONE.
+
+THE LOOPS DIFFER BY PARADIGM, and the difference is worth naming because it explains their
+relative difficulty:
+
+    SUPERVISED, UNSUPERVISED, SELF-SUPERVISED all loop over a FIXED dataset. Each pass sees
+    the same data. WHAT MAKES IT STOP: a fixed number of epochs, or validation loss ceasing to
+    improve. The data does not change while you learn, which is what makes training stable.
+
+    REINFORCEMENT LEARNING loops over EPISODES, and the data is generated BY THE CURRENT
+    POLICY. Each pass: act, observe reward, update, and then act again with the updated
+    policy - which visits different states, producing different data. WHAT MAKES IT STOP: a
+    fixed episode budget, or average reward plateauing. WHAT MAKES IT UNSTABLE: the
+    distribution shifting under you, because a bad policy collects bad experience and learns
+    from it.
+
+THE STEPS:
+
+  1. ASK WHETHER LABELS EXIST, and how many. This single question resolves most cases.
+
+  2. IF LABELS ARE PLENTIFUL: supervised. Classification for a discrete target, regression for
+     a continuous one.
+
+  3. IF THERE ARE FEW LABELS AND MUCH UNLABELLED DATA: first look for a PRETRAINED model built
+     self-supervised on data like yours, and fine-tune it. That beats semi-supervised
+     techniques almost every time, and it is what most people should do rather than
+     pseudo-labelling from scratch.
+
+  4. IF NO PRETRAINED MODEL FITS, use semi-supervised pseudo-labelling - with the guards from
+     trap 1, because it will otherwise amplify whatever bias your small labelled set carries.
+
+  5. IF THERE ARE NO LABELS AND YOU WANT STRUCTURE RATHER THAN PREDICTION: unsupervised.
+     Accept that evaluation will be unsatisfying and plan for human inspection.
+
+  6. IF THE DATA CONTAINS ITS OWN ANSWERS - text, images, audio, anything with predictable
+     internal structure - self-supervised pretraining is available to you, and it is where the
+     scale is.
+
+  7. IF THERE IS NO CORRECT ANSWER TO ANNOTATE, ONLY AN OUTCOME TO SCORE - a game result, a
+     control objective, a human preference between two outputs - reinforcement learning. Check
+     first that you can run enough episodes; RL is data-hungry in a way the others are not.
+
+  8. EXPECT TO COMBINE THEM. Modern systems use several in sequence, and section 9 traces an
+     LLM through three.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Five ways to learn something, and the difference is entirely in what feedback you get.
+
+THE FIRST is a class with a teacher who marks every single exercise. You attempt a question,
+you are told immediately whether you were right and what the right answer was. You learn
+quickly and reliably - and the whole thing is limited by how many exercises the teacher has
+time to mark. Hire one teacher and you get one teacher's worth of marked work.
+
+THE SECOND is being handed a crate of unsorted objects and asked to arrange them sensibly. No
+answer key exists. You group them by shape, or colour, or weight. Somebody may say your
+arrangement is useful or useless, but nobody can say it is WRONG, because there was never a
+right answer.
+
+THE THIRD is a class where the teacher marks the first twenty exercises and then hands you five
+hundred more, unmarked. You use what you learned to mark them yourself, keeping only the ones
+you feel sure about, and study from the enlarged pile. It works. The danger is that where you
+feel most sure is exactly where you are already committed - so any misunderstanding in the
+first twenty gets copied confidently onto hundreds more, and studying the enlarged pile makes
+you more certain without making you more correct.
+
+THE FOURTH is the clever one. Take any book, cover a word with your thumb, and try to guess it.
+Then lift your thumb - the answer was under it the whole time. You have just given yourself a
+marked exercise, for nothing, and you can do it for every word in every book that has ever been
+written. No teacher, no marking budget, no ceiling except how many books exist.
+
+And the surprise is what this teaches you. To guess the covered word reliably, you end up
+having to understand grammar, follow who is being referred to, and know a great many facts
+about the world - not because anyone set out to teach you those things, but because you cannot
+guess well without them.
+
+THE FIFTH is learning to play a game where nobody comments on any individual move. You play
+forty moves, and at the end you are told only "you lost". Which move was the mistake? Nothing
+says. You must play thousands of games and slowly notice which kinds of positions tend to
+precede losing. And there is a further difficulty the others do not have: what you do
+determines what you see next. Play badly and you only ever visit bad positions, so you only
+ever learn about those.
+
+The fourth changed everything, and for one reason: it removed the teacher. Everything else was
+limited by how much marking somebody could afford. That one was limited only by how much had
+been written down.""",
+              r"""8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+The code shows the same data under four paradigms. Line by line, with the real names.
+
+    X = np.random.rand(1000, 8)                 # features
+    y = (X[:, 0] + X[:, 3] > 1.0).astype(int)   # labels (expensive in real life)
+
+1,000 rows, 8 features. The label is a deterministic rule for demonstration - and the comment
+carries the real point: in production, producing that y column is the expensive part of the
+whole enterprise.
+
+    # SUPERVISED: labels for every row.
+    LogisticRegression().fit(X, y)
+
+Both X and y handed over. Every row carries its answer. Dense, exact feedback - and it needed
+all 1,000 labels to exist.
+
+    # UNSUPERVISED: no y at all - just "find 4 groups".
+    labels = KMeans(n_clusters=4, n_init=10).fit_predict(X)
+
+Note what is ABSENT: y never appears. The output `labels` is not a prediction of anything - it
+is an arbitrary grouping index. Cluster 2 has no meaning beyond "these rows resemble each
+other". And n_clusters=4 was chosen by you, not discovered, which is the awkward part of
+clustering: you must supply the answer to the question you were asking.
+
+n_init=10 runs the algorithm ten times from different random starts and keeps the best,
+because k-means converges to a local optimum that depends on where it began.
+
+    # SEMI-SUPERVISED: only 50 rows are labelled, -1 means "unknown".
+    y_partial = np.full(len(y), -1)
+    y_partial[:50] = y[:50]
+
+The convention: -1 marks "no label". 50 rows out of 1,000 have real labels; 950 are unknown.
+This is the realistic situation - a small labelled set and a large unlabelled one.
+
+    SelfTrainingClassifier(LogisticRegression()).fit(X, y_partial)
+
+The wrapper does trap 1's loop for you: fit on the 50, predict the 950, keep the confident
+predictions as labels, refit, repeat. Convenient, and it will amplify whatever bias those 50
+rows carry - the wrapper cannot know that.
+
+    # SELF-SUPERVISED: the label comes FROM the input. Hide a column, predict it.
+    mask_col = 3
+    X_masked = np.delete(X, mask_col, axis=1)   # input  = the other 7 features
+    y_made_up = X[:, mask_col]                  # target = the hidden one
+
+THE HEART OF THE ENTRY, in three lines. Column 3 is REMOVED from the input and PROMOTED to the
+target. No new information entered - the same array supplies both sides. That is what "the
+label comes from the input" means, made literal.
+
+The name `y_made_up` is exactly right: nobody labelled it, it was manufactured by hiding
+something that was already present.
+
+    # Train on that pretext task, throw away the head, keep the learned
+    # representation, and fine-tune it on your small labelled set.
+
+The part people miss. YOU DO NOT CARE ABOUT PREDICTING COLUMN 3. Predicting it is a PRETEXT -
+an excuse to force the model to learn the structure of the data. Afterwards you discard the
+output layer and keep the internal representation, which is the thing of value.
+
+That is masked language modelling in miniature: nobody wants a model that fills in blanks; they
+want what the model had to understand in order to fill them in.
+
+    # REINFORCEMENT (sketch): no dataset, an environment and a reward.
+    #   for episode in range(N):
+    #       state = env.reset()
+    #       while not done:
+    #           action = policy(state)            # explore vs exploit
+    #           state, reward, done = env.step(action)
+    #           policy.update(reward)             # learn from the CONSEQUENCE
+
+Deliberately a sketch, because RL does not fit the pattern above - and the differences are
+visible in the code shape:
+
+  - THERE IS NO X AND NO y. There is an `env`, and the data does not exist until you act.
+  - `policy(state)` chooses the action, so THE POLICY DETERMINES WHAT DATA IS COLLECTED. Change
+    the policy and you get different experience. This is the instability from trap 5, visible
+    as a line of code.
+  - `reward` arrives from `env.step`, possibly zero for most steps and non-zero only at the
+    end. That is the credit assignment problem: `policy.update(reward)` must somehow apportion
+    one number across all the actions that led to it.
+  - The outer loop is over EPISODES rather than epochs, because there is no fixed dataset to
+    pass over.""",
+              r"""9. TRACED ON REAL EXAMPLES AND REAL NUMBERS.
+
+ONE DATASET, FOUR FRAMINGS - customer transactions, one row per purchase:
+
+    SUPERVISED:       "predict who churns next month."
+                      Needs a churn label per customer - which means waiting a month, or
+                      trawling historical records. The label is the bottleneck.
+
+    UNSUPERVISED:     "find natural customer segments."
+                      No labels needed at all. The output is groups, and whether they are
+                      useful is a judgement call rather than a measurement.
+
+    SEMI-SUPERVISED:  "we hand-labelled 500 customers as churn risks; use the other 50,000."
+                      Pseudo-label the confident ones and retrain.
+
+    SELF-SUPERVISED:  "hide each customer's next purchase category and predict it from their
+                      history."
+                      No labels needed - the next purchase IS the label, sitting in the data.
+                      Then reuse the learned representation for the churn task.
+
+THE LABELLING ARITHMETIC, which is the whole reason paradigm four won:
+
+    SUPERVISED VISION - ImageNet:
+        about 14,000,000 hand-labelled images
+        at 1 to 2 euros per image for careful annotation
+        = 14,000,000 to 28,000,000 euros of labelling effort, over years
+
+    SELF-SUPERVISED TEXT - an LLM's pretraining corpus:
+        hundreds of billions of tokens
+        labelling cost: ZERO, because the next token IS the label
+        ceiling: how much text exists, not what you can pay
+
+    Roughly four orders of magnitude more training signal, for none of the money. And note WHY
+    the money disappears: not because labelling got cheaper, but because the task was
+    reformulated so that no human is in the loop at all.
+
+SEMI-SUPERVISED, TRACED THROUGH ITS FAILURE:
+
+    500 labelled reviews (350 positive, 150 negative - a 70/30 skew)
+    50,000 unlabelled
+
+    ROUND 1: train on 500. The model learns the 70/30 tilt.
+             Predict the 50,000. Keep those above 0.95 confidence: say 12,000 pass.
+             Of those 12,000 confident pseudo-labels, about 9,500 are positive - a 79/21 skew,
+             MORE tilted than the original.
+
+    ROUND 2: retrain on 12,500 examples that are more skewed than the 500 you started with.
+             The model becomes more confident and more tilted.
+
+    ROUND 3: the skew tightens again.
+
+    Confidence rose every round. Accuracy on a truly held-out set did not - and if you were
+    watching only training metrics, everything looked like it was improving. THE GUARD is a
+    validation set that is never pseudo-labelled, checked every round, plus watching the class
+    balance of what you are adding.
+
+WHERE AN LLM SITS - all three paradigms in one pipeline, which is the follow-up to expect:
+
+    STAGE 1  PRETRAINING          SELF-SUPERVISED
+             next-token prediction over trillions of tokens.
+             Supplies essentially all the knowledge and essentially all the cost.
+
+    STAGE 2  INSTRUCTION TUNING   SUPERVISED
+             a comparatively tiny set of (instruction, good answer) pairs, human-written.
+             Turns a text-completer into something that answers questions.
+
+    STAGE 3  RLHF                 REINFORCEMENT
+             humans RANK pairs of answers; those rankings train a reward model; the LLM is
+             optimised against it.
+
+    WHY STAGE 3 MUST BE REINFORCEMENT rather than supervised - this is the good part. "Be more
+    helpful" is not a label anyone can write down. You cannot annotate the correct helpful
+    answer, because there are thousands of them. But a human CAN say "this answer is better
+    than that one", and a preference is a reward signal rather than a target.
+
+    So the paradigm was chosen by what feedback was OBTAINABLE - which is exactly the axis this
+    entry is organised around.
+
+REINFORCEMENT LEARNING'S DISTINGUISHING DIFFICULTY, concretely:
+
+    A chess game: 40 moves, then one bit of feedback - "you lost".
+
+    SUPERVISED equivalent: 40 examples, each with its own correct answer, all independent.
+    RL reality:            40 actions, ONE number at the end, and the actions are not
+                           independent - move 12 was only available because of move 11.
+
+    Which move lost the game? Perhaps move 12. Perhaps move 12 was fine and move 31 threw it
+    away. The reward says nothing about which, and the model must infer it across thousands of
+    games. That is CREDIT ASSIGNMENT, and it is why RL needs orders of magnitude more
+    experience than supervised learning needs examples.""",
+              r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT EACH ONE COSTS:
+
+    SUPERVISED       cheap to train, expensive to LABEL. The labels dominate the budget and cap
+                     the dataset size.
+    UNSUPERVISED     no labelling cost, and a real evaluation cost - human judgement, which does
+                     not scale and is hard to defend.
+    SEMI-SUPERVISED  cheap, with a correctness risk: it can confidently amplify bias.
+    SELF-SUPERVISED  no labelling cost and an enormous COMPUTE cost. The expense moved from
+                     humans to hardware - which is the trade that made scale possible, because
+                     hardware gets cheaper and annotators do not.
+    REINFORCEMENT    no labels, and a very large EXPERIENCE cost - millions of episodes, plus
+                     an environment you can act in, plus genuine training instability.
+
+THE DECISION RULE, condensed:
+
+    labels plentiful                          -> supervised
+    a few labels, much unlabelled data        -> fine-tune a pretrained model (first choice),
+                                                 or semi-supervised with guards
+    no labels, want structure                 -> unsupervised
+    data contains its own structure           -> self-supervised pretraining
+    no correct answer, only an outcome score  -> reinforcement learning
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What is the difference between unsupervised and self-supervised?" Unsupervised has NO
+    target and finds structure. Self-supervised MANUFACTURES a target from the input and then
+    does ordinary supervised learning. The distinction is the whole modern-AI story, and
+    conflating them is the most common error here.
+  - "Why did self-supervised learning change things?" It removed the labelling ceiling. Section
+    9's numbers: 14 million labelled images at millions of euros, against hundreds of billions
+    of tokens at zero.
+  - "Which paradigm is an LLM?" All three, in sequence - and be ready to say why the last stage
+    must be reinforcement: helpfulness cannot be annotated, but it can be ranked.
+  - "When would you NOT use reinforcement learning for a sequential problem?" Whenever you have
+    examples of correct behaviour. Supervised imitation is cheaper and far more stable. RL is
+    for when the right behaviour is unknown and only outcomes can be scored.
+  - "How do you evaluate a clustering?" Internal measures like silhouette, stability across
+    resamples, and human inspection - and say plainly that it is unsatisfying, because
+    pretending otherwise is the weaker answer.
+
+THE #1 MISTAKE: treating self-supervised learning as a variety of unsupervised learning. It
+obscures the one idea that explains why the last few years happened - that a task whose answers
+are already inside the data has NO LABELLING CEILING, so training data scales with what exists
+rather than with what you can afford.
+
+RUNNER-UP: pseudo-labelling without a clean validation set, so a model that is becoming
+steadily more confident and no more accurate looks like a success.
+
+TAKEAWAY: the five paradigms differ only in what feedback is available - an answer for every
+example, a few answers, none, answers hidden inside the data, or a score after the fact - and
+the fourth mattered most, because manufacturing labels from the data itself removed the human
+bottleneck that had capped everything before it.""",
           ],
           pitfalls="Calling self-supervised learning 'unsupervised' (it uses labels - it just generates them, and that distinction is the whole reason LLMs exist); claiming clustering can be evaluated with accuracy; forgetting that semi-supervised pseudo-labelling amplifies its own mistakes if the confidence threshold is too low.",
           followups="'Where does an LLM fit?' Pretrained self-supervised on next-token prediction, then supervised fine-tuned on instruction pairs, then RLHF - all three paradigms in one pipeline. 'You have a million images and budget to label a thousand - what do you do?' Self-supervised pretraining plus active learning: label the thousand the model is least certain about, not a thousand at random."),

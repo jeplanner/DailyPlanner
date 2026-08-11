@@ -61,12 +61,565 @@ class Lot:                            # the "service" class that ties it togethe
         return self.pricing.price(hours)   # delegates - Lot never asks "which rule?"
 '''),
           examples=[
-              "Scoping out loud, in practice. Prompt: 'Design a library management system.' Weak start: silently drawing Book, Member, Librarian, Shelf, Rack, Fine, Reservation, Review, Author, Publisher. Strong start: 'I'll cover searching the catalogue, borrowing and returning with a per-member limit, and overdue fines. I'll leave out reservations and inter-branch transfers - tell me if you want them instead.' You have now defined a problem you can finish in 45 minutes, and the interviewer can steer you if they wanted something else. Scope control is graded.",
-              "Nouns are candidates, not conclusions. In 'design a parking lot', 'colour' is a noun but it is an attribute of Vehicle, not a class. 'Entrance' is a noun and IS worth a class if entries are gated and ticketed, but is noise if the prompt never mentions gates. The filter: does this thing have behaviour, or its own lifecycle, or a list of things hanging off it? If it is just a value, it is a field.",
-              "Verbs go where the data is. A common junior mistake is a fat manager class: ParkingLotManager.calculateFee(ticket), ParkingLotManager.assignSpot(vehicle), ParkingLotManager.printReceipt(ticket) - every method reaching into other objects' fields. Ask 'whose data does this need?' and move it there. Fee calculation needs the ticket's timestamps, so the pricing lives near the ticket. This is the Tell-Don't-Ask principle and it is the difference between OO code and a script with classes.",
-              "Finding the extension point. Ask 'if the business changed one thing next quarter, what would it be?' Parking lot -> the pricing rules. Vending machine -> the payment methods. Notification service -> the channels. Elevator -> the dispatch algorithm. That answer is exactly where your one interface goes. Putting interfaces everywhere else is over-engineering, and interviewers do notice.",
-              "What 'write real code' means. With 25 minutes left, do not produce ten classes with `pass` in every method. Produce Spot, Ticket and the pricing strategy fully - constructors, the actual fee arithmetic, the error case where a ticket is scanned twice - and describe the rest in a sentence. One working slice beats a complete-looking sketch that does nothing, because the interviewer can only grade code that exists.",
-              "The follow-up is the real test. Almost every LLD round ends with 'now support X'. If X requires editing a big if/elif chain in the middle of your core class, your design failed the Open/Closed principle and the interviewer just saw it happen live. If X is a new subclass registered in one place, you pass. So when you design, imagine the follow-up before it is asked - it is nearly always a new variant of the thing you already have two of.",
+              r"""1. THE GOAL - the prompt is one sentence, and that is deliberate.
+
+    "Design a parking lot."
+
+That is the whole question. It is vague on purpose, and the vagueness IS the test. The
+interviewer is not waiting to see whether you know what a parking lot is - they are watching
+whether you can IMPOSE STRUCTURE ON SOMETHING UNDERSPECIFIED, which is most of what the job
+turns out to be.
+
+Two failure modes bracket the good answer:
+
+    FREEZING - "what kind of parking lot? how many floors? do we handle motorbikes?" and
+    twenty more questions, waiting to be told what to build.
+
+    DIVING - opening with `class ParkingLot:` in the first thirty seconds and writing code
+    before anyone has agreed what the pieces are.
+
+Both are the same underlying mistake: treating the vagueness as a problem with the question
+rather than as the question itself.
+
+THE ANSWER IS A PROCESS, run identically every time. Five moves, four minutes:
+
+    1. CLARIFY AND SHRINK      -  ask two or three questions, then STATE the scope yourself
+    2. NOUNS BECOME CLASSES    -  underline the nouns; those are your candidates
+    3. VERBS BECOME METHODS    -  put each verb on the class that owns the data it needs
+    4. DRAW THE RELATIONSHIPS  -  who holds whom; has-a by default, is-a rarely
+    5. NAME THE EXTENSION POINT-  say what will change next quarter, and put ONE interface there
+
+Then write real code for two or three interesting classes rather than skeletons for ten.
+
+Those five moves take four minutes and buy you the rest of the hour, because after them
+everyone in the room agrees what is being built. Section 9 runs them on the parking lot end to
+end, and then shows the follow-up question that separates a good design from a plausible one.""",
+              r"""2. THE INTUITION - the shape of the hour.
+
+    minutes 0-4     CLARIFY, SCOPE, NOUNS, VERBS, RELATIONSHIPS, EXTENSION POINT
+                    [====]
+    minutes 4-30    WRITE REAL CODE for the two or three classes that matter
+                    [=========================]
+    minutes 30-45   THE FOLLOW-UP: "now support X"
+                    [==============]
+
+Almost every candidate gets this shape wrong in the same direction. They spend twenty minutes
+enumerating classes and drawing boxes, then twenty-five minutes writing `pass` into ten of
+them, and arrive at the follow-up with a design that cannot absorb it.
+
+The move that changes everything is the SECOND HALF OF STEP 1 - not asking questions, but
+STATING THE SCOPE YOURSELF:
+
+    weak:   "How many floors? Do we support motorbikes? Is there a mobile app? Do we need
+             reservations? What about season tickets?"
+
+    strong: "I'll support multiple vehicle sizes, hourly pricing and one payment method. I'll
+             skip reservations and multi-floor routing unless you'd like them. Sound
+             reasonable?"
+
+Both ask about scope. Only the second one DECIDES anything. Juniors ask; the strong signal is
+proposing a scope and inviting correction - it is exactly what you would do with a vague ticket
+at work, and it is the thing the interviewer is actually looking for.
+
+And the last move, the extension point, is where the whole hour is won or lost:
+
+    "The pricing rule is the thing most likely to change, so it goes behind a PricingStrategy
+     interface."
+
+Say that at minute four, and when the interviewer asks at minute thirty-five for weekend rates,
+your answer is "one new class, nothing else changes." Skip it, and your answer is "I edit this
+if/elif chain in the middle of the class that also handles parking" - which is a worse answer
+to a question you knew was coming.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+LLD (LOW-LEVEL DESIGN). Designing the CLASSES inside one system - their responsibilities,
+relationships and interfaces. Distinct from HLD (high-level design), which is about services,
+databases, queues and scaling. LLD is object modelling; HLD is system topology.
+
+CLASS. A thing with data and behaviour. Vehicle, Ticket, Spot.
+
+ENTITY. A class representing a real-world noun with identity - a Ticket that exists over time.
+
+ATTRIBUTE. Data on a class. A vehicle's colour is an attribute, not a class of its own.
+
+METHOD. Behaviour on a class. `park`, `price`, `pay`.
+
+INTERFACE / ABSTRACT BASE CLASS (ABC). A contract listing methods without implementing them.
+Anything implementing it can be substituted for anything else that does.
+
+ABSTRACT METHOD. A method declared but not implemented; subclasses MUST provide it.
+
+COMPOSITION ("HAS-A"). One class holding a reference to another. A Lot HAS-A pricing strategy.
+The default relationship, and the one to reach for.
+
+INHERITANCE ("IS-A"). One class extending another. Use only for genuine substitutability - a
+Motorbike IS-A Vehicle. Overused by candidates who reach for it as the default.
+
+ENUM. A fixed set of named values. Beats magic strings because a typo becomes an error rather
+than a silent bug.
+
+STRATEGY PATTERN. Putting an interchangeable rule behind an interface so it can be swapped
+without touching the code that uses it. The single most useful pattern in LLD interviews - it
+is the answer to "now support X" more often than any other.
+
+OPEN/CLOSED PRINCIPLE. Code should be open to EXTENSION and closed to MODIFICATION - you should
+be able to add behaviour by adding code, not by editing working code. Section 9 demonstrates it
+rather than naming it.
+
+FAT MANAGER CLASS. The anti-pattern where one class does everything and the rest are bags of
+data. The commonest structural mistake in these interviews.
+
+DELEGATION. A class asking another object to do a job instead of doing it itself, and not
+knowing how it is done.
+
+EXTENSION POINT. The place you deliberately made flexible because you expect change there.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE FAT MANAGER CLASS. The commonest structural failure, and it looks organised:
+
+    ParkingLotManager.calculateFee(ticket)
+    ParkingLotManager.assignSpot(vehicle)
+    ParkingLotManager.validatePayment(payment)
+    ParkingLotManager.releaseSpot(spot)
+
+One class does everything; Ticket, Spot and Vehicle become bags of data with no behaviour.
+This is procedural code wearing class syntax.
+
+THE FIX IS A RULE, and it is step 3: PUT EACH VERB ON THE CLASS THAT OWNS THE DATA IT NEEDS.
+Calculating a fee needs entry time and exit time, which live on the Ticket - so it belongs
+there, or on a pricing object the Ticket consults. Assigning a spot needs to know which spots
+are free, which the Floor owns.
+
+The tell is easy to spot in your own design: if a method's first act is to reach INTO another
+object and pull out three fields, the method is on the wrong class.
+
+TRAP 2 - TREATING EVERY NOUN AS A CLASS. Step 2 produces CANDIDATES, not conclusions.
+
+    In "design a parking lot": "colour" is a noun, and it is an ATTRIBUTE of Vehicle, not a
+    class. "Entrance" is a noun and IS a class, because it has behaviour - it issues tickets.
+
+    THE TEST: does it have behaviour, or its own identity over time? If it is only a value,
+    it is an attribute. A candidate who lists fifteen classes has not filtered.
+
+TRAP 3 - INHERITANCE WHERE COMPOSITION BELONGS. Candidates reach for inheritance because it is
+the object-oriented thing they were taught first.
+
+    WRONG:  class HourlyLot(ParkingLot), class FlatRateLot(ParkingLot)
+            Now a lot that charges hourly on weekdays and flat on weekends is... what? You
+            cannot be two subclasses at once, and the pricing has been welded to the lot.
+
+    RIGHT:  a Lot HAS-A PricingStrategy.
+            Weekday and weekend rules are two objects; switching is assignment.
+
+    THE TEST: does the subclass genuinely substitute for the parent in every context? If it
+    varies a BEHAVIOUR rather than being a KIND, that behaviour wants an interface.
+
+TRAP 4 - TEN SKELETON CLASSES INSTEAD OF THREE REAL ONES. With twenty-five minutes left, ten
+classes with `pass` in every method demonstrate nothing - not judgement, not code quality, not
+correctness. Two or three classes written properly, with the interesting logic actually
+present, demonstrate all three. Say which ones you are choosing and why.
+
+TRAP 5 - ASKING QUESTIONS INSTEAD OF PROPOSING SCOPE. Covered in section 2 and worth repeating,
+because it is the single highest-value habit: state the scope, invite correction.
+
+TRAP 6 - NO EXTENSION POINT, OR FIVE OF THEM. None means the follow-up hurts. Five means you
+have built a configurable framework for a problem nobody has yet - which is over-engineering,
+and interviewers notice. ONE interface at the point most likely to change is the calibrated
+answer.""",
+              r"""5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE.
+
+THE NAIVE APPROACH: start coding the obvious class.
+
+    class ParkingLot:
+        def __init__(self):
+            self.spots = []
+        def park(self, vehicle):
+            for spot in self.spots:
+                if spot.free:
+                    ...
+
+It feels productive - there is code on the board within a minute. And it fails for a reason
+that only becomes visible later: NOBODY AGREED WHAT WE ARE BUILDING. Twenty minutes in, the
+interviewer asks about motorbikes, or about a second floor, or about season tickets, and the
+design has no place for them because it was never scoped. You now rewrite under time pressure.
+
+THE REAL APPROACH: five moves, in order, before any code.
+
+    MOVE 1 - CLARIFY AND SHRINK. Two or three questions, then STATE the scope. The stating is
+    the part that scores.
+
+    MOVE 2 - NOUNS BECOME CLASSES. Read the problem back and underline the nouns: parking lot,
+    floor, spot, vehicle, ticket, payment. Then FILTER by "does it have behaviour or identity?"
+    - which drops colour and keeps entrance.
+
+    MOVE 3 - VERBS BECOME METHODS. park, unpark, price, pay. Each goes on the class owning the
+    data it needs. This is what prevents trap 1.
+
+    MOVE 4 - DRAW THE RELATIONSHIPS. Who holds a reference to whom. Composition by default;
+    inheritance only for genuine substitutability.
+
+    MOVE 5 - NAME THE EXTENSION POINT. One sentence, out loud, about what will change.
+
+WHY MOVE 5 IS WORTH THE MOST - and this deserves a real argument rather than an assertion,
+because it is the difference between passing and not.
+
+    ALMOST EVERY LLD ROUND ENDS WITH "NOW SUPPORT X". That is not a curveball; it is the actual
+    assessment. Everything before it was setup.
+
+    Consider the two designs when X arrives as "add weekend flat-rate pricing":
+
+    WITHOUT AN EXTENSION POINT - pricing lives in an if/elif chain inside the Lot class:
+
+        def checkout(self, hours, kind):
+            if kind == "hourly":   return 2.0 * hours
+            elif kind == "flat":   return 10.0
+            elif kind == "weekend": ...        # <- you edit this method
+
+        To add a rule you MODIFY a method inside the class that also handles parking,
+        unparking and spot assignment. That method is already tested and already works. Every
+        new rule is a chance to break parking, and the chain grows without bound.
+
+    WITH AN EXTENSION POINT - pricing is behind an interface:
+
+        class WeekendPricing(PricingStrategy):
+            def __init__(self, fee): self.fee = fee
+            def price(self, hours):  return self.fee
+
+        THREE NEW LINES. ZERO EDITS to any existing class. Lot never learns that weekend
+        pricing exists, because Lot only ever calls `self.pricing.price(hours)`.
+
+    THAT CONTRAST IS THE OPEN/CLOSED PRINCIPLE - open to extension, closed to modification -
+    and demonstrating it beats naming it.
+
+WHERE TO PUT THE ONE INTERFACE. Ask: IF THE BUSINESS CHANGED ONE THING NEXT QUARTER, WHAT WOULD
+IT BE?
+
+    parking lot        -> the pricing rules
+    vending machine    -> the payment methods
+    elevator           -> the scheduling policy
+    notification system-> the delivery channels
+    chess game         -> nothing; the rules of chess do not change quarterly. Do NOT invent an
+                          extension point here - over-engineering is its own error.""",
+              r"""6. HOW TO DRIVE IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: SPEND FOUR MINUTES TURNING A VAGUE SENTENCE INTO AN
+AGREED SET OF CLASSES, RELATIONSHIPS AND ONE EXTENSION POINT - THEN WRITE REAL CODE FOR THE TWO
+OR THREE CLASSES THAT ACTUALLY CONTAIN LOGIC.
+
+THE LOOP HERE IS THE INTERVIEW ITSELF, and it needs an explicit stopping rule because the usual
+failure is spending the whole hour in the first phase:
+
+  - Phase one: clarify, model, agree. WHAT MAKES IT STOP - you have stated a scope, listed the
+    classes, and the interviewer has not objected. That is the signal to start coding, and it
+    should arrive around minute four. If you are still listing classes at minute fifteen, you
+    have failed to stop.
+  - Phase two: code the interesting classes. WHAT MAKES IT STOP - the classes with real logic
+    are complete. Not all of them; the interesting ones.
+  - Phase three: the follow-up. This is the assessment, and phase one's extension point decides
+    how it goes.
+
+THE STEPS:
+
+  1. RESTATE THE PROBLEM in one sentence, to confirm you heard it.
+
+  2. ASK TWO OR THREE QUESTIONS - no more. Good ones narrow scope: "single floor or multiple?",
+     "one payment method or several?", "do we need reservations?"
+
+  3. STATE THE SCOPE YOURSELF and invite correction. "I'll build X, Y and Z, and skip W unless
+     you want it." THIS IS THE HIGHEST-VALUE SENTENCE IN THE FIRST TEN MINUTES.
+
+  4. LIST THE NOUNS as candidate classes. Say them out loud so the interviewer can steer.
+
+  5. FILTER THEM. Drop anything that is just data on another class. Keep anything with
+     behaviour or its own identity over time. Say why you are dropping each one - the filtering
+     is the signal, not the list.
+
+  6. LIST THE VERBS and assign each to the class that owns the data it needs. If a method would
+     have to reach into another object for three fields, it is on the wrong class.
+
+  7. STATE THE RELATIONSHIPS. Who holds whom. Composition unless there is genuine
+     substitutability.
+
+  8. NAME ONE EXTENSION POINT, out loud, with the reason. One - not five.
+
+  9. WRITE REAL CODE for two or three classes, including the interface and at least two
+     implementations of it, so the extension point is demonstrated rather than promised.
+
+ 10. WHEN THE FOLLOW-UP COMES, add a class rather than editing one. If you cannot, say so
+     honestly and describe the refactor - recognising the limitation still scores.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Somebody hands you a note that says "build me a parking lot" and leaves the room for an hour.
+
+The panicked response is to start laying bricks immediately. Within a minute there is
+something visible, which feels like progress. An hour later there is a structure that fits no
+particular requirement, and when the client returns and mentions motorbikes, much of it comes
+down.
+
+The paralysed response is to write back with thirty questions and wait. An hour later there is
+a list of questions and no building.
+
+What an experienced builder does is neither. They take four minutes and say, out loud: "I am
+going to assume cars and motorbikes, one floor, hourly charging and one way to pay. I am not
+going to handle reservations unless you tell me otherwise." That single sentence turns a vague
+note into a brief, and it does it by DECIDING rather than by asking.
+
+Then they name the parts. A lot, floors, spaces, vehicles, tickets, payments. Some things that
+sounded like parts turn out not to be - the colour of a car is a fact about a car, not a
+separate component. Some things that sounded trivial turn out to be real parts, because they
+DO something: the entrance issues tickets, so it is a part.
+
+Then they decide who is responsible for what. The thing that knows when you arrived and when
+you left is the ticket, so the ticket is where working out the charge belongs - not in some
+central office that reaches into everyone's paperwork.
+
+And then the move that separates them from everybody else. They stop and ask: "what will this
+client change their mind about first?" With a parking lot, it is always the pricing. So they
+put the pricing behind a small, clearly marked hatch - anyone can slot in a new rule without
+touching the building.
+
+An hour later the client returns and says "actually, weekends should be a flat fee."
+
+The panicked builder starts knocking through walls, because the pricing is mortared into the
+same wall as the barrier mechanism, and every change risks the barrier.
+
+The experienced builder writes a new card, slots it into the hatch, and the building does not
+change at all.
+
+The client was always going to ask. Everybody knew. Only one of them built for it.""",
+              r"""8. THE CODE, LINE BY LINE, in the real variable names.
+
+    from abc import ABC, abstractmethod   # ABC = "Abstract Base Class"
+    from enum import Enum                 # Enum = a fixed set of named values
+
+Two standard-library imports. ABC gives you interfaces - contracts subclasses must fulfil.
+Enum gives you named constants.
+
+    class Status(Enum):        # Enums beat magic strings: typo-proof and self-documenting
+        AVAILABLE = "available"
+        OCCUPIED = "occupied"
+
+Why an enum rather than the strings "available" and "occupied": a typo like "avaliable" in a
+comparison silently evaluates false and the bug is invisible. `Status.AVALIABLE` is an
+AttributeError at the moment you write it. Worth saying aloud in an interview - it is a small
+thing that signals production habits.
+
+    class PricingStrategy(ABC):           # <- the ONE extension point
+        @abstractmethod                   # subclasses MUST implement this
+        def price(self, hours): ...
+
+THE MOST IMPORTANT SEVEN LINES OF THE DESIGN, and worth being explicit about why.
+
+`ABC` marks this a contract rather than a usable class - Python will refuse to instantiate it.
+`@abstractmethod` means any subclass that forgets `price` fails LOUDLY at construction rather
+than mysteriously at call time.
+
+And notice what the contract does NOT say: nothing about hourly rates, flat fees, weekends or
+discounts. It says only "given hours, produce a price." That deliberate emptiness is what lets
+rules nobody has thought of yet slot in.
+
+    class HourlyPricing(PricingStrategy): # one concrete rule...
+        def __init__(self, rate): self.rate = rate
+        def price(self, hours): return self.rate * hours
+
+One implementation. It holds its own configuration - the rate - so two lots can charge
+differently without any new class.
+
+    class FlatPricing(PricingStrategy):   # ...and a second one, added without
+        def __init__(self, fee): self.fee = fee   # touching any existing class
+        def price(self, hours): return self.fee
+
+THE SECOND IMPLEMENTATION EXISTS TO PROVE THE POINT. One implementation of an interface
+demonstrates nothing - it might as well be a plain class. Two demonstrates that adding a third
+requires no edits anywhere.
+
+Note also that `price` ignores `hours` entirely here, and that is fine: the CONTRACT is
+"given hours, produce a price", and a flat fee is a legitimate way to honour it.
+
+    class Lot:                            # the "service" class that ties it together
+        def __init__(self, pricing):
+            self.pricing = pricing        # HAS-A a strategy (composition)
+
+COMPOSITION, in one line. The Lot HOLDS a pricing strategy rather than BEING a kind of lot
+defined by its pricing. This is trap 3's fix - had this been `class HourlyLot(ParkingLot)`,
+a lot that charges hourly on weekdays and flat at weekends would be inexpressible.
+
+The strategy arrives through the constructor rather than being created inside, so the Lot never
+names any concrete pricing class. That is what keeps it closed to modification.
+
+        def checkout(self, hours):
+            return self.pricing.price(hours)   # delegates - Lot never asks "which rule?"
+
+DELEGATION, and the comment is the whole point. There is NO if/elif here and there never will
+be. Lot does not know how many pricing rules exist, and adding a tenth changes nothing in this
+method.
+
+Compare with the version this replaces:
+
+        def checkout(self, hours, kind):
+            if kind == "hourly":    return 2.0 * hours
+            elif kind == "flat":    return 10.0
+            elif kind == "weekend": return 15.0        # every new rule edits THIS method
+
+Same behaviour today. Completely different cost tomorrow - which is exactly what the follow-up
+question measures.""",
+              r"""9. THE FIVE MOVES, RUN END TO END - AND THE FOLLOW-UP THAT SCORES THEM.
+
+THE PROMPT: "Design a parking lot."
+
+MOVE 1 - CLARIFY AND SHRINK (about 45 seconds):
+
+    Ask:   "Single floor or multiple? One payment method or several? Do we need reservations?"
+    Then STATE:
+           "I'll support multiple vehicle sizes, hourly pricing and one payment method. I'll
+            skip reservations and multi-floor routing unless you'd like them. Sound reasonable?"
+
+    Scope fixed by you, correction invited. This is the sentence juniors never say.
+
+MOVE 2 - NOUNS BECOME CLASSES (about 45 seconds):
+
+    Underline:  parking lot, floor, spot, vehicle, ticket, payment, entrance, colour, size
+
+    FILTER, out loud, because the filtering is the signal:
+        parking lot  KEEP    - owns floors, coordinates parking
+        floor        KEEP    - owns spots
+        spot         KEEP    - has state (available/occupied) and identity
+        vehicle      KEEP    - has size, has identity
+        ticket       KEEP    - has entry time, exit time, its own identity over time
+        payment      KEEP    - has an amount and a method
+        entrance     KEEP    - it ISSUES TICKETS, so it has behaviour
+        colour       DROP    - an attribute of Vehicle. No behaviour, no identity.
+        size         DROP    - an attribute, though it drives spot matching
+
+    Seven classes from nine nouns. A candidate who keeps all nine has not filtered.
+
+MOVE 3 - VERBS BECOME METHODS (about 45 seconds):
+
+    park, unpark, price, pay, issue
+
+        Ticket.duration()          - it owns entry and exit times
+        Spot.occupy() / release()  - it owns its own status
+        Floor.find_free(size)      - it owns the collection of spots
+        Entrance.issue(vehicle)    - it creates tickets
+        Lot.checkout(hours)        - it holds the pricing strategy
+
+    NOT ParkingLotManager.calculateFee(ticket), which would reach into Ticket for its times -
+    the tell from trap 1 that the method is on the wrong class.
+
+MOVE 4 - RELATIONSHIPS (about 30 seconds):
+
+    Lot      HAS-A   many Floors             composition
+    Floor    HAS-A   many Spots              composition
+    Ticket   HAS-A   a Vehicle and a Spot    composition
+    Lot      HAS-A   a PricingStrategy       composition
+    Motorbike IS-A   Vehicle                 inheritance - genuine substitutability
+
+    One inheritance relationship out of five. That ratio is about right.
+
+MOVE 5 - THE EXTENSION POINT (about 15 seconds):
+
+    "If the business changed one thing next quarter it would be the pricing rules, so pricing
+     goes behind a PricingStrategy interface. Everything else I'll keep concrete."
+
+    ONE interface. Named, with a reason.
+
+    Total elapsed: about three minutes. Now write code.
+
+--- AND HERE IS THE FOLLOW-UP, WHICH IS THE ACTUAL TEST ---
+
+    At minute thirty-five: "Now support weekend flat-rate pricing."
+
+    WITH THE EXTENSION POINT:
+
+        class WeekendPricing(PricingStrategy):
+            def __init__(self, fee): self.fee = fee
+            def price(self, hours):  return self.fee
+
+        3 new lines. 1 new class. 0 lines of existing code changed. 0 existing tests at risk.
+
+        Lot.checkout is untouched and does not know weekend pricing exists.
+
+    WITHOUT IT - pricing as an if/elif inside Lot.checkout:
+
+        1 method modified, inside the class that also handles parking and spot assignment.
+        That method's existing tests must be re-run and possibly rewritten.
+        The chain is now three branches and will be six by the next follow-up.
+
+    THE SAME REQUIREMENT, one design absorbing it with zero edits and the other requiring
+    surgery on working code. Nothing about the requirement changed - only the decision you made
+    at minute four.
+
+    THE SECOND FOLLOW-UP, if it comes: "now support a discount for electric vehicles." Same
+    test again. If your answer is still "one new class", the design is sound. If it is "edit
+    the chain again", the interviewer has learned what they came to learn.
+
+WHERE THE OVER-ENGINEERING LINE IS:
+
+    A candidate who puts FIVE interfaces in - pricing, spot allocation, payment, notification,
+    logging - has not demonstrated foresight, they have built a configuration framework for a
+    problem nobody has. Interviewers read that as inexperience just as clearly as no
+    interfaces at all.
+
+    ONE, at the point most likely to change, with the reason stated. That is the calibrated
+    answer.""",
+              r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHERE THE HOUR GOES, and how to budget it:
+
+    0-4 minutes      the five moves. Non-negotiable, and short.
+    4-30 minutes     real code for the two or three classes containing logic. Including the
+                     interface and at least TWO implementations, so the extension point is
+                     demonstrated rather than claimed.
+    30-45 minutes    "now support X". The assessment.
+    45+ minutes      testing, concurrency, scaling - if you get there, which is a good sign.
+
+WHAT TO WRITE AND WHAT TO SKIP, since you cannot write everything:
+
+    WRITE:  the interface, two implementations of it, and the one or two classes with real
+            logic - the ticket's duration calculation, the spot-matching method.
+    SKETCH: everything else as a name and a one-line description. "Payment holds an amount and
+            a method; I'll leave it as a data class."
+    SKIP:   getters, setters, constructors with no logic, and any class you are not going to
+            use.
+
+    Say which you are doing and why. "I'll write Spot and the pricing strategy properly and
+    leave the rest as data classes - the interesting logic is in those two."
+
+COMMON PROMPTS AND THEIR EXTENSION POINTS, worth having ready:
+
+    parking lot          -> pricing rules
+    vending machine      -> payment methods (and the state machine for the transaction)
+    elevator system      -> the scheduling policy
+    library system       -> fine calculation, and search
+    notification service -> the delivery channel
+    chess or tic-tac-toe -> no obvious one; do not invent one. The rules do not change.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "How would you test this?" The strategy interface makes it easy - inject a fake pricing
+    rule and assert on it. Say that; testability is a design property and interviewers score it.
+  - "What if two cars arrive at once?" Concurrency. The spot allocation needs a lock or an
+    atomic compare-and-set, or you double-allocate a spot. Naming the race is most of the marks.
+  - "How would this change at ten thousand lots?" That is an HLD question, and saying so is
+    correct - then answer briefly: the object model stays, the storage moves behind a
+    repository interface.
+  - "Why composition rather than inheritance here?" Because pricing is a behaviour that varies
+    independently of what a lot IS. A lot that prices hourly on weekdays and flat at weekends
+    cannot be two subclasses.
+
+THE #1 MISTAKE: writing code before the entities are agreed. It feels like progress and it is
+the fastest route to rewriting under time pressure, because the design absorbs the first
+requirement change badly and there is no time left to restructure. Four minutes of modelling
+buys the other fifty-six.
+
+RUNNER-UP: the fat manager class - one object doing everything while Ticket, Spot and Vehicle
+hold data and no behaviour. It is procedural code in class syntax, and the tell is a method
+that opens by reaching into another object for three fields.
+
+TAKEAWAY: an LLD prompt is vague on purpose, so the marks are for imposing structure - state
+the scope yourself, turn nouns into classes and verbs into the class that owns the data, and
+put ONE interface where the business will change next, because "now support X" is coming and
+it is the only question that is really being asked.""",
           ]),
 
         Q("lld", "SOLID principles - all five, each with the bug it prevents",
