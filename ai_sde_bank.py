@@ -70459,66 +70459,467 @@ afterwards, and the exchange argument shows that choice can never cost you anyth
 ]
 
 _EX_P1C["Triangle (Minimum Path Sum)"] = [
-    """The standard triangle, computed bottom-up.
-      2
-     3 4
-    6 5 7
-   4 1 8 3
-dp starts as the last row: [4,1,8,3].
-Row 2 [6,5,7]: dp[0] = 6 + min(4,1) = 7; dp[1] = 5 + min(1,8) = 6;
-               dp[2] = 7 + min(8,3) = 10  ->  dp = [7,6,10,3]
-Row 1 [3,4]:   dp[0] = 3 + min(7,6) = 9;  dp[1] = 4 + min(6,10) = 10
-               -> dp = [9,10,10,3]
-Row 0 [2]:     dp[0] = 2 + min(9,10) = 11
-Answer 11, the path 2 -> 3 -> 5 -> 1. The stale values left in the tail of dp
-are never read again, which is why one array suffices.""",
+    """1. THE GOAL - walk down a triangle as cheaply as possible.
 
-    """Why bottom-up beats top-down here.
-Going TOP-DOWN, each cell has two parents and the edge cells have only one, so
-you need boundary special-cases for col == 0 and col == last, and at the end
-you must scan the final row for the minimum.
-Going BOTTOM-UP, every cell has exactly TWO children (dp[col] and dp[col+1])
-with no exceptions, and the answer lands in dp[0] with no final scan. Same
-complexity, noticeably less code and no off-by-one risk. When a DP has messy
-boundaries in one direction, try the other - that is the transferable lesson.""",
+The numbers are arranged in a triangle: row 0 has one number, row 1 has two, row 2 has three, and so
+on. Start at the top and step down to the bottom row. FROM A NUMBER YOU MAY STEP TO EITHER OF THE TWO
+NUMBERS DIRECTLY BELOW IT. Add up everything you land on and make that total as small as possible.
 
-    """Why greedy fails, with the counterexample to quote.
-      1
-     2 3
-   100 100 1
-Greedy from the top picks the smaller child each step: 1 -> 2 -> 100, total
-103. The optimal path is 1 -> 3 -> 1, total 5.
-A locally cheap step can commit you to an expensive subtree. This is exactly
-the difference between greedy and DP: greedy needs the exchange property, and
-here it does not hold, so you must consider both branches. Have this
-counterexample ready - 'why not greedy?' is the most common follow-up.""",
+            2
+           3 4
+          6 5 7
+         4 1 8 3
 
-    """The in-place variant, and why you might refuse it.
-You can write directly into the triangle: `triangle[row][col] += min(
-triangle[row+1][col], triangle[row+1][col+1])`, giving O(1) extra space. It is
-a legitimate answer, but say the trade out loud: it DESTROYS the caller's
-input. If the triangle is reused - and a caller has no way to know you mutated
-it - that is a real bug. Copying the last row costs O(n) and keeps the function
-pure, which is nearly always the right default.""",
+    From the 3 in row 1 (at position 0) you may step to the 6 or the 5 in row 2 - positions 0 and 1.
+    From the 4 in row 1 (at position 1) you may step to the 5 or the 7 - positions 1 and 2.
 
-    """Edge cases and complexity.
-Single row [[5]] -> dp = [5], no rows above, return 5.
-Two rows [[1],[2,3]] -> dp = [2,3], then dp[0] = 1 + min(2,3) = 3.
-Negative numbers are fine - the recurrence never assumes positivity, which is
-worth checking because many path-sum problems do.
-Time is O(n^2) where n is the number of rows, because a triangle of n rows has
-n(n+1)/2 cells and each is touched once. Space is O(n) for the single dp row,
-down from O(n^2) for a full table - and that reduction is the point of the
-problem.""",
+    A GOOD PATH:   2 -> 3 -> 5 -> 1     =  2 + 3 + 5 + 1  =  11
+    ANOTHER:       2 -> 4 -> 5 -> 1     =  2 + 4 + 5 + 1  =  12
+    ANOTHER:       2 -> 3 -> 6 -> 4     =  2 + 3 + 6 + 4  =  15
 
-    """The rolling-array idea, generalised.
-The reason one array works is that row r depends ONLY on row r+1. Whenever a DP
-depends on a fixed number of previous rows, you can drop the full table and
-keep just those rows. Siblings: Unique Paths and Minimum Path Sum on a grid
-(one row), Climbing Stairs and House Robber (two scalars), 0/1 Knapsack (one
-row, iterated BACKWARDS to avoid reusing an item), Edit Distance (two rows).
-'Can I reduce the space?' is a standard follow-up on every 2-D DP, and the
-answer is always: look at how far back the recurrence actually reaches.""",
+    ANSWER: 11
+
+THE RULE IN INDEX TERMS, because it is what makes the code work: FROM POSITION `col` IN A ROW YOU MAY
+STEP TO POSITION `col` OR POSITION `col + 1` IN THE ROW BELOW. Each row is one longer than the one
+above, so both of those positions always exist - THERE ARE NO EDGE CASES GOING DOWNWARD.
+
+    Note that going UPWARD is not so tidy: position `col` in a row can be reached from `col - 1` or
+    `col` above, and the two end positions have only ONE parent each. That asymmetry is the whole
+    reason section 2 works from the bottom.
+
+AND THE GREEDY DOES NOT WORK. "At each step take the smaller of the two numbers below" is the obvious
+idea, and section 4 has a three-row triangle where it returns 103 against a true answer of 5.
+
+    THIS ENTRY JOINS THE GRID-DP CLUSTER in this bank. Minimum Path Sum owns the rolling row; Maximal
+    Square owns the min-of-three and the padded border; Unique Paths II owns obstacle zeroing.
+    THIS ONE OWNS THE BOTTOM-UP REFRAMING - why turning the problem upside down removes every boundary
+    check.""",
+
+    """2. THE INTUITION - start at the bottom, where the answers are already known.
+
+Ask a different question from the obvious one. Instead of "what is the cheapest way DOWN TO here", ask:
+
+    dp[col]  =  THE CHEAPEST TOTAL FROM POSITION `col` IN THIS ROW ALL THE WAY TO THE BOTTOM.
+
+For the LAST row that is free - there is nowhere further to go, so the answer at each position is just
+the number sitting there.
+
+    bottom row  4  1  8  3        dp = [4, 1, 8, 3]
+
+Now step up one row. From position `col` you may go to `col` or `col + 1` below, so:
+
+    dp[col]  =  this row's number  +  the smaller of dp[col] and dp[col + 1]
+
+    row [6, 5, 7]:
+        col 0:  6 + min(dp[0]=4, dp[1]=1)  =  6 + 1  =  7
+        col 1:  5 + min(dp[1]=1, dp[2]=8)  =  5 + 1  =  6
+        col 2:  7 + min(dp[2]=8, dp[3]=3)  =  7 + 3  = 10
+        dp = [7, 6, 10, 3]        <- only the first three entries matter now
+
+    row [3, 4]:
+        col 0:  3 + min(7, 6)  =  3 + 6  =  9
+        col 1:  4 + min(6, 10) =  4 + 6  = 10
+        dp = [9, 10, 10, 3]
+
+    row [2]:
+        col 0:  2 + min(9, 10) =  2 + 9  = 11
+        dp = [11, ...]
+
+    THE TOP CELL NOW HOLDS THE ANSWER: 11.
+
+WHY THIS DIRECTION IS THE EASY ONE. Working downward, a cell has TWO CHILDREN and both always exist,
+because the row below is one longer. Working upward, a cell has two PARENTS except at the two ends,
+where it has one - so a top-down version needs `if col == 0` and `if col == last` special cases at
+every row. Section 5 spells that out.
+
+AND ONE ARRAY IS ENOUGH. Row r depends only on row r+1, so you can overwrite the array in place as you
+climb - the entries beyond the current row's width are simply stale and never read again.
+
+    That works ONLY sweeping left to right within a row: when computing `dp[col]`, the entries at `col`
+    and `col + 1` must both still belong to the row BELOW. Going right to left would have already
+    overwritten `dp[col]`... and in fact left-to-right is safe precisely because the write at `col`
+    happens after both reads. Section 8 pins that down.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRIANGLE. A list of rows where row r has exactly r + 1 numbers.
+ADJACENT NUMBERS BELOW. From position `col` in a row, positions `col` and `col + 1` in the next row.
+
+PATH SUM. The total of every number a path lands on, top and bottom included.
+
+DYNAMIC PROGRAMMING (DP). Solving smaller pieces first and reusing their answers.
+BOTTOM-UP. Filling in from the last row upward, which is what this code does.
+TOP-DOWN. The other direction, which needs boundary cases - section 5.
+
+STATE. What one stored value means. HERE: `dp[col]` is the cheapest total from that position DOWN TO
+THE BOTTOM. Note it is a cost to FINISH, not a cost to ARRIVE - that inversion is what makes the
+recurrence clean.
+
+ROLLING ARRAY. Reusing one array across rows because each row depends only on the row below.
+
+triangle. The input, a list of lists. NOT modified - `triangle[-1][:]` copies the bottom row.
+dp. The rolling array, as long as the bottom row.
+row. The row index being processed, counting downward from the second-to-last.
+col. The position within that row.
+
+n. The number of rows. The triangle holds about n^2/2 numbers.
+O(n^2) TIME, O(n) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - THE GREEDY. "From each number step to the smaller of the two below" is the first idea and it
+is wrong, sometimes spectacularly.
+
+            1
+           2 3
+        100 100 1
+
+        GREEDY:  start at 1. The two below are 2 and 3, so take the 2 (position 0).
+                 From position 0 the two below are 100 and 100 - take either.
+                 TOTAL: 1 + 2 + 100 = 103.
+
+        OPTIMAL: 1 -> 3 -> 1 = 5.  Taking the LARGER number in row 1 opens the way to the 1 below it.
+
+    103 AGAINST 5, on a triangle of six numbers. The greedy commits to a position before it can see
+    what that position leads to, and one step of lookahead is not enough.
+
+TRAP 2 - GOING TOP-DOWN WITHOUT HANDLING THE EDGES. If you insist on working downward, `dp[col]` is
+reached from `dp[col - 1]` or `dp[col]` in the row above - but position 0 has no `col - 1`, and the
+last position of a row has no `col` above it (the row above is shorter). Both ends need their own case.
+
+    IT IS NOT WRONG, IT IS FIDDLIER, and section 5 shows the two special cases you would have to write.
+    Bottom-up has none.
+
+TRAP 3 - READING `dp[col + 1]` AFTER OVERWRITING IT. The inner loop must go LEFT TO RIGHT. Computing
+`dp[col]` reads `dp[col]` and `dp[col + 1]`, and both must still hold values from the row BELOW. Going
+left to right, `dp[col + 1]` has not been touched yet in this pass, so it is safe.
+
+    Reversing the inner loop breaks it: `dp[col + 1]` would already have been rewritten with this row's
+    value, and the "child" you are consulting is no longer a child.
+
+TRAP 4 - THINKING THE STALE TAIL IS A BUG. After processing a row of width w, entries `dp[w]` onward
+still hold values from lower rows. THAT IS FINE - the next row up is narrower still and never reads
+them. Only `dp[0]` matters at the end.
+
+TRAP 5 - MUTATING THE CALLER'S TRIANGLE. `dp = triangle[-1][:]` COPIES the bottom row, so the input is
+left alone - CONFIRMED by comparing the triangle before and after a call. The in-place variant in
+section 5 does modify it, and that is a real trade rather than an improvement.
+
+TRAP 6 - ASSUMING THE NUMBERS ARE POSITIVE. They may be negative, and nothing in the algorithm cares -
+`min` works the same. A triangle of [[-1],[2,3],[1,-1,-3]] gives −1, which is the top plus the cheapest
+descent. Any solution that prunes on "the total has already exceeded the best" would be wrong.
+
+TRAP 7 - THE ONE-ROW TRIANGLE. `[[5]]` gives `dp = [5]` and the outer loop `range(-1, -1, -1)` is
+empty, so it returns 5 immediately. Correct with no special case.""",
+
+    """5. THE ALTERNATIVES, AND WHY BOTTOM-UP IS THE ONE TO WRITE.
+
+VERSION A - TRY EVERY PATH. Each of the n − 1 steps is a binary choice, so there are 2^(n−1) paths. For
+a 20-row triangle that is 524,288; for 50 rows it is over 500 trillion.
+
+VERSION B - THE GREEDY. Trap 1. Wrong by a factor of 20 on a six-number triangle.
+
+VERSION C - TOP-DOWN DP. Define `dp[col]` as the cheapest cost to REACH position col in the current
+row. Then
+
+        dp[col] = triangle[row][col] + min(dp[col - 1], dp[col])
+
+    and you need TWO SPECIAL CASES: at `col == 0` there is no `dp[col - 1]`, so the only parent is
+    directly above; at the LAST position of the row there is no `dp[col]` from the row above, because
+    the row above is one shorter, so the only parent is `dp[col - 1]`.
+
+    You must also sweep RIGHT TO LEFT to avoid clobbering, or keep a second array. IT WORKS. It is just
+    three things to get right instead of none.
+
+VERSION D - BOTTOM-UP DP, which is the code here. Every cell has exactly two children and both always
+exist, so there is not a single boundary check in the whole function.
+
+WHY THE ASYMMETRY EXISTS, because it is worth seeing rather than memorising:
+
+        row r     has r + 1 positions:   0 .. r
+        row r+1   has r + 2 positions:   0 .. r+1
+
+    GOING DOWN from position col in row r, you use positions col and col+1 in row r+1. Since col is at
+    most r, col+1 is at most r+1 - WHICH IS EXACTLY THE LAST VALID POSITION. Always in range.
+
+    GOING UP into position col of row r+1, you would use positions col−1 and col in row r. For col = 0
+    the first does not exist; for col = r+1 the second does not exist. TWO EDGE CASES.
+
+    THE TRIANGLE WIDENS DOWNWARD, so downward movement always has room and upward movement does not.
+    That is the whole reason to invert the problem.
+
+VERSION E - THE IN-PLACE VARIANT. Write the running totals straight into the triangle:
+
+        triangle[row][col] += min(triangle[row+1][col], triangle[row+1][col+1])
+
+    O(1) extra space, and IT DESTROYS THE CALLER'S DATA. Whether that is acceptable depends entirely on
+    the caller, and it is worth refusing unless asked - several entries in this bank flag the same
+    trade. The O(n) version costs one array of n numbers, which is rarely the constraint.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: START FROM THE BOTTOM ROW, WHERE THE CHEAPEST REMAINING
+TOTAL IS JUST THE NUMBER ITSELF, AND CLIMB UPWARD REPLACING EACH POSITION WITH ITS OWN NUMBER PLUS THE
+SMALLER OF THE TWO POSITIONS BELOW IT - UNTIL THE TOP CELL HOLDS THE ANSWER.
+
+THERE IS NO RECURSION. The mechanism is A SINGLE ARRAY REWRITTEN ONCE PER ROW, CLIMBING:
+
+  - The array starts as a copy of the bottom row, and after processing row r its first r + 1 entries
+    hold the cheapest total from each position of row r down to the bottom.
+  - Each entry depends only on two entries of the row below, which are still sitting in the array
+    because this row has not overwritten them yet.
+  - WHAT MAKES IT STOP: the outer loop runs once per row above the bottom, a count fixed before it
+    starts.
+  - WHY THERE ARE NO BOUNDARY CHECKS: every position has exactly two positions below it, and both
+    always exist, because each row is one longer than the one above.
+
+THE STEPS:
+
+  1. COPY THE BOTTOM ROW INTO A WORKING ARRAY. For those positions the cheapest total to the bottom is
+     the number itself, since there is nowhere further to go.
+
+     COPY IT rather than referring to it, so the caller's triangle is left untouched.
+
+  2. WORK UPWARD, FROM THE SECOND-TO-LAST ROW TO THE TOP. FOR EACH POSITION IN THAT ROW, LEFT TO RIGHT:
+
+     REPLACE THE WORKING VALUE AT THAT POSITION WITH: this row's number, plus the smaller of the two
+     working values at this position and the next one along.
+
+     LEFT TO RIGHT MATTERS. You read the entry at this position and the one beside it, and both must
+     still describe the row below. Sweeping the other way would have already rewritten the neighbour,
+     so you would be consulting something from the wrong row.
+
+     Do not worry that the working array is longer than the row you are on. The extra entries at the end
+     are left over from lower rows, and nothing above will ever look at them.
+
+  3. WHEN YOU REACH THE TOP, THE FIRST ENTRY IS THE ANSWER - the cheapest total from the single top
+     position all the way down.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a hillside of terraces, narrow at the top and widening as it goes down. Each terrace has a
+number painted on it - the toll for standing there. You start on the single terrace at the summit and
+walk down to the bottom, and from any terrace you may only step onto one of the two directly below it.
+You want the cheapest descent.
+
+The instinct is to start at the top and, at each step, look at the two terraces below and move onto the
+cheaper one. That fails, and it is easy to see why once you look for it: a cheap terrace can be
+perched above two ruinously expensive ones, while its dearer neighbour opens onto a bargain. One step
+of lookahead is not enough, and no fixed amount of lookahead is either.
+
+So turn the problem upside down and start at the BOTTOM.
+
+For the terraces on the bottom row, the question is trivial. There is nowhere further to go, so the
+cheapest cost of finishing from there is simply that terrace's own toll. Write those numbers down.
+
+Now step up one row. For each terrace on that row, you know exactly what the two terraces beneath it
+would cost you to finish from, because you just worked them out. So the cheapest cost of finishing
+from HERE is this terrace's toll plus whichever of those two is cheaper. Write the new numbers over the
+old ones.
+
+Keep climbing. Every time you move up a row you are asking the same question, and every time the
+answers you need are already written down from the row before.
+
+When you finally reach the single terrace at the summit, the number written against it is the cheapest
+possible descent, and you are done.
+
+Two small things make this pleasant. The first is that going DOWNWARD every terrace has exactly two
+terraces beneath it, always - because each row is one wider than the row above, there is never a
+terrace hanging off the edge with only one option. Had you tried to work downward from the top, the
+terraces at the two ends of each row would have had only one terrace above them rather than two, and
+you would have needed separate rules for them.
+
+The second is that you only ever need one row of numbers. Once you have used the row below, you can
+write straight over it - as long as you work along the row in one direction, so that the neighbour you
+are about to consult has not already been replaced.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the triangle 2 / 3 4 / 6 5 7 / 4 1 8 3 beside you, answer 11.
+
+    def minimum_total(triangle):
+
+`triangle` is a list of rows, row r having r + 1 numbers. Returns the minimum top-to-bottom path sum.
+THE INPUT IS NOT MODIFIED - the next line copies.
+
+        dp = triangle[-1][:]              # start from the bottom row
+
+    dp  HOLDS, for each position, THE CHEAPEST TOTAL FROM THAT POSITION DOWN TO THE BOTTOM.
+
+For the bottom row that is just the number itself - there is nowhere further to go, so the base case
+needs no computation at all.
+
+    `[:]` MAKES A COPY. Writing `dp = triangle[-1]` would alias the caller's bottom row and the loop
+    below would overwrite it (trap 5). Verified: the triangle compares equal before and after a call.
+
+The array is as long as the BOTTOM row, which is the longest - so it has room for every row above.
+
+        for row in range(len(triangle) - 2, -1, -1):
+
+Climb from the SECOND-TO-LAST row up to row 0. The bottom row is already done.
+
+For a one-row triangle this is `range(-1, -1, -1)`, which is empty - so `[[5]]` returns 5 with no
+special case (trap 7).
+
+            for col in range(len(triangle[row])):
+
+Every position in this row - and note the row's own length is used, so the loop naturally narrows as it
+climbs.
+
+LEFT TO RIGHT IS REQUIRED (trap 3). The write at `col` happens after both reads, so `dp[col + 1]` still
+belongs to the row below.
+
+                # each cell + the smaller of its two children below
+                dp[col] = triangle[row][col] + min(dp[col], dp[col + 1])
+
+THE RECURRENCE, AND THERE IS NOT A SINGLE BOUNDARY CHECK IN IT.
+
+    `dp[col]`      the cheapest finish from the position directly below-left.
+    `dp[col + 1]`  the cheapest finish from below-right.
+    `min`          you may take either, so take the better.
+    `triangle[row][col]`  the toll for standing here.
+
+    BOTH CHILDREN ALWAYS EXIST. `col` runs from 0 to `row`, so `col + 1` runs to `row + 1` - which is
+    exactly the last valid position in the row below, since that row has `row + 2` entries. Section 5
+    proves it. This is the payoff of working bottom-up.
+
+Entries beyond the current row's width still hold values from lower rows and are never read again
+(trap 4).
+
+        return dp[0]
+
+After the top row is processed, `dp[0]` is the cheapest total from the single top position to the
+bottom.""",
+
+    """9. THE TRIANGLE, COMPUTED BOTTOM-UP - AND THE GREEDY THAT LOSES BY A FACTOR OF TWENTY.
+
+TRACE 1 - THE STANDARD TRIANGLE. Expected 11.
+
+            2
+           3 4
+          6 5 7
+         4 1 8 3
+
+    dp starts as a copy of the bottom row:   dp = [4, 1, 8, 3]
+
+    ROW 2, the numbers [6, 5, 7]:
+        col 0:  dp[0] = 6 + min(dp[0]=4, dp[1]=1) = 6 + 1 =  7
+        col 1:  dp[1] = 5 + min(dp[1]=1, dp[2]=8) = 5 + 1 =  6
+        col 2:  dp[2] = 7 + min(dp[2]=8, dp[3]=3) = 7 + 3 = 10
+        dp = [7, 6, 10, 3]
+
+        NOTE col 1 READ dp[1] BEFORE OVERWRITING IT - the 1 it used was the bottom row's, not the 7 just
+        written at col 0. That is why the sweep goes left to right (trap 3).
+
+    ROW 1, the numbers [3, 4]:
+        col 0:  dp[0] = 3 + min(7, 6)  = 3 + 6 =  9
+        col 1:  dp[1] = 4 + min(6, 10) = 4 + 6 = 10
+        dp = [9, 10, 10, 3]        <- the last two entries are stale and never read again (trap 4)
+
+    ROW 0, the number [2]:
+        col 0:  dp[0] = 2 + min(9, 10) = 2 + 9 = 11
+        dp = [11, 10, 10, 3]
+
+    RETURN dp[0] = 11.
+
+    CHECK BY HAND: the winning path is 2 -> 3 -> 5 -> 1, and 2 + 3 + 5 + 1 = 11.
+
+    AND THE TRIANGLE IS UNCHANGED after the call - the `[:]` copy did its job.
+
+TRACE 2 - THE GREEDY COUNTEREXAMPLE (trap 1).
+
+            1
+           2 3
+        100 100 1
+
+    THE GREEDY, one step of lookahead:
+        At the 1 (row 0, position 0). Below are 2 and 3. Take the 2, moving to position 0.
+        At the 2 (row 1, position 0). Below are 100 and 100. Take either.
+        TOTAL 1 + 2 + 100 = 103.
+
+    THE DP:
+        dp = [100, 100, 1]
+        ROW 1 [2, 3]:  col 0:  2 + min(100, 100) = 102
+                       col 1:  3 + min(100, 1)   =   4
+                       dp = [102, 4, 1]
+        ROW 0 [1]:     col 0:  1 + min(102, 4)   =   5
+        RETURN 5.
+
+    103 AGAINST 5. The greedy took the cheaper number in row 1 and walked into a wall; the DP saw that
+    position 1 leads to a 1 and paid one extra to get there.
+
+TRACE 3 - THE EXTREMES.
+
+    A SINGLE ROW [[5]]:  dp = [5]. The outer loop `range(-1, -1, -1)` is empty.  RETURN 5.
+
+    TWO ROWS [[1], [2, 3]]:  dp = [2, 3].
+        ROW 0 [1]:  dp[0] = 1 + min(2, 3) = 3.  RETURN 3.
+
+    NEGATIVE NUMBERS [[-1], [2, 3], [1, -1, -3]]:
+        dp = [1, -1, -3]
+        ROW 1 [2, 3]:  col 0: 2 + min(1, -1) = 1;  col 1: 3 + min(-1, -3) = 0.  dp = [1, 0, -3]
+        ROW 0 [-1]:    -1 + min(1, 0) = -1.
+        RETURN -1.
+
+        Nothing in the algorithm cares about signs - `min` behaves identically, and any solution that
+        pruned on "the running total is already too large" would be wrong here (trap 6).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2), where n is the number of rows.
+
+In plain words: the triangle contains 1 + 2 + ... + n = n(n+1)/2 numbers, and each is touched exactly
+once with constant work - one `min` and one addition. That is optimal, since you cannot answer without
+at least looking at every number.
+
+SPACE: O(n) - one array as long as the bottom row.
+
+    THE IN-PLACE VARIANT is O(1) extra and destroys the caller's triangle (section 5). A full
+    two-dimensional table would be O(n^2). The rolling array is the middle ground and the usual answer.
+
+THE ROLLING-ARRAY IDEA, GENERALISED - this is the transferable part: THE REASON ONE ARRAY WORKS IS THAT
+ROW r DEPENDS ONLY ON ROW r+1. WHENEVER A DP DEPENDS ON A FIXED NUMBER OF PREVIOUS ROWS, YOU CAN KEEP
+JUST THOSE ROWS.
+
+    Same reduction: Minimum Path Sum keeps one row; Unique Paths II keeps one row; Maximal Square keeps
+    one row plus a saved diagonal; Fibonacci and House Robber keep two numbers; Tribonacci keeps three.
+    The WIDTH of the dependency is what you must keep, and nothing more.
+
+THE GRID-DP CLUSTER, AND WHO OWNS WHAT:
+
+    TRIANGLE                  owns the BOTTOM-UP REFRAMING - inverting the direction to remove every
+                              boundary check.                                    <- this entry
+    MINIMUM PATH SUM          owns the rolling row and the in-place overwrite argument.
+    MAXIMAL SQUARE            owns the min-of-three and the padded sentinel border.
+    UNIQUE PATHS II           owns obstacle zeroing and the first-row propagation.
+
+    ALL FOUR are "each cell from a fixed set of neighbours, swept in dependency order". What differs is
+    which neighbours, and which direction makes the boundaries disappear.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it in O(1) extra space." Write into the triangle itself - and say plainly that it destroys the
+    input.
+  - "Return the path, not just the sum." Keep the full two-dimensional table and walk down from the
+    top, at each step moving to whichever child supplied the `min`.
+  - "Why bottom-up?" Because a cell's two CHILDREN always exist while its two PARENTS do not - the
+    triangle widens downward (section 5).
+  - "What if you could also step two positions across?" The recurrence widens to a min over three
+    children, and `col + 2` would then need a bounds check - the boundary-free property is specific to
+    the adjacent-only rule.
+  - "What if you wanted the MAXIMUM path sum?" Change `min` to `max`. Nothing else moves.
+
+THE #1 BEGINNER MISTAKE: the greedy - always stepping to the smaller of the two numbers below. It gives
+103 where the answer is 5 on a six-number triangle, because a cheap cell can sit above two expensive
+ones and one step of lookahead cannot see it.
+
+RUNNER-UP: writing it top-down and forgetting that the two ends of each row have only ONE parent, not
+two. It is not wrong to work downward, but it costs two special cases that the bottom-up version simply
+does not have.
+
+TAKEAWAY: define the state as the cheapest cost to FINISH from a cell rather than to REACH it, and
+climb from the bottom row upward - because the triangle widens downward, every cell has exactly two
+children that always exist, so the whole function contains no boundary checks at all.""",
 ]
 
 for _e in ENTRIES:
@@ -81242,125 +81643,913 @@ children on either side, because a partial number partway down the tree is not a
 ]
 
 _EX_P1H["Unique Paths II (grid with obstacles)"] = [
-    """The example, row by row.
-grid = [[0,0,0],
-        [0,1,0],
-        [0,0,0]]
-dp starts [1,0,0].
-Row 0: c=0 no obstacle, dp stays 1. c=1: dp[1] += dp[0] -> 1. c=2: dp[2] +=
-dp[1] -> 1.  dp = [1,1,1]
-Row 1: c=0 fine, dp[0] stays 1. c=1 is an OBSTACLE -> dp[1] = 0. c=2: dp[2] +=
-dp[1] = 1 + 0 = 1.  dp = [1,0,1]
-Row 2: c=0 -> 1. c=1: dp[1] += dp[0] -> 0 + 1 = 1. c=2: dp[2] += dp[1] ->
-1 + 1 = 2.
-Answer 2, which matches the two routes around the obstacle.""",
+    """1. THE GOAL - count the routes, but some cells are blocked.
 
-    """Why the rolling row works, and what dp[c] means mid-loop.
-The recurrence is paths[r][c] = paths[r-1][c] + paths[r][c-1]. Scanning left to
-right, dp[c] still holds the value from the row ABOVE while dp[c-1] already
-holds this row's - so `dp[c] += dp[c-1]` is exactly 'from above plus from the
-left' with one array.
-Reverse the scan direction and dp[c-1] is stale, silently computing something
-else. This is the same rolling-row argument as Minimum Path Sum, and it drops
-space from O(rows*cols) to O(cols).""",
+Move from the TOP-LEFT of a grid to the BOTTOM-RIGHT, stepping only RIGHT or DOWN. Some cells hold a 1,
+meaning an OBSTACLE you may not enter; the rest hold 0. COUNT HOW MANY DISTINCT ROUTES EXIST.
 
-    """The obstacle line is an assignment, not an addition.
-`dp[c] = 0` overwrites, killing every path that would have passed through the
-cell - and it must happen BEFORE the addition, which the if/elif ordering
-guarantees. Writing `dp[c] += 0` or handling obstacles after the accumulation
-lets paths leak through the wall.
-The zero then propagates naturally: cells to the right of the obstacle in the
-same row inherit a smaller dp[c-1], and cells below inherit dp[c] = 0. No extra
-bookkeeping is needed, which is the elegance of this formulation.""",
+    grid =  0  0  0
+            0  1  0
+            0  0  0
 
-    """The two guards that are genuinely required.
-A blocked START (grid[0][0] == 1) means zero paths, and the code returns early -
-without that, dp[0] would be initialised to 1 and you would count paths from a
-cell you cannot stand on.
-A blocked END is handled automatically: the last cell's dp becomes 0 in the
-obstacle branch, so dp[-1] is 0. Worth checking explicitly in the interview, as
-interviewers often supply exactly that input to see whether you special-cased
-one end and forgot the other.""",
+    Without the obstacle a 3 x 3 grid would have 6 routes. The 1 in the middle blocks any route through
+    it, and exactly four of the six passed through there.
 
-    """Edge cases.
-A single cell [[0]] -> dp = [1], no additions, answer 1. [[1]] -> the guard
-returns 0.
-A fully blocked row anywhere -> every dp becomes 0 on that row and stays 0
-thereafter, correctly reporting no route.
-A one-column grid with an obstacle partway -> dp[0] is zeroed and never
-recovers, since there is no dp[c-1] to add. Correct: in one column you cannot
-go around anything.
-Note dp[0] is only ever updated by the obstacle branch, never by the addition -
-column 0 is reachable solely from above.""",
+        RIGHT RIGHT DOWN DOWN     valid - along the top, then down the right edge
+        DOWN DOWN RIGHT RIGHT     valid - down the left edge, then along the bottom
 
-    """Complexity and the family.
-Time O(rows * cols), space O(cols). Both optimal - you must look at every cell
-at least once.
-Family: Unique Paths (the no-obstacle original, which also has the closed-form
-binomial C(m+n-2, m-1)), Minimum Path Sum (min instead of sum), Triangle,
-Cherry Pickup (two paths at once, so the state gains a dimension), and Dungeon
-Game - which is the instructive one, because it must be solved BACKWARDS from
-the destination since the constraint is on the running minimum rather than on
-a total. Same grid, different direction, for a reason worth understanding.""",
+    ANSWER: 2
+
+TWO THINGS TO PIN DOWN:
+
+    AN OBSTACLE IS A CELL YOU CANNOT ENTER, so no route may pass through it. It does not merely cost
+        more; it removes every route that would have used it.
+    THE START OR THE END MAY THEMSELVES BE BLOCKED. If the top-left holds a 1 there are no routes at
+        all, and the same is true of the bottom-right. Section 4 checks whether that needs its own code.
+
+WHY COUNTING RATHER THAN OPTIMISING CHANGES THE RECURRENCE. Its sibling Minimum Path Sum takes the
+`min` of the two ways into a cell; here you ADD them, because two different routes into a cell are two
+different routes overall.
+
+    routes into a cell  =  routes from above  +  routes from the left
+
+    That single change - `min` becomes `+` - is the whole difference between the two problems, and it
+    is worth noticing how little else moves.
+
+    THIS ENTRY JOINS THE GRID-DP CLUSTER. Minimum Path Sum owns the rolling row; Maximal Square owns the
+    min-of-three and the padded border; Triangle owns the bottom-up reframing. THIS ONE OWNS OBSTACLE
+    ZEROING and how the first row and column propagate.""",
+
+    """2. THE INTUITION - add the two ways in, and an obstacle contributes nothing.
+
+Because you may only move right or down, a cell can be entered from exactly TWO places: the cell ABOVE
+and the cell to the LEFT. So the number of routes to a cell is the sum of the routes to those two.
+
+    routes[r][c]  =  routes[r-1][c]  +  routes[r][c-1]
+
+    AND IF THE CELL IS AN OBSTACLE, routes[r][c] = 0 - nothing can pass through it, whatever leads up
+    to it.
+
+Fill in row by row for the example grid:
+
+    grid                    routes
+    0  0  0                 1  1  1        top row: one way along, until something blocks it
+    0  1  0                 1  0  1        the obstacle kills its own cell; the cell to its right
+    0  0  0                 1  1  2        can then only be reached from above
+
+    THE BOTTOM-RIGHT HOLDS 2.
+
+Read the middle row carefully, because it is where the obstacle does its work. The cell right of the
+obstacle would normally get "from above (1) plus from the left (0-because-blocked)" = 1, and that is
+exactly what happens. The zero propagates - not as a special case, but because zero added to something
+contributes nothing.
+
+NOW THE SPACE SAVING. Each row depends only on the row above and on cells to its own left, so ONE ROW
+OF NUMBERS SUFFICES, rewritten as you sweep downward.
+
+    dp starts    [1, 0, 0]        one way to be at the start, before any row is processed
+    after row 0  [1, 1, 1]
+    after row 1  [1, 0, 1]
+    after row 2  [1, 1, 2]        the last entry is the answer
+
+WHY THE IN-PLACE UPDATE IS SAFE. When you reach position `c`, the value sitting in `dp[c]` has not been
+touched during this row - so it is still the count from THE ROW ABOVE. And `dp[c-1]` was updated a
+moment ago, so it is THIS row's count for the cell to the left. Those are exactly the two numbers the
+rule needs.
+
+    `dp[c] += dp[c-1]`   reads "from above" and "from the left" and writes the new value in one step.
+
+    IT WORKS ONLY SWEEPING LEFT TO RIGHT, for the same reason as in Minimum Path Sum.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+OBSTACLE. A cell holding 1, which may not be entered. Clear cells hold 0.
+ROUTE / PATH. A sequence of right and down moves from the top-left to the bottom-right.
+
+DP TABLE. Here, a single ROLLING ROW: `dp[c]` is the number of routes to column c of whichever row is
+currently being processed.
+
+ROLLING ROW. Reusing one array across rows because each row depends only on the row above.
+IN-PLACE UPDATE. Writing to an entry while its old value is still needed - safe here for a specific
+reason (section 2).
+
+grid. The input, a list of rows of 0s and 1s. NOT modified.
+cols. The number of columns.
+dp. The rolling row.
+row. The current row of the grid, taken directly by iteration rather than by index.
+c. The column index.
+
+rows x cols. The grid's size.
+O(rows x cols) TIME, O(cols) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - and one guard turns out to be redundant.
+
+TRAP 1 - USING A SEPARATE `if` INSTEAD OF `elif`, so that an obstacle cell still receives the addition.
+This is the mistake, and it silently lets routes flow straight through the walls.
+
+    THE CORRECT SHAPE:
+        if row[c] == 1:   dp[c] = 0
+        elif c > 0:       dp[c] += dp[c-1]
+
+    THE BROKEN SHAPE:
+        if row[c] == 1:   dp[c] = 0
+        if c > 0:         dp[c] += dp[c-1]        <- runs even for an obstacle
+
+    On the worked grid the obstacle cell is zeroed and then immediately gains the count from its left
+    neighbour, so it stops being an obstacle at all.
+
+        CORRECT:  2        BROKEN:  4
+
+    And on the two-by-two grid [[0,1],[0,0]] the broken version gives 2 where the answer is 1.
+
+    THE OBSTACLE LINE IS AN ASSIGNMENT, AND IT MUST BE THE ONLY THING THAT HAPPENS AT THAT CELL.
+
+TRAP 2 - THE `grid[0][0] == 1` GUARD IS REDUNDANT, and this is worth knowing rather than repeating.
+
+    It looks essential - a blocked start surely needs handling. But trace it: `dp[0]` is initialised to
+    1, and then on the very first row the loop reaches `c = 0`, sees `row[0] == 1`, and sets `dp[0] = 0`.
+    Everything downstream is then zero.
+
+    REMOVING THAT HALF OF THE GUARD CHANGES NOTHING. Checked on six grids including `[[1]]` itself: the
+    answers are identical with and without it.
+
+    THE OTHER HALF IS LOAD-BEARING. `if not grid` must stay, because `len(grid[0])` on an empty list
+    raises IndexError. So the line is half necessary and half decoration - keep it if you like the
+    explicitness, but do not believe it is doing work.
+
+TRAP 3 - INITIALISING `dp[0]` TO SOMETHING OTHER THAN 1. The 1 means "there is one way to be at the
+start before you have moved". It is what seeds the whole table; a 0 there makes every count zero.
+
+TRAP 4 - THE FIRST COLUMN NEEDS NO ADDITION, AND GETS NONE. At `c == 0` the `elif c > 0` is false, so
+nothing happens and `dp[0]` keeps its value from the row above - which is correct, since the first
+column can only be reached from directly above.
+
+    AND THAT IS ALSO HOW A BLOCKED FIRST COLUMN PROPAGATES: once an obstacle sets `dp[0] = 0`, every
+    later row leaves it at 0, so nothing below can be reached down that edge.
+
+TRAP 5 - SWEEPING RIGHT TO LEFT. `dp[c] += dp[c-1]` needs `dp[c-1]` to hold THIS row's value, which it
+only does if the sweep has already passed it. Reversing the inner loop reads the row above instead and
+the counts come out wrong.
+
+TRAP 6 - A BLOCKED DESTINATION. If the bottom-right holds a 1, the last cell processed is zeroed and
+`dp[-1]` is 0. Correct, and it needs no special case.
+
+TRAP 7 - A FULLY BLOCKED ROW. Every cell in that row becomes 0, so every row below starts from nothing
+and the answer is 0. Confirmed on [[0,0],[1,1],[0,0]].""",
+
+    """5. THE ALTERNATIVES, AND THE ONE LINE THAT SEPARATES THIS FROM ITS SIBLING.
+
+VERSION A - ENUMERATE EVERY ROUTE. There are "(R+C−2) choose (R−1)" routes in an unobstructed grid -
+48,620 for a 10 x 10 and over 35 billion for 20 x 20. Hopeless, and obstacles do not reduce it enough
+to matter.
+
+VERSION B - RECURSION WITHOUT MEMOISATION. "Routes from here = routes from the right + routes from
+below, or 0 if blocked." Correct and exponential, for the same reason.
+
+VERSION C - MEMOISED RECURSION. Correct, O(rows x cols), and it uses recursion depth up to rows + cols.
+
+VERSION D - A FULL TWO-DIMENSIONAL TABLE. O(rows x cols) time and space. Clear to write and to explain.
+
+VERSION E - THE ROLLING ROW, which is the code here. O(rows x cols) time, O(cols) space.
+
+THE COMBINATORIAL SHORTCUT, AND WHY IT DIES HERE. Without obstacles the answer is a single binomial
+coefficient - you choose which of the R+C−2 moves are the downs - computable in O(min(R,C)) with no DP
+at all. That is Unique Paths I.
+
+    ADD ONE OBSTACLE and the formula collapses. You can patch it with inclusion-exclusion over the
+    obstacles, but the number of terms grows exponentially in how many there are. THE DP IS THE RIGHT
+    ANSWER precisely because it does not care how many obstacles there are or where.
+
+THE ONE-LINE DIFFERENCE FROM MINIMUM PATH SUM, which is the comparison worth having ready:
+
+    MINIMUM PATH SUM     dp[c] = min(dp[c], dp[c-1]) + cost      <- choose the better way in
+    UNIQUE PATHS II      dp[c] = dp[c] + dp[c-1]                 <- count both ways in
+
+    OPTIMISING TAKES A MIN; COUNTING TAKES A SUM. The traversal, the sweep direction, the rolling row
+    and the boundary handling are otherwise identical. Recognising that saves learning the second
+    problem at all.
+
+WHY ZERO IS EXACTLY THE RIGHT VALUE FOR AN OBSTACLE. It is not a sentinel or a flag - it is the literal
+answer to "how many routes reach this cell", which for a blocked cell is none. And because the
+recurrence ADDS, a zero contributes nothing to its neighbours automatically. Compare with Minimum Path
+Sum, where blocking a cell would need INFINITY rather than zero, since that recurrence takes a minimum.
+The identity element of the operation is what the blocked value has to be.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP ONE ROW OF ROUTE COUNTS AND SWEEP IT DOWN THE GRID -
+EACH CELL BECOMING THE COUNT FROM ABOVE PLUS THE COUNT FROM THE LEFT, EXCEPT THAT AN OBSTACLE IS SET
+FLATLY TO ZERO AND GETS NO ADDITION AT ALL.
+
+THERE IS NO RECURSION. The mechanism is A SINGLE ROW OF NUMBERS REWRITTEN ONCE PER GRID ROW:
+
+  - Before a row is processed, each entry holds the number of routes to that column in the row ABOVE.
+  - As the sweep moves along the row, each entry is updated to this row's count.
+  - So at the moment a cell is computed, the entry under your finger is still the row above, and the
+    entry beside it has already become this row - which are precisely the two numbers required.
+  - THAT ONLY HOLDS SWEEPING LEFT TO RIGHT.
+  - WHAT MAKES IT STOP: two nested loops with trip counts fixed by the grid's dimensions.
+
+THE STEPS:
+
+  1. IF THERE IS NO GRID AT ALL, THERE ARE NO ROUTES.
+
+  2. MAKE A ROW OF COUNTS, ONE PER COLUMN, ALL ZERO EXCEPT THE FIRST, WHICH IS ONE.
+
+     That one means "there is a single way to be standing at the start before making any move". It is
+     the seed the entire table grows from; make it zero and every count stays zero.
+
+  3. FOR EACH ROW OF THE GRID IN TURN, FROM THE TOP, AND WITHIN EACH ROW FROM LEFT TO RIGHT:
+
+     a. IF THIS CELL IS AN OBSTACLE, SET ITS COUNT TO ZERO AND DO NOTHING ELSE.
+
+        NOTHING ELSE. The temptation is to zero it and then still add the neighbour on the left, which
+        immediately un-blocks it - routes flow straight through the wall and the answer comes out too
+        large.
+
+     b. OTHERWISE, IF THIS IS NOT THE FIRST COLUMN, ADD THE COUNT OF THE CELL TO ITS LEFT TO WHATEVER IS
+        ALREADY THERE.
+
+        What is already there is the count from the row above; what you are adding is the count from the
+        left. Those are the only two ways into this cell.
+
+     c. THE FIRST COLUMN GETS NO ADDITION, because there is nothing to its left. Its value simply
+        carries down from the row above - which also means that once an obstacle zeroes it, everything
+        below it down that edge stays zero.
+
+  4. THE LAST ENTRY IS THE NUMBER OF ROUTES TO THE BOTTOM-RIGHT.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture a city laid out on a grid, and you want to count the different ways of walking from the
+north-west corner to the south-east corner, only ever heading east or south. Some junctions are closed
+for roadworks and cannot be entered at all.
+
+Rather than trying to trace out routes, count them junction by junction. Because you only ever travel
+east or south, there are exactly two ways to arrive anywhere: from the junction to the north, or from
+the junction to the west. So the number of routes to a junction is simply the number of routes to those
+two, added together. Two different ways of getting to your neighbour are two different ways of getting
+to you.
+
+And a closed junction has a count of nothing at all - not a large number, not a special marker, just
+zero, because zero routes reach it. That turns out to be exactly the right thing to write, because
+adding zero to a neighbour's count contributes nothing, so the closure spreads its effect without any
+extra rule. Everything downstream that could only have been reached through it quietly loses those
+routes.
+
+You work through the city one street at a time, west to east, then move to the next street south. And
+you only ever need to remember one street's worth of numbers. As you walk east along a street, the
+number written at the junction you are standing on is still the count from the street to the NORTH -
+you have not updated it yet - while the number just behind you has already been brought up to date for
+the street you are on. Those are precisely the two you need, so you add them and write the result in
+place.
+
+That trick depends on always walking east. Walk the other way and the number behind you would still
+belong to the street above, and you would be adding the wrong thing.
+
+Two junctions need a word. The very first one starts with a count of one, meaning there is exactly one
+way to be standing at the start having gone nowhere - that single 1 is what everything else is built
+from. And junctions in the westernmost column never have anything to their west, so they take no
+addition at all; their count just carries straight down from the junction above. Which also means that
+if roadworks close one of them, the whole column below it is cut off, and the zeros carry down of their
+own accord.
+
+When you reach the south-east corner, the number written there is the answer.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the grid [[0,0,0],[0,1,0],[0,0,0]] beside you, answer 2.
+
+    def unique_paths_with_obstacles(grid):
+        if not grid or grid[0][0] == 1:
+            return 0                       # blocked start -> no paths
+
+TWO CHECKS, AND ONLY ONE IS DOING WORK (trap 2).
+
+    `not grid`         IS REQUIRED - `len(grid[0])` on an empty list raises IndexError.
+    `grid[0][0] == 1`  IS REDUNDANT. `dp[0]` starts at 1, and the very first pass of the loop sees the
+                       obstacle at column 0 and sets `dp[0] = 0`, after which everything is zero.
+                       Verified: removing it changes no answer, including on `[[1]]`.
+
+    Keep it for explicitness if you like, but do not imagine it is load-bearing.
+
+        cols = len(grid[0])
+        dp = [0] * cols
+
+    dp  HOLDS, for each column, the number of routes to that column IN WHICHEVER ROW IS CURRENTLY BEING
+        PROCESSED. One row of numbers reused all the way down.
+
+        dp[0] = 1                          # one way to be at the start
+
+THE SEED (trap 3). One way to be standing at the start having made no moves. Every other count is
+ultimately built from this single 1.
+
+        for row in grid:
+
+Iterate the rows themselves rather than their indices - the code never needs a row number.
+
+            for c in range(cols):
+
+Left to right, which is what makes the in-place update valid (trap 5).
+
+                if row[c] == 1:
+                    dp[c] = 0              # no path through an obstacle
+
+AN ASSIGNMENT, NOT AN ADDITION. It wipes out every route that would have passed through this cell.
+
+Zero is not a flag here - it is literally the number of routes reaching a blocked cell, and because the
+recurrence ADDS, it propagates on its own (section 5).
+
+                elif c > 0:
+                    dp[c] += dp[c-1]       # from top (dp[c]) + from left (dp[c-1])
+
+`elif`, NOT a second `if` (trap 1). An obstacle must receive NO addition; writing this as a separate
+`if` lets a blocked cell be re-populated from its left neighbour and routes pass through the wall -
+giving 4 instead of 2 on this very grid.
+
+    `dp[c]`     at this instant still holds the count from THE ROW ABOVE, untouched so far this row.
+    `dp[c-1]`   was updated a moment ago, so it is THIS row's count for the cell to the left.
+    `+=`        adds the two ways in.
+
+`c > 0` skips the first column, which has nothing to its left - so its value carries down from above
+unchanged (trap 4).
+
+        return dp[-1]
+
+The last column after the final row - the bottom-right cell.""",
+
+    """9. THE GRID, ROW BY ROW - AND THE WALL THAT ROUTES WALK THROUGH.
+
+TRACE 1 - THE WORKED EXAMPLE. grid = [[0,0,0],[0,1,0],[0,0,0]]. Expected 2.
+
+    cols = 3.  dp = [1, 0, 0]        the seed: one way to be at the start
+
+    ROW 0 = [0, 0, 0]:
+        c = 0:  not an obstacle, and `c > 0` is false  ->  nothing happens.  dp[0] stays 1.
+        c = 1:  dp[1] += dp[0]  ->  0 + 1 = 1
+        c = 2:  dp[2] += dp[1]  ->  0 + 1 = 1
+        dp = [1, 1, 1]           one way along the top row to each cell
+
+    ROW 1 = [0, 1, 0]:
+        c = 0:  clear, first column  ->  nothing.  dp[0] stays 1 (carried down from above).
+        c = 1:  OBSTACLE  ->  dp[1] = 0.  No addition.
+        c = 2:  clear.  dp[2] += dp[1]  ->  1 + 0 = 1
+                the 1 was from ABOVE, the 0 was from the blocked left neighbour
+        dp = [1, 0, 1]
+
+    ROW 2 = [0, 0, 0]:
+        c = 0:  nothing.  dp[0] = 1.
+        c = 1:  dp[1] += dp[0]  ->  0 + 1 = 1      reachable again, but only from the left
+        c = 2:  dp[2] += dp[1]  ->  1 + 1 = 2
+        dp = [1, 1, 2]
+
+    RETURN dp[-1] = 2.
+
+    Brute force over all routes agrees: exactly two survive - along the top then down the right edge,
+    and down the left edge then along the bottom.
+
+TRACE 2 - THE WALL THAT LEAKS (trap 1). The same grid with a separate `if` instead of `elif`:
+
+    ROW 1, c = 1:  OBSTACLE  ->  dp[1] = 0
+                   then `if c > 0` STILL RUNS  ->  dp[1] += dp[0] = 0 + 1 = 1
+                   THE OBSTACLE NOW HAS A ROUTE COUNT OF 1.
+    ROW 1, c = 2:  dp[2] += dp[1]  ->  1 + 1 = 2
+    ROW 2:         c=1: dp[1] += dp[0] = 1 + 1 = 2;   c=2: dp[2] += dp[1] = 2 + 2 = 4
+
+    RETURNS 4 instead of 2 - it counts the four routes that pass straight through the obstacle.
+
+    And on the two-by-two grid [[0,1],[0,0]] the same bug gives 2 where the answer is 1.
+
+TRACE 3 - THE REDUNDANT GUARD (trap 2). grid = [[1]], with the `grid[0][0] == 1` check REMOVED:
+
+    cols = 1, dp = [1].
+    ROW 0 = [1]:  c = 0:  row[0] == 1  ->  dp[0] = 0.
+    RETURN dp[-1] = 0.   CORRECT, without the guard ever running.
+
+    The same holds on every grid tested - the loop's own obstacle branch reaches column 0 of row 0
+    before anything else can happen, so a blocked start is already handled.
+
+TRACE 4 - A BLOCKED FIRST COLUMN (trap 4). grid = [[0,0],[1,0],[0,0]]. Expected 1.
+
+    dp = [1, 0]
+    ROW 0 = [0,0]:  c=0 nothing;  c=1: dp[1] += dp[0] = 1.        dp = [1, 1]
+    ROW 1 = [1,0]:  c=0: OBSTACLE  ->  dp[0] = 0.
+                    c=1: clear.  dp[1] += dp[0] = 1 + 0 = 1.      dp = [0, 1]
+    ROW 2 = [0,0]:  c=0: clear, first column, no addition  ->  dp[0] STAYS 0.
+                    c=1: dp[1] += dp[0] = 1 + 0 = 1.              dp = [0, 1]
+    RETURN 1.
+
+    THE ZERO IN THE FIRST COLUMN CARRIED ALL THE WAY DOWN, because that column never receives an
+    addition. The one surviving route goes right first, then down twice - confirmed by brute force.
+
+TRACE 5 - THE EXTREMES.
+    [[0]]            dp = [1], the single cell is clear and c > 0 never holds.  RETURN 1.
+    [[1]]            the guard returns 0 - and so does the loop without it (trace 3).
+    [[0,0],[1,1],[0,0]]   row 1 zeroes BOTH columns, so row 2 starts from nothing.  RETURN 0.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(rows x cols). Every cell is visited once and does constant work - one comparison and at most one
+addition. That is optimal: you cannot answer without looking at every cell, since any one of them might
+be an obstacle.
+
+SPACE: O(cols) for the rolling row.
+
+    A full table would be O(rows x cols). Sweeping by COLUMNS instead of rows would give O(rows), which
+    is better on a wide, short grid - the rolling dimension should be the SHORTER one.
+
+    The input grid is never modified, unlike the in-place variants some sibling entries offer.
+
+THE COMBINATORIAL CONTRAST: without obstacles the answer is one binomial coefficient, "(R+C−2) choose
+(R−1)", computable in O(min(R,C)) with no DP at all - that is Unique Paths I. ONE OBSTACLE DESTROYS
+THAT. Inclusion-exclusion over obstacles works but has exponentially many terms in their number, so the
+DP is the right answer as soon as any obstacle exists.
+
+THE GRID-DP CLUSTER, AND WHO OWNS WHAT:
+
+    UNIQUE PATHS II       owns OBSTACLE ZEROING and first-column propagation.     <- this entry
+    MINIMUM PATH SUM      owns the rolling row and the in-place overwrite argument.
+    MAXIMAL SQUARE        owns the min-of-three and the padded sentinel border.
+    TRIANGLE              owns the bottom-up reframing that removes boundary checks.
+
+    THE ONE-LINE DIFFERENCE from Minimum Path Sum is worth carrying: OPTIMISING TAKES A MIN, COUNTING
+    TAKES A SUM. Everything else - the sweep, the rolling row, the boundaries - is identical.
+
+    AND THE BLOCKED VALUE FOLLOWS THE OPERATION: zero for a sum, infinity for a min. It is the identity
+    element, not a magic number.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if there were no obstacles?" One binomial coefficient, O(min(R,C)).
+  - "What if you could also move diagonally?" A third term in the sum, and the first row and column stop
+    being simple carries.
+  - "Return the routes themselves, not the count." The count can be astronomically large, so
+    enumerating is exponential by necessity - the same "the exponent is in the output" point as
+    Palindrome Partitioning.
+  - "What if obstacles could be removed at a cost?" A different problem - shortest path with a budget,
+    solved by BFS over (cell, removals used) states.
+  - "Which guard is actually needed?" Only `not grid`; the blocked-start check is handled by the loop
+    (trap 2).
+
+THE #1 BEGINNER MISTAKE: writing the obstacle case as a separate `if` rather than an `elif`, so a
+blocked cell is zeroed and then immediately given its left neighbour's count. Routes walk through the
+wall and the answer comes out too large - 4 instead of 2 on the standard example.
+
+RUNNER-UP: believing the `grid[0][0] == 1` guard is required. It is not - the loop's own obstacle branch
+handles a blocked start - and it is worth checking claims like that rather than repeating them.
+
+TAKEAWAY: a cell's route count is the sum of the two cells that lead into it, and an obstacle is simply
+a count of ZERO - which needs no special propagation logic because zero is the identity for addition,
+just as infinity would be for a minimum in the optimisation version of the same sweep.""",
 ]
 
 _EX_P1H["Wiggle Subsequence (greedy)"] = [
-    """A trace on [1,7,4,9,2,5].
-up = down = 1.
-i=1: 7 > 1 -> up = down + 1 = 2.
-i=2: 4 < 7 -> down = up + 1 = 3.
-i=3: 9 > 4 -> up = down + 1 = 4.
-i=4: 2 < 9 -> down = up + 1 = 5.
-i=5: 5 > 2 -> up = down + 1 = 6.
-Answer 6 - the whole array already alternates.
-The two variables mean 'longest wiggle subsequence so far that ENDS with a rise
-/ ends with a fall'. A rise can only extend something that ended with a fall,
-which is exactly what `up = down + 1` says.""",
+    """1. THE GOAL - the longest zigzag you can pick out.
 
-    """Why it works on an array with runs, which is the real test.
-[1,17,5,10,13,15,10,5,16,8]: the run 10,13,15 is monotonically rising.
-i at 13: 13 > 10 -> up = down + 1, but down has not changed since the 5, so up
-is recomputed to the same value it would have had - the middle of a run costs
-nothing and adds nothing.
-That is the elegance: within a monotone run only the LAST element matters, and
-the greedy handles it without any explicit run detection, because up is
-overwritten rather than incremented.""",
+A WIGGLE SEQUENCE is one whose consecutive differences STRICTLY ALTERNATE between positive and
+negative: up, down, up, down, ... or down, up, down, up, ...
 
-    """Why equal neighbours must do nothing.
-The code has `if >` and `elif <`, with no else - so a flat step leaves both
-variables untouched. That is deliberate: the differences must be STRICTLY
-alternating, so a zero difference is not a wiggle in either direction and must
-not extend anything.
-[1,1,1] -> neither branch ever fires -> answer 1. Adding an else that
-incremented something would return 3, which is wrong. Interviewers include a
-flat array precisely to catch this.""",
+    1, 7, 4, 9, 2, 5        differences  +6, −3, +5, −7, +3     up down up down up    WIGGLE
+    1, 4, 7, 2              differences  +3, +3, −5             two rises in a row    NOT
+    3, 3, 5                 difference    0                     a flat step          NOT
 
-    """The O(n^2) DP, and why the greedy is preferable.
-The DP formulation is up[i] = max(down[j] + 1) over all j < i with nums[j] <
-nums[i], and symmetrically for down - correct, and quadratic. The greedy
-collapses it because you only ever need the BEST value so far, not per-index
-values: any earlier down-ending subsequence can be extended by the current
-rise, so the maximum is all you must carry.
-Being able to state the DP first and then explain why two scalars suffice is a
-stronger answer than producing the greedy alone, because it shows the greedy is
-derived rather than remembered.""",
+Given an array, FIND THE LENGTH OF THE LONGEST WIGGLE SUBSEQUENCE - what remains after deleting some
+elements and keeping the rest IN ORDER.
 
-    """Edge cases.
-[] -> len < 2 -> 0. [3] -> 1. [3,3] -> neither branch fires -> max(1,1) = 1,
-which is right: a flat pair is not a wiggle.
-[1,2] -> up = 2 -> answer 2. [2,1] -> down = 2 -> 2.
-A strictly increasing array [1,2,3,4,5] -> up is repeatedly set to down + 1 = 2
-and down never moves -> answer 2. Correct: the longest wiggle is any two
-elements, since one rise is a valid (trivial) alternating sequence.""",
+    nums = [1, 7, 4, 9, 2, 5]        the whole array already wiggles.   ANSWER: 6
 
-    """Complexity and the family.
-Time O(n), space O(1) - one pass, two integers.
-The family is 'two rolling states, each extending the other': Best Time to Buy
-and Sell Stock II and its cooldown variant (hold/sold/rest), House Robber
-(take/skip), and Maximum Product Subarray (max/min, because a negative flips
-them). The recognition cue is that the answer depends on WHICH KIND of step you
-just took - the moment you find yourself wanting two answers instead of one,
-carry two variables rather than an array.""",
+    nums = [1, 17, 5, 10, 13, 15, 10, 5, 16, 8]
+
+        Keep 1, 17, 5, 15, 5, 16, 8   ->  +16, −12, +10, −10, +11, −8   alternating.
+        ANSWER: 7
+
+THREE THINGS THE DEFINITION IS SAYING:
+
+    STRICTLY ALTERNATING. A rise must be followed by a fall and vice versa. Two rises in a row break it.
+    A DIFFERENCE OF ZERO IS NEITHER. Equal neighbours cannot be part of a wiggle together - one of them
+        must go. Section 4 is about the code doing nothing at all on a flat step.
+    ONE OR TWO ELEMENTS ARE TRIVIALLY FINE. A single element wiggles vacuously; two DIFFERENT elements
+        make one difference, which alternates with nothing. But two EQUAL elements give a difference of
+        zero, so the answer there is 1, not 2.
+
+WHY THE ANSWER IS SMALLER THAN IT LOOKS ON A MONOTONIC RUN. `[1,2,3,4,5,6,7,8,9]` rises nine times in a
+row, and you can keep at most TWO of them - the answer is 2. Any long climb collapses to its two ends,
+and section 2 is about why the greedy handles that without noticing.""",
+
+    """2. THE INTUITION - two running answers that feed each other.
+
+Track TWO numbers as you sweep left to right:
+
+    up    =  the length of the longest wiggle so far that ENDS WITH A RISE
+    down  =  the length of the longest wiggle so far that ENDS WITH A FALL
+
+Both start at 1: a single element is a wiggle of length 1, ending in neither direction yet, and
+treating it as either is harmless.
+
+Now the rule, and it is one line each:
+
+    IF THIS ELEMENT IS HIGHER THAN THE ONE BEFORE, that is a RISE. A rise can only follow a FALL - so
+        it extends the best fall-ending wiggle by one.        up = down + 1
+
+    IF IT IS LOWER, that is a FALL, which can only follow a RISE.        down = up + 1
+
+    IF IT IS EQUAL, nothing happens at all.
+
+    nums = [1, 7, 4, 9, 2, 5]
+
+        start          up = 1   down = 1
+        7 > 1  rise    up = down + 1 = 2
+        4 < 7  fall    down = up + 1 = 3
+        9 > 4  rise    up = down + 1 = 4
+        2 < 9  fall    down = up + 1 = 5
+        5 > 2  rise    up = down + 1 = 6
+
+    ANSWER: max(6, 5) = 6
+
+THE ELEGANT PART IS WHAT HAPPENS ON A RUN. Take 10, 13, 15 - three rising values in a row:
+
+        at 13:  a rise, so up = down + 1
+        at 15:  ALSO a rise, so up = down + 1 AGAIN
+
+    `down` has not changed in between, so the second assignment computes the SAME VALUE. The run does
+    not inflate the count, and the code needed no test for "am I in a run?" - it simply recomputes the
+    same number.
+
+    THAT IS WHY THE GREEDY IS SO SHORT. Each variable answers "the best wiggle ending in this direction",
+    and a longer run in the same direction cannot improve that.
+
+AND `up` AND `down` ARE NEVER BOTH UPDATED IN ONE STEP, because a difference cannot be both positive and
+negative. So each element moves exactly one of them, or neither.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBSEQUENCE. What remains after deleting some elements, KEEPING THE ORIGINAL ORDER. Elements need not be
+adjacent.
+WIGGLE SEQUENCE. One whose consecutive differences strictly alternate in sign.
+DIFFERENCE. `nums[i] - nums[i-1]`. Positive is a rise, negative a fall, zero is neither.
+
+GREEDY. Making a local decision with no search and no backtracking. Provably right here - section 5.
+
+ROLLING STATE. A small fixed set of running answers updated in one pass, rather than a table.
+
+up. The length of the longest wiggle subsequence found so far that ends with a RISE.
+down. The same, ending with a FALL.
+nums. The input array. NOT modified.
+i. The index being examined; the comparison is always against `i - 1`.
+
+n. The array's length.
+O(n) TIME, O(1) SPACE.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the flat step.
+
+TRAP 1 - DOING SOMETHING ON EQUAL NEIGHBOURS. The code is `if >` and `elif <`, WITH NO `else`. A flat
+step leaves both variables completely untouched, and that is deliberate.
+
+    A difference of zero is neither a rise nor a fall, so it cannot extend a wiggle in either direction.
+    The two equal elements cannot both be kept, and the algorithm simply ignores the second one.
+
+    ADD AN `else` THAT UPDATES ANYTHING and the counts inflate:
+
+        nums = [1, 2, 2, 3]      correct 2,   treating equals as a wiggle: 4
+        nums = [0, 0, 0]         correct 1,   treating equals as a wiggle: 3
+        nums = [3, 3]            correct 1,   treating equals as a wiggle: 2
+
+    `[0,0,0]` IS THE CLEAREST. Three identical values contain no wiggle longer than a single element -
+    there is no pair of them with a non-zero difference - so the answer is 1. A version that counts flat
+    steps returns 3, claiming a zigzag in a flat line.
+
+TRAP 2 - `<=` OR `>=` INSTEAD OF STRICT COMPARISONS. Same failure by a different route: a flat step
+would then satisfy one of the branches and be counted as a direction.
+
+TRAP 3 - HANDLING RUNS EXPLICITLY. A common instinct is to first collapse consecutive equal-direction
+moves, or to track "the direction of the last kept move" and skip. IT IS UNNECESSARY - section 2 shows
+the second rise in a run recomputes the same value because `down` did not move. Extra machinery here is
+a source of bugs, not correctness.
+
+TRAP 4 - THE SHORT-INPUT GUARD. `if len(nums) < 2: return len(nums)` covers both the empty array
+(returns 0) and a single element (returns 1). Without it the loop would not run and `max(up, down)`
+would return 1 even for an empty array - wrong by one.
+
+TRAP 5 - RETURNING `up` OR `down` ALONE. The best wiggle may end in either direction, so the answer is
+`max(up, down)`. On `[1,7,4,9,2,5]` the sequence ends on a rise and `up` is 6 while `down` is 5;
+on `[1,17,5,10,13,15,10,5,16,8]` it ends on a fall and `down` is 7 while `up` is 6. EITHER ONE ALONE IS
+WRONG ON HALF THE INPUTS.
+
+TRAP 6 - ASSUMING THE ANSWER GROWS WITH THE ARRAY. A strictly increasing array of any length has answer
+2. Length tells you nothing; only the number of direction changes does.""",
+
+    """5. THE ALTERNATIVES, AND WHY TWO VARIABLES SUFFICE.
+
+VERSION A - TRY EVERY SUBSEQUENCE. 2^n of them, each needing a check. For n = 20 that is a million; for
+n = 40, a trillion.
+
+VERSION B - THE O(n^2) DP. The natural formulation is
+
+        up[i]   = max(down[j] + 1)  over all j < i with nums[j] < nums[i]
+        down[i] = max(up[j] + 1)    over all j < i with nums[j] > nums[i]
+
+    Correct, O(n^2) time and O(n) space. This is the version most people write first, and it is worth
+    stating before improving - it makes the greedy's claim easier to believe.
+
+VERSION C - THE TWO-VARIABLE GREEDY, which is the code here. O(n) time, O(1) space.
+
+WHY THE GREEDY IS EXACT - the argument, because "track two numbers" needs justifying.
+
+    CLAIM: after processing element i, `up` is the length of the longest wiggle subsequence of the first
+    i + 1 elements that ends with a rise, and `down` likewise for a fall.
+
+    WHY THE UPDATE IS RIGHT. Suppose element i is HIGHER than element i − 1. Any wiggle ending with a
+    rise AT i must have its previous kept element lower than nums[i], and the part before that must end
+    with a FALL. The best such prefix has length `down` - so the best wiggle ending in a rise at i is
+    `down + 1`.
+
+    WHY IT IS SAFE TO IGNORE WHICH ELEMENT THE FALL ENDED ON. This is the step people distrust. The
+    fall-ending wiggle recorded in `down` ends on some earlier value v. If v >= nums[i] then the rise
+    from v to nums[i] is not a rise at all - but in that case there is an earlier fall-ending wiggle of
+    the same length whose last value is lower, because `down` was itself set by a fall, and a fall lands
+    on a value lower than its predecessor. The greedy always ends its fall-wiggles as LOW as it can and
+    its rise-wiggles as HIGH as it can, which is precisely what leaves the most room for the next move.
+
+    THAT LAST SENTENCE IS THE HEART OF IT: the two variables track not just lengths but the most
+    permissive endpoints, so no better continuation is ever forfeited.
+
+    CHECKED EXHAUSTIVELY AGAINST BRUTE FORCE over every sequence of length 1 to 7 drawn from {0, 1, 2} -
+    3,279 sequences, chosen because that alphabet forces plenty of ties and flat steps. ZERO MISMATCHES.
+
+WHY A RUN CANNOT HELP. Three rising values 10, 13, 15: keeping 13 rather than 15 as the endpoint of the
+rise leaves you LOWER, which is worse for the fall that must come next. The greedy takes 15
+automatically, because the second rise recomputes `up = down + 1` with the same `down` - no test
+required.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SWEEP ONCE THROUGH THE ARRAY KEEPING TWO RUNNING LENGTHS -
+THE BEST ZIGZAG THAT ENDS GOING UP AND THE BEST THAT ENDS GOING DOWN - AND WHENEVER THE VALUE RISES,
+REBUILD THE UP FIGURE FROM THE DOWN ONE, AND WHENEVER IT FALLS, THE OTHER WAY ROUND.
+
+THERE IS NO RECURSION AND NO TABLE. The mechanism is ONE FORWARD PASS CARRYING TWO NUMBERS:
+
+  - Each element is compared only with the one immediately before it.
+  - Exactly one of the two numbers changes per element, or neither - a difference cannot be both
+    positive and negative.
+  - WHAT MAKES IT STOP: the loop runs once per element, a count fixed before it starts.
+  - THE TWO NUMBERS FEED EACH OTHER: a rise can only follow a fall and a fall can only follow a rise, so
+    each is always rebuilt from the other and never from itself.
+
+THE STEPS:
+
+  1. IF THERE ARE FEWER THAN TWO ELEMENTS, THE ANSWER IS SIMPLY HOW MANY THERE ARE. No array has a
+     wiggle longer than itself, and one element counts as a wiggle of length one.
+
+  2. START BOTH RUNNING LENGTHS AT ONE. Before any comparison, the best zigzag is a single element, and
+     it ends in neither direction - so recording it as both is harmless.
+
+  3. WALK FROM THE SECOND ELEMENT TO THE LAST. FOR EACH ONE, COMPARE IT WITH THE ELEMENT BEFORE IT:
+
+     a. IF IT IS LARGER, this step is a rise. A rise can only come after a fall, so the best zigzag
+        ending in a rise is now one longer than the best ending in a fall.
+
+     b. IF IT IS SMALLER, this step is a fall, and by the mirror argument the best zigzag ending in a
+        fall is one longer than the best ending in a rise.
+
+     c. IF IT IS EQUAL, DO NOTHING WHATSOEVER.
+
+        A flat step is neither a rise nor a fall, so it cannot lengthen either kind of zigzag. Adding
+        any handling here inflates the answer - a flat line of three identical values would come back as
+        a zigzag of three, when the longest zigzag it contains is a single element.
+
+     Notice there is nothing to do about a long run in one direction either. A second consecutive rise
+     recomputes the up figure from a down figure that has not moved, so it lands on the same number.
+     Runs take care of themselves.
+
+  4. THE ANSWER IS THE LARGER OF THE TWO RUNNING LENGTHS, since the best zigzag may end in either
+     direction.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a line of numbers written along a page and you want to pick out the longest zigzag you can -
+crossing out whatever you like, but keeping what is left in order, and requiring that the survivors go
+up, down, up, down, strictly alternating.
+
+You could try every possible selection, and there are astronomically many. Instead, walk along the line
+once keeping two figures in your head.
+
+The first is the length of the best zigzag you have found so far that finishes on a step UPWARD. The
+second is the best that finishes on a step DOWNWARD. Both start at one, because a single number counts
+as a zigzag and it has not gone anywhere yet.
+
+Now at each number you compare it with the one immediately before it, and there are only three
+possibilities.
+
+If it is higher, you have just gone up. An upward step can only follow a downward one - that is what
+alternating means - so the best zigzag finishing upward is now one longer than the best finishing
+downward. You rebuild the up figure from the down figure.
+
+If it is lower, the mirror image: the down figure becomes one more than the up figure.
+
+If it is exactly the same, you do nothing at all. A flat step is neither up nor down, so it cannot
+lengthen a zigzag in either direction - the two equal numbers simply cannot both survive. Doing nothing
+here is not laziness, it is the correct handling, and it is the one place people are tempted to add
+something. Add anything and a run of identical numbers starts reporting itself as a zigzag, which it
+plainly is not.
+
+There is a second place people are tempted to add machinery, and it is also unnecessary. What about a
+long climb - three or four numbers each higher than the last? Surely you must notice you are in a run
+and skip the middle ones? You do not. On the second rise you rebuild the up figure from the down figure,
+and the down figure has not moved since the first rise, so you compute exactly the same number as
+before. The run cannot inflate anything. It handles itself.
+
+And in fact taking the LAST number of a climb rather than an earlier one is exactly what you want,
+because it leaves you as high as possible for the fall that has to come next. The same is true in
+reverse for a descent. The two figures quietly keep you at the most useful place at all times.
+
+When you reach the end of the line, the answer is whichever of the two figures is larger, because the
+best zigzag might finish going either way.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep nums = [1, 7, 4, 9, 2, 5] beside you, answer 6.
+
+    def wiggle_max_length(nums):
+        if len(nums) < 2:
+            return len(nums)
+
+THE SHORT-INPUT GUARD (trap 4). It covers BOTH small cases at once: an empty array returns 0, a single
+element returns 1.
+
+Without it the loop would not run and `max(up, down)` would return 1 even for an empty array.
+
+        up = down = 1               # longest wiggle ending going up / down
+
+    up    HOLDS the length of the longest wiggle subsequence so far that ENDS WITH A RISE.
+    down  HOLDS the same, ending with a FALL.
+
+BOTH START AT 1. Before any comparison the best wiggle is one element, which ends in neither direction -
+so recording it as both is harmless and saves a special case for the first step.
+
+The input is only ever read; `nums` is not modified.
+
+        for i in range(1, len(nums)):
+
+Start at 1, because every comparison is against `i - 1`.
+
+            if nums[i] > nums[i - 1]:
+                up = down + 1        # a rise extends a down-ending subsequence
+
+A RISE. It can only follow a fall, so the best rise-ending wiggle is one longer than the best
+fall-ending one - which is what `down` holds.
+
+    `down + 1`  NOT `up + 1`. Rebuilding `up` from itself would count consecutive rises as a zigzag.
+
+    THIS IS ALSO WHY RUNS NEED NO SPECIAL CASE (trap 3): a second consecutive rise runs this same line
+    with an unchanged `down`, producing the same value.
+
+            elif nums[i] < nums[i - 1]:
+                down = up + 1        # a fall extends an up-ending subsequence
+
+THE MIRROR IMAGE.
+
+`elif`, and both comparisons are STRICT (trap 2). There is NO `else` - a flat step falls through both
+branches and changes nothing at all (trap 1). Adding an `else` that touches either variable turns
+`[0,0,0]` from 1 into 3.
+
+Only one of the two variables can change per element, since a difference cannot be both positive and
+negative.
+
+        return max(up, down)
+
+THE BEST WIGGLE MAY END IN EITHER DIRECTION (trap 5). Returning `up` alone gives 6 on the first example
+and 6 on the second where the answer is 7; returning `down` alone fails on the first. Both are wrong on
+roughly half of all inputs.""",
+
+    """9. TRACED, ELEMENT BY ELEMENT - AND THE RUN THAT DOES NOT INFLATE.
+
+TRACE 1 - THE SIMPLE CASE. nums = [1, 7, 4, 9, 2, 5]. Expected 6.
+
+    up = down = 1
+
+    i = 1:  7 > 1   RISE   ->  up   = down + 1 = 2        up = 2,  down = 1
+    i = 2:  4 < 7   FALL   ->  down = up   + 1 = 3        up = 2,  down = 3
+    i = 3:  9 > 4   RISE   ->  up   = down + 1 = 4        up = 4,  down = 3
+    i = 4:  2 < 9   FALL   ->  down = up   + 1 = 5        up = 4,  down = 5
+    i = 5:  5 > 2   RISE   ->  up   = down + 1 = 6        up = 6,  down = 5
+
+    RETURN max(6, 5) = 6.
+
+    The whole array already alternates, so nothing is discarded. Note `up` and `down` leapfrog each
+    other - each is always rebuilt from the OTHER.
+
+TRACE 2 - THE ARRAY WITH A RUN, WHICH IS THE REAL TEST.
+nums = [1, 17, 5, 10, 13, 15, 10, 5, 16, 8]. Expected 7.
+
+    up = down = 1
+
+    i = 1:  17 > 1    RISE   ->  up   = down + 1 = 2           up = 2,  down = 1
+    i = 2:   5 < 17   FALL   ->  down = up   + 1 = 3           up = 2,  down = 3
+    i = 3:  10 > 5    RISE   ->  up   = down + 1 = 4           up = 4,  down = 3
+    i = 4:  13 > 10   RISE   ->  up   = down + 1 = 4           UNCHANGED - down never moved
+    i = 5:  15 > 13   RISE   ->  up   = down + 1 = 4           UNCHANGED again
+    i = 6:  10 < 15   FALL   ->  down = up   + 1 = 5           up = 4,  down = 5
+    i = 7:   5 < 10   FALL   ->  down = up   + 1 = 5           UNCHANGED - up never moved
+    i = 8:  16 > 5    RISE   ->  up   = down + 1 = 6           up = 6,  down = 5
+    i = 9:   8 < 16   FALL   ->  down = up   + 1 = 7           up = 6,  down = 7
+
+    RETURN max(6, 7) = 7.
+
+    LOOK AT STEPS 4 AND 5. The run 10, 13, 15 rises three times, and `up` sat at 4 throughout - because
+    each rise rebuilds `up` from `down`, and `down` did not change during the run. THE RUN CONTRIBUTED
+    NOTHING EXTRA, with no test for it anywhere.
+
+    Steps 6 and 7 do the same in the other direction for the descent 15, 10, 5.
+
+    AND NOTE THE ANSWER CAME FROM `down`, not `up` - the sequence ends on a fall. Returning `up` alone
+    would give 6 (trap 5).
+
+TRACE 3 - THE FLAT STEP (trap 1). Three ways to see it:
+
+    nums = [0, 0, 0]
+        i = 1:  0 is neither > nor < 0  ->  NOTHING HAPPENS.
+        i = 2:  the same.
+        RETURN max(1, 1) = 1.   CORRECT - no two of these have a non-zero difference, so the longest
+                                 wiggle is a single element.
+        IF EQUALS WERE COUNTED:  3.  A zigzag claimed in a flat line.
+
+    nums = [1, 2, 2, 3]
+        i = 1:  2 > 1  RISE  ->  up = 2
+        i = 2:  2 == 2       ->  nothing
+        i = 3:  3 > 2  RISE  ->  up = down + 1 = 2.  Unchanged, since down is still 1.
+        RETURN max(2, 1) = 2.   CORRECT - keep 1 and 3, or 1 and 2; either way just two elements.
+        IF EQUALS WERE COUNTED:  4.
+
+    nums = [3, 3]
+        Neither branch fires.  RETURN max(1, 1) = 1.   CORRECT - a flat pair is not a wiggle.
+        IF EQUALS WERE COUNTED:  2.
+
+TRACE 4 - THE MONOTONIC ARRAY (trap 6). nums = [1,2,3,4,5,6,7,8,9]:
+
+    Every step is a rise, so every step computes `up = down + 1 = 2` with `down` fixed at 1 throughout.
+    RETURN max(2, 1) = 2.
+
+    NINE ELEMENTS, ANSWER 2 - you can keep only the two ends of a climb. Length tells you nothing about
+    the answer; only direction changes do.
+
+THE EXHAUSTIVE CHECK: the greedy was compared against a brute-force search over every subsequence, on
+every sequence of length 1 to 7 drawn from {0, 1, 2} - 3,279 sequences, an alphabet chosen deliberately
+to force ties and flat steps. ZERO MISMATCHES.
+
+THE TINY INPUTS:
+    []       len < 2  ->  RETURN 0.
+    [3]      len < 2  ->  RETURN 1.
+    [1, 2]   i = 1: rise, up = 2.  RETURN max(2, 1) = 2.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n). ONE PASS, one comparison and at most one assignment per element.
+
+SPACE: O(1). TWO INTEGERS, whatever the array's length. No table, no auxiliary array.
+
+    AGAINST THE O(n^2) DP that most people write first - `up[i] = max(down[j] + 1)` over all earlier j
+    with a smaller value. At n = 10,000 that is about 50,000,000 comparisons against 10,000.
+
+    THE DP IS NOT WRONG, AND IT IS WORTH STATING BEFORE IMPROVING - it makes the greedy's correctness
+    easier to accept, and it is the fallback if the problem gains a constraint the greedy cannot express.
+
+THE FAMILY - TWO ROLLING STATES, EACH EXTENDING THE OTHER:
+
+    WIGGLE SUBSEQUENCE          up rebuilt from down and vice versa            <- this entry
+    BEST TIME TO BUY AND SELL STOCK II    hold and cash, each rebuilt from the other
+    STOCK WITH COOLDOWN         THREE states - hold, sold, rest - because the cooldown splits
+                                "not holding" in two
+    HOUSE ROBBER                take and skip, each rebuilt from the other
+    MAXIMUM SUBARRAY (KADANE)   one rolling state plus a running best
+
+    THE RECOGNITION CUE: a sweep where the answer depends on WHICH KIND of step you last took. Give each
+    kind its own running best, and rebuild each from the OTHERS rather than from itself. If a rolling
+    state is ever rebuilt from itself, the alternation is not being enforced.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it with DP." The O(n^2) formulation above - and say why the greedy replaces it.
+  - "Return the subsequence, not its length." Record which element caused each update and walk back;
+    the greedy's endpoints are exactly the elements to keep.
+  - "What if equal values were allowed to count as a step?" A different problem - the answer becomes the
+    length of the array, since every step qualifies. Worth naming, because it shows exactly what the
+    strict comparisons buy.
+  - "What if you needed at least k alternations?" The DP formulation extends; the two-variable greedy
+    does not, because it forgets everything but the two bests.
+  - "Why does a long run not need special handling?" Because the second rise rebuilds `up` from an
+    unchanged `down` and lands on the same value (section 2).
+
+THE #1 BEGINNER MISTAKE: adding an `else` branch for equal neighbours. The absence of one looks like an
+oversight and is the correct behaviour - a flat step is neither a rise nor a fall. Handle it and
+`[0,0,0]` comes back as 3, a zigzag claimed in a flat line.
+
+RUNNER-UP: returning `up` rather than `max(up, down)`. The best wiggle can end in either direction, and
+each of the two worked examples in section 9 is won by a different one of them.
+
+TAKEAWAY: keep one running length per ending direction and always rebuild each from the OTHER - because
+a rise may only follow a fall - and then long runs and flat steps both take care of themselves, the run
+because it recomputes the same value and the flat step because it matches neither branch.""",
 ]
 
 _EX_P1H["Arranging Coins"] = [
