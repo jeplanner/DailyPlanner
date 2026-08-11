@@ -78650,57 +78650,495 @@ rewritten underneath you.""",
 ]
 
 _EX_P1G["Path Sum II (all root-to-leaf paths)"] = [
-    """The example, traced.
-Tree 5 -> (4 -> (11 -> (7, 2)), 8 -> (13, 4 -> (5, 1))), target 22.
-Path 5,4,11,7: at 7, remaining is 22-5-4-11 = 2, and 7 != 2 -> not recorded.
-Path 5,4,11,2: remaining at 2 is 2, and it is a leaf -> RECORD [5,4,11,2].
-Path 5,8,13: remaining 9 != 13 -> no. Path 5,8,4,5: remaining at 5 is 5 ->
-RECORD [5,8,4,5]. Path 5,8,4,1: remaining 5 != 1 -> no.
-Result [[5,4,11,2],[5,8,4,5]].
-Note the leaf test and the sum test must BOTH hold - a node whose remaining
-equals its value but which has children is not an answer.""",
+    """1. THE GOAL - every full path down the tree that adds up to the target.
 
-    """Why the leaf check is `left is None and right is None`.
-A node with one child is NOT a leaf, and this is the classic trap. If you test
-only `node.left is None`, then a node with only a right child is wrongly
-treated as a leaf and you record a path that does not reach the bottom.
-Same asymmetry as Minimum Depth. Any problem containing the words 'root-to-leaf'
-needs this two-sided check, and interviewers construct single-child trees
-specifically to catch it.""",
+Walk from the ROOT all the way down to a LEAF, adding up the values you pass through. RETURN EVERY
+SUCH PATH WHOSE TOTAL EQUALS A GIVEN TARGET.
 
-    """The copy, which is the other half of the problem.
-`result.append(path[:])` must copy. `path` is one list mutated throughout the
-whole traversal, so appending it directly stores a reference - and by the time
-the traversal finishes, every recorded 'path' is the same empty list.
-The symptom is distinctive: the right NUMBER of answers, all of them wrong and
-identical. If you ever see that, the missing copy is the cause.""",
+            5
+           / \\
+          4   8
+         /   / \\
+       11   13  4
+       / \\     / \\
+      7   2   5   1
 
-    """The backtracking pop, and where it must sit.
-`path.pop()` runs on the way OUT of every node, including the recorded ones -
-which is why it sits after the if/else rather than inside the else. Miss it on
-the recording branch and the leaf stays on the path while the sibling subtree
-is explored, corrupting every later answer.
-A cleaner formulation some prefer passes `path + [node.val]` down instead,
-which needs no pop at all - at the cost of allocating a new list per node. Say
-which you chose and why; the trade is clarity versus allocations.""",
+    target = 22
 
-    """Complexity, stated carefully.
-Time is O(n^2) in the worst case, NOT O(n). Traversal is O(n), but COPYING a
-path costs O(height), and there can be O(n) qualifying leaves - a balanced tree
-with many matches gives O(n log n), and a pathological tree gives O(n^2).
-Space is O(h) for the recursion and the path, plus O(number of paths * length)
-for the output. Getting the copy cost into the complexity statement is a detail
-that distinguishes a careful answer.""",
+        5 -> 4 -> 11 -> 7   =  5 + 4 + 11 + 7  = 27   no
+        5 -> 4 -> 11 -> 2   =  5 + 4 + 11 + 2  = 22   YES
+        5 -> 8 -> 13        =  5 + 8 + 13      = 26   no
+        5 -> 8 -> 4  -> 5   =  5 + 8 + 4 + 5   = 22   YES
+        5 -> 8 -> 4  -> 1   =  5 + 8 + 4 + 1   = 18   no
 
-    """The family, and the sibling that needs a different technique.
-Path Sum I (does ANY root-to-leaf path sum to target) is the boolean version -
-same recursion, return early on the first hit. Binary Tree Paths is this
-problem without the sum condition. Sum Root to Leaf Numbers accumulates digits
-instead.
-Path Sum III is the one that changes technique entirely: paths may start and
-end anywhere, so backtracking over root-to-leaf paths no longer applies and you
-switch to a prefix-sum hash map for O(n). Knowing which sibling needs which
-tool is the point of studying them together.""",
+    ANSWER: [[5, 4, 11, 2], [5, 8, 4, 5]]
+
+THREE THINGS THE QUESTION IS SAYING, and the second is where people fall over:
+
+    ROOT TO LEAF. The path must START at the root and END at a leaf. It may not stop halfway down,
+        and it may not start halfway down.
+    A LEAF IS A NODE WITH NO CHILDREN AT ALL - neither left nor right. A node with ONE child is not a
+        leaf, and section 4 is entirely about that.
+    RETURN THE PATHS THEMSELVES, not a count and not a boolean. That is what forces the copying in
+        section 4, and what pushes the complexity above O(n).
+
+    THE SIBLING PROBLEMS ARE WORTH NAMING NOW. PATH SUM I asks only whether ANY such path exists - a
+    boolean, same recursion, no list. PATH SUM III drops "root to leaf" entirely and counts paths
+    between any node and any descendant, which needs a completely different technique. THIS ENTRY
+    OWNS THE BACKTRACKING LIST - the copy and the pop; Path Sum III owns the prefix-sum map.""",
+
+    """2. THE INTUITION - carry the path down, and subtract as you go.
+
+Two things travel DOWNWARD as you descend, because both depend on your ANCESTORS:
+
+    THE PATH SO FAR - the list of values from the root to where you are standing.
+    HOW MUCH TARGET IS LEFT - the original target minus everything already spent.
+
+Rather than adding up on the way back, SUBTRACT ON THE WAY DOWN. Then the test at a leaf is simply
+"does what remains equal this leaf's value?".
+
+            5      remaining 22
+           /
+          4        remaining 22 - 5  = 17
+         /
+       11          remaining 17 - 4  = 13
+       / \\
+      7   2        remaining 13 - 11 = 2
+
+        at leaf 7:  remaining is 2, and 7 is not 2   ->  no
+        at leaf 2:  remaining is 2, and 2 IS 2       ->  RECORD [5, 4, 11, 2]
+
+THE PATH IS ONE SHARED LIST, pushed and popped as the walk descends and returns:
+
+        []  ->  [5]  ->  [5,4]  ->  [5,4,11]  ->  [5,4,11,7]      leaf, no good
+                                 ->  [5,4,11]  (popped back)
+                                 ->  [5,4,11,2]                    leaf, RECORD
+                                 ->  [5,4,11] -> [5,4] -> [5] ...
+
+    THAT SHARING IS THE ENTIRE EFFICIENCY - one list serves the whole traversal instead of building a
+    fresh one at every node. AND IT IS THE SOURCE OF BOTH TRAPS: because the list keeps changing, a
+    recorded answer must be a COPY, and every push must be undone by a matching pop.
+
+WHY SUBTRACTING BEATS ACCUMULATING. Either works. Subtracting keeps the test to a single comparison
+at the leaf, with no need to carry a running total alongside the target. It is a small tidiness, not
+a correctness matter - say so rather than pretending otherwise.
+
+THIS ENTRY IS PART OF THE CARRY-IT-DOWN FAMILY. Count Good Nodes carries a running MAXIMUM down; Sum
+Root to Leaf Numbers carries a running NUMBER down; this one carries a PATH and a REMAINING TARGET.
+The contrast is Binary Tree Tilt, where the information flows the other way - a subtree sum returned
+UP. Ask which direction a problem needs and the shape follows.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ROOT-TO-LEAF PATH. A walk starting at the root, always moving to a child, ending at a leaf.
+LEAF. A node with NO children - BOTH `left` and `right` are None. THIS DEFINITION IS THE PROBLEM.
+
+DFS (DEPTH-FIRST SEARCH). Following one path as far as it goes before backing up. Natural here,
+because the question is about paths.
+
+BACKTRACKING. Build a candidate answer step by step, and UNDO the last step before trying the next.
+The three-beat rhythm is CHOOSE (append), EXPLORE (recurse), UN-CHOOSE (pop).
+
+REMAINING TARGET. What is left of the target after subtracting everything on the path so far.
+
+SHALLOW COPY. `path[:]` builds a NEW list holding the same values. Needed because `path` itself keeps
+changing - section 4.
+
+RECURSION. A function calling itself. Each call PAUSES at the call site and resumes when the inner
+call returns.
+THE CALL STACK. The pile of paused calls; its depth here is the tree's HEIGHT.
+
+result. The list of qualifying paths.
+dfs(node, remaining, path). The search.
+node. Where you are standing. remaining. Target left to spend. path. The values from the root to here.
+
+n. The number of nodes. h. The tree's height.
+O(n^2) TIME in the worst case - and section 10 explains why it is not O(n).""",
+
+    """4. THE CASES THAT CATCH PEOPLE - three, and all three are quiet.
+
+TRAP 1 - THE LEAF TEST. The condition is `node.left is None and node.right is None`. BOTH. A node with
+exactly one child is NOT a leaf, and testing only one side is the classic error.
+
+    TREE: node 1 whose ONLY child is a RIGHT child, 2.       target = 1
+
+            1
+             \\
+              2
+
+        CORRECT:  node 1 has a right child, so it is not a leaf. Recurse into 2 with remaining 0.
+                  At 2: it IS a leaf, remaining is 0, and 0 is not 2.  RESULT: []
+                  (There is no root-to-leaf path summing to 1 - the only such path is 1 -> 2, which
+                  sums to 3.)
+
+        TESTING ONLY `node.left is None`:  at node 1, the left is None, so it is called a leaf.
+                  remaining 1 equals node.val 1  ->  RECORD [1].   RESULT: [[1]]
+
+    IT REPORTS A PATH THAT DOES NOT REACH A LEAF. The answer is well-formed, plausible, and wrong -
+    and on a tree where every node has two children or none, the buggy version agrees with the correct
+    one on every input, so the bug survives casual testing.
+
+TRAP 2 - APPENDING `path` INSTEAD OF `path[:]`. `path` is ONE list, mutated throughout the entire
+traversal. Appending it stores a REFERENCE, and since every append is undone by a matching pop, that
+list is EMPTY by the time the search finishes.
+
+    RESULT for the worked example: `[[], []]` - the right number of paths, every one of them empty.
+
+TRAP 3 - THE POP'S POSITION. `path.pop()` sits AFTER the if/else, not inside the else. It must run on
+the way OUT of every node, INCLUDING the ones whose path was just recorded.
+
+    Put it only in the `else` branch and a recorded leaf never pops itself, so it stays on the path
+    and contaminates every path found afterwards.
+
+    (This is the same discipline as Palindrome Partitioning's `path.pop()`. Generate Parentheses needs
+    no pop at all, because it passes an immutable STRING down rather than mutating a shared list -
+    worth knowing which shape you are in.)
+
+TRAP 4 - RECURSING INTO CHILDREN AFTER RECORDING A LEAF. The `else` matters: once you have identified
+a leaf, there are no children to recurse into. Writing the recursion unconditionally is harmless here
+- both calls would hit `node is None` and return - but it muddies the intent and costs two pointless
+calls per leaf.
+
+TRAP 5 - THE EMPTY TREE. `dfs(None, target, [])` returns immediately at the `node is None` guard, so
+`result` stays empty and the function returns `[]`. Correct, with no special case - and worth checking,
+since several entries in this bank crash on their empty input.
+
+TRAP 6 - ASSUMING A ZERO TARGET MEANS "NO PATH". With negative values in the tree, a path can sum to
+anything. The algorithm never assumes the remaining target shrinks; it simply subtracts.""",
+
+    """5. THE ALTERNATIVES, AND WHY THE SHARED LIST IS WORTH THE CARE.
+
+VERSION A - BUILD A FRESH LIST AT EVERY NODE. Pass `path + [node.val]` down instead of appending and
+popping. NO POP IS NEEDED, and no copy at the leaf either, because every call already owns a private
+list.
+
+    IT IS CORRECT AND IT IS TIDIER TO REASON ABOUT. The cost is that a new list of length up to h is
+    built at EVERY node rather than only at qualifying leaves - so the copying happens n times instead
+    of once per answer.
+
+    THAT IS A REAL TRADE, NOT A MISTAKE. On a tree where almost no path qualifies, version A copies far
+    more; on a tree where almost every path qualifies, the two are comparable. The shared-list version
+    is the conventional answer because it copies only when it must, and it costs you the two traps in
+    section 4.
+
+VERSION B - COLLECT PATHS ON THE WAY BACK UP. Have each call return the list of qualifying paths in its
+subtree, prepending its own value to each. Correct, and it prepends to every returned path at every
+level, which is O(h) work per path per level - strictly worse.
+
+VERSION C - THE SHARED LIST WITH APPEND, RECURSE, POP, which is the code here.
+
+WHY THE COMPLEXITY IS NOT O(n) - the point most people get wrong, and worth stating carefully.
+
+    THE TRAVERSAL IS O(n) - every node is visited once. But COPYING a qualifying path costs O(h), and
+    there can be many qualifying paths.
+
+    THE WORST CASE IS A CATERPILLAR: a long spine, with one leaf hanging off each spine node. Half the
+    nodes are leaves, and the paths to them get longer and longer.
+
+        MEASURED, on caterpillars where every value is 0 and the target is 0, so EVERY path qualifies:
+
+            8 nodes   ->   4 paths,    14 elements copied
+            16 nodes  ->   8 paths,    44 elements copied
+            32 nodes  ->  16 paths,   152 elements copied
+            64 nodes  ->  32 paths,   560 elements copied
+
+        DOUBLING THE TREE ROUGHLY QUADRUPLES THE COPYING - 14, 44, 152, 560 - which is what quadratic
+        growth looks like. THAT is the O(n^2), and it comes entirely from the output, not from the
+        traversal.
+
+    ON A BALANCED TREE it is gentler: n/2 leaves each at depth log n, so O(n log n) of copying.
+
+    NO ALGORITHM CAN DO BETTER, because the paths themselves have to be written out. Same situation as
+    Palindrome Partitioning - the cost is in the answer, not the method.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK DOWN FROM THE ROOT CARRYING THE LIST OF VALUES YOU
+HAVE PASSED AND HOW MUCH OF THE TARGET IS LEFT, AND WHENEVER YOU ARRIVE AT A NODE WITH NO CHILDREN AT
+ALL WHOSE VALUE IS EXACTLY WHAT REMAINS, WRITE DOWN A COPY OF THE LIST.
+
+THIS VERSION IS RECURSIVE, and the mechanism matters:
+
+  - The function calls itself once per child, and each call PAUSES at the call site holding its own
+    node and its own remaining target.
+  - THE LIST OF VALUES IS NOT PRIVATE TO EACH CALL. It is one shared list that grows as the walk
+    descends and shrinks as it returns - which is what makes it cheap, and what makes the copy and the
+    undo necessary.
+  - Those paused calls form the CALL STACK, whose depth is the tree's height.
+  - WHAT MAKES IT STOP: an absent node returns immediately, and every path downward reaches absence
+    because a tree is finite and has no cycles.
+
+THE STEPS:
+
+  1. START AN EMPTY LIST OF ANSWERS AND AN EMPTY LIST FOR THE PATH SO FAR.
+
+  2. THE WALK, GIVEN A NODE, THE TARGET STILL TO SPEND, AND THE PATH SO FAR:
+
+     a. IF THERE IS NO NODE HERE, RETURN AT ONCE. This is also what handles an empty tree.
+
+     b. ADD THIS NODE'S VALUE TO THE PATH.
+
+     c. IF THIS NODE HAS NO CHILD ON EITHER SIDE, AND THE TARGET STILL TO SPEND IS EXACTLY THIS NODE'S
+        VALUE, then the walk has arrived at the bottom having spent the target precisely. WRITE DOWN A
+        COPY OF THE PATH.
+
+        NO CHILD ON EITHER SIDE. A node missing one child is a bend in the path, not the end of it.
+        Testing only one side reports paths that stop in mid-air.
+
+        A COPY. The path is a single list that keeps being modified, so recording it directly records
+        something that will keep changing - and by the end of the search it is empty.
+
+     d. OTHERWISE CARRY ON DOWN BOTH SIDES, each with the target reduced by this node's value.
+
+     e. WHATEVER HAPPENED ABOVE, REMOVE THIS NODE'S VALUE FROM THE PATH BEFORE RETURNING.
+
+        WHATEVER HAPPENED - including when a path was just recorded. This removal is what keeps the
+        shared list honest, and a leaf that records without removing itself stays stuck to the front of
+        every later answer.
+
+  3. RUN THE WALK FROM THE ROOT WITH THE FULL TARGET, AND RETURN THE ANSWERS.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a tree of paths branching downward, with a number painted at every junction, and you want to
+find every complete route from the top to a dead end where the numbers add up to exactly some given
+total.
+
+You explore it the way you would a cave system: pick a branch, follow it as far as it goes, and when
+you run out of passage, come back and try the next one.
+
+As you go you carry two things. The first is a running note of the numbers you have passed, in order -
+the route so far. The second is how much of your total is still unspent: you start with the whole
+amount and subtract each junction's number as you pass it. Doing it that way means that when you reach
+the bottom you only have to ask one question - is the number here exactly what I have left?
+
+A dead end is a junction with NO passages leading on. That sounds obvious and it is precisely where
+people go wrong, because a junction can have a passage on one side and nothing on the other. That is
+not a dead end, it is a bend. If you treat it as an ending you will confidently report routes that
+finish in mid-air, halfway down the cave, and the routes you report will look perfectly reasonable
+written down.
+
+When you do reach a genuine dead end with exactly the right amount spent, you copy your route into
+your notebook. COPY it - because the running note is the same piece of paper you have been rubbing out
+and rewriting all along. If you simply staple the note itself into the notebook, then by the time you
+have finished exploring, every entry in the notebook points at that one piece of paper, and that paper
+has been rubbed out back to blank.
+
+And whenever you come back from a junction - whether or not you found anything down there - you rub
+your own number off the end of the note before trying the next passage. This applies just as much to
+the junctions where you did find something. Forget it there, and that number stays stuck on the front
+of every route you record afterwards, so all your later answers arrive with somebody else's ending
+still attached.
+
+When there is nothing left to explore, the notebook holds every qualifying route.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 5 / (4 -> 11 -> (7, 2)), (8 -> (13, 4 -> (5, 1))) and target 22 beside you.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None.
+
+    def path_sum(root, target):
+        result = []
+
+    result  HOLDS the qualifying paths, each a list of values.
+
+        def dfs(node, remaining, path):
+
+    node       HOLDS where the walk currently stands.
+    remaining  HOLDS how much of the target is still unspent - the original minus everything already
+               on the path. Carried DOWN, because it depends on ancestors.
+    path       HOLDS the values from the root to here. ONE SHARED LIST, mutated throughout the whole
+               traversal - which is why the copy and the pop below exist.
+
+            if node is None:
+                return
+
+The base case. Also what makes `path_sum(None, target)` return `[]` with no special case (trap 5).
+
+            path.append(node.val)
+
+CHOOSE. Extend the shared path with this node.
+
+            if node.left is None and node.right is None and remaining == node.val:
+
+THE LEAF TEST AND THE TARGET TEST, IN ONE CONDITION.
+
+    `node.left is None and node.right is None`  DECIDES leaf-ness, and BOTH halves are required. A node
+                                                with one child is a bend, not an ending. Testing only
+                                                the left side reports [[1]] for a root whose only child
+                                                is on the right (trap 1).
+    `remaining == node.val`                     DECIDES whether the target lands exactly here. Since
+                                                `remaining` already had every ancestor subtracted, this
+                                                one comparison finishes the arithmetic.
+
+                result.append(path[:])          # a valid leaf path -> copy it
+
+    `path[:]`  TAKES A COPY at this instant. Appending `path` itself stores a reference to the shared
+               list, which is emptied by the pops on the way out - giving `[[], []]` (trap 2).
+
+            else:
+                dfs(node.left, remaining - node.val, path)
+                dfs(node.right, remaining - node.val, path)
+
+EXPLORE. Both children, each with this node's value already spent.
+
+The `else` is deliberate: a leaf has no children to descend into. Recursing anyway would be harmless -
+both calls would hit the `None` guard - but it says something you do not mean (trap 4).
+
+            path.pop()                          # backtrack
+
+UN-CHOOSE, AND ITS POSITION IS THE POINT. It sits AFTER the whole if/else, so it runs on the way out of
+EVERY node - including the leaves whose paths were just recorded. Put it inside the `else` and a
+recorded leaf never removes itself, so it stays stuck to every later path (trap 3).
+
+        dfs(root, target, [])
+        return result""",
+
+    """9. TRACED, NODE BY NODE - AND THE ONE-CHILD TREE THAT BREAKS THE LEAF TEST.
+
+TRACE 1 - THE WORKED EXAMPLE, target 22.
+
+            5
+           / \\
+          4   8
+         /   / \\
+       11   13  4
+       / \\     / \\
+      7   2   5   1
+
+    dfs(5, 22, [])            path = [5].  Not a leaf.  Children get remaining 22 − 5 = 17.
+
+      dfs(4, 17, [5])         path = [5,4].  Not a leaf.  Children get 17 − 4 = 13.
+
+        dfs(11, 13, [5,4])    path = [5,4,11].  Not a leaf.  Children get 13 − 11 = 2.
+
+          dfs(7, 2, ...)      path = [5,4,11,7].  IS a leaf.  remaining 2, node.val 7.  2 != 7.
+                              Not recorded.  pop  ->  [5,4,11]
+          dfs(2, 2, ...)      path = [5,4,11,2].  IS a leaf.  remaining 2, node.val 2.  2 == 2.
+                              RECORD a copy: [5,4,11,2].      pop  ->  [5,4,11]
+                              pop  ->  [5,4]
+
+        dfs(None, 13, ...)    returns at once.
+                              pop  ->  [5]
+
+      dfs(8, 17, [5])         path = [5,8].  Not a leaf.  Children get 17 − 8 = 9.
+
+        dfs(13, 9, ...)       path = [5,8,13].  IS a leaf.  9 != 13.  Not recorded.  pop.
+        dfs(4, 9, ...)        path = [5,8,4].  Not a leaf.  Children get 9 − 4 = 5.
+
+          dfs(5, 5, ...)      path = [5,8,4,5].  IS a leaf.  5 == 5.  RECORD [5,8,4,5].  pop.
+          dfs(1, 5, ...)      path = [5,8,4,1].  IS a leaf.  5 != 1.  Not recorded.  pop.
+                              pop  ->  [5,8]
+                              pop  ->  [5]
+                              pop  ->  []
+
+    RETURN [[5,4,11,2], [5,8,4,5]].
+
+    NOTE `path` IS EMPTY AT THE END - every append was matched by a pop. That is exactly why `path[:]`
+    was needed: had the references been stored, both answers would now read `[]` (trap 2).
+
+TRACE 2 - THE ONE-CHILD TREE (trap 1). Node 1 whose only child is a RIGHT child, 2. target = 1.
+
+            1
+             \\
+              2
+
+    CORRECT TEST (`left is None AND right is None`):
+        dfs(1, 1, []):  path = [1].
+            left is None - true.  right is None?  NO, it is node 2.  NOT A LEAF.
+            So the else branch runs:  dfs(None, 0, ...) returns;  dfs(2, 1 − 1 = 0, ...):
+                path = [1,2].  IS a leaf.  remaining 0, node.val 2.  0 != 2.  Not recorded.  pop.
+            pop.
+        RETURN []   -   correct, since the only root-to-leaf path is 1 -> 2, summing to 3.
+
+    TESTING ONLY `node.left is None`:
+        dfs(1, 1, []):  path = [1].
+            left is None  ->  "leaf".  remaining 1 == node.val 1  ->  RECORD [1].
+        RETURN [[1]]
+
+    A PATH THAT STOPS AT A NODE WITH A CHILD BELOW IT. Nothing about the output looks wrong - it is a
+    well-formed list of values summing to the target - and on any tree where every node has two
+    children or none, the buggy version agrees with the correct one everywhere.
+
+TRACE 3 - WHY THE COST IS QUADRATIC (section 5), measured on caterpillar trees - a spine with one leaf
+hanging off each spine node, every value 0 and target 0, so EVERY path qualifies:
+
+        8 nodes   ->   4 paths,    14 elements copied
+        16 nodes  ->   8 paths,    44 elements copied
+        32 nodes  ->  16 paths,   152 elements copied
+        64 nodes  ->  32 paths,   560 elements copied
+
+    DOUBLING THE TREE ROUGHLY QUADRUPLES THE COPYING. The traversal itself is linear; the copying is
+    what makes the whole thing quadratic, and it is unavoidable because the paths must be written out.
+
+THE TINY INPUTS:
+    root = None            the guard returns immediately.  RETURN [].
+    A SINGLE NODE 5, target 5:  path = [5], both children None so it IS a leaf, remaining 5 == 5.
+                           RECORD [5].  RETURN [[5]].
+    A SINGLE NODE 5, target 3:  5 != 3.  RETURN [].""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2) IN THE WORST CASE - NOT O(n), and this is the part to state carefully.
+
+In plain words: the traversal visits every node once, which is O(n). But every qualifying path must be
+COPIED into the result, and a copy costs its length. On a caterpillar tree half the nodes are leaves
+and the paths grow steadily longer, so the copying alone is quadratic - measured at 14, 44, 152 and
+560 elements for trees of 8, 16, 32 and 64 nodes.
+
+    ON A BALANCED TREE it is O(n log n): about n/2 leaves at depth log n.
+    NO METHOD CAN BEAT IT, because the answer itself is that large. The cost is in the output, exactly
+    as in Palindrome Partitioning.
+
+SPACE: O(h) for the recursion stack and O(h) for the shared path, where h is the height - PLUS the
+output, which is not counted as working space.
+
+THE FAMILY, AND WHICH SIBLING OWNS WHAT:
+
+    PATH SUM I        does ANY root-to-leaf path hit the target? The same recursion returning a
+                      boolean - no list, no copy, no pop, and it can stop at the first hit.
+    PATH SUM II       return every such path.                                    <- this entry
+                      OWNS the backtracking list: the `path[:]` copy and the `path.pop()`.
+    PATH SUM III      count paths from ANY node to ANY descendant - "root to leaf" is dropped entirely.
+                      A completely different technique: a running prefix sum with a hash map. That
+                      entry owns the prefix-sum argument.
+    BINARY TREE PATHS every root-to-leaf path as a string - the same skeleton with a different payload.
+    SUM ROOT TO LEAF NUMBERS   carry a running NUMBER down instead of a list.
+
+    AND THE WIDER SPLIT: this belongs to the CARRY-IT-DOWN family, where a node's answer depends on its
+    ANCESTORS, so information travels down as a parameter - alongside Count Good Nodes (a running
+    maximum) and Sum Root to Leaf Numbers (a running number). The mirror image is Binary Tree Tilt,
+    where a subtree sum is returned UP. ASK WHICH DIRECTION THE PROBLEM NEEDS and the shape follows.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Just say whether one exists." Path Sum I - return a boolean, and short-circuit on the first hit.
+  - "Do it without the pop." Pass `path + [node.val]` down, giving every call a private list. Correct,
+    and it copies at every node rather than only at answers - a real trade, not an improvement
+    (section 5).
+  - "Count them instead of listing them." Then the output is one number and the whole thing is O(n),
+    because no copying is needed. Worth saying: the quadratic term comes entirely from being asked to
+    enumerate.
+  - "What about paths that need not start at the root?" That is Path Sum III - prefix sums.
+  - "Do it iteratively." An explicit stack of (node, remaining, path-so-far) triples.
+
+THE #1 BEGINNER MISTAKE: testing only one side for leaf-ness. `node.left is None` alone treats a node
+with a right child as an ending, so the function reports paths that stop in mid-tree - and on any tree
+where every node has either two children or none, it agrees with the correct version on every input.
+
+RUNNER-UP: appending `path` rather than `path[:]`. Every answer becomes a reference to the one shared
+list, which the pops empty on the way out, so the result is the right number of paths all of which are
+empty.
+
+TAKEAWAY: carry the path and the remaining target DOWNWARD because both depend on the ancestors, record
+only at a node with NO children on EITHER side, and remember that the shared path list is what makes
+this cheap - which is exactly why an answer must be copied out of it and every step must be undone on
+the way back up.""",
 ]
 
 _EX_P1G["LLMs & RAG (Retrieval-Augmented Generation)"] = [
@@ -78774,123 +79212,1007 @@ retrieval - which is why you measure them apart before you touch either.""",
 ]
 
 _EX_P1G["Path Sum III (prefix sum)"] = [
-    """Why the naive answer is O(n^2) and this is O(n).
-The obvious solution runs a downward-sum DFS from EVERY node - n starting
-points, each walking its subtree - which is O(n^2), or O(n log n) balanced.
-The prefix-sum trick counts every qualifying path in a single traversal by
-reusing the array technique: on a path from the root, the sum of the segment
-between two ancestors is (running sum here) minus (running sum there). So a
-path ending at the current node sums to target exactly when some ancestor had
-running sum equal to (running - target). Keep a count of the running sums seen
-ON THE CURRENT PATH and the lookup is O(1).""",
+    """1. THE GOAL - paths that may start and end anywhere, as long as they go downward.
 
-    """A trace. Tree 10 -> (5 -> (3, 2 -> (None, 1)), -3 -> (None, 11)), target 8.
-prefix starts {0: 1}.
-At 10: running 10, look up 10-8 = 2 -> 0 paths. prefix {0:1, 10:1}.
-At 5: running 15, look up 7 -> 0. prefix {0:1, 10:1, 15:1}.
-At 3: running 18, look up 10 -> found once (the ancestor 10) -> 1 path, namely
-5 -> 3. Correct.
-At 2: running 17, look up 9 -> 0. At 1: running 18, look up 10 -> 1 path,
-namely 5 -> 2 -> 1. Correct.
-At -3: running 7, look up -1 -> 0. At 11: running 18, look up 10 -> 1 path,
-namely -3 -> 11. Total 3.""",
+Count the paths whose values sum to a target. THE PATH MAY START AT ANY NODE AND END AT ANY OF ITS
+DESCENDANTS - it does not have to begin at the root or end at a leaf. It must only travel DOWNWARD.
 
-    """Why prefix[0] = 1 must be seeded.
-It represents the empty prefix BEFORE the root, and it is what lets a path
-starting AT the root count. Without it, a tree of a single node 8 with target 8
-gives running = 8, looks up 8-8 = 0, finds nothing, and returns 0 - wrong.
-This is the identical seed used in Subarray Sum Equals K on an array, and
-forgetting it there produces the same class of bug. If your answer is right
-except that it misses paths beginning at the root, this is why.""",
+            10
+           /  \\
+          5    -3
+         / \\     \\
+        3   2     11
+             \\
+              1
 
-    """The un-counting on the way out, which is what makes it a TREE algorithm.
-    prefix[running] += 1
-    count += dfs(left) + dfs(right)
-    prefix[running] -= 1        # <- backtrack
-That decrement removes the current node's running sum as you leave it, so a
-node in the LEFT subtree can never be paired with an ancestor that only exists
-on the RIGHT branch. Omit it and you count paths that are not paths at all -
-they zig-zag across the tree, which is not a downward path.
-This is the tree version of backtracking state, exactly like path.pop() in Path
-Sum II, and it is where this problem is usually lost.""",
+    target = 8
 
-    """Edge cases.
-Negative values are the reason this problem is interesting - with only positive
-values a sliding window would work, but negatives mean the running sum is not
-monotonic, so you genuinely need the hash map.
-target = 0 with a node value of 0 -> a single-node path counts; check the
-prompt's intent. Empty tree -> 0. A path of length 1 (a node equal to target)
-must count, which the prefix[0] = 1 seed guarantees.
-Large sums can exceed 32-bit range in other languages; Python is immune.""",
+        5 -> 3        =  5 + 3      = 8   YES
+        5 -> 2 -> 1   =  5 + 2 + 1  = 8   YES
+        -3 -> 11      = -3 + 11     = 8   YES
 
-    """Complexity and the family.
-Time O(n) - one traversal, O(1) hash work per node. Space O(h) for the
-recursion plus O(h) for the prefix map, since it only ever holds the sums along
-the current path.
-The family is the prefix-sum-plus-hash-map pattern: Subarray Sum Equals K (the
-array original), Continuous Subarray Sum (store running mod k), Contiguous
-Array (map +1/-1 running counts), and Binary Tree Maximum Path Sum (different -
-postorder, because the path may bend rather than run downward). Recognising
-'sum of a segment = difference of two prefixes' is what unlocks all of them.""",
+        10 -> 5       = 15    10 -> -3 = 7    3 alone = 3    2 -> 1 = 3    11 alone = 11
+        ... nothing else reaches 8.
+
+    ANSWER: 3
+
+    NOTE THAT NONE OF THE THREE STARTS AT THE ROOT, and one of them ends at a node with a child below
+    it. Both would be illegal in Path Sum II.
+
+TWO THINGS THAT MAKE THIS HARDER THAN ITS SIBLINGS:
+
+    THE PATH CAN START ANYWHERE. So there are O(n) possible starting points, not one.
+    THE VALUES MAY BE NEGATIVE. That is what makes the problem interesting - with only positive values
+        a running total is monotonic and a sliding window would work. With negatives, a running sum can
+        go up and down, so you cannot prune by "the sum has already exceeded the target".
+
+    ITS SIBLINGS IN THIS BANK: PATH SUM I asks whether ANY root-to-leaf path hits the target; PATH SUM
+    II returns every root-to-leaf path and OWNS the backtracking list - the `path[:]` copy and the pop.
+    THIS ENTRY OWNS THE PREFIX-SUM MAP, which is a different technique entirely and is what turns an
+    O(n^2) problem into an O(n) one.""",
+
+    """2. THE INTUITION - the same trick as counting subarrays, applied to a root path.
+
+Forget trees for a moment. Given a LIST of numbers, how do you count the stretches that sum to a
+target? You keep a RUNNING TOTAL from the start, and note that
+
+    the sum of the stretch from position a+1 to position b  =  running(b) − running(a)
+
+So a stretch ending at b sums to the target exactly when
+
+    running(b) − running(a) = target,   that is,   running(a) = running(b) − target
+
+    SO AT EACH POSITION, COUNT HOW MANY EARLIER RUNNING TOTALS EQUAL "running now minus target". A hash
+    map of running-total counts answers that in constant time.
+
+NOW PUT IT ON A TREE. The path from the root down to wherever you are standing IS a list of numbers.
+Every downward path ending at the current node is a suffix of it - exactly a "stretch ending here".
+
+            10                running total 10
+           /
+          5                   running total 15
+         /
+        3                     running total 18
+
+        At node 3, running is 18 and the target is 8. Look up 18 − 8 = 10.
+        The running total 10 was seen at node 10 - ONCE.
+        SO ONE PATH ENDING AT NODE 3 SUMS TO 8, namely the stretch AFTER node 10: that is 5 -> 3.
+
+    THE MAP HOLDS THE RUNNING TOTALS OF THE ANCESTORS ON THE CURRENT ROOT PATH, and nothing else.
+
+AND THAT LAST CLAUSE IS WHAT MAKES IT A TREE ALGORITHM RATHER THAN A LIST ONE. When the walk finishes
+with a node and backs up, that node's running total must be REMOVED from the map - otherwise it would
+still be visible from a completely different branch, and the algorithm would count paths that jump
+sideways across the tree.
+
+    prefix[running] += 1        before descending
+    ... explore both children ...
+    prefix[running] -= 1        on the way back up
+
+    ADD ON THE WAY DOWN, REMOVE ON THE WAY UP. Section 4 has a four-node tree where dropping the
+    removal invents a path that does not exist.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DOWNWARD PATH. A walk from some node to one of its descendants, always moving to a child. The path in
+question here.
+DESCENDANT. Any node below a given node.
+
+PREFIX SUM / RUNNING TOTAL. The sum of everything from the root down to and including the current node.
+Written `running` in the code.
+
+THE PREFIX-SUM MAP. A count of how many times each running total has been seen on THE CURRENT ROOT
+PATH. Written `prefix`.
+
+defaultdict(int). A dictionary that returns 0 for a missing key instead of raising. It is what lets
+`prefix[running - target]` be read without checking whether the key exists.
+
+BACKTRACKING THE MAP. Decrementing a count on the way out so the map describes only the current root
+path. Section 4.
+
+THE EMPTY PREFIX. `prefix[0] = 1`, representing the running total BEFORE the root - what makes a path
+STARTING at the root countable. Section 4.
+
+target. The sum being looked for.
+running. The running total from the root to the current node.
+count. Paths found in this subtree.
+
+n. The number of nodes. h. The height.
+O(n) TIME, O(h) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - FORGETTING `prefix[0] = 1`. It represents the running total BEFORE the root - the empty
+prefix - and it is what allows a path that STARTS at the root to be counted.
+
+    A SINGLE NODE with value 5, target 5.
+
+        running becomes 5.  Look up 5 − 5 = 0.
+        SEEDED:      prefix[0] is 1  ->  count 1.  CORRECT - the path is the root by itself.
+        NOT SEEDED:  prefix[0] is 0  ->  count 0.  WRONG.
+
+    Every path that begins at the root needs an "ancestor prefix" of 0 to subtract against, and the
+    seed is the only place that 0 comes from.
+
+TRAP 2 - FORGETTING TO DECREMENT ON THE WAY OUT. This is the line that makes it a TREE algorithm rather
+than a list one, and without it the code counts paths that do not exist.
+
+    TREE:  root 1, left child 2, right child 3, and 3 has a right child 4.     target = 5
+
+            1
+           / \\
+          2   3
+               \\
+                4
+
+        THE CORRECT ANSWER IS 0. Enumerate every downward path:
+            1=1,  2=2,  3=3,  4=4,  1+2=3,  1+3=4,  3+4=7,  1+3+4=8.   None is 5.
+
+        WITH THE DECREMENT:      0.   (Brute force agrees.)
+        WITHOUT THE DECREMENT:   1.
+
+        WHERE THE PHANTOM COMES FROM: walking the LEFT branch reaches node 2 with a running total of
+        1 + 2 = 3, and records prefix[3] = 1. Without the decrement that entry survives after the walk
+        leaves the left branch. Later, at node 4 in the RIGHT branch, the running total is
+        1 + 3 + 4 = 8, and the lookup is 8 − 5 = 3 - which finds that stale entry and counts a "path".
+
+        THAT PATH WOULD BE "3 -> 4 STARTING AFTER NODE 2" - but node 2 is not an ancestor of node 4 at
+        all. It is a path that jumps sideways across the tree, which is not a downward path.
+
+TRAP 3 - READING THE MAP AFTER ADDING THE CURRENT NODE. The order in the code is: compute `running`,
+LOOK UP, then add. Adding first would let a node match itself when the target is 0, counting an empty
+path.
+
+TRAP 4 - ASSUMING POSITIVE VALUES AND PRUNING. With only positive values you could stop descending once
+the running total exceeded the target, or use a sliding window. NEGATIVE VALUES MAKE THAT INVALID - the
+running total can come back down, so a path that looks hopeless may still reach the target. The tree in
+section 1 has a −3 for exactly this reason.
+
+TRAP 5 - USING A PLAIN DICT AND INDEXING A MISSING KEY. `prefix[running - target]` on an ordinary dict
+raises KeyError when that total has never been seen. `defaultdict(int)` returns 0 instead. A plain dict
+with `.get(key, 0)` works equally well - the defaultdict is a convenience, not a requirement.
+
+TRAP 6 - THE EMPTY TREE. `dfs(None, 0)` returns 0 at the guard, so the function returns 0. Correct, with
+no special case.""",
+
+    """5. WHY THE NAIVE ANSWER IS QUADRATIC AND THIS IS LINEAR.
+
+VERSION A - START A FRESH DOWNWARD WALK FROM EVERY NODE. For each of the n nodes, walk its entire
+subtree adding up and counting hits.
+
+    Correct and O(n^2) in the worst case - or O(n x h) more precisely, since each walk covers a subtree.
+    On a balanced tree that is O(n log n); ON A SKEWED TREE, where the "subtree" of the root is the
+    whole chain, it is genuinely O(n^2).
+
+    IT IS ALSO THE ANSWER MOST PEOPLE GIVE FIRST, and it is worth stating and then improving rather
+    than skipping.
+
+VERSION B - THE PREFIX-SUM MAP, which is the code here. ONE traversal, O(1) work per node, O(n) overall.
+
+THE INSIGHT THAT COLLAPSES IT. Version A re-walks the same root paths over and over: the path from the
+root to a deep node is traversed once for every ancestor that starts a walk through it. The prefix map
+computes each running total ONCE and answers "how many earlier totals equal running − target" in
+constant time.
+
+    IT IS EXACTLY THE SUBARRAY-SUM-EQUALS-K TRICK, lifted from a list to a root path. If you have seen
+    that problem, this is the same three lines with an add and a remove wrapped around the recursion.
+
+WHY THE ADD AND REMOVE MUST BRACKET THE RECURSION:
+
+    prefix[running] += 1              this node joins the current root path
+    count += dfs(left) + dfs(right)   explore everything below it
+    prefix[running] -= 1              this node leaves the current root path
+
+    THE INVARIANT IS: at any moment, `prefix` counts exactly the running totals of the nodes on the path
+    from the root to wherever the walk currently stands - plus the seeded 0 for the empty prefix.
+
+    Adding before descending is what lets descendants see this node as a possible path START. Removing
+    afterwards is what stops a node in a different branch from seeing it, which would be a sideways
+    path (trap 2).
+
+WHY IT IS COUNTS AND NOT A SET. The same running total can occur at several ancestors - a subtree
+containing values that cancel out will do it - and each occurrence is a distinct place a path could
+start. So the map stores HOW MANY, and the lookup adds all of them at once.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP A RUNNING TOTAL FROM THE ROOT AND A TALLY OF EVERY
+RUNNING TOTAL SEEN ON THE WAY DOWN, AND AT EACH NODE THE NUMBER OF QUALIFYING PATHS ENDING THERE IS
+SIMPLY HOW MANY EARLIER TOTALS EQUAL THE CURRENT TOTAL MINUS THE TARGET.
+
+THIS VERSION IS RECURSIVE, and the mechanism is the whole point:
+
+  - One walk down the tree, carrying a running total that grows as it descends.
+  - A shared tally is updated on the way DOWN and undone on the way UP, so that at every moment it
+    describes exactly the chain of ancestors above the current node - and nothing else.
+  - Those paused calls form the call stack, whose depth is the tree's height.
+  - WHAT MAKES IT STOP: an absent node returns zero immediately, and every downward path reaches
+    absence.
+
+THE STEPS:
+
+  1. START A TALLY OF RUNNING TOTALS, AND PUT ONE ENTRY IN IT FOR A TOTAL OF ZERO.
+
+     That entry stands for the position BEFORE the root - the point from which a path starting at the
+     root would be measured. Without it, no path that begins at the root can ever be counted, and a
+     tree of one node whose value equals the target reports nothing.
+
+  2. THE WALK, GIVEN A NODE AND THE RUNNING TOTAL SO FAR:
+
+     a. IF THERE IS NO NODE, REPORT ZERO.
+
+     b. ADD THIS NODE'S VALUE TO THE RUNNING TOTAL.
+
+     c. LOOK UP HOW MANY TIMES THE TALLY HAS SEEN "THE CURRENT TOTAL MINUS THE TARGET". That count IS
+        the number of qualifying paths that END at this node, because each such earlier total marks a
+        place a path could have started.
+
+        LOOK IT UP BEFORE RECORDING THIS NODE'S OWN TOTAL. Recording first would let this node match
+        itself when the target is zero, counting a path of no nodes at all.
+
+     d. RECORD THIS NODE'S RUNNING TOTAL IN THE TALLY.
+
+     e. EXPLORE BOTH CHILDREN, adding whatever they report.
+
+     f. REMOVE THIS NODE'S RUNNING TOTAL FROM THE TALLY BEFORE RETURNING.
+
+        THIS IS THE STEP THAT MAKES IT A TREE ALGORITHM. The tally must describe only the current chain
+        of ancestors. Leave this node's total behind and a node in a completely different branch can
+        match against it, counting a "path" that jumps sideways across the tree rather than running
+        downward.
+
+     g. REPORT THE TOTAL FOUND HERE AND BELOW.
+
+  3. THE ANSWER IS WHAT THE ROOT REPORTS.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a family tree where every person has a number, and you want to count the runs of consecutive
+generations - parent to child to grandchild and so on - whose numbers add up to some particular total.
+The run may start with anybody and end with anybody below them.
+
+The plodding way is to stand on each person in turn and walk down through all their descendants adding
+up as you go. That works, and it means walking the same long chains over and over, once for every
+ancestor who starts a walk through them.
+
+There is a much better way, borrowed from a trick for lists. As you walk down from the very top, keep a
+RUNNING TOTAL of everybody you have passed. Now here is the observation: the sum of any run ending
+where you are standing is just your running total minus the running total at the person just above
+where the run began. So if you want a run summing to some target, you need an ancestor whose running
+total was exactly your current total minus the target.
+
+So alongside the running total you keep a tally: for each total you have passed through on your way
+down, how many times you have seen it. When you arrive at somebody, you look up "my total minus the
+target" in the tally, and however many times that number appears is exactly how many qualifying runs
+end at you. One lookup, and you are done with that person.
+
+You then add your own running total to the tally and carry on down to your children.
+
+There are two details that decide whether this works at all.
+
+The first is that you must put a single entry in the tally for a total of nothing, before you start.
+That stands for the position just above the very top of the tree, and it is what allows a run that
+begins at the top person to be counted. Leave it out and a family tree consisting of one person whose
+number IS the target reports no runs at all.
+
+The second is that when you finish with somebody and climb back up, you must take their total OUT of
+the tally again. The tally is supposed to describe the chain of ancestors above wherever you are
+standing right now - nobody else. If you leave someone's total lying in it after you have left their
+branch, then later, over in a completely different part of the family, somebody may match against it
+and you will count a run that zigzags sideways across the tree from one cousin to another. That is not
+a run of consecutive generations at all, and it is easy to leave in because nothing about it looks
+wrong.
+
+Add on the way down, take away on the way up, and the tally always describes exactly the line of
+ancestors above you.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 10 / (5 -> (3, 2 -> 1)), (-3 -> 11) and target 8 beside you, answer 3.
+
+    from collections import defaultdict
+
+A dictionary returning 0 for a missing key rather than raising - which is what lets the lookup below be
+written without a membership test (trap 5).
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+    def path_sum_iii(root, target):
+        prefix = defaultdict(int)
+
+    prefix  HOLDS how many times each running total has been seen ON THE CURRENT ROOT PATH. Not in the
+            whole tree - only on the chain of ancestors above wherever the walk currently stands. The
+            decrement below is what maintains that.
+
+        prefix[0] = 1                        # the empty prefix
+
+THE SEED, AND IT IS LOAD-BEARING (trap 1). It stands for the running total BEFORE the root, which is
+what a path STARTING at the root must subtract against. Without it, a single node whose value equals
+the target counts as 0 instead of 1.
+
+        def dfs(node, running):
+            if node is None:
+                return 0
+
+The base case, which also makes an empty tree return 0 with no special case.
+
+            running += node.val
+
+    running  HOLDS the sum from the root down to and including this node.
+
+Note this rebinds the local parameter - the caller's value is untouched, so each branch carries its own
+running total automatically.
+
+            count = prefix[running - target] # paths ending here summing to target
+
+THE HEART OF THE ALGORITHM, AND IT IS ONE LOOKUP.
+
+    A path ending HERE and starting just after some ancestor sums to `running − (that ancestor's
+    running)`. Setting that equal to the target gives `ancestor's running = running − target`, so the
+    number of qualifying paths ending here is exactly how many ancestors had that total.
+
+    THE LOOKUP HAPPENS BEFORE THIS NODE'S OWN TOTAL IS RECORDED (trap 3). Recording first would let the
+    node match itself when the target is 0.
+
+            prefix[running] += 1
+
+This node joins the current root path, so descendants may treat it as a place a path could start.
+
+            count += dfs(node.left, running) + dfs(node.right, running)
+
+Explore both subtrees, adding whatever they find. Each child gets THIS node's running total as its
+starting point.
+
+            prefix[running] -= 1             # backtrack: leave this path
+
+THE LINE THAT MAKES IT A TREE ALGORITHM (trap 2). This node is no longer an ancestor of anything the
+walk will visit next, so its total must leave the map.
+
+Drop it and a node in a different branch can match against a stale total, counting a path that runs
+sideways across the tree rather than downward - section 9 has a four-node tree where that invents a
+path out of nothing.
+
+            return count
+
+        return dfs(root, 0)
+
+Start at the root with a running total of 0 - the seeded empty prefix is what that 0 will match
+against.""",
+
+    """9. TRACED, NODE BY NODE - AND THE PHANTOM PATH.
+
+TRACE 1 - THE WORKED EXAMPLE. target = 8.
+
+            10
+           /  \\
+          5    -3
+         / \\     \\
+        3   2     11
+             \\
+              1
+
+    prefix = {0: 1}
+
+    dfs(10, 0):   running = 10.  Look up 10 − 8 = 2  ->  prefix[2] = 0.  count = 0.
+                  prefix[10] += 1   ->  {0:1, 10:1}
+
+      dfs(5, 10):   running = 15.  Look up 15 − 8 = 7  ->  0.  count = 0.
+                    prefix[15] += 1   ->  {0:1, 10:1, 15:1}
+
+        dfs(3, 15):   running = 18.  Look up 18 − 8 = 10  ->  prefix[10] = 1.  COUNT 1.
+                      THAT IS THE PATH 5 -> 3: it starts just after node 10, whose running total was
+                      10, and 18 − 10 = 8.
+                      prefix[18] += 1.  Both children absent.  prefix[18] -= 1.  RETURNS 1.
+
+        dfs(2, 15):   running = 17.  Look up 9  ->  0.  count = 0.
+                      prefix[17] += 1
+
+          dfs(1, 17):   running = 18.  Look up 10  ->  prefix[10] = 1.  COUNT 1.
+                        THAT IS THE PATH 5 -> 2 -> 1, again starting just after node 10.
+                        prefix[18] += 1, children absent, prefix[18] -= 1.  RETURNS 1.
+
+                      prefix[17] -= 1.  RETURNS 0 + 0 + 1 = 1.
+
+        node 5 total: 0 + 1 + 1 = 2.  prefix[15] -= 1.  RETURNS 2.
+
+      dfs(-3, 10):  running = 7.  Look up 7 − 8 = −1  ->  0.  count = 0.
+                    prefix[7] += 1
+
+        dfs(11, 7):   running = 18.  Look up 10  ->  prefix[10] = 1.  COUNT 1.
+                      THAT IS THE PATH -3 -> 11.
+                      RETURNS 1.
+
+                    prefix[7] -= 1.  RETURNS 1.
+
+      node 10 total: 0 + 2 + 1 = 3.
+
+    RETURN 3.   A brute-force walk from every node agrees.
+
+    NOTE ALL THREE HITS LOOKED UP THE SAME VALUE, 10 - the running total at the root. Every qualifying
+    path here happens to start just below the root, which is a coincidence of this tree rather than a
+    property of the method.
+
+TRACE 2 - THE PHANTOM PATH (trap 2). Tree: root 1, left 2, right 3, and 3 has a right child 4.
+target = 5.
+
+            1
+           / \\
+          2   3
+               \\
+                4
+
+    EVERY DOWNWARD PATH:  1, 2, 3, 4, 1+2=3, 1+3=4, 3+4=7, 1+3+4=8.  NONE sums to 5.
+    THE CORRECT ANSWER IS 0, and a brute-force walk confirms it.
+
+    WITH THE DECREMENT:
+        dfs(1, 0): running 1.  Look up −4  ->  0.  prefix[1] = 1.
+          dfs(2, 1): running 3.  Look up −2  ->  0.  prefix[3] = 1.  no children.
+                     prefix[3] -= 1  ->  BACK TO 0.  RETURNS 0.
+          dfs(3, 1): running 4.  Look up −1  ->  0.  prefix[4] = 1.
+            dfs(4, 4): running 8.  Look up 8 − 5 = 3  ->  prefix[3] is 0.  COUNT 0.
+                       RETURNS 0.
+            prefix[4] -= 1.  RETURNS 0.
+        RETURN 0.  CORRECT.
+
+    WITHOUT THE DECREMENT:
+        The left branch leaves `prefix[3] = 1` behind when it finishes.
+        Later, at node 4, running is 8 and the lookup is 8 − 5 = 3 - WHICH NOW FINDS THAT STALE ENTRY.
+        COUNT 1.
+        RETURN 1.  WRONG.
+
+    WHAT THE PHANTOM CLAIMS TO BE: a path summing to 5 that starts just after the node whose running
+    total was 3 - that is, node 2 - and ends at node 4. But node 2 is not an ancestor of node 4; they
+    are in different branches. THE "PATH" ZIGZAGS SIDEWAYS ACROSS THE TREE, which is not a downward
+    path at all.
+
+TRACE 3 - THE SEED (trap 1). A single node with value 5, target 5.
+
+    SEEDED with prefix[0] = 1:
+        dfs(5, 0): running = 5.  Look up 5 − 5 = 0  ->  prefix[0] = 1.  COUNT 1.
+        RETURN 1.  Correct - the path is the single node.
+
+    WITHOUT THE SEED:
+        Look up 0  ->  0.  COUNT 0.
+        RETURN 0.  WRONG.
+
+    Every path that BEGINS at the root needs an ancestor prefix of 0 to subtract against, and the seed
+    is the only place that 0 exists.
+
+THE TINY INPUTS:
+    root = None            the guard returns 0 at once.  RETURN 0.
+    A SINGLE NODE 5, target 3:  running 5, look up 2  ->  0.  RETURN 0.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n). ONE traversal, and constant work per node - one addition, one hash lookup, one increment,
+one decrement.
+
+    AGAINST THE NAIVE VERSION at O(n x h): a fresh downward walk from every node, which is O(n log n)
+    on a balanced tree and genuinely O(n^2) on a skewed one, because the root's "subtree" is the entire
+    chain.
+
+SPACE: O(h) for the recursion stack, plus O(h) for the map - IT ONLY EVER HOLDS THE RUNNING TOTALS OF
+THE CURRENT ROOT PATH, which is what the decrement guarantees. Without the decrement it would grow to
+O(n) AND give wrong answers.
+
+THE PATTERN - PREFIX SUMS WITH A HASH MAP OF COUNTS. The same three lines solve:
+
+    SUBARRAY SUM EQUALS K            the list version, and the one to recognise this from
+    PATH SUM III                     the same thing on a root path                <- this entry
+    CONTINUOUS SUBARRAY SUM          store running total MODULO k instead of the total itself
+    CONTIGUOUS ARRAY                 map 0 to −1 and count equal numbers of each - a prefix sum in
+                                     disguise
+    BINARY SUBARRAYS WITH SUM        the same counting map
+
+    THE RECOGNITION CUE: "count the contiguous stretches summing to X" and the values may be NEGATIVE.
+    Negative values are the tell - they rule out sliding windows and two pointers, which need the
+    running total to be monotonic.
+
+THE PATH SUM FAMILY, AND WHO OWNS WHAT:
+
+    PATH SUM I      any ROOT-TO-LEAF path hits the target? A boolean, plain recursion.
+    PATH SUM II     every root-to-leaf path. OWNS the backtracking list - the `path[:]` copy and the
+                    `path.pop()`, and the O(n^2) copying cost.
+    PATH SUM III    any node to any descendant. OWNS the prefix-sum map.          <- this entry
+
+    THE JUMP IN DIFFICULTY between II and III is entirely the freedom of where a path may start, and
+    the prefix map is what handles it without re-walking.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if paths could go UP and over, through a common ancestor?" That is Binary Tree Maximum Path
+    Sum - a completely different shape, where each node returns its best downward gain and the answer
+    is scored at the turn.
+  - "Return the paths, not the count." Then the output can be large and the prefix map is not enough -
+    you would need to record where each total occurred and reconstruct, which loses the O(n).
+  - "What if all values were positive?" A sliding window over the root path would work, since the
+    running total would be monotonic. Worth saying, because it names exactly what the negatives cost.
+  - "Why counts rather than a set?" Several ancestors can share a running total, and each is a distinct
+    starting point.
+  - "Do it iteratively." An explicit stack carrying (node, running), with the map updated on push and
+    pop - the same bracketing.
+
+THE #1 BEGINNER MISTAKE: forgetting to decrement the map on the way out. The code still runs, still
+looks like a prefix-sum solution, and counts paths that jump sideways between branches - on a
+four-node tree it reports 1 where the answer is 0.
+
+RUNNER-UP: forgetting `prefix[0] = 1`, which silently loses every path that starts at the root - so a
+single node whose value is the target reports nothing.
+
+TAKEAWAY: the sum of a downward path ending here is the running total now minus the running total at
+the node above where it started, so one lookup of "running minus target" counts every qualifying path
+ending at this node - and the map must be added to on the way down and UNDONE on the way up, because
+it is meant to describe the current chain of ancestors and nothing else.""",
 ]
 
 _EX_P1G["Perfect Squares (DP)"] = [
-    """The DP, traced for small n.
-dp[0] = 0. dp[1] = dp[0]+1 = 1 (just 1). dp[2] = dp[1]+1 = 2 (1+1).
-dp[3] = dp[2]+1 = 3. dp[4] = min(dp[3]+1, dp[0]+1) = 1 (4 itself).
-dp[5] = min(dp[4]+1, dp[1]+1) = 2 (4+1). dp[12] = min over j*j in {1,4,9}:
-dp[11]+1, dp[8]+1, dp[3]+1 = min(4, 3, 4) = 3, namely 4+4+4.
-dp[13] = min(dp[12]+1, dp[9]+1, dp[4]+1) = min(4, 2, 3)... dp[9]+1 = 2, so 2 -
-namely 9+4. Doing 12 and 13 by hand is worth it: 13 is the case where the
-greedy 'take the largest square' would give 9+1+1+1+1 = 5.""",
+    """1. THE GOAL - the fewest square numbers that add up to n.
 
-    """Why greedy fails, which is the first thing to establish.
-Greedy 'subtract the largest square that fits' gives, for 12: 9 + 1 + 1 + 1 =
-four squares. The optimum is 4 + 4 + 4 = three. For 13, greedy gives 9+4 = two,
-which happens to be right - so a single test case can convince you greedy
-works. 12 is the counterexample to keep.
-The reason greedy breaks is the same as in Coin Change: taking the largest
-piece can leave a remainder that is expensive to fill, and there is no exchange
-argument to rule that out.""",
+A PERFECT SQUARE is a whole number times itself: 1, 4, 9, 16, 25, 36, ... Given n, FIND THE FEWEST
+PERFECT SQUARES THAT SUM TO IT. You may reuse the same square as often as you like.
 
-    """This IS Coin Change with a computed coin set.
-The recurrence dp[i] = min(dp[i - c] + 1) over available pieces c is identical;
-the only difference is that the 'coins' are 1, 4, 9, 16, ... generated on the
-fly rather than given. Saying that out loud is worth marks, because it shows
-you are recognising a pattern rather than inventing one.
-It also tells you the follow-ups for free: 'return the actual squares' (keep a
-parent pointer per state), and 'count the number of ways' (sum instead of min,
-with the loop order swapped so combinations are not double-counted).""",
+    n = 12
 
-    """The mathematical shortcut, which is a legitimate second answer.
-Lagrange's four-square theorem says every natural number is the sum of at most
-FOUR squares, so the answer is always 1, 2, 3 or 4. Legendre's three-square
-theorem says it is 4 exactly when n has the form 4^a * (8b + 7). So:
-check if n is a perfect square -> 1; check the 4^a(8b+7) form -> 4; check
-whether n = i*i + j*j for some i -> 2; otherwise 3. That is O(sqrt(n)) with no
-table at all.
-Offer the DP first (safe, and clearly your own reasoning) and this second. Do
-not lead with it unless you are certain of the conditions - a half-remembered
-number-theory rule is worse than a correct DP.""",
+        9 + 1 + 1 + 1   =  12    FOUR squares
+        4 + 4 + 4       =  12    THREE squares
 
-    """Edge cases and complexity.
-n = 1 -> 1. n = 4 -> 1 (a perfect square is one square). n = 0 -> dp[0] = 0,
-though most versions constrain n >= 1.
-Time O(n * sqrt(n)): for each of n values you try up to sqrt(n) squares -
-about 1.2 million operations at n = 10,000, comfortably fast. Space O(n).
-The BFS alternative is worth mentioning: treat each number as a node with edges
-to n - j*j, and the answer is the shortest path from n to 0. Same complexity,
-and it finds the answer without filling the whole table, which is faster in
-practice when the answer is small.""",
+    ANSWER: 3
 
-    """The family, and the recognition cue.
-Coin Change (fewest coins), Coin Change II (number of ways), Perfect Squares,
-Minimum Cost For Tickets, Word Break (boolean version), and Integer Break (a
-product instead of a count). All are unbounded-knapsack shaped: an outer loop
-over the target value, an inner loop over the pieces, and a min/sum/or combine.
-Cue: 'fewest / how many ways to make N from a set of pieces, reusable'. Once
-you see it, the two nested loops and the base case write themselves, and the
-only thinking left is the combine step.""",
+    n = 13
+
+        9 + 4  =  13     TWO squares
+
+    ANSWER: 2
+
+    n = 4        4 is itself a perfect square.     ANSWER: 1
+
+TWO THINGS WORTH NOTICING IMMEDIATELY:
+
+    AN ANSWER ALWAYS EXISTS, because 1 is a perfect square - worst case you write n as 1 + 1 + ... + 1.
+        So the question is only how much better than n you can do.
+    THE ANSWER IS ALWAYS SMALL. Checking every n from 1 to 2000, THE ONLY VALUES THAT EVER APPEAR ARE
+        1, 2, 3 AND 4. That is not a coincidence - it is Lagrange's four-square theorem, and section 5
+        turns it into a second, much faster solution.
+
+WHY THE OBVIOUS APPROACH FAILS. The instinct is to take the biggest square that fits and repeat. For
+12 that gives 9, then 1 + 1 + 1 - four squares, when three suffice. And this is not a rare failure:
+across the first 2000 values, THE GREEDY IS WRONG 1102 TIMES - more than half. Section 4 has the
+numbers.
+
+THE SHAPE OF THE PROBLEM: this is COIN CHANGE with the coin set computed rather than given. The
+"coins" are 1, 4, 9, 16, ... and the question is the fewest coins summing to n. Recognising that is
+worth more than the code, and section 5 spells out exactly what carries across.""",
+
+    """2. THE INTUITION - build up from 1, and try every square as the last piece.
+
+Work out the answer for every number from 1 up to n, in order, writing each one down.
+
+To solve i, ask: WHAT WAS THE LAST SQUARE I ADDED? It must be some square j*j that is no bigger than i.
+Having used it, the rest is i − j*j, and you already know the answer for that because it is smaller.
+
+    dp[i] = 1 + the smallest dp[i − j*j] over every square j*j <= i
+
+    dp[0] = 0        nothing needs no squares - the anchor everything else is built from
+
+    dp[1]  = 1 + dp[0]                                   = 1        1
+    dp[2]  = 1 + dp[1]                                   = 2        1+1
+    dp[3]  = 1 + dp[2]                                   = 3        1+1+1
+    dp[4]  = 1 + min(dp[3], dp[0])   = 1 + min(3, 0)     = 1        4
+    dp[5]  = 1 + min(dp[4], dp[1])   = 1 + min(1, 1)     = 2        4+1
+    ...
+    dp[12] = 1 + min(dp[11], dp[8], dp[3])               = 3        4+4+4
+                     ^        ^       ^
+                  last = 1  last = 4  last = 9
+
+The whole table for n = 12:
+
+        i:      0   1   2   3   4   5   6   7   8   9  10  11  12
+        dp[i]:  0   1   2   3   1   2   3   4   2   1   2   3   3
+
+    AND LOOK AT dp[12]. The three candidates are dp[11] + 1 = 4, dp[8] + 1 = 3, and dp[3] + 1 = 4.
+    THE WINNER IS THE MIDDLE ONE - subtracting 4, not 9. The greedy takes the largest square and lands
+    on dp[3] + 1 = 4; the DP tries all three and finds 3.
+
+WHY BUILDING UPWARD WORKS. Every value you consult is at a SMALLER index than the one you are
+computing, and you filled the smaller ones first - so the answer is always already there, and nothing
+is ever computed twice.
+
+    (That is exactly the argument in the Coin Change entry, and the recurrence is the same one with a
+    different set of pieces.)""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PERFECT SQUARE. A whole number multiplied by itself: 1, 4, 9, 16, 25, ...
+Note 0 is excluded here - allowing it would let you add zeros for ever without changing the sum.
+
+DYNAMIC PROGRAMMING (DP). Solving small cases first, storing the answers, and building the bigger ones
+from them.
+BOTTOM-UP. Filling a table from the smallest case upward, which is what this code does.
+
+STATE. What one stored value means. HERE: `dp[i]` is the fewest perfect squares summing to exactly i.
+BASE CASE. `dp[0] = 0` - the only answer known without computing, and every other value traces back
+to it through a chain of "+1"s.
+
+RECURRENCE. The rule linking a value to smaller ones: `dp[i] = min over j of dp[i - j*j] + 1`.
+
+float('inf'). Positive infinity, used to mark "no answer found yet" so that any real candidate wins a
+`min`. Section 4 explains why it is safe here and what it would mean if a value stayed infinite.
+
+GREEDY. Taking the locally largest square and repeating. WRONG here - section 4 has the rate.
+
+n. The target.
+dp. The table; `dp[i]` is the answer for i.
+i. The value being solved. j. The candidate square root, so `j*j` is the square being subtracted.
+
+O(n x sqrt(n)) TIME, O(n) SPACE.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the greedy, and how often it fails.
+
+TRAP 1 - TAKING THE LARGEST SQUARE THAT FITS. It is the first idea everyone has, and it is wrong far
+more often than people expect.
+
+    n = 12:   GREEDY takes 9, leaving 3, then 1 + 1 + 1.        FOUR squares.
+              OPTIMUM is 4 + 4 + 4.                             THREE squares.
+
+    n = 43:   GREEDY takes 36, leaving 7, then 4 + 1 + 1 + 1.   FIVE squares.
+              OPTIMUM is 25 + 9 + 9.                            THREE squares.
+
+    AND IT IS NOT AN EDGE CASE. Comparing the greedy against the DP for every n from 1 to 2000:
+
+        THE GREEDY IS WRONG ON 1102 OF THEM - more than half.
+        The first few failures are 12, 18, 19, 22, 23, 32, 41, 42, 43, 48.
+
+    So this is not a clever counterexample hunted down to make a point; the greedy is simply not a
+    solution. THE REASON is that the largest square can leave an awkward remainder, and no local rule
+    can see that. On 12, spending 9 leaves 3, which needs three 1s; spending 4 leaves 8, which is two
+    more 4s.
+
+TRAP 2 - INCLUDING 0 AS A PERFECT SQUARE. The loop starts at `j = 1`. If `j` began at 0 then `j*j` is
+0, `dp[i - 0] + 1` is `dp[i] + 1`, and you would be offering "use a square of 0" as a move - which
+never reduces the remainder and would let the count grow without limit. Starting at 1 is not
+arbitrary.
+
+TRAP 3 - WRITING THE LOOP CONDITION AS `j <= i` INSTEAD OF `j * j <= i`. The bound is on the SQUARE,
+not on the root. With `j <= i` the code computes `dp[i - j*j]` for squares larger than i, which is a
+NEGATIVE index - and in Python that silently wraps to the end of the list, reading an unrelated entry
+and producing wrong answers with no error at all.
+
+TRAP 4 - MISREADING `float('inf')` AS A PROBLEM. Every entry except `dp[0]` starts at infinity, meaning
+"not yet solved". It is safe because a real candidate always beats it, and because `inf + 1` is still
+`inf` so an unsolved state cannot masquerade as an answer.
+
+    UNLIKE COIN CHANGE, no entry can REMAIN infinite here - `j = 1` always applies, so every i has at
+    least the answer `dp[i-1] + 1`. There is no "impossible" case and no −1 to return. Worth noticing:
+    the sentinel is doing bookkeeping rather than detecting failure.
+
+TRAP 5 - n = 0. `dp = [0] + [inf] * 0` is just `[0]`, the loop `range(1, 1)` never runs, and the
+function returns `dp[0] = 0`. Correct - zero needs no squares - though most versions of the problem
+constrain n >= 1 so the case does not arise.
+
+TRAP 6 - ASSUMING THE ANSWER GROWS WITH n. It does not. Checking every n from 1 to 2000, THE ANSWER IS
+ALWAYS 1, 2, 3 OR 4 - never more. That is Lagrange's four-square theorem, and section 5 turns it into a
+much faster algorithm.""",
+
+    """5. THE ALTERNATIVES - and the theorem that gives a second, legitimate answer.
+
+VERSION A - GREEDY. Trap 1. Wrong on more than half the first 2000 values.
+
+VERSION B - PLAIN RECURSION. "The answer for i is 1 plus the best answer for i − j*j, over all j."
+Correct and exponentially slow, because the same values are recomputed along many different paths.
+
+VERSION C - RECURSION WITH MEMOISATION. Same recurrence, each value computed once. O(n x sqrt(n)) time,
+O(n) space, plus recursion depth up to n - which overflows Python's default limit for large n.
+
+VERSION D - THE BOTTOM-UP DP, which is the code here. O(n x sqrt(n)), no recursion.
+
+VERSION E - BFS OVER THE NUMBERS. Treat each value as a node with an edge to `value − j*j`, and search
+outward from n for 0. The level at which 0 is reached IS the answer, since BFS finds fewest steps.
+
+    SAME COMPLEXITY, and it has one genuine advantage: it can stop as soon as it reaches 0, so on a
+    number whose answer is 1 or 2 it barely explores anything. The DP always fills the whole table.
+    Worth naming; neither is clearly better.
+
+VERSION F - THE MATHEMATICAL SHORTCUT, and this is a legitimate second answer rather than a curiosity.
+
+    LAGRANGE'S FOUR-SQUARE THEOREM: every natural number is the sum of at most FOUR perfect squares. So
+    the answer is always 1, 2, 3 or 4 - which the table over 1..2000 confirms, containing exactly those
+    four values and nothing else.
+
+    That reduces the problem to deciding WHICH of the four:
+
+        IS IT 1?   n is itself a perfect square. One test.
+        IS IT 2?   some a*a + b*b = n. Try every a up to sqrt(n) and check the remainder is a square.
+                   O(sqrt(n)).
+        IS IT 4?   LEGENDRE'S THREE-SQUARE THEOREM says a number needs four squares EXACTLY WHEN it has
+                   the form 4^a x (8b + 7). Strip factors of 4, then test whether the remainder leaves
+                   7 on division by 8.
+        OTHERWISE IT IS 3.
+
+    O(sqrt(n)) OVERALL, against the DP's O(n x sqrt(n)).
+
+    WRITE THE DP FIRST AND MENTION THIS. The DP generalises - change the piece set and it still works;
+    the theorem is specific to squares and would be worth nothing if the question became "fewest cubes"
+    or "fewest primes".
+
+WHY THIS IS COIN CHANGE WITH A COMPUTED COIN SET. The recurrence `dp[i] = min(dp[i − c] + 1)` over
+available pieces c is IDENTICAL. The only difference is that the pieces are not handed to you - they
+are 1, 4, 9, ... generated as you go, which is why the inner loop grows `j` rather than iterating a
+list. Everything else transfers: the upward fill, the infinity sentinel, the "what was the last piece"
+framing.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WORK OUT THE ANSWER FOR EVERY NUMBER FROM ONE UP TO THE
+TARGET, AND FOR EACH ONE TRY EVERY SQUARE THAT FITS AS THE LAST PIECE ADDED - TAKING ONE MORE THAN THE
+BEST ANSWER FOR WHAT WOULD BE LEFT.
+
+THERE IS NO RECURSION. The mechanism is TWO NESTED LOOPS OVER A TABLE THAT ONLY EVER LOOKS BACKWARDS:
+
+  - The outer loop walks the number being solved, from small to large.
+  - The inner loop tries each square as the final piece.
+  - EVERY LOOKUP IS AT A SMALLER NUMBER than the one being computed, and smaller numbers were filled
+    in earlier - so the value needed is always already there. That is why the outer loop must go
+    upward.
+  - WHAT MAKES IT STOP: both loops have trip counts fixed before they start - the target, and then how
+    many squares fit under it.
+
+THE STEPS:
+
+  1. MAKE A TABLE WITH ONE SLOT FOR EVERY NUMBER FROM ZERO UP TO THE TARGET.
+
+  2. PUT ZERO IN THE SLOT FOR ZERO - it takes no squares to make nothing - AND MARK EVERY OTHER SLOT AS
+     "NOT YET SOLVED" with a value larger than any real answer could be.
+
+  3. WALK THE NUMBERS UPWARD FROM ONE TO THE TARGET. FOR EACH ONE:
+
+     a. TRY EACH SQUARE IN TURN, STARTING FROM ONE TIMES ONE, AND STOP WHEN THE SQUARE EXCEEDS THE
+        NUMBER YOU ARE SOLVING.
+
+        THE TEST IS ON THE SQUARE, NOT ON ITS ROOT. Comparing the root against the number instead lets
+        squares bigger than the number through, and subtracting one of those gives a negative
+        remainder - which in Python quietly reads from the wrong end of the table rather than
+        complaining.
+
+        START FROM ONE, NOT ZERO. A square of zero would subtract nothing, so it would offer a move
+        that never makes progress.
+
+     b. FOR EACH SQUARE THAT FITS, LOOK UP THE ANSWER FOR THE NUMBER MINUS THAT SQUARE, AND ADD ONE.
+        That is what this number would cost if that square were the last piece.
+
+     c. KEEP THE SMALLEST SUCH TOTAL.
+
+  4. THE ANSWER IS THE SLOT FOR THE TARGET.
+
+Note there is no "impossible" case to handle. A square of one always fits, so every number has at least
+the answer "one more than the number below it" - which is why no slot can stay unsolved and no failure
+value ever needs returning.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine you are paying an exact amount using tokens, and the only tokens that exist are worth one,
+four, nine, sixteen and so on - the square numbers. You have as many of each as you like. You want to
+hand over as few tokens as possible.
+
+The tempting method is to reach for the largest token that does not overshoot, then repeat. For twelve
+that means a nine, and then you are left with three, which takes three ones - four tokens altogether.
+But twelve is three fours, which is only three tokens. And this is not bad luck on one number: checking
+every amount up to two thousand, that grab-the-biggest habit gets the wrong answer more than half the
+time.
+
+The reliable method is to work out the answer for every amount from one upward and write each down as
+you go, so that by the time you reach a big amount you already know the answers for all the smaller
+ones.
+
+For any given amount, ask a single question: what was the LAST token I handed over? It has to be one of
+the square-valued tokens that is no bigger than the amount. Whichever it was, the rest of the payment
+is the amount minus that token - and you have already worked that out and written it down. So the cost
+is one token plus whatever that smaller amount cost.
+
+You try every token that fits, take whichever leaves you best off, and record the result.
+
+Two small things keep this honest. The first is that you must stop trying tokens once their VALUE
+exceeds the amount, not once their square root does - handing over a token worth more than you owe
+leaves you with a negative remainder, and looking that up in your notes finds something entirely
+unrelated rather than telling you anything is wrong. The second is that there is no token worth
+nothing; a zero-value token would let you hand over tokens for ever without ever reducing what you owe.
+
+There is also a striking fact lurking here that you will notice if you write out enough answers: the
+number of tokens is never more than four. Not for twelve, not for a thousand, not for any amount at
+all. That is a genuine theorem about square numbers, and it means the answer is always one, two, three
+or four - which, if you know how to tell which, gives a much quicker way to the answer for this
+particular set of tokens. It is worth knowing and it would be worth nothing at all if the tokens were
+cubes instead, whereas the working-upward method would carry across unchanged.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep n = 12 beside you, answer 3.
+
+    def num_squares(n):
+
+`n` is the target. Returns the fewest perfect squares summing to it. Nothing is modified.
+
+        dp = [0] + [float('inf')] * n     # dp[i] = fewest squares summing to i
+
+THE TABLE, BUILT IN ONE EXPRESSION.
+
+    `[0]`                     is `dp[0]` - THE BASE CASE. It takes no squares to make nothing, and
+                              every other answer is built out of it through a chain of "+1"s.
+    `[float('inf')] * n`      marks every other slot as not yet solved, so that the first real
+                              candidate always wins the `min` below.
+
+    THE LENGTH IS n + 1 - indices 0 through n. Writing `[float('inf')] * (n+1)` after the `[0]` would
+    give one slot too many; omitting the `[0]` would leave no base case at all.
+
+    NOTE THE SENTINEL CANNOT SURVIVE HERE (trap 4). Since `j = 1` always fits, every i gets at least
+    `dp[i-1] + 1`, so no slot stays infinite. There is no impossible case and no −1 to return - unlike
+    Coin Change, where an unreachable amount genuinely stays at infinity.
+
+        for i in range(1, n + 1):
+
+Walk the numbers upward, starting at 1 because slot 0 is already correct and must not be overwritten.
+`n + 1` so the target itself is included.
+
+UPWARD IS ESSENTIAL: every lookup below is at a SMALLER index, so those slots must already hold their
+final values.
+
+            j = 1
+
+    j  HOLDS the candidate square ROOT, so `j*j` is the square being tried as the last piece.
+
+STARTS AT 1, NOT 0 (trap 2). `j = 0` would give a square of 0, offering a move that subtracts nothing.
+
+            while j * j <= i:
+
+THE BOUND IS ON THE SQUARE, NOT THE ROOT (trap 3). Writing `j <= i` would let squares larger than `i`
+through, making `i - j*j` negative - and in Python a negative index silently wraps to the end of the
+list, reading an unrelated entry with no error.
+
+This loop runs about sqrt(i) times, which is where the sqrt(n) factor in the complexity comes from.
+
+                dp[i] = min(dp[i], dp[i - j * j] + 1)
+
+THE RECURRENCE, AND THE WHOLE ALGORITHM IN ONE LINE.
+
+    `dp[i]`                 the best found so far for this i, across earlier values of j.
+    `dp[i - j*j]`           the answer for what remains after using this square - ALREADY COMPUTED,
+                            because `i - j*j` is smaller than i.
+    `+ 1`                   counts the square just used.
+
+    THE `min` IS WHERE THE GREEDY'S MISTAKE IS AVOIDED. It tries every square, not just the largest -
+    on i = 12 it compares subtracting 1, 4 and 9 and picks the 4 (section 9).
+
+                j += 1
+
+Next square root.
+
+        return dp[n]""",
+
+    """9. THE TABLE, FILLED BY HAND - AND THE CELL WHERE THE GREEDY GOES WRONG.
+
+TRACE 1 - n = 12. Expected 3.
+
+    dp starts as [0, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf]
+
+    i = 1:   j = 1 (1 <= 1):  dp[1] = min(inf, dp[0] + 1) = 1
+             j = 2: 4 > 1, stop.                                        dp[1] = 1     (1)
+    i = 2:   j = 1:  dp[2] = min(inf, dp[1] + 1) = 2                    dp[2] = 2     (1+1)
+    i = 3:   j = 1:  dp[3] = min(inf, dp[2] + 1) = 3                    dp[3] = 3     (1+1+1)
+    i = 4:   j = 1:  dp[4] = min(inf, dp[3] + 1) = 4
+             j = 2 (4 <= 4):  dp[4] = min(4, dp[0] + 1) = 1             dp[4] = 1     (4)
+    i = 5:   j = 1:  min(inf, dp[4] + 1) = 2
+             j = 2:  min(2, dp[1] + 1) = 2                              dp[5] = 2     (4+1)
+    i = 6:   j = 1:  dp[5] + 1 = 3;   j = 2:  dp[2] + 1 = 3             dp[6] = 3     (4+1+1)
+    i = 7:   j = 1:  dp[6] + 1 = 4;   j = 2:  dp[3] + 1 = 4             dp[7] = 4     (4+1+1+1)
+    i = 8:   j = 1:  dp[7] + 1 = 5;   j = 2:  dp[4] + 1 = 2             dp[8] = 2     (4+4)
+    i = 9:   j = 1:  dp[8] + 1 = 3;   j = 2:  dp[5] + 1 = 3;
+             j = 3 (9 <= 9):  dp[0] + 1 = 1                             dp[9] = 1     (9)
+    i = 10:  j = 1:  dp[9] + 1 = 2;   j = 2:  dp[6] + 1 = 4;
+             j = 3:  dp[1] + 1 = 2                                      dp[10] = 2    (9+1)
+    i = 11:  j = 1:  dp[10] + 1 = 3;  j = 2:  dp[7] + 1 = 5;
+             j = 3:  dp[2] + 1 = 3                                      dp[11] = 3    (9+1+1)
+    i = 12:  j = 1:  dp[11] + 1 = 4
+             j = 2:  dp[8]  + 1 = 3         <- THE WINNER
+             j = 3:  dp[3]  + 1 = 4                                     dp[12] = 3    (4+4+4)
+
+    THE FINISHED TABLE:
+
+        i:      0   1   2   3   4   5   6   7   8   9  10  11  12
+        dp[i]:  0   1   2   3   1   2   3   4   2   1   2   3   3
+
+    RETURN dp[12] = 3.
+
+    LOOK AT THE LAST ROW. The three candidates are 4, 3 and 4. THE GREEDY WOULD TAKE THE LARGEST SQUARE,
+    j = 3, giving dp[3] + 1 = 4. The `min` tries all three and finds that subtracting 4 - the MIDDLE
+    option - leaves 8, which is itself two fours.
+
+    THAT SINGLE CELL IS THE WHOLE POINT OF THE PROBLEM.
+
+TRACE 2 - HOW OFTEN THE GREEDY IS WRONG (trap 1). Comparing "take the largest square that fits" against
+the DP for every n from 1 to 2000:
+
+        n = 12:   greedy 4  (9+1+1+1),         optimum 3  (4+4+4)
+        n = 43:   greedy 5  (36+4+1+1+1),      optimum 3  (25+9+9)
+        n = 18:   greedy 3,                    optimum 2  (9+9)
+        n = 32:   greedy 3,                    optimum 2  (16+16)
+
+        DISAGREEMENTS: 1102 OUT OF 2000 - more than half.
+        The first ten failures are 12, 18, 19, 22, 23, 32, 41, 42, 43, 48.
+
+    The greedy is not a near-miss that fails on contrived inputs; it is simply the wrong method.
+
+TRACE 3 - LAGRANGE, OBSERVED (trap 6 and section 5). Collecting `dp[n]` for every n from 1 to 2000 and
+taking the distinct values gives EXACTLY:
+
+        {1, 2, 3, 4}
+
+    Never 5, never more, however large n gets. That is Lagrange's four-square theorem showing up in the
+    data, and it is what makes the O(sqrt(n)) shortcut possible.
+
+THE SMALL INPUTS:
+    n = 1   ->  1.   1 is a perfect square.
+    n = 4   ->  1.   So is 4 - so the answer for a perfect square is always 1, whatever its size.
+    n = 7   ->  4.   4+1+1+1, and no better - 7 is of the form 4^0 x (8x0 + 7), which Legendre's
+                     theorem says needs four.
+    n = 0   ->  dp is just [0], the loop never runs, RETURN 0 (trap 5).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n x sqrt(n)). For each of the n values you try every square that fits, and there are about
+sqrt(i) of those - so the total is roughly n x sqrt(n). For n = 10,000 that is on the order of a
+million operations, which is instant.
+
+SPACE: O(n) for the table.
+
+    THE MATHEMATICAL SHORTCUT (section 5) is O(sqrt(n)) - test whether n is a square, then whether it
+    is a sum of two, then apply Legendre's rule for whether it needs four, else three. Enormously
+    faster and completely specific to squares.
+
+    WRITE THE DP AND MENTION THE THEOREM. The DP survives a change of question - fewest cubes, fewest
+    primes, fewest coins from an arbitrary set - and the theorem does not.
+
+THE FAMILY, AND THE RECOGNITION CUE. Every one of these is `dp[i] = f(dp[i − piece])` over a set of
+pieces:
+
+    COIN CHANGE (fewest coins)      the same recurrence with a GIVEN piece set. Perfect Squares is this
+                                    with the pieces computed as 1, 4, 9, ...
+    COIN CHANGE II (number of ways) the same table, SUMMING instead of minimising - and there the loop
+                                    order decides whether you count combinations or permutations
+    PERFECT SQUARES                 pieces are the squares                        <- this entry
+    MINIMUM COST FOR TICKETS        pieces are 1-day, 7-day and 30-day passes
+    WORD BREAK                      pieces are dictionary words, and the value is a boolean
+    COMBINATION SUM IV              the same shape, counting ordered sequences
+
+    THE CUE: a total to be made up from a repeatable set of pieces, and an optimum or a count over the
+    ways of doing it. Reach for a table indexed by the total, fill it upward, and ask "what was the last
+    piece?".
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Can you do better than O(n sqrt n)?" Yes - Lagrange plus Legendre gives O(sqrt(n)). Give the four
+    cases.
+  - "Do it with BFS." Each number is a node with edges to `value − j*j`; the level at which 0 is
+    reached is the answer. Same complexity, and it can stop early on numbers whose answer is 1 or 2.
+  - "Return the actual squares, not just how many." Record which j won each `min`, then walk backwards
+    from n.
+  - "What if 0 counted as a perfect square?" The answer would be unbounded - you could add zeros for
+    ever. Hence `j` starting at 1.
+  - "Why is there no −1 case?" Because 1 is always available, so every n is representable. Unlike Coin
+    Change, no entry can stay at infinity.
+
+THE #1 BEGINNER MISTAKE: the greedy - take the largest square and repeat. It is the first instinct, and
+it is wrong on 1102 of the first 2000 values. On 12 it gives 4 instead of 3; on 43 it gives 5 instead
+of 3.
+
+RUNNER-UP: writing the inner condition as `j <= i` rather than `j * j <= i`. The bound belongs on the
+SQUARE, and getting it wrong produces a negative index which Python silently wraps to the far end of
+the table - wrong answers, no error.
+
+TAKEAWAY: this is Coin Change with the coins computed rather than given, so fill a table upward and at
+each value ask what the LAST square was, trying every square that fits - because the largest one is
+often not the right one, and on more than half of all values the greedy that assumes otherwise gets a
+worse answer.""",
 ]
 
 for _e in ENTRIES:
