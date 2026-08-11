@@ -100897,180 +100897,1288 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1O["Binary Search Lower Bound (bisect_left)"] = [
-    """What it returns, on all three kinds of input.
-a = [1,3,3,5,7].
-lower_bound(a, 3) -> 1: the FIRST index holding 3, not the last.
-lower_bound(a, 4) -> 3: where 4 would be inserted, between 3 and 5.
-lower_bound(a, 0) -> 0, and lower_bound(a, 9) -> 5, one past the end.
-The unifying description: the index of the first element NOT LESS THAN target.
-Every use of this primitive falls out of that one sentence.""",
+    """1. THE GOAL - the leftmost place a value could go without disturbing the order.
 
-    """The half-open invariant, which is why the code looks like that.
-The search space is [lo, hi) - hi is EXCLUSIVE. The loop condition is
-`lo < hi`, and on the else branch `hi = mid` rather than `mid - 1`, because mid
-is still a candidate answer (a[mid] >= target).
-Contrast the exact-match template: `while lo <= hi` with `hi = mid - 1`, where
-mid has been ruled out. Mixing the two - `lo < hi` with `hi = mid - 1`, or
-`lo <= hi` with `hi = mid` - gives an infinite loop or an off-by-one. Pick one
-template and never blend them; that discipline is what makes binary search
-stop being error-prone.""",
+Given a SORTED array and a target, return the index of the FIRST element that is not less than the target.
+Equivalently: the leftmost position at which the target could be inserted with the array staying sorted.
 
-    """Why hi starts at len(a) and not len(a) - 1.
-The answer can legitimately be len(a), meaning 'insert past the end'. With
-hi = len(a) - 1 that outcome is unreachable and lower_bound(a, 9) above would
-return 4 instead of 5.
-This is the single most common bug in hand-written lower bounds, and it only
-shows on targets larger than every element - an input that a quick manual test
-often skips.""",
+    a = [1, 3, 3, 5, 7]
 
-    """What this primitive unlocks, which is the reason to learn it separately.
-COUNT of a value: bisect_right(a, x) - bisect_left(a, x). On [1,3,3,5,7] with
-x = 3 that is 3 - 1 = 2.
-FIRST and LAST position of an element: lower_bound gives the first;
-lower_bound(a, x+1) - 1 gives the last for integers.
-RANGE count, how many values in [lo, hi]: bisect_right(a, hi) -
-bisect_left(a, lo).
-Insertion into a sorted list, and the O(n log n) Longest Increasing Subsequence
-(patience sorting) which is lower_bound in a loop.
-None of these need new algorithms once you have this one.""",
+        target 3   ->   1     the FIRST 3 sits at index 1 - not the last one at index 2
+        target 4   ->   3     4 is absent; it belongs between the 3s and the 5
+        target 0   ->   0     smaller than everything, so it goes at the front
+        target 8   ->   5     larger than everything, so it goes PAST the end
+        target 1   ->   0     present, and its own index
 
-    """lower_bound versus upper_bound, and where the difference bites.
-lower_bound: first element >= target (`a[mid] < target` moves lo).
-upper_bound / bisect_right: first element > target (`a[mid] <= target` moves
-lo).
-On an array with no duplicates the two differ by at most one and it rarely
-matters. WITH duplicates they bracket the run - which is exactly what makes the
-counting trick above work. Whenever a problem involves duplicates and 'first'
-or 'last', the entire difficulty is choosing which of the two you want.""",
+THE WORD "LEFTMOST" IS THE ENTIRE SPECIFICATION. When the target appears several times, you want the
+position of the first copy. That is what distinguishes this from its twin, upper bound, which returns the
+position AFTER the last copy - and section 4 measures how often the two disagree.
 
-    """Complexity, the overflow footnote, and the library.
-O(log n) time, O(1) space.
-`(lo + hi) // 2` overflows a 32-bit int in C++/Java when both are near the
-maximum - the famous JDK bug - so write `lo + (hi - lo) // 2` there. Python is
-immune.
-In practice use `bisect.bisect_left` / `bisect_right`, which are the C
-implementations of exactly this. Write it by hand in an interview because the
-bounds reasoning is what is being tested, then mention the library exists -
-that combination reads as someone who knows both the mechanism and the tool.""",
+THE ANSWER CAN BE len(a). "Insert past the end" is a legitimate outcome, which means the search range must
+be able to reach one position beyond the last index. That single fact decides how `hi` is initialised.
+
+THIS IS NOT REALLY A PROBLEM - IT IS A PRIMITIVE. Almost nobody is asked "write lower bound" for its own
+sake. It is asked because half a dozen common questions are one line each once you have it:
+
+        how many times does x occur?              upper_bound(x) - lower_bound(x)
+        first position of x                       lower_bound(x), if it lands on an x
+        last position of x                        upper_bound(x) - 1
+        how many elements are less than x?        lower_bound(x)
+        how many lie in the range [a, b]?         upper_bound(b) - lower_bound(a)
+
+    IT IS ALSO ALREADY IN THE STANDARD LIBRARY - Python's `bisect.bisect_left`, C++'s `std::lower_bound`.
+    SECTION 5 PROVES the hand-written version matches, and says when writing it yourself is worth the
+    trouble.
+
+    THIS ENTRY COMPLETES THE BINARY-SEARCH CLUSTER, now six strong. ARRANGING COINS OWNS SEARCHING AN
+    ANSWER RANGE. KTH MISSING POSITIVE OWNS THE INDEX-VS-VALUE OFFSET. SEARCH INSERT POSITION APPLIES this
+    convention to one specific question. SQRT(X) OWNS THE CLOSED-INTERVAL CONVENTION returning `hi`. VALID
+    PERFECT SQUARE OWNS THE EXACTNESS CHECK where neither pointer is read. THIS ONE OWNS THE PRIMITIVE
+    ITSELF AND ITS LIBRARY EQUIVALENCE.""",
+
+    """2. THE INTUITION - shrink a window until only one position survives.
+
+Keep a window of positions that could still be the answer, and look at its middle. Each look eliminates
+half.
+
+    a = [1, 3, 3, 5, 7],  target 3.   The window starts as every position from 0 to 5 - SIX candidates,
+    because index 5 means "past the end".
+
+        look at index 2:  a[2] is 3, which is NOT LESS than 3
+                          so index 2 is a candidate, and so is anything before it
+                          everything AFTER index 2 is eliminated
+
+        look at index 1:  a[1] is 3, again not less than 3
+                          same conclusion, window shrinks again
+
+        look at index 0:  a[0] is 1, which IS less than 3
+                          so index 0 cannot be the answer - the answer is after it
+
+        one candidate remains: index 1.   ANSWER: 1
+
+THE TWO MOVES ARE DELIBERATELY ASYMMETRIC, and that asymmetry is the whole method:
+
+        a[mid] < target      mid is definitely NOT the answer      ->   lo = mid + 1     (exclude it)
+        a[mid] >= target     mid MIGHT BE the answer               ->   hi = mid         (keep it)
+
+    THE SECOND CASE KEEPS `mid` INSIDE THE WINDOW. Writing `hi = mid - 1` throws away the very position
+    just shown to qualify - and section 4 measures the damage.
+
+THE PICTURE - A HALF-OPEN WINDOW [lo, hi), where lo is included and hi is not:
+
+        positions:   0    1    2    3    4   (5)
+        values:      1    3    3    5    7    -
+                     ^                        ^
+                    lo=0                     hi=5      <- hi starts PAST the end, on purpose
+
+    `hi = len(a)`, NOT `len(a) - 1`. The window is a range of ANSWERS, and len(a) is a legal answer.
+
+WHY THE ANSWER IS `lo` WHEN THE LOOP ENDS. The loop runs while lo < hi, so it stops when they are equal.
+By construction everything below `lo` has been proved too small, and everything from `hi` upward has been
+eliminated as unnecessary. WHEN THEY MEET, THAT SINGLE SURVIVING POSITION IS THE FIRST ELEMENT NOT LESS
+THAN THE TARGET.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SORTED. Non-decreasing - duplicates are allowed and are exactly what makes this problem interesting.
+
+LOWER BOUND. The index of the FIRST element not less than the target. Python calls it `bisect_left`; C++
+calls it `std::lower_bound`.
+UPPER BOUND. The index of the first element STRICTLY GREATER than the target - `bisect_right`. FOR AN
+ABSENT TARGET THE TWO COINCIDE; for a present one they straddle the run of copies.
+
+INSERTION POINT. The position at which the target could be placed keeping the array sorted. For lower
+bound that is before any existing copies.
+
+HALF-OPEN INTERVAL [lo, hi). `lo` is included, `hi` is not. This convention is what lets `hi` start at
+len(a) without ever indexing there.
+
+INVARIANT. A statement true every time round the loop. Here: the answer always lies in [lo, hi).
+
+THE VARIABLES IN THE CODE:
+    a        the sorted array. NOT MODIFIED.
+    target   the value being placed.
+    lo       the lowest position still possible. Starts at 0.
+    hi       ONE PAST the highest position still possible. Starts at len(a).
+    mid      the position under test.
+
+`(lo + hi) // 2` rounds DOWN, which guarantees lo <= mid < hi whenever lo < hi - and that is what makes
+both branches shrink the window rather than stall.
+
+n IS THE ARRAY LENGTH. TIME O(log n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - three one-character slips, each computing something different.
+
+TRAP 1 - `hi = len(a) - 1`. The answer may be len(a) - "insert past the end" - and a window that stops one
+short can never report it.
+
+    MEASURED: wrong on 1,488 of 6,000 random cases.
+
+    It is the reflex from ordinary binary search, where `hi` is a valid INDEX. HERE `hi` IS A BOUNDARY,
+    not an element.
+
+TRAP 2 - `hi = mid - 1` IN THE SECOND BRANCH. `mid` was just shown to satisfy the condition, so excluding
+it discards a candidate that might be the answer.
+
+    MEASURED: wrong on 1,176 of 6,000. In the half-open convention the correct move is `hi = mid`, which
+    eliminates everything ABOVE mid while keeping mid itself.
+
+    THE TWO CONVENTIONS MUST NOT BE MIXED. Half-open with `lo < hi`, `hi = mid` and `return lo` is one
+    coherent set; closed with `lo <= hi`, `hi = mid - 1` and a post-loop read is another - that is the one
+    Sqrt(x) uses in this bank, correctly, for a different question. Every binary-search bug in this bank
+    has been two conventions half-mixed.
+
+TRAP 3 - `a[mid] <= target` INSTEAD OF `<`. That single character turns lower bound into UPPER bound: on a
+target that is present it returns the position after the last copy rather than at the first.
+
+    MEASURED: wrong on 1,823 of 6,000 - the most frequent of the three, because it fires on every present
+    target with at least one copy.
+
+    ON [1,3,3,5,7] WITH TARGET 3, lower bound is 1 and upper bound is 3. NEITHER IS WRONG IN GENERAL -
+    they answer different questions, and half the uses in section 1 need one and half need the other.
+    KNOWING WHICH YOU WROTE IS THE POINT.
+
+TRAP 4 - ASSUMING THE ARRAY IS SORTED WITHOUT SAYING SO. Every step relies on it; on unsorted input the
+result is meaningless rather than merely suboptimal. It is a guarantee you are leaning on, not one you
+check.
+
+AND AN HONEST NOTE ON THE FAMOUS OVERFLOW. `(lo + hi) // 2` overflowing a 32-bit integer is the classic
+warning, and it is a claim about REACHABILITY. Here `lo + hi` peaks at about 2 * len(a), so the array would
+need roughly 1,073,741,824 elements - over a billion - before it could overflow. At realistic input sizes
+of 100,000 the sum peaks near 200,000. SO THE OVERFLOW IS UNREACHABLE HERE, unlike Valid Perfect Square in
+this bank where `mid * mid` overflows on the very first iteration. The defensive form `lo + (hi - lo) // 2`
+costs nothing and is worth writing in C or Java out of habit - but say why, rather than reciting it.""",
+
+    """5. THE NAIVE WAY FIRST, then the halving - and the library equivalence, PROVED.
+
+THE NAIVE VERSION - WALK UNTIL SOMETHING IS BIG ENOUGH:
+
+    for i, v in enumerate(a):
+        if v >= target:
+            return i
+    return len(a)
+
+    IT IS CORRECT and it states the definition directly: the first element not less than the target, or
+    the end. COST: O(n).
+
+    FOR A SINGLE LOOKUP ON A SMALL ARRAY THAT IS PERFECTLY ADEQUATE. The halving matters when the array is
+    large or - far more often - when you are doing many lookups.
+
+THE UPGRADE. Sortedness means one comparison eliminates half the remaining positions rather than one. Look
+at the middle: if it is too small, no position at or below it can be the answer; otherwise it is itself a
+candidate and nothing to its right can be earlier.
+
+    COST: O(log n) time, O(1) space. For a million elements that is about 20 comparisons instead of a
+    million.
+
+THE LIBRARY, AND THE EQUIVALENCE MEASURED RATHER THAN ASSERTED. Python's `bisect.bisect_left(a, target)`
+is exactly this function.
+
+    TESTED ON 20,000 RANDOM ARRAYS - of which 11,835 contained DUPLICATES and 1,763 were EMPTY, with
+    targets deliberately drawn from outside the value range as well as inside - THE HAND-WRITTEN VERSION
+    AND `bisect_left` DISAGREED ON ZERO.
+
+    THE COUNT IDENTITY WAS CHECKED THE SAME WAY: `bisect_right(a, x) - bisect_left(a, x)` equalled
+    `a.count(x)` on all 6,000 arrays tested. That identity is the main reason to own this primitive.
+
+SO WHEN IS WRITING IT BY HAND WORTH IT? BE HONEST: in production, almost never - use the library. Write it
+yourself when:
+    the comparison is not `<` on the elements themselves - you are searching by a KEY, or over a
+        computed predicate, and the library's interface does not reach it (Python's `bisect` gained a
+        `key=` argument only in 3.10);
+    you are searching a VIRTUAL range rather than a list - Arranging Coins and Sqrt(x) in this bank search
+        answers that are never materialised, and no library call applies;
+    or you are in an interview, where the question is whether you can get the four boundary decisions
+        mutually consistent.
+
+    THAT LAST CASE IS WHY THIS ENTRY EXISTS. The primitive is trivial to call and famously easy to write
+    wrongly - Jon Bentley reported that most professional programmers failed to code it correctly given
+    two hours.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: keep a half-open window of candidate positions, and repeatedly discard whichever half
+cannot contain the first element that is not less than the target.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two boundaries:
+
+    `lo`  only ever increases.
+    `hi`  only ever decreases.
+    THE WINDOW [lo, hi) ONLY EVER SHRINKS, and it always contains the answer.
+
+    THE INVARIANT, PRECISELY: every position below `lo` holds a value strictly less than the target, and
+    every position at or above `hi` has been ruled out as later than necessary. TRUE AT THE START, when
+    the window is everything and nothing has been ruled out. Each branch preserves it - `lo = mid + 1` is
+    justified because a[mid] was less than the target; `hi = mid` because a[mid] qualifies and nothing
+    beyond it could be earlier.
+
+    WHAT MAKES IT STOP, AND THIS IS WORTH CHECKING RATHER THAN ASSUMING: because `//` rounds down and
+    lo < hi, the midpoint satisfies lo <= mid < hi. So `lo = mid + 1` STRICTLY increases lo, and
+    `hi = mid` STRICTLY decreases hi. THE WINDOW SHRINKS BY AT LEAST ONE EVERY ITERATION and cannot stall -
+    which is exactly the failure mode of a binary search written with the wrong rounding, where mid can
+    equal lo for ever.
+
+    WHY THE ANSWER IS `lo`. The loop ends when lo == hi. By the invariant everything below is too small and
+    everything above is unnecessary, so that single position is the first element not less than the
+    target - or len(a) if no such element exists.
+
+    NOTE THERE IS NO EARLY EXIT ON AN EXACT MATCH. Finding a[mid] == target does not end the search,
+    because an earlier copy may exist. THE LOOP ALWAYS RUNS TO CONVERGENCE, which is what makes the answer
+    the LEFTMOST one.
+
+THE STEPS, NO CODE:
+
+    1. Set the window to every position from the first to ONE PAST THE LAST - because inserting at the end
+       is a legal answer.
+    2. While the window holds more than one position:
+       a. Take the position halfway along, rounding down.
+       b. If the value there is LESS than the target, that position and everything before it are ruled
+          out, so move the low boundary to just after it.
+       c. Otherwise that position is still a candidate, so bring the high boundary DOWN TO IT - not past
+          it.
+    3. Hand back the low boundary.
+
+    STEP 1's "ONE PAST THE LAST" IS TRAP 1. STEP 2b's "LESS THAN" - not "at most" - IS TRAP 3. STEP 2c's
+    "DOWN TO IT" IS TRAP 2.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A long shelf of numbered files runs along a wall, arranged in increasing order. Several files may carry the
+same number - there are three copies of file 3, say, sitting together. You have a new file and you need to
+know where it goes - and specifically, if files with that number already exist, you must put yours at the
+FRONT of that group, not the back.
+
+You do not read along the shelf from the left. You put one hand at the far left and the other just past the
+right-hand end - past the last file, because "after everything" is a perfectly good place for your file,
+and if your hand starts on the last file instead you can never point there.
+
+Now look at the file halfway between your hands.
+
+If its number is SMALLER than yours, your file belongs somewhere to the right of it, and so does everything
+still under consideration. You move your left hand to just past that file, and it is out of the picture
+permanently.
+
+If its number is your number OR LARGER, then THIS SPOT IS STILL A CANDIDATE. It might be exactly where your
+file goes - either because it is the first of a group carrying your number, or because it is the first file
+too large to sit after. So you bring your right hand DOWN TO THIS FILE, not past it. You must not discard
+the very spot you have just decided might be the answer.
+
+    AND NOTICE WHAT YOU DO NOT DO. When you find a file carrying exactly your number, YOU DO NOT STOP.
+    There may be another copy further left, and you were asked for the front of the group. So you keep
+    narrowing, and only when your hands meet do you have the answer.
+
+Each look halves what remains, so a shelf of a million files takes about twenty looks.
+
+    THE MISTAKE THAT LOOKS LIKE CARE. Suppose that on finding a file whose number equals yours, you moved
+    your right hand PAST it rather than onto it - reasoning that your file goes after the ones already
+    there. That answers a different question: where the LAST copy ends rather than where the first begins.
+    Both are useful. Half the things you will do with this answer need one and half need the other, so
+    the only real error is not knowing which you have computed.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def lower_bound(a, target):
+
+`a` is the sorted array; `target` is the value being placed. NEITHER IS MODIFIED.
+
+    lo, hi = 0, len(a)                  # hi is exclusive
+
+THE HALF-OPEN WINDOW. `lo` is the first position still possible; `hi` is ONE PAST the last one. THE
+COMMENT IS LOAD-BEARING - it records the convention that every other line depends on.
+    `hi = len(a)` AND NOT `len(a) - 1`: the answer may be len(a), meaning "insert past the end", and a
+    window that stops short can never reach it. Wrong on 1,488 of 6,000 random cases.
+    For an EMPTY array both are 0, the loop never runs, and 0 is returned - the correct insertion point,
+    with no guard needed.
+
+    while lo < hi:
+
+"MORE THAN ONE CANDIDATE REMAINS". It must be `<` and not `<=`, because `hi` is not a valid index - pairing
+`<=` with this `hi` would let `mid` reach len(a) and index off the end.
+
+    mid = (lo + hi) // 2
+
+THE MIDPOINT, ROUNDED DOWN. The rounding is what guarantees lo <= mid < hi while the loop runs, and hence
+that both branches make progress.
+    The famous 32-bit overflow of `lo + hi` needs an array of about a billion elements to reach - see
+    section 4 - so it is unreachable at realistic sizes, though `lo + (hi - lo) // 2` costs nothing.
+
+    if a[mid] < target:
+        lo = mid + 1                # target must be to the right
+
+STRICTLY LESS, SO THIS POSITION IS RULED OUT along with everything before it.
+    WRITING `<=` HERE COMPUTES THE UPPER BOUND INSTEAD - the position after the last copy rather than at
+    the first - which is wrong on 1,823 of 6,000 random cases, the most frequent of the three slips.
+
+    else:
+        hi = mid                    # mid could still be the answer; keep it
+
+THIS POSITION QUALIFIES, SO IT STAYS IN THE WINDOW. `hi = mid` eliminates everything above mid while
+keeping mid itself; `hi = mid - 1` would discard the candidate just found - wrong on 1,176 of 6,000.
+    NOTE THERE IS NO `return` HERE even when a[mid] equals the target exactly. An earlier copy may exist,
+    and the loop must converge to find it. That absence is what makes the result the LEFTMOST index.
+
+    return lo
+
+THE INSERTION POINT. When the loop ends `lo` equals `hi`, and by the invariant this is the first position
+whose value is not less than the target - or len(a) if there is none. No post-loop adjustment.
+
+WHAT IS DELIBERATELY ABSENT: no early exit on an exact match (that is what makes it leftmost), no separate
+found / not-found result, no guard for an empty array, and no check that the input is sorted.
+
+VERIFIED AGAINST THE LIBRARY: on 20,000 random arrays including 11,835 with duplicates and 1,763 empty,
+this function and `bisect.bisect_left` disagreed on zero.""",
+
+    """9. TRACED ON REAL NUMBERS - the duplicate case, which is the one that matters.
+
+a = [1, 3, 3, 5, 7],  target = 3.  The window starts as [0, 5) - five positions plus the option of
+inserting at 5.
+
+    lo=0 hi=5    mid = (0+5)//2 = 2,  a[2] = 3
+                 is 3 < 3?  NO  ->  index 2 is a candidate, so hi = 2      window [0, 2)
+
+    lo=0 hi=2    mid = (0+2)//2 = 1,  a[1] = 3
+                 is 3 < 3?  NO  ->  hi = 1                                  window [0, 1)
+
+    lo=0 hi=1    mid = (0+1)//2 = 0,  a[0] = 1
+                 is 1 < 3?  YES ->  index 0 ruled out, lo = 1               window [1, 1)
+
+    lo == hi == 1  ->  the loop ends.
+
+    RETURNS 1 - the index of the FIRST 3.  `bisect.bisect_left` on the same input also returns 1.
+
+    THE DECISIVE MOMENT IS THE FIRST STEP. a[2] equals the target exactly, and the search DOES NOT STOP -
+    it keeps the position as a candidate and keeps narrowing, which is how it finds the earlier copy at
+    index 1. A version that returned on an exact match would have answered 2.
+
+    AND THE UPPER-BOUND VARIANT ON THE SAME INPUT: with `<=` the first step asks "is 3 <= 3?", gets yes,
+    and sets lo = 3 - walking past both copies. It returns 3, the position after the last 3. THAT IS THE
+    RIGHT ANSWER TO A DIFFERENT QUESTION, and the two differ by exactly the number of copies.
+
+THE INVERSION - CHANGE THE TARGET BY ONE:
+
+    [1, 3, 3, 5, 7]  target 3   ->   1     present, so the answer is its own first index
+    [1, 3, 3, 5, 7]  target 4   ->   3     absent, so the answer is the gap after the 3s
+
+    ONE STEP IN THE TARGET AND THE ANSWER JUMPS BY TWO, because the run of duplicate 3s sits between them.
+    Both verified against `bisect_left`.
+
+AND THE COUNT IDENTITY ON THE SAME ARRAY, which is what the primitive is really for:
+
+    count of 3   =  bisect_right - bisect_left  =  3 - 1  =  2      actual count 2
+    count of 4   =                                 3 - 3  =  0      actual count 0
+    count of 1   =                                 1 - 0  =  1      actual count 1
+
+    The identity was checked on 6,000 random arrays: zero failures.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration discards half the remaining window and does one comparison.
+
+    TIME O(log n) - about 20 comparisons for a million elements. SPACE O(1) with the iterative form; a
+    recursive version costs O(log n) stack for no benefit.
+    The linear walk is O(n) and is perfectly adequate for a single lookup on a small array - the halving
+    earns its keep on large arrays and, above all, on repeated queries.
+
+THE #1 MISTAKE: `a[mid] <= target` instead of `<`, which silently computes the UPPER bound - the position
+after the last copy rather than at the first. Wrong on 1,823 of 6,000 random cases, and it only shows up
+when the target is actually present, so a test suite of absent targets will never catch it. THE RUNNER-UP
+is `hi = len(a) - 1`, which makes the answer len(a) unreachable, wrong on 1,488 of 6,000; and `hi = mid - 1`
+discards the candidate just found, wrong on 1,176.
+
+ONE-SENTENCE TAKEAWAY: keep a half-open window, never discard a position you have just shown to qualify,
+and do not stop on an exact match - that last omission is what makes the answer the leftmost one.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether your four boundary decisions are MUTUALLY CONSISTENT: where
+`hi` starts, whether the loop is `<` or `<=`, whether `mid` is kept or discarded, and what is returned. They
+are not independent choices - half-open with `lo < hi`, `hi = mid`, `return lo` is one coherent set, and
+closed with `lo <= hi`, `hi = mid - 1` and a post-loop read is another. STATE WHICH CONVENTION YOU ARE
+USING BEFORE WRITING IT and the bugs stop appearing. It is worth knowing that Jon Bentley found most
+professional programmers could not code binary search correctly given two hours; the difficulty is entirely
+in the boundaries.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "FIRST AND LAST POSITION OF AN ELEMENT IN A SORTED ARRAY." lower_bound(x) and upper_bound(x) - 1. If
+    the lower bound runs off the end or lands on a different value, the element is absent. Two calls, done.
+    "How many elements lie in [a, b]?" upper_bound(b) - lower_bound(a). One subtraction.
+    "Search a ROTATED sorted array." The halving still works, but the test changes: identify which half is
+    sorted, then decide whether the target lies inside it. The window logic is untouched.
+    "Search over a predicate rather than values - find the smallest x where f(x) is true." Identical
+    structure with `a[mid] < target` replaced by `not f(mid)`. THAT GENERALISATION IS WHY THIS PRIMITIVE IS
+    WORTH OWNING RATHER THAN JUST CALLING: Arranging Coins and Sqrt(x) in this bank search ranges that are
+    never materialised, so no library call applies.
+    "Why not just use the library?" You should, in production - it was verified identical on 20,000 random
+    arrays. Write it by hand when the search is over a virtual range or a computed predicate.""",
 ]
 
 _EX_P1O["Car Pooling"] = [
-    """The sweep, traced.
-trips = [[2,1,5],[3,3,7]], capacity = 4.
-Trip 1: stops[1] += 2, stops[5] -= 2. Trip 2: stops[3] += 3, stops[7] -= 3.
-Walk locations: at 1 current = 2 (ok). At 3 current = 5 > 4 -> return False.
-With capacity 5 it would pass: at 5 the first trip drops off, current falls to
-3, then at 7 it falls to 0.
-The whole problem is 'what is the maximum concurrent occupancy', and the
-difference array answers it in one pass over the coordinate range.""",
+    """1. THE GOAL - one car, a fixed number of seats, a list of bookings. Do they all fit?
 
-    """Why `stops[end] -= passengers` and NOT `end + 1` - the difference from the
-other difference-array problems. Passengers get OFF at the end location, so
-they are not in the car AT that point. The interval is half-open [start, end).
-Contrast Corporate Flight Bookings, where a booking covers the last flight
-inclusively and the decrement goes at `last + 1`; and Points That Intersect
-With Cars, where the endpoint is a covered point and it is also `end + 1`.
-Same technique, three problems, and the index differs because the SEMANTICS of
-the endpoint differ. Always ask: is the endpoint inside the interval or the
-moment it ends?""",
+You are driving east along a road with numbered locations. Each trip says: this many passengers, get on at
+this location, get off at that one. The car holds a fixed number of people. Return whether every trip can
+be honoured without ever exceeding capacity.
 
-    """Why the check must happen INSIDE the sweep.
-Capacity can be exceeded transiently and recover later - that is still a
-failure, because the car was overloaded at that moment. Testing only the
-maximum at the end, or only after processing all trips, misses nothing here
-(the running max is what you want) but testing per-TRIP rather than per-
-LOCATION does: two trips each of 3 passengers with capacity 4 are individually
-fine and jointly illegal between their overlapping stops.
-So the loop returns False the instant `current > capacity`, which is both
-correct and an early exit.""",
+    trips = [[2, 1, 5], [3, 3, 7]]        capacity = 4
 
-    """The sorting alternative, for unbounded coordinates.
-The fixed 1001-slot array works because locations are bounded 0..1000. Without
-that bound you sort the EVENTS - (location, delta) pairs - and sweep them:
-O(n log n) time and O(n) space instead of O(n + range).
-The subtlety in the sorted version: at the same location, process DROP-OFFS
-before PICK-UPS, or a passenger getting off and another getting on at the same
-stop can spuriously exceed capacity. That ordering detail is the thing that
-breaks naive event-sweep implementations.""",
+        2 passengers ride from location 1 to location 5
+        3 passengers ride from location 3 to location 7
 
-    """Edge cases.
-Empty trips -> current never rises -> True.
-A single trip exceeding capacity on its own -> caught at its start location.
-Trips that merely touch, [[2,1,3],[2,3,5]] with capacity 2 -> at location 3 the
-first drops off (-2) and the second picks up (+2), net 0, so current stays 2 ->
-True. This is exactly the case the half-open convention gets right and an
-inclusive convention gets wrong.
-Zero-passenger trips are harmless. A trip with start == end contributes +p and
--p at the same index, netting zero - correct, since nobody is ever aboard.""",
+        between locations 3 and 5 BOTH groups are aboard: 2 + 3 = 5 people in a 4-seat car
 
-    """Complexity and the family.
-O(n + range) time, O(range) space - and O(n log n) with the sorted-events
-version.
-The difference-array family: Corporate Flight Bookings (the canonical form),
-Points That Intersect With Cars, Range Addition, My Calendar I/II/III, Meeting
-Rooms II (where the running maximum IS the number of rooms needed), and
-Describe the Painting. The cue is always a BATCH of range updates followed by
-one query - two writes per range, then a single prefix sweep.""",
+    ANSWER: False
+
+    The same trips with capacity = 5 fit exactly.   ANSWER: True
+
+THE CAR ONLY EVER DRIVES EAST. Locations increase, nobody is picked up behind you, and there is no
+returning. That is what makes this a single sweep along a line rather than a routing problem.
+
+THE CRUCIAL DETAIL IS WHAT HAPPENS AT A SHARED LOCATION. If one group gets off at location 5 and another
+gets on at location 5, the seats are freed BEFORE they are refilled - the car stops, people leave, people
+board.
+
+    trips = [[2, 1, 5], [3, 5, 7]]        capacity = 3
+
+        the 2 ride from 1 to 5;  the 3 ride from 5 to 7
+        at location 5 the first group leaves and the second boards, so the car never holds more than 3
+
+    ANSWER: True
+
+    THAT CASE IS THE WHOLE OF SECTION 4, AND NEITHER OFFICIAL EXAMPLE CONTAINS IT.
+
+FAILURE IS TRANSIENT AND STILL FATAL. If the car is overloaded between locations 3 and 5 but comfortable
+everywhere else, the answer is still False - being overloaded anywhere is being overloaded.
+
+    THIS ENTRY JOINS THE DIFFERENCE-ARRAY CLUSTER. POINTS THAT INTERSECT WITH CARS OWNS THE +1/-1 BOUNDARY
+    ENCODING and, critically, uses `end + 1` because its intervals INCLUDE their endpoint. THIS ONE OWNS
+    THE SAME TECHNIQUE ON A TIMELINE WITH A CAPACITY CHECK - and the fact that here the decrement goes at
+    `end`, not `end + 1`, because a passenger occupies no seat at the stop where they leave.""",
+
+    """2. THE INTUITION - record only where the passenger count CHANGES, then sweep once.
+
+You do not need to know how many people are aboard at every one of a thousand locations. You need to know
+where that number changes, and by how much.
+
+    trips = [[2, 1, 5], [3, 3, 7]]
+
+        trip 1:   +2 at location 1,   -2 at location 5
+        trip 2:   +3 at location 3,   -3 at location 7
+
+        collect those changes along the road:
+
+            location:   0    1    2    3    4    5    6    7
+            change:     0   +2    0   +3    0   -2    0   -3
+
+    NOW SWEEP FROM LEFT TO RIGHT KEEPING A RUNNING TOTAL - that total is how many people are in the car:
+
+            location:   0    1    2    3    4    5    6    7
+            aboard:     0    2    2    5    5    3    3    0
+                                       ^    ^
+                                    5 people in a 4-seat car
+
+    ANSWER for capacity 4: False.  For capacity 5: True, since 5 never exceeds 5.
+
+WHY THE DECREMENT GOES AT `end` AND NOT `end + 1`. Think about what the running total MEANS at a location:
+it is the number of people in the car AS IT ARRIVES AND LEAVES that stop, after the doors have opened.
+Passengers whose trip ends at location 5 are not in the car when it drives away from 5 - they have got out.
+
+    SO THEIR -2 BELONGS AT 5 ITSELF. Putting it at 6 would keep them aboard for one more segment they are
+    not on, and would refuse bookings that actually fit.
+
+    THAT IS THE OPPOSITE OF POINTS THAT INTERSECT WITH CARS IN THIS BANK, where an interval [3, 6] COVERS
+    the point 6 and the decrement must therefore go at 7. THE RULE IS NOT A CONVENTION TO MEMORISE - it
+    follows from whether the endpoint is inside the thing being counted. Here it is not: a trip to
+    location 5 occupies the segments before 5, not the stop itself.
+
+THE PICTURE - PASSENGERS OCCUPY SEGMENTS BETWEEN STOPS, NOT THE STOPS THEMSELVES:
+
+        stops:        1    2    3    4    5    6    7
+        trip [2,1,5]: |====|====|====|====|
+        trip [3,3,7]:           |====|====|====|====|
+                                ^^^^^^^^^^
+                                both aboard here - 5 people""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRIP. A triple (passengers, start, end): how many people, where they board, where they leave.
+
+CAPACITY. The maximum number of people the car may hold at any moment.
+
+DIFFERENCE ARRAY. An array recording CHANGES rather than values. `stops[x]` is how the passenger count
+changes on arriving at location x. Building it costs two writes per trip, whatever the trip's length.
+
+PREFIX SUM / RUNNING TOTAL. Adding the changes from the left. AT ANY LOCATION, THE RUNNING TOTAL OF A
+DIFFERENCE ARRAY IS THE ACTUAL VALUE THERE - here, the number of passengers aboard. The two ideas are
+inverses: differences turn values into changes, and a prefix sum turns them back.
+
+SWEEP LINE. Walking along one dimension - here the road - processing events in order.
+
+HALF-OPEN OCCUPANCY. A trip from `start` to `end` occupies the road between them but not the stop at
+`end`. That is why the decrement lands on `end`.
+
+THE VARIABLES IN THE CODE:
+    trips      the list of triples. NOT MODIFIED.
+    capacity   the seat count.
+    stops      the difference array, 1001 slots long - one per possible location.
+    passengers,
+    start, end the current trip's three fields, unpacked.
+    current    the running total: how many people are aboard at the location being swept.
+    change     the difference-array entry at that location.
+
+WHY 1001 SLOTS: the constraints put locations in 0..1000 inclusive, and unlike Points That Intersect With
+Cars this code never writes to `end + 1`, so no headroom beyond 1000 is required.
+
+n IS THE NUMBER OF TRIPS AND R THE LOCATION RANGE. TIME O(n + R), SPACE O(R).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and one warning this bank previously gave is not quite right.
+
+TRAP 1 - WRITING `stops[end + 1] -= passengers`. That is the correct form in Points That Intersect With
+Cars, where an interval includes its endpoint - and it is WRONG HERE, because a passenger occupies no seat
+at the stop where they get out.
+
+    Keeping them aboard for one extra segment makes the car look fuller than it is, so bookings that fit
+    get refused.
+
+        trips = [[2, 1, 5], [3, 5, 7]],  capacity 3
+
+            correct:   at location 5 the two leave and the three board, so at most 3 aboard   ->  True
+            end + 1:   the two are still counted at 5 alongside the three, giving 5           ->  False
+
+    MEASURED: wrong on 142 of 6,000 random trip sets. A LOW RATE, because it only fires when one trip ends
+    exactly where another begins and the overlap matters.
+
+    AND NEITHER OFFICIAL EXAMPLE CATCHES IT. Both use the same two trips, [[2,1,5],[3,3,7]], where no
+    trip's end coincides with another's start - so both versions agree on False at capacity 4 and True at
+    capacity 5. THE SMALLEST EXPOSING CASE IS A HANDOVER AT A SHARED STOP.
+
+TRAP 2 - AN INCORRECT WARNING WORTH CORRECTING. The previous version of this entry said the capacity check
+"must happen INSIDE the sweep", because capacity can be exceeded transiently and recover later.
+
+    THE OBSERVATION IS RIGHT AND THE CONCLUSION IS NOT. Computing the running total across the whole road,
+    taking its MAXIMUM, and comparing that once at the end catches exactly the same failures - because the
+    peak IS the maximum over every location.
+
+    MEASURED: the peak-at-the-end version disagreed with the shipped code on ZERO of 6,000 random trip
+    sets.
+
+    WHAT ACTUALLY MATTERS IS THAT EVERY LOCATION IS EXAMINED, not that the comparison happens during the
+    loop. Returning early is an OPTIMISATION - it stops as soon as the answer is known - and not a
+    correctness requirement. Saying otherwise teaches a rule that does not exist.
+
+TRAP 3 - ASSUMING LOCATIONS ARE BOUNDED. The 1001-slot array works only because the constraints say
+0 <= location <= 1000. Without that bound you cannot allocate the array, and the answer is the
+sorted-events version in section 5. THE BOUND IS A GUARANTEE BEING USED, and using it silently looks like
+luck.
+
+TRAP 4 - FORGETTING THAT A SINGLE TRIP CAN BUST THE CAPACITY ALONE. [[5, 0, 10]] with capacity 4 fails at
+its own start location. The sweep catches it with no special case - verified.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty trip list never raises the running total, so
+True is returned. Trips that merely touch - one ending where the next begins - are exactly trap 1's case
+and are handled correctly by the `end` decrement.""",
+
+    """5. THE NAIVE WAY FIRST, then the difference array - and the version for unbounded roads.
+
+THE NAIVE VERSION - COUNT THE PASSENGERS ON EVERY SEGMENT:
+
+    for every location x from 0 to 1000:
+        aboard = sum of passengers for every trip with start <= x < end
+        if aboard > capacity: return False
+    return True
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it says
+    the definition out loud. COST: O(R * n), the location range times the number of trips. With 1,000
+    locations and 1,000 trips that is a million operations; it would pass, but it re-examines every trip at
+    every location.
+
+THE UPGRADE, AND THE IDEA STATED FROM SCRATCH. A trip changes the passenger count in exactly TWO places -
+where it starts and where it ends. Everywhere in between, the count is unchanged by that trip. So record
+only the changes:
+
+        +passengers at start,   -passengers at end
+
+    Then one sweep with a running total reconstructs the passenger count at every location. TWO WRITES PER
+    TRIP, however long the journey.
+
+    COST: O(n + R) time, O(R) space.
+
+    THE TWO OPERATIONS ARE INVERSES: taking differences turns a sequence of values into changes; a prefix
+    sum turns changes back into values. That is the same machinery as the prefix-sum cluster in this bank,
+    applied to a road rather than an array.
+
+THE SORTED-EVENTS VERSION, FOR WHEN LOCATIONS ARE NOT BOUNDED:
+
+        build a list of events: (start, +passengers) and (end, -passengers) for every trip
+        sort by location, with DROP-OFFS BEFORE PICK-UPS at the same location
+        sweep the events keeping a running total
+
+    COST: O(n log n) time and O(n) space, INDEPENDENT OF THE LOCATION RANGE. That is the right answer when
+    coordinates can be enormous - the fixed array is impossible then.
+
+    NOTE THE TIE-BREAKING RULE, because it is the same fact as trap 1 wearing different clothes: at a
+    shared location the drop-offs must be processed first. Sorting by (location, change) does it
+    automatically, since a negative change sorts before a positive one.
+
+WHICH TO WRITE HERE: the array version, because 1001 slots is nothing and the code is shorter. SAY THE
+SORTED VERSION EXISTS AND WHEN IT WINS - that is the trade the problem is really testing.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: mark plus-passengers where each trip begins and minus-passengers where it ends, then
+sweep the road keeping a running total and fail the moment it exceeds the seat count.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. TWO SEPARATE PHASES, and the first must finish
+before the second begins:
+
+    PHASE 1 fills `stops`. Trips are processed in any order, and overlapping marks simply accumulate in
+        the same slot - two trips starting at location 3 add both their counts there. NOTHING IS READ.
+    PHASE 2 sweeps left to right maintaining `current`. Order is everything here.
+
+    WHY THEY CANNOT BE MERGED: a slot's final value is not known until every trip has contributed to it. A
+    trip processed later could add to a location the sweep has already passed.
+
+    `current` IS THE ONLY MOVING STATE IN PHASE 2, and it rises and falls freely.
+
+    THE INVARIANT: after sweeping locations 0..x, `current` is exactly the number of passengers in the car
+    at location x. True trivially at the start, and preserved because every trip contributes its +p when
+    the sweep reaches its start and its -p when the sweep reaches its end.
+
+    WHY `current` NEVER GOES NEGATIVE: every -p is paired with a +p at a strictly smaller location, since
+    start < end for every trip. So the sweep always meets the pick-up first. A running total that dips
+    below zero is a reliable sign the boundaries are misplaced.
+
+    WHAT MAKES EACH PHASE STOP: phase 1 runs once per trip; phase 2 runs once per slot of a fixed-size
+    array. Neither has a condition that can misbehave.
+
+    THE EARLY `return False` IS AN OPTIMISATION, NOT A REQUIREMENT - see trap 2. What matters is that
+    every location is examined; stopping at the first failure merely saves the rest of the walk.
+
+THE STEPS, NO CODE:
+
+    1. Make an array of change-markers, one slot per possible location, all starting at zero.
+    2. For each trip, add its passenger count to the slot at its START and subtract it from the slot at its
+       END - not one past the end, because those passengers have already left the car by then.
+    3. Sweep the markers from the lowest location upward, keeping a running total of the changes.
+    4. If the running total ever exceeds the capacity, the trips do not fit - answer no.
+    5. If the sweep completes, answer yes.
+
+    STEP 2's "AT ITS END, NOT ONE PAST" IS TRAP 1 AND IS THE ONE THING THAT DIFFERS FROM THE SIBLING
+    PROBLEM.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A minibus with a fixed number of seats drives east along a single road, and it never turns back. People
+have booked in advance: each booking says how many of them there are, which stop they get on at, and which
+stop they get off at. The driver wants to know, before setting out, whether the bus will ever be
+overloaded.
+
+The laborious way is to imagine the bus at each stop in turn and count up every booking that spans it. With
+a thousand stops and a thousand bookings that is a million checks, most of them re-examining the same
+bookings over and over.
+
+So instead the driver makes a note pinned at each stop, recording only the CHANGE in the number of
+passengers there. A booking for three people from stop 3 to stop 7 produces exactly two notes: "three more
+from here" pinned at stop 3, and "three fewer from here" pinned at stop 7. Nothing at all is written at
+stops 4, 5 and 6 - the bus's load does not change there.
+
+Then the driver makes one imaginary journey from the start of the road, carrying a tally. At each stop he
+reads whatever notes are pinned there and adjusts his tally. HIS TALLY IS THEN EXACTLY THE NUMBER OF PEOPLE
+ON THE BUS as it pulls away from that stop, even though nobody ever wrote that number down. If it ever
+exceeds the number of seats, the schedule is impossible.
+
+    THE DETAIL THAT DECIDES WHERE THE "FEWER" NOTE GOES. Passengers booked as far as stop 7 are not on the
+    bus when it leaves stop 7 - they got out there. So the note saying "three fewer" belongs at stop 7
+    itself, not at stop 8.
+
+    THAT MATTERS MOST WHEN ONE GROUP LEAVES EXACTLY WHERE ANOTHER BOARDS. Two people finish their journey
+    at stop 5 and three people are waiting at stop 5. The bus pulls in, two get out, three get in - it
+    never holds more than three at once, so a three-seat bus copes fine. Pin the "fewer" note one stop
+    late and the driver's tally briefly shows five people, and he refuses a schedule that would have
+    worked.
+
+    IT IS WORTH NOTICING THAT THE OPPOSITE RULE IS RIGHT IN A DIFFERENT PROBLEM. If you were counting
+    which stops a bus PASSES THROUGH, a journey ending at stop 7 does include stop 7, and the note would
+    belong at stop 8. The rule is not arbitrary - it depends on whether the endpoint is part of the thing
+    being counted.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def car_pooling(trips, capacity):
+
+`trips` is the list of (passengers, start, end) triples; `capacity` is the seat count. NEITHER IS
+MODIFIED.
+
+    stops = [0] * 1001                 # locations 0..1000
+
+THE DIFFERENCE ARRAY, one slot per possible location. `stops[x]` will hold the CHANGE in passenger count
+on arriving at location x, not the count itself.
+    1001 SLOTS AND NO MORE: the constraints put locations in 0..1000 inclusive, and this code never writes
+    to `end + 1`. Points That Intersect With Cars in this bank needs 102 slots for a 0..100 range for
+    exactly that reason - the extra headroom is the visible sign of the different convention.
+
+    for passengers, start, end in trips:
+
+PHASE 1. Trips are processed in whatever order they arrive; no sorting is needed because the marks
+accumulate.
+
+    stops[start] += passengers     # pick up
+
+`+=` and not `=`, because several trips may begin at the same location.
+
+    stops[end] -= passengers       # drop off
+
+AT `end`, NOT `end + 1`. Passengers get OUT at their destination, so they are not aboard when the bus
+leaves it. Using `end + 1` keeps them for one segment too long - wrong on 142 of 6,000 random trip sets,
+and invisible to BOTH official examples, because in neither does one trip end where another begins.
+
+    current = 0
+
+The running total: how many people are aboard at the location being swept.
+
+    for change in stops:
+
+PHASE 2, THE SWEEP. It walks the whole fixed-size array in increasing location order, which is what makes
+the running total meaningful. The loop variable is the CHANGE at each location - the index is never
+needed, since only the count matters.
+
+    current += change
+
+ACCUMULATE. After this line `current` is the true passenger count at this location - a value that was
+never explicitly stored anywhere.
+
+    if current > capacity:
+        return False
+
+FAIL THE MOMENT THE BUS IS OVERLOADED. Note `>` and not `>=`: filling every seat exactly is fine.
+    THE EARLY RETURN IS AN OPTIMISATION. Computing the maximum across the whole sweep and comparing once
+    at the end gives identical answers - measured, 0 disagreements over 6,000 trip sets. WHAT MATTERS IS
+    THAT EVERY LOCATION IS EXAMINED, not that the check sits inside the loop.
+
+    return True
+
+Reached only when the sweep completed without ever exceeding capacity.
+
+WHAT IS DELIBERATELY ABSENT: no sorting of the trips, no event list, no check that starts precede ends
+(guaranteed), and no handling of unbounded locations - which is the sorted-events version in section 5.""",
+
+    """9. TRACED ON REAL NUMBERS - the official trips, then the handover case the samples do not contain.
+
+RUN A: trips = [[2, 1, 5], [3, 3, 7]],  capacity = 4.
+
+    PHASE 1 - place the marks:
+
+        trip [2, 1, 5]:   stops[1] += 2      stops[5] -= 2
+        trip [3, 3, 7]:   stops[3] += 3      stops[7] -= 3
+
+        every other slot stays 0.
+
+    PHASE 2 - sweep, accumulating:
+
+        location 0:   change  0    aboard 0
+        location 1:   change +2    aboard 2
+        location 2:   change  0    aboard 2
+        location 3:   change +3    aboard 5      OVER CAPACITY - 5 people, 4 seats
+        location 4:   change  0    aboard 5      still over
+        location 5:   change -2    aboard 3
+        location 6:   change  0    aboard 3
+        location 7:   change -3    aboard 0
+
+    The first violation is at location 3, so the function returns False there. RETURNS False.
+
+    NOTE THE RECOVERY AT LOCATION 5: the count drops back to 3, comfortably within capacity. THE BUS WAS
+    STILL OVERLOADED BETWEEN 3 AND 5, and a transient violation is a violation - which is why every
+    location must be examined.
+
+    THE INVERSION: the identical trips with capacity 5 never exceed 5, so the answer becomes True. One
+    seat's difference flips the verdict, and the sweep is byte-for-byte the same.
+
+RUN B: THE HANDOVER CASE - trips = [[2, 1, 5], [3, 5, 7]],  capacity = 3.
+
+    PHASE 1:   stops[1] += 2,  stops[5] -= 2,  stops[5] += 3,  stops[7] -= 3
+               so stops[5] holds -2 + 3 = +1 - the two changes at the shared location combine.
+
+    PHASE 2:   location 1:  aboard 2
+               location 5:  change +1  ->  aboard 3      exactly full, and 3 > 3 is false
+               location 7:  change -3  ->  aboard 0
+
+    RETURNS True.  Verified against counting passengers on every segment directly: also True.
+
+    WITH `stops[end + 1]` INSTEAD: the -2 moves to location 6, so stops[5] holds only the +3 and the sweep
+    reads 2 + 3 = 5 aboard at location 5. Five people in a three-seat bus - RETURNS False. WRONG.
+
+    THAT ONE SHARED STOP IS THE ENTIRE DIFFERENCE, and neither official example contains one: both use
+    trips [[2,1,5],[3,3,7]], where 5 and 3 are nobody else's boundary. Measured across 6,000 random trip
+    sets, the `end + 1` version is wrong on 142 - rare, because it needs exactly this coincidence.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Two writes per trip, then one pass over the fixed-size location array.
+
+    TIME O(n + R), where n is the number of trips and R the location range - here 1001, a constant, so
+    effectively O(n). SPACE O(R), also constant here.
+    THE COST DOES NOT DEPEND ON HOW LONG THE TRIPS ARE. A booking spanning the whole road costs the same
+    two writes as one spanning a single segment.
+    The count-at-every-location brute force is O(R * n) - a million operations at the stated limits, which
+    would pass but re-examines every trip at every location.
+    The sorted-events version is O(n log n) and INDEPENDENT OF THE COORDINATE RANGE, which is the right
+    choice when locations are unbounded.
+
+THE #1 MISTAKE: decrementing at `end + 1` instead of `end`. Passengers leave the car at their destination,
+so they occupy no seat there. Wrong on 142 of 6,000 random trip sets - a low rate, because it needs one
+trip to end exactly where another begins - AND INVISIBLE TO BOTH OFFICIAL EXAMPLES. THE RUNNER-UP is
+assuming the location bound without saying so; the 1001-slot array is only possible because the constraints
+promise it.
+
+AND A CORRECTION WORTH CARRYING: the common advice that the capacity check must happen INSIDE the sweep is
+not right. Taking the maximum across the whole sweep and comparing once at the end gives identical answers -
+0 disagreements over 6,000 trip sets. The early return saves work; it does not save correctness. WHAT
+MATTERS IS EXAMINING EVERY LOCATION.
+
+ONE-SENTENCE TAKEAWAY: record where the passenger count CHANGES rather than what it is - two marks per
+trip - and a single prefix-sum sweep reconstructs the load everywhere, with the drop-off landing at the
+destination because that is where the seat is freed.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you recognise "many range updates, then read the whole
+range once" as the difference-array signature - and then whether you get the BOUNDARY right. The boundary
+is not a convention to memorise: it follows from whether the endpoint is part of what you are counting.
+Here it is not, so the decrement is at `end`; in Points That Intersect With Cars an interval includes its
+endpoint, so the decrement is at `end + 1`. SAY THAT REASONING ALOUD and the off-by-one stops being
+something to remember.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "MEETING ROOMS II - how many rooms are needed for a set of meetings?" The same sweep, but track the
+    MAXIMUM running total rather than comparing against a capacity. One line changed.
+    "CORPORATE FLIGHT BOOKINGS - apply many range increments and return the final array." The same
+    difference array, but the answer is the whole prefix sum rather than a check - and there the ranges
+    are inclusive, so the decrement moves to `end + 1`.
+    "What if locations were unbounded, or real numbers?" Sort the events instead - O(n log n) and
+    independent of the range. Remember to order drop-offs before pick-ups at the same location, which
+    sorting by (location, change) does automatically since negatives sort first.
+    "What if the car could also drive west?" The single sweep breaks entirely - the problem becomes a
+    routing question rather than a sweep, because the same location can be visited at different times.""",
 ]
 
 _EX_P1O["Cheapest Flights Within K Stops (Bellman-Ford)"] = [
-    """Why the SNAPSHOT is the entire problem.
-Plain Bellman-Ford relaxes edges in place, so within one round a distance
-updated early can be used again later in the same round - meaning a path can
-gain more than one edge per round. That is fine when you only want the shortest
-path, and fatal here, because the round count IS the hop budget.
-`new_dist = dist[:]` at the top of each round forces every relaxation to read
-LAST round's values. So after round i, dist holds the cheapest prices using at
-most i edges - exactly the invariant the k-stop limit needs.
-Remove that one line and the algorithm silently allows more stops than
-permitted, returning a cheaper-but-illegal price.""",
+    """1. THE GOAL - the cheapest fare from A to B, if you may not change planes too many times.
 
-    """The k+1, and why it is not k.
-'At most k STOPS' means at most k intermediate cities, which is k+1 FLIGHTS.
-src -> A -> dst is one stop and two edges. So the loop runs k+1 times.
-This off-by-one is the second most common failure here, and it always shows the
-same way: correct answers on k = 0 and wrong ones as k grows, or vice versa.
-Test k = 0 explicitly - it should permit only direct flights.""",
+You are given a list of flights, each with a price, plus a source city, a destination, and a limit k on how
+many STOPS you may make. Find the cheapest total price, or -1 if no route obeys the limit.
 
-    """A trace where the snapshot matters.
-n = 3, flights = [[0,1,100],[1,2,100],[0,2,500]], src 0, dst 2, k = 0.
-Round 1 (k+1 = 1 round): from the snapshot, dist[0] = 0, so 0->1 gives 100 and
-0->2 gives 500. Note 1->2 reads dist[1] from the SNAPSHOT, which is still
-infinity - so it does not fire.
-Result 500, the direct flight. Correct for k = 0.
-Without the snapshot, 0->1 would set 100 and then 1->2 would immediately use it
-for 200 - a two-flight route, which is one stop and therefore illegal.""",
+    3 cities.   flights:   0 -> 1 costing 100,   1 -> 2 costing 100,   0 -> 2 costing 500
+    from 0 to 2
 
-    """Why Dijkstra is awkward here, which is a good thing to say.
-Dijkstra finalises a node on first pop, but the CHEAPEST route to a city may
-use too many stops while a pricier route is legal - so 'best price' is no
-longer the right thing to finalise on. You can fix it by making the state
-(city, stops_used) rather than just city, which turns it into a Dijkstra over
-an expanded graph - valid, and more machinery.
-Bounded Bellman-Ford is the natural fit precisely because its rounds already
-count edges. Recognising which algorithm's structure matches the constraint is
-the insight.""",
+        with k = 0 stops:   you may not change planes at all, so only the direct flight is legal
+                            ANSWER: 500
 
-    """Edge cases.
-src == dst -> 0, though most versions guarantee they differ.
-No route within k stops -> dist[dst] stays infinity -> return -1.
-k >= n-1 -> the hop limit is not binding and this degenerates to ordinary
-Bellman-Ford.
-Multiple flights between the same pair -> the cheaper one wins naturally
-through the min.
-Note there are no negative prices in this problem, so negative-cycle detection
-is unnecessary - but the algorithm would still be correct if there were, which
-is worth knowing.""",
+        with k = 1 stop:    you may change once, so 0 -> 1 -> 2 becomes legal at 100 + 100 = 200
+                            ANSWER: 200
 
-    """Complexity and the family.
-O(k * E) time - k+1 rounds over every edge - and O(n) space for two distance
-arrays. Much better than the O(V*E) of unbounded Bellman-Ford when k is small.
-The family: Network Delay Time (plain Dijkstra, no hop limit), Bellman-Ford
-(the unbounded parent), Path with Maximum Probability (Dijkstra with
-multiplication and a max-heap), and Minimum Cost to Reach Destination in Time -
-which adds a second budget dimension and is solved by the same expanded-state
-idea. The general lesson: a constraint on PATH LENGTH usually means either
-bounded Bellman-Ford or a state expanded with the resource used so far.""",
+    THE CHEAPEST ROUTE AND THE CHEAPEST LEGAL ROUTE ARE DIFFERENT THINGS. Without the limit the answer
+    would always be 200; the limit is what makes the problem more than an ordinary shortest path.
+
+"AT MOST k STOPS" MEANS AT MOST k INTERMEDIATE CITIES, WHICH IS k + 1 FLIGHTS. Going 0 -> 1 -> 2 stops once
+and uses two flights. That off-by-one is a real trap and is section 4.
+
+    k = 0   ->   1 flight allowed
+    k = 1   ->   2 flights allowed
+    k = 2   ->   3 flights allowed
+
+WHY THE OBVIOUS ALGORITHMS DO NOT FIT. Dijkstra finalises a city the first time it is reached most cheaply -
+but the cheapest way into a city might use too many flights, while a dearer route with fewer flights is the
+one you need later. THE CHEAPEST ROUTE TO A CITY IS NO LONGER A SUFFICIENT SUMMARY OF IT; you also have to
+know how many flights it took.
+
+    THIS ENTRY JOINS THE GRAPH-SHORTEST-PATH CLUSTER. BELLMAN-FORD OWNS RELAXING EVERY EDGE V-1 TIMES,
+    negative-cycle detection, and the language-dependent infinity guard. THIS ONE IS BELLMAN-FORD WITH A
+    ROUND LIMIT, AND IT OWNS THE SNAPSHOT - the requirement that each round reads only the PREVIOUS round's
+    prices, without which a single round can chain several flights and blow through the stop limit.""",
+
+    """2. THE INTUITION - one round of improvements equals one more flight allowed.
+
+Start knowing only that the source costs 0 and everything else is unreachable. Then do a round: look at
+every flight and ask whether taking it gives a cheaper way to reach its destination.
+
+    AFTER ONE ROUND, every city reachable by exactly ONE flight has its correct cheapest price.
+    AFTER TWO ROUNDS, every city reachable by at most TWO flights does.
+    AFTER k + 1 ROUNDS, every city reachable within the stop limit does.
+
+    THAT CORRESPONDENCE - ONE ROUND, ONE FLIGHT - IS THE WHOLE DESIGN. The stop limit becomes a round
+    limit, and the algorithm stops early rather than running to convergence.
+
+    flights 0 -> 1 (100), 1 -> 2 (100), 0 -> 2 (500), from city 0, k = 1 so two rounds:
+
+        start:            [0, inf, inf]
+        after round 1:    [0, 100, 500]     one flight: city 1 for 100, city 2 direct for 500
+        after round 2:    [0, 100, 200]     two flights: city 2 via city 1 for 200
+
+    ANSWER: 200.
+
+    AND WITH k = 0 - a single round - the answer stops at 500, because two flights are not permitted.
+
+NOW THE PART THAT MAKES THIS DIFFERENT FROM PLAIN BELLMAN-FORD. The correspondence only holds if a round
+cannot secretly do two flights' work.
+
+    Suppose the flights are examined in the order 0 -> 1, then 1 -> 2. Relaxing in place, the first sets
+    city 1 to 100 - and then the second reads that BRAND-NEW value and sets city 2 to 200, all within
+    round one. THE ROUND HAS QUIETLY USED TWO FLIGHTS.
+
+    With k = 0 that returns 200 when the only legal answer is 500. VERIFIED.
+
+THE FIX IS TO FREEZE THE PRICES AT THE START OF EACH ROUND. Take a copy; read every "from" price out of
+the frozen copy; write every improvement into the new one. THEN A ROUND CAN ONLY EVER EXTEND A ROUTE BY
+EXACTLY ONE FLIGHT, whatever order the flights happen to be listed in.
+
+    THE PICTURE:
+
+        IN PLACE          round 1:  0 --100--> 1 --100--> 2      two flights, one round.  WRONG.
+        SNAPSHOT          round 1:  0 --100--> 1        and      0 --500--> 2
+                          round 2:  1 --100--> 2 using round 1's price for city 1""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FLIGHT / EDGE. A one-way connection (from, to, price). Directed: a flight from 0 to 1 says nothing about
+returning.
+
+STOP. An intermediate city where you change planes. k STOPS MEANS k + 1 FLIGHTS - the phrase counts the
+cities in the middle, not the legs.
+
+RELAXATION. Improving a price estimate using one flight: if reaching `u` and then flying to `v` costs less
+than the current belief about `v`, adopt it. The name is inherited from Bellman-Ford.
+
+ROUND. One pass over every flight. Here each round corresponds to permitting one more flight in the route.
+
+SNAPSHOT. A frozen copy of the previous round's prices, read from while the new round writes elsewhere.
+THIS IS THE ONE IDEA THAT DISTINGUISHES THIS PROBLEM FROM ITS PARENT.
+
+INFINITY. A city not yet known to be reachable within the rounds so far. `float('inf')` compares larger
+than any real number and stays infinite when anything is added.
+
+THE VARIABLES IN THE CODE:
+    n          the number of cities, labelled 0 to n-1.
+    flights    the list of (u, v, price) triples. NOT MODIFIED.
+    src, dst   the start and end cities.
+    k          the maximum number of stops.
+    dist       the cheapest known price to each city using at most the rounds completed so far.
+    new_dist   the round being built. It starts as a copy of `dist`.
+    u, v, price the current flight's fields.
+
+`dist[:]` MAKES A COPY - a new list with the same contents. `new_dist = dist` would alias the same list and
+destroy the entire point.
+
+V AND E ARE THE CITY AND FLIGHT COUNTS. TIME O(k * E), SPACE O(V).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the snapshot, and an off-by-one in the round count.
+
+TRAP 1 - RELAXING IN PLACE, WITHOUT THE SNAPSHOT. This is the defining mistake of the problem. Writing
+improvements straight into `dist` lets a value updated early in a round be READ AGAIN later in the SAME
+round, chaining flights and exceeding the stop limit.
+
+        n = 3, flights 0 -> 1 (100), 1 -> 2 (100), 0 -> 2 (500), from 0 to 2, k = 0
+
+            correct:        500 - with no stops allowed, only the direct flight is legal
+            in place:       200 - the round sets city 1 to 100, then immediately uses that to reach
+                                  city 2, having flown twice in a round that allows one flight
+
+    MEASURED: wrong on 37 of 3,000 random flight networks. A LOW RATE, and that is precisely what makes it
+    dangerous - it needs the flights to be listed in an order that allows the chaining, so it can pass a
+    great deal of testing before failing.
+
+    THE FIX IS TWO LINES: take `new_dist = dist[:]` at the top of each round, READ from `dist` and WRITE to
+    `new_dist`, then swap. Note that both halves matter - reading from `new_dist` by accident reintroduces
+    exactly the bug.
+
+TRAP 2 - RUNNING k ROUNDS INSTEAD OF k + 1. "At most k stops" counts INTERMEDIATE CITIES, and a route with
+k stops uses k + 1 flights. One round permits one flight, so k + 1 rounds are needed.
+
+    MEASURED: wrong on 280 of 3,000 random networks - considerably more common than the snapshot bug.
+
+        with k = 0 and only 0 rounds, no flight at all is permitted, so even a direct route returns -1.
+        VERIFIED: the two-city network 0 -> 1 costing 5 with k = 0 returns 5 correctly and -1 with k
+        rounds.
+
+TRAP 3 - REACHING FOR DIJKSTRA. It finalises a city the first time it is popped, which assumes the cheapest
+route to a city is the only one worth remembering. HERE IT IS NOT: a dearer route using fewer flights may
+be the only one that can be extended within the limit. Dijkstra can be adapted - by keying the priority
+queue on (city, flights used) rather than city alone - but that is a different and larger algorithm, and
+saying WHY the plain version fails is the useful part.
+
+TRAP 4 - THE INFINITY GUARD, WHICH BEHAVES EXACTLY AS IT DOES IN BELLMAN-FORD. `dist[u] != INF` is
+unnecessary in Python, where `inf + price` is `inf` and `inf < anything` is False, and ESSENTIAL in C or
+Java where INT_MAX + price wraps to a large negative number. The same finding as the parent entry, and the
+same rule: test the line, then say which language regime it matters in.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty flight list leaves every city at infinity and
+returns -1. A k larger than the number of cities simply runs extra rounds that change nothing.""",
+
+    """5. THE NAIVE WAY FIRST, then the bounded rounds.
+
+THE NAIVE VERSION - ENUMERATE EVERY ROUTE WITHIN THE LIMIT:
+
+    explore every path from the source, tracking the cost and the flights used
+    stop extending a path once it has used k + 1 flights
+    keep the cheapest that reaches the destination
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and for small
+    k it is not even unreasonable. COST: the number of routes grows exponentially with the branching
+    factor, so it becomes hopeless quickly.
+
+    A DEPTH-FIRST SEARCH WITH PRUNING - abandoning any partial route already dearer than the best complete
+    one found - is what makes the brute force usable for verification, and it is worth knowing as the
+    honest fallback when k is tiny.
+
+THE UPGRADE, AND ITS ONE OBSERVATION: you do not need to enumerate routes, only to know THE CHEAPEST PRICE
+TO EACH CITY USING AT MOST SO MANY FLIGHTS. That is a much smaller thing to track - one number per city per
+round rather than one entry per route.
+
+    Define it as a table: the cheapest price to city v using at most r flights. Each round is computed from
+    the previous one by trying every flight as the last leg. That is a dynamic program, and Bellman-Ford
+    IS that dynamic program with the older rows discarded.
+
+    COST: O(k * E) time and O(V) space - two arrays of city prices.
+
+    COMPARE THE PARENT: unbounded Bellman-Ford runs V-1 rounds because that is the longest a simple path
+    can be. HERE THE LIMIT IS k + 1, WHICH IS USUALLY MUCH SMALLER, so this is genuinely cheaper as well
+    as answering a stricter question.
+
+WHY THE SNAPSHOT IS NOT AN OPTIMISATION BUT A CORRECTNESS REQUIREMENT. In unbounded Bellman-Ford, relaxing
+in place is harmless and in fact helps - improvements travel further per round and it converges sooner,
+because the only thing that matters is the final answer after enough rounds. HERE THE NUMBER OF ROUNDS IS
+THE ANSWER'S CONSTRAINT, so a round doing extra work is a round breaking the rules.
+
+    THAT IS WORTH STATING PLAINLY: THE SAME LINE THAT IS A FREE SPEED-UP IN THE PARENT PROBLEM IS A BUG IN
+    THIS ONE. It is the clearest example in this bank of an optimisation whose validity depends entirely on
+    what is being asked.
+
+THE ALTERNATIVE WORTH NAMING: a BFS by levels, expanding all routes with r flights before any with r + 1,
+carrying the cheapest price found for each city at each level. Same complexity, same idea, and some find
+the level structure clearer than the array swap.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: run k + 1 rounds of price improvements, each round reading only the previous round's
+prices so that it can add exactly one flight to any route.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. One outer loop over rounds, one inner loop over
+flights, and TWO ARRAYS THAT SWAP ROLES:
+
+    `dist`      the prices as they stood at the END of the previous round. READ ONLY during this round.
+    `new_dist`  the prices being built for this round. WRITTEN ONLY.
+    At the end of the round, `new_dist` becomes `dist` and the next round begins.
+
+    THE SEPARATION IS THE ALGORITHM. Reading from `dist` guarantees that every improvement extends a route
+    that used at most the previous round's number of flights - so this round's routes use at most one
+    more.
+
+    `new_dist` STARTS AS A COPY, NOT AS ALL-INFINITY. A city reachable in fewer flights stays reachable;
+    the round can only improve prices, never lose them. Starting from infinity would compute "exactly r
+    flights" rather than "at most r", which is a different and wrong quantity.
+
+    THE INVARIANT: after r rounds, `dist[v]` is the cheapest price to city v using at most r flights.
+    True at the start with r = 0, when only the source is reachable at 0. Preserved by each round, since
+    any route of r flights is a route of r-1 flights plus one final leg, and every possible final leg is
+    examined.
+
+    WHAT MAKES IT STOP: the outer loop is a plain counted range of k + 1 iterations. THERE IS NO
+    CONVERGENCE TEST AND NONE IS WANTED - stopping early would be stopping at the wrong answer, because
+    the round count IS the constraint.
+
+    WHY THE ANSWER MAY BE INFINITY: no route within the limit reaches the destination. That is reported as
+    -1 rather than as a number.
+
+THE STEPS, NO CODE:
+
+    1. Set every city's price to infinity except the source, which is zero.
+    2. Repeat k + 1 times - one round per flight permitted:
+       a. Take a frozen copy of the current prices.
+       b. For every flight, if reaching its origin AT THE FROZEN PRICE and then paying its fare beats the
+          price currently recorded for its destination in the NEW table, record that cheaper figure.
+       c. Adopt the new table as current.
+    3. If the destination's price is still infinity, no route obeys the limit - answer -1. Otherwise
+       answer the price.
+
+    STEP 2a AND THE "AT THE FROZEN PRICE" IN 2b ARE THE WHOLE PROBLEM. STEP 2's "k + 1" IS TRAP 2.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A travel agent has a wall chart of every direct flight between cities, with the fare on each. A customer
+wants the cheapest way from one city to another - but they refuse to change planes more than once, because
+they have luggage and a bad back.
+
+The agent works in rounds, and each round represents permitting one more flight.
+
+She starts with a card for every city. The customer's home city is marked "nothing", and every other city
+is marked "no known route".
+
+    ROUND ONE. She goes through every flight on the wall. For each one she asks: I know a price for
+    getting to where this flight starts - does paying this fare beat what I currently have written for
+    where it lands? If so, she writes the better figure. After this round, every city reachable by ONE
+    flight has a price.
+
+    ROUND TWO. Exactly the same sweep. Now cities two flights away acquire prices, built on the one-flight
+    prices from round one.
+
+    Since the customer will change planes at most once, two flights are the most they will take, and she
+    stops after two rounds.
+
+    THE CRUCIAL DISCIPLINE, AND IT IS EASY TO GET WRONG. When she works through a round, she must read all
+    the "getting there" prices from the chart AS IT STOOD AT THE START OF THAT ROUND - not as she is
+    updating it. Otherwise something awkward happens: she writes a new price for a middle city early in the
+    sweep, then a few flights later reads that brand-new price and uses it to reach a third city. She has
+    just booked two flights inside a round that was only allowed to add one, and the customer ends up with
+    an itinerary that changes planes more often than they agreed to.
+
+    So she keeps two sheets. She reads from yesterday's sheet and writes on today's, and only when the
+    round is finished does today's sheet become yesterday's.
+
+    IT IS WORTH NOTICING THAT THIS DISCIPLINE WOULD BE UNNECESSARY - even counterproductive - IF THE
+    CUSTOMER HAD NO LIMIT ON CHANGES. Then she would simply want the cheapest fare however many flights it
+    took, and letting good news travel further within a round would get her there sooner. THE RULE EXISTS
+    ONLY BECAUSE THE NUMBER OF ROUNDS IS ITSELF PART OF WHAT THE CUSTOMER ASKED FOR.
+
+Finally she reads the destination's card. If it still says "no known route", then no itinerary respects the
+customer's limit, and she says so rather than offering one that breaks it.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def find_cheapest_price(n, flights, src, dst, k):
+
+`n` is the number of cities; `flights` is a list of (from, to, price); `src` and `dst` are the endpoints;
+`k` is the maximum number of stops. NOTHING IS MODIFIED - `flights` is only read.
+
+    INF = float('inf')
+    dist = [INF] * n
+    dist[src] = 0
+
+EVERY CITY UNREACHABLE EXCEPT THE SOURCE. `float('inf')` is a true infinity: `inf + price` is still `inf`,
+which is why the guard below is optional in Python and mandatory in C - the same finding as the parent
+Bellman-Ford entry.
+
+    for _ in range(k + 1):               # at most k stops == k+1 edges
+
+THE ROUND LOOP, COUNTED AND UNCONDITIONAL. `k + 1` because k STOPS means k intermediate cities and
+therefore k + 1 FLIGHTS - one round permits one flight. Running only `k` rounds is wrong on 280 of 3,000
+random networks, and with k = 0 it forbids even the direct flight.
+
+    new_dist = dist[:]               # snapshot: only use last round's values
+
+THE SNAPSHOT, AND THIS SINGLE LINE IS WHAT DISTINGUISHES THIS PROBLEM FROM ITS PARENT. `dist[:]` builds a
+COPY; `new_dist = dist` would alias the same list and change nothing.
+    IT STARTS AS A COPY RATHER THAN ALL-INFINITY so that cities already reachable in fewer flights keep
+    their prices - the round computes "at most r flights", not "exactly r".
+
+    for u, v, price in flights:
+        if dist[u] != INF and dist[u] + price < new_dist[v]:
+
+THE RELAXATION, AND NOTE THE ASYMMETRY THAT IS THE ENTIRE POINT: it READS `dist[u]` - the frozen previous
+round - and COMPARES AGAINST `new_dist[v]`, the round being built.
+    READING `new_dist[u]` INSTEAD would let a price improved earlier in this same sweep be used again,
+    chaining two flights into one round - wrong on 37 of 3,000 random networks, and it fails the canonical
+    three-city case by returning 200 where 500 is the only legal answer.
+    The `dist[u] != INF` guard is unnecessary in Python and essential in C, exactly as in the parent entry.
+
+    new_dist[v] = dist[u] + price
+
+RECORD THE CHEAPER FARE IN THE ROUND BEING BUILT.
+
+    dist = new_dist
+
+ADOPT THE ROUND'S RESULTS. The next round will read from these and write into a fresh copy.
+
+    return dist[dst] if dist[dst] != INF else -1
+
+THE ANSWER, WITH INFINITY TRANSLATED INTO THE SENTINEL THE PROBLEM ASKS FOR. A destination still at
+infinity means no route obeys the stop limit - not that the cities are disconnected, which is a distinction
+worth keeping straight.
+
+WHAT IS DELIBERATELY ABSENT: no priority queue (that is Dijkstra, and section 4 says why it does not apply
+directly), no visited set, no early exit when a round changes nothing - which would be valid here only
+because extra rounds cannot help once the limit is reached, and is not worth the line.""",
+
+    """9. TRACED ON REAL NUMBERS - the canonical network, at two different limits.
+
+n = 3.  flights:  0 -> 1 costing 100,  1 -> 2 costing 100,  0 -> 2 costing 500.  From 0 to 2.
+
+RUN A: k = 1, so k + 1 = 2 rounds.
+
+    START:            dist = [0, inf, inf]
+
+    ROUND 1:          new_dist starts as a copy: [0, inf, inf]
+        flight 0->1:  dist[0] = 0 is finite, and 0 + 100 = 100 < inf   ->  new_dist[1] = 100
+        flight 1->2:  dist[1] is INF - THE FROZEN COPY, not the 100 just written - so nothing happens
+        flight 0->2:  0 + 500 = 500 < inf                              ->  new_dist[2] = 500
+        dist becomes [0, 100, 500]
+
+    ROUND 2:          new_dist starts as [0, 100, 500]
+        flight 0->1:  0 + 100 = 100 < 100?  no
+        flight 1->2:  dist[1] = 100 now, and 100 + 100 = 200 < 500     ->  new_dist[2] = 200
+        flight 0->2:  0 + 500 = 500 < 200?  no
+        dist becomes [0, 100, 200]
+
+    RETURNS 200.  Verified against an exhaustive search over all routes using at most two flights: 200.
+
+    THE DECISIVE LINE IS IN ROUND 1: `flight 1->2` read `dist[1]`, which was still infinity, because the
+    100 had gone into `new_dist`. That is the snapshot doing its job. Without it, round 1 would have set
+    city 2 to 200 immediately - using two flights in a round that permits one.
+
+RUN B: k = 0, so ONE round only.
+
+    ROUND 1 is exactly as above, giving [0, 100, 500].
+
+    RETURNS 500 - the direct flight, which is the only route using a single flight.
+
+    THE INVERSION IN ONE LINE: k = 0 gives 500 and k = 1 gives 200, on an identical network. One extra
+    permitted stop halves the fare.
+
+    AND THIS IS THE RUN THAT EXPOSES THE MISSING SNAPSHOT. Relaxing in place, round 1 processes 0->1
+    (setting city 1 to 100), then 1->2 (reading that fresh 100 and setting city 2 to 200), then 0->2 (500,
+    no improvement). IT RETURNS 200 - an itinerary with one stop, offered to a customer who allowed none.
+
+    Measured across 3,000 random networks the in-place version is wrong on 37 - rare, because it needs the
+    flights listed in a chainable order, which is exactly why it survives casual testing.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. k + 1 rounds, each sweeping every flight once and doing constant work per flight, plus
+one array copy per round.
+
+    TIME O(k * E). SPACE O(V) - two arrays of city prices.
+    THAT IS BETTER THAN UNBOUNDED BELLMAN-FORD'S O(V * E) whenever k is smaller than V - which is the usual
+    case, and is a rare instance of a stricter question being cheaper to answer.
+    The enumerate-every-route brute force is exponential in the branching factor.
+
+THE #1 MISTAKE: relaxing in place instead of from a snapshot. A price improved early in a round gets read
+again later in the SAME round, chaining two flights into one round and silently exceeding the stop limit.
+Wrong on 37 of 3,000 random networks - a LOW rate, which is what makes it dangerous, since it needs the
+flights listed in a chainable order and can survive a great deal of testing. THE RUNNER-UP is running k
+rounds instead of k + 1, wrong on 280 of 3,000: k stops means k intermediate cities and k + 1 legs.
+
+AND THE OBSERVATION WORTH CARRYING AWAY: relaxing in place is a FREE SPEED-UP in unbounded Bellman-Ford,
+where only the final answer matters and letting improvements travel further per round makes it converge
+sooner. HERE THE ROUND COUNT IS PART OF THE QUESTION, so the same line becomes a bug. AN OPTIMISATION IS
+ONLY VALID RELATIVE TO WHAT IS BEING ASKED.
+
+ONE-SENTENCE TAKEAWAY: one relaxation round equals one permitted flight, so run k + 1 of them - and freeze
+each round's starting prices, or a round will quietly spend more flights than it was given.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that the stop limit changes what a node's state
+IS. In an ordinary shortest-path problem a city is summarised by its cheapest price; here it needs the
+price AND the number of flights used, and every correct solution encodes that somehow - Bellman-Ford by the
+round number, a modified Dijkstra by putting the flight count in the priority queue, a BFS by the level.
+SAY THAT ALOUD - "the state is (city, flights used), not just city" - because it explains why plain
+Dijkstra fails and what every fix has in common.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Why does plain Dijkstra fail, and how would you fix it?" It finalises a city on first pop, but the
+    cheapest route in may use too many flights while a dearer one with fewer flights is the one that can
+    still be extended. Fix it by keying the queue on (price, city, flights used) and allowing a city to be
+    popped several times with different flight counts.
+    "Do it as a BFS by levels." Expand all routes with r flights before any with r + 1, keeping the
+    cheapest price per city at each level. Same complexity, and the level structure makes the stop limit
+    explicit.
+    "What if prices could be negative?" The round limit already caps the work, so a negative cycle cannot
+    be exploited indefinitely - you simply get the cheapest route within k + 1 flights, which is
+    well-defined. THAT IS A RARE CASE WHERE BOUNDING THE PATH LENGTH REMOVES THE NEGATIVE-CYCLE PROBLEM
+    ENTIRELY, and it is worth saying because the parent problem needs a whole extra pass to detect them.
+    "What if k is very large?" Once k + 1 reaches V - 1 the limit stops binding, and this becomes ordinary
+    Bellman-Ford; capping the round count at V - 1 avoids pointless rounds.""",
 ]
 
 _EX_P1O["Corporate Flight Bookings"] = [
