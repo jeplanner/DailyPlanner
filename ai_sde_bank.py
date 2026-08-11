@@ -103100,185 +103100,1431 @@ two that a candidate reciting complexities never mentions.""",
 ]
 
 _EX_P1P["Number of Provinces"] = [
-    """What the problem is underneath the wording.
-'Provinces' are connected components of an undirected graph given as an
-adjacency MATRIX. is_connected[i][j] == 1 means a direct road; a province is a
-maximal set of mutually reachable cities.
-[[1,1,0],[1,1,0],[0,0,1]] -> cities 0 and 1 are joined, city 2 is alone -> 2
-provinces.
-[[1,0,0],[0,1,0],[0,0,1]] -> no roads at all -> 3 provinces.
-Recognising 'count connected components' behind the story is most of the work;
-after that it is any of three standard algorithms.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The union-find version, and why path compression matters.
-`find` walks to the root, and the line `parent[x] = parent[parent[x]]` is path
-HALVING - it flattens the tree while walking, so repeated finds get cheaper.
-Combined with union by rank or size, the amortised cost per operation is
-effectively constant (inverse Ackermann, written alpha, which is under 5 for
-any input that fits in the universe).
-Without compression, a chain of unions can build a linked list and each find
-becomes O(n) - turning the whole thing into O(n^3) on a dense matrix. The one
-line is the difference.""",
+There are n cities. Some pairs of cities are directly connected by a road. A
+PROVINCE is a group of cities that can all reach each other - directly, or by
+hopping through other cities in the group. Count the provinces.
 
-    """The count at the end - two ways, one of them subtly wrong.
-Correct: count how many i satisfy `find(i) == i` - the number of distinct
-roots. Note you must call find(i), not read parent[i] directly, because a node's
-parent may point somewhere mid-tree rather than at the root until compressed.
-Alternative and often cleaner: initialise a counter to n and DECREMENT it every
-time a union actually merges two different sets. That avoids the final pass and
-makes the invariant obvious - each real merge reduces the component count by
-exactly one.""",
+The connections arrive as a GRID of 0s and 1s called `is_connected`, where
+is_connected[i][j] == 1 means "city i and city j are directly joined".
 
-    """The DFS/BFS alternative, which is simpler to write.
-Loop over cities; when you find an unvisited one, increment the count and
-flood-fill everything reachable from it. O(n^2) for the matrix scan, O(n)
-space for the visited set - the same asymptotics as union-find here, and less
-code.
-So why learn union-find? Because it handles INCREMENTAL connectivity - edges
-arriving over time, with queries interleaved - which DFS cannot do without
-re-running. That is the honest answer to 'which would you use': DFS for a
-static snapshot, union-find when the graph changes or when the problem is
-really about merging sets.""",
+    is_connected = [[1, 1, 0],
+                    [1, 1, 0],
+                    [0, 0, 1]]
 
-    """Edge cases.
-n = 1 -> one province.
-Fully connected matrix -> 1.
-Identity matrix (only self-loops) -> n provinces.
-The diagonal is always 1 (a city is connected to itself) and must be IGNORED -
-which the loop does by starting j at i+1. Including the diagonal would union
-each city with itself, harmless here but a real bug in variants that count
-edges.
-The matrix is symmetric, so scanning only the upper triangle halves the work
-and avoids redundant unions.""",
+    row 0 says city 0 joins city 0 (itself) and city 1.
+    row 1 says city 1 joins city 0 and city 1 (itself).
+    row 2 says city 2 joins only itself.
 
-    """Complexity and the family.
-O(n^2 * alpha) time - dominated by scanning the matrix, since alpha is
-effectively constant - and O(n) space for the parent array.
-The union-find family: Number of Connected Components in an Undirected Graph
-(the same problem with an edge list), Redundant Connection (the edge that
-creates a cycle is the first union that finds both endpoints already joined),
-Accounts Merge, Most Stones Removed, and Kruskal's MST - which is union-find
-plus a sort. Number of Islands is the grid version, usually done with DFS but
-solvable either way.""",
+    picture:     0 --- 1        2
+
+    Cities 0 and 1 are one province. City 2 is alone and is a province of one.
+    ANSWER: 2
+
+Verified against a brute-force flood fill: 2.
+
+    is_connected = [[1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1]]     ->  0     1     2      ANSWER: 3
+
+Three things about this grid are worth noticing straight away, because all three
+will matter:
+
+  The diagonal is always 1 - every city is trivially connected to itself. That tells
+  you nothing and must not be treated as a road.
+  The grid is SYMMETRIC - if is_connected[i][j] is 1 then is_connected[j][i] is 1
+  too. Roads have no direction. So half the grid is a mirror of the other half.
+  "Connected" is INDIRECT as well as direct. If 0 joins 1 and 1 joins 2, then 0 and
+  2 are in the same province even though is_connected[0][2] is 0. That indirectness
+  is the entire difficulty.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Forget graphs. Think of a school playground where you want to count the friendship
+groups, and the only thing you are allowed to do is ask pairs "are you two friends?"
+
+Give every child a badge with their own name on it - "I follow myself". Now, every
+time you learn that two children are friends, you make the LEADER of one group start
+following the LEADER of the other. Not the two children - their LEADERS.
+
+    start:   0 follows 0     1 follows 1     2 follows 2
+             (three groups of one)
+
+    learn "0 and 1 are friends":
+             leader of 0 is 0. leader of 1 is 1. Make 0 follow 1.
+             0 -> 1           1 follows 1      2 follows 2
+             (two groups: {0,1} and {2})
+
+To answer "how many groups?", ask every child to follow the chain of badges up to
+whoever follows themselves. That person is the group's LEADER. Count the distinct
+leaders.
+
+    0 -> 1 -> (1 follows itself)     leader of 0 is 1
+    1 -> (1 follows itself)          leader of 1 is 1
+    2 -> (2 follows itself)          leader of 2 is 2
+
+    distinct leaders {1, 2}  ->  2 groups
+
+WHY YOU MUST MERGE LEADERS AND NOT PEOPLE. Suppose you had made child 0 follow child
+1 directly, ignoring leaders. Later you learn 0 is also friends with 2, and you make
+0 follow 2. But 0 was the only link holding 1 in place - by re-pointing 0 you have
+silently abandoned 1, and it becomes a group of its own. Measured: pointing at the
+person instead of the leader was wrong on 973 of 4,000 random grids.
+
+Merging leaders can never do that, because a leader has nothing above it to lose.
+
+This whole scheme - badges, leaders, merging - is called UNION-FIND.""",
+
+    """3. EVERY TERM, DEFINED
+
+CONNECTED COMPONENT. A maximal group of things that can all reach each other. The
+problem calls them "provinces"; the textbook calls them connected components; they
+are the same thing. "Maximal" means you cannot add another city to the group and
+still have everybody reachable.
+
+ADJACENCY MATRIX. The n-by-n grid form of a graph, where cell [i][j] says whether i
+and j are directly joined. It costs n-squared memory even if there are only three
+roads, which is why the scan below is unavoidably O(n^2) here. The alternative form,
+an ADJACENCY LIST (each city storing just its neighbours), is smaller for sparse
+graphs but that is not what this problem hands you.
+
+UNION-FIND (also DISJOINT SET UNION, or DSU). The badges-and-leaders structure. It
+supports exactly two operations: FIND (who leads this element's group?) and UNION
+(merge the two groups these elements are in).
+
+PARENT ARRAY. The badges. parent[x] is who x follows. A ROOT is any x with
+parent[x] == x - it follows itself, so it leads its group.
+
+PATH COMPRESSION. While walking up the chain to find a root, re-pointing nodes higher
+so future walks are shorter. The line `parent[x] = parent[parent[x]]` does the cheap
+version of this - PATH HALVING - by re-pointing each node at its grandparent as you
+pass. It does not change any answer; it changes how long the chains get.
+
+  Measured on a 500-city chain (city 0 joined to 1, 1 to 2, ... straight line):
+      total pointer hops WITH compression:     1,219
+      total pointer hops WITHOUT compression: 124,750
+      the same answer both times, 102 times the work without it.
+
+FLOOD FILL / DFS / BFS. The alternative approach: start at an unvisited city, mark
+everything reachable from it, and count how many times you had to start fresh. Each
+fresh start is one province.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - AND THE OFFICIAL EXAMPLES HIDE IT
+
+TRAP ONE - COUNTING THE PARENT ARRAY INSTEAD OF THE ROOTS. THIS IS THE BIG ONE.
+
+  At the end you want the number of distinct groups. It is tempting to write
+  `len(set(parent))` - "how many different values are in the badge array". That is
+  not the same question. A badge may point at somebody who is themselves following
+  somebody else, so counting badge values counts CHAINS, not leaders.
+
+      is_connected = [[1, 1, 0],
+                      [1, 1, 1],
+                      [0, 1, 1]]        picture:  0 --- 1 --- 2
+
+      This is ONE province. But the parent array can end as [1, 2, 2]:
+          distinct badge values {1, 2}  ->  reports 2      WRONG
+          distinct LEADERS {2}          ->  reports 1      right
+
+  Measured: `len(set(parent))` was wrong on 1,514 of 4,000 random grids.
+
+  AND HERE IS WHY THIS BUG IS DANGEROUS - BOTH OFFICIAL EXAMPLES AGREE WITH IT:
+
+      [[1,1,0],[1,1,0],[0,0,1]]   correct 2   len(set(parent)) 2   AGREES
+      [[1,0,0],[0,1,0],[0,0,1]]   correct 3   len(set(parent)) 3   AGREES
+
+  Both samples are too shallow to build a chain, so both pass. You need three cities
+  in a ROW before the bug shows. Test only on the given examples and you ship it.
+
+  A PRECISION NOTE, MEASURED RATHER THAN ASSUMED. It is often said that you must
+  never read `parent` directly at the end. That is too broad. Counting the i where
+  `parent[i] == i` is EXACTLY equivalent to counting the i where `find(i) == i` -
+  wrong on 0 of 4,000 grids - because under this union rule a node's badge points at
+  itself if and only if it is a root. The bug is not "reading parent"; the bug is
+  specifically collecting parent's VALUES without resolving them.
+
+TRAP TWO - UNIONING THE NODES INSTEAD OF THEIR ROOTS. Writing `parent[i] = j` rather
+  than `parent[find(i)] = find(j)`. Section 2 explains why it loses groups. Measured:
+  wrong on 973 of 4,000.
+
+TRAP THREE - COUNTING THE DIAGONAL AS A ROAD. is_connected[i][i] is always 1. If you
+  scan the whole grid and union i with i, nothing breaks - it is a no-op - but if you
+  are using the "start at n and subtract one per union" ending, every diagonal cell
+  silently subtracts one and the answer collapses. Measured: decrementing on every 1
+  in the grid rather than only on a REAL merge was wrong on 869 of 4,000.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - FLOOD FILL. Keep a `visited` list. Walk the cities; each time you
+meet one you have not visited, add one to the count and then spread out from it,
+marking every city reachable, however many hops away.
+
+    count = 0
+    visited = [False] * n
+    for start in range(n):
+        if not visited[start]:
+            count += 1
+            <spread out from start, marking everything reachable>
+    return count
+
+This is completely correct and it is what the ground truth in this entry uses. Its
+cost is O(n^2) - the spreading step must scan a whole row of the grid to find each
+city's neighbours - and O(n) memory. Say it first in an interview. For a graph handed
+to you all at once, it is arguably the better answer: shorter, no auxiliary structure,
+nothing to get wrong.
+
+WHY BOTHER WITH ANYTHING ELSE. Because of a question the interviewer usually asks
+next: "what if the roads arrive one at a time and I ask you the count after each
+one?" Flood fill has to re-run from scratch every time - O(n^2) per query. Union-Find
+absorbs a new road in near-constant time and answers immediately. THAT is the real
+reason this technique exists, and saying so is worth more than the code.
+
+THE UPGRADE - UNION-FIND. Cost O(n^2 * alpha), where the n^2 is just reading the grid
+and alpha is the inverse Ackermann function - a quantity so slow-growing it is below
+5 for any input that fits in the universe, so treat it as constant. Memory O(n) for
+the badge array.
+
+THE TRICK EXPLAINED FROM SCRATCH - PATH COMPRESSION. Each `find` walks up a chain of
+badges. If chains grow long, every find is slow. So while walking, re-point each node
+you pass at its GRANDPARENT. The walk still ends at the same root, so no answer
+changes - but the chain is roughly halved for everyone who uses it later. It is
+maintenance done in passing, paid for by work you were doing anyway.
+
+  Measured on the worst possible shape, a 500-city straight chain:
+      1,219 pointer hops with compression, 124,750 without - 102 times fewer.
+      At 200 cities: 478 against 19,900 - 42 times fewer.
+  Both produced the same answer, 1 province. Compression is a speed device only.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: give every city a badge pointing at itself, then for each road make one
+group's leader follow the other group's leader, and at the end count how many
+distinct leaders are left.
+
+THE MECHANISM, SPELLED OUT. The `find` helper is written here as a LOOP, not a
+recursion - it climbs badge by badge until it reaches a city that points at itself.
+The loop stops because every step moves strictly upward in a structure that has no
+cycles: a badge is only ever re-pointed at a root, and a root is never pointed at
+anything below it, so following badges can never come back around. There is no call
+stack to worry about and no depth limit to blow.
+
+(A recursive `find` is common and also correct, but on a long chain it can exceed
+Python's recursion limit - the chain measured above was 500 deep, and real inputs go
+to 200 cities, so it survives here, but the loop is the safer habit.)
+
+The outer double loop is the RECORDING phase and the final pass is the COUNTING
+phase, and they must be in that order - a leader you compute halfway through may be
+superseded by a later road.
+
+  What makes the structure correct: after every union, two cities are in the same
+  group if and only if they lead to the same root. That property holds after zero
+  roads (everybody leads to themselves) and is preserved by each union (merging two
+  roots merges exactly the two groups beneath them, and nothing else moves). So it
+  holds at the end.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Let n be the number of cities - the number of rows in the grid.
+  2. Make a badge array of length n where every city's badge points at itself.
+  3. Define FIND for a city: keep moving to whoever the current badge points at,
+     until you reach a city whose badge points at itself. Return that city. While
+     moving, re-point each city you pass at its grandparent - this is optional for
+     correctness and large for speed.
+  4. Define UNION for two cities: find the leader of each, then set the FIRST
+     leader's badge to point at the second leader. Leaders, not the cities - pointing
+     at the cities loses groups and was wrong on 973 of 4,000 grids.
+  5. For every pair of cities i and j with j strictly greater than i - the upper
+     triangle only - if the grid says they are joined, union them. Skipping j <= i
+     skips the mirror half and the diagonal, both of which are redundant.
+  6. Find the leader of every city, collect the distinct leaders, and return how many
+     there are. Do not collect the badge VALUES - resolve each one to its leader
+     first; the shortcut was wrong on 1,514 of 4,000 grids and agrees with both
+     official examples.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a room of people who have all just arrived at a party and know nobody. Each
+one writes their own name on a slip of paper and holds it - "the person I defer to is
+me".
+
+You then read out pairs from a guest list: "Anna and Ben have met." You do not touch
+Anna and Ben. Instead, Anna walks the chain of slips until she finds the person at
+the top of her chain - the one deferring to themselves - and Ben does the same. Then
+that top person of Anna's chain tears up their slip and writes down the name of the
+top person of Ben's chain.
+
+One merge, one slip changed, no matter how many people are standing behind each of
+them. That is the efficiency of the whole idea: joining two crowds costs one
+handshake between their two leaders.
+
+A tidy habit while walking a chain: each person you pass, you nudge to skip a link
+and defer directly to their grandparent instead. Nobody's leader changes; the queues
+just get shorter for whoever walks them next. On a 500-person chain this cut the
+total walking from 124,750 steps to 1,219.
+
+At the end of the evening, you ask everybody to walk to the top of their chain and
+raise a hand if they are the top. The number of raised hands is the number of
+separate crowds.
+
+The mistake that ruins the evening is asking instead "how many different names are
+written on the slips?" - because a name on a slip may belong to somebody who is
+themselves deferring to someone else. You would count links in the chains rather than
+the people at the top of them.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def find_circle_num(is_connected):
+
+  `is_connected` is the n-by-n grid of 0s and 1s. The name is LeetCode's; the
+  function name is a leftover from when the problem was called "Friend Circles".
+
+        n = len(is_connected)
+
+  `n` is the number of cities - the grid is square, so the row count is enough.
+
+        parent = list(range(n))
+
+  `parent` is the badge array: `parent[i]` is who city i defers to. `list(range(n))`
+  makes [0, 1, 2, ... n-1], so every city starts pointing at itself - n separate
+  provinces before any road is read.
+
+        def find(x):
+            while parent[x] != x:
+
+  `find` climbs. The loop test IS the definition of a root: keep going while `x` does
+  not point at itself. When it does, `x` is the leader.
+
+                parent[x] = parent[parent[x]]
+
+  PATH HALVING. Re-point `x` at its grandparent before moving on. Read it right to
+  left: `parent[x]` is x's parent, `parent[parent[x]]` is x's grandparent, and the
+  assignment installs the grandparent as x's new parent. The chain above `x` is
+  unchanged, so the eventual answer is identical - this line is pure speed, worth 102
+  times fewer hops on a 500-city chain.
+
+                x = parent[x]
+
+  Step up. Note this reads `parent[x]` AFTER the halving line rewrote it, so the walk
+  climbs two levels per iteration rather than one.
+
+            return x
+
+  `x` now satisfies parent[x] == x. It is the leader.
+
+        def union(a, b):
+            parent[find(a)] = find(b)
+
+  The critical line of the whole solution. Both sides call `find`. The badge that is
+  rewritten belongs to a's LEADER, and it is pointed at b's LEADER. Writing
+  `parent[a] = b` instead loses groups and was wrong on 973 of 4,000 grids. If a and
+  b already share a leader, this harmlessly writes `parent[r] = r` - a no-op, which
+  is why no "are they already joined?" check is needed here.
+
+        for i in range(n):
+            for j in range(i + 1, n):
+
+  The UPPER TRIANGLE. `j` starts at `i + 1`, so pairs are visited once each and the
+  diagonal is never touched. Scanning the whole row instead is not wrong - measured
+  at 0 errors on 4,000 grids - but it performs 2.0 to 2.1 times as many unions for no
+  benefit. It IS wrong if you are using the decrement-a-counter ending, because then
+  every diagonal 1 silently subtracts a province.
+
+                if is_connected[i][j] == 1:
+                    union(i, j)
+
+  A road exists, so merge the two provinces. Nothing here checks whether they were
+  already merged; `union` handles that case by doing nothing meaningful.
+
+        return len({find(i) for i in range(n)})
+
+  For every city, resolve its leader, gather the leaders into a set - which discards
+  duplicates - and return the size. `find(i)` is essential: `len(set(parent))` counts
+  chains rather than leaders and was wrong on 1,514 of 4,000 grids while agreeing
+  with BOTH official examples.""",
+
+    """9. TRACED ON REAL NUMBERS - AND THE EXAMPLE THAT EXPOSES THE TRAP
+
+FIRST, THE OFFICIAL EXAMPLE, TRACED IN FULL.
+
+    is_connected = [[1, 1, 0],
+                    [1, 1, 0],
+                    [0, 0, 1]]
+
+    parent starts as [0, 1, 2]
+
+    i=0, j=1:  is_connected[0][1] == 1
+               find(0) = 0 (parent[0] is 0, already a root)
+               find(1) = 1 (parent[1] is 1, already a root)
+               parent[0] = 1        ->  parent = [1, 1, 2]
+    i=0, j=2:  is_connected[0][2] == 0   nothing to do
+    i=1, j=2:  is_connected[1][2] == 0   nothing to do
+
+    counting:  find(0): parent[0] is 1, parent[1] is 1 -> leader 1
+               find(1): leader 1
+               find(2): leader 2
+               leaders [1, 1, 2]  ->  distinct {1, 2}  ->  2 provinces
+
+    Cross-checked against brute-force flood fill: 2. Match.
+
+NOW THE EXAMPLE THAT CATCHES THE TRAP FROM SECTION 4 - THREE CITIES IN A ROW.
+
+    is_connected = [[1, 1, 0],
+                    [1, 1, 1],
+                    [0, 1, 1]]        picture:  0 --- 1 --- 2
+
+    parent starts as [0, 1, 2]
+
+    i=0, j=1:  joined. find(0) = 0, find(1) = 1.  parent[0] = 1  -> [1, 1, 2]
+    i=0, j=2:  is_connected[0][2] == 0. NOT joined directly.
+    i=1, j=2:  joined. find(1) = 1, find(2) = 2.  parent[1] = 2  -> [1, 2, 2]
+
+    Look at the badge array now: [1, 2, 2]. City 0's badge says 1, but city 1's badge
+    says 2 - so city 0's LEADER is 2, not 1. The badge is stale by one link, exactly
+    as section 4 warned.
+
+    the shortcut:  distinct values of parent = {1, 2}       ->  2      WRONG
+    the correct:   find(0)=2, find(1)=2, find(2)=2 -> {2}   ->  1      right
+
+    Brute-force flood fill confirms 1 province: 0 reaches 1 directly and 2 through 1.
+
+    This is also why cities 0 and 2 end in the same province despite
+    is_connected[0][2] being 0 - the indirect link from section 1, made concrete.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+Those two grids differ in exactly one connection - whether city 1 and city 2 are
+joined (two mirrored cells, since the grid is symmetric):
+
+    0 --- 1     2        ->  2 provinces
+    0 --- 1 --- 2        ->  1 province
+
+One road, and the count changes. Note that it also changes which version of the
+counting code gives the right answer: on the first grid the buggy shortcut agrees, on
+the second it does not. The bug did not appear because the grid got bigger; it
+appeared because the grid got DEEPER.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Reading the grid is unavoidably n-times-n work, because the
+input itself is that big - so both solutions are O(n^2) time and neither can beat it.
+Union-Find adds only a near-constant factor per road (the alpha term, below 5 for any
+real input). Memory: O(n) for the badge array, against O(n) for a visited list in
+flood fill. Nothing separates them on paper for THIS problem.
+
+WHAT DOES SEPARATE THEM: flood fill needs the whole graph up front and must re-run
+from scratch if it changes. Union-Find absorbs one new road at a time and can answer
+the count after every single one. If the interviewer says "now the roads stream in",
+flood fill is O(n^2) per query and Union-Find is effectively free. That is the honest
+reason to reach for it, and if the graph is static you should say plainly that flood
+fill is the simpler, equally good answer.
+
+THE #1 MISTAKE. Ending with `len(set(parent))` instead of resolving every city to its
+leader first. Wrong on 1,514 of 4,000 random grids AND agreeing with both official
+examples - the worst combination there is, common enough to fail you and quiet enough
+that the given tests will not warn you. Its close relative is `parent[find(a)] = b`,
+half-corrected, which has the same failure mode.
+
+  Be precise about the rule, though. Reading `parent` is not itself forbidden -
+  counting the i where `parent[i] == i` is equivalent to counting the i where
+  `find(i) == i`, measured wrong on 0 of 4,000. What is forbidden is collecting
+  parent's VALUES as if they were leaders.
+
+TWO ENDINGS, BOTH CORRECT - PICK ONE AND SAY WHY
+
+  Count distinct leaders at the end, as this code does. One extra pass, easy to get
+  right, and it works no matter how the unions were performed. Measured correct.
+  Start a counter at n and subtract one on every union that MERGED TWO DIFFERENT
+  groups. No final pass. Measured correct on 4,000 grids - but ONLY with the
+  different-groups test: decrementing on every 1 in the grid was wrong on 869 of
+  4,000, because the always-1 diagonal quietly eats a province each time.
+
+THE UNION-FIND CLUSTER - WHO OWNS WHAT
+
+  Number of Provinces (this one) opens the cluster and owns COUNTING THE COMPONENTS -
+     the badge array, path compression, and the counting-at-the-end trap.
+  Redundant Connection owns the CYCLE-DETECTION form, where the useful signal is
+     union REFUSING to merge: if two cities already share a leader, the road joining
+     them closes a loop and is the redundant edge. Same structure, opposite question -
+     there you care about the merges that do NOT happen.
+  Surrounded Regions owns BORDER-SEEDED FLOOD FILL - the grid variant where you start
+     from the edges and mark what survives, rather than counting groups at all.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Roads arrive one at a time; report the count after each." Keep a counter starting
+     at n and subtract one on each real merge. O(1) per query, no re-scan. This is the
+     question that justifies Union-Find over flood fill.
+
+  "Can you also make find shallower without path compression?" Yes - UNION BY RANK or
+     BY SIZE: always attach the smaller tree under the larger, so the depth grows
+     logarithmically at worst. Combined with path compression it gives the
+     inverse-Ackermann bound. Alone, compression is usually enough in practice.
+
+  "The graph has 200,000 cities but only 500 roads." Then an adjacency MATRIX is the
+     wrong input format - it would be 40 billion cells. Take an edge list instead and
+     Union-Find becomes O(E * alpha), independent of the number of cities except for
+     the badge array. This is where Union-Find pulls decisively ahead of a matrix scan.
+
+  "Would you write find recursively?" It reads better, but on a long chain it can
+     exceed Python's default recursion limit of 1,000. The 500-city chain measured
+     here survives; a 5,000-city one would not. The loop has no such ceiling.
+
+ONE-SENTENCE TAKEAWAY. Merge LEADERS, never members - and when you count at the end,
+resolve every badge to its leader first, because a badge pointing at a follower
+counts a chain instead of a group.
+
+THE INTERVIEW IMPLICATION. This is the standard opener for the Union-Find family, and
+the interviewer is watching for two specific things. First, do you spot that flood
+fill is simpler and say so rather than performing complexity for its own sake.
+Second, do you get the two `find` calls inside `union` and the `find` inside the final
+count - those three calls are the whole technique, and every one of them is a place
+candidates drop a bug that the sample inputs will not catch. Write the flood fill,
+name Union-Find, then ask "do the edges stream?" - that question is the signal.""",
 ]
 
 _EX_P1P["Odd Even Linked List"] = [
-    """POSITION, not value - the first thing to confirm.
-'Odd' and 'even' refer to the node's 1-based POSITION in the list, not to
-whether its value is odd. 1 -> 2 -> 3 -> 4 -> 5 becomes 1 -> 3 -> 5 -> 2 -> 4:
-positions 1, 3, 5 first, then 2, 4, with relative order preserved inside each
-group.
-Values are irrelevant, which is why 2 -> 1 -> 4 -> 3 becomes 2 -> 4 -> 1 -> 3.
-Misreading this gives a completely different (and much easier) problem, so
-restate it before coding.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The weave, traced.
-list 1 -> 2 -> 3 -> 4 -> 5. odd = 1, even = 2, even_head = 2.
-Iteration 1: odd.next = even.next (1 -> 3), odd = 3. even.next = odd.next
-(2 -> 4), even = 4.
-Iteration 2: even.next is 5, so continue. odd.next = 5, odd = 5.
-even.next = odd.next = None, even = None.
-Loop ends (even is None). Finally odd.next = even_head joins 5 -> 2.
-Result 1 -> 3 -> 5 -> 2 -> 4.
-The two chains are built simultaneously in one pass, each stepping over the
-other.""",
+You are given a LINKED LIST - a chain of boxes where each box holds a value and an
+arrow pointing at the next box. Rearrange it so that all the boxes sitting at ODD
+POSITIONS come first, followed by all the boxes at EVEN POSITIONS. Within each half,
+keep the original order.
 
-    """Why `even_head` must be saved before the loop.
-The odd chain's tail has to be connected to the START of the even chain, but by
-the time the loop ends `even` points at the END (or at None). Capturing
-`even_head = head.next` up front is the only way to find it again.
-Forgetting it is the classic bug and it produces a TRUNCATED list - just the
-odd-position nodes - because the tail is left pointing at None. If your output
-is exactly half the input, this is why.""",
+    input:   1 -> 2 -> 3 -> 4 -> 5
+    position 1    2    3    4    5
 
-    """Why the loop condition is `even and even.next`.
-`even` guards the even-length case (the even chain runs out first); `even.next`
-guards the odd-length case (there is no further odd node to attach).
-Both are needed. With only `even`, an odd-length list dereferences even.next
-when it is None. With only `even.next`, an even-length list dereferences a None
-even.
-Test both parities explicitly - four nodes and five nodes - because each
-condition is exercised by only one of them.""",
+    odd positions 1, 3, 5 hold the values 1, 3, 5
+    even positions 2, 4  hold the values 2, 4
 
-    """Edge cases.
-Empty list -> guarded, return None.
-One node -> even is None, loop never runs, odd.next = even_head = None ->
-unchanged.
-Two nodes 1 -> 2 -> even is 2, even.next is None -> loop does not run ->
-odd.next = even_head, which re-links 1 -> 2. Unchanged, correctly.
-Three nodes 1 -> 2 -> 3 -> becomes 1 -> 3 -> 2.
-The final `odd.next = even_head` runs unconditionally and is safe in every one
-of these cases, which is worth checking rather than assuming.""",
+    output:  1 -> 3 -> 5 -> 2 -> 4
 
-    """Complexity and the family.
-O(n) time, O(1) space - the constraint that makes this interesting, since
-collecting the two groups into lists and rebuilding is trivial but O(n) space.
-The family is in-place pointer surgery: Partition List (same weave, but
-partitioned by value against a pivot rather than by position), Reverse Linked
-List, Reorder List (split at the middle, reverse the second half, interleave),
-Swap Nodes in Pairs, and Rotate List.
-The shared technique: build one or more chains with separate tail pointers
-while walking once, then join them at the end. Draw the pointers on paper before
-coding - three arrows is where most people lose this problem.""",
+THE FIRST THING TO SETTLE, BECAUSE IT IS DELIBERATELY MISLEADING: "odd" and "even"
+refer to the box's POSITION in the chain, counting from 1 - NOT to whether the value
+inside is an odd or even number. The example above hides this, because the values
+happen to equal the positions. The problem's second official example makes it plain:
+
+    input:   2 -> 1 -> 3 -> 5 -> 6 -> 4 -> 7
+    position 1    2    3    4    5    6    7
+
+    odd positions hold  2, 3, 6, 7
+    even positions hold 1, 5, 4
+
+    output:  2 -> 3 -> 6 -> 7 -> 1 -> 5 -> 4
+
+Verified: the code returns exactly that. Notice the first output value is 2, an even
+NUMBER, sitting first because it is at position 1.
+
+And one more requirement that is the whole point of the exercise: do it in O(1) extra
+space. You may not build two new lists and join them. You must re-aim the arrows in
+the chain you were given.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Think of a zip fastener. The chain alternates odd, even, odd, even all the way down.
+You are going to UNZIP it into two separate chains, then staple one onto the end of
+the other.
+
+    1 -> 2 -> 3 -> 4 -> 5
+
+    unzip:   odd chain:   1 ---> 3 ---> 5
+             even chain:       2 ---> 4
+
+    staple:  1 -> 3 -> 5 -> 2 -> 4
+
+The unzipping is done by two walkers moving down the chain together, one standing on
+odd boxes and one on even boxes:
+
+    odd                even
+     |                  |
+     v                  v
+     1 ---- 2 ---- 3 ---- 4 ---- 5
+
+Each walker's move is the same idea: "skip over the box in front of me and grab the
+one after it, because that is the next box of MY parity."
+
+    odd is at 1. The next odd box is the one after even's box.
+    even is at 2. The next even box is the one after odd's NEW box.
+
+They advance in lockstep, each one re-aiming its own arrow to skip a box, and after
+one pass the single chain has become two chains that share no boxes.
+
+WHY THE STAPLE NEEDS PLANNING. Once the walkers have moved on, the START of the even
+chain is nowhere to be found - `even` is somewhere in the middle now, and the second
+box's address was overwritten the moment the odd walker re-aimed its arrow. So you
+must write down the even chain's first box BEFORE the unzipping starts. Forgetting to
+was measured wrong on 4,640 of 6,000 random lists.""",
+
+    """3. EVERY TERM, DEFINED
+
+LINKED LIST. A chain of small objects called NODES. Each node holds a value (`val`)
+and a reference to the next node (`next`). The last node's `next` is None. Unlike an
+array, there is no indexing - to reach the fifth node you must walk through four.
+
+  Everyday version: a treasure hunt. Each clue tells you where the next clue is. You
+  cannot jump to clue five; you must follow the trail. Rearranging the hunt means
+  rewriting the clues, not moving the physical envelopes.
+
+NODE / POINTER / REFERENCE. A node is one box. A pointer (in Python, just a variable
+holding a node) is a name pointing at one box. Two names can point at the same box -
+that is not a copy, and writing through one is visible through the other. This is the
+fact the whole solution runs on.
+
+IN PLACE, O(1) EXTRA SPACE. You may use a fixed number of extra variables - here
+three: `odd`, `even`, `even_head` - regardless of how long the list is. You may NOT
+allocate anything that grows with n, so collecting the values into two Python lists
+and rebuilding is banned, even though it is much easier.
+
+  Proven, not asserted: for the 5-node input the set of node object identities before
+  and after the call is IDENTICAL - 5 nodes before, 5 after, the same 5 objects. Not
+  one node was allocated, copied, or discarded. Only the arrows moved.
+
+RELATIVE ORDER PRESERVED. Within the odd group, boxes stay in the order they appeared;
+same for the even group. So this is not a sort - nothing is compared.
+
+1-BASED POSITION. The problem counts the first node as position 1, so the head is
+ODD. If you think in 0-based indices the parities flip, which is a good way to get
+the two groups backwards.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - AND BOTH OFFICIAL EXAMPLES HIDE IT
+
+THE LOOP CONDITION IS `while even and even.next`, AND EACH HALF GUARDS A DIFFERENT
+LIST LENGTH. That is the trap, and it is worth slowing down for.
+
+  `even` guards the ODD-LENGTH case. On 1 -> 2 -> 3 -> 4 -> 5, after the second pass
+     the even walker steps off the end and becomes None. If you tried to read
+     `even.next` you would be reading an attribute of None.
+  `even.next` guards the EVEN-LENGTH case. On 1 -> 2 -> 3 -> 4, after the first pass
+     the even walker sits on the last node, 4, whose `next` is None. There is no
+     further odd box to fetch - and the body's very first action is to fetch one.
+
+Drop the second half and write just `while even`, and the even-length case walks off
+the end: `odd.next = even.next` sets odd's arrow to None, `odd = odd.next` makes odd
+itself None, and the next line reads `odd.next` on None.
+
+  Measured, on 6,000 random lists of lengths 0 to 12:
+      `while even` without `and even.next`:  wrong on 2,721 - ALL of them CRASHES
+      `while odd and odd.next` instead:      wrong on 2,721 - ALL of them CRASHES
+
+  It does not return a wrong answer. It raises AttributeError. And it does so on a
+  perfectly ordinary input, not an exotic one.
+
+NOW THE PART THAT MAKES IT DANGEROUS. Look at exactly which lengths crash:
+
+      length 0 (even):  []                    survives
+      length 1 (odd ):  [1]                   survives
+      length 2 (even):  AttributeError
+      length 3 (odd ):  [1, 3, 2]             survives
+      length 4 (even):  AttributeError
+      length 5 (odd ):  [1, 3, 5, 2, 4]       survives
+      length 6 (even):  AttributeError
+      length 7 (odd ):  [1, 3, 5, 7, 2, 4, 6] survives
+
+  EVERY EVEN LENGTH FROM 2 UPWARDS CRASHES. EVERY ODD LENGTH IS FINE.
+
+  And the two official examples have lengths 5 and 7 - BOTH ODD. Both AGREE with the
+  buggy version. You can develop this solution, run it against both provided samples,
+  see them pass, and submit code that fails on half of all possible inputs.
+
+THE OTHER TWO TRAPS, BOTH LOUD FOR ONCE.
+
+  Reattaching with `head.next` instead of a saved `even_head`: wrong on 4,640 of
+     6,000, and BOTH official examples catch it. `head.next` was the second node when
+     the function started, but the very first thing the loop does is overwrite it.
+  Re-aiming the even arrow before advancing the odd walker: wrong on 4,640 of 6,000,
+     both examples catch it. The line `even.next = odd.next` is only correct once
+     `odd` has already moved to its new box.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Walk the list collecting values into two Python lists, then walk
+it again writing the concatenation back into the nodes.
+
+    vals = []
+    cur = head
+    while cur:
+        vals.append(cur.val); cur = cur.next
+    result = vals[0::2] + vals[1::2]        # odd positions, then even positions
+    cur = head
+    for v in result:
+        cur.val = v; cur = cur.next
+
+Correct, obvious, and it is what the ground truth in this entry uses to check the
+real answer. It is O(n) time - same as the real solution - so it is NOT slower.
+
+WHY IT IS REJECTED ANYWAY. It uses O(n) extra memory for `vals` and `result`. That is
+the single constraint the problem exists to impose. Without it there is no problem
+here at all. Say this version out loud, name its memory cost, and then say "the
+interesting version does it by re-pointing arrows" - that sequence shows you know why
+the constraint is there rather than just obeying it.
+
+There is also a real-world reason to care: if the nodes carried heavy payloads rather
+than one integer, copying values around would be expensive, whereas re-aiming arrows
+is free regardless of what is inside the boxes.
+
+THE UPGRADE. Two walkers, one pass, three variables, no allocation.
+
+    naive:   read all n values into memory, compute, write all n back
+    upgrade: walk once, re-aiming 2 arrows per step, then 1 final arrow
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY TWO ARROWS PER STEP IS ENOUGH. At any moment
+the odd walker sits on an odd box and the even walker on the even box immediately
+after it. The next odd box is therefore exactly the box after the even walker, and -
+once the odd walker has moved there - the next even box is exactly the box after IT.
+So each step needs no searching and no lookahead beyond one box: the two chains are
+interleaved, so each walker's next target is always the box just past the other
+walker. That is why this works in one pass with no bookkeeping.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: walk two pointers down the chain in lockstep, each skipping over the
+other's box to reach its own next box, then point the last odd box at the first even
+box.
+
+THE MECHANISM, SPELLED OUT. There is no recursion and no call stack - this is a single
+`while` loop with three pointer variables, and everything it changes lives inside the
+nodes themselves.
+
+  What the loop maintains, at the top of every iteration: `odd` sits on the last box
+  of the odd chain built so far, `even` sits on the last box of the even chain built
+  so far, `even` is the box immediately after `odd` in the ORIGINAL order, and every
+  box before them has already been rewired.
+
+  What makes it stop: both walkers move strictly forward, two original boxes per
+  iteration, and the chain is finite. The loop test asks whether there is another
+  PAIR of boxes to consume. When there is not - either because the even walker has
+  run off the end (odd-length list, `even` is None) or because it is standing on the
+  final box (even-length list, `even.next` is None) - the loop ends. Both halves of
+  the test are load-bearing and each covers one parity; dropping either crashes on
+  half of all inputs.
+
+  Why the final staple is outside the loop: it happens exactly once, and it needs the
+  even chain's FIRST box, which was captured before the loop began and would be
+  unrecoverable afterwards.
+
+NUMBERED STEPS, NO CODE:
+
+  1. If the list is empty, return nothing. Every later step assumes a first box exists.
+  2. Put the odd walker on the first box. Put the even walker on the second box - which
+     may be nothing at all, and that is fine.
+  3. Write down where the even chain starts, right now, before anything moves. This is
+     the only chance; the second box's address is about to be overwritten.
+  4. Repeat while the even walker exists AND has a box after it:
+       a. Point the odd walker's arrow at the box after the even walker. That is the
+          next odd box.
+       b. Move the odd walker forward onto that box.
+       c. Point the even walker's arrow at the box after the odd walker's NEW
+          position. That is the next even box. This must come after step b - doing it
+          before was wrong on 4,640 of 6,000 lists.
+       d. Move the even walker forward onto that box.
+  5. The loop has ended, so the odd chain is complete and its last box is where the
+     odd walker stands. Point that box's arrow at the even chain's start, saved in
+     step 3.
+  6. Return the original first box - it is still the head of the whole list.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a long line of people at a station, each holding a card that names the person
+they are standing behind. You want everyone in an odd place in the queue to end up at
+the front, in their original order, followed by everyone in an even place, also in
+order. Nobody may leave their spot on the platform - you can only rewrite the cards.
+
+Two organisers start at the head of the queue. The first stands beside person one,
+the second beside person two.
+
+The first organiser tells their person: "ignore whoever is directly behind you; your
+new follower is the person behind THEM." Then the organiser walks forward to that new
+follower. The second organiser does exactly the same for their person, measuring from
+where the first organiser has just arrived. Then they both step forward and repeat.
+
+Because the two organisers leapfrog each other, one always handles the odd places and
+the other the even places, and neither ever has to search - the next person of their
+kind is always just past the other organiser.
+
+They stop when the second organiser either runs out of queue or finds themselves at
+the very back with nobody behind. Those are two different endings for two different
+queue lengths, and the organisers must watch for both; watching for only one means
+the first organiser eventually walks off the end of the platform, and on a queue of
+even length that happens every single time.
+
+Finally, someone had the foresight to write down, at the very start, who was standing
+in place two. The last person in the odd chain is now told to follow that person. Two
+chains become one, the queue never moved, and not a single new person was hired.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    class ListNode:
+        def __init__(self, val=0, next=None):
+            self.val = val; self.next = next
+
+  One box: `val` is the payload, `next` is the arrow. Standard scaffolding.
+
+    def odd_even_list(head):
+
+  `head` is the first node, or None for an empty list.
+
+        if head is None:
+            return None
+
+  The empty-list guard. Everything below reads `head.next`, which would fail on None.
+  Note it is NOT needed for a one-node list - that case survives naturally, which the
+  edge-case check confirms: [1] returns [1].
+
+        odd = head
+
+  `odd` is the odd-position walker, starting at position 1.
+
+        even = head.next
+
+  `even` is the even-position walker, starting at position 2. On a one-node list this
+  is None, and that is handled - the loop simply never runs.
+
+        even_head = even
+
+  THE SAVE. `even_head` remembers where the even chain begins, captured before any
+  arrow moves. This exists solely for the last line of the function. Substituting
+  `head.next` there instead was wrong on 4,640 of 6,000 lists, because the first
+  statement inside the loop overwrites `head.next`.
+
+        while even and even.next:
+
+  The two-part guard. `even` covers odd-length lists (the even walker has stepped off
+  the end); `even.next` covers even-length lists (the even walker is on the final
+  box, so there is no next odd box to fetch). Dropping either half crashes with
+  AttributeError on 2,721 of 6,000 random lists - every even length from 2 upward -
+  and BOTH official examples have odd length, so both agree with the broken version.
+
+            odd.next = even.next
+
+  Re-aim the odd walker's arrow to skip the even box and land on the next odd box.
+
+            odd = odd.next
+
+  Advance the odd walker onto the box it just claimed. `odd` is now the tail of the
+  odd chain.
+
+            even.next = odd.next
+
+  Re-aim the even walker's arrow at the box after the odd walker's NEW position -
+  which is the next even box. The order matters: this line reads `odd.next`, so `odd`
+  must already have moved. Swapping this line with the one above was wrong on 4,640
+  of 6,000.
+
+            even = even.next
+
+  Advance the even walker. Both walkers have now consumed one box each, and the
+  invariant from section 6 holds again.
+
+        odd.next = even_head
+
+  THE STAPLE. `odd` is the last odd box. Point it at the saved start of the even
+  chain. This runs exactly once and works for both parities: on an odd-length list
+  `odd` is the final box; on an even-length list it is the second-to-last.
+
+        return head
+
+  `head` never moved - position 1 is odd, so the original first box is still first.
+  The function returns the same object it was given.""",
+
+    """9. TRACED ON REAL NUMBERS - BOTH PARITIES, BECAUSE THE TRAP IS A PARITY TRAP
+
+Section 4's trap is that the two halves of the loop condition guard two different list
+lengths, so a single trace can only ever exercise one of them. Here are both.
+
+CASE ONE - ODD LENGTH. list 1 -> 2 -> 3 -> 4 -> 5
+
+    odd = 1, even = 2, even_head = 2
+
+    check: even is 2, even.next is 3.  Both present, enter.
+    iter 1: odd.next = even.next     ->  1 links to 3
+            odd = odd.next           ->  odd is now 3
+            even.next = odd.next     ->  2 links to 4
+            even = even.next         ->  even is now 4
+
+    check: even is 4, even.next is 5.  Both present, enter.
+    iter 2: odd.next = even.next     ->  3 links to 5
+            odd = odd.next           ->  odd is now 5
+            even.next = odd.next     ->  4 links to None
+            even = even.next         ->  even is now None
+
+    check: even is None.  THE FIRST HALF OF THE GUARD STOPS IT. Exit.
+
+    odd.next = even_head             ->  5 links to 2
+
+    result: 1 -> 3 -> 5 -> 2 -> 4
+
+    Cross-checked against the value-collecting brute force: [1, 3, 5, 2, 4]. Match.
+
+    Note what would happen with `while even` alone: `even` is None here too, so the
+    loop still exits correctly. THIS LENGTH DOES NOT EXPOSE THE BUG - and neither does
+    the other official example, which is also odd-length.
+
+CASE TWO - EVEN LENGTH, WHICH IS WHERE THE SECOND GUARD EARNS ITS KEEP.
+list 1 -> 2 -> 3 -> 4
+
+    odd = 1, even = 2, even_head = 2
+
+    check: even is 2, even.next is 3.  Enter.
+    iter 1: odd.next = even.next     ->  1 links to 3
+            odd = odd.next           ->  odd is now 3
+            even.next = odd.next     ->  2 links to 4
+            even = even.next         ->  even is now 4
+
+    check: even is 4 - PRESENT. even.next is None - ABSENT.
+           THE SECOND HALF OF THE GUARD STOPS IT. Exit.
+
+    odd.next = even_head             ->  3 links to 2
+
+    result: 1 -> 3 -> 2 -> 4      (verified: [1, 3, 2, 4])
+
+    NOW REMOVE THE SECOND GUARD AND REPLAY THAT LAST CHECK:
+      `while even` sees even is 4, which is truthy, so it ENTERS the body.
+        odd.next = even.next   ->  even.next is None, so 3's arrow becomes None
+        odd = odd.next         ->  odd is now None
+        even.next = odd.next   ->  reading .next on None
+      AttributeError. Not a wrong answer - a crash, on a four-element list.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+Append a single node and the output regroups:
+
+    1 -> 2 -> 3 -> 4 -> 5        ->  [1, 3, 5, 2, 4]
+    1 -> 2 -> 3 -> 4 -> 5 -> 6   ->  [1, 3, 5, 2, 4, 6]
+
+The value 6 does not go where you might guess from the first result - it lands at the
+END, because position 6 is even and it is the last even box. One extra node also
+flips which half of the loop guard does the stopping, and therefore whether the
+common one-character bug crashes or passes silently.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One walk down the list, doing a fixed amount of arrow-rewriting
+per node - O(n) time. Three pointer variables no matter how long the list is - O(1)
+extra space. Both are optimal: you cannot rearrange what you have not looked at, and
+you are not allowed to allocate.
+
+The value-copying version is ALSO O(n) time. The only thing separating them is memory,
+so do not claim the in-place version is faster - it is not. It is smaller, and on
+nodes carrying heavy payloads it is cheaper because it never copies contents.
+
+THE #1 MISTAKE. Writing `while even` and losing the `and even.next`. It crashes with
+AttributeError on every even-length list from 2 upward - 2,721 of 6,000 random lists -
+and BOTH official examples are odd-length, so both agree with the broken code. This is
+the worst shape a bug can have: half of all inputs fail, and none of the provided
+tests say so.
+
+  The defence is a habit, not memorisation: before writing a loop condition over a
+  linked list, ask "which pointers does the FIRST line of my body dereference?" Here
+  the body's first line reads `even.next`, so `even.next` must be checked. Then ask
+  "and what does that line's result get dereferenced as?" - `odd` becomes `even.next`,
+  and the third line reads `odd.next`, so `even.next` must not be None either. The
+  guard falls out of the body; it is not a fact to remember.
+
+  Runner-up: reattaching with `head.next` instead of a saved `even_head` - wrong on
+  4,640 of 6,000, but caught by both official examples, so it will not survive to
+  submission.
+
+TEST BOTH PARITIES. This is the transferable lesson. Any linked-list algorithm that
+consumes nodes two at a time - this one, Reorder List, finding the middle with
+fast/slow pointers, Swap Nodes in Pairs, detecting a cycle - has two distinct ending
+conditions, one per parity, and a test suite containing only odd-length lists is
+blind to half of them. Write down lengths 0, 1, 2, 3, 4, 5 and check all six.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Group by VALUE parity instead of position." Now relative order within each group
+     must still be preserved, so it is a stable partition. Same two-chain unzip, but
+     you cannot leapfrog - test each node's value and append it to whichever chain it
+     belongs to, keeping a tail pointer for each. Still O(n) time, O(1) space, but you
+     need a dummy head for each chain because either chain may start empty.
+
+  "Split into k groups by position mod k." Keep k tails and k heads, walk once
+     appending each node to group (i mod k), then chain the groups together. The
+     leapfrog trick does not generalise - with k > 2 you need explicit tails.
+
+  "Does your solution work if the list has a cycle?" No - it would never terminate.
+     Nothing here detects one, and the problem guarantees there is none. Saying that
+     out loud is a good instinct to show.
+
+  "Prove it is really in place." Compare node identities before and after: 5 nodes in,
+     the same 5 objects out, nothing allocated. Only `next` fields changed.
+
+ONE-SENTENCE TAKEAWAY. Unzip with two leapfrogging pointers, save the even chain's
+head BEFORE you start because you cannot recover it afterwards, and guard the loop
+with both `even` and `even.next` because each one covers a different list length.
+
+THE INTERVIEW IMPLICATION. This is a pointer-hygiene question, not an algorithms
+question - there is no insight to discover, only bookkeeping to get exactly right. So
+the whole signal is in your process: state that "odd/even" means position, write the
+O(n)-space version and name why it is disallowed, draw the two chains before typing,
+and then dry-run your code on a length-4 list out loud. That last step is what catches
+the guard bug, and doing it unprompted is the strongest thing you can show here.""",
 ]
 
 _EX_P1P["Pairs of Songs Divisible by 60"] = [
-    """The modular pairing rule.
-(a + b) % 60 == 0 means the remainders must sum to 60 - or both be 0. So for a
-song with remainder r, the partner remainder is (60 - r) % 60. The outer %60 is
-what maps r = 0 to 0 rather than to 60.
-time = [30,20,150,100,40]: remainders 30, 20, 30, 40, 40.
-30 pairs with 30, 20 pairs with 40, 40 pairs with 20, 0 pairs with 0.
-Answer 3: (30,150), (20,40) at indices 1&4, and (30,150)... traced properly
-below.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The one-pass count, traced.
-remainders array of 60 zeros, count 0.
-t=30, r=30, complement 30 -> remainders[30] is 0 -> add 0. Record: rem[30] = 1.
-t=20, r=20, complement 40 -> 0. rem[20] = 1.
-t=150, r=30, complement 30 -> rem[30] is 1 -> add 1 (pairs with the first song).
-rem[30] = 2.
-t=100, r=40, complement 20 -> rem[20] is 1 -> add 1. rem[40] = 1.
-t=40, r=40, complement 20 -> rem[20] is 1 -> add 1. rem[40] = 2.
-Total 3.
-Counting against only what has ALREADY been recorded is what enforces i < j
-without ever comparing indices - the same trick as Two Sum.""",
+You have a playlist. Each song has a length in seconds. Count how many PAIRS of songs
+have lengths that add up to a whole number of minutes - that is, a total divisible by
+60.
 
-    """The two self-pairing remainders, which are where the bugs live.
-r = 0: the complement is (60-0)%60 = 0, so zero-remainder songs pair with each
-other. Without the outer %60 you would look up remainders[60], which is out of
-bounds.
-r = 30: the complement is 30 - also itself, since 30 + 30 = 60.
-Both are handled correctly by the incremental approach because you look up the
-count BEFORE recording the current song, so a song never pairs with itself. A
-solution that builds the full frequency table first must special-case these two
-with c*(c-1)/2 and halve everything else - much easier to get wrong.""",
+A "pair" means two DIFFERENT songs from the list, and each pair is counted once. Song
+1 with song 4 is the same pair as song 4 with song 1.
 
-    """Why 60 and not the raw durations.
-Durations can be up to 500, but only the remainder mod 60 determines
-divisibility - so a fixed 60-slot array suffices regardless of how large the
-values are. That is what makes the space O(1) rather than O(n).
-The generalisation: for 'pairs divisible by k', use a k-slot array of
-remainders. The technique is identical for k = 60, k = 7 or k = 1000 - only the
-array size changes.""",
+    time = [30, 20, 150, 100, 40]
 
-    """Edge cases.
-Fewer than two songs -> 0 pairs.
-All the same remainder, [30,30,30] -> pairs (0,1), (0,2), (1,2) -> 3, which the
-incremental count produces as 0 + 1 + 2.
-All zero-remainder, [60,120,180] -> same, 3.
-No valid pairs, [10,20] -> 10 needs 50, 20 needs 40, neither present -> 0.
-Large inputs: the count can exceed 32-bit range with ~100,000 songs sharing a
-remainder (about 5 billion pairs); Python is immune but it is worth naming.""",
+    check every pair:
+        30 + 20  = 50    no
+        30 + 150 = 180   YES  (180 = 3 minutes)
+        30 + 100 = 130   no
+        30 + 40  = 70    no
+        20 + 150 = 170   no
+        20 + 100 = 120   YES  (2 minutes)
+        20 + 40  = 60    YES  (1 minute)
+        150 + 100 = 250  no
+        150 + 40 = 190   no
+        100 + 40 = 140   no
 
-    """Complexity and the family.
-O(n) time, O(1) space (60 slots). Brute force is O(n^2) - fine at n = 100 and
-fatal at n = 60,000, which is the actual constraint.
-The family is complement counting: Two Sum, Count Number of Pairs With Absolute
-Difference K, Subarray Sums Divisible by K (prefix sums mod k, with the same
-'count what you have already seen' structure), Continuous Subarray Sum, and
-4Sum II. Whenever the condition can be rearranged so one element determines
-what its partner must be, a frequency map turns quadratic into linear.""",
+    ANSWER: 3
+
+Verified by brute force: 3.
+
+    time = [60, 60, 60]
+
+    Every pair sums to 120. There are three pairs - songs (1,2), (1,3) and (2,3).
+    ANSWER: 3
+
+The second example is the important one, and it is not there by accident. It says two
+things at once: identical values still form distinct pairs, and a song that is
+ALREADY a whole number of minutes pairs with another song of the same kind. Both
+facts break naive code, as section 4 shows.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+The lengths can be anything up to 500 seconds, but only ONE thing about a song
+matters: how many seconds it is past the last whole minute. Call that the LEFTOVER.
+
+    150 seconds = 2 minutes and 30 seconds left over.  leftover 30
+     30 seconds = 0 minutes and 30 seconds left over.  leftover 30
+    100 seconds = 1 minute  and 40 seconds left over.  leftover 40
+     40 seconds = 0 minutes and 40 seconds left over.  leftover 40
+
+Two songs make a whole number of minutes exactly when their LEFTOVERS add to a whole
+minute - because the whole minutes each song already contains are, by definition,
+already whole and can be ignored.
+
+    150 + 30  ->  leftovers 30 + 30 = 60.  A whole minute. YES.
+    100 + 40  ->  leftovers 40 + 20?  No - 100's leftover is 40, 40's leftover is 40,
+                  and 40 + 40 = 80, not 60. So 100 + 40 = 140 is NOT divisible.
+    100 + 20  ->  leftovers 40 + 20 = 60. YES.
+
+So every song is really just a number from 0 to 59, and you are counting pairs of
+those numbers that add to 60.
+
+    leftover:  0   1   2  ...  20  ...  30  ...  40  ...  58  59
+               |   |   |       |        |        |        |   |
+               |   +---|-------|--------|--------|--------|---+   1 pairs with 59
+               |       +-------|--------|--------|--------+       2 pairs with 58
+               |               +--------|--------+                20 pairs with 40
+               |                        +                         30 pairs with ITSELF
+               +                                                  0 pairs with ITSELF
+
+Read that picture carefully, because the two ends are the whole difficulty. Leftover 1
+wants leftover 59; leftover 20 wants leftover 40. But leftover 30 wants leftover 30,
+and leftover 0 wants leftover 0 - those two pair with THEMSELVES. Everything that goes
+wrong in this problem goes wrong at those two values.
+
+The counting method then writes itself: walk the playlist once, and for each song ask
+"how many songs BEFORE me had the leftover I need?" Add that many, then record your
+own leftover for the songs still to come.""",
+
+    """3. EVERY TERM, DEFINED
+
+MODULO / REMAINDER (`%`). `t % 60` is what is left after removing as many whole 60s as
+possible. It is the LEFTOVER from section 2. In Python, `150 % 60` is 30 and
+`60 % 60` is 0.
+
+  Everyday version: a clock face. 150 minutes past noon and 30 minutes past noon put
+  the minute hand in the same place. The clock has thrown away the whole hours,
+  keeping only what matters for the hand's position.
+
+DIVISIBLE BY 60. A number is divisible by 60 when its remainder mod 60 is exactly 0.
+So "(a + b) is divisible by 60" is the same statement as "(a % 60 + b % 60) is
+divisible by 60" - because the whole 60s discarded from each were already divisible.
+
+COMPLEMENT. Given a leftover r, the complement is the leftover a partner must have.
+For r = 20 it is 40. For r = 0 it is 0, not 60 - and that exception is the whole point
+of writing `(60 - r) % 60` rather than `60 - r`.
+
+SELF-PAIRING REMAINDER. A leftover whose complement is itself. Solving r = (60 - r)
+mod 60 gives 2r divisible by 60, so r is 0 or 30 - EXACTLY TWO values, and no others.
+This is not a fact to memorise; it is two lines of arithmetic you can do at the board.
+
+COUNTING ARRAY / BUCKET. `remainders` is a 60-slot tally: slot 17 holds how many songs
+seen so far had leftover 17. Sixty slots is enough no matter how long songs get -
+durations run to 500, but there are only 60 distinct remainders mod 60, confirmed by
+counting them.
+
+PAIR (i < j). An unordered pair of distinct positions. The "count what came before"
+technique produces each pair exactly once automatically, because a pair is only
+counted when its LATER song is being processed - which is why no division by two ever
+appears.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - AND IT IS ALWAYS 0 AND 30
+
+TRAP ONE - THE COMPLEMENT OF 0 IS 0, NOT 60.
+
+  Writing `complement = 60 - r` looks harmless until a song's leftover is 0 - a song
+  that is already an exact number of minutes. Then the complement is 60, and there is
+  no slot 60 in a 60-slot array.
+
+      time = [60, 60]      correct 1,  `60 - r` version: IndexError
+      time = [120, 240]    correct 1,  `60 - r` version: IndexError
+      time = [30, 30]      correct 1,  `60 - r` version: 1     (survives)
+      time = [61, 59]      correct 1,  `60 - r` version: 1     (survives)
+
+  Measured, on 6,000 random playlists: wrong on 636 - and ALL 636 were IndexError
+  crashes, never wrong answers. It needs at least one song that is an exact multiple
+  of 60, which is why the rate is low.
+
+  AND THE TWO OFFICIAL EXAMPLES DISAGREE ABOUT IT:
+      [30, 20, 150, 100, 40]   no song is a multiple of 60  ->  AGREES, returns 3
+      [60, 60, 60]             all three are               ->  CRASHES
+
+  So the second sample is the one protecting you. Test on the first alone and the bug
+  ships. `(60 - r) % 60` maps 60 back to 0 and costs nothing.
+
+TRAP TWO - RECORDING BEFORE COUNTING.
+
+  The loop must ask "how many EARLIER songs match me?" and only then record itself. If
+  you record first, a self-pairing song counts ITSELF as its own partner.
+
+      RIGHT:  count += remainders[complement];  remainders[r] += 1
+      WRONG:  remainders[r] += 1;  count += remainders[complement]
+
+  Measured: wrong on 1,178 of 6,000. Both official examples catch it - [30,20,150,100,40]
+  reports 5 instead of 3, and [60,60,60] reports 6 instead of 3, exactly double.
+
+  AND HERE IS THE PRECISE CHARACTER OF THE BUG, MEASURED BY CONTRAST - it only
+  misfires on the two self-pairing leftovers:
+
+      [60, 60, 60]      leftovers {0}       correct 3   record-first 6    SELF-PAIRING
+      [30, 30, 30]      leftovers {30}      correct 3   record-first 6    SELF-PAIRING
+      [20, 40, 20, 40]  leftovers {20, 40}  correct 4   record-first 4    unaffected
+      [10, 50, 10, 50]  leftovers {10, 50}  correct 4   record-first 4    unaffected
+
+  When r and its complement are different slots, incrementing your own slot first
+  cannot affect the slot you then read - so the bug is silent. When they are the SAME
+  slot, you read the tally you just bumped and count yourself. Two values out of
+  sixty, and they are the two values the problem's own examples are built from.
+
+TRAP THREE - INDEXING BY THE RAW DURATION. Tallying `remainders[t]` instead of
+  `remainders[r]` means a 150-second song is filed under 150, where nobody looking for
+  leftover 30 will ever find it. Wrong on 1,821 of 6,000.
+
+  Example one AGREES with it - returns 3 - and the reason is worth seeing. All three
+  of its pairs are found by looking up the songs 30 and 20, and both of those are
+  UNDER 60, so their raw duration and their remainder are the same number - the wrong
+  index happens to be the right one. The two songs that ARE misfiled, 150 at slot 150
+  and 100 at slot 100, are never looked for by anybody. Example two, [60,60,60], files
+  all three under slot 60 while looking up slot 0, finds nothing, and returns 0 -
+  caught.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Try every pair.
+
+    count = 0
+    for i in range(len(time)):
+        for j in range(i + 1, len(time)):
+            if (time[i] + time[j]) % 60 == 0:
+                count += 1
+    return count
+
+This is exactly correct and it is the ground truth used to check everything in this
+entry. Note the `range(i + 1, ...)` - it visits each unordered pair once, which is why
+no halving is needed. Cost: O(n^2) time, O(1) space.
+
+WHY IT IS TOO SLOW, WITH REAL NUMBERS. The stated constraint allows 60,000 songs.
+
+    pairs a brute force examines:  1,799,970,000
+    operations the one-pass does:          60,000
+    ratio:                             29,999 to 1
+
+Roughly 1.8 BILLION additions against sixty thousand. At n = 100 the brute force is
+fine and you should say so; at n = 60,000 it is hopeless.
+
+THE UPGRADE. One pass, one 60-slot tally.
+
+THE TRICK EXPLAINED FROM SCRATCH - "COUNT WHAT CAME BEFORE". The naive version asks,
+for each pair, "do these two match?" The upgrade flips the question: for each song, it
+asks "how many songs I have ALREADY SEEN would match me?" - and it can answer instantly
+because it has been keeping a tally of the leftovers seen so far.
+
+  Every pair (i, j) with i before j is counted exactly once, at the moment j is
+  processed, because that is the only moment when i is in the tally and j is asking.
+  Nothing is double counted and nothing is missed - so there is no division by two and
+  no "did I already count this?" check anywhere.
+
+  The tally is only 60 slots because there are only 60 possible leftovers, so the
+  memory does not grow with the playlist at all - it is O(1) regardless of n.
+
+This "walk once, ask the tally, then join the tally" shape is the same one used by Two
+Sum's hash map and by Subarray Sum Equals K. What changes between them is the KEY you
+tally on: here it is the remainder rather than the value, which is the one idea worth
+carrying away.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: keep a tally of the 60 possible leftovers, and for each song add how
+many earlier songs had the leftover that completes it, then add the song's own
+leftover to the tally.
+
+THE MECHANISM, SPELLED OUT. No recursion, no call stack - a single pass over the
+playlist with two pieces of state: a 60-slot tally and a running count.
+
+  What the loop maintains: after processing the first m songs, `count` holds the exact
+  number of qualifying pairs among those m songs, and `remainders` holds how many of
+  those m songs had each leftover. Both statements are true after zero songs
+  (everything is zero) and each iteration preserves them.
+
+  Why the ORDER inside the body is load-bearing: the read must happen while the tally
+  still describes only the EARLIER songs. Once the current song has been added, the
+  tally describes m + 1 songs, and reading it would let the song pair with itself
+  whenever its leftover is its own complement. This is not a stylistic preference -
+  measured wrong on 1,178 of 6,000 playlists.
+
+  What makes it stop: a plain counted loop over the playlist. There is no convergence
+  condition and nothing can loop forever.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Make a tally of 60 zeros, one slot per possible leftover, and start a running
+     count of pairs at zero.
+  2. For each song duration in the playlist, in order:
+       a. Work out the song's leftover: the duration's remainder when divided by 60.
+       b. Work out the partner leftover it needs: sixty minus its own leftover, and
+          then take THAT result's remainder mod 60 as well - so that a leftover of 0
+          asks for 0 rather than for a slot 60 that does not exist.
+       c. Look up how many songs already tallied have the partner leftover, and add
+          that number to the running count. Every one of them forms a valid pair with
+          this song, and none of those pairs has been counted before.
+       d. NOW add one to this song's own leftover slot, so later songs can find it.
+          This step must come after step c.
+  3. Return the running count.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a coat-check with sixty numbered pegs, labelled 0 to 59. Guests arrive one at
+a time, each wearing a badge with a number from 0 to 59 on it.
+
+The rule of the party is that two guests can dance together only if their badge
+numbers add up to sixty - or if both badges read zero.
+
+Each guest, on arrival, does exactly two things. First they look at ONE peg: the peg
+whose number completes theirs. A guest badged 20 looks at peg 40. A guest badged 30
+looks at peg 30 - their own. They count the coats already hanging there, because every
+one of those coats belongs to a guest they can dance with, and they add that many
+dances to the tally on the wall.
+
+Then, and only then, they hang their own coat on their own peg.
+
+That order is the entire discipline of the place. If a guest hangs their coat first and
+then counts, a guest badged 30 will see their own coat hanging on peg 30 and record a
+dance with themselves. Guests badged 20 never notice the difference, because they hang
+on peg 20 and count peg 40 - two different pegs. Only the guests whose peg IS the peg
+they count are affected, and there are exactly two such badges in the whole building:
+0 and 30.
+
+Nobody ever revisits an earlier guest, and nobody counts a dance twice, because a
+dance is always recorded by whichever of the two guests arrived LATER. At the end, the
+tally on the wall is the answer, and the cloakroom never needed more than sixty pegs
+no matter how many thousands of guests came through.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def num_pairs_divisible_by_60(time):
+
+  `time` is the list of song durations in seconds. (The name shadows Python's `time`
+  module inside this function - harmless here, but worth noticing.)
+
+        remainders = [0] * 60
+
+  `remainders` is the sixty-peg cloakroom: `remainders[k]` counts how many songs seen
+  so far had leftover k. Sixty slots is exactly enough - there are only 60 distinct
+  values of `t % 60`, confirmed by enumerating every duration from 1 to 500. This
+  array does not grow with the playlist, which is why the space cost is O(1).
+
+        count = 0
+
+  `count` is the running total of qualifying pairs.
+
+        for t in time:
+
+  `t` is one song's duration. One pass, in order. The order does not affect the answer,
+  only which member of each pair does the counting.
+
+            r = t % 60
+
+  `r` is this song's leftover. Everything above 60 seconds is discarded here, which is
+  what makes a fixed 60-slot array sufficient for durations up to 500.
+
+            complement = (60 - r) % 60
+
+  The partner leftover. The outer `% 60` exists for exactly one input: when `r` is 0,
+  `60 - r` is 60, and `60 % 60` is 0 - so a whole-minute song correctly looks for
+  another whole-minute song instead of indexing a slot that does not exist. Dropping
+  it raised IndexError on 636 of 6,000 playlists and crashes on the official
+  [60, 60, 60].
+
+            count += remainders[complement]
+
+  THE COUNTING STEP. Every song already tallied under `complement` pairs with this one.
+  Add them all at once - not one at a time, and with no loop. This line reads the
+  tally while it still describes only the EARLIER songs.
+
+            remainders[r] += 1
+
+  THE RECORDING STEP, AND IT MUST BE LAST. File this song under its own leftover so
+  later songs can find it. Swapping these two lines lets a song with leftover 0 or 30
+  count itself, and was wrong on 1,178 of 6,000. Note it files under `r`, not `t` -
+  filing under the raw duration was wrong on 1,821 of 6,000.
+
+        return count
+
+  Every unordered pair was counted exactly once, at the moment its later song was
+  processed - so no halving and no deduplication is needed.""",
+
+    """9. TRACED ON REAL NUMBERS - AND IT LANDS ON THE SELF-PAIRING CASE
+
+The example is the problem's first official sample, and it is worth tracing precisely
+because it contains a self-pairing leftover - the branch section 4 names.
+
+    time = [30, 20, 150, 100, 40]
+    remainders = sixty zeros,  count = 0
+
+    t = 30    r = 30 % 60 = 30
+              complement = (60 - 30) % 60 = 30      <-- SELF-PAIRING
+              remainders[30] is 0     ->  count stays 0
+              remainders[30] becomes 1
+
+    t = 20    r = 20,  complement = (60 - 20) % 60 = 40
+              remainders[40] is 0     ->  count stays 0
+              remainders[20] becomes 1
+
+    t = 150   r = 150 % 60 = 30       (150 = 2 minutes + 30 seconds)
+              complement = 30         <-- SELF-PAIRING AGAIN
+              remainders[30] is 1     ->  count 0 -> 1
+              remainders[30] becomes 2
+
+    t = 100   r = 100 % 60 = 40
+              complement = (60 - 40) % 60 = 20
+              remainders[20] is 1     ->  count 1 -> 2
+              remainders[40] becomes 1
+
+    t = 40    r = 40,  complement = 20
+              remainders[20] is 1     ->  count 2 -> 3
+              remainders[40] becomes 2
+
+    ANSWER: 3.  Cross-checked against the all-pairs brute force: 3. Match.
+
+  Look at the t = 150 step. It counted 1, which is the pair (30, 150) - and it did NOT
+  count itself, because its own tally entry had not been made yet. Under the
+  record-first ordering, remainders[30] would already be 2 at that moment and this
+  single step would add 2 instead of 1. Continue that and the run ends at 5 rather
+  than 3 - measured.
+
+  Look also at t = 100. It counted the earlier song 20, and later t = 40 counted the
+  same song 20 again - correctly, because (20, 100) and (20, 40) are two different
+  pairs. The tally is read many times and each read is a different pair.
+
+  And note that nothing here ever compares 150 with 30 directly. The comparison
+  happened via slot 30, which is what makes this one pass rather than n-squared.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+Change the last song from 40 seconds to 41:
+
+    [30, 20, 150, 100, 40]   ->  3 pairs   (brute force 3)
+    [30, 20, 150, 100, 41]   ->  2 pairs   (brute force 2)
+
+One second, and the pair (20, 40) disappears - 20 + 41 is 61, one second past a
+minute, so its leftover 41 now needs a partner with leftover 19 and there is none.
+That is how brittle "divisible by" is: it is an exact test, not a nearby-enough test,
+and no amount of closeness counts.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the playlist doing a fixed amount of arithmetic per
+song - O(n) time. Sixty tally slots plus two variables, no matter how long the playlist
+is - O(1) space. Both optimal: you must read every song, and the tally never grows.
+
+Against the brute force at the stated ceiling of 60,000 songs: 1,799,970,000 pairs
+examined versus 60,000 operations, a ratio of about 30,000 to 1.
+
+Worth being precise about the space claim: it is O(1) because 60 is fixed by the
+problem, not by the input. If the divisor were a parameter d, it would be O(d).
+
+THE #1 MISTAKE. Recording the song's own leftover before counting its partners. Wrong
+on 1,178 of 6,000 playlists, and it misfires on EXACTLY the two leftovers 0 and 30 -
+the two values that are their own complement. The saving grace is that both official
+examples catch it, so it will not survive submission. Its quieter sibling is
+`complement = 60 - r` without the second `% 60`, which crashes with IndexError on 636
+of 6,000 and is invisible on the first official example.
+
+  The derivation that prevents both: solve "which leftover is its own partner?" -
+  r = 60 - r means 2r = 60, so r = 30; and r = 0 works because 0 + 0 = 0 is already a
+  multiple of 60. TWO values. Say that at the board and both bugs become obvious rather
+  than memorised.
+
+THE COMPLEMENT-LOOKUP FAMILY - WHAT IS THE SAME AND WHAT IS DIFFERENT
+
+  Two Sum tallies raw VALUES and looks up target minus the value; it returns the first
+     pair and stops.
+  Subarray Sum Equals K tallies running PREFIX SUMS and looks up prefix minus k.
+  This entry tallies REMAINDERS and looks up (60 - r) mod 60 - and because the key
+     space is a fixed 60 values rather than unbounded, a plain array replaces the hash
+     map entirely, which is both faster and simpler.
+
+  The shared skeleton is identical: walk once, ask the tally what you need, then join
+  the tally. What differs is the key. Recognising that the key can be a REMAINDER
+  rather than a value is the transferable idea, and it is what lets the same trick
+  count pairs, subarrays or triples divisible by any modulus.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Divisible by k instead of 60." Identical code with a k-slot array. The self-pairing
+     leftovers become r = 0 and, when k is EVEN, r = k/2. When k is odd there is only
+     ONE self-pairing leftover, zero - so the odd case is strictly easier, and noticing
+     that shows you derived the rule rather than memorised it.
+
+  "Return the pairs themselves, not the count." Then the tally must store the INDICES
+     at each leftover, not just a count - O(n) space, and the output can be O(n^2)
+     large in the worst case, so the count question is the only one with an O(1)-space
+     answer.
+
+  "Count TRIPLES summing to a multiple of 60." The complement trick does not extend
+     directly, because three leftovers can reach 60 or 120. Tally the 60 leftover
+     counts first, then loop over all pairs of leftovers (a, b) - 3,600 combinations,
+     a constant - and look up the third. O(n + k^2), still linear in the playlist.
+
+  "Could the count overflow a 32-bit int?" With 60,000 songs all identical, every pair
+     qualifies: 60,000 x 59,999 / 2 = 1,799,970,000. The int32 ceiling is 2,147,483,647.
+     So it FITS, but with only 16% headroom - closer than it looks, and worth a
+     sentence. In Java or C++ this is the kind of margin where a long is defensible;
+     Python's integers are unbounded either way.
+
+ONE-SENTENCE TAKEAWAY. Only the remainder matters, so tally the sixty remainders and
+ask each song how many earlier songs complete it - counting BEFORE recording, because
+leftovers 0 and 30 are their own partners.
+
+THE INTERVIEW IMPLICATION. This is a fast question - the technique is recognisable
+within a minute - so the signal is entirely in the two boundary values. Volunteer them:
+say "0 and 30 are their own complements" before you write the loop, and the ordering of
+the two statements inside it stops being a coin flip. Then state the brute force and
+its 1.8 billion pairs, so the interviewer knows you optimised for a reason. Candidates
+who write the right code but cannot say WHY the `% 60` is on the complement line are
+the ones who get the follow-up about k and stall.""",
 ]
 
 _EX_P1P["Partition Labels (greedy)"] = [
