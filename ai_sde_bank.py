@@ -75273,60 +75273,508 @@ proves the whole task impossible, so one pass either produces the answer or −1
 ]
 
 _EX_P1F["Maximal Square (DP)"] = [
-    """Why the recurrence is a MIN of three neighbours.
-dp[r][c] is the side of the largest all-1s square whose BOTTOM-RIGHT corner is
-(r,c). For a square of side k to end here, three squares of side k-1 must
-already exist - one ending above, one ending to the left, and one ending
-diagonally up-left. Any one of them being smaller caps you.
-So dp[r][c] = min(top, left, diagonal) + 1. Taking max instead, or omitting the
-diagonal, produces squares with a hole in them - and the bug only shows on
-inputs where the three neighbours disagree, which small tests often miss.""",
+    """1. THE GOAL - the biggest solid square of 1s.
 
-    """A trace on a matrix where the min bites.
-matrix = [[1,1,1],
-          [1,1,1],
-          [1,1,1]]
-Row 1 (padded indices): dp = 1,1,1. Row 2: dp[2][2] = min(1,1,1)+1 = 2;
-dp[2][3] = min(1,2,1)+1 = 2. Row 3: dp[3][2] = min(1,2,1)+1 = 2;
-dp[3][3] = min(2,2,2)+1 = 3.
-best = 3, area 9 - the whole matrix.
-Now flip one cell: matrix[0][0] = 0. Then dp[3][3] = min(2,2,1)+1 = 2, area 4.
-One zero in the far corner caps the square, which is exactly what the diagonal
-term is there to notice.""",
+Given a grid of 0s and 1s, find the LARGEST SQUARE made entirely of 1s, and return its AREA.
 
-    """The padded border, and why it removes every boundary check.
-dp is (rows+1) x (cols+1) with an all-zero first row and column, and the matrix
-is read as matrix[r-1][c-1]. That means row 1 and column 1 can reference
-dp[0][*] and dp[*][0] without an if - they read 0, which is exactly right,
-since a square ending on the top edge can have side at most 1.
-Without the pad you need `if r == 0 or c == 0: dp[r][c] = matrix[r][c]`, which
-is where off-by-one bugs live. Padding a DP table with a neutral border is a
-general trick worth carrying to Edit Distance and grid-path problems.""",
+    matrix = 1  0  1  0  0
+             1  0  1  1  1
+             1  1  1  1  1
+             1  0  0  1  0
 
-    """Area versus side, which is the trap in the return line.
-dp holds SIDE lengths, and the problem asks for AREA. Returning best instead of
-best*best is the most common wrong answer on this problem, and it passes any
-test case where the answer happens to be 1 or 0 - so it survives casual
-testing. Say 'dp is the side, the answer is the square of it' out loud when you
-write the return statement.""",
+    Look at the block sitting at rows 1-2, columns 3-4 (counting from 0):
 
-    """Edge cases.
-Empty matrix or empty first row -> 0 by the guard.
-All zeros -> dp stays 0 everywhere, best 0, area 0.
-A single 1 -> dp = 1, area 1.
-A 1xN strip of 1s -> every dp is 1 (no row above), area 1. Correct: a square
-needs height as well as width, and a strip has none. That case catches
-solutions that accidentally compute the largest RECTANGLE.""",
+             1  0  1  0  0
+             1  0  1 [1][1]
+             1  1  1 [1][1]
+             1  0  0  1  0
 
-    """Complexity, the space reduction, and the harder sibling.
-Time O(rows * cols), one pass. Space O(rows * cols), reducible to O(cols) with
-a rolling row plus one saved variable for the diagonal (because dp[r-1][c-1] is
-overwritten the moment you compute dp[r][c-1]) - that saved-diagonal detail is
-the follow-up.
-Maximal RECTANGLE is the genuinely harder cousin: the min-of-three trick does
-not extend, and the standard solution treats each row as a histogram and runs
-Largest Rectangle in Histogram with a monotonic stack, O(rows * cols) overall.
-Knowing that square and rectangle need different techniques is the point.""",
+    That is a 2 x 2 block of 1s. There is no 3 x 3 block anywhere.
+
+    THE LARGEST SIDE IS 2, SO THE AREA IS 4.
+
+THREE THINGS THE QUESTION IS SAYING:
+
+    A SQUARE, NOT A RECTANGLE. The sides must be equal. The harder sibling problem, MAXIMAL
+        RECTANGLE, drops that requirement and needs a completely different technique - section 10.
+    SOLID - every cell inside it must be a 1.
+    RETURN THE AREA, NOT THE SIDE. The answer for the grid above is 4, not 2. Section 4 is about
+        how easy that is to get wrong.
+
+WHY THE OBVIOUS APPROACH IS TOO SLOW. You could try every cell as a corner and every possible side
+length, checking all the cells inside each candidate. That is O(rows x cols x min(rows,cols)^3) in
+the worst case, and section 5 puts a number on it.
+
+THE INSIGHT THAT MAKES IT LINEAR IN THE NUMBER OF CELLS: rather than asking "is there a square of
+side k anywhere", ask a much smaller question at every single cell - HOW BIG IS THE LARGEST SQUARE
+WHOSE BOTTOM-RIGHT CORNER IS EXACTLY HERE? Every square has exactly one bottom-right corner, so
+answering that at every cell answers the whole problem, and section 2 shows the answer at one cell
+follows from three neighbours.""",
+
+    """2. THE INTUITION - a square is limited by its weakest corner.
+
+Define one quantity:
+
+    dp[r][c]  =  THE SIDE LENGTH of the largest all-1s square whose BOTTOM-RIGHT CORNER is at (r, c).
+
+If the cell itself is a 0, no square can end there, so the value is 0. If it is a 1, look at THREE
+NEIGHBOURS - the one above, the one to the left, and the one diagonally up-left:
+
+            dp[r-1][c-1]   dp[r-1][c]
+            dp[r][c-1]     (r, c)
+
+For a square of side k to end at (r, c), a square of side k−1 must end at EACH of those three. So
+the biggest you can manage is one more than THE SMALLEST of the three:
+
+    dp[r][c] = min(above, left, diagonal) + 1
+
+WHY ALL THREE, AND WHY THE MINIMUM. Picture trying to build a 3 x 3 square:
+
+        the 2x2 ending ABOVE covers the top two rows of it
+        the 2x2 ending LEFT covers the left two columns
+        the 2x2 ending DIAGONALLY covers the top-left corner block
+
+    Between them those three 2x2 blocks plus the cell itself cover the whole 3 x 3 area - so if all
+    three are at least 2, the 3 x 3 is solid. And if ANY of them is only 1, some part of the 3 x 3
+    contains a 0, so it cannot be built. THE SMALLEST NEIGHBOUR IS THE BINDING CONSTRAINT.
+
+    A CONCRETE CASE where the minimum bites. Suppose the three neighbours hold 1, 2 and 1:
+
+            1   1              the diagonal says 1, the above says 1, the left says 2
+            2   ?              so ? = min(1, 2, 1) + 1 = 2
+
+    The left neighbour could have supported a side of 3, and it does not matter - the other two cap
+    it at 2. That is the whole reason it is a `min` and not a `max` or a sum.
+
+Walk the grid left to right, top to bottom, and every neighbour you need has already been computed.
+Keep the largest side you ever see, and square it at the end.
+
+    matrix  1 1 1        dp  1 1 1
+            1 1 1     ->     1 2 2        the bottom-right 3 means a 3x3 square ends there
+            1 1 1            1 2 3        AREA = 3 x 3 = 9""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY MATRIX. A grid where every cell is 0 or 1.
+SQUARE. A block with equal width and height, all of whose cells are 1.
+SIDE. The length of one edge. AREA. The side squared - and the thing being returned.
+
+DP TABLE. A second grid holding one computed value per cell.
+STATE. What one table entry means. HERE: the side of the largest square whose BOTTOM-RIGHT CORNER is
+that cell. Anchoring on one corner is what makes the states independent and countable.
+
+PADDING / SENTINEL BORDER. An extra all-zero first row and column added to the table so that cells on
+the real grid's edges have neighbours to read without any boundary checks. Section 4.
+
+OFFSET INDEXING. Because of the padding, table cell (r, c) corresponds to matrix cell (r−1, c−1).
+Getting this wrong by one is the commonest way to break the code.
+
+matrix. The input grid. NOT modified.
+rows, cols. Its dimensions.
+dp. The padded table, (rows+1) x (cols+1).
+best. The largest SIDE seen anywhere.
+r, c. Indices into the PADDED table, running from 1.
+
+O(rows x cols) TIME AND SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - RETURNING THE SIDE INSTEAD OF THE AREA. `dp` holds SIDE LENGTHS and the problem asks for
+AREA. The last line is `return best * best`.
+
+    On the 3 x 3 grid of all 1s: the side is 3 and the area is 9. Returning `best` gives 3.
+    On the 4 x 5 example in section 1: the side is 2 and the area is 4. Returning `best` gives 2.
+
+    IT IS THE COMMONEST MISTAKE ON THIS PROBLEM, because everything in the algorithm is about sides
+    and the conversion happens only once, on the very last line.
+
+TRAP 2 - COMPARING AGAINST THE WRONG TYPE. The code tests `matrix[r-1][c-1] == 1` - the INTEGER 1.
+
+    LEETCODE HANDS YOU CHARACTERS: the grid is `[["1","0"],["1","1"]]`, strings not numbers. Against
+    strings, `== 1` is false for every cell, `dp` stays 0 everywhere, and the answer comes back as 0
+    for a grid full of 1s. No error, just a confident zero.
+
+    Fix it by comparing against `"1"`, or by converting the grid once up front. The point is to CHECK
+    what the input actually contains rather than assuming.
+
+TRAP 3 - INDEXING THE MATRIX WITH THE PADDED INDICES. `dp` is one bigger in each dimension, so table
+cell (r, c) is matrix cell (r−1, c−1). Writing `matrix[r][c]` reads one row and one column too far -
+which either runs off the end or, worse, silently reads the wrong cells.
+
+TRAP 4 - DROPPING THE PADDING AND ADDING BOUNDARY CHECKS INSTEAD. Perfectly possible, and it means
+every one of the three neighbour lookups needs an `if r > 0` style guard, and the first row and column
+need separate handling. THE PADDED BORDER REPLACES ALL OF THAT WITH A ROW AND A COLUMN OF ZEROS: a
+cell on the real top edge reads 0 from the padding, so its `min` is 0 and its value is 1, which is
+exactly right - a single 1 with nothing above it supports a square of side 1.
+
+TRAP 5 - TAKING THE MAXIMUM OF THE THREE NEIGHBOURS RATHER THAN THE MINIMUM. It is a natural slip if
+you are thinking "how big can this be" rather than "what limits this". The minimum is the binding
+constraint (section 2); the maximum would claim squares that contain 0s.
+
+TRAP 6 - FORGETTING THAT `best` MUST BE UPDATED INSIDE THE `if`. It is only meaningful when a square
+actually ends at this cell. Updating it outside would compare against a stale or zero value - harmless
+here since `dp[r][c]` is 0 for a 0-cell and `max` ignores it, but it says something you do not mean.
+
+TRAP 7 - THE EMPTY INPUTS. `if not matrix: return 0` handles an empty grid. A grid whose first row is
+empty - `[[]]` - would make `cols` 0, the inner loop never runs, and the answer is 0, which is correct.""",
+
+    """5. THE NAIVE VERSION FIRST, AND WHY THE RECURRENCE IS EXACTLY RIGHT.
+
+VERSION A - TRY EVERY SQUARE. For every cell as a top-left corner and every side length k, check all
+k^2 cells inside. Summed over all sizes that is O(rows x cols x min(rows,cols)^3) in the worst case.
+
+    FOR A 300 x 300 GRID OF ALL 1s that is on the order of 90,000 starting cells times the work of
+    verifying squares up to side 300 - billions of cell reads. The DP does 90,000 cell visits, each
+    with a constant amount of work.
+
+VERSION B - PRECOMPUTE A 2D PREFIX SUM, then check any candidate square's total in O(1). That brings
+the search down to O(rows x cols x min(rows,cols)) - much better, still worse than linear, and more
+code. Worth naming; it is the right tool when the shape being searched for is not a square.
+
+VERSION C - THE DP, which is the code here. O(rows x cols).
+
+WHY `min OF THREE, PLUS ONE` IS EXACTLY THE SIDE - the argument in both directions, since an
+interviewer will ask why three neighbours and not two.
+
+    IF THE MINIMUM IS AT LEAST k−1, A SQUARE OF SIDE k FITS. Suppose squares of side k−1 end at the
+    cell above, the cell to the left, and the cell diagonally up-left. The one above covers the top
+    k−1 rows of the k x k block; the one to the left covers its left k−1 columns; the diagonal one
+    covers the top-left (k−1) x (k−1) corner. Together with the cell (r, c) itself, every cell of the
+    k x k block is covered by at least one of them - so all of it is 1s.
+
+    IF A SQUARE OF SIDE k ENDS HERE, ALL THREE NEIGHBOURS SUPPORT k−1. Chop the last row off the k x k
+    block and you have a (k−1) x (k−1) square ending at the cell above. Chop the last column and you
+    get one ending at the cell to the left. Chop both and you get one ending diagonally.
+
+    So the largest k is exactly one more than the smallest of the three. Neither direction works with
+    only two neighbours - taking just the above and the left would allow an L-shape with a 0 in the
+    corner, which the diagonal term is precisely what rules out.
+
+WHY SCANNING TOP-LEFT TO BOTTOM-RIGHT IS THE RIGHT ORDER. Every neighbour consulted is up, left, or
+up-left - all of which come earlier in that scan. So each value is final by the time it is read, and
+no second pass is needed.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: AT EVERY CELL, WORK OUT THE SIDE OF THE LARGEST SOLID
+SQUARE THAT ENDS THERE AT ITS BOTTOM-RIGHT CORNER - WHICH IS ONE MORE THAN THE SMALLEST OF THE THREE
+NEIGHBOURS ABOVE, LEFT AND DIAGONALLY UP-LEFT - AND REMEMBER THE BIGGEST SIDE YOU EVER SEE.
+
+THERE IS NO RECURSION. The mechanism is A SINGLE SWEEP OVER THE GRID FILLING A SECOND GRID:
+
+  - Each cell's value depends only on cells ABOVE and to the LEFT, all of which come earlier in a
+    top-to-bottom, left-to-right scan - so everything needed is already final when it is read.
+  - WHAT MAKES IT STOP: two nested loops with trip counts fixed by the grid's dimensions.
+  - WHY ANCHORING ON THE BOTTOM-RIGHT CORNER WORKS: every square has exactly one bottom-right corner,
+    so asking the question at every cell asks about every square exactly once.
+
+THE STEPS:
+
+  1. IF THERE IS NO GRID, THE ANSWER IS ZERO.
+
+  2. MAKE A TABLE ONE ROW TALLER AND ONE COLUMN WIDER THAN THE GRID, ALL ZERO.
+
+     The extra row and column are a border of zeros that is never written. Cells on the real grid's
+     top and left edges read their "neighbours" from it, which saves writing a boundary check on
+     every lookup - a zero neighbour caps the square at side one, which is exactly right for a lone 1
+     with nothing above or beside it.
+
+  3. START THE BEST SIDE AT ZERO.
+
+  4. WALK EVERY CELL OF THE TABLE THAT CORRESPONDS TO A REAL GRID CELL, ROW BY ROW FROM THE TOP AND
+     LEFT TO RIGHT WITHIN EACH ROW.
+
+     Remember the table is shifted by one, so the table cell you are on corresponds to the grid cell
+     one row up and one column left of the same numbers.
+
+  5. IF THE GRID CELL IS A 1:
+
+     a. TAKE THE SMALLEST OF THE THREE ALREADY-COMPUTED VALUES ABOVE, TO THE LEFT, AND DIAGONALLY
+        UP-LEFT, AND ADD ONE. That is the side of the largest square ending here.
+
+        THE SMALLEST, not the largest. Each of those three represents a corner of the square you are
+        trying to build, and the weakest one is what limits it. If any of them cannot support the
+        size, the square would contain a 0.
+
+     b. KEEP IT IF IT BEATS THE BEST SIDE SO FAR.
+
+     If the grid cell is a 0, leave the table entry at zero - no square can end on an empty cell.
+
+  6. RETURN THE BEST SIDE MULTIPLIED BY ITSELF.
+
+     The table holds SIDES and the question asks for AREA. This single multiplication at the very end
+     is the only place the two are connected, which is exactly why it is so easy to forget.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a large sheet of graph paper where some squares are shaded in and the rest are blank, and you
+want to find the biggest completely shaded square block anywhere on the sheet.
+
+Checking every possible block directly is an enormous amount of work - you would have to try every
+starting position and every size, and inspect every little square inside each candidate, over and over.
+
+So you ask a much smaller question, and you ask it at every square on the sheet: if a solid shaded
+block ended HERE, at this square's bottom-right corner, how big could it be?
+
+That is a good question to ask because every block has exactly one bottom-right corner. Ask it
+everywhere and you have asked about every possible block, without ever inspecting the same little
+square twice.
+
+Now the trick is that you can answer it by looking at only three neighbours - the square directly
+above, the square directly to the left, and the square diagonally up and to the left. Each of those
+already has its own answer written on it, because you work across the sheet from the top-left corner
+and they all come before you.
+
+If your own square is blank, the answer is nothing - no block can end on an empty square.
+
+If your square is shaded, then you can extend whatever those three neighbours support by one. But only
+as far as the WEAKEST of them allows. Think of the three of them as holding up three corners of the
+block you want to draw: the one above covers its top, the one to the left covers its side, and the
+diagonal one covers the far corner. If any one of them cannot manage the size, then somewhere inside
+your block there is a blank square, and the block does not exist. So you take the smallest of the
+three and add one.
+
+That is the whole method. Work across and down, filling in a number for every square, and keep note of
+the biggest number you ever write.
+
+Two small things make it tidy. First, squares along the very top and left edges have no neighbours in
+one direction or another, and rather than treating them as special cases you simply pretend there is a
+border of zeros just outside the sheet. A zero neighbour caps them at one, which is exactly right - a
+lone shaded square with nothing above it is a block of size one.
+
+Second, and this is the thing to remember at the end: all through this you have been writing down side
+lengths, and the question asked for the area. A block of side three has an area of nine. The
+conversion happens once, on the very last step, which is precisely why it is the easiest part to
+forget.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the 3 x 3 grid of all 1s beside you, answer 9.
+
+    def maximal_square(matrix):
+        if not matrix:
+            return 0
+
+An empty grid has no square. This also stops `len(matrix[0])` on the next line from raising.
+
+        rows, cols = len(matrix), len(matrix[0])
+
+The grid's dimensions. `matrix[0]` is safe because of the guard above.
+
+        dp = [[0] * (cols + 1) for _ in range(rows + 1)]   # padded with a 0 border
+
+    dp  HOLDS the table. `dp[r][c]` is the SIDE of the largest all-1s square whose BOTTOM-RIGHT CORNER
+        is the grid cell (r−1, c−1).
+
+ONE ROW AND ONE COLUMN BIGGER THAN THE GRID. Row 0 and column 0 are the sentinel border - all zero,
+and never written. Cells on the grid's top or left edge read their missing neighbours from there and
+get 0, which caps them at side 1 without a single boundary check (trap 4).
+
+Note the comprehension - `[[0] * (cols+1)] * (rows+1)` would make every row the SAME list.
+
+        best = 0
+
+    best  HOLDS the largest SIDE seen anywhere. Not the area - the conversion happens on the last line.
+
+        for r in range(1, rows + 1):
+            for c in range(1, cols + 1):
+
+Walk the table's real cells, top to bottom and left to right. Starting at 1 skips the sentinel border.
+
+THIS ORDER IS WHAT MAKES THE RECURRENCE WORK: every neighbour consulted below is up, left, or up-left,
+so all of them are already final (section 5).
+
+                if matrix[r-1][c-1] == 1:
+
+THE OFFSET. Table cell (r, c) is grid cell (r−1, c−1), because of the padding. Writing `matrix[r][c]`
+reads the wrong cell or runs off the end (trap 3).
+
+`== 1` compares against the INTEGER 1. If the grid holds STRINGS - which LeetCode's version does -
+this is false everywhere and the function returns 0 for a grid full of 1s (trap 2).
+
+                    # a square here is limited by its smallest neighbour + 1
+                    dp[r][c] = min(dp[r-1][c], dp[r][c-1], dp[r-1][c-1]) + 1
+
+THE RECURRENCE, AND THE THREE ARGUMENTS ARE THE THREE CORNERS OF THE SQUARE BEING BUILT:
+
+    `dp[r-1][c]`    the square ending directly ABOVE - it covers the top of the new block.
+    `dp[r][c-1]`    the square ending to the LEFT - it covers the left side.
+    `dp[r-1][c-1]`  the square ending DIAGONALLY up-left - it covers the far corner. WITHOUT THIS TERM
+                    an L-shape with a 0 in the corner would be accepted (section 5).
+
+    `min`  because the WEAKEST of the three is the binding constraint. A `max` would claim squares
+           containing 0s (trap 5).
+    `+ 1`  for the current cell, which extends each of those by one.
+
+If the cell is 0 this line never runs and `dp[r][c]` stays 0 - no square can end on an empty cell, and
+that zero then correctly limits its own neighbours later.
+
+                    best = max(best, dp[r][c])
+
+Track the largest side. Inside the `if`, because it is only meaningful where a square actually ends
+(trap 6).
+
+        return best * best
+
+THE SIDE SQUARED. The table held sides throughout; the question asked for area. THIS SINGLE
+MULTIPLICATION IS THE ONLY PLACE THE TWO ARE CONNECTED, and forgetting it is the commonest error on
+this problem (trap 1).""",
+
+    """9. THE TABLE, FILLED BY HAND - AND THE CELL WHERE THE MINIMUM BITES.
+
+TRACE 1 - A GRID OF ALL 1s. matrix = [[1,1,1],[1,1,1],[1,1,1]]. Expected area 9.
+
+    `dp` is 4 x 4, all zero. Row 0 and column 0 are the sentinel border and stay zero throughout.
+
+    r = 1  (grid row 0):
+        c = 1:  matrix[0][0] = 1.  min(dp[0][1], dp[1][0], dp[0][0]) = min(0, 0, 0) = 0
+                dp[1][1] = 1.  best = 1
+                ALL THREE NEIGHBOURS ARE SENTINEL ZEROS - this cell is on the grid's top-left corner,
+                and the border gave it neighbours to read without any special case.
+        c = 2:  min(dp[0][2] = 0, dp[1][1] = 1, dp[0][1] = 0) = 0  ->  dp[1][2] = 1
+        c = 3:  min(0, 1, 0) = 0  ->  dp[1][3] = 1
+
+    r = 2  (grid row 1):
+        c = 1:  min(dp[1][1] = 1, dp[2][0] = 0, dp[1][0] = 0) = 0  ->  dp[2][1] = 1
+        c = 2:  min(dp[1][2] = 1, dp[2][1] = 1, dp[1][1] = 1) = 1  ->  dp[2][2] = 2.  best = 2
+                THE FIRST 2 x 2 SQUARE - all three neighbours support side 1, so this supports 2.
+        c = 3:  min(dp[1][3] = 1, dp[2][2] = 2, dp[1][2] = 1) = 1  ->  dp[2][3] = 2
+
+    r = 3  (grid row 2):
+        c = 1:  min(dp[2][1] = 1, 0, 0) = 0  ->  dp[3][1] = 1
+        c = 2:  min(dp[2][2] = 2, dp[3][1] = 1, dp[2][1] = 1) = 1  ->  dp[3][2] = 2
+        c = 3:  min(dp[2][3] = 2, dp[3][2] = 2, dp[2][2] = 2) = 2  ->  dp[3][3] = 3.  best = 3
+
+    THE TABLE (real cells only):
+
+            1  1  1
+            1  2  2
+            1  2  3
+
+    RETURN best * best = 3 * 3 = 9.
+
+    RETURNING `best` INSTEAD WOULD GIVE 3 (trap 1) - a plausible-looking number that is the side, not
+    the area.
+
+TRACE 2 - THE FIVE-COLUMN EXAMPLE, WHERE THE MINIMUM BITES.
+
+    matrix = 1  0  1  0  0
+             1  0  1  1  1
+             1  1  1  1  1
+             1  0  0  1  0
+
+    Filling row by row, the real cells of `dp` come out as:
+
+            1  0  1  0  0
+            1  0  1  1  1
+            1  1  1  2  2
+            1  0  0  1  0
+
+    best = 2, so the area is 4.
+
+    THE CELL WORTH LOOKING AT is table position r = 3, c = 5 - grid row 2, column 4, the last 1 in the
+    third row:
+
+        above     dp[2][5] = 1
+        left      dp[3][4] = 2
+        diagonal  dp[2][4] = 1
+
+        min(1, 2, 1) = 1  ->  dp[3][5] = 2
+
+    THE LEFT NEIGHBOUR WOULD HAVE SUPPORTED A SIDE OF 3, and it does not matter. The cell above and the
+    diagonal one both cap it at 1, so the square ending here can only be 2 x 2. That is the `min` doing
+    its job - and had the code taken the `max` of the three (trap 5) it would have claimed a 3 x 3
+    square here, which does not exist: grid row 0 columns 3 and 4 are both 0.
+
+    NOTE ALSO ROW 3 OF THE TABLE. The grid's last row is 1 0 0 1 0, so dp becomes 1 0 0 1 0 - every
+    zero cell resets its entry to 0, and those zeros then cap anything below them. A 0 anywhere is a
+    wall that no square can cross.
+
+TRACE 3 - THE EXTREMES.
+
+    ALL ZEROS, matrix = [[0,0],[0,0]]:
+        the `if` never fires, every table entry stays 0, `best` stays 0.
+        RETURN 0 * 0 = 0.
+
+    A SINGLE 1, matrix = [[1]]:
+        r = 1, c = 1:  min(dp[0][1], dp[1][0], dp[0][0]) = min(0, 0, 0) = 0  ->  dp[1][1] = 1.
+        best = 1.  RETURN 1 * 1 = 1.
+        The sentinel border supplied all three neighbours; without it this cell would have needed
+        three boundary checks.
+
+    A SINGLE ROW OF 1s, matrix = [[1,1,1,1]]:
+        every cell's `above` and `diagonal` neighbours are sentinel zeros, so every entry is
+        min(0, something, 0) + 1 = 1.  best = 1.  RETURN 1.
+        Correct - a 1 x 4 strip contains no square bigger than 1 x 1. THE SHAPE MATTERS, NOT THE COUNT
+        OF 1s.
+
+THE TYPE TRAP (trap 2), on the same 3 x 3 grid but with STRING cells [["1","1","1"], ...]:
+
+    `matrix[r-1][c-1] == 1` compares the string "1" against the integer 1, which is FALSE.
+    The `if` never fires anywhere, `best` stays 0.
+    RETURN 0 - for a grid that is entirely 1s. No error, no warning, just a confident zero.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(rows x cols). ONE PASS over the grid, with a fixed amount of work per cell - one comparison,
+one three-way minimum, one addition, one maximum. Every cell is visited exactly once and never
+revisited.
+
+    AGAINST THE BRUTE FORCE at O(rows x cols x min(rows,cols)^3): on a 300 x 300 grid of all 1s that
+    is billions of cell reads against 90,000.
+
+SPACE: O(rows x cols) for the table.
+
+    REDUCIBLE TO O(cols). Each row depends only on the row ABOVE it and on cells to its own left, so
+    ONE ROW plus a single saved value suffices - the saved value holds the diagonal neighbour, which
+    would otherwise be overwritten the moment you update the cell to its left. That one extra variable
+    is the whole subtlety of the space reduction, and it is a standard follow-up.
+
+THE HARDER SIBLING - MAXIMAL RECTANGLE. Drop the requirement that the shape be square and this
+recurrence collapses entirely: a rectangle is not determined by three neighbours, because its width
+and height vary independently.
+
+    THE STANDARD SOLUTION THERE treats each row as the base of a HISTOGRAM - the height of each column
+    being how many consecutive 1s sit above it - and runs LARGEST RECTANGLE IN HISTOGRAM on every row
+    using a monotonic stack. Also O(rows x cols), and a genuinely different technique.
+
+    SAYING THAT UNPROMPTED is the strongest follow-up on this problem: the square case is easy
+    precisely BECAUSE one number per cell pins the whole shape down, and the rectangle case is not.
+
+THE FAMILY - GRID DP WHERE A CELL IS BUILT FROM ITS UP-AND-LEFT NEIGHBOURS:
+
+    MAXIMAL SQUARE              min of three, plus one                    <- this entry
+    MINIMUM PATH SUM            min of two (above, left) plus the cell's cost
+    UNIQUE PATHS                sum of two
+    LONGEST COMMON SUBSEQUENCE  the same up-and-left shape on two strings
+    COUNT SQUARE SUBMATRICES    THE SAME TABLE - the total of every dp entry is the number of squares
+                                of all sizes, which is a one-line change to this exact code
+
+    THE RECOGNITION CUE: a grid, an answer anchored at each cell, and dependencies pointing up and
+    left. Scan top-left to bottom-right and every value you need is already there.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Reduce the space to O(cols)." Keep one row plus a saved diagonal value - and name why the extra
+    variable is needed.
+  - "Count ALL square submatrices, not just the largest." Sum every dp entry. Same table, one line.
+  - "Return the square's position, not just the area." Record the (r, c) where `best` was last
+    improved; the square runs back `best` cells up and left from there.
+  - "What about the largest RECTANGLE?" Histogram plus monotonic stack per row - a different algorithm.
+  - "What if the input is strings?" Compare against "1", or convert once up front (trap 2).
+
+THE #1 BEGINNER MISTAKE: returning the side instead of the area. Every line of the algorithm reasons
+about side lengths, the conversion is a single multiplication on the last line, and the wrong answer -
+3 instead of 9, or 2 instead of 4 - looks entirely reasonable.
+
+RUNNER-UP: using only two neighbours, above and left, and omitting the diagonal. That accepts an
+L-shape with a 0 in its corner as a solid square, and it passes plenty of small tests before failing on
+one where the corner is empty.
+
+TAKEAWAY: anchor the question at each cell's BOTTOM-RIGHT CORNER, because every square has exactly one
+of those - and the side is one more than the SMALLEST of the three neighbours above, left and
+diagonal, since each of them holds up a different part of the block and the weakest one is what limits
+it.""",
 ]
 
 _EX_P1F["Minimum Number of Arrows to Burst Balloons"] = [
