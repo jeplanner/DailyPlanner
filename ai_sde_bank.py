@@ -22483,71 +22483,536 @@ come from the same single mechanism.
 """.strip("\n")
 
 _EXAMPLES_LLM["What is a Large Language Model (LLM)?"] = [
-    """The mechanism traced concretely.
-Prompt: "The Eiffel Tower is located in the city of"
-The model produces a distribution over its entire vocabulary:
-   "Paris"  0.94
-   "Lyon"   0.01
-   "France" 0.01
-   ...tens of thousands of other tokens sharing the rest
-It emits "Paris", appends it to the input, and runs again on
-"The Eiffel Tower is located in the city of Paris" to predict the token after
-that. Generating 100 tokens means 100 forward passes, each one reading
-everything produced so far. That loop is the whole of text generation.""",
+    """1. THE GOAL - what this question is really asking.
 
-    """Why prediction forces understanding - a case where autocomplete cannot work.
-"Sarah put the book on the table. She then picked ___ up."
-To choose "it" and have it refer to the book, the model must track that Sarah
-is the subject, the book is the object, and the pronoun refers to the book
-rather than the table. No amount of surface-level word-frequency statistics
-gets this right consistently. The training objective is trivial; the only way
-to satisfy it across billions of such cases is to represent the situation being
-described.""",
+"What is an LLM?" sounds like a definition question. It is not. The interviewer wants
+to know whether you understand the MECHANISM well enough to predict the model's
+behaviour - why it hallucinates, why it cannot count letters, why serving it is
+expensive, why it does not know what happened last week.
 
-    """The numbers, so the scale is concrete.
-A 70-billion-parameter model:
-  storage at fp16 (2 bytes/param) = 140 GB just for the weights
-  that does not fit on a single 80GB A100 - hence tensor parallelism, or
-  quantisation to 4-bit which brings it to roughly 35GB and fits on one card
-  training data: on the order of 1-15 trillion tokens
-  training compute: thousands of GPUs for weeks, tens of millions of dollars
-Inference is cheap and training is not: the same model that cost $50m to train
-answers a question for a fraction of a cent. That asymmetry is why almost
-everyone consumes models rather than training them.""",
+So here is the answer in one plain sentence, and everything else on this page is
+consequences of it:
 
-    """The failure case that comes straight from the mechanism.
-Ask a model: "How many r's are in 'strawberry'?"
-Models have famously got this wrong. The reason is not stupidity - it is that
-the model never sees the letters. "strawberry" arrives as perhaps two or three
-tokens, and the character composition inside a token is not directly visible.
-It is being asked about a level of structure below its input representation.
-The same root cause explains weakness at reversing strings, counting
-characters, and rhyming in some languages. Knowing WHY it fails tells you the
-fix: give it a tool, or force character-level spacing in the prompt.""",
+    AN LLM IS A VERY LARGE NEXT-WORD PREDICTOR.
 
-    """Contrast against the sibling technologies, which interviewers probe.
-* Traditional ML classifier: trained on labelled examples for ONE task, cannot
-  do anything else, small and cheap, and its confidence score is meaningful.
-* Search engine: retrieves documents that exist. Cannot synthesise, but never
-  invents.
-* LLM: generates new text for any task expressible in language, but has no
-  retrieval guarantee and no reliable confidence.
-This is precisely why RAG exists - it bolts the search engine's grounding onto
-the LLM's synthesis. Being able to place the three side by side is usually how
-the "what is an LLM" question actually gets scored.""",
+That is genuinely all it does. Given some text, it produces a probability for every
+possible next word-piece, one of those is chosen, it gets stuck onto the end, and the
+whole thing runs again.
 
-    """The interview application - a system-design implication.
-"You are serving an LLM to 10,000 concurrent users. What dominates your
-design?"
-Everything follows from the mechanism. Generation is sequential - token N+1
-needs token N - so you cannot parallelise within one response, which makes
-latency roughly proportional to output length. The KV-cache grows with context
-length and consumes GPU memory per active request, so concurrency is bounded by
-memory, not by compute. That is why continuous batching, prompt caching for
-shared prefixes, and capping max output tokens are the three levers that
-actually matter. Every one of those is derived from "it predicts one token at a
-time", which is why the mechanism is worth understanding rather than
-memorising.""",
+    "The Eiffel Tower is located in the city of ___"
+
+    the model outputs a probability for every entry in its vocabulary:
+
+        Paris     0.92
+        France    0.03
+        Lyon      0.01
+        lights    0.005
+        ... about 100,000 more entries, each with a tiny probability
+
+    "Paris" is chosen, appended, and the model is run again on the longer text.
+
+The surprise - and the reason this technology works at all - is that getting really
+good at this one narrow task turns out to require grammar, world facts, arithmetic,
+code structure, and something that behaves a great deal like reasoning. Section 5
+shows a sentence where it is impossible to predict the next word without actually
+tracking what is going on.
+
+The formal version, for when you need it: a transformer neural network with billions of
+parameters, PRETRAINED on enormous amounts of text to predict the next token, then
+FINE-TUNED and aligned to follow instructions. Every phrase in that sentence is unpacked
+below.""",
+
+    """2. THE INTUITION - autocomplete, scaled until something new happens.
+
+Your phone's keyboard suggests the next word. It looks at the last word or two and
+offers the words that most often followed them. Type "how are" and it offers "you".
+
+    phone keyboard:      [last 2 words]  ->  3 guesses
+
+That is the same SHAPE of task. The differences are what matter:
+
+    phone keyboard                    large language model
+    ------------------------------    ----------------------------------------
+    looks back 2 words                looks back thousands of words
+    a lookup table of word pairs      billions of tuned numbers
+    trained on your typing            trained on a large fraction of the
+                                      written internet
+    offers 3 guesses                  scores every one of ~100,000 word-pieces
+
+Picture the output not as a word but as a bar chart over the entire vocabulary:
+
+    Paris   ############################################  0.92
+    France  ##                                            0.03
+    Lyon    #                                             0.01
+    lights  .                                             0.005
+    zebra   .                                             0.0000001
+    (and ~100,000 others)
+
+One of those bars is picked - usually a high one, but not always the highest, which is
+what makes the model's output vary between runs. The chosen word-piece is appended to
+the text, and the model runs again on the now-longer text. Then again. Then again.
+
+    step 1: "...city of"           -> Paris
+    step 2: "...city of Paris"     -> ","
+    step 3: "...city of Paris,"    -> " France"
+
+That loop - output feeds back in as input - is called AUTOREGRESSIVE generation, and it
+explains a great deal of the model's behaviour. It generates left to right and cannot
+revise. Once a wrong word is out, the model's next prediction is conditioned on that
+wrong word, so a single bad step can carry a whole answer off course.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TOKEN. The unit an LLM actually reads and writes. Not quite a word - common words are
+one token, rare words split into pieces. "the" is one token; "strawberry" might be
+"str" + "aw" + "berry". Roughly 0.75 words per token in English, so 1,000 tokens is
+about 750 words. Everything - context limits, pricing, speed - is measured in tokens.
+
+TOKENIZER. The component that chops text into tokens and maps each to a number. It is
+fixed before training and never changes afterwards.
+
+VOCABULARY. The full list of tokens the model knows - typically 50,000 to 200,000
+entries. Every prediction is a probability distribution over this entire list.
+
+PARAMETER / WEIGHT. One tunable number inside the network. "70 billion parameters"
+means 70 billion such numbers, all adjusted during training. They are the model; there
+is nothing else stored.
+
+NEURAL NETWORK. A large stack of matrix multiplications with simple non-linear
+functions between them. The parameters are the entries of those matrices.
+
+TRANSFORMER. The specific network design used by essentially all modern LLMs. Its key
+component is SELF-ATTENTION, which lets every token look at every other token in the
+input and decide which ones are relevant. This is what lets a model connect "she" back
+to a name mentioned three paragraphs earlier.
+
+PRETRAINING. The first and by far the most expensive stage: show the model enormous
+amounts of text and repeatedly ask it to predict the next token, nudging the parameters
+whenever it is wrong. Months of compute on thousands of GPUs.
+
+SELF-SUPERVISED. Training that needs no human labels, because the text supplies its own
+answer - the next token is right there. This is the reason LLMs could be trained on
+internet-scale data at all; nobody could have labelled it.
+
+FINE-TUNING. A much smaller additional training stage on curated data, to teach a
+specific behaviour or style.
+
+INSTRUCTION TUNING. Fine-tuning on examples of instructions and good responses, so the
+model answers questions instead of just continuing text.
+
+RLHF (Reinforcement Learning from Human Feedback). Humans rank pairs of model answers;
+those rankings train a reward model; the LLM is then optimised to score well on it.
+This is what turns a raw next-token predictor into something that behaves like an
+assistant.
+
+INFERENCE. Actually running the trained model to generate text. Distinct from training,
+and it is what costs money in production.
+
+AUTOREGRESSIVE. Each generated token is fed back in as input for the next one.
+Generation is inherently sequential - this is why output speed is measured in tokens
+per second and cannot be parallelised away.
+
+CONTEXT WINDOW. The maximum number of tokens the model can attend to at once - prompt
+plus generated output together. Beyond it, the earliest tokens must be dropped.
+
+KNOWLEDGE CUTOFF. The date the training data ends. The model has no knowledge of
+anything after it and no way to find out, unless you put the information in the prompt.
+
+HALLUCINATION. Producing false statements with complete confidence. Section 4 explains
+why this follows directly from the mechanism rather than being a bug that could be
+patched out.
+
+TEMPERATURE. A dial on how randomly the next token is picked. 0 means always take the
+highest-probability token (repeatable, safer); higher values sample more adventurously
+(more varied, more error-prone).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - four behaviours that come straight from the
+mechanism.
+
+Each of these is a favourite interview question, and each has the same answer: look at
+what the model actually does.
+
+(a) "HOW MANY r's ARE IN 'strawberry'?" Models have famously got this wrong.
+
+The reason is not stupidity, it is TOKENIZATION. The model never sees the letters. It
+sees token numbers - perhaps "str", "aw", "berry" as three integers. Asking it to count
+letters is like asking someone to count the strokes in a word they only ever heard
+spoken. The information was destroyed before the model got it. The same cause explains
+weakness at reversing strings, character-level puzzles, and arithmetic on long numbers.
+
+(b) WHY IT HALLUCINATES. The model is trained to produce PLAUSIBLE CONTINUATIONS, and
+that is all its objective ever rewarded. A fabricated citation in the right format is a
+highly plausible continuation. Nothing in the mechanism separates "this is true" from
+"this reads like the sort of thing that is true" - there is no lookup, no database, no
+verification step. Confidence in the output is not evidence about truth; it reflects
+how predictable the wording was.
+
+How to reduce it: give the model the facts in the prompt rather than relying on its
+weights (retrieval-augmented generation), lower the temperature, ask for citations that
+can be checked against the provided sources, and verify anything that matters with a
+separate system. You reduce hallucination by changing the inputs and adding checks, not
+by asking the model to try harder.
+
+(c) THE KNOWLEDGE CUTOFF. Parameters are frozen when training ends. The model cannot
+learn from your conversation - what looks like learning within a chat is just the
+earlier turns still sitting in the context window. Close the conversation and it is
+gone. For current information, the information must be retrieved and placed in the
+prompt.
+
+(d) IT IS NOT A DATABASE, AND NOT A SEARCH ENGINE. Facts are not stored as retrievable
+records; they are diffused across billions of weights as statistical tendencies. You
+cannot look up what it knows, delete one fact, or get a citation for where a claim came
+from. This is why "just fine-tune it on our documents" is usually the wrong answer to
+"make it know our documents" - fine-tuning teaches style and format reliably, and facts
+only unreliably. Retrieval puts the document in the prompt, where the model can actually
+read it.
+
+TRAP FOR THE INTERVIEW ITSELF: do not describe an LLM as "understanding" or "thinking"
+without qualification, and do not describe it as "just autocomplete" dismissively
+either. Both overclaim. The accurate and defensible statement is: it is trained purely
+to predict the next token, and doing that well at scale produces capabilities that look
+a lot like reasoning, with failure modes that reveal it is not reasoning the way a
+person does.""",
+
+    """5. THE SIMPLE MODEL FIRST, THEN THE UPGRADE - AND WHY PREDICTION FORCES
+UNDERSTANDING.
+
+THE SIMPLE VERSION - an n-gram model. This is what phone keyboards did for decades.
+
+Count, across a huge pile of text, how often each word follows each pair of words. To
+predict, look up the last two words and pick whatever most often came next.
+
+    saw "how are" 50,000 times:  "you" 41,000, "we" 3,000, "things" 2,000, ...
+    -> predict "you"
+
+It works for short phrases and fails immediately on anything requiring memory. It
+cannot connect a pronoun to a name mentioned earlier in the sentence, because it only
+ever looks at the last two words. And the table explodes: covering three-word contexts
+over a 100,000-word vocabulary needs more entries than there are atoms available.
+
+THE UPGRADE - a transformer with self-attention.
+
+Instead of a lookup table, use a network where EVERY token can look at EVERY earlier
+token and weigh how relevant each one is to predicting what comes next. Instead of
+storing counts, store billions of tuned numbers that compress the patterns.
+
+Here is a sentence that shows why that matters, and it is the cleanest way to make the
+point in an interview:
+
+    "Sarah put the book on the table. She then picked ___ up."
+
+To fill that blank with "it", the model must:
+  - work out that "She" refers to Sarah, not to the book or the table;
+  - work out that the thing being picked up is the BOOK, not the table, because books
+    are the sort of thing you pick up and tables are not;
+  - produce the pronoun that agrees with "book".
+
+No two-word lookup table can do this. The information needed sits eight words back, and
+using it requires tracking who did what to which object. The training objective never
+mentioned pronouns, coreference, or physical plausibility - it only ever said "predict
+the next token". Those capabilities appeared because they were NECESSARY to predict the
+next token well.
+
+That is the single most important idea on this page. A narrow objective, pursued at
+enormous scale, forces the machinery underneath to become general.
+
+THE THREE-STAGE PIPELINE, in increasing sophistication, because interviewers ask how a
+raw model becomes a usable assistant:
+
+  1. PRETRAINING - predict the next token on internet-scale text. Produces a model that
+     knows a great deal and does nothing useful. Ask it a question and it may well
+     reply with more questions, because that is what a list of questions looks like.
+
+  2. INSTRUCTION TUNING - fine-tune on (instruction, good response) pairs. Now it
+     answers rather than continues.
+
+  3. RLHF - humans rank competing answers, those rankings train a reward model, and the
+     LLM is optimised against it. This shapes helpfulness, tone, and refusal behaviour.
+
+Stage 1 supplies essentially all the knowledge and costs essentially all the money.
+Stages 2 and 3 are comparatively tiny and supply the behaviour.""",
+
+    """6. HOW IT WORKS - the generation loop, step by step, in plain English.
+
+The one sentence that holds the whole idea: TURN THE TEXT INTO NUMBERED TOKENS, RUN
+THEM THROUGH THE NETWORK TO GET A PROBABILITY FOR EVERY POSSIBLE NEXT TOKEN, PICK ONE,
+STICK IT ON THE END, AND DO IT AGAIN.
+
+THERE IS NO RECURSION in the programming sense - no function calling itself, no call
+stack. But there IS a feedback loop, and it is worth being precise about it because it
+is the source of several behaviours:
+
+  - Each pass produces exactly ONE token.
+  - That token is appended to the input, and the next pass runs on the longer input.
+  - So the input grows by one token per pass, and each pass is conditioned on
+    everything generated so far - including any mistakes.
+  - WHAT MAKES IT STOP: either the model itself emits a special END-OF-SEQUENCE token
+    (it has learned where responses naturally finish), or a maximum length set by the
+    caller is reached, or a stop sequence supplied by the caller appears. Without one
+    of those three, generation does not stop on its own.
+  - Because each pass needs the previous pass's output, generation cannot be
+    parallelised across tokens. This is why a long answer takes time proportional to
+    its length, no matter how much hardware you have.
+
+THE STEPS, for one generated token:
+
+  1. TOKENIZE. Chop the input text into tokens and replace each with its vocabulary
+     number. "The Eiffel Tower is located in the city of" might become a list of ten
+     integers.
+
+  2. EMBED. Turn each token number into a long list of numbers - a vector - that
+     encodes what that token means. Add positional information, so the network knows
+     the order.
+
+  3. RUN THE STACK. Pass the vectors through many identical layers. In each layer,
+     SELF-ATTENTION lets every position look at all earlier positions and pull in
+     whatever is relevant, then a small network processes the result. Dozens of layers,
+     each refining the representation.
+
+  4. SCORE THE VOCABULARY. From the final position's vector, produce one raw score for
+     every token in the vocabulary. These raw scores are called LOGITS.
+
+  5. NORMALISE. Convert the raw scores into probabilities that sum to 1, using the
+     SOFTMAX function - exponentiate each score and divide by the total. Temperature is
+     applied here: dividing the scores by a larger number before the softmax flattens
+     the distribution and makes unlikely tokens more likely to be chosen.
+
+  6. PICK ONE. At temperature 0, take the highest. Otherwise sample from the
+     distribution, usually restricted to the most probable few (top-k) or the smallest
+     set whose probabilities sum past a threshold (top-p / nucleus sampling).
+
+  7. APPEND AND REPEAT. Add the chosen token to the sequence and go back to step 3 -
+     with a large caching optimisation described in section 10, so the earlier tokens
+     do not have to be recomputed.
+
+  8. STOP when the end-of-sequence token appears, the length limit is hit, or a stop
+     sequence matches. Then detokenize: turn the numbers back into text.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine an enormously well-read person who has read almost everything ever written, and
+who is playing one specific game. You show them a passage that stops mid-sentence, and
+they must say what word comes next. They have played this game a trillion times, and
+every time they were told immediately whether they got it right, and they adjusted.
+
+To win consistently they had to pick up an extraordinary amount along the way: grammar,
+who tends to do what, how arguments are structured, what usually follows "therefore",
+how code is laid out, what a French city is called. Not because anybody taught those
+things, but because you cannot guess the next word reliably without them.
+
+Now some important limits on this person.
+
+They have no books with them. Nothing to look up. Everything they say comes from what
+settled into their memory while playing the game, and none of it is filed as a fact
+they could quote a source for - it is all impressions of what usually goes with what.
+So when they do not actually know, they do not fall silent. They say the thing that
+SOUNDS like what would be there, in the right shape, with the right confidence. That
+is not lying; it is the only move the game ever rewarded.
+
+They stopped playing on a particular day and have heard nothing since. Ask about last
+week and they will still produce a fluent answer, because producing fluent answers is
+what they do.
+
+They can only see what is on the desk in front of them - a limited number of pages.
+Anything that slides off the far end of the desk is gone completely.
+
+And they speak strictly one word at a time, left to right, never going back. If the
+third word out of their mouth was wrong, every word after it is built on top of that
+wrong word.
+
+Give them the right page open on the desk, though, and they are formidable - because
+now they are not reaching into fog, they are reading. That is the entire idea behind
+retrieval-augmented generation, and it is why "put the facts in the prompt" beats
+"hope the model remembers".""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+There is no code to trace here, so what follows is the anatomy of ONE generation step -
+every stage named, in the order it happens, with what each one actually holds.
+
+    INPUT TEXT
+        "The Eiffel Tower is located in the city of"
+
+    -> TOKENIZER
+        Produces a list of integers, one per token. Perhaps 10 tokens for this
+        sentence. This is the last point at which letters exist; from here on the model
+        sees only these numbers. This is exactly why the strawberry question fails.
+
+    -> EMBEDDING TABLE
+        Each token number becomes a vector - a list of several thousand numbers -
+        looked up from a table that is itself part of the learned parameters. Positional
+        information is added, because attention on its own has no notion of order.
+        Result: a grid, one row per token, several thousand columns wide.
+
+    -> THE TRANSFORMER STACK  (repeated N times, often 32 to 100 layers)
+        Each layer does two things:
+
+        SELF-ATTENTION. Every token produces three vectors: a QUERY (what am I looking
+        for?), a KEY (what do I offer?) and a VALUE (what do I contribute?). Each
+        token's query is compared against every earlier token's key; the resulting
+        scores decide how much of each token's value to pull in. This is the machinery
+        that connects "She" back to "Sarah". It is CAUSAL - a token may look backwards
+        but never forwards, which is what makes the whole thing a next-token predictor
+        rather than a fill-in-the-blank system.
+
+        FEED-FORWARD NETWORK. A small network applied to each position independently,
+        which does most of the actual storing of facts. The majority of the parameter
+        count lives here, not in attention.
+
+    -> FINAL LAYER, LAST POSITION ONLY
+        For generation, only the vector at the LAST token matters - it now encodes
+        everything relevant about the whole sequence for the purpose of predicting what
+        comes next.
+
+    -> OUTPUT PROJECTION -> LOGITS
+        That vector is multiplied by a large matrix to produce one raw score per
+        vocabulary entry. If the vocabulary is 100,000, this is a list of 100,000
+        numbers. They are unbounded and can be negative; they are not yet probabilities.
+
+    -> SOFTMAX (with temperature)
+        Each logit is divided by the temperature, exponentiated, and divided by the sum
+        of all of them. The result is 100,000 numbers, all positive, summing to exactly
+        1. Now they are probabilities.
+
+    -> SAMPLING (top-k / top-p / greedy)
+        One token is chosen. Greedy takes the maximum. Top-k restricts to the k most
+        probable and samples among them. Top-p keeps the smallest set of tokens whose
+        probabilities sum past p, and samples from those.
+
+    -> APPEND, AND LOOP BACK
+        The chosen token joins the sequence. The next pass reuses the stored keys and
+        values of all previous tokens - the KV CACHE - so only the new token needs
+        processing through the stack.
+
+    -> STOP when the end-of-sequence token is produced, the length cap is reached, or a
+       caller-supplied stop sequence appears. Then the token numbers are turned back
+       into text.
+
+Two facts about this pipeline worth carrying into any system-design discussion: the
+parameters are READ but never written during inference - the same weights serve every
+user simultaneously - and the only per-user state is that user's tokens and KV cache.""",
+
+    """9. TRACED ON A CONCRETE EXAMPLE, with real numbers.
+
+    Prompt: "The Eiffel Tower is located in the city of"
+
+STEP 1 - the model produces logits over the whole vocabulary, and softmax turns them
+into probabilities. (Illustrative values; the shape is the point, not the exact
+figures.)
+
+    Paris     0.92
+    France    0.03
+    Lyon      0.01
+    lights    0.005
+    love      0.004
+    ... roughly 100,000 further tokens sharing the remaining 0.031
+
+    At temperature 0, "Paris" is taken - the maximum. At temperature 1, "Paris" is
+    taken about 92 times in 100, and occasionally something else appears. Notice the
+    distribution is extremely PEAKED here, because the answer is heavily determined by
+    the prompt.
+
+STEP 2 - "Paris" is appended and the model runs again.
+
+    Input is now: "The Eiffel Tower is located in the city of Paris"
+
+    ","       0.55
+    "."       0.30
+    " in"     0.06
+    " which"  0.04
+    ...
+
+    This distribution is FLAT by comparison, because several continuations are equally
+    reasonable. Same model, same mechanism - the flatness reflects genuine ambiguity in
+    the text, not uncertainty about a fact. This is the distinction people miss when
+    they assume a confident-sounding answer means the model is sure of a fact.
+
+STEP 3 - "," is chosen and appended.
+
+    Input: "The Eiffel Tower is located in the city of Paris,"
+    -> " France"  0.88, " the"  0.04, " a"  0.02, ...
+
+STEP 4 - and so on, until an end-of-sequence token is produced or the length cap is
+reached. Each step ran the entire network to produce exactly one token.
+
+NOW THE NUMBERS THAT MAKE THE SCALE CONCRETE, because interviewers ask about serving
+cost:
+
+    A 70-billion-parameter model, stored at 2 bytes per parameter:
+        70,000,000,000 x 2 bytes = 140 GB, just for the weights.
+
+    A single high-end accelerator holds 80 GB. So 140 GB does not fit on one - the
+    model must be split across at least two, and in practice more, with the network
+    between them becoming part of your latency budget.
+
+    Work per generated token is roughly 2 arithmetic operations per parameter:
+        2 x 70 billion = about 140 billion operations - FOR ONE TOKEN.
+    A 500-token answer is therefore around 70 trillion operations.
+
+    Quantisation to 1 byte per parameter halves the memory to 70 GB, which does fit on
+    one accelerator, at some cost in quality. This is why quantisation is discussed in
+    every serving design.
+
+    Context: a 1,000-word prompt is about 1,300 tokens. Attention cost grows with the
+    SQUARE of sequence length, so doubling the context roughly quadruples that part of
+    the work - which is why long-context support is a genuine engineering achievement
+    and not just a configuration setting.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST MODEL, since this is what an interviewer will push on:
+
+  - Generation is SEQUENTIAL. One token per full pass through the network, each pass
+    depending on the last. More hardware makes each pass faster; it cannot make the
+    passes happen at the same time. Output length therefore sets latency directly.
+
+  - The PROMPT is processed in parallel (all its tokens at once - the "prefill" phase),
+    but the OUTPUT is not (the "decode" phase). A long prompt with a short answer is far
+    cheaper than a short prompt with a long answer.
+
+  - The KV CACHE stores the attention keys and values for every token processed so far,
+    so each new token does not reprocess the whole sequence. It is what makes generation
+    tolerable, and it is memory that grows with context length AND with the number of
+    concurrent users. On a busy server it often runs out before compute does.
+
+  - ATTENTION IS QUADRATIC in sequence length. Doubling the context roughly quadruples
+    that component of the work.
+
+  - PARAMETERS ARE READ-ONLY at inference. Every user shares the same weights, which is
+    why batching many users' requests together is the single biggest efficiency win
+    available - the expensive weight-loading is amortised across all of them.
+
+THE SYSTEM-DESIGN QUESTION THIS SETS UP: "you are serving an LLM to 10,000 concurrent
+users - what dominates your design?" The answer follows entirely from the above: batch
+aggressively to share the weight reads; cap and manage the KV cache, since memory
+usually binds before compute; cache repeated prompt prefixes; stream tokens to users so
+perceived latency tracks the first token rather than the last; route easy requests to a
+smaller model; and quantise if the quality cost is acceptable.
+
+HOW LLMs DIFFER FROM THEIR NEIGHBOURS, a comparison interviewers like:
+
+  - A traditional ML CLASSIFIER is trained on labelled examples for ONE task and can do
+    nothing else. An LLM is trained on unlabelled text for one generic objective and can
+    attempt an enormous range of tasks.
+
+  - A SEARCH ENGINE retrieves documents that exist and can cite them. An LLM generates
+    text that may or may not correspond to anything. Combining the two - retrieve, then
+    generate from what was retrieved - is RAG, and it exists precisely because each
+    covers the other's weakness.
+
+  - A DATABASE stores facts you can query, update and delete individually. An LLM's
+    "facts" are smeared across billions of weights and cannot be individually inspected
+    or edited.
+
+THE #1 MISTAKE when answering this question: describing an LLM as if it looks things up.
+Everything that confuses people about these systems - hallucination, the knowledge
+cutoff, the inability to count letters, the confident wrong answer - dissolves once you
+hold onto the fact that it is generating a plausible continuation rather than retrieving
+a stored one. Answer from the mechanism and the follow-up questions answer themselves.
+
+TAKEAWAY: an LLM is a next-token predictor scaled until prediction requires
+understanding - so it is fluent, general and frozen at training time, and everything it
+does well and everything it gets wrong both follow from that single fact.""",
 ]
 
 
@@ -49956,64 +50421,527 @@ failed, not that users got harder.""",
 ]
 
 _EX_P0H["Union-Find (Disjoint Set Union)"] = [
-    """Merging groups step by step (union by SIZE).
-n=6, parent=[0,1,2,3,4,5], size=[1,1,1,1,1,1].
-union(0,1): roots differ, sizes equal -> parent[1]=0, size[0]=2.
-union(2,3): parent[3]=2, size[2]=2.
-union(1,2): find(1)=0 (size 2), find(2)=2 (size 2). Equal sizes, so 2 is attached
-under 0: parent[2]=0, size[0]=4.
-Groups now: {0,1,2,3} rooted at 0, plus {4} and {5}.
-find(3) walks 3 -> 2 -> 0 and, thanks to path compression, leaves 3 pointing much
-closer to the root for next time.""",
+    """1. THE GOAL, in plain English.
 
-    """'Are these two connected?' answered in near-constant time.
-After the unions above: find(3) == find(1) == 0 -> connected.
-find(3) == find(4)? 0 vs 4 -> not connected.
-This is the query DFS cannot do cheaply: with DFS each connectivity question
-costs a fresh O(V+E) traversal, whereas DSU answers it in amortised alpha(n) -
-under 5 for any n you can store. With a million queries that is the difference
-between minutes and milliseconds.""",
+Connections keep arriving one at a time, and you must keep answering two questions
+instantly:
 
-    """Counting groups while edges stream in.
-Start count = n and decrement on each successful union:
-n=6, edges arriving one at a time: (0,1) -> count 5; (2,3) -> 4; (1,2) -> 3;
-(0,3) -> union returns False (already together) -> count stays 3.
-Final: 3 groups - {0,1,2,3}, {4}, {5}.
-That False return is doing double duty: it keeps the count honest AND it is a
-cycle detector, since an edge between two already-connected nodes closes a
-cycle.""",
+    "Are these two things in the same group?"
+    "Merge these two groups."
 
-    """Union by size vs union by rank - the same guarantee, different bookkeeping.
-By SIZE: attach the tree with fewer NODES under the larger one. By RANK: attach
-the SHORTER tree under the taller one.
-Either keeps depth at O(log n) before compression, and with path compression both
-give amortised alpha(n).
-Union by size has one practical advantage: size[find(x)] answers 'how big is x's
-group?' for free - which is exactly what problems like 'largest component after
-each merge' ask for. Rank cannot answer that.
-Without EITHER optimisation, unioning in a chain builds a linked list of depth n
-and every find becomes O(n).""",
+This page covers the UNION BY SIZE variant, and it leans on the two situations where
+that variant is what you actually want in an interview: COUNTING how many separate
+groups remain as edges stream in, and KRUSKAL'S minimum spanning tree.
 
-    """Kruskal's MST, worked.
-Edges sorted by weight: (A,B,1), (C,D,2), (B,C,3), (A,C,4).
-Take (A,B,1): union succeeds -> in the tree.
-Take (C,D,2): succeeds -> in.
-Take (B,C,3): A,B is one group and C,D another -> succeeds, merging them.
-Take (A,C,4): find(A) == find(C) -> returns False, so this edge would close a
-cycle and is SKIPPED.
-Result: 3 edges, total weight 6, spanning all 4 nodes. DSU is what makes the
-cycle test O(alpha) instead of a graph traversal per edge - the whole algorithm
-is 'sort the edges, then let DSU say yes or no'.""",
+The everyday picture is a road network being built. Six towns, no roads yet - six
+separate regions.
 
-    """Where to use it, and where not to.
-Use DSU when connectivity questions or merges arrive OVER TIME: Number of Islands
-II, Accounts Merge, Redundant Connection, friend circles, Kruskal, and detecting
-cycles while a dependency graph is being built.
-Do NOT reach for it when the graph is static and you need one answer - plain DFS
-or BFS is simpler and equally fast for a single sweep.
-Its real limitation: DSU cannot UNDO a union. If the problem removes edges as
-well as adding them, you need a different structure (offline processing in
-reverse, or a link-cut tree). Saying that out loud is a strong senior signal.""",
+    (0)   (1)   (2)   (3)   (4)   (5)          6 regions
+
+Build a road between town 0 and town 1, and those two towns become one region. Build
+another between 2 and 3. Now four regions. Build one between 1 and 2, and - without
+anyone building a road from 0 to 3 - towns 0, 1, 2 and 3 are all in one region,
+because you can drive between any of them.
+
+    (0-1-2-3)   (4)   (5)                       3 regions
+
+Two things this structure gives you that a plain list of roads does not:
+
+  - The number of regions, updated as each road opens, with no re-scanning.
+  - An instant answer to "can I drive from here to there?"
+
+And one thing it deliberately does NOT give you: the route. Union-Find knows WHICH
+blob you are in, never HOW to get across it.
+
+The name: FIND asks which group; UNION merges two. DISJOINT SET UNION (DSU) is the
+same thing under a more formal name - "disjoint" meaning the groups never overlap.""",
+
+    """2. THE INTUITION - each group keeps a leader and a headcount.
+
+A group does not need a list of its members. It needs a NAME, and the cheapest name is
+one of its own members that everybody agrees on.
+
+Give each element an arrow pointing at somebody else in the same group. Follow arrows
+and you reach an element pointing at ITSELF - the ROOT, and the group's name.
+
+Everybody starts alone, so everybody starts as their own root, and every group has
+size 1:
+
+    0->0   1->1   2->2   3->3   4->4   5->5
+    size:  1      1      1      1      1      1
+
+Merge 0 and 1. Point one root at the other, and add the headcounts:
+
+       0->0        size[0] = 2
+       ^
+       1
+
+Merge 2 and 3 the same way. Now merge 1 and 3. Do NOT point 1 at 3 - that merges two
+MEMBERS, not two groups. Walk up from each to find the roots (0 and 2) and point one
+root at the other:
+
+          0->0            size[0] = 4
+         / \\
+        1   2
+             \\
+              3
+
+Answering "are 1 and 3 connected?" is: walk up from 1 to reach 0, walk up from 3 to
+reach 2 then 0. Same root, so yes.
+
+THE SIZE IS DOING REAL WORK, in two separate ways:
+
+  - It decides which root hangs under which. Always hang the SMALLER group under the
+    LARGER one. Do it backwards and the arrows form one long chain, and every question
+    walks its whole length.
+
+  - It is genuinely useful information on its own. "How big is the largest connected
+    component?" is answered by reading size at any root, for free. The rank variant of
+    this structure tracks tree height instead, which cannot answer that question.
+
+One more free number falls out. Start a counter at n and subtract one every time a
+merge actually happens. That counter is always the number of groups remaining - which
+is exactly what "count the connected components as edges arrive" asks for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SET / GROUP / COMPONENT. A collection of elements all reachable from one another. Used
+interchangeably here. "Connected component" is the graph word for the same thing.
+
+DISJOINT. Non-overlapping. Every element is in exactly one group.
+
+PARENT. The single arrow each element carries. parent[3] is the element that 3 points
+at.
+
+ROOT / LEADER. The element pointing at itself: parent[x] == x. One per group; it is
+the group's name.
+
+FIND(x). Walk the arrows from x to the root and return it. "Which group is x in?"
+
+UNION(a, b). Find both roots; if different, point one at the other. Returns True if a
+merge really happened, False if they were already together.
+
+SIZE. How many elements are in a group. size[r] is only meaningful when r is a ROOT;
+values stored against non-roots are stale leftovers and are never read.
+
+UNION BY SIZE. When merging, hang the group with FEWER MEMBERS under the group with
+more. (The alternative, union by RANK, compares estimated tree HEIGHT instead.)
+
+PATH COMPRESSION. While walking up during a find, re-point the elements you pass so
+they sit closer to the root. The read operation improves the structure as it goes.
+
+MINIMUM SPANNING TREE (MST). Given a weighted graph, the cheapest set of edges that
+connects every node with no cycles. Always exactly n-1 edges for n nodes. Section 5
+shows how DSU makes finding one nearly trivial.
+
+CYCLE. A closed loop in a graph. In an UNDIRECTED graph, adding an edge between two
+nodes already in the same component creates one - which is precisely when union
+returns False.
+
+AMORTISED. Averaged over a long run. One find might take a few steps; across many
+operations the average is essentially constant.
+
+INVERSE ACKERMANN, a(n). The true per-operation cost with both optimisations. It stays
+below 5 for any n that could physically exist. Treat it as a constant, and say
+"effectively constant time, amortised".""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the fundamental one: MERGING NODES INSTEAD OF ROOTS.
+
+    def union(self, a, b):
+        self.parent[b] = a          # WRONG
+
+b may be the root of a thousand elements, or a member buried inside another group.
+Either way this attaches one NODE to another node, not one GROUP to another. The code
+runs, no error appears, and elements that should now be connected still report
+different roots. Every correct union starts with two finds.
+
+TRAP 2: forgetting to update the size after the merge. `self.size[ra] += self.size[rb]`
+is easy to leave out because nothing crashes without it. The structure still gives
+correct connectivity answers - but every future merge decision is based on stale
+counts, the trees gradually get taller, and the "largest component" query silently
+returns the wrong number.
+
+TRAP 3: reading size at a non-root. After 1 is merged into 0, size[1] is still 1 and it
+is meaningless. To ask how big 1's group is, you must call find(1) first and read the
+size at the ROOT. This is the single most common bug in "size of the largest island"
+style problems.
+
+TRAP 4: treating union returning False as an error. It is information. In an undirected
+graph, False means the edge you were about to add joins two nodes that were already
+connected - a CYCLE. In Kruskal's algorithm, False is exactly the signal to skip that
+edge. In "Redundant Connection", the first edge that returns False IS the answer.
+
+TRAP 5: writing find recursively and blowing the stack. The recursive form is prettier
+and performs slightly better compression, but on a long chain it recurses as deep as
+the chain, and Python's default limit is around 1000. With 100,000 elements it crashes.
+The loop version on this page cannot.
+
+TRAP 6: using DSU on a DIRECTED graph. It has no notion of direction - only "these are
+in the same blob". Cycle detection in a directed graph needs DFS with white/grey/black
+colouring. Say this distinction out loud; interviewers ask.
+
+TRAP 7: expecting to un-merge. There is no "un-union". If edges are REMOVED over time,
+the standard trick is to process the whole timeline BACKWARDS, so removals become
+additions.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADES - AND THE PROOF.
+
+THE SLOW VERSION - label every element with its group id.
+
+    group = [0, 1, 2, 3, 4, 5]
+
+    find(x)     -> group[x]          instant
+    union(a, b) -> walk the WHOLE array relabelling every member of one group
+
+FIND is O(1), which is lovely. UNION is O(n), which is fatal: n merges cost n^2.
+
+THE TREE VERSION - arrows instead of labels. Union is now O(1) once you know the roots,
+because only ONE arrow changes. But find must walk to the root, and if the trees become
+chains that walk is O(n). You have moved the cost, not removed it.
+
+UPGRADE 1 - UNION BY SIZE, and why it bounds the depth.
+
+Always hang the SMALLER group under the LARGER one. Here is the proof that this keeps
+every element shallow, and it is a genuinely nice argument:
+
+Follow ONE element and count how many times its depth increases. Its depth only grows
+when the tree containing it is hung UNDER another tree - and by the rule, that only
+happens when its tree is the SMALLER of the two. So at the moment its depth increases
+by one, the tree it now belongs to is AT LEAST TWICE the size of the tree it was in.
+
+Its tree started at size 1. Every single depth increase at least doubles that size.
+The tree can never exceed n elements. So the number of doublings - and therefore the
+number of depth increases for that element - is at most log2(n).
+
+For a million elements, that is 20. For a billion, 30. And that is BEFORE path
+compression does anything at all.
+
+Note how directly the argument uses the size counter. The rank variant proves the same
+bound a different way, by arguing a tree of height h must contain at least 2^h nodes.
+Same guarantee, different bookkeeping.
+
+UPGRADE 2 - PATH COMPRESSION, and why it is safe.
+
+Every time a find walks up, shorten the path for whoever comes next.
+
+Why you are allowed to modify the structure during a READ: re-pointing a node at its
+grandparent does NOT change which root it eventually reaches. The root is the same
+either way; only the intermediate stops are removed. Group membership is untouched.
+This is the sentence to say in an interview, because "a read operation that mutates"
+sounds wrong until you see why it cannot change any answer.
+
+The specific line:
+
+    self.parent[x] = self.parent[self.parent[x]]
+
+points x at its GRANDPARENT, not all the way at the root. This variant is called PATH
+HALVING - each traversal roughly halves the chain for everyone behind it. It needs no
+recursion and no second pass, and it reaches the same amortised bound. Be precise if
+asked: the comment says compression, the mechanism is halving, the guarantee is equal.
+
+TOGETHER: O(a(n)) amortised per operation, effectively constant. With only one of the
+two, O(log n), which still passes most constraints. With neither, O(n) and a timeout.
+
+WHAT THE SIZE VARIANT BUYS YOU THAT RANK DOES NOT: size[root] is a real, meaningful
+number you can hand back to the caller. "What is the largest connected component?"
+"How many people are in this account cluster?" Rank cannot answer those - it is an
+upper bound on height, not a count of anything. If a problem asks about component
+SIZES, use union by size; otherwise the two are interchangeable.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: GIVE EVERY ELEMENT AN ARROW TO SOMEONE IN
+ITS OWN GROUP, CALL THE SELF-POINTING ELEMENT THE GROUP'S NAME, AND MERGE BY POINTING
+THE SMALLER GROUP'S NAME AT THE LARGER ONE'S AND ADDING THE HEADCOUNTS.
+
+THERE IS NO RECURSION in this implementation - find is a loop on purpose, so it cannot
+exhaust the call stack on a long chain. But the recursive version is what most books
+show, so it is worth knowing what it would be doing:
+
+  - find(x) would call find on x's parent, which PAUSES the current call. Python
+    records where it stopped and what x was, on the CALL STACK - a pile of paused
+    calls.
+  - Each deeper call is one step closer to the root.
+  - WHAT MAKES IT STOP: reaching an element whose parent is itself. That call returns
+    without going deeper - the BASE CASE.
+  - The root then travels back DOWN the pile. Each paused call wakes up, receives the
+    root, re-points its own x directly at it, and passes it on. That downward journey
+    is what performs full path compression.
+  - The catch: the pile is as deep as the chain, so a 100,000-long chain crashes.
+
+SETTING UP:
+
+  1. Make an array parent where parent[i] = i - everyone is their own leader.
+  2. Make an array size where every entry is 1 - every group has one member.
+  3. If you need a component count, start a separate counter at n.
+
+FIND(x):
+
+  4. While x does not point at itself:
+     a. Re-point x at its grandparent. This is free - you are already looking at the
+        parent - and it permanently shortens x's walk.
+     b. Step up to x's new parent.
+  5. Return x, which is now the root.
+
+UNION(a, b):
+
+  6. Find the root of a and the root of b.
+  7. If they are the same root, no merge happens. Report False - and remember that in
+     a graph this means the edge closes a cycle.
+  8. Compare the two group SIZES. Arrange it so the name you keep refers to the LARGER
+     group; if it does not, swap the two names.
+  9. Point the smaller group's root at the larger group's root. One arrow changes.
+ 10. Add the smaller group's headcount into the larger group's headcount.
+ 11. Report True. If you are counting components, this is where you decrement.
+
+The step people skip is 6. Merging operates on ROOTS, never on the elements passed in.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Picture a town of clubs where nobody keeps a membership register. Every member can name
+ONE other member - "ask her, she knows more than me". Follow the referrals far enough
+and you reach someone who says "ask me, I decide here". That person is the president,
+and the club has no name other than its president.
+
+Each president does keep ONE number written on a card: how many people are in the club.
+Nobody else's card is up to date, and nobody else's card matters.
+
+To ask whether two people are in the same club, follow each one's referral chain to a
+president. Same president, same club.
+
+As you walk up somebody's chain, you tell each person along the way: "skip a step -
+from now on refer people straight to whoever your contact refers to." Nobody's
+membership changes; you have only shortened the chain. So the act of ASKING makes the
+town faster to ask next time.
+
+To merge two clubs, you do not copy any registers. You find both presidents and compare
+their headcount cards. The president of the SMALLER club steps down and starts referring
+to the larger club's president. The larger president adds the smaller headcount to their
+own card. One sentence, one number updated, and every member of the smaller club -
+however many thousands - is now in the larger club, because their chains all led to
+their old president, who now leads onward.
+
+Why must the smaller president be the one to step down? Because everyone in the club
+that stepped down just got one referral further from the top. Making that happen to the
+smaller crowd rather than the larger one is what keeps the chains short.
+
+Finally, keep a tally on the wall: how many clubs exist in the town. It starts at one
+per person, and it drops by one every time a merge actually happens. If two people
+turn out to already share a president, no merge happens, the tally does not move - and
+that fact is itself worth knowing, because it means those two were already connected
+by some other route.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    class UnionFind:
+        def __init__(self, n):
+
+n elements, numbered 0 to n-1, all present from the start.
+
+            self.parent = list(range(n))   # each node starts as its own root
+
+The arrows. list(range(6)) is [0,1,2,3,4,5], so everyone points at themselves - n
+separate groups of one.
+
+            self.size = [1] * n            # group sizes (for union by size)
+
+The headcount cards. Every group starts with one member. Only the entry at a ROOT is
+ever meaningful; entries at non-roots go stale the moment that element stops being a
+root, which is trap 3.
+
+        def find(self, x):                 # return the root of x's group
+            while self.parent[x] != x:
+
+Walk up until x points at itself - the definition of a root. A loop, not recursion, so
+a long chain cannot overflow the stack.
+
+                self.parent[x] = self.parent[self.parent[x]]  # path compression
+
+Read it inside out: self.parent[x] is x's parent, so self.parent[self.parent[x]] is
+x's GRANDPARENT. The line re-points x at its grandparent, permanently cutting one link
+out of x's chain. Safe because it changes the route, never the destination. (Strictly
+this is path halving - see section 5.) If x's parent is already the root, the
+grandparent is the root too and the line is harmless.
+
+                x = self.parent[x]
+
+Step up. Because of the line above, this jumps two levels of the ORIGINAL chain, which
+is why chains roughly halve each time they are walked.
+
+            return x
+
+x points at itself, so x is the root - the group's name.
+
+        def union(self, a, b):             # merge the groups of a and b
+            ra, rb = self.find(a), self.find(b)
+
+The step everybody skips. Find the ROOT of each side first; ra and rb are the two
+presidents. Never touch parent[a] or parent[b] directly. As a side effect, these two
+finds also compress both paths, so union quietly improves the structure too.
+
+            if ra == rb:                   # already the same group
+                return False
+
+Same president means same club, nothing to merge. False is not a failure - it is the
+"already connected" signal, which is a detected cycle in graph terms and the skip
+signal in Kruskal.
+
+            if self.size[ra] < self.size[rb]:   # attach smaller under larger
+                ra, rb = rb, ra
+
+Union by size. If ra names the smaller group, swap the two names. After this line ra
+ALWAYS names the group with at least as many members, so the two lines below only need
+to be written one way round.
+
+            self.parent[rb] = ra
+
+The merge. ONE arrow changes and two groups become one. Every element that used to
+reach rb now walks one extra step and reaches ra. Nothing is copied and no register is
+updated, because no register exists.
+
+            self.size[ra] += self.size[rb]
+
+Add the headcounts. Missing this line is trap 2 - the structure keeps giving correct
+connectivity answers while every future merge decision degrades, so the bug hides.
+Note that size[rb] is deliberately left alone; rb is no longer a root, so its entry is
+now stale and will never be read again.
+
+            return True
+
+A merge genuinely happened. A caller counting components decrements here.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    uf = UnionFind(6)
+    count = 6                              (a caller-side component counter)
+
+    parent = [0, 1, 2, 3, 4, 5]
+    size   = [1, 1, 1, 1, 1, 1]
+
+union(0, 1)
+    find(0) = 0 (parent[0] == 0, loop never runs).  find(1) = 1.  ra = 0, rb = 1.
+    ra != rb, continue.
+    size[0] = 1, size[1] = 1. Is 1 < 1? No -> no swap.
+    parent[1] = 0.
+    size[0] = 1 + 1 = 2.
+    return True -> count = 5.
+
+    parent = [0, 0, 2, 3, 4, 5]
+    size   = [2, 1, 2, 1, 1, 1]      (size[1] is now stale and never read again)
+    Groups: {0,1}, {2}, {3}, {4}, {5}
+
+union(2, 3)
+    find(2) = 2, find(3) = 3.  ra = 2, rb = 3.
+    size[2] = 1, size[3] = 1. Is 1 < 1? No -> no swap.
+    parent[3] = 2.  size[2] = 1 + 1 = 2.
+    return True -> count = 4.
+
+    parent = [0, 0, 2, 2, 4, 5]
+    size   = [2, 1, 2, 1, 1, 1]
+    Groups: {0,1}, {2,3}, {4}, {5}
+
+union(1, 2)
+    find(1): parent[1] = 0, and 0 != 1, so enter the loop.
+             parent[1] = parent[parent[1]] = parent[0] = 0.  (already at the root)
+             x = 0. parent[0] == 0 -> return 0.   ra = 0.
+    find(2) = 2 (parent[2] == 2).   rb = 2.
+    ra != rb.
+    size[0] = 2, size[2] = 2. Is 2 < 2? No -> no swap.
+    parent[2] = 0.  size[0] = 2 + 2 = 4.
+    return True -> count = 3.
+
+    parent = [0, 0, 0, 2, 4, 5]
+    size   = [4, 1, 2, 1, 1, 1]
+    Groups: {0,1,2,3}, {4}, {5}
+
+union(4, 0)   <- THE SWAP BRANCH, which the equal-size merges above never triggered
+    find(4) = 4, find(0) = 0.   ra = 4, rb = 0.
+    size[4] = 1, size[0] = 4. Is 1 < 4? YES -> swap: ra = 0, rb = 4.
+    parent[4] = 0.  size[0] = 4 + 1 = 5.
+    return True -> count = 2.
+
+    parent = [0, 0, 0, 2, 0, 5]
+    size   = [5, 1, 2, 1, 1, 1]
+    Groups: {0,1,2,3,4}, {5}
+
+Notice what the swap prevented. Without it, the four-member group would have been hung
+under the single element 4, pushing all four of them one level deeper to serve one
+node. With it, the lone node moved instead.
+
+NOW WATCH PATH HALVING DO REAL WORK - find(3):
+    parent[3] = 2, and 2 != 3, so enter the loop.
+      parent[3] = parent[parent[3]] = parent[2] = 0.   <- 3 now points STRAIGHT at 0
+      x = 0.
+    parent[0] == 0 -> return 0.
+
+    parent = [0, 0, 0, 0, 0, 5]
+
+3's walk was two steps and is now one, permanently. The read improved the structure.
+
+union(0, 3)
+    find(0) = 0.  find(3) = 0.
+    ra == rb -> return False. Nothing changes, count stays 2.
+    In a graph, this False means the edge 0-3 closes a CYCLE - 0 and 3 were already
+    connected through 1 and 2.
+
+FINAL CHECK. Four Trues were returned, so count = 6 - 4 = 2, and the arrays show
+exactly two groups: {0,1,2,3,4} of size 5, and {5} of size 1. size[0] = 5 confirms it -
+and that is the answer to "how big is the largest component?", read for free.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(a(n)) amortised per operation - effectively constant. Say that phrase, and be
+ready to explain that a is the inverse Ackermann function and stays under 5 for any
+real n.
+
+In plain words: union by size keeps every element within log2(n) levels of its root
+even before compression, because an element's depth only grows when its tree is
+absorbed into one at least twice the size - and you cannot double from 1 past n more
+than log2(n) times. Path halving then flattens whatever chains actually get used. After
+a handful of operations almost everything points directly at its root.
+
+SPACE: O(n) - two integer arrays. Merging a group of a million into another group of a
+million costs one array write and one addition. Nothing is ever copied.
+
+KRUSKAL'S MST, worked, because this is the classic application:
+
+    edges sorted by weight: (A,B,1), (C,D,2), (B,C,3), (A,C,4)
+
+    (A,B,1): union succeeds -> take the edge. Total 1.
+    (C,D,2): union succeeds -> take it. Total 3.
+    (B,C,3): union succeeds -> take it. Total 6.
+    (A,C,4): union returns False - A and C are already connected -> SKIP. Taking it
+             would create a cycle, and a spanning tree has none.
+
+    Result: 3 edges for 4 nodes (always n-1), total weight 6.
+
+The whole of Kruskal is "sort the edges by weight, then take each one exactly when
+union returns True". That is why the True/False return value exists.
+
+WHERE DSU IS THE RIGHT TOOL: when connectivity questions or merges arrive OVER TIME -
+Number of Islands II, Accounts Merge, Redundant Connection, Number of Connected
+Components, Kruskal, and equation-consistency problems. When the entire graph is handed
+to you at once and you just need the components, plain BFS or DFS is simpler and just
+as fast. Reach for DSU when edges stream in.
+
+SIZE OR RANK? They give the same asymptotic guarantee. Choose SIZE when the problem
+asks anything about component sizes - largest island, cluster headcount - because
+size[root] is then a real answer you already have. Choose either otherwise.
+
+THE #1 BEGINNER MISTAKE: reading size[x] without calling find(x) first. After a merge,
+size is only correct at the ROOT; every other entry is a stale leftover. This is what
+breaks "size of the largest connected component" problems, and it fails quietly with a
+plausible-looking smaller number.
+
+Runner-up: writing parent[b] = a in union without finding the roots, which merges two
+nodes instead of two groups and gives silently wrong connectivity.
+
+TAKEAWAY: keep a leader and a headcount per group, always hang the smaller group under
+the larger, and both the "are these connected?" question and the "how many groups are
+left?" question become effectively instant - with the headcount doubling as a free
+answer to "how big is it?".""",
 ]
 
 _EX_P0H["Insert Interval"] = [
