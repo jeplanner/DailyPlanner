@@ -77159,185 +77159,1494 @@ for _e in ENTRIES:
 _EX_P1G = {}
 
 _EX_P1G["Minimum Number of Coins for Fruits"] = [
-    """The offer, restated so the DP makes sense.
-Buying the i-th fruit (1-indexed) at price[i] grants the NEXT i fruits free.
-So buying fruit 1 covers fruit 2. Buying fruit 3 covers fruits 4, 5 and 6.
-Crucially you MAY still pay for a free fruit, because doing so buys its own
-offer - a cheap fruit deep in the list can unlock a long free run.
-That last sentence is the whole difficulty: a greedy 'always take the free
-fruit' is wrong, because paying for something you could have had free can be
-cheaper overall.""",
+    """1. THE GOAL - a market offer with a catch.
 
-    """A trace on prices = [3,1,2].
-dp has size n+2 with dp[4] = 0 (nothing left).
-i=3: buying fruit 3 covers 4..6, all past the end. upper = min(4, 7) = 4, so
-     j ranges over {4}: dp[3] = 2 + dp[4] = 2.
-i=2: buying fruit 2 covers fruit 3. upper = min(4, 5) = 4, j in {3,4}:
-     dp[2] = 1 + min(dp[3], dp[4]) = 1 + min(2, 0) = 1.
-     (Choosing j=4 means fruit 3 came free.)
-i=1: buying fruit 1 covers fruit 2. upper = min(4, 3) = 3, j in {2,3}:
-     dp[1] = 3 + min(dp[2], dp[3]) = 3 + min(1, 2) = 4.
-Answer 4: buy fruit 1 for 3 (fruit 2 free), then pay 1 for fruit 2 anyway to
-get fruit 3 free... which costs 4 total. Tracing this by hand is the only way
-to be sure the index arithmetic is right.""",
+Fruits are numbered 1, 2, 3, ... and each has a price. THE OFFER IS:
 
-    """Why the inner range ends at 2i+1, which is the index detail that sinks people.
-Buying fruit i covers i+1 through 2i. So the next fruit you might PAY for is
-anywhere from i+1 (you decline the offer immediately) up to 2i+1 (you take
-every free fruit and resume paying just past the covered block).
-Hence `for j in range(i+1, min(n+1, 2*i+1) + 1)`. Off by one in either
-direction gives a wrong answer that still looks plausible on small inputs -
-which is exactly why the three-element trace above is worth doing out loud.""",
+    IF YOU BUY THE i-th FRUIT, THE NEXT i FRUITS ARE FREE.
 
-    """Why iterate BACKWARDS.
-dp[i] depends on dp[j] for j > i - states to its RIGHT. So the table must be
-filled from n down to 1, and dp[n+1] = 0 is the base case meaning 'nothing
-remains to buy'. Fill forwards and every dp[j] you read is still the
-uninitialised zero, so the answer collapses to price[1].
-The general rule: look at which direction the recurrence reaches, and iterate
-against it. Forward-reaching recurrences fill backwards.""",
+    Buy fruit 1  ->  fruit 2 is free.
+    Buy fruit 2  ->  fruits 3 and 4 are free.
+    Buy fruit 3  ->  fruits 4, 5 and 6 are free.
 
-    """Edge cases.
-[1] -> i=1, upper = min(2,3) = 2, j in {2}: dp[1] = 1 + dp[2] = 1. One fruit,
-you must buy it.
-[1,1,1] -> buying fruit 1 (cost 1) covers fruit 2; then fruit 3 must be paid or
-covered - dp works out to 2. Verify by hand that taking the free fruit is not
-always right.
-All-expensive-then-cheap like [10,1,1,1] -> buying fruit 1 for 10 covers only
-fruit 2, so paying 1 for fruit 2 to cover 3 and 4 is better than it looks.
-That is the case that defeats greedy.""",
+YOU MUST END UP WITH EVERY FRUIT. Minimise the total spent.
 
-    """Complexity, and the optimisation.
-As written it is O(n^2): for each i the inner min scans up to i+1 positions.
-For n <= 1000 that is fine.
-The follow-up is to notice the inner operation is 'minimum of dp over a sliding
-window', which a monotonic deque computes in O(1) amortised - giving O(n)
-overall. Naming that reduction (the same technique as Sliding Window Maximum
-and Jump Game VI) is the strong finish, even if you do not implement it.""",
+THE CATCH THAT MAKES IT INTERESTING: YOU MAY STILL BUY A FRUIT YOU WERE GOING TO GET FREE. Why would
+you? Because buying it triggers ITS offer, which may cover more ground than the free one you were
+handed.
+
+    prices = [3, 1, 2]        fruit 1 costs 3, fruit 2 costs 1, fruit 3 costs 2
+
+        Buy fruit 1 for 3   ->  fruit 2 is free.
+        Fruit 3 is not covered, so buy it for 2.        TOTAL 5.
+
+        OR: buy fruit 1 for 3   ->  fruit 2 is free.
+            BUY FRUIT 2 ANYWAY for 1  ->  its offer covers fruits 3 and 4.
+            Fruit 3 is now free.                        TOTAL 4.
+
+    ANSWER: 4 - and it is reached by PAYING FOR SOMETHING THAT WAS ALREADY FREE.
+
+    prices = [1, 10, 1, 1]
+
+        Buy fruit 1 for 1   ->  fruit 2 free.
+        Fruit 2 costs 10, so do NOT buy it. Fruit 3 is not covered - buy it for 1  ->  fruit 4 free.
+        TOTAL 2.
+
+    ANSWER: 2
+
+SO THE DECISION AT EVERY FRUIT IS NOT "buy or take free" - it is WHERE DO I NEXT CHOOSE TO PAY? Once
+you have bought fruit i, everything through fruit 2i is free, so the next fruit you PAY for could be
+anywhere from i+1 (paying immediately, ignoring the freebies) up to 2i+1 (taking every free fruit
+first). Section 2 turns that into a recurrence, and section 4 is about the off-by-one in that upper
+limit, which is the whole difficulty.""",
+
+    """2. THE INTUITION - work backwards, and choose where to pay next.
+
+Define one quantity:
+
+    dp[i]  =  THE CHEAPEST WAY TO ACQUIRE FRUITS i, i+1, ... n, GIVEN THAT YOU ARE PAYING FOR FRUIT i.
+
+If you pay for fruit i, you spend price(i) and fruits i+1 through 2i arrive free. THE ONLY THING LEFT
+TO DECIDE IS WHERE YOU NEXT CHOOSE TO PAY - call it j. And j can be anywhere in a specific window:
+
+    THE EARLIEST is j = i+1. Pay for the very next fruit, ignoring the freebie, because its own offer
+        might be better.
+    THE LATEST is j = 2i+1. Accept every free fruit through 2i, and the first fruit not covered is
+        2i+1, which you must then deal with.
+
+    dp[i]  =  price(i)  +  the smallest dp[j] for j from i+1 to 2i+1
+
+    prices = [3, 1, 2]      the windows:
+
+        fruit 1 covers fruit 2          ->  next paid fruit j is in {2, 3}
+        fruit 2 covers fruits 3, 4      ->  j is in {3, 4, 5}
+        fruit 3 covers fruits 4, 5, 6   ->  j is in {4, ...}, all past the end
+
+Anything past the end of the list means "nothing left to buy", which costs 0. So put a sentinel there
+and fill the table FROM THE RIGHT:
+
+        dp[4] = 0                                     nothing left
+        dp[3] = 2 + min(dp[4]) = 2 + 0 = 2            buy fruit 3, everything after is free
+        dp[2] = 1 + min(dp[3], dp[4]) = 1 + 0 = 1     buy fruit 2, and its offer reaches past the end
+        dp[1] = 3 + min(dp[2], dp[3]) = 3 + 1 = 4     buy fruit 1, then pay again at fruit 2
+
+    ANSWER: dp[1] = 4
+
+    Read that last line again - THE MINIMUM CHOSE dp[2] = 1 OVER dp[3] = 2. That is the algorithm
+    deciding to pay for fruit 2 even though fruit 1's offer had already made it free, because fruit
+    2's own offer then covers fruit 3.
+
+WHY BACKWARDS. `dp[i]` depends on `dp[j]` for j > i - states to its RIGHT. So the table must be
+filled from n down to 1, with the sentinel past the end as the base case. Filling forwards would read
+cells not yet computed.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+1-INDEXED. Fruits are numbered from 1, not 0. The list `prices` is 0-indexed, so fruit i costs
+`prices[i-1]` - which is what the little `price` helper exists to hide.
+
+THE OFFER. Buying fruit i makes fruits i+1 through i+i free.
+COVERAGE. The range a purchase makes free: i+1 .. 2i.
+
+DYNAMIC PROGRAMMING (DP). Solving smaller pieces first and reusing the answers.
+STATE. What one stored value means. HERE: `dp[i]` is the cheapest cost for everything from fruit i
+onward, GIVEN THAT YOU PAY FOR FRUIT i. That conditioning is what makes the states independent.
+
+SENTINEL. `dp[n+1] = 0` - a slot past the end meaning "nothing left to buy", so the recurrence needs
+no special case for the last few fruits.
+
+BACKWARD FILL. Computing the table from the highest index down, because each state depends on higher
+ones.
+
+prices. The input list. NOT modified.
+n. The number of fruits.
+price(i). Helper returning the 1-indexed price - `prices[i-1]`.
+dp. The table, of size n+2 so that index n+1 exists.
+i. The fruit being paid for. j. The next fruit you choose to pay for.
+upper. The clamped top of the window - `min(n+1, 2i+1)`.
+
+O(n^2) TIME as written, O(n) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - and the standard example cannot detect the main one.
+
+TRAP 1 - THE WINDOW ENDING AT 2i INSTEAD OF 2i+1. This is the index detail that sinks people, and it
+is worse than it looks because THE OBVIOUS TEST CASES DO NOT EXPOSE IT.
+
+    Buying fruit i covers i+1 through 2i. So the next fruit you might PAY for runs from i+1 up to
+    2i+1 - the +1 being the case where you accept ALL the free fruits and the first uncovered one is
+    2i+1.
+
+    WRITE `upper = min(n+1, 2*i)` INSTEAD AND:
+
+        prices = [3, 1, 2]          correct 4,   with 2i:  4      <- IDENTICAL
+        prices = [1]                correct 1,   with 2i:  1      <- IDENTICAL
+        prices = [1, 1, 1]          correct 2,   with 2i:  2      <- IDENTICAL
+        prices = [1, 10, 1, 1]      correct 2,   with 2i: 12      <- caught at last
+        prices = [26,18,6,12,49,7,45,45]   correct 39,  with 2i: 57
+
+    THE PROBLEM'S OWN FIRST EXAMPLE PASSES WITH THE BUG IN PLACE. You need an input where skipping
+    ahead past the whole coverage genuinely pays - [1,10,1,1] is the smallest such, because there the
+    right move is to take fruit 2 free (it costs 10) and resume paying at fruit 3, which is exactly
+    j = 2i+1 for i = 1.
+
+TRAP 2 - FILLING THE TABLE FORWARDS. `dp[i]` depends on states to its RIGHT, so the loop must run
+from n down to 1. Forwards, every `dp[j]` read is still 0 from initialisation, and the answer collapses
+to just `price(1)`.
+
+TRAP 3 - FORGETTING THE SENTINEL, OR SIZING THE TABLE AS n+1. The table must have index n+1 available
+and holding 0. `dp = [0] * (n + 2)` gives indices 0..n+1. Size it as n+1 and the `upper = min(n+1, ...)`
+clamp indexes off the end.
+
+TRAP 4 - MIXING UP THE INDEXING. Fruits are 1-indexed and `prices` is 0-indexed. The `price(i)` helper
+returns `prices[i-1]`. Using `prices[i]` directly reads the NEXT fruit's price - which shifts every
+answer and, on the last fruit, raises IndexError.
+
+TRAP 5 - TREATING THE OFFER AS "the next i fruits are free SO SKIP THEM". They are free, but you may
+still choose to pay for one, and sometimes you must in order to get its offer. The whole point of the
+`min` over a window is that paying early is an option, not a mistake. On [3,1,2] the optimal answer
+does exactly that.
+
+TRAP 6 - ASSUMING GREEDY WORKS. "Always buy the cheapest fruit in reach" has no reason to be optimal -
+the value of a purchase is not its price but how far its coverage reaches combined with what lies
+beyond. The DP considers every resume point precisely because no local rule captures that.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE WINDOW EXPLAINED.
+
+VERSION A - TRY EVERY SUBSET OF FRUITS TO BUY. Check each for whether it covers everything, and keep
+the cheapest. 2^n subsets - for n = 30 that is over a billion, and the coverage check is another O(n)
+each.
+
+VERSION B - RECURSION WITHOUT MEMOISATION. "Cheapest from fruit i onward = price(i) + the cheapest
+from the best resume point". Correct and exponential, because the same fruit is reached along many
+different paths.
+
+VERSION C - THE BACKWARD DP, which is the code here. O(n^2).
+
+VERSION D - THE SAME DP WITH A SLIDING-WINDOW MINIMUM. The inner `min` scans a window that moves as i
+decreases, so a MONOTONIC DEQUE can supply the minimum in amortised O(1), bringing the whole thing to
+O(n). Worth naming as the follow-up; for n <= 1000 the quadratic version is entirely comfortable.
+
+WHY THE WINDOW IS i+1 THROUGH 2i+1 - the part that decides whether the code is right.
+
+    You have just paid for fruit i. Fruits i+1 .. 2i are now free. Consider the next fruit you CHOOSE
+    to pay for, and call it j.
+
+        j CANNOT BE i ITSELF or anything before - those are behind you.
+        j = i+1 IS ALLOWED. You may ignore the freebie and pay immediately, because fruit i+1's own
+            offer covers i+2 .. 2i+2, which may reach further than fruit i's did.
+        EVERY j UP TO 2i IS ALLOWED, for the same reason - take some free fruits, then start paying
+            again inside the covered range.
+        j = 2i+1 IS ALLOWED, and is the case people drop. Accept all the free fruits; the first one
+            NOT covered is 2i+1, and you must obtain it somehow.
+        j BEYOND 2i+1 IS NOT ALLOWED - fruit 2i+1 would then be neither free nor bought.
+
+    SO THE WINDOW IS EXACTLY i+1 .. 2i+1, and `upper = min(n+1, 2*i+1)` clamps it to the sentinel when
+    the offer already reaches past the end.
+
+WHY CONDITIONING ON "YOU PAY FOR FRUIT i" MAKES THE STATES CLEAN. Without that condition, "the cheapest
+for fruits i onward" would depend on how much free coverage you arrived with - a second dimension. By
+defining the state as "I am paying here", every earlier decision is fully summarised by which fruit you
+are paying for, and the table stays one-dimensional.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WORKING FROM THE LAST FRUIT BACKWARDS, WORK OUT THE
+CHEAPEST WAY TO GET EVERYTHING FROM EACH FRUIT ONWARD ASSUMING YOU PAY FOR THAT FRUIT - WHICH IS ITS
+PRICE PLUS THE CHEAPEST ANSWER AMONG ALL THE PLACES YOU COULD CHOOSE TO PAY NEXT.
+
+THERE IS NO RECURSION. The mechanism is A BACKWARD SWEEP OVER A TABLE THAT ONLY EVER LOOKS RIGHTWARDS:
+
+  - Each entry depends on entries at HIGHER indices, so the sweep runs from the last fruit down to the
+    first and everything needed is already computed.
+  - A slot just past the last fruit holds zero and means "nothing left to buy", which removes every
+    special case for the final few fruits.
+  - WHAT MAKES IT STOP: the outer loop runs once per fruit; the inner scan runs over a bounded window.
+
+THE STEPS:
+
+  1. MAKE A TABLE WITH ONE SLOT PER FRUIT, PLUS ONE EXTRA SLOT PAST THE END HOLDING ZERO.
+
+  2. WORK FROM THE LAST FRUIT DOWN TO THE FIRST. FOR EACH FRUIT:
+
+     a. WORK OUT THE WINDOW OF PLACES YOU COULD NEXT CHOOSE TO PAY.
+
+        It starts at the very next fruit - you are always allowed to ignore the free offer and pay
+        immediately, because that fruit's own offer might reach further.
+
+        It ends one past the last fruit the offer covers. Buying this fruit makes the next
+        however-many free, and the first one NOT made free is the one after those - so that is the
+        latest place you could resume paying. STOPPING THE WINDOW AT THE LAST COVERED FRUIT INSTEAD OF
+        ONE BEYOND IT IS THE MISTAKE THIS PROBLEM IS BUILT AROUND, and it is invisible on the obvious
+        test cases.
+
+        Clamp the top of the window to the slot past the end, in case the offer already reaches
+        further than there are fruits.
+
+     b. THIS FRUIT'S ANSWER IS ITS OWN PRICE PLUS THE SMALLEST ANSWER ANYWHERE IN THAT WINDOW.
+
+  3. THE ANSWER IS THE FIRST FRUIT'S ENTRY - you always have to pay for fruit one, since nothing
+     precedes it to make it free.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a fruit stall where the fruits are laid out in a line and every one has a price. The stall has
+an unusual offer: pay for the fruit in position three and you get the next three fruits for nothing;
+pay for the one in position five and the next five are free. The further along the line a fruit sits,
+the more it gives away.
+
+You want to walk away with all of them, spending as little as possible.
+
+The obvious approach is to pay for the first fruit, collect your free ones, then pay for whichever
+fruit is not covered, and repeat. That is a reasonable plan and it is not always the cheapest, because
+of a wrinkle worth pausing on: NOTHING STOPS YOU PAYING FOR A FRUIT YOU WERE ABOUT TO GET FREE. And
+sometimes you should, because paying for it triggers its own offer, which may cover far more ground
+than the handful you were being given.
+
+So at any moment, having just paid for something, the only real question is: where do I next choose to
+open my wallet? And the answer has a range. You could pay for the very next fruit immediately,
+declining the freebie entirely. You could take one or two free ones and then start paying again. Or
+you could take every free fruit you are entitled to, in which case the first fruit still unaccounted
+for is the one just past the end of the free run - and that is the furthest you can possibly wait.
+
+That last option is the one people forget. If the offer covers you up to some fruit, the next fruit
+you have to deal with is the one AFTER that, not the last covered one. Overlook it and you have
+quietly forbidden yourself from ever taking the full benefit of an offer - and the annoying part is
+that on simple examples the answer comes out right anyway, so nothing tells you.
+
+The way to compute all this is to start from the far end of the line and work backwards. For the last
+fruit the answer is trivial: pay for it, and there is nothing beyond. For the one before it, you know
+what everything after costs, so you can compare your options. Keep stepping backwards and at each
+fruit ask: if I pay here, what is the cheapest total from here to the end? That is this fruit's price
+plus the best of all the places you could resume paying.
+
+Working backwards is not a preference. Each answer is built from answers further along the line, so
+they must exist before you need them.
+
+When you reach the first fruit, its figure is the answer - because the first fruit is the one thing
+nobody can give you free.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep prices = [3, 1, 2] beside you, answer 4.
+
+    def minimum_coins(prices):
+        n = len(prices)
+
+The number of fruits. `prices` is only ever read - this function does not modify the caller's list.
+
+        def price(i):
+            return prices[i - 1]
+
+THE 1-INDEXING BRIDGE. Fruits are numbered from 1 and the list is indexed from 0, so fruit i costs
+`prices[i-1]`. Isolating that in one helper is what keeps the rest of the code free of off-by-ones
+(trap 4).
+
+        dp = [0] * (n + 2)                 # dp[n+1] = 0 (nothing left to buy)
+
+    dp  HOLDS the table. `dp[i]` is the cheapest total for fruits i onward, GIVEN THAT YOU PAY FOR
+        FRUIT i.
+
+SIZE n+2, so indices 0 through n+1 exist. `dp[n+1]` is the SENTINEL - already 0 from the
+initialisation - meaning "nothing left to buy". It is what lets the recurrence work unchanged for the
+final fruits, whose offers reach past the end (trap 3).
+
+        for i in range(n, 0, -1):
+
+BACKWARDS, from the last fruit down to the first. `dp[i]` reads entries at HIGHER indices, so those
+must already be final (trap 2). Running this forwards returns just `price(1)`.
+
+            # buying fruit i covers i+1..2i free; resume paying at any j in i+1..2i+1
+            upper = min(n + 1, 2 * i + 1)
+
+THE WINDOW'S TOP, AND THE LINE THE PROBLEM IS BUILT AROUND.
+
+    `2 * i + 1`  is the first fruit NOT covered by this purchase - buying fruit i frees i+1 through
+                 2i, so 2i+1 is the latest place you could resume paying. Writing `2 * i` instead
+                 forbids ever taking the full benefit of the offer (trap 1).
+    `min(n + 1, ...)`  clamps to the sentinel when the coverage already reaches past the last fruit.
+
+            dp[i] = price(i) + min(dp[j] for j in range(i + 1, upper + 1))
+
+THE RECURRENCE.
+
+    `price(i)`                          what you spend here.
+    `range(i + 1, upper + 1)`           every place you could next choose to pay - from the very next
+                                        fruit up to and INCLUDING `upper`, which is why `upper + 1`
+                                        appears.
+    `min(dp[j] for ...)`                the cheapest of those futures.
+
+    THE `min` IS WHERE PAYING FOR AN ALREADY-FREE FRUIT GETS CHOSEN. On [3,1,2] at i = 1 it compares
+    `dp[2] = 1` against `dp[3] = 2` and picks `dp[2]` - deciding to pay for fruit 2 even though fruit
+    1's offer had already made it free (trap 5).
+
+        return dp[1]
+
+Fruit 1 must always be paid for - nothing precedes it to make it free - so the answer is its entry.""",
+
+    """9. THE TABLE, FILLED BY HAND - AND THE BUG THE EXAMPLE CANNOT SEE.
+
+TRACE 1 - prices = [3, 1, 2]. n = 3. Expected 4.
+
+    dp has size 5, all zero.  dp[4] = 0 is the sentinel: nothing left to buy.
+
+    i = 3:  upper = min(4, 2*3+1 = 7) = 4        the offer covers 4, 5, 6 - all past the end
+            j ranges over range(4, 5) = {4}
+            dp[3] = price(3) + min(dp[4]) = 2 + 0 = 2
+
+    i = 2:  upper = min(4, 5) = 4                the offer covers 3 and 4
+            j ranges over range(3, 5) = {3, 4}
+            dp[2] = price(2) + min(dp[3] = 2, dp[4] = 0) = 1 + 0 = 1
+            (the min chose dp[4] - buy fruit 2 and its offer reaches past the end)
+
+    i = 1:  upper = min(4, 3) = 3                the offer covers only fruit 2
+            j ranges over range(2, 4) = {2, 3}
+            dp[1] = price(1) + min(dp[2] = 1, dp[3] = 2) = 3 + 1 = 4
+
+    THE FINAL TABLE:  dp = [0, 4, 1, 2, 0]
+
+    RETURN dp[1] = 4.
+
+    LOOK AT THE LAST STEP. The `min` picked dp[2] = 1 over dp[3] = 2 - which means PAYING FOR FRUIT 2,
+    a fruit that fruit 1's offer had already made free. That is the whole point of the problem, and it
+    is the case a solution that "skips the free ones" gets wrong.
+
+TRACE 2 - THE BUG, AND WHY THE EXAMPLE ABOVE CANNOT CATCH IT (trap 1).
+
+    Suppose `upper = min(n+1, 2*i)` - stopping at the last COVERED fruit instead of one past it.
+
+    ON prices = [3, 1, 2]:
+        i = 3:  upper = min(4, 6) = 4.  j = {4}.  dp[3] = 2 + 0 = 2.        same
+        i = 2:  upper = min(4, 4) = 4.  j = {3,4}.  dp[2] = 1 + 0 = 1.      same
+        i = 1:  upper = min(4, 2) = 2.  j = {2}.   dp[1] = 3 + dp[2] = 4.   SAME ANSWER
+
+        THE BUG IS INVISIBLE HERE. So are [1] and [1,1,1] - all three give identical answers with and
+        without it.
+
+    ON prices = [1, 10, 1, 1]:
+        CORRECT (upper = 2i+1):
+            dp[5] = 0
+            i = 4:  upper = min(5, 9) = 5.  j = {5}.        dp[4] = 1 + 0 = 1
+            i = 3:  upper = min(5, 7) = 5.  j = {4,5}.      dp[3] = 1 + min(1, 0) = 1
+            i = 2:  upper = min(5, 5) = 5.  j = {3,4,5}.    dp[2] = 10 + min(1, 1, 0) = 10
+            i = 1:  upper = min(5, 3) = 3.  j = {2,3}.      dp[1] = 1 + min(10, 1) = 2
+            RETURN 2.   Buy fruit 1 (fruit 2 free), take fruit 2 free, buy fruit 3 (fruit 4 free).
+
+        WITH upper = 2i:
+            i = 1:  upper = min(5, 2) = 2.  j = {2} ONLY.   dp[1] = 1 + dp[2] = 1 + 10 = 11
+            ... and the whole table shifts.  RETURNS 12.
+
+        TWO AGAINST TWELVE. The bug forbids resuming at fruit 3 - the option of taking fruit 2 free
+        and paying next at fruit 3 - which is exactly the optimal play.
+
+    ON prices = [26, 18, 6, 12, 49, 7, 45, 45]:  correct 39, with the bug 57.
+
+    THE LESSON IS AS MUCH ABOUT TESTING AS ABOUT INDEXING: three of the five inputs cannot distinguish
+    a correct solution from a broken one.
+
+TRACE 3 - THE SMALL INPUTS.
+
+    prices = [1]:   n = 1, dp size 3, dp[2] = 0.
+        i = 1:  upper = min(2, 3) = 2.  j = range(2, 3) = {2}.  dp[1] = 1 + dp[2] = 1.
+        RETURN 1 - one fruit, and you must buy it since nothing precedes it.
+
+    prices = [1, 1, 1]:  dp[4] = 0.
+        i = 3:  upper = min(4, 7) = 4.  dp[3] = 1 + 0 = 1
+        i = 2:  upper = min(4, 5) = 4.  j = {3,4}.  dp[2] = 1 + min(1, 0) = 1
+        i = 1:  upper = min(4, 3) = 3.  j = {2,3}.  dp[1] = 1 + min(1, 1) = 2
+        RETURN 2 - buy fruit 1 (fruit 2 free), then fruit 3 is uncovered and must be bought.
+
+    NOTE THE CLAMP DOING ITS JOB at i = 3 in both traces: `2*i+1` would be 7, far past the end, and
+    `min(n+1, ...)` pulls it back to the sentinel so the range does not run off the table.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2) as written. For each fruit i the inner `min` scans a window of up to i+1 positions, and
+summing that over all i gives about n^2/2.
+
+    FOR THE USUAL CONSTRAINT n <= 1000 THAT IS AROUND 500,000 OPERATIONS - instant. This is another
+    case where a quadratic algorithm is entirely comfortable because the input is small by definition.
+
+SPACE: O(n) for the table.
+
+THE OPTIMISATION, WHICH IS THE STANDARD FOLLOW-UP: the inner `min` is over a WINDOW that slides as i
+decreases. A MONOTONIC DEQUE maintains the minimum of a sliding window in amortised constant time, so
+the whole thing becomes O(n).
+
+    IT IS WORTH KNOWING AND NOT WORTH WRITING UNLESS ASKED - the quadratic version is clearer and fast
+    enough for the stated limits. Say both.
+
+THE FAMILY - "PAY HERE AND SKIP AHEAD" DP, where the state is a position and the transition is a
+choice of where to resume:
+
+    MINIMUM COINS FOR FRUITS       the window is i+1 .. 2i+1                    <- this entry
+    JUMP GAME II                   from position i you may land anywhere in i+1 .. i+nums[i] - the
+                                   same shape, though there a greedy beats the DP
+    MINIMUM COST TO REACH THE END  variants where each position has its own reach
+    VIDEO STITCHING / TAPS         intervals of coverage rather than counts, same "resume point" idea
+    WORD BREAK                     the window is every valid word boundary
+
+    THE RECOGNITION CUE: a purchase or a move grants COVERAGE over a range, and the only decision is
+    where the coverage ends and you must act again. Define the state as "I am acting HERE" and the
+    transition is a minimum over the reachable window.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Make it O(n)." Sliding-window minimum with a monotonic deque.
+  - "Which fruits did you buy?" Record which j supplied each `min`, then walk forward from fruit 1.
+  - "What if the offer were 'the next k fruits' for a fixed k?" The window becomes i+1 .. i+k+1, and
+    with a fixed width the sliding-window minimum is even more natural.
+  - "Why is the state conditioned on paying for fruit i?" Otherwise the answer depends on how much
+    free coverage you arrived with, which needs a second dimension (section 5).
+  - "Would greedy work?" No reason to - the value of a purchase is its reach combined with what lies
+    beyond, which no local rule captures.
+
+THE #1 BEGINNER MISTAKE: ending the resume window at 2i rather than 2i+1. It forbids ever taking the
+full benefit of an offer, and it gives 12 instead of 2 on [1,10,1,1] - but it produces the CORRECT
+answer on the problem's own first example and on every trivially small input, so nothing draws
+attention to it until a hidden test fails.
+
+RUNNER-UP: filling the table forwards. Every value read is still zero, and the answer collapses to the
+price of the first fruit alone.
+
+TAKEAWAY: define the state as "the cheapest total from here on, GIVEN that I pay for this fruit", fill
+the table backwards from a zero sentinel past the end, and let the minimum range over every place you
+could resume paying - from the very next fruit right through to ONE PAST the last fruit the offer
+covers, because that final position is the whole benefit of the offer and it is the one everybody
+drops.""",
 ]
 
 _EX_P1G["Network Delay Time (Dijkstra application)"] = [
-    """The example, traced.
-times = [[2,1,1],[2,3,1],[3,4,1]], n = 4, k = 2.
-heap [(0,2)]. Pop (0,2) -> dist[2] = 0; push (1,1) and (1,3).
-Pop (1,1) -> dist[1] = 1; node 1 has no outgoing edges.
-Pop (1,3) -> dist[3] = 1; push (2,4).
-Pop (2,4) -> dist[4] = 2.
-All four nodes reached, so the answer is max(0,1,1,2) = 2.
-The MAX is the point: the signal has reached everyone only when the slowest
-recipient has it, so the answer is the largest shortest-path, not the sum and
-not the average.""",
+    """1. THE GOAL - when has the message reached everybody?
 
-    """Why the answer is a max of shortest paths, which is the modelling step.
-Two things are happening at once. Each node receives the signal at its SHORTEST
-distance from k, because the signal propagates along every edge simultaneously.
-And 'all nodes have received it' happens at the LAST of those times.
-So the problem is single-source shortest paths followed by a max - and
-recognising that a word problem about signals is Dijkstra underneath is most of
-what is being tested. If any node is unreachable, no finite time exists, hence
-the -1.""",
+You are given a network of n nodes and a list of DIRECTED links, each written [u, v, w] meaning "a
+signal travels from u to v in w units of time". A signal starts at node k and spreads along every link
+it can.
 
-    """The lazy-deletion pattern, which is the implementation detail worth knowing.
-`if node in dist: continue` is doing real work. A node can be pushed onto the
-heap several times with different tentative distances, from different
-predecessors. The FIRST time it is popped, the heap guarantees that is its
-smallest distance, so it is finalised; every later pop of the same node is
-stale and must be skipped.
-The alternative - a decrease-key operation - needs an indexed priority queue
-that Python's heapq does not provide. Pushing duplicates and skipping stale
-pops is the standard workaround, and it costs at most O(E) heap entries.""",
+    RETURN THE TIME WHEN ALL n NODES HAVE RECEIVED IT, or −1 if some node never does.
 
-    """Why Dijkstra and not BFS - and when it would break.
-BFS finds shortest paths only when every edge has the SAME weight, because it
-explores in order of hop count. Here edges have different delays, so a two-hop
-path can be faster than a one-hop path, and BFS would return the wrong answer.
-Dijkstra handles arbitrary NON-NEGATIVE weights.
-The limit to state: with negative edges Dijkstra is wrong - it finalises a node
-on first pop, and a later negative edge could have improved it. That needs
-Bellman-Ford at O(V*E), which also detects negative cycles.""",
+    times = [[2,1,1], [2,3,1], [3,4,1]],   n = 4,   k = 2
 
-    """Edge cases.
-n = 1, k = 1, no edges -> dist = {1: 0}, len(dist) == n, answer 0. The signal
-is already there.
-An unreachable node -> len(dist) < n -> -1. This is why the check is on the
-COUNT of reached nodes rather than on whether the heap emptied.
-Self-loops and parallel edges are harmless: a self-loop is skipped by the
-`in dist` guard, and among parallel edges the cheaper one simply pops first.
-A disconnected graph where k is isolated -> dist has one entry -> -1.""",
+        2 --1--> 1
+        2 --1--> 3 --1--> 4
 
-    """Complexity and the family.
-O(E log V) time - every edge can push one heap entry, and each heap operation
-is log of the heap size. O(V + E) space for the graph plus the heap.
-The family: Cheapest Flights Within K Stops (Dijkstra with a hop constraint, or
-Bellman-Ford relaxed exactly K+1 times), Path With Minimum Effort (Dijkstra
-where the path cost is a max rather than a sum), Swim in Rising Water, and
-Minimum Cost to Reach Destination in Time. The recognition cue is a shortest or
-cheapest path over WEIGHTED edges - unweighted means BFS, weighted and
-non-negative means Dijkstra, negative means Bellman-Ford.""",
+        node 2 has it at time 0   (that is where it starts)
+        node 1 at time 1
+        node 3 at time 1
+        node 4 at time 2          (via 3)
+
+        THE LAST ONE TO HEAR IS NODE 4, AT TIME 2.
+
+    ANSWER: 2
+
+THE MODELLING STEP IS THE WHOLE QUESTION, and it has two halves that people run together:
+
+    EACH NODE RECEIVES THE SIGNAL AT ITS SHORTEST DISTANCE from k. The signal takes every path
+        simultaneously, so a node hears it as soon as the FASTEST route arrives - not the average, not
+        the last.
+    THE ANSWER IS THE LATEST OF THOSE ARRIVAL TIMES. "All nodes have it" is only true once the
+        slowest-to-arrive node has heard.
+
+    SO THE ANSWER IS THE MAXIMUM OF THE SHORTEST DISTANCES. A minimum inside a maximum, and mixing up
+    which is which is the commonest modelling error here.
+
+    IF EVEN ONE NODE IS UNREACHABLE, no amount of time helps - return −1.
+
+DIRECTED MATTERS. `[2,1,1]` lets the signal go from 2 to 1 and NOT from 1 to 2. Section 9 has a case
+where starting at the wrong end makes almost everything unreachable.""",
+
+    """2. THE INTUITION - always finalise the nearest unfinished node.
+
+This is single-source shortest paths with non-negative weights, which is DIJKSTRA'S ALGORITHM. The
+idea is one sentence: REPEATEDLY TAKE THE UNFINISHED NODE THAT IS NEAREST, DECLARE ITS DISTANCE FINAL,
+AND RELAX ITS OUTGOING EDGES.
+
+A MIN-HEAP - a structure that always hands back its smallest item - supplies "the nearest unfinished
+node" in logarithmic time. Each heap entry is a pair: an elapsed time and the node it would reach.
+
+    times = [[2,1,1], [2,3,1], [3,4,1]],  n = 4,  k = 2
+
+        heap [(0, 2)]                          the start, at time 0
+
+        pop (0, 2)   ->  node 2 finalised at 0.  Push (1, 1) and (1, 3).
+        pop (1, 1)   ->  node 1 finalised at 1.  Node 1 has no outgoing links.
+        pop (1, 3)   ->  node 3 finalised at 1.  Push (2, 4).
+        pop (2, 4)   ->  node 4 finalised at 2.
+
+        heap empty.  Four nodes finalised out of four.  The times are 0, 1, 1, 2.
+
+        MAXIMUM = 2.
+
+WHY POPPING THE SMALLEST MAKES IT FINAL. Every edge weight is non-negative, so any route to a node
+that has not yet been popped must pass through some node still in the heap - and that node is at least
+as far away as the one being popped. So there is no shorter route waiting to be discovered. THAT
+ARGUMENT IS WHY DIJKSTRA WORKS, AND IT COLLAPSES THE MOMENT A WEIGHT CAN BE NEGATIVE.
+
+A NODE CAN BE PUSHED SEVERAL TIMES, once per route that reaches it, with different times attached. The
+first pop is the smallest and is correct; the later ones are stale and must be ignored. This code does
+that with a single line - `if node in dist: continue` - which is called LAZY DELETION, and section 4
+shows it firing.
+
+    dist grows as nodes are finalised:   {2:0}  ->  {2:0, 1:1}  ->  {2:0, 1:1, 3:1}  ->  ... {4:2}
+
+    AND `dist` IS DOING TWO JOBS: it holds the answers, AND it is the "already finalised" set. One
+    structure, two purposes - the same economy as Clone Graph's map and the Bipartite check's colour
+    dictionary.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIRECTED EDGE. A one-way link. `[u, v, w]` allows u -> v only.
+WEIGHT. The travel time along an edge. Non-negative here, which is what makes Dijkstra applicable.
+ADJACENCY LIST. `graph[u]` is the list of (neighbour, weight) pairs leaving u.
+
+SINGLE-SOURCE SHORTEST PATHS. Finding the shortest distance from one starting node to every other.
+DIJKSTRA'S ALGORITHM. The standard method when all weights are non-negative: repeatedly finalise the
+nearest unfinished node.
+RELAX AN EDGE. Consider whether going through this node gives a better time to its neighbour.
+
+MIN-HEAP / PRIORITY QUEUE. A structure whose smallest element can be removed in O(log size). Python's
+`heapq` module, operating on a plain list.
+    `heappop`   removes and returns the smallest.
+    `heappush`  inserts.
+    Tuples compare element by element, so `(time, node)` sorts by time first - which is why the pair is
+    ordered that way and not as `(node, time)`.
+
+LAZY DELETION. Allowing stale entries to sit in the heap and skipping them when popped, rather than
+searching the heap to remove or update them. Section 4.
+
+FINALISED. A node whose shortest distance is settled. Here, a node present in `dist`.
+
+times. The edge list. NOT modified.
+n, k. The node count and the starting node.
+graph. The adjacency list, built once.
+dist. Node -> its finalised shortest time. ALSO the finalised set.
+heap. The priority queue of (elapsed time, node) pairs.
+d, node. The popped pair. nbr, w. A neighbour and the edge weight to it.
+
+O(E log V) TIME, O(V + E) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - USING BFS INSTEAD OF DIJKSTRA. BFS finds shortest paths only when EVERY EDGE HAS THE SAME
+WEIGHT, because it explores in order of HOP COUNT rather than in order of distance.
+
+    times = [[1,2,10], [1,3,1], [3,2,1]],  n = 3,  k = 1
+
+        1 --10--> 2          one hop, cost 10
+        1 --1--> 3 --1--> 2  two hops, cost 2
+
+        BFS BY HOPS reaches node 2 in one hop and records 10, then never revisits it.  ANSWER 10.
+        DIJKSTRA finalises node 3 at time 1, then reaches node 2 at time 2.            ANSWER 2.
+
+    THE CORRECT ANSWER IS 2. BFS committed to the first route it found because it was the fewest hops,
+    and fewest hops is not the same question as least time.
+
+    (If every weight were equal, BFS would be correct AND faster - O(V+E) with no heap. Say so; it is
+    the right answer to "can you do better if the delays are all 1?")
+
+TRAP 2 - OMITTING THE `if node in dist: continue` LINE. It is not an optimisation; it is correctness.
+
+    A node can be pushed onto the heap MANY TIMES, once per route that reaches it. The first pop
+    carries the smallest time and is correct. Without the guard, a later stale pop OVERWRITES
+    `dist[node]` with a LARGER value.
+
+    On the trap-1 graph the heap receives (10, 2) early and (2, 2) later. The pops come out
+    (0,1), (1,3), (2,2), (10,2) - four pops, and THE FOURTH IS SKIPPED BY THE GUARD. Without it,
+    `dist[2]` would be rewritten from 2 to 10 and the answer would be 10 again.
+
+TRAP 3 - CONFUSING THE MIN AND THE MAX. Each node's arrival time is a MINIMUM over routes; the answer
+is a MAXIMUM over nodes. Returning the minimum distance, or the sum, or the distance to the
+last-popped node, are all different questions. `max(dist.values())` is the line.
+
+TRAP 4 - CHECKING REACHABILITY WRONGLY. The test is `len(dist) == n` - EVERY node finalised. Checking
+`if -1 in dist.values()` or similar misses the point: unreachable nodes are simply ABSENT from `dist`,
+never present with a bad value.
+
+TRAP 5 - BUILDING THE GRAPH WITH THE WRONG NODE RANGE. Nodes are numbered 1..n, not 0..n−1. The
+comprehension is `{i: [] for i in range(1, n + 1)}`. Getting this wrong raises KeyError on the first
+edge whose endpoint is n.
+
+TRAP 6 - TREATING THE EDGES AS UNDIRECTED. Only `graph[u].append((v, w))` appears - there is no reverse
+entry. Adding one would let the signal travel backwards and produce answers that are too small.
+
+TRAP 7 - ASSUMING NEGATIVE WEIGHTS WOULD WORK. They would not. Dijkstra's finality argument (section 2)
+relies on every edge being non-negative; with a negative edge, a node popped as "nearest" could still
+be improved later. Bellman-Ford is the tool then, at O(V x E).""",
+
+    """5. THE ALTERNATIVES, AND WHY POPPING THE SMALLEST IS FINAL.
+
+VERSION A - BFS. Correct only for uniform weights. Trap 1 shows it returning 10 where the answer is 2.
+
+VERSION B - BELLMAN-FORD. Relax every edge V−1 times. O(V x E) - slower, and the right answer when
+weights can be NEGATIVE, which Dijkstra cannot handle. Worth naming as the fallback and saying exactly
+what buys the extra cost.
+
+VERSION C - FLOYD-WARSHALL. All-pairs shortest paths in O(V^3). Enormous overkill for a single source,
+though it is the natural choice if you needed the distance between every pair.
+
+VERSION D - DIJKSTRA WITH A MIN-HEAP, which is the code here. O(E log V).
+
+WHY THE FIRST POP OF A NODE IS ITS FINAL ANSWER - the argument that makes Dijkstra correct.
+
+    Suppose node x is popped with time d, and suppose some shorter route to x exists. That route must
+    leave the finalised set at some point, crossing to a node y that is still in the heap. Let the time
+    to reach y along that route be t.
+
+        Since all weights are NON-NEGATIVE, the rest of the route from y to x cannot reduce the total,
+        so the whole route costs at least t.
+        But y is still in the heap with some entry no larger than t, and the heap handed back x with
+        time d as the SMALLEST entry - so d <= t.
+        Therefore the "shorter" route costs at least t, which is at least d. It is not shorter.
+
+    NO SHORTER ROUTE CAN EXIST, so d is final.
+
+    THE NON-NEGATIVITY IS DOING ALL THE WORK. With a negative edge, "the rest of the route cannot
+    reduce the total" is false, and the whole argument collapses (trap 7).
+
+WHY LAZY DELETION RATHER THAN UPDATING THE HEAP. The textbook Dijkstra decreases a node's key in place,
+which needs a heap supporting decrease-key and an index from nodes to heap positions. Python's `heapq`
+has no such operation.
+
+    SO INSTEAD you push a NEW entry every time you find a better route and let the old one rot. The
+    heap may hold up to E entries rather than V, and each stale entry costs one pop and one comparison
+    to discard.
+
+    THE COMPLEXITY IS THE SAME O(E log V), the code is a few lines shorter, and the price is a slightly
+    larger heap. This is the standard Python idiom and worth recognising on sight.
+
+WHY `dist` IS BOTH THE ANSWER AND THE VISITED SET. A node is finalised exactly when it is first popped
+and written into `dist`, so membership in `dist` IS the "already finalised" test. One structure doing
+two jobs, exactly as Clone Graph's map and the Bipartite colour dictionary do.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SPREAD OUT FROM THE STARTING NODE ALWAYS SETTLING WHICHEVER
+UNSETTLED NODE CAN BE REACHED SOONEST, AND WHEN EVERY NODE IS SETTLED THE ANSWER IS THE LATEST OF THOSE
+ARRIVAL TIMES.
+
+THERE IS NO RECURSION. The mechanism is A PRIORITY QUEUE THAT ALWAYS HANDS BACK THE SOONEST-ARRIVING
+CANDIDATE:
+
+  - The queue holds candidate arrivals - a time paired with the node it would reach.
+  - Because it always yields the smallest time, the first time a node comes out is the soonest it can
+    possibly be reached, so it can be settled permanently.
+  - A NODE MAY BE PUT IN THE QUEUE SEVERAL TIMES, once for each route that reaches it. Only the first
+    one out matters; the rest are out of date and are thrown away when they surface.
+  - WHAT MAKES IT STOP: every entry that goes in comes out exactly once, and entries are only added
+    when a node is settled - which happens at most once per node.
+
+THE STEPS:
+
+  1. BUILD A LOOKUP FROM EACH NODE TO THE LIST OF LINKS LEAVING IT, with their travel times. Nodes are
+     numbered from one, not from zero. The links are ONE-WAY - do not add the reverse.
+
+  2. START A RECORD OF SETTLED ARRIVAL TIMES, EMPTY. Put one candidate in the queue: the starting node,
+     arriving at time zero.
+
+  3. WHILE THE QUEUE HAS ANYTHING IN IT:
+
+     a. TAKE OUT THE CANDIDATE WITH THE SOONEST ARRIVAL TIME.
+
+     b. IF THAT NODE IS ALREADY SETTLED, THROW THIS CANDIDATE AWAY AND CARRY ON. It came from a slower
+        route that has been overtaken. This is not a tidy-up - without it, a slower route arriving
+        later would overwrite the correct answer with a worse one.
+
+     c. OTHERWISE SETTLE IT at this time.
+
+     d. FOR EVERY LINK LEAVING IT, ADD A NEW CANDIDATE: the node at the far end, arriving at this
+        node's time plus the link's travel time.
+
+  4. IF THE NUMBER OF SETTLED NODES IS LESS THAN THE TOTAL, some node was never reachable - report that
+     it cannot be done.
+
+  5. OTHERWISE THE ANSWER IS THE LARGEST SETTLED TIME. Each node's own figure is the SOONEST it could
+     hear; the moment everybody has heard is when the slowest of those arrives. A smallest-of-largests
+     and a largest-of-smallests are different things, and this is the latter.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a network of relay stations connected by one-way cables, each cable taking a known number of
+seconds to carry a message. You broadcast from one station and you want to know how long until every
+station in the network has heard it.
+
+Two things are true at once, and keeping them apart is the whole trick. Each individual station hears
+the message as soon as the FASTEST route to it delivers - the message is travelling down every cable
+simultaneously, so a station does not wait for the slow routes. But the network as a whole is not
+finished until the very LAST station has heard. So you want the soonest arrival at each station, and
+then the latest of those.
+
+To work out the soonest arrivals, you keep a waiting list of possible deliveries - each one a station
+paired with the time a message would get there by some particular route. You always deal with whichever
+delivery on the list is due SOONEST.
+
+When you take the soonest one off the list, you can be certain it is the best that station will ever
+do. Anything better would have to arrive by some route that is still unfinished - and everything still
+unfinished is due later than this, so nothing better is coming. That certainty depends completely on
+cables never taking negative time. If a cable could somehow subtract seconds, a route that looks slow
+now might overtake later, and the whole method falls apart.
+
+So you mark the station as settled at that time, and then you look at every cable leaving it and add
+new possible deliveries for the stations at the far ends.
+
+A station will often end up on the waiting list several times over, once for each route that reaches
+it. That is fine and expected. The first one you take off is the fastest, and when a later duplicate
+surfaces you simply discard it, because that station is already settled. Skipping those is not
+housekeeping - if you let one through, it would overwrite a good answer with a worse one.
+
+Eventually the waiting list empties. If some station was never settled at all, no cable route reaches
+it and the message will never arrive - you say so. Otherwise you look at all the settled times and take
+the largest one, because that is the moment the last station finally heard.
+
+One thing to watch: the cables are one-way. A link from A to B says nothing about getting from B to A,
+and quietly treating them as two-way makes the network far better connected than it really is.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep times = [[2,1,1], [2,3,1], [3,4,1]], n = 4, k = 2 beside you, answer 2.
+
+    import heapq
+
+Python's min-heap, operating on a plain list.
+
+    def network_delay_time(times, n, k):
+
+`times` is the edge list, `n` the node count, `k` the starting node. Returns the time for all nodes to
+receive, or −1. NOTHING IS MODIFIED - `times` is only read.
+
+        graph = {i: [] for i in range(1, n + 1)}
+
+    graph  HOLDS the adjacency list - `graph[u]` is the list of (neighbour, weight) pairs leaving u.
+
+NODES ARE 1-INDEXED, so `range(1, n + 1)` (trap 5). Pre-creating every key means a node with no
+outgoing edges still has an entry and the loop below never raises KeyError.
+
+        for u, v, w in times:
+            graph[u].append((v, w))
+
+ONE DIRECTION ONLY (trap 6). There is no `graph[v].append((u, w))` - the edges are directed, and adding
+the reverse would let the signal travel backwards and give answers that are too small.
+
+        dist = {}
+
+    dist  HOLDS each finalised node's shortest time - AND IT IS ALSO THE FINALISED SET. Membership in
+          `dist` is the "already settled" test, which is what the guard below relies on.
+
+        heap = [(0, k)]                   # (elapsed time, node)
+
+The priority queue, seeded with the start at time 0.
+
+    THE PAIR IS ORDERED (TIME, NODE), not the other way round. Tuples compare element by element, so
+    this makes the heap order by TIME - which is the entire point. `(node, time)` would order by node
+    number and produce nonsense.
+
+        while heap:
+
+Continue while candidates remain. It terminates because every entry pushed is popped exactly once, and
+entries are only pushed when a node is finalised - which happens at most once per node.
+
+            d, node = heapq.heappop(heap)
+
+Take the SOONEST-ARRIVING candidate. That is what makes the next line's finality claim true
+(section 5).
+
+            if node in dist:
+                continue                  # already finalized
+
+LAZY DELETION, AND IT IS CORRECTNESS RATHER THAN TIDINESS (trap 2). A node is pushed once per route
+that reaches it; the first pop is the smallest and correct, and any later pop is stale. Without this
+line, a slower route arriving later OVERWRITES `dist[node]` with a larger value.
+
+            dist[node] = d
+
+Settle it. Nothing will ever change this - section 5's argument, which depends on all weights being
+non-negative.
+
+            for nbr, w in graph[node]:
+                if nbr not in dist:
+                    heapq.heappush(heap, (d + w, nbr))
+
+RELAX THE OUTGOING EDGES: a candidate arrival at `nbr` at this node's time plus the edge's weight.
+
+The `if nbr not in dist` check is an OPTIMISATION rather than a necessity - a finalised neighbour would
+be skipped by the guard above anyway when popped. It just keeps the heap smaller.
+
+        return max(dist.values()) if len(dist) == n else -1
+
+TWO THINGS IN ONE LINE.
+
+    `len(dist) == n`     DECIDES reachability. Unreachable nodes are simply ABSENT from `dist` - they
+                         never appear with a sentinel value (trap 4).
+    `max(dist.values())` is THE MODELLING STEP. Each stored value is a MINIMUM over routes; the answer
+                         is the MAXIMUM over nodes - the last node to hear (trap 3).""",
+
+    """9. TRACED, POP BY POP - AND THE CASE WHERE BFS GETS IT WRONG.
+
+TRACE 1 - THE WORKED EXAMPLE. times = [[2,1,1], [2,3,1], [3,4,1]], n = 4, k = 2.
+
+    graph = {1: [], 2: [(1,1), (3,1)], 3: [(4,1)], 4: []}
+    dist = {},  heap = [(0, 2)]
+
+    POP (0, 2):  2 not in dist  ->  dist[2] = 0
+                 edges from 2:  push (0+1, 1) = (1, 1),  push (0+1, 3) = (1, 3)
+                 heap now holds (1,1) and (1,3)
+
+    POP (1, 1):  1 not in dist  ->  dist[1] = 1
+                 graph[1] is empty - nothing pushed
+
+    POP (1, 3):  3 not in dist  ->  dist[3] = 1
+                 edges from 3:  push (1+1, 4) = (2, 4)
+
+    POP (2, 4):  4 not in dist  ->  dist[4] = 2
+                 graph[4] is empty
+
+    heap empty.  dist = {2: 0, 1: 1, 3: 1, 4: 2}.  len(dist) = 4 = n.
+
+    RETURN max(0, 1, 1, 2) = 2.
+
+    FOUR POPS, NONE SKIPPED - this graph has only one route to each node, so no stale entries arise.
+    THAT IS WHY THIS EXAMPLE CANNOT DEMONSTRATE THE LAZY-DELETION GUARD, and trace 2 is needed.
+
+TRACE 2 - THE CASE THAT NEEDS DIJKSTRA, AND FIRES THE GUARD.
+times = [[1,2,10], [1,3,1], [3,2,1]], n = 3, k = 1.
+
+    graph = {1: [(2,10), (3,1)], 2: [], 3: [(2,1)]}
+    dist = {},  heap = [(0, 1)]
+
+    POP (0, 1):  dist[1] = 0
+                 push (10, 2)  and  (1, 3)
+                 heap: (1,3), (10,2)
+
+    POP (1, 3):  dist[3] = 1                    <- the heap chose the SMALLER time, not the fewer hops
+                 edge 3 -> 2 with weight 1:  push (1+1, 2) = (2, 2)
+                 heap: (2,2), (10,2)            <- node 2 is now in the heap TWICE
+
+    POP (2, 2):  2 not in dist  ->  dist[2] = 2
+
+    POP (10, 2): 2 IS ALREADY IN dist  ->  `continue`. THE STALE ENTRY IS DISCARDED.
+
+    heap empty.  dist = {1: 0, 3: 1, 2: 2}.  Four pops, ONE SKIPPED.
+
+    RETURN max(0, 1, 2) = 2.
+
+    WITHOUT THE GUARD, that fourth pop would set dist[2] = 10 and the answer would be 10 (trap 2).
+
+    AND BFS BY HOP COUNT ON THE SAME GRAPH: it reaches node 2 in one hop, records 0 + 10 = 10, marks it
+    visited and never reconsiders.  IT RETURNS 10 (trap 1).
+
+    ONE GRAPH, TWO LESSONS: why Dijkstra rather than BFS, and why the stale-entry guard is not optional.
+
+TRACE 3 - UNREACHABLE, AND THE DIRECTION OF THE EDGES.
+times = [[1,2,1]], n = 2.
+
+    STARTING AT k = 1:  graph = {1: [(2,1)], 2: []}
+        POP (0,1): dist[1] = 0, push (1,2).  POP (1,2): dist[2] = 1.
+        len(dist) = 2 = n.  RETURN max(0,1) = 1.
+
+    STARTING AT k = 2:  same graph.
+        POP (0,2): dist[2] = 0.  graph[2] is EMPTY - nothing to push.
+        heap empty.  dist = {2: 0}.  len(dist) = 1, which is not 2.
+        RETURN −1.
+
+    THE SAME EDGE, THE OTHER END, AND THE ANSWER GOES FROM 1 TO −1. The link is one-way (trap 6), and
+    node 1 simply cannot be reached from node 2.
+
+THE TINY INPUTS:
+    times = [], n = 1, k = 1:
+        graph = {1: []}.  POP (0,1): dist[1] = 0.  heap empty.  len(dist) = 1 = n.
+        RETURN max(0) = 0 - the signal is already there, so no time passes. Correct, and it needs no
+        special case.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(E log V), where E is the number of edges and V the number of nodes.
+
+In plain words: every edge can cause at most one push onto the heap, so the heap holds at most E
+entries, and each push and pop costs the logarithm of the heap size. Building the adjacency list is
+O(V + E) on top, which is dominated.
+
+    THE LAZY-DELETION VERSION KEEPS UP TO E ENTRIES rather than V, which is why the bound is written
+    log V or log E interchangeably - they differ by a constant factor, since E is at most V^2 and so
+    log E is at most 2 log V.
+
+SPACE: O(V + E) for the adjacency list plus the heap.
+
+WHEN EACH TOOL IS RIGHT - the comparison worth having ready:
+
+    ALL EDGE WEIGHTS EQUAL       BFS. O(V + E), no heap at all. Say this if asked "what if every delay
+                                 is 1?" - it is strictly better.
+    NON-NEGATIVE WEIGHTS         DIJKSTRA. O(E log V).                          <- this problem
+    NEGATIVE WEIGHTS ALLOWED     BELLMAN-FORD. O(V x E), and it also DETECTS negative cycles, which
+                                 Dijkstra cannot even represent.
+    ALL PAIRS NEEDED             FLOYD-WARSHALL. O(V^3).
+    A GOOD HEURISTIC AVAILABLE   A*, which is Dijkstra with a priority that adds an estimate of the
+                                 remaining distance.
+
+THE FAMILY - PROBLEMS THAT ARE DIJKSTRA WEARING A COSTUME:
+
+    NETWORK DELAY TIME               max of the shortest distances               <- this entry
+    PATH WITH MINIMUM EFFORT         the "distance" is the maximum single step along a path, so the
+                                     relaxation uses max instead of sum
+    CHEAPEST FLIGHTS WITHIN K STOPS  Dijkstra with an extra dimension for stops used - or
+                                     Bellman-Ford, which naturally bounds the number of edges
+    SWIM IN RISING WATER             the same max-along-path variant on a grid
+    PATH WITH MAXIMUM PROBABILITY    a MAX-heap and multiplication instead of addition
+
+    THE RECOGNITION CUE: a graph with non-negative costs and a question about the best route. What
+    varies is how you COMBINE costs along a path - sum, max, product - and the heap machinery is
+    unchanged.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if all delays were 1?" BFS, O(V + E), no heap.
+  - "What if a delay could be negative?" Bellman-Ford - and explain that Dijkstra's finality argument
+    needs non-negativity (section 5).
+  - "Which node was last?" The node whose `dist` equals the maximum.
+  - "Why not update the heap entry instead of pushing a duplicate?" Python's `heapq` has no
+    decrease-key. Lazy deletion is the standard idiom and costs only a larger heap.
+  - "What if the graph were undirected?" Add both directions when building the adjacency list.
+
+THE #1 BEGINNER MISTAKE: reaching for BFS. It is the right shape - spread out from a source - and it
+answers a different question, ordering by hop count rather than by elapsed time. On
+[[1,2,10],[1,3,1],[3,2,1]] it returns 10 where the answer is 2.
+
+RUNNER-UP: dropping the `if node in dist: continue` guard, which lets a stale, slower entry overwrite a
+correct finalised distance. It is easy to read as an optimisation; it is correctness.
+
+TAKEAWAY: this is single-source shortest paths, and the modelling step is that each node hears at its
+MINIMUM distance while the network is done at the MAXIMUM of those - so run Dijkstra with a min-heap,
+settle each node the first time it is popped because non-negative weights guarantee nothing better is
+coming, and discard the stale duplicates that the same node's other routes left behind.""",
 ]
 
 _EX_P1G["Palindrome Partitioning (backtracking)"] = [
-    """The example, traced as a decision tree.
-s = 'aab'. backtrack(0, []):
-  end=1: 'a' is a palindrome -> path ['a'], recurse from 1
-    end=2: 'a' -> path ['a','a'], recurse from 2
-      end=3: 'b' -> path ['a','a','b'], start == 3 -> RECORD
-    end=3: 'ab' not a palindrome -> skip
-  end=2: 'aa' is a palindrome -> path ['aa'], recurse from 2
-    end=3: 'b' -> ['aa','b'], start == 3 -> RECORD
-  end=3: 'aab' not a palindrome -> skip
-Result [['a','a','b'], ['aa','b']].
-Every branch either extends with a palindromic piece or is pruned immediately -
-the palindrome check IS the pruning.""",
+    """1. THE GOAL - every way to cut a string into palindromes.
 
-    """The three lines that make it backtracking rather than recursion.
-    path.append(piece)      # choose
-    backtrack(end, path)    # explore
-    path.pop()              # UN-choose
-That pop is what lets one list be reused across the whole search instead of
-allocating a new one per branch. Forget it and pieces from a finished branch
-leak into the next one, producing partitions that were never valid.
-And `result.append(path[:])` must COPY - appending path itself stores a
-reference to a list that keeps mutating, so every recorded answer ends up
-identical (and usually empty). Those two lines are where this problem is
-actually lost.""",
+A PALINDROME reads the same forwards and backwards: "a", "aa", "aba", "racecar".
 
-    """Why the palindrome check goes BEFORE the recursion.
-Checking first prunes the entire subtree under a non-palindromic piece. On
-'aab', the branch for 'ab' dies immediately instead of exploring everything
-beneath it.
-Generate-then-filter - enumerate all 2^(n-1) cuts and keep the valid ones -
-gives the same answer and explores exponentially more. The lesson generalises
-to every backtracking problem: push the constraint as early as possible, which
-is the difference between N-Queens finishing and N-Queens hanging.""",
+Cut a string into consecutive pieces so that EVERY PIECE IS A PALINDROME. RETURN EVERY POSSIBLE WAY OF
+DOING IT.
 
-    """Complexity, and why it is exponential no matter what.
-A string of n characters has n-1 possible cut positions, so 2^(n-1) partitions
-in the worst case - and for 'aaaa...' EVERY partition is valid, so the output
-alone is exponential. Time O(n * 2^n) counting the palindrome checks and the
-copies; space O(n) for the recursion and the path, excluding the output.
-You cannot beat exponential when the OUTPUT is exponential. That distinction -
-between an algorithm being slow and the answer being large - is worth stating,
-because it tells the interviewer you know optimisation is pointless here.""",
+    s = "aab"
 
-    """The optimisation that IS available: memoise the palindrome test.
-`is_pal` is called repeatedly on overlapping substrings. Precompute a table
-pal[i][j] with the standard interval DP - pal[i][j] is true when s[i] == s[j]
-and pal[i+1][j-1] - in O(n^2) time and space. The search then does O(1) checks
-instead of O(n) string comparisons and slices.
-This does not change the exponential class, but it is the right answer to 'can
-you speed it up?' and it reuses the Longest Palindromic Subsequence table
-shape.""",
+        cut after every character:  "a" | "a" | "b"     all three are palindromes  ->  VALID
+        cut after the second:       "aa" | "b"          both are palindromes       ->  VALID
+        cut after the first:        "a" | "ab"          "ab" is not a palindrome   ->  invalid
+        no cuts at all:             "aab"               not a palindrome           ->  invalid
 
-    """Edge cases and the family.
-'' -> start == 0 == len(s) immediately, so the result is [[]] - one empty
-partition. Check whether the prompt wants that or [].
-'a' -> [['a']]. 'abc' with no repeats -> [['a','b','c']], the only partition.
-'aaaa' -> 8 partitions, the exponential worst case.
-The family: Palindrome Partitioning II asks for the MINIMUM cuts, which is DP
-not backtracking, because you want one number rather than all answers - a very
-common follow-up and a genuinely different algorithm. Word Break II has the
-identical shape with a dictionary check replacing the palindrome check.""",
+    ANSWER: [["a", "a", "b"], ["aa", "b"]]
+
+THREE THINGS THE QUESTION IS SAYING:
+
+    THE PIECES ARE CONSECUTIVE AND COVER THE WHOLE STRING. This is a PARTITION - no gaps, no overlaps,
+        nothing left over. Every character belongs to exactly one piece.
+    EVERY PIECE MUST BE A PALINDROME. A single character always qualifies, so there is ALWAYS at least
+        one valid answer - cut after every character.
+    RETURN THEM ALL, not a count and not the best one. That single fact is what makes this an
+        exponential problem no matter how cleverly you write it (section 5).
+
+WHERE THE CHOICES ARE. Between any two adjacent characters there either is a cut or there is not, so a
+string of n characters has n−1 independent cut positions and 2^(n−1) possible partitions. Most are
+rejected because some piece is not a palindrome - but on a string like "aaaa" NONE are rejected, and
+all 8 come back.
+
+THIS IS BACKTRACKING: build a partition piece by piece, and abandon a line of attack the moment it
+cannot work. Section 2 draws the search.""",
+
+    """2. THE INTUITION - decide the FIRST piece, then solve the rest.
+
+Stand at some position in the string and ask ONE question: WHERE DOES THE NEXT PIECE END?
+
+Every choice of end gives a candidate piece. If that piece is a palindrome, take it and solve the SAME
+PROBLEM on whatever remains. If it is not, that whole line of attack is dead - and abandoning it
+immediately is the entire saving.
+
+    s = "aab", starting at position 0:
+
+        piece "a"    palindrome    ->  now partition "ab" (the rest)
+        piece "aa"   palindrome    ->  now partition "b"
+        piece "aab"  NOT           ->  abandon
+
+Draw the whole search as a tree, with each level choosing one more piece:
+
+        start at 0, nothing chosen
+        |
+        |-- take "a"                     start at 1, chosen ["a"]
+        |     |-- take "a"               start at 2, chosen ["a","a"]
+        |     |     '-- take "b"         start at 3 = the end  ->  RECORD ["a","a","b"]
+        |     '-- take "ab"              NOT a palindrome - DEAD, never explored
+        |
+        |-- take "aa"                    start at 2, chosen ["aa"]
+        |     '-- take "b"               start at 3 = the end  ->  RECORD ["aa","b"]
+        |
+        '-- take "aab"                   NOT a palindrome - DEAD
+
+    TWO LEAVES REACHED THE END, so there are two partitions.
+
+WHEN IS A PARTITION COMPLETE? WHEN THE STARTING POSITION REACHES THE END OF THE STRING. At that moment
+every character has been consumed by some piece and every piece was checked as it was taken - so the
+partition is valid by construction. THERE IS NO FINAL VALIDATION STEP, and there does not need to be.
+
+THE THREE-BEAT RHYTHM that makes this backtracking rather than plain recursion:
+
+    CHOOSE      add the piece to the list you are building
+    EXPLORE     solve the rest of the string
+    UN-CHOOSE   remove the piece again, so the next candidate starts from a clean slate
+
+    That third beat is what lets ONE list be reused across the whole search instead of copying it at
+    every branch. Section 4 shows what the answer looks like without it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PALINDROME. Reads the same in both directions. Single characters and the empty string qualify.
+PARTITION. A way of cutting a string into consecutive pieces that together cover it exactly.
+
+BACKTRACKING. Build a candidate answer piece by piece; at each step try every legal next piece;
+abandon a branch as soon as it cannot lead anywhere; undo the last choice before trying the next.
+It is depth-first search over the space of partial answers.
+
+PRUNING. Refusing to explore a branch that cannot work. Here, refusing to recurse into a piece that is
+not a palindrome.
+
+PATH. The pieces chosen so far - `path` in the code. A partial answer, not yet complete.
+CHOOSE / EXPLORE / UN-CHOOSE. The three-line rhythm of backtracking: append, recurse, pop.
+
+RECURSION. A function calling itself on a smaller piece of the problem. Each call PAUSES at the call
+site and resumes when the inner call returns.
+THE CALL STACK. The pile of paused calls. Its depth here is at most the string's length, since each
+call consumes at least one character.
+
+BASE CASE. `start == len(s)` - the whole string has been used up.
+
+SLICE. `s[start:end]` is the characters from `start` up to but NOT including `end`. That exclusive end
+is why the loop runs to `len(s) + 1`.
+
+s. The input string. Never modified.
+result. The list of completed partitions.
+is_pal(sub). The palindrome test - `sub == sub[::-1]`, comparing a string with its reverse.
+backtrack(start, path). The search: partition `s` from `start` onward, having already chosen `path`.
+start. Where the next piece begins. end. Where it ends (exclusive).
+piece. The candidate substring.
+
+O(n x 2^n) TIME in the worst case - and section 5 explains why that cannot be improved.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - APPENDING `path` INSTEAD OF `path[:]`. The single most destructive mistake, and the result
+looks almost right.
+
+    `path` is ONE list, reused throughout the search and mutated as the algorithm chooses and
+    un-chooses. Appending it to `result` stores A REFERENCE, not a snapshot - so every stored answer
+    points at the same list, and by the time the search finishes that list is EMPTY (every append has
+    been undone by its matching pop).
+
+    RESULT: `[[], []]` for "aab" - the right NUMBER of partitions, each of them empty.
+
+    `path[:]` takes a copy at that instant, which is what freezes the answer.
+
+TRAP 2 - FORGETTING `path.pop()`. Without the un-choose step, pieces from an abandoned branch stay in
+the list and contaminate everything after it.
+
+    On "aab", WITHOUT the pop:
+
+        result = [["a", "a", "b"], ["a", "a", "b", "aa", "b"]]
+
+    The first answer is correct. The second is nonsense - it carries the leftovers of the first branch
+    followed by the second branch's pieces, and its pieces do not even spell the input string. The
+    count is right and the contents are garbage.
+
+TRAP 3 - CHECKING THE PALINDROME AFTER RECURSING INSTEAD OF BEFORE. Correctness survives - you would
+simply validate at the end - but the pruning is lost. Checking first KILLS AN ENTIRE SUBTREE the moment
+a piece fails: on "aab", the branch for "ab" dies at once instead of exploring everything beneath it
+and discarding the results later. On longer strings that is the difference between exploring the
+palindromic partitions and exploring all 2^(n−1) partitions.
+
+TRAP 4 - LOOPING `end` TO `len(s)` INSTEAD OF `len(s) + 1`. Python slices exclude their end, so
+`s[start:len(s)]` is the last possible piece - and `range(start+1, len(s))` stops one short of
+producing it. The final character would never be included in any piece and the result would be empty.
+
+TRAP 5 - THINKING THE ANSWER NEEDS A FINAL VALIDITY CHECK. It does not. Every piece was tested as it
+was taken, so reaching `start == len(s)` guarantees a valid partition. The absence of a check at the
+base case is deliberate, exactly as in Generate Parentheses.
+
+TRAP 6 - THE EMPTY STRING. `backtrack(0, [])` hits `start == 0 == len(s)` immediately and records the
+empty path, so the result is `[[]]` - a list containing ONE empty partition, not an empty list.
+
+    That is arguably correct - there is exactly one way to cut nothing into nothing - and it is worth
+    checking what the prompt wants. LeetCode constrains the string to at least one character, so the
+    case never arises there.""",
+
+    """5. THE NAIVE VERSION FIRST, AND WHY EXPONENTIAL IS UNAVOIDABLE.
+
+VERSION A - GENERATE EVERY PARTITION, THEN FILTER. Enumerate all 2^(n−1) ways of placing cuts, and keep
+those whose every piece is a palindrome.
+
+    Correct, and it does the full exponential work even when almost every branch is hopeless. On a
+    string like "abcdefgh" with no repeated characters, only ONE partition is valid (every character
+    alone) and this version still builds all 128 of them.
+
+VERSION B - BACKTRACKING WITH THE CHECK BEFORE THE RECURSION, which is the code here. The same tree,
+pruned: a branch dies the instant a piece fails, so its entire subtree is never built.
+
+VERSION C - BACKTRACKING PLUS A PRECOMPUTED PALINDROME TABLE. THE OPTIMISATION THAT IS ACTUALLY
+AVAILABLE.
+
+    `is_pal` is called repeatedly on OVERLAPPING substrings, and each call costs O(length) to build the
+    reverse and compare. Precompute a table `pal[i][j]` - "is s[i..j] a palindrome" - in O(n^2) using
+    the interval recurrence
+
+        pal[i][j] = (s[i] == s[j]) and (j - i < 2 or pal[i+1][j-1])
+
+    and every check inside the search becomes O(1) instead of O(n).
+
+    (That recurrence is the same shape as the Longest Palindromic Subsequence entry in this bank -
+    ends match, then look inside - so the two are worth reading together.)
+
+WHY IT IS EXPONENTIAL NO MATTER WHAT. THE OUTPUT ITSELF IS EXPONENTIAL.
+
+    A string of n identical characters - "aaaa" - has EVERY piece a palindrome, so every one of the
+    2^(n−1) partitions is valid and must be returned.
+
+        "aaaa" gives exactly 8 partitions, and 2^(4−1) = 8:
+            [a,a,a,a]  [a,a,aa]  [a,aa,a]  [a,aaa]  [aa,a,a]  [aa,aa]  [aaa,a]  [aaaa]
+
+    NO ALGORITHM CAN BEAT THAT, because writing the answer out already takes that long. The table
+    optimisation removes a factor of n from the CHECKING; it cannot touch the size of the output.
+
+    THE HONEST SUMMARY: pruning and memoising the palindrome test are real improvements to the constant
+    and the polynomial factor, and the exponential term is a property of the question, not of your
+    solution. Saying that plainly is better than implying a clever method exists.
+
+WHAT IF THE QUESTION CHANGED. If it asked for the FEWEST CUTS rather than every partition - Palindrome
+Partitioning II - the output collapses to a single number, and a DP over positions solves it in O(n^2)
+with no exponential anywhere. THE EXPONENT COMES ENTIRELY FROM BEING ASKED TO ENUMERATE.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: FROM WHEREVER YOU ARE IN THE STRING, TRY EVERY POSSIBLE
+ENDING POINT FOR THE NEXT PIECE, AND WHENEVER THAT PIECE READS THE SAME BOTH WAYS, TAKE IT AND SOLVE
+THE SAME PROBLEM ON WHAT IS LEFT.
+
+THIS VERSION IS RECURSIVE, and the mechanism matters:
+
+  - The search function calls itself once per palindromic piece it can take. Each call PAUSES at the
+    call site, holding its own starting position and its own place in the loop over ending points.
+  - Those paused calls form the CALL STACK. It is at most as deep as the string is long, because every
+    call consumes at least one character - so there is no risk of running out of stack on any realistic
+    input.
+  - WHAT MAKES IT STOP: every recursive call starts strictly further along the string, and the string
+    is finite. When the starting point reaches the end, that call records an answer and returns without
+    recursing.
+  - WHY A BRANCH DIES: a piece that is not a palindrome is never taken, so everything that would have
+    followed it is never explored at all.
+
+THE STEPS:
+
+  1. START A LIST FOR THE COMPLETED PARTITIONS, AND ANOTHER FOR THE PIECES CHOSEN SO FAR.
+
+  2. THE SEARCH, GIVEN A STARTING POSITION:
+
+     a. IF THE STARTING POSITION IS THE END OF THE STRING, every character has been used and every
+        piece was checked when it was taken - so what you are holding is a valid partition. RECORD A
+        COPY OF IT and stop this branch.
+
+        A COPY. The list of chosen pieces is a single list that keeps being modified as the search goes
+        on, so storing it directly would store something that changes underneath you - and by the end
+        it is empty.
+
+        And note there is nothing to verify here. Validity was established piece by piece on the way
+        down.
+
+     b. OTHERWISE, TRY EVERY POSSIBLE ENDING POINT FOR THE NEXT PIECE, from one character long up to
+        all the way to the end of the string.
+
+        For each one, take the piece it describes and ask whether it reads the same backwards.
+
+        - IF IT DOES: add it to the chosen pieces, search onward from just after it, and then REMOVE IT
+          AGAIN before trying the next ending point.
+
+          That removal is what lets one shared list serve the whole search. Without it, the pieces from
+          a finished branch stay behind and corrupt every answer found afterwards.
+
+        - IF IT DOES NOT: do nothing at all. Not taking it means everything that could have followed it
+          is skipped, which is where the saving comes from.
+
+  3. RUN THE SEARCH FROM THE START OF THE STRING WITH NOTHING CHOSEN, AND RETURN THE COMPLETED LIST.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a strip of paper with letters written along it, and a pair of scissors. You want to cut it into
+consecutive pieces so that every single piece reads the same forwards as backwards - and you have been
+asked not for one such way of cutting it, but for all of them.
+
+You work from the left-hand end. The only decision in front of you is where to make the first cut, so
+you try them all in turn: snip after one letter, after two, after three, and so on right up to taking
+the whole strip in one piece.
+
+For each of those, you hold up the piece you have just cut off and check whether it reads the same
+both ways. If it does not, you stop instantly. You do not go on to consider how the rest of the strip
+might be cut, because whatever you did afterwards, that bad piece would still be sitting there ruining
+it. Abandoning that whole line of thought the moment the piece fails is where all the time is saved.
+
+If the piece does read the same both ways, you set it aside on a pile of pieces-so-far, and then you
+face exactly the same problem again with the shorter strip that remains. So you do the same thing:
+try every place to make the next cut, keep the good ones, abandon the bad ones.
+
+Eventually you will consume the last letter. At that moment your pile is a complete answer - and
+notice that you do not need to inspect it, because every piece on it was checked as it went on. You
+write the answer down and go back to try the alternatives you have not explored yet.
+
+Two details make the difference between this working and not working.
+
+The first is that when you write an answer down, you must write down a COPY of the pile. The pile
+itself is the one you keep using - you are about to take pieces off it and put different ones on - so
+if you merely note where the pile is, then by the time you have finished exploring everything, the
+thing you noted has been emptied and rebuilt many times over and bears no relation to the answer you
+meant to record.
+
+The second is that when you come back from exploring, you must take your piece back off the pile
+before trying the next cut. Leave it there and it contaminates everything that follows: your later
+answers arrive with the leftovers of earlier attempts still stuck to the front of them, spelling
+something that is not even the string you started with.
+
+Take the piece off, try the next cut, and carry on until every possibility has been tried.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep s = "aab" beside you, answer [["a","a","b"], ["aa","b"]].
+
+    def partition(s):
+
+`s` is the input string. Returns a list of partitions, each a list of pieces. Nothing is modified -
+strings are immutable and `s` is only sliced.
+
+        result = []
+
+    result  HOLDS the completed partitions.
+
+        def is_pal(sub):
+            return sub == sub[::-1]
+
+THE PALINDROME TEST. `sub[::-1]` is the string reversed, and a palindrome equals its own reverse.
+
+Costs O(length) - it builds a reversed copy and compares. Called repeatedly on overlapping substrings,
+which is what the precomputed table in section 5 removes.
+
+        def backtrack(start, path):
+
+THE SEARCH.
+
+    start  HOLDS where the next piece begins - everything before it has been partitioned already.
+    path   HOLDS the pieces chosen so far. IT IS ONE LIST, REUSED throughout the entire search, which
+           is what makes the copy and the pop below necessary.
+
+            if start == len(s):
+                result.append(path[:])          # reached the end with a valid cut
+                return
+
+THE BASE CASE. Reaching the end means every character has been consumed.
+
+NO VALIDITY CHECK IS NEEDED (trap 5) - every piece was tested by `is_pal` before it was appended, so
+anything reaching here is valid by construction.
+
+    `path[:]`  TAKES A COPY. Appending `path` itself stores a reference to the shared list, which is
+               mutated as the search continues and ends up EMPTY - giving `[[], []]` (trap 1).
+
+            for end in range(start + 1, len(s) + 1):
+
+EVERY POSSIBLE ENDING POINT for the next piece.
+
+    Starts at `start + 1` so the piece is at least one character.
+    Ends at `len(s) + 1` because Python slices EXCLUDE their end - `s[start:len(s)]` is the piece
+    running to the end of the string, and stopping the range at `len(s)` would never generate it
+    (trap 4).
+
+                piece = s[start:end]
+
+The candidate - characters `start` up to but not including `end`.
+
+                if is_pal(piece):               # only recurse on palindromic pieces
+
+THE PRUNE, AND ITS POSITION IS THE POINT. Checking BEFORE recursing means a failing piece kills its
+entire subtree immediately. Checking afterwards would still be correct and would explore everything
+(trap 3).
+
+                    path.append(piece)
+                    backtrack(end, path)
+                    path.pop()
+
+THE THREE-BEAT RHYTHM - CHOOSE, EXPLORE, UN-CHOOSE.
+
+    `path.append(piece)`  choose this piece.
+    `backtrack(end, path)` solve the rest, starting where this piece ended. `end` is the new `start`,
+                          which is what guarantees progress and termination.
+    `path.pop()`          UN-CHOOSE, so the next `end` value starts from the same state this iteration
+                          began with.
+
+    WITHOUT THE POP, pieces from a finished branch remain and corrupt every later answer - "aab"
+    returns a second "partition" of ["a","a","b","aa","b"], which does not even spell the input
+    (trap 2).
+
+            backtrack(0, [])
+
+Start at the beginning with nothing chosen.
+
+        return result""",
+
+    """9. THE SEARCH TRACED AS A DECISION TREE.
+
+TRACE 1 - s = "aab", len 3. Expected [["a","a","b"], ["aa","b"]].
+
+    backtrack(0, [])            start is 0, not 3 - so try every end from 1 to 3.
+
+      end = 1:  piece = s[0:1] = "a".  is_pal -> YES.
+                path = ["a"].  RECURSE from 1.
+
+        backtrack(1, ["a"])     try every end from 2 to 3.
+
+          end = 2:  piece = s[1:2] = "a".  is_pal -> YES.
+                    path = ["a","a"].  RECURSE from 2.
+
+            backtrack(2, ["a","a"])   try end = 3.
+
+              end = 3:  piece = s[2:3] = "b".  is_pal -> YES.
+                        path = ["a","a","b"].  RECURSE from 3.
+
+                backtrack(3, ...)   start 3 == len(s)  ->  RECORD a copy: ["a","a","b"].  return.
+
+                        path.pop()  ->  path = ["a","a"]
+              loop ends.  return.
+
+            path.pop()  ->  path = ["a"]
+
+          end = 3:  piece = s[1:3] = "ab".  is_pal -> NO.
+                    NOTHING HAPPENS. The entire subtree under "ab" is never built - that is the prune.
+          loop ends.  return.
+
+                path.pop()  ->  path = []
+
+      end = 2:  piece = s[0:2] = "aa".  is_pal -> YES.
+                path = ["aa"].  RECURSE from 2.
+
+        backtrack(2, ["aa"])
+          end = 3:  piece = "b".  is_pal -> YES.  path = ["aa","b"].  RECURSE from 3.
+            backtrack(3, ...)  ->  RECORD ["aa","b"].  return.
+                    path.pop()  ->  path = ["aa"]
+          return.
+
+                path.pop()  ->  path = []
+
+      end = 3:  piece = s[0:3] = "aab".  is_pal -> NO.  Nothing happens.
+
+    RETURN [["a","a","b"], ["aa","b"]].
+
+    NOTE `path` IS BACK TO EMPTY at the end - every append was matched by a pop. That is exactly why
+    `path[:]` was needed at the base case: had the references been stored, both entries would now read
+    `[]` (trap 1).
+
+TRACE 2 - THE SAME STRING WITHOUT `path.pop()` (trap 2).
+
+    The first branch proceeds identically and records ["a","a","b"] - but `path` is left holding
+    ["a","a","b"] instead of returning to [].
+
+    Then `end = 2` at the top level appends "aa" to THAT, giving ["a","a","b","aa"], recurses, appends
+    "b", and records ["a","a","b","aa","b"].
+
+    RESULT: [["a","a","b"], ["a","a","b","aa","b"]]
+
+    The right NUMBER of answers, the first one correct, and the second is nonsense - its pieces
+    concatenate to "aabaab", which is not the input string at all.
+
+TRACE 3 - THE WORST CASE, s = "aaaa". Every substring of a string of identical characters is a
+palindrome, so NOTHING is ever pruned and every partition is valid:
+
+    [a,a,a,a]   [a,a,aa]   [a,aa,a]   [a,aaa]   [aa,a,a]   [aa,aa]   [aaa,a]   [aaaa]
+
+    EIGHT PARTITIONS, and 2^(4−1) = 8 - so the count matches the number of ways to choose cut
+    positions exactly. THIS IS THE INPUT THAT SHOWS THE EXPONENTIAL IS IN THE OUTPUT, not in the
+    method (section 5).
+
+TRACE 4 - THE OPPOSITE EXTREME, s = "abc". No two characters match, so the only palindromic pieces are
+single characters:
+
+    end = 1: "a" YES -> ... end = 1: "b" YES -> ... end = 1: "c" YES -> record ["a","b","c"]
+    Every longer piece ("ab", "abc", "bc") fails and is pruned immediately.
+
+    RETURN [["a","b","c"]] - exactly one partition. The pruning did almost all the work here: of the
+    2^2 = 4 possible partitions, three died at their first bad piece.
+
+THE TINY INPUTS:
+    s = "a"   backtrack(0,[]): end = 1, piece "a" is a palindrome, path ["a"], recurse from 1 which
+              equals len(s)  ->  record ["a"].  RETURN [["a"]].
+    s = ""    `start == 0 == len(s)` fires immediately  ->  RETURN [[]] - one empty partition, not an
+              empty list (trap 6).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n x 2^n) in the worst case.
+
+In plain words: there are up to 2^(n−1) partitions to return, and each one contains up to n pieces that
+must be copied into the result. The palindrome checks add more work - each is O(n) as written - but the
+dominant term is the size of the answer.
+
+    "aaaa" RETURNS 8 PARTITIONS, and 2^3 = 8. Every partition is valid because every substring of a
+    uniform string is a palindrome, so the pruning never fires at all.
+
+SPACE: O(n) for the recursion stack and for `path` - each call consumes at least one character, so the
+depth is at most n. The OUTPUT is of course exponential, and that is not counted as working space.
+
+THE OPTIMISATION THAT IS AVAILABLE, and the one that is not:
+
+    AVAILABLE - PRECOMPUTE THE PALINDROME TABLE. `pal[i][j]` in O(n^2) via
+    `pal[i][j] = (s[i] == s[j]) and (j - i < 2 or pal[i+1][j-1])`, after which every check inside the
+    search is O(1). That removes a factor of n from the checking.
+
+    NOT AVAILABLE - ANYTHING THAT BEATS THE EXPONENT. The output itself is exponential, so no algorithm
+    can be faster than producing it. Being straight about that is better than implying a clever method
+    exists.
+
+THE CONTRAST WORTH DRAWING: PALINDROME PARTITIONING II asks for the FEWEST CUTS instead of every
+partition. The output collapses to one number, and a DP over positions solves it in O(n^2) with no
+exponential anywhere. THE EXPONENT COMES ENTIRELY FROM BEING ASKED TO ENUMERATE - not from the
+palindromes, not from the cutting.
+
+THE BACKTRACKING FAMILY - build a partial answer, prune with a condition checked BEFORE the move,
+choose / explore / un-choose:
+
+    PALINDROME PARTITIONING     the guard is "is this piece a palindrome"        <- this entry
+    GENERATE PARENTHESES        the guard is on the two bracket counts - and notably needs no
+                                un-choose, because it passes an immutable string rather than mutating
+                                a shared list
+    SUBSETS / COMBINATIONS      the guard is "only pick indices after the current one"
+    PERMUTATIONS                the guard is "skip anything already used"
+    WORD BREAK II               the identical shape with "is this piece in the dictionary"
+    N-QUEENS                    the guard is row, column and diagonal safety
+    COMBINATION SUM             the guard is "does the remaining target stay non-negative"
+
+    THE COMMON SHAPE: a loop over candidate next moves, a test before committing, and the three-beat
+    rhythm around the recursive call. What changes between them is only the guard.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Speed up the palindrome checks." Precompute the O(n^2) table - and say plainly that it does not
+    change the exponential term.
+  - "Just count the partitions." Then the output is one number and a DP over positions is polynomial.
+  - "Fewest cuts?" Palindrome Partitioning II - O(n^2) DP, no enumeration.
+  - "Why is there no validity check at the base case?" Because each piece was checked as it was taken,
+    exactly as in Generate Parentheses.
+  - "Could you avoid the copy at the base case?" Not while sharing one `path` list. Either copy there,
+    or pass an immutable structure down and lose the pop - which is what Generate Parentheses does.
+
+THE #1 BEGINNER MISTAKE: appending `path` rather than `path[:]`. Every stored answer becomes a
+reference to the same list, and since the search empties that list on its way out, the result is the
+right number of partitions all of which are empty.
+
+RUNNER-UP: forgetting `path.pop()`, which leaves pieces from finished branches lying around so that
+later answers arrive with earlier attempts stuck to the front - producing partitions whose pieces do
+not even spell the input string.
+
+TAKEAWAY: decide only WHERE THE NEXT PIECE ENDS, check it is a palindrome BEFORE recursing so a bad
+piece kills its whole subtree, and wrap the recursive call in choose / un-choose so one shared list can
+serve the entire search - taking a copy when you record an answer, because that list is still being
+rewritten underneath you.""",
 ]
 
 _EX_P1G["Path Sum II (all root-to-leaf paths)"] = [
