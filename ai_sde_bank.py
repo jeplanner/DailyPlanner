@@ -65604,120 +65604,1014 @@ rather than to the trees.""",
 ]
 
 _EX_P0H["N-th Tribonacci Number"] = [
-    """The sequence, computed by hand.
-T0 = 0, T1 = 1, T2 = 1 (the three seeds).
-T3 = 0+1+1 = 2      T4 = 1+1+2 = 4      T5 = 1+2+4 = 7
-T6 = 2+4+7 = 13     T7 = 4+7+13 = 24    T8 = 7+13+24 = 44
-So tribonacci(4) = 4 and tribonacci(8) = 44. Write these out on the whiteboard
-before coding - it catches an off-by-one in the seeds immediately, which is the
-single most common bug here.""",
+    """1. THE GOAL - Fibonacci, but with three.
 
-    """The rolling update, traced through the tuple assignment.
-Start a,b,c = 0,1,1 (representing T0,T1,T2).
-n = 4, so the loop runs for i = 3 and i = 4.
-  i=3: a,b,c = 1, 1, 0+1+1 = 2   -> now (T1,T2,T3)
-  i=4: a,b,c = 1, 2, 1+1+2 = 4   -> now (T2,T3,T4)
-Return c = 4. Correct.
-The tuple assignment is doing real work: the right-hand side is fully evaluated
-FIRST, so `a+b+c` uses the OLD values. Writing it as three separate statements
-(a = b; b = c; c = a+b+c) uses the already-overwritten a and b and silently
-computes the wrong sequence - a classic and hard-to-spot bug.""",
+Fibonacci adds the previous TWO numbers. Tribonacci adds the previous THREE.
 
-    """The three seeds, and why they need explicit guards.
-n = 0 -> 0, n = 1 -> 1, n = 2 -> 1. The loop `range(3, n+1)` is empty for all
-three, so without the guards the function would return c = 1 for n = 0, which
-is wrong.
-Test all three boundaries every time. Note also that T1 = T2 = 1 makes an
-off-by-one invisible in the small cases: a solution seeded 0,1,1 and one seeded
-1,1,2 both look plausible until n = 4, where they give 4 and 7. Always verify
-against a value at least four steps in.""",
+    THE THREE SEEDS:   T0 = 0,   T1 = 1,   T2 = 1
+    THE RULE:          Tn = Tn-1 + Tn-2 + Tn-3   for every n from 3 upwards
 
-    """Why not recursion, in numbers.
-Naive `trib(n) = trib(n-1)+trib(n-2)+trib(n-3)` re-computes the same subproblems
-exponentially: about 1.84^n calls, so trib(30) is roughly a million calls and
-trib(40) is hundreds of millions.
-Memoising it drops that to O(n) time but costs O(n) space and O(n) stack depth,
-which blows Python's recursion limit around n = 1000.
-The rolling three-variable loop is O(n) time and O(1) space with no stack at
-all. Say the progression out loud - naive, memoised, iterative - because
-showing you know all three is what the question is for.""",
+Compute the start of the sequence by hand:
 
-    """Growth and overflow.
-Tribonacci grows by a factor of about 1.839 per step, so T37 = 1,132,436,852
-just fits in a signed 32-bit integer and T38 overflows it.
-In Python this does not matter - integers are arbitrary precision, so
-tribonacci(100) is exact. In Java or C++ it very much does, and the standard
-LeetCode constraint n <= 37 exists precisely so the answer fits in an int.
-Mentioning the language difference unprompted is a nice signal.""",
+    T3 = T2 + T1 + T0 =  1 +  1 + 0 =  2
+    T4 = T3 + T2 + T1 =  2 +  1 + 1 =  4
+    T5 = T4 + T3 + T2 =  4 +  2 + 1 =  7
+    T6 = T5 + T4 + T3 =  7 +  4 + 2 = 13
+    T7 = T6 + T5 + T4 = 13 +  7 + 4 = 24
+    T8 = T7 + T6 + T5 = 24 + 13 + 7 = 44
 
-    """The generalisation the interviewer will ask for.
-'Now do k-bonacci - each term sums the previous k.' The answer keeps a deque of
-the last k values plus a RUNNING SUM: append the sum, then subtract the value
-that falls out of the window. That is O(n) total instead of O(n*k) from
-re-adding k numbers each step - the same sliding-window-with-running-total
-trick used for subarray sums.
-The second follow-up is 'compute T(10^18) mod p', which needs matrix
-exponentiation of the k x k companion matrix in O(k^3 log n) - worth naming
-even if you do not implement it.""",
+    0, 1, 1, 2, 4, 7, 13, 24, 44, 81, 149, 274, ...
+
+GIVEN n, RETURN Tn. That is the whole question.
+
+WHAT MAKES IT WORTH ASKING is not the arithmetic - it is that the obvious implementation, writing
+the rule down as a recursive function, is catastrophically slow, and the fix is to notice you only
+ever need the last three numbers rather than all of them. Section 5 puts real figures on both
+halves of that.
+
+    THE SEQUENCE GROWS FAST. Each term is roughly 1.839 times the one before it, so the numbers
+    outrun a 32-bit integer within forty terms. Section 10 says exactly where.
+
+THIS IS THE SAME SHAPE AS CLIMBING STAIRS AND FIBONACCI - a fixed-width sliding window over a
+recurrence. Learn it once here and the whole family is the same four lines with a different width.""",
+
+    """2. THE INTUITION - three variables sliding along.
+
+You never need the whole sequence. To produce the next number you need EXACTLY THE LAST THREE, so
+keep three variables and slide them forward one step at a time.
+
+Call them a, b, c, holding three consecutive terms:
+
+    a = T0 = 0      b = T1 = 1      c = T2 = 1
+
+    ONE STEP:  the new term is a + b + c.
+               then everything shifts left: the old b becomes the new a, the old c becomes the new
+               b, and the new term becomes the new c.
+
+        a   b   c            new = a + b + c
+        0   1   1            new = 0 + 1 + 1 = 2
+            \\   \\      \\
+             \\   \\      \\
+        1   1   2            now a,b,c = T1,T2,T3
+
+        1   1   2            new = 1 + 1 + 2 = 4
+        1   2   4            now a,b,c = T2,T3,T4
+
+        1   2   4            new = 1 + 2 + 4 = 7
+        2   4   7            now a,b,c = T3,T4,T5
+
+    AFTER EVERY STEP, c HOLDS THE NEWEST TERM. So once you have taken enough steps, the answer is
+    simply c.
+
+HOW MANY STEPS? The variables start holding T0, T1, T2. Each step advances the window by one, so
+after one step c is T3, after two steps c is T4, and in general after k steps c is T(k+2). To reach
+Tn you need n − 2 steps - which is exactly what a loop running from 3 up to n does.
+
+THE WHOLE SAVING IS THIS: THE PAST IS NOT NEEDED. T50 depends on T49, T48, T47 and on nothing
+before them, so once you have moved past a number it can be thrown away. Three variables, however
+large n is, and O(1) memory instead of a table of n entries.
+
+    (Compare with Coin Change, where the recurrence reaches back an arbitrary distance and the
+    whole table must be kept. The window being FIXED-WIDTH is what buys the constant space here.)""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRIBONACCI. The sequence where each term is the sum of the previous three, seeded 0, 1, 1.
+FIBONACCI. The same idea with two: 0, 1, 1, 2, 3, 5, 8. Tribonacci's older sibling.
+
+SEED / BASE CASE. A value given rather than computed. There are three here - T0, T1 and T2 - and
+you need three because the rule reaches back three places.
+
+RECURRENCE. A rule defining a term from earlier terms: Tn = Tn-1 + Tn-2 + Tn-3.
+
+DYNAMIC PROGRAMMING (DP). Computing each subproblem once and reusing the answer. Here it takes its
+simplest possible form: a loop that walks forward.
+
+MEMOISATION. Caching a recursive function's results so each input is computed once. Section 5.
+
+ROLLING VARIABLES / SLIDING WINDOW. Keeping only the last few values instead of the whole table,
+because the recurrence never reaches further back than a fixed distance.
+
+TUPLE ASSIGNMENT. `a, b, c = b, c, a + b + c` - Python evaluates the ENTIRE right-hand side first,
+then assigns all three at once. This is not a convenience; section 4 shows that writing it as three
+separate statements produces a different and wrong answer.
+
+O(1) SPACE. A fixed number of variables regardless of how large n is.
+
+n. The index being asked for.
+a, b, c. Three consecutive terms - at the start T0, T1, T2; after k loop passes, T(k), T(k+1),
+         T(k+2).
+_. Python's convention for a loop variable that is never used. The loop is counting, not indexing.
+
+THE TRIBONACCI CONSTANT. About 1.8393 - the factor by which the sequence grows each step, and the
+root of x^3 = x^2 + x + 1. It is what makes the naive recursion exponential and the numbers
+overflow so quickly.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - SPLITTING THE TUPLE ASSIGNMENT INTO THREE STATEMENTS. This is the one that produces wrong
+numbers rather than an error.
+
+    a, b, c = b, c, a + b + c
+
+Python builds the whole right-hand side FIRST, using the OLD values of a, b and c, and only then
+writes all three. Write it as three lines in the obvious order and each assignment clobbers a value
+the next one still needs:
+
+    Starting from a, b, c = 0, 1, 1:
+
+        CORRECT (simultaneous):
+            right-hand side computed from the old values:  (1, 1, 0+1+1) = (1, 1, 2)
+            a, b, c  ->  1, 1, 2                    c = 2 = T3.  CORRECT.
+
+        WRONG (three separate statements):
+            a = b            ->  a = 1
+            b = c            ->  b = 1
+            c = a + b + c    ->  c = 1 + 1 + 1 = 3   using the ALREADY-OVERWRITTEN a and b
+
+            c = 3, where T3 is 2.
+
+    The correct fix if you must use separate statements is to save the new term FIRST:
+    `nxt = a + b + c`, then shift, then `c = nxt`.
+
+TRAP 2 - THE SEEDS, AND WHICH GUARD IS ACTUALLY NEEDED. `range(3, n + 1)` is EMPTY for n = 0, 1 and
+2 - it is `range(3,1)`, `range(3,2)` and `range(3,3)` respectively. So for all three the loop never
+runs and the function returns whatever `c` was initialised to, which is 1.
+
+    n = 1  ->  returns c = 1.  T1 IS 1.  Correct by initialisation.
+    n = 2  ->  returns c = 1.  T2 IS 1.  Correct by initialisation.
+    n = 0  ->  would return 1.  T0 IS 0.  WRONG.
+
+    SO THE `if n == 0: return 0` GUARD IS LOAD-BEARING AND THE `if n <= 2: return 1` GUARD IS NOT -
+    the initialisation `c = 1` already handles n = 1 and n = 2. Keeping it is a defensible choice
+    (it documents the base cases and survives someone changing the initialisation), but it is worth
+    knowing which line is doing real work. Only n = 0 is genuinely special, because it is the one
+    seed whose value differs from `c`'s starting value.
+
+TRAP 3 - WRITING THE RECURSION AND STOPPING THERE. `trib(n) = trib(n-1) + trib(n-2) + trib(n-3)` is
+correct and exponentially slow. Section 5 counts the calls exactly, and the figure is worse than
+most people expect.
+
+TRAP 4 - MISCOUNTING THE LOOP BOUNDS. The window starts at (T0, T1, T2), so it needs n − 2 advances
+to reach Tn. `range(3, n + 1)` runs exactly n − 2 times - check it at n = 3, where it runs once, and
+one advance takes c from T2 to T3. Writing `range(3, n)` runs one step too few and returns T(n-1);
+writing `range(n)` runs far too many.
+
+TRAP 5 - OVERFLOW, in a language with fixed-width integers. Section 10 has the exact terms. Python
+is immune - its integers grow without bound - which is precisely why this trap is invisible until
+the code is translated.""",
+
+    """5. WHY NOT RECURSION - the numbers.
+
+VERSION A - THE DIRECT RECURSION.
+
+    def trib(n):
+        if n == 0: return 0
+        if n <= 2: return 1
+        return trib(n-1) + trib(n-2) + trib(n-3)
+
+Correct, and it recomputes the same subproblems an enormous number of times, because `trib(n-1)`
+and `trib(n-2)` both go on to compute `trib(n-3)` from scratch, and so on all the way down.
+
+    COUNT THE CALLS EXACTLY. Let C(n) be the number of calls made to evaluate trib(n):
+
+        C(0) = C(1) = C(2) = 1
+        C(n) = 1 + C(n-1) + C(n-2) + C(n-3)
+
+        C(5)  =            13
+        C(10) =           289
+        C(15) =         6,094
+        C(20) =       128,287
+        C(25) =     2,700,421
+        C(30) =    56,843,233
+
+    TO COMPUTE T30, THE NAIVE RECURSION MAKES 56,843,233 CALLS. THE LOOP BELOW DOES 28 ITERATIONS.
+    That is a factor of about TWO MILLION.
+
+    And the ratio between consecutive counts settles at 128,287 / 69,748 = 1.839 - the TRIBONACCI
+    CONSTANT, the root of x^3 = x^2 + x + 1. The work grows by that factor for every step of n, so
+    T40 is another 1.839^10 = about 400 times worse again.
+
+VERSION B - RECURSION WITH MEMOISATION. Cache each result the first time it is computed. Now every
+index is solved once: O(n) time, O(n) space for the cache, plus O(n) recursion depth - which
+overflows Python's default 1,000-frame limit for large n.
+
+VERSION C - A FULL DP TABLE. `dp[i] = dp[i-1] + dp[i-2] + dp[i-3]`, filled from 3 upward. O(n) time,
+O(n) space, no recursion. Correct, and it stores n numbers when only three are ever consulted.
+
+VERSION D - THREE ROLLING VARIABLES, which is the code here. O(n) time, O(1) SPACE.
+
+    The recurrence reaches back exactly three places and never further, so the rest of the table is
+    dead weight. This is the same reduction as Climbing Stairs (window of two) and Fibonacci
+    (window of two) - the window's WIDTH is what changes, not the idea.
+
+VERSION E - MATRIX EXPONENTIATION, for completeness. The recurrence can be written as a 3x3 matrix
+applied to the vector of the last three terms, and repeated application is a matrix POWER, which
+fast exponentiation computes in O(log n) multiplications.
+
+    O(log n) instead of O(n) - genuinely faster in principle. It is almost never worth it here,
+    because the numbers themselves grow linearly in digit count, so the arithmetic stops being
+    constant-time long before the loop count matters. Worth naming to show you know it exists.
+
+THE GENERALISATION THE INTERVIEWER WILL ASK FOR: "now do k-bonacci - each term sums the previous k."
+Three variables become a queue of the last k values PLUS A RUNNING SUM:
+
+    new = running_sum
+    running_sum += new - the value falling out of the window
+    push new, pop the oldest
+
+    O(n) time and O(k) space. Without the running sum you would re-add k numbers every step, making
+    it O(n x k) - which for k = 1,000 is a thousandfold difference. The running total is the whole
+    trick, and it is the same idea as a sliding-window sum over an array.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP JUST THE LAST THREE NUMBERS OF THE SEQUENCE, AND
+REPEATEDLY REPLACE THEM WITH THE SECOND, THE THIRD, AND THEIR TOTAL - BECAUSE THE RULE NEVER REACHES
+FURTHER BACK THAN THREE PLACES, SO EVERYTHING OLDER CAN BE THROWN AWAY.
+
+THERE IS NO RECURSION, and that is the point - the recursive version in section 5 makes fifty-six
+million calls to reach the thirtieth term. The mechanism is A FIXED-WIDTH WINDOW SLIDING FORWARD:
+
+  - Three variables hold three consecutive terms of the sequence.
+  - Each pass computes one new term and shifts the window one place along.
+  - WHAT MAKES IT STOP: the loop's trip count is fixed before it starts - it depends only on n, not
+    on any value computed inside.
+  - WHY THREE IS ENOUGH: the rule for a term names exactly the three before it and nothing else, so
+    once the window has moved past a number, nothing will ever ask for it again.
+
+THE STEPS:
+
+  1. IF THE INDEX ASKED FOR IS ZERO, THE ANSWER IS ZERO. This is the one seed that has to be handled
+     separately, for the reason in step 2.
+
+  2. START THE THREE VARIABLES HOLDING THE FIRST THREE TERMS: zero, one, and one.
+
+     The third of them already holds the right answer for indices one and two, so those two cases
+     need no work at all - the loop below simply never runs for them. Only index zero differs from
+     that starting value, which is why it alone needed a guard.
+
+  3. REPEAT ONCE FOR EVERY INDEX FROM THREE UP TO THE ONE ASKED FOR:
+
+     a. WORK OUT THE NEXT TERM BY ADDING ALL THREE VARIABLES TOGETHER.
+
+     b. SLIDE THE WINDOW: the second value becomes the first, the third becomes the second, and the
+        new term becomes the third.
+
+     THESE TWO STEPS MUST HAPPEN AS ONE. If you shift the variables one at a time and then add
+     them, you will be adding values you have already overwritten, and the answer comes out too
+     large. Compute the new term from the OLD three before changing anything.
+
+  4. THE THIRD VARIABLE NOW HOLDS THE TERM ASKED FOR. Return it.
+
+Note that the number of passes is two fewer than the index asked for - the window begins already
+holding three terms, so it only has to advance from the third one onwards.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a very long ledger of numbers where each new entry is worked out by adding up the previous
+three, and somebody asks you for the fiftieth entry.
+
+You could write out the whole ledger. But look at what you actually use when you write a new line:
+only the three lines immediately above it. The line before those, and every line before that, plays
+no part whatsoever. Once you have written past a number, nothing will ever ask you for it again.
+
+So you do not keep a ledger at all. You keep three slips of paper in front of you, holding three
+consecutive numbers, and you slide them along.
+
+You start with the three numbers you were given: nought, one, and one. Then you repeat one simple
+move. You add up all three slips to get the next number in the sequence. Then you shuffle: you
+throw away the leftmost slip, slide the other two along into its place, and write your new number
+on the slip that has just been freed up at the right-hand end.
+
+After every shuffle, the rightmost slip holds the newest number in the sequence. So you just count
+how many shuffles you need - your three slips already cover the first three entries, so you need
+two fewer shuffles than the entry number you were asked for - and then read the rightmost slip.
+
+There is one way to get this badly wrong, and it is worth being careful about. If you start
+shuffling the slips BEFORE you have worked out the sum, you will end up adding the wrong things:
+you will have already copied one number over the top of another, so when you come to add, one of
+the three values you need has gone and you count another one twice. The sum comes out too big and
+every entry after it is wrong. Work out the total first, using the three numbers as they stand,
+and only then shuffle.
+
+The alternative approach - writing a rule that says "to get entry fifty, first go and get entries
+forty-nine, forty-eight and forty-seven, each by the same rule" - is perfectly correct and quite
+mad. Each of those three sends off for three more, and those for three more again. Working out the
+thirtieth entry that way means starting over fifty-six million separate errands, almost all of them
+recomputing something you have already worked out several times. The three slips do it in
+twenty-eight moves.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep n = 4 beside you, and the sequence 0, 1, 1, 2, 4.
+
+    def tribonacci(n):
+
+`n` is the index wanted. Returns Tn. Nothing is modified - the function reads one integer and
+returns one integer.
+
+        if n == 0:
+            return 0
+
+THE ONE GUARD THAT IS GENUINELY REQUIRED (trap 2). Without it, n = 0 would fall through, the loop
+would not run, and the function would return `c`, which starts at 1 - the wrong seed.
+
+        if n <= 2:
+            return 1
+
+T1 and T2 are both 1. NOTE THAT THIS LINE IS NOT STRICTLY NECESSARY: for n = 1 and n = 2 the loop
+`range(3, n+1)` is empty and the function would return `c`, which is already 1. It is kept because
+it states the base cases plainly and would survive someone changing the initialisation below.
+
+        a, b, c = 0, 1, 1
+
+THE WINDOW, holding three consecutive terms.
+
+    a  HOLDS T0 at the start; after k passes, T(k).
+    b  HOLDS T1 at the start; after k passes, T(k+1).
+    c  HOLDS T2 at the start; after k passes, T(k+2) - ALWAYS THE NEWEST TERM, which is why the
+       last line returns it.
+
+        for _ in range(3, n + 1):
+
+Advance the window once for each index from 3 up to n inclusive - that is n − 2 passes.
+
+    CHECK THE ARITHMETIC AT n = 3: `range(3, 4)` runs once, and one pass moves c from T2 to T3.
+    Correct. `range(3, n)` would run one pass too few and return T(n-1) (trap 4).
+
+The variable is `_` because nothing uses it - the loop counts, it does not index.
+
+            a, b, c = b, c, a + b + c   # slide the window of three
+
+THE ENTIRE ALGORITHM, IN ONE LINE, AND THE LINE THAT MUST NOT BE SPLIT.
+
+    Python evaluates the WHOLE right-hand side first, from the OLD a, b and c, and only then
+    assigns all three. So `a + b + c` uses the values as they stood at the start of the pass.
+
+    `b`          becomes the new a - the window's left edge moves up one.
+    `c`          becomes the new b.
+    `a + b + c`  is the new term, and becomes the new c.
+
+    Written as three separate statements in this order, `a = b` and `b = c` destroy the values that
+    the third line still needs, and the sum comes out wrong - trap 1 traces it giving 3 where T3
+    is 2.
+
+        return c
+
+After the loop, `c` holds Tn - because `c` is always the newest term and the loop advanced the
+window exactly n − 2 times from its starting point at T2.""",
+
+    """9. TRACED, PASS BY PASS.
+
+TRACE 1 - n = 4. Expected T4 = 4.
+
+    n is not 0, and n is not <= 2, so both guards fall through.
+
+    SETUP:  a, b, c = 0, 1, 1        (representing T0, T1, T2)
+
+    The loop is `range(3, 5)`, so it runs for 3 and for 4 - TWO passes, which is n − 2 = 2.
+
+    PASS 1:
+        right-hand side, computed from the OLD a=0, b=1, c=1:
+            b        = 1
+            c        = 1
+            a + b + c = 0 + 1 + 1 = 2
+        assign all three at once:  a, b, c = 1, 1, 2
+        NOW a, b, c represent T1, T2, T3.  And c = 2, which is T3.  Correct.
+
+    PASS 2:
+        right-hand side, from a=1, b=1, c=2:
+            b        = 1
+            c        = 2
+            a + b + c = 1 + 1 + 2 = 4
+        assign:  a, b, c = 1, 2, 4
+        NOW a, b, c represent T2, T3, T4.  c = 4, which is T4.
+
+    return c = 4.   Correct.
+
+    THE INVERSION - RUN THE SAME TWO PASSES WITH THE ASSIGNMENT SPLIT INTO THREE STATEMENTS
+    (trap 1), starting again from a, b, c = 0, 1, 1:
+
+    PASS 1:
+        a = b            ->  a = 1        (the 0 is gone)
+        b = c            ->  b = 1
+        c = a + b + c    ->  c = 1 + 1 + 1 = 3
+        c is 3, where T3 is 2. The `a` used in the sum was the NEW a, not the old one, so T1 got
+        counted where T0 should have been.
+
+    PASS 2:
+        a = b            ->  a = 1
+        b = c            ->  b = 3
+        c = a + b + c    ->  c = 1 + 3 + 3 = 7
+
+    returns 7, where T4 is 4.
+
+    SAME THREE OPERATIONS, WRITTEN ON THREE LINES INSTEAD OF ONE, AND THE ANSWER IS ALMOST DOUBLE.
+
+TRACE 2 - THE SEEDS (trap 2).
+
+    n = 0:  the first guard fires.  RETURN 0.
+    n = 1:  the first guard does not fire; the second does.  RETURN 1.
+            (And had the second guard been absent: a,b,c = 0,1,1; `range(3,2)` is empty; return
+            c = 1. Still correct - which is why that guard is documentation rather than logic.)
+    n = 2:  the second guard fires.  RETURN 1.
+            (Without it: `range(3,3)` is empty, return c = 1. Also correct.)
+    n = 3:  both guards fall through. `range(3,4)` runs ONE pass.
+            a,b,c = 0,1,1  ->  a,b,c = 1, 1, 0+1+1 = 2.  RETURN 2.  T3 = 2.  Correct.
+
+    ONLY n = 0 GENUINELY NEEDS A GUARD, because it is the only seed whose value differs from `c`'s
+    starting value of 1.
+
+TRACE 3 - RUNNING FURTHER, to check the window keeps its meaning. Continuing from pass 2 above
+(a,b,c = 1,2,4 = T2,T3,T4):
+
+    PASS 3:  new = 1 + 2 + 4 = 7    ->  a,b,c = 2, 4, 7      = T3,T4,T5.   T5 = 7.
+    PASS 4:  new = 2 + 4 + 7 = 13   ->  a,b,c = 4, 7, 13     = T4,T5,T6.   T6 = 13.
+    PASS 5:  new = 4 + 7 + 13 = 24  ->  a,b,c = 7, 13, 24    = T5,T6,T7.   T7 = 24.
+    PASS 6:  new = 7 + 13 + 24 = 44 ->  a,b,c = 13, 24, 44   = T6,T7,T8.   T8 = 44.
+
+    Against the sequence in section 1: 0, 1, 1, 2, 4, 7, 13, 24, 44. Every term matches.
+
+    SPOT CHECK FURTHER OUT: continuing the same way gives T25 = 1,389,537 - which is the value the
+    problem's own example asks for.
+
+    NOTE THE GROWTH: 44/24 = 1.83, 24/13 = 1.85, 13/7 = 1.86. The ratio is settling towards 1.8393,
+    the tribonacci constant, which is what section 10 uses to say where the numbers overflow.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n). One pass, doing three additions and three assignments per step. No recursion, no table,
+no searching.
+
+SPACE: O(1). THREE INTEGERS, whether n is 4 or 40. That is the whole reduction from the DP-table
+version, and it is available because the recurrence's window has a FIXED WIDTH.
+
+    AGAINST THE NAIVE RECURSION: 56,843,233 calls to reach T30, against 28 loop passes. About two
+    million times the work, and the ratio multiplies by 1.839 for every further step of n.
+
+GROWTH AND OVERFLOW - worth knowing precisely, because the constraint on this problem exists for
+exactly this reason:
+
+    The sequence grows by a factor of about 1.8393 per step, so it outruns fixed-width integers fast.
+
+        T36 = 1,132,436,852
+        T37 = 2,082,876,103        <- still fits a signed 32-bit integer (max 2,147,483,647)
+        T38 = 3,831,006,429        <- OVERFLOWS it
+
+    THAT IS WHY THE PROBLEM CONSTRAINS n <= 37: it is the largest index whose answer fits in a
+    32-bit int. In Java or C++ you must use a `long` beyond that; PYTHON IS IMMUNE, because its
+    integers grow without bound - which is precisely why the bug is invisible until the code is
+    translated into a typed language.
+
+THE FAMILY - A FIXED-WIDTH WINDOW OVER A RECURRENCE. Only the window's width and the seeds change:
+
+    FIBONACCI                     window of 2, seeds 0, 1
+    CLIMBING STAIRS               window of 2 - it IS Fibonacci, since you arrive from one step
+                                  back or two
+    MIN COST CLIMBING STAIRS      window of 2, with a cost added at each step
+    TRIBONACCI                    window of 3                                    <- this entry
+    DECODE WAYS                   window of 2, but each term is GATED on whether the digits form a
+                                  legal letter - the same shape with conditions
+    HOUSE ROBBER                  window of 2, taking a max rather than a sum
+    k-BONACCI                     window of k, which needs a running sum (section 5) to stay O(n)
+
+    THE CONTRAST WORTH DRAWING: Coin Change also builds a table from the bottom up, but its
+    recurrence reaches back an ARBITRARY distance - as far as the largest coin - so the whole table
+    must be kept and O(1) space is not available. The fixed window is what buys the constant space,
+    and noticing whether a recurrence has one is the transferable skill.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Now do k-bonacci." A deque of the last k values plus A RUNNING SUM - section 5. Without the
+    running sum it degrades to O(n x k).
+  - "Can you do better than O(n)?" Matrix exponentiation gives O(log n) multiplications by raising a
+    3x3 matrix to a power. Say that the numbers' digit count grows linearly, so the arithmetic is
+    not really constant-time and the win is smaller than it looks.
+  - "What if n can be 10,000?" Fine in Python - the loop is trivial, and the integers just get long.
+    In a typed language you need big integers.
+  - "Why does the tuple assignment matter?" Because Python evaluates the entire right-hand side
+    before assigning - trap 1, with the trace showing 7 instead of 4.
+  - "Which of the three guards are actually needed?" Only `n == 0`. Explaining why is a good signal.
+
+THE #1 BEGINNER MISTAKE: writing the recursion straight from the definition and stopping there. It
+is correct, it is the shortest thing to write, and it makes fifty-six million calls to reach the
+thirtieth term because it recomputes the same values over and over.
+
+RUNNER-UP: splitting the simultaneous assignment into three separate statements, so the sum is built
+from values that have already been overwritten. It produces plausible-looking numbers that are
+wrong from the very first pass - 3 instead of 2 for T3, and 7 instead of 4 for T4.
+
+TAKEAWAY: the rule reaches back exactly three places and never further, so keep three variables
+rather than a table and slide them forward - computing the new term from all three BEFORE shifting
+any of them, because the shift destroys the values the sum still needs.""",
 ]
 
 _EX_P0H["Rank Transform of an Array"] = [
-    """The base case, traced.
-arr = [40,10,20,30]
-set -> {40,10,20,30}; sorted -> [10,20,30,40]
-enumerate gives (0,10),(1,20),(2,30),(3,40), so rank = {10:1, 20:2, 30:3, 40:4}
-after the +1 that makes ranks 1-based.
-Map the ORIGINAL array through it, preserving position: [4,1,2,3].
-Note the output keeps the input's order - you are relabelling elements in
-place, not sorting them.""",
+    """1. THE GOAL - replace every number by its position in the pecking order.
 
-    """Ties, which is the entire point of the problem.
-arr = [100,100,100]
-set collapses to {100}, sorted [100], rank = {100:1}.
-Output [1,1,1] - equal values share a rank.
-Contrast with what happens if you forget the set: sorted([100,100,100]) is
-[100,100,100] and enumerating gives {100:3} (the last write wins), so the
-output is [3,3,3]. It looks almost right, which is what makes it dangerous.
-Deduplicating BEFORE ranking is the whole algorithm.""",
+Take an array and replace each element with its RANK: the smallest value becomes 1, the next
+distinct value becomes 2, and so on. EQUAL VALUES SHARE A RANK.
 
-    """Ties in the middle, where the difference is visible.
-arr = [37,12,28,9,100,56,80,5,12]
-distinct sorted -> [5,9,12,28,37,56,80,100] -> ranks 1..8
-Output: [5,3,4,2,8,6,7,1,3]
-Both 12s get rank 3, and 28 gets rank 4 - NOT 5. This is dense ranking
-(SQL's DENSE_RANK): ties share a rank and the next value does not skip.
-If the prompt had wanted competition ranking (1,2,2,4 - RANK, skipping after a
-tie), the algorithm changes: you would rank by index in the FULL sorted array
-of the first occurrence. Ask which one is meant; the two differ on every
-tie.""",
+    arr = [40, 10, 20, 30]
 
-    """Edge cases.
-[] -> set is empty, sorted is empty, the comprehension yields [] . No guard
-needed.
-[7] -> {7:1} -> [1] . A single element is always rank 1.
-[-5, 0, -5, 3] -> distinct sorted [-5,0,3] -> {-5:1, 0:2, 3:3} -> [1,2,1,3].
-Negatives need no special handling because sorting already orders them; a
-solution that assumed non-negative values and used the value as an index into
-an array breaks here.""",
+    Sort the distinct values:   10, 20, 30, 40
+    Hand out ranks in order:     1,  2,  3,  4
 
-    """Complexity, and the trade being made.
-Time O(n log n), dominated by sorting the k distinct values (k <= n). The set
-build and the final mapping pass are both O(n). Space O(k) for the set and the
-dictionary, plus O(n) for the output.
-Could you do better? Not comparison-based - you must know the relative order of
-the distinct values, which is a sorting problem, so O(n log n) is the floor.
-If the values are small bounded integers, counting sort makes it O(n + range),
-which is the correct answer to 'can you beat n log n?'.""",
+    Now replace each element of the ORIGINAL array by its rank, keeping the original positions:
 
-    """Where dense ranking actually appears.
-- Leaderboards: two players on the same score share a place, and the next
-  player takes the following place.
-- Percentile and quantile bucketing: rank first, then divide by the count.
-- Feature engineering: replacing a skewed numeric column with its rank makes it
-  robust to outliers and monotone-invariant, which is exactly what rank
-  correlation (Spearman) does.
-- SQL: this function IS `DENSE_RANK() OVER (ORDER BY value)`, and saying so is
-  the fastest way to prove you understand the tie semantics.""",
+        40 -> 4        10 -> 1        20 -> 2        30 -> 3
+
+    ANSWER: [4, 1, 2, 3]
+
+TWO REQUIREMENTS, and the second is the whole problem:
+
+    THE OUTPUT KEEPS THE INPUT'S ORDER AND SHAPE. Element i of the output is the rank of element i
+        of the input. Nothing is rearranged.
+
+    TIES SHARE A RANK, AND LEAVE NO GAP AFTERWARDS.
+
+        arr = [100, 100, 100]     ->     [1, 1, 1]
+
+        All three are the smallest value, so all three are rank 1. And there is no rank 2 or 3 -
+        with only one distinct value, the ranks stop at 1.
+
+THAT SECOND RULE HAS A NAME: DENSE RANKING. It is one of three different things "rank" can mean, and
+choosing the wrong one gives a well-formed answer that is wrong throughout. Section 4 lays out all
+three side by side, because they differ on the simplest possible tied input.""",
+
+    """2. THE INTUITION - the distinct values ARE the rank table.
+
+Once you notice that ties share a rank, the answer falls out in one line.
+
+    THROW AWAY THE DUPLICATES. What is left is exactly the set of ranks that exist.
+    SORT THEM. Their positions in that sorted order ARE their ranks.
+    LOOK EVERY ORIGINAL ELEMENT UP.
+
+    arr = [37, 12, 28, 9, 100, 56, 80, 5, 12]
+
+    step 1 - the distinct values:      {5, 9, 12, 28, 37, 56, 80, 100}
+                                       (the second 12 has vanished - that is the point)
+
+    step 2 - sorted, with positions:    5    9   12   28   37   56   80   100
+                                        1    2    3    4    5    6    7     8
+
+    step 3 - a lookup table:            {5:1, 9:2, 12:3, 28:4, 37:5, 56:6, 80:7, 100:8}
+
+    step 4 - walk the ORIGINAL array and look each element up:
+
+        37   12   28    9   100   56   80    5   12
+         5    3    4    2     8    6    7    1    3
+                                                  ^
+                            both 12s got rank 3 - they share it, automatically,
+                            because they are the same key in the table
+
+    ANSWER: [5, 3, 4, 2, 8, 6, 7, 1, 3]
+
+WHY REMOVING THE DUPLICATES IS THE ENTIRE ALGORITHM. Dense ranking says "count how many DISTINCT
+values are less than or equal to this one". Deduplicating and sorting produces exactly that count as
+a position. There is no tie-handling code anywhere, because after deduplication there are no ties
+left to handle.
+
+    THE STRUCTURE OF THE SOLUTION MIRRORS THE STRUCTURE OF THE DEFINITION - which is what makes it
+    a one-liner rather than a fiddly loop with equality checks.
+
+AND NOTE THE TWO PASSES ARE INDEPENDENT. Building the table is about the VALUES; applying it is
+about the POSITIONS. Sorting is safe here precisely because the sorting happens to a copy of the
+values and the original array is never disturbed.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RANK. A position in the ordering, smallest first, starting at 1.
+
+DENSE RANKING. Ties share a rank AND the next value takes the immediately following rank - no gaps.
+This is what the problem asks for. SQL calls it `DENSE_RANK()`.
+
+COMPETITION (STANDARD) RANKING. Ties share a rank but the next value SKIPS - 1, 1, 3. SQL calls it
+`RANK()`. The Olympic convention: two silvers and no bronze.
+
+ORDINAL RANKING. Every element gets a distinct rank, ties broken arbitrarily - 1, 2, 3. SQL calls
+it `ROW_NUMBER()`.
+
+    ALL THREE ARE CALLED "RANK" IN ORDINARY SPEECH. Section 4 shows them disagreeing on a
+    three-element array.
+
+SET. An unordered collection with no duplicates. `set(arr)` throws the duplicates away. This is the
+single most important call in the code.
+
+`sorted(...)`. Returns a NEW sorted list. It does not modify what it was given - which is why this
+function leaves the caller's array alone.
+
+`enumerate(...)`. Yields (index, value) pairs: (0, first), (1, second), ... The `+ 1` turns the
+0-based index into a 1-based rank.
+
+DICTIONARY COMPREHENSION. `{key: value for ... }` - builds a dictionary in one expression.
+LIST COMPREHENSION. `[expr for ... ]` - builds a list in one expression.
+
+COORDINATE COMPRESSION. Replacing large or sparse values by their ranks so they can be used as array
+indices. This function IS coordinate compression, and section 10 argues it is the real reason to
+know it.
+
+arr. The input array. NOT modified.
+rank. The dictionary from value to its 1-based rank.
+i, v. Inside the comprehension: the 0-based position in the sorted distinct list, and the value
+      sitting there.
+
+n. The array's length. k. The number of DISTINCT values, always k <= n.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - three different things called "rank".
+
+Take the smallest array that separates them:
+
+    arr = [10, 10, 20]
+
+    DENSE RANKING          ->  [1, 1, 2]      the two 10s share rank 1; 20 is next, so rank 2
+    COMPETITION RANKING    ->  [1, 1, 3]      the two 10s share rank 1; 20 SKIPS to rank 3
+    ORDINAL RANKING        ->  [1, 2, 3]      the 10s get different ranks, chosen arbitrarily
+
+    THE PROBLEM WANTS DENSE. Produce either of the others and every tied array is wrong.
+
+TRAP 1 - FORGETTING `set`, WHICH SILENTLY GIVES A DIFFERENT RANKING. This is the mistake, and it is
+one function call.
+
+    Written without the deduplication:
+
+        rank = {v: i + 1 for i, v in enumerate(sorted(arr))}        # NO set
+
+    On arr = [10, 10, 20], `sorted(arr)` is [10, 10, 20], so `enumerate` yields
+    (0, 10), (1, 10), (2, 20), and the dictionary is built key by key:
+
+        {10: 1}          from (0, 10)
+        {10: 2}          from (1, 10)  -  THE SECOND WRITE OVERWRITES THE FIRST
+        {10: 2, 20: 3}   from (2, 20)
+
+    OUTPUT: [2, 2, 3]
+
+    Both 10s do still share a rank - dictionaries only keep one value per key, so last-write-wins
+    accidentally preserves that much. But THE RANK IS WRONG (2 rather than 1) and the largest rank
+    is 3 rather than 2. What comes out is competition ranking shifted by one - a fourth thing, and
+    not what anybody asked for.
+
+    NOTE HOW QUIET IT IS: the output has the right length, the right shape, ties still agree with
+    one another, and it is correct on any array with NO duplicates at all. The bug only appears on
+    tied input.
+
+TRAP 2 - 0-BASED VERSUS 1-BASED. `enumerate` counts from 0 and ranks start at 1, so the `+ 1` is
+required. Without it the smallest value gets rank 0, and every rank in the answer is one too small.
+
+TRAP 3 - REBUILDING THE ANSWER FROM THE SORTED ARRAY. The output must follow the ORIGINAL order.
+Returning ranks in sorted order gives [1, 2, 3, 4] for the first example instead of [4, 1, 2, 3] -
+a correctly-computed set of ranks attached to the wrong positions.
+
+TRAP 4 - SEARCHING THE SORTED LIST FOR EACH ELEMENT INSTEAD OF USING A DICTIONARY. `sorted_distinct
+.index(v)` is a LINEAR SCAN, so the final pass becomes O(n x k) rather than O(n). For an array of
+50,000 distinct values that is 2.5 billion comparisons instead of 50,000 lookups. Binary search
+would fix the complexity and the dictionary is simpler.
+
+TRAP 5 - THIS FUNCTION DOES NOT MUTATE ITS INPUT, and that is worth saying because so many siblings
+do. `set(arr)` builds a new set and `sorted(...)` returns a new list, so `arr` is untouched -
+unlike 3Sum's `nums.sort()`, Assign Cookies' `g.sort()`, Meeting Rooms' `intervals.sort()` and
+Insert Interval's `new[]`. Here the politeness is free, because you needed the sorted DISTINCT
+values in a separate structure anyway.
+
+TRAP 6 - EMPTY AND SINGLE INPUTS. `[]` gives an empty set, an empty sorted list, an empty dictionary
+and an empty comprehension - `[]`, with no guard needed. `[7]` gives `{7: 1}` and `[1]`. Negative
+numbers need nothing special: `[-5, 0, 5]` sorts to [-5, 0, 5] and yields [1, 2, 3].""",
+
+    """5. THE SLOWER VERSIONS FIRST, AND WHAT THE COST IS REALLY MADE OF.
+
+VERSION A - COUNT SMALLER VALUES FOR EACH ELEMENT. For every element, scan the whole array and count
+how many DISTINCT values are smaller; add 1.
+
+    Correct, and O(n^2) - or worse, since keeping the "distinct" part honest means a set per
+    element. For n = 10,000 that is 100,000,000 comparisons against the real solution's roughly
+    10,000 x log2(10,000) = 133,000 sort operations. About 750 times the work, and it grows
+    quadratically.
+
+VERSION B - SORT A COPY, THEN WALK IT ASSIGNING RANKS, INCREMENTING ONLY WHEN THE VALUE CHANGES.
+
+    prev, r = None, 0
+    for v in sorted(arr):
+        if v != prev: r += 1; prev = v
+        rank[v] = r
+
+    This is what the one-liner does, written out. It works, it is O(n log n), and it makes the
+    tie-handling EXPLICIT - `if v != prev` is the line the `set` version deletes entirely. Worth
+    writing out once to see that deduplication and "increment only on a change" are the same idea.
+
+VERSION C - THE DEDUPLICATE-SORT-MAP ONE-LINER, which is the code here.
+
+VERSION D - COUNTING SORT, when the values are small integers. If values were bounded by, say, 1000,
+you could tick off which values occur in an array of 1001 flags and walk it in index order, handing
+out ranks with no comparison sort at all: O(n + range).
+
+    IT IS USELESS HERE, and saying why is the point: the problem allows values from −10^9 to 10^9,
+    a range of two billion. An array of two billion flags is not a solution. This is the same
+    consideration that made counting viable in Merge Similar Items (values 1..1000) and impossible
+    here - the constraint, not the technique, decides.
+
+WHERE THE COST ACTUALLY IS. The three steps are:
+
+    set(arr)                O(n)         one pass, hashing each element
+    sorted(...)             O(k log k)   k = the number of DISTINCT values
+    the final lookup pass   O(n)         one hash lookup per element
+
+    SO THE SORT DOMINATES, and it sorts k items rather than n. On an array of a million elements
+    with only fifty distinct values, the sort is trivial and the whole thing is effectively linear.
+    On an array with no duplicates, k = n and it is a plain O(n log n).
+
+    THE DEDUPLICATION IS NOT JUST FOR CORRECTNESS - IT ALSO SHRINKS THE ONLY EXPENSIVE STEP.
+
+CAN IT BE FASTER THAN O(n log n)? Not by comparisons. Ranking every element is at least as hard as
+sorting - if you had the ranks you could place every element in order in one pass, so a
+sub-O(n log n) rank transform would give a sub-O(n log n) comparison sort, which is impossible.
+Only a non-comparison method like version D can beat it, and only when the values are bounded.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: THROW AWAY THE DUPLICATE VALUES, PUT WHAT IS LEFT IN
+ORDER, AND THAT ORDER IS THE RANK TABLE - THEN WALK THE ORIGINAL ARRAY LOOKING EVERY ELEMENT UP.
+
+THERE IS NO RECURSION AND NO TIE-HANDLING CODE. The mechanism is TWO INDEPENDENT PASSES:
+
+  - The FIRST pass is about the VALUES and ignores where they sit. It builds a lookup table.
+  - The SECOND pass is about the POSITIONS and ignores the values' relationships. It just looks
+    things up.
+  - Keeping those two jobs separate is why there is no branching anywhere: nothing ever has to ask
+    "is this a tie?".
+  - WHAT MAKES IT STOP: both passes have trip counts fixed before they start - the number of
+    distinct values, then the length of the array.
+
+THE STEPS:
+
+  1. COLLECT THE DISTINCT VALUES, discarding every repeat.
+
+     THIS IS THE STEP THAT HANDLES TIES, and it handles them by making them cease to exist. After
+     it, no two values are equal, so nothing further needs to think about equality.
+
+  2. PUT THOSE DISTINCT VALUES IN ASCENDING ORDER.
+
+  3. WALK THAT ORDERED LIST AND GIVE EACH VALUE A NUMBER, STARTING AT ONE AND COUNTING UP.
+
+     Starting at one, not zero - ranks are 1-based, and the position counter in most languages is
+     not, so one has to be added.
+
+     Record these as a lookup table: given a value, what is its number.
+
+  4. WALK THE ORIGINAL ARRAY FROM START TO FINISH, and for each element write down the number the
+     table gives for it.
+
+     THE ORIGINAL ARRAY, IN ITS ORIGINAL ORDER. The ranks were worked out on a sorted copy, but the
+     answer has to line up with the input position by position.
+
+     Two equal elements look the same value up, so they get the same number without anything
+     checking that they were equal.
+
+  5. THAT LIST OF NUMBERS IS THE ANSWER.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a class of pupils who have all sat the same test, and you are asked to write, next to each
+name on the register, what position that score comes in - with the lowest score counting as first
+position. Pupils with identical scores must be given the same position, and the position after a tie
+carries straight on rather than skipping.
+
+The register is in whatever order the pupils were enrolled, and it has to stay that way. You are
+writing a position beside each name, not reordering anybody.
+
+So you do the work in two entirely separate halves, and keeping them separate is what makes it easy.
+
+For the first half you forget about the pupils completely and look only at the scores. You write out
+every score that occurred, but only once each - if three pupils scored the same, that score appears
+on your list a single time. Then you put that list in order, lowest first, and number the entries
+one, two, three, and so on down the page.
+
+Notice what has happened. By writing each score only once, the whole business of ties has quietly
+disappeared. There are no equal entries left on your list, so there is nothing to decide about them.
+The numbering is just counting down a page.
+
+For the second half you go back to the register, in its original order, and for each pupil you look
+their score up on your numbered list and write the corresponding number beside their name. Two
+pupils with the same score look up the very same entry, so they get the same number - not because
+you checked whether they were tied, but because there was only ever one entry for that score to
+find.
+
+The mistake that spoils this is skipping the "only once each" step. If you write out every score
+including the repeats and then number them one, two, three down the page, a score shared by two
+pupils occupies two lines and consumes two numbers. Everything below it is pushed down, and the
+positions you hand out are too large - and worse, they will look perfectly reasonable, because they
+still increase in the right order and tied pupils still agree with each other. It is only wrong in a
+way you would have to check against a second method to notice.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep arr = [40, 10, 20, 30] beside you, answer [4, 1, 2, 3].
+
+    def array_rank_transform(arr):
+
+`arr` is the input array. Returns a new list of the same length. `arr` IS NOT MODIFIED (trap 5).
+
+        rank = {v: i + 1 for i, v in enumerate(sorted(set(arr)))}
+
+THE FIRST PASS, AND FOUR THINGS HAPPEN IN IT. Read it from the inside out.
+
+    `set(arr)`      THROWS AWAY THE DUPLICATES. This is the line that implements dense ranking, and
+                    it does so by removing every tie before anything else looks at the data.
+                    Deleting it gives a different ranking scheme entirely - trap 1.
+                    O(n), and the result has k elements where k <= n.
+
+    `sorted(...)`   PUTS THE DISTINCT VALUES IN ASCENDING ORDER. A set has no order of its own, so
+                    this is what turns it into a ranking. Returns a NEW list - it cannot disturb
+                    `arr`, which is a set away by now in any case.
+                    O(k log k), and this is the dominant cost of the whole function.
+
+    `enumerate(...)` yields (0, smallest), (1, next), ... - position paired with value.
+
+    `i + 1`         CONVERTS the 0-based position into a 1-based rank. Drop the `+ 1` and every
+                    rank is one too small (trap 2).
+
+    rank            HOLDS the lookup table.
+                    the KEY   is a VALUE from the array.
+                    the VALUE is its 1-based dense rank.
+
+Note the comprehension writes `{v: i + 1 ...}` - value as key, position as value. Getting those the
+wrong way round builds a table from rank to value, which is the inverse of what the next line needs.
+
+        return [rank[v] for v in arr]
+
+THE SECOND PASS.
+
+    `for v in arr`  walks THE ORIGINAL ARRAY IN ITS ORIGINAL ORDER. This is what keeps the output
+                    lined up with the input position by position (trap 3). The sorted list played
+                    its part in building the table and is not used here.
+
+    `rank[v]`       one dictionary lookup, constant time. Every value in `arr` is guaranteed to be a
+                    key, because the table was built from `set(arr)` - so this can never raise
+                    KeyError, and no `.get` default is needed.
+
+    TWO EQUAL ELEMENTS LOOK UP THE SAME KEY and therefore receive the same rank. There is no
+    equality check anywhere in this function; the sharing is a consequence of the deduplication,
+    not of any code that handles it.
+
+    O(n) - one lookup per element. Using `sorted_list.index(v)` here instead would be a linear scan
+    per element and turn this into O(n x k) (trap 4).""",
+
+    """9. TRACED, STEP BY STEP - AND THE ONE FUNCTION CALL THAT CHANGES THE ANSWER.
+
+TRACE 1 - THE BASE CASE. arr = [40, 10, 20, 30]. Expected [4, 1, 2, 3].
+
+    set(arr)                 ->  {40, 10, 20, 30}      no duplicates to remove here
+    sorted(...)              ->  [10, 20, 30, 40]
+    enumerate(...)           ->  (0, 10), (1, 20), (2, 30), (3, 40)
+    with i + 1               ->  rank = {10: 1, 20: 2, 30: 3, 40: 4}
+
+    the second pass, walking arr in ITS OWN order:
+        v = 40  ->  rank[40] = 4
+        v = 10  ->  rank[10] = 1
+        v = 20  ->  rank[20] = 2
+        v = 30  ->  rank[30] = 3
+
+    RETURN [4, 1, 2, 3].
+
+    NOTE THAT THE OUTPUT IS NOT SORTED. The ranks were computed in sorted order but applied in the
+    input's order - which is exactly trap 3. Returning [1, 2, 3, 4] would be a correct rank table
+    attached to the wrong positions.
+
+TRACE 2 - TIES IN THE MIDDLE, where the sharing is visible.
+arr = [37, 12, 28, 9, 100, 56, 80, 5, 12]. Expected [5, 3, 4, 2, 8, 6, 7, 1, 3].
+
+    set(arr)     ->  {5, 9, 12, 28, 37, 56, 80, 100}
+                     NINE ELEMENTS BECAME EIGHT - the second 12 is gone.
+    sorted(...)  ->  [5, 9, 12, 28, 37, 56, 80, 100]
+    rank         ->  {5: 1, 9: 2, 12: 3, 28: 4, 37: 5, 56: 6, 80: 7, 100: 8}
+
+    the second pass:
+        37   ->  5
+        12   ->  3
+        28   ->  4
+         9   ->  2
+       100   ->  8
+        56   ->  6
+        80   ->  7
+         5   ->  1
+        12   ->  3          <- the SAME key, so the SAME rank, with nothing checking for a tie
+
+    RETURN [5, 3, 4, 2, 8, 6, 7, 1, 3].
+
+    The ranks run 1 to 8 for nine elements. There is no rank 9, because there are only eight
+    distinct values - which is exactly what "dense" means.
+
+TRACE 3 - THE INVERSION. arr = [10, 10, 20], the smallest array that separates the ranking schemes.
+
+    AS WRITTEN, WITH `set`:
+        set(arr)     ->  {10, 20}
+        sorted(...)  ->  [10, 20]
+        rank         ->  {10: 1, 20: 2}
+        second pass  ->  10 -> 1,  10 -> 1,  20 -> 2
+        RETURN [1, 1, 2].     Dense ranking.  CORRECT.
+
+    WITHOUT `set` (trap 1):
+        sorted(arr)  ->  [10, 10, 20]
+        enumerate    ->  (0, 10), (1, 10), (2, 20)
+        the dictionary is built key by key:
+            (0, 10)  ->  rank = {10: 1}
+            (1, 10)  ->  rank = {10: 2}       THE SECOND WRITE OVERWRITES THE FIRST
+            (2, 20)  ->  rank = {10: 2, 20: 3}
+        second pass  ->  10 -> 2,  10 -> 2,  20 -> 3
+        RETURN [2, 2, 3].
+
+    ONE FUNCTION CALL, AND [1, 1, 2] BECOMES [2, 2, 3]. Note how well it hides: the length is right,
+    the order is right, the two tied elements still agree with each other, and on any array WITHOUT
+    duplicates the two versions produce identical output. It is wrong only where it matters.
+
+    AND FOR COMPLETENESS, the three schemes on this same array:
+        DENSE (wanted)   [1, 1, 2]
+        COMPETITION      [1, 1, 3]
+        ORDINAL          [1, 2, 3]
+    All three are called "rank" in ordinary speech, and none of the other two is what the problem
+    asked for.
+
+TRACE 4 - EVERYTHING TIED. arr = [100, 100, 100].
+
+    set(arr)  ->  {100}       three elements collapse to ONE
+    sorted    ->  [100]
+    rank      ->  {100: 1}
+    second pass  ->  1, 1, 1
+
+    RETURN [1, 1, 1]. The largest rank is 1, because there is one distinct value. No gaps, no
+    special case.
+
+THE TINY INPUTS:
+    []            set is empty, sorted is empty, the dictionary is empty, the comprehension yields
+                  [].  RETURNS []. No guard needed anywhere.
+    [7]           rank = {7: 1}.  RETURNS [1]. A single element is always rank 1.
+    [-5, 0, 5]    sorted gives [-5, 0, 5], so rank = {-5: 1, 0: 2, 5: 3}.  RETURNS [1, 2, 3].
+                  Negative values need nothing special - the sort handles them.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n + k log k), where n is the array's length and k the number of DISTINCT values - and since
+k <= n, that is O(n log n) in the worst case.
+
+In plain words: one pass to collect the distinct values, a sort of just those, and one pass to look
+every element up. THE SORT IS THE ONLY EXPENSIVE PART, and the deduplication shrinks it before it
+runs. On a million elements with fifty distinct values the sort is trivial and the whole function is
+effectively linear; with no duplicates at all, k = n and it is a plain O(n log n).
+
+SPACE: O(k) for the set and the dictionary, plus O(n) for the output list.
+
+CAN IT BE FASTER? Not by comparisons. Ranking is at least as hard as sorting - given the ranks you
+could place every element in order in one pass - so a faster comparison-based rank transform would
+give a faster comparison sort, which is impossible. Only counting sort beats it, and only when the
+values are bounded, which here they are not (−10^9 to 10^9).
+
+WHERE DENSE RANKING ACTUALLY APPEARS:
+
+    LEADERBOARDS                  two players on the same score share a place, and the next player
+                                  takes the following place rather than skipping.
+    PERCENTILE AND GRADE BUCKETS  turning raw scores into bands.
+    SQL                           this is literally `DENSE_RANK() OVER (ORDER BY value)`, and its
+                                  siblings `RANK()` and `ROW_NUMBER()` are the other two schemes
+                                  from section 4.
+    COORDINATE COMPRESSION        AND THIS IS THE REAL REASON TO KNOW IT.
+
+    COORDINATE COMPRESSION, spelled out, because it is what turns this from a toy into a tool:
+    suppose you need a Fenwick tree or a segment tree indexed by VALUE, and the values run up to
+    10^9. You cannot allocate an array of a billion. But there are at most n distinct values in your
+    input, so rank-transform them first and every value becomes an integer between 1 and n. Now an
+    array of size n works, and the ORDER of the values is preserved - which is all those structures
+    ever needed.
+
+    That single trick is a prerequisite for a whole class of "count inversions", "count smaller
+    elements after self", and "range query on sparse coordinates" problems. The rank transform is the
+    preprocessing step, and it is exactly this function.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if ties should SKIP the next rank?" That is competition ranking - do not deduplicate; walk
+    the sorted array and set each value's rank to its first position + 1. [10,10,20] gives [1,1,3].
+  - "What if every element needs a distinct rank?" Ordinal ranking - sort the INDICES by value and
+    assign 1, 2, 3 in that order. You must decide how to break ties, usually by original index.
+  - "What if the array is huge but the values are small integers?" Counting sort: O(n + range). Say
+    plainly that it needs a bounded range, which this problem does not give.
+  - "Can you avoid the dictionary?" Sort the distinct values and binary-search each element:
+    O(n log k) instead of O(n), and more code. The dictionary is better.
+  - "Does this modify the input?" No - `set` and `sorted` both build new objects. Worth volunteering,
+    since several neighbouring problems do mutate.
+
+THE #1 BEGINNER MISTAKE: leaving out `set`, so duplicated values consume consecutive positions and
+every rank after the first tie is inflated. [10,10,20] comes back as [2,2,3] instead of [1,1,2]. It
+is quiet because the output still has the right length and order, tied elements still agree with
+each other, and arrays without duplicates come out identical - so it passes every test that does not
+contain a tie.
+
+RUNNER-UP: returning the ranks in sorted order rather than in the input's order - a correctly
+computed rank table attached to the wrong positions.
+
+TAKEAWAY: deduplicate first and the tie-handling disappears - the sorted DISTINCT values are the
+rank table, so build a value-to-rank dictionary once and then walk the original array looking each
+element up, which keeps the output aligned with the input and makes equal values share a rank
+without any code ever testing for equality.""",
 ]
 
 for _e in ENTRIES:
@@ -65871,72 +66765,560 @@ fixed number of times and verify.""",
 ]
 
 _EX_P1A["Minimum Depth of Binary Tree"] = [
-    """The standard example, level by level.
-        3
-       / \\
-      9   20
-         /  \\
-        15   7
-Queue starts [(3,1)]. Pop 3 - it has children, so push (9,2) and (20,2).
-Pop (9,2) - 9 has no left and no right, so it IS a leaf. Return 2.
-We never look at 15 or 7 at all. BFS reaches the SHALLOWEST leaf first, so the
-first leaf it dequeues is the answer by construction - no comparison across
-paths is needed.""",
+    """1. THE GOAL - and the word that makes it harder than it looks.
 
-    """The trap that makes this harder than Maximum Depth.
-        1
-         \\
-          2
-           \\
+THE MINIMUM DEPTH IS THE NUMBER OF NODES ON THE SHORTEST PATH FROM THE ROOT DOWN TO A LEAF.
+
             3
-The tempting DFS one-liner is `1 + min(min_depth(left), min_depth(right))`.
-At node 1 the left subtree is None and returns 0, so it computes 1 + min(0, 2)
-= 1. WRONG: depth 1 would mean node 1 is a leaf, and it is not - it has a right
-child. The true answer is 3.
-Minimum depth counts paths to a LEAF, and a node with one missing child is not
-a leaf. Maximum Depth has no such problem because max(0, 2) naturally ignores
-the empty side. This asymmetry is the entire reason the question exists.""",
+           / \\
+          9   20
+             /  \\
+           15    7
 
-    """The DFS version done correctly, for comparison.
-    def min_depth(root):
+    Every path from the root to a leaf:
+        3 -> 9            2 nodes
+        3 -> 20 -> 15     3 nodes
+        3 -> 20 -> 7      3 nodes
+
+    THE SHORTEST IS 2.
+
+THE WORD THAT DOES ALL THE DAMAGE IS "LEAF". A leaf is a node with NO children at all - neither
+left nor right. The path must end at one; it may not stop halfway down just because one side
+happens to be empty.
+
+    That distinction is invisible on the tree above, where every path ends at a genuine leaf. It
+    is the entire problem on this tree:
+
+            1
+             \\
+              2
+               \\
+                3
+
+    Node 1 has no left child. It is NOT a leaf - it has a right child. The only root-to-leaf path
+    is 1 -> 2 -> 3, so THE ANSWER IS 3.
+
+    The tempting one-line formula gives 1. Section 4 shows exactly how.
+
+THIS IS WHY MINIMUM DEPTH IS A HARDER PROBLEM THAN MAXIMUM DEPTH, which is otherwise its identical
+twin. For maximum depth, `1 + max(left, right)` is correct with no special cases whatsoever. Swap
+`max` for `min` and it is wrong. Section 5 explains why the asymmetry is real and not an accident
+of the code.
+
+NOTE THE UNITS. "Depth" here counts NODES, not edges - a single-node tree has depth 1, not 0. An
+empty tree has depth 0 by convention, since there is no root-to-leaf path at all.""",
+
+    """2. THE INTUITION - the first leaf you meet, meeting them in order of distance.
+
+If you explore the tree LEVEL BY LEVEL - everything one step from the root, then everything two
+steps, then three - then the FIRST leaf you bump into is the shallowest one there is. You can stop
+the moment you see it.
+
+That ring-by-ring order is BREADTH-FIRST SEARCH, and a QUEUE produces it. A queue is a waiting
+line: join the back, leave the front. Carry each node's depth along with it:
+
+            3                 queue: [(3,1)]
+           / \\
+          9   20              pop (3,1). Is 3 a leaf? No - it has children.
+             /  \\                          Push (9,2) and (20,2).
+           15    7            queue: [(9,2), (20,2)]
+
+                              pop (9,2). Is 9 a leaf? YES.  ->  RETURN 2.
+
+    The node 20 is still sitting in the queue, and 15 and 7 were never even created as entries.
+    THE SEARCH STOPPED AT THE FIRST LEAF, and that leaf was the shallowest because everything at
+    depth 1 had already been examined before anything at depth 2 was touched.
+
+WHY "FIRST LEAF FOUND" IS "SHALLOWEST LEAF". BFS finishes every node at distance k before touching
+any node at distance k+1. So when a leaf comes out of the queue at depth d, every node at depth
+1 through d−1 has already been examined and none of them was a leaf. There cannot be a shallower
+one.
+
+    That is not luck. It is what "explore in ring order" means, and it is the same property that
+    makes BFS the tool for shortest paths in an unweighted graph.
+
+AND THE PAYOFF IS ENORMOUS ON LOPSIDED TREES:
+
+            root
+           /    \\
+        leaf     a chain of 1,000,000 nodes
+
+    BFS pops the root, pushes two entries, pops the leaf, and returns 2. THREE DEQUEUES.
+    A depth-first walk must compute the depth of BOTH sides before it can take a minimum, so it
+    walks the entire million-node chain first. Section 5 puts the exact ratio on it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY TREE. Each node has a value and up to two children, `left` and `right`.
+ROOT. The top node; the only thing you are handed.
+
+LEAF. A node with NO children - BOTH `left` and `right` are None. THIS DEFINITION IS THE PROBLEM.
+A node with one child is not a leaf, however tempting it is to treat it as the end of a path.
+
+DEPTH (of a node). The number of NODES from the root down to it, counting both ends. The root is
+at depth 1. (Some sources count EDGES instead, making the root 0 - read the problem statement.)
+
+MINIMUM DEPTH. The smallest depth of any LEAF.
+
+ROOT-TO-LEAF PATH. A walk starting at the root, always moving to a child, ending at a leaf. It may
+not stop early.
+
+BFS (BREADTH-FIRST SEARCH) / LEVEL ORDER. Visiting nodes in order of increasing depth - all of
+depth 1, then all of depth 2, and so on.
+
+DFS (DEPTH-FIRST SEARCH). Following one path as far as it goes before backing up. Fine here if
+written carefully; section 5 gives the careful version and the cost.
+
+QUEUE. First in, first out. Join the back, leave the front.
+deque. Python's double-ended queue from `collections`. `popleft()` removes from the front in
+constant time; a plain list's `pop(0)` is O(n) because everything shifts down.
+
+TUPLE. `(node, depth)` - two values carried together as one queue entry, so each node arrives
+knowing how deep it is without a separate structure.
+
+EARLY RETURN. Stopping the instant the answer is known. What makes the lopsided case cheap.
+
+root. The tree's top node, or None.
+queue. The waiting line of (node, depth) pairs.
+node, depth. The pair unpacked from the front of the queue.
+
+O(n). Worst-case work proportional to the number of nodes - though often far less, which is the
+point.""",
+
+    """4. THE TRAP - the one-line formula that looks obviously right.
+
+Maximum Depth has a famous one-liner, and everyone writes the minimum version by analogy:
+
+    def min_depth(root):                       # WRONG
         if root is None: return 0
-        if root.left is None:  return 1 + min_depth(root.right)   # only one side
-        if root.right is None: return 1 + min_depth(root.left)
         return 1 + min(min_depth(root.left), min_depth(root.right))
-The two extra guards say 'if a child is missing, you must go down the other
-side - there is no choice'. Correct, and O(n) - but it visits EVERY node, while
-BFS stops at the first leaf. On a tree with a shallow leaf on the left and a
-million nodes on the right, BFS is dramatically faster in practice even though
-both are O(n) worst case. That is the argument for preferring BFS here.""",
 
-    """Edge cases.
-None -> 0 by the first guard. An empty tree has no root-to-leaf path, and 0 is
-the agreed convention.
-A single node 5 -> queue pops (5,1), it has no children, return 1. The root can
-itself be the leaf.
-A perfectly balanced tree of 15 nodes -> 4, and BFS confirms it after
-dequeuing at most 8 nodes, since the first leaf appears at level 4.
-Note the depth here is a count of NODES, not edges - a single node is depth 1,
-not 0. Prompts differ on this; restate the convention before coding.""",
+Try it on the tree from section 1:
 
-    """Why BFS wins, quantified.
-Consider a tree that is a single node with a leaf on the left and a
-1,000,000-node chain on the right. BFS dequeues the root, then the left leaf,
-and returns 2 after touching 3 nodes. DFS explores by branch, so depending on
-the order it may walk the entire million-node chain before ever reaching the
-answer. Both are O(n) in the worst case (a complete tree, where every leaf is
-at the bottom), but the EXPECTED behaviour differs enormously.
-The general rule worth stating: shallowest-first questions are BFS questions,
-deepest-first questions are DFS questions.""",
+            1
+             \\
+              2
+               \\
+                3
 
-    """Space, and how it relates to the shape.
-BFS holds at most one level at a time, so space is O(w) where w is the maximum
-width - for a complete tree that is about n/2, so O(n). DFS holds a path, so
-space is O(h): O(log n) balanced, O(n) skewed.
-So the two swap which shape hurts them: BFS is memory-hungry on wide bushy
-trees, DFS on deep skinny ones. If an interviewer constrains memory, that trade
-is the answer. The same reasoning drives the choice in Level Order Traversal,
-Right Side View and Word Ladder - all BFS, all bounded by width.""",
+    min_depth(3):  node 3 has no children.
+                   = 1 + min(min_depth(None), min_depth(None))
+                   = 1 + min(0, 0) = 1                      correct - 3 IS a leaf
+
+    min_depth(2):  node 2 has no LEFT child but does have a right child.
+                   = 1 + min(min_depth(None), min_depth(3))
+                   = 1 + min(0, 1)
+                   = 1 + 0 = 1                              WRONG - the answer is 2
+
+    min_depth(1):  = 1 + min(min_depth(None), min_depth(2))
+                   = 1 + min(0, 1)
+                   = 1 + 0 = 1                              WRONG - the answer is 3
+
+    IT RETURNS 1 WHERE THE ANSWER IS 3.
+
+WHY IT FAILS, precisely. `min_depth(None)` returns 0, and that 0 means "there is no subtree here".
+The `min` reads it as "a path of length 0 ends here" - it treats an ABSENCE as a very short PATH.
+But a missing child is not a leaf, so no path ends there, and the 0 should be ignored rather than
+minimised over.
+
+    NOTE THE ASYMMETRY WITH MAXIMUM DEPTH. `1 + max(0, something)` picks the real side automatically,
+    because any genuine depth is at least 1 and therefore beats the 0. The 0 is harmless to `max`
+    and poisonous to `min`. That is the whole reason one problem is Easy and the other trips people.
+
+THE CORRECT DFS needs the missing sides handled explicitly - section 5.
+
+TRAP 2 - `deque([root])` WITH AN EMPTY TREE, which is the failure the code here avoids and its
+cluster sibling Average of Levels does not. A queue containing None has LENGTH 1, so `while queue`
+is true, and `node.left` would crash. THE GUARD `if root is None: return 0` AT THE TOP IS WHAT
+PREVENTS IT, and it is present in this code.
+
+TRAP 3 - PUSHING CHILDREN WITHOUT CHECKING THEY EXIST. `queue.append((node.left, depth+1))` when
+`node.left` is None puts a None into the queue, and the leaf test `node.left is None and node.right
+is None` then raises AttributeError on the None. Hence the two `if` guards.
+
+TRAP 4 - CONFUSING "NO CHILDREN" WITH "NO LEFT CHILD". The leaf test must be `and`, not `or`.
+Written with `or`, node 1 in the traced tree - which has no left child - would be called a leaf and
+the function would return 1. That is the same wrong answer as the naive DFS, reached from a
+different direction.
+
+TRAP 5 - THE UNREACHABLE `return 0` AT THE BOTTOM. If the tree is non-empty, the loop always
+returns from inside, because every finite non-empty binary tree contains at least one leaf. The
+trailing `return 0` exists only to satisfy readers and linters; it can never run.""",
+
+    """5. THE DFS VERSION DONE CORRECTLY, AND WHY BFS STILL WINS.
+
+VERSION A - THE NAIVE ONE-LINER. Section 4. Wrong, and wrong on ordinary trees.
+
+VERSION B - DFS WITH THE MISSING SIDES HANDLED:
+
+    def min_depth(root):
+        if root is None:            return 0
+        if root.left is None:       return 1 + min_depth(root.right)
+        if root.right is None:      return 1 + min_depth(root.left)
+        return 1 + min(min_depth(root.left), min_depth(root.right))
+
+    The two middle lines say: with only one child, THERE IS NO CHOICE TO MINIMISE OVER - the path
+    must go down the side that exists. Only when both children are present is `min` meaningful.
+
+    Check it on the trap tree:  min_depth(3) = 1 + min_depth(None) = 1 + 0 = 1  (left is None)
+                                min_depth(2) = 1 + min_depth(3)    = 2          (left is None)
+                                min_depth(1) = 1 + min_depth(2)    = 3          (left is None)
+    Correct.
+
+    O(n) time, O(h) stack. Perfectly acceptable, and it is the version to write if the tree is very
+    WIDE.
+
+VERSION C - BFS WITH DEPTHS, which is the code here. O(n) worst case, and far less than that in
+practice because it stops at the first leaf.
+
+WHY BFS WINS, QUANTIFIED. Take a root whose left child is a leaf and whose right child begins a
+chain of 1,000,000 nodes:
+
+    BFS:  pop (root,1) - not a leaf, push two entries.
+          pop (leaf,2) - IS a leaf.  RETURN 2.
+          THREE DEQUEUES. Total nodes examined: 2.
+
+    DFS (version B): the root has BOTH children, so it takes the last branch, which must evaluate
+          `min_depth(root.right)` before it can take a minimum. That call walks the entire chain.
+          ABOUT 1,000,002 NODES EXAMINED.
+
+    THAT IS A FACTOR OF ROUGHLY 333,000 on this input - and it is not a contrived tree, it is any
+    tree that is shallow on one side and deep on the other, which is most real trees.
+
+    WORSE, IN PYTHON: the DFS recurses 1,000,000 frames deep against a default recursion limit of
+    1,000, so it does not merely run slowly - it raises RecursionError and returns nothing at all.
+
+WHEN DFS IS THE BETTER CHOICE. The trade is the usual one, in the opposite direction:
+
+    BFS  space is O(WIDTH)   - the queue holds a level at a time. A complete tree's bottom level is
+                               about half its nodes, so this can be n/2.
+    DFS  space is O(HEIGHT)  - the stack holds one path.
+
+    So a very WIDE, SHALLOW tree favours DFS on memory, and a very DEEP, NARROW one favours BFS.
+    For minimum depth specifically, BFS also has the early exit, which is why it is the default
+    answer here and why the entry's code uses it.
+
+THE CLUSTER, so reading several of these is not repetitive:
+
+    BINARY TREE RIGHT SIDE VIEW    owns the FROZEN LEVEL SIZE mechanism in full.
+    AVERAGE OF LEVELS              owns what to do with a whole level once you have it.
+    THIS ENTRY                     owns carrying the depth alongside each node, the LEAF test, and
+                                   the early exit.
+    MAXIMUM DEPTH                  the easy twin - `1 + max(left, right)`, no special cases.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE TREE OUTWARD FROM THE ROOT IN ORDER OF
+DISTANCE, CARRYING EACH NODE'S DEPTH ALONGSIDE IT, AND STOP THE INSTANT YOU TAKE A NODE WITH NO
+CHILDREN AT ALL OUT OF THE LINE - BECAUSE IN THAT ORDER, THE FIRST SUCH NODE IS THE SHALLOWEST
+THERE IS.
+
+THERE IS NO RECURSION, which is deliberate - the depth-first version in section 5 recurses as deep
+as the tree is tall and dies on a long chain. The mechanism is A QUEUE OF NODE-AND-DEPTH PAIRS:
+
+  - The queue is a waiting line: things join the back and leave the front, so nodes come out in the
+    order they were discovered, which is order of increasing depth.
+  - Each entry carries its own depth, so no separate bookkeeping is needed to know how far down a
+    node is.
+  - WHAT MAKES IT STOP: either a leaf is found - which is guaranteed, since every non-empty finite
+    tree has at least one - or the queue empties. Every node enters once and leaves once, and a
+    tree has no cycles, so the queue must drain.
+  - WHY IT USUALLY STOPS EARLY: the answer is a single number and the first leaf settles it, so
+    nothing beyond the shallowest leaf is ever examined.
+
+THE STEPS:
+
+  1. IF THERE IS NO TREE, THE ANSWER IS ZERO. There is no root-to-leaf path at all, and zero is the
+     agreed convention. This also stops the line below from putting an absence into the queue,
+     which would then be taken out and asked about its children.
+
+  2. START THE LINE WITH THE ROOT, RECORDED AS BEING AT DEPTH ONE.
+
+  3. WHILE THE LINE IS NOT EMPTY:
+
+     a. TAKE THE FRONT ENTRY, which gives you a node and the depth it sits at.
+
+     b. IF THAT NODE HAS NEITHER A LEFT CHILD NOR A RIGHT CHILD, it is a leaf. ITS DEPTH IS THE
+        ANSWER - STOP.
+
+        NEITHER. Not "one of them is missing" - both. A node with a single child is not the end of
+        a path, and treating it as one is the mistake this whole problem is built around.
+
+     c. OTHERWISE, PUT ITS LEFT CHILD ON THE BACK OF THE LINE AT ONE GREATER DEPTH, IF IT HAS ONE.
+        THEN THE SAME FOR ITS RIGHT CHILD.
+
+        The two "if it has one" checks matter: putting a missing child into the line means the next
+        entry taken out is nothing at all, and asking nothing about its children fails.
+
+  4. (The line can only empty on a tree that was empty to begin with, which step 1 already dealt
+     with - so this point is never reached in practice.)""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine an underground cave system that branches, and you want to find the nearest exit - a dead
+end that opens to the surface. You are looking for the SHORTEST way out, so you need to be careful
+about how you search.
+
+The wrong way is to pick a passage and follow it as far as it goes. You might spend hours crawling
+down a tunnel that runs for miles, when there was a way out three steps behind you down the other
+branch.
+
+So instead you send out a search party that spreads rather than plunges. First you check every
+chamber one step from the entrance. Then every chamber two steps away. Then three. You keep a
+waiting list of chambers still to check, and you always deal with whichever has been waiting
+longest - which, because of how the list grows, is always one of the nearest ones you have not
+looked at yet.
+
+Each chamber on the list is written down together with how many steps it took to get there, so when
+you reach it you already know its distance without having to work anything out.
+
+When you take a chamber off the list, you ask one question: does it have any passages leading on?
+If it has none at all, it is a dead end, and you have found your exit. And because you have been
+working strictly outward, every chamber closer than this one has already been checked and none of
+them was a dead end. So this one is the nearest. You stop immediately - there is nothing further to
+learn, and the rest of the waiting list can be abandoned untouched.
+
+If it does have passages, you add wherever they lead to the back of the list, each noted as being
+one step further out, and you carry on.
+
+The one thing to be exact about is what counts as a dead end. A chamber with a passage going left
+and nothing to the right is not a dead end - it is a corridor that happens to bend. If you count
+those as exits you will report a way out that does not exist, and you will report it very
+confidently, because the chamber genuinely did have a missing side.
+
+That single confusion, between "one way is blocked" and "every way is blocked", is what makes
+finding the nearest exit harder than finding the furthest one.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 3 / 9, 20 / (20's children 15, 7) beside you, answer 2.
+
+    from collections import deque
+
+A queue with constant-time removal from the front. A plain list's `pop(0)` is O(n) because every
+remaining element shifts down, which would make the traversal O(n^2).
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None.
+
+    def min_depth(root):
+
+`root` is the tree's top node, or None. Returns the number of nodes on the shortest root-to-leaf
+path. The tree is never modified.
+
+        if root is None:
+            return 0
+
+TWO JOBS IN ONE LINE. It gives the agreed answer for an empty tree - there is no root-to-leaf path,
+so 0 - and it prevents the next line from building `deque([None])`, which would be a queue of
+LENGTH ONE whose first entry is nothing at all (trap 2).
+
+        queue = deque([(root, 1)])
+
+The waiting line. Each entry is a PAIR: the node, and the depth it sits at.
+
+    the tuple `(root, 1)`  carries the depth alongside the node, so a node arrives already knowing
+                           how deep it is. The alternative - a frozen level-size loop counting
+                           rounds - is what the cluster sibling Right Side View uses; carrying the
+                           depth is simpler when you want to return the instant you find something.
+    the `1`                is the ROOT'S depth. Nodes are being counted, not edges, so the root is
+                           at 1 and a single-node tree answers 1.
+
+        while queue:
+
+One pass per node taken out. It terminates because every node enters the queue once and leaves
+once, and trees have no cycles.
+
+In practice it almost never runs to completion - the return below fires first.
+
+            node, depth = queue.popleft()
+
+Take from the FRONT. First in, first out, which is what makes nodes come out in order of increasing
+depth - and that ordering is the entire justification for the early return below.
+
+The pair is unpacked into two named variables in one step.
+
+            if node.left is None and node.right is None:
+                return depth              # first leaf reached (BFS) = min depth
+
+THE LEAF TEST AND THE EARLY RETURN - the two lines this problem is about.
+
+    `is None and ... is None`  DECIDES leaf-ness. BOTH must be absent. Written with `or`, a node
+                               with one child would be called a leaf and the function would return
+                               too small a number (trap 4).
+    `return depth`             is correct ONLY because of the queue's ordering. Every node
+                               shallower than this one has already been taken out and rejected, so
+                               no shallower leaf exists. With a stack instead of a queue this line
+                               would be wrong.
+
+            if node.left: queue.append((node.left, depth + 1))
+            if node.right: queue.append((node.right, depth + 1))
+
+Push the children onto the BACK, each one step deeper. The two guards are trap 3 - pushing a None
+means the next `node.left` is read off nothing.
+
+`depth + 1` is where the depth bookkeeping happens: a child is exactly one node further from the
+root than its parent.
+
+        return 0
+
+UNREACHABLE FOR A NON-EMPTY TREE (trap 5). Every finite non-empty binary tree has at least one leaf,
+so the return inside the loop always fires first. This line exists for readers and linters.""",
+
+    """9. TRACED, ENTRY BY ENTRY - AND THE TREE THAT BREAKS THE ONE-LINER.
+
+TRACE 1 - THE STANDARD EXAMPLE.
+
+            3
+           / \\
+          9   20
+             /  \\
+           15    7
+
+    root is not None, so queue = [(3, 1)]
+
+    ITERATION 1:  node, depth = (3, 1).   queue = []
+        Is node.left None?  No - it is 9.  The leaf test fails immediately.
+        node.left is 9   ->  queue = [(9, 2)]
+        node.right is 20 ->  queue = [(9, 2), (20, 2)]
+
+    ITERATION 2:  node, depth = (9, 2).   queue = [(20, 2)]
+        node.left is None AND node.right is None  ->  9 IS A LEAF.
+        RETURN 2.
+
+    ANSWER 2.
+
+    NOTE WHAT WAS NEVER TOUCHED. The entry (20, 2) is still sitting in the queue, and nodes 15 and
+    7 were never even added. Five nodes in the tree, TWO examined. The early return is not a
+    micro-optimisation - it is most of the algorithm's value.
+
+    AND NOTE WHY IT IS SAFE: node 9 came out at depth 2, and the only node ever examined at depth 1
+    was the root, which was not a leaf. So there is no leaf shallower than 2. That is the queue's
+    ordering doing the work.
+
+TRACE 2 - THE TREE THAT BREAKS THE ONE-LINER (section 4).
+
+            1
+             \\
+              2
+               \\
+                3
+
+    queue = [(1, 1)]
+
+    ITERATION 1:  node, depth = (1, 1).   queue = []
+        node.left is None  ->  the first half of the leaf test passes.
+        node.right is 2    ->  THE SECOND HALF FAILS. Node 1 is NOT a leaf.
+        node.left is None  ->  nothing pushed.
+        node.right is 2    ->  queue = [(2, 2)]
+
+        THIS IS THE EXACT MOMENT THE NAIVE DFS GOES WRONG. It sees `min_depth(None) = 0` on the
+        left, takes the minimum with it, and reports 1. The `and` in the leaf test is what stops
+        this code doing the same (trap 4).
+
+    ITERATION 2:  node, depth = (2, 2).   queue = []
+        node.left is None, node.right is 3  ->  not a leaf.
+        queue = [(3, 3)]
+
+    ITERATION 3:  node, depth = (3, 3).   queue = []
+        node.left is None AND node.right is None  ->  LEAF.
+        RETURN 3.
+
+    ANSWER 3.  The naive one-liner returns 1 on this same tree - traced in section 4.
+
+    THE INVERSION: give node 1 a left child, a leaf with value 9.
+
+            1
+           / \\
+          9   2
+               \\
+                3
+
+    queue = [(1,1)].  Pop (1,1): not a leaf; push (9,2) and (2,2).
+    Pop (9,2): both children None  ->  LEAF.  RETURN 2.
+
+    ONE NODE ADDED AND THE ANSWER FALLS FROM 3 TO 2 - and the search now stops after two
+    iterations instead of three, because the shallow leaf is found before the deep chain is ever
+    followed.
+
+TRACE 3 - THE LOPSIDED CASE, WHERE BFS EARNS ITS KEEP.
+
+    root with a left child that is a leaf, and a right child beginning a chain of 1,000,000 nodes.
+
+    queue = [(root, 1)]
+    ITERATION 1:  pop (root, 1). Not a leaf (it has both children).
+                  push (leaf, 2) and (chain_head, 2).   queue = [(leaf,2), (chain_head,2)]
+    ITERATION 2:  pop (leaf, 2). Both children None  ->  RETURN 2.
+
+    TWO ITERATIONS, THREE QUEUE OPERATIONS, TWO NODES EXAMINED - out of 1,000,002.
+
+    The correct DFS (section 5, version B) sees that the root has both children, so it must
+    evaluate BOTH recursive calls before it can take a minimum. It walks the whole chain: about
+    1,000,002 nodes, and in Python it raises RecursionError at depth 1,000 before finishing.
+
+THE TINY INPUTS:
+    root = None       the guard at the top returns 0. No queue is ever built.
+    A SINGLE NODE 5   queue = [(5,1)]. Pop it. Both children None  ->  RETURN 1.
+                      Depth counts NODES, so a lone node is at depth 1, not 0.
+    TWO NODES 1 -> 2 (left child only)
+                      Pop (1,1): left is 2, so not a leaf. Push (2,2).
+                      Pop (2,2): leaf.  RETURN 2.  The naive one-liner would say 1.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n) in the worst case, and usually far less.
+
+In plain words: every node is enqueued at most once and dequeued at most once, with constant work
+each. But the search STOPS at the shallowest leaf, so the nodes actually examined are only those
+strictly shallower than that leaf, plus its own level. On a tree with any shallow leaf at all -
+which is most trees - that is a small fraction of n.
+
+    THE WORST CASE IS A PERFECT TREE, where every leaf is at the bottom and BFS must examine
+    essentially everything before finding one. The best case is a root with a leaf child: two nodes.
+
+SPACE: O(w), where w is the maximum WIDTH of any level held in the queue. For a complete tree the
+bottom level is about half the nodes, so this can approach n/2.
+
+    THE OPPOSITE TRADE against the DFS version: BFS space is O(WIDTH), DFS space is O(HEIGHT). A
+    wide shallow tree favours DFS on memory; a deep narrow one favours BFS - and for THIS problem
+    BFS also gets the early exit, which is why it is the default.
+
+WHY THIS IS HARDER THAN MAXIMUM DEPTH - the sentence to have ready:
+
+    "`1 + max(left, right)` works because a missing subtree returns 0 and `max` ignores it. `min`
+    does NOT ignore it - it treats the absence as a zero-length path and reports a node with one
+    child as though it were a leaf. So minimum depth needs the one-child case handled explicitly,
+    or a BFS that tests for a genuine leaf."
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it with DFS." Version B in section 5 - handle "no left child" and "no right child"
+    separately, and only take a minimum when both exist. Say why the one-liner fails.
+  - "Which is better here?" BFS, because of the early exit - and give the lopsided-tree numbers.
+    Then name the space trade honestly.
+  - "What if depth counts EDGES rather than nodes?" Subtract one from the answer, and note the
+    empty tree becomes a special case rather than falling out.
+  - "Return the shortest PATH, not just its length." Store the path alongside the depth in each
+    queue entry, or store parent pointers and walk back up from the leaf.
+  - "Maximum Depth?" The easy twin: `1 + max(...)`, no special cases, and it must examine every
+    node - there is no early exit, because you cannot know a leaf is the deepest until you have
+    seen them all.
+
+THE #1 BEGINNER MISTAKE: writing `1 + min(min_depth(left), min_depth(right))` by analogy with
+Maximum Depth. It is the first thing almost everyone produces, it is short and it reads correctly -
+and on a node with exactly one child it takes the minimum with the 0 that means "nothing here",
+returning 1 for a tree whose answer is 3.
+
+RUNNER-UP: writing the leaf test with `or` instead of `and`, which calls a one-child node a leaf and
+produces the identical wrong answer from the other direction.
+
+TAKEAWAY: a leaf is a node with NO children at all, so a missing subtree is an absence rather than a
+zero-length path - which is why `min` cannot be used naively where `max` can, and why walking the
+tree outward with a queue and stopping at the first genuine leaf is both correct and, on any
+lopsided tree, dramatically cheaper.""",
 ]
 
 for _e in ENTRIES:
