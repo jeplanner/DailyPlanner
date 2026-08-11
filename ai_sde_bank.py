@@ -69554,66 +69554,453 @@ comparison among the candidates is ever needed.""",
 ]
 
 _EX_P1C["Integer Break (DP)"] = [
-    """Small values, computed by hand, which is how you find the pattern.
-n=2: only 1+1 -> product 1.
-n=3: 1+2 -> 2, or 1+1+1 -> 1. Best is 2.
-n=4: 2+2 -> 4, or 1+3 -> 3, or 1+1+2 -> 2. Best is 4.
-n=5: 2+3 -> 6. n=6: 3+3 -> 9. n=7: 3+4 = 3*2*2 -> 12. n=8: 3+3+2 -> 18.
-n=10: 3+3+4 -> 36.
-Notice what emerges: 3s dominate, with a 2 or two left over. Writing out these
-six lines in the interview is what lets you SEE the mathematical shortcut
-instead of guessing it.""",
+    """1. THE GOAL - chop up a number to make the biggest product.
 
-    """Why the DP has two candidates per split.
-dp[i] = max over j of max(j * (i-j), j * dp[i-j]).
-The two terms answer two different questions. j*(i-j) means 'split off j and
-leave the remainder WHOLE'. j*dp[i-j] means 'split off j and break the
-remainder optimally too'.
-Both are needed: for i=4, j=2 gives 2*2 = 4 from the first term, while
-2*dp[2] = 2*1 = 2 from the second - the unbroken remainder wins. For i=8, j=3
-gives 3*5 = 15 unbroken but 3*dp[5] = 3*6 = 18 broken. Drop either term and you
-get wrong answers on half the inputs.""",
+Take a whole number n. Break it into a sum of AT LEAST TWO positive whole numbers. Multiply those
+pieces together. MAKE THAT PRODUCT AS LARGE AS POSSIBLE.
 
-    """The mathematical shortcut, and why 3 is optimal.
-Compare how much 'product per unit' each piece buys: 2 gives 2^(1/2) = 1.414
-per unit, 3 gives 3^(1/3) = 1.442, 4 gives 4^(1/4) = 1.414. Three wins, and it
-is the integer closest to e = 2.718, which is the continuous optimum.
-So: use as many 3s as possible, and handle the remainder. If n mod 3 == 0, all
-3s. If n mod 3 == 1, replace one 3 with two 2s (since 2*2 = 4 beats 3*1 = 3).
-If n mod 3 == 2, one extra 2.
-That gives an O(log n) solution with fast exponentiation. Say the DP first
-(safe), then offer this - offering the maths without the DP is a risk if you
-misremember the remainder cases.""",
+    n = 10.   Some ways to break it:
 
-    """The base cases, which are the usual failure point.
-dp[1] = 1 in the table, but the ANSWER for n=1 is undefined because the problem
-demands at least TWO parts. Similarly dp[2] computed by the loop gives 1
-(1*1), which is correct as an answer, but when 2 is used as a SUB-piece inside a
-larger break it should contribute 2, not 1.
-This is exactly why the recurrence carries the j*(i-j) term: it lets a piece
-stay unbroken, which is the case where 'the value of 2 is 2, not dp[2]'. Many
-buggy solutions use only j*dp[i-j] and then patch dp[2] = 2 and dp[3] = 3 by
-hand, which works but obscures why.""",
+        5 + 5             ->  5 x 5           = 25
+        3 + 3 + 4         ->  3 x 3 x 4       = 36
+        2 + 2 + 3 + 3     ->  2 x 2 x 3 x 3   = 36
+        1 + 9             ->  1 x 9           =  9
+        1 + 1 + ... + 1   ->  1               =  1
 
-    """Complexity.
-Time O(n^2): for each i up to n you try every j < i. Space O(n) for the table.
-For n = 58 (the usual constraint) that is about 1,700 operations - instantly
-fine, so the DP is never rejected for performance. The maths solution is
-O(log n) via fast exponentiation and is the answer to 'now n can be 10^9',
-where the DP table would not even fit in memory.
-Note the product itself grows enormously - 3^(n/3) - so in Java or C++ you
-would need modular arithmetic or big integers, while Python's arbitrary
-precision hides the issue.""",
+    ANSWER: 36
 
-    """The family, and the recognition cue.
-'Break a number/rope/string into pieces to optimise something' is a partition
-DP, and the skeleton is always the same: dp[i] over prefixes, an inner loop
-over the split point, and a decision per split of 'stop here' versus 'recurse'.
-Siblings: Perfect Squares (fewest squares summing to n), Coin Change (fewest
-coins), Word Break (can a string be split into dictionary words), Palindrome
-Partitioning II (fewest cuts). All four are the same two nested loops with a
-different combine step - once you see that, the code writes itself and only the
-recurrence needs thought.""",
+"AT LEAST TWO" IS THE PHRASE THAT DOES THE WORK. Without it the answer would trivially be n itself -
+leave the number alone and its "product" is n. The rule forces at least one cut, and for small
+numbers that HURTS:
+
+    n = 2:  the only break is 1 + 1  ->  product 1.  WORSE than 2.
+    n = 3:  best is 1 + 2  ->  product 2.  WORSE than 3.
+    n = 4:  best is 2 + 2  ->  product 4.  Equal to 4.
+    n = 5:  best is 2 + 3  ->  product 6.  Finally better.
+
+    So the answers for the first few n run:  1, 2, 4, 6, 9, 12, 18, 27, 36  for n = 2 .. 10.
+
+TWO OBSERVATIONS FROM THAT LIST, and both matter later:
+
+    NEVER USE A 1. Adding a 1 to the sum costs you a whole unit and multiplies the product by 1 -
+        pure waste. Every optimal break for n >= 5 uses only 2s and 3s.
+    THE NUMBERS GROW FAST. 27 and 36 are already bigger than n, and the growth is exponential -
+        section 5 explains why, and it turns out 3 is the magic piece size.
+
+The straightforward solution is a small dynamic program; the interesting part is that there is also a
+one-line mathematical answer, and knowing WHY it works is what the question is really testing.""",
+
+    """2. THE INTUITION - decide the first piece, then reuse the answer for the rest.
+
+Suppose you have already worked out the best product for every number smaller than n. Now for n
+itself, ask: WHAT IS THE FIRST PIECE?
+
+It could be 1, or 2, or anything up to n−1. Call it j. Having taken j, you are left with n − j, and
+there are exactly TWO things you can do with that remainder:
+
+    LEAVE IT WHOLE.        The product is  j x (n − j).
+    BREAK IT UP FURTHER.   The best you can do is  j x (best product for n − j).
+
+    TAKE THE LARGER OF THE TWO, then take the best over every choice of j.
+
+    n = 5, trying each first piece:
+
+        j = 1:   leave the rest whole   1 x 4 = 4        break the rest   1 x best(4) = 1 x 4 = 4
+        j = 2:   leave the rest whole   2 x 3 = 6        break the rest   2 x best(3) = 2 x 2 = 4
+        j = 3:   leave the rest whole   3 x 2 = 6        break the rest   3 x best(2) = 3 x 1 = 3
+        j = 4:   leave the rest whole   4 x 1 = 4        break the rest   4 x best(1) = 4 x 1 = 4
+
+        THE BEST OF ALL THAT IS 6.   best(5) = 6.
+
+BOTH CANDIDATES ARE NEEDED, and this is the part people trim by mistake. The "leave it whole" term
+exists because breaking further is not always an improvement - for n = 5 with j = 2, leaving the 3
+alone gives 6 while breaking it gives 4. The "break it further" term exists because sometimes it is -
+and for larger n it is usually the winner.
+
+    THE REASON THE TWO DIFFER: the stored best-product-for-m assumes m is broken into AT LEAST TWO
+    pieces, so it can be SMALLER than m itself for small m. best(3) is 2, not 3. So you cannot simply
+    use the stored value everywhere; you must also allow the option of not breaking at all.
+
+Build the table upwards from the smallest numbers, and every value you need is already there:
+
+        n:      2   3   4   5   6   7   8   9   10
+        best:   1   2   4   6   9  12  18  27   36
+
+Each entry is computed from the ones to its left. That is the whole algorithm.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BREAK / PARTITION. Splitting n into positive whole numbers that add up to n. Order does not matter,
+since multiplication is commutative.
+
+AT LEAST TWO PARTS. The problem's requirement - at least one cut must be made.
+
+PRODUCT. The pieces multiplied together.
+
+DYNAMIC PROGRAMMING (DP). Solving small cases first, storing the answers, and building bigger ones
+from them.
+
+BOTTOM-UP. Filling a table from the smallest case upward, which is what this code does. Every value
+needed is already present because it was computed earlier.
+
+SUBPROBLEM / STATE. Here, one number i, and the value stored is the best product achievable by
+breaking i into at least two parts.
+
+SPLIT POINT. The chosen first piece, called j in the code. Every j from 1 to i−1 is tried.
+
+dp. The table. `dp[i]` is the best product for i.
+i. The number currently being solved.
+j. The candidate first piece.
+n. The input.
+
+`j * (i - j)`. Take j and leave the remainder whole.
+`j * dp[i - j]`. Take j and break the remainder as well as possible.
+
+O(n^2) TIME, O(n) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - KEEPING ONLY ONE OF THE TWO CANDIDATES. Both `j * (i - j)` and `j * dp[i - j]` are needed,
+and dropping either gives wrong answers on small inputs.
+
+    DROP `j * (i - j)`, keeping only "break the remainder": then dp[i] is built only from other
+        table entries, and since dp[2] would be built from dp[1] alone, the small values collapse.
+        The chain never gets the "leave it whole" option that makes best(5) = 2 x 3 = 6.
+
+    DROP `j * dp[i - j]`, keeping only "leave it whole": then you are only ever considering TWO
+        pieces, so best(10) would be the best of 1x9, 2x8, 3x7, 4x6, 5x5 = 25 - not 36. Three or more
+        pieces would never be considered at all.
+
+    THE TWO TERMS ANSWER TWO DIFFERENT QUESTIONS, and neither implies the other.
+
+TRAP 2 - THE BASE CASE, WHICH IS SUBTLER THAN IT LOOKS. `dp[1] = 1` is set in the table, but THE
+ANSWER FOR n = 1 IS NOT 1 - the problem demands at least two parts, and 1 cannot be split into two
+positive whole numbers at all. The table entry is a convenience for the recurrence, not an answer.
+
+    AND IT TURNS OUT TO BE REDUNDANT. Setting `dp[1] = 0` instead gives exactly the same results -
+    n = 10 still comes out as 36 - because whenever `dp[1]` would be consulted (that is, when
+    i − j = 1), the other candidate `j * (i - j)` equals `j * 1` = j, which is at least as large as
+    `j * dp[1]`. So the `j * (i - j)` term already covers that case.
+
+    Worth knowing rather than repeating as folklore: the line is harmless and does no work.
+
+TRAP 3 - RETURNING n FOR SMALL n. For n = 2, 3 and 4 the required break makes things WORSE or equal
+(1, 2 and 4 against 2, 3 and 4). Any solution that "optimises" by returning max(n, dp[n]) is wrong -
+the problem does not allow leaving n unbroken.
+
+TRAP 4 - USING 1s IN A BREAK. A piece of 1 contributes a factor of 1 while consuming a unit that
+could have gone into another piece. It is never useful except when forced (n = 2 and n = 3). The DP
+discovers this on its own; the mathematical shortcut in section 5 relies on knowing it.
+
+TRAP 5 - APPLYING THE "ALL 3s" SHORTCUT WITHOUT THE REMAINDER RULE. "Use as many 3s as possible" is
+right, but the leftover matters:
+
+    remainder 0  ->  all 3s.                    n = 9  ->  3 x 3 x 3 = 27
+    remainder 1  ->  DO NOT leave a 1. Trade one 3 and the 1 for two 2s, because 3 x 1 = 3 while
+                     2 x 2 = 4.                 n = 10 ->  3 x 3 x 2 x 2 = 36, not 3 x 3 x 3 x 1 = 27
+    remainder 2  ->  use a single 2.            n = 8  ->  3 x 3 x 2 = 18
+
+    The remainder-1 case is the one people get wrong, and it costs a factor of 4/3 every time.""",
+
+    """5. THE MATHEMATICAL SHORTCUT, AND WHY 3 IS OPTIMAL.
+
+VERSION A - TRY EVERY PARTITION. The number of ways to partition n grows very fast - for n = 50 there
+are over 200,000 partitions, and for n = 100, more than 190 million. Correct and unnecessary.
+
+VERSION B - THE DP, which is the code here. O(n^2).
+
+VERSION C - THE CLOSED-FORM ANSWER. Use as many 3s as possible, with the remainder rule from trap 5.
+O(1) arithmetic, or O(log n) if you count the exponentiation.
+
+WHY 3 IS THE BEST PIECE SIZE - the argument, since this is what makes the question interesting.
+
+    Each piece of size k costs you k units of the total and multiplies the product by k. So the
+    fair comparison is PRODUCT PER UNIT SPENT, which is k^(1/k):
+
+        k = 2:   2^(1/2)  =  1.4142
+        k = 3:   3^(1/3)  =  1.4422        <- the largest
+        k = 4:   4^(1/4)  =  1.4142        (the same as 2, and no wonder - 4 = 2 + 2 and 2 x 2 = 4)
+        k = 5:   5^(1/5)  =  1.3797
+        k = 6:   6^(1/6)  =  1.3480
+
+    THREE BUYS THE MOST PRODUCT PER UNIT, so an optimal break uses as many 3s as it can.
+
+    AND THE SUPPORTING FACTS THAT FINISH THE ARGUMENT:
+
+        NO PIECE SHOULD BE 1.  A 1 multiplies by nothing and wastes a unit.
+        NO PIECE SHOULD BE 4 OR MORE.  A piece of 4 can be replaced by 2 + 2 with the same product,
+            and a piece of k >= 5 can be replaced by 3 + (k−3), which is strictly better because
+            3(k−3) > k exactly when k > 4.5.
+        SO EVERY PIECE IS A 2 OR A 3, and 3s are preferred.
+        AT MOST TWO 2s ARE EVER NEEDED, because 2 + 2 + 2 can be replaced by 3 + 3 (8 becomes 9).
+
+    That chain is a complete proof, and it is worth being able to give it: the DP is the safe answer
+    to write, and this is the answer that shows you understand the problem.
+
+WHY THE DP IS STILL THE RIGHT THING TO CODE. The closed form is easy to get slightly wrong (trap 5),
+it does not generalise if the problem changes - "pieces must be distinct", "pieces from a given set",
+"at most k pieces" all break it - whereas the DP skeleton survives all of those with a small edit.
+Write the DP, then mention the shortcut.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: BUILD A TABLE OF BEST PRODUCTS FROM THE SMALLEST NUMBER
+UPWARD, AND FOR EACH NUMBER TRY EVERY POSSIBLE FIRST PIECE - CONSIDERING BOTH LEAVING THE REMAINDER
+WHOLE AND BREAKING IT FURTHER.
+
+THERE IS NO RECURSION. The mechanism is TWO NESTED LOOPS OVER A TABLE THAT ONLY EVER LOOKS BACKWARDS:
+
+  - The outer loop walks the number being solved, from small to large.
+  - The inner loop tries every possible first piece.
+  - EVERY LOOKUP IS AT A SMALLER NUMBER than the one being computed, and smaller numbers were filled
+    in earlier - so the value needed is always already there. That is what makes bottom-up work, and
+    why the outer loop must go upward.
+  - WHAT MAKES IT STOP: both loops have trip counts fixed before they start.
+
+THE STEPS:
+
+  1. MAKE A TABLE WITH ONE SLOT FOR EVERY NUMBER FROM ZERO UP TO THE TARGET.
+
+  2. FILL IN THE SMALLEST CASE. The slot for 1 gets the value 1 - a convenience for the arithmetic
+     below rather than a real answer, since 1 cannot be split at all.
+
+  3. WORK UPWARD FROM TWO TO THE TARGET. For each number:
+
+     a. TRY EVERY POSSIBLE FIRST PIECE, from 1 up to one less than the number itself.
+
+     b. FOR EACH SUCH PIECE, WORK OUT TWO CANDIDATE PRODUCTS:
+
+        - THE PIECE MULTIPLIED BY THE WHOLE OF WHAT IS LEFT, leaving the remainder uncut.
+        - THE PIECE MULTIPLIED BY THE BEST PRODUCT ALREADY RECORDED FOR WHAT IS LEFT, cutting the
+          remainder up as well.
+
+        BOTH ARE NEEDED. Breaking further is not always an improvement, because a stored best-product
+        can be smaller than the number itself for small numbers - the best for 3 is 2, not 3. And
+        leaving the remainder whole only ever gives you two pieces, so on its own it can never find a
+        three-piece answer.
+
+     c. KEEP THE LARGEST CANDIDATE SEEN FOR THIS NUMBER.
+
+  4. THE ANSWER IS THE SLOT FOR THE TARGET.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine you have a length of rope measured in whole metres, and you must cut it into at least two
+pieces. You are paid the lengths of the pieces multiplied together, so a rope of ten metres cut into
+five and five earns you twenty-five, while three, three and four earns thirty-six.
+
+You cannot try every possible way of cutting - for a long rope there are far too many. So you build
+up a little table of answers, starting with the shortest ropes and working upward, and you never
+throw a result away.
+
+By the time you get to a rope of a given length, you already know the best earnings for every shorter
+rope. So you only have to decide one thing: how long is the FIRST piece you cut off?
+
+You try every possibility in turn. For each one you consider two futures. In the first, you cut that
+piece off and stop - so you earn the piece multiplied by whatever is left over, uncut. In the second,
+you cut the piece off and then go on to cut the remainder up as well - and you already know the best
+you can do with a rope that length, because it is written in your table.
+
+You take whichever of those two futures pays more, and then you take the best over all the possible
+first pieces. That number goes into the table, and you move on to the next length.
+
+Keeping both futures in mind is important, because neither one is always the better. Cutting the
+remainder up is not automatically an improvement - a three-metre rope, which you are forced to cut,
+only earns you two, which is less than the three metres it started as. So sometimes the sensible
+thing is to leave the rest alone. But if you ONLY ever left the rest alone, you would never make more
+than two pieces, and you would miss the three-piece answers that turn out to be the good ones.
+
+There is also a pattern hidden in all this, which you notice once the table is a few rows long. The
+best cuts are always into threes, with at most a couple of twos to use up whatever does not divide.
+The reason is that a three-metre piece earns more for its length than any other size does. And the
+one thing never to do is leave a single metre as a piece - it earns you nothing at all while
+swallowing a metre you could have spent elsewhere. If you are left with one spare metre, do not cut
+it off on its own; take a three and that one and make two twos instead, because two twos earn four
+where a three and a one earn only three.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep n = 10 beside you, answer 36.
+
+    def integer_break(n):
+
+`n` is the number to break. Returns the maximum product. Nothing is modified.
+
+        dp = [0] * (n + 1)
+
+    dp  HOLDS the table. `dp[i]` is the best product achievable by breaking i into AT LEAST TWO
+        positive parts.
+
+Length n + 1 so that `dp[n]` exists - indices 0 through n.
+
+        dp[1] = 1
+
+THE BASE CASE - and it is a convenience rather than a real answer (trap 2). The true answer for n = 1
+is undefined, since 1 cannot be split into two positive parts at all.
+
+IT IS ALSO REDUNDANT. Setting it to 0 gives identical results for every n, because wherever `dp[1]`
+could be consulted the sibling term `j * (i - j)` equals `j * 1` and is at least as large. Harmless,
+and it does no work.
+
+        for i in range(2, n + 1):
+
+Walk the numbers upward, starting at 2 - the smallest number that can be broken at all. UPWARD IS
+ESSENTIAL: every lookup below is at a smaller index, so those slots must already hold their final
+values.
+
+            for j in range(1, i):
+
+Try every possible FIRST PIECE, from 1 up to i − 1. Not up to i, because a piece equal to i would
+leave nothing behind and would not be a break at all.
+
+(Only j up to i/2 is strictly necessary, since j and i − j give the same pair - but trying all of
+them costs a constant factor and keeps the code obviously correct.)
+
+                # j*(i-j): don't break i-j ; j*dp[i-j]: break i-j further
+                dp[i] = max(dp[i], j * (i - j), j * dp[i - j])
+
+THE WHOLE ALGORITHM, IN ONE LINE, WITH THREE THINGS BEING COMPARED:
+
+    `dp[i]`          - the best found so far for this i, across earlier values of j.
+    `j * (i - j)`    - TAKE j AND LEAVE THE REST WHOLE. Exactly two pieces.
+    `j * dp[i - j]`  - TAKE j AND BREAK THE REST TOO. Three or more pieces.
+
+    BOTH OF THE LAST TWO ARE REQUIRED (trap 1). The second cannot replace the first, because
+    `dp[i - j]` can be SMALLER than `i - j` for small remainders - `dp[3]` is 2, not 3 - so the
+    stored value is not always the better choice. And the first cannot replace the second, because on
+    its own it never produces more than two pieces, which caps n = 10 at 25 instead of 36.
+
+    `dp[i - j]` is a lookup at a strictly smaller index, already computed by an earlier pass of the
+    outer loop.
+
+        return dp[n]""",
+
+    """9. THE TABLE, FILLED BY HAND.
+
+TRACE 1 - BUILDING UP TO n = 10. dp starts as [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0].
+
+    i = 2:  j = 1:  max(0, 1 x 1 = 1, 1 x dp[1] = 1)  ->  dp[2] = 1
+            (1 + 1 is the only break, and its product is 1 - WORSE than 2 itself, which the problem
+             forces on you.)
+
+    i = 3:  j = 1:  max(0, 1 x 2 = 2, 1 x dp[2] = 1)  ->  dp[3] = 2
+            j = 2:  max(2, 2 x 1 = 2, 2 x dp[1] = 2)  ->  dp[3] = 2
+            (1 + 2 gives 2.)
+
+    i = 4:  j = 1:  max(0, 1 x 3 = 3, 1 x dp[3] = 2)  ->  dp[4] = 3
+            j = 2:  max(3, 2 x 2 = 4, 2 x dp[2] = 2)  ->  dp[4] = 4      <- 2 + 2
+            j = 3:  max(4, 3 x 1 = 3, 3 x dp[1] = 3)  ->  dp[4] = 4
+
+            NOTE j = 2: the "leave it whole" term gave 4 and the "break it further" term gave only 2,
+            because dp[2] is 1 rather than 2. THIS IS EXACTLY WHY BOTH TERMS ARE NEEDED.
+
+    i = 5:  j = 1:  max(0, 1 x 4 = 4, 1 x dp[4] = 4)  ->  4
+            j = 2:  max(4, 2 x 3 = 6, 2 x dp[3] = 4)  ->  6              <- 2 + 3
+            j = 3:  max(6, 3 x 2 = 6, 3 x dp[2] = 3)  ->  6
+            j = 4:  max(6, 4 x 1 = 4, 4 x dp[1] = 4)  ->  6
+            dp[5] = 6
+
+    Continuing the same way:
+
+        i:      1   2   3   4   5   6   7   8    9    10
+        dp[i]:  1   1   2   4   6   9  12  18   27    36
+
+    dp[10] = 36.
+
+    CHECK IT AGAINST THE SHORTCUT: 10 = 3 + 3 + 3 + 1, and the remainder is 1, so trade one 3 and the
+    1 for two 2s: 3 + 3 + 2 + 2, product 3 x 3 x 2 x 2 = 36. The DP and the formula agree.
+
+    AND CHECK dp[9] = 27: 9 = 3 + 3 + 3 exactly, product 27. No remainder, no trade.
+
+TRACE 2 - WHERE THE THREE-PIECE ANSWER FIRST BEATS THE TWO-PIECE ONE.
+
+    For n = 6, the best two-piece break is 3 x 3 = 9. The best three-piece break is 2 x 2 x 2 = 8.
+    So dp[6] = 9, and two pieces win.
+
+    For n = 10, the best two-piece break is 5 x 5 = 25. The best multi-piece break is 36.
+    SO A SOLUTION KEEPING ONLY THE `j * (i - j)` TERM RETURNS 25 INSTEAD OF 36 (trap 1) - it can
+    never express more than two pieces, and by n = 10 that is a 30% shortfall.
+
+TRACE 3 - THE REDUNDANT BASE CASE (trap 2). Rerun the whole table with `dp[1] = 0`:
+
+    i = 2:  j = 1:  max(0, 1 x 1 = 1, 1 x dp[1] = 0)  ->  dp[2] = 1      <- unchanged
+    i = 3:  j = 1:  max(0, 1 x 2 = 2, 1 x dp[2] = 1)  ->  2
+            j = 2:  max(2, 2 x 1 = 2, 2 x dp[1] = 0)  ->  2              <- unchanged
+    ... and so on. dp[10] is still 36.
+
+    Wherever `dp[1]` is consulted, i − j is 1, so the sibling term `j * (i - j)` is `j * 1` = j, which
+    is at least as large as `j * dp[1]` under either setting. The line cannot change any answer.
+
+TRACE 4 - THE REMAINDER-1 TRAP IN THE SHORTCUT (trap 5). For n = 10:
+
+    NAIVE "ALL 3s":            3 + 3 + 3 + 1   ->  3 x 3 x 3 x 1 = 27
+    WITH THE TRADE:            3 + 3 + 2 + 2   ->  3 x 3 x 2 x 2 = 36
+
+    27 against 36 - a factor of 4/3 lost, exactly the ratio between 2 x 2 and 3 x 1. The DP gets this
+    right without knowing the rule, which is the argument for writing the DP.
+
+THE SMALL INPUTS:
+    n = 2   ->  1.  Forced into 1 + 1, which is worse than leaving it alone - but leaving it alone is
+                not allowed.
+    n = 3   ->  2.  Likewise.
+    n = 4   ->  4.  The first n where breaking costs nothing.
+    n = 5   ->  6.  The first n where breaking actually pays.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2). For each number i up to n, every split point j from 1 to i−1 is tried - about n^2/2
+operations in total.
+
+    FOR THE USUAL CONSTRAINT n <= 58 THAT IS ABOUT 1,700 OPERATIONS - instant. This is a rare case
+    where a quadratic algorithm is entirely comfortable, because the input is tiny by definition.
+
+SPACE: O(n) for the table.
+
+    THE CLOSED FORM is O(1) arithmetic and needs no table at all - but see section 5 for why the DP
+    is still the right thing to write.
+
+THE FAMILY - "BREAK A NUMBER OR A ROPE OR A STRING INTO PIECES TO OPTIMISE SOMETHING" is a PARTITION
+DP, and the skeleton is always the same: for each total, try every first piece and combine with the
+stored answer for the remainder.
+
+    INTEGER BREAK               maximise the product                       <- this entry
+    ROD CUTTING                 maximise the value, given a price per length. The same two loops with
+                                `price[j] + dp[i-j]` instead of a product.
+    COIN CHANGE                 minimise the number of pieces, from a fixed set of allowed sizes
+    WORD BREAK                  can a string be cut into dictionary words - the same shape with a
+                                boolean instead of a number
+    PERFECT SQUARES             fewest squares summing to n - Coin Change with squares as the coins
+    PALINDROME PARTITIONING II  fewest cuts so every piece is a palindrome
+
+    THE RECOGNITION CUE: a total that must be split, a value attached to each piece, and an optimum
+    over all splittings. When you see it, reach for `for i ... for j in range(1, i)` and ask what the
+    two candidates are.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it in O(1)." Use as many 3s as possible; if the remainder is 1, trade a 3 and the 1 for two
+    2s; if it is 2, use a single 2. And give the k^(1/k) argument for why 3 wins.
+  - "Why is 3 optimal?" Product per unit spent is k^(1/k), maximised at k = 3 among whole numbers
+    (1.4422 against 1.4142 for both 2 and 4). Plus: no piece should be 1, and no piece should exceed
+    4 since 3(k−3) > k for k > 4.5.
+  - "What if the pieces had to be DISTINCT?" The closed form dies; the DP survives with an extra
+    dimension tracking the largest piece used so far.
+  - "What if there were a limit on the number of pieces?" Add a second dimension to the table.
+  - "Why is dp[1] = 1 and not 0?" Convenience - and it makes no difference either way, which is worth
+    saying rather than defending a line that does nothing.
+
+THE #1 BEGINNER MISTAKE: keeping only one of the two candidate products. Dropping `j * dp[i - j]`
+caps every answer at two pieces, so n = 10 comes out as 25 instead of 36; dropping `j * (i - j)`
+removes the option of leaving a small remainder uncut, which is exactly what makes 2 + 3 = 6 the best
+break of 5. Neither term implies the other, because a stored best-product can be smaller than the
+number it came from.
+
+RUNNER-UP: applying "use all 3s" without the remainder-1 trade, which turns 36 into 27 on n = 10.
+
+TAKEAWAY: build the table upward and for each number try every first piece, comparing BOTH leaving
+the remainder whole and breaking it further - because the stored best for a small remainder can be
+less than the remainder itself, so neither option can be dropped, and the mathematical answer
+underneath it all is "as many 3s as possible, never a leftover 1".""",
 ]
 
 _EX_P1C["Maximum Length of Pair Chain"] = [
@@ -72982,65 +73369,467 @@ the two cuts.""",
 ]
 
 _EX_P1E["Jump Game II (fewest jumps)"] = [
-    """The example, traced level by level.
-nums = [2,3,1,1,4]. jumps=0, current_end=0, farthest=0.
-i=0: farthest = max(0, 0+2) = 2. i == current_end (0), so jump: jumps=1,
-     current_end=2.
-i=1: farthest = max(2, 1+3) = 4.
-i=2: farthest = max(4, 2+1) = 4. i == current_end (2), so jump: jumps=2,
-     current_end=4.
-i=3: loop ends (range stops at len-1 = 4, so i goes 0..3).
-Answer 2: jump 0 -> 1, then 1 -> 4.
-Notice we never decide WHICH index to jump to - only how many jumps are needed,
-which is what makes the greedy work.""",
+    """1. THE GOAL - fewest hops to the far end.
 
-    """Why this is BFS in disguise.
-Think of the indices reachable in exactly k jumps as 'level k'. current_end is
-the last index of the current level, and farthest is the last index of the NEXT
-level, computed while scanning the current one. Hitting i == current_end means
-'the current level is exhausted, advance to the next' - which is exactly what
-incrementing jumps means.
-So this is breadth-first search with the queue replaced by two integers,
-because the reachable set from any level is always a contiguous RANGE. That
-observation is what turns an O(n) BFS with a queue into an O(1)-space scan.""",
+You are given an array where `nums[i]` is THE MAXIMUM DISTANCE you may jump forward from position i.
+You start at position 0. RETURN THE FEWEST JUMPS NEEDED TO REACH THE LAST POSITION.
 
-    """Why the loop stops at len(nums) - 1.
-If it included the last index, then arriving exactly at the final index would
-trigger one more `i == current_end` and count a phantom jump. You do not jump
-FROM the destination.
-Test it on [1,1]: with the correct range, i=0 only -> farthest=1, i==0==
-current_end -> jumps=1, answer 1. With an off-by-one range you would get 2.
-This is the single most common bug on this problem, and it produces answers
-that are exactly one too large - suspiciously plausible.""",
+    nums = [2, 3, 1, 1, 4]
 
-    """Edge cases.
-[0] -> the loop body never executes, answer 0. You are already at the end.
-[2,1] -> i=0: farthest=2, i==current_end -> jumps=1. Answer 1.
-[1,1,1,1] -> jumps at i=0,1,2 -> 3.
-Note the problem GUARANTEES the end is reachable. If it did not, you would need
-a check that farthest > i at each step, otherwise a zero at index i strands you
-- and that check is exactly Jump Game I, the boolean version. Ask whether
-reachability is guaranteed; it changes the code.""",
+    index:     0    1    2    3    4
+    value:     2    3    1    1    4
+               ^                   ^
+             start                goal
 
-    """Complexity, versus the DP everyone writes first.
-Greedy: O(n) time, O(1) space, one pass.
-DP: dp[i] = 1 + min(dp[j]) over all j that can reach i - O(n^2) time and O(n)
-space. On n = 10,000 that is 100 million operations versus 10,000. Both are
-correct; only one passes.
-The reason greedy works here and not on every 'minimum steps' problem is that
-the reachable set is a contiguous prefix-extending range, so the farthest reach
-is always the best choice. If jumps had COSTS rather than uniform weight 1, the
-greedy would break and you would need Dijkstra or DP.""",
+    From index 0 you may jump 1 or 2 places - to index 1 or index 2.
+    From index 1 you may jump 1, 2 or 3 places - to index 2, 3 or 4.
 
-    """The family and the recognition cue.
-Jump Game I (can you reach the end?) - same scan, just track farthest and fail
-if i > farthest. Jump Game III (arbitrary +/- jumps) - a real BFS, because the
-reachable set is no longer a range. Minimum Number of Taps to Water a Garden
-and Video Stitching are the same greedy-interval-covering algorithm in
-disguise: sort or bucket by reach, then extend the current window.
-Cue to remember: 'fewest steps' with UNIFORM cost and a CONTIGUOUS reachable
-range -> greedy level scan. Non-uniform cost or scattered reachability -> BFS
-or Dijkstra.""",
+    A TWO-JUMP ROUTE:   0  ->  1  ->  4        (hop 1, then hop 3)
+    A THREE-JUMP ROUTE: 0  ->  2  ->  3  ->  4
+
+    ANSWER: 2
+
+TWO THINGS THE PROBLEM PROMISES, and they matter:
+
+    THE END IS ALWAYS REACHABLE. This version guarantees it, so you never have to report failure.
+        (The sibling problem, Jump Game I, asks only WHETHER you can get there.)
+    A JUMP MAY BE SHORTER THAN THE MAXIMUM. `nums[i] = 3` means "up to 3", not "exactly 3" - so from
+        index 1 you may land on 2, 3 or 4.
+
+WHY IT IS NOT AS EASY AS IT LOOKS. The obvious greedy - "always jump as far as you can" - is wrong.
+From index 0 the furthest landing is index 2, but index 2 only allows a jump of 1, so that route
+takes three jumps. THE BEST FIRST MOVE IS THE SHORTER ONE, because index 1 is a much better
+launchpad.
+
+    SO YOU CANNOT CHOOSE A LANDING SPOT BY DISTANCE ALONE. What matters is where you can get to NEXT,
+    and section 2 shows the reframing that makes that tractable without any searching.""",
+
+    """2. THE INTUITION - stop choosing a landing spot; think in levels.
+
+Do not ask "which index do I jump to?". Ask instead: WHICH INDICES CAN I REACH IN EXACTLY ONE JUMP?
+IN EXACTLY TWO? That turns the problem into a series of expanding bands.
+
+    nums = [2, 3, 1, 1, 4]
+
+    with 0 jumps you can be at:   index 0                     the band is [0, 0]
+    with 1 jump  you can be at:   indices 1 to 2              because index 0 reaches at most 0 + 2
+    with 2 jumps you can be at:   indices 3 to 4              the furthest anything in [1,2] reaches
+                                                              is index 1 + 3 = 4
+
+    index 4 is the goal, and it first appears in the two-jump band.  ANSWER: 2
+
+    band 0:  [0]
+              \\___ reaches as far as 2
+    band 1:      [1, 2]
+                  \\______ reaches as far as 4   (from index 1: 1 + 3)
+    band 2:            [3, 4]                    <- the goal is here
+
+NOW THE WHOLE ALGORITHM IS A SINGLE LEFT-TO-RIGHT SCAN. Walk the indices in order, keeping two
+numbers:
+
+    current_end   the LAST index of the band you are currently in.
+    farthest      the furthest index anything you have scanned so far can reach.
+
+    As you pass each index, update `farthest`. WHEN YOU ARRIVE AT `current_end`, you have scanned the
+    entire band - so you have seen every launchpad in it, and `farthest` is exactly the last index of
+    the NEXT band. Count a jump and move the boundary out.
+
+    i = 0:  farthest = 0 + 2 = 2.   i has reached current_end (0)  ->  jump 1, band now ends at 2.
+    i = 1:  farthest = max(2, 1 + 3) = 4.   i (1) is not yet at 2.
+    i = 2:  farthest = max(4, 2 + 1) = 4.   i has reached current_end (2)  ->  jump 2, band ends at 4.
+    i = 3:  farthest = max(4, 3 + 1) = 4.   i (3) is not at 4, and the loop stops here anyway.
+
+    RETURN 2.
+
+THAT IS BREADTH-FIRST SEARCH WITHOUT A QUEUE. The bands are BFS levels, `current_end` marks where the
+current level ends, and `farthest` accumulates the next level's boundary - the same job the frozen
+level size does in the tree problems, done with two integers because the "graph" is a line.
+
+    AND THE COUNTING IS EXACT: you cannot reach the goal in fewer jumps than the number of the band
+    it first appears in, because each jump advances you by at most one band.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+nums[i]. The MAXIMUM jump length from index i. Any shorter jump is also allowed.
+REACH FROM i. The furthest index reachable in one jump from i: `i + nums[i]`.
+
+GREEDY. Making a decision without exploring alternatives. Here the decision is not "where to land"
+but "when to count a jump", which is what makes it safe.
+
+BFS LEVEL / BAND. The set of indices reachable in exactly k jumps. Section 2's reframing.
+
+current_end. The last index of the current band - the boundary you must jump before crossing.
+farthest. The furthest index reachable from anything scanned so far. Becomes the next band's
+boundary.
+jumps. The running count.
+i. The index being scanned.
+
+`i + nums[i]`. Where index i can reach.
+`i == current_end`. "I have scanned the whole of this band" - the trigger to count a jump.
+
+O(n) TIME, O(1) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - LOOPING TO THE LAST INDEX INSTEAD OF STOPPING ONE SHORT. The loop is
+`for i in range(len(nums) - 1)`, and that final `- 1` is load-bearing.
+
+    You never need to JUMP FROM the goal - arriving there is the end of the journey. If the loop
+    includes the last index, then arriving exactly at the final index triggers one more
+    `i == current_end` and counts a jump that is never taken.
+
+        nums = [2, 3, 1, 1, 4]:   correct 2,   looping to the end 3.
+        nums = [1, 1, 1, 1]:      correct 3,   looping to the end 4.
+        nums = [0]:               correct 0,   looping to the end 1.
+
+    THE LAST ONE IS THE STARKEST. A single-element array means you are ALREADY at the goal and the
+    answer is 0 jumps - but the buggy version counts one. It does not crash, and on most inputs it is
+    merely one too many, which reads like an off-by-one rather than a misunderstanding.
+
+TRAP 2 - JUMPING AS FAR AS POSSIBLE EVERY TIME. The natural greedy, and it is wrong.
+
+    On nums = [2, 3, 1, 1, 4]: from index 0 the furthest landing is index 2, but `nums[2]` is 1, so
+    that route goes 0 -> 2 -> 3 -> 4, THREE jumps. The optimal route takes the SHORTER first hop to
+    index 1, which reaches all the way to index 4.
+
+    THE CODE NEVER PICKS A LANDING SPOT AT ALL. It only decides WHEN a jump must be counted, and it
+    considers every launchpad in the band before doing so - which is why it finds the good route
+    without searching for it.
+
+TRAP 3 - UPDATING `current_end` BEFORE FINISHING THE BAND. `current_end = farthest` must happen only
+when `i == current_end`, not on every iteration. Updating it every step would let the boundary run
+ahead of the scan and the jump count would collapse toward 1.
+
+TRAP 4 - COUNTING A JUMP WHENEVER `farthest` IMPROVES. Improvement is not the trigger; EXHAUSTING THE
+BAND is. `farthest` typically improves several times within one band - on the traced example it goes
+2, then 4, then stays - and each improvement is a better option WITHIN the same jump, not a new jump.
+
+TRAP 5 - ASSUMING A ZERO BLOCKS YOU. A `0` in the middle is fine as long as the band jumps over it.
+On nums = [2, 3, 0, 1, 4] the answer is still 2, because index 1 reaches index 4 directly and index 2
+is never used as a launchpad. Only Jump Game I - where reachability is in question - needs to worry
+about being stranded.
+
+TRAP 6 - THE SINGLE ELEMENT. nums = [0] returns 0: `range(0)` is empty, the body never runs, and the
+answer is the initial `jumps = 0`. Correct and needs no special case - you are already at the goal.""",
+
+    """5. THE ALTERNATIVES, AND WHY THE GREEDY IS EXACT.
+
+VERSION A - BREADTH-FIRST SEARCH WITH A REAL QUEUE. Treat each index as a node with edges to
+i+1 .. i+nums[i], and BFS from index 0. Correct by construction, since BFS finds shortest paths in an
+unweighted graph. The cost is O(n^2) edges in the worst case - an array of large values has almost
+every index connected to almost every later one - plus O(n) memory for the queue and visited set.
+
+VERSION B - DYNAMIC PROGRAMMING. `dp[i] = 1 + min(dp[j])` over every j that can reach i. O(n^2) time
+and O(n) space, and it is what most people write first.
+
+    FOR n = 10,000 THAT IS ABOUT 50,000,000 OPERATIONS AGAINST THE GREEDY'S 10,000 - five thousand
+    times the work, and the gap grows linearly with n.
+
+VERSION C - THE ONE-PASS GREEDY, which is the code here. O(n) time, O(1) space.
+
+WHY THE GREEDY IS EXACT, and this is the part worth being able to argue.
+
+    CLAIM: when the scan reaches `current_end` having scanned indices 0 .. current_end, the value of
+    `farthest` is the furthest index reachable in one more jump than the band just finished.
+
+    WHY: every index in the current band has been scanned by the time `i` arrives at its last member,
+    because the scan goes strictly left to right and the band is a contiguous range ending at
+    `current_end`. `farthest` is the maximum of `i + nums[i]` over ALL of them. So no launchpad in the
+    band has been overlooked.
+
+    THEREFORE the next band is exactly the indices from `current_end + 1` to `farthest`, and setting
+    `current_end = farthest` moves the boundary correctly.
+
+    AND SINCE the bands are precisely "reachable in exactly k jumps", the band number at which the
+    goal first appears IS the minimum number of jumps. There is no shorter route, because each jump
+    advances you by at most one band.
+
+    NOTE WHAT MAKES THIS DIFFERENT FROM A GUESS: the algorithm never chooses a landing index. It
+    considers every launchpad in the band before committing, so there is nothing to be wrong about.
+
+WHY THE BANDS ARE CONTIGUOUS - the small fact holding it together. If index j is reachable in k
+jumps, so is every index between `current_end + 1` and j, because a jump may be SHORTER than the
+maximum. That is why two integers can describe a band, and why this is not a general BFS needing a
+queue.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SCAN LEFT TO RIGHT KEEPING TRACK OF HOW FAR ANYTHING SEEN
+SO FAR CAN REACH, AND EACH TIME YOU ARRIVE AT THE EDGE OF WHAT YOUR CURRENT NUMBER OF JUMPS CAN
+REACH, COUNT ONE MORE JUMP AND PUSH THE EDGE OUT TO THE FURTHEST POINT YOU HAVE SEEN.
+
+THERE IS NO RECURSION AND NO QUEUE. The mechanism is A SINGLE FORWARD SCAN CARRYING TWO BOUNDARIES:
+
+  - One boundary is the last position your current number of jumps can reach.
+  - The other is the furthest position anything scanned so far can reach - which becomes the next
+    boundary when the current one is exhausted.
+  - THE SCAN NEVER CHOOSES WHERE TO LAND. It only decides when a jump has become unavoidable, and by
+    then it has already examined every possible launchpad, so there is no choice to get wrong.
+  - WHAT MAKES IT STOP: the loop runs once per position, a count fixed before it starts.
+
+THE STEPS:
+
+  1. START WITH NO JUMPS COUNTED, THE CURRENT BOUNDARY AT THE STARTING POSITION, AND THE FURTHEST
+     REACH AT THE STARTING POSITION.
+
+  2. WALK THE POSITIONS FROM THE FIRST UP TO BUT NOT INCLUDING THE LAST.
+
+     NOT INCLUDING THE LAST. You never jump FROM the destination - arriving is the end. Including it
+     would let the arrival itself trigger one more jump, and a single-position array would report one
+     jump when the answer is none.
+
+  3. AT EACH POSITION:
+
+     a. WORK OUT HOW FAR THIS POSITION CAN REACH - its own index plus its value - AND KEEP THE
+        FURTHEST SUCH REACH SEEN SO FAR.
+
+     b. IF THIS POSITION IS THE CURRENT BOUNDARY, then you have now examined every position your
+        current number of jumps could have taken you to. ONE MORE JUMP IS UNAVOIDABLE:
+
+        - COUNT IT.
+        - MOVE THE BOUNDARY OUT TO THE FURTHEST REACH RECORDED.
+
+        The trigger is arriving at the boundary, NOT the furthest reach improving. It improves
+        several times within a single band, and each improvement is a better option within the same
+        jump rather than a new one.
+
+  4. THE COUNT IS THE ANSWER.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a line of stepping stones across a river. Each stone has a number painted on it telling you
+the furthest you may leap from that stone - you may leap any distance up to that, but no further. You
+want to reach the far bank in as few leaps as possible.
+
+The obvious tactic is to leap as far as you can every time, and it is wrong. A distant stone may have
+a small number painted on it, while a nearer one has a large number and would have carried you much
+further on the next leap. So you cannot judge a stone by how far away it is.
+
+Instead, stop thinking about which stone to land on, and think about how far you can get in a given
+number of leaps.
+
+With no leaps at all you are on the first stone. With one leap you can reach any stone within the
+range painted on that first stone - a stretch of the river, not a single point. With two leaps you can
+reach anywhere that any stone in that first stretch could take you. Each additional leap opens up a
+new stretch, and the stretches march across the river one after another.
+
+So you walk your eye along the stones from left to right, keeping two things in mind. The first is
+where the current stretch ends - the furthest you can be with the leaps you have counted so far. The
+second is the furthest any stone you have looked at could throw you.
+
+Every stone you pass, you update that second number. And when your eye arrives at the end of the
+current stretch, you know you have inspected every single stone you could possibly have been standing
+on - so you have found the best launching point among them, whatever it was. At that moment one more
+leap becomes unavoidable, so you count it and push the end of the stretch out to the furthest point
+you found.
+
+The crucial part is when you count. It is not when you spot a stone that throws you further than
+before - that happens repeatedly within one stretch, and each time it is simply a better option for
+the same leap. You count only when you reach the edge of what your current leaps can reach, because
+that is the moment you genuinely have no choice.
+
+And you stop looking one stone short of the far bank, because you never leap FROM your destination.
+Arriving is the end of the journey. If you carried on and included the final stone, then landing on
+it would trigger one last phantom leap - and a river you were already standing across would be
+reported as taking one leap to cross.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep nums = [2, 3, 1, 1, 4] beside you, answer 2.
+
+    def jump(nums):
+
+`nums[i]` is the maximum jump length from index i. Returns the fewest jumps to the last index. The
+end is guaranteed reachable, so there is no failure case. Nothing is modified.
+
+        jumps = 0
+
+    jumps  HOLDS the running count - which is also the current band number.
+
+        current_end = 0        # boundary reachable with the jumps taken so far
+
+    current_end  HOLDS the LAST index reachable using `jumps` jumps. Starts at 0, since with no jumps
+                 you are stuck at index 0.
+
+        farthest = 0           # farthest index seen while scanning this level
+
+    farthest  HOLDS the furthest index reachable from ANY index scanned so far. It accumulates across
+              the band and becomes the next boundary.
+
+        for i in range(len(nums) - 1):     # no need to jump from the last index
+
+THE `- 1` IS LOAD-BEARING (trap 1). You never jump FROM the goal, and including it would let the
+arrival trigger an extra count - turning 2 into 3 on this example, and 0 into 1 for a single-element
+array.
+
+For `nums = [0]` this is `range(0)`, so the body never runs and the answer is the initial 0. Correct
+with no special case.
+
+            farthest = max(farthest, i + nums[i])
+
+    `i + nums[i]`  is how far THIS index can reach.
+    `max(...)`     keeps the best launchpad found anywhere in the band so far.
+
+Note this runs on EVERY index, not only at the boundary - the whole band must be surveyed before the
+boundary moves.
+
+            if i == current_end:           # reached the edge -> must jump now
+
+THE TRIGGER, AND IT IS ARRIVAL AT THE BOUNDARY - not an improvement in `farthest` (trap 4).
+
+By the time `i` equals `current_end`, every index in the current band has been scanned, because the
+scan runs strictly left to right over a contiguous band. So `farthest` is final for this band, and
+one more jump is genuinely unavoidable.
+
+                jumps += 1
+                current_end = farthest      # new boundary is the farthest reach
+
+Count the jump and push the boundary out. `current_end = farthest` is assigned ONLY here (trap 3) -
+doing it every iteration would let the boundary outrun the scan.
+
+        return jumps""",
+
+    """9. TRACED, INDEX BY INDEX - AND THE PHANTOM JUMP.
+
+TRACE 1 - THE WORKED EXAMPLE. nums = [2, 3, 1, 1, 4]. Expected 2.
+
+    jumps = 0,  current_end = 0,  farthest = 0
+    The loop runs for i = 0, 1, 2, 3 - `range(4)`, stopping one short of index 4.
+
+    i = 0:  farthest = max(0, 0 + 2) = 2
+            Is i (0) == current_end (0)?  YES.
+                jumps = 1
+                current_end = 2                <- one jump reaches anywhere up to index 2
+
+    i = 1:  farthest = max(2, 1 + 3) = 4       <- index 1 is an excellent launchpad
+            Is i (1) == current_end (2)?  no.  The band is not exhausted.
+
+    i = 2:  farthest = max(4, 2 + 1) = 4       <- index 2 adds nothing; its value is only 1
+            Is i (2) == current_end (2)?  YES.
+                jumps = 2
+                current_end = 4                <- two jumps reach anywhere up to index 4
+
+    i = 3:  farthest = max(4, 3 + 1) = 4
+            Is i (3) == current_end (4)?  no.
+
+    Loop ends.  RETURN 2.
+
+    NOTE WHAT HAPPENED BETWEEN i = 1 AND i = 2. `farthest` jumped to 4 at index 1 and NO JUMP WAS
+    COUNTED THERE - because the band [1, 2] had not been fully surveyed. The count came at index 2,
+    the band's last member. That is trap 4 in action: an improvement is a better option within the
+    same jump, not a new jump.
+
+    AND NOTE THE ALGORITHM NEVER DECIDED TO LAND ON INDEX 1. It surveyed both index 1 and index 2 and
+    took the best reach among them. The good route was found without ever being chosen - which is why
+    trap 2's "always jump furthest" failure cannot happen here.
+
+TRACE 2 - THE PHANTOM JUMP (trap 1). The same input, looping over ALL indices.
+
+    Everything proceeds as above through i = 3, with jumps = 2 and current_end = 4. Then:
+
+    i = 4:  farthest = max(4, 4 + 4) = 8
+            Is i (4) == current_end (4)?  YES.
+                jumps = 3
+                current_end = 8
+
+    RETURN 3, where the answer is 2.
+
+    THE EXTRA JUMP IS COUNTED FOR ARRIVING AT THE DESTINATION. And on nums = [0] the same bug gives 1
+    instead of 0 - a jump counted on an array where you begin at the goal.
+
+TRACE 3 - WHY "ALWAYS JUMP FURTHEST" FAILS (trap 2), on the same input.
+
+    From index 0, the furthest landing is index 0 + 2 = 2.
+    From index 2, `nums[2]` is 1, so the furthest landing is index 3.
+    From index 3, `nums[3]` is 1, so the furthest landing is index 4.
+
+    ROUTE: 0 -> 2 -> 3 -> 4.  THREE JUMPS.
+
+    The optimal route takes the SHORTER first hop, to index 1, whose value of 3 carries it straight to
+    index 4 - two jumps. Distance is the wrong thing to optimise; where you can go NEXT is what
+    matters, and the band scan accounts for it automatically.
+
+TRACE 4 - A ZERO IN THE MIDDLE (trap 5). nums = [2, 3, 0, 1, 4]. Expected 2.
+
+    i = 0:  farthest = 2.  i == current_end (0)  ->  jumps = 1, current_end = 2.
+    i = 1:  farthest = max(2, 1 + 3) = 4.  i (1) != 2.
+    i = 2:  farthest = max(4, 2 + 0) = 4.  i (2) == current_end (2)  ->  jumps = 2, current_end = 4.
+    i = 3:  farthest = max(4, 3 + 1) = 4.  i (3) != 4.
+
+    RETURN 2.
+
+    The zero at index 2 contributed nothing to `farthest` and did no harm, because index 1 had already
+    carried the band to 4. A zero only matters when it is the ONLY launchpad available - which is the
+    concern of Jump Game I, not this problem.
+
+THE TINY INPUTS:
+    nums = [0]        `range(0)` is empty, the body never runs.  RETURN 0. You start at the goal.
+    nums = [2, 1]     i = 0: farthest = 2, i == current_end (0)  ->  jumps = 1, current_end = 2.
+                      Loop ends.  RETURN 1.
+    nums = [1,1,1,1]  i=0: farthest 1, count -> jumps 1, end 1.
+                      i=1: farthest 2, i == 1 == end -> jumps 2, end 2.
+                      i=2: farthest 3, i == 2 == end -> jumps 3, end 3.
+                      RETURN 3 - one jump per step, which is forced when every value is 1.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n). ONE PASS, and constant work per index - one addition, one comparison for `farthest`, and
+one equality test.
+
+SPACE: O(1). THREE INTEGERS, whatever the length of the array. No queue, no table, no visited set.
+
+    AGAINST THE DP THAT MOST PEOPLE WRITE FIRST - `dp[i] = 1 + min(dp[j])` over all j reaching i -
+    which is O(n^2) time and O(n) space. At n = 10,000 that is about 50,000,000 operations against
+    10,000: five thousand times the work.
+
+    AND AGAINST A REAL BFS WITH A QUEUE, which is also O(n^2) in the worst case because an array of
+    large values gives almost every index an edge to almost every later one. The greedy is BFS with
+    the queue collapsed into two integers, available only because the "graph" is a line and each
+    level is a contiguous range (section 5).
+
+THE FAMILY AND THE RECOGNITION CUE:
+
+    JUMP GAME I         CAN you reach the end? The same scan - track `farthest`, and fail the moment
+                        `i > farthest`, meaning you are standing beyond anything reachable.
+    JUMP GAME II        FEWEST jumps. This entry.
+    JUMP GAME III       arbitrary forward AND backward jumps of a fixed size - the line structure is
+                        gone, so it needs a genuine BFS or DFS with a visited set.
+    VIDEO STITCHING     the same band-expanding greedy on intervals rather than indices.
+    MINIMUM NUMBER OF TAPS TO WATER A GARDEN
+                        again the same shape: convert each tap to the range it covers, then expand
+                        bands.
+    GAS STATION         a different greedy on a line, but the same "one pass, two running quantities"
+                        instinct.
+
+    THE CUE: a line, a reach from each position, and a question about the FEWEST steps. When the
+    levels of a BFS are contiguous ranges, the queue is unnecessary and two integers will do.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the end might be unreachable?" That is Jump Game I - fail when `i > farthest`. You can
+    fold the check into this same loop.
+  - "Return the actual route, not just the count." Record which index supplied each `farthest` when
+    the boundary moves, then walk the choices back.
+  - "Why is the greedy optimal?" Section 5: by the time `i` reaches `current_end`, every launchpad in
+    the band has been surveyed, so `farthest` is exactly the next band's boundary - and the band a
+    position first appears in IS its minimum jump count.
+  - "What if jumps could go backwards?" The bands stop being contiguous ranges and you need a real
+    BFS with a visited set.
+  - "What if each index had a COST rather than a count?" Then it is a shortest-path problem with
+    weights - Dijkstra, not a greedy scan.
+
+THE #1 BEGINNER MISTAKE: looping all the way to the last index. Arriving at the destination then
+triggers one final `i == current_end` and counts a jump that is never taken - 3 instead of 2 on the
+worked example, and 1 instead of 0 on a single-element array where you begin at the goal.
+
+RUNNER-UP: counting a jump whenever `farthest` improves. Improvement happens several times within one
+band, and each is a better choice for the SAME jump; the trigger is exhausting the band, not
+improving on it.
+
+TAKEAWAY: stop trying to choose where to land and count bands instead - scan left to right tracking
+how far everything seen so far can reach, and count a jump only on arriving at the current band's
+edge, because at that moment every possible launchpad has been surveyed and one more jump is
+genuinely unavoidable.""",
 ]
 
 _EX_P1E["Longest Palindromic Subsequence"] = [
