@@ -52792,8 +52792,1092 @@ won anyway because the parallelism let the models get big enough for scaling
 laws to take over.""",
 ]
 
-_EX_P0H["The Transformer & self-attention (the big one)"] = _SELF_ATTENTION_EXAMPLES
-_EX_P0H["How does self-attention work (the Transformer core)?"] = _SELF_ATTENTION_EXAMPLES
+# These two used to share _SELF_ATTENTION_EXAMPLES, so opening either card showed the
+# same six examples. They now carry their own write-ups with the emphasis split: the
+# ai_llm entry owns the per-head mechanism (it has a code field to walk), and the
+# ml_concepts entry owns the architecture built around it.
+_EX_P0H["The Transformer & self-attention (the big one)"] = [
+    """1. THE GOAL - the architecture that everything modern is built from.
+
+The Transformer is the network design underneath essentially every large language model,
+every modern translation system, and increasingly vision and audio models too. If you
+understand one architecture, understand this one.
+
+Its central move, and the reason it replaced what came before:
+
+    IT READS THE WHOLE SEQUENCE AT ONCE, IN PARALLEL, AND LETS EVERY TOKEN LOOK DIRECTLY
+    AT EVERY OTHER TOKEN.
+
+The generation before it - recurrent networks - read left to right, one token at a time,
+carrying a single running summary. That had two fatal problems. It could not be
+parallelised, because step 20 needs step 19's output. And information from early tokens had
+to survive being rewritten at every step to reach the end, so long-range connections
+faded.
+
+    RNN:          token1 -> token2 -> token3 -> ... -> token20
+                  "animal" reaches "it" only through 19 rewrites
+
+    TRANSFORMER:  every token connected to every token, directly, in one step
+
+WHAT THIS ENTRY OWNS, so the cluster does not repeat itself:
+
+    THIS ENTRY - the ARCHITECTURE. Multi-head attention, positional encoding, the
+                 residual-and-normalise pattern, the feed-forward block, encoder versus
+                 decoder, causal masking, where the parameters actually live, and why it
+                 beat RNNs.
+    "HOW DOES SELF-ATTENTION WORK (THE TRANSFORMER CORE)?" (sibling) - the MECHANISM of a
+                 single head: Q, K, V, the scoring formula, sqrt(d_k), the softmax, and a
+                 hand-computed trace. Read that one for the arithmetic.
+    "CNN vs RNN vs TRANSFORMER" (sibling) - when to choose which.
+
+So this page assumes you know what one attention head does, and builds the machine around
+it.""",
+
+    """2. THE INTUITION - one block, stacked many times.
+
+A Transformer is not a complicated design. It is ONE block, repeated 12 or 32 or 96 times.
+Here is the block:
+
+    input tokens (one vector each)
+          |
+          v
+    +-----------------------------+
+    |   MULTI-HEAD ATTENTION      |   every token looks at every token,
+    |   (8 heads in parallel)     |   in 8 different ways at once
+    +-----------------------------+
+          |
+       [ + input ]  <---------------  RESIDUAL: add the block's input back
+          |
+       [ normalise ]
+          |
+          v
+    +-----------------------------+
+    |   FEED-FORWARD NETWORK      |   each token processed on its own,
+    |   (expand, then contract)   |   no looking at neighbours
+    +-----------------------------+
+          |
+       [ + input ]  <---------------  RESIDUAL again
+          |
+       [ normalise ]
+          |
+          v
+    output (one vector each, same shape as input)
+
+Two halves, and the division of labour is worth naming:
+
+    ATTENTION MIXES INFORMATION BETWEEN TOKENS. It is the only place tokens talk to each
+    other.
+
+    THE FEED-FORWARD NETWORK PROCESSES EACH TOKEN ALONE. No token sees another here. This
+    is where most of the parameters live, and where most of the model's stored knowledge
+    is believed to sit.
+
+Because the output has the same shape as the input, blocks stack trivially. Stack 32 of
+them and each token has been through 32 rounds of "gather relevant context, then think
+about it privately".
+
+And one thing must be added before any of this works. Attention has NO NOTION OF ORDER -
+section 5 proves it - so positional information is injected into the embeddings before the
+first block. Without it, "dog bites man" and "man bites dog" are literally the same input.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRANSFORMER. The architecture: stacked blocks of multi-head attention plus a feed-forward
+network, with residual connections and normalisation.
+
+SELF-ATTENTION. Each token attending to every token in the same sequence. The mechanism is
+in the sibling entry.
+
+MULTI-HEAD ATTENTION. Several attention computations in parallel, each with its own
+learned projections, then concatenated. Each head can specialise in a different kind of
+relationship.
+
+HEAD. One of those parallel attention computations. With d_model = 512 and 8 heads, each
+head works in a 64-dimensional subspace.
+
+d_model. The width of the token representation flowing through the network. 512, 768, 4096.
+
+POSITIONAL ENCODING. Information about WHERE a token sits, added to its embedding, because
+attention alone is order-blind. Either fixed sine/cosine patterns or learned vectors;
+modern models often use rotary embeddings (RoPE) applied inside attention instead.
+
+RESIDUAL CONNECTION (SKIP CONNECTION). Adding a sub-layer's input to its output. Lets
+gradients flow directly through deep stacks and lets a sub-layer learn a small correction
+rather than a whole transformation.
+
+LAYER NORMALISATION. Rescaling each token's vector to have consistent mean and variance,
+so activations do not drift as depth grows.
+
+FEED-FORWARD NETWORK (FFN / MLP). Two linear layers with a non-linearity between,
+typically expanding d_model by 4x and contracting back. Applied to each token
+independently.
+
+ENCODER. A stack where every token sees every other token in both directions. BERT is
+encoder-only, which suits classification and understanding tasks.
+
+DECODER. A stack where a token may only see itself and earlier tokens. GPT is decoder-only,
+which is what makes next-token generation possible.
+
+CAUSAL MASK / CAUSAL ATTENTION. The mechanism enforcing that: scores for future positions
+are set to negative infinity before the softmax, so their weights become exactly zero.
+
+BIDIRECTIONAL. Seeing both left and right context. Encoders are; decoders are not.
+
+PARAMETER. One learned number. Model size is quoted in parameters - 7B means seven billion.
+
+CONTEXT WINDOW. The maximum number of tokens attended to at once. Limited by the n-squared
+cost.
+
+SCALING LAWS. The empirical finding that performance improves predictably with more
+parameters, data and compute - which is why parallelisability mattered so much.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE MOST COMMON GAP: FORGETTING POSITIONAL ENCODING.
+
+Candidates explain attention beautifully and never mention position. But attention is
+PERMUTATION-EQUIVARIANT: shuffle the input tokens and the outputs are the same set,
+shuffled the same way. Section 5 proves it. So without positional information:
+
+    "dog bites man"    and    "man bites dog"
+
+produce the identical set of representations. The model literally cannot tell them apart.
+Position must be injected, and it is injected by ADDING a position-dependent vector to
+each token's embedding before the first block.
+
+TRAP 2: thinking multi-head means "run attention 8 times at full width". It does not - the
+dimensions are SPLIT. With d_model = 512 and 8 heads, each head works in 64 dimensions, and
+the 8 outputs of 64 are concatenated back to 512. The cost is roughly the same as one
+full-width head; you get diversity for free rather than for 8x the compute.
+
+TRAP 3: confusing encoder and decoder. BERT is an ENCODER - every token sees both
+directions, which is why it is good at classification and cannot generate text left to
+right. GPT is a DECODER - causal masking means a token sees only the past, which is exactly
+what next-token prediction requires. Getting this backwards in an interview is costly
+because it reveals the mechanism was memorised rather than understood.
+
+TRAP 4: thinking the causal mask is applied after the softmax. It is applied BEFORE -
+scores at future positions are set to negative infinity, and exp(negative infinity) = 0, so
+those weights vanish and the remaining weights still sum to 1. Zeroing weights after the
+softmax would leave the row not summing to 1 and would silently distort everything.
+
+TRAP 5: assuming attention holds most of the parameters. It does not - the FFN does,
+usually about twice as many. Section 9 does the arithmetic. This matters because it is
+where the "knowledge" is thought to live, and it is what mixture-of-experts architectures
+replace.
+
+TRAP 6: forgetting the n-squared cost when discussing long context. Doubling the context
+quadruples attention's work and memory. Any answer about long-context models that does not
+mention this has missed the constraint that drives the whole area.
+
+TRAP 7: saying "Transformers have no recurrence, so they are unlimited". They have a
+context window precisely because of the quadratic cost, and everything outside it is simply
+invisible.""",
+
+    """5. THE PREDECESSOR FIRST, THEN THE UPGRADE - AND A PROOF.
+
+THE PREDECESSOR: the recurrent network (RNN, LSTM, GRU).
+
+Read the sequence left to right, maintaining one hidden state that is updated at each
+token. To connect "it" back to "animal" ten words earlier, that information must survive
+ten successive rewrites of a single fixed-size vector.
+
+Two consequences, and both are fatal at scale:
+
+    NOT PARALLELISABLE. Step 20 needs step 19's output. Training time grows with sequence
+    length no matter how much hardware you have.
+
+    LONG-RANGE DEPENDENCIES FADE. The path from token 1 to token 20 is 20 steps long, and
+    each step can overwrite. LSTMs and GRUs improved this with gates but did not remove it.
+
+THE UPGRADE: attention, where the path from ANY token to ANY other is length 1.
+
+    property                RNN                    TRANSFORMER
+    ------------------      -----------------      ------------------
+    path between tokens     O(n) steps             O(1) - one step
+    parallelism             none across sequence   full across sequence
+    compute per layer       O(n x d)               O(n squared x d)
+
+Note the Transformer is MORE expensive in raw operations. It won anyway, because its work
+is one large matrix multiplication - exactly what GPUs do best - while an RNN's work is
+inherently sequential. The parallel algorithm finishes sooner in wall-clock time, and that
+let models grow big enough for scaling laws to take over.
+
+THE PROOF THAT ATTENTION IS ORDER-BLIND - because this justifies positional encoding, and
+asserting "attention has no notion of order" without showing why is where most explanations
+stop.
+
+Take the input matrix X and shuffle its rows with a permutation P, giving PX.
+
+  - Q, K and V are computed by multiplying X by learned matrices ON THE RIGHT: Q = X Wq.
+    Permuting rows of X permutes rows of Q, K and V identically: (PX)Wq = P(X Wq) = PQ.
+  - The scores are Q K-transpose. With permuted inputs this becomes (PQ)(PK)-transpose =
+    P (Q K-transpose) P-transpose - the same score matrix with its rows AND columns
+    permuted. So the score between token i and token j is unchanged; it has merely moved.
+  - The softmax is applied per row and is unaffected by which row it is.
+  - The output is weights times V, which comes out as P times the original output.
+
+So permuting the input permutes the output the same way and changes NOTHING else. The
+representation a token receives depends only on WHICH tokens are present, never on WHERE
+they are. That is exactly why "dog bites man" and "man bites dog" would be indistinguishable
+- and exactly why a position-dependent vector must be added to each embedding before the
+first block.
+
+THE OTHER UPGRADES IN THE BLOCK, and what each is for:
+
+  MULTI-HEAD. One attention head must commit to a single notion of relevance. Eight heads,
+  each in its own 64-dimensional subspace, can specialise - one tracking syntactic
+  agreement, another coreference, another position-adjacent patterns. Splitting the
+  dimensions means this costs about the same as one full-width head.
+
+  RESIDUAL CONNECTIONS. Adding a sub-layer's input back to its output. Two benefits:
+  gradients flow directly down the stack without being repeatedly multiplied by small
+  numbers, which is what makes 96-layer models trainable at all; and each sub-layer only
+  has to learn a CORRECTION to what arrived, which is an easier thing to learn than a whole
+  transformation.
+
+  LAYER NORMALISATION. Keeps activations at a consistent scale as depth grows, so training
+  stays stable.
+
+  THE FEED-FORWARD NETWORK. Attention only ever produces WEIGHTED AVERAGES of value
+  vectors - it mixes, but its output is a convex combination of things it was given. The
+  FFN is where genuinely non-linear per-token computation happens, and it is where most
+  parameters and most stored factual knowledge live.""",
+
+    """6. HOW IT WORKS - the whole model, step by step.
+
+The one sentence that holds the whole idea: ADD POSITION INFORMATION TO THE TOKEN
+EMBEDDINGS, THEN PASS THEM THROUGH A STACK OF IDENTICAL BLOCKS THAT ALTERNATE BETWEEN
+LETTING TOKENS EXCHANGE INFORMATION (ATTENTION) AND LETTING EACH TOKEN THINK PRIVATELY
+(FEED-FORWARD), ADDING THE INPUT BACK AND RENORMALISING AFTER EACH.
+
+THERE IS NO RECURRENCE AND NOTHING TO TERMINATE inside the model - and that absence is the
+architectural point. A fixed number of blocks execute in a fixed order. Cost depends on
+sequence length and depth, not on convergence.
+
+THE ONE LOOP THAT DOES EXIST is OUTSIDE the model, in generation: produce one token, append
+it to the input, run the whole stack again. WHAT MAKES IT STOP is an end-of-sequence token,
+a length cap, or a caller-supplied stop sequence - never the architecture itself.
+
+THE STEPS:
+
+  1. TOKENIZE the text and look up an embedding vector for each token.
+
+  2. ADD POSITIONAL INFORMATION to every embedding. Without this the model cannot
+     distinguish orderings at all (section 5). Fixed sinusoids, learned position vectors,
+     or rotary embeddings applied inside attention.
+
+  3. FOR EACH BLOCK IN THE STACK, repeat steps 4 to 7.
+
+  4. MULTI-HEAD ATTENTION. Split the representation across several heads. In each head,
+     every token queries every token and takes a weighted blend of their values (the
+     sibling entry has the arithmetic). Concatenate the heads and project back to full
+     width. In a DECODER, mask future positions to negative infinity before the softmax so
+     they receive exactly zero weight.
+
+  5. ADD AND NORMALISE. Add the block's input back to the attention output, then normalise.
+
+  6. FEED-FORWARD. Pass each token independently through an expand-then-contract network -
+     typically four times wider in the middle. No token sees another here.
+
+  7. ADD AND NORMALISE again.
+
+  8. AFTER THE LAST BLOCK, project the final representation onto the vocabulary to get one
+     score per possible token, and softmax those into probabilities.
+
+  9. FOR GENERATION, pick a token from that distribution, append it, and go back to step 1
+     with the longer sequence - reusing the cached keys and values of earlier tokens so
+     they are not recomputed.
+
+The step that gets skipped in explanations is 2, and the step that gets misplaced is the
+mask in 4 - it goes BEFORE the softmax, not after.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a room of people, each holding one word of a sentence, trying to work out what the
+sentence means. They do it in rounds, and every round has two halves.
+
+In the first half, everybody talks to everybody at once. Not a chain of whispers - a room
+where anyone can hear anyone directly, however far apart they are sitting. Each person
+listens hardest to whoever seems most relevant to them, and updates their understanding
+with what they heard.
+
+They actually do this eight times simultaneously, in eight separate conversations, each
+about a different kind of relevance. One conversation is about grammatical agreement,
+another about what refers to what, another about which words usually appear together.
+Afterwards each person merges what they learned from all eight.
+
+In the second half, everyone stops talking and thinks privately about what they now know.
+Nobody consults anybody. This is where each person does the real processing on their own
+understanding.
+
+And there is a rule that runs through both halves: nobody throws away what they came in
+with. Each person ADDS what they just learned to what they already had. That is why a
+hundred rounds of this does not turn into noise - each round is a refinement, not a
+replacement.
+
+Then they do the whole thing again. And again. Thirty-two times, or ninety-six.
+
+Two details make or break it. First, at the very start each person is told where they are
+sitting - because otherwise the room genuinely cannot tell "dog bites man" from "man bites
+dog"; everyone hears the same words either way. Second, when the room's job is to PREDICT
+the next word rather than to understand a finished sentence, everyone is forbidden from
+listening to anyone seated later than them - otherwise predicting the next word would be
+trivial, since somebody in the room is already holding it.""",
+
+    """8. THE ARCHITECTURE, WALKED THROUGH PIECE BY PIECE.
+
+No code in this entry - the sibling has it - so what follows is each component, what it
+holds, and what it decides.
+
+--- BEFORE THE STACK ---
+
+    TOKEN EMBEDDING TABLE
+        HOLDS: one learned vector per vocabulary entry. A 50,000-token vocabulary at
+        d_model 512 is 25.6 million parameters here alone.
+        DECIDES: the starting representation of each token, before any context.
+
+    POSITIONAL ENCODING
+        HOLDS: a vector per position, ADDED to the token embedding (not concatenated).
+        DECIDES: whether the model can distinguish orderings at all. Without it the whole
+        architecture is order-blind (proved in section 5).
+        VARIANTS: fixed sinusoids of different frequencies (the original, and it
+        extrapolates to unseen lengths); learned position vectors (simpler, does not
+        extrapolate); rotary embeddings, RoPE, applied inside attention and now the common
+        choice in large models.
+
+--- INSIDE EACH BLOCK ---
+
+    MULTI-HEAD ATTENTION
+        HOLDS: per head, three projection matrices (Wq, Wk, Wv), plus one output projection
+        shared across the concatenated heads.
+        DECIDES: which tokens exchange information, and how much. THE ONLY PLACE TOKENS
+        COMMUNICATE.
+        SPLITS, NOT REPEATS: d_model 512 with 8 heads means each head works in 64
+        dimensions, and the 8 x 64 outputs concatenate back to 512.
+
+    CAUSAL MASK (decoders only)
+        HOLDS: an upper-triangular pattern of negative infinity.
+        DECIDES: whether a token can see the future. Applied to the scores BEFORE the
+        softmax, so exp() drives those weights to exactly 0 and the surviving weights still
+        sum to 1.
+        WHY IT MATTERS: without it, next-token prediction is trivial and the model learns
+        nothing - the answer is already in the input.
+
+    RESIDUAL CONNECTION
+        HOLDS: nothing - it is an addition.
+        DECIDES: whether very deep stacks are trainable. Gradients travel down the
+        additions without being repeatedly multiplied by small numbers, and each sub-layer
+        only needs to learn a correction to its input.
+
+    LAYER NORMALISATION
+        HOLDS: a learned scale and shift per feature.
+        DECIDES: whether activations stay at a workable scale as depth grows.
+
+    FEED-FORWARD NETWORK
+        HOLDS: two matrices - expand d_model to 4 x d_model, then contract back - with a
+        non-linearity between.
+        DECIDES: the per-token non-linear computation. Attention can only produce weighted
+        averages of values; this is where genuinely new per-token computation happens.
+        WHERE THE PARAMETERS ARE: about twice as many as attention (section 9), and it is
+        where factual knowledge is believed to be stored.
+
+--- AFTER THE STACK ---
+
+    OUTPUT PROJECTION
+        HOLDS: a matrix from d_model to vocabulary size.
+        DECIDES: the score for every possible next token. Often shares weights with the
+        input embedding table.
+
+--- THE TWO FAMILIES ---
+
+    ENCODER-ONLY (BERT). Every token sees both directions. Good at understanding -
+    classification, retrieval, tagging. Cannot generate left to right.
+
+    DECODER-ONLY (GPT and essentially all modern LLMs). Causal mask; a token sees only
+    itself and the past. Trained by next-token prediction.
+
+    ENCODER-DECODER (the original Transformer, T5). Encoder reads the input bidirectionally;
+    decoder generates while cross-attending to the encoder's output. Natural for
+    translation.""",
+
+    """9. THE ARCHITECTURE IN REAL NUMBERS.
+
+Take the original base configuration: d_model = 512, 8 heads, FFN inner width 2048,
+6 blocks.
+
+WHERE THE PARAMETERS ARE, PER BLOCK:
+
+    ATTENTION
+        per head:  Wq is 512 x 64  = 32,768
+                   Wk is 512 x 64  = 32,768
+                   Wv is 512 x 64  = 32,768
+                   -> 98,304 per head
+        8 heads:   98,304 x 8      = 786,432
+        output projection 512 x 512 = 262,144
+        ATTENTION TOTAL             = 1,048,576
+
+    FEED-FORWARD
+        expand   512 x 2048        = 1,048,576
+        contract 2048 x 512        = 1,048,576
+        FFN TOTAL                  = 2,097,152
+
+    So the FFN holds EXACTLY TWICE the parameters of attention in this configuration.
+
+That inverts the usual mental picture. Attention is the famous part and the interesting
+part, and it is the minority of the model. The feed-forward blocks - which do no
+communication at all - hold most of the weights, and are where factual knowledge is
+believed to sit. It is also why mixture-of-experts models replace the FFN rather than the
+attention: that is where the parameters worth making conditional are.
+
+MULTI-HEAD IS NOT 8x THE COST - the arithmetic:
+
+    ONE full-width head:   Wq, Wk, Wv each 512 x 512  ->  786,432 parameters
+    EIGHT 64-wide heads:   as computed above          ->  786,432 parameters
+
+    Identical. The dimensions are SPLIT, not duplicated. Eight different notions of
+    relevance for the price of one - which is why multi-head is universal.
+
+THE QUADRATIC COST, and how it inverts the comparison with RNNs:
+
+    attention work per layer ~ n squared x d
+    RNN work per layer       ~ n x d squared
+
+    with d = 512:
+
+      n =    512:  attention 512^2 x 512 =    134 million
+                   RNN       512 x 512^2 =    134 million     -> equal
+      n =  2,048:  attention 2048^2 x 512 = 2,147 million
+                   RNN       2048 x 512^2 =   537 million     -> RNN 4x cheaper
+      n = 16,384:  attention 16384^2 x 512 = 137,439 million
+                   RNN       16384 x 512^2 =   4,295 million  -> RNN 32x cheaper
+
+    ON RAW OPERATION COUNT THE RNN WINS, and by a widening margin. The Transformer won
+    anyway - because its operations are one large parallel matrix multiplication, while the
+    RNN's must happen in sequence, one timestep after another. On hardware with thousands
+    of parallel units, doing 32 times more work all at once beats doing less work strictly
+    one step at a time.
+
+    That is the inversion worth carrying into an interview: judged on operations, attention
+    is the worse algorithm; judged on wall-clock training time at scale, it is the one that
+    made modern models possible.
+
+THE CONTEXT WINDOW CONSEQUENCE:
+
+    n =   1,000  ->        1,000,000 attention scores
+    n =   4,000  ->       16,000,000
+    n = 100,000  ->   10,000,000,000
+
+    Doubling the context quadruples both compute and the memory for the score matrix. This
+    is the reason context windows were small for years, why long-context support is a real
+    engineering achievement, and why FlashAttention (which never writes the full n x n
+    matrix to slow memory), sliding-window attention and sparse attention all exist.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COST SUMMARY:
+
+  - ATTENTION: O(n squared x d) time and O(n squared) memory per layer. The binding
+    constraint on context length.
+  - FEED-FORWARD: O(n x d squared). Linear in sequence length, and it holds most of the
+    parameters.
+  - DEPTH: everything above, multiplied by the number of blocks.
+  - GENERATION: inherently sequential - one token per full forward pass - which is why
+    output length sets latency and why the KV cache (storing earlier tokens' keys and
+    values so they are not recomputed) exists.
+
+WHERE THIS SITS IN THE CLUSTER:
+  - THIS ENTRY: the architecture - blocks, multi-head, position, residuals, encoder versus
+    decoder.
+  - "HOW DOES SELF-ATTENTION WORK": one head's arithmetic, Q/K/V, sqrt(d_k), the code.
+  - "CNN vs RNN vs TRANSFORMER": which architecture for which data.
+  - "WHAT IS A LARGE LANGUAGE MODEL": what this architecture becomes once trained at scale.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why does the Transformer need positional encoding?" Because attention is
+    permutation-equivariant - shuffling the input just shuffles the output, so word order
+    is invisible without it. Be ready to sketch the proof from section 5; that is what
+    separates a memorised answer from an understood one.
+  - "Why multi-head rather than one big head?" Different heads specialise in different
+    relationships, and because dimensions are split rather than duplicated it costs the
+    same.
+  - "What is the difference between BERT and GPT?" Encoder versus decoder - bidirectional
+    understanding versus causal generation. The causal mask is the difference.
+  - "Where does an LLM store facts?" Predominantly the feed-forward blocks, which hold
+    about twice the parameters of attention.
+  - "How do models handle 100k-token contexts if attention is quadratic?" They do not do
+    plain attention - FlashAttention for memory, sliding-window or sparse patterns for
+    compute, and architectural variants that share or compress keys and values.
+  - "Why did Transformers beat RNNs if they need more compute?" Parallelism. Section 9 has
+    the arithmetic showing the RNN doing strictly fewer operations and still losing.
+
+THE #1 MISTAKE: explaining attention without ever mentioning positional encoding. It is the
+most common gap, and it is not a footnote - without it the architecture cannot tell any
+sentence from an anagram of itself.
+
+RUNNER-UP: describing multi-head as running attention several times at full width, which
+misses that the dimensions are split and makes the cost story wrong.
+
+TAKEAWAY: a Transformer is one block stacked many times - attention to exchange information
+between tokens, a feed-forward network to process each token alone, with the input added
+back each time - and its defining trade is that it does far MORE arithmetic than a
+recurrent network but does all of it in parallel, which is what let models get big enough
+to matter.""",
+]
+
+_EX_P0H["How does self-attention work (the Transformer core)?"] = [
+    """1. THE GOAL - one word looking at all the others.
+
+Read this sentence and answer one question:
+
+    "The animal did not cross the street because it was tired."
+
+    What does "it" refer to?
+
+You said "the animal" without effort. But nothing about the word "it" itself tells you
+that - "it" is three letters that could mean anything. You worked it out by looking at
+the OTHER words in the sentence and deciding which one was relevant. Streets do not get
+tired; animals do.
+
+SELF-ATTENTION is the mechanism that lets a neural network do exactly that: for each
+word, look at every other word in the sentence, decide how relevant each one is, and
+build a new representation of that word that has the relevant ones mixed in.
+
+    before attention:   "it"  =  a generic pronoun, meaning almost nothing
+    after attention:    "it"  =  a pronoun that has absorbed most of "animal"
+
+The word "self" means the sequence is attending to ITSELF - the queries and the keys
+come from the same sentence. (Cross-attention, where one sequence looks at a different
+one, is the same arithmetic with two inputs.)
+
+WHAT THIS ENTRY OWNS, so the cluster does not repeat itself:
+
+    THIS ENTRY - the MECHANISM of one attention head: Q, K and V, the scoring formula,
+                 the scaling, the softmax, and the code line by line.
+    "THE TRANSFORMER & SELF-ATTENTION (THE BIG ONE)" (sibling) - the ARCHITECTURE built
+                 around this: multi-head, positional encoding, residuals, the
+                 feed-forward block, encoder versus decoder, and why it replaced RNNs.
+    "CNN vs RNN vs TRANSFORMER" (sibling) - when to reach for which.
+
+So this page is the single head, computed by hand.""",
+
+    """2. THE INTUITION - a search engine running inside the sentence.
+
+The hardest part of self-attention is Q, K and V - three vectors per token, with names
+that mean nothing at first. The clearest way in is that they are exactly a search
+engine, and every token plays all three roles at once.
+
+    QUERY  (Q)  =  what this token is LOOKING FOR.
+                   "it" says: I am a pronoun, I need something that can be tired.
+
+    KEY    (K)  =  what this token ADVERTISES about itself.
+                   "animal" says: I am a living thing, singular, a subject.
+                   "street" says: I am a place, inanimate.
+
+    VALUE  (V)  =  what this token PASSES ON if selected.
+                   The actual content that gets mixed into whoever attended to it.
+
+The search runs like this. Take one token's QUERY and compare it against EVERY token's
+KEY. Each comparison is a dot product, which is high when two vectors point in similar
+directions - so it measures "does what you offer match what I want?"
+
+    query of "it"   ·  key of "animal"   =  3.0     strong match
+    query of "it"   ·  key of "street"   =  1.0     weak match
+    query of "it"   ·  key of "it"       =  2.5     moderate
+
+Those raw numbers become proportions through a SOFTMAX, which turns any list of numbers
+into positive weights that sum to 1:
+
+    animal  ############################  0.51
+    it      ####################          0.36
+    street  #######                       0.12
+                                          ----
+                                          1.00
+
+Finally, the new representation of "it" is the weighted sum of everybody's VALUE
+vectors, using those weights. Half of the new "it" is animal, a third is its old self, a
+little is street.
+
+    new "it"  =  0.51 x V(animal)  +  0.12 x V(street)  +  0.36 x V(it)
+
+That is the whole operation. Every token does this simultaneously, and every token can
+reach every other token IN ONE STEP - which is the property that made this replace the
+recurrent networks that had to pass information along a chain.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TOKEN. The unit the model processes - roughly a word or word-piece.
+
+EMBEDDING. A token represented as a list of numbers (a vector), positioned so that
+similar meanings sit near each other. The input to attention is one embedding per token.
+
+d_model. How long each token's embedding is. 512 and 768 are common.
+
+SEQUENCE LENGTH (n or seq_len). How many tokens are being processed together.
+
+X. The input matrix, shape (seq_len, d_model) - one row per token.
+
+QUERY, KEY, VALUE (Q, K, V). Three vectors derived from each token's embedding by
+multiplying it by three LEARNED matrices Wq, Wk, Wv. Query is what a token seeks, key is
+what it offers, value is what it contributes. All three come from the same input, which
+is what "self" means.
+
+d_k. The length of the query and key vectors. Often d_model divided by the number of
+heads - 64 when d_model is 512 and there are 8 heads.
+
+DOT PRODUCT. Multiply two vectors element by element and add the results. Large and
+positive when the vectors point the same way, near zero when unrelated. This is the
+similarity measure at the heart of attention.
+
+SCORES. The matrix of all query-key dot products, shape (seq_len, seq_len). Entry (i, j)
+is "how much should token i attend to token j?"
+
+SCALING BY 1/sqrt(d_k). Dividing the scores before the softmax. Section 5 shows exactly
+what breaks without it - this is not a cosmetic detail.
+
+SOFTMAX. Turns a list of numbers into positive weights summing to 1: exponentiate each,
+then divide by the total. Larger inputs get disproportionately larger weights, because
+the exponential grows fast.
+
+ATTENTION WEIGHTS. The output of the softmax, shape (seq_len, seq_len). Each ROW sums to
+1 - it is one token's distribution of attention over all tokens.
+
+CONTEXT VECTOR / OUTPUT. The weighted sum of value vectors. One per token, and it is the
+token's new, context-aware representation.
+
+MULTI-HEAD ATTENTION. Several of these running in parallel with different learned
+matrices, then concatenated. Covered in the sibling entry.
+
+@ (in Python/numpy). Matrix multiplication.
+
+.T. Transpose - flip a matrix so rows become columns. K.T is needed so that Q @ K.T
+computes every query against every key.
+
+axis=1, keepdims=True. Operate along each ROW and keep the result shaped as a column, so
+it can be subtracted from or divided into the original matrix row by row.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE INTERVIEWERS ASK: WHY DIVIDE BY sqrt(d_k)?
+
+"For numerical stability" is the answer people give, and it is the wrong answer - the
+stability fix is the max-subtraction on the next line. The real reason is about GRADIENTS,
+and section 5 works it out. In short: dot products of long vectors have large variance,
+softmax on large numbers saturates into a near-one-hot distribution, and a saturated
+softmax has almost no gradient, so the layer stops learning.
+
+TRAP 2: confusing the two "stability" steps. There are two, and they do different jobs:
+
+    scores / sqrt(d_k)                      - keeps the softmax SOFT so gradients flow
+    scores - scores.max(axis=1, keepdims=True) - prevents exp() OVERFLOWING to infinity
+
+The first is about learning. The second is about arithmetic. Both appear in this code and
+they are not the same fix.
+
+TRAP 3: thinking the softmax is over the wrong axis. It is over axis=1 - across the KEYS,
+for each query. Each ROW must sum to 1, meaning "this token's attention is distributed
+over all tokens". Softmaxing down the columns instead produces a matrix where each token's
+attention does not sum to 1 and the whole thing is meaningless. This is a genuinely easy
+mistake to make when writing it from scratch.
+
+TRAP 4: forgetting the transpose. Q @ K gives a shape error unless the matrices happen to
+be square, and if they are square you get silently wrong answers. It must be Q @ K.T so
+that row i of the result is query i dotted with every key.
+
+TRAP 5: believing attention weights are explanations. It is tempting to read the weights
+as "the model decided 'it' means 'animal'". They are one layer of one head out of dozens,
+values are mixed in ways the weights do not show, and there is a substantial research
+literature on attention being an unreliable explanation. Say this if asked - it shows you
+know the difference between a mechanism and an interpretation.
+
+TRAP 6: forgetting attention has NO notion of order. The arithmetic is identical if you
+shuffle the sentence - which is why positional encodings exist. The sibling entry proves
+this properly, and it is the single most common gap in a candidate's explanation.
+
+TRAP 7: ignoring the n-squared cost. Every token compares against every token, so the
+score matrix has seq_len squared entries. Section 10 puts numbers on it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - average all the words together.
+
+To give a word context, mix in the surrounding words equally:
+
+    new representation of "it"  =  the average of every word's embedding
+
+This is a real technique (bag-of-words averaging) and it does capture something. Its
+failure is obvious once stated: it treats "animal" and "the" as equally relevant to "it".
+Every word gets weight 1/n whether or not it matters. The context is a blur.
+
+THE UPGRADE - LEARN the weights instead of fixing them.
+
+Keep the weighted-sum idea, but let the weights depend on the CONTENT of both tokens: how
+relevant is word j to word i? That relevance is computed as a dot product between what i
+is looking for and what j offers - which is precisely Q and K - and the mixture is over
+V.
+
+WHY THREE SEPARATE MATRICES, rather than just dotting the embeddings together? Because
+the three roles are genuinely different. What a token WANTS to find is not the same as
+what it ADVERTISES, and neither is the same as what it CONTRIBUTES. "it" advertises
+almost nothing useful but wants a great deal; "animal" advertises heavily. Using one
+vector for all three roles forces relevance to be symmetric - i attends to j exactly as
+much as j attends to i - and pronoun resolution is not symmetric at all.
+
+THE TRICK, EXPLAINED FROM SCRATCH: why divide by sqrt(d_k)?
+
+Take d_k = 64, and suppose the components of q and k are independent with mean 0 and
+variance 1. Their dot product is a sum of 64 such products. Variances add, so:
+
+    variance of the dot product = 64,   standard deviation = sqrt(64) = 8
+
+So typical scores are not around 1 - they are spread across roughly plus or minus 8, and
+two scores 16 apart are entirely ordinary.
+
+Now push those through a softmax and watch what happens:
+
+    scores 8 and -8:
+        exp(8)  = 2980.96
+        exp(-8) = 0.000335
+        weight on the first = 2980.96 / 2980.96336 = 0.99999989
+
+That distribution is one-hot in all but name. And here is why that matters, which is the
+part people miss: THE GRADIENT OF A SATURATED SOFTMAX IS ESSENTIALLY ZERO. When one
+weight is 0.9999999 and the rest are 0.0000001, changing the scores slightly changes the
+weights not at all, so no learning signal flows back. The layer freezes.
+
+Divide by sqrt(d_k) = 8 first:
+
+    scores become 1 and -1:
+        exp(1)  = 2.71828
+        exp(-1) = 0.36788
+        weight on the first = 2.71828 / 3.08616 = 0.88079
+
+Still a clear preference - 0.88 versus 0.12 - but soft, with real gradients. The division
+rescales the standard deviation from sqrt(d_k) back to 1, keeping scores O(1) regardless
+of how long the vectors are.
+
+That is the whole justification, and note what it is NOT about: overflow. Overflow is
+handled separately by the max-subtraction, which is upgrade two.
+
+THE SECOND UPGRADE - subtracting the row maximum, and why it changes nothing.
+
+exp(1000) overflows to infinity in floating point, and infinity divided by infinity is
+NaN. So before exponentiating, subtract each row's largest score. The largest exponent is
+then exp(0) = 1 and nothing can overflow.
+
+Why this is safe - the proof, because "for stability" without it is hand-waving. Let m be
+the row maximum:
+
+    exp(a - m) / SUM over b of exp(b - m)
+      = [exp(a) x exp(-m)] / [exp(-m) x SUM over b of exp(b)]
+      = exp(a) / SUM over b of exp(b)
+
+The exp(-m) factor appears in both numerator and denominator and cancels exactly. The
+softmax output is mathematically IDENTICAL; only the intermediate numbers are smaller.
+This is why every real softmax implementation does it.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: TURN EVERY TOKEN INTO A QUERY, A KEY AND A
+VALUE; SCORE EVERY QUERY AGAINST EVERY KEY WITH A DOT PRODUCT; TURN THOSE SCORES INTO
+WEIGHTS THAT SUM TO ONE; AND MAKE EACH TOKEN'S OUTPUT THE WEIGHTED SUM OF ALL THE VALUES.
+
+THERE IS NO RECURSION AND NO LOOP OVER TOKENS. That absence is the entire point of the
+architecture, and it is worth being explicit about because it is what distinguishes this
+from the RNNs it replaced:
+
+  - An RNN processes token 1, then token 2, then token 3 - each step needing the previous
+    step's output. That chain cannot be parallelised, and information from token 1 reaches
+    token 20 only by surviving nineteen intermediate rewrites.
+  - Self-attention computes ALL pairs at once as matrix multiplications. Token 1 reaches
+    token 20 in ONE step, with a path length of 1 rather than 19.
+  - There is nothing to terminate: it is a fixed sequence of matrix operations, not an
+    iterative process. Cost is fixed by the sequence length, not by convergence.
+
+THE STEPS:
+
+  1. START WITH ONE EMBEDDING PER TOKEN - a matrix with one row per token and d_model
+     numbers per row.
+
+  2. PROJECT INTO THREE ROLES. Multiply that matrix by three separate learned matrices to
+     get queries, keys and values. Same input, three different learned views of it.
+
+  3. SCORE EVERY PAIR. Dot each token's query with every token's key. The result is a
+     square table: one row per token asking, one column per token being asked about.
+
+  4. SCALE. Divide every score by the square root of the query length, so the softmax
+     stays soft and gradients keep flowing.
+
+  5. STABILISE. Subtract each row's largest score from that row. This changes no final
+     answer (section 5 proves it) and prevents the exponential from overflowing.
+
+  6. EXPONENTIATE EVERY SCORE, then divide each row by that row's total. Now every row is
+     a set of positive weights summing to 1 - one token's distribution of attention.
+
+  7. MIX THE VALUES. Multiply the weight table by the value matrix. Each token's output is
+     the weighted sum of every token's value vector.
+
+  8. RETURN one output vector per token - same shape as the input, but every token now
+     carries information from the tokens it found relevant.
+
+The step most often got wrong is 6's direction: the normalisation is ACROSS each row (over
+the keys), not down the columns.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Picture everyone in a meeting room. Each person is holding three cards.
+
+On the first card, each person has written WHAT THEY ARE LOOKING FOR. The person called
+"it" has written: "I'm a pronoun - I need to know which thing I refer to, something that
+can be tired."
+
+On the second card, each has written WHAT THEY OFFER. "animal" has written: "I'm a living
+creature, singular, the subject of this sentence." "street" has written: "I'm a place,
+inanimate."
+
+On the third card, each has written WHAT THEY WOULD CONTRIBUTE if somebody listened to
+them - the actual substance they would pass along.
+
+Now everyone does the same thing simultaneously. Each person holds up their first card
+and compares it against everybody else's second card, giving each person a relevance
+score. "it" finds a strong match with "animal", a weak one with "street".
+
+Then each person converts their scores into shares of attention that add up to exactly
+one whole. Not "animal is relevant" but "I'm giving 51% of my attention to animal, 36% to
+myself, 12% to street". That forcing-to-one matters: attention is a budget, so paying more
+attention to one thing necessarily means paying less to another.
+
+Finally each person collects everyone's third card and blends them in those proportions.
+"it" walks away holding a blend that is mostly animal - it has become a pronoun that knows
+what it refers to.
+
+Two things are worth noticing about this room. Everybody does it AT THE SAME TIME - nobody
+waits for anybody else, which is why this runs so well on hardware built for parallel
+arithmetic. And anybody can hear anybody directly, however far apart they are sitting -
+there is no whispering down a chain, which is how the previous generation of models had
+to work and why they forgot things.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    import numpy as np
+
+    def self_attention(X, Wq, Wk, Wv):
+
+X holds the token embeddings, shape (seq_len, d_model) - one ROW per token. Wq, Wk and Wv
+are the three learned projection matrices. In a trained model these contain the parameters
+that were learned; here they are inputs so the mechanism is visible. Nothing is modified -
+the function only reads its arguments.
+
+        Q = X @ Wq                                    # queries: what each token seeks
+
+Matrix multiply. Every token's embedding is projected into a query vector. Q has one row
+per token, and row i is "what token i is looking for". This is the first card in the story.
+
+        K = X @ Wk                                    # keys: what each token offers
+
+Same input, different learned matrix, different meaning. Row j is "what token j
+advertises". Using a separate matrix from Wq is what allows relevance to be asymmetric -
+"it" can find "animal" highly relevant without "animal" finding "it" equally relevant.
+
+        V = X @ Wv                                    # values: what each token passes on
+
+The third projection: what a token contributes if attended to. Note this is what gets
+MIXED - the output is built from V, never from K or Q.
+
+        d_k = Q.shape[1]
+
+The length of each query vector - the number of COLUMNS of Q. Needed for the scaling on
+the next line. Reading it from the array rather than hard-coding it is what lets this
+function work for any head size.
+
+        scores = Q @ K.T / np.sqrt(d_k)               # (seq, seq) relevance, scaled
+
+The heart of the mechanism, and there are two things happening.
+
+  Q @ K.T computes EVERY query against EVERY key in one operation. The transpose is what
+  makes the shapes line up: Q is (seq, d_k) and K.T is (d_k, seq), giving (seq, seq).
+  Entry (i, j) is the dot product of query i with key j - "how much should token i attend
+  to token j?"
+
+  / np.sqrt(d_k) is the scaling from section 5. With d_k = 64 this divides by 8, pulling
+  the scores' standard deviation back to about 1 so the softmax below stays soft and
+  gradients keep flowing. Without it the softmax saturates and the layer stops learning.
+
+        scores = scores - scores.max(axis=1, keepdims=True)   # numerical stability
+
+The overflow guard, and a DIFFERENT fix from the line above. axis=1 takes the maximum
+along each ROW; keepdims=True keeps the result as a column so it subtracts row-wise. After
+this every row's largest entry is exactly 0, so the exponential below can never overflow.
+Section 5 proves the final weights are mathematically unchanged - the common factor
+cancels.
+
+        weights = np.exp(scores)
+
+Exponentiate every score. This is what makes attention decisive rather than linear: a
+score twice as large does not get twice the weight, it gets exponentially more. The
+largest entry in each row is now exp(0) = 1, and everything else is between 0 and 1.
+
+        weights = weights / weights.sum(axis=1, keepdims=True) # softmax over keys
+
+Normalise each ROW to sum to 1. axis=1 again - across the keys, for each query. This is
+the direction that matters (trap 3): each token's attention is a budget distributed over
+all tokens. weights is now (seq, seq) with every row summing to exactly 1.
+
+        return weights @ V                            # context-aware output per token
+
+The mixture. Multiplying the (seq, seq) weight matrix by the (seq, d_v) value matrix gives
+(seq, d_v) - one output row per token, each the weighted sum of all the value vectors.
+Token i's output is built from the values of whichever tokens its row gave weight to.
+
+Note what the output is NOT: it is not a score, a label, or a probability. It is a new
+REPRESENTATION of each token, the same shape as what came in, ready to be fed to the next
+layer.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+Three tokens, and to keep the arithmetic visible let d_model = d_k = 2 and let Wq, Wk and
+Wv all be the identity matrix - so Q, K and V each equal X. (In a real model these are
+learned and different; the identity keeps the numbers small enough to follow.)
+
+    X  =  animal  [2.0, 0.0]
+          street  [0.0, 2.0]
+          it      [1.5, 0.5]      <- deliberately leaning toward animal
+
+    Q = K = V = X.        d_k = Q.shape[1] = 2,   sqrt(2) = 1.4142
+
+STEP 1 - scores for the row of "it" (query = [1.5, 0.5]):
+
+    against animal:  1.5 x 2.0  +  0.5 x 0.0  =  3.00
+    against street:  1.5 x 0.0  +  0.5 x 2.0  =  1.00
+    against itself:  1.5 x 1.5  +  0.5 x 0.5  =  2.25 + 0.25 = 2.50
+
+STEP 2 - scale by sqrt(d_k) = 1.4142:
+
+    animal  3.00 / 1.4142 = 2.1213
+    street  1.00 / 1.4142 = 0.7071
+    it      2.50 / 1.4142 = 1.7678
+
+STEP 3 - subtract the row maximum (2.1213):
+
+    animal  2.1213 - 2.1213 =  0.0000
+    street  0.7071 - 2.1213 = -1.4142
+    it      1.7678 - 2.1213 = -0.3536
+
+STEP 4 - exponentiate:
+
+    animal  exp( 0.0000) = 1.00000
+    street  exp(-1.4142) = 0.24312
+    it      exp(-0.3536) = 0.70219
+    sum                  = 1.94531
+
+STEP 5 - divide by the sum (this is the softmax):
+
+    animal  1.00000 / 1.94531 = 0.5141
+    street  0.24312 / 1.94531 = 0.1250
+    it      0.70219 / 1.94531 = 0.3610
+    check:  0.5141 + 0.1250 + 0.3610 = 1.0001   (rounding; exactly 1 before rounding)
+
+    "it" gives 51% of its attention to "animal" and 12% to "street" - FOUR TIMES more to
+    the animal. That is pronoun resolution, produced by nothing but dot products.
+
+STEP 6 - mix the values:
+
+    output for "it" = 0.5141 x [2.0, 0.0]
+                    + 0.1250 x [0.0, 2.0]
+                    + 0.3610 x [1.5, 0.5]
+
+      first  component: 0.5141 x 2.0 + 0.1250 x 0.0 + 0.3610 x 1.5
+                      = 1.0282 + 0 + 0.5415 = 1.5697
+      second component: 0.5141 x 0.0 + 0.1250 x 2.0 + 0.3610 x 0.5
+                      = 0 + 0.2500 + 0.1805 = 0.4305
+
+    output for "it" = [1.5697, 0.4305]
+
+WHAT ACTUALLY HAPPENED. "it" went in as [1.5, 0.5] and came out as [1.57, 0.43] - it moved
+TOWARD "animal" at [2.0, 0.0] and away from "street". The token has absorbed the meaning of
+what it refers to. That shift is the entire product of the layer.
+
+NOW THE INVERSION - what the scaling is worth, on the same numbers.
+
+Suppose d_k were 64 rather than 2, with the same relative spread. Raw scores of a 64-dim
+dot product with unit-variance components have standard deviation 8, so scores of +8 and
+-8 are ordinary rather than extreme.
+
+    WITHOUT the / sqrt(d_k):
+        exp(8)  = 2980.958
+        exp(-8) =    0.000335
+        weights = 0.99999989  and  0.00000011
+        -> effectively one-hot. The softmax has saturated, its gradient is ~0, and this
+           layer will not learn.
+
+    WITH the / sqrt(64) = 8:
+        scores become +1 and -1
+        exp(1)  = 2.71828,  exp(-1) = 0.36788
+        weights = 0.8808  and  0.1192
+        -> still a strong, clear preference, but soft, with real gradients.
+
+Same model, same data, ONE DIVISION - and the difference is between a layer that learns
+and a layer that is frozen from the first step. That is why the sqrt(d_k) is in the
+formula's name.""",
+
+    """10. THE COST IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME AND MEMORY: O(n squared x d) where n is the sequence length.
+
+In plain words: every token is compared against every token, so the score matrix has n x n
+entries and must be both computed and held in memory.
+
+    n =     1,000  ->        1,000,000 scores
+    n =    10,000  ->      100,000,000 scores
+    n =   100,000  ->   10,000,000,000 scores
+
+DOUBLING THE SEQUENCE LENGTH QUADRUPLES THE COST. This single fact shapes an enormous
+amount of modern LLM engineering: it is why context windows were small for years, why
+long-context support is a genuine achievement rather than a configuration flag, and why
+FlashAttention (which never materialises the full n x n matrix in slow memory), sparse
+attention, and sliding-window attention all exist.
+
+Against the alternative: an RNN is O(n) per layer in compute, which is cheaper. Transformers
+won anyway, because attention's work is PARALLEL - one big matrix multiplication - while
+an RNN's is inherently sequential. On hardware built for parallel arithmetic, the more
+expensive parallel algorithm finishes sooner, and that let models grow large enough for
+scaling laws to take over.
+
+THE OTHER PROPERTY THAT WON: PATH LENGTH. In attention, any token reaches any other in ONE
+step. In an RNN, information from token 1 reaches token 20 only by surviving 19 successive
+rewrites of a single hidden state - which is exactly how long-range dependencies get lost.
+Attention has a maximum path length of 1 regardless of distance.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why divide by sqrt(d_k)?" Gradients, not overflow. Dot products of d_k-dimensional
+    vectors have standard deviation sqrt(d_k); without rescaling the softmax saturates and
+    its gradient vanishes. Overflow is handled separately by subtracting the row max.
+  - "Why three matrices instead of one?" Because wanting, offering and contributing are
+    different roles, and a single vector would force relevance to be symmetric.
+  - "What is the difference between self-attention and cross-attention?" Same arithmetic;
+    self-attention takes Q, K and V from one sequence, cross-attention takes Q from one and
+    K, V from another (how a decoder reads an encoder's output).
+  - "How does a decoder avoid seeing the future?" A causal mask sets the scores above the
+    diagonal to negative infinity before the softmax, so exp() makes them exactly 0. The
+    sibling architecture entry covers it.
+  - "Can attention weights explain the model's decision?" Only weakly. One head in one
+    layer, values mixed in ways the weights do not reveal, and a real literature disputing
+    it. Worth saying.
+
+THE #1 MISTAKE: answering "for numerical stability" when asked about sqrt(d_k). It confuses
+the two guards in this code - the scaling protects the GRADIENT, the max-subtraction
+protects against OVERFLOW - and the interviewer is asking about the first one.
+
+RUNNER-UP: softmaxing over the wrong axis, so the attention weights do not form a
+distribution per token.
+
+TAKEAWAY: self-attention is a search engine run inside the sentence - each token asks with
+a query, every token answers with a key, and the token's new meaning is the weighted blend
+of everyone's values - which lets any word reach any other in a single step, at a cost that
+grows with the square of the sentence length.""",
+]
 
 _EX_P0H["Cross-validation — what and why"] = [
     """5-fold CV on 200 samples, worked.
