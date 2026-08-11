@@ -91941,59 +91941,404 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1K["Minimum Common Value"] = [
-    """The two-pointer merge, traced.
-nums1 = [1,2,3], nums2 = [2,4]. i=0, j=0: 1 < 2 -> i=1. Now 2 == 2 -> return 2.
-nums1 = [1,2,3,6], nums2 = [2,3,4,5]: 1 < 2 -> i=1. 2 == 2 -> return 2.
-No common value, nums1 = [1,3], nums2 = [2,4]: 1<2 -> i=1. 3>2 -> j=1. 3<4 ->
-i=2, out of range -> loop ends -> -1.
-Because both arrays are sorted and you always advance the smaller side, the
-FIRST match you encounter is necessarily the smallest common value - no need to
-collect all matches and take a minimum.""",
+    """1. THE GOAL - two sorted lists; what is the smallest number they both contain?
 
-    """Why advancing the smaller side is correct.
-If nums1[i] < nums2[j], then nums1[i] cannot appear anywhere in the remainder
-of nums2 - everything left there is >= nums2[j] > nums1[i]. So nums1[i] can be
-discarded safely. Symmetrically for the other side.
-That is the invariant of every merge-style two-pointer walk, and it is the
-justification interviewers want rather than 'it works'. It is also why the
-sortedness is load-bearing: without it, discarding an element is unsound.""",
+You are given two arrays, each already SORTED in increasing order. Return the smallest value that appears
+in both. If they share nothing, return -1.
 
-    """Why not a set intersection.
-`min(set(nums1) & set(nums2), default=-1)` is correct and takes one line - but
-it costs O(n + m) SPACE, while the two-pointer walk is O(1). When the inputs
-are already sorted, spending linear memory to re-discover what the ordering
-already gives you is the wrong trade.
-Present both: the set version as the obvious answer, the pointers as the one
-that uses the stated precondition. Choosing to exploit 'sorted' is the signal
-the problem is testing.""",
+    nums1 = [1, 2, 3]        nums2 = [2, 4]
 
-    """Edge cases.
-Either array empty -> the loop never runs -> -1.
-No overlap -> -1.
-Identical arrays -> the first element matches immediately.
-Duplicates within an array, nums1 = [1,1,2] and nums2 = [2] -> 1<2 twice, then
-2 == 2 -> 2. Duplicates cause no trouble because you only ever compare current
-heads.
-All of nums1 smaller than all of nums2 -> i runs off the end -> -1.
-Negative values are fine; only the ordering matters.""",
+        nums1 holds 1, 2, 3
+        nums2 holds 2, 4
+        shared: just 2
 
-    """Complexity.
-O(n + m) time - each pointer advances at most once per element and never moves
-backwards - and O(1) space.
-The binary-search alternative, iterating the shorter array and binary-searching
-each value in the longer, is O(min * log max). That wins when one array is much
-smaller than the other, e.g. 10 elements against 10 million: 10 * log(10^7) is
-about 230 operations versus 10 million. Worth naming as the better choice under
-that asymmetry - the two-pointer walk is not universally optimal.""",
+    ANSWER: 2
 
-    """The family: merge-style two pointers over sorted inputs.
-Merge Two Sorted Lists, Merge Sorted Array, Intersection of Two Arrays I and
-II, Squares of a Sorted Array, and Find Median of Two Sorted Arrays (the hard
-one, which binary-searches the partition instead of walking).
-The cue is two or more SORTED sequences plus a question about their
-combination. The default tool is the lockstep walk; escalate to binary search
-only when the sizes are wildly different or the question is about a rank rather
-than a match.""",
+    nums1 = [1, 2, 3, 6]     nums2 = [2, 3, 4, 5]
+
+        shared: 2 and 3.  The SMALLEST of those is 2.
+
+    ANSWER: 2
+
+TWO THINGS THE STATEMENT IS QUIETLY SAYING:
+
+    THE ARRAYS ARE ALREADY SORTED. That is not decoration - it is the whole reason this is not simply
+    "build two sets and intersect them". Sortedness lets you walk both arrays once, in step, using no
+    extra memory at all.
+
+    "SMALLEST" IS FREE ONCE YOU WALK IN ORDER. Because both arrays ascend, the FIRST value you find in
+    common is automatically the smallest one. You never collect candidates and compare them.
+
+AND THE NO-ANSWER CASE:
+
+    nums1 = [1, 2]        nums2 = [3, 4]        nothing shared        ANSWER: -1
+
+    -1 is a SENTINEL - a value chosen because it could never be a real answer, since the constraints say
+    every element is at least 1.
+
+WHY IT IS NOT JUST `set(nums1) & set(nums2)`. That one-liner is CORRECT and is worth saying out loud. It
+costs O(n + m) SPACE, though - it builds two whole copies of the data - while the sorted walk uses two
+integers. WHEN THE INPUT IS ALREADY SORTED, THROWING THAT ORDER AWAY TO BUILD A HASH SET IS PAYING FOR
+SOMETHING YOU WERE GIVEN FOR FREE.
+
+    THIS ENTRY COMPLETES THE MULTISET-INTERSECTION PAIR with Intersection of Two Arrays II. INTERSECTION
+    OF TWO ARRAYS II OWNS COUNT-AND-SPEND-DOWN - a hash tally of one array spent while walking the other,
+    which is what you need when the input is UNSORTED and duplicates must be preserved. THIS ONE OWNS THE
+    SORTED TWO-POINTER WALK and the argument for why advancing the smaller side can never lose an
+    answer.""",
+
+    """2. THE INTUITION - two fingers, and you always move the one that is behind.
+
+Put a finger at the start of each array. Compare what the two fingers point at:
+
+    IF THEY ARE EQUAL      you have found a common value, and because you have been walking in increasing
+                           order, it is the smallest one. Stop.
+    IF ONE IS SMALLER      that value can never be matched by anything still ahead in the OTHER array, so
+                           discard it: move that finger forward.
+
+    nums1 = [1, 2, 3, 6]        nums2 = [2, 3, 4, 5]
+
+        finger positions          comparison          action
+        1 | 2                     1 < 2               1 can never appear later in nums2 - move nums1's finger
+        2 | 2                     equal               FOUND. Answer 2.
+
+WHY DISCARDING THE SMALLER ONE IS SAFE - AND THIS IS THE ONLY THING TO PROVE. Suppose nums1's finger is on
+1 and nums2's is on 2. Everything remaining in nums2 is 2 OR LARGER, because nums2 ascends. So 1 cannot
+appear anywhere in the rest of nums2. It is not a candidate and never will be, so dropping it loses
+nothing.
+
+    THE SAME ARGUMENT RUNS THE OTHER WAY when nums2 is behind. AND IT IS EXACTLY THE ARGUMENT THAT FAILS
+    IF THE ARRAYS ARE NOT SORTED - a smaller value could reappear later, and the walk would discard a
+    real answer. THE SORT IS DOING ALL THE WORK.
+
+THE PICTURE - THE TWO FINGERS ONLY EVER MOVE RIGHT, AND NEVER BOTH AT ONCE:
+
+        nums1:   1    2    3    6
+                 ^ -> ^
+        nums2:   2    3    4    5
+                 ^
+
+        step 1: nums1's finger is behind (1 < 2), so it advances
+        step 2: both fingers read 2 - match
+
+    BETWEEN THEM, THE TWO FINGERS TAKE AT MOST n + m STEPS, because each advance consumes one element and
+    neither ever goes back. That is where the O(n + m) comes from.
+
+WHY THE FIRST MATCH IS THE MINIMUM. Both walks are non-decreasing, so every value examined after this
+point is at least as large as the values examined now. A match found later could not be smaller. YOU
+NEVER NEED A `min()` ANYWHERE IN THE FUNCTION.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SORTED (here). In non-decreasing order: each element is at least as large as the one before it. The
+constraints for this problem say STRICTLY increasing, so there are no duplicates - but the algorithm below
+works either way, which is worth knowing.
+
+COMMON VALUE. A number appearing in both arrays. The task asks for the smallest such number.
+
+SENTINEL -1. The agreed "no answer" value, safe because the constraints say every element is at least 1,
+so -1 can never be a genuine answer.
+
+TWO POINTERS. Two indices moving through two different sequences. Here they move INDEPENDENTLY - exactly
+one advances per step - which distinguishes this from lockstep walks like Same Tree, where both move
+together.
+
+MERGE-STYLE WALK. The same movement pattern used when merging two sorted lists: compare the fronts,
+consume the smaller. THIS PROBLEM IS A MERGE THAT STOPS AT THE FIRST COLLISION.
+
+THE VARIABLES IN THE CODE:
+    nums1, nums2   the two sorted arrays. NEITHER IS MODIFIED.
+    i              the index into nums1. Only ever increases.
+    j              the index into nums2. Only ever increases.
+
+`i = j = 0` sets both to 0 in one statement.
+
+n AND m ARE THE TWO ARRAY LENGTHS. TIME O(n + m), SPACE O(1) - two integers, whatever the input size.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and here, unusually, both official examples catch everything.
+
+TRAP 1 - ADVANCING THE WRONG POINTER. Writing `if nums1[i] > nums2[j]: i += 1` reverses the rule: it moves
+past the LARGER value and keeps the smaller one waiting.
+
+    That is exactly backwards. The smaller value is the one that can never be matched by what remains on
+    the other side; the LARGER one may still be found. Advancing past the larger throws away live
+    candidates and stalls on dead ones.
+
+    MEASURED: wrong on 1,954 of 6,000 random sorted pairs.
+
+    AND BOTH OFFICIAL EXAMPLES CATCH IT: [1,2,3] with [2,4] returns -1 instead of 2, and [1,2,3,6] with
+    [2,3,4,5] returns -1 instead of 2. SO THIS ONE IS LOUD - it fails the first sample. That is worth
+    saying plainly, because several problems in this bank hide their most common bug from every sample;
+    this is not one of them.
+
+    NOTE WHAT IT DOES NOT DO: it does not hang. Both pointers still only move forward, so the walk simply
+    runs one of them off the end and returns -1. A WRONG ANSWER RATHER THAN AN INFINITE LOOP - which is
+    worth knowing, because "it terminates" is not evidence that the rule is right.
+
+TRAP 2 - ADVANCING BOTH POINTERS EVERY STEP. Treating this as a lockstep comparison - "check position 0
+against position 0, position 1 against position 1" - only finds values that happen to sit at the SAME
+index in both arrays.
+
+    MEASURED: wrong on 1,638 of 6,000, and again both official examples catch it.
+
+    IT DOES OCCASIONALLY GET LUCKY: on [1,9] and [2,9] it returns 9, the correct answer, because the
+    shared value happens to sit at index 1 in both. Coincidence, not correctness.
+
+TRAP 3 - CHECKING EQUALITY LAST. The three branches must be tested equality-first. If you write
+`if nums1[i] < nums2[j] ... elif nums1[i] > nums2[j] ... else: return`, that is fine - but a two-branch
+version with no equality case at all (`if a < b: i += 1 else: j += 1`) never returns anything and always
+falls through to -1.
+
+TRAP 4 - FORGETTING THAT THE SORT IS LOAD-BEARING. If either array were unsorted, the discard argument in
+section 2 collapses and the whole method is unsound. SAY WHICH GUARANTEE YOU ARE USING - it is the
+difference between an algorithm and a coincidence.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty array. If either is empty the loop condition is
+false immediately and -1 is returned, with no guard needed. And duplicates within an array are harmless -
+[1,1,2] against [2] still returns 2.""",
+
+    """5. THE SLOW WAY FIRST, then the walk - and the honest comparison with a set.
+
+THE NAIVE VERSION - CHECK EVERY PAIR:
+
+    best = -1
+    for a in nums1:
+        for b in nums2:
+            if a == b and (best == -1 or a < best):
+                best = a
+    return best
+
+    IT IS CORRECT and it uses nothing about sortedness at all. COST: O(n * m). At this problem's limits
+    (both arrays up to 100,000 long) that is up to 10 billion comparisons - far too slow.
+
+THE SET VERSION, WHICH IS GENUINELY GOOD AND WORTH SAYING:
+
+    shared = set(nums1) & set(nums2)
+    return min(shared) if shared else -1
+
+    ONE LINE, CORRECT, AND O(n + m) TIME - the same as the two-pointer walk. It is the ground truth every
+    figure in this entry was checked against.
+
+    ITS ONLY WEAKNESS IS SPACE: O(n + m), because it builds hash sets holding copies of both arrays. The
+    two-pointer walk uses O(1).
+
+    SO BE HONEST: IF THE ARRAYS WERE NOT SORTED, THE SET VERSION WOULD BE THE RIGHT ANSWER. The walk is
+    better here only because the input arrives sorted and the walk exploits that. An interviewer asking
+    this problem is checking whether you notice the word "sorted" in the statement.
+
+THE UPGRADE, AND THE OBSERVATION BEHIND IT. Sortedness means you can compare the two FRONTS and
+immediately eliminate one of them - the smaller can never match anything ahead. So instead of searching,
+you consume:
+
+        compare the fronts
+        equal      -> done, and it is the minimum because you walked in order
+        unequal    -> discard the smaller, permanently
+
+    Each step consumes one element and neither pointer ever moves backwards, so the walk takes at most
+    n + m steps.
+
+    COST: O(n + m) time, O(1) space.
+
+THE BINARY-SEARCH ALTERNATIVE, for completeness: walk the shorter array and binary-search each of its
+values in the longer one. O(n log m) time, O(1) space. IT IS WORSE THAN THE MERGE WHEN THE ARRAYS ARE
+COMPARABLE IN SIZE and BETTER when one is tiny and the other enormous - a genuine trade worth naming
+rather than dismissing.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: put a pointer at the front of each sorted array; if they agree you have the answer, and
+if they do not, advance the pointer sitting on the smaller value.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two integers:
+
+    `i` and `j` BOTH ONLY EVER INCREASE, and EXACTLY ONE of them increases per iteration - never both,
+    never neither.
+
+    THE INVARIANT: every value already stepped over has been proved not to be a common value, or to be
+    larger than one already found. TRUE AT THE START (nothing stepped over) and preserved by each
+    advance, by the discard argument in section 2.
+
+    WHAT MAKES IT STOP, AND THERE ARE TWO EXITS, BOTH GUARANTEED:
+        the loop returns the moment the two values agree; or
+        one pointer reaches the end of its array, the loop condition fails, and -1 is returned.
+    Because exactly one pointer advances per iteration and neither retreats, the total number of
+    iterations is at most n + m. THERE IS NO WAY TO SPIN WITHOUT PROGRESS - which is worth checking
+    deliberately in any two-pointer loop, since a branch that advances neither pointer is the classic way
+    to hang.
+
+    WHY THE ANSWER IS THE MINIMUM WITHOUT ANY COMPARISON: the values under each pointer are
+    non-decreasing over time, so the first agreement is the earliest possible one in value order. NO
+    `min()` APPEARS ANYWHERE.
+
+THE STEPS, NO CODE:
+
+    1. Put a marker at the first element of each array.
+    2. While both markers are still inside their arrays:
+       a. If the two marked values are the same, hand that value back and stop - it is the smallest
+          common value.
+       b. Otherwise, whichever marked value is smaller cannot be matched by anything remaining in the
+          other array, so move that marker one place forward.
+    3. If either marker runs off the end, there is no common value - hand back -1.
+
+    STEP 2b MOVES THE MARKER ON THE SMALLER VALUE, NOT THE LARGER. That is the whole algorithm, and
+    reversing it is trap 1.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+Two people are each holding a list of dates, and both lists are already written out in order, earliest
+first. They want the earliest date that appears on both lists - the soonest day they could both attend
+something.
+
+They do not read out their whole lists and compare everything. Instead each puts a finger on their own
+first date, and they call out what they see.
+
+One says "the 3rd", the other says "the 7th". The 3rd is earlier. Now think about what that means: the
+second person's list is in order, so everything still ahead on it is the 7th or later. The 3rd cannot
+possibly appear further down their list. IT IS DEAD, AND IT WILL NEVER COME BACK. So the first person
+moves their finger on, and the 3rd is never mentioned again.
+
+They repeat. Whoever calls the earlier date moves on, because that date has just been ruled out. The
+moment they both call the same date, they are finished - and it must be the earliest shared date, because
+they have been working forwards through both lists and have skipped nothing that could have been earlier.
+
+If one of them runs out of list, there is nothing more to compare and the answer is that they share
+nothing.
+
+    THE MISTAKE THAT LOOKS EQUALLY SENSIBLE. Suppose instead the person calling the LATER date moved on.
+    They would be skipping past a date that might still be waiting on the other list, while leaving in
+    place one that has already been ruled out. The two fingers would drift apart and they would finish
+    convinced they shared nothing - which is exactly what happens.
+
+AND NOTICE WHY BEING IN ORDER MATTERS SO MUCH. The entire argument was "everything ahead is later". If
+either list were jumbled, the 3rd might turn up again three entries down, and throwing it away would lose
+the real answer. THE ORDERING IS NOT A CONVENIENCE HERE - IT IS THE PERMISSION SLIP FOR EVERY DISCARD.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def get_common(nums1, nums2):
+
+Both inputs are sorted arrays. NEITHER IS MODIFIED - nothing sorts, copies or writes.
+
+    i = j = 0
+
+TWO POINTERS AT THE FRONT OF EACH ARRAY. `i` indexes nums1 and `j` indexes nums2. Both only ever increase.
+
+    while i < len(nums1) and j < len(nums2):
+
+KEEP GOING WHILE BOTH POINTERS ARE STILL INSIDE THEIR ARRAYS. `and` means the loop stops as soon as EITHER
+runs out, which is correct - once one array is exhausted no further match is possible. This condition also
+makes both index reads below safe, and it is what handles an empty input with no separate guard.
+
+    if nums1[i] == nums2[j]:
+        return nums1[i]              # first match = minimum common
+
+THE EQUALITY CHECK COMES FIRST, and returning immediately is what makes the answer the MINIMUM: both
+walks ascend, so nothing found later could be smaller. `nums1[i]` and `nums2[j]` are the same number here,
+so either may be returned.
+
+    if nums1[i] < nums2[j]:
+        i += 1                       # advance the smaller side
+
+THE ONE DECISION IN THE FUNCTION. nums1[i] is smaller, so it cannot appear anywhere in the remainder of
+nums2 - everything left there is at least nums2[j], which is larger. Discarding it loses nothing.
+    REVERSING THIS COMPARISON is trap 1: wrong on 1,954 of 6,000 random pairs, and it fails both official
+    examples by returning -1.
+
+    else:
+        j += 1
+
+THE MIRROR CASE. Note this `else` is reached only when nums2[j] is strictly smaller, because equality was
+already handled and returned. EXACTLY ONE POINTER MOVES PER ITERATION, which is what guarantees the loop
+terminates in at most n + m steps.
+
+    return -1
+
+Reached only when one array is exhausted with no match. -1 is the sentinel the problem specifies, safe
+because every real element is at least 1.
+
+WHAT IS DELIBERATELY ABSENT: no `min()` anywhere (the walk order supplies it), no set, no sorting, no
+guard for empty arrays, and no collection of matches - the function returns on the first one and never
+looks further.""",
+
+    """9. TRACED ON REAL NUMBERS - the example with two shared values, so "smallest" actually matters.
+
+nums1 = [1, 2, 3, 6],  nums2 = [2, 3, 4, 5].  These arrays share BOTH 2 and 3, so this trace shows the
+walk stopping at the smaller one rather than merely finding something.
+
+    START     i = 0, j = 0
+
+    i=0 j=0   nums1[0] = 1,  nums2[0] = 2
+              1 == 2?  no
+              1 < 2?   YES  ->  advance i
+              (the 1 is discarded forever: everything left in nums2 is 2 or larger, so 1 can never match)
+
+    i=1 j=0   nums1[1] = 2,  nums2[0] = 2
+              2 == 2?  YES  ->  RETURN 2
+
+    RETURNS 2.  Two iterations, and nums1[2], nums1[3], nums2[1], nums2[2], nums2[3] are never examined.
+
+    CONFIRM IT IS THE MINIMUM: the shared values are 2 and 3, and 2 is smaller. The walk found 2 first
+    because both arrays ascend - no comparison between candidates was ever needed.
+
+WHAT THE TWO BROKEN RULES DO ON THIS SAME INPUT:
+
+    ADVANCING THE LARGER SIDE:  at i=0, j=0 the rule moves i only when nums1[i] > nums2[j], which is
+        false, so j advances instead - past the 2 that was about to match. The walk then compares 1 with
+        3, moves j again, compares 1 with 4, moves j again, compares 1 with 5, moves j off the end.
+        RETURNS -1.
+
+    ADVANCING BOTH:  compares 1 with 2, then 2 with 3, then 3 with 4, then 6 with 5. No pair is ever
+        equal. RETURNS -1.
+
+    BOTH BROKEN VERSIONS FAIL THIS SAMPLE, AND THE OTHER OFFICIAL SAMPLE TOO.
+
+THE INVERSION - REPLACE nums2 ENTIRELY WITH VALUES ABOVE nums1's RANGE:
+
+    nums1 = [1,2,3,6],  nums2 = [2,3,4,5]     ->   2
+    nums1 = [1,2,3,6],  nums2 = [7,8,9,10]    ->   -1
+
+    In the second case i advances four times - 1 < 7, 2 < 7, 3 < 7, 6 < 7 - and runs off the end of
+    nums1, so the loop condition fails and the sentinel is returned. Both verified against the set-based
+    ground truth.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration either returns or advances exactly one pointer, and neither pointer
+ever moves backwards, so the walk takes at most n + m steps of constant work.
+
+    TIME O(n + m). SPACE O(1) - two integers, whatever the size of the arrays.
+    The set version is the same O(n + m) time but O(n + m) SPACE, and it is otherwise a perfectly good
+    answer. The nested-loop brute force is O(n * m) and, at this problem's limit of 100,000 elements per
+    array, far too slow.
+    The binary-search variant is O(n log m) - better when one array is far shorter than the other, worse
+    when they are similar.
+
+THE #1 MISTAKE: advancing the pointer on the LARGER value instead of the smaller. It discards live
+candidates and keeps dead ones - wrong on 1,954 of 6,000 random pairs. It is a LOUD bug: both official
+examples return -1 instead of 2. And note it does not hang; both pointers still move forward, so it simply
+walks off the end. TERMINATION IS NOT EVIDENCE OF CORRECTNESS. THE RUNNER-UP is advancing both pointers
+together, which only finds values sitting at the same index in both arrays.
+
+ONE-SENTENCE TAKEAWAY: when both inputs are sorted, the smaller front value can never be matched by
+anything still ahead on the other side - so discard it, and the first agreement you reach is automatically
+the minimum.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether the word "sorted" changes what you write. Everyone can
+produce `set(nums1) & set(nums2)`; the signal is noticing that the input arrives with structure and that
+using it drops the space from O(n + m) to O(1). SAY THE DISCARD ARGUMENT ALOUD - "the smaller one can't
+appear later in the other array, because that array ascends" - because that sentence is the proof, and it
+is also the sentence that tells you the method dies if the sort guarantee is removed.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return ALL common values, not just the smallest." Same walk; on a match, record it and advance BOTH
+    pointers, then continue instead of returning. Still O(n + m).
+    "What if the arrays are NOT sorted?" Use the set intersection - O(n + m) time and space. Sorting first
+    would cost O(n log n + m log m), which is worse than just hashing.
+    "What if one array is tiny and the other is enormous?" Binary-search each element of the small one in
+    the large one: O(n log m). That beats the merge when n is much smaller than m.
+    "What if both arrays are too large for memory?" The merge walk already streams: it reads each array
+    once, in order, and holds only two positions. That is precisely what the O(1) space buys, and it is
+    the honest reason to prefer it over the set even when both are equally fast.""",
 ]
 
 for _e in ENTRIES:
@@ -92004,175 +92349,1284 @@ for _e in ENTRIES:
 _EX_P1L = {}
 
 _EX_P1L["Minimum Recolors to Get K Consecutive Black Blocks"] = [
-    """The reframing that solves it in one line of thought.
-Recolouring only ever turns W into B, so the cost of making a window all black
-is exactly the NUMBER OF W's in that window. The question 'fewest recolors' is
-therefore 'the window of size k containing the fewest W's' - a fixed-size
-sliding window minimum, with no optimisation reasoning needed at all.
-blocks = 'WBBWWBBWBW', k = 7: the first window 'WBBWWBB' has 3 W's. Slide and
-the counts go 3, 3, 3 -> answer 3.
-Turning a recolour-cost question into a character-count question is the whole
-insight; everything after is mechanical.""",
+    """1. THE GOAL - repaint as few blocks as possible so that k in a row are all black.
 
-    """The slide, and the arithmetic trick in it.
-`whites += (blocks[i] == 'W') - (blocks[i-k] == 'W')` adds 1 if the entering
-character is W and subtracts 1 if the leaving one was - booleans arithmetic in
-Python, which reads compactly and avoids two if-statements.
-The two indices are the pair to get right: `i` is entering, `i - k` is leaving.
-Off by one there and the window drifts to size k+1 or k-1, which still returns
-a plausible number. Check on a tiny input where the answer is obvious.""",
+You have a row of blocks, each either 'B' (black) or 'W' (white). You may RECOLOUR any block - and the
+only useful recolour is turning a white one black. Find the FEWEST recolours needed so that somewhere in
+the row there are k CONSECUTIVE black blocks.
 
-    """Why the window is FIXED size, not variable.
-Most sliding-window problems grow and shrink to satisfy a condition (longest
-substring without repeats, minimum window substring). Here k is given, so the
-window never changes size - it just translates one step at a time.
-That makes this the SIMPLEST class of window problem: initialise over the first
-k, then a single loop from k to n-1. Recognising which of the two kinds you
-have determines the loop shape, and this fixed-size kind needs no inner while
-loop at all.""",
+    blocks = "WBBWWBBWBW"        k = 7
 
-    """Why recomputing per window is the thing to avoid.
-`min(blocks[i:i+k].count('W') for i in range(len(blocks)-k+1))` is correct and
-one line - and it is O(n*k), because each slice is counted from scratch. At
-n = 100 that is fine; the sliding update makes it O(n) by reusing the previous
-window's answer and touching only the two characters that changed.
-The general principle: when consecutive subproblems overlap heavily, update the
-answer incrementally instead of recomputing. That is the same idea behind
-prefix sums and behind Kadane.""",
+        Look at every stretch of 7 in a row and count the whites in it - because those are exactly the
+        blocks you would have to repaint:
 
-    """Edge cases.
-k equals the length -> the initial count IS the answer; the loop never runs.
-k = 1 -> the answer is 0 if any B exists, else 1.
-All black 'BBBB' with k = 2 -> 0 recolors.
-All white 'WWWW' with k = 3 -> 3.
-k = 0 is excluded by the constraints; if allowed it would be 0 trivially.
-Note `blocks[:k]` is safe even when k equals the length, and the loop
-`range(k, len(blocks))` is empty in that case - so no guards are needed.""",
+            positions 0-6   "WBBWWBB"   ->   3 whites   ->   3 recolours
+            positions 1-7   "BBWWBBW"   ->   3 whites   ->   3 recolours
+            positions 2-8   "BWWBBWB"   ->   3 whites   ->   3 recolours
+            positions 3-9   "WWBBWBW"   ->   4 whites   ->   4 recolours
 
-    """Complexity and the family.
-O(n) time, O(1) space - one integer for the running count.
-The fixed-window family: Maximum Average Subarray I, Maximum Number of Vowels
-in a Substring of Given Length, Find All Anagrams in a String (fixed window
-plus a frequency comparison), Sliding Window Maximum (fixed window plus a
-monotonic deque, the hard one). All share the initialise-then-slide skeleton;
-only what you maintain inside the window changes - a count, a sum, a frequency
-map, or a deque.""",
+        THE CHEAPEST IS 3.
+
+    ANSWER: 3
+
+THE REFRAMING THAT SOLVES THE WHOLE PROBLEM, AND IT IS ONE SENTENCE: THE COST OF MAKING A STRETCH ALL
+BLACK IS EXACTLY THE NUMBER OF WHITE BLOCKS IN IT. Recolouring only ever turns W into B, and each white
+costs one operation, so there is nothing to optimise within a stretch - the cost is a simple count.
+
+    SO THE PROBLEM IS NOT ABOUT RECOLOURING AT ALL. It is: among all stretches of exactly k consecutive
+    blocks, which one contains the fewest 'W's?
+
+    blocks = "WBWBBBW"        k = 2
+
+        "WB" -> 1     "BW" -> 1     "WB" -> 1     "BB" -> 0     "BB" -> 0     "BW" -> 1
+
+    ANSWER: 0 - there is already a run of two blacks, so nothing needs repainting.
+
+THE STRETCH IS ALWAYS EXACTLY k LONG. You are not looking for the longest run of blacks or the cheapest
+run of any length - k is fixed, and every candidate window has that same width.
+
+    THIS ENTRY OPENS THE FIXED-WINDOW CLUSTER in this bank. IT OWNS THE FIXED-SIZE SLIDE - a window whose
+    width never changes, so each step adds exactly one element and removes exactly one. THAT IS THE
+    DELIBERATE CONTRAST WITH VARIABLE-SIZE WINDOWS like Longest Substring Without Repeating Characters,
+    where the window grows and shrinks to satisfy a condition and the two ends move independently.""",
+
+    """2. THE INTUITION - slide a window of width k, and fix up the count instead of recounting.
+
+Lay a frame of width k over the row and count the whites inside it. Then slide the frame one place right.
+Only two blocks change status: one enters on the right, one leaves on the left. EVERYTHING ELSE IN THE
+FRAME IS UNCHANGED AND DOES NOT NEED LOOKING AT AGAIN.
+
+    blocks = "WBBWWBBWBW",  k = 7
+
+        frame over 0-6:   W B B W W B B                whites = 3
+                          |___________|
+
+        slide right:      leaves 'W' (position 0), enters 'W' (position 7)
+        frame over 1-7:     B B W W B B W              whites = 3 - 1 + 1 = 3
+                            |___________|
+
+        slide right:      leaves 'B' (position 1), enters 'B' (position 8)
+        frame over 2-8:       B W W B B W B            whites = 3 - 0 + 0 = 3
+                              |___________|
+
+        slide right:      leaves 'B' (position 2), enters 'W' (position 9)
+        frame over 3-9:         W W B B W B W          whites = 3 - 0 + 1 = 4
+                                |___________|
+
+    THE MINIMUM SEEN IS 3.
+
+THE ARITHMETIC OF THE SLIDE, IN ONE LINE:
+
+        new count = old count + (1 if the entering block is white else 0)
+                              - (1 if the leaving block is white else 0)
+
+    So each slide costs a constant amount of work no matter how large k is. Recounting the frame from
+    scratch would cost k per position.
+
+THE PICTURE - WHAT CHANGES AND WHAT DOES NOT:
+
+        W B B W W B B W B W
+        ^           ^
+        leaves      enters
+        |___________|              the middle six blocks are in BOTH frames and are never re-examined
+
+    THAT OVERLAP IS THE ENTIRE SAVING. A window of width k sliding across n positions shares k-1 blocks
+    with its predecessor every time; only the two at the edges differ.
+
+WHY THE WINDOW NEVER CHANGES SIZE. The problem fixes k. In problems where you are asked for the longest
+or shortest stretch satisfying some condition, the two ends move at different rates and the window
+breathes. HERE BOTH ENDS MOVE TOGETHER, ALWAYS ONE STEP, and that is why the count can be maintained with
+a single addition and subtraction.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BLOCK. One character of the string, either 'B' for black or 'W' for white. These are CHARACTERS - the
+comparisons in the code are against `'W'` with quotes.
+
+RECOLOUR. Change a block's colour. Only W->B is ever useful, and each one costs 1.
+
+CONSECUTIVE / A RUN. Adjacent positions with nothing skipped. "k consecutive black blocks" means k
+neighbouring positions that are all B.
+
+WINDOW. A stretch of k consecutive positions currently under consideration. FIXED-SIZE here: every window
+has exactly k blocks.
+
+SLIDING WINDOW. Moving that stretch one position at a time and updating a running summary rather than
+recomputing it.
+
+RUNNING COUNT. A number kept up to date as the window moves. Here it is the number of 'W's inside the
+window - which, by section 1's reframing, IS the cost of that window.
+
+THE VARIABLES IN THE CODE:
+    blocks   the input string. NOT MODIFIED - no block is actually recoloured; the function only counts.
+    k        the required run length.
+    whites   the number of 'W's in the CURRENT window. This is the running count.
+    best     the smallest `whites` seen so far, over all windows. This is the answer.
+    i        the index of the block ENTERING the window; `i - k` is the index of the one LEAVING.
+
+`blocks[:k]` is the first k characters - the initial window. `.count('W')` counts the whites in it.
+
+`(blocks[i] == 'W')` is a BOOLEAN used as a number: True counts as 1 and False as 0, so the expression
+`(entering == 'W') - (leaving == 'W')` evaluates to +1, 0 or -1.
+
+n IS THE STRING LENGTH. TIME O(n), SPACE O(1) - two integers.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one bug the samples half-catch, and one they both accept.
+
+TRAP 1 - REMOVING THE WRONG BLOCK ON THE SLIDE. When `blocks[i]` enters, the block that leaves is
+`blocks[i - k]`, not `blocks[i - k + 1]`.
+
+    Work out the window's extent to see why. After `blocks[i]` joins, the window covers positions
+    i-k+1 through i - that is k positions inclusive. The position immediately BEFORE that range is
+    i-k, so that is the one that just dropped out.
+
+        i = 7, k = 7:   the new window is positions 1..7.   The one that left is position 0 = i - k.
+                        Position 1 = i - k + 1 is still INSIDE the window.
+
+    Using `i - k + 1` therefore subtracts a block that is still in the window and never subtracts the one
+    that left - so the count drifts.
+
+    MEASURED: wrong on 1,471 of 6,000 random block strings.
+
+    THE TWO OFFICIAL EXAMPLES SPLIT ON IT:
+        "WBBWWBBWBW" with k = 7   correct 3, buggy 3    AGREE - the bug is invisible here
+        "WBWBBBW"    with k = 2   correct 0, buggy 1    CAUGHT
+
+    So one sample hides it and one exposes it. THE RELIABLE WAY TO GET IT RIGHT IS TO WRITE DOWN THE
+    WINDOW'S RANGE - "after adding i, the window is i-k+1 .. i" - BEFORE writing the subtraction.
+
+TRAP 2 - NOT COUNTING THE FIRST WINDOW AS A CANDIDATE, AND BOTH SAMPLES ACCEPT THIS ONE. The initial
+`best = whites` is not just initialisation - the first window is a legitimate answer. Seeding `best` to
+infinity and only recording values after each slide skips it.
+
+    MEASURED: wrong on 621 of 6,000 random strings. AND BOTH OFFICIAL EXAMPLES AGREE WITH THE BROKEN
+    VERSION - in each, the best window is not the first one, so skipping it changes nothing.
+
+    THE SMALLEST EXPOSING CASE IS A STRING WHOSE FIRST WINDOW IS UNIQUELY BEST, such as "BBW" with k = 2:
+    the first window "BB" needs 0 recolours, every later window needs 1, and skipping the first gives 1.
+
+TRAP 3 - RECOUNTING EACH WINDOW FROM SCRATCH. `min(blocks[i:i+k].count('W') for i in range(...))` is
+CORRECT and it is the ground truth every figure here was checked against - but it is O(n * k) and it
+allocates a new substring per position. It is what the sliding update exists to avoid.
+
+TRAP 4 - MISREADING THE COST. The cost of a window is the number of WHITES in it, not the number of
+blacks, and not the number of blocks you would need to move. Section 1's reframing is one sentence and
+everything depends on getting it the right way round.
+
+WHAT IS NOT A TRAP, checked rather than assumed: k equal to the string's length. Then the loop body never
+runs and the initial count IS the answer - which is only correct BECAUSE `best` was seeded from that first
+window, so trap 2 and this edge case are the same fact seen twice.""",
+
+    """5. THE SLOW WAY FIRST, then the slide.
+
+THE NAIVE VERSION - COUNT EVERY WINDOW FROM SCRATCH:
+
+    return min(blocks[i:i+k].count('W') for i in range(len(blocks) - k + 1))
+
+    IT IS CORRECT, it is one line, and it reads exactly like the problem statement after the section-1
+    reframing. This is the ground truth every figure in this entry was checked against.
+
+    COST: there are n - k + 1 windows and each is counted in O(k), so O(n * k) - plus a fresh substring
+    allocated per window. At this problem's limit of n = 100 that is at most 2,500 character inspections,
+    SO THE NAIVE VERSION PASSES COMFORTABLY. The slide is what the problem is teaching, not what it needs.
+
+THE UPGRADE, AND THE OBSERVATION BEHIND IT. Consecutive windows OVERLAP IN k-1 POSITIONS. Recounting
+examines those shared blocks again and again, and their contribution has not changed. So maintain the
+count instead:
+
+        one block enters on the right, one leaves on the left, and nothing else changes
+
+    COST: O(n) time - one pass, constant work per step - and O(1) space.
+
+THE ARITHMETIC TRICK, EXPLAINED FROM SCRATCH. In Python, `True` and `False` behave as 1 and 0 in
+arithmetic. So:
+
+        (blocks[i] == 'W') - (blocks[i - k] == 'W')
+
+    evaluates to +1 if a white entered and a black left, -1 if a black entered and a white left, and 0 if
+    both are the same colour. ONE EXPRESSION REPLACES FOUR BRANCHES, and it says exactly what it means:
+    "add one if the newcomer is white, subtract one if the departer was".
+
+    In a language without that behaviour you would write it as two `if` statements. THE POINT IS THE
+    UPDATE, NOT THE IDIOM.
+
+WHAT THE UPGRADE ACTUALLY BUYS, HONESTLY: it changes O(n * k) to O(n), which at n = 100 is invisible. THE
+REASON TO LEARN IT is that the same shape appears with k in the millions - Maximum Average Subarray,
+Maximum Number of Vowels in a Substring, and every "rolling statistic over a fixed period" in real data
+work, where recounting is genuinely impossible.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: count the whites in the first k blocks, then slide the window one place at a time,
+adding one when a white enters and subtracting one when a white leaves, keeping the smallest count seen.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two integers:
+
+    `whites`  the number of 'W's in the CURRENT window. It goes up and down freely by at most 1 per step.
+    `best`    a ratchet in the DOWNWARD direction - it only ever decreases or stays put.
+
+    THE INVARIANT: at the top of the iteration for index i, `whites` is the exact count of 'W's in the
+    window ending at i-1, and `best` is the smallest count over every window considered so far. TRUE
+    BEFORE THE LOOP because `whites` was counted directly from the first window and `best` was seeded
+    from it. PRESERVED by each step, since the only two blocks whose membership changes are accounted for
+    by the two terms of the update.
+
+    THE SEEDING IS PART OF THE ALGORITHM, NOT PREAMBLE. `best = whites` before the loop is what makes the
+    first window a candidate; without it the invariant is false from the start. That is trap 2, and it is
+    also why the k-equals-the-whole-string case works with no special code.
+
+    WHAT MAKES IT STOP: the loop runs from k to len(blocks) - 1, so exactly len(blocks) - k iterations,
+    one per slide. There is no condition to get wrong.
+
+    WHY THE WINDOW NEVER NEEDS TO GROW OR SHRINK: k is fixed by the problem. In variable-window problems
+    the right end advances and the left end catches up only when a condition is violated, so the two move
+    at different rates and the loop needs an inner `while`. HERE BOTH ENDS MOVE ONE STEP EVERY TIME, which
+    is why a single `for` with one arithmetic line suffices.
+
+THE STEPS, NO CODE:
+
+    1. Count the whites among the first k blocks. That count is the cost of the first window.
+    2. Record it as the best cost so far.
+    3. For each position from k up to the end of the row:
+       a. The block at this position enters the window: if it is white, add one to the running count.
+       b. The block k places earlier leaves the window: if it was white, subtract one.
+       c. If the running count is now smaller than the best so far, it becomes the new best.
+    4. Hand back the best count.
+
+    STEP 2 IS NOT OPTIONAL. STEP 3b's "k PLACES EARLIER" MEANS INDEX i - k, NOT i - k + 1.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A long fence runs along a road, made of panels that are either painted black or left white. A decorator is
+paid one coin for every white panel she paints black, and she has been asked to produce a stretch of seven
+neighbouring black panels somewhere along the fence - anywhere at all. She wants to spend as little as
+possible.
+
+The first thing she works out is that there is no cleverness available WITHIN a stretch. If a run of seven
+contains three white panels, it costs exactly three coins - one per white panel - and no choice she makes
+changes that. So the question is not "how should I paint?" but "which run of seven has the fewest white
+panels?"
+
+She could walk to each possible starting point and count the whites in the seven panels ahead of her. But
+the runs overlap almost completely: the run starting at panel 1 shares six panels with the run starting at
+panel 0. She would be counting the same panels over and over.
+
+So she holds up a cardboard frame exactly seven panels wide, counts the whites showing through it once,
+and writes that number down. Then she slides the frame one panel along. Only two panels change: one
+appears at the right-hand edge, one disappears at the left. If the newcomer is white she adds one to her
+number; if the panel that vanished was white she takes one off. She never recounts the middle.
+
+She keeps the smallest number she has seen at any position, and when she reaches the end of the fence,
+that is her answer.
+
+    TWO THINGS SHE HAS TO BE CAREFUL ABOUT.
+
+    FIRST, THE PANEL THAT VANISHED IS THE ONE JUST OUTSIDE THE LEFT EDGE - not the leftmost panel still
+    showing. Those are different panels, one apart, and subtracting for the wrong one leaves her count
+    drifting away from the truth with every slide.
+
+    SECOND, THE VERY FIRST POSITION COUNTS. She wrote a number down before she slid anywhere, and that
+    number is a real candidate - the cheapest stretch might be right at the start of the fence. If she
+    only starts paying attention after the first slide, she can walk the whole fence and report a price
+    higher than one she had already seen.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def minimum_recolors(blocks, k):
+
+`blocks` is the string of 'B' and 'W'; `k` is the required run length. BLOCKS IS NOT MODIFIED - nothing is
+actually recoloured, the function only counts.
+
+    whites = blocks[:k].count('W')     # recolors needed for the first window
+
+THE INITIAL WINDOW, COUNTED DIRECTLY. `blocks[:k]` is the first k characters. This is the only place a
+window is counted from scratch; every later window is derived from this one. The comment records the
+section-1 reframing: THE NUMBER OF WHITES IS THE COST.
+
+    best = whites
+
+SEED THE ANSWER WITH THE FIRST WINDOW. THIS LINE IS PART OF THE ALGORITHM, NOT INITIALISATION BOILERPLATE:
+the first window is a legitimate candidate, and omitting it is wrong on 621 of 6,000 random strings while
+agreeing with BOTH official examples. It is also what makes the k-equals-full-length case work, since
+then the loop never runs and this value is returned unchanged.
+
+    for i in range(k, len(blocks)):
+
+ONE ITERATION PER SLIDE. `i` is the index of the block ENTERING the window. Starting at k is right because
+positions 0..k-1 are already accounted for; ending at len(blocks)-1 is right because that is the last
+block that can enter.
+
+    whites += (blocks[i] == 'W') - (blocks[i - k] == 'W')   # slide window
+
+THE WHOLE SLIDE IN ONE LINE, and it has two independent halves:
+    `(blocks[i] == 'W')` is the ENTERING block - a boolean used as 1 or 0, adding one if it is white.
+    `(blocks[i - k] == 'W')` is the LEAVING block, subtracting one if it was white.
+    `i - k` IS THE INDEX THAT JUST FELL OUT. After `blocks[i]` joins, the window covers i-k+1 through i,
+        so the position immediately before that range is i-k. Writing `i - k + 1` subtracts a block that
+        is still inside the window - wrong on 1,471 of 6,000 random strings.
+    The result is +1, 0 or -1, so `whites` is always the exact count for the new window.
+
+    best = min(best, whites)
+
+KEEP THE CHEAPEST WINDOW SEEN. `best` never increases.
+
+    return best
+
+The fewest recolours over all windows. No post-processing.
+
+WHAT IS DELIBERATELY ABSENT: no recount of any window after the first, no substring created inside the
+loop, no array of per-window costs (only the minimum is wanted), and no special case for k equal to the
+string length - the seeded `best` covers it.""",
+
+    """9. TRACED ON REAL NUMBERS - the official example, slide by slide.
+
+blocks = "WBBWWBBWBW",  k = 7.  The string is 10 long, so there are 4 windows.
+
+    THE FIRST WINDOW - counted directly:
+
+        blocks[:7] = "WBBWWBB"        whites in it: positions 0, 3, 4        whites = 3
+        best = 3
+
+    SLIDE 1 (i = 7):
+
+        entering  blocks[7] = 'W'     ->  +1
+        leaving   blocks[0] = 'W'     ->  -1
+        whites = 3 + 1 - 1 = 3
+        the window is now positions 1..7 = "BBWWBBW"; counting directly gives 3.  AGREE.
+        best = min(3, 3) = 3
+
+    SLIDE 2 (i = 8):
+
+        entering  blocks[8] = 'B'     ->  +0
+        leaving   blocks[1] = 'B'     ->  -0
+        whites = 3 + 0 - 0 = 3
+        the window is now positions 2..8 = "BWWBBWB"; counting directly gives 3.  AGREE.
+        best = 3
+
+    SLIDE 3 (i = 9):
+
+        entering  blocks[9] = 'W'     ->  +1
+        leaving   blocks[2] = 'B'     ->  -0
+        whites = 3 + 1 - 0 = 4
+        the window is now positions 3..9 = "WWBBWBW"; counting directly gives 4.  AGREE.
+        best = min(3, 4) = 3
+
+    RETURNS 3.  Every intermediate count was cross-checked against a direct recount of that window.
+
+    NOTE SLIDE 1: the leaving index is 0, which is i - k = 7 - 7. The block at index 1 is still inside
+    the new window - if the code subtracted `blocks[i - k + 1]` it would have removed a 'B' that is still
+    there, and the count would already be wrong.
+
+THE INVERSION - THE SAME STRING WITH k CHANGED:
+
+    "WBBWWBBWBW"  k = 7   ->   3
+    "WBBWWBBWBW"  k = 4   ->   1
+
+    With k = 4 the seven windows cost 2, 2, 2, 2, 2, 1, 2 - the cheapest is "BBWB" at positions 5..8,
+    needing a single recolour. A SHORTER TARGET RUN IS EASIER TO ACHIEVE, which is the sanity check on
+    the direction. Both verified against the recount-every-window brute force.
+
+AND THE CASE THAT EXPOSES THE UNSEEDED `best`: "BBW" with k = 2. The first window "BB" costs 0; the only
+slide gives "BW" costing 1. Seeding from the first window returns 0; starting the record after the first
+slide returns 1.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One count of k characters to set up, then one pass over the remaining n - k
+positions, each doing two comparisons, one addition and one minimum.
+
+    TIME O(n) - the initial count is O(k) and the sweep is O(n - k), which together is O(n).
+    SPACE O(1) - two integers, whatever k is.
+    The recount-every-window version is O(n * k) and allocates a substring per window. At this problem's
+    limit of n = 100 that is at most 2,500 inspections and passes easily, SO THE SLIDE IS THE TECHNIQUE
+    BEING TAUGHT RATHER THAN A RESCUE. It matters when k is large.
+
+THE #1 MISTAKE: subtracting `blocks[i - k + 1]` instead of `blocks[i - k]`, which removes a block still
+inside the window and never removes the one that left. Wrong on 1,471 of 6,000 random strings; one official
+example catches it and the other does not. THE RUNNER-UP is the quieter one: failing to seed `best` from
+the first window, wrong on 621 of 6,000 and accepted by BOTH official examples, because in each the best
+window is not the first.
+
+ONE-SENTENCE TAKEAWAY: the cost of a window is just the count of whites inside it, and consecutive windows
+differ by exactly two blocks - so maintain the count rather than recomputing it, and remember the first
+window is already an answer.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things. First, the REFRAMING - can you turn "fewest
+recolours" into "fewest whites in a window of k"? That is the whole problem, and it is one sentence.
+Second, whether you know the difference between a FIXED and a VARIABLE window. Say it explicitly: "k is
+fixed, so both ends move together every step and I just need one running count - unlike the longest-
+substring problems where the left end only catches up when a condition breaks." That sentence tells the
+interviewer you have a taxonomy rather than a memorised template.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "MAXIMUM AVERAGE SUBARRAY I - the largest average over any k consecutive numbers." Identical
+    structure: maintain a running SUM instead of a count, and divide by k at the end. Track the maximum
+    rather than the minimum.
+    "MAXIMUM NUMBER OF VOWELS IN A SUBSTRING OF GIVEN LENGTH." Identical again, counting vowels and taking
+    the maximum - which is worth noticing, because three different-sounding problems are one function with
+    the predicate and the comparison swapped.
+    "What if you also had a budget of at most m recolours and wanted the LONGEST run you could achieve?"
+    Now the window is VARIABLE: grow the right end, and pull the left end in whenever the whites inside
+    exceed m. That is Longest Repeating Character Replacement, and it needs the inner `while` this
+    problem does not.
+    "What if the blocks arrive as a stream?" The slide already works, but you must retain the last k
+    characters to know what is leaving - so O(k) memory becomes unavoidable, whereas here the string is
+    already in hand.""",
 ]
 
 _EX_P1L["Points That Intersect With Cars"] = [
-    """The difference-array idea, traced.
-nums = [[3,6],[1,5],[4,7]]. Instead of marking every covered point, record only
-the CHANGES: +1 where coverage starts, -1 just after it ends.
-diff[3] += 1, diff[7] -= 1; diff[1] += 1, diff[6] -= 1; diff[4] += 1,
-diff[8] -= 1.
-Prefix-sum across coordinates: at 1 running becomes 1 (covered), 2 -> 1, 3 -> 2,
-4 -> 3, 5 -> 3, 6 -> 2, 7 -> 1, 8 -> 0.
-Points with running > 0 are 1..7 -> answer 7.
-Three intervals, six updates, one sweep - regardless of how long the intervals
-are.""",
+    """1. THE GOAL - cars park along a road; how many whole-number spots are covered by at least one?
 
-    """Why `end + 1` and not `end`.
-The interval [3,6] covers the integer point 6, so coverage must persist THROUGH
-6 and stop at 7. Decrementing at `end` would end coverage one point early and
-undercount every interval by its last point.
-This is the single most common difference-array bug, and it always presents the
-same way: the answer is short by roughly the number of intervals. Test on one
-interval [1,1], which must yield 1 - with the wrong index it yields 0.""",
+Each car is given as an interval [start, end] on a number line, covering every INTEGER point from start to
+end INCLUSIVE. Count how many integer points are covered by at least one car. A point covered by three
+cars still counts ONCE.
 
-    """Why a difference array beats marking every point.
-Marking is O(total length): an interval [1, 1000000] costs a million writes.
-The difference array costs TWO writes per interval no matter how long it is,
-plus one sweep of the coordinate range. So the cost moves from 'sum of interval
-lengths' to 'number of intervals plus range'.
-That distinction matters the moment intervals are long or numerous, and it is
-the reason this technique exists. Say it as 'I only record where the coverage
-CHANGES' - the sweep reconstructs everything in between.""",
+    nums = [[3, 6], [1, 5], [4, 7]]
 
-    """The sizing of the array, and where the +1 comes from.
-Coordinates run 1..100 by the constraint, and you write to `end + 1`, which can
-be 101 - so the array needs 102 slots to avoid an index error. Getting that
-headroom wrong throws on the largest legal input only, which is exactly the
-input a test suite includes and a hand-run does not.
-For unbounded coordinates you would use a dict of changes plus a sort of the
-keys, which is the same algorithm at O(n log n) - the standard escalation when
-the range is large or sparse.""",
+        car [3,6] covers   3 4 5 6
+        car [1,5] covers   1 2 3 4 5
+        car [4,7] covers   4 5 6 7
 
-    """Edge cases.
-Fully overlapping intervals [[1,5],[1,5]] -> running reaches 2 but each point
-counts ONCE, since the test is `running > 0` rather than a sum. Counting
-coverage rather than counting cars is the point of the > 0 test.
-Adjacent but disjoint [[1,3],[4,6]] -> all of 1..6 covered -> 6.
-A gap [[1,2],[5,6]] -> 4 points, not 6.
-A single point [[4,4]] -> diff[4] += 1, diff[5] -= 1 -> exactly one covered
+        the union of all of those:   1 2 3 4 5 6 7
+
+    ANSWER: 7
+
+BOTH ENDS ARE INCLUDED. The interval [3, 6] covers four points - 3, 4, 5 and 6 - not three. That single
+word "inclusive" is where the `end + 1` in the code comes from, and it is section 4.
+
+EACH POINT COUNTS ONCE, NOT ONCE PER CAR. This is a UNION, not a total.
+
+    nums = [[1, 5], [1, 5]]        two identical cars
+
+        every point 1..5 is covered twice, but the answer is the number of points, not the coverage
+
+    ANSWER: 5
+
+AND THE CARS NEED NOT OVERLAP AT ALL:
+
+    nums = [[1, 3], [5, 8]]
+
+        covered: 1 2 3   and   5 6 7 8        the point 4 is covered by nobody
+
+    ANSWER: 7   (three points plus four points)
+
+WHY IT IS NOT JUST "MARK EVERY POINT". You could walk each interval and tick off every point it covers.
+That works here, but its cost depends on how LONG the intervals are rather than how many there are - an
+interval [1, 1000000] costs a million ticks. THE DIFFERENCE ARRAY RECORDS ONLY WHERE COVERAGE CHANGES,
+which is two writes per car regardless of its length.
+
+    THIS ENTRY OPENS THE DIFFERENCE-ARRAY CLUSTER in this bank. IT OWNS THE +1/-1 BOUNDARY ENCODING and
+    the `end + 1` convention. IT IS THE MIRROR IMAGE OF THE PREFIX-SUM CLUSTER: Find Pivot Index and Left
+    and Right Sum Difference turn an array into running totals, while this turns running CHANGES back into
+    an array. The prefix sum is what reads a difference array.""",
+
+    """2. THE INTUITION - record where coverage STARTS and STOPS, then sweep once.
+
+Instead of writing down every point a car covers, write down only the two moments where the number of
+cars overhead changes: one more car at `start`, one fewer just after `end`.
+
+    nums = [[3, 6], [1, 5], [4, 7]]
+
+        car [3,6]:   +1 at 3,   -1 at 7        (coverage must persist THROUGH 6, so it ends at 7)
+        car [1,5]:   +1 at 1,   -1 at 6
+        car [4,7]:   +1 at 4,   -1 at 8
+
+        collect those changes on a number line:
+
+            point:    0    1    2    3    4    5    6    7    8    9
+            change:   0   +1    0   +1   +1    0   -1   -1   -1    0
+
+    NOW SWEEP LEFT TO RIGHT, KEEPING A RUNNING TOTAL. That running total is HOW MANY CARS ARE OVERHEAD at
+    each point:
+
+            point:    0    1    2    3    4    5    6    7    8    9
+            running:  0    1    1    2    3    3    2    1    0    0
+                           ^--------------------------------^
+                           these are the points with at least one car
+
+        POINTS 1 THROUGH 7 HAVE A RUNNING TOTAL ABOVE ZERO - SEVEN POINTS.
+
+    ANSWER: 7
+
+THE PICTURE - THE RUNNING TOTAL RISES AND FALLS LIKE A SKYLINE, AND YOU COUNT THE NON-ZERO WIDTH:
+
+        3 |          ####
+        2 |     ##########
+        1 | ####################
+        0 +----------------------
+            1  2  3  4  5  6  7  8
+
+    YOU ARE NOT MEASURING THE AREA - you are measuring how many columns are non-empty. That is why the
+    test is `running > 0` and not `running` added to a total; see trap 2.
+
+WHY THE MINUS GOES AT end + 1 AND NOT AT end. The interval [3, 6] covers the point 6. If you decremented
+at 6, the running total would drop BEFORE that point was counted, and 6 would look uncovered. THE CAR
+LEAVES AFTER 6, WHICH IS AT 7. Say it as "coverage stops at end+1" rather than "coverage ends at end" and
+the off-by-one disappears.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INTERVAL [start, end]. All integer points from start to end, INCLUSIVE of both. [3, 6] means 3, 4, 5, 6 -
+four points, which is end - start + 1.
+
+COVERED POINT. An integer point lying inside at least one interval.
+
+UNION. The set of points covered by at least one car, with duplicates collapsed. The answer is the SIZE of
+that union.
+
+DIFFERENCE ARRAY. An array recording CHANGES rather than values. `diff[p]` says how much the coverage
+changes when you step onto point p. Building it costs two writes per interval, whatever the interval's
+length.
+
+PREFIX SUM / RUNNING TOTAL. Adding up the changes from the left. AT ANY POINT, THE RUNNING TOTAL OF A
+DIFFERENCE ARRAY IS THE ACTUAL VALUE AT THAT POINT - here, the number of cars overhead. The two ideas are
+inverses of each other: a difference array is what you get by subtracting neighbours, and a prefix sum is
+what turns it back.
+
+COVERAGE / RUNNING. How many cars cover the current point. Only whether it is ZERO or NON-ZERO matters
+here, not how large it is.
+
+THE VARIABLES IN THE CODE:
+    nums       the list of [start, end] pairs. NOT MODIFIED.
+    diff       the difference array, 102 slots long. `diff[p]` is the change in coverage AT point p.
+    start, end the two ends of the current car's interval, unpacked from the pair.
+    running    the number of cars overhead at the point currently being swept.
+    covered    how many points have had a non-zero running total. This is the answer.
+
+WHY 102 SLOTS: the coordinates run 1..100 by the constraints, and the code writes to `end + 1`, which can
+be 101 - so the array must have index 101, meaning length 102.
+
+TIME O(n + range), SPACE O(range).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one bug is total, one is hidden by half the samples.
+
+TRAP 1 - DECREMENTING AT `end` INSTEAD OF `end + 1`. The interval covers the point `end`, so coverage must
+persist THROUGH it and stop afterwards. Decrementing at `end` cancels the car one point too early, so the
+last point of every interval is lost.
+
+    MEASURED: wrong on ALL 6,000 of 6,000 random interval sets. THIS BUG IS TOTAL - it undercounts on
+    literally every input containing an interval, and both official examples catch it (7 becomes 6, and 7
+    becomes 5). YOU CANNOT SHIP THIS ONE, and the smallest demonstration is a single car [[1,1]], which
+    covers exactly one point and reports 0.
+
+    THE RELIABLE WAY TO GET IT RIGHT is to say what the slot MEANS before writing it: "diff[p] is the
+    change AS YOU STEP ONTO p". The car is still overhead at `end`, so the change happens at end + 1.
+
+TRAP 2 - ADDING THE RUNNING TOTAL INSTEAD OF COUNTING THE POINT ONCE. Writing `covered += running`
+computes the total COVERAGE - the sum over points of how many cars are overhead - rather than the number
+of covered points.
+
+    MEASURED: wrong on 4,070 of 6,000 random interval sets.
+
+    AND THE TWO OFFICIAL EXAMPLES SPLIT ON IT:
+        [[3,6],[1,5],[4,7]]   correct 7, summing gives 13    CAUGHT - these intervals overlap
+        [[1,3],[5,8]]         correct 7, summing gives 7     AGREE  - these do not overlap at all
+
+    THE SECOND SAMPLE CANNOT DISTINGUISH THEM, because with no overlaps the running total is only ever 0
+    or 1 and summing it is the same as counting it. A solution with this bug looks fine on any
+    non-overlapping test. THE TEST YOU NEED IS TWO CARS ON TOP OF EACH OTHER: [[1,5],[1,5]] gives 5
+    correctly and 10 when summing.
+
+TRAP 3 - SIZING THE ARRAY AT 100 OR 101. The coordinates go up to 100 INCLUSIVE, and the code writes to
+`end + 1`, which can be 101. An array of length 101 has no index 101 and raises IndexError on any car
+ending at 100. LENGTH 102 IS THE MINIMUM - and the sweep then naturally reads slot 101, where the last
+decrements live.
+
+TRAP 4 - ASSUMING THE INTERVALS ARE SORTED OR DISJOINT. They are neither. The difference array does not
+care - it accumulates all the +1s and -1s wherever they fall, and the sweep resolves them. THAT
+INDIFFERENCE TO ORDER IS THE METHOD'S REAL STRENGTH, and it is worth saying out loud, because the
+sort-and-merge alternative in section 5 depends entirely on sorting first.""",
+
+    """5. THE SLOW WAY FIRST, then the difference array - and the honest alternative.
+
+THE NAIVE VERSION - MARK EVERY POINT:
+
+    seen = set()
+    for start, end in nums:
+        for p in range(start, end + 1):
+            seen.add(p)
+    return len(seen)
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it is
+    the definition transcribed. COST: O(total length of all intervals). At this problem's constraints
+    (at most 100 cars, coordinates up to 100) that is at most 10,000 additions and passes instantly, SO
+    BE HONEST - the naive version is entirely adequate here.
+
+    WHAT MAKES IT THE WRONG SHAPE is that its cost depends on how LONG the intervals are, not how many
+    there are. A single car [1, 1000000] costs a million operations. The difference array costs two.
+
+THE UPGRADE, AND THE IDEA EXPLAINED FROM SCRATCH. Instead of storing what the coverage IS at every point,
+store how it CHANGES:
+
+        at `start`, one more car is overhead        ->   +1
+        at `end + 1`, one fewer                     ->   -1
+
+    Those two writes describe the entire interval, however long it is. Then a single left-to-right sweep
+    adds the changes up, and the running total at each point is the true coverage there.
+
+        THE TWO OPERATIONS ARE INVERSES. Taking differences turns values into changes; taking a prefix
+        sum turns changes back into values. That is the whole trick, and it is the same prefix-sum
+        machinery used in Find Pivot Index - here applied to a number line rather than to the array
+        itself.
+
+    COST: O(n) to place the marks plus O(range) to sweep, and O(range) space.
+
+THE SORT-AND-MERGE ALTERNATIVE, WHICH IS BETTER FOR LARGE COORDINATES:
+
+        sort the intervals by start
+        walk them, merging any that overlap or touch, and add up the merged lengths
+
+    COST: O(n log n) time and O(1) extra space. IT DOES NOT DEPEND ON THE COORDINATE RANGE AT ALL, which
+    is decisive when coordinates can be up to a billion - you cannot allocate a billion-slot array.
+
+    SO THE HONEST COMPARISON IS: the difference array wins when the range is small and the number of
+    intervals is large; sorting wins when the range is huge. HERE THE RANGE IS 100, SO THE DIFFERENCE
+    ARRAY IS THE RIGHT CALL - and naming the crossover is worth more than picking one.
+
+    A SUBTLETY IN THE MERGE VERSION, since these are INTEGER points: intervals [1,3] and [4,6] do not
+    overlap but they do touch, and together they cover 1..6 with no gap. A merge that only combines
+    when `next_start <= current_end` would treat them as separate - correct for counting, since the
+    lengths still add up, but wrong if you were asked for the number of maximal runs.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: mark +1 where each car's coverage begins and -1 just past where it ends, then sweep the
+number line adding up those marks, counting every point where the running total is above zero.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. TWO SEPARATE PHASES, and the first must finish
+completely before the second begins:
+
+    PHASE 1 fills `diff`. Order is irrelevant - the cars can be processed in any sequence, and overlapping
+        marks simply accumulate in the same slot. NOTHING IS READ during this phase.
+    PHASE 2 sweeps `diff` from left to right maintaining `running`. Order is everything here.
+
+    WHY THEY CANNOT BE MERGED: a slot's final value is not known until every car has contributed to it. A
+    car processed later might add +1 to a slot the sweep has already passed.
+
+    `running` IS THE ONLY MOVING STATE IN PHASE 2, and it goes up and down freely. `covered` only ever
+    increases.
+
+    THE INVARIANT: after the sweep has processed slots 0..p, `running` equals the number of intervals
+    containing p, and `covered` is the number of points among 0..p contained in at least one. TRUE
+    TRIVIALLY at the start, and preserved because every interval contributes exactly +1 when the sweep
+    reaches its start and exactly -1 when it passes its end.
+
+    WHY `running` NEVER GOES NEGATIVE: every -1 is paired with a +1 placed at a strictly smaller index,
+    since start <= end < end + 1. So the sweep meets the increment first. That is worth checking rather
+    than assuming - a difference array whose running total dips below zero is a sure sign the boundaries
+    are misplaced.
+
+    WHAT MAKES EACH PHASE STOP: phase 1 runs once per car; phase 2 runs once per slot of a fixed-size
+    array. Neither has a condition to get wrong.
+
+THE STEPS, NO CODE:
+
+    1. Make an array of change-markers, one slot per possible coordinate plus one extra at the end, all
+       starting at zero.
+    2. For each car, add one to the slot at its start, and subtract one from the slot just PAST its end.
+    3. Sweep the marker array from left to right, keeping a running total of the changes seen so far.
+    4. At each slot, if that running total is greater than zero, this point is covered - count it ONCE,
+       regardless of how many cars are overhead.
+    5. Hand back the count.
+
+    STEP 2 SAYS "JUST PAST ITS END", NOT "AT ITS END". STEP 4 SAYS "COUNT IT ONCE", NOT "ADD THE
+    RUNNING TOTAL".""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A street has numbered parking bays. Several delivery vans each occupy a run of consecutive bays - one van
+takes bays 3 to 6, another takes 1 to 5, another 4 to 7. The council wants to know how many bays are
+occupied by at least one van. A bay with three vans piled on it is still just one occupied bay.
+
+The obvious approach is to walk the street with a clipboard, and for each van tick every bay it sits on.
+On a short street that is fine. On a street with ten thousand bays and a van stretching across most of
+them, you would be ticking for a very long time to learn something quite simple.
+
+So instead the council records only the MOMENTS WHEN THE NUMBER OF VANS CHANGES. For each van they write
+two notes: "one more van from bay 3 onwards", and "one fewer van from bay 7 onwards". Notice the second
+note says SEVEN, not six - the van is still sitting on bay 6, so it does not stop being there until you
+reach bay 7.
+
+Now an inspector walks the street once from the low-numbered end, carrying a tally. At each bay she reads
+whatever notes are pinned there and adjusts her tally up or down. Her tally, at any moment, is exactly how
+many vans are sitting on the bay she is standing at - even though nobody ever wrote that number down.
+
+Whenever her tally is above zero she marks the bay as occupied. She does not care whether it says one or
+three; occupied is occupied. She marks it once and walks on.
+
+    THE TWO MISTAKES THE STORY MAKES OBVIOUS.
+
+    FIRST, IF THE "ONE FEWER" NOTE WERE PINNED AT BAY 6 RATHER THAN BAY 7, the inspector would arrive at
+    bay 6, subtract the van, find her tally lower than it should be, and possibly record the bay as empty
+    while a van is plainly parked on it. Every van would lose its last bay.
+
+    SECOND, IF SHE ADDED HER TALLY TO A RUNNING SUM instead of just marking the bay, she would end up
+    reporting how many van-bays there are rather than how many bays are occupied - a bay with three vans
+    would count three times. She was asked about bays, not about vans.
+
+AND NOTICE SHE NEVER SORTED ANYTHING. The vans were recorded in whatever order they arrived, their notes
+landing wherever they landed. The single walk from the low end is what puts everything in order.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def number_of_points(nums):
+
+`nums` is the list of [start, end] pairs. IT IS NOT MODIFIED - not sorted, not written to.
+
+    diff = [0] * 102                   # coordinates 1..100, +1 headroom
+
+THE DIFFERENCE ARRAY, ONE SLOT PER COORDINATE PLUS HEADROOM. `diff[p]` will hold the CHANGE in coverage
+as you step onto point p - not the coverage itself. LENGTH 102 BECAUSE the coordinates run 1..100
+inclusive and the next line writes to `end + 1`, which can be 101; an array of 101 has no index 101. The
+comment records the constraint the sizing depends on.
+
+    for start, end in nums:
+
+PHASE 1. The cars are processed in whatever order they appear - no sorting, and overlapping marks simply
+accumulate.
+
+    diff[start] += 1               # coverage begins
+
+ONE MORE CAR FROM THIS POINT ONWARD. `+=` rather than `=` because several cars may start at the same
 point.
-Nested [[1,10],[3,4]] -> still 10 points.""",
 
-    """Complexity and the family.
-O(n + range) time, O(range) space. Sorting-and-merging the intervals is the
-alternative at O(n log n) time and O(1) extra space - better when the
-coordinate range is huge relative to the number of intervals.
-The family: Corporate Flight Bookings (the canonical difference array), Car
-Pooling (capacity check via the same sweep), Meeting Rooms II (the max of the
-running count IS the number of rooms), Range Addition, and My Calendar
-problems. The cue is any batch of range updates followed by one query - which
-is exactly what the difference array is built for.""",
+    diff[end + 1] -= 1             # coverage ends after 'end'
+
+ONE FEWER CAR FROM JUST PAST THIS POINT. `end + 1` IS THE ENTIRE OFF-BY-ONE OF THE PROBLEM: the interval
+covers the point `end`, so coverage must survive through it. Writing `diff[end] -= 1` is wrong on ALL
+6,000 of 6,000 random interval sets and fails both official examples.
+
+    covered = 0
+    running = 0
+
+`running` is how many cars are overhead at the point being swept; `covered` is how many points have had a
+non-zero `running`. THEY ARE DIFFERENT QUANTITIES and confusing them is trap 2.
+
+    for change in diff:
+
+PHASE 2, THE SWEEP. It walks the whole fixed-size array, including slot 0 and slot 101, which cost nothing
+and remove any need for boundary handling. The loop variable is the CHANGE at this point, not the point's
+index - the index is never needed, because only the count of covered points is wanted.
+
+    running += change
+
+ACCUMULATE THE CHANGES. This is a prefix sum, and after this line `running` is the true coverage at this
+point - the value that was never explicitly stored anywhere.
+
+    if running > 0:
+        covered += 1
+
+COUNT THIS POINT ONCE. `> 0` rather than adding `running` is what makes the answer a UNION rather than a
+total: a point under three cars contributes 1, not 3. Writing `covered += running` is wrong on 4,070 of
+6,000 random sets, and one of the two official examples agrees with it because its intervals do not
+overlap.
+
+    return covered
+
+The number of covered points. No post-processing.
+
+WHAT IS DELIBERATELY ABSENT: no sorting, no merging of intervals, no set of points, and no bounds checks
+in the sweep - the fixed 102-slot array makes every index valid by construction.""",
+
+    """9. TRACED ON REAL NUMBERS - the overlapping example, which is the one that matters.
+
+nums = [[3, 6], [1, 5], [4, 7]].  Chosen because these intervals OVERLAP - the other official example does
+not, and so cannot distinguish counting from summing.
+
+    PHASE 1 - place the marks (only the non-zero slots shown):
+
+        car [3,6]:   diff[3] += 1        diff[7] -= 1
+        car [1,5]:   diff[1] += 1        diff[6] -= 1
+        car [4,7]:   diff[4] += 1        diff[8] -= 1
+
+        diff[1] = +1    diff[3] = +1    diff[4] = +1    diff[6] = -1    diff[7] = -1    diff[8] = -1
+
+    PHASE 2 - sweep, accumulating:
+
+        point 0    change  0    running 0    ->  not covered
+        point 1    change +1    running 1    ->  COVERED   (covered = 1)
+        point 2    change  0    running 1    ->  COVERED   (covered = 2)
+        point 3    change +1    running 2    ->  COVERED   (covered = 3)
+        point 4    change +1    running 3    ->  COVERED   (covered = 4)
+        point 5    change  0    running 3    ->  COVERED   (covered = 5)
+        point 6    change -1    running 2    ->  COVERED   (covered = 6)
+        point 7    change -1    running 1    ->  COVERED   (covered = 7)
+        point 8    change -1    running 0    ->  not covered
+        point 9 onwards: change 0, running 0 ->  not covered
+
+    RETURNS 7.  Cross-checked against building the actual set of points: {1,2,3,4,5,6,7}, size 7.
+
+    NOTE POINT 7. It is covered only by the car [4,7], and its coverage is still 1 there because that
+    car's -1 sits at slot 8. If the decrements had been placed at `end` instead, point 7 would read 0 and
+    the answer would be 6 - which is exactly what the broken version returns.
+
+    NOTE ALSO THAT `running` PEAKS AT 3 AT POINT 4, where all three cars overlap, and that point still
+    contributes exactly 1 to `covered`. Summing instead would add 3 there and give 13 overall.
+
+THE INVERSION - MOVE THE THIRD CAR AWAY FROM THE OTHERS:
+
+    [[3,6], [1,5], [4,7]]    ->   7      the three cars form one unbroken block, 1 through 7
+    [[3,6], [1,5], [9,10]]   ->   8      now 1 through 6 is one block (6 points) and 9, 10 is another
+                                         (2 points); point 7 and point 8 are covered by nobody
+
+    MOVING ONE CAR OUT OF THE OVERLAP INCREASES THE ANSWER, because overlapping coverage was being
+    collapsed and separated coverage is not. Both verified against the mark-every-point ground truth.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Two writes per car, then one pass over the fixed-size marker array.
+
+    TIME O(n + R), where n is the number of cars and R the coordinate range - here 102, a constant, so
+    effectively O(n).
+    SPACE O(R), also constant here.
+    IMPORTANTLY, THE COST DOES NOT DEPEND ON HOW LONG THE INTERVALS ARE. The mark-every-point version is
+    O(total interval length); at this problem's limits it passes easily, but it degrades the moment
+    intervals get long.
+    The sort-and-merge alternative is O(n log n) time and O(1) extra space, and does not depend on the
+    coordinate range at all - which is the right choice when coordinates can be enormous.
+
+THE #1 MISTAKE: decrementing at `end` instead of `end + 1`. The interval covers the point `end`, so
+coverage must persist through it. Wrong on ALL 6,000 of 6,000 random interval sets - every interval loses
+its last point - and both official examples catch it. THE RUNNER-UP is quieter: `covered += running` sums
+the total coverage instead of counting each point once, wrong on 4,070 of 6,000, and ONE OF THE TWO
+OFFICIAL EXAMPLES AGREES WITH IT because its intervals never overlap. Test with two identical cars.
+
+ONE-SENTENCE TAKEAWAY: record where coverage CHANGES rather than where it exists - two marks per interval
+regardless of length - and a single prefix-sum sweep turns those changes back into the coverage at every
+point.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you recognise that "many range updates, then read the
+whole array once" is the difference-array signature. The tell is that you are given RANGES and asked
+something about POINTS. Most candidates mark every point, which is correct and range-dependent; the signal
+is knowing that two writes suffice. SAY THE INVERSE RELATIONSHIP ALOUD - "a difference array plus a prefix
+sum recovers the values" - because it is the sentence that connects this to Find Pivot Index and to every
+range-update problem that follows.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if the coordinates go up to a BILLION?" You cannot allocate the array. Sort the interval
+    endpoints and sweep them instead - or sort the intervals by start and merge - for O(n log n) time and
+    O(n) space. The difference array's dependence on the coordinate RANGE is its one real weakness.
+    "Return the MAXIMUM number of cars overlapping at any point." Same sweep, but track `max(running)`
+    instead of counting non-zero points. That is the classic Meeting Rooms II / minimum-platforms
+    question, and it is this exact code with one line changed.
+    "Return the merged intervals themselves." Sweep and record where `running` transitions from 0 to
+    positive and back - those are the boundaries of each maximal covered run.
+    "What if the intervals were half-open, [start, end)?" Then the decrement goes at `end`, not `end + 1` -
+    which is precisely why half-open intervals are preferred in most libraries: the off-by-one disappears
+    and boundaries compose cleanly.""",
 ]
 
 _EX_P1L["Ransom Note"] = [
-    """The direction of the containment, which is the thing to get right.
-The note must be buildable FROM the magazine, so every letter of the note must
-be available in at least that quantity. It is a one-way check: the magazine may
-contain plenty of letters the note never uses.
-note = 'aa', magazine = 'aab' -> a appears twice in the magazine, note needs
-two -> True. note = 'aab', magazine = 'aa' -> needs a b, none available ->
-False.
-Reversing the direction - counting the note and checking the magazine fits
-inside it - is a real and easy mistake, and it passes on symmetric inputs.""",
+    """1. THE GOAL - can you cut the note's letters out of the magazine?
 
-    """Why counts, not sets.
-A set-based check ('every letter of the note appears somewhere in the
-magazine') gets 'aa' from 'ab' wrong, reporting True when there is only one a.
-Multiplicity is the entire problem - each magazine letter is usable ONCE - so
-the structure must be a multiset.
-This is the same trap as Find Words That Can Be Formed by Characters, and the
-same fix: compare frequencies, not membership.""",
+You have a RANSOM NOTE you want to spell and a MAGAZINE to cut letters from. Each letter in the magazine
+can be used AT MOST ONCE. Return whether the note can be built.
 
-    """The early exit, and why decrementing beats pre-counting both sides.
-Decrementing as you walk the note lets you return False the moment a letter
-runs out, without counting the whole note first. On a long note with an early
-failure that is a real saving.
-The alternative `Counter(ransom_note) <= Counter(magazine)` (Python 3.10+) is
-one line and reads beautifully, but it counts both strings fully before
-comparing. Both are O(n + m); mention the one-liner and then give the explicit
-loop, since the loop is what you would write in an interview where the
-interviewer may not accept a library subset comparison.""",
+    ransom_note = "aa"        magazine = "aab"
 
-    """Edge cases.
-Empty note -> True vacuously; anything can build nothing. The loop never runs.
-Empty magazine with a non-empty note -> the first letter fails -> False.
-Note longer than magazine -> must fail on some letter, and the count check
-catches it without a separate length guard (though adding
-`if len(note) > len(magazine): return False` is a legitimate cheap early exit).
-Identical strings -> True, with every count landing at exactly 0.
-Repeated letters are the case that matters: 'aa' from 'a' -> False.""",
+        the magazine offers:   a, a, b
+        the note needs:        a, a
 
-    """Complexity.
-O(n + m) time, O(k) space for k distinct characters - O(1) under the
-lowercase-letters constraint.
-The array version replaces Counter with a 26-integer list indexed by
-ord(ch) - ord('a'): no hashing, better constants, and it is what you would
-write in C++ or Java. Worth a sentence, since 'O(1) hash lookup' still costs
-more than an array index and the alphabet here is small and dense.""",
+        Two `a`s are needed and two are available.
 
-    """The family: multiset containment and equality.
-Ransom Note (containment, one direction), Valid Anagram (equality both ways),
-Find Words That Can Be Formed by Characters (containment, repeated per word),
-Find All Anagrams in a String (sliding-window equality), Permutation in String,
-and Minimum Window Substring - the hard end, where you slide until containment
-holds and then shrink to minimise.
-Every one is a frequency comparison; the only questions are which direction and
-whether a window is involved. Recognising that makes the easy ones instant and
-gives you the vocabulary for the hard one.""",
+    ANSWER: True
+
+    ransom_note = "aa"        magazine = "ab"
+
+        the magazine offers only ONE `a`, and the note needs two.
+
+    ANSWER: False
+
+THAT SECOND EXAMPLE IS THE WHOLE PROBLEM IN MINIATURE. The letter `a` IS present in the magazine - so any
+check that merely asks "does this letter appear?" says yes and gets the wrong answer. THE QUESTION IS NOT
+WHETHER THE LETTER EXISTS BUT WHETHER THERE ARE ENOUGH OF IT.
+
+THE DIRECTION MATTERS AND IS EASY TO FLIP. The note must be buildable FROM the magazine, not the other way
+round. The magazine may contain heaps of letters the note never uses - that is fine, they are simply left
+uncut.
+
+    ransom_note = "aab"       magazine = "aabb"        the spare `b` is harmless        ANSWER: True
+
+AND THE EMPTY NOTE IS ALWAYS BUILDABLE:
+
+    ransom_note = ""          magazine = "abc"         nothing is needed                ANSWER: True
+
+    That is not a special case in the code - the loop simply never runs.
+
+    THIS ENTRY JOINS THE FREQUENCY-COMPARISON CLUSTER. ALMOST EQUIVALENT OWNS THE UNION OF BOTH KEY SETS.
+    FIND WORDS THAT CAN BE FORMED BY CHARACTERS APPLIES CONTAINMENT TO A WHOLE LIST OF WORDS AGAINST A
+    POOL THAT IS NEVER SPENT. FIRST UNIQUE CHARACTER OWNS WHY TWO PASSES ARE NECESSARY. THIS ONE OWNS
+    ONE-DIRECTIONAL CONTAINMENT FOR A SINGLE STRING - and the EARLY EXIT that spending the counts down
+    makes possible.""",
+
+    """2. THE INTUITION - tally the magazine, then spend it letter by letter.
+
+Turn the magazine into a stock list: how many of each letter you have. Then walk the note, taking one
+letter from stock each time. If stock ever runs out, the note cannot be built.
+
+    ransom_note = "aa",  magazine = "aab"
+
+        STOCK:   a: 2    b: 1
+
+        need 'a'   stock has 2, which is more than 0   ->   take one, stock becomes a: 1
+        need 'a'   stock has 1, which is more than 0   ->   take one, stock becomes a: 0
+
+        The note is finished and stock never ran out.
+
+    ANSWER: True
+
+    Now the same note against "ab":
+
+        STOCK:   a: 1    b: 1
+
+        need 'a'   stock has 1   ->   take one, stock becomes a: 0
+        need 'a'   stock has 0   ->   NOTHING LEFT.  Return False immediately.
+
+    ANSWER: False
+
+THE PICTURE - STOCK DRAINING AS THE NOTE IS SPELLED:
+
+        stock:   a: [##]   b: [#]
+        note:     a    a
+                  |    |
+                  v    v
+        after:   a: [# ]   then   a: [  ]
+                                       ^
+                        a third 'a' would find an empty pot and fail
+
+    THE COMPARISON RUNS ONE WAY ONLY. You never ask whether the magazine has letters the note does not
+    need - a spare `b` imposes no requirement at all. THAT IS THE DIFFERENCE FROM ALMOST EQUIVALENT in
+    this bank, where both key sets had to be walked because the condition was symmetric.
+
+WHY SPENDING BEATS PRE-COUNTING BOTH SIDES. You could count the note as well and compare the two tallies
+letter by letter. That is equally correct. But spending lets you stop THE MOMENT a letter runs out,
+without reading the rest of the note - and on a note whose very first letter is unavailable, that is one
+comparison instead of two full passes. THE EARLY EXIT IS WHAT THIS SHAPE BUYS.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MULTISET. A collection where duplicates matter but order does not. "aab" and "aba" are the same multiset:
+two `a`s and one `b`. Both the note and the magazine are multisets here.
+
+MULTISET CONTAINMENT. Multiset A fits inside multiset B when, for EVERY letter, A's count is at most B's
+count. That is exactly the buildable test.
+
+ONE-DIRECTIONAL. Only one containment is checked: note inside magazine. The reverse is not required and
+would be a different question.
+
+FREQUENCY / TALLY. How many times each letter appears.
+
+Counter. Python's tally-in-one-call dictionary. `Counter("aab")` is `{'a': 2, 'b': 1}`.
+    TWO PROPERTIES MATTER HERE AND THEY PULL DIFFERENT WAYS:
+        reading a MISSING key returns 0 rather than raising - which is what lets `available[ch]` be
+            written for a letter the magazine never contained;
+        but a key DECREMENTED TO ZERO IS STILL PRESENT - the key does not vanish. That is trap 1.
+
+EARLY EXIT. Returning as soon as the answer is known, without processing the rest of the input.
+
+THE VARIABLES IN THE CODE:
+    ransom_note   the string to be built. NOT MODIFIED.
+    magazine      the letter source. NOT MODIFIED - `Counter(magazine)` builds a new tally.
+    available     the stock: letter -> how many remain UNSPENT. This IS modified as the walk proceeds.
+    ch            the letter currently needed.
+
+n AND m ARE THE TWO STRING LENGTHS. TIME O(n + m), SPACE O(k) for k distinct letters - O(1) under the
+lowercase-letters constraint.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - two different-looking mistakes that turn out to be the same function.
+
+TRAP 1 - `ch not in available` INSTEAD OF `available[ch] <= 0`. These look like the same test and are not.
+A Counter key decremented to zero IS STILL A KEY, so membership stays True and the letter keeps being
+taken from an empty pot, driving the count negative.
+
+        ransom_note = "aa",  magazine = "ab"
+
+            first 'a':   'a' is in available   ->   take it, available['a'] becomes 0
+            second 'a':  'a' is STILL in available (the key survives at zero)   ->   take it again,
+                         available['a'] becomes -1
+            RETURNS True.   THE CORRECT ANSWER IS False.
+
+    MEASURED: wrong on 781 of 6,000 random pairs.
+
+TRAP 2 - USING A SET INSTEAD OF COUNTS. `all(ch in set(magazine) for ch in ransom_note)` asks only whether
+each needed letter EXISTS somewhere, ignoring how many.
+
+    MEASURED: wrong on 781 of 6,000 random pairs - THE SAME NUMBER, and that is not a coincidence.
+
+    THE TWO BUGS ARE THE SAME FUNCTION. Checked directly: over 6,000 random pairs the `in`-test version
+    and the set version returned identical answers on ALL of them - 0 disagreements. Both amount to "is
+    this letter present at all", because the `in` test's decrement never feeds back into any decision. TWO
+    DIFFERENT-LOOKING MISTAKES COLLAPSE TO ONE, which is worth knowing: fixing the `in` to a `<= 0` is not
+    a small tidy-up, it is the entire difference between counting and not counting.
+
+    NOW CHECK THE THREE OFFICIAL EXAMPLES:
+
+        "a"  / "b"      correct False    both bugs give False    AGREE
+        "aa" / "ab"     correct False    both bugs give True     CAUGHT
+        "aa" / "aab"    correct True     both bugs give True     AGREE
+
+    ONLY THE SECOND EXAMPLE SEPARATES THEM - and it is precisely the example the problem includes to make
+    the point. Test the first and third alone and the bug ships.
+
+TRAP 3 - REVERSING THE DIRECTION. Tallying the NOTE and spending it while walking the MAGAZINE asks
+whether the magazine fits inside the note - a different question entirely.
+
+    MEASURED: wrong on 3,448 of 6,000 random pairs - by far the most destructive of the three. AND THE
+    EXAMPLES SPLIT: "a"/"b" and "aa"/"ab" both give False either way, so they agree; only "aa"/"aab"
+    exposes it, returning False where the answer is True.
+
+    THE FIX IS TO SAY THE SENTENCE ALOUD: "the note is BUILT FROM the magazine, so the note's counts must
+    be at most the magazine's."
+
+WHAT IS NOT A TRAP, checked rather than assumed: the empty note returns True with no guard (the loop never
+runs), and an empty magazine with a non-empty note fails on the first letter, since `available[ch]` reads
+0.""",
+
+    """5. THE SLOW WAY FIRST, then the tally.
+
+THE NAIVE VERSION - CROSS OFF LETTERS FROM A COPY OF THE MAGAZINE:
+
+    remaining = list(magazine)
+    for ch in ransom_note:
+        if ch not in remaining:
+            return False
+        remaining.remove(ch)
+    return True
+
+    IT IS CORRECT and it expresses the rule directly - "take it if there is one left, then use it up".
+    Note it works on a COPY, so the caller's magazine is untouched. COST: `in` and `remove` each scan the
+    list, so O(n * m). At this problem's limit of 100,000 characters that is up to 10 billion operations -
+    far too slow.
+
+THE UPGRADE. Replace the linear search with a tally. `ch not in remaining` becomes `available[ch] <= 0`,
+and `remaining.remove(ch)` becomes `available[ch] -= 1`. Both go from O(m) to O(1), and THE SHAPE OF THE
+ALGORITHM IS OTHERWISE IDENTICAL - which is worth noticing, because the hash map is not a new idea, just a
+faster container for the same one.
+
+    COST: O(m) to build the tally plus O(n) to walk the note. O(n + m) time, O(k) space.
+
+THE COMPARE-BOTH-TALLIES ALTERNATIVE, WHICH IS EQUALLY GOOD:
+
+        note_counts = Counter(ransom_note)
+        mag_counts = Counter(magazine)
+        return all(note_counts[ch] <= mag_counts[ch] for ch in note_counts)
+
+    SAME COMPLEXITY, and it is the ground truth every figure in this entry was checked against. IT IS NOT
+    WORSE - say so honestly. Its one difference is that it always reads the whole note, whereas the
+    spending version can bail out at the first impossible letter. On a 100,000-character note whose first
+    letter is unavailable, that is one operation instead of 100,000.
+
+    In Python 3.10+ it also compresses to `Counter(ransom_note) <= Counter(magazine)`, which is exact and
+    beautiful and hides the per-letter comparison the interviewer wants to see you know about.
+
+THE FIXED-ALPHABET VERSION. The constraints say lowercase English letters only, so a 26-integer array
+replaces the hash map. Same O(n + m) time, space becomes O(1) outright rather than O(k), and array
+indexing beats hashing by a constant factor. WORTH MENTIONING, NOT WORTH LEADING WITH - it is the same
+algorithm in a tighter container, and it is the same bounded-alphabet observation that appears in First
+Unique Character in this bank.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: count the magazine's letters, then walk the note spending one from stock per character,
+failing the moment a needed letter has none left.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop after one counting pass:
+
+    `available`  starts as the full tally of the magazine and ONLY EVER DECREASES. It never gains a key
+                 and never gains a count. Its meaning at any moment is "how many of this letter remain
+                 unspent".
+
+    THE INVARIANT: at any point in the walk, `available[c]` equals the magazine's count of c minus the
+    number of c's already used by the prefix of the note processed so far. TRUE BEFORE THE LOOP (nothing
+    used, full tally) and preserved by each step, because checking and decrementing happen together.
+
+    WHY THAT ANSWERS THE QUESTION: the note is buildable exactly when no letter is ever demanded after its
+    stock has reached zero. So the first failure is decisive - there is no arrangement or ordering that
+    could rescue it, because the note needs a fixed multiset of letters regardless of the order they are
+    cut out in.
+
+    THAT IS WHY THE EARLY RETURN IS CORRECT AND NOT MERELY FAST: there is nothing to backtrack over.
+    Contrast a problem where choices interact - here they do not, so the greedy spend never needs undoing.
+
+    WHAT MAKES IT STOP: at most len(ransom_note) iterations, and it may exit earlier by returning False.
+
+    WHY THE CHECK MUST BE ON THE QUANTITY, NOT ON THE KEY: a spent letter's key remains in the tally with
+    a count of zero. Only `available[ch] <= 0` distinguishes "still available" from "was available once".
+    That is trap 1, and it is the same Counter behaviour that catches people in Intersection of Two Arrays
+    II in this bank.
+
+THE STEPS, NO CODE:
+
+    1. Count how many times each letter appears in the magazine. This is the stock.
+    2. For each character of the note, in any order (order does not matter, but walking it once is
+       simplest):
+       a. Look at how much of that letter remains in stock.
+       b. If none remains, the note cannot be built - answer no immediately and stop.
+       c. Otherwise take one: reduce that letter's stock by one.
+    3. If the whole note is spelled without running out, answer yes.
+
+    STEP 2a ASKS FOR A QUANTITY, NOT FOR MEMBERSHIP. STEP 2b STOPS AT ONCE.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+Someone wants to spell a message by cutting individual letters out of a magazine and gluing them onto a
+sheet. Every letter they cut out is gone - a printed `e` can be used once and once only.
+
+Before starting, they go through the magazine and write down an inventory: how many `a`s, how many `b`s,
+and so on. That inventory is the only thing they consult from then on; the magazine itself is not
+re-examined.
+
+Then they work through the message one character at a time. The message wants an `a`. They look at the
+inventory: three `a`s available. Fine - they cut one out and cross a stroke off the inventory, leaving
+two. The message wants another `a`. Two available, so again fine, leaving one.
+
+If the message asks for a letter whose inventory line has already reached zero, they stop right there.
+There is no point reading the rest of the message: this letter cannot be found, so the message cannot be
+made, and no amount of rearranging changes that. THEY DO NOT NEED TO CHECK ANYTHING ELSE.
+
+If they reach the end of the message with the inventory never having run dry, the message can be made.
+
+    THE MISTAKE THAT LOOKS LIKE CARE. Suppose that instead of reading the NUMBER beside each letter, they
+    only checked whether the letter appeared on the inventory at all. Then a message wanting two `a`s from
+    a magazine containing one `a` would pass - the letter is on the list, after all. Crossing off a stroke
+    that takes the count to zero does not remove the LINE from the inventory; the line is still there,
+    saying zero. Looking for the line rather than reading the number is the difference between counting
+    and not counting.
+
+    AND THE MISTAKE THAT ANSWERS A DIFFERENT QUESTION ENTIRELY. Suppose they inventoried the MESSAGE and
+    then walked the magazine crossing things off. They would be asking whether the magazine can be built
+    from the message - which fails the moment the magazine contains a single letter the message does not
+    use, and magazines are full of such letters. The spare letters in the magazine are meant to be
+    irrelevant; the comparison only ever runs one way.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` tallies a sequence in one call and returns 0 for keys it has never seen.
+
+    def can_construct(ransom_note, magazine):
+
+`ransom_note` is what must be spelled; `magazine` is the source. NEITHER IS MODIFIED - `Counter(magazine)`
+builds a new tally, and the note is only read. THE ARGUMENT ORDER MATTERS and reversing it silently asks
+the opposite question.
+
+    available = Counter(magazine)
+
+THE STOCK. `available[c]` is how many of letter c the magazine offers. THIS IS THE ONLY STRUCTURE THAT
+CHANGES, and it is a copy of the magazine's information rather than the magazine itself.
+
+    for ch in ransom_note:
+
+WALK THE NOTE. Each character is one demand on the stock. Indices are never needed - and note the order of
+the note is irrelevant to the answer, though walking it in order is simplest.
+
+    if available[ch] <= 0:
+        return False        # not enough of this letter
+
+THE ONE DECISION, AND IT COMPARES A QUANTITY. `available[ch]` returns 0 for a letter the magazine never
+contained, so this single expression handles both "never present" and "all used up".
+    WRITING `if ch not in available` INSTEAD IS THE BUG: a key decremented to zero remains in the Counter,
+    so the test stays False and the letter is taken from an empty pot - wrong on 781 of 6,000 random pairs,
+    and it turns out to be the SAME FUNCTION as the set-based check, which was wrong on exactly the same
+    781.
+    RETURNING IMMEDIATELY is correct because a shortage cannot be repaired by anything later in the note.
+
+        available[ch] -= 1
+
+SPEND ONE. Reached only when stock was available. Checking and spending in the same step is what keeps the
+invariant true at every moment.
+
+    return True
+
+Reached only when the whole note was spelled without running out.
+
+WHAT IS DELIBERATELY ABSENT: no tally of the note (the spending replaces it), no guard for an empty note
+(the loop does not run and True is returned - verified), no guard for an empty magazine (every lookup
+reads 0 and the first letter fails), and no comparison in the reverse direction.""",
+
+    """9. TRACED ON REAL NUMBERS - the two examples that differ by one character.
+
+RUN A: ransom_note = "aa",  magazine = "aab"
+
+    BEFORE THE WALK:   available = {'a': 2, 'b': 1}
+
+    ch = 'a'     available['a'] = 2, which is more than 0   ->   spend it
+                 available = {'a': 1, 'b': 1}
+
+    ch = 'a'     available['a'] = 1, which is more than 0   ->   spend it
+                 available = {'a': 0, 'b': 1}
+
+    The note is exhausted.   RETURNS True.
+
+    NOTE THE FINAL STATE: available['a'] is 0 BUT THE KEY 'a' IS STILL THERE. If a third 'a' were
+    demanded, `available['a'] <= 0` would correctly refuse it - while `'a' in available` would still be
+    True and would wrongly allow it. The spare 'b' was never looked at.
+
+RUN B: ransom_note = "aa",  magazine = "ab" - one character removed from the magazine
+
+    BEFORE THE WALK:   available = {'a': 1, 'b': 1}
+
+    ch = 'a'     available['a'] = 1   ->   spend it
+                 available = {'a': 0, 'b': 1}
+
+    ch = 'a'     available['a'] = 0   ->   NOT more than 0   ->   RETURN False
+
+    RETURNS False, and it stops without reading anything further.
+
+    THE INVERSION IN ONE LINE: "aa" from "aab" is True, "aa" from "ab" is False. One character removed
+    from the magazine and the answer flips - and it is precisely the character that made the count
+    sufficient, not the character's presence.
+
+    AND THIS IS THE RUN THAT SEPARATES THE CORRECT CODE FROM BOTH COMMON BUGS. With `ch not in available`
+    the second 'a' passes (the key survives at zero) and the function returns True. With a set-based check
+    the same thing happens. Both are wrong here, and both are right on runs A and on "a" against "b" -
+    which is why only ONE of the three official examples exposes them.
+
+AND THE DIRECTION BUG, ON RUN A: tallying the note ("aa" -> {'a': 2}) and walking the magazine "aab" spends
+'a' twice and then meets 'b', whose count is 0 - so it returns False where the answer is True. THE FIRST
+TWO OFFICIAL EXAMPLES DO NOT CATCH THIS, because they are False under both readings; only run A does.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the magazine to tally it, then one pass over the note doing a constant
+amount of work per character - and possibly stopping early.
+
+    TIME O(n + m). SPACE O(k) for k distinct letters, which is O(1) under the lowercase-letters
+    constraint - at most 26 entries.
+    The cross-off-a-list brute force is O(n * m); at this problem's limit of 100,000 characters that is
+    far too slow, so the tally is genuinely required here rather than merely tidier.
+    Comparing two full tallies is the same O(n + m) and is EQUALLY GOOD - its only loss is the early exit.
+
+THE #1 MISTAKE: testing `ch not in available` instead of `available[ch] <= 0`. A Counter key survives
+being decremented to zero, so membership stays True and letters are taken from an empty pot. Wrong on 781
+of 6,000 random pairs - AND IT IS THE SAME FUNCTION as the set-based check, which was wrong on exactly the
+same 781, confirmed by comparing the two on all 6,000. Only the second official example, "aa" against
+"ab", separates either of them from the correct answer. THE RUNNER-UP is reversing the direction, which is
+the most destructive of the three at 3,448 of 6,000, and which only the THIRD example catches.
+
+ONE-SENTENCE TAKEAWAY: "can be built from" is multiset containment in one direction - a per-letter
+comparison of counts, not a membership test - and spending the stock down as you walk lets you stop at the
+first impossible letter.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you turn an English sentence into the right comparison.
+Three choices are being watched and each has a plausible wrong twin: counts versus presence, the direction
+of containment, and whether letters are consumed. NONE OF THESE IS AN ALGORITHM - they are all reading.
+It is a warm-up question, so the signal is the sentence you say before writing: "each magazine letter is
+used at most once, so the note's count of every letter must be at most the magazine's."
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if the magazine letters are NOT consumed - each can be reused freely?" Then it collapses to the
+    set check that is wrong here: just verify every letter of the note appears somewhere. The consumption
+    rule is exactly what makes counting necessary.
+    "How does this relate to FIND WORDS THAT CAN BE FORMED BY CHARACTERS?" That problem runs this same
+    containment check over a LIST of words against a pool that is NOT spent between words, and sums their
+    lengths. Same check, different wrapper - and the not-spent rule is what keeps it linear.
+    "How does it relate to VALID ANAGRAM?" Anagram is containment in BOTH directions, i.e. equality of the
+    two tallies. Naming the difference - containment versus equality - is the useful part.
+    "What if the strings are enormous and arrive as streams?" The magazine must be tallied first, which is
+    O(k) memory rather than O(m), so it streams fine. The note streams too, and the early exit means you
+    may not need to read all of it.""",
 ]
 
 _EX_P1L["Remove Duplicates from Sorted List"] = [
