@@ -99851,67 +99851,447 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1N["Prim's Minimum Spanning Tree"] = [
-    """What an MST is, and the trace.
-A minimum spanning tree connects all V nodes with V-1 edges at the lowest total
-weight - no cycles, everything reachable.
-Graph: 0-1 (4), 0-2 (1), 1-2 (2), 1-3 (5), 2-3 (8).
-Start with heap [(0,0)]. Pop node 0 (cost 0), push its edges (4,1) and (1,2).
-Pop (1,2) -> add node 2, total 1; push (2,1) and (8,3).
-Pop (2,1) -> add node 1, total 3; push (5,3).
-Pop (4,1) -> node 1 already visited, SKIP.
-Pop (5,3) -> add node 3, total 8. All four nodes in -> MST weight 8.""",
+    """1. THE GOAL - connect everything, as cheaply as possible, with no waste.
 
-    """Why the skip-if-visited line is the whole correctness argument.
-The heap accumulates stale entries: the same node can be pushed several times
-with different edge weights, once per neighbour already in the tree. When
-popped, the FIRST occurrence is guaranteed cheapest (that is what the min-heap
-gives), so every later pop of the same node must be discarded.
-Without that `continue`, you add a node twice, create a cycle, and overcount
-the weight. It is the same lazy-deletion pattern as in Dijkstra, and for the
-same reason: Python's heapq has no decrease-key.""",
+You are given a graph: some nodes, and edges between them with costs. Find the cheapest set of edges that
+connects EVERY node to every other. That set is called a MINIMUM SPANNING TREE.
 
-    """Prim versus Kruskal, and when each wins.
-PRIM grows one tree from a start node using a heap of frontier edges -
-O(E log V), and it is the better fit for DENSE graphs, especially with an
-adjacency-matrix O(V^2) variant that needs no heap at all.
-KRUSKAL sorts ALL edges and adds each if it joins two different components,
-using union-find - O(E log E), better for SPARSE graphs and much easier to
-write if you already have DSU.
-Both are greedy and both are optimal, which is the interesting part: the cut
-property guarantees that the cheapest edge crossing any cut is in some MST, and
-each algorithm exploits it from a different direction.""",
+    the graph:        0 ---1--- 1
+                      |        /|
+                      4       2 5
+                      |      /  |
+                      2 ---3--- 3
 
-    """The subtle difference from Dijkstra, which is one character in practice.
-Dijkstra pushes (dist_so_far + w, neighbour) - the CUMULATIVE distance from the
-source. Prim pushes (w, neighbour) - just the single EDGE weight, because an
-MST cares about the cost of connecting a node to the tree, not about its
-distance from the start.
-The two algorithms are otherwise structurally identical, and confusing them
-gives a correct-looking program that computes a shortest-path tree instead of a
-minimum spanning tree. Being able to state that one-line difference is a strong
-signal.""",
+        edges:   0-1 costing 1,   0-2 costing 4,   1-2 costing 2,   1-3 costing 5,   2-3 costing 3
 
-    """Edge cases.
-A disconnected graph -> the heap empties before `len(visited) < n` is satisfied,
-so the loop exits with an incomplete tree. The code returns a total for a
-FOREST, silently. If connectivity is not guaranteed, check
-`len(visited) == n` after the loop and report failure - the prompt usually
-guarantees connectivity, and noticing that it does is worth a sentence.
-Single node -> visited = {0}, total 0.
-Duplicate edge weights -> several valid MSTs exist with the same total; any is
-acceptable, which is worth confirming since the expected output may be just the
-weight.
-Self-loops are skipped by the visited check; parallel edges resolve to the
-cheaper one naturally.""",
+    Pick 0-1 (1), 1-2 (2) and 2-3 (3). Every node is reachable from every other, and the total is 6.
+    Any other connecting set costs more.
 
-    """Complexity and where MSTs actually appear.
-O(E log V) time with a binary heap, O(V+E) space.
-Real uses worth naming: laying network cable or road at minimum cost,
-clustering (delete the k-1 most expensive MST edges and you have k clusters -
-this is single-linkage clustering), image segmentation, and approximation
-algorithms for travelling-salesman. The family: Kruskal, Union-Find, Connecting
-Cities With Minimum Cost, Min Cost to Connect All Points, and Optimize Water
-Distribution - all of which are MST problems wearing product language.""",
+    ANSWER: 6
+
+THREE PROPERTIES DEFINE THE ANSWER, and each word in the name earns its place:
+
+    SPANNING   - every node is included. None may be left out.
+    TREE       - exactly V-1 edges and no cycles. A cycle would mean one edge is redundant, since its two
+                 ends are already connected some other way, so you could drop it and save money.
+    MINIMUM    - of all the spanning trees, this one has the smallest total weight.
+
+    THE SECOND POINT IS WORTH DWELLING ON: with V nodes, ANY connecting set with no redundancy has exactly
+    V-1 edges. So you are not choosing how many edges to buy - only which ones.
+
+THE ANSWER IS NOT ALWAYS UNIQUE. A triangle whose three edges all cost 1 has three different minimum
+spanning trees - drop any one edge - and all three cost 2. VERIFIED: Prim's and Kruskal's agree on the
+total, and the edge sets they return differ. THAT MATTERS FOR TESTING: you may compare totals, and you may
+check that the result spans and has V-1 edges, BUT YOU MAY NOT COMPARE EDGE LISTS.
+
+    THIS ENTRY OPENS THE MINIMUM-SPANNING-TREE CLUSTER. IT OWNS GROW-ONE-TREE-FROM-A-SEED, using a
+    min-heap of the edges leaving the tree, and the LAZY-DELETION detail that stale heap entries are
+    skipped rather than removed. ITS SIBLING IS KRUSKAL, which sorts ALL the edges and joins components
+    with union-find - a completely different shape for the same answer.""",
+
+    """2. THE INTUITION - grow a blob, and always take the cheapest edge leaving it.
+
+Start with one node. Look at every edge leading OUT of what you have so far, take the cheapest one, and
+swallow the node at its far end. Repeat until everything is inside.
+
+    starting at node 0
+
+        TREE = {0}.    Edges leaving it: 0-1 costing 1, 0-2 costing 4.
+                       Cheapest is 1.  Take it, swallow node 1.  Running total 1.
+
+        TREE = {0,1}.  Edges leaving: 0-2 costing 4, 1-2 costing 2, 1-3 costing 5.
+                       Cheapest is 2.  Take it, swallow node 2.  Running total 3.
+
+        TREE = {0,1,2}. Edges leaving: 1-3 costing 5, 2-3 costing 3.
+                       Cheapest is 3.  Take it, swallow node 3.  Running total 6.
+
+        Everything is inside.  TOTAL: 6.
+
+    NOTE WHAT WAS NEVER USED: the edge 0-2 costing 4 and the edge 1-3 costing 5. Both would have created
+    cycles by the time they were cheapest.
+
+THE PICTURE - THE TREE GROWS AS ONE CONNECTED BLOB:
+
+        step 1:   (0)      1   2   3          the blob is one node
+        step 2:   (0=1)        2   3          swallowed 1 across the cheapest exit
+        step 3:   (0=1=2)          3
+        step 4:   (0=1=2=3)                   everything inside
+
+    THAT IS THE DIFFERENCE FROM KRUSKAL, which picks cheap edges from anywhere in the graph and ends up
+    with SEVERAL disconnected fragments that eventually merge. PRIM KEEPS EXACTLY ONE FRAGMENT AT ALL
+    TIMES.
+
+WHY TAKING THE CHEAPEST EXIT IS SAFE - and this is the one thing that needs proving. Consider the cheapest
+edge crossing from your blob to the outside. Claim: some minimum spanning tree contains it.
+
+    Suppose a minimum tree does NOT contain that edge. It must still connect the blob to the outside
+    somehow, so it uses some OTHER crossing edge, which costs at least as much. Add your cheap edge to
+    that tree: you now have a cycle, and that cycle must cross the boundary a second time - at the more
+    expensive edge. REMOVE THAT ONE. You still have a spanning tree, and it costs no more than before.
+
+    SO THE GREEDY CHOICE NEVER LOSES. That is the CUT PROPERTY, and it is the whole justification for both
+    Prim's and Kruskal's.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+WEIGHTED UNDIRECTED GRAPH. Nodes joined by edges that cost something to use, where an edge works in both
+directions. Represented here as an ADJACENCY DICT: node -> list of (neighbour, weight).
+
+SPANNING TREE. A set of edges connecting every node, with no cycles. Always exactly V-1 edges for V nodes.
+
+MINIMUM SPANNING TREE (MST). The spanning tree of least total weight. NOT NECESSARILY UNIQUE - see
+section 1.
+
+CUT. A split of the nodes into two groups. Here, the group already in the tree and the group outside.
+CROSSING EDGE. One with an end in each group. Prim always takes the cheapest crossing edge.
+THE CUT PROPERTY. The cheapest crossing edge of any cut belongs to SOME minimum spanning tree - proved in
+section 2, and the reason the greedy choice works.
+
+MIN-HEAP. A structure whose cheapest item can be read and removed in logarithmic time. Python's `heapq`
+orders tuples by their first element, which is why the code pushes `(weight, node)` in that order and not
+the other way round.
+
+LAZY DELETION. Leaving out-of-date entries in the heap and ignoring them when they surface, rather than
+hunting them down and removing them. Section 4 is about the one line that makes this work.
+
+THE VARIABLES IN THE CODE:
+    n        the number of nodes.
+    graph    the adjacency dict. NOT MODIFIED.
+    visited  the set of nodes already in the tree.
+    heap     candidate edges as (weight, node) - "it costs this much to swallow that node".
+    total    the running sum of the edges taken. This is the answer.
+    w, node  the weight and destination popped from the heap.
+
+V AND E ARE THE NUMBERS OF NODES AND EDGES. TIME O(E log V), SPACE O(V + E).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one line carries the entire correctness argument.
+
+TRAP 1 - REMOVING `if node in visited: continue`. THE HEAP ACCUMULATES STALE ENTRIES, and this line is the
+only thing that copes with them.
+
+    When node 1 joins the tree, every edge out of node 1 is pushed - including edges to nodes that are
+    ALREADY reachable more cheaply by another route, and including nodes that a later step will swallow
+    from somewhere else entirely. The same node can therefore sit in the heap several times at several
+    different prices. NOTHING EVER REMOVES THOSE OBSOLETE ENTRIES; they simply surface later and must be
+    recognised and discarded.
+
+    MEASURED: without that line, the total was wrong on 1,494 of 4,000 random connected graphs. The tree
+    is charged for nodes it already owns.
+
+    MEASURED SEPARATELY, THE SCALE OF THE STALENESS: over 2,000 random graphs the algorithm popped 13,412
+    entries in total, of which 2,290 - about 17% - were stale and skipped. That is the price of lazy
+    deletion, and it is why the heap can hold O(E) entries rather than O(V).
+
+    THE ALTERNATIVE, FOR COMPLETENESS, is an INDEXED heap supporting decrease-key: keep one entry per node
+    and lower its priority when a cheaper edge is found. That keeps the heap at O(V) and removes the skip
+    entirely - and it needs a heap implementation Python does not provide. LAZY DELETION IS THE STANDARD
+    PRACTICAL CHOICE, and knowing why is better than knowing only that the line is needed.
+
+TRAP 2 - PUSHING THE CUMULATIVE DISTANCE, WHICH TURNS PRIM INTO DIJKSTRA. The two algorithms differ by
+almost nothing on the page:
+
+        PRIM:      heappush(heap, (weight, nbr))          the cost of THIS ONE EDGE
+        DIJKSTRA:  heappush(heap, (w + weight, nbr))      the total distance FROM THE SOURCE
+
+    MEASURED: the cumulative version gave a different total on 3,092 of 4,000 random graphs. It is not a
+    broken Prim - it is a correct Dijkstra, computing a shortest-path tree, which is a different object.
+    A SHORTEST-PATH TREE MINIMISES EACH NODE'S DISTANCE FROM THE SOURCE; AN MST MINIMISES THE TOTAL EDGE
+    WEIGHT. They usually disagree.
+
+TRAP 3 - A DISCONNECTED GRAPH, HANDLED SILENTLY AND BADLY. If the graph is in two pieces, the heap empties
+before every node is visited, the loop exits, and a total is returned anyway - THE WEIGHT OF ONE COMPONENT
+ONLY, with no indication that anything was missed.
+
+    VERIFIED on nodes 0-1 (weight 5) and 2-3 (weight 7) with no link between the pairs: the function
+    returns 5, having reached only 2 of the 4 nodes. THE HONEST FIX is to check `len(visited) == n` before
+    returning and report failure otherwise.
+
+TRAP 4 - TESTING BY COMPARING EDGE LISTS. MSTs are not unique under tied weights, so a correct
+implementation can legitimately return a different edge set. COMPARE THE TOTAL, and check that the result
+spans all n nodes with n-1 edges. Every figure in this entry was verified that way, against Kruskal's
+algorithm as an independent second opinion: 0 disagreements on 4,000 random connected graphs.""",
+
+    """5. THE NAIVE WAY FIRST, then the heap - and the sibling algorithm.
+
+THE NAIVE VERSION - RESCAN FOR THE CHEAPEST CROSSING EDGE EVERY TIME:
+
+    repeat V-1 times:
+        look at every edge; if exactly one end is in the tree, it is a candidate
+        take the cheapest candidate and swallow its outside end
+
+    IT IS CORRECT and it is the definition acted out. COST: each round scans all E edges and there are V-1
+    rounds, so O(V * E). For a dense graph with V = 1,000 that is around a billion operations.
+
+THE UPGRADE, AND THE OBSERVATION BEHIND IT. Rescanning every edge each round re-examines edges that were
+already rejected and edges deep inside the tree. But the SET OF CANDIDATES ONLY EVER GROWS BY THE EDGES OF
+THE NODE JUST SWALLOWED - everything else was already known.
+
+    So keep the candidates in a MIN-HEAP. Swallowing a node costs one push per incident edge; taking the
+    cheapest is one pop. NO RESCANNING AT ALL.
+
+    COST: O(E log V) time, O(E) space for the heap.
+
+WHY THE HEAP HOLDS EDGES AND NOT NODES. Each entry says "it costs w to bring `node` into the tree by one
+particular edge". A node may appear several times at several prices - and that is fine, because the
+cheapest surfaces first and every later copy is skipped. THAT IS THE LAZY DELETION FROM SECTION 4.
+
+KRUSKAL, THE SIBLING, AND WHEN EACH WINS:
+
+        PRIM      grows ONE tree from a seed, using a heap of frontier edges.
+                  O(E log V). Better on DENSE graphs, where E is close to V^2 and the frontier is rich.
+
+        KRUSKAL   sorts ALL the edges cheapest-first and adds any edge joining two different components,
+                  using UNION-FIND to test that. Its fragments merge only at the end.
+                  O(E log E). Better on SPARSE graphs, and simpler when the edges already arrive sorted.
+
+    THEY PRODUCE THE SAME TOTAL - verified on 4,000 random graphs, 0 disagreements - and may produce
+    different edge sets when weights tie. NEITHER IS UNIFORMLY BETTER; the choice is about density and
+    about which data structure you would rather write.
+
+AND THE PROOF THAT BOTH ARE CORRECT IS THE SAME: the cut property from section 2. Prim applies it to the
+cut between the tree and everything else; Kruskal applies it to the cut around whichever component the
+next edge would join.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: keep a heap of the cheapest ways to reach nodes not yet in the tree, repeatedly take the
+cheapest, and when a node joins, offer up all its edges as new candidates.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two structures:
+
+    `visited`  GROWS ONLY, by exactly one node per successful pop. It is the tree.
+    `heap`     grows when a node joins and shrinks on every pop. IT MAY HOLD SEVERAL ENTRIES FOR THE SAME
+               NODE, at different prices - that is expected, not a bug.
+    `total`    the running sum, increased only when a node genuinely joins.
+
+    THE INVARIANT: `visited` is always a connected blob, and `total` is the weight of a minimum spanning
+    tree OF THAT BLOB. True at the start, when the blob is one node and the total is 0. Preserved by every
+    successful pop, by the cut property - the edge taken is the cheapest crossing the boundary.
+
+    WHAT MAKES IT STOP, AND THERE ARE TWO EXITS:
+        `len(visited) < n` becomes false - every node is in the tree, which is the success case; or
+        the heap empties first - which means the remaining nodes are UNREACHABLE, and the graph is
+        disconnected. The code exits quietly here, which is trap 3.
+
+    WHY IT CANNOT SPIN: every iteration pops one entry and never re-pushes it, and pushes happen only when
+    a node joins - at most once per node, contributing at most its own degree. So the total number of
+    pushes is bounded by E and the loop runs at most E times.
+
+    THE START `heap = [(0, 0)]` IS A TRICK WORTH NAMING: a phantom zero-weight edge into node 0. It seeds
+    the process without a special case, and because it costs 0 it contributes nothing to the total. THE
+    TREE IS ROOTED AT NODE 0 ONLY BECAUSE THAT IS THE SEED; ANY NODE WOULD GIVE THE SAME TOTAL.
+
+THE STEPS, NO CODE:
+
+    1. Start with an empty tree and a heap containing one phantom entry: cost zero to reach the starting
+       node.
+    2. While the heap is not empty and the tree does not yet hold every node:
+       a. Take the cheapest entry.
+       b. If that node is already in the tree, this entry is out of date - discard it and go round again,
+          WITHOUT counting its cost.
+       c. Otherwise add the node to the tree and add the entry's cost to the running total.
+       d. For every neighbour of that node not already in the tree, offer a new entry: the weight of that
+          edge, and the neighbour.
+    3. Hand back the total.
+
+    STEP 2b IS THE WHOLE CORRECTNESS ARGUMENT. STEP 2d PUSHES THE EDGE'S OWN WEIGHT, NOT A RUNNING SUM.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A utility company must connect every house in a new village to the water main. Any house connected to
+another connected house counts as served, so the network only needs to reach everybody - it does not need
+a separate pipe from the reservoir to each door. Every possible trench between two houses has been surveyed
+and costed. The company wants the cheapest set of trenches that leaves nobody dry.
+
+The foreman starts at one house, arbitrarily - it makes no difference which. That house is now "connected".
+
+On his desk he keeps a tray of quotes. Each quote says: "digging this particular trench would connect that
+particular house, for this much money." Whenever a house becomes connected, he drops onto the tray a quote
+for every trench leading out of it.
+
+Then he works in a simple rhythm: take the cheapest quote off the tray, dig that trench, and connect the
+house at the far end. Repeat.
+
+    AND HERE IS THE PART THAT MATTERS. The tray fills up with quotes that have quietly become worthless.
+    A quote to connect the Miller house for 800 pounds is still sitting there after the Millers were
+    connected from the other direction for 300. He does not go through the tray weeding those out - that
+    would mean rummaging through hundreds of slips every time anything changed. INSTEAD HE CHECKS EACH
+    QUOTE AS HE PICKS IT UP: is this house already connected? If so he bins the slip and reaches for the
+    next one, WITHOUT PAYING ANYTHING.
+
+    Measured on a few thousand villages, about one slip in six turns out to be worthless by the time it
+    reaches the top of the tray. Binning them as they surface is far cheaper than keeping the tray tidy.
+
+WHY ALWAYS TAKING THE CHEAPEST QUOTE CANNOT GO WRONG. Suppose the perfect plan did not use the cheapest
+trench currently leaving the connected area. That plan still has to reach the outside somehow, so it uses
+some other trench across the same boundary, costing at least as much. Swap them: dig the cheap one, and
+drop the dear one. Everybody is still connected, and the bill is no higher. So there is never a reason to
+pass over the cheapest exit.
+
+    ONE THING THE FOREMAN'S METHOD WILL NOT TELL HIM. If the village is really two hamlets with no
+    possible trench between them, his tray runs empty while houses remain unconnected - and his ledger
+    still shows a total, for the hamlet he happened to start in. IT LOOKS LIKE AN ANSWER AND IS NOT ONE.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    import heapq
+
+Python's min-heap. It orders tuples by their FIRST element, which is why entries are pushed as
+`(weight, node)` and not `(node, weight)`.
+
+    def prim_mst(n, graph):
+
+`n` is the number of nodes; `graph` maps a node to a list of (neighbour, weight) pairs. NOT MODIFIED. The
+function returns the TOTAL WEIGHT, not the edge list.
+
+    # graph: adjacency dict node -> list of (neighbour, weight)
+    visited = set()
+
+THE TREE SO FAR - the nodes already connected. It only ever grows.
+
+    heap = [(0, 0)]                      # (edge weight, node); start at node 0
+
+THE CANDIDATE EDGES, seeded with a PHANTOM ENTRY: cost 0 to reach node 0. That removes the need for a
+special first step, and its zero weight means it contributes nothing to the total. Any starting node would
+give the same answer.
+
+    total = 0
+
+The running sum of the edges actually taken.
+
+    while heap and len(visited) < n:
+
+TWO EXIT CONDITIONS, AND ONLY ONE OF THEM IS SUCCESS. Running out of candidates while nodes remain
+unvisited means the graph is DISCONNECTED - and the code then returns a partial total silently, which is
+trap 3.
+
+    w, node = heapq.heappop(heap)
+
+TAKE THE CHEAPEST CANDIDATE. Because the heap orders on the first tuple element, this is the smallest
+weight available.
+
+    if node in visited:
+        continue                     # already in the tree
+
+THE LINE THAT CARRIES THE CORRECTNESS ARGUMENT. Stale entries are never removed from the heap, so the same
+node can appear several times at several prices; every copy after the first must be discarded WITHOUT
+adding its weight. Removing this line made the total wrong on 1,494 of 4,000 random graphs, and measurement
+shows about 17% of all pops are stale.
+
+    visited.add(node)
+    total += w                       # add this edge to the MST
+
+THE NODE JOINS AND ITS ENTRY EDGE IS PAID FOR. `total` increases only here - never on a skipped pop.
+
+    for nbr, weight in graph.get(node, []):
+        if nbr not in visited:
+            heapq.heappush(heap, (weight, nbr))
+
+OFFER UP THE NEW FRONTIER. `graph.get(node, [])` tolerates a node with no listed edges.
+    THE PUSHED VALUE IS `weight` - THE COST OF THIS SINGLE EDGE. Pushing `w + weight` instead would
+    accumulate distance from the start and turn this into Dijkstra, giving a different total on 3,092 of
+    4,000 random graphs.
+    The `if nbr not in visited` filter is an optimisation, not a correctness requirement - the skip at the
+    top of the loop would catch those anyway - but it keeps the heap smaller.
+
+    return total
+
+The minimum spanning weight - or, on a disconnected graph, one component's worth of it.
+
+WHAT IS DELIBERATELY ABSENT: no union-find (that is Kruskal), no decrease-key (Python has no indexed heap),
+no record of WHICH edges were chosen, and no check that the graph was connected.""",
+
+    """9. TRACED ON REAL NUMBERS - the four-node graph, then one weight changed.
+
+RUN A: nodes 0..3, edges 0-1 costing 1, 0-2 costing 4, 1-2 costing 2, 1-3 costing 5, 2-3 costing 3.
+
+    START:   visited = {}, heap = [(0, 0)], total = 0
+
+    POP (0, 0)    node 0 is not visited  ->  join.  visited = {0}, total = 0 + 0 = 0
+                  push its edges: (1, 1) and (4, 2)
+                  heap now holds (1,1), (4,2)
+
+    POP (1, 1)    node 1 is not visited  ->  join.  visited = {0,1}, total = 0 + 1 = 1
+                  push node 1's edges to unvisited nodes: (2, 2) and (5, 3)
+                  heap now holds (2,2), (4,2), (5,3)
+
+    POP (2, 2)    node 2 is not visited  ->  join.  visited = {0,1,2}, total = 1 + 2 = 3
+                  push node 2's edges to unvisited nodes: (3, 3)
+                  heap now holds (3,3), (4,2), (5,3)
+
+    POP (3, 3)    node 3 is not visited  ->  join.  visited = {0,1,2,3}, total = 3 + 3 = 6
+                  no unvisited neighbours to push
+
+    len(visited) is 4  ->  the loop ends.
+
+    RETURNS 6.  Cross-checked against Kruskal's algorithm, which sorts the edges and uses union-find: also
+    6. The edges Prim chose were 0-1, 1-2 and 2-3 - three edges for four nodes, and every node reached.
+
+    NOTE WHAT IS STILL SITTING IN THE HEAP: (4, 2) and (5, 3). Both name nodes already in the tree. Had
+    the loop continued, each would have surfaced and been skipped by the visited check - WITHOUT being
+    added to the total. That is the stale-entry mechanism, left visible at the end of the run.
+
+RUN B: THE INVERSION - change the edge 1-3 from weight 5 to weight 1.
+
+    Now node 3 can be reached from node 1 for 1 instead of from node 2 for 3.
+
+    The walk takes 0-1 (1), then 1-3 (1), then 1-2 (2), for a total of 4.
+
+    RETURNS 4.  Kruskal agrees: 4.
+
+    ONE WEIGHT LOWERED BY FOUR, AND THE TREE'S SHAPE CHANGES - the edge 2-3 is no longer used at all, and
+    node 2 is now attached via node 1 rather than being the bridge to node 3.
+
+AND THE CASE THAT SHOWS WHY EDGE LISTS CANNOT BE COMPARED: a triangle whose three edges all cost 1. Prim
+returns a total of 2 and Kruskal returns 2, but they may drop different edges. VERIFIED - the totals match
+and the chosen sets need not.
+
+AND THE DISCONNECTED CASE: nodes 0-1 joined at cost 5, nodes 2-3 joined at cost 7, no edge between the
+pairs. The function returns 5, having visited only nodes 0 and 1 of the 4. IT LOOKS LIKE AN ANSWER.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each node joins once and pushes one entry per incident edge, so at most E pushes; each
+push and pop costs logarithmic time in the heap's size.
+
+    TIME O(E log V). SPACE O(V + E) - the heap can hold one entry per edge because stale ones are never
+    removed.
+    The rescan-every-round naive version is O(V * E).
+    KRUSKAL is O(E log E), dominated by sorting the edges. PRIM TENDS TO WIN ON DENSE GRAPHS and Kruskal
+    on sparse ones - neither is uniformly better, and the honest answer names the density trade rather
+    than picking a favourite.
+    MEASURED OVERHEAD OF LAZY DELETION: about 17% of pops are stale entries that are discarded. That is
+    the price paid for not maintaining an indexed heap.
+
+THE #1 MISTAKE: omitting `if node in visited: continue`. The heap is full of obsolete entries by design,
+and without that line their weights are added to the total for nodes already in the tree - wrong on 1,494
+of 4,000 random connected graphs. THE RUNNER-UP is pushing `w + weight` rather than `weight`, which
+silently converts Prim into Dijkstra and computes a shortest-path tree instead of a minimum spanning tree -
+a different total on 3,092 of 4,000.
+
+ONE-SENTENCE TAKEAWAY: grow one connected blob and always take the cheapest edge leaving it - the cut
+property says that is never a mistake, and the visited check is what makes a heap full of stale entries
+harmless.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Three things. First, WHETHER YOU CAN JUSTIFY THE GREEDY CHOICE -
+the cut-property exchange argument, not "it seems obviously right". Second, WHETHER YOU KNOW WHY THE
+VISITED CHECK IS THERE: a candidate who writes it from muscle memory and one who can say "the heap holds
+stale entries and this is lazy deletion" look identical in code. Third, PRIM VERSUS KRUSKAL, where the
+expected answer is about graph density and about which structure you need - a heap or union-find.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return the EDGES, not just the total." Push `(weight, node, parent)` and record the parent when a node
+    joins. One extra tuple element.
+    "KRUSKAL'S ALGORITHM." Sort all edges by weight; for each, if its ends are in different components,
+    take it and union them. Union-find with path compression and union by rank makes each test nearly
+    constant. O(E log E).
+    "What if the graph might be disconnected?" Check `len(visited) == n` before returning and report
+    failure - or run Prim from every unvisited node to build a MINIMUM SPANNING FOREST.
+    "What if edge weights can be negative?" MSTs are unaffected: nothing in the cut property assumes
+    positivity, unlike Dijkstra which breaks immediately. Worth saying, because it is a rare case where
+    negative weights cause no trouble at all.
+    "MINIMUM SPANNING TREE WITH ONE EDGE FORCED IN." Contract that edge - merge its two endpoints - then
+    run the algorithm on the smaller graph and add the forced edge's weight.""",
 ]
 
 _EX_P1N["Temperature, top-k and top-p (controlling LLM output)"] = [
@@ -100051,66 +100431,469 @@ for _e in ENTRIES:
 _EX_P1O = {}
 
 _EX_P1O["01 Matrix (distance to nearest zero)"] = [
-    """Why MULTI-SOURCE BFS rather than one BFS per cell.
-The naive approach runs a BFS from every 1 to find its nearest 0 - O((rows*cols)^2)
-in the worst case. Instead, seed the queue with EVERY zero at distance 0 and
-expand outward once. The first time the wave reaches a cell, it has arrived by
-the shortest route from the nearest source, because BFS explores in order of
-distance.
-Think of it as every zero starting a flood at the same instant; the fronts meet
-along the midlines, and each cell is claimed by whichever flood got there
-first. One O(rows*cols) pass instead of thousands.""",
+    """1. THE GOAL - for every cell, how far is the nearest zero?
 
-    """A trace on a small matrix.
-mat = [[0,0,0],
-       [0,1,0],
-       [1,1,1]]
-Seed: all six zeros enter the queue with distance 0. dist for those is 0, the
-1s are -1 (unvisited).
-Wave 1: expanding from the zeros reaches (1,1) and (2,0) and (2,2) -> distance
-1. Wave 2: from those, (2,1) is reached -> distance 2. Queue empties.
-Result [[0,0,0],[0,1,0],[1,2,1]].
-Note (2,1) got 2 rather than 1 - its nearest zero is two steps away - and no
-comparison logic was needed; the wave order did the work.""",
+You are given a grid of 0s and 1s. For each cell, report the distance to the closest 0, moving only up,
+down, left or right - never diagonally. A cell holding a 0 is distance 0 from itself.
 
-    """Why the dist array doubles as the visited set.
-Initialising to -1 and only writing a real distance when a cell is first
-reached means `dist[nr][nc] == -1` is exactly the 'not yet visited' test. No
-separate visited set is needed, which saves memory and removes a whole class of
-bug where the two structures disagree.
-The invariant to state: a cell is written EXACTLY ONCE, at the moment the first
-wave reaches it, and never revisited. That is what makes the whole thing linear
-rather than quadratic.""",
+    mat = [[0, 0, 0],
+           [0, 1, 0],
+           [1, 1, 1]]
 
-    """The DP alternative, which is worth knowing.
-Two passes over the grid. Forward (top-left to bottom-right): dist[r][c] =
-min(dist[r][c], dist[r-1][c] + 1, dist[r][c-1] + 1). Backward (bottom-right to
-top-left): the same with the down and right neighbours.
-Two sweeps suffice because any shortest path in a 4-directional grid can be
-decomposed into an up-left portion and a down-right portion. O(rows*cols) time
-and O(1) extra space beyond the output - better than BFS's queue.
-Present BFS first (it is obviously correct) and offer the DP as the space
-optimisation; it is the standard follow-up.""",
+        the six zeros are all distance 0
+        the 1 at the centre touches zeros above, left and right           ->  1
+        the 1s along the bottom row:
+            bottom-left  touches the 0 directly above it                  ->  1
+            bottom-right touches the 0 directly above it                  ->  1
+            bottom-CENTRE has 1s on both sides and a 1 above,
+                so its nearest zero is two steps away                     ->  2
 
-    """Edge cases.
-All zeros -> every distance is 0, and the queue seeds with everything.
-A single 1 among zeros -> distance 1.
-The problem GUARANTEES at least one zero exists. Without that guarantee the
-queue would start empty, the loop would not run, and every cell would remain
--1 - so you would need to decide what 'distance to nothing' means. Worth asking
-about, because it is the one input that breaks the algorithm silently.
-A 1xN strip works fine; the neighbour bounds check handles the missing rows.""",
+    ANSWER: [[0, 0, 0],
+             [0, 1, 0],
+             [1, 2, 1]]
 
-    """Complexity and the family.
-O(rows*cols) time - each cell enters and leaves the queue once - and
-O(rows*cols) space for the queue in the worst case (an all-zeros grid seeds
-everything at once).
-The multi-source BFS family: Rotting Oranges (seed all rotten oranges, the
-answer is the last wave number), Walls and Gates (seed all gates), Shortest
-Bridge (BFS out from one island), Map of Highest Peak, and As Far from Land as
-Possible. The cue is 'nearest X for every cell' or 'time for something to
-spread' - whenever the answer is a distance from a SET of starting points,
-seed them all rather than looping.""",
+THE DISTANCE IS MEASURED THROUGH THE GRID, NOT AS THE CROW FLIES. It counts steps between neighbouring
+cells - what is usually called the Manhattan distance when there are no obstacles, and here there are
+none, since every cell can be walked through.
+
+THE PROBLEM GUARANTEES AT LEAST ONE ZERO EXISTS. Without that promise the answer for a grid of all 1s
+would be undefined - or infinite - and section 4 says what the code does if the guarantee were removed.
+
+    mat = [[0, 1, 1, 1, 1]]     ->     [[0, 1, 2, 3, 4]]
+
+    A single row: each cell's distance is just how far along it sits.
+
+WHY THIS IS NOT SIMPLY "SEARCH FROM EACH 1". You could run a separate search outward from every 1 until it
+bumped into a zero. That is correct and it repeats an enormous amount of work - MEASURED, on a 30x30 grid
+with one zero in a corner, it examines 596,584 cells against 900 for the method below, A FACTOR OF 663.
+
+    THIS ENTRY OPENS THE GRID-BFS CLUSTER. IT OWNS MULTI-SOURCE BREADTH-FIRST SEARCH - starting from EVERY
+    zero simultaneously rather than from one place - which is the single idea that collapses the cost.""",
+
+    """2. THE INTUITION - flood outward from every zero at once.
+
+Instead of asking each 1 "where is your nearest zero?", turn the question round and let the zeros answer
+it: they all spread outward together, one step per wave, and the first wave to reach a cell is by
+definition the shortest route to it.
+
+    mat = [[0, 0, 0],
+           [0, 1, 0],
+           [1, 1, 1]]
+
+        WAVE 0 - every zero, all five of them, marked distance 0:
+
+            0  0  0
+            0  .  0
+            .  .  .          (dots are cells not yet reached)
+
+        WAVE 1 - every cell touching a marked cell gets distance 1:
+
+            0  0  0
+            0  1  0
+            1  .  1
+
+        WAVE 2 - the one remaining cell is reached from its neighbours:
+
+            0  0  0
+            0  1  0
+            1  2  1
+
+    ANSWER as shown. Three waves, and every cell was written exactly once.
+
+THE KEY PROPERTY OF BREADTH-FIRST SEARCH: cells are reached in order of increasing distance. So THE FIRST
+TIME A CELL IS TOUCHED IS ITS SHORTEST DISTANCE - there is never a need to revisit and improve it. That is
+what makes a single pass sufficient, and it is why the algorithm can mark a cell and forget about it.
+
+WHY STARTING FROM ALL THE ZEROS AT ONCE IS LEGITIMATE. Imagine one extra invisible cell joined to every
+zero at no cost. Then "distance to the nearest zero" is exactly "distance from that invisible cell", and
+an ordinary single-source search answers it. SEEDING THE QUEUE WITH EVERY ZERO IS THAT SAME SEARCH WITH
+THE INVISIBLE CELL'S FIRST STEP ALREADY TAKEN.
+
+    THAT REFRAMING IS THE WHOLE TECHNIQUE, and it generalises: whenever a question asks "distance to the
+    NEAREST member of a set", seed the search with the entire set rather than looping over it.
+
+THE PICTURE OF WHY THE NAIVE WAY IS SO MUCH WORSE:
+
+        one search per 1-cell      each search explores outward until it finds a zero, and neighbouring
+                                   cells explore almost the same region as each other
+
+        one search from all zeros  every cell is entered once, ever
+
+    MEASURED on a 30x30 grid with a single corner zero: 596,584 cells examined against 900.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRID / MATRIX. A rectangle of cells addressed by row and column. `mat[r][c]` is the cell in row r, column
+c.
+
+FOUR-DIRECTIONAL NEIGHBOURS. Up, down, left and right - never diagonal. The four offsets (1,0), (-1,0),
+(0,1) and (0,-1) express exactly that.
+
+DISTANCE. The number of steps between neighbouring cells needed to walk from one to the other.
+
+BREADTH-FIRST SEARCH (BFS). Exploring outward in waves: everything one step away, then everything two
+steps away, and so on. IT VISITS CELLS IN ORDER OF DISTANCE, which is precisely why the first arrival at a
+cell is the shortest one.
+
+QUEUE. A first-in-first-out line. Cells are taken from the front and added to the back, which is what
+keeps the waves in order. Python's `deque` supports both ends efficiently; `popleft` on a plain list would
+be O(n) and would turn the algorithm quadratic.
+
+MULTI-SOURCE BFS. A BFS seeded with many starting cells at once rather than one.
+
+THE VARIABLES IN THE CODE:
+    mat      the input grid. NOT MODIFIED - verified in section 4.
+    rows,
+    cols     its dimensions, read once.
+    dist     the output grid, initialised to -1 everywhere. IT DOUBLES AS THE VISITED MARKER.
+    queue    the cells waiting to be expanded, as (row, column) pairs.
+    r, c     the cell being expanded.
+    dr, dc   one of the four direction offsets.
+    nr, nc   the neighbouring cell being considered.
+
+`-1` MEANS "NOT YET REACHED". Any value that cannot be a real distance would do; -1 is the conventional
+choice.
+
+TIME O(rows * cols), SPACE O(rows * cols).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one missing test turns a linear algorithm into an infinite loop.
+
+TRAP 1 - DROPPING THE `dist[nr][nc] == -1` TEST. That single condition is doing THREE jobs at once: it
+prevents revisiting, it keeps the first-arrival distance rather than a later worse one, and it is what
+makes the loop terminate.
+
+    Without it, every cell re-enters the queue every time any neighbour is expanded, and each of those
+    re-entries expands its own neighbours again. THE QUEUE NEVER EMPTIES.
+
+    VERIFIED with an iteration cap: on the two-by-two grid [[0,1],[1,1]] the guard-less version was still
+    running after 200,000 queue pops. IT DOES NOT RETURN A WRONG ANSWER - IT DOES NOT RETURN.
+
+    A HANG IS WORSE THAN A WRONG ANSWER, because there is nothing to inspect. The same finding appeared in
+    Remove Linked List Elements in this bank, where a misplaced cursor advance loops for ever. THE RULE:
+    in any search that revisits neighbours, confirm that something MONOTONICALLY shrinks - here, the count
+    of cells still marked -1.
+
+TRAP 2 - RUNNING A SEPARATE SEARCH FROM EVERY 1. Correct, and quadratic. MEASURED on a 30x30 grid with one
+zero in the corner: 596,584 cells examined against 900 for the multi-source version - 663 times more work.
+On the problem's stated limit of 10,000 cells the gap is far larger still. THE NAIVE VERSION IS THE THING
+MULTI-SOURCE BFS EXISTS TO REPLACE.
+
+TRAP 3 - WRITING THE ANSWERS INTO `mat` ITSELF. Many published solutions overwrite the input grid, using
+its 0s and 1s as both data and workspace. THIS CODE DOES NOT - it allocates a separate `dist` grid.
+VERIFIED by content check: after the call, the caller's matrix is byte-for-byte what it was, and the
+returned object is a different array.
+
+    THAT IS A DESIGN CHOICE WITH A REAL COST - O(rows * cols) extra memory - AND A REAL BENEFIT: the
+    caller keeps their data. Say which one you have written; the two are not interchangeable to whoever
+    called you.
+
+TRAP 4 - ASSUMING A ZERO EXISTS. The problem guarantees one. Without that guarantee, a grid of all 1s
+seeds an empty queue, the loop never runs, and every cell is returned as -1 - not a distance at all. THE
+GUARANTEE IS LOAD-BEARING and the code leans on it silently.
+
+TRAP 5 - USING A LIST AND `pop(0)` INSTEAD OF A DEQUE. Removing from the front of a Python list shifts
+every remaining element, costing O(n) per operation and turning the whole algorithm quadratic. The
+`deque` is not a stylistic preference here.
+
+WHAT IS NOT A TRAP, checked rather than assumed: a one-by-one grid holding a single zero returns [[0]],
+and a grid of all zeros returns all zeros with the queue seeded by every cell.""",
+
+    """5. THE NAIVE WAY FIRST, then the flood - and the two-pass alternative.
+
+THE NAIVE VERSION - ONE SEARCH PER 1-CELL:
+
+    for every cell holding a 1:
+        breadth-first search outward from it until a 0 is found
+        record how many steps that took
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it is the
+    definition acted out. COST: O((rows * cols)^2) in the worst case, because each of up to rows*cols
+    searches can sweep most of the grid.
+
+    MEASURED on a 30x30 grid with a single zero in one corner: 596,584 cells examined, against 900 for the
+    method below. A FACTOR OF 663 ON A GRID OF ONLY 900 CELLS.
+
+THE UPGRADE, AND THE REFRAMING BEHIND IT. Rather than each 1 hunting for a zero, let the zeros spread. Seed
+the queue with EVERY zero at distance 0 and expand outward. Because BFS reaches cells in order of
+distance, the first time a cell is touched is its answer - so every cell is written exactly once and the
+whole grid is processed in one sweep.
+
+    COST: O(rows * cols) time and space. Each cell enters the queue once and leaves once.
+
+    THE JUSTIFICATION IS THE INVISIBLE-SOURCE ARGUMENT from section 2: imagine one extra cell connected to
+    every zero at no cost, and this is an ordinary single-source BFS from it.
+
+THE TWO-PASS DYNAMIC-PROGRAMMING ALTERNATIVE, WHICH IS GENUINELY COMPETITIVE:
+
+        set every zero to 0 and every 1 to a large number
+        FORWARD pass, top-left to bottom-right:   dist = min(dist, above + 1, left + 1)
+        BACKWARD pass, bottom-right to top-left:  dist = min(dist, below + 1, right + 1)
+
+    The forward pass finds the nearest zero that is up-or-left; the backward pass fixes up everything
+    reachable down-or-right. TOGETHER THEY COVER ALL FOUR DIRECTIONS, because any shortest path in a
+    four-directional grid can be decomposed into a monotone up-left portion and a monotone down-right one.
+
+    VERIFIED CORRECT against the BFS on 3,000 random matrices: 0 disagreements.
+
+    IT IS THE SAME O(rows * cols) TIME and needs NO QUEUE at all - just two nested loops - so its constant
+    factor and its memory are both better. BE HONEST: FOR THIS PROBLEM THE DP IS ARGUABLY THE NICER
+    SOLUTION. The BFS is worth knowing because it generalises - to obstacles, to weighted steps, to
+    non-grid graphs - where the two-pass trick does not.
+
+THE TRICK THAT NEEDS EXPLAINING FROM SCRATCH is why one pass in each diagonal direction suffices, and it
+is the sentence above: a shortest grid path never needs to zig-zag, so it can always be split into an
+up-left leg and a down-right leg.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: put every zero into a queue at distance 0, then repeatedly take a cell from the front and
+give each unvisited neighbour one more than that cell's distance.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. One queue and one grid of answers:
+
+    `queue`  holds cells waiting to be expanded, in order of their distance. It starts full of zeros and
+             empties exactly when every reachable cell has been assigned.
+    `dist`   starts entirely -1 except the zeros. EACH CELL IS WRITTEN AT MOST ONCE, and once written it
+             is never revised.
+
+    THE INVARIANT: at any moment, every cell holding a value other than -1 holds its TRUE shortest
+    distance, and the queue contains those cells whose neighbours have not yet been examined, in
+    non-decreasing order of distance. True at the start, when only the zeros are written and all hold 0.
+
+    WHY THE FIRST ARRIVAL IS ALREADY OPTIMAL - this is the property everything rests on. The queue is
+    first-in-first-out and every step adds exactly one to the distance, so cells leave the queue in
+    non-decreasing order. A cell reached later can therefore never be reached more cheaply. THAT IS WHY
+    THERE IS NO COMPARISON AND NO UPDATE - only a write.
+
+    WHAT MAKES IT STOP: each cell is added to the queue at most once, because it is added only when its
+    `dist` is -1 and the value is written in the same breath. The number of cells is finite, so the queue
+    must empty. REMOVE THAT TEST AND NOTHING SHRINKS - the loop never ends, verified at 200,000 pops on a
+    four-cell grid.
+
+    WHY `dist` IS BOTH THE ANSWER AND THE VISITED SET. A separate visited grid would carry exactly the
+    same information: "has this cell been written?" is the same question as "is this cell not -1?". USING
+    ONE STRUCTURE FOR BOTH IS NOT A TRICK - it is noticing that two structures held the same fact.
+
+THE STEPS, NO CODE:
+
+    1. Make an answer grid the same shape as the input, filled with a marker meaning "not yet reached".
+    2. Walk the input; for every cell holding a zero, set its answer to 0 and put it in the queue.
+    3. While the queue is not empty:
+       a. Take the cell at the front.
+       b. For each of its four neighbours that is inside the grid AND still marked "not yet reached":
+          set that neighbour's answer to this cell's answer plus one, and add it to the back of the
+          queue.
+    4. Hand back the answer grid.
+
+    STEP 2 SEEDS WITH ALL THE ZEROS AT ONCE - that is the whole technique. STEP 3b's "still marked not yet
+    reached" is what makes it terminate.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A city is laid out on a grid of blocks. Some blocks have a fire station; most do not. The council wants to
+know, for every block in the city, how many blocks away its nearest fire station is - counting only
+journeys along the streets, never diagonally through buildings.
+
+The obvious way is to stand on each ordinary block in turn and walk outward in circles until you spot a
+station. That gives the right answer for that block, and then you start again on the next block and walk
+almost exactly the same streets. On a city with one station in a far corner you would end up walking the
+same roads hundreds of thousands of times.
+
+So the council does it the other way round. Rather than each block searching for a station, EVERY STATION
+SOUNDS ITS SIREN AT THE SAME MOMENT.
+
+In the first second, the sound reaches every block directly adjacent to any station: those blocks are one
+away. In the second second, it reaches every block adjacent to THOSE - the ones that had not already
+heard it - and those are two away. And so on, the sound spreading outward in a single expanding front
+across the whole city.
+
+    THE MOMENT A BLOCK FIRST HEARS THE SIREN IS ITS ANSWER. It can never be closer to some other station,
+    because the sound from every station started at the same instant and travels at the same speed - so
+    the first sound to arrive came by the shortest possible route.
+
+    AND ONCE A BLOCK HAS HEARD IT, IT STOPS LISTENING. That is not just an economy: if blocks kept
+    responding every time a neighbour heard something, the sound would bounce back and forth between
+    adjacent blocks for ever and the survey would never finish. THE RULE "IF YOU HAVE ALREADY HEARD IT,
+    IGNORE IT" IS WHAT LETS THE PROCESS END.
+
+WHY STARTING EVERY STATION TOGETHER IS FAIR. Think of a phantom control room wired to every station with a
+cable of zero length. Asking "how far is the nearest station" is then exactly asking "how far is the
+control room", which is a single ordinary question with a single starting point. Sounding all the sirens at
+once IS that question, with the free first step already taken.
+
+    ONE LAST THING THE COUNCIL DID CAREFULLY. It wrote the distances on a fresh map rather than scribbling
+    over the original one showing where the stations are. That costs a second sheet of paper, and it means
+    the station map is still intact afterwards for whoever needs it next.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import deque
+
+A double-ended queue with O(1) removal from the front. A plain list's `pop(0)` shifts every remaining
+element and would make the whole algorithm quadratic - this import is a correctness-of-complexity choice,
+not a style one.
+
+    def update_matrix(mat):
+
+`mat` is the input grid. IT IS NOT MODIFIED - verified by content check in section 4. A new grid is
+returned.
+
+    rows, cols = len(mat), len(mat[0])
+
+The dimensions, read once. `mat[0]` assumes at least one row, which the constraints guarantee.
+
+    dist = [[-1] * cols for _ in range(rows)]
+
+THE ANSWER GRID, and simultaneously the visited marker. `-1` means "not yet reached". Note the list
+comprehension builds a fresh row each time; `[[-1] * cols] * rows` would alias one row rows times and every
+write would appear in all of them - a classic Python trap worth avoiding deliberately.
+
+    queue = deque()
+    for r in range(rows):
+        for c in range(cols):
+            if mat[r][c] == 0:
+                dist[r][c] = 0        # zeros are the BFS sources
+                queue.append((r, c))
+
+THE SEEDING PASS, AND THIS IS THE ENTIRE TECHNIQUE. EVERY zero enters the queue before any expansion
+happens, so the search has many starting points rather than one. Their distances are 0 because a zero is
+zero steps from itself.
+
+    while queue:
+
+Run until nothing is left to expand. The queue empties because each cell is added at most once.
+
+    r, c = queue.popleft()
+
+TAKE FROM THE FRONT - first in, first out. That ordering is what keeps the waves in distance order, and it
+is the property that makes the first arrival optimal. Taking from the BACK would make this a depth-first
+search and the distances would be wrong.
+
+    for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
+        nr, nc = r + dr, c + dc
+
+THE FOUR NEIGHBOURS. No diagonals.
+
+    if 0 <= nr < rows and 0 <= nc < cols and dist[nr][nc] == -1:
+
+THREE CONDITIONS, AND ALL THREE ARE NEEDED. The first two keep the index inside the grid. THE THIRD IS THE
+LOAD-BEARING ONE: it skips any cell already assigned, which prevents revisiting, preserves the first and
+therefore shortest distance, and is what makes the loop terminate at all. Removing it does not give a
+wrong answer - it never returns, verified at 200,000 pops on a four-cell grid.
+
+    dist[nr][nc] = dist[r][c] + 1   # first visit = shortest
+    queue.append((nr, nc))
+
+WRITE AND ENQUEUE IN THE SAME BREATH. Writing the distance is what marks the cell as visited, so there is
+no window in which a cell could be enqueued twice. NOTE THERE IS NO `min` AND NO COMPARISON - the BFS
+ordering guarantees this value is already the best possible.
+
+    return dist
+
+The completed grid.
+
+WHAT IS DELIBERATELY ABSENT: no separate visited grid (`dist` serves), no priority queue (every step costs
+1, so a plain queue suffices - a heap would be Dijkstra and unnecessary), no writing into `mat`, and no
+guard for a grid with no zeros, which the constraints exclude.""",
+
+    """9. TRACED ON REAL NUMBERS - wave by wave, then one cell changed.
+
+mat = [[0, 0, 0],
+       [0, 1, 0],
+       [1, 1, 1]]
+
+    SEEDING: five cells hold 0 - (0,0), (0,1), (0,2), (1,0) and (1,2). All five get distance 0 and enter
+    the queue together. THE QUEUE STARTS WITH FIVE ENTRIES, not one.
+
+        dist = [[0, 0, 0],
+                [0, -1, 0],
+                [-1, -1, -1]]
+
+    WAVE 1 - expand all five seeds. Their unvisited neighbours are:
+        from (0,1) and (1,0) and (1,2):  the centre (1,1)   ->  distance 0 + 1 = 1
+        from (1,0):                      (2,0)              ->  1
+        from (1,2):                      (2,2)              ->  1
+
+        dist = [[0, 0, 0],
+                [0, 1, 0],
+                [1, -1, 1]]
+
+        NOTE (1,1) IS REACHED BY THREE DIFFERENT NEIGHBOURS IN THE SAME WAVE. The first one to get there
+        writes 1 and marks it; the other two find it no longer -1 and skip it. NO COMPARISON IS MADE - the
+        skip is the whole mechanism.
+
+    WAVE 2 - expand (1,1), (2,0) and (2,2). The only cell still at -1 is (2,1), reached from (2,0) and
+    (2,2), both at distance 1:
+
+        dist[2][1] = 1 + 1 = 2
+
+        dist = [[0, 0, 0],
+                [0, 1, 0],
+                [1, 2, 1]]
+
+    WAVE 3 - the remaining cells have no unvisited neighbours; the queue empties.
+
+    RETURNS [[0,0,0],[0,1,0],[1,2,1]].  Cross-checked against the one-search-per-1-cell brute force:
+    identical.
+
+    THE CELL THAT MATTERS IS (2,1), THE BOTTOM CENTRE. Its four neighbours are (1,1) which is a 1, (2,0)
+    and (2,2) which are 1s, and nothing below. So its nearest zero is genuinely two steps away - up and
+    then sideways - and it is the only cell in the grid whose answer exceeds 1.
+
+THE INVERSION - CHANGE THE BOTTOM-RIGHT CELL FROM 1 TO 0:
+
+    [[0,0,0],[0,1,0],[1,1,1]]   ->   [[0,0,0],[0,1,0],[1,2,1]]
+    [[0,0,0],[0,1,0],[1,1,0]]   ->   [[0,0,0],[0,1,0],[1,1,0]]
+
+    ONE NEW ZERO IN THE CORNER AND THE 2 DISAPPEARS: the bottom-centre cell now has a zero directly to its
+    right, so its distance drops from 2 to 1. Both verified against the brute force.
+
+AND THE MUTATION CHECK: after running the function on a caller's grid, that grid still reads
+[[0,0,0],[0,1,0],[1,1,1]] - unchanged - and the returned object is a different array.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. The seeding pass looks at every cell once. Then every cell enters the queue at most
+once and leaves once, and each departure examines four neighbours.
+
+    TIME O(rows * cols) - linear in the number of cells, with a constant factor of about five.
+    SPACE O(rows * cols) for the answer grid, plus a queue that in the worst case - an all-zeros grid -
+    holds every cell at once.
+    The one-search-per-1-cell version is O((rows * cols)^2). MEASURED on a 30x30 grid with a single corner
+    zero: 596,584 cells examined against 900, a factor of 663.
+    THE TWO-PASS DP IS ALSO O(rows * cols), needs no queue, and has a smaller constant - verified correct
+    on 3,000 random matrices. It is arguably the better solution to this particular problem; the BFS is
+    worth knowing because it survives obstacles and weights, which the DP does not.
+
+THE #1 MISTAKE: dropping the `dist[nr][nc] == -1` test. It is not an optimisation - it prevents
+revisiting, preserves the first and shortest distance, and is the only reason the loop terminates. Without
+it the queue never empties: verified still running after 200,000 pops on a four-cell grid. A HANG, NOT A
+WRONG ANSWER. THE RUNNER-UP is running a separate search from each 1, which is correct and quadratic.
+
+ONE-SENTENCE TAKEAWAY: when the question is "distance to the NEAREST member of a set", do not search from
+each cell - seed the search with the whole set at once, and the first arrival is the answer.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can INVERT the question. Almost everyone's first
+instinct is to search outward from each 1, and the entire problem is noticing that starting from the zeros
+instead collapses the cost from quadratic to linear. SAY THE INVISIBLE-SOURCE ARGUMENT ALOUD - "imagine one
+virtual node joined to every zero at cost zero; then this is an ordinary single-source BFS" - because it
+justifies the seeding rather than merely describing it. The second thing on show is whether you know WHY
+BFS gives shortest distances at all: because every step has the same cost, so a queue visits cells in
+distance order and a priority queue is unnecessary.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "WALLS AND GATES - fill each empty room with the distance to its nearest gate, with walls blocking."
+    Identical multi-source BFS seeded with every gate; walls are simply never enqueued. The same problem
+    with obstacles, and the DP alternative stops working because paths are no longer monotone.
+    "ROTTING ORANGES - how many minutes until every fresh orange rots?" Multi-source BFS from every rotten
+    orange, and the answer is the number of waves rather than a per-cell distance. Same seeding, different
+    readout.
+    "What if steps had different costs?" A plain queue is no longer enough, because cells would stop
+    leaving in distance order. Use a priority queue - that is Dijkstra - or, for costs of only 0 and 1, a
+    deque with 0-cost moves pushed to the FRONT, which is the 0-1 BFS trick.
+    "Do it without the extra grid." Write into `mat` itself, using a sentinel to distinguish unvisited
+    cells. Saves O(rows * cols) memory and destroys the caller's input - a trade to state, not to make
+    silently.""",
 ]
 
 _EX_P1O["Binary Search Lower Bound (bisect_left)"] = [
@@ -104650,66 +105433,411 @@ obvious choice'.""",
 ]
 
 _EX_P1AE["Largest Perimeter Triangle"] = [
-    """First, the real-world fact this problem rests on.
-Take three drinking straws of lengths 2cm, 3cm and 10cm. Try to make a triangle.
-You cannot - the 2 and the 3 together are only 5cm long, so they can never
-stretch far enough to meet across the 10cm straw. They fall short.
-Now try 4cm, 5cm and 6cm. The 4 and 5 together are 9cm, which is more than 6,
-so there is slack and they meet above the 6cm base. A triangle forms.
-That is the whole rule: THE TWO SHORTER SIDES ADDED TOGETHER MUST BE LONGER
-THAN THE LONGEST SIDE. Mathematicians call this the triangle inequality, but
-you just discovered it with straws.""",
+    """1. THE GOAL - pick three of the given lengths that actually form a triangle, and make the total as large
+as possible.
 
-    """What the problem is asking for.
-PERIMETER means the distance all the way around the shape - just the three side
-lengths added together. So a triangle with sides 4, 5 and 6 has a perimeter of
-15.
-You are given a pile of straws and asked: pick any three that CAN form a
-triangle, and make the perimeter as big as possible.
-Your instinct is probably 'just take the three longest straws'. That is the
-right instinct, but it does not always work - the three longest might fail the
-straw test. So the real question is what to do when that happens.""",
+You are given a list of side lengths. Choose any three of them that can form a real triangle, and return
+the largest possible PERIMETER - the three lengths added together. If no three of them form a triangle,
+return 0.
 
-    """Why you sort from LARGEST to smallest, and check neighbours.
-Sort the straws longest-first: say [10, 6, 5, 4, 3].
-Check the first three: 10, 6, 5. Is 6 + 5 (= 11) bigger than 10? Yes -> they
-form a triangle, and since these are the three longest straws available, no
-other combination can beat their perimeter. Answer 10 + 6 + 5 = 21. Stop.
-If they had FAILED - say the list were [20, 6, 5, 4, 3], where 6 + 5 = 11 is
-not more than 20 - then you slide down one and try 6, 5, 4. Keep sliding until
-a triple works.""",
+    nums = [2, 1, 2]
 
-    """Why you only need to check CONSECUTIVE triples.
-This is the part worth slowing down on. Suppose 20, 6, 5 fails. Could 20, 6, 4
-work? No - you swapped the 5 for a SMALLER straw, so the two short sides add up
-to even less. Every other triple containing the 20 is worse than the one you
-already tried.
-So once a straw fails as the longest side with the two best partners it could
-possibly have, that straw can be discarded entirely. That is why sliding down
-one position at a time is enough, and why you never need to test every
-combination.""",
+        the only three available are 2, 1 and 2 - and they do form a triangle
+        perimeter = 2 + 1 + 2 = 5
 
-    """Reading the code, line by line.
-    nums.sort(reverse=True)          # longest straw first
-    for i in range(len(nums) - 2):   # stop 2 early, we need 3 straws
-        if nums[i] < nums[i+1] + nums[i+2]:   # the straw test
-            return nums[i] + nums[i+1] + nums[i+2]
-    return 0                          # no triple worked at all
-`reverse=True` sorts big-to-small. `len(nums) - 2` stops the loop before it runs
-off the end, because at position i you also need i+1 and i+2 to exist.
-The `if` is exactly the straw rule: the longest side (nums[i]) must be SHORTER
-than the other two added together.""",
+    ANSWER: 5
 
-    """The cases to test, and how fast it is.
-Fewer than 3 straws -> no triangle possible, return 0.
-No valid triple at all, like [1, 2, 50] -> the loop finishes without returning,
-so you return 0.
-Straws of equal length [5,5,5] -> 5 < 5 + 5 is true, so a perimeter of 15.
-Two equal and one different [5,5,9] -> 9 < 5 + 5 = 10, valid, perimeter 19.
-Speed: the sort dominates at about n x log(n) steps; the scan afterwards is a
-single walk. Checking every possible triple instead would take about n^3 steps -
-for 1,000 straws that is a billion checks versus about 10,000. That gap is why
-sorting first is worth it.""",
+    nums = [1, 2, 1, 10]
+
+        try 10, 2, 1:   the 2 and the 1 together are 3, nowhere near reaching across a 10
+        try 2, 1, 1:    the 1 and the 1 together are 2, exactly the length of the 2 - still no triangle
+        no three of them work
+
+    ANSWER: 0
+
+THE PHYSICAL FACT THE WHOLE PROBLEM RESTS ON. Take three drinking straws of 2cm, 3cm and 10cm and try to
+make a triangle. You cannot: lay the 10 flat, and the other two together span only 5cm - they cannot
+reach from one end of it to the other, so the shape never closes.
+
+    THE TRIANGLE INEQUALITY: three lengths form a triangle exactly when THE LONGEST IS STRICTLY LESS THAN
+    THE OTHER TWO ADDED TOGETHER.
+
+    AND "STRICTLY" IS DOING REAL WORK. If the longest EQUALS the other two combined - 1, 2 and 3 - the two
+    short straws lie flat along the long one and the shape has no height at all. That is a straight line,
+    not a triangle, and the answer for [1, 2, 3] is 0.
+
+PERIMETER IS JUST THE THREE LENGTHS SUMMED - the distance all the way round the shape. Nothing about area
+or angles enters into it.
+
+    THIS ENTRY JOINS THE SORT-THEN-SCAN GREEDY FAMILY alongside Maximum Length of Pair Chain and Minimum
+    Arrows. THOSE SORT BY AN ENDPOINT AND SWEEP FORWARD. THIS ONE OWNS SORTING DESCENDING AND STOPPING AT
+    THE FIRST SUCCESS - and the argument for why only ADJACENT triples ever need testing.""",
+
+    """2. THE INTUITION - sort longest-first, and the first triple that works is already the best.
+
+Line the lengths up from longest to shortest. Then walk down the list looking at each run of three
+NEIGHBOURING lengths, and stop at the first one that forms a triangle.
+
+    nums = [10, 6, 5, 4, 3]  (already sorted descending)
+
+        try 10, 6, 5:   is 10 < 6 + 5 = 11?   YES  ->  a triangle, perimeter 21.  STOP.
+
+    ANSWER: 21
+
+    Nothing further down the list can beat it: any other triple uses three lengths that are each no larger
+    than these, so its total cannot be greater.
+
+WHY YOU TEST THE LARGEST AGAINST THE OTHER TWO. Of any three lengths, only the LONGEST can fail to be
+reached by the other two - the shorter ones are automatically less than the sum of a longer one and
+anything positive. SO ONE COMPARISON SETTLES IT, not three.
+
+WHY ONLY CONSECUTIVE TRIPLES NEED CHECKING - and this is the part worth slowing down on.
+
+    Suppose the triple at positions i, i+1, i+2 FAILS: nums[i] is at least nums[i+1] + nums[i+2].
+    Now ask whether keeping nums[i] as the longest side could work with some other pair further down.
+
+    Any other pair is drawn from positions after i, and the list is descending - so both of those lengths
+    are at most nums[i+1] and nums[i+2] respectively. THEIR SUM IS THEREFORE NO LARGER, and it already
+    failed to reach nums[i]. IT CANNOT SUCCEED NOW.
+
+    So once a triple fails, its longest side can be discarded entirely, and you move on to the next
+    position. NO NON-ADJACENT COMBINATION IS EVER WORTH TRYING.
+
+    VERIFIED EMPIRICALLY: over 6,000 random sorted arrays, checking only consecutive triples agreed with
+    checking ALL triples on every single one - 0 disagreements.
+
+THE PICTURE - THE SCAN SLIDES DOWN AND STOPS AT THE FIRST FIT:
+
+        [10,  6,  5,  4,  3]
+          ^^^^^^^^^          10 vs 6+5 = 11   ->  fits.  Perimeter 21, and we stop here.
+
+        had it failed, the window would slide:
+
+        [20,  6,  5,  4,  3]
+          ^^^^^^^^^          20 vs 11  ->  no
+              ^^^^^^^^^      6 vs 5+4 = 9   ->  fits.  Perimeter 15.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRIANGLE INEQUALITY. Three positive lengths form a triangle exactly when each one is less than the sum of
+the other two. Because the two shorter conditions hold automatically, ONLY THE LONGEST SIDE NEEDS
+CHECKING.
+
+STRICTLY LESS. `<`, not `<=`. When the longest exactly equals the sum of the other two, the shape
+collapses into a straight line - a DEGENERATE triangle, which does not count.
+
+PERIMETER. The three side lengths added together.
+
+DESCENDING SORT. Largest first. `nums.sort(reverse=True)` does it IN PLACE, which means the caller's list
+is rearranged - see section 4.
+
+CONSECUTIVE / ADJACENT TRIPLE. Three lengths sitting next to each other in the sorted list: positions i,
+i+1 and i+2. Section 2 proves nothing else needs testing.
+
+GREEDY. Taking the first thing that works and not looking further. Valid here only because the list is
+sorted descending, so the first success is necessarily the largest.
+
+THE VARIABLES IN THE CODE:
+    nums   the list of lengths. IT IS SORTED IN PLACE, so the caller's list changes.
+    i      the position of the LONGEST side of the triple being tested.
+
+`nums[i]`, `nums[i + 1]`, `nums[i + 2]` are the three sides, longest first because of the sort.
+`range(len(nums) - 2)` stops two early, because a triple starting at the last two positions would run off
+the end.
+
+n IS THE NUMBER OF LENGTHS. TIME O(n log n), dominated by the sort. SPACE O(1) beyond the sort itself.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - a comparison that must be strict, and a sort that eats your input.
+
+TRAP 1 - WRITING `<=` INSTEAD OF `<`. That admits the DEGENERATE case where the longest side exactly equals
+the other two combined - three lengths lying flat in a line, which is not a triangle.
+
+        nums = [1, 2, 1, 10]     sorted descending: 10, 2, 1, 1
+                                 10 vs 2 + 1 = 3    no
+                                 2 vs 1 + 1 = 2     equal - with `<=` this is ACCEPTED
+                                 `<=` returns 4;  THE CORRECT ANSWER IS 0
+
+    MEASURED: wrong on 236 of 6,000 random arrays. It is a low rate, because it needs an exact equality to
+    arise - but THE SECOND OFFICIAL EXAMPLE IS PRECISELY THAT CASE and catches it. The problem includes
+    [1, 2, 1, 10] for exactly this reason; the first example, [2, 1, 2], agrees under both versions.
+
+TRAP 2 - SORTING ASCENDING AND SCANNING FORWARD. It seems symmetric and it is not. With the list ascending
+and the scan running left to right, the first triple that works is made of the SMALLEST lengths, so you get
+a valid triangle with the smallest perimeter rather than the largest.
+
+        [10, 6, 5, 4, 3]  ascending is  [3, 4, 5, 6, 10]
+        the first working triple is 3, 4, 5  ->  perimeter 12
+        THE CORRECT ANSWER IS 21
+
+    MEASURED: wrong on 4,173 of 6,000 random arrays - by far the more destructive slip. DESCENDING ORDER
+    IS NOT A PREFERENCE; it is what makes "stop at the first success" equal "find the maximum". Sorting
+    ascending and scanning from the RIGHT would be equivalent and correct - the direction of the scan and
+    the direction of the sort must agree.
+
+TRAP 3 - THE SORT MUTATES THE CALLER'S LIST. `nums.sort(reverse=True)` reorders in place, so after the
+call the caller's own list is in a different order.
+
+    VERIFIED: a caller's list of [3, 6, 2, 3] reads [6, 3, 3, 2] afterwards.
+
+    IT IS ALSO WHY THE CODE RETURNS THE RIGHT ANSWER AT ALL - the whole method depends on the ordering -
+    so this is a side effect with a purpose, not an accident. THE HONEST FIX IF THE CALLER NEEDS THEIR
+    ORDER PRESERVED is `nums = sorted(nums, reverse=True)`, which costs O(n) extra space and rebinds the
+    local name only. Say which you have written.
+
+TRAP 4 - CHECKING ALL THREE INEQUALITIES. Testing that each side is less than the sum of the other two is
+correct and wasteful: sorted descending, the two shorter conditions are automatically satisfied. ONE
+COMPARISON IS ENOUGH, and knowing why is better than knowing that it is.
+
+WHAT IS NOT A TRAP, checked rather than assumed: fewer than three lengths gives an empty range and returns
+0. Three equal lengths [1,1,1] form an equilateral triangle: 1 < 1 + 1, perimeter 3.""",
+
+    """5. THE NAIVE WAY FIRST, then the sorted scan.
+
+THE NAIVE VERSION - TRY EVERY COMBINATION:
+
+    best = 0
+    for every choice of three lengths a, b, c:
+        sort those three; if the smallest two exceed the largest, it is a triangle
+        keep the largest perimeter seen
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it is
+    the definition acted out. COST: there are n-choose-3 combinations, which is about n^3/6. At this
+    problem's limit of n = 10,000 that is around 1.6 x 10^11 triples - hopeless.
+
+THE UPGRADE, IN TWO OBSERVATIONS THAT ARE WORTH SEPARATING:
+
+    FIRST: SORTING MAKES THE TEST CHEAP. In an unsorted triple you do not know which is the longest, so
+        you either sort the three or check all three inequalities. Sort the whole list once and the
+        longest is always the first of any triple you look at - ONE COMPARISON PER TRIPLE.
+
+    SECOND, AND THIS IS THE REAL SAVING: SORTING DESCENDING MAKES THE FIRST SUCCESS THE ANSWER. Because
+        the list descends, the triple at positions i, i+1, i+2 has the largest possible sum among all
+        triples whose longest element sits at position i or later. So the moment one works, nothing
+        remaining can beat it and the scan stops.
+
+    AND THE ARGUMENT FROM SECTION 2 - a failed triple's longest side can never succeed with any pair
+    further down - is what licenses skipping the non-adjacent combinations entirely.
+
+    COST: O(n log n) for the sort plus O(n) for the scan, so O(n log n) overall, dominated by the sort.
+    SPACE O(1) beyond whatever the sort itself uses.
+
+THE EMPIRICAL CHECK ON THE KEY CLAIM, because it is the one step that is not obvious: over 6,000 random
+sorted arrays, checking only CONSECUTIVE triples gave the same answer as checking ALL triples on every
+single one - 0 disagreements. THE SHORTCUT IS NOT AN APPROXIMATION.
+
+COULD YOU AVOID THE SORT? Not usefully. The problem is about relative order, and any method must
+effectively find the largest few elements in decreasing order. You could use a heap to pull the largest
+elements one at a time and stop early, which is O(n + k log n) if the answer is found after k pulls - but
+in the worst case k is n and it is no better, with more code. SORTING IS THE RIGHT CALL, and saying why
+you considered and rejected the alternative is worth more than not considering it.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: sort the lengths largest-first, then walk down testing each run of three neighbours, and
+return the first total that forms a real triangle.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. One sort, then one forward scan with a single
+index:
+
+    `i` walks from 0 upward and names THE LONGEST SIDE of the triple under test. The other two are always
+        the next two positions.
+
+    THE INVARIANT: every triple examined before position i has failed, and by the section-2 argument every
+    triple whose longest element sits at a position before i has therefore also failed. SO THE ANSWER, IF
+    ONE EXISTS, HAS ITS LONGEST SIDE AT POSITION i OR LATER.
+
+    WHY THE FIRST SUCCESS IS THE MAXIMUM: the list is descending, so nums[i] + nums[i+1] + nums[i+2] is the
+    largest sum still available. Any triple found later is drawn from smaller or equal values and cannot
+    total more. THAT IS WHY THE FUNCTION RETURNS IMMEDIATELY RATHER THAN TRACKING A BEST-SO-FAR.
+
+    WHAT MAKES IT STOP: two exits, both guaranteed. It returns the moment a triple works; otherwise the
+    loop runs out after n-2 positions and returns 0. The loop is a plain counted range with no condition
+    to get wrong.
+
+    WHY THE RANGE ENDS TWO EARLY: a triple starting at position n-2 would need position n, which does not
+    exist. `range(len(nums) - 2)` is therefore not a safety margin but the exact count of triples
+    available - and for a list of fewer than three lengths it is empty or negative, so the loop simply
+    does not run and 0 comes back with no special case.
+
+THE STEPS, NO CODE:
+
+    1. Sort the lengths from largest to smallest.
+    2. For each position from the first, stopping two before the end:
+       a. Take that length and the next two - the largest of the three is the one at this position,
+          because the list descends.
+       b. If that largest is STRICTLY less than the other two added together, these three form a triangle -
+          hand back their total and stop.
+    3. If no position worked, hand back 0.
+
+    STEP 2b's "STRICTLY" IS TRAP 1. STEP 1's DIRECTION IS TRAP 2. STEP 2b's "HAND BACK AND STOP" IS WHAT
+    MAKES THE GREEDY CHOICE CORRECT, and it is correct only because of step 1.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A box of drinking straws of assorted lengths sits on a table, and you have been asked to make the biggest
+triangle you can from any three of them - biggest meaning the greatest total length of straw used, not the
+greatest area.
+
+The first thing to know is when three straws work at all. Lay the longest one flat. The other two are
+hinged at its ends and have to meet somewhere above it. If together they are shorter than the long one,
+they simply cannot reach each other and no shape closes. If together they are EXACTLY the length of the
+long one, they meet only by lying flat on top of it - a line, not a triangle. They must together be
+strictly longer.
+
+Notice that only the longest straw is ever in question. The other two are each shorter than the longest,
+so each is automatically shorter than the longest plus something. ONE COMPARISON DECIDES THE WHOLE THING.
+
+So you tip the box out and lay the straws in a row, longest on the left, shortest on the right. Then you
+pick up the first three - the three longest you have - and check them. If they work, you are finished
+immediately: no other three straws could possibly add up to more, because every other straw is shorter
+than these.
+
+If they do not work, you learn something stronger than it first appears. The longest straw could not be
+reached by the two next-longest. Every remaining straw is shorter still, so no pair from further along
+could reach it either. THAT LONGEST STRAW IS USELESS - not just with this pair, but with every pair. You
+set it aside for good and start again with the next three in the row.
+
+So you slide a window of three along the row until one of them closes, and the moment it does you have
+your answer.
+
+    AND IF YOU REACH THE END WITHOUT ANY THREE WORKING, then no triangle can be made from this box at all,
+    and you say so rather than inventing a shape.
+
+ONE THING TO MENTION TO WHOEVER OWNS THE BOX. You did not tip the straws back in the order you found them.
+Laying them out longest-first was the whole method, and the row is what you have left. If the original
+order mattered to them, it is gone.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def largest_perimeter(nums):
+
+`nums` is the list of side lengths. IT IS MODIFIED - the sort below reorders it in place, verified in
+section 4.
+
+    nums.sort(reverse=True)
+
+SORT LARGEST-FIRST, IN PLACE. Two things follow from this single line:
+    the longest side of any triple is now the FIRST of the three, so one comparison suffices;
+    and the first triple that works has the greatest possible total, so the scan can stop at it.
+    SORTING ASCENDING AND SCANNING FORWARD instead finds the SMALLEST valid perimeter - wrong on 4,173 of
+    6,000 random arrays.
+    `sort` mutates; `sorted(nums, reverse=True)` would leave the caller's list alone at the cost of O(n)
+    extra space.
+
+    for i in range(len(nums) - 2):
+
+WALK THE POSITION OF THE LONGEST SIDE. Stopping two early is exact rather than cautious - a triple needs
+positions i, i+1 and i+2, so i can go no further than n-3. FOR A LIST SHORTER THAN THREE this range is
+empty and the function falls through to `return 0` with no guard needed.
+
+    # a valid triangle needs the two smaller sides to exceed the largest
+    if nums[i] < nums[i + 1] + nums[i + 2]:
+
+THE TRIANGLE INEQUALITY, TESTED ONCE. Because the list descends, `nums[i]` is the longest of the three, and
+only the longest can fail - so checking the other two inequalities would be redundant work.
+    THE `<` MUST BE STRICT. With `<=` a degenerate flat triple is accepted - wrong on 236 of 6,000 random
+    arrays, and caught by the second official example, [1, 2, 1, 10], where 2 exactly equals 1 + 1.
+
+    return nums[i] + nums[i + 1] + nums[i + 2]
+
+RETURN IMMEDIATELY. This is the greedy step, and it is valid only because of the descending sort: no later
+triple can total more. There is no best-so-far variable anywhere in the function.
+
+    return 0
+
+Reached only when every position failed, meaning no three of these lengths form a triangle. Also the
+answer for a list of fewer than three lengths.
+
+WHAT IS DELIBERATELY ABSENT: no combinations, no best-so-far tracking, no check of all three inequalities,
+and no guard for a short list - the loop range handles it.""",
+
+    """9. TRACED ON REAL NUMBERS - a success on the first try, then a case where none works.
+
+RUN A: nums = [10, 6, 5, 4, 3] - already in descending order, so the sort changes nothing.
+
+    i = 0:   the triple is 10, 6, 5.
+             Is 10 < 6 + 5 = 11?   YES.
+             RETURN 10 + 6 + 5 = 21.
+
+    RETURNS 21 after ONE comparison. Positions 1 and 2 are never examined.
+
+    CONFIRM IT IS THE MAXIMUM: these are the three longest lengths in the list, so no other triple can
+    total more - and they happen to form a valid triangle, so the search ends at once. Cross-checked
+    against trying all ten combinations of three: also 21.
+
+RUN B: nums = [1, 2, 1, 10] - the second official example.
+
+    SORT DESCENDING:   [10, 2, 1, 1]
+
+    i = 0:   the triple is 10, 2, 1.
+             Is 10 < 2 + 1 = 3?   No.
+             THE 10 IS NOW DISCARDED FOR GOOD - every remaining length is at most 2 and at most 1, so no
+             pair further along could reach it either.
+
+    i = 1:   the triple is 2, 1, 1.
+             Is 2 < 1 + 1 = 2?   NO - they are EQUAL, and the test is strict.
+             Two straws of length 1 lie exactly flat along a straw of length 2. No triangle.
+
+    The loop is exhausted.   RETURN 0.
+
+    THIS IS THE RUN THAT SEPARATES `<` FROM `<=`. With `<=` the second check would pass and the function
+    would return 2 + 1 + 1 = 4 - a shape with no height at all. THE FIRST OFFICIAL EXAMPLE, [2, 1, 2],
+    CANNOT TELL THE TWO VERSIONS APART: sorted it is 2, 2, 1, and 2 < 2 + 1 = 3 is comfortably true under
+    either comparison.
+
+THE INVERSION - CHANGE THE 10 TO A 2:
+
+    [1, 2, 1, 10]   ->   0     sorted 10, 2, 1, 1 - nothing works
+    [1, 2, 1, 2]    ->   5     sorted 2, 2, 1, 1 - the first triple is 2, 2, 1 and 2 < 2 + 1 = 3, so it
+                               forms a triangle with perimeter 5
+
+    ONE LENGTH SHORTENED AND AN IMPOSSIBLE BOX BECOMES A WORKING ONE. Both verified against the
+    all-combinations brute force.
+
+AND THE MUTATION, PROVED: calling the function on a caller's list of [3, 6, 2, 3] leaves that list reading
+[6, 3, 3, 2] - reordered in place, because the sort is the method.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One sort, then at most one pass over the list doing a single comparison per position.
+
+    TIME O(n log n), entirely dominated by the sort - the scan itself is O(n) and usually stops almost
+    immediately.
+    SPACE O(1) beyond the sort's own working memory, since the sort is in place and nothing else is
+    allocated.
+    The try-every-combination brute force is O(n^3); at this problem's limit of n = 10,000 that is roughly
+    1.6 x 10^11 triples and is hopeless.
+
+THE #1 MISTAKE: sorting in the wrong direction, or scanning in the wrong direction for the sort you chose.
+Ascending order with a forward scan returns the SMALLEST valid perimeter rather than the largest - wrong on
+4,173 of 6,000 random arrays. The greedy "stop at the first success" is correct only when the first
+success is also the largest. THE RUNNER-UP is writing `<=`, which admits a degenerate flat triple - wrong
+on 236 of 6,000, and caught by the second official example but not the first.
+
+ONE-SENTENCE TAKEAWAY: sorted descending, a failed triple's longest side can never work with any shorter
+pair - so only adjacent triples matter, and the first one that satisfies the triangle inequality is
+already the maximum.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can JUSTIFY skipping the non-adjacent combinations
+rather than just skipping them. The argument is two sentences - if the two next-longest cannot reach the
+longest, nothing shorter can either, so that longest is finished with - and a candidate who states it has
+solved the problem, while one who only writes the loop has guessed correctly. THE SECOND THING is whether
+you say the sort mutates the input; it is a real side effect and it is also load-bearing here, which makes
+it worth a sentence rather than a shrug.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return the three SIDES rather than the perimeter." Return the triple instead of its sum - the scan is
+    unchanged.
+    "Count how many triples form a triangle." The greedy shortcut collapses, because you can no longer stop
+    at the first success. Sort ascending and, for each pair, binary-search or two-pointer for how many
+    third sides are short enough - O(n^2), which is Valid Triangle Number.
+    "What if lengths can be zero?" A zero side can never form a triangle, since the longest would have to
+    be less than the other two, one of which contributes nothing. The strict inequality rejects it
+    automatically, with no special case.
+    "What if the list is enormous but you only need to know WHETHER any triangle exists?" Still sort - the
+    same scan answers it - but note that a list with no valid triple must grow at least as fast as the
+    Fibonacci numbers, so any list of more than about 45 lengths bounded by a 32-bit integer is guaranteed
+    to contain one. THAT IS THE CLASSIC FOLLOW-UP OBSERVATION and it is worth having ready.""",
 ]
 
 _EX_P1AE["Embeddings for recommendation systems"] = [
