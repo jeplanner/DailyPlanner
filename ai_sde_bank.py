@@ -66629,139 +66629,1091 @@ for _e in ENTRIES:
 _EX_P1A = {}
 
 _EX_P1A["Sum of Left Leaves"] = [
-    """The standard example, traced.
-        3
-       / \\
-      9   20
-         /  \\
-        15   7
-At node 3: root.left is 9, and 9 has no children, so 9 IS a left leaf -> add 9.
-Recurse left into 9: it has no children, so it contributes 0. (Note 9 does NOT
-add itself - a node never counts itself, only its LEFT CHILD.)
-Recurse right into 20: root.left is 15 and 15 is a leaf -> add 15. Then recurse
-into 15 (0) and into 7 (0).
-Total 9 + 15 = 24. Note 7 is a leaf and is NOT counted, because it is a RIGHT
-child - that asymmetry is the entire problem.""",
+    """1. THE GOAL - and the word "left" is doing more work than it looks.
 
-    """The check that catches everyone: parent-side, not self-side.
-The natural first attempt is 'if this node is a leaf, add it' plus some flag
-saying whether we arrived from the left. That works, but the cleaner version
-looks DOWN instead of tracking where it came from:
-    if root.left and root.left.left is None and root.left.right is None
-Read it as: 'I have a left child, and that child has no children of its own.'
-The node inspects its child rather than the child inspecting its own origin,
-which is why no extra parameter is needed.""",
+ADD UP THE VALUES OF ALL THE LEFT LEAVES.
 
-    """The single-node tree, which is the classic wrong answer.
-Tree: just the node 5. It IS a leaf, so a careless solution returns 5.
-The correct answer is 0: a left leaf must be the LEFT CHILD of some parent, and
-the root has no parent. Trace the code - root.left is None, so nothing is
-added, and both recursive calls return 0.
-Similarly a tree of 1 -> (None, 2) returns 0: the only leaf is a right child.
-Test both of these; they are the two cases an interviewer will hand you.""",
+A LEFT LEAF is a node that satisfies TWO separate conditions at once:
 
-    """A left child that is NOT a leaf.
-        1
-       /
-      2
-     / \\
-    4   5
-At node 1: root.left is 2, but 2 has children, so the guard fails and nothing
-is added. We recurse into 2.
-At node 2: root.left is 4 and 4 is childless -> add 4.
-Total is 4. The value 2 is never counted despite being a left child, and 5 is
-never counted despite being a leaf. You need BOTH conditions - left child AND
-childless - which is why the guard has three parts.""",
+    IT IS A LEAF          - it has no children at all, neither left nor right.
+    IT IS A LEFT CHILD    - its parent reaches it through the parent's `left` link.
 
-    """The iterative version, for the recursion-depth follow-up.
-A tree skewed 10,000 nodes deep blows Python's default recursion limit. The
-explicit-stack rewrite keeps the identical logic:
+            3
+           / \\
+          9   20
+             /  \\
+           15    7
+
+    node 9   - a leaf, and it is 3's LEFT child.    A LEFT LEAF.    counts.
+    node 15  - a leaf, and it is 20's LEFT child.   A LEFT LEAF.    counts.
+    node 7   - a leaf, but it is 20's RIGHT child.  NOT a left leaf. ignored.
+    node 20  - a left child of 3, but NOT a leaf.   NOT a left leaf. ignored.
+    node 3   - the root: not a leaf, and not anybody's child at all.
+
+    ANSWER: 9 + 15 = 24
+
+THE TWO CONDITIONS ARE INDEPENDENT, and each one on its own catches somebody out. Node 7 fails only
+the second; node 20 fails only the first.
+
+    AND HERE IS THE PART THAT MAKES THIS MORE THAN A BOOKKEEPING EXERCISE: A NODE CANNOT TELL FROM
+    ITS OWN CONTENTS WHETHER IT IS A LEFT CHILD. It holds a value and two links downwards; nothing
+    in it points upwards. "Left-ness" is not a property of the node - it is a property of the
+    RELATIONSHIP between it and its parent, and only the parent knows it.
+
+    So the test cannot be made while standing on the node. It has to be made one level up. Section
+    2 is about that shift of viewpoint, and section 4 is about what happens if you resist it.
+
+THE SIMPLEST TREE THAT MAKES THE POINT is a single node. It IS a leaf. It is nobody's left child,
+because it has no parent. THE ANSWER FOR A ONE-NODE TREE IS 0, not the node's value - and that is
+the classic wrong answer.""",
+
+    """2. THE INTUITION - ask the question from the parent's chair.
+
+Instead of visiting a node and asking "am I a left leaf?", visit a node and ask about ITS CHILD:
+
+    STANDING AT ANY NODE, ASK:  "Do I have a left child, and is that child a leaf?"
+    IF SO, ADD THAT CHILD'S VALUE.
+    THEN GO AND ASK THE SAME QUESTION AT BOTH OF MY CHILDREN.
+
+Everything the question needs is now in one place. The parent knows which link it used - it is
+looking down its own `left` pointer - and it can see whether that child has children of its own.
+
+            3                 AT NODE 3:   left child is 9.  Does 9 have children?  No.
+           / \\                             9 IS A LEFT LEAF.  add 9.
+          9   20
+             /  \\             AT NODE 9:   no left child at all.  add nothing.
+           15    7
+                              AT NODE 20:  left child is 15.  Does 15 have children?  No.
+                                           15 IS A LEFT LEAF.  add 15.
+
+                              AT NODE 15:  no left child.  nothing.
+                              AT NODE 7:   no left child.  nothing.
+
+    total = 9 + 15 = 24
+
+WATCH WHAT NEVER HAPPENS. Node 7 is a leaf and is visited, and nothing is added - because when the
+walk stands on node 7 it looks at ITS left child, which does not exist. Node 7's own leaf-ness is
+never tested, because the algorithm never asks a node about itself.
+
+    THE RIGHT LEAVES ARE NOT EXCLUDED BY A CHECK. THEY ARE EXCLUDED BY NEVER BEING ASKED ABOUT.
+
+WHY THIS IS THE NATURAL SHAPE. Every node is looked at twice in different roles - once as a parent
+deciding about its left child, and once as a child being walked into. That is not waste; it is what
+lets the tree be traversed downward only, with no parent pointers and no extra parameter.
+
+    (There IS an alternative that carries a "did I arrive from the left?" flag downward, and it is
+    equally correct - section 5 gives it. Both work; what does not work is testing a node against
+    itself with no knowledge of how you got there.)""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY TREE. Each node holds a value and up to two child links, `left` and `right`.
+ROOT. The top node - the only one with no parent.
+LEAF. A node with NO children: both `left` and `right` are None.
+
+LEFT CHILD. The node reached by following a parent's `left` link. Being a left child is a fact
+about the EDGE, not about the node.
+
+LEFT LEAF. A leaf that is also a left child. Both conditions, and this problem exists because they
+are easy to conflate.
+
+DFS (DEPTH-FIRST SEARCH). Following one path as far as it goes before backing up. This code does it
+with recursion.
+
+RECURSION. A function calling itself on a smaller piece. Each call PAUSES at the call site and
+resumes when the inner call returns.
+
+THE CALL STACK. The pile of paused calls. Its depth here is the tree's HEIGHT, which is what makes
+the recursive version fail on very deep trees (section 5).
+
+BASE CASE. The condition that stops the recursion - here, `root is None` returning 0.
+
+SHORT-CIRCUIT EVALUATION. Python's `and` evaluates left to right and stops at the first false thing.
+It is what makes `root.left and root.left.left is None` safe when there is no left child - section
+4 explains what breaks without it.
+
+root. The node the current call is standing on. (Named `root` because every node is the root of its
+      own subtree.)
+total. The running sum accumulated by this call: its own contribution plus both subtrees'.
+
+n. The number of nodes. h. The tree's height.
+O(n) TIME, O(h) SPACE.""",
+
+    """4. THE CHECK THAT CATCHES EVERYONE - self-side versus parent-side.
+
+TRAP 1 - TESTING THE NODE AGAINST ITSELF. The natural first attempt is:
+
+    if this node is a leaf: add its value
+
+    ... and then some way of knowing whether we arrived from the left. Written without that second
+    part, it adds EVERY leaf, so the traced tree gives 9 + 15 + 7 = 31 rather than 24. The right
+    leaf 7 is swept in, because nothing in node 7 says which side it hangs on.
+
+    THE INFORMATION SIMPLY IS NOT THERE. A node holds a value and two downward links. There is no
+    parent pointer, so from inside node 7 there is no way to discover that it was reached through a
+    `right`. THE TEST MUST MOVE TO THE PARENT, or an extra parameter must carry the direction down
+    (section 5). There is no third option.
+
+TRAP 2 - THE SINGLE-NODE TREE, which is the classic wrong answer.
+
+    Tree: just the node 5.
+
+    It IS a leaf, so any solution that tests nodes against themselves returns 5.
+    THE CORRECT ANSWER IS 0 - a left leaf must be somebody's LEFT CHILD, and the root is nobody's
+    child at all.
+
+    The parent-side code gets this right without a special case: standing on node 5, it asks about
+    node 5's left child, there is none, nothing is added, and both recursive calls return 0.
+
+TRAP 3 - DROPPING THE `root.left` GUARD. The condition is
+
+        if root.left and root.left.left is None and root.left.right is None:
+
+    Remove the leading `root.left and` and, on any node with no left child, `root.left.left` reads
+    an attribute off None:
+
+        AttributeError: 'NoneType' object has no attribute 'left'
+
+    Python's `and` SHORT-CIRCUITS - it evaluates left to right and stops at the first falsy value -
+    so the guard is not merely tidy, it is what makes the rest of the line legal. Node 9 in the
+    traced tree hits this on the very first recursive call.
+
+TRAP 4 - CONFUSING "MY LEFT CHILD IS A LEFT LEAF" WITH "MY LEFT CHILD EXISTS". A left child that
+has children of its own is not a leaf and contributes nothing:
+
+            1
+           /
+          2
+         / \\
+        4   5
+
+    At node 1: `root.left` is 2, but 2 has children, so the guard fails and NOTHING is added for it.
+    At node 2: `root.left` is 4, and 4 has no children  ->  add 4.
+    Node 5 is a leaf but a RIGHT child, so it is never asked about.
+
+    ANSWER: 4.  Not 2, and not 4 + 5.
+
+TRAP 5 - WORRYING ABOUT DOUBLE COUNTING. After adding `root.left.val`, the code still recurses into
+`root.left`. That looks like it might count the same leaf twice - it does not. The recursive call
+lands ON the leaf, and from there it asks about THAT node's left child, which does not exist, so it
+contributes 0. The recursion into a leaf is harmless; it is needed for the case where the left child
+is NOT a leaf and has left leaves of its own beneath it.""",
+
+    """5. THE ALTERNATIVES, AND THE ONE THE FOLLOW-UP ASKS FOR.
+
+VERSION A - TEST EACH NODE AGAINST ITSELF. Section 4. It cannot work, because the node does not
+carry the information the question needs.
+
+VERSION B - CARRY A DIRECTION FLAG DOWNWARD.
+
+    def helper(node, is_left):
+        if node is None: return 0
+        if node.left is None and node.right is None:
+            return node.val if is_left else 0
+        return helper(node.left, True) + helper(node.right, False)
+
+    def sum_of_left_leaves(root):
+        return helper(root, False)          # the root is nobody's left child
+
+    EQUALLY CORRECT, and arguably clearer: it tests leaf-ness on the node, as instinct wants, and
+    supplies the missing "how did I get here" as an extra parameter. Note the top-level call passes
+    False, which is what makes the single-node tree answer 0 (trap 2).
+
+    The trade is one extra parameter against one extra level of pointer-chasing. Interviewers accept
+    either; being able to write both and say why they are the same is the good answer.
+
+VERSION C - THE PARENT-SIDE CHECK, which is the code here. No extra parameter; the check is made
+where the information lives.
+
+VERSION D - ITERATIVE, WITH AN EXPLICIT STACK. THIS IS THE FOLLOW-UP THAT ALWAYS COMES, because the
+recursive versions use stack depth proportional to the tree's HEIGHT:
+
     def sum_of_left_leaves(root):
         if root is None: return 0
-        stack, total = [root], 0
+        total, stack = 0, [root]
         while stack:
             node = stack.pop()
             if node.left:
                 if node.left.left is None and node.left.right is None:
-                    total += node.left.val     # counted; nothing below it
+                    total += node.left.val
                 else:
-                    stack.append(node.left)    # only descend if NOT a leaf
+                    stack.append(node.left)
             if node.right:
                 stack.append(node.right)
         return total
-Note the optimisation that falls out: a left child counted as a leaf has no
-children, so there is no reason to push it - the if/else does both jobs.""",
 
-    """Complexity, and the family this belongs to.
-Time O(n) - every node is visited once. Space O(h) for the recursion stack,
-which is O(log n) for a balanced tree and O(n) for a skewed one.
-The pattern is 'postorder recursion that combines children's results', and it
-is the same skeleton as Maximum Depth, Diameter of a Binary Tree, Path Sum and
-Count Good Nodes. Once you can write 'handle None, do something at this node,
-recurse both sides, combine', most easy tree problems differ only in what
-'something' is - here it is a three-part guard on the left child.""",
+    SAME LOGIC, SAME PARENT-SIDE CHECK, no recursion. It matters concretely: a tree skewed 10,000
+    nodes deep - a chain, which is a perfectly legal binary tree - makes the recursive version
+    10,000 frames deep against PYTHON'S DEFAULT LIMIT OF 1,000. It does not run slowly; it raises
+    RecursionError and returns nothing at all. The iterative version holds those same nodes on the
+    heap and finishes.
+
+    (Note this version also skips pushing a left child that was already counted as a leaf, since
+    there is nothing beneath it - a small saving the recursive version does not bother with.)
+
+WHY THE RECURSION TERMINATES. Every call either returns immediately on None, or recurses only on
+its two children, which are strictly further from the root. A tree is finite and has no cycles, so
+every downward path reaches None. There is no way back up except by returning.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE WHOLE TREE, AND AT EVERY NODE ASK NOT ABOUT
+ITSELF BUT ABOUT ITS LEFT CHILD - IF THAT CHILD EXISTS AND HAS NO CHILDREN OF ITS OWN, ADD ITS
+VALUE - BECAUSE ONLY A PARENT KNOWS WHICH SIDE A CHILD HANGS ON.
+
+THIS VERSION IS RECURSIVE, and the mechanism is worth spelling out:
+
+  - The function calls itself once for each child. Each call PAUSES at the call site, holding its
+    own running total, and resumes when the inner call hands a number back.
+  - Those paused calls form the CALL STACK, and it gets as deep as the tree is TALL - which on a
+    long thin tree is as deep as the tree has nodes, and section 5 gives the number where that
+    becomes fatal.
+  - WHAT MAKES IT STOP: an absent node returns zero immediately without recursing, and every path
+    downward reaches absence because the tree is finite and has no cycles.
+  - WHAT EACH CALL HANDS BACK: the total for its own subtree - its own contribution plus whatever
+    the two calls below it reported. Nothing is shared or accumulated outside the calls.
+
+THE STEPS:
+
+  1. IF THERE IS NO NODE HERE, HAND BACK ZERO. An absent subtree contributes nothing, and this is
+     also what stops the recursion.
+
+  2. START THIS NODE'S RUNNING TOTAL AT ZERO.
+
+  3. LOOK AT THIS NODE'S LEFT CHILD. IF IT EXISTS, AND IT HAS NEITHER A LEFT CHILD NOR A RIGHT
+     CHILD OF ITS OWN, ADD ITS VALUE TO THE RUNNING TOTAL.
+
+     CHECK THAT IT EXISTS FIRST. Asking whether a child that is not there has children of its own
+     is a question about nothing, and the program stops with an error rather than answering it.
+
+     NOTHING IS ASKED ABOUT THIS NODE ITSELF. That is the whole design: the right leaves are not
+     rejected by a test, they are simply never the subject of one.
+
+  4. ADD WHATEVER THE SAME PROCEDURE REPORTS FOR THE LEFT SUBTREE.
+
+  5. ADD WHATEVER IT REPORTS FOR THE RIGHT SUBTREE.
+
+     BOTH SUBTREES, ALWAYS. The right subtree can contain plenty of left leaves - they are simply
+     left children of nodes that happen to live over on the right - so skipping it would lose them.
+
+  6. HAND BACK THE RUNNING TOTAL.
+
+Note step 3 and step 4 both concern the left child, and they do not double count: step 3 adds its
+value only when it is a leaf, and step 4 walking into a leaf finds no left child of its own and
+reports zero.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture a family tree drawn on a board, where every person has at most two children, and the two
+are always drawn in fixed positions - one on the left, one on the right. You are asked to add up
+the ages of everyone who is BOTH childless AND drawn on the left.
+
+The obvious way to go about it is to walk up to each person in turn and ask "do you have children,
+and are you on the left?" The first half they can answer. The second half they cannot. Standing in
+front of somebody on the board, there is nothing about them that says which side of their parent
+they were drawn on - the person is just a name and an age with two lines going downwards. The
+information you need is in the LINE that connects them to the person above, and from where you are
+standing you cannot see it.
+
+So you change where you stand. Instead of asking people about themselves, you ask every person
+about their left-hand child.
+
+That works, because a parent can see both things at once. They know perfectly well which of their
+two lines goes down-left - they are the one who drew it - and they can see whether anything hangs
+below the person on the end of it. So at each person you ask: is there somebody on my left-hand
+line, and does that person have nobody below them? If both are true, you note down that child's age.
+
+Then you move on and ask the same question of everybody else on the board, working down both sides.
+
+Notice what has quietly happened. The childless people drawn on the RIGHT are never excluded by any
+rule. They are simply never the subject of the question. When your walk reaches one of them, you ask
+about THEIR left-hand child, they have none, and you move on. Their own childlessness never comes up.
+
+Two things go wrong if you are careless. The first is asking a person about their left-hand child
+when they have no left-hand line at all - there is nobody there to have children, and the question
+does not mean anything. Check the line exists before you follow it.
+
+The second is the person at the very top of the board. They may well have no children, but they are
+nobody's left-hand child either, because nothing is drawn above them. A method that asks people
+about themselves will happily count them; a method that asks parents about their children never
+gets the chance to, because nobody is standing above them to ask.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 3 / 9, 20 / (20's children 15, 7) beside you, answer 24.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None. Note there is NO parent
+link - which is the whole reason the check has to happen at the parent.
+
+    def sum_of_left_leaves(root):
+
+`root` is the node this call is standing on - every node is the root of its own subtree. Returns the
+sum of the left leaves WITHIN that subtree. The tree is never modified.
+
+        if root is None:
+            return 0
+
+THE BASE CASE, doing two jobs. It stops the recursion, and it defines an absent subtree's
+contribution as zero - so a node with only one child needs no special handling anywhere else. It
+also makes `sum_of_left_leaves(None)` correct without a separate guard.
+
+        total = 0
+
+    total  HOLDS this subtree's running sum: this node's own contribution plus whatever the two
+           recursive calls report. It is local to this call - there is no shared accumulator, so no
+           `nonlocal` is needed.
+
+        if root.left and root.left.left is None and root.left.right is None:
+            total += root.left.val          # a left child that is a leaf
+
+THE LINE THE WHOLE PROBLEM COMES DOWN TO, and it has three parts read left to right:
+
+    `root.left`                  DECIDES that there is a left child at all. It must come FIRST -
+                                 `and` short-circuits, so the two tests after it are only evaluated
+                                 once a child is known to exist. Without it, any node lacking a left
+                                 child raises AttributeError (trap 3).
+    `root.left.left is None`     )  together these DECIDE that the child is a LEAF. BOTH are
+    `root.left.right is None`    )  required - a node with one child is not a leaf.
+
+    `root.left.val`              is what gets added: THE CHILD'S value, not this node's.
+
+NOTE WHAT IS ABSENT. There is no test of `root` itself anywhere. The right leaves are excluded by
+never being asked about, not by a check (trap 1) - and the root of the whole tree is excluded for
+the same reason, which is what makes a single-node tree answer 0 (trap 2).
+
+        total += sum_of_left_leaves(root.left)
+
+Walk into the left subtree. This is NOT double counting the leaf added above: landing on a leaf, the
+guard asks about ITS left child, finds none, and both of its recursive calls return 0 - so a leaf
+contributes 0 from here (trap 5). This call matters for the case where the left child is NOT a leaf
+and has left leaves beneath it.
+
+        total += sum_of_left_leaves(root.right)
+
+Walk into the right subtree too. Essential: a left leaf is a left CHILD, and plenty of nodes on the
+right-hand side of the tree have left children. Skipping this would lose node 15 in the traced tree
+entirely.
+
+        return total
+
+Hand this subtree's total up to whoever asked - either a parent's `total +=`, or the original
+caller.""",
+
+    """9. TRACED, NODE BY NODE - AND THE ANSWER INVERTING ON A MIRROR.
+
+TRACE 1 - THE STANDARD EXAMPLE.
+
+            3
+           / \\
+          9   20
+             /  \\
+           15    7
+
+    sum_of_left_leaves(3)
+        root is not None.  total = 0.
+        root.left is 9 (exists).  9.left is None.  9.right is None.   ->  ALL THREE PASS
+            total += 9        ->  total = 9
+        total += sum_of_left_leaves(9)
+            root.left is None  ->  the guard SHORT-CIRCUITS on the first test, so 9.left.left is
+                                   never evaluated. This is trap 3 being avoided in practice.
+            total = 0 + sum(None) + sum(None) = 0
+            RETURNS 0                         ->  total = 9
+        total += sum_of_left_leaves(20)
+            root.left is 15 (exists).  15.left is None.  15.right is None.  ->  PASS
+                total += 15   ->  total = 15
+            total += sum_of_left_leaves(15)
+                15.left is None -> guard fails.  0 + 0 + 0 = 0.    RETURNS 0
+            total += sum_of_left_leaves(7)
+                7.left is None -> guard fails.   RETURNS 0
+            RETURNS 15                        ->  total = 9 + 15 = 24
+        RETURNS 24
+
+    ANSWER 24.
+
+    NODE 7 WAS VISITED AND CONTRIBUTED NOTHING. Not because anything rejected it - the call on node
+    7 simply asked about node 7's left child, found none, and returned. Its own leaf-ness was never
+    tested. That is the design working.
+
+    AND NODE 15 IS WHY THE RIGHT-SUBTREE RECURSION MATTERS: 15 is a left leaf living inside the
+    RIGHT subtree of the root. Skipping `sum_of_left_leaves(root.right)` would have returned 9.
+
+TRACE 2 - THE INVERSION. Mirror the whole tree - swap every node's two children:
+
+            3
+           / \\
+         20   9
+        /  \\
+       7    15
+
+    sum_of_left_leaves(3)
+        root.left is 20 (exists), but 20.left is 7, NOT None  ->  the guard fails. Nothing added.
+        total += sum_of_left_leaves(20)
+            root.left is 7 (exists).  7.left is None.  7.right is None.  ->  PASS.  total += 7
+            total += sum_of_left_leaves(7)  ->  0
+            total += sum_of_left_leaves(15) ->  0
+            RETURNS 7
+        total += sum_of_left_leaves(9)
+            9.left is None  ->  guard fails.  RETURNS 0
+        RETURNS 7
+
+    ANSWER 7, where the original tree gave 24.
+
+    THE SAME NODES, THE SAME VALUES, THE SAME SET OF LEAVES. The leaves are still {9, 15, 7} and
+    they still sum to 31 either way. Only their POSITIONS changed, and the answer went from 24 to 7 -
+    which is the clearest possible demonstration that "left leaf" is about where a node sits, not
+    about what it contains.
+
+TRACE 3 - A LEFT CHILD THAT IS NOT A LEAF (trap 4).
+
+            1
+           /
+          2
+         / \\
+        4   5
+
+    sum_of_left_leaves(1)
+        root.left is 2 (exists), but 2.left is 4, not None  ->  guard FAILS. Nothing added for 2.
+        total += sum_of_left_leaves(2)
+            root.left is 4 (exists).  4.left is None.  4.right is None.  ->  PASS.  total += 4
+            total += sum_of_left_leaves(4)  ->  4.left is None, guard fails.  RETURNS 0
+            total += sum_of_left_leaves(5)  ->  5.left is None, guard fails.  RETURNS 0
+            RETURNS 4
+        total += sum_of_left_leaves(None)  ->  0        (node 1 has no right child)
+        RETURNS 4
+
+    ANSWER 4.  Node 2 is a left child but not a leaf, so it contributes nothing itself. Node 5 is a
+    leaf but a RIGHT child. Only node 4 satisfies both conditions.
+
+    NOTE ALSO THAT ADDING 4 AND THEN RECURSING INTO 4 DID NOT COUNT IT TWICE (trap 5) - the call on
+    node 4 asked about node 4's left child, found none, and returned 0.
+
+THE TINY INPUTS:
+    root = None       the base case returns 0 immediately.
+    A SINGLE NODE 5   root is not None. total = 0. `root.left` is None, so the guard
+                      short-circuits and nothing is added. Both recursive calls hit the base case.
+                      RETURNS 0 - not 5 (trap 2). The node is a leaf but it is nobody's left child.
+    TWO NODES, 1 with left child 2
+                      At node 1: 2 exists, 2.left is None, 2.right is None  ->  add 2.
+                      Recursing into 2 and into None both give 0.  RETURNS 2.
+    TWO NODES, 1 with RIGHT child 2
+                      At node 1: `root.left` is None, guard short-circuits.  At node 2: same.
+                      RETURNS 0.  Same two nodes, mirrored, and the answer changes.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: `sum_of_left_leaves` is called exactly once per node - plus once per missing child,
+which returns immediately - and each call does a fixed amount of work: three comparisons and two
+additions. Nothing is revisited, because a tree has no cycles and the walk only ever goes downward.
+
+SPACE: O(h) for the recursion stack, where h is the tree's HEIGHT. Nothing else is stored - each
+call's `total` is local and disappears when the call returns.
+
+    THAT IS O(log n) FOR A BALANCED TREE - about 20 frames for a million nodes - AND O(n) FOR A
+    SKEWED ONE. Python's default recursion limit is 1,000, so a chain of more than about a thousand
+    nodes raises RecursionError rather than running slowly. The iterative version in section 5 is
+    the fix, and volunteering it before being asked is the right move.
+
+THE FAMILY THIS BELONGS TO - problems where the answer depends on a node's RELATIONSHIP to its
+parent rather than on the node alone, so the test has to move up a level or a parameter has to come
+down:
+
+    SUM OF LEFT LEAVES         is my left child a leaf?                      <- this entry
+    BINARY TREE PATHS          build the path string on the way down
+    PATH SUM                   carry the running total downward as a parameter
+    ROOT-TO-LEAF NUMBERS       carry the number built so far downward
+    DEEPEST LEAVES SUM         carry or compute the depth
+    COUNT GOOD NODES           carry the maximum seen so far on the path
+
+    THE COMMON QUESTION TO ASK OF ANY TREE PROBLEM: does a node contain everything needed to decide
+    its own contribution? If not, the missing fact either travels DOWN as a parameter or the check
+    happens UP at the parent. Recognising which of those you need is most of the work.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it iteratively." Section 5's explicit stack - and give the reason: a 10,000-deep chain
+    exceeds Python's 1,000-frame limit.
+  - "Do it with a flag instead." Section 5's version B - pass `is_left` down and test leaf-ness on
+    the node. Note the top-level call must pass False, which is what makes a single-node tree
+    answer 0.
+  - "Sum the RIGHT leaves." Change `left` to `right` in the guard - and note the recursion into
+    BOTH subtrees stays exactly as it is.
+  - "Sum all leaves." Then the node DOES contain everything needed, so you can test it against
+    itself and no parent-side check is required. Worth saying, because it shows you know precisely
+    what the difficulty was.
+  - "What if nodes had parent pointers?" Then a node could check `self is self.parent.left` and the
+    whole problem evaporates. The parent-side trick is a workaround for the data structure you were
+    given.
+
+THE #1 BEGINNER MISTAKE: testing each node against itself - "if this is a leaf, add it" - which
+sweeps in every right leaf and returns 31 instead of 24 on the standard example. The information
+needed simply is not in the node; it is in the edge above it.
+
+RUNNER-UP: the single-node tree. It is a leaf, so a self-testing solution confidently returns its
+value, when the answer is 0 - the root is nobody's left child.
+
+TAKEAWAY: "left leaf" is a fact about the EDGE above a node rather than about the node itself, so
+ask every node about its LEFT CHILD instead of about itself - which excludes the right leaves not by
+rejecting them but by never asking, and correctly gives zero for a tree of one node.""",
 ]
 
 _EX_P1A["Valid Palindrome II (delete at most one)"] = [
-    """The core case, traced.
-s = 'abca'. left=0 ('a'), right=3 ('a') -> match, move in.
-left=1 ('b'), right=2 ('c') -> MISMATCH. This is the only decision point in the
-whole algorithm.
-Try skipping the left character: is_pal(2, 2) - a single character range, which
-is trivially a palindrome -> True. So the answer is True (delete 'b' to get
-'aca'). Skipping the right would also have worked ('aba'), which is why the two
-attempts are joined with `or`.""",
+    """1. THE GOAL - one free deletion.
 
-    """Why you must try BOTH sides, with a string that proves it.
-s = 'ebcbbececabbacecbbcbe' is a known counterexample to the one-sided version.
-More simply: consider 'cbbcc'. First mismatch is at left=0 ('c') and right=4
-('c')... they match. Move to left=1 ('b'), right=3 ('c') -> mismatch.
-Skipping the LEFT gives 'bc' between the pointers -> not a palindrome.
-Skipping the RIGHT gives 'bb' -> palindrome -> True.
-A solution that only ever skips the left character returns False here. There is
-no rule for guessing which side to drop, so you check both - and because you do
-it at most once, the cost stays linear.""",
+A PALINDROME reads the same forwards and backwards: "aba", "racecar", "aa".
 
-    """Why this stays O(n) despite looking like it branches.
-The outer two-pointer walk is O(n). At the FIRST mismatch you make two helper
-calls, each of which scans at most the remaining range, so O(n) - and then you
-return immediately. There is no recursion and no second chance to branch,
-because 'at most one deletion' means the budget is spent.
-Total O(n) time, O(1) space. Contrast with allowing k deletions, which becomes
-a genuine dynamic-programming problem (longest palindromic subsequence) at
-O(n^2) - a good follow-up to raise yourself.""",
+THE QUESTION: can this string be turned into a palindrome by DELETING AT MOST ONE CHARACTER?
 
-    """Already a palindrome, and the empty/short cases.
-'aba': no mismatch ever occurs, the loop exits with left >= right, return True.
-Deleting zero characters is allowed - the prompt says AT MOST one, not exactly
-one, and misreading that is a real source of wrong answers.
-'' -> left=0, right=-1, loop never runs -> True.
-'a' -> left=0, right=0, `while left < right` is false -> True.
-'aa' -> match, then pointers cross -> True.
-All four fall out of the code with no special cases, which is worth pointing
-out rather than adding guards for them.""",
+    "AT MOST ONE" means zero deletions counts too - a string that is already a palindrome is a yes.
 
-    """The case that returns False.
-s = 'abc'. left=0 ('a'), right=2 ('c') -> mismatch immediately.
-Skip left: is_pal(1,2) checks 'b' vs 'c' -> False.
-Skip right: is_pal(0,1) checks 'a' vs 'b' -> False.
-Both fail, so return False - no single deletion can fix it, and indeed you
-would need two.
-Notice the helper is called on the RANGE, not on a new string. Writing
-`is_pal(s[left+1:right+1])` instead allocates a copy on every call, turning O(1)
-space into O(n) - a small detail interviewers do notice.""",
+    s = "aba"     already a palindrome                    ->  True   (delete nothing)
+    s = "abca"    delete the 'c' and you get "aba"        ->  True
+                  (or delete the 'b' and you get "aca" - either works)
+    s = "abc"     no single deletion helps                ->  False
+    s = "deeee"   delete the 'd' and you get "eeee"       ->  True
 
-    """The generalisation, and where the pattern appears.
-Follow-up: 'at most k deletions'. The greedy two-pointer trick no longer works
-because you can no longer prove that the first mismatch must be resolved
-locally; you switch to DP - the answer is len(s) minus the longest palindromic
-subsequence, and it is a palindrome within k deletions iff that difference is
-at most k.
-The two-pointer-with-one-exception shape itself recurs: 'is this array sorted
-after removing one element', 'can this array become non-decreasing by modifying
-one element' (Non-decreasing Array), and 'delete one character to make two
-strings equal'. In every case: scan until the first violation, then branch a
-fixed number of times and verify.""",
+WHAT YOU ARE NOT ASKED. You do not have to say WHICH character to delete, or how many ways there
+are, or produce the resulting string. JUST TRUE OR FALSE.
+
+    That matters, because it means you can stop the instant you know - and section 5 shows the whole
+    algorithm is built on there being exactly ONE moment where a decision is required.
+
+WHY IT IS NOT OBVIOUS. Checking a plain palindrome is easy: walk from both ends inward comparing
+characters. The moment two differ, it is not a palindrome. Here, the first difference is not a
+refusal - it is a choice. You may delete the character on the left OR the character on the right,
+and the two choices lead to different strings.
+
+    So the question becomes: WHEN YOU HIT THAT FIRST MISMATCH, HOW MANY POSSIBILITIES DO YOU HAVE TO
+    CONSIDER? The answer is exactly two, and section 5 proves it - which is what keeps this linear
+    instead of quadratic.""",
+
+    """2. THE INTUITION - walk inward, and at the first disagreement branch exactly once.
+
+Put a finger on each end and walk them toward each other, comparing as you go.
+
+    s = "abca"
+
+        a  b  c  a
+        ^        ^
+      left     right      's[0]' is 'a', 's[3]' is 'a'.  MATCH.  Move both inward.
+
+        a  b  c  a
+           ^  ^
+         left right       's[1]' is 'b', 's[2]' is 'c'.  MISMATCH.
+
+At that mismatch you have used no deletion yet, and you must use it now - these two characters
+cannot both stay. THERE ARE EXACTLY TWO THINGS TO TRY:
+
+    SKIP THE LEFT ONE   ->  is the stretch from left+1 to right a plain palindrome?   "c"   YES
+    SKIP THE RIGHT ONE  ->  is the stretch from left to right-1 a plain palindrome?   "b"   YES
+
+    Either one works, so the answer is True.
+
+AND HERE IS THE CRUCIAL PART: THOSE TWO CHECKS ARE PLAIN PALINDROME CHECKS WITH NO FURTHER
+DELETIONS ALLOWED. The one deletion has been spent. So each check is the simple inward walk again,
+and it returns a straight yes or no.
+
+    THAT IS WHY THERE IS ONLY EVER ONE BRANCH POINT. The moment you mismatch, you commit your
+    deletion and hand off to two ordinary palindrome checks. You never come back to the outer loop.
+
+    outer walk:   a  b  c  a
+                  match ... MISMATCH  ->  STOP THE OUTER WALK ENTIRELY
+                                          |
+                             +------------+------------+
+                             |                         |
+                      skip left: "c"            skip right: "b"
+                         palindrome?               palindrome?
+                             YES                       YES
+                             |                         |
+                             +-----------> True <------+
+
+WHY YOU MUST TRY BOTH, and cannot guess which. Take "deeee": skipping the left 'd' gives "eeee",
+a palindrome; skipping the right 'e' gives "deee", which is not. Now reverse it - "eeeed": skipping
+the left fails and skipping the right succeeds. NEITHER SIDE IS RELIABLY THE RIGHT ONE, so both
+must be checked. Section 9 traces both.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PALINDROME. A string that reads the same in both directions. Single characters and the empty string
+are palindromes.
+
+TWO POINTERS (OPPOSITE ENDS). Two indices starting at the two ends of a string and moving toward
+each other. The standard tool for palindrome and symmetry questions.
+
+MISMATCH. The first position, working inward, where the two characters differ.
+
+SUBSTRING / WINDOW [lo, hi]. The stretch of the string between two indices, inclusive. The helper
+here works on INDICES INTO THE ORIGINAL STRING rather than on a copied substring - which matters,
+because copying would allocate (section 4).
+
+HELPER FUNCTION / CLOSURE. `is_pal` is defined inside `valid_palindrome`, so it can see `s` without
+being handed it. It takes only the two indices.
+
+SHORT-CIRCUIT `or`. Python evaluates the left side first and skips the right entirely if the left is
+already True. So the second palindrome check only runs when the first fails.
+
+GREEDY. Making a decision without exploring alternatives. Here the greedy step is stopping at the
+FIRST mismatch and considering only two candidates - and section 5 proves that is safe rather than
+merely hoping.
+
+s. The input string. Never modified.
+is_pal(lo, hi). The helper: is the stretch from `lo` to `hi` inclusive a plain palindrome?
+lo, hi. The helper's own two pointers.
+left, right. The outer walk's two pointers.
+
+O(n) TIME, O(1) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - CHECKING ONLY ONE SIDE. The single biggest mistake, and it is easy to convince yourself one
+side is enough.
+
+    s = "deeee"
+
+        left = 0 is 'd', right = 4 is 'e'.  MISMATCH at the very first comparison.
+
+        SKIP THE RIGHT ONLY:  is "deee" a palindrome?   'd' vs 'e'  ->  NO.
+        A one-sided solution returns False.
+
+        SKIP THE LEFT:        is "eeee" a palindrome?   YES.
+        THE CORRECT ANSWER IS True.
+
+    And it is not that one particular side is the right one to pick. Reverse the string:
+
+    s = "eeeed"
+
+        SKIP THE LEFT:   is "eeed" a palindrome?  'e' vs 'd'  ->  NO.
+        SKIP THE RIGHT:  is "eeee" a palindrome?  YES.
+
+    THE TWO STRINGS NEED OPPOSITE CHOICES. No fixed preference works, and no cheap rule decides it -
+    so both are tried, and `or` returns True if either succeeds.
+
+TRAP 2 - CONTINUING THE OUTER LOOP AFTER THE MISMATCH INSTEAD OF RETURNING. The line is a `return`,
+not an assignment. Once the deletion is spent, the remainder must be a STRICT palindrome - so the
+two helper calls give the final answer and there is nothing left for the outer walk to do. Carrying
+on would allow a second deletion later, answering a different question.
+
+TRAP 3 - ALLOWING MORE THAN ONE DELETION BY RECURSING. Writing the helper as another call to
+`valid_palindrome` rather than to a strict palindrome check permits a deletion inside each branch,
+so "abcdef"-style strings that need several deletions would wrongly pass. The helper must be the
+plain check.
+
+TRAP 4 - SLICING INSTEAD OF USING INDICES. `s[lo:hi+1] == s[lo:hi+1][::-1]` is correct and allocates
+two new strings of up to n characters on every call. The helper here takes INDICES and reads the
+original string, so the whole function uses O(1) extra space. On a 100,000-character string that is
+the difference between three passes and three passes plus 200,000 characters of copying.
+
+TRAP 5 - `left < right` versus `left <= right`. It must be `<`. When the pointers meet on the same
+character there is nothing to compare - a character always equals itself - and for an even-length
+string they cross without ever meeting. Using `<=` compares a character with itself, which is
+harmless here but says something you did not mean.
+
+TRAP 6 - FORGETTING THAT ZERO DELETIONS COUNT. "aba" never mismatches, the outer loop runs to
+completion, and the final `return True` fires. If your code only returned True from inside the
+mismatch branch, an already-palindromic string would come back False.
+
+TRAP 7 - THE EMPTY AND ONE-CHARACTER STRINGS. `""` gives left = 0 and right = −1, so the loop never
+runs and the answer is True. `"a"` gives left = right = 0, the loop never runs, True. Both correct
+with no special case - and both are genuinely palindromes, so True is right.""",
+
+    """5. THE SLOW VERSION FIRST, AND THE PROOF THAT TWO CANDIDATES SUFFICE.
+
+VERSION A - TRY DELETING EVERY CHARACTER IN TURN. For each of the n positions, build the string
+without it and check whether that is a palindrome.
+
+    Correct, and O(n^2): n candidate deletions, each needing an O(n) palindrome check - and in most
+    languages an O(n) string copy as well. For n = 100,000 that is 10,000,000,000 character
+    operations against the real solution's roughly 300,000.
+
+VERSION B - THE TWO-POINTER WALK WITH ONE BRANCH, which is the code here. O(n).
+
+THE PROOF THAT ONLY TWO CANDIDATES NEED CHECKING. This is the part an interviewer probes, and it is
+worth being able to give properly rather than saying "it's greedy".
+
+    Let `left` and `right` be the FIRST mismatching pair working inward. So everything outside them
+    already matches: position 0 pairs with position n−1, position 1 with n−2, and so on, all the way
+    up to left−1 pairing with right+1.
+
+    CLAIM: if a single deletion can make the whole string a palindrome, THE DELETED CHARACTER MUST
+    BE s[left] OR s[right].
+
+    Suppose instead the deleted character is at some index i with left < i < right - strictly
+    between them. Look at what happens to the two mismatching characters:
+
+        s[left] is BEFORE the deletion, so it does not move - it is still at position left.
+        s[right] is AFTER the deletion, so it shifts down one - it is now at position right − 1.
+
+        The new string has length n − 1. For it to be a palindrome, position `left` must pair with
+        position (n − 1) − 1 − left = n − 2 − left.
+
+        And since left and right were a matching PAIR in the original string, right = n − 1 − left,
+        so n − 2 − left = right − 1.
+
+        THAT IS EXACTLY WHERE s[right] NOW SITS. So s[left] would have to equal s[right] - and they
+        do not, because that is what made them a mismatch.
+
+    A deletion strictly between them therefore cannot help. And a deletion OUTSIDE the pair - before
+    `left` or after `right` - breaks one of the pairs that already matched, so it cannot help either.
+
+    ONLY TWO POSSIBILITIES REMAIN. Check both; that is the whole branch.
+
+WHY IT STAYS O(n) DESPITE LOOKING LIKE IT BRANCHES. The outer walk is a single pass, O(n). At the
+FIRST mismatch it RETURNS, so the outer walk never resumes. The two helper calls each scan at most
+the remaining window, O(n) each.
+
+    WORST CASE: THREE PASSES OVER THE STRING, so 3n character comparisons - which is O(n).
+
+    THE KEY IS THAT THERE IS EXACTLY ONE BRANCH POINT IN THE ENTIRE ALGORITHM. If the branch could
+    happen repeatedly, each mismatch doubling the work, it would be 2^k for k mismatches. It cannot,
+    because after the first mismatch the deletion is spent and both branches are strict checks with
+    no further choices.
+
+THE GENERALISATION, AND WHERE IT BREAKS. "At most k deletions" CANNOT be done this way. With two or
+more deletions in hand, a mismatch no longer has just two candidate fixes - you might delete on the
+left now and on the right later, and the proof above collapses because the pairing argument assumed
+a single shift.
+
+    THE RIGHT TOOL THEN IS THE LONGEST PALINDROMIC SUBSEQUENCE: the answer is yes exactly when
+    n − LPS(s) <= k, because the characters you keep must form a palindrome and everything else is
+    deleted. LPS is an O(n^2) dynamic program. So k = 1 is a genuinely special case that admits a
+    linear greedy, and k >= 2 is a different problem.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK IN FROM BOTH ENDS COMPARING CHARACTERS, AND AT THE
+VERY FIRST DISAGREEMENT SPEND YOUR ONE DELETION - CHECKING WHETHER SKIPPING THE LEFT CHARACTER
+LEAVES A PALINDROME, OR SKIPPING THE RIGHT ONE DOES - AND ANSWER WITH WHETHER EITHER WORKED.
+
+THERE IS NO RECURSION. The mechanism is A SINGLE INWARD SWEEP WITH EXACTLY ONE BRANCH POINT:
+
+  - Two positions start at the two ends and step toward each other, one place each per comparison.
+  - WHAT MAKES THE SWEEP STOP: the two positions close in by two every step, so they must meet or
+    cross - or a disagreement is found, at which point the whole function finishes.
+  - WHY THERE IS ONLY ONE BRANCH: once the deletion has been spent, both things you try are ordinary
+    palindrome checks with no further choices in them. So the branching cannot compound - it happens
+    once and then the work is strictly linear.
+  - A SEPARATE, SIMPLER PROCEDURE does the ordinary palindrome check on a stretch of the string
+    given by two positions. It looks at the ORIGINAL string rather than at a copy, so nothing is
+    duplicated in memory.
+
+THE STEPS:
+
+  FIRST, THE ORDINARY CHECK - given a start position and an end position:
+
+    a. WHILE THE START IS BEFORE THE END: if the two characters differ, ANSWER NO. Otherwise step
+       the start forward and the end backward.
+    b. IF THEY MEET OR CROSS WITHOUT A DISAGREEMENT, ANSWER YES.
+
+  THEN THE MAIN WALK:
+
+  1. PUT ONE POSITION AT THE FIRST CHARACTER AND ONE AT THE LAST.
+
+  2. WHILE THEY HAVE NOT MET:
+
+     a. IF THE TWO CHARACTERS DIFFER, THIS IS THE ONE DECISION POINT IN THE WHOLE PROBLEM. These two
+        characters cannot both stay, so one of them is the character to delete:
+
+        - RUN THE ORDINARY CHECK ON THE STRETCH THAT EXCLUDES THE LEFT CHARACTER.
+        - RUN IT AGAIN ON THE STRETCH THAT EXCLUDES THE RIGHT CHARACTER.
+        - ANSWER YES IF EITHER SAID YES.
+
+        AND FINISH - do not carry on walking. The deletion has been used, so anything further would
+        be a second one.
+
+        BOTH must be tried. Neither side is reliably the right one to remove, and no cheap rule
+        picks between them.
+
+     b. OTHERWISE THEY MATCH, so step both positions inward and carry on.
+
+  3. IF THE WALK FINISHES WITHOUT EVER DISAGREEING, THE STRING WAS ALREADY A PALINDROME. ANSWER YES -
+     deleting nothing is allowed.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a row of tiles with letters on them, and you want to know whether the row reads the same
+from either end. You are allowed to remove exactly one tile if it helps, or none at all.
+
+You start with a finger at each end of the row and compare the two tiles you are touching. If they
+match, you move both fingers one place inward and compare again. You carry on like that, working
+steadily toward the middle.
+
+If your fingers meet without ever finding a disagreement, the row already reads the same both ways.
+You never needed your one removal, and that is perfectly allowed, so the answer is yes.
+
+The interesting moment is the first disagreement. Your two fingers are on tiles that do not match,
+and they cannot both stay - so the tile you are allowed to remove has to be one of these two. It
+cannot be anything further in between them, because removing a tile from the middle would slide the
+right-hand tile one place along and leave it paired against the very same left-hand tile it already
+disagrees with. And it cannot be anything further out, because everything out there has already been
+checked and matched, so removing one of those would break a pair that was fine.
+
+So you have exactly two things to try, and you try both.
+
+First you cover up the left tile and ask whether what remains between your fingers reads the same
+both ways - this time with no removals allowed at all, because you have just used yours. Then you
+put it back, cover up the right tile instead, and ask the same question. If either version reads the
+same both ways, the answer is yes.
+
+You must genuinely try both. It is tempting to believe one side is always the sensible one to
+remove, and it is not. A row reading d-e-e-e-e needs the d taken off the front; the same row
+backwards, e-e-e-e-d, needs the d taken off the back. There is no rule that tells you which without
+looking.
+
+And once you have covered a tile, you are finished - you do not go back to walking inward hoping for
+another chance. You had one removal and you have spent it, so whatever remains has to be perfect on
+its own.
+
+That is why this is quick despite the moment of choice: the choice happens once and once only, and
+each of the two things you try afterwards is just another walk inward with no decisions in it.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep s = 'abca' beside you, answer True.
+
+    def valid_palindrome(s):
+
+`s` is the input string. Returns True if at most one deletion makes it a palindrome. Nothing is
+modified - strings are immutable and no copy is made.
+
+        def is_pal(lo, hi):
+
+THE ORDINARY PALINDROME CHECK - NO DELETIONS ALLOWED. This is the point of trap 3: it must be a
+strict check, not another call to `valid_palindrome`, or a second deletion would sneak in.
+
+Defined inside so it can see `s` without being handed it. It takes only two INDICES, not a
+substring - so it reads the original string in place and allocates nothing (trap 4).
+
+            while lo < hi:
+                if s[lo] != s[hi]:
+                    return False
+                lo += 1; hi -= 1
+            return True
+
+The plain inward walk. Any disagreement is fatal here, because the one deletion has already been
+spent by the caller.
+
+`lo < hi` rather than `<=`: when the two meet on the same character there is nothing to compare
+(trap 5). Reaching the end means every pair agreed, so the stretch is a palindrome - and note this
+returns True for an empty or single-character stretch, which is correct and is what makes the traces
+in section 9 come out cleanly.
+
+        left, right = 0, len(s) - 1
+
+    left   HOLDS the position being examined from the front.
+    right  HOLDS the position being examined from the back.
+
+For an empty string `right` is −1, which is harmless: the loop condition below is false at once.
+
+        while left < right:
+
+The outer walk, closing in by two positions per iteration. It terminates because both pointers move
+every time the characters match, and the mismatch branch returns outright.
+
+            if s[left] != s[right]:
+
+THE ONLY DECISION POINT IN THE ENTIRE ALGORITHM. Everything outside `left` and `right` has already
+been checked and matched, which is what makes the two candidates below the ONLY two (section 5).
+
+                # try skipping either the left or the right mismatched char
+                return is_pal(left + 1, right) or is_pal(left, right - 1)
+
+THE BRANCH, AND THE LINE THE PROBLEM IS ABOUT.
+
+    `is_pal(left + 1, right)`  DECIDES whether deleting the LEFT character works: check the stretch
+                               starting one place further in.
+    `is_pal(left, right - 1)`  DECIDES whether deleting the RIGHT one works.
+    `or`                       succeeds if either does - and SHORT-CIRCUITS, so the second check
+                               only runs when the first fails.
+
+    BOTH ARE NEEDED. "deeee" needs the left one and "eeeed" needs the right one (trap 1).
+
+    AND IT IS A `return`, NOT AN ASSIGNMENT (trap 2). The deletion is spent, so these two strict
+    checks are the final answer and the outer walk must not resume.
+
+                left += 1; right -= 1
+
+The characters matched, so step both inward and carry on. Reached only when the `if` above did not
+fire.
+
+        return True
+
+The outer walk finished without ever disagreeing, so the string is ALREADY a palindrome. Zero
+deletions is within "at most one", so the answer is True (trap 6).""",
+
+    """9. TRACED, POINTER BY POINTER - INCLUDING THE PAIR THAT PROVES BOTH SIDES ARE NEEDED.
+
+TRACE 1 - THE CORE CASE. s = 'abca'. Expected True.
+
+    left = 0, right = 3
+
+    ITERATION 1:  s[0] = 'a',  s[3] = 'a'.   Equal  ->  left = 1, right = 2
+    ITERATION 2:  s[1] = 'b',  s[2] = 'c'.   MISMATCH - the one decision point.
+
+        is_pal(left + 1, right) = is_pal(2, 2):
+            lo = 2, hi = 2.  `lo < hi` is FALSE - a single character.  RETURN True.
+            (This is "delete the 'b'", leaving "aca".)
+
+        `or` SHORT-CIRCUITS - the second check never runs.
+
+        RETURN True.
+
+    ANSWER True.  Deleting 'b' gives "aca"; deleting 'c' would give "aba". Either works, and the
+    code stops as soon as the first succeeds.
+
+TRACE 2 - THE PAIR THAT PROVES YOU MUST TRY BOTH (trap 1).
+
+    s = "deeee".  Expected True.
+
+    left = 0, right = 4
+    ITERATION 1:  s[0] = 'd',  s[4] = 'e'.   MISMATCH immediately.
+
+        is_pal(1, 4)  -  "delete the 'd'", leaving "eeee":
+            lo=1, hi=4:  s[1]='e', s[4]='e'.  Equal  ->  lo=2, hi=3
+            lo=2, hi=3:  s[2]='e', s[3]='e'.  Equal  ->  lo=3, hi=2
+            lo < hi is false  ->  RETURN True.
+
+        `or` short-circuits.  RETURN True.
+
+    NOW THE MIRROR IMAGE.  s = "eeeed".  Expected True.
+
+    left = 0, right = 4
+    ITERATION 1:  s[0] = 'e',  s[4] = 'd'.   MISMATCH.
+
+        is_pal(1, 4)  -  "delete the leading 'e'", leaving "eeed":
+            lo=1, hi=4:  s[1]='e', s[4]='d'.  DIFFERENT  ->  RETURN False.
+
+        The first branch FAILED, so `or` evaluates the second:
+
+        is_pal(0, 3)  -  "delete the 'd'", leaving "eeee":
+            lo=0, hi=3:  s[0]='e', s[3]='e'.  Equal  ->  lo=1, hi=2
+            lo=1, hi=2:  s[1]='e', s[2]='e'.  Equal  ->  lo=2, hi=1
+            lo < hi false  ->  RETURN True.
+
+        RETURN True.
+
+    THE TWO STRINGS ARE REVERSES OF EACH OTHER AND THEY NEED OPPOSITE DELETIONS. A version that only
+    tried skipping the right character returns False on "deeee"; one that only tried skipping the
+    left returns False on "eeeed". Neither one-sided version can be right, which is exactly why the
+    line has two calls joined by `or`.
+
+TRACE 3 - THE CASE THAT RETURNS FALSE. s = 'abc'. Expected False.
+
+    left = 0, right = 2
+    ITERATION 1:  s[0] = 'a',  s[2] = 'c'.  MISMATCH.
+
+        is_pal(1, 2):  lo=1, hi=2:  s[1]='b', s[2]='c'.  DIFFERENT  ->  RETURN False.
+        is_pal(0, 1):  lo=0, hi=1:  s[0]='a', s[1]='b'.  DIFFERENT  ->  RETURN False.
+
+        False or False  ->  RETURN False.
+
+    ANSWER False.  Deleting 'a' leaves "bc", deleting 'c' leaves "ab" - neither is a palindrome, and
+    a second deletion is not permitted.
+
+TRACE 4 - ALREADY A PALINDROME (trap 6). s = 'aba'. Expected True.
+
+    left = 0, right = 2
+    ITERATION 1:  s[0] = 'a',  s[2] = 'a'.  Equal  ->  left = 1, right = 1
+    LOOP CHECK:   left 1 is not < right 1.  The loop ends.
+    RETURN True   -   from the LAST line, not from the mismatch branch.
+
+    NO MISMATCH EVER OCCURRED, so `is_pal` was never called at all. Deleting zero characters is
+    within "at most one", which is why the final `return True` has to be there.
+
+    THE INVERSION: change one character to break the symmetry. s = 'abb':
+        ITERATION 1: s[0]='a', s[2]='b'.  MISMATCH.
+            is_pal(1,2): s[1]='b', s[2]='b'.  Equal -> lo=2, hi=1 -> RETURN True.
+        RETURN True - delete the 'a' and "bb" remains.
+    And s = 'abd':
+        ITERATION 1: s[0]='a', s[2]='d'.  MISMATCH.
+            is_pal(1,2): 'b' vs 'd'  ->  False.
+            is_pal(0,1): 'a' vs 'b'  ->  False.
+        RETURN False.
+    Three-character strings, one character apart, and the answer turns on whether the two survivors
+    happen to match.
+
+THE TINY INPUTS:
+    ""    left = 0, right = −1.  `left < right` is false at once.  RETURN True.  The empty string
+          is a palindrome.
+    "a"   left = right = 0.  Loop never runs.  RETURN True.
+    "ab"  ITERATION 1: 'a' vs 'b' mismatch.  is_pal(1,1) -> lo<hi false -> True.  RETURN True.
+          Correct: delete either character and one letter remains, which is a palindrome.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n).
+
+In plain words: the outer walk is one pass over the string. At the first mismatch it RETURNS, so it
+never resumes - and each of the two helper calls is at most one more pass over what remains.
+THREE PASSES AT WORST, so about 3n character comparisons.
+
+    THE THING TO SAY OUT LOUD: it looks like it branches, and branching usually means exponential
+    work. It does not here, because THERE IS EXACTLY ONE BRANCH POINT IN THE WHOLE ALGORITHM. After
+    it, the deletion is spent and both branches are strict palindrome checks with no choices left
+    in them. If mismatches could each branch again, k of them would cost 2^k.
+
+SPACE: O(1). Four indices and no copies - the helper takes INDICES into the original string rather
+than a substring, so nothing is allocated (trap 4). The slicing version would be O(n) space per
+call.
+
+    AGAINST THE NAIVE VERSION: trying every deletion in turn is O(n^2). At n = 100,000 that is
+    10,000,000,000 character operations against roughly 300,000 - about thirty thousand times the
+    work.
+
+WHY k = 1 IS SPECIAL, and the generalisation:
+
+    "AT MOST k DELETIONS" CANNOT be done with this trick for k >= 2. The proof in section 5 relies
+    on the deleted character being forced to be one of the two mismatching ones, and that argument
+    assumes a single shift. With two deletions in hand you might remove on the left now and on the
+    right later, and the candidate set is no longer just two.
+
+    THE RIGHT TOOL THEN is the LONGEST PALINDROMIC SUBSEQUENCE: the characters you KEEP must form a
+    palindrome, and everything else is deleted, so the answer is yes exactly when
+    n − LPS(s) <= k. LPS is an O(n^2) dynamic program.
+
+    SO: k = 1 is a linear greedy; k >= 2 is a quadratic DP. That jump is the interesting content of
+    the follow-up, and naming it unprompted is worth a lot.
+
+THE FAMILY - TWO POINTERS FROM OPPOSITE ENDS WITH A PROOF ATTACHED:
+
+    VALID PALINDROME             the plain version, no deletion               <- the parent problem
+    VALID PALINDROME II          one deletion, one branch point               <- this entry
+    TWO SUM II (sorted input)    move left in if the sum is too small
+    COUNT PAIRS BELOW A TARGET   count a whole block, then retire an end
+    CONTAINER WITH MOST WATER    always move the shorter wall inward
+    BOATS TO SAVE PEOPLE         pair the lightest with the heaviest
+    REVERSE STRING / VOWELS      swap and step inward
+
+    THE COMMON THREAD IS NOT THE SHAPE, IT IS THE ARGUMENT: in each one you can prove that a
+    position can be retired on the basis of a single comparison. If you cannot state that proof,
+    the two-pointer sweep is unjustified even when it happens to work.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "At most k deletions?" LPS-based DP, O(n^2) - and say why the greedy stops working.
+  - "Which character would you delete?" The branch already knows: whichever of the two checks
+    succeeded tells you, so return the index instead of a boolean.
+  - "Ignore case and non-letters?" That is Valid Palindrome I's variation - skip non-alphanumerics
+    while walking, and lowercase before comparing.
+  - "What if you may INSERT one character instead of deleting?" The same problem - inserting on one
+    side is equivalent to deleting on the other.
+  - "Why is it still linear?" One branch point, three passes. That is the answer.
+
+THE #1 BEGINNER MISTAKE: checking only one side at the mismatch. It is tempting because one side
+often works, and "deeee" and "eeeed" are the smallest pair showing that neither side is reliably the
+right one - they are reverses of each other and need opposite deletions.
+
+RUNNER-UP: letting the helper allow another deletion - recursing into `valid_palindrome` rather than
+into a strict check - which quietly answers "at most two" instead of "at most one".
+
+TAKEAWAY: walk inward from both ends, and at the FIRST mismatch the deleted character is provably
+one of exactly those two - so try skipping each, with no further deletions allowed in either check,
+and the single branch point is what keeps a problem that looks like a search down to three linear
+passes.""",
 ]
 
 _EX_P1A["Minimum Depth of Binary Tree"] = [
