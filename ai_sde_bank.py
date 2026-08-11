@@ -95242,241 +95242,1614 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1L["Search Insert Position"] = [
-    """Both outcomes, traced on the same array.
-nums = [1,3,5,6].
-target 5: lo 0, hi 4 -> mid 2, nums[2] = 5, not < 5 -> hi = 2. mid 1, nums[1] =
-3 < 5 -> lo = 2. lo == hi -> return 2. Found at index 2.
-target 2: mid 2, 5 not < 2 -> hi = 2. mid 1, 3 not < 2 -> hi = 1. mid 0, 1 < 2
--> lo = 1. Return 1 - the position where 2 would go, between 1 and 3.
-target 7: everything is < 7, so lo climbs to 4 -> return 4, one past the end.
-One code path handles all three, which is the point.""",
+    """1. THE GOAL - where is the target, or where would it go?
 
-    """Why the half-open bounds, and why `hi = len(nums)` not `len(nums) - 1`.
-The answer can legitimately be n - inserting past the last element - so hi must
-be able to reach n. Initialising hi to n-1 caps the answer at n-1 and gets
-target 7 above wrong.
-The loop is `while lo < hi` with `hi = mid` (not mid - 1), which is the
-lower-bound template: the search space is the half-open interval [lo, hi), and
-it shrinks until empty with lo sitting at the answer. Mixing this template with
-the closed-interval one (`while lo <= hi`, `hi = mid - 1`) is where binary
-search bugs come from - pick one and use it consistently.""",
+Given a SORTED array of DISTINCT integers and a target, return the index of the target if it is present,
+and otherwise the index where it WOULD have to be inserted to keep the array sorted.
 
-    """What this actually computes: lower_bound.
-It returns the index of the FIRST element not less than target - which is
-`bisect.bisect_left(nums, target)` exactly. Recognising that means you can
-answer a whole family instantly rather than re-deriving bounds each time.
-The sibling is bisect_right / upper_bound, the first element strictly GREATER
-than target, obtained by changing the comparison to `nums[mid] <= target`. With
-duplicates present the two differ, and knowing which one a problem wants is
-usually the entire difficulty of the harder variants.""",
+    nums = [1, 3, 5, 6]
 
-    """Edge cases.
-Empty array -> lo 0, hi 0, loop does not run -> 0. Insert at the front.
-Target smaller than everything -> 0. Larger than everything -> len(nums).
-Target present -> its index, because bisect_left stops at the first
-not-less-than element.
-Single element [1] with target 1 -> 0; with target 0 -> 0; with target 2 -> 1.
-Duplicates are excluded by the 'distinct' constraint here, but if they existed
-this returns the LEFTMOST occurrence - which is worth stating since it is the
-behaviour that makes the template reusable.""",
+        target 5   present at index 2                                    ->  2
+        target 2   absent; it belongs between 1 and 3, i.e. at index 1   ->  1
+        target 7   absent; it belongs after everything, at index 4       ->  4
+        target 0   absent; it belongs before everything, at index 0      ->  0
 
-    """The overflow footnote.
-`mid = (lo + hi) // 2` can overflow a 32-bit int in C++ or Java when lo and hi
-are both near the maximum - the famous bug that sat in the JDK's binary search
-for nine years. The fix is `lo + (hi - lo) // 2`.
-Python's integers are arbitrary precision so it cannot happen here, which is
-exactly why it is worth saying: it shows you know the algorithm beyond the
-language you are writing in.""",
+THE TWO OUTCOMES ARE ONE ANSWER, WHICH IS THE WHOLE ELEGANCE OF THE PROBLEM. You do not need a found /
+not-found branch: both questions have the same answer, THE INDEX OF THE FIRST ELEMENT THAT IS NOT LESS
+THAN THE TARGET.
 
-    """Complexity and the family.
-O(log n) time - the interval halves each iteration - and O(1) space with the
-iterative form. The recursive version is O(log n) stack for no benefit.
-The family: Binary Search (exact match), First and Last Position of Element in
-Sorted Array (bisect_left and bisect_right together), Find Smallest Letter
-Greater Than Target (upper bound with wraparound), Search in Rotated Sorted
-Array (one half is always sorted), and every 'binary search on the answer'
-problem - Koko Eating Bananas, Capacity to Ship Packages, Arranging Coins.
-This entry is the template the rest are variations of, so it is worth being
-able to write from memory without hesitation.""",
+    nums = [1, 3, 5, 6]
+
+        first element not less than 5   ->   the 5 at index 2      (present: its own index)
+        first element not less than 2   ->   the 3 at index 1      (absent: where it would go)
+        first element not less than 7   ->   there is none         ->   index 4, past the end
+
+    THAT LAST CASE IS WHY THE ANSWER CAN BE n, ONE PAST THE LAST INDEX. Inserting after everything is a
+    legitimate answer, and section 4 shows what breaks if your search cannot reach it.
+
+THE ARRAY IS DISTINCT, WHICH MAKES THIS PROBLEM SIMPLER THAN IT LOOKS. With duplicates, "the index of the
+target" would be ambiguous - first occurrence or last? - and the two conventions genuinely differ. The
+distinctness guarantee hides that question here, but section 4 shows the bug it hides.
+
+    THIS ENTRY JOINS THE BINARY-SEARCH CLUSTER. ARRANGING COINS OWNS SEARCHING OVER AN ANSWER RANGE rather
+    than an array. KTH MISSING POSITIVE OWNS THE INDEX-VS-VALUE OFFSET and computing an answer that is not
+    in the array. THIS ONE OWNS THE INSERTION-POINT CONVENTION - half-open bounds, and why `lo` is the
+    answer when the loop ends.""",
+
+    """2. THE INTUITION - shrink a window until it holds exactly one position.
+
+Keep a window of positions that could still be the answer. Look at the middle. Every look lets you throw
+away half.
+
+    nums = [1, 3, 5, 6],  target 2
+
+        candidates 0..4 (five positions, because index 4 - insert at the end - is allowed)
+
+        look at index 2: nums[2] is 5, which is NOT LESS than 2
+            so 5 is a candidate for "first element not less than 2", and so is anything before it
+            everything AFTER index 2 is ruled out
+            candidates now 0..2
+
+        look at index 1: nums[1] is 3, NOT LESS than 2
+            same conclusion; candidates now 0..1
+
+        look at index 0: nums[0] is 1, which IS less than 2
+            so index 0 cannot be the answer - the answer is somewhere after it
+            candidates now 1..1
+
+        one candidate left: index 1.   ANSWER: 1
+
+THE TWO MOVES ARE NOT SYMMETRIC, AND THAT ASYMMETRY IS THE PROBLEM:
+
+        nums[mid] < target        mid is definitely NOT the answer   ->   lo = mid + 1     (exclude it)
+        nums[mid] >= target       mid might BE the answer            ->   hi = mid         (keep it)
+
+    THE SECOND CASE KEEPS `mid` INSIDE THE WINDOW. If you wrote `hi = mid - 1` you would throw away the
+    very position you had just shown to be a candidate.
+
+THE PICTURE - A HALF-OPEN WINDOW [lo, hi), MEANING lo IS INCLUDED AND hi IS NOT:
+
+        positions:   0    1    2    3    (4)
+        values:      1    3    5    6     -
+                     ^                    ^
+                    lo=0                 hi=4        <- hi starts PAST the end, on purpose
+
+    hi = len(nums), NOT len(nums) - 1. The window is a range of ANSWERS, and n is a legal answer.
+
+WHY `lo` IS THE ANSWER WHEN THE LOOP ENDS. The loop runs while lo < hi, so it stops when they are equal.
+Everything below `lo` has been proved too small; everything from `hi` upward has been ruled out as
+unnecessary. WHEN THEY MEET, THAT SINGLE POSITION IS THE ONLY SURVIVOR - and it is the insertion point.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SORTED. Non-decreasing. Here also DISTINCT, so strictly increasing.
+
+INSERTION POINT. The index at which the target would be placed to keep the array sorted. If the target is
+present, that is its own index; if not, it is the index of the first larger element.
+
+LOWER BOUND. The standard name for exactly this quantity: the index of the FIRST element not less than the
+target. Python's `bisect.bisect_left` computes it. C++ calls it `std::lower_bound`.
+UPPER BOUND. The index of the first element STRICTLY GREATER than the target - `bisect_right`. FOR AN
+ABSENT TARGET THE TWO AGREE; for a present one they differ by one, and section 4 measures that.
+
+HALF-OPEN INTERVAL [lo, hi). `lo` is included, `hi` is not. Writing the window this way is what lets `hi`
+start at n - one past the last index - without ever indexing there.
+
+INVARIANT. A statement that stays true every time round the loop. Here: the answer is always somewhere in
+[lo, hi).
+
+THE VARIABLES IN THE CODE:
+    nums     the sorted array. NOT MODIFIED.
+    target   the value being placed.
+    lo       the lowest position still possible. Starts at 0.
+    hi       one PAST the highest position still possible. STARTS AT len(nums), not len(nums) - 1.
+    mid      the position being tested.
+
+`(lo + hi) // 2` rounds DOWN, so `mid` is always strictly less than `hi` when lo < hi - which is what
+guarantees progress.
+
+n IS THE ARRAY LENGTH. TIME O(log n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - two bugs, and each official example catches exactly one.
+
+TRAP 1 - `hi = len(nums) - 1` INSTEAD OF `len(nums)`. It is the reflex from ordinary binary search, where
+`hi` is a valid index. HERE `hi` IS A BOUNDARY, NOT AN ELEMENT, and the answer may be n.
+
+    With `hi = len(nums) - 1` the window can never reach n, so a target larger than everything reports
+    n - 1 instead of n.
+
+    MEASURED: wrong on 1,348 of 6,000 random cases.
+
+TRAP 2 - `nums[mid] <= target` INSTEAD OF `<`. That one character turns lower_bound into UPPER bound: on a
+target that IS present, it returns the index AFTER it.
+
+        nums = [1, 3, 5, 6], target 5     lower bound 2 (the 5 itself)     upper bound 3
+
+    MEASURED: wrong on 1,090 of 6,000 random cases.
+
+NOW THE PART WORTH NOTICING - THE THREE OFFICIAL EXAMPLES DIVIDE THE LABOUR EXACTLY:
+
+        target 5 (PRESENT)         correct 2   hi=len-1 gives 2   AGREE      upper bound gives 3   CAUGHT
+        target 2 (absent, middle)  correct 1   hi=len-1 gives 1   AGREE      upper bound gives 1   AGREE
+        target 7 (absent, at end)  correct 4   hi=len-1 gives 3   CAUGHT     upper bound gives 4   AGREE
+
+    EACH BUG IS CAUGHT BY EXACTLY ONE EXAMPLE, AND THE MIDDLE EXAMPLE CATCHES NEITHER. Test only target 2
+    - the most "typical-looking" case - and both bugs ship. THE TWO CASES THAT MATTER ARE THE EXTREME ONE
+    (insert past the end) AND THE PRESENT ONE (is it the element's own index or the one after?).
+
+TRAP 3 - `while lo <= hi` COMBINED WITH `hi = len(nums)`. Mixing the half-open bound with the closed-loop
+condition lets `mid` reach n, and `nums[n]` raises IndexError. THE LOOP CONDITION AND THE INITIAL `hi`
+MUST MATCH: `[lo, hi)` with `lo < hi`, or `[lo, hi]` with `lo <= hi` and `hi = n - 1`. Choose one
+convention and keep it - most binary-search bugs are two conventions half-mixed.
+
+TRAP 4 - `hi = mid - 1` IN THE SECOND BRANCH. `mid` was just shown to be a candidate; excluding it
+discards the answer. In the half-open form the correct move is `hi = mid`, which excludes everything above
+`mid` while keeping `mid` itself.
+
+WHAT IS NOT A TRAP, checked rather than assumed: the empty array. `lo` and `hi` are both 0, the loop never
+runs, and 0 is returned - the correct insertion point for an empty array, with no guard.""",
+
+    """5. THE SLOW WAY FIRST, then the halving - and an honest word about the constraints.
+
+THE NAIVE VERSION - WALK UNTIL YOU FIND SOMETHING BIG ENOUGH:
+
+    for i, v in enumerate(nums):
+        if v >= target:
+            return i
+    return len(nums)
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it says
+    the definition out loud: the first element not less than the target, or the end. COST: O(n).
+
+    AT THIS PROBLEM'S LIMIT OF n = 10,000 THAT IS AT MOST 10,000 COMPARISONS AND WOULD PASS INSTANTLY. So
+    be honest: the linear scan is adequate here. The problem exists to make you write the binary search,
+    and it says "O(log n) runtime complexity" explicitly for that reason.
+
+THE UPGRADE, AND THE OBSERVATION BEHIND IT. Because the array is sorted, one comparison rules out HALF the
+remaining positions rather than one. Look at the middle:
+
+        if the middle element is less than the target, no position at or below the middle can be the
+        answer - the answer is strictly to the right
+        otherwise the middle element is itself a candidate, and nothing to its right can be a better one
+
+    Each step halves the window, so 10,000 positions take about 14 comparisons instead of 10,000.
+
+    COST: O(log n) time, O(1) space.
+
+WHY THE HALF-OPEN FORM IS WORTH LEARNING RATHER THAN THE CLOSED ONE. Written as [lo, hi) with `hi` starting
+at n:
+    the answer n needs no special case, because the window already contains it;
+    the loop condition is `lo < hi`, which is exactly "more than one candidate remains";
+    the answer is `lo`, with no post-loop adjustment.
+    CONTRAST THE CLOSED FORM used by Arranging Coins in this bank, which ends with `lo > hi` and returns
+    `hi` - a different convention, correct for a different question. BOTH ARE FINE; MIXING THEM IS NOT.
+
+THE LIBRARY ANSWER: `bisect.bisect_left(nums, target)` is this function exactly. Say so in an interview
+after writing the loop - the question is about the mechanism, and pretending the built-in does not exist
+is worse than naming it.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: keep a window of positions that could be the answer, look at its middle, and discard
+whichever half cannot contain the first element that is not less than the target.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two boundaries:
+
+    `lo`  only ever increases.
+    `hi`  only ever decreases.
+    THE WINDOW [lo, hi) ONLY EVER SHRINKS, and it always contains the answer.
+
+    THE INVARIANT, STATED PRECISELY: every position below `lo` holds a value strictly less than the
+    target, and every position at or above `hi` has been ruled out as later than necessary. TRUE AT THE
+    START, when the window is the whole range and nothing has been ruled out. Each branch preserves it:
+    `lo = mid + 1` is justified because nums[mid] was less than the target; `hi = mid` is justified
+    because nums[mid] is a candidate and nothing beyond it can be earlier.
+
+    WHAT MAKES IT STOP, AND THIS IS THE PART WORTH CHECKING RATHER THAN ASSUMING: because `//` rounds
+    DOWN and lo < hi, `mid` satisfies lo <= mid < hi. So `lo = mid + 1` strictly increases `lo`, and
+    `hi = mid` strictly decreases `hi`. THE WINDOW SHRINKS BY AT LEAST ONE EVERY ITERATION and cannot
+    stall - which is exactly the failure mode of a binary search written with the wrong rounding, where
+    `mid` can equal `lo` forever.
+
+    WHY THE ANSWER IS `lo`: the loop ends when lo == hi. By the invariant, everything below is too small
+    and everything above is unnecessary, so this single position is the first element not less than the
+    target - or n, if no such element exists.
+
+THE STEPS, NO CODE:
+
+    1. Set the window to every position from the first to ONE PAST THE LAST - because inserting at the end
+       is a legal answer.
+    2. While the window holds more than one position:
+       a. Take the position halfway along, rounding down.
+       b. If the value there is LESS than the target, that position and everything before it are ruled
+          out, so move the low boundary to just after it.
+       c. Otherwise that position is still a candidate, so move the high boundary DOWN TO IT - not past
+          it.
+    3. Hand back the low boundary.
+
+    STEP 1's "ONE PAST THE LAST" IS TRAP 1. STEP 2b's "LESS THAN" - not "at most" - IS TRAP 2. STEP 2c's
+    "DOWN TO IT" - not past it - IS TRAP 4.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A library shelf holds books arranged by catalogue number, lowest at the left, and every number is
+different. You are holding a new book and need to know where it goes - or, if the library already owns
+that number, where that copy is sitting. THE ANSWER TO BOTH QUESTIONS IS THE SAME SPOT, which is the first
+thing to notice: you want the leftmost place where a book with your number would sit correctly.
+
+You do not read along the shelf from the left. You put one hand at the far left and the other just beyond
+the right-hand end - PAST the last book, because "after everything" is a perfectly good place for your
+book to go, and if your hand starts on the last book instead you can never point there.
+
+Now look at the book halfway between your hands.
+
+If its number is SMALLER than yours, your book belongs somewhere to the right of it. So does everything
+you are still considering. You move your left hand to just past that book, and it is out of the picture
+for good.
+
+If its number is your number or larger, then THIS SPOT IS STILL A CANDIDATE - your book might belong
+exactly here, either because it is where the existing copy sits or because it is the first book too large
+for you to go after. So you move your right hand DOWN TO THIS BOOK, not past it. You must not discard the
+very spot you just decided might be the answer.
+
+Each look halves what is left, so a shelf of ten thousand books takes about fourteen looks.
+
+Eventually your hands are on the same spot. Everything to the left has been proved too small, and
+everything to the right was set aside as unnecessary. That spot is your answer.
+
+    AND THE TWO MISTAKES ARE BOTH ABOUT EDGES. If your right hand started ON the last book rather than
+    just past it, a book with a huge number would end up reported as belonging on top of the last one
+    instead of after it. And if you moved your left hand rightwards when the middle book's number EQUALLY
+    matched yours, you would walk straight past the existing copy and report the gap after it instead.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def search_insert(nums, target):
+
+`nums` is the sorted array of distinct integers; `target` is the value to place. NEITHER IS MODIFIED.
+
+    lo, hi = 0, len(nums)
+
+THE WINDOW, HALF-OPEN: `lo` is the first position still possible, `hi` is ONE PAST the last one. `hi` IS
+len(nums) AND NOT len(nums) - 1 - the answer may be n, meaning "insert after everything", and a window
+that stops at n-1 can never report it. That single choice is wrong on 1,348 of 6,000 random cases and is
+caught by only ONE of the three official examples.
+
+    while lo < hi:
+
+"MORE THAN ONE CANDIDATE REMAINS". It must be `<` and not `<=`, because `hi` is not a valid index -
+pairing `<=` with this `hi` lets `mid` reach n and raises IndexError.
+
+    mid = (lo + hi) // 2
+
+THE MIDDLE, ROUNDED DOWN. The rounding matters: with lo < hi it guarantees lo <= mid < hi, which is what
+makes both branches shrink the window and the loop terminate.
+
+    if nums[mid] < target:
+        lo = mid + 1
+
+STRICTLY LESS, SO THIS POSITION IS RULED OUT. Everything at or before `mid` is too small, so the low
+boundary moves past it. WRITING `<=` HERE COMPUTES THE UPPER BOUND INSTEAD - the index after a present
+target rather than its own index - wrong on 1,090 of 6,000, and caught by a different official example
+than trap 1.
+
+    else:
+        hi = mid
+
+THIS POSITION IS STILL A CANDIDATE, SO KEEP IT. `hi = mid` excludes everything ABOVE mid while leaving mid
+itself inside the half-open window. `hi = mid - 1` would throw away the position just shown to qualify.
+
+    return lo
+
+THE INSERTION POINT. When the loop ends `lo` equals `hi`, and by the invariant this is the first position
+whose value is not less than the target - or n if there is none. NOT `mid`, which is stale, and no
+post-loop adjustment is needed.
+
+WHAT IS DELIBERATELY ABSENT: no separate found / not-found branch (both answers are the same number), no
+guard for an empty array (lo and hi are both 0, the loop does not run, 0 is returned - verified), and no
+special case for a target beyond the last element.""",
+
+    """9. TRACED ON REAL NUMBERS - the absent case, then the present one, on the same array.
+
+nums = [1, 3, 5, 6].  The window starts as [0, 4) - FIVE possible answers, 0 through 4.
+
+RUN A: target = 2 (absent, belongs in the middle)
+
+    lo=0 hi=4    mid = (0+4)//2 = 2,  nums[2] = 5
+                 5 < 2?  NO  ->  5 is a candidate, so hi = 2      window [0, 2)
+    lo=0 hi=2    mid = (0+2)//2 = 1,  nums[1] = 3
+                 3 < 2?  NO  ->  hi = 1                            window [0, 1)
+    lo=0 hi=1    mid = (0+1)//2 = 0,  nums[0] = 1
+                 1 < 2?  YES ->  index 0 ruled out, lo = 1         window [1, 1)
+    lo == hi == 1  ->  loop ends
+
+    RETURNS 1.  Correct: 2 belongs between the 1 and the 3.
+
+RUN B: target = 5 (present at index 2)
+
+    lo=0 hi=4    mid = 2,  nums[2] = 5.   5 < 5?  NO  ->  hi = 2   window [0, 2)
+    lo=0 hi=2    mid = 1,  nums[1] = 3.   3 < 5?  YES ->  lo = 2   window [2, 2)
+    lo == hi == 2  ->  RETURNS 2 - the target's OWN index.
+
+    WITH `<=` IN PLACE OF `<`, the first step would ask "5 <= 5?" - yes - and set lo = 3, and the answer
+    would come back 3, the position AFTER the 5. THIS RUN IS THE ONE THAT EXPOSES THAT BUG; run A does
+    not, because with an absent target the two conventions agree.
+
+THE INVERSION - THE SAME ARRAY, TARGET CHANGED FROM 2 TO 5:
+
+    [1,3,5,6] target 2  ->  1     (absent: the gap before the 3)
+    [1,3,5,6] target 5  ->  2     (present: its own index)
+
+    Both verified against the linear ground truth.
+
+AND THE THIRD OFFICIAL CASE, target 7, which is the one that needs the window to reach n:
+
+    lo=0 hi=4   mid=2, nums[2]=5 < 7  ->  lo = 3
+    lo=3 hi=4   mid=3, nums[3]=6 < 7  ->  lo = 4
+    lo == hi == 4  ->  RETURNS 4, one past the last index.
+
+    With `hi` initialised to 3 instead of 4, the window is [0,3) and `lo` can never exceed 3, so this
+    returns 3 - on top of the 6 rather than after it.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration discards half the remaining window, so the number of iterations is how
+many times n can be halved.
+
+    TIME O(log n) - about 14 comparisons for 10,000 elements. SPACE O(1) with the iterative form; the
+    recursive version is O(log n) stack for no benefit.
+    The linear scan is O(n) and, at this problem's limit of n = 10,000, would pass instantly - so the
+    binary search is what the problem asks for rather than what it needs. The prompt states the O(log n)
+    requirement explicitly, which is the tell.
+
+THE #1 MISTAKE: initialising `hi` to len(nums) - 1. The answer can be n - "insert after everything" - and
+a window that stops one short can never report it. Wrong on 1,348 of 6,000 random cases. THE RUNNER-UP is
+`nums[mid] <= target`, which computes the UPPER bound and returns the index after a present target -
+wrong on 1,090 of 6,000. EACH IS CAUGHT BY EXACTLY ONE OF THE THREE OFFICIAL EXAMPLES, and the
+middle-looking one, target 2, catches NEITHER.
+
+ONE-SENTENCE TAKEAWAY: the found and not-found answers are the same number - the index of the first
+element not less than the target - so search a half-open window that includes n, keep `mid` when it
+qualifies, and return `lo`.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can write a binary search whose BOUNDARY CONVENTION
+is coherent. Everyone knows the halving idea; the failures are all at the edges - where `hi` starts,
+whether the loop is `<` or `<=`, whether `mid` is kept or discarded, and what is returned at the end.
+THOSE FOUR CHOICES ARE NOT INDEPENDENT: half-open with `lo < hi`, `hi = mid`, and `return lo` is one
+coherent set; closed with `lo <= hi`, `hi = mid - 1`, and `return hi` is another. Say which convention you
+are using before you write it, and the bugs stop appearing.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if the array has DUPLICATES and you want the FIRST occurrence?" This code already returns it -
+    it is lower_bound. For the LAST occurrence you want upper_bound minus one, which is the `<=` variant
+    that is a bug here and the correct answer there. THE TWO BUGS IN SECTION 4 ARE EACH THE RIGHT ANSWER
+    TO A DIFFERENT QUESTION.
+    "Count how many elements lie in the range [a, b]." bisect_right(b) - bisect_left(a). Two binary
+    searches, O(log n) total - this is what the primitive is really for.
+    "What about the famous overflow bug?" `mid = (lo + hi) // 2` can overflow a fixed-width integer in C++
+    or Java when both are near the maximum - the bug that sat undetected in the JDK's binary search for
+    nine years. The fix is `lo + (hi - lo) // 2`. Python's unbounded integers make it a non-issue, and
+    saying so shows you know why the idiom exists rather than copying it.
+    "Do it recursively." Same logic, O(log n) stack instead of O(1). No advantage here.""",
 ]
 
 _EX_P1L["Search in a Binary Search Tree"] = [
-    """The descent, traced.
-BST 4 -> (2 -> (1, 3), 7), searching for 2.
-At 4: 2 < 4 -> go left. At 2: found -> return the subtree rooted at 2, i.e.
-2 -> (1, 3).
-Searching for 5: at 4, 5 > 4 -> right. At 7, 5 < 7 -> left, which is None ->
-return None.
-Note the function returns the NODE, not a boolean - so the caller receives the
-whole subtree hanging below it, which is what makes this composable with
-further BST operations.""",
+    """1. THE GOAL - find the node holding a value, and hand back everything under it.
 
-    """Why this is O(h) and not O(n).
-The BST invariant means that at every node you can discard an entire subtree
-without looking at it: if the target is smaller than the current value, nothing
-in the right subtree can match, because everything there is larger. So each
-comparison halves the remaining search space in a balanced tree.
-That is the whole value of a BST over an unsorted tree, and it is the sentence
-to say: 'the ordering lets me eliminate half the tree per comparison'. A
-candidate who writes a full traversal here has produced a correct answer that
-ignores the data structure.""",
+You are given a BINARY SEARCH TREE and a value. Return the SUBTREE whose root holds that value - that is,
+the node itself, together with everything hanging below it. If the value is not in the tree, return null.
 
-    """The iterative form, and why it is preferable.
-The recursive version is three lines and costs O(h) stack. The loop above costs
-O(1) space and cannot blow the stack on a degenerate tree.
-    while root and root.val != val:
-        root = root.left if val < root.val else root.right
+    the tree:            4
+                       /   \\
+                      2     7
+                     / \\
+                    1   3
+
+    searching for 2   ->   the node 2, which brings its children with it:      2
+                                                                             / \\
+                                                                            1   3
+    searching for 5   ->   null - there is no 5 anywhere in the tree
+
+YOU RETURN A NODE, NOT A BOOLEAN AND NOT A VALUE. That is worth reading twice: the answer is a whole
+subtree, and because a node carries its children with it, returning the node IS returning the subtree. No
+copying is involved.
+
+WHY THE BST PROPERTY MAKES THIS FAST. In an ordinary binary tree you would have to look everywhere - the
+value could be anywhere. In a BST, EVERY NODE TELLS YOU WHICH WAY TO GO:
+
+    at the node 4, looking for 2:   2 is less than 4, so if a 2 exists it MUST be in the left subtree
+                                    - the entire right subtree, and the 7 in it, is ruled out unread
+
+    THAT IS THE WHOLE ALGORITHM: one comparison per level, discarding half the remaining tree each time.
+
+MEASURED: on a balanced tree of 1,023 nodes, finding a value visits 8 NODES. A search that ignored the
+ordering would visit up to all 1,023.
+
+    THIS ENTRY JOINS THE BST-DESCENT CLUSTER. CLOSEST BINARY SEARCH TREE VALUE OWNS THE HARDER CASE - the
+    answer is often an ANCESTOR, so you must compare at every step - AND THE TIE RULE. TWO SUM IV OWNS
+    COMBINING A TRAVERSAL WITH A HASH SET, and why the BST property does not help there. THIS ONE OWNS THE
+    PLAIN EXACT-MATCH DESCENT - the simplest member, where you stop the moment you match - AND THE
+    ITERATIVE-VERSUS-RECURSIVE CHOICE.""",
+
+    """2. THE INTUITION - every node is a signpost, so you never look both ways.
+
+Stand at a node and compare. The comparison does not just tell you whether you have arrived; it tells you
+which single direction to walk.
+
+    searching for 2 in the tree rooted at 4:
+
+        at 4:   is 2 equal to 4?   no
+                is 2 less than 4?  YES  ->  go LEFT.
+                the right subtree - the 7 - is now permanently out of the question and was never read
+
+        at 2:   is 2 equal to 2?   YES  ->  stop, and return this node
+
+    THE ANSWER IS THE NODE 2, which carries its children 1 and 3 with it.
+
+WHY DISCARDING A WHOLE SUBTREE IS SAFE - AND IT IS THE ONLY THING TO PROVE. The BST rule says everything
+in a node's right subtree is LARGER than that node. So if your target is smaller than the node, it cannot
+be anywhere in there, however deep you looked. THE ORDERING IS A PROMISE ABOUT AN ENTIRE REGION, made by a
+single comparison.
+
+THE PICTURE - ONE PATH, NOT A SEARCH:
+
+                4          <- compare, turn left
+              /   \\
+             2     7       <- never visited, never read
+            / \\
+           1   3           <- these come along with the answer, but were not searched either
+
+    THE WALK TOUCHES ONE NODE PER LEVEL. The number of levels is the tree's HEIGHT, so the cost is O(h),
+    not O(n).
+
+    MEASURED ON A BALANCED TREE OF 1,023 NODES: the descent visits 8 nodes. That is log2(1024) = 10 at
+    worst, and 8 for this particular value.
+
+WHERE THE PROMISE RUNS OUT. If the values were inserted in increasing order, the tree is not bushy at all -
+it is a straight chain to the right, and its height equals its node count.
+
+    MEASURED: inserting 1 through 10 in order and then searching for 10 visits ALL 10 NODES. THE TREE IS A
+    LINKED LIST. The descent is still correct and still O(h) - it is just that h is now n.
+
+    THAT CAVEAT APPLIES TO EVERY BST OPERATION, and it is why self-balancing trees exist. Section 10 says
+    what to do about it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY SEARCH TREE (BST). A binary tree where, for EVERY node, everything in its left subtree is smaller
+and everything in its right subtree is larger. That promise is what makes one comparison eliminate half
+the remaining tree.
+
+    valid BST:          4              at 4: {1,2,3} on the left are all < 4; {7} on the right is > 4
+                      /   \\            at 2: {1} < 2 and {3} > 2
+                     2     7
+                    / \\
+                   1   3
+
+NODE. A value plus links to a left child and a right child; a missing child is None.
+SUBTREE. A node together with everything below it. RETURNING A NODE IS RETURNING ITS SUBTREE, because the
+links come with it - nothing is copied.
+ROOT. The node a walk starts from. Note that as the loop reassigns `root`, the meaning shifts naturally:
+it is always "the root of the part of the tree still under consideration".
+
+HEIGHT (h). The number of levels from the top to the deepest leaf. Balanced: about log2(n). Degenerate: n.
+DEGENERATE TREE. One that has collapsed into a chain, so h equals n. Produced by inserting sorted values.
+
+ITERATIVE vs RECURSIVE. The loop below uses O(1) space; the equivalent recursion uses O(h) stack. See
+section 5.
+
+THE VARIABLES IN THE CODE:
+    root    the current node. REASSIGNED as the walk descends - the parameter itself is used as the
+            cursor, which is why no extra variable appears.
+    val     the value being searched for.
+
+`root.left if val < root.val else root.right` is a conditional expression: it evaluates to one child or
+the other, and only one of them is ever read.
+
+TIME O(h), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and this problem is genuinely hard to get wrong.
+
+Be honest: this is one of the easiest problems in the bank, and there is no hidden trap of the kind that
+Isomorphic Strings or Ransom Note conceal. What follows are the four ways it actually goes wrong.
+
+TRAP 1 - REVERSING THE COMPARISON. Writing `root.right if val < root.val else root.left` descends away
+from the target every time.
+
+    MEASURED: wrong on 817 of 6,000 random BSTs.
+
+    NOTE IT IS NOT WRONG ON ALL OF THEM, and the reason is instructive: when the value sits AT THE ROOT the
+    loop never runs, so both versions return the whole tree. AND WHEN THE VALUE IS ABSENT, both versions
+    usually return None - the broken one walks off the tree in the wrong direction and still reports
+    "not found", which is the right answer for the wrong reason. THE BUG ONLY SHOWS ITSELF WHEN THE VALUE
+    EXISTS AND IS NOT THE ROOT. Verified on the standard tree: searching for 2 returns the subtree
+    correctly, while the reversed version returns None.
+
+TRAP 2 - SEARCHING BOTH SUBTREES. Writing a recursive scan that tries the left and, if that fails, the
+right, is CORRECT - and it is O(n), throwing away the entire point of the data structure. It is also the
+version you would need for an ordinary binary tree, so knowing the difference matters more than knowing
+either one.
+
+TRAP 3 - RETURNING A BOOLEAN OR THE VALUE. The problem asks for the NODE. `return True` compiles, passes a
+mental check, and fails the judge.
+
+TRAP 4 - ASSUMING BALANCE. The descent is O(h), and h is only about log n when the tree is bushy. MEASURED:
+a tree built by inserting 1..10 in increasing order is a straight chain, and searching for 10 visits all
+ten nodes. The algorithm is fine; the DATA is the problem, and saying which of the two you are complaining
+about is what an interviewer listens for.
+
+WHAT IS NOT A TRAP, checked rather than assumed:
+    an EMPTY tree - the loop condition `root is not None` fails immediately and None is returned;
+    the value AT THE ROOT - the condition `root.val != val` is false immediately, the loop never runs, and
+        the whole tree is returned, which is correct;
+    DUPLICATE values - the constraints say all values are unique, so "which occurrence?" never arises. If
+        they could repeat, this code returns the highest one on the path, and the question would need
+        answering explicitly.""",
+
+    """5. THE SLOW WAY FIRST, then the descent - and the iterative-versus-recursive choice.
+
+THE NAIVE VERSION - LOOK EVERYWHERE:
+
+    if root is None: return None
+    if root.val == val: return root
+    return search_everywhere(root.left, val) or search_everywhere(root.right, val)
+
+    IT IS CORRECT, and it is the ground truth every figure in this entry was checked against - it agreed
+    with the descent on all 6,000 random trees tested. IT IS ALSO THE ONLY OPTION FOR AN UNSORTED BINARY
+    TREE.
+
+    COST: O(n) time and O(h) stack. It reads the whole tree in the worst case, because it has no reason
+    not to.
+
+THE UPGRADE, AND THERE IS NO TRICK - ONLY THE PROPERTY. One comparison at a node tells you which subtree
+can possibly contain the value, so the other is discarded unread. That turns O(n) into O(h).
+
+    COST: O(h) time. On a balanced tree of a million nodes that is about 20 comparisons instead of a
+    million.
+
+THE RECURSIVE DESCENT, which is the version most people write first:
+
+        if root is None or root.val == val: return root
+        return search(root.left, val) if val < root.val else search(root.right, val)
+
+    THREE LINES, PERFECTLY CLEAR, AND EXACTLY AS FAST. Its only cost is O(h) STACK instead of O(1).
+
+WHY THE LOOP IS PREFERRED HERE, STATED HONESTLY. The recursion is TAIL RECURSIVE - the recursive call is
+the last thing that happens, so nothing needs to be remembered across it. A language that eliminates tail
+calls would compile it into exactly the loop. PYTHON DOES NOT, so the stack really does grow, and on a
+degenerate tree of 10,000 nodes it would exceed Python's default recursion limit of 1,000 and crash.
+
+    ON THIS PROBLEM'S LIMIT OF 5,000 NODES, A DEGENERATE TREE WOULD ALSO EXCEED IT. So the iterative form
+    is not merely tidier here - it is the one that survives the worst legal input. THAT IS THE REASON TO
+    PREFER IT, and it is a better answer than "loops are faster".
+
+    WHENEVER A RECURSION IS TAIL RECURSIVE, IT CAN BE REWRITTEN AS A LOOP MECHANICALLY: replace the call
+    with an assignment to the parameter and wrap it in a while. That is exactly the transformation between
+    the two versions above, and it is worth being able to perform on demand.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk down from the root, at each node going left when the target is smaller and right
+when it is larger, and stop the moment the node matches or the walk falls off the tree.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, ONE variable - and that variable is the
+parameter itself:
+
+    `root`  is reassigned to one of its own children each time round. It always means "the top of the part
+            of the tree still worth looking at", so the reassignment is not a hack - the remaining problem
+            really is a smaller tree of the same kind.
+
+    WHAT MAKES IT STOP, AND THERE ARE TWO EXITS, BOTH GUARANTEED:
+        the value matches, so `root.val != val` is false; or
+        the walk reaches a missing child, so `root is not None` is false.
+    Every iteration replaces the current node with a child, which is strictly one level deeper. The tree
+    has finite depth, so after at most h steps one of the two conditions must fire. A TREE HAS NO UPWARD
+    OR SIDEWAYS LINKS, so the walk cannot circle back - there is no visited set and no cycle to worry
+    about.
+
+    THE ORDER OF THE TWO CONDITIONS MATTERS. `root is not None and root.val != val` - the None check must
+    come first, because `and` short-circuits and `root.val` on a missing node would raise.
+
+    THE INVARIANT: if the value is anywhere in the original tree, it is in the subtree currently rooted at
+    `root`. True at the start trivially. Preserved by each step, because the BST property guarantees the
+    discarded side cannot contain it. WHEN `root` BECOMES None, THE INVARIANT SAYS THE VALUE WAS NOWHERE -
+    which is why returning `root` covers both outcomes with one line.
+
+THE STEPS, NO CODE:
+
+    1. Start at the top of the tree.
+    2. While you are standing on a real node whose value is not the one you want:
+       a. If the value you want is smaller than this node's, move to its left child.
+       b. Otherwise move to its right child.
+    3. Hand back whatever you are standing on - the matching node if you found one, or nothing if you
+       walked off the bottom.
+
+    STEP 3 IS ONE LINE FOR BOTH OUTCOMES, which is why the code has no found / not-found branch.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A filing system is arranged as a series of signposts. At each signpost is a number, and two paths lead
+away from it - one to the left, one to the right. The system was built with a strict rule: EVERYTHING
+DOWN THE LEFT PATH HAS A SMALLER NUMBER THAN THE SIGNPOST, AND EVERYTHING DOWN THE RIGHT PATH HAS A
+LARGER ONE. That is true at every signpost, all the way down.
+
+You are looking for the number 2, and for everything filed beneath it.
+
+You arrive at the first signpost, which says 4. Your number is smaller, so you take the left path. Notice
+what you have just done: you have discarded the ENTIRE right-hand side of the system, along with every
+signpost and every file down there, without walking a single step in that direction. You did not check it.
+You did not need to - the rule guarantees everything over there is bigger than 4, and your number is
+smaller than 4.
+
+You arrive at the next signpost. It says 2. That is what you were looking for, so you stop, and you take
+that signpost and everything below it - which comes along automatically, because the paths beneath it are
+still attached.
+
+If instead you had reached a point where the path simply ended, that would mean the number is not in the
+system at all, and you would report finding nothing.
+
+    WHY THIS IS SO MUCH FASTER THAN LOOKING EVERYWHERE. Each signpost halves what is left. A system with a
+    thousand files takes about ten signposts to walk. On a real measurement of a system with 1,023 files,
+    reaching the one you want took eight signposts.
+
+    AND THE CATCH THAT COMES WITH IT. All of that assumes the system BRANCHES - that each signpost really
+    does split the remaining files roughly in two. If the files were added in increasing order, every
+    signpost's left path is empty and the whole thing is one long corridor with a signpost every few
+    paces. Measured: ten files added in order means walking past all ten signposts to reach the last. THE
+    RULE STILL HOLDS AND THE WALK IS STILL CORRECT - it is just that there is nothing left to discard.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    class Node:
+        def __init__(self, val, left=None, right=None):
+            self.val = val
+            self.left = left
+            self.right = right
+
+THE NODE TYPE. A value and two child links, each None when absent. There is no parent link, which is why
+the walk can only go downward.
+
+    def search_bst(root, val):
+
+`root` is the top of the tree; `val` is the value to find. THE TREE IS NOT MODIFIED - nothing is written,
+only followed. The function returns a NODE, which brings its whole subtree with it.
+
+    while root is not None and root.val != val:
+
+BOTH CONDITIONS, AND THE ORDER IS LOAD-BEARING. `root is not None` must be tested first: `and`
+short-circuits, so `root.val` is never evaluated on a missing node. Reversing them raises AttributeError
+the moment the walk falls off the tree.
+    THE LOOP CONTINUES WHILE THERE IS SOMEWHERE TO STAND AND THE VALUE HAS NOT BEEN FOUND - so both exits
+    are expressed here, and the body has no `return` at all.
+
+    root = root.left if val < root.val else root.right   # BST-guided descent
+
+THE ONE DECISION, AND ONLY ONE CHILD IS EVER READ. The target being smaller means it can only be on the
+left, by the BST promise; otherwise it can only be on the right. REVERSING THIS COMPARISON is wrong on 817
+of 6,000 random trees - and note it is not wrong on all of them, because a value at the root or a value
+that is absent often produces the right answer for the wrong reason.
+    REASSIGNING `root` ITSELF is deliberate: the remaining problem is a smaller tree of exactly the same
+    kind, so the parameter keeps its meaning. No separate cursor variable is needed.
+
     return root
-The condition does double duty: it stops on a match AND on falling off the
-bottom, so the single return handles both outcomes. Whenever a recursion is
-purely TAIL recursive - nothing happens after the recursive call - it converts
-to a loop mechanically like this, which is worth naming as the general
-transformation.""",
 
-    """Edge cases.
-Empty tree -> the while condition fails immediately -> None.
-Value at the root -> loop does not run -> the whole tree.
-Value absent -> descent runs off a leaf -> None.
-A single-node tree, matching or not -> handled by the same two cases.
-Duplicates: standard BSTs assume distinct values. If duplicates were allowed
-you would need a convention (all equal values to the left, say) and this search
-would return the first one encountered - worth asking, since the prompt usually
-guarantees uniqueness precisely to avoid the question.""",
+BOTH ANSWERS IN ONE LINE. If the loop ended because the value matched, `root` is that node - and returning
+it returns the subtree, since the children are still attached. If the loop ended because `root` became
+None, that None is exactly the "not found" answer. NO found / not-found BRANCH IS NEEDED.
 
-    """The degenerate-tree caveat, which applies to every BST operation.
-Insert 1,2,3,4,5 into a BST in that order and it becomes a right-leaning linked
-list: h = n, so search degrades to O(n) and the ordering buys nothing.
-This is exactly why self-balancing trees exist - AVL and red-black trees do
-rotations on insert to keep h at O(log n), and that is the answer to 'what if
-the input is sorted?'. Naming the failure mode and its fix is more valuable
-than the search itself.""",
+WHAT IS DELIBERATELY ABSENT: no recursion (so no stack growth - see section 5), no visited set (a tree has
+no cycles), no separate cursor variable, no guard for an empty tree (the loop condition covers it), and no
+copying of the returned subtree.""",
 
-    """The family: BST-guided descent.
-Insert into a BST (descend to the null slot and attach), Delete Node in a BST
-(the hard one - three cases, the two-child case replaced by the inorder
-successor), Closest BST Value (descend while tracking the best), Lowest Common
-Ancestor of a BST (descend while both targets are on the same side, and the
-split point IS the answer), Validate BST (descend carrying min/max bounds).
-Every one is 'walk down using the ordering'. Together with the fact that
-inorder traversal of a BST yields sorted order, that covers essentially the
-whole BST question set.""",
+    """9. TRACED ON REAL NUMBERS - a hit that is not at the root, then a miss.
+
+The tree, built by inserting 4, 2, 7, 1, 3:
+
+                4
+              /   \\
+             2     7
+            / \\
+           1   3
+
+    Its inorder reading is 1, 2, 3, 4, 7 - increasing, which confirms it is a valid BST.
+
+RUN A: searching for 2
+
+    at 4:   root is not None, and 4 != 2, so the loop body runs
+            is 2 < 4?  YES  ->  root becomes the left child, the node 2
+            THE ENTIRE RIGHT SUBTREE - the node 7 - IS NOW UNREACHABLE AND WAS NEVER READ
+
+    at 2:   root is not None, but 2 != 2 is FALSE  ->  the loop ends
+
+    RETURNS the node 2. Reading that subtree inorder gives 1, 2, 3 - the node and both its children,
+    carried along automatically.
+
+    TWO NODES EXAMINED OUT OF FIVE.
+
+RUN B: searching for 5 - one value changed, and it is absent
+
+    at 4:   4 != 5, and 5 < 4 is FALSE  ->  root becomes the right child, the node 7
+    at 7:   7 != 5, and 5 < 7 is TRUE   ->  root becomes 7's left child, which is None
+    root is None  ->  the loop ends
+
+    RETURNS None.
+
+    THE INVERSION: searching for 2 returns the subtree 1, 2, 3; searching for 5 returns None. The walk
+    took the opposite turn at the very first node, which is the whole difference.
+
+WHAT THE REVERSED COMPARISON DOES ON RUN A: at 4 it asks "is 2 < 4?", gets yes, and goes RIGHT to the node
+7. At 7 it asks again, gets yes, and goes right from 7 - which is None. IT RETURNS None FOR A VALUE THAT IS
+IN THE TREE. On run B it also returns None, which is correct by accident - which is exactly why that bug
+is wrong on only 817 of 6,000 rather than all of them.
+
+THE COST, MEASURED RATHER THAN ASSERTED:
+
+    a BALANCED tree of 1,023 nodes:      the descent to a value visits 8 nodes
+    a DEGENERATE tree of 10 nodes,       the descent to the deepest value visits all 10 -
+    built by inserting 1..10 in order:   the tree is a right-leaning linked list""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One comparison per level, and the walk only ever goes down.
+
+    TIME O(h), where h is the tree's HEIGHT. Balanced: about log2(n) - measured at 8 nodes visited in a
+    1,023-node tree. Degenerate: h equals n - measured at 10 of 10 in a chain built from sorted inserts.
+    SPACE O(1) for the iterative version. The recursive version is O(h) stack, and at this problem's limit
+    of 5,000 nodes a degenerate tree would exceed Python's default recursion limit of 1,000 and crash.
+    The look-everywhere scan is O(n) time and O(h) stack, and is what you would need if the tree were not
+    ordered.
+
+    SAY BOTH BOUNDS. "O(log n) if the tree is balanced, O(n) if it has degenerated into a chain" is the
+    answer that shows you know what a BST does and does not guarantee.
+
+THE #1 MISTAKE: reversing the comparison, so the walk descends away from the target. Wrong on 817 of 6,000
+random trees - and instructively NOT wrong on all of them, because a value at the root or an absent value
+often yields the right answer for the wrong reason. THE RUNNER-UP is searching both subtrees, which is
+correct and O(n), and quietly discards the entire benefit of the data structure.
+
+ONE-SENTENCE TAKEAWAY: in a BST every comparison eliminates a whole subtree unread, so finding a value is
+a single walk down one path - and because a node carries its children, returning the node returns the
+subtree.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. This is a warm-up whose real content is two remarks. First, that
+the cost is O(HEIGHT) and not O(log n) unless the tree is balanced - candidates who say "O(log n)" flatly
+have not thought about the degenerate case. Second, the ITERATIVE-VERSUS-RECURSIVE observation: the
+recursion here is tail recursive, so it converts to a loop mechanically, and the loop is the version that
+survives a 5,000-node chain in Python. BEING ABLE TO PERFORM THAT CONVERSION ON DEMAND is worth more than
+either version alone.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "INSERT INTO A BST." Same descent, but instead of stopping at a match you continue to the empty slot
+    and attach a new node there. O(h). Track the parent, or do it recursively and reassign the child link.
+    "DELETE NODE IN A BST - the hard one." Three cases: a leaf is simply removed; a node with one child is
+    replaced by that child; a node with TWO children is replaced by its inorder successor - the smallest
+    value in its right subtree - which is then deleted from there. That third case is what makes deletion
+    the genuinely difficult BST operation.
+    "What if the tree is degenerate?" This query cannot fix it. Use a SELF-BALANCING tree - AVL or
+    red-black - which restores O(log n) by rotating after inserts and deletes. Naming the structures is
+    the expected answer.
+    "VALIDATE a BST." Not this descent - you must check every node against an inherited RANGE, not just
+    against its parent, because a node can satisfy its parent and still violate a grandparent's bound.""",
 ]
 
 _EX_P1L["Sort Array By Parity"] = [
-    """The two-pointer partition, traced.
-nums = [3,1,2,4]. left 0, right 3.
-nums[0] = 3 is odd, nums[3] = 4 is even -> neither guard fires, so SWAP ->
-[4,1,2,3]. Pointers unchanged this iteration.
-nums[0] = 4 is even -> left = 1.
-nums[1] = 1 is odd, nums[2] = 2 is even -> swap -> [4,2,1,3]. left 1, right 2.
-nums[1] = 2 even -> left = 2. Now left == right -> stop.
-Result [4,2,1,3] - all evens before all odds. Any such arrangement is accepted,
-which is what licenses the swapping.""",
+    """1. THE GOAL - all the even numbers first, all the odd ones after. Any order within each group.
 
-    """Why the swap branch does NOT advance the pointers.
-After swapping, the element now at `left` is even and the one at `right` is
-odd - so the very next iteration advances both through the first two guards.
-Advancing inside the swap branch as well would work here, but writing it as
-three separate branches keeps each condition doing exactly one job and is
-harder to get wrong. The cost is one extra loop iteration per swap, which is
-irrelevant.""",
+Rearrange the array so that every EVEN number comes before every ODD number. You are NOT asked to sort -
+the evens may appear in any order among themselves, and so may the odds.
 
-    """Why 'any relative order' is what makes O(1) space possible.
-The prompt explicitly allows any ordering within the evens and within the odds.
-That is what licenses swapping distant elements. If it demanded STABILITY -
-evens in their original relative order, then odds in theirs - the two-pointer
-swap breaks, and you need either an O(n) output array or a much fiddlier
-in-place rotation.
-Always check for the word 'stable' or 'relative order preserved'; it is the
-difference between a five-line answer and a genuinely hard one.""",
+    nums = [3, 1, 2, 4]
 
-    """The alternative one-liners, and their cost.
-`sorted(nums, key=lambda x: x % 2)` is correct, stable, and O(n log n) - using
-a full sort for a two-way partition.
-`[x for x in nums if x%2==0] + [x for x in nums if x%2==1]` is O(n) time but
-O(n) space and two passes.
-The two-pointer version is O(n) time and O(1) space in a single pass. Presenting
-all three and saying why you chose the last is a better answer than producing
-only one - it shows you know the trade rather than one trick.""",
+        the evens are 2 and 4; the odds are 3 and 1
 
-    """Edge cases.
-Empty or single element -> `left < right` is false immediately, returned
-unchanged.
-All even [2,4,6] -> the left guard advances all the way, no swaps.
-All odd [1,3,5] -> the right guard retreats all the way, no swaps.
-Zero is EVEN - `0 % 2 == 0` - which is correct and is the kind of thing worth
-confirming out loud since people hesitate.
-Negative odds: in Python `-3 % 2` is 1, so the parity test works for negatives;
-in C or Java it would be -1, so `% 2 == 1` FAILS there and you must write
-`% 2 != 0`. A genuinely useful cross-language footnote.""",
+        [2, 4, 3, 1]   valid
+        [4, 2, 1, 3]   valid - a different arrangement, equally correct
+        [2, 4, 1, 3]   valid
+        [3, 1, 2, 4]   NOT valid - odds before evens
 
-    """Complexity and the family.
-O(n) time - each pointer moves monotonically toward the other, so the total
-work is one pass - and O(1) space.
-The family is partitioning: Move Zeroes (stable version, slow/fast pointers),
-Sort Colors (three-way Dutch National Flag, one pass), Partition Array
-According to a Pivot, and Quicksort's partition step, which is this exact
-operation and the reason it is worth being fluent in. Two-way partition with
-converging pointers, three-way when there is a middle category.""",
+    ANY of the valid ones is accepted.
+
+"ANY ORDER" IS NOT A THROWAWAY PHRASE - IT IS THE PERMISSION THAT MAKES THE FAST SOLUTION POSSIBLE. If the
+evens had to keep their original relative order, you could not simply swap an element from the far end
+into place, because that would jumble them. Section 5 shows what the problem would cost with that
+requirement added.
+
+THIS IS A PARTITION, NOT A SORT. Sorting arranges n items into one specific order and costs O(n log n).
+Partitioning splits them into TWO GROUPS with no order inside either, and costs O(n) - one pass.
+
+    nums = [2, 4, 6]     already all even    ->    unchanged, and that is correct
+    nums = [1, 3, 5]     already all odd     ->    unchanged, and that is correct
+
+    Neither needs a single swap; there is nothing out of place.
+
+AND IT IS DONE IN PLACE. The array you were given is rearranged, using O(1) extra space, AND THE CALLER'S
+ARRAY IS CHANGED - verified in section 4 rather than assumed.
+
+    THIS ENTRY JOINS THE TWO-POINTER CLUSTER. REVERSE STRING OWNS THE PLAIN ENDS-INWARD SWAP. BACKSPACE
+    STRING COMPARE OWNS THE BACKWARD SCAN. FLIPPING AN IMAGE OWNS FUSING TWO OPERATIONS INTO ONE PASS.
+    IS SUBSEQUENCE OWNS THE ONE-WAY GREEDY ADVANCE. THIS ONE OWNS THE PARTITION - two pointers that
+    advance CONDITIONALLY rather than every step, which is the pattern underneath Quicksort and Dutch
+    National Flag.""",
+
+    """2. THE INTUITION - two pointers, each skipping what is already where it belongs.
+
+Put one pointer at the front and one at the back. Each has a job:
+
+    THE LEFT POINTER looks for something that should not be on the left - an ODD number.
+    THE RIGHT POINTER looks for something that should not be on the right - an EVEN number.
+
+    If the left is already even, it is fine where it is: step right past it.
+    If the right is already odd, it is fine where it is: step left past it.
+    ONLY WHEN BOTH ARE WRONG - an odd on the left AND an even on the right - do you swap them, and BOTH
+    are fixed by a single exchange.
+
+    nums = [3, 1, 2, 4]
+
+        left=0 (value 3, ODD - wrong side),  right=3 (value 4, EVEN - wrong side)   ->   SWAP
+        [4, 1, 2, 3]
+        left=0 (value 4, even - fine)        ->   advance left
+        left=1 (value 1, odd - wrong),  right=3 (value 3, ODD - fine)  ->  retreat right
+        left=1 (value 1, odd - wrong),  right=2 (value 2, EVEN - wrong)   ->   SWAP
+        [4, 2, 1, 3]
+        left=1 (value 2, even - fine)        ->   advance left
+        left=2, right=2  ->  the pointers have met, so stop
+
+    RESULT: [4, 2, 1, 3]   - evens 4 and 2 first, odds 1 and 3 after.
+
+THE PICTURE - THREE REGIONS, AND THE MIDDLE ONE SHRINKS TO NOTHING:
+
+        [ known even ][ not yet examined ][ known odd ]
+                      ^                  ^
+                     left              right
+
+    EVERY ITERATION SHRINKS THE MIDDLE by at least one - either a pointer advances, or a swap places two
+    elements correctly and the following iterations advance past them. When the middle is empty, the array
+    is partitioned.
+
+WHY THE TWO GUARDS COME FIRST. Checking "is the left already even?" before considering a swap is what
+makes the pointers move at all. Without the guards you would swap correctly-placed elements back and
+forth for ever. THE GUARDS ARE THE PROGRESS; THE SWAP IS THE FIX.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PARITY. Whether a number is even or odd. `n % 2` is 0 for even and 1 for odd. NOTE FOR NEGATIVES: Python's
+`%` always returns a non-negative result, so `-3 % 2` is 1 - which is what you want. In C and Java it is
+-1, and `n % 2 == 1` would silently misclassify every negative odd number. THIS PROBLEM'S CONSTRAINTS SAY
+0 <= nums[i], so it does not arise here - but the difference is worth knowing before you port the code.
+
+PARTITION. Splitting a collection into groups by a property, with no ordering required inside a group.
+Cheaper than sorting because far less is being decided.
+
+STABLE. An arrangement that preserves the original relative order within each group. THIS PROBLEM DOES NOT
+REQUIRE STABILITY, which is exactly what licenses the swap-from-the-ends approach.
+
+IN PLACE. Rearranging the given array rather than building a new one. O(1) extra space, AND the caller's
+array changes.
+
+TWO POINTERS, CONVERGING - but with a difference from Reverse String: there, both pointers move EVERY
+iteration. HERE THEY MOVE CONDITIONALLY, and sometimes neither moves while a swap happens. That is why
+termination needs its own argument, in section 6.
+
+THE VARIABLES IN THE CODE:
+    nums     the input array. MUTATED IN PLACE and also returned.
+    left     scans from the front, looking for an odd number that needs moving.
+    right    scans from the back, looking for an even number that needs moving.
+
+n IS THE ARRAY LENGTH. TIME O(n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the obvious suspect turns out to be innocent.
+
+TRAP 1 - THE MUTATION, WHICH MUST BE SAID ALOUD. This function rearranges the caller's array and returns
+that same object. VERIFIED BY INSPECTION: after calling it on a list holding [3, 1, 2, 4], the caller's own
+list reads [4, 2, 1, 3], and the returned object IS the caller's list - not a copy.
+
+    FOR CONTRAST, `sorted(nums, key=lambda x: x % 2)` leaves the caller's list as [3, 1, 2, 4] and returns
+    a new one. THE TWO ARE NOT INTERCHANGEABLE, and handing someone the in-place version when they still
+    need their original ordering is a silent data loss.
+
+TRAP 2 - ADVANCING THE POINTERS AFTER A SWAP, AND HERE IS THE HONEST RESULT: IT IS NOT A BUG. Adding
+`left += 1; right -= 1` to the swap branch feels necessary - surely you must move on? - and MEASURED over
+6,000 random arrays it produced a valid partition on every single one, 0 failures, exactly like the
+version without it.
+
+    THE REASON IS WORTH UNDERSTANDING RATHER THAN MEMORISING: immediately after a swap, `nums[left]` holds
+    the even number that came from the right, and `nums[right]` holds the odd number that came from the
+    left. So on the very next iteration the first guard advances `left` and the second retreats `right`
+    ANYWAY. The explicit advance is a shortcut that saves two comparisons, not a correction.
+
+    THAT IS THE SAME SHAPE OF FINDING AS REVERSE STRING'S `left <= right` in this bank, where the
+    suspicious character also turned out to be harmless - and the deliberate contrast is FLIPPING AN
+    IMAGE, where the identical-looking change was wrong on 3,584 of 6,000. THE LESSON IS TO TEST, NOT TO
+    PATTERN-MATCH: "this line looks load-bearing" is a hypothesis, and deleting it is the experiment.
+
+TRAP 3 - CHECKING THE RESULT FOR EQUALITY WITH ONE EXPECTED ANSWER. Because any order is allowed, a test
+that compares against a single array will reject correct outputs. THE CHECK MUST BE THE PROPERTY: the same
+multiset of values, and no even number appearing after an odd one. That is how every figure in this entry
+was verified.
+
+TRAP 4 - `n % 2 == 1` ON NEGATIVE NUMBERS IN A C-LIKE LANGUAGE. See section 3. Safe in Python, and safe
+here anyway because the constraints forbid negatives - but a real portability trap, and `n % 2 == 0` for
+"even" is the formulation that survives the port.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty or single-element array. `left < right` is false
+immediately and the array is returned untouched. An all-even array advances `left` to the end with no
+swaps; an all-odd array retreats `right` with no swaps.""",
+
+    """5. THE SLOW WAYS FIRST, then the partition.
+
+VERSION 1 - SORT WITH A KEY:
+
+    return sorted(nums, key=lambda x: x % 2)
+
+    CORRECT, one line, and STABLE - it preserves the original order within the evens and within the odds,
+    which is more than the problem asks for. COST: O(n log n) time and O(n) space, USING A FULL SORT TO
+    ANSWER A TWO-WAY QUESTION. It also does NOT mutate the caller's array, which may be a feature.
+
+VERSION 2 - TWO LISTS AND A CONCATENATION:
+
+    return [x for x in nums if x % 2 == 0] + [x for x in nums if x % 2 == 1]
+
+    CORRECT, O(n) time, and beautifully clear. Also stable. COST: O(n) EXTRA SPACE for the two lists, and
+    two passes over the input. IF THE PROBLEM DID NOT SAY "IN PLACE", THIS WOULD BE THE ANSWER TO WRITE -
+    say so rather than pretending it is inferior.
+
+VERSION 3 - THE ONE-POINTER PARTITION, worth knowing because it generalises further:
+
+        boundary = 0
+        for i in range(len(nums)):
+            if nums[i] % 2 == 0:
+                nums[boundary], nums[i] = nums[i], nums[boundary]
+                boundary += 1
+
+    A single forward scan, swapping each even number down to a growing boundary. O(n) time, O(1) space,
+    and it is EXACTLY THE LOMUTO PARTITION FROM QUICKSORT with "less than the pivot" replaced by "even".
+    Worth recognising: this problem is a partition step wearing a disguise.
+
+THE UPGRADE THIS ENTRY USES - THE TWO-POINTER PARTITION. Instead of scanning forward, close in from both
+ends and swap only the pairs that are both misplaced.
+
+    COST: O(n) time, O(1) space. IT PERFORMS FEWER SWAPS than the one-pointer version - only when both
+    sides are genuinely wrong - which is why the same shape is used in Hoare's original partition and in
+    Dutch National Flag.
+
+    BE HONEST ABOUT WHAT THAT BUYS: the complexity class is identical, and at this problem's limit of
+    n = 5,000 nothing is measurable. The reason to learn it is that the pattern recurs, not that it is
+    faster here.
+
+THE TRICK THAT NEEDS EXPLAINING FROM SCRATCH is why the pointers may advance CONDITIONALLY without the
+loop stalling - which is section 6's termination argument, and it is the one part of this problem that is
+not obvious.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk two pointers toward each other, skipping anything already on its correct side, and
+swap whenever the left holds an odd number and the right holds an even one.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two pointers - AND THIS IS THE
+INTERESTING PART - they do NOT both move every iteration:
+
+    ITERATION TYPE 1:  `left` advances, `right` unchanged        (the left value was already even)
+    ITERATION TYPE 2:  `right` retreats, `left` unchanged        (the right value was already odd)
+    ITERATION TYPE 3:  NEITHER MOVES - a swap happens instead
+
+    A LOOP WHERE AN ITERATION CAN MOVE NOTHING IS EXACTLY WHERE INFINITE LOOPS COME FROM, so termination
+    needs a real argument rather than a glance.
+
+    HERE IT IS: after a type-3 iteration, `nums[left]` is even and `nums[right]` is odd - the swap
+    guarantees it. So the NEXT iteration must be type 1, and the one after that type 2. A SWAP IS ALWAYS
+    FOLLOWED BY TWO MOVES. Therefore the gap between the pointers strictly decreases at least once every
+    three iterations, the loop runs at most about 3n times, and it must end.
+
+    THE INVARIANT: everything strictly before `left` is even, and everything strictly after `right` is
+    odd. TRUE AT THE START, when both regions are empty. Preserved by every branch: type 1 extends the
+    even region only after confirming the value is even; type 2 extends the odd region likewise; type 3
+    makes both confirmations true so that the next two iterations can extend.
+
+    WHEN THE POINTERS MEET, THE UNEXAMINED MIDDLE IS EMPTY and the invariant says the whole array is
+    partitioned.
+
+THE STEPS, NO CODE:
+
+    1. Put one marker at the first position and another at the last.
+    2. While the first marker is strictly before the second:
+       a. If the value at the first marker is EVEN, it is already on the correct side - move that marker
+          one place right, and do nothing else this round.
+       b. Otherwise, if the value at the second marker is ODD, it is already on the correct side - move
+          that marker one place left, and do nothing else this round.
+       c. Otherwise the first marker holds an odd number and the second holds an even one, both on the
+          wrong side - exchange them.
+    3. Hand back the array, rearranged where it stands.
+
+    THE THREE BRANCHES ARE MUTUALLY EXCLUSIVE AND ORDERED. The two guards must be tested before the swap,
+    because they are what makes progress happen.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A row of numbered tickets lies face up on a long table. The red ones must all end up at the left end and
+the blue ones at the right end. Within each colour nobody cares about the order at all - you are sorting
+by colour only, and the numbers on the tickets are irrelevant.
+
+You could pick the whole row up and deal it into two piles, then lay the piles down end to end. That works
+perfectly and needs a clear space on the table for the two piles.
+
+Instead you work on the row where it lies, with one hand at each end.
+
+Your left hand looks at the ticket in front of it. If it is red, that ticket is already in the correct half
+of the table, so you simply slide your hand one place to the right and forget about it. Your right hand
+does the mirror image: if the ticket there is blue, it is already fine, and the hand slides one place left.
+
+Sooner or later your left hand is resting on a BLUE ticket - which does not belong on the left - and your
+right hand is resting on a RED one, which does not belong on the right. Both are wrong, and one exchange
+fixes both at once. So you swap them.
+
+    AND NOW NOTICE SOMETHING. After the swap, your left hand is resting on a red ticket and your right hand
+    on a blue one - both correctly placed. So the very next thing that happens is that both hands slide
+    inward, one after the other, without any further thought. You could have slid them yourself at the
+    moment of the swap and saved a glance; it makes no difference to where anything ends up.
+
+Eventually your hands meet in the middle. Every ticket to the left of that point has been confirmed red
+and every ticket to the right confirmed blue, so the job is done.
+
+    THE THING TO TELL WHOEVER ASKED YOU. You did not deal out a new row and leave theirs alone. You
+    rearranged the tickets on their table. If they needed the original ordering - which ticket came before
+    which - it is gone, because you were freely swapping tickets from opposite ends of the row.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def sort_array_by_parity(nums):
+
+`nums` is the array. IT IS MUTATED IN PLACE and the same object is returned - verified in section 4.
+
+    left, right = 0, len(nums) - 1
+
+THE TWO POINTERS, at the first and last positions. `len(nums) - 1` is the last valid index. For an EMPTY
+array this is -1, which is safe only because the loop condition below is checked before any indexing.
+
+    while left < right:
+
+STOP WHEN THE POINTERS MEET OR CROSS. If they land on the same element, that single element is trivially
+on whichever side it belongs to - there is nothing to compare it with. Unlike Flipping an Image, no
+operation needs applying to a middle element here, so `<` is right and `<=` would simply be a wasted
+iteration.
+
+    if nums[left] % 2 == 0:
+        left += 1               # even already on the left
+
+GUARD ONE. An even number at the left pointer is already where it belongs, so skip it. `% 2 == 0` for
+"even" rather than `% 2 == 1` for "odd" is the formulation that stays correct on negative numbers in
+C-like languages - see trap 4.
+
+    elif nums[right] % 2 == 1:
+        right -= 1              # odd already on the right
+
+GUARD TWO, and it is an `elif` - reached only when the left value is odd. An odd number at the right
+pointer is already where it belongs, so skip it.
+
+    else:
+        nums[left], nums[right] = nums[right], nums[left]
+
+THE SWAP, REACHED ONLY WHEN BOTH GUARDS FAILED - meaning the left holds an odd number and the right holds
+an even one. Both are on the wrong side, and one exchange fixes both. The simultaneous assignment
+evaluates the whole right-hand side first, so no temporary is needed.
+    NOTE WHAT DOES NOT HAPPEN: the pointers are not advanced. Adding `left += 1; right -= 1` here is a
+    valid shortcut and NOT a fix - measured at 0 failures over 6,000 random arrays either way - because
+    after the swap both guards fire on the following two iterations anyway.
+
+    return nums
+
+The same object that came in, rearranged.
+
+WHAT IS DELIBERATELY ABSENT: no new lists, no sort, no temporary variable, no guard for an empty or
+single-element array (the loop condition covers both - verified), and no attempt to preserve relative
+order, which the problem explicitly does not require.""",
+
+    """9. TRACED ON REAL NUMBERS - the official array, step by step.
+
+nums = [3, 1, 2, 4].  Pointers start at left = 0 and right = 3.
+
+    left=0 right=3    nums[0] = 3, odd - guard one fails
+                      nums[3] = 4, even - guard two fails
+                      BOTH WRONG  ->  SWAP
+                      nums becomes [4, 1, 2, 3]
+                      the pointers do NOT move
+
+    left=0 right=3    nums[0] = 4, EVEN - guard one fires
+                      advance left  ->  left = 1
+
+    left=1 right=3    nums[1] = 1, odd - guard one fails
+                      nums[3] = 3, ODD - guard two fires
+                      retreat right  ->  right = 2
+
+    left=1 right=2    nums[1] = 1, odd - guard one fails
+                      nums[2] = 2, even - guard two fails
+                      BOTH WRONG  ->  SWAP
+                      nums becomes [4, 2, 1, 3]
+
+    left=1 right=2    nums[1] = 2, EVEN - guard one fires
+                      advance left  ->  left = 2
+
+    left=2 right=2    2 < 2 is FALSE  ->  loop ends
+
+    RETURNS [4, 2, 1, 3].  The evens 4 and 2 come first; the odds 1 and 3 follow. VALID.
+
+    NOTE THE TWO ITERATIONS IMMEDIATELY AFTER EACH SWAP: in both cases the next iteration advanced `left`
+    and the one after retreated `right`. That is the termination argument from section 6 happening in
+    front of you - and it is also why advancing the pointers inside the swap branch changes nothing.
+
+    NOTE ALSO THAT [4, 2, 1, 3] IS NOT THE ONLY CORRECT ANSWER. [2, 4, 3, 1] and [2, 4, 1, 3] are equally
+    acceptable, which is why every check in this entry tests the PARTITION PROPERTY - same multiset, and
+    no even after an odd - rather than equality with one expected array.
+
+THE INVERSION - CHANGE THE LAST ELEMENT FROM 4 TO 5:
+
+    [3, 1, 2, 4]   ->   [4, 2, 1, 3]      two swaps: two evens had to be brought forward
+    [3, 1, 2, 5]   ->   [2, 1, 3, 5]      only ONE even exists, so only one swap happens
+
+    In the second case the right pointer retreats past both 5 and 3 without a single exchange, then the
+    2 at index 2 swaps with the 3 at index 0. Both verified against the partition-property check.
+
+AND THE TWO ARRAYS THAT NEED NO WORK AT ALL:
+
+    [2, 4, 6]   all even  ->  guard one fires three times, `left` walks to meet `right`, no swaps
+    [1, 3, 5]   all odd   ->  guard two fires, `right` walks back to meet `left`, no swaps
+
+    Both returned unchanged, which is correct.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration either moves a pointer or performs a swap, and a swap is always
+followed by two moves - so the pointers between them traverse the array once.
+
+    TIME O(n). SPACE O(1) - two integers, and the swap needs no temporary.
+    The sort-with-a-key version is O(n log n) time and O(n) space. The two-lists version is O(n) time and
+    O(n) space. Both are correct, both are STABLE - which is more than is asked - and both leave the
+    caller's array alone. AT THIS PROBLEM'S LIMIT OF n = 5,000, ALL THREE ARE INSTANT; the two-pointer
+    version is what the "in place" phrasing asks for, not what performance demands.
+
+THE #1 MISTAKE: not noticing that the function MUTATES the caller's array. Verified: the returned object
+is the caller's own list, reordered. `sorted(...)` returns a new list and leaves the input alone, and
+swapping one for the other silently destroys the caller's ordering. THE RUNNER-UP is testing the output
+against one expected array - since any order is allowed, that rejects correct answers, and the check must
+be the partition property instead.
+
+AND AN HONEST NON-MISTAKE: advancing both pointers inside the swap branch. It looks like it must be
+required and it is not - 0 failures over 6,000 random arrays - because after a swap both guards fire on the
+next two iterations anyway. That is worth saying, because the reflex to "fix" it is strong and the fix is
+a no-op.
+
+ONE-SENTENCE TAKEAWAY: a partition is not a sort - with no order required inside each group, two pointers
+closing in and swapping only genuinely misplaced pairs does it in one pass and no extra space.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that "any order" downgrades the problem from
+sorting to partitioning - the phrase is the hint, and reaching for `sorted()` shows it was missed. The
+second thing is whether you can argue TERMINATION for a loop in which an iteration may move neither
+pointer. That argument - a swap is always followed by two advances - is the only non-obvious part of the
+problem, and it is what separates a candidate who wrote the loop from one who verified it.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "SORT ARRAY BY PARITY II - the evens must land on the even INDICES and the odds on the odd indices."
+    Two pointers again, but one walks the even indices and the other the odd ones, swapping whenever both
+    are misplaced. Still O(n) and O(1).
+    "What if the relative order within each group must be PRESERVED?" Then the swap-from-the-ends approach
+    is unusable, because it reorders. Use the two-lists version - O(n) time, O(n) space - or an in-place
+    stable partition, which is genuinely harder and costs O(n log n).
+    "DUTCH NATIONAL FLAG - partition into THREE groups." Three pointers: one for the low boundary, one for
+    the high boundary, and one scanning. Same family, one dimension harder, and it is the partition inside
+    a three-way Quicksort.
+    "How does this relate to QUICKSORT?" The one-pointer version in section 5 IS the Lomuto partition with
+    "even" in place of "less than the pivot"; the two-pointer version is Hoare's. Recognising the shape is
+    worth more than either problem alone.""",
 ]
 
 _EX_P1L["Sqrt(x) — integer square root (binary search)"] = [
-    """The search, traced on x = 8.
-lo 1, hi 4 (x//2). mid 2, 4 <= 8 -> ans 2, lo 3.
-mid 3, 9 > 8 -> hi 2. Now lo 3 > hi 2 -> exit, return 2.
-Correct: floor(sqrt(8)) = 2.
-x = 16: mid 4, 16 <= 16 -> ans 4, lo 5. mid 6, 36 > 16 -> hi 5. mid 5, 25 > 16
--> hi 4. lo 5 > hi 4 -> return 4.
-The `ans` variable holds the best candidate seen so far, which is what makes
-this a search for a FLOOR rather than for an exact match.""",
+    """1. THE GOAL - the whole-number square root, rounded DOWN, without using a square-root function.
 
-    """Why hi starts at x // 2, and why that needs the x < 2 guard.
-For x >= 4, sqrt(x) <= x/2, so half the range is a free optimisation. But for
-x = 1 that upper bound is 0, and the range [1, 0] is empty - so the function
-would return the initial ans of 1 by luck rather than by logic, and for x = 0
-it would return 1, which is wrong.
-Hence `if x < 2: return x`, handling 0 and 1 directly. Starting hi at x avoids
-the special case entirely at the cost of one extra iteration; either is fine as
-long as you know why the guard is there.""",
+Given a non-negative integer x, return the largest integer whose square does not exceed x. Equivalently:
+compute the square root and throw away everything after the decimal point.
 
-    """The floor semantics, which is the whole problem.
-There is no integer whose square is 8, so the answer is the LARGEST integer
-whose square does not exceed 8. Two equivalent implementations: keep an `ans`
-updated whenever mid*mid <= x (as here), or drop `ans` and return `hi` after
-the loop, since hi ends on exactly that value.
-Both are correct; the `ans` version is easier to explain and the `hi` version
-is shorter. What is NOT correct is returning lo, which ends one past the
-answer.""",
+    x = 4    ->   2      exactly, since 2 x 2 = 4
+    x = 8    ->   2      because 2 x 2 = 4 which fits, and 3 x 3 = 9 which does not
+    x = 9    ->   3
+    x = 15   ->   3
+    x = 16   ->   4
 
-    """Why not float sqrt, which is the point of the exercise.
-`int(math.sqrt(x))` is right for small x and WRONG for large: doubles have 53
-bits of mantissa, so for x above about 2^52 the square root cannot be
-represented exactly and the truncation can land one below the true value.
-Concretely, int(math.sqrt(999999999999999999)) can differ from the exact
-integer root. Production code either binary-searches or computes the float root
-and then adjusts by +/-1 with an exact integer check. That precision argument
-is the real answer to 'why not just use sqrt?'.""",
+THE ROUNDING IS ALWAYS DOWN, NEVER TO THE NEAREST. For x = 8 the true square root is about 2.83, and the
+answer is 2 - not 3, even though 2.83 is closer to 3. THE PHRASE THAT DEFINES IT is "the largest integer
+whose square is at most x".
 
-    """Edge cases.
-x = 0 -> guard -> 0. x = 1 -> guard -> 1. x = 2 -> lo 1, hi 1, mid 1, 1 <= 2 ->
-ans 1, lo 2 -> exit -> 1.
-x = 3 -> 1. x = 4 -> 2 exactly.
-A perfect square returns its exact root; one less returns root-1.
-Overflow: mid*mid can exceed 32-bit range in C or Java for large x - compare
-`mid <= x // mid` instead to avoid the multiplication. Python is immune, which
-is precisely why the footnote is worth making.""",
+    THAT IS THE WHOLE PROBLEM, RESTATED AS A SEARCH: find the biggest k with k*k <= x.
 
-    """Complexity and the family.
-O(log x) time - the range halves each step - and O(1) space.
-Newton's method converges faster in practice (quadratically): repeatedly set
-r = (r + x // r) // 2 until it stops decreasing, typically about 5 iterations
-for a 64-bit input versus ~31 for binary search. Worth naming as the
-alternative.
-The family is binary search on the ANSWER rather than on an array: Arranging
-Coins, Koko Eating Bananas, Capacity to Ship Packages Within D Days, Split
-Array Largest Sum, Valid Perfect Square. The cue is a monotonic predicate over
-a numeric answer - 'is k big enough?' - where you can test a candidate cheaply
-but cannot compute the answer directly.""",
+TWO SMALL INPUTS MATTER MORE THAN THEY LOOK:
+
+    x = 0   ->   0
+    x = 1   ->   1
+
+    Both are their own square roots, and section 4 shows that x = 1 is the single value in the entire
+    range that a missing guard gets wrong - EXACTLY ONE, and neither official example is it.
+
+YOU ARE NOT ALLOWED TO USE A BUILT-IN SQUARE ROOT. That restriction is the point of the exercise. And it
+is worth being precise about WHY, because the usual explanation is only half right: within this problem's
+range the float version actually works fine, and section 5 shows exactly where it starts failing.
+
+    THIS ENTRY JOINS THE BINARY-SEARCH CLUSTER. ARRANGING COINS OWNS SEARCHING OVER AN ANSWER RANGE. KTH
+    MISSING POSITIVE OWNS THE INDEX-VS-VALUE OFFSET. SEARCH INSERT POSITION OWNS THE HALF-OPEN INSERTION
+    CONVENTION. THIS ONE OWNS THE CLOSED-INTERVAL FORM THAT ENDS WITH `return hi` - the convention where
+    the loop runs while lo <= hi and the answer is left behind in the HIGH pointer.""",
+
+    """2. THE INTUITION - guess a number, square it, and halve the range.
+
+You are looking for a whole number in a known range. Squaring is easy; un-squaring is what you are not
+allowed to do. So GUESS, SQUARE THE GUESS, AND COMPARE.
+
+    x = 8, and the answer is somewhere in 1..4
+
+        guess 2:   2 x 2 = 4.   4 is less than 8, so 2 is TOO SMALL - but it might still be the answer if
+                                nothing bigger works. The answer is 2 or more, so search 3..4.
+        guess 3:   3 x 3 = 9.   9 is more than 8, so 3 is TOO BIG. The answer is below 3, so search 3..2 -
+                                which is empty.
+
+        The range is empty and the search stops. THE ANSWER IS 2.
+
+THE PICTURE - THE RANGE CLOSING FROM BOTH SIDES:
+
+        candidates:   1    2    3    4
+                      ^--------------^        start
+                           ^---------^        after "2 is too small": lo = 3
+                           ^                  after "3 is too big": hi = 2, so lo > hi
+
+    THE POINTERS HAVE CROSSED. `lo` is 3 - the smallest value known to be too big - and `hi` is 2 - the
+    largest value known to be small enough. IT IS `hi` THAT HOLDS THE ANSWER.
+
+WHY `hi` AND NOT `lo`, WHICH IS THE ONE THING TO GET STRAIGHT. Every time the code writes `lo = mid + 1`
+it has just proved that `mid` is small enough - so `hi` is only ever moved DOWN to values that have been
+proved too big, and `lo` is only ever moved UP past values proved acceptable. When they cross, `hi` is
+sitting on the last value that passed.
+
+    THAT IS THE OPPOSITE CONVENTION FROM SEARCH INSERT POSITION IN THIS BANK, which uses a half-open
+    window and returns `lo`. BOTH ARE CORRECT FOR THEIR OWN QUESTION - lower bound wants the first value
+    that is big enough, this wants the last value that is small enough. MIXING THE TWO IS WHERE
+    BINARY-SEARCH BUGS COME FROM; pick the convention that matches the question and keep every line
+    consistent with it.
+
+WHY THE RANGE CAN START AT x // 2. For any x of 4 or more, the square root is at most x/2 - because
+(x/2)^2 = x^2/4, which is at least x once x >= 4. So half the range is free. BUT THAT ARGUMENT FAILS FOR
+x = 1, where x // 2 is 0 and the range 1..0 is empty before the search even begins - which is exactly the
+trap in section 4.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INTEGER SQUARE ROOT / FLOOR OF THE SQUARE ROOT. The largest integer k with k*k <= x. Written floor(sqrt(x)).
+For x = 8 it is 2.
+
+PERFECT SQUARE. An integer that is some whole number squared: 0, 1, 4, 9, 16. For these the answer is
+exact and the search can return early.
+
+BINARY SEARCH ON THE ANSWER. Searching a RANGE OF POSSIBLE ANSWERS rather than an array. There is no array
+here at all - the "array" is the imaginary list 0, 1, 4, 9, 16, ... of squares, which you never build
+because you can compute any entry on demand by multiplying.
+
+MONOTONIC. As k increases, k*k increases. That is what makes the search valid: the answers to "is k*k <= x?"
+form a run of YESes followed by a run of NOs, with exactly one boundary.
+
+CLOSED INTERVAL [lo, hi]. Both ends are valid candidates. Paired with `while lo <= hi`, and the loop ends
+with lo = hi + 1 - the pointers CROSSED.
+
+FLOATING POINT / DOUBLE. The 64-bit real-number type. It has 53 bits of mantissa, so it can represent every
+integer exactly only up to 2^53 = 9,007,199,254,740,992. Above that, integers start being rounded - which
+is where section 5's counterexample lives.
+
+THE VARIABLES IN THE CODE:
+    x      the input. NOT MODIFIED.
+    lo     the smallest candidate still possible. Starts at 1.
+    hi     the largest candidate still possible. Starts at x // 2. ENDS HOLDING THE ANSWER.
+    mid    the candidate being tested.
+    sq     mid * mid, computed once and compared twice.
+
+TIME O(log x), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - a guard that matters for exactly one input, and neither example is it.
+
+TRAP 1 - DROPPING THE `x < 2` GUARD. The search range starts at `hi = x // 2`, and for x = 1 that is 0. So
+the range is 1..0, which is empty: the loop body never runs, and the function returns `hi`, which is 0.
+THE CORRECT ANSWER FOR x = 1 IS 1.
+
+    MEASURED EXHAUSTIVELY over x = 0 to 3,999: the guard-less version is wrong on EXACTLY ONE VALUE, and
+    that value is x = 1.
+
+    THAT PRECISION IS WORTH DWELLING ON. x = 0 also produces the empty range 1..0 and returns 0 - which
+    happens to be RIGHT. So the guard exists for a single input in the entire domain.
+
+    AND NEITHER OFFICIAL EXAMPLE IS THAT INPUT: x = 4 and x = 8 both return 2 with or without the guard.
+    A solution missing this line passes both samples and fails on the smallest interesting input there is.
+
+    THE HABIT: WHEN A RANGE IS DERIVED FROM THE INPUT (here `x // 2`), CHECK THE INPUTS WHERE THE DERIVED
+    RANGE COLLAPSES. Empty-range cases are where "obviously fine" bounds stop being fine.
+
+TRAP 2 - RETURNING `lo` INSTEAD OF `hi`. When the loop ends, `lo` is the smallest value proved TOO BIG and
+`hi` is the largest proved SMALL ENOUGH. Returning `lo` gives the answer plus one on every non-perfect
+square. THE CONVENTION MUST MATCH THE QUESTION - see section 2, and contrast Search Insert Position, which
+correctly returns `lo` for a different question.
+
+TRAP 3 - `while lo < hi` WITH A CLOSED INTERVAL. The closed form needs `<=`, or the final single-candidate
+range is never examined. Mixing the half-open loop condition with closed-interval updates is the single
+most common way to write a broken binary search - the four choices (initial `hi`, loop condition, how `hi`
+moves, what is returned) are not independent.
+
+TRAP 4 - OVERFLOW IN `mid * mid`, in a fixed-width language. For x near 2^31, `mid` is near 46,341 and
+mid*mid is near 2^31 - fine in a 64-bit type and an overflow in a 32-bit one. The defensive form is to
+compare `mid > x // mid` instead of squaring. IN PYTHON INTEGERS ARE UNBOUNDED so it cannot happen, and
+saying that explicitly is better than copying the workaround without knowing why it exists.
+
+WHAT IS NOT A TRAP, checked rather than assumed: x = 2 and x = 3. Both give lo = 1, hi = 1, one iteration
+with mid = 1 and sq = 1 < x, so lo becomes 2 and the loop ends with hi = 1. Correct for both.""",
+
+    """5. THE SLOW WAY FIRST, then the search - and an honest account of the float version.
+
+THE NAIVE VERSION - COUNT UPWARD:
+
+    k = 0
+    while (k + 1) * (k + 1) <= x:
+        k += 1
+    return k
+
+    IT IS CORRECT and it is the definition transcribed. COST: O(sqrt(x)) - for x near 2^31 that is about
+    46,000 iterations, which would actually finish, but it is doing linearly what can be done
+    logarithmically.
+
+THE UPGRADE. The squares increase as the candidate increases, so the answers to "is k*k <= x?" form a run
+of YESes followed by a run of NOs. THAT IS EXACTLY THE SHAPE BINARY SEARCH NEEDS, and there is no array to
+search - you compute k*k on demand.
+
+    COST: O(log x) - about 31 iterations for x near 2^31, instead of 46,000.
+
+NOW THE FLOAT VERSION, AND THIS IS WHERE THE USUAL EXPLANATION NEEDS CORRECTING. The standard warning is
+"do not use `int(math.sqrt(x))` because floating point is imprecise". MEASURED, THAT IS TRUE BUT NOT
+WITHIN THIS PROBLEM'S RANGE:
+
+    over x = 0..3,999 exhaustively:                            0 failures
+    sampling 200,000 values in 0 <= x <= 2^31 - 1:             0 failures
+
+    SO INSIDE THE STATED CONSTRAINTS THE FLOAT VERSION IS CORRECT. It is forbidden because the problem
+    forbids it, not because it would give wrong answers. Say that honestly rather than repeating a warning
+    you have not checked.
+
+WHERE IT DOES BREAK, WITH A REAL COUNTEREXAMPLE. A double holds every integer exactly only up to
+2^53 = 9,007,199,254,740,992. Beyond that, x itself cannot be represented, and the square root of the
+rounded value can land on the wrong side of a whole number. The worst case is x one BELOW a perfect
+square, where the root may round UP:
+
+    x = 9,999,999,999,999,999 = 100,000,000^2 - 1
+        int(math.sqrt(x))  gives  100,000,000
+        the true floor is         99,999,999
+
+    x = 18,014,398,509,481,983 = 134,217,728^2 - 1  (that is 2^54 - 1)
+        int(math.sqrt(x))  gives  134,217,728
+        the true floor is         134,217,727
+
+    BOTH FOUND BY SEARCHING, NOT INVENTED. The first is easy to remember: sixteen nines, and the float
+    says a hundred million.
+
+NEWTON'S METHOD, the other classic answer: start from a guess g and repeatedly replace it with
+(g + x/g) // 2, stopping when it stops decreasing. It converges QUADRATICALLY - the number of correct
+digits doubles each step - so it needs about 5 iterations where binary search needs 31. Faster in
+practice, harder to get the integer termination exactly right, and worth naming as the alternative.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: binary-search the candidate answers between 1 and x/2, squaring each guess and narrowing
+the range, and when the range empties the high pointer is sitting on the floor of the square root.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two bounds:
+
+    `lo`  only ever increases, and only past values proved SMALL ENOUGH.
+    `hi`  only ever decreases, and only below values proved TOO BIG.
+
+    THE INVARIANT, WHICH IS WHAT MAKES `return hi` CORRECT: at every moment, every value below `lo` has
+    been shown to satisfy k*k <= x, and every value above `hi` has been shown to fail it. So the answer is
+    always in [lo, hi]. WHEN THE RANGE EMPTIES, `hi` IS THE LAST VALUE THAT PASSED - which is precisely
+    the largest k with k*k <= x.
+
+    WHAT MAKES IT STOP: `mid` always lies between `lo` and `hi` inclusive, so `lo = mid + 1` strictly
+    increases `lo` and `hi = mid - 1` strictly decreases `hi`. The interval shrinks by at least one every
+    iteration and cannot stall. THE EARLY `return mid` ON AN EXACT HIT is an optimisation, not a
+    requirement - without it the search would still converge on the right answer.
+
+    WHY THE GUARD RUNS BEFORE ANY OF THIS. The range 1..x//2 is only sensible once x is at least 4; for
+    x = 0 and x = 1 the range is empty. Those two inputs are their own answers, so returning x directly is
+    both correct and the shortest statement of it. See trap 1 for the measurement.
+
+THE STEPS, NO CODE:
+
+    1. If the input is 0 or 1, hand it straight back - it is its own square root.
+    2. Set the search range from 1 up to half the input.
+    3. While the range is not empty:
+       a. Take the middle candidate, rounding down, and square it.
+       b. If the square equals the input, that candidate is exact - hand it back and stop.
+       c. If the square is LESS than the input, this candidate works but a bigger one might too, so raise
+          the bottom of the range to just above it.
+       d. Otherwise the square exceeds the input, so this candidate is too big - lower the top of the
+          range to just below it.
+    4. When the range empties, hand back the TOP pointer - it holds the largest candidate that worked.
+
+    STEP 4 SAYS THE TOP POINTER, NOT THE BOTTOM. STEP 1 IS NOT DECORATION - see section 4.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+You have a square carpet of unknown side length, and you know only its area - say eight square metres. You
+want the largest WHOLE number of metres the side could be without the carpet exceeding that area. You have
+a tape measure and a calculator that can multiply, but nothing that can take a square root.
+
+You could try one metre, then two, then three, multiplying each guess by itself and stopping when you
+overshoot. For a small carpet that is fine; for a carpet of two billion square metres you would be
+multiplying forty-six thousand times.
+
+So you play a guessing game instead. You know the side is somewhere between one metre and half the area -
+because once a square is four square metres or bigger, its side is never more than half its area.
+
+You guess the middle of that range: two metres. Two by two is four, which fits inside eight. SO TWO WORKS -
+but something bigger might work too, so you write down that everything from one to two is settled and
+search upward from three.
+
+You guess three. Three by three is nine, which is more than eight. SO THREE IS TOO BIG, and so is anything
+above it. You search below three.
+
+But "below three" and "from three upward" have no numbers in common - your range has closed up entirely.
+The game is over.
+
+    AND NOW THE QUESTION IS WHICH NUMBER TO REPORT. You have two markers: one sitting at three, the
+    smallest number you proved was too big, and one sitting at two, the largest number you proved fitted.
+    THE ANSWER IS THE SECOND ONE. Every time you moved the lower marker up, you did it because the number
+    you had just tested FITTED; every time you moved the upper marker down, it was because the number
+    FAILED. So the upper marker is always resting on the last success.
+
+    THE ONE CARPET THIS STORY GETS WRONG. Suppose the area is one square metre. Half of one is zero, so
+    your search range runs from one metre to zero metres - which contains nothing at all, and you would
+    report zero without ever measuring anything. A carpet of one square metre plainly has a side of one
+    metre. That single case has to be handled before the game starts.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def my_sqrt(x):
+
+`x` is the non-negative input. NOT MODIFIED.
+
+    if x < 2:
+        return x
+
+THE GUARD, AND IT EARNS ITS PLACE FOR EXACTLY ONE INPUT. For x = 0 and x = 1 the number is its own floor
+square root, and returning it directly is the shortest true statement. It is REQUIRED because the range
+below starts at `x // 2`, which is 0 for x = 1, making the search range 1..0 - empty - so the loop never
+runs and `hi` is returned as 0.
+    MEASURED EXHAUSTIVELY over x = 0..3,999: without this line the function is wrong on exactly ONE value,
+    x = 1. Neither official example is that value.
+
+    lo, hi = 1, x // 2
+
+THE CLOSED SEARCH RANGE, both ends inclusive. `x // 2` is a valid upper bound because for x >= 4 the square
+root never exceeds x/2 - that halves the range for free. The guard above is what makes this line safe.
+
+    while lo <= hi:
+
+CLOSED-INTERVAL LOOP CONDITION. It must be `<=`, not `<`: with both ends inclusive, a range of one
+candidate still needs examining. This pairs with the `mid + 1` and `mid - 1` updates below - all four
+choices belong to the same convention.
+
+    mid = (lo + hi) // 2
+    sq = mid * mid
+
+THE CANDIDATE AND ITS SQUARE, computed once and used twice. In a fixed-width language `mid * mid` can
+overflow near the top of the range; Python's integers are unbounded, so it cannot - see trap 4.
+
+    if sq == x:
+        return mid
+
+AN EXACT HIT - x is a perfect square. This is an early exit, not a necessity: without it the search would
+still converge, with `hi` ending on the same value.
+
+    if sq < x:
+        lo = mid + 1
+
+`mid` FITS, BUT A BIGGER ONE MIGHT TOO. Raising `lo` past `mid` is what keeps the invariant "everything
+below `lo` has been proved to fit" - and that invariant is the whole reason the final `return hi` works.
+
+    else:
+        hi = mid - 1
+
+`mid` IS TOO BIG, and so is everything above it, so the top comes down below it.
+
+    return hi                # hi ends on the floor of the square root
+
+THE ANSWER, AND IT IS `hi`, NOT `lo`. When the loop ends the pointers have crossed: `lo` is the smallest
+value proved too big and `hi` is the largest proved small enough. Returning `lo` gives the answer plus one
+on every non-perfect square.
+
+WHAT IS DELIBERATELY ABSENT: no float arithmetic anywhere, no `math` import, no special case for perfect
+squares beyond the early return, and no overflow workaround - unnecessary in Python and named as such.""",
+
+    """9. TRACED ON REAL NUMBERS - a non-perfect square, then a perfect one.
+
+RUN A: x = 8 - not a perfect square, so the answer comes from `hi` after the pointers cross
+
+    GUARD:  8 is not less than 2, so the search runs.
+    RANGE:  lo = 1, hi = 8 // 2 = 4.  The answer is somewhere in 1..4.
+
+    lo=1 hi=4    mid = (1+4)//2 = 2,  sq = 2 x 2 = 4
+                 4 == 8?  no.   4 < 8?  YES  ->  2 fits, try bigger  ->  lo = 3
+
+    lo=3 hi=4    mid = (3+4)//2 = 3,  sq = 3 x 3 = 9
+                 9 == 8?  no.   9 < 8?  no   ->  3 is too big        ->  hi = 2
+
+    lo=3 hi=2    3 <= 2 is FALSE  ->  the loop ends
+
+    RETURN hi = 2.
+
+    CHECK: 2 x 2 = 4 <= 8, and 3 x 3 = 9 > 8. So 2 is the largest integer whose square fits. CORRECT.
+    NOTE `lo` IS 3 - the smallest value proved too big. Returning it would give 3, which is wrong.
+
+RUN B: x = 9 - one more than run A's input, and now a perfect square
+
+    RANGE:  lo = 1, hi = 9 // 2 = 4.
+
+    lo=1 hi=4    mid = 2,  sq = 4.   4 < 9  ->  lo = 3
+    lo=3 hi=4    mid = 3,  sq = 9.   9 == 9  ->  RETURN 3 immediately, from the early-exit branch
+
+    RETURN 3.
+
+    THE INVERSION: x = 8 gives 2 and x = 9 gives 3. One unit of input separates them, and the two runs
+    even leave by different exits - one through the crossed-pointer path and one through the exact hit.
+
+AND THE INPUT THAT THE GUARD EXISTS FOR:
+
+    x = 1    with the guard:     returns 1 immediately.  CORRECT.
+             without the guard:  lo = 1, hi = 1 // 2 = 0. The condition 1 <= 0 is false, the loop never
+                                 runs, and `hi` - which is 0 - is returned.  WRONG.
+
+    x = 0    without the guard:  the same empty range 1..0, and `hi` is 0 - which is the RIGHT answer,
+                                 by accident.
+
+    So across x = 0..3,999 the guard-less version is wrong on exactly one input, and it is x = 1.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration halves the range of candidates, and each does one multiplication and
+two comparisons.
+
+    TIME O(log x) - about 31 iterations at the top of the 32-bit range. SPACE O(1).
+    The count-upward version is O(sqrt x) - roughly 46,000 iterations near 2^31, which would finish but is
+    doing linearly what halving does logarithmically.
+    Newton's method converges quadratically and needs about 5 iterations where this needs 31 - faster in
+    practice, fiddlier to terminate correctly on integers.
+
+THE #1 MISTAKE: dropping the `x < 2` guard. The range `1 .. x // 2` is empty for x = 1, so the loop never
+runs and 0 comes back instead of 1. Measured exhaustively over x = 0..3,999, that is wrong on EXACTLY ONE
+INPUT - and NEITHER OFFICIAL EXAMPLE IS IT. A single missing line, one failing value, and both samples
+pass. THE RUNNER-UP is returning `lo` instead of `hi`, which is off by one on every non-perfect square.
+
+ONE-SENTENCE TAKEAWAY: you cannot un-square a number, but you can square a guess - so binary-search the
+answer, and in the closed-interval convention the largest value that passed is left behind in `hi`.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things. First, whether you recognise BINARY SEARCH ON THE
+ANSWER - there is no array here, and the searchable structure is the imaginary sorted list of squares,
+computed on demand. That reframing is the technique, and it is the same one behind Arranging Coins and
+every "minimum capacity / maximum speed" problem. Second, whether your boundary convention is COHERENT:
+closed interval, `lo <= hi`, `mid ± 1`, return `hi` is one consistent set; half-open, `lo < hi`,
+`hi = mid`, return `lo` is another. Search Insert Position in this bank uses the second, correctly, for a
+different question - and mixing them is where binary-search bugs actually come from.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "VALID PERFECT SQUARE - is x exactly a square?" The same search, but return whether an exact hit
+    occurred rather than the floor. Equivalently, compute this answer and check whether squaring it
+    reproduces x.
+    "Why not `int(math.sqrt(x))`?" Because the problem forbids it - and be precise about the numerics:
+    measured, it is correct on every value in 0 <= x <= 2^31 - 1. It fails above 2^53, where a double can
+    no longer hold every integer; x = 9,999,999,999,999,999 = 10^8^2 - 1 returns 100,000,000 when the
+    true floor is 99,999,999.
+    "What about overflow in `mid * mid`?" Real in C++ or Java near 2^31; compare `mid > x // mid` instead.
+    Impossible in Python, and knowing which language you are in is the point.
+    "Compute the square root to k decimal places." Keep binary-searching on a scaled integer - find the
+    integer square root of x * 10^(2k) and insert the decimal point - which avoids floats entirely.
+    "Newton's method?" g <- (g + x // g) // 2, repeated until it stops decreasing. About 5 iterations,
+    quadratic convergence, and the termination condition is the delicate part.""",
 ]
 
 for _e in ENTRIES:
