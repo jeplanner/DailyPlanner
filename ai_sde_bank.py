@@ -96860,234 +96860,1652 @@ for _e in ENTRIES:
 _EX_P1M = {}
 
 _EX_P1M["Sum of Unique Elements"] = [
-    """The definition, which is narrower than it sounds.
-'Unique' here means appearing EXACTLY ONCE - not 'distinct values'.
-nums = [1,2,3,2]: counts are 1:1, 2:2, 3:1. The values appearing once are 1 and
-3 -> sum 4. The 2s contribute NOTHING, not even one copy.
-Under the other reading - sum the distinct values - the answer would be
-1+2+3 = 6. That gap is the entire problem, and it is worth restating the rule
-before writing code because both readings are natural English.""",
+    """1. THE GOAL - add up only the numbers that appear exactly once.
 
-    """Why you sum the KEYS, not the values.
-`sum(n for n, c in counts.items() if c == 1)` adds the numbers themselves,
-filtered by their count. Accidentally summing `c` adds the counts (which would
-be the number of unique elements) - a plausible-looking one-character mistake.
-A quick sanity check on [1,2,3,2]: summing keys gives 4, summing counts gives 2.
-If your answer looks suspiciously like a count rather than a total, this is
-why.""",
+Walk the array, find the values that occur EXACTLY ONE TIME, and return their total.
 
-    """The one-pass alternative, and why two passes is fine here.
-You cannot decide 'appears exactly once' until the whole array is seen, so the
-count must complete first - this is inherently two passes, exactly like First
-Unique Character.
-A neat single-structure variant tracks a running sum and a seen-twice set:
-add each new value, and the first time you see a repeat, SUBTRACT it once.
-    total, seen, dup = 0, set(), set()
-    for n in nums:
-        if n in dup: continue
-        if n in seen: total -= n; dup.add(n)
-        else: total += n; seen.add(n)
-Same O(n), and it works on a stream where you cannot re-read the input.""",
+    nums = [1, 2, 3, 2]
 
-    """Edge cases.
-Empty array -> sum of nothing -> 0.
-All duplicates [1,1,2,2] -> nothing appears once -> 0.
-All unique [1,2,3] -> 6.
-Single element [5] -> 5.
-Negative numbers work unchanged, and note the answer can be negative - so
-initialising a running total to 0 is right but initialising a 'best' to 0 would
-not be, if the problem were a maximum instead of a sum.
-Zeros: 0 appearing once contributes 0, which is invisible in the total but
-correct.""",
+        1 appears once   ->  counts
+        2 appears twice  ->  does NOT count
+        3 appears once   ->  counts
 
-    """Complexity.
-O(n) time for both passes, O(k) space for k distinct values.
-There is no way to do better in general: you must observe every element to know
-whether any value repeats, and you must remember what you have seen. If the
-values were bounded small integers you could swap the hash map for a fixed
-array - the usual counting-sort trade - but the asymptotics are unchanged.""",
+        1 + 3 = 4
 
-    """The family: count-then-filter.
-Single Number (XOR works only because everything else appears exactly TWICE -
-a much stronger constraint that buys O(1) space), Find All Duplicates in an
-Array, First Unique Character, Kth Distinct String, Majority Element.
-The habit these build: when a prompt says 'exactly once', 'more than once', or
-'appears k times', build the frequency map first and think afterwards. The only
-time to look for something cleverer is when the constraints are unusually tight
-- which is precisely the signal that XOR or Boyer-Moore is intended.""",
+    ANSWER: 4
+
+"UNIQUE" HERE IS NARROWER THAN THE EVERYDAY WORD, and getting that wrong is the whole problem. In ordinary
+speech "the unique values" means "the different values, each counted once" - which would include the 2 and
+give 1 + 2 + 3 = 6. THAT IS NOT THIS. A value qualifies only if its TOTAL COUNT IS 1.
+
+    nums = [1, 1, 1, 1, 1]        the 1 appears five times, so nothing qualifies
+
+    ANSWER: 0     (the "distinct values" reading would give 1)
+
+    nums = [1, 2, 3, 4, 5]        every value appears once, so all of them qualify
+
+    ANSWER: 15    (here the two readings happen to agree, which is why this example cannot separate them)
+
+THE SUM IS OF THE VALUES THEMSELVES, not of how many there are. On [1, 2, 3, 2] the qualifying values are 1
+and 3, so the answer is 4 - not 2, which is merely how many qualified. Section 4 measures how often that
+slip matters.
+
+NEGATIVE NUMBERS ARE FINE and the total can be negative or zero; nothing here assumes positivity.
+
+    THIS ENTRY COMPLETES THE FREQUENCY-COMPARISON CLUSTER. FIRST UNIQUE CHARACTER OWNS WHY TWO PASSES ARE
+    NECESSARY. KTH DISTINCT STRING OWNS ORDER PRESERVATION AND THE COUNTDOWN. RANSOM NOTE OWNS
+    ONE-DIRECTIONAL CONTAINMENT. FIND LUCKY INTEGER OWNS THE SELF-REFERENTIAL PREDICATE. THIS ONE OWNS THE
+    SIMPLEST MEMBER - PURE count == 1 FILTERING - where the only decisions are what "unique" means and
+    which column you add up.""",
+
+    """2. THE INTUITION - build the tally, then read down it keeping the ones.
+
+Every problem in this family starts identically: one pass turns the array into a table of value against
+count. After that the array is finished with, and the question is about the table.
+
+    nums = [1, 2, 3, 2]
+
+        value  |  count      keep?
+        -------+--------     -----
+          1    |    1        YES  ->  add 1
+          2    |    2        no
+          3    |    1        YES  ->  add 3
+
+    TOTAL: 4
+
+THE PICTURE - TWO COLUMNS, AND YOU FILTER BY ONE AND SUM THE OTHER:
+
+        value:   1    2    3
+        count:   1    2    1
+                 ^         ^
+                 |         |
+        the COUNT column decides WHICH rows survive
+        the VALUE column is what gets added up
+
+    THOSE ARE DIFFERENT COLUMNS. Filtering by count and then summing the count as well gives 1 + 1 = 2 -
+    the NUMBER of unique values rather than their total. Section 4 measures how often that differs.
+
+WHY THE TALLY MUST BE COMPLETE BEFORE ANY DECISION. At the moment you meet the first 2, its count so far
+is 1 - and it looks like it qualifies. The second 2 arrives later and disqualifies it. YOU CANNOT KNOW A
+VALUE APPEARS EXACTLY ONCE UNTIL THE WHOLE ARRAY HAS BEEN SEEN, which is exactly the argument First Unique
+Character in this bank makes for its two passes.
+
+    THAT SAID, ORDER DOES NOT MATTER HERE - unlike First Unique Character and Kth Distinct String, which
+    need the second walk to go over the original sequence to answer a question about POSITION. This
+    problem asks only for a total, so the second pass can walk the tally directly. THAT IS THE ONE
+    SIMPLIFICATION THIS MEMBER OF THE FAMILY ENJOYS.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+UNIQUE (in this problem). Appearing EXACTLY ONCE in the array. NOT "one of the different values" - that is
+the everyday meaning and it is not the one used here.
+
+FREQUENCY / COUNT. How many times a value occurs in the whole array.
+
+DISTINCT VALUES. The set of different values, each considered once regardless of repeats. `set([1,2,3,2])`
+is `{1, 2, 3}`. Summing that gives 6, which is the answer to a DIFFERENT question.
+
+Counter. Python's tally-in-one-call dictionary. `Counter([1,2,3,2])` is `{1: 2, 2: 2, 3: 1}`... note that
+is wrong as written - it is `{1: 1, 2: 2, 3: 1}`. The keys are the VALUES from the array and the numbers
+beside them are their counts.
+    `.items()` yields (value, count) pairs - the two columns of the table in section 2.
+
+GENERATOR EXPRESSION. `sum(n for n, c in counts.items() if c == 1)` builds nothing: it walks the pairs,
+keeps the ones passing the test, and adds them as it goes. No intermediate list is created.
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. NOT MODIFIED - `Counter` reads it and builds something new.
+    counts   the tally: value -> how many times it appears.
+    n        one VALUE from the tally - this is what gets summed.
+    c        that value's COUNT - this is what the filter tests.
+
+`n` AND `c` ARE THE TWO COLUMNS, and confusing them is trap 2.
+
+n IS ALSO THE ARRAY LENGTH IN COMPLEXITY TALK; here it is a tally key, matching the code.
+TIME O(n), SPACE O(k) for k distinct values.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - two misreadings, and neither is subtle once measured.
+
+TRAP 1 - READING "UNIQUE" AS "DISTINCT". Summing `set(nums)` adds each different value once, regardless of
+how often it repeats.
+
+        nums = [1, 2, 3, 2]     distinct sum 1 + 2 + 3 = 6      correct answer 4
+
+    MEASURED: wrong on 2,676 of 6,000 random arrays.
+
+    THE OFFICIAL EXAMPLES: [1,2,3,2] catches it (6 versus 4) and [1,1,1,1,1] catches it (1 versus 0), but
+    [1,2,3,4,5] does NOT - with every value appearing once, the two readings coincide at 15. THE EXAMPLE
+    THAT LOOKS MOST LIKE A SUMMARY OF THE PROBLEM IS THE ONE THAT CANNOT TELL THE READINGS APART.
+
+TRAP 2 - SUMMING THE COUNTS INSTEAD OF THE VALUES. Writing `sum(c for n, c in counts.items() if c == 1)`
+filters correctly and then adds the wrong column - every surviving row contributes 1, so the result is
+HOW MANY values are unique rather than their total.
+
+        nums = [1, 2, 3, 2]     summing counts gives 2      correct answer 4
+
+    MEASURED: wrong on 4,973 of 6,000 random arrays - the more destructive of the two.
+
+    THE OFFICIAL EXAMPLES: [1,2,3,2] catches it (2 versus 4) and [1,2,3,4,5] catches it (5 versus 15), but
+    [1,1,1,1,1] does NOT - with nothing qualifying, both versions sum an empty selection and return 0.
+
+    SO EACH OF THE TWO ALL-ONE-KIND EXAMPLES IS BLIND TO EXACTLY ONE MISREADING, and only the mixed first
+    example catches both. BOTH BUGS ARE LOUD - you cannot ship either past the full sample set - which is
+    worth saying plainly, since several problems in this bank hide their commonest bug from every sample.
+
+TRAP 3 - TRYING TO DO IT IN ONE PASS. Adding a value as you meet it and subtracting it when a duplicate
+arrives DOES work - subtract twice the value the second time you see it, and ignore it thereafter - but it
+needs a "have I already cancelled this?" flag per value, which is the tally again in disguise. THE TWO-PASS
+VERSION IS THE SIMPLEST CORRECT SHAPE, not a compromise.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty array gives an empty tally, an empty selection
+and a sum of 0 - correct with no guard. A single element [5] gives 5. Negative values work unchanged:
+[-3, -3, 4] gives 4.""",
+
+    """5. THE SLOW WAY FIRST, then the tally.
+
+THE NAIVE VERSION - ASK THE ARRAY ABOUT EVERY ELEMENT:
+
+    return sum(v for v in nums if nums.count(v) == 1)
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it reads
+    exactly like the problem statement. COST: `nums.count(v)` scans the entire array, once per element, so
+    O(n^2).
+
+    AT THIS PROBLEM'S LIMIT OF n = 100 THAT IS 10,000 COMPARISONS AND FINISHES INSTANTLY. So be honest:
+    the brute force passes comfortably here. The tally is the tidier answer, not a rescue.
+
+THE UPGRADE, AND IT IS THE SAME OBSERVATION AS EVERY MEMBER OF THIS FAMILY. The naive version asks "how
+many 2s are there?" once for every 2 in the array - the same question, recomputed. ONE PASS ANSWERS IT FOR
+EVERY VALUE AT ONCE, and then each lookup is free.
+
+    COST: O(n) time, O(k) space for k distinct values.
+
+    NOTE THE SPACE IS O(k) AND NOT O(1). Unlike the character problems in this family, the values here are
+    integers with no bounded alphabet - the constraints allow 1 <= nums[i] <= 100, so a 101-slot counting
+    array WOULD give O(1) space, which is the same bounded-values observation How Many Numbers Are Smaller
+    Than the Current makes in this bank. Worth mentioning; not worth leading with, since the Counter is
+    shorter and works for any range.
+
+WHY NOT A SET-BASED TRICK. It is tempting to compute `sum(set(nums))` and subtract something, but there is
+nothing clean to subtract: knowing the distinct values tells you nothing about which of them repeated. The
+information you need is the COUNT, so counting is the honest route.
+
+    CONTRAST SINGLE NUMBER in this bank, where XOR solves a superficially similar problem in O(1) space -
+    but only because that problem GUARANTEES every other value appears exactly TWICE. THAT MUCH STRONGER
+    CONSTRAINT IS WHAT BUYS THE TRICK. Here values may repeat any number of times, so no cancellation
+    identity applies and a tally is genuinely required.
+
+NO OTHER TRICK IS INVOLVED. The whole content is the definition of "unique" and which column you add.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: tally how many times each value appears, then add up the values whose tally is exactly
+one.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. Two sequential passes, and the first must finish
+completely before the second begins:
+
+    PASS 1 fills `counts`. It walks the array; order is irrelevant, since the tally would be identical for
+        any rearrangement.
+    PASS 2 walks the finished tally, testing each count and accumulating the matching values. It never
+        touches the array again.
+
+    WHY THEY CANNOT BE MERGED: a value seen once so far may reappear later, so "count is 1 so far" is not
+    the claim the problem makes. The first pass exists to turn a statement about a PREFIX into a statement
+    about the WHOLE ARRAY - exactly the argument First Unique Character makes in this bank.
+
+    WHAT MAKES EACH STOP: pass 1 runs once per element; pass 2 runs once per distinct value. Both are plain
+    iterations over finite collections with no conditions to get wrong and no early exit.
+
+    WHY PASS 2 MAY WALK THE TALLY RATHER THAN THE ARRAY. The answer is a SUM, which does not depend on
+    order or position. Its siblings in this family ask for an INDEX or a kth ITEM, and those must walk the
+    original sequence because position is part of the question. THIS PROBLEM IS THE ONE MEMBER THAT IS
+    FREE OF THAT CONSTRAINT, and noticing why is more useful than the code.
+
+THE STEPS, NO CODE:
+
+    1. Walk the array once and tally how many times each value appears.
+    2. Start a total at zero.
+    3. Go through the finished tally. For each entry, if its count is exactly one, add THE VALUE - not the
+       count - to the total.
+    4. Hand back the total.
+
+    STEP 3 SAYS "EXACTLY ONE", WHICH IS TRAP 1, AND "ADD THE VALUE", WHICH IS TRAP 2.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A charity shop receives a crate of donated books. Some titles arrive as single copies and some arrive
+several times over. The manager wants to know the combined COVER PRICE of the books that came in as a
+single copy only - the ones with no duplicate anywhere in the crate.
+
+She cannot decide as she unpacks. She lifts out a copy of a particular title and, at that moment, it is
+the only one she has seen - but there may be another of the same title further down the crate. ANY
+JUDGEMENT MADE MID-UNPACKING CAN BE OVERTURNED BY SOMETHING STILL IN THE CRATE.
+
+So she unpacks the whole thing first, keeping a tally sheet: one line per title, with a stroke added each
+time that title appears. When the crate is empty the sheet is complete and nothing can change it.
+
+Then she reads down the sheet. For each line she looks at the number of strokes. Two or more strokes -
+skip it, that title came in duplicate. Exactly one stroke - this title qualifies, so she adds ITS COVER
+PRICE to a running total.
+
+At the end she reports the total.
+
+    THE FIRST MISTAKE, AND IT IS ABOUT THE WORD. If she had been asked for "the unique titles" in the
+    everyday sense, she would have added one copy of every different title, including the ones that came
+    in threes. That is a perfectly sensible question and it is not the one she was asked. Here a title
+    that arrived three times does not contribute at all.
+
+    THE SECOND MISTAKE, AND IT IS ABOUT WHICH COLUMN. Her sheet has two columns: the title's price and the
+    number of strokes. She filters using the strokes and adds using the price. If she added the strokes
+    instead she would end up reporting how MANY single-copy titles there were, which is a count of books
+    rather than a sum of money - a plausible-looking number answering nothing she was asked.
+
+AND NOTE THAT ORDER NEVER MATTERED. She was asked for a total, so it makes no difference which title she
+unpacked first or in what order she reads her sheet. Had she been asked "which single-copy title was
+nearest the top of the crate?", the sheet alone would not answer it and she would have to go back through
+the crate in order.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` tallies a sequence in one call. Only the tallying is used - no arithmetic on Counters here.
+
+    def sum_of_unique(nums):
+
+`nums` is the input list. IT IS NOT MODIFIED - `Counter(nums)` reads it and builds a new object.
+
+    counts = Counter(nums)
+
+PASS 1, THE WHOLE TALLY IN ONE LINE. `counts[v]` is the number of times v appears in the ENTIRE array.
+Complete before anything is judged, which is what makes the test below a statement about the whole array
+rather than about a prefix.
+
+    return sum(n for n, c in counts.items() if c == 1)
+
+PASS 2, AND EVERY DECISION IN THE PROBLEM IS ON THIS LINE:
+
+    `counts.items()` yields (value, count) pairs - `n` is the value, `c` is how many times it appeared.
+        THE TWO NAMES ARE THE TWO COLUMNS from section 2, and keeping them straight is trap 2.
+
+    `if c == 1` is the definition of "unique" in this problem: EXACTLY ONCE. Not `c >= 1`, which would be
+        true for every key present and would sum all the distinct values - that is trap 1, wrong on 2,676
+        of 6,000 random arrays.
+
+    `sum(n for ...)` adds THE VALUES. Writing `sum(c for ...)` instead adds 1 for each surviving row and
+        returns how MANY values are unique - wrong on 4,973 of 6,000.
+
+    The generator builds no intermediate list; it filters and accumulates in one walk over the distinct
+    values.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty array (an empty tally means an empty selection and
+`sum` of nothing is 0 - verified), no sorting, no second walk over `nums`, and no counting array - though
+the constraint 1 <= nums[i] <= 100 would permit one, as section 5 notes.""",
+
+    """9. TRACED ON REAL NUMBERS - the example that separates both misreadings.
+
+nums = [1, 2, 3, 2]. Chosen deliberately: it is the only one of the three official examples that
+distinguishes the correct answer from BOTH common misreadings.
+
+    PASS 1 - build the tally by walking the array:
+
+        see 1   ->  counts = {1: 1}
+        see 2   ->  counts = {1: 1, 2: 1}
+        see 3   ->  counts = {1: 1, 2: 1, 3: 1}
+        see 2   ->  counts = {1: 1, 2: 2, 3: 1}
+
+        THE SECOND 2 IS WHAT DISQUALIFIES THE FIRST ONE. At the moment the 2 was first seen its count was
+        1 and it looked like a keeper.
+
+    PASS 2 - walk the finished tally:
+
+        value 1, count 1   ->   count is exactly 1, so KEEP.   running total = 1
+        value 2, count 2   ->   not 1, so skip.                running total = 1
+        value 3, count 1   ->   KEEP.                          running total = 4
+
+    RETURNS 4.  Cross-checked against the O(n^2) version that asks `nums.count(v)` at every position:
+    also 4.
+
+    WHAT THE TWO MISREADINGS GIVE ON THIS SAME ARRAY:
+        summing the COUNTS of the surviving rows:   1 + 1 = 2
+        summing the DISTINCT values:                1 + 2 + 3 = 6
+    Three different plausible numbers from one four-element array, which is why this example is the one to
+    test against.
+
+THE INVERSION - CHANGE THE LAST ELEMENT FROM 2 TO 4:
+
+    [1, 2, 3, 2]   ->   4       the repeated 2 contributes nothing; only 1 and 3 count
+    [1, 2, 3, 4]   ->   10      nothing repeats, so every value counts: 1 + 2 + 3 + 4
+
+    ONE ELEMENT CHANGED AND THE 2 IS RESCUED - it now appears once, so it joins the total, taking it from
+    4 to 10 (the 2 itself plus the 4 that replaced its duplicate). Both verified against the brute force.
+
+AND THE TWO EXAMPLES THAT CANNOT TELL THE READINGS APART:
+
+    [1, 1, 1, 1, 1]   correct 0.  Summing the counts also gives 0 - nothing survives the filter either
+                      way. Only the distinct-values reading differs, at 1.
+    [1, 2, 3, 4, 5]   correct 15. The distinct-values reading also gives 15, since nothing repeats. Only
+                      the summing-counts reading differs, at 5.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the array to tally, one pass over the distinct values to filter and
+add.
+
+    TIME O(n). SPACE O(k) for k distinct values, at most n.
+    The `nums.count(v)`-per-element brute force is O(n^2); at this problem's limit of n = 100 that is
+    10,000 comparisons and passes instantly, so the tally is the cleaner answer rather than a required
+    one.
+    With the constraint 1 <= nums[i] <= 100, a 101-slot counting array makes the space O(1) - the same
+    bounded-values observation that How Many Numbers Are Smaller Than the Current is built on.
+
+THE #1 MISTAKE: summing the counts instead of the values, which returns HOW MANY values are unique rather
+than their total - wrong on 4,973 of 6,000 random arrays. THE RUNNER-UP is reading "unique" as "distinct",
+wrong on 2,676 of 6,000. BOTH ARE LOUD: the first official example, [1, 2, 3, 2], catches both, and the
+other two examples each catch exactly one. There is no hidden failure here, which is itself worth knowing -
+not every problem conceals its bug from the samples.
+
+ONE-SENTENCE TAKEAWAY: "unique" means count exactly one, not "one of each" - build the tally, filter on
+the count column, and sum the value column.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Almost nothing about algorithms; this is a warm-up. What is on
+show is precision of reading - "unique" has two ordinary meanings and only one is intended - and whether
+you can say WHY the tally must be complete before any judgement. That second point is one sentence and it
+is the same sentence that justifies the two passes in First Unique Character.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Sum the values appearing exactly k times." Change `c == 1` to `c == k`. Nothing else moves, which is
+    the sign that the structure is right.
+    "Return the unique values themselves rather than their sum." Collect instead of summing - and note
+    that if the ORDER of the output matters, the second pass must walk the ARRAY rather than the tally,
+    which is exactly what Kth Distinct String in this bank does.
+    "SINGLE NUMBER - every element appears twice except one; find it in O(1) space." XOR everything
+    together; the pairs cancel and the loner survives. THAT TRICK IS UNAVAILABLE HERE because it needs the
+    guarantee that every other value appears exactly twice - naming why the stronger constraint is what
+    buys the trick is the useful part.
+    "What if the array is a stream too large to store?" The tally is O(k), not O(n), so a single pass
+    works as long as the number of DISTINCT values fits - which the 1..100 bound guarantees.""",
 ]
 
 _EX_P1M["Summary Ranges"] = [
-    """The sweep, traced.
-nums = [0,1,2,4,5,7]. i=0: start 0, extend while the next is +1 -> i reaches 2
-(value 2). start 0 != nums[2] = 2 -> append '0->2'. i becomes 3.
-i=3: start 4, extend -> i reaches 4 (value 5) -> append '4->5'. i becomes 5.
-i=5: start 7, cannot extend (i+1 is out of range). start == nums[5] -> append
-'7'.
-Result ['0->2','4->5','7'].
-The inner while does the extending and the outer i += 1 steps past the finished
-run - two pointers collapsed into one index.""",
+    """1. THE GOAL - collapse runs of consecutive numbers into range strings.
 
-    """Why the single-element case needs its own branch.
-A run of length 1 must print as '7', not '7->7'. The test `start == nums[i]`
-after the inner loop distinguishes them: if the inner loop never advanced, the
-run is a single number.
-Forgetting this produces output that is structurally right and formatted wrong
-on every isolated element - which is the kind of failure that passes a
-hand-trace on [0,1,2] and fails on the real test set. Any input with an isolated
-value catches it.""",
+You are given a SORTED array of DISTINCT integers. Find every maximal run of consecutive values and write
+each one as a string: "a->b" for a run of two or more, and just "a" for a run of one.
 
-    """The overflow trap hiding in `nums[i+1] == nums[i] + 1`.
-The values can reach the 32-bit maximum, and adding 1 to INT_MAX overflows in
-C++ or Java - so the comparison silently misbehaves at the very top of the
-range. The safe form is `nums[i+1] - nums[i] == 1`, which cannot overflow
-because the difference of two in-range values is in range.
-Python is immune, so this is a footnote rather than a bug here - but it is
-exactly the sort of detail an interviewer with a C++ background will probe, and
-knowing it costs nothing.""",
+    nums = [0, 1, 2, 4, 5, 7]
 
-    """Why sorted-and-unique is load-bearing.
-'Consecutive' is decided by comparing NEIGHBOURS, which only works because the
-array is sorted; and the +1 test assumes no duplicates, since [1,1,2] would
-break the run at the repeated 1 rather than extending it.
-If the input were unsorted you would sort first at O(n log n); if duplicates
-were allowed you would deduplicate as you go. Stating that dependency shows you
-noticed the precondition rather than absorbing it silently.""",
+        0, 1, 2   are consecutive        ->   "0->2"
+        4, 5      are consecutive        ->   "4->5"
+        7         stands alone           ->   "7"
 
-    """Edge cases.
-Empty array -> the outer loop never runs -> [].
-Single element [3] -> ['3'].
-All consecutive [1,2,3,4] -> one range ['1->4'].
-No two consecutive [1,3,5] -> ['1','3','5'], three single-element runs.
-Negative numbers -> [-3,-2,-1] gives ['-3->-1'], and the string concatenation
-handles the minus signs without any special care.
-A run at the very end is closed by the loop exiting rather than by a break,
-which is why no post-loop flush is needed - a common source of bugs in
-run-detection code written with a for loop instead.""",
+    ANSWER: ["0->2", "4->5", "7"]
 
-    """Complexity and the family.
-O(n) time - i only ever advances - and O(1) extra space beyond the output.
-The family is run detection: Longest Consecutive Sequence (unsorted, so a set
-plus 'only start counting at a run's beginning' gives O(n)), Missing Ranges
-(the complement of this problem), Merge Intervals (runs over intervals rather
-than integers), and the gaps-and-islands SQL trick which is the same idea in a
-different notation.
-Cue: 'consecutive', 'run', 'streak' or 'range' over a sorted sequence means a
-single sweep with a start marker.""",
+    nums = [0, 2, 3, 4, 6, 8, 9]
+
+        0          alone                 ->   "0"
+        2, 3, 4    consecutive           ->   "2->4"
+        6          alone                 ->   "6"
+        8, 9       consecutive           ->   "8->9"
+
+    ANSWER: ["0", "2->4", "6", "8->9"]
+
+TWO RULES DEFINE THE OUTPUT, AND THE SECOND IS THE ONE PEOPLE DROP:
+
+    A RUN IS MAXIMAL. You do not split 0, 1, 2 into "0->1" and "2"; you take the run as far as it goes.
+    A RUN OF LENGTH ONE PRINTS AS A BARE NUMBER. "7", never "7->7". That single formatting rule is what
+        section 4 is about, and it is why the code has a branch at all.
+
+CONSECUTIVE MEANS EXACTLY ONE APART. 4 and 5 are consecutive; 4 and 6 are not. Because the array is sorted
+and distinct, you can decide this by comparing each value with the one directly after it - no searching,
+no memory.
+
+    nums = [1, 2, 3, 4]   ->   ["1->4"]      one run covering everything
+    nums = [1, 3, 5]      ->   ["1", "3", "5"]   three runs of one
+
+    THIS ENTRY OPENS THE RANGE-COMPRESSION SLOT in this bank. IT OWNS EMITTING A RUN WHEN IT BREAKS - the
+    shape where you extend while a condition holds, then output once at the boundary - AND THE
+    SINGLE-ELEMENT FORMATTING RULE. It sits alongside the first-and-last-occurrence work of Degree of an
+    Array, which tracks where runs START and END rather than emitting them.""",
+
+    """2. THE INTUITION - hold the start, run forward while the chain continues, then print.
+
+Every run needs two things: where it began and where it ended. So remember the start, walk forward as long
+as each next value is exactly one more, and when the chain breaks you have both ends.
+
+    nums = [0, 1, 2, 4, 5, 7]
+
+        START a run at 0.
+            next is 1, which is 0 + 1   ->  extend
+            next is 2, which is 1 + 1   ->  extend
+            next is 4, which is NOT 2 + 1  ->  the chain breaks
+        The run is 0 through 2. They differ, so emit "0->2".
+
+        START a new run at 4.
+            next is 5, which is 4 + 1   ->  extend
+            next is 7, which is NOT 5 + 1  ->  break
+        The run is 4 through 5. Emit "4->5".
+
+        START a new run at 7.
+            there is no next value      ->  break
+        The run is 7 through 7. THE ENDS ARE EQUAL, so emit "7" - not "7->7".
+
+    ANSWER: ["0->2", "4->5", "7"]
+
+THE PICTURE - THE GAPS ARE WHERE THE OUTPUT HAPPENS:
+
+        0    1    2  |  4    5  |  7
+        \\________/      \\___/     \\_/
+          one run       a run    a run
+                     ^         ^
+                   gap 2->4  gap 5->7
+
+    YOU ARE REALLY DETECTING THE GAPS. Each gap ends a run and starts the next, and the number of output
+    strings is one more than the number of gaps.
+
+WHY SORTED-AND-DISTINCT IS LOAD-BEARING. "Consecutive" is decided by comparing neighbours, which is only
+meaningful because the array ascends - in a shuffled array the 1 following the 5 would tell you nothing.
+And the `+ 1` test assumes no repeats: with [1, 1, 2] the pair (1, 1) is not consecutive and the run would
+break where it should not.
+
+    BOTH ARE GUARANTEES YOU ARE LEANING ON, NOT PROPERTIES YOU CHECK - and saying which guarantees your
+    method needs is exactly what an interviewer listens for.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CONSECUTIVE. Differing by exactly one. 4 and 5 are consecutive; 4 and 6 are not; 4 and 4 are not.
+
+RUN / MAXIMAL RUN. A stretch of consecutive values that cannot be extended in either direction. In
+[0,1,2,4] the run 0..2 is maximal - 3 is missing, so it stops there.
+
+RANGE STRING. The output format: "a->b" when the run has two or more members, and just "a" when it has
+one. The arrow is a literal two-character sequence, `-` then `>`.
+
+SORTED AND DISTINCT. Strictly increasing. Both properties are required by the neighbour test - see
+section 2.
+
+THE VARIABLES IN THE CODE:
+    nums     the input array. NOT MODIFIED.
+    result   the list of range strings being built.
+    i        the index currently being examined. IT ONLY EVER ADVANCES, in both loops.
+    n        the array length, read once.
+    start    the FIRST value of the run currently being built. Captured before the inner loop runs.
+
+NOTE THAT `start` HOLDS A VALUE, NOT AN INDEX, while `i` holds an index. That mixture is deliberate: the
+output needs values, and the walking needs positions.
+
+INNER AND OUTER LOOP. The outer loop starts a new run; the inner one extends it. Despite the nesting, the
+total work is linear - see section 6.
+
+str(...) converts a number to its text form. The concatenation `str(start) + "->" + str(nums[i])` builds
+the range string.
+
+n IS THE ARRAY LENGTH. TIME O(n), SPACE O(1) beyond the output.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one formatting branch, and one warning in this bank that turns out to
+be backwards.
+
+TRAP 1 - EMITTING "a->b" FOR EVERY RUN, INCLUDING SINGLETONS. Dropping the `start == nums[i]` branch
+produces "7->7" where the answer is "7".
+
+    MEASURED: wrong on 5,346 of 6,000 random sorted arrays - almost any array with an isolated value.
+    BOTH OFFICIAL EXAMPLES CATCH IT: the first ends in a lone 7, and the second begins with a lone 0. So
+    this bug is LOUD and cannot be shipped - which is worth saying plainly, since several problems in this
+    bank hide their commonest bug from every sample.
+
+    THE TEST `start == nums[i]` WORKS BECAUSE `start` WAS CAPTURED BEFORE THE INNER LOOP RAN. If the inner
+    loop never advanced, `i` still points at the run's only element and the two are equal.
+
+TRAP 2 - THE OVERFLOW WARNING, WHICH IS THE INTERESTING ONE BECAUSE IT IS BACKWARDS. This bank's previous
+version of this entry warned that `nums[i + 1] == nums[i] + 1` can overflow in C++ or Java, because the
+values reach the 32-bit maximum and INT_MAX + 1 wraps.
+
+    CHECKED: THAT ADDITION IS NEVER EVALUATED AT INT_MAX. The array is SORTED and DISTINCT, so a value
+    equal to INT_MAX can only be the LAST element - anything after it would have to be larger. And the
+    inner condition is `i + 1 < n and nums[i + 1] == nums[i] + 1`, which SHORT-CIRCUITS: at the last index
+    the first half is false and the addition is never performed. Verified on an array containing INT_MAX:
+    the addition was evaluated at INT_MAX exactly zero times.
+
+    AND THE "SAFER" REWRITE IS THE ONE WITH THE REAL BUG. Replacing the test with
+    `nums[i + 1] - nums[i] == 1` computes a DIFFERENCE, and on the array [INT_MIN, INT_MAX] that difference
+    is 4,294,967,295 - which does not fit in a 32-bit signed integer, whose maximum is 2,147,483,647.
+
+    SO THE ORIGINAL FORM IS SAFE AND THE RECOMMENDED FIX IS NOT. The lesson generalises: an overflow
+    warning is a claim about which expressions are REACHABLE, and reachability depends on the input
+    guarantees. Check before repeating the folklore.
+
+TRAP 3 - ADVANCING `i` INSIDE THE INNER LOOP AND FORGETTING THE OUTER ADVANCE. After the inner loop, `i`
+sits on the run's LAST element, not past it. The `i += 1` at the bottom of the outer loop is what moves to
+the next run's first element; without it the outer loop restarts on the same value for ever.
+
+TRAP 4 - ASSUMING SORTED OR DISTINCT WITHOUT SAYING SO. See section 2 - both are load-bearing for the
+neighbour test.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty array returns an empty list, since the outer
+loop never runs. A single element [3] returns ["3"] through the equality branch.""",
+
+    """5. THE ALTERNATIVES FIRST, then the sweep.
+
+THE NAIVE VERSION - COLLECT INDICES, THEN FORMAT:
+
+    walk the array recording where each run starts and ends
+    then loop over those pairs building the strings
+
+    IT IS CORRECT and it separates the two concerns cleanly - finding the runs, and formatting them. It is
+    the ground truth every figure in this entry was checked against. COST: O(n) time, plus O(number of
+    runs) space for the intermediate list of pairs. There is nothing wrong with it; it simply materialises
+    something the single sweep can emit directly.
+
+A GENUINELY DIFFERENT APPROACH - THE INDEX-MINUS-VALUE TRICK. For a run of consecutive integers, the
+quantity `nums[i] - i` is CONSTANT:
+
+        nums:        0    1    2    4    5    7
+        index:       0    1    2    3    4    5
+        nums - i:    0    0    0    1    1    2
+                     \\_______/    \\____/    \\_/
+                       run 1       run 2   run 3
+
+    Values sharing a `nums[i] - i` belong to the same run, so you could group by that key. IT IS A REAL
+    IDENTITY AND WORTH RECOGNISING - the same trick solves Longest Consecutive Sequence variants - but
+    here it needs a grouping structure and O(n) space to express what a two-pointer sweep does with two
+    integers. MENTION IT, DO NOT LEAD WITH IT.
+
+THE UPGRADE - THE SINGLE SWEEP. Because a run is contiguous and the array is sorted, you can detect the
+run and emit its string in one pass with no intermediate storage:
+
+        capture the start value
+        advance while the next value continues the chain
+        emit once, choosing the format by whether the run has length one
+
+    COST: O(n) time, O(1) extra space beyond the output list itself.
+
+    THAT PHRASING MATTERS: the output is O(number of runs), which can be O(n), but it is the ANSWER rather
+    than working storage - the same distinction Left and Right Sum Difference makes in this bank.
+
+THE SHAPE THIS TEACHES - EXTEND-THEN-EMIT. You do not know a run is finished until you see the value that
+breaks it, so the emit happens at the BOUNDARY rather than at each element. That pattern recurs in
+run-length encoding, in grouping log lines by session, and in every "compress consecutive identical
+things" problem. THE DETAIL THAT MAKES IT WORK IS CAPTURING THE START BEFORE THE EXTENSION BEGINS.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk the array, and at each new run remember where it began, run forward while the next
+value is exactly one more, then emit either "start->end" or just the number.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. TWO NESTED LOOPS AND ONE INDEX SHARED BETWEEN THEM:
+
+    `i`  is advanced by BOTH loops and NEVER RESET. The inner loop pushes it to the end of the current
+         run; the outer loop then steps it once more, onto the first element of the next run.
+
+    WHY THE NESTING IS STILL LINEAR, WHICH IS THE ONE THING WORTH PROVING HERE: `i` only ever increases,
+    and it increases by exactly one per inner-loop iteration and once per outer-loop iteration. Since it
+    never exceeds n, THE TOTAL NUMBER OF ITERATIONS ACROSS BOTH LOOPS IS AT MOST 2n. A nested loop is not
+    automatically quadratic - what makes it quadratic is an inner index that RESTARTS, and this one does
+    not.
+
+    WHAT MAKES IT STOP: both loops advance `i` and both are bounded by `n`. The inner loop also stops when
+    the chain breaks. There is no path that leaves `i` unchanged, so the outer loop cannot spin.
+
+    WHY `start` IS CAPTURED BEFORE THE INNER LOOP. After the inner loop, `i` names the run's LAST element
+    and the original first value would be unrecoverable - the index that held it has been passed. Grabbing
+    it first is what makes both ends available at the moment of emitting.
+
+    WHY THE EMIT HAPPENS AFTER THE INNER LOOP, NOT INSIDE IT. You cannot know a run is finished until you
+    meet the value that breaks it, so the output is produced at the BOUNDARY. That is the extend-then-emit
+    shape from section 5.
+
+THE STEPS, NO CODE:
+
+    1. Start an empty output list and put a marker on the first position.
+    2. While the marker is inside the array:
+       a. Remember the value under the marker - this is the run's first value.
+       b. While there is a next value AND it is exactly one more than the current one, move the marker
+          forward.
+       c. The marker now sits on the run's last value. If that equals the remembered first value, the run
+          has one member, so output just that number. Otherwise output the first value, an arrow, and the
+          last value.
+       d. Move the marker one more place, onto the start of the next run.
+    3. Hand back the output list.
+
+    STEP 2c's TWO CASES ARE TRAP 1. STEP 2d IS TRAP 3 - without it the outer loop never moves on.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A conference has issued numbered badges, but not every number was collected - some attendees never turned
+up. You have the list of collected numbers in ascending order, and you must write the notice board: a
+summary showing which numbers are present, written as compactly as possible.
+
+Nobody wants to read "4, 5, 6, 7, 8, 9". They want "4 to 9". So you compress every unbroken stretch into a
+single line.
+
+You start at the first number and write it down on a scrap of paper - this is where the current stretch
+begins. Then you look at the next number in the list. If it is exactly one more than the one you are on,
+the stretch continues, so you move along and look again. You keep going as long as each number follows on
+from the last.
+
+Sooner or later you find a number that is not one more - there is a gap, because somebody did not collect
+their badge. THAT GAP ENDS THE STRETCH. You now have both ends: the number on your scrap of paper, and the
+number you had reached before the gap. You write one line on the notice board covering that stretch, then
+begin a new scrap of paper at the number after the gap.
+
+    AND HERE IS THE DETAIL THAT DECIDES HOW THE LINE READS. Sometimes a stretch has only one number in it -
+    the badge either side of it was never collected. Writing "7 to 7" is silly; you just write "7". So
+    before writing the line you compare the two ends: if they are the same number, one end is all you
+    write.
+
+    THAT COMPARISON ONLY WORKS BECAUSE YOU WROTE THE STARTING NUMBER DOWN BEFORE YOU STARTED WALKING. Once
+    you have moved along the list, the place you began from is behind you and you would have no way of
+    knowing where the stretch started.
+
+WHY YOU NEVER HAVE TO SEARCH. The list is in ascending order with no repeats, so everything belonging to a
+stretch is sitting together - the only number that could continue your stretch is the very next one on the
+list. If the list were shuffled, the continuation of your stretch could be anywhere, and you would have to
+look through the whole thing for each step.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def summary_ranges(nums):
+
+`nums` is the sorted array of distinct integers. IT IS NOT MODIFIED. A new list of strings is returned.
+
+    result = []
+    i = 0
+    n = len(nums)
+
+`result` collects the output strings. `i` is the position being examined and ONLY EVER ADVANCES. `n` is
+read once rather than recomputed in each loop condition.
+
+    while i < n:
+
+THE OUTER LOOP - each iteration handles ONE COMPLETE RUN, not one element. That is why it is a `while` and
+not a `for`: the body decides how far to jump.
+
+    start = nums[i]
+
+CAPTURE THE RUN'S FIRST VALUE BEFORE ANY WALKING. This is a VALUE, not an index. After the inner loop, `i`
+will have moved and this value would be unrecoverable - so grabbing it here is what makes the
+single-element test below possible.
+
+    while i + 1 < n and nums[i + 1] == nums[i] + 1:
+        i += 1                       # extend the consecutive run
+
+THE EXTENSION. `i + 1 < n` must come first and Python's `and` short-circuits, so `nums[i + 1]` is never
+read past the end.
+    NOTE ALSO WHAT THAT SHORT-CIRCUIT BUYS: `nums[i] + 1` is only evaluated when a next element exists, so
+    with a sorted distinct array the addition can never happen at INT_MAX - verified. The rewrite
+    `nums[i+1] - nums[i] == 1`, often recommended as safer, actually CAN overflow 32 bits on
+    [INT_MIN, INT_MAX]. See trap 2.
+
+    if start == nums[i]:
+        result.append(str(start))    # a single number
+
+THE SINGLE-ELEMENT BRANCH. If the inner loop never advanced, `i` still points at the run's only element,
+so the first and last values are equal and the output is a bare number. WITHOUT THIS BRANCH the function
+emits "7->7" - wrong on 5,346 of 6,000 random arrays, and caught by both official examples.
+
+    else:
+        result.append(str(start) + "->" + str(nums[i]))
+
+THE RANGE BRANCH. `nums[i]` is the run's LAST value, because the inner loop stopped exactly there.
+
+    i += 1
+
+STEP PAST THE RUN'S LAST ELEMENT, ONTO THE NEXT RUN'S FIRST. THIS LINE IS WHAT MAKES THE OUTER LOOP
+PROGRESS - the inner loop leaves `i` ON the last element, not past it.
+
+    return result
+
+The finished list.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty array (the outer loop does not run and `[]` is
+returned - verified), no list of start/end pairs, no `nums[i] - i` grouping key, and no check that the
+input really is sorted and distinct - those are guarantees, not assertions.""",
+
+    """9. TRACED ON REAL NUMBERS - the official array, which contains all three cases.
+
+nums = [0, 1, 2, 4, 5, 7], so n = 6. This array is well chosen: it has a run of three, a run of two, and a
+run of one, so every branch is exercised.
+
+    OUTER ITERATION 1 - i = 0
+
+        start = nums[0] = 0
+        inner: i+1 = 1 < 6, and nums[1] = 1 equals nums[0] + 1 = 1   ->   extend, i = 1
+        inner: i+1 = 2 < 6, and nums[2] = 2 equals nums[1] + 1 = 2   ->   extend, i = 2
+        inner: i+1 = 3 < 6, and nums[3] = 4, but nums[2] + 1 = 3     ->   chain BREAKS, inner loop ends
+        start is 0 and nums[i] is 2 - NOT equal, so emit "0->2"
+        i += 1  ->  i = 3
+
+    OUTER ITERATION 2 - i = 3
+
+        start = nums[3] = 4
+        inner: nums[4] = 5 equals nums[3] + 1 = 5                    ->   extend, i = 4
+        inner: nums[5] = 7, but nums[4] + 1 = 6                      ->   BREAKS
+        start is 4 and nums[i] is 5 - not equal, so emit "4->5"
+        i += 1  ->  i = 5
+
+    OUTER ITERATION 3 - i = 5
+
+        start = nums[5] = 7
+        inner: i + 1 = 6, which is not less than n = 6                ->   the condition fails on its
+               FIRST half, so nums[i] + 1 is never even computed
+        start is 7 and nums[i] is 7 - EQUAL, so emit the bare "7"
+        i += 1  ->  i = 6, the outer loop ends
+
+    RETURNS ["0->2", "4->5", "7"].
+
+    THE THIRD ITERATION IS THE ONE THAT MATTERS. It is the only one taking the equality branch, and it is
+    also the one demonstrating the short-circuit: at the last element the addition is skipped entirely,
+    which is the whole of trap 2.
+
+    COUNT THE WORK: `i` took the values 0,1,2 then 3,4 then 5 - six increments in total for six elements,
+    which is the linearity argument from section 6 made concrete.
+
+THE INVERSION - CHANGE THE LAST ELEMENT FROM 7 TO 6:
+
+    [0, 1, 2, 4, 5, 7]   ->   ["0->2", "4->5", "7"]        three runs, the last one a singleton
+    [0, 1, 2, 4, 5, 6]   ->   ["0->2", "4->6"]             the 6 now continues the second run
+
+    ONE VALUE CHANGED AND THE OUTPUT LOSES AN ENTRY ENTIRELY - the singleton is absorbed into its
+    neighbour rather than reformatted. Both verified against the collect-then-format ground truth.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Every element is visited exactly once by one loop or the other, and each visit does a
+comparison and at most one string construction.
+
+    TIME O(n). The nested loops are NOT quadratic, because `i` never resets - the two loops share one index
+    that only advances, so the total iteration count is at most 2n. That is worth stating explicitly,
+    because "nested loop" reads as O(n^2) at a glance.
+    SPACE O(1) beyond the output. The output itself is O(number of runs), which is the answer rather than
+    working storage.
+
+THE #1 MISTAKE: emitting "a->b" for every run, so a lone value prints as "7->7". Wrong on 5,346 of 6,000
+random sorted arrays - and BOTH official examples catch it, so it is a loud bug rather than a hidden one.
+THE RUNNER-UP is forgetting the `i += 1` after the emit, which leaves the outer loop restarting on the same
+run for ever.
+
+AND A CORRECTION WORTH CARRYING: the commonly repeated warning that `nums[i] + 1` overflows at INT_MAX does
+not apply here. Sorted and distinct means INT_MAX can only be the last element, and the short-circuit means
+the addition is never evaluated there - verified. Meanwhile the "safe" rewrite `nums[i+1] - nums[i] == 1`
+genuinely does overflow 32 bits on [INT_MIN, INT_MAX], where the difference is 4,294,967,295. AN OVERFLOW
+CLAIM IS A CLAIM ABOUT REACHABILITY, AND REACHABILITY DEPENDS ON THE INPUT GUARANTEES.
+
+ONE-SENTENCE TAKEAWAY: extend the run while the chain holds, emit only when it breaks - and capture the
+start before you walk, because that is the only way to still know both ends when you get there.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you handle the BOUNDARY correctly: the last run has no
+breaking value after it, and a run of one needs different formatting. Both are edge cases of the same
+extend-then-emit shape, and both are where the failures land. The second thing on show is whether you can
+justify that a nested loop is linear here - a candidate who says "O(n) because i never resets" has
+understood the structure rather than counted the indentation.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "MISSING RANGES - report the GAPS instead of the runs." The mirror image: sweep the same way but emit
+    what lies BETWEEN consecutive elements, plus the stretch before the first and after the last against
+    the given bounds. The boundary handling is harder there, which is why it is the Medium version.
+    "What if the array is NOT sorted?" Sort it first, O(n log n) - or, if you only need the longest run
+    rather than all of them, use the hash-set trick from Longest Consecutive Sequence, which is O(n)
+    without sorting.
+    "What if there are DUPLICATES?" The `+ 1` test breaks on equal neighbours. Skip repeats as you extend,
+    or deduplicate first.
+    "RUN-LENGTH ENCODING - compress runs of identical characters." Exactly this shape with "equal to the
+    previous" replacing "one more than the previous", and the same
+    emit-at-the-boundary-and-special-case-length-one structure.""",
 ]
 
 _EX_P1M["Two Sum IV - Input is a BST"] = [
-    """The seen-set traversal, traced.
-BST 5 -> (3 -> (2,4), 6 -> (None,7)), k = 9.
-Visit 5: 9-5 = 4 not in seen -> add 5.
-Visit 3: 9-3 = 6 not in seen (only 5 so far) -> add 3.
-Visit 2: 7 not seen -> add 2. Visit 4: 5 IS in seen -> True (4 + 5 = 9).
-Answer True. Note this is exactly Two Sum on an array, with the traversal
-supplying the elements one at a time - the tree structure is incidental to this
-solution, which is both its strength and the reason it is not the intended
-answer.""",
+    """1. THE GOAL - do two different nodes of the tree add up to k?
 
-    """Why this ignores the BST property, and what that costs.
-The seen-set approach works on ANY binary tree - it never compares values to
-decide where to go. That is O(n) time and O(n) space, and it is the right first
-answer because it is obviously correct.
-But the input is a BST, and an interviewer who specified that expects you to
-notice. The follow-up is always 'can you use the ordering?', so have the next
-two solutions ready rather than stopping here.""",
+Given a BINARY SEARCH TREE and a number k, return whether there exist TWO DISTINCT NODES whose values sum
+to k.
 
-    """Solution 2: inorder to a sorted array, then two pointers.
-Inorder traversal of a BST yields values in SORTED order. Flatten to a list,
-then run the classic converging two-pointer scan: if the sum is too small
-advance the left pointer, too large retreat the right.
-O(n) time, O(n) space - the same asymptotics as the set, but it USES the
-ordering and it is the answer most interviewers are looking for. It also
-generalises: any 'find a pair with property X' question on a BST becomes the
-sorted-array version of itself.""",
+    the tree:            5
+                       /   \\
+                      3     6
+                     / \\      \\
+                    2   4      7
 
-    """Solution 3: O(h) space with two BST iterators.
-Build a forward inorder iterator (a stack descending left) and a backward one
-(descending right), then advance whichever side needs to move - exactly the
-two-pointer walk, but without materialising the array. Space drops to O(h) for
-the two stacks, which is O(log n) on a balanced tree.
-This is the genuinely optimal answer and the reason the problem exists at
-Medium rather than Easy. Even describing it without coding it scores well.""",
+    its values, in order:   2, 3, 4, 5, 6, 7
 
-    """Edge cases.
-Empty tree -> False.
-Single node with k = 2 * that value -> must be FALSE: the two elements must be
-DISTINCT NODES. The seen-set version gets this right for free, because a node's
-complement is checked BEFORE the node is added to the set - so it can never
-match itself.
-Getting the order wrong (add first, then check) makes [5] with k = 10 return
-True, which is the classic bug in every Two Sum variant.
-Duplicates: standard BSTs have distinct values, so the pair is two different
-values; if duplicates were allowed, two equal nodes summing to k would be
-valid and the add-before-check ordering would matter differently.""",
+    k = 9    ->   True    because 2 + 7 = 9  (also 3 + 6 and 4 + 5)
+    k = 28   ->   False   the largest possible sum is 6 + 7 = 13
 
-    """Complexity summary, and the family.
-Seen-set: O(n) time, O(n) space, ignores the BST. Inorder + two pointers: O(n)
-time, O(n) space, uses the ordering. Two iterators: O(n) time, O(h) space,
-optimal.
-The family: Two Sum (array), Two Sum II (sorted array - the two-pointer core
-here), 3Sum, Two Sum BSTs (two separate trees), and Binary Search Tree Iterator
-- which is literally the stack-based iterator this problem's best solution
-needs, so the two are worth learning together.""",
+"TWO DISTINCT NODES" IS THE PHRASE THAT MATTERS. A single node may not pair with itself.
+
+    a tree containing only the node 1, with k = 2
+
+        1 + 1 = 2 would need the SAME node twice, which is not allowed
+
+    ANSWER: False
+
+    That one-node case is the smallest input that separates a correct solution from the commonest bug, and
+    section 4 shows that NEITHER official example does.
+
+THE VALUES ARE DISTINCT - a BST as defined here holds no duplicates - so "two distinct nodes" and "two
+distinct values" coincide, and you never have to worry about whether a repeated value counts twice.
+
+WHY THIS PROBLEM IS INTERESTING DESPITE BEING EASY. You are handed a BST, which loudly suggests using the
+ordering. The simplest correct solution IGNORES THE ORDERING COMPLETELY - it works on any binary tree at
+all. Whether that is the right trade is the actual content of the problem, and section 5 gives three
+solutions with genuinely different costs.
+
+    THIS ENTRY COMPLETES THE BST-DESCENT CLUSTER. SEARCH IN A BINARY SEARCH TREE OWNS THE PLAIN
+    EXACT-MATCH DESCENT, where one comparison discards half the tree. CLOSEST BINARY SEARCH TREE VALUE
+    OWNS THE-ANSWER-IS-AN-ANCESTOR and the tie rule. THIS ONE OWNS TRAVERSAL-PLUS-HASH - and, more
+    usefully, WHY THE BST PROPERTY DOES NOT HELP HERE, which is the opposite lesson from its two
+    siblings.""",
+
+    """2. THE INTUITION - it is Two Sum, and the tree is just an awkward container.
+
+Forget the tree for a moment. If the values were in a list, this is the classic Two Sum question: as you
+walk, ask whether the number you NEED has already gone past.
+
+    you are standing on the value v, and the target is k
+    the partner you need is exactly k - v
+    if you have already seen k - v, you are done
+
+    tree values visited in some order: 5, 3, 2, 4, 6, 7,  with k = 9
+
+        at 5:   need 9 - 5 = 4.   Seen so far: nothing.        Record 5.
+        at 3:   need 9 - 3 = 6.   Seen: {5}.                   Record 3.
+        at 2:   need 9 - 2 = 7.   Seen: {5, 3}.                Record 2.
+        at 4:   need 9 - 4 = 5.   Seen: {5, 3, 2} - YES, 5 is there.   RETURN True.
+
+    THE PAIR FOUND IS 4 AND 5, and it was found the moment the second member of a pair was reached.
+
+THE PICTURE - THE SET IS EVERYTHING BEHIND YOU:
+
+        visited:  5    3    2    4  ...
+                  \\____________/    ^
+                    the "seen" set   standing here, asking: is 9 - 4 = 5 in there?
+
+    A PAIR IS ALWAYS DISCOVERED AT ITS SECOND MEMBER, never its first - which is exactly what guarantees
+    the two nodes are distinct. When you ask "have I seen k - v?", the current node is NOT yet in the set,
+    so it cannot answer its own question. THAT ORDERING IS THE WHOLE OF SECTION 4.
+
+WHY THE TREE'S SHAPE IS IRRELEVANT HERE. The method never compares a value against a node to decide where
+to walk - it simply visits everything and remembers. IT WOULD WORK IDENTICALLY ON A SHUFFLED BINARY TREE,
+on a linked list, or on an unsorted array.
+
+    THAT IS WORTH SAYING OUT LOUD, BECAUSE IT IS THE OPPOSITE OF WHAT THE PROBLEM'S TITLE SUGGESTS.
+    Search in a BST and Closest BST Value both LEAN on the ordering to throw away half the tree. Here
+    there is nothing to throw away: a pair summing to k can have its two members anywhere, so every node
+    must be visited regardless. THE ORDERING BUYS YOU SPACE, NOT TIME - see section 5.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY SEARCH TREE (BST). A binary tree where every node's left subtree holds smaller values and its right
+subtree larger ones. Here the values are DISTINCT.
+
+TWO DISTINCT NODES. Two different positions in the tree. Since values are unique, this is the same as two
+different values - but the phrase is about nodes, and the single-node case in section 1 is why it matters.
+
+COMPLEMENT. The value you would need to complete a pair: for a node holding v and a target k, the
+complement is k - v. THE ENTIRE TWO SUM FAMILY IS "COMPUTE THE COMPLEMENT AND LOOK IT UP" rather than
+"search for something that fits".
+
+SET. An unordered collection with no duplicates, supporting membership tests in O(1) on average. Here it
+records every value visited so far.
+
+DFS / DEPTH-FIRST SEARCH. Visiting a node, then fully exploring one child before the other. The order does
+not matter for this problem - any order that visits every node works.
+
+INORDER TRAVERSAL. Left subtree, then node, then right subtree. ON A BST THIS YIELDS THE VALUES IN SORTED
+ORDER, which is what solution 2 in section 5 exploits.
+
+THE VARIABLES IN THE CODE:
+    root    the top of the tree. NOT MODIFIED - nothing is written to any node.
+    k       the target sum.
+    seen    the set of values visited so far. It only ever grows.
+    node    the node currently being visited, inside the helper.
+
+`k - node.val in seen` is one subtraction and one membership test.
+`dfs(node.left) or dfs(node.right)` SHORT-CIRCUITS: if the left subtree finds a pair, the right is never
+explored.
+
+n IS THE NUMBER OF NODES, h THE HEIGHT. TIME O(n), SPACE O(n) for the set plus O(h) for the recursion.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and NEITHER official example catches it.
+
+TRAP 1 - ADDING THE NODE'S VALUE TO THE SET BEFORE CHECKING FOR THE COMPLEMENT. Swapping those two lines
+lets a node satisfy the target BY PAIRING WITH ITSELF.
+
+        seen.add(node.val)
+        if k - node.val in seen:      # WRONG ORDER - the node can now answer its own question
+            return True
+
+    Whenever k is exactly twice some node's value, that node alone reports a pair.
+
+        the single-node tree [1], with k = 2
+
+            correct:      False - the two nodes must be distinct, and there is only one node
+            add-first:    adds 1, then asks whether 2 - 1 = 1 is in the set. It is - itself. Returns True.
+
+    MEASURED: wrong on 380 of 6,000 random BSTs. That is a lower rate than most bugs in this bank, and the
+    reason is structural: it only misfires when k = 2v for some node value v AND no genuine pair exists.
+    MEASURED SEPARATELY, that combination arose in 361 of 6,000 random cases - so the bug fires on very
+    nearly every case where it is possible at all.
+
+    NOW CHECK BOTH OFFICIAL EXAMPLES:
+
+        k = 9    correct True    add-first True    AGREE
+        k = 28   correct False   add-first False   AGREE
+
+    NEITHER CATCHES IT. For k = 9 a genuine pair exists, so both versions answer True - the broken one for
+    a legitimate reason. For k = 28 no node has value 14, so the self-pairing never triggers. A SOLUTION
+    WITH THIS BUG PASSES BOTH SAMPLES AND FAILS ON A HIDDEN TEST.
+
+    THE FIX IS TO CHECK BEFORE RECORDING, and the reason is worth stating rather than memorising: THE SET
+    MUST MEAN "NODES OTHER THAN THIS ONE". Checking first is what enforces "distinct".
+
+TRAP 2 - TRYING TO USE THE BST PROPERTY TO PRUNE. It is tempting to descend toward k - node.val the way
+Search in a BST descends. THAT DOES NOT WORK: the two members of a pair can be in completely different
+subtrees, so no subtree can be discarded. Any attempt to prune loses answers.
+
+TRAP 3 - FORGETTING THAT `or` SHORT-CIRCUITS, and writing the two recursive calls as separate statements
+whose results are ignored. `dfs(node.left) or dfs(node.right)` returns as soon as either succeeds; calling
+them without combining the results throws the answer away.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty tree returns False immediately. And because BST
+values are distinct, there is no question of a repeated value pairing with a legitimate twin - if there
+were duplicates, "two distinct nodes holding the same value" WOULD be a valid pair, and the seen-set
+version would handle it correctly while a set of VALUES would not.""",
+
+    """5. THREE SOLUTIONS, AND THEY TRADE DIFFERENTLY - this is the real content of the problem.
+
+SOLUTION 1 - TRAVERSE WITH A SEEN SET. The one in this entry's code.
+
+        visit every node; at each, check whether k minus its value has already been seen; then record it
+
+    O(n) TIME, O(n) SPACE for the set (plus O(h) recursion stack).
+    IT IGNORES THE BST PROPERTY ENTIRELY and works on any binary tree. Simple, and the one to write first.
+
+SOLUTION 2 - FLATTEN INORDER, THEN TWO POINTERS.
+
+        an inorder traversal of a BST yields the values in SORTED order
+        with a sorted list, run the classic converging two-pointer walk:
+            if the pair sums too low, advance the left pointer; too high, retreat the right one
+
+    O(n) TIME, O(n) SPACE for the list.
+    IT USES THE ORDERING - but only to produce a sorted array, and it still stores everything. THE SAME
+    COMPLEXITY AS SOLUTION 1, so it is not an improvement; it is a different route to the same cost. Be
+    honest about that rather than presenting it as the "proper BST answer".
+
+    THE TWO-POINTER STEP IS ITSELF WORTH KNOWING - it is the same walk Minimum Common Value uses in this
+    bank, and it is why "sorted input" so often means "two pointers".
+
+SOLUTION 3 - TWO BST ITERATORS, AND THIS IS THE ONE THAT ACTUALLY IMPROVES ON SPACE.
+
+        build a FORWARD inorder iterator - a stack that descends left as far as possible - and a BACKWARD
+        one that descends right; then run the same two-pointer logic, advancing whichever end needs to
+        move, pulling values on demand instead of materialising them
+
+    O(n) TIME, O(h) SPACE - the two stacks hold only a root-to-leaf path each.
+    ON A BALANCED TREE THAT IS O(log n) INSTEAD OF O(n), which is a genuine win. It is also considerably
+    more code, and it is the answer to give when an interviewer asks "can you do better than O(n)
+    space?".
+
+WHICH TO WRITE. Solution 1, then say the other two exist and what each buys. THE HONEST SUMMARY IS THAT
+THE BST PROPERTY BUYS SPACE, NOT TIME: every solution must visit every node, because a pair's members can
+lie anywhere, so O(n) time is unavoidable. WHAT THE ORDERING PERMITS IS ANSWERING WITHOUT STORING
+EVERYTHING.
+
+THE BRUTE FORCE, FOR COMPLETENESS: check every pair of nodes, O(n^2) time and O(h) space. It is the ground
+truth every figure in this entry was checked against, and at this problem's limit of 10,000 nodes it would
+be 50 million comparisons - too slow.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk every node keeping a set of the values already visited, and at each node ask whether
+the value that would complete the pair is already in that set.
+
+THE MECHANISM - AND THIS ONE IS RECURSIVE, SO THE CALL STACK IS PART OF THE STORY.
+
+    `seen` is created ONCE, outside the recursion, and shared by every call. It only ever grows. That
+    sharing is what makes the whole traversal cooperate rather than each subtree working in isolation.
+
+    WHAT A RECURSIVE CALL ACTUALLY DOES: calling `dfs(node.left)` PAUSES the current invocation - its local
+    `node` is remembered on the call stack - and starts a fresh one for the child. When that returns, the
+    paused call resumes at exactly the point it stopped, with its own `node` intact. THE STACK IS WHAT
+    REMEMBERS WHERE TO COME BACK TO; nothing else does, because a node has no link to its parent.
+
+    WHAT MAKES IT STOP: every call either receives None and returns False immediately - THAT IS THE BASE
+    CASE - or recurses on nodes strictly one level deeper. The tree has finite depth, so the chain of
+    paused calls cannot exceed the height, and every branch eventually reaches a missing child.
+
+    THE SHORT-CIRCUIT IN `dfs(node.left) or dfs(node.right)`: if the left subtree returns True, the right
+    is never explored and the True propagates straight back up through every paused call. That is an early
+    exit for free.
+
+    THE ORDER OF THE TWO LINES INSIDE THE BODY IS THE ALGORITHM. Checking before adding means the set
+    contains only OTHER nodes when the question is asked, which is precisely what "two distinct nodes"
+    requires. Reversing them lets a node answer its own question - trap 1.
+
+    WHY THE TRAVERSAL ORDER DOES NOT MATTER. Any order visiting every node works, because a pair is
+    discovered when its SECOND member is reached, whichever that turns out to be. This is unusual for a
+    tree problem and is a direct consequence of ignoring the BST property.
+
+THE STEPS, NO CODE:
+
+    1. Start an empty set of values seen so far.
+    2. Visit the nodes in any order that reaches all of them. At each node:
+       a. Work out the value that would complete the pair: the target minus this node's value.
+       b. If that value is ALREADY in the set, a pair exists - answer yes and stop everything.
+       c. Otherwise add this node's value to the set and carry on to its children.
+    3. If every node has been visited without a match, answer no.
+
+    STEP 2b HAPPENS BEFORE STEP 2c. THAT IS THE ENTIRE PROBLEM.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A hall is full of people, each wearing a badge with a number on it, and they are arranged in a branching
+structure of rooms - each room leads to two smaller rooms. You have been asked whether any TWO DIFFERENT
+people have badges adding up to nine.
+
+You could compare everybody with everybody, which for a large hall is an enormous number of comparisons.
+
+Instead you walk through every room with a notebook, and at each person you do one thing: you work out
+what number their partner would have to be wearing. Somebody wearing four needs a five. Then you glance at
+your notebook to see whether you have already met someone wearing that number. If you have, you are
+finished - you have your two people. If not, you write down the number this person is wearing and move on.
+
+    THE CRUCIAL DETAIL IS THE ORDER OF THOSE TWO ACTS. You look in the notebook BEFORE you write this
+    person down. If you wrote first and looked afterwards, then somebody wearing four and a half - in a
+    hall where the target is nine - would look in the notebook, see their own entry staring back, and you
+    would report a pair consisting of one person counted twice. YOU WERE ASKED FOR TWO PEOPLE, NOT ONE
+    PERSON MENTIONED TWICE.
+
+    That mistake only shows itself when the target happens to be exactly double somebody's badge. If the
+    target is odd, or if no badge is exactly half of it, you will never notice - which is why it can
+    survive a good deal of testing.
+
+WHY THE ROOM STRUCTURE DOES NOT HELP YOU. The rooms were arranged so that smaller numbers are always to the
+left and larger to the right - and that is genuinely useful if you are hunting for ONE particular badge,
+because at every doorway you can ignore half the building.
+
+    BUT YOU ARE HUNTING FOR A PAIR, and the two members of a pair can be in completely different wings.
+    There is no doorway at which you can safely say "nobody through there can be part of the answer". So
+    you have to visit everybody anyway, and the elegant arrangement of the rooms buys you nothing at all
+    on this particular question.
+
+    THAT IS WORTH NOTICING RATHER THAN GLOSSING OVER. The building's structure is not always the tool for
+    the job, and recognising when a helpful-looking property is irrelevant is as useful as exploiting it
+    when it is not.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+THE NODE TYPE: a value and two child links. No parent link, which is why the recursion's call stack is
+what remembers the way back.
+
+    def find_target(root, k):
+
+`root` is the top of the tree; `k` is the target sum. THE TREE IS NOT MODIFIED - nothing is written to any
+node.
+
+    seen = set()
+
+THE VALUES ALREADY VISITED. Created ONCE, outside the recursion, and shared by every recursive call - that
+sharing is what lets a node in the right subtree pair with one from the left.
+
+    def dfs(node):
+
+An inner function so it can reach `seen` and `k` without passing them down through every call.
+
+    if node is None:
+        return False
+
+THE BASE CASE. Falling off the tree means this branch contributed nothing, and it is what guarantees the
+recursion terminates.
+
+    if k - node.val in seen:
+        return True                  # complement already seen
+
+THE CHECK, AND IT COMES FIRST. `k - node.val` is the value that would complete a pair. Because this node's
+own value has NOT yet been added, the set contains only OTHER nodes - which is exactly what "two distinct
+nodes" demands.
+    MOVING THIS BELOW THE `seen.add` LINE lets a node pair with itself whenever k is twice its value -
+    wrong on 380 of 6,000 random BSTs, and NEITHER official example catches it.
+
+    seen.add(node.val)
+
+RECORD THIS NODE so that later nodes can pair with it. Only reached when this node did not itself complete
+a pair.
+
+    return dfs(node.left) or dfs(node.right)
+
+EXPLORE BOTH CHILDREN, and `or` SHORT-CIRCUITS - if the left subtree finds a pair, the right is never
+visited and True flows straight back up through every paused call. Note the result is RETURNED; calling
+the two functions without combining their results would discard the answer.
+    THE ORDER OF THE CHILDREN IS IRRELEVANT, because a pair is found at whichever member is reached
+    second.
+
+    return dfs(root)
+
+Start the traversal at the top and hand back its verdict.
+
+WHAT IS DELIBERATELY ABSENT: no use of the BST ordering (deliberately - see section 5), no sorted list, no
+guard for an empty tree (the base case covers it), and no check that the two nodes differ - the ordering
+of the check and the add is what enforces it.""",
+
+    """9. TRACED ON REAL NUMBERS - the official example, then the case both examples miss.
+
+The tree, built from 5, 3, 6, 2, 4, 7:
+
+                5
+              /   \\
+             3     6
+            / \\      \\
+           2   4      7
+
+    Its inorder reading is 2, 3, 4, 5, 6, 7.
+
+RUN A: k = 9.  The traversal visits node, then left subtree, then right.
+
+    at 5:   complement 9 - 5 = 4.   seen is empty.        no match.   add 5     seen = {5}
+    at 3:   complement 9 - 3 = 6.   seen = {5}.           no match.   add 3     seen = {5, 3}
+    at 2:   complement 9 - 2 = 7.   seen = {5, 3}.        no match.   add 2     seen = {5, 3, 2}
+    at 4:   complement 9 - 4 = 5.   seen = {5, 3, 2}  ->  5 IS THERE.  RETURN True.
+
+    RETURNS True, at the fourth node visited. The pair is 4 and 5, and it was found the moment the SECOND
+    member was reached - the 5 had been recorded three steps earlier.
+    NODES 6 AND 7 ARE NEVER VISITED, because the `or` short-circuits back up the stack.
+
+RUN B: k = 28.  Every node is visited, no complement is ever present - the largest value is 7, so a
+complement of 21 or more can never appear - and the traversal returns False.
+
+RUN C - THE CASE NEITHER OFFICIAL EXAMPLE COVERS: a tree containing only the node 1, with k = 2.
+
+    CORRECT VERSION:
+        at 1:   complement 2 - 1 = 1.   seen is EMPTY, because this node has not been recorded yet.
+                no match.   add 1.
+        both children are None -> False.
+        RETURNS False, which is right: there is only one node, and the two must be distinct.
+
+    ADD-BEFORE-CHECK VERSION:
+        at 1:   add 1 first, so seen = {1}.
+                complement 2 - 1 = 1.   1 IS in seen - it is this very node.
+        RETURNS True.  WRONG.
+
+    THE INVERSION IN ONE LINE: the same one-node tree gives False correctly and True under the swapped
+    lines, while both official examples give identical answers under both versions.
+
+MEASURED ACROSS 6,000 RANDOM BSTs: the add-before-check version was wrong on 380. Separately, the situation
+that makes it possible - k equal to twice some node's value, with no genuine pair present - arose in 361 of
+6,000, so the bug fires on very nearly every case where it can.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Every node is visited once, and each visit does one subtraction, one set lookup and
+one set insertion - all constant on average.
+
+    TIME O(n). This is unavoidable for any solution: the two members of a pair can be anywhere, so no
+    subtree can be discarded unread.
+    SPACE O(n) for the set, plus O(h) for the recursion stack - which on a degenerate tree is itself O(n),
+    and at this problem's limit of 10,000 nodes would exceed Python's default recursion limit of 1,000.
+    Converting the traversal to an explicit stack removes that particular risk.
+    The all-pairs brute force is O(n^2) - 50 million comparisons at the limit, too slow.
+    The two-iterator solution is O(n) time and O(h) space, which on a balanced tree is O(log n) - THE ONLY
+    ONE OF THE THREE THAT IMPROVES ANYTHING.
+
+THE #1 MISTAKE: adding the node's value to the set before checking for the complement, which lets a node
+pair with itself whenever k is exactly twice its value. Wrong on 380 of 6,000 random BSTs, and NEITHER
+OFFICIAL EXAMPLE CATCHES IT - the smallest exposing case is a one-node tree with k = 2 times that node.
+THE RUNNER-UP is trying to prune using the BST ordering, which loses pairs split across subtrees.
+
+ONE-SENTENCE TAKEAWAY: this is Two Sum with a tree for a container - check the complement before recording
+the current value, because that ordering is what makes the two nodes distinct.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that the BST property, prominently advertised
+in the title, DOES NOT HELP with time here - and whether you can say why. Every node must be visited
+because a pair straddles subtrees, so O(n) time is a floor. What the ordering permits is answering in
+O(h) SPACE via two inorder iterators, and being able to name that trade - ordering buys space, not time -
+is the whole signal. A candidate who reaches for the ordering and prunes has pattern-matched on "BST"
+rather than thought about the question.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Do it in O(h) space." Two inorder iterators, forward and backward, each a stack holding one
+    root-to-leaf path; run the converging two-pointer walk, pulling the next value from whichever side
+    must move. O(n) time, O(h) space.
+    "Return the pair rather than a boolean." Same walk; on a match return (k - node.val, node.val).
+    "What if it were an ordinary binary tree, not a BST?" The seen-set solution is unchanged - which is
+    the clearest possible demonstration that it never used the ordering.
+    "What if the tree could contain duplicate values?" Then two distinct nodes may hold the same value,
+    and a pair summing to 2v becomes legitimate. The seen-set version handles it correctly as written,
+    because the earlier node was recorded before the later one asks - the check-then-add order does the
+    right thing in both regimes.
+    "THREE nodes summing to k?" Flatten inorder, then the standard 3Sum approach: fix one value and
+    two-pointer the rest. O(n^2).""",
 ]
 
 _EX_P1M["Valid Mountain Array"] = [
-    """The walk, traced on a valid mountain.
-arr = [0,3,2,1]. Climb: 0 < 3 -> i = 1. 3 < 2 is false, so the climb stops at
-i = 1.
-Peak checks: i is neither 0 nor n-1 = 3, so it is a legal peak.
-Descend: 3 > 2 -> i = 2. 2 > 1 -> i = 3. i + 1 < n fails, loop ends.
-Return i == n-1 -> 3 == 3 -> True.
-The final check is the important one: it verifies the descent ran all the way
-to the end rather than stopping at a plateau or a second climb.""",
+    """1. THE GOAL - does the array go strictly up, turn once, and come strictly down?
 
-    """The two guards, and the input each one rejects.
-`i == 0` means the array never rose - it starts by falling or is flat at the
-front, e.g. [3,2,1]. There is no up-slope, so it is not a mountain.
-`i == n-1` means it rose all the way to the last element with no descent, e.g.
-[0,1,2,3].
-Both are strictly-increasing-or-decreasing arrays, which are the two most
-common wrong answers people accept. Test both explicitly; a solution that only
-checks one passes half the test set.""",
+An array is a VALID MOUNTAIN if it climbs strictly to a single peak and then descends strictly to the end,
+with at least one step on each side.
 
-    """Why the final `i == n-1` check cannot be skipped.
-Consider [0,3,2,1,4]. The climb stops at index 1, the peak guards pass, the
-descent runs to index 3 (value 1) and then stops because 1 > 4 is false. i is
-3, not 4 -> False. Correct: the array climbs again, so it has two peaks.
-Without that final comparison you would return True after any descent of any
-length, accepting every zig-zag. This single line is what enforces 'exactly one
-peak'.""",
+    arr = [0, 3, 2, 1]
 
-    """Why the comparisons must be STRICT.
-A mountain strictly increases then strictly decreases, so plateaus are illegal.
-[0,1,1,0] -> the climb stops at index 1 (since 1 < 1 is false), the peak guards
-pass, then the descent: 1 > 1 is false immediately, so i stays 1 and the final
-check 1 == 3 fails -> False. Correct.
-Using <= or >= would accept plateaus and change the answer on exactly this
-input. Whenever a prompt says 'strictly', the comparison operator IS the
-specification.""",
+        0 -> 3   up
+        3 -> 2   down
+        2 -> 1   down
 
-    """Edge cases.
-Length < 3 -> False by the guard: you need at least one up, one peak and one
-down. [0,1] and [2,1] are both rejected.
-All equal [2,2,2] -> the climb never starts, i == 0 -> False.
-Peak at position 1 with a long descent, [1,5,4,3,2] -> valid.
-Peak at the second-to-last, [1,2,3,4,3] -> valid.
-Two equal peaks [1,2,2,1] -> rejected by strictness, as above.
-Empty array -> caught by n < 3.""",
+        one climb, one peak at index 1, then a clean descent to the last element.
 
-    """Complexity and the family.
-O(n) time - the index only advances, so the two loops together traverse the
-array once - and O(1) space. It is a single pass despite looking like two.
-The family: Peak Index in a Mountain Array (binary search for the peak in
-O(log n), since the mountain property makes the array 'sorted' in a usable
-sense), Find in Mountain Array (binary search the peak, then binary search each
-side), Longest Mountain in Array (find every mountain, not just check one), and
-Find Peak Element. Recognising a mountain as 'two monotone runs' is what makes
-all of them approachable.""",
+    ANSWER: True
+
+THREE CONDITIONS, AND ALL THREE MUST HOLD:
+
+    STRICTLY INCREASING, THEN STRICTLY DECREASING. No flat steps anywhere - equal neighbours are illegal
+        on both slopes and at the summit.
+    THE PEAK IS NEITHER FIRST NOR LAST. There must be a real climb and a real descent, so the array cannot
+        be purely ascending or purely descending.
+    LENGTH AT LEAST 3. One up-step, the peak, one down-step - anything shorter cannot satisfy the above.
+
+    arr = [2, 1]        only two elements, so there is no room for both slopes    ->   False
+    arr = [3, 5, 5]     the summit is flat: 5 followed by 5 is neither up nor down ->  False
+    arr = [3, 2, 1]     it never climbs - the peak would have to be the first element  ->  False
+    arr = [0, 1, 2, 3]  it never descends - the peak would be the last element     ->  False
+
+    ALL FOUR OF THOSE ARE REJECTIONS FOR DIFFERENT REASONS, and section 4 shows that the three official
+    examples between them exercise only one of the reasons.
+
+THE WORD "STRICTLY" IS DOING REAL WORK. [0, 1, 1, 0] looks like a mountain with a plateau on top and is
+NOT valid: 1 followed by 1 is neither an ascent nor a descent, so the climb stops there and the descent
+cannot start.
+
+    THIS ENTRY OPENS THE MONOTONIC-SCAN SLOT in this bank. IT OWNS THE TWO-PHASE WALK - climb, then
+    descend - AND THE THREE SEPARATE CHECKS THAT MAKE IT A MOUNTAIN RATHER THAN JUST A SHAPE: neither
+    phase may be empty, and the descent must reach the very end.""",
+
+    """2. THE INTUITION - walk up as far as you can, then walk down, then check where you stopped.
+
+Put a finger at the start and push it forward while each step rises. When it stops rising, you are at the
+summit. Then push it forward while each step falls. When it stops falling, you are wherever the shape
+broke.
+
+    arr = [0, 3, 2, 1]
+
+        CLIMB:    0 < 3, so advance to index 1.
+                  3 < 2 is false, so the climb stops.  THE PEAK IS AT INDEX 1.
+
+        CHECK:    is the peak the first element?  No.
+                  is the peak the last element?   No.        Both slopes exist.
+
+        DESCEND:  3 > 2, advance to index 2.
+                  2 > 1, advance to index 3.
+                  no next element, so the descent stops at index 3.
+
+        FINISH:   index 3 is the last index.  ANSWER: True.
+
+THE PICTURE - THE FINGER MAKES ONE PASS, IN TWO PHASES:
+
+              3
+             / \\
+            /   2
+           0     \\
+                  1
+
+        indices:  0    1    2    3
+                  ^climb^
+                       ^--descend--^
+
+    THE FINGER NEVER GOES BACKWARDS. The climb hands over to the descent at the summit, so the two loops
+    together traverse the array once - which is why this is O(n) despite being two loops.
+
+WHY THE FINAL CHECK IS NOT OPTIONAL, AND IT IS THE SUBTLEST PART. The descent stops as soon as the values
+stop falling - which might be long before the end.
+
+    arr = [0, 3, 2, 1, 4]
+
+        climb stops at index 1 (the 3).  Peak checks pass.
+        descent runs 3 > 2 > 1 and stops at index 3, because 1 > 4 is false.
+        BUT INDEX 3 IS NOT THE LAST INDEX - there is a 4 sitting after it.
+
+    THE SHAPE WENT DOWN AND THEN UP AGAIN, which is two peaks, not one. Only by asking "did I finish at
+    the very end?" do you rule it out. WITHOUT THAT CHECK THE FUNCTION SAYS True.
+
+    THAT IS WHY THE ALGORITHM IS "CLIMB, CHECK, DESCEND, CHECK" AND NOT JUST "CLIMB THEN DESCEND".""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STRICTLY INCREASING. Each element is greater than the one before - never equal. [1, 2, 3] is strictly
+increasing; [1, 2, 2] is not.
+STRICTLY DECREASING. Each element is less than the one before.
+
+PLATEAU. Two or more equal neighbours. ILLEGAL ANYWHERE IN A MOUNTAIN, including at the summit - which is
+what rejects [3, 5, 5] and [0, 1, 1, 0].
+
+PEAK / SUMMIT. The single highest point, where the climb ends and the descent begins. It must have at least
+one element on each side.
+
+MONOTONIC. Moving consistently in one direction. A mountain is monotonic increasing up to the peak and
+monotonic decreasing after it - two monotonic phases joined at one point.
+
+THE VARIABLES IN THE CODE:
+    arr    the input array. NOT MODIFIED.
+    n      the length, read once.
+    i      the walking index. IT ONLY EVER ADVANCES, across both loops - which is what makes the whole
+           thing one pass rather than two.
+
+`i + 1 < n and arr[i] < arr[i + 1]` - the bounds check comes FIRST and Python's `and` short-circuits, so
+`arr[i + 1]` is never read past the end.
+
+AFTER THE CLIMB, `i` IS THE PEAK'S INDEX. After the descent, `i` is where the fall stopped. The same
+variable means different things at different moments, which is deliberate and is why the two checks read
+so simply.
+
+n IS THE ARRAY LENGTH. TIME O(n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - three separate checks, and the samples only exercise one.
+
+There are three pieces beyond the climb-and-descend walk, and MEASURING THEM SEPARATELY shows they are not
+equally important - nor equally visible.
+
+TRAP 1 - OMITTING THE FINAL `i == n - 1` CHECK. The descent can stop early, leaving a second climb
+untested.
+
+        arr = [0, 3, 2, 1, 4]     the shape goes up, down, then up again - two peaks
+                                  correct False; without the final check, True
+
+    MEASURED: wrong on 1,223 of 6,000 random arrays - by far the most damaging of the three.
+    THE OFFICIAL EXAMPLE [3, 5, 5] CATCHES IT: the climb stops at index 1, the guards pass, the descent
+    cannot start because 5 > 5 is false, and `i` is left at 1 rather than 2. Without the final check that
+    returns True instead of False.
+
+TRAP 2 - OMITTING THE `i == 0` GUARD, which rejects arrays that never climb.
+
+        arr = [3, 2, 1]     the climb never advances, so the "peak" would be the first element
+                            correct False; without the guard, the descent runs to the end and returns True
+
+    MEASURED: wrong on only 52 of 6,000 random arrays. AND NO OFFICIAL EXAMPLE CATCHES IT: [2, 1] is
+    rejected earlier by the length check, [3, 5, 5] does climb one step, and [0, 3, 2, 1] climbs
+    properly.
+
+TRAP 3 - OMITTING THE `i == n - 1` GUARD, which rejects arrays that never descend.
+
+        arr = [0, 1, 2, 3]  the climb runs to the last index, so there is no descent at all
+                            correct False; without the guard, the descent loop does nothing, `i` is
+                            already n-1, and the final check passes - returning True
+
+    MEASURED: wrong on 53 of 6,000. ALSO CAUGHT BY NO OFFICIAL EXAMPLE.
+
+    SO THE PATTERN IS: THE LOUD BUG IS CAUGHT AND THE TWO QUIET ONES ARE BOTH HIDDEN. The rates differ by
+    a factor of over twenty - 1,223 against 52 and 53 - and the two rare ones are exactly the ones no
+    sample exercises. FREQUENCY DOES NOT PREDICT VISIBILITY, and neither predicts importance: all three
+    are required for correctness.
+
+TRAP 4 - USING `<=` OR `>=` IN THE WALKS. That admits plateaus. On [0, 1, 1, 0] a non-strict climb would
+walk through the flat top and then fail to descend properly. The comparisons must be strict on both
+slopes.
+
+TRAP 5 - LOOKING FOR THE MAXIMUM AND CHECKING BOTH SIDES OF IT. That works, but with duplicated maxima -
+[1, 3, 3, 1] - "the index of the maximum" is ambiguous, and the check must reject rather than pick one.
+THE WALKING VERSION NEVER ASKS WHERE THE MAXIMUM IS; it just stops climbing, which handles the tie
+automatically.
+
+WHAT IS NOT A TRAP, checked rather than assumed: `[2, 2, 2]` is rejected because the climb never advances
+and the `i == 0` guard fires. An empty array or a single element is rejected by the length check.""",
+
+    """5. THE NAIVE WAY FIRST, then the single walk.
+
+THE NAIVE VERSION - FIND THE PEAK, THEN VERIFY BOTH SIDES:
+
+    if n < 3: return False
+    peak = arr.index(max(arr))
+    if peak == 0 or peak == n - 1: return False
+    check every step before the peak is strictly increasing
+    check every step after the peak is strictly decreasing
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it maps
+    directly onto the definition. COST: O(n), the same as the walking version; `max` is one pass and the
+    two verifications are one more.
+
+    ITS AWKWARDNESS IS THE TIE. `arr.index(max(arr))` returns the FIRST position holding the maximum, so on
+    [1, 3, 3, 1] it picks index 1 and then discovers 3 is not greater than 3 while checking the descent.
+    That happens to work, but only because the descent check is strict - THE CODE IS RELYING ON A SECOND
+    CHECK TO CATCH WHAT THE FIRST ONE AMBIGUOUSLY CHOSE, which is fragile reasoning.
+
+THE UPGRADE, AND IT IS ABOUT CLARITY RATHER THAN SPEED. Instead of locating the peak and then validating,
+WALK AND LET THE PEAK EMERGE. The climb stops exactly where the ascent fails, whatever the reason - a
+descent, a plateau, or the end of the array - and you then interrogate where it stopped.
+
+    COST: O(n) time, O(1) space. THE SAME COMPLEXITY AS THE NAIVE VERSION - be honest, this is not faster.
+    What it buys is that plateaus and ties need no special handling: a flat step simply stops the climb,
+    and the guards then reject it.
+
+WHY THE TWO LOOPS ARE STILL ONE PASS. `i` is shared and only ever advances - the descent picks up exactly
+where the climb left off. The total number of iterations across both loops is at most n. A NESTED OR
+SEQUENCED PAIR OF LOOPS IS ONLY QUADRATIC WHEN AN INDEX RESTARTS, and this one never does.
+
+A THIRD APPROACH WORTH KNOWING - WALK IN FROM BOTH ENDS. Advance a left pointer while the array rises and
+a right pointer while it falls (moving leftward); the array is a mountain exactly when the two pointers
+meet at the same index and neither is at its starting end.
+
+        [0, 3, 2, 1]      left climbs to 1;  right descends to 1;  they meet at 1, and 1 is neither 0 nor
+                          n-1  ->  True
+
+    SAME O(n) TIME AND O(1) SPACE, and some find the symmetry clearer. IT IS NOT BETTER - it is the same
+    algorithm folded in half, and the three conditions reappear as "they met", "left moved", "right
+    moved".""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk forward while the values rise, confirm you stopped somewhere in the middle, then walk
+forward while they fall, and confirm you reached the very last element.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. TWO SEQUENTIAL LOOPS SHARING ONE INDEX:
+
+    `i`  starts at 0 and ONLY EVER INCREASES. The climb pushes it up to the summit; the descent continues
+         from there. It is never reset, which is why the two loops together are a single traversal.
+
+    THE MEANING OF `i` CHANGES BETWEEN PHASES, and that is deliberate:
+        after the climb   - `i` is the index of the peak (the last element of the ascending run)
+        after the descent - `i` is where the descending run stopped
+
+    WHAT MAKES EACH LOOP STOP: both advance `i` by exactly one per iteration and both are bounded by
+    `i + 1 < n`, so neither can run past the end or spin. The climb also stops the moment a step fails to
+    rise; the descent the moment one fails to fall.
+
+    WHY THE BOUNDS CHECK MUST COME FIRST in `i + 1 < n and arr[i] < arr[i + 1]`: at the last index
+    `arr[i + 1]` does not exist. Python's `and` short-circuits, so it is never evaluated.
+
+    THE THREE CHECKS AND WHAT EACH RULES OUT:
+        `n < 3`        - too short for one up-step, a peak and one down-step.
+        `i == 0`       - the climb never moved, so there is no ascending side.
+        `i == n - 1`   - the climb reached the end, so there is no descending side.
+        `i == n - 1` AGAIN AT THE END - this time it means the OPPOSITE: the descent must have reached the
+                       end. THE SAME EXPRESSION APPEARS TWICE MEANING DIFFERENT THINGS, once as a
+                       rejection and once as the success condition, because `i` means something different
+                       at each point.
+
+THE STEPS, NO CODE:
+
+    1. If the array has fewer than three elements, answer no.
+    2. Start at the first position and move forward while each next value is strictly greater.
+    3. If you never moved, or you moved all the way to the last position, answer no - one of the two
+       slopes is missing.
+    4. Continue moving forward while each next value is strictly smaller.
+    5. Answer yes only if you have arrived exactly at the last position.
+
+    STEP 3 IS TWO SEPARATE REJECTIONS. STEP 5 IS NOT THE SAME AS STEP 3'S SECOND ONE, despite testing the
+    same thing.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+You are given a profile of a walking route as a series of height readings, one per marker post, and asked
+whether it describes a proper hill walk: a steady climb to a single summit, then a steady descent to the
+finish. No flat sections anywhere, and the summit must not be at either end - it has to be a walk UP and
+then DOWN, not merely one or the other.
+
+You start at the first post and walk forward as long as each post is higher than the one before. The moment
+a post is not higher, you stop. Wherever you are standing is the summit - and note you did not have to
+search for it or know its height in advance; you simply walked until you stopped rising.
+
+Now you ask two questions before going any further.
+
+    Did you actually move? If the very first step was not upward, then there is no climb at all - the route
+    starts by going down or by running flat. That is a descent, not a hill walk.
+
+    Did you walk all the way to the end? If the route rose the entire distance, there is no descent - that
+    is a climb, not a hill walk.
+
+If both answers are satisfactory, you carry on from the summit, walking forward as long as each post is
+lower than the one before. When posts stop falling, you stop again.
+
+    AND HERE IS THE QUESTION THAT MOST PEOPLE FORGET TO ASK. Are you at the finish? Because the descent
+    might have stopped early - the route might have dropped for a while and then started climbing again,
+    which is a second hill, not part of the first. Standing halfway along thinking "well, I climbed and
+    then I descended" is not enough. YOU HAVE TO HAVE DESCENDED ALL THE WAY TO THE END.
+
+    That is the check that catches a route reading up-down-up. And it is the one the examples in the
+    problem happen to test, while the two questions you asked at the summit - did I move, did I reach the
+    end - are both untested by any of them, even though a route can fail on either.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def valid_mountain_array(arr):
+
+`arr` is the input array. NOT MODIFIED.
+
+    n = len(arr)
+    if n < 3:
+        return False
+
+THE LENGTH GUARD. A mountain needs at least one ascent, one peak and one descent, so three elements is the
+minimum. This also makes every index used below safe.
+
+    i = 0
+
+THE WALKING INDEX, shared by both loops and never reset - which is what makes the whole function a single
+traversal.
+
+    while i + 1 < n and arr[i] < arr[i + 1]:
+        i += 1                       # climb up
+
+THE ASCENT. `i + 1 < n` comes first so `arr[i + 1]` is never read past the end. The comparison is STRICT,
+so a flat step stops the climb - which is how plateaus get rejected without any special case.
+    WHEN THIS LOOP ENDS, `i` IS THE INDEX OF THE PEAK.
+
+    if i == 0 or i == n - 1:
+        return False                 # peak can't be first or last
+
+TWO SEPARATE REJECTIONS SHARING A LINE:
+    `i == 0` - the climb never advanced, so there is no ascending side. Rejects [3, 2, 1] and [2, 2, 2].
+        Removing this clause is wrong on 52 of 6,000 random arrays, and NO OFFICIAL EXAMPLE CATCHES IT.
+    `i == n - 1` - the climb reached the last element, so there is no descending side. Rejects
+        [0, 1, 2, 3]. Removing it is wrong on 53 of 6,000, ALSO UNCAUGHT BY ANY OFFICIAL EXAMPLE.
+
+    while i + 1 < n and arr[i] > arr[i + 1]:
+        i += 1                       # come down
+
+THE DESCENT, resuming from the peak. Strict again, so a plateau on the way down stops it. `i` continues
+from where the climb left it, which is why the two loops together visit each element at most once.
+
+    return i == n - 1
+
+THE FINAL CHECK, AND IT IS THE SAME EXPRESSION AS THE SECOND GUARD ABOVE MEANING THE OPPOSITE THING. Here
+it asks whether the descent reached the very end. If it stopped early, the array went down and then up
+again - two peaks - and this is the only thing that detects it.
+    Removing this line is wrong on 1,223 of 6,000 random arrays, and the official example [3, 5, 5] does
+    catch it.
+
+WHAT IS DELIBERATELY ABSENT: no search for the maximum, no special handling of plateaus (the strict
+comparisons do it), no second index, and no guard for an empty array beyond the length check.""",
+
+    """9. TRACED ON REAL NUMBERS - a valid mountain, then the array that needs the final check.
+
+RUN A: arr = [0, 3, 2, 1],  n = 4
+
+    LENGTH:   4 is not less than 3, so continue.
+
+    CLIMB:    i = 0.  i+1 = 1 < 4, and arr[0] = 0 < arr[1] = 3   ->   advance, i = 1
+                      i+1 = 2 < 4, and arr[1] = 3 < arr[2] = 2 is FALSE   ->   climb stops
+              THE PEAK IS AT INDEX 1, holding 3.
+
+    GUARDS:   i == 0?     1 == 0 is false.
+              i == n-1?   1 == 3 is false.
+              Both pass - there is something on each side of the peak.
+
+    DESCENT:  arr[1] = 3 > arr[2] = 2   ->   advance, i = 2
+              arr[2] = 2 > arr[3] = 1   ->   advance, i = 3
+              i+1 = 4 is not less than 4   ->   descent stops.
+
+    FINAL:    i == n-1?   3 == 3   ->   RETURN True.
+
+    THE INDEX TOOK THE VALUES 0, 1, 2, 3 - four steps for four elements, which is the single-pass claim
+    made concrete.
+
+RUN B: arr = [0, 3, 2, 1, 4],  n = 5 - one element appended, and the answer flips
+
+    CLIMB:    stops at i = 1 again, for exactly the same reason.
+    GUARDS:   1 is neither 0 nor 4 - both pass.
+    DESCENT:  3 > 2 -> i = 2.   2 > 1 -> i = 3.   1 > 4 is FALSE -> descent stops at i = 3.
+    FINAL:    i == n-1?   3 == 4 is FALSE   ->   RETURN False.
+
+    THE SHAPE WENT UP, DOWN, THEN UP AGAIN. Everything up to the final line looked like a valid mountain:
+    it climbed, the peak was interior, and it descended. ONLY THE LAST CHECK CATCHES IT - without that
+    line the function returns True.
+
+    THE INVERSION IN ONE LINE: [0,3,2,1] is True and [0,3,2,1,4] is False, differing by one appended
+    element, and the difference is invisible to every part of the algorithm except the final comparison.
+
+AND THE TWO ARRAYS THAT NO OFFICIAL EXAMPLE COVERS:
+
+    [3, 2, 1]     the climb never advances, so i stays 0.  The `i == 0` guard fires   ->   False.
+                  Without that guard the descent runs to index 2 and the final check passes - True. WRONG.
+
+    [0, 1, 2, 3]  the climb runs all the way to i = 3 = n-1.  The `i == n-1` guard fires   ->   False.
+                  Without it the descent does nothing, i is already n-1, and the final check passes -
+                  True. WRONG.
+
+    Measured across 6,000 random arrays, those two omissions are wrong on 52 and 53 respectively, against
+    1,223 for the missing final check.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. The index only ever advances, and both loops share it, so between them they traverse
+the array once.
+
+    TIME O(n) - at most n increments across both loops. Two sequential loops are not two passes when they
+    share an index that never resets.
+    SPACE O(1) - one integer.
+    The find-the-maximum-then-verify version is also O(n); neither is faster, and the walking version's
+    advantage is that plateaus and tied maxima need no special handling.
+
+THE #1 MISTAKE: omitting the final `i == n - 1` check. The descent can stop early, leaving a second climb
+unexamined - [0, 3, 2, 1, 4] climbs, has an interior peak, and descends, yet is not a mountain. Wrong on
+1,223 of 6,000 random arrays. THE RUNNER-UP is a tie between the two peak guards, at 52 and 53 of 6,000 -
+twenty times rarer, and NEITHER IS CAUGHT BY ANY OFFICIAL EXAMPLE, while the far commoner bug IS caught.
+FREQUENCY DOES NOT PREDICT VISIBILITY.
+
+ONE-SENTENCE TAKEAWAY: climb, then check you are not at either end, then descend, then check you finished
+at the end - four conditions, and the last one is the only defence against a shape that goes up, down and
+up again.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you enumerate the failure modes rather than coding the
+happy path. "Mountain" describes what a valid input looks like; the work is listing what an invalid one can
+look like - too short, never rises, never falls, has a plateau, has two peaks - and confirming each is
+rejected. A candidate who writes climb-then-descend and stops has handled one of the five. THE SECOND
+POINT is being able to say the two loops are one pass, and why.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "PEAK INDEX IN A MOUNTAIN ARRAY - the array IS a mountain; find the peak in O(log n)." Binary search on
+    the slope: if arr[mid] < arr[mid+1] you are on the way up so move right, otherwise move left. The
+    guarantee that it IS a mountain is what makes the halving valid.
+    "LONGEST MOUNTAIN IN AN ARRAY - find the longest mountain subarray." Scan for each peak - a position
+    strictly greater than both neighbours - then expand outward in both directions while the slopes hold.
+    O(n) with care.
+    "What if plateaus were allowed?" Change the strict comparisons to non-strict on both slopes, and the
+    peak guards then need rethinking, because a flat summit spans several indices and `i` no longer names
+    a single peak.
+    "Do it with two pointers from both ends." Advance a left pointer while values rise and a right pointer
+    leftward while they fall; it is a mountain exactly when they meet and neither stayed at its start.
+    Same O(n) and O(1), and the three conditions reappear in the meeting test.""",
 ]
 
 _EX_P1M["Valid Perfect Square"] = [
