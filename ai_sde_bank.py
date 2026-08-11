@@ -72165,203 +72165,1445 @@ engineering story.""",
 ]
 
 _EX_P0LP["STAR: Insisting on the right long-term solution over a quick hack (Are Right, A Lot / Insist on Highest Standards)"] = [
-    """A full student-scale answer.
-SITUATION: Our capstone's data loader broke whenever the university API
-returned a null field, which was roughly weekly. The team's fix was a
-try/except that skipped the failing row.
-TASK: With four weeks left, the quick fix was genuinely tempting.
-ACTION: I argued for spending a day on it instead, and made the case with
-evidence rather than principle: I counted the skipped rows over the previous
-fortnight - about 3% of the dataset, and NOT at random, because the nulls
-concentrated in one department's records. So the hack was silently biasing our
-training data, which would have shown up as an unexplainable evaluation result
-later. I proposed explicit schema validation with typed defaults and a logged
-counter for anything rejected.
-RESULT: A day of work; the 3% came back, the department skew disappeared, and
-when the API changed again in week three the validation error named the field
-instead of silently dropping rows.""",
+    """1. THE GOAL - two principles that pull in opposite directions, and the judgement between them.
 
-    """The evidence is what makes it 'Are Right, A Lot' rather than pedantry.
-The LP is about having good judgement and seeking diverse perspectives to
-disconfirm your own beliefs - it is not about being stubborn. So the story must
-show WHY the long-term solution was right in this instance, with something
-measured: 3% of rows, non-randomly distributed. Without that, the same story is
-'I insisted on doing it properly', which an interviewer hears as someone who
-will over-engineer under deadline.
-The strongest versions also acknowledge the cost you were asking the team to
-pay - a day, with four weeks left - because insisting on standards while
-pretending it is free is not a trade-off, it is a preference.""",
+    ARE RIGHT, A LOT: "Leaders are right a lot. They have strong judgement and good instincts.
+    They seek diverse perspectives and work to DISCONFIRM THEIR BELIEFS."
 
-    """When the hack is the RIGHT answer, which you must be able to say.
-If you cannot name a situation where you would take the quick fix, the LP
-becomes a red flag. The honest framing: a hack is right when the cost of being
-wrong is low and reversible, when the deadline is genuinely fixed and external,
-and when you write down the debt. 'We shipped the try/except for the demo, with
-a TODO and a ticket, and fixed it properly the week after' is a perfectly good
-answer - what makes it good is that the debt was VISIBLE rather than forgotten.
-Interviewers probe this directly: 'when would you have taken the shortcut?'""",
+    INSIST ON THE HIGHEST STANDARDS: "Leaders have relentlessly high standards - many people may
+    think these standards are unreasonably high. Leaders continually raise the bar."
 
-    """The weak version.
-'I always do things properly and I refused to cut corners.' No evidence, no
-cost acknowledged, no judgement demonstrated - and it implies you would do this
-under any deadline, which is a hiring risk rather than a virtue.
-Also weak: a story where insisting cost nothing. If the right solution was also
-the fast one, the LP was never tested. There has to be a real trade you argued
-for and won, and ideally something you gave up elsewhere to pay for it.""",
+Most candidates treat these as one principle meaning "always build it properly". They are not,
+and the interesting answers live in the tension between them:
 
-    """Insist on the Highest Standards, stated as Amazon means it.
-'Leaders have relentlessly high standards - many people may think these
-standards are unreasonably high. They continually raise the bar and drive their
-teams to deliver high-quality products, services and processes. Leaders ensure
-that defects do not get sent down the line and that problems are fixed so they
-stay fixed.'
-That last clause is the one to hit: FIXED SO THEY STAY FIXED. The schema
-validation in the story qualifies because the next API change produced a named
-error rather than silent data loss. A fix that merely handles today's instance
-does not clear the bar.""",
+    INSIST ON THE HIGHEST STANDARDS  pushes toward  build the architecturally correct thing
+    ARE RIGHT, A LOT                 pushes toward  be correct about what actually matters HERE
 
-    """The probes.
-'How did you convince the team?' - data plus a bounded cost ('one day') beats
-argument; say who pushed back and what changed their mind. 'What if they had
-said no?' - you disagree and commit, and you make the risk visible in writing
-so the decision is informed rather than accidental. 'What did it cost?' - name
-the day, and what did not get done because of it. 'How did you know 3% mattered
-but 0.1% would not?' - this is the judgement question underneath the whole LP,
-and the answer is about whether the loss is RANDOM or SYSTEMATIC, not about
-the size.""",
+Sometimes the architecturally correct thing is the wrong decision, and knowing that is the
+judgement being assessed.
+
+THE DISTINCTION THAT RESOLVES IT, and it is the whole content of this entry:
+
+    STANDARDS ON THE OUTPUT       non-negotiable. The evaluation must be honest. The number you
+                                  report must be defensible. You do not ship a claim you cannot
+                                  support.
+
+    STANDARDS ON THE IMPLEMENTATION  negotiable, knowingly. The architecture can be suboptimal if
+                                  you can say why, and say what the right one was.
+
+A candidate who refuses to compromise on either sounds principled and is unemployable under a
+deadline. A candidate who compromises on both has no standards. The signal is knowing WHICH ONE
+IS WHICH.
+
+THIS ENTRY IS AN INDEX over the story bank, drawing on the AMBIGUITY shape, and reuses the same
+capstone. Its siblings own the other angles: "STAR: Being frugal" owns the comparison with
+buying compute, "STAR: Delivering under a hard deadline" owns what was protected, "STAR: Diving
+deep" owns the profiling.
+
+WHAT THIS ENTRY OWNS: THE RIGHT FIX SHE DID NOT BUILD - the metadata filter - and why not
+building it was the correct call.""",
+
+    """2. THE INTUITION - the right answer, and the answer that fits.
+
+By week four the profiling had produced a clear diagnosis. Twelve separate per-category indexes
+were the cost. And there was an obviously better architecture:
+
+    WHAT THEY HAD                        THE RIGHT FIX
+    twelve indexes, one per category     ONE index, with a category METADATA FIELD
+                                         checked at query time
+
+    re-index rebuilds twelve             re-index rebuilds one
+    filtering is structural              filtering is a field comparison
+    scope must shrink to go faster       full scope AND fast
+
+The metadata fix is better on every axis. It keeps all twelve categories, it is faster, and it
+removes the week-one assumption that caused the problem. If someone asked "what is the right
+architecture here?", that is the answer, and she knew it.
+
+SHE DID NOT BUILD IT.
+
+The reason is not that she failed to see it, and it is not laziness. It is VARIANCE UNDER A FIXED
+DEADLINE:
+
+    THE METADATA FIX
+        touches the QUERY PATH, which Arun owned
+        needs coordination, re-testing, and agreement mid-project
+        if it goes well:  about 3 days   -> 7 days left x 8 experiments = 56, full scope
+        if it goes badly: about 6 days   -> 4 days left x 8 experiments = 32, and a demo
+                                            with almost no rehearsal time
+
+    THE SCOPE CUT
+        touches only her own component
+        about half a day, near-certain
+        -> 9.5 days x 8 = 76 experiments, one third of the scope
+
+Drawn as the shape of the risk:
+
+    metadata fix   [====== 56 ======]  or  [== 32 ==] and a frightening week
+                    good case               bad case
+
+    scope cut      [========= 76 =========]  almost regardless
+
+WITH TEN DAYS AND NO SLACK, YOU TAKE THE LOW-VARIANCE OPTION. Not because it is better, but
+because the downside of the better one is unrecoverable and there is no second attempt.
+
+That is the sentence the whole answer turns on, and section 5 makes it precise.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ARE RIGHT, A LOT. The Amazon principle about judgement - and note the operative clause is "work
+to DISCONFIRM their beliefs", which is about method rather than about being clever.
+
+INSIST ON THE HIGHEST STANDARDS. The principle about not accepting mediocrity, and continually
+raising the bar.
+
+TECHNICAL DEBT. A known-suboptimal implementation accepted deliberately, with the intention of
+fixing it. DELIBERATE debt is an engineering decision; accidental debt is a mistake wearing the
+same name.
+
+QUICK HACK vs DELIBERATE TRADE-OFF. A hack is a shortcut you have not thought about. A deliberate
+trade-off is a shortcut you can price, justify, and describe the proper fix for. The words in the
+prompt push toward "hack"; a good answer usually reframes it.
+
+VARIANCE. How much an outcome can differ from its expectation. The central quantity here - two
+options can have similar expected results and completely different worst cases.
+
+SLACK. Spare time in the schedule. With slack, you can afford the high-variance option, because a
+bad outcome is recoverable. Without it, you cannot.
+
+ONE-WAY vs TWO-WAY DOOR. Reversibility. Covered fully by the Bias for Action sibling; relevant
+here because a fix that overruns has no undo when the deadline is fixed.
+
+BLAST RADIUS OF A CHANGE. How much of the system, and how many people, a change touches. The
+metadata fix touched two components and two people; the scope cut touched one of each.
+
+DISCONFIRMING EVIDENCE. Looking for what would prove you wrong rather than what supports you. The
+profiling was exactly this - she believed the model was the bottleneck and went looking for the
+truth instead of confirmation.
+
+STANDARDS ON OUTPUT vs IMPLEMENTATION. The distinction in section 1. Which standard is
+non-negotiable, and which can be traded knowingly.
+
+STAR. Situation, Task, Action, Result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - ANSWERING THE PROMPT LITERALLY AND HEROICALLY. The question invites a story where you
+refused the quick hack and built it properly against pressure. That story exists and is sometimes
+right - and told carelessly it reads as someone who cannot ship.
+
+    THE STRONGER SHAPE IS USUALLY: "I knew the right architecture, I could name it, and I
+    deliberately did not build it - here is the reasoning, and here is what I did instead to make
+    sure the shortcut was not permanent."
+
+    That demonstrates BOTH principles at once: the standards to know what right looks like, and
+    the judgement to be right about what mattered under the constraint.
+
+TRAP 2 - COMPROMISING ON THE WRONG STANDARD. The thing you must never trade is the honesty of
+what you report. In the capstone she took a suboptimal ARCHITECTURE and refused a suboptimal
+EVALUATION - 87% measured on 200 hand-labelled queries with the sample size stated, rather than
+twelve categories with numbers nobody could defend.
+
+    Getting that the wrong way round - shipping a beautiful architecture and a number you cannot
+    support - is the failure this principle actually guards against.
+
+TRAP 3 - TAKING THE SHORTCUT WITHOUT NAMING THE REAL FIX. A shortcut you can describe, price, and
+plan to remove is technical debt. A shortcut you never articulated is just a worse system. If you
+cannot say what the right answer was, you did not make a trade-off - you made a mistake that
+happened to work.
+
+TRAP 4 - NO PLAN TO PAY IT BACK. "We did it the quick way and moved on" leaves the debt
+permanent. In the capstone, Arun's written staging plan is what made the cut a deferral rather
+than a loss - and the same principle applies to architecture: say what would have to happen to
+put it right.
+
+TRAP 5 - MISSING WHAT "ARE RIGHT, A LOT" ACTUALLY SAYS. The clause is "work to DISCONFIRM their
+beliefs". It is not a principle about having good instincts and being vindicated; it is about
+METHOD. The profiling is the demonstration - she held a belief, went looking for evidence against
+it, and found it. A story where you were simply right, with no attempt to check, misses the point
+of the principle even when the outcome was good.
+
+TRAP 6 - INSISTING ON HIGH STANDARDS AS A PERSONALITY TRAIT. "I have very high standards and I
+would not let it go" with no cost analysis reads as inflexibility. The principle says standards
+others may think unreasonably high - it does not say standards regardless of context.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE - WITH THE VARIANCE ARGUMENT.
+
+THE NAIVE VERSION: "I insisted on doing it properly, and it took longer, but it was the right
+call."
+
+Sometimes true. Told without a cost comparison it is unfalsifiable, and it carries a risk the
+candidate rarely notices - it can read as someone who does not weigh deadlines, which is a real
+liability rather than a virtue.
+
+THE REAL VERSION: name the right fix, price both options INCLUDING THEIR WORST CASES, and choose
+on variance rather than on expectation.
+
+    TEN WORKING DAYS REMAIN. Eight experiments a day once the pipeline is fast.
+
+    OPTION A - THE METADATA FIX (architecturally correct, full scope)
+
+        good case:  3 days of work  ->  7 days x 8   =  56 experiments, twelve categories
+        bad case:   6 days of work  ->  4 days x 8   =  32 experiments, twelve categories,
+                                        and four days to rehearse a demo that has never run
+                                        end to end
+
+    OPTION B - THE SCOPE CUT (architecturally worse, one third of the scope)
+
+        near-certain: 0.5 days      ->  9.5 days x 8 =  76 experiments, four categories
+
+    Compare the EXPECTATIONS and they are not far apart - Option A at even odds averages about 44
+    experiments with full scope, against 76 with a third of the scope. Reasonable people could
+    argue either.
+
+    NOW COMPARE THE WORST CASES, and the argument stops being close:
+
+        Option A's bad case is 32 experiments AND a demo with no rehearsal time. If the fix
+        overruns, there is no recovery - the date does not move, and the fallback (cut scope
+        anyway) now has to happen with four days left instead of ten.
+
+        Option B has essentially no bad case. Half a day, inside her own component, no
+        coordination.
+
+    THE RULE THAT FOLLOWS: WITH NO SLACK IN THE SCHEDULE, CHOOSE ON VARIANCE, NOT ON EXPECTATION.
+    A fixed deadline removes your ability to absorb a bad draw, so an option whose downside you
+    cannot survive is not really available, however good its average.
+
+WHY THIS IS "ARE RIGHT, A LOT" RATHER THAN COWARDICE: the principle's operative clause is "work
+to disconfirm their beliefs". Two separate acts in this story did that.
+
+    THE PROFILING. She believed the model was the bottleneck and spent forty minutes measuring
+    instead of two more days assuming. That is disconfirmation applied to a technical belief.
+
+    THE VARIANCE CHECK. She believed - correctly - that the metadata fix was the better
+    architecture, and then asked what would happen if she were wrong about how long it took.
+    That is disconfirmation applied to her own plan.
+
+Being right a lot is not about instincts being good. IT IS ABOUT CHECKING THEM CHEAPLY BEFORE
+COMMITTING EXPENSIVELY.
+
+THE INVERSION - change the slack and the answer flips:
+
+    SIX MONTHS INSTEAD OF TWO WEEKS. Now the metadata fix is straightforwardly correct: three
+    days for permanent full-scope speed, and if it overruns to six, nothing is lost. The scope cut
+    becomes false economy - trading two thirds of the product for speed you could have had
+    anyway.
+
+    SAME TWO OPTIONS, SAME COSTS, OPPOSITE CORRECT CHOICE. The only variable is whether a bad
+    draw is survivable - which is exactly what "insist on the highest standards" has to be
+    weighed against, and why the two principles need each other.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: NAME THE ARCHITECTURALLY RIGHT FIX, PRICE BOTH
+OPTIONS INCLUDING THEIR WORST CASES, CHOOSE ON VARIANCE WHEN THERE IS NO SLACK - AND BE CLEAR
+ABOUT WHICH STANDARD YOU REFUSED TO TRADE.
+
+THE LOOP IS DISCONFIRMATION, and its stopping rule is what makes it cheap:
+
+  - Hold a belief. Ask what would prove it wrong. Go and check, as cheaply as possible.
+  - WHAT MAKES IT STOP: the check either confirms or refutes, and you act.
+  - THE CRUCIAL PROPERTY: THE CHECK MUST BE CHEAPER THAN THE COMMITMENT. Forty minutes of
+    profiling against two days of optimising. An hour estimating the metadata fix against three
+    days building it.
+  - WHAT MAKES IT NOT WORTH RUNNING: when checking costs as much as committing. Then just commit
+    and keep the option to reverse - which is the Bias for Action sibling's territory.
+
+THE STEPS:
+
+  1. NAME THE RIGHT FIX explicitly, and say why it is right. Without this, everything after
+     sounds like you did not know.
+
+  2. ESTIMATE IT HONESTLY - and estimate the BAD CASE too, not just the good one. The bad case
+     is the number that decides.
+
+  3. ESTIMATE THE ALTERNATIVE, including what it costs you in quality or scope.
+
+  4. ASK WHETHER THERE IS SLACK. Can a bad draw be absorbed? This single question decides which
+     way to weigh the two principles.
+
+  5. CHOOSE, AND SAY THE REASONING OUT LOUD. "I took the lower-variance option because the
+     deadline was fixed and the fallback would have had to happen with four days left instead of
+     ten."
+
+  6. IDENTIFY WHICH STANDARD YOU WILL NOT TRADE. In the capstone: the evaluation. Say it
+     explicitly - it is what stops the answer sounding like you compromise on everything.
+
+  7. WRITE DOWN THE DEBT. What the right fix is, and what it would take. A shortcut you have
+     documented is technical debt; one you have not is a worse system.
+
+  8. PREPARE THE REVERSE QUESTION: "when WOULD you have built the right fix?" Answer with the
+     condition - more slack - not with a defence.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Your kitchen tap is dripping, and you are hosting twelve people on Saturday.
+
+You know exactly what the right repair is: the whole mixer unit is failing and should be
+replaced. That is not a guess - you have looked. Replacing it properly is the correct answer and
+you could describe it to a plumber in one sentence.
+
+It also means turning the water off at the mains, and the mains valve is old and stiff. If it
+turns cleanly, the job takes an afternoon. If it seizes - and old valves do - you have no water in
+the house on Friday, twelve people arriving Saturday, and a plumber who cannot come until Monday.
+
+The other option is a new washer. Twenty minutes, no mains, and it will hold for months. It is
+not the right repair and you know it is not.
+
+You fit the washer.
+
+That is not giving up on doing things properly. It is noticing that the correct repair has a
+failure mode you cannot survive this particular week, and that the temporary one has none. In
+February, with nobody coming, you replace the mixer.
+
+Three details make the difference between this and simply bodging it.
+
+You knew what the right repair was, and could say so. Somebody who fits a washer because they
+never diagnosed the mixer has not made a decision.
+
+You wrote it on the list. "Replace kitchen mixer - mains valve may need doing first." A shortcut
+you have recorded is a plan; one you have forgotten is just a worse kitchen.
+
+And there is one thing you would not have compromised on at all. If the washer had made the water
+unsafe rather than merely imperfect, no amount of Saturday pressure would have justified it. Some
+standards bend for a deadline and some do not, and knowing which is which is the entire skill.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THESE principles:
+
+    SITUATION (2 sentences)
+        HOLDS: the context, the fixed constraint, and THE PROBLEM YOU DIAGNOSED.
+        DECIDES: whether there was a genuine architectural choice to make.
+
+    TASK (1 sentence)
+        HOLDS: what you owned and what you had to decide.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats:
+            (a) THE RIGHT FIX, NAMED, and why it is right      <- omit this and you look
+                                                                  as though you did not see it
+            (b) ITS COST, INCLUDING THE BAD CASE
+            (c) THE ALTERNATIVE AND ITS COST
+            (d) THE VARIANCE ARGUMENT - is a bad draw survivable?
+            (e) THE STANDARD YOU REFUSED TO TRADE
+        DECIDES: everything. (a) demonstrates standards; (d) demonstrates judgement; (e) stops
+        the answer reading as "I compromise under pressure".
+
+    RESULT (2-3 sentences)
+        HOLDS: what shipped, with a number, AND the written debt.
+        DECIDES: whether the shortcut was deliberate or permanent.
+
+    REFLECTION (1 sentence)
+        HOLDS: the condition under which you would have chosen differently.
+
+--- THE TWO KINDS OF STANDARD ---
+
+    STANDARDS ON THE OUTPUT - NON-NEGOTIABLE
+        the evaluation is honest
+        the number you report is defensible, with its sample size
+        you do not claim what you cannot support
+        WHY: these are what other people rely on. Trading them transfers your problem to
+        somebody who cannot see it.
+
+    STANDARDS ON THE IMPLEMENTATION - NEGOTIABLE, KNOWINGLY
+        the architecture may be suboptimal
+        provided you can NAME the right one, PRICE it, and WRITE DOWN the debt
+        WHY: these are yours, visible, and fixable later.
+
+--- THE VARIANCE TEST ---
+
+    HOLDS: the worst case of each option, not just the expected case.
+    DECIDES: which option is actually available. An option whose downside you cannot survive is
+    not a choice, however good its average.
+    THE QUESTION: IS THERE SLACK? With slack, take the higher-variance, higher-value option.
+    Without it, take the one you can guarantee.
+
+--- WHAT "WORK TO DISCONFIRM THEIR BELIEFS" LOOKS LIKE ---
+
+    NOT: having good instincts and being proved right.
+    YES: forty minutes of profiling against a belief you held, before spending two more days on
+         it. And asking what happens if your three-day estimate is wrong, before committing three
+         days.""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - WITH THE VARIANCE ARITHMETIC.
+
+THE PROMPT: "Tell me about a time you insisted on the right solution rather than a quick fix."
+
+OPEN WITH THIS, because it reframes the question rather than answering it literally:
+
+    "I knew what the architecturally right fix was, I could describe it precisely, and I
+     deliberately did not build it - because with ten days and no slack, its bad case was
+     something we could not have recovered from."
+
+THE ANSWER (about 115 seconds):
+
+    SITUATION: "Four-person capstone, six weeks, fixed demo date with external examiners. I owned
+    the indexing pipeline. At week four, profiling showed a full re-index took nine hours and the
+    index build was about 80% of it."
+
+    TASK: "I had to decide how to fix it with ten working days left."
+
+    ACTION: "The root cause was that we built twelve separate indexes, one per item category,
+    because in week one we had assumed category filtering had to be structural. The right fix was
+    obvious once I saw it: ONE index with a category metadata field checked at query time. That
+    keeps all twelve categories AND removes the cost entirely. It is straightforwardly the better
+    architecture.
+
+    I did not build it, and here is the reasoning. It touches the query path, which Arun owned,
+    so it needs coordination and re-testing. My honest estimate was three days if it went well and
+    up to six if it did not. Three days leaves seven days at eight experiments - about 56 - with
+    full scope. Six days leaves four days, about 32 experiments, and a demo we would never have
+    rehearsed end to end.
+
+    Cutting scope was half a day, entirely inside my own component, near-certain: about 76
+    experiments with a third of the scope.
+
+    The expectations are arguable. The worst cases are not. With a fixed date and no slack, an
+    option whose downside I could not recover from was not really available - if the metadata fix
+    overran, the fallback would have been cutting scope anyway, with four days left instead of
+    ten.
+
+    What I would NOT trade was the evaluation. We shipped fewer categories, and we shipped a
+    number we could defend - 87% on 200 hand-labelled queries, fifty per category, with the sample
+    size stated to the panel."
+
+    RESULT: "Shipped on the demo date at 87%. And the metadata fix went into the report as the
+    known right answer, with what it would take - so it was recorded debt rather than a thing we
+    quietly did badly."
+
+    REFLECTION: "With six months instead of two weeks I would have built the metadata fix without
+    hesitating. The decision was about slack, not about standards."
+
+THE VARIANCE ARITHMETIC, ready for the follow-up:
+
+    ten working days left, eight experiments a day once fast
+
+    METADATA FIX     good case  3 days -> 7 x 8 = 56 experiments, 12 categories
+                     bad case   6 days -> 4 x 8 = 32 experiments, 12 categories, unrehearsed demo
+
+    SCOPE CUT        0.5 days near-certain -> 9.5 x 8 = 76 experiments, 4 categories
+
+    Expectation is arguable. The worst case decides, because the deadline removes your ability to
+    absorb one.
+
+THE PROBES:
+
+    "When WOULD you have built the right fix?" - "With slack. Six months, or even three weeks
+     rather than two. The variance was the problem, not the work."
+
+    "Is that not just taking the easy option?" - "The easy option would have been not diagnosing
+     it at all. I found the right architecture, priced it, and chose against it deliberately -
+     and wrote down what it was. A shortcut you can name and price is technical debt; one you
+     never articulated is just a worse system."
+
+    "What did you refuse to compromise on?" - "The evaluation. Fewer categories, but a number with
+     its sample size attached. The architecture is mine to fix later; a number the panel cannot
+     trust is not."
+
+THE HONEST NOTE, worth volunteering:
+
+    "The thing I actually got wrong was earlier. If I had profiled in week one instead of week
+     four, the metadata fix would have had three weeks of slack and I would have built it. The
+     constraint that forced the lower-variance choice was one I created."
+
+    That sentence turns a good answer into a self-aware one, and it is true.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about an hour, as an INDEX over the existing story. Most of it goes
+on the four numbers - 56, 32, 76, and the half-day - because without them the variance argument
+is an opinion.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns THE RIGHT FIX NOT BUILT and the tension between
+the two principles. Its siblings own the other angles on the same capstone - "STAR: Being frugal"
+owns the comparison with buying compute, "STAR: Delivering under a hard deadline" owns what was
+protected and the evaluation statistics, "STAR: Diving deep" owns the profiling, "STAR: Acting
+decisively" owns reversibility.
+
+THE FOLLOW-UPS, with what to say:
+
+  - "When would you have built the right fix?" Name the condition - slack - rather than defending
+    the choice.
+  - "Is that not just taking the easy option?" The distinction is naming and pricing the right
+    answer. Deliberate debt versus an unexamined shortcut.
+  - "What did you refuse to compromise on?" Have this ready. Without it the answer reads as
+    someone who trades everything under pressure.
+  - "Tell me about a time you DID insist and it cost you." Worth having - the mirror story, where
+    holding the standard was expensive and correct. Usually about the output rather than the
+    implementation.
+  - "How do you decide which shortcuts are acceptable?" Output versus implementation, and whether
+    the debt is written down.
+
+THE #1 MISTAKE: answering the prompt heroically - "I insisted on doing it properly despite the
+pressure" - with no cost comparison. It sounds principled and reads as someone who does not weigh
+deadlines, which is a genuine liability. The stronger answer usually shows you knew the right fix,
+priced it, and chose against it for a reason you can state.
+
+RUNNER-UP: compromising on the output rather than the implementation. A beautiful architecture
+shipped with a number nobody can defend is the exact failure these principles exist to prevent -
+the architecture is yours to fix later, and the number is what other people rely on.
+
+TAKEAWAY: high standards are not the same as always building the best thing - so name the right
+fix, price its worst case as well as its best, choose on variance when the deadline removes your
+slack, and be explicit about the one standard you would not trade.""",
 ]
 
 _EX_P0LP["STAR: Learning something hard and outside your expertise fast (Learn and Be Curious)"] = [
-    """A full student-scale answer.
-SITUATION: My internship task needed the recommendations served under 100ms,
-and the existing path recomputed embeddings per request. I had never used a
-vector index and had a week.
-TASK: Nobody on the team had time to teach me.
-ACTION: I gave myself a day of reading with a deliverable attached rather than
-open-ended study - I read the HNSW paper and wrote a one-page summary of what M
-and efSearch actually control, because forcing myself to explain it is how I
-find out what I have not understood. Then I built the smallest possible test:
-10,000 vectors, brute force versus HNSW, measuring recall and latency for
-myself instead of trusting the README. That surfaced the thing the docs
-underplayed - recall drops sharply below efSearch 40 on our data.
-RESULT: Shipped at p95 of 45ms with recall@10 of 0.97. I left the one-pager in
-the repo, and the engineer who took over the service after me used it.""",
+    """1. THE GOAL - learning something because a problem required it.
 
-    """Learning is not the story - APPLYING under pressure is.
-Learn and Be Curious is 'leaders are never done learning and always seek to
-improve themselves; they are curious about new possibilities and act to explore
-them'. The operative word is ACT. A story that is only 'I took a course' or 'I
-read a lot about X' scores poorly because there is no outcome and no pressure.
-The shape that scores: I did not know X -> I needed it for a real deadline -> I
-learned it in a specific, bounded way -> I shipped something -> here is the
-evidence I actually understood it (a measurement, a decision, a thing I taught
-someone else).""",
+    AMAZON LEADERSHIP PRINCIPLE - LEARN AND BE CURIOUS: "Leaders are never done learning and
+    always seek to improve themselves. They are curious about new possibilities and act to
+    explore them."
 
-    """Naming your METHOD is what makes this answer distinctive.
-Everyone learns things; few can describe how. Concrete methods that read well:
-attach a deliverable to the reading (the one-pager), build the smallest
-possible experiment rather than trusting documentation, deliberately measure
-the claim you are relying on, find the one person who knows and prepare three
-specific questions rather than asking for a tutorial, and teach it to someone
-as a comprehension test.
-'I read the paper and wrote a summary so I would find out what I had not
-understood' is the sentence interviewers remember, because it shows a system
-rather than diligence.""",
+The clause that decides the answer is "AND ACT TO EXPLORE THEM". Curiosity alone is a
+disposition; the principle is about curiosity that produced something.
 
-    """The weak version.
-'I taught myself PyTorch by doing an online course over the summer.' No
-pressure, no application, no outcome, and nothing that distinguishes you from
-every other candidate who lists a course. If a course is genuinely your only
-material, anchor it to something you then BUILT and a problem you then solved -
-the course is the setup, not the story.
-Also weak: 'I learn quickly.' The LP asks for evidence, and the evidence is
-always a deadline plus a shipped thing.""",
+So the near-universal weak answer fails on the last word:
 
-    """The probe that finds bluffers, and how to survive it.
-'Explain HNSW to me.' If your story claims you learned something, expect to be
-tested on it right there - so never choose a topic you cannot still explain two
-levels down. Have ready: what problem it solves, the core mechanism in one
-sentence, the main knob and what it trades, and one thing you got wrong at
-first.
-That last part is unusually valuable: 'I initially assumed higher M would fix
-recall, and measuring showed efSearch mattered far more on our data' proves the
-learning was real rather than recited.""",
+    "I was interested in machine learning so I did an online course."
 
-    """The Google version, which weights it differently.
-Google treats intellectual curiosity as a core Googleyness signal but cares
-less about the deadline framing. Lead instead with the curiosity and the
-sharing: 'I wanted to know why the index was fast rather than just that it was,
-so I read the paper and benchmarked it myself - and the one-pager I wrote ended
-up being what the next engineer used.' Amazon wants learned-under-pressure-and-
-delivered; Google wants curious-and-made-others-better. Same week of work.""",
+That is consumption. There is no problem, no application, and no evidence anything changed. It
+would be identical if the course had been abandoned at week three.
+
+THE STRONG SHAPE IS ALWAYS THE SAME:
+
+    A PROBLEM I COULD NOT SOLVE  ->  A SPECIFIC THING I DID NOT KNOW  ->  HOW I LEARNED IT
+    ->  WHAT IT UNLOCKED
+
+And the best version of it is SCOPED. Not "I learned about vector databases" but "I read enough
+of the library's index-build code to work out where to put timers" - which took forty minutes and
+unlocked an answer worth sixteen hours.
+
+THIS ENTRY IS AN INDEX over the story bank, drawing on the LEARNING shape, and reuses the same
+capstone. Its sibling "STAR: Diving deep" owns the profiling as an act of MEASUREMENT; this entry
+owns the same forty minutes as an act of LEARNING - what she had to understand before she could
+measure anything at all.
+
+WHAT THIS ENTRY OWNS: PROBLEM-DRIVEN, SCOPED LEARNING, and the contrast with the two days of
+learning-by-substitution that preceded it.""",
+
+    """2. THE INTUITION - two ways of learning, and only one worked.
+
+The capstone contains both kinds, back to back, which makes the comparison unusually clean.
+
+    LEARNING BY SUBSTITUTION - days one and two of week four
+
+        try a smaller embedding model      -> no real improvement
+        try a different smaller model      -> no real improvement
+        try a quantised version            -> no real improvement
+
+        WHAT WAS LEARNED: that three specific models did not help.
+        TRANSFERABLE TO THE NEXT PROBLEM: almost nothing.
+        TIME: two days.
+        RESULT: nothing.
+
+    LEARNING BY UNDERSTANDING - forty minutes on day three
+
+        read enough of the index library's build path to know what stages exist
+        work out where the boundaries are, so timers can go between them
+        instrument each stage
+
+        WHAT WAS LEARNED: how the thing actually works.
+        TRANSFERABLE: entirely - the same skill measures any pipeline.
+        TIME: forty minutes.
+        RESULT: the whole answer.
+
+Drawn against each other:
+
+        substitution   [============ 2 days ============]  ->  nothing
+        understanding  [= 40 min =]                        ->  everything
+
+THE DIFFERENCE IS NOT EFFORT AND IT IS NOT CLEVERNESS. Substitution treats the system as a black
+box and searches the space of things you can swap. Understanding opens the box far enough to see
+where the time goes.
+
+And the crucial property of the second one, which is what makes it tellable as a LEARNING story:
+IT WAS SCOPED TO THE PROBLEM. She did not learn how the index library works. She learned the one
+thing needed to put timers in the right places, and stopped. That bounded, purposeful quality is
+what separates "I learned something because I needed to" from "I did a course".""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LEARN AND BE CURIOUS. The Amazon principle: never done learning, curious about possibilities, and
+ACT to explore them.
+
+SCOPED LEARNING. Learning bounded by a specific problem - you learn what you need and stop. The
+opposite of studying a subject.
+
+PROBLEM-DRIVEN vs INTEREST-DRIVEN. Whether the learning was caused by something you had to do, or
+by curiosity alone. Both are legitimate in life; only the first comes with evidence attached,
+which is what an interview needs.
+
+LEARNING BY SUBSTITUTION. Swapping components until something works, without understanding why.
+Search rather than learning, and it produces knowledge that does not transfer.
+
+LEARNING BY UNDERSTANDING. Opening the box far enough to know how it works. Transfers to every
+similar problem afterwards.
+
+INSTRUMENTATION. Adding timers or counters to code so its behaviour can be measured. Requires
+knowing where the internal boundaries are, which is what had to be learned.
+
+BLACK BOX. A component you use without knowing its internals. Fine until it is the problem.
+
+READING SOURCE. Going to the library's own code when documentation does not answer the question.
+Worth naming as a habit - many candidates never do it, and it is the difference between being
+stuck and not.
+
+TRANSFERABLE. Whether what you learned helps on the next, different problem. The test of whether
+it was learning or search.
+
+STAR. Situation, Task, Action, Result.
+
+THE FORTY MINUTES. The specific unit of learning in this story: reading enough of the index
+library's build path to place timers correctly.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE COURSE ANSWER. "I was interested in X so I completed a course / read a book /
+watched a series of lectures."
+
+It fails on "act to explore them". There is no problem, no application, and nothing that would
+have looked different had the learning not happened. Interviewers hear it constantly and it
+distinguishes nobody, because anyone can enrol in anything.
+
+    IF THE COURSE IS GENUINELY YOUR STORY, RESCUE IT BY ATTACHING A PROBLEM AND AN OUTPUT: what
+    you then built, what it did, what you got wrong first. The course becomes the middle of a
+    story rather than the whole of it.
+
+TRAP 2 - UNSCOPED LEARNING. "I learned about vector databases" is too large to be evidence -
+nobody can tell what you actually know, and the follow-up will find the edge quickly. "I read
+enough of the index build path to place timers between its stages" is small, specific, checkable,
+and demonstrably sufficient.
+
+TRAP 3 - LEAVING OUT THE FAILED APPROACH. The two days of swapping models are not an
+embarrassment. They are the CONTROL in the experiment - they show what the same person did
+BEFORE deciding to understand the system, and they make the forty minutes mean something. A
+learning story with no prior failure has nothing to contrast against.
+
+TRAP 4 - LEARNING WITHOUT AN OUTPUT. The principle wants what the learning produced. "I now
+understand HNSW indexes" is a state; "I could place timers, which found the bottleneck, which
+took re-index from nine hours to forty minutes" is a consequence.
+
+TRAP 5 - CLAIMING MORE THAN YOU LEARNED. This one is dangerous because the follow-up is
+immediate. If you read enough of a library to instrument it, say exactly that - do not upgrade it
+to "I understand its internals", because the next question will go two levels down and find the
+edge. Precisely stated learning survives probing; inflated learning does not.
+
+TRAP 6 - NO SIGN OF HOW YOU LEARN. Interviewers are trying to predict how you will pick things up
+on the job, so the METHOD matters as much as the outcome. Reading the source rather than only the
+documentation, timing rather than guessing, building the smallest test - these are the habits
+being assessed, and naming them is worth more than the specific technology.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE - WITH THE ARITHMETIC.
+
+THE NAIVE VERSION: demonstrate breadth. List what you have studied.
+
+It fails for a structural reason worth understanding: A LIST OF SUBJECTS CANNOT BE CHECKED, AND
+ANYTHING THAT CANNOT BE CHECKED CARRIES NO INFORMATION. Interviewers know this, so a breadth
+answer is scored at roughly zero and then probed until it produces something specific.
+
+THE REAL VERSION: one problem, one gap, one bounded act of learning, one result.
+
+THE ARITHMETIC THAT MAKES THIS STORY WORK:
+
+    LEARNING BY SUBSTITUTION
+        two days = 16 working hours = 960 minutes
+        produced: three models that did not help, and no understanding of why
+        transferable: essentially nothing
+
+    LEARNING BY UNDERSTANDING
+        40 minutes reading the index build path and placing timers
+        produced: the index build is 80% of the nine hours - the entire answer
+        transferable: the method works on any pipeline
+
+    960 / 40 = 24
+
+    THE LEARNING THAT WORKED TOOK ONE TWENTY-FOURTH OF THE TIME OF THE SEARCHING THAT DID NOT.
+
+And the reason is not that she got lucky in the forty minutes. It is structural:
+
+    SUBSTITUTION SEARCHES A SPACE. Its cost grows with how many candidates there are, and it
+    tells you nothing about candidates you did not try. Three models tried is three data points
+    in a space of hundreds.
+
+    UNDERSTANDING COLLAPSES THE SPACE. Knowing that the index build is 80% of the time rules out
+    EVERY possible model substitution at once - because even reducing the embedding to zero could
+    not have produced the improvement needed. One measurement eliminated the entire search space
+    the two days had been exploring.
+
+    THAT IS WHY UNDERSTANDING IS CHEAPER: IT DOES NOT TEST CANDIDATES, IT REMOVES THEM.
+
+WHAT THE FORTY MINUTES ACTUALLY CONTAINED, since "I read the source" is too vague to be evidence:
+
+    1. finding where the library's index build begins and ends
+    2. identifying the distinct stages inside it, so a timer between them means something
+    3. working out which of those stages were called per-category rather than once
+    4. placing timers and running one re-index
+
+    Step 3 is the one that mattered - and it is the one that required understanding rather than
+    copying, because nothing in the documentation says "this is called once per index".
+
+THE HABIT WORTH NAMING, because it is what the interviewer is really assessing: WHEN THE
+DOCUMENTATION DOES NOT ANSWER THE QUESTION, GO TO THE SOURCE. Most people stop at the
+documentation and conclude the answer is unavailable.
+
+THE INVERSION - when substitution is the right method:
+
+    If there had been three plausible models, all cheap to try, and no way to reason about which
+    would help, then trying all three is CORRECT and understanding the internals would be
+    over-investment.
+
+    SUBSTITUTION IS RIGHT WHEN THE SPACE IS SMALL AND EACH TEST IS CHEAP. It was wrong here
+    because the space was large, each test cost hours, and forty minutes of understanding could
+    eliminate all of it at once. The mistake was not the method - it was not asking which method
+    the situation called for.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: NAME A PROBLEM YOU COULD NOT SOLVE, THE SPECIFIC
+SMALL THING YOU DID NOT KNOW, HOW YOU LEARNED IT AND HOW LONG IT TOOK, AND WHAT IT UNLOCKED -
+AND KEEP THE LEARNING SMALL ENOUGH TO BE CHECKABLE.
+
+THE LOOP IS LEARN-APPLY-CHECK, and its stopping rule is what makes it "scoped":
+
+  - Learn the smallest thing that might unblock you. Apply it. See whether you are unblocked.
+  - WHAT MAKES IT STOP: you are unblocked. Not when you understand the subject - when the problem
+    moves.
+  - WHAT MAKES IT SPRAWL: studying rather than solving. The difference is whether there is a
+    problem waiting for the knowledge, and a course has no such gate, which is why the course
+    answer is weak.
+
+THE STEPS:
+
+  1. STATE THE PROBLEM AND WHY YOU WERE STUCK. "The re-index took nine hours and I did not know
+     where the time was going."
+
+  2. STATE WHAT YOU TRIED FIRST, AND THAT IT FAILED. The two days. This is the control.
+
+  3. NAME THE SPECIFIC GAP - small enough to be checkable. Not "I did not understand indexing"
+     but "I did not know what stages the build had, so I could not time them."
+
+  4. SAY HOW YOU CLOSED IT, and how long it took. Reading the library's source, forty minutes.
+     The METHOD is what the interviewer is assessing.
+
+  5. SAY WHAT IT UNLOCKED, with a number. The index build was 80%; the fix took nine hours to
+     forty minutes.
+
+  6. SAY WHAT TRANSFERRED. "I now instrument before optimising, on everything." This is the part
+     that makes it learning rather than an incident.
+
+  7. KEEP THE CLAIM PRECISE. Say what you learned, not the subject it belongs to. The follow-up
+     goes two levels down and precision survives it.
+
+  8. PREPARE THE METHOD QUESTION: "how do you usually learn something new?" Answer with the habit
+     - smallest thing first, source over documentation, apply immediately - rather than with a
+     list of courses.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Your car is making a noise, and you know almost nothing about cars.
+
+The first approach is to change things. New wiper blades - no. Different oil - no. New air
+filter - no. Two afternoons gone, three things replaced, and the noise is exactly the same. What
+you have learned is that three specific parts were not it, which does not help you with the
+fourth, or with the next car.
+
+The second approach starts differently. You do not set out to learn about cars. You ask one
+question: where is the noise coming from? And to answer that you need to know just enough about
+what is under the bonnet to tell which part is which.
+
+So you spend forty minutes with a diagram, learning which component is where, so that when you
+listen you can say "that is coming from the belt area" rather than "that is coming from the
+front".
+
+That is not becoming a mechanic. It is learning precisely enough to LOCALISE the problem - and
+once localised, the noise is a worn belt, which is obvious to everyone the moment it is named.
+
+Two things about the second approach are worth keeping.
+
+The forty minutes was worth more than the two afternoons, and not because you were cleverer. The
+afternoons tested three candidates out of dozens. The forty minutes eliminated everything except
+one area at once. Understanding does not test possibilities; it removes them.
+
+And the diagram is still useful next year, on a different noise, on a different car. The wiper
+blades are not.
+
+There is one more thing, and it is the part people skip. You did not read the whole manual. You
+read the page you needed and closed it. That is what makes this a story about solving something
+rather than a story about studying - and if someone asks what you know about cars, the honest
+answer is "very little, but I can find where a noise is coming from", which is small, true, and
+survives being questioned.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the problem, and why you personally were stuck.
+        DECIDES: whether there was a genuine need to learn. Without a problem, learning is
+        consumption.
+
+    TASK (1 sentence)
+        HOLDS: what you had to achieve, and the knowledge gap standing in the way.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats:
+            (a) WHAT YOU TRIED FIRST, AND THAT IT FAILED         <- the control
+            (b) THE SPECIFIC GAP, small enough to be checkable
+            (c) HOW YOU CLOSED IT - the method, and the time it took
+            (d) WHAT YOU DID WITH IT immediately
+            (e) WHAT TRANSFERRED to later problems
+        DECIDES: everything. (b) is what stops the answer being "I learned about X"; (c) is the
+        habit being assessed; (e) is what makes it learning rather than an anecdote.
+
+    RESULT (2-3 sentences)
+        HOLDS: what the learning unlocked, with a number.
+        DECIDES: whether "act to explore" is satisfied.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would do sooner next time. Here: instrument before optimising, always.
+
+--- THE TWO LEARNING MODES ---
+
+    LEARNING BY SUBSTITUTION
+        method: swap components until something works
+        cost: grows with the size of the space; each test is a whole trial
+        yields: knowledge about the candidates you tried, and nothing about the rest
+        transferable: barely
+        RIGHT WHEN: the space is small and each test is cheap
+
+    LEARNING BY UNDERSTANDING
+        method: open the box far enough to see where the cost is
+        cost: usually small and fixed
+        yields: elimination of whole regions of the space at once
+        transferable: fully
+        RIGHT WHEN: the space is large, or each test is expensive
+
+--- THE PRECISION RULE ---
+
+    SAY:      "I read enough of the index build path to place timers between its stages."
+    NOT:      "I learned how vector indexes work."
+
+    The first is small, checkable, and survives a follow-up two levels down. The second invites a
+    question you will not survive, and the difference in what you actually know is zero.
+
+--- THE HABIT BEING ASSESSED ---
+
+    Not the technology. HOW YOU LEARN:
+        smallest useful thing first, not the subject
+        source code when the documentation does not answer it
+        apply immediately, so the learning is checked by reality
+        stop when unblocked""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - WITH THE COMPARISON.
+
+THE PROMPT: "Tell me about a time you had to learn something new quickly."
+
+OPEN WITH: "I spent two days trying things I did not understand, then forty minutes understanding
+one thing - and the forty minutes was what solved it."
+
+THE ANSWER (about 100 seconds):
+
+    SITUATION: "Four-person capstone, six weeks, fixed demo date. I owned the indexing pipeline.
+    At week four a full re-index took nine hours - one experiment a day with ten days left - and I
+    did not know where the time was going."
+
+    TASK: "I had to find and fix the bottleneck, in a library I had used but never looked inside."
+
+    ACTION: "My first approach was substitution. I assumed the embedding model was the expensive
+    part, and spent two days trying smaller models, a different architecture and a quantised
+    version. None of them made a real difference, and I had learned only that those three did not
+    help.
+
+    So I changed approach. Rather than trying to learn 'how vector indexes work', I asked what the
+    smallest thing was that would let me MEASURE. That turned out to be: which distinct stages
+    does the index build have, and which of them run once per category rather than once overall?
+
+    That question is not answered in the documentation, so I read the library's build code -
+    about forty minutes - until I could see the stage boundaries. Then I placed timers between
+    them and ran one re-index.
+
+    The index build was about 80% of the nine hours, and the per-category stages were the reason.
+    That single measurement also told me the two days had been wasted in a way I could prove -
+    even reducing the embedding time to zero could not have produced the improvement we needed."
+
+    RESULT: "Cutting to four categories took re-index from nine hours to forty minutes - eight
+    experiments a day instead of one - and we shipped on the demo date at 87% retrieval accuracy.
+    What transferred is that I now instrument before optimising, on everything. It is the habit I
+    took out of that project rather than anything about that particular library."
+
+    REFLECTION: "The forty minutes was available on day one. What I was missing was not knowledge,
+    it was the instinct to go and get it before spending two days guessing."
+
+THE COMPARISON, ready for the follow-up:
+
+    SUBSTITUTION:   960 minutes  ->  three models eliminated, nothing transferable
+    UNDERSTANDING:   40 minutes  ->  the whole answer, and a method that transfers
+
+    960 / 40 = 24 times cheaper
+
+    AND THE REASON, which is the part worth saying: substitution TESTS candidates one at a time,
+    so its cost grows with the size of the space. Understanding REMOVES whole regions at once -
+    knowing the index build was 80% eliminated every possible model substitution simultaneously.
+
+THE PROBES:
+
+    "What exactly did you read?" - "The library's index build path. Specifically I was looking for
+     which operations were invoked per index rather than once, because that determines whether
+     twelve indexes cost twelve times as much. About forty minutes."
+
+    "How do you normally learn something new?" - "Smallest useful thing first, driven by a problem
+     rather than a syllabus. Source code when the documentation does not answer the question.
+     Apply it immediately so reality checks whether I understood it. And stop when I am unblocked,
+     rather than when I have finished the subject."
+
+    "Do you feel you understand vector indexes now?" - "Not really, and I would not claim to. I
+     understand how to find where time goes in one, which is a different and smaller thing." That
+     precision is worth more than a broader claim, because it survives the next question.
+
+THE INVERSION - when substitution would have been the right method:
+
+    "If there had been three plausible models, all cheap to swap, and no way to reason about which
+     would help, then trying all three would have been correct and reading the source would have
+     been over-investment. Substitution is right when the space is small and each test is cheap.
+     My mistake was not the method - it was not asking which method the situation called for."
+
+AND THE WEAK VERSION, for contrast:
+
+    "I was interested in machine learning so I completed a course on it."
+
+    No problem, no application, no evidence anything changed. It would read identically if the
+    course had been abandoned halfway.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: under an hour, as an INDEX over the existing story. The work is
+narrowing the claim - deciding to say "I read enough of the build path to place timers" rather
+than "I learned how indexes work" - because the narrower claim is what survives probing.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns SCOPED, PROBLEM-DRIVEN LEARNING. Its closest
+sibling is "STAR: Diving deep", which owns the same forty minutes as an act of MEASUREMENT - the
+five whys and the root cause. Here the same event is an act of LEARNING: what she had to
+understand before measuring was even possible. The other siblings own reversibility, what was
+protected, the frugality comparison, and Arun.
+
+THE FOLLOW-UPS, with what to say:
+
+  - "How do you normally learn something new?" The habit question, and the real one. Smallest
+    useful thing, problem-driven, source over documentation, apply immediately, stop when
+    unblocked.
+  - "What exactly did you read?" Be specific and small. Vagueness here suggests the learning was
+    decoration.
+  - "Do you understand it now?" Claim precisely what you know. "I can find where time goes in one"
+    beats "I understand them", and it survives the next question.
+  - "Tell me about something you are learning at the moment." Have an answer, and attach a problem
+    to it - otherwise it becomes the course answer.
+  - "What if the source had been unreadable?" Reasonable follow-up: the fallback is a black-box
+    binary search - time the whole thing, then time it with half the work, and narrow down. Worth
+    having, because it shows the instinct survives the tooling.
+
+THE #1 MISTAKE: the course answer. "I was interested in X so I did a course" fails on "act to
+explore" - there is no problem, no application, and nothing that would look different had the
+learning not happened. If a course genuinely is your story, attach a problem and an output to it
+so it becomes the middle of a story rather than all of it.
+
+RUNNER-UP: claiming a whole subject rather than the specific thing you learned. It feels stronger
+and it invites a follow-up that finds the edge immediately, whereas a precise small claim is
+checkable and holds.
+
+TAKEAWAY: the principle is about learning that CHANGED SOMETHING - so tell a story where a
+problem forced a specific, small gap into view, name how you closed it and how long it took, and
+say what transferred, because the method is what they are trying to predict rather than the
+subject.""",
 ]
 
-_EX_P0LP["STAR: Raising the bar on hiring or quality "
-         "(Hire and Develop the Best / Insist on Highest Standards)"] = [
-    """A student-scale answer, since you will not have hired anyone.
-SITUATION: A second-year joined our robotics team and was assigned sensor
-calibration. After a week he had committed nothing and had stopped coming to
-stand-ups; the group's assumption was that he was not up to it.
-TASK: His module blocked my part of the pipeline, and nobody had actually asked
-him what was wrong.
-ACTION: I paired with him for an hour and found the problem was not the maths -
-our repo had no setup instructions and he had spent five days fighting the
-build, too embarrassed to say so in front of four people. So I did two things
-deliberately: I sat with him while HE fixed the build on his own machine,
-narrating what I was checking rather than typing, and I wrote a ten-line
-SETUP.md so the next person would not lose a week. I did not touch his module.
-RESULT: He shipped calibration that week and went on to own the entire sensor
-stack, including two modules nobody helped with. Onboarding for the two who
-joined later went from days to about an hour.""",
+_EX_P0LP["STAR: Raising the bar on hiring or quality (Hire and Develop the Best / Insist on Highest Standards)"] = [
+    """1. THE GOAL - making somebody else better, with evidence.
 
-    """What the LP means when you have no hiring authority.
-'Hire and Develop the Best' is 'leaders raise the performance bar with every
-hire and promotion; they recognise exceptional talent and willingly move them
-throughout the organisation; leaders develop leaders and take seriously their
-role in coaching others'. For a new grad the accessible half is DEVELOP, and
-the graded behaviour is making someone else more capable - not doing their work
-for them.
-The proof sentence is what they did AFTERWARDS without you: 'he went on to own
-the entire sensor stack'. Candidates almost always omit that, and it is the
-only evidence that you taught rather than rescued.""",
+    AMAZON LEADERSHIP PRINCIPLE - HIRE AND DEVELOP THE BEST: "Leaders raise the performance bar
+    with every hire and promotion. They recognise exceptional talent and willingly move them
+    throughout the organisation. Leaders develop leaders and take seriously their role in
+    coaching others."
 
-    """The anti-pattern, which is the most common answer to this question.
-'My teammate was struggling so I took over their part and finished it.' That is
-absorbing, not developing: the person learned nothing, you now own two jobs, and
-the team's capacity is unchanged. It also reads as someone who will silently
-carry underperformers rather than address the cause - the opposite of raising a
-bar.
-The distinguishing question to ask yourself about your story: is the other
-person MORE capable at the end than at the start? If not, pick a different
-story.""",
+    INSIST ON THE HIGHEST STANDARDS: "Leaders have relentlessly high standards - many people may
+    think these standards are unreasonably high. Leaders continually raise the bar."
 
-    """The 'raising the bar' half, which also has a student version.
-You can demonstrate this through process rather than people: introducing code
-review to a group project that had none, adding CI so broken code could not
-merge, insisting on a test for the bug class that had bitten twice, writing the
-README that stopped the same question recurring. Each raises the floor for
-everyone who comes after, which is the same idea as raising a hiring bar
-applied to a codebase.
-Pair it with a number if you can - 'onboarding went from days to an hour' -
-because bar-raising claims without evidence sound like opinion.""",
+A NOTE THAT HAS TO COME FIRST, because pretending otherwise wastes preparation time: AT STUDENT
+SCALE NOBODY HIRES ANYONE. You have never sat on a hiring panel, never written a promotion case,
+never had a report. Any answer built around hiring will be invented, and invented answers do not
+survive the follow-up.
 
-    """The probes.
-'How did you know he needed help?' - you noticed a signal (stopped committing,
-stopped attending), which shows attentiveness; being asked is weaker than
-noticing. 'Why didn't you just do it?' - the deadline maths, and the fact that
-his module was one of four he would own. 'How did you avoid undermining him?' -
-asked before offering, let him type, let him own the commit and the credit.
-'What if he still had not improved?' - then you adjust the plan honestly and
-escalate with facts, which is a different LP but a fair question.""",
+So the version of this principle available to you is the other half of it: DEVELOP. "Leaders
+develop leaders and take seriously their role in coaching others."
 
-    """Where interviewers push hardest on this one.
-They will test whether you can assess talent honestly, because the LP is about
-a BAR. Expect 'have you ever worked with someone who was not good enough?' The
-answer that works is specific and non-contemptuous: describe what the gap was
-in terms of behaviour rather than character, what you tried, and what the
-outcome was - including if it did not resolve. Refusing to say anyone ever
-underperformed reads as either inexperience or evasion, and contempt reads far
-worse.""",
+And the test for whether you did that is sharper than most people expect:
+
+    DID SOMEBODY DO SOMETHING WITHOUT YOU, AFTERWARDS, THAT THEY WOULD NOT HAVE DONE BEFORE?
+
+If they only did what you told them, that is DELEGATION. If they took ownership of something and
+carried it themselves, that is DEVELOPMENT - and the evidence is that the work has their name on
+it rather than yours.
+
+THIS ENTRY IS AN INDEX over the story bank, drawing on the HELPING shape, and reuses the same
+capstone. Its sibling "STAR: Disagreeing with a decision then fully committing" tells the same
+events from the CONFLICT angle - her argument with Arun and how it resolved. THIS entry owns what
+happened AFTERWARDS: that Arun wrote the staging plan, presented it himself, and framed it better
+than she had.
+
+WHAT THIS ENTRY OWNS: MAKING SOMEONE ELSE MORE EFFECTIVE, AND THE EVIDENCE THAT IT WAS REAL.""",
+
+    """2. THE INTUITION - three things that look alike and are not.
+
+    TELLING          "we should cut to four categories - can you update the query path?"
+                     Arun does the task. It is your idea, your framing, your work with his hands.
+                     -> nothing has been developed. This is DELEGATION.
+
+    CONVINCING       you make the case, he agrees, you both implement the plan.
+                     Better - he is bought in. Still your plan.
+                     -> this is PERSUASION, and most candidates stop here and call it
+                        development.
+
+    DEVELOPING       he ends up OWNING a piece you did not specify, doing it his own way, and
+                     doing it better than you would have.
+                     -> the evidence is that HIS NAME IS ON IT.
+
+The capstone contains the third, and the detail that proves it is small and specific:
+
+    Arun objected to the scope cut. After the argument resolved, he WROTE THE STAGING PLAN for
+    re-adding the other eight categories - which nobody asked him to do - and HE PRESENTED IT to
+    the panel. And his framing was better than hers: he presented the cut as DELIBERATE STAGING
+    rather than as a shortfall, which was a stronger story than "we ran out of time and shipped
+    less".
+
+Drawn as who owns what afterwards:
+
+    BEFORE      her idea, her argument, her component
+                Arun: an objector
+
+    AFTER       her component, her measurement
+                ARUN: the staging plan, the framing, the presentation
+
+That transfer is the whole answer. She did not just win an argument - the person who lost it
+walked away owning a piece of the project and doing it better than she would have.
+
+AND THE HONEST TEST: would he have written that plan if she had simply told him to? Almost
+certainly he would have written something. Would he have INVENTED THE FRAMING - deliberate
+staging rather than shortfall - and volunteered to present it? That part came from him, and that
+is what distinguishes development from delegation.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HIRE AND DEVELOP THE BEST. The Amazon principle - raising the bar with every hire, and coaching
+others. At student scale, only the second half is available honestly.
+
+RAISE THE BAR. Making the standard higher than it was. Applies to hiring, to quality, and to what
+your teammates are capable of.
+
+DEVELOP vs DELEGATE. Delegation transfers a TASK. Development transfers OWNERSHIP - and the sign
+is that the person makes decisions inside it that you did not specify.
+
+COACHING. Helping someone become able to do something, rather than doing it for them or telling
+them how.
+
+OWNERSHIP TRANSFER. The moment a piece of work becomes theirs rather than yours. The test: could
+they have made a decision inside it that you would not have made? If not, they were executing.
+
+THE BAR RAISER. At Amazon, an interviewer from outside the hiring team whose job is to ensure the
+candidate is better than the median of the existing team. Worth knowing the term exists even
+though you will not have played the role.
+
+STAGING PLAN. In the capstone, the written plan for re-adding the eight cut categories. Arun's,
+and the artefact that makes this story evidenced rather than asserted.
+
+FRAMING. How work is presented. Arun's - "deliberate staging" rather than "shortfall" - was
+better than hers, which is a specific, checkable claim rather than generous vagueness.
+
+CREDIT. Naming what someone else did. Costs nothing, and its absence is conspicuous.
+
+STAR. Situation, Task, Action, Result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - INVENTING A HIRING STORY. The principle's name pushes toward hiring, and a student
+answer about assessing candidates or raising a hiring bar will be thin and will collapse under
+"what specifically did you look for, and how did you calibrate it?"
+
+    SAY THE HONEST THING INSTEAD: "I have not hired anyone, so I will answer the develop half."
+    That reframing is not a concession - it is the correct answer to a question you cannot
+    otherwise answer truthfully.
+
+TRAP 2 - CONFUSING PERSUASION WITH DEVELOPMENT. "I explained my reasoning and they agreed" is
+persuasion, and most candidates present it as development. The person's capability did not
+change; they just now hold your opinion.
+
+    THE TEST AGAIN: did they do something WITHOUT you afterwards that they would not have done
+    before?
+
+TRAP 3 - TAKING CREDIT FOR THE OTHER PERSON'S WORK. The story here is that Arun wrote and
+presented the staging plan. A candidate who says "I made sure the staging plan got written"
+quietly reclaims it and loses exactly the thing that made the story work. Say plainly: he wrote
+it, he presented it, and his framing was better than mine.
+
+    THIS FEELS LIKE GIVING AWAY YOUR OWN ANSWER. It is not. THE PRINCIPLE IS ABOUT WHAT OTHER
+    PEOPLE BECAME, so their achievement IS your evidence.
+
+TRAP 4 - HELPING IN A WAY THAT MADE THEM DEPENDENT. Fixing someone's code for them, doing the
+hard part yourself, taking over when it got difficult. That is help and it develops nobody -
+next time they still cannot do it. The distinguishing question: AFTERWARDS, COULD THEY DO IT
+WITHOUT YOU?
+
+TRAP 5 - A STORY WITH NO RESISTANCE. "My teammate wanted to learn X so I taught them X" is
+pleasant and demonstrates little. The capstone version is stronger precisely BECAUSE Arun started
+by disagreeing - bringing round someone who objected is a harder thing than helping someone who
+asked.
+
+TRAP 6 - RAISING THE BAR AS CRITICISM. "I insisted the code quality was not good enough" with no
+support offered reads as someone difficult to work with. Raising a bar and then helping people
+reach it are two halves of one behaviour; only the first is a personality trait.
+
+TRAP 7 - NO ARTEFACT. Development claims are easy to assert and hard to check, so the answer
+needs something concrete that exists in the world with their name on it - a document, a
+component, a presentation. Without it you are asking to be believed.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE.
+
+THE NAIVE VERSION: "I helped a teammate who was struggling."
+
+It is kind and it is unfalsifiable, and it usually describes DOING SOMETHING FOR SOMEBODY. The
+principle is not about generosity - it is about capability, theirs, afterwards.
+
+THE REAL VERSION: ownership moved, and something exists with their name on it.
+
+Here is the structure that distinguishes the three levels, worked on the capstone:
+
+    LEVEL 1 - DELEGATION
+        "I decided to cut to four categories and asked Arun to update the query path."
+        Arun: executes. Capability unchanged. Nothing to report.
+
+    LEVEL 2 - PERSUASION
+        "Arun objected. I showed him the arithmetic - ten experiments against eighty - and he
+         agreed, and we implemented it together."
+        Arun: convinced. Better, and still her plan and her framing.
+        MOST CANDIDATES STOP HERE and describe it as development.
+
+    LEVEL 3 - DEVELOPMENT
+        "Arun objected because twelve categories was our proposal commitment, and he was right
+         that it was a real commitment. What resolved it was recognising we were optimising
+         different things - he was protecting a promise, I was protecting how fast we could
+         learn. So the question became how to keep both, and I asked him what a version that kept
+         the commitment would look like.
+         He came back with the staging plan - the order the other eight categories would be
+         added, and what each needed. Nobody specified it. And when we presented, he framed it as
+         deliberate staging rather than as a shortfall, which was better than how I had been
+         describing it."
+
+        Arun: owns a piece, made decisions inside it, framed it better than she did.
+        THE EVIDENCE: the plan exists, and it is his.
+
+THE MOVE THAT PRODUCED LEVEL 3, and it is one sentence: SHE ASKED HIM WHAT A VERSION THAT SERVED
+HIS OBJECTIVE WOULD LOOK LIKE, INSTEAD OF ARGUING HER OWN VERSION HARDER.
+
+    That question does something specific. It hands him a PROBLEM rather than a CONCLUSION - and
+    a problem is something a person can own, whereas a conclusion is something they can only
+    accept or reject.
+
+    THAT IS THE GENERAL FORM: TO DEVELOP SOMEONE, GIVE THEM A PROBLEM, NOT AN ANSWER. Delegation
+    hands over a task. Persuasion hands over a conclusion. Development hands over a question and
+    lets the answer be theirs.
+
+WHY HIS FRAMING WAS ACTUALLY BETTER, since the claim should be checkable rather than gracious:
+
+    HERS:  "we cut to four categories to protect iteration speed"   - true, and it centres what
+                                                                       was LOST
+    HIS:   "we staged delivery, shipping four categories with a
+            written plan for the remaining eight"                    - the same fact, centred on
+                                                                       what was DELIVERED and
+                                                                       what comes next
+
+    A panel hears the first as a shortfall being explained and the second as a plan being
+    executed. It is a genuinely better framing and it was not hers.
+
+THE INVERSION - when this behaviour is the wrong call:
+
+    Three days before the demo, with something broken, handing someone a problem rather than an
+    answer is not development - it is abdication. Under acute time pressure, tell people what to
+    do.
+
+    DEVELOPMENT COSTS TIME AND CARRIES RISK, so it belongs where there is slack for the person to
+    do it their own way, including doing it worse than you would have. At week four there was
+    slack for that; on demo morning there would not have been.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: SHOW THAT SOMEBODY ENDED UP OWNING SOMETHING THEY DID
+NOT OWN BEFORE, MADE DECISIONS INSIDE IT THAT YOU DID NOT SPECIFY, AND THAT AN ARTEFACT EXISTS
+WITH THEIR NAME ON IT.
+
+THE LOOP IS HAND OVER - STEP BACK - LET IT BE THEIRS, and its stopping rule is uncomfortable and
+essential:
+
+  - You hand over a problem rather than an answer.
+  - They come back with something that is not what you would have done.
+  - WHAT MAKES IT STOP: you accept their version when it is good enough, rather than correcting
+    it to yours. THIS IS THE HARD PART. Correcting it back converts development into delegation
+    with extra steps, and the person notices immediately.
+  - WHAT MAKES IT FAIL: taking it back when it gets difficult. That teaches the opposite lesson -
+    that ownership is provisional.
+  - THE COST: it will sometimes be worse than what you would have done. That is the price, and
+    accepting it knowingly is the behaviour.
+
+THE STEPS:
+
+  1. SAY THE HONEST THING ABOUT SCALE. "I have not hired anyone, so I will answer the develop
+     half." Reframing beats inventing.
+
+  2. CHOOSE A STORY WITH RESISTANCE. Someone who disagreed, or was struggling, or did not want
+     the work. Helping someone who asked is easy and demonstrates less.
+
+  3. NAME WHAT THEY COULD NOT OR WOULD NOT DO at the start, specifically.
+
+  4. DESCRIBE WHAT YOU HANDED OVER - and make sure it was A PROBLEM, not a conclusion. This is
+     the move that produces ownership.
+
+  5. SAY WHAT THEY DID THAT YOU DID NOT SPECIFY. This is the evidence. If everything they did was
+     in your instructions, it was delegation.
+
+  6. NAME THE ARTEFACT. A document, a component, a presentation - something that exists with
+     their name on it.
+
+  7. SAY WHERE THEY WERE BETTER THAN YOU, if they were, and be specific about why. Vague
+     generosity reads as politeness; a specific comparison reads as observation.
+
+  8. GIVE THE RESULT, and include what THEY got out of it as well as the project.
+
+  9. PREPARE THE PROBE: "how do you know you developed them rather than just delegating?" Answer
+     with what they did without you.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Two people are building a shed, and one of them has done it before.
+
+The fast way is for the experienced one to do the difficult parts. The roof gets done properly,
+the shed goes up on time, and at the end of it there is one person who can build a shed and one
+person who watched somebody build a shed. Next time, exactly the same thing happens.
+
+A slightly better way is to explain each step as you do it. Now the second person understands the
+roof. They still have not built one.
+
+The thing that actually changes somebody looks different and feels worse at the time.
+
+The second person says the door should go on the other side. You think they are wrong - the
+prevailing wind is on that side. And instead of explaining why they are wrong, you ask: "what are
+you trying to solve by moving it?" And it turns out they are thinking about the path from the
+house, which you had not considered at all.
+
+So you say: the wind matters and so does the path - work out where the door should go.
+
+They go away and come back with the door where you would have put it, and a small overhanging
+lip you would never have thought of, which solves the wind problem AND keeps the short walk from
+the house. It is better than your answer. It is also theirs, and they will build the next shed
+without you.
+
+Three things about that are worth keeping.
+
+You handed over a PROBLEM rather than a verdict. A verdict can only be accepted or argued with. A
+problem can be owned.
+
+You accepted their answer when it turned out different from yours. That is the uncomfortable
+part, and skipping it converts the whole thing back into telling somebody what to do while
+sounding collaborative.
+
+And there is a moment when this is the wrong approach entirely. If the rain is coming in an hour
+and the roof is half on, you do not hand anyone a problem. You say where to stand and what to
+hold. Developing people costs time and it costs the risk of a worse answer - and it belongs where
+there is room for both.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the context and THE OTHER PERSON, named, with where they stood at the start.
+        DECIDES: whether there is somebody in this answer to develop. A story about your own work
+        with a teammate in the background does not qualify.
+
+    TASK (1 sentence)
+        HOLDS: what needed to happen, and what THEY could not or would not do yet.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats:
+            (a) THE RESISTANCE - why this was not simply helping someone who asked
+            (b) WHAT YOU HANDED OVER, and that it was a PROBLEM rather than a conclusion
+            (c) WHAT THEY DID THAT YOU DID NOT SPECIFY          <- the evidence
+            (d) WHERE YOU ACCEPTED THEIR VERSION over yours
+            (e) THE ARTEFACT with their name on it
+        DECIDES: everything. (b) is the mechanism, (c) is the proof, and (d) is the part that is
+        genuinely hard and therefore worth saying.
+
+    RESULT (2-3 sentences)
+        HOLDS: the project outcome AND what changed for them.
+        DECIDES: whether the person actually developed, or just the work got done.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would hand over sooner.
+
+--- THE THREE LEVELS, and how to tell which one your story is ---
+
+    DELEGATION      you transferred a TASK
+                    test: everything they did was in your instructions
+                    demonstrates: nothing about development
+
+    PERSUASION      you transferred a CONCLUSION
+                    test: they agree with you now
+                    demonstrates: that you can argue
+
+    DEVELOPMENT     you transferred OWNERSHIP
+                    test: THEY MADE A DECISION INSIDE IT THAT YOU DID NOT SPECIFY
+                    demonstrates: the principle
+
+--- THE MECHANISM ---
+
+    HAND OVER A PROBLEM, NOT AN ANSWER.
+
+        an answer  -> can only be accepted or rejected
+        a problem  -> can be owned, and the solution becomes theirs
+
+    In the capstone that was one question: "what would a version that keeps the commitment look
+    like?" - handed to the person who was objecting on exactly that ground.
+
+--- THE UNCOMFORTABLE PART ---
+
+    ACCEPTING A VERSION THAT IS NOT YOURS. If you correct it back to what you would have done,
+    the ownership never transferred and the person knows it. The cost is that it will sometimes
+    be worse; paying that knowingly is the behaviour being assessed.""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - AND THE EVIDENCE.
+
+THE PROMPT: "Tell me about a time you helped someone else grow, or raised the bar on your team."
+
+OPEN WITH THE HONEST REFRAME, then the story:
+
+    "I have not hired anyone, so I will take the develop half of that. The clearest example is a
+     teammate who started out arguing against my proposal and ended up owning a piece of the
+     project and presenting it better than I would have."
+
+THE ANSWER (about 110 seconds):
+
+    SITUATION: "Four-person final-year capstone, six weeks, fixed demo date with external
+    examiners. At week four I proposed cutting from twelve item categories to four, because a
+    full re-index took nine hours and we could test one change a day."
+
+    TASK: "Arun objected - twelve categories was what we had committed to in our proposal - and I
+    needed the change to happen without simply overruling him."
+
+    ACTION: "His objection was legitimate and I want to be clear about that. It WAS a real
+    commitment.
+
+    What I did not do was argue my case harder. Once I noticed we were optimising different
+    things - he was protecting a promise, I was protecting how fast we could learn - I asked him a
+    question instead: what would a version that keeps the commitment look like?
+
+    That handed him the problem rather than my conclusion. He came back with a staging plan - the
+    order the remaining eight categories would be added, and what each one needed. Nobody
+    specified that; it was not a task I gave him.
+
+    And when we presented to the panel, he presented it himself, and framed it as DELIBERATE
+    STAGING rather than as a shortfall. That framing was better than mine. I had been describing
+    it as 'we cut scope to protect iteration speed', which centres what was lost. His version
+    centres what was delivered and what comes next, and a panel hears those two very
+    differently."
+
+    RESULT: "We shipped on the demo date at 87% retrieval accuracy on 200 hand-labelled queries.
+    The staging plan was Arun's work and he presented it. What changed for him is that he went
+    from objecting to a decision to owning the part of it that faced the examiners."
+
+    REFLECTION: "I should have asked him that question on the first day of the disagreement
+    instead of the second. I spent most of a day arguing my conclusion before I thought to hand
+    over the problem."
+
+THE EVIDENCE, ready for the probe:
+
+    "How do you know you developed him rather than just delegating?"
+
+    "Two things I did not specify. The staging plan was not a task I gave him - I asked what a
+     version that kept the commitment would look like, and the plan is what he came back with. And
+     the framing as deliberate staging was entirely his; I had been calling it a scope cut. If
+     everything he did had been in my instructions, that would be delegation - the test is whether
+     he made decisions inside it that I did not make."
+
+THE THREE LEVELS, in case they push on the distinction:
+
+    IF I HAD SAID:  "we are cutting to four, please update the query path"
+                    -> delegation. He executes. Nothing changes about what he can do.
+
+    IF I HAD SAID:  "here is the arithmetic - ten experiments against eighty" and he agreed
+                    -> persuasion. He holds my opinion now. Still my plan.
+
+    WHAT I SAID:    "what would a version that keeps the commitment look like?"
+                    -> he owned the answer, and the answer was better than mine.
+
+THE INVERSION - when this would have been the wrong move:
+
+    "Three days before the demo, with something broken, I would not have handed anyone a problem -
+     I would have said what to do. Developing someone costs time and carries the risk of a worse
+     answer, and at week four there was room for both. On demo morning there would not have been."
+
+AND THE WEAK VERSIONS, for contrast:
+
+    "I helped a teammate who was struggling."         - unfalsifiable, and usually describes doing
+                                                        their work for them
+    "I explained my reasoning and they agreed."       - persuasion, presented as development
+    "I made sure the staging plan got written."       - quietly reclaims his work, and loses the
+                                                        only evidence the story had""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: under an hour, as an INDEX over the existing story. The work is
+identifying what the other person did that you DID NOT SPECIFY, because that is the entire
+evidence and it is easy to overlook when recalling your own project.
+
+WHAT DEVELOPING SOMEBODY COSTS IN PRACTICE:
+  - TIME. Handing over a problem is slower than handing over an answer, always.
+  - RISK. Their version may be worse. Sometimes it is.
+  - THE DISCOMFORT OF ACCEPTING A DIFFERENT ANSWER. This is the real cost, and correcting it back
+    is the common failure.
+  - IT DOES NOT BELONG UNDER ACUTE TIME PRESSURE. Say this if asked; knowing when not to do it is
+    part of knowing how.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns MAKING SOMEONE ELSE MORE EFFECTIVE, and the
+evidence that it happened. Its closest sibling is "STAR: Disagreeing with a decision then fully
+committing", which tells the same Arun events from the CONFLICT angle - the argument and how it
+resolved. This entry picks up where that one ends: what he owned afterwards.
+
+THE FOLLOW-UPS, with what to say:
+
+  - "How do you know you developed them rather than delegating?" THE probe. Answer with what they
+    did that you did not specify.
+  - "What did they get out of it?" Have an answer about THEM, not about the project.
+  - "Have you ever raised a bar and been resisted?" The Highest Standards half. The good answer
+    pairs the bar with the support - insisting on a standard while helping people reach it.
+  - "What if their version had been worse?" Say honestly that sometimes it is, that you accept it
+    when it is good enough, and that correcting it back would have undone the whole point. Then
+    name where the line is: if it would have failed the demo, you step in.
+  - "Have you interviewed anyone?" If no, say no. Then offer the closest real thing - reviewing
+    someone's code, assessing a group member's contribution, choosing between approaches on
+    quality grounds.
+
+THE #1 MISTAKE: telling a persuasion story as if it were development. "I explained my reasoning
+and they came round" shows you can argue, which is a different principle. Nobody's capability
+changed - they simply hold your opinion now. The test that separates them is whether the person
+did something afterwards, without you, that they would not have done before.
+
+RUNNER-UP: quietly reclaiming their work. "I made sure the plan got written" instead of "he wrote
+it, and his framing was better than mine". It feels like protecting your own answer and it
+destroys the only evidence the story contains - because on this principle, THEIR achievement is
+your evidence.
+
+TAKEAWAY: at student scale this principle is about developing rather than hiring - so hand
+somebody a PROBLEM instead of a conclusion, accept the version that comes back even when it is
+not yours, and point at the artefact with their name on it, because what they did without you is
+the only proof that anything changed.""",
 ]
 
 _EX_P0LP["STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)"] = [
