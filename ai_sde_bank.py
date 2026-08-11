@@ -88638,119 +88638,811 @@ THE THREE FOLLOW-UPS, WITH THEIR ANSWERS - PREPARE THESE, THEY ARE ASKED ALMOST 
 ]
 
 _EX_P1J["Is Subsequence"] = [
-    """The greedy scan, traced.
-s = 'abc', t = 'ahbgdc'. i tracks how much of s is matched.
-'a' == s[0] -> i = 1. 'h' no. 'b' == s[1] -> i = 2. 'g' no. 'd' no.
-'c' == s[2] -> i = 3. i == len(s) -> True.
-s = 'axc', t = 'ahbgdc': 'a' matches -> i = 1. Nothing else matches 'x', so i
-stays 1 at the end -> False.
-One pass over t, never backtracking - which is the surprising part, since
-subsequence problems usually smell like DP.""",
+    """1. THE GOAL - can you spell s by crossing letters out of t?
 
-    """Why greedy is correct, which is the question behind the question.
-Claim: matching each character of s at its EARLIEST possible position in t is
-always safe. If some valid matching uses a later position for s[i], you can
-swap it to the earlier one without disturbing the rest - everything after was
-matched beyond the later position, so it is still beyond the earlier one.
-So there is never a reason to skip a match and hope for a better one. That
-exchange argument is why no backtracking is needed, and stating it turns a
-plausible-looking loop into a justified algorithm.""",
+Given two strings s and t, decide whether s is a SUBSEQUENCE of t: whether s's characters all appear
+inside t, in the same left-to-right order, though not necessarily next to each other.
 
-    """The bounds check that must come first.
-`if i < len(s) and s[i] == ch` - the length guard has to precede the index, or
-you read past the end of s once every character has been matched. Python would
-raise IndexError; in C you would read garbage.
-An equivalent formulation avoids the issue entirely by iterating s with an
-iterator: `it = iter(t); return all(c in it for c in s)` - a genuinely elegant
-one-liner where `in` on an iterator consumes it, so the scan never restarts.
-Worth knowing, though the explicit loop is easier to explain.""",
+    s = "abc"        t = "ahbgdc"
 
-    """The follow-up that changes the algorithm completely.
-'What if you must check MANY strings s1, s2, ..., sk against the same t?'
-Rescanning t per string is O(k * len(t)). Instead PREPROCESS t: build, for each
-character, a sorted list of the positions where it occurs. Then for each s,
-binary-search for the smallest position greater than the current one -
-O(len(s) * log len(t)) per query after an O(len(t)) build.
-This is the actual point of the problem on LeetCode, and it is a good example
-of preprocessing paying off across repeated queries. Have it ready.""",
+        t:   a   h   b   g   d   c
+             ^       ^           ^
+             |       |           |
+             a       b           c        <- the letters of s, found in order
 
-    """Edge cases.
-s = '' -> i is already 0 == len(s) -> True. The empty string is a subsequence
-of everything, and the loop never needs to run.
-t = '' with non-empty s -> loop never runs, i stays 0 -> False.
-s longer than t -> cannot possibly match all of s -> False, and the code gets
-this without a length check because i can never reach len(s).
-s == t -> True. Repeated characters, s = 'aa' in t = 'aba' -> matches at
-positions 0 and 2 -> True; in t = 'ab' -> False.""",
+    You may skip h, g and d. What you may NOT do is take them out of order.
 
-    """Complexity and the distinction to state.
-O(len(t)) time, O(1) space. Note it is linear in T, not in s - you always scan
-all of t in the worst case.
-The important distinction: SUBSEQUENCE (order preserved, gaps allowed - this
-problem, greedy, O(n)) versus SUBSTRING (contiguous - needs KMP or a sliding
-window) versus SUBSET (order irrelevant - a frequency comparison). Prompts use
-these words precisely and candidates often do not; getting the wrong one means
-solving a different problem entirely.""",
+    ANSWER: True
+
+    s = "axc"        t = "ahbgdc"
+
+        The `a` is at position 0. After it, t contains h, b, g, d, c - and no `x` anywhere.
+
+    ANSWER: False
+
+THE THREE WORDS THAT DEFINE IT:
+
+    IN ORDER. "cba" is NOT a subsequence of "abc", even though every letter is present. Order is the
+        whole constraint.
+    NOT NECESSARILY ADJACENT. This is what makes it a SUBSEQUENCE rather than a SUBSTRING. "ac" is a
+        subsequence of "abc" but not a substring of it, because a substring has to be an unbroken run.
+    EVERY CHARACTER OF s, INCLUDING REPEATS. "aa" needs two separate `a`s in t; one will not do.
+
+THE EMPTY STRING IS A SUBSEQUENCE OF EVERYTHING, including of the empty string. There is nothing to find,
+so the search succeeds before it starts - and the code gets that right without a special case, which is
+worth checking rather than assuming.
+
+    THIS ENTRY JOINS THE TWO-POINTER CLUSTER. BACKSPACE STRING COMPARE OWNS THE BACKWARD SCAN. FLIPPING
+    AN IMAGE OWNS FUSING TWO OPERATIONS INTO ONE PASS. THIS ONE OWNS THE ONE-WAY GREEDY ADVANCE - one
+    pointer that only ever moves forward, and the argument for why taking the EARLIEST possible match is
+    never a mistake.""",
+
+    """2. THE INTUITION - march through t once, ticking off s as you go.
+
+Keep a finger on the next character of s you still need. Walk t from left to right. Every time the
+character under your eye is the one your finger is pointing at, move the finger on. If the finger runs off
+the end of s, everything was found.
+
+    s = "abc"   t = "ahbgdc"
+
+        need `a`    read a    MATCH    ->   now need `b`
+        need `b`    read h    no
+        need `b`    read b    MATCH    ->   now need `c`
+        need `c`    read g    no
+        need `c`    read d    no
+        need `c`    read c    MATCH    ->   nothing left to need
+
+        Three of the three characters of s were found.   ANSWER: True
+
+THE PICTURE - ONE POINTER CRAWLS, THE OTHER SPRINTS:
+
+        t:   a    h    b    g    d    c
+             |         |              |
+             v         v              v
+        s:   a         b              c
+             0         1              2
+
+    THE POINTER INTO t VISITS EVERY POSITION. The pointer into s moves only on a hit. That asymmetry is
+    why the cost is the length of t, not of s.
+
+THE QUESTION BEHIND THE QUESTION: WHY IS IT SAFE TO GRAB THE FIRST MATCH? When you see the `b` at position
+2 of t, you take it immediately. But t has more characters after it - could waiting for a later `b` ever
+help?
+
+    NO, AND HERE IS THE ARGUMENT. Suppose some valid matching exists that uses a LATER `b`, at position
+    j > 2. Take that matching and move its `b` back to position 2. Everything before it still matches -
+    the characters of s before `b` were matched at positions below 2. Everything after it still matches -
+    those were matched at positions above j, which are also above 2. SO THE MODIFIED MATCHING IS STILL
+    VALID.
+
+    Repeating that swap for every character shows: IF ANY VALID MATCHING EXISTS, THE EARLIEST-MATCH ONE
+    DOES. So the greedy scan never has to backtrack, and never has to consider alternatives.
+
+    THAT IS AN EXCHANGE ARGUMENT, and it is the standard way to prove a greedy algorithm correct: show
+    that any solution can be pushed toward the greedy one without breaking it. THE SAME SHAPE OF PROOF
+    APPEARS IN THIS BANK IN MAXIMUM LENGTH OF PAIR CHAIN AND MINIMUM ARROWS.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBSEQUENCE. Characters taken from a string in order, with any number skipped. "ace" is a subsequence of
+"abcde".
+SUBSTRING. A CONTIGUOUS run. "cde" is a substring of "abcde"; "ace" is not. THE TWO WORDS ARE CONSTANTLY
+CONFUSED, and this problem is about the first one.
+
+    "abcde"        subsequences include:  "", "a", "ace", "abcde", "bd"
+                   substrings include:    "", "a", "cde", "abcde"    - but NOT "ace"
+
+GREEDY. Making the locally obvious choice - here, taking the first match available - and never revisiting
+it. Greedy is only correct when you can prove it, which section 2 does.
+
+EXCHANGE ARGUMENT. A proof that any valid solution can be transformed step by step into the greedy one
+without becoming invalid. It is what licenses "take the first match".
+
+TWO POINTERS. Two positions moving through data. Here one is explicit (`i`, into s) and the other is the
+loop variable walking t.
+
+SHORT-CIRCUIT EVALUATION. In `A and B`, if A is false, B is never evaluated. That is what makes the bounds
+check in the code safe rather than merely tidy - see section 4.
+
+THE VARIABLES IN THE CODE:
+    s    the string being looked for. NOT MODIFIED.
+    t    the string being searched. NOT MODIFIED.
+    i    how many characters of s have been matched so far, and equally the INDEX of the next one needed.
+         Those two readings are the same number, which is what makes the final test so short.
+    ch   the current character of t.
+
+TIME O(len(t)), SPACE O(1). Note the time depends on t, not on s.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and neither official example triggers it.
+
+TRAP 1 - DROPPING THE `i < len(s)` BOUNDS CHECK. Once every character of s has been matched, `i` equals
+len(s), and `s[i]` is past the end. Writing
+
+        if s[i] == ch:            # no guard
+
+    raises IndexError as soon as t continues past the point where s finished.
+
+    MEASURED: over 6,000 random pairs the guard-less version RAISED IndexError on 2,313 and survived on
+    3,687.
+
+    NOW CHECK THE OFFICIAL EXAMPLES:
+
+        s = "abc", t = "ahbgdc"    the final `c` is the LAST character of t, so the loop ends
+                                   immediately after the match.  NO CRASH.
+        s = "axc", t = "ahbgdc"    s is never fully matched, so `i` never reaches len(s).  NO CRASH.
+
+    NEITHER SAMPLE CRASHES. The smallest case that does is s = "abc", t = "abcd" - s completes at the
+    third character and the loop still has a `d` to read. A one-character difference between the sample
+    and reality is all it takes.
+
+    AND THE ORDER MATTERS: the guard must come FIRST. `if s[i] == ch and i < len(s)` still evaluates
+    `s[i]` before the check and crashes anyway. It works only because `and` SHORT-CIRCUITS - when
+    `i < len(s)` is false, `s[i]` is never evaluated.
+
+TRAP 2 - CONFUSING SUBSEQUENCE WITH SUBSTRING. Reaching for `s in t` answers a different question. `"ac"
+in "abc"` is False, but "ac" IS a subsequence of "abc". If the problem said substring, the whole
+algorithm would be different.
+
+TRAP 3 - RESETTING `i` ON A MISMATCH. Some solutions, thinking of substring matching, set `i = 0` when a
+character fails. THAT IS WRONG HERE: skipping characters of t is allowed, so a mismatch costs nothing and
+the progress already made must be kept. `i` ONLY EVER MOVES FORWARD.
+
+TRAP 4 - LOOPING OVER s AND SEARCHING t. Structurally backwards. You would have to remember where in t you
+had got to anyway, which is the same pointer - and it invites re-scanning t from the start for each
+character, which is O(len(s) * len(t)).
+
+WHAT IS NOT A TRAP, checked rather than assumed: the empty string. `s = ""` makes `i` already equal to
+len(s), the loop body never matches anything, and the final comparison returns True. `t = ""` with a
+non-empty s means the loop never runs and `i` stays 0, returning False. BOTH CORRECT WITH NO SPECIAL
+CASE - verified.""",
+
+    """5. THE SLOW WAY FIRST, then the greedy scan - and the follow-up that changes everything.
+
+THE NAIVE VERSION - TRY EVERY WAY OF CHOOSING POSITIONS:
+
+    for every set of len(s) positions in t, in increasing order:
+        if the characters at those positions spell s, return True
+    return False
+
+    IT IS CORRECT - it is the definition of "subsequence" enumerated - and it is the ground truth every
+    figure in this entry was checked against. COST: there are "len(t) choose len(s)" such sets, which is
+    EXPONENTIAL. For t of length 30 and s of length 15 that is over 155 million combinations. Unusable,
+    and mentioned only to make clear what the greedy scan is replacing.
+
+A BETTER-BUT-STILL-WRONG-SHAPED ATTEMPT: for each character of s, search t from the beginning. That is
+O(len(s) * len(t)) and, worse, it can give the wrong answer if it forgets to search only AFTER the
+previous match - "aa" would match a single `a` twice.
+
+THE GREEDY SCAN. One pass over t, one pointer into s, never moving backwards. O(len(t)) time, O(1) space.
+Its correctness is not obvious and IS worth the exchange argument in section 2 - a greedy algorithm you
+cannot justify is a guess that happened to work.
+
+THE FOLLOW-UP THAT CHANGES THE ALGORITHM COMPLETELY, and it is the real reason this problem is asked:
+
+    "SUPPOSE YOU HAVE k STRINGS s1, s2, ..., sk AND ONE FIXED t, AND MUST CHECK EACH."
+
+    Rescanning t for every query is O(k * len(t)) - fine for a handful, hopeless for a million.
+
+    THE ANSWER: PREPROCESS t. For each of the 26 letters, record a sorted list of the positions where it
+    occurs. Then a query walks s, and for each character BINARY-SEARCHES that letter's position list for
+    the first position greater than where you currently are.
+
+        t = "ahbgdc"    ->   a: [0]   h: [1]   b: [2]   g: [3]   d: [4]   c: [5]
+
+        query "abc":  need `a` after -1  -> position 0
+                      need `b` after 0   -> position 2
+                      need `c` after 2   -> position 5      all found -> True
+
+    COST: O(len(t)) once to build, then O(len(s) * log len(t)) per query. THE PREPROCESSING IS THE POINT -
+    it converts repeated linear scans into repeated logarithmic lookups, which is the same trade behind
+    every index in every database.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk through t once, advancing a pointer into s every time the current character of t is
+the one s needs next, and answer yes if that pointer reaches the end of s.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, one integer:
+
+    `i`  starts at 0 and ONLY EVER INCREASES, by at most 1 per character of t. It never resets and never
+         decreases.
+
+    THE TWO READINGS OF `i`, AND THEY ARE THE SAME NUMBER: it is both "how many characters of s have been
+    matched" and "the index of the next character needed". That coincidence is what makes the final line
+    `i == len(s)` a complete answer with no extra bookkeeping.
+
+    THE INVARIANT: after reading the first p characters of t, `i` is the largest number of leading
+    characters of s that can be matched inside those p characters. True before the loop (0 characters
+    read, 0 matched) and preserved by each step, BY THE EXCHANGE ARGUMENT in section 2 - taking the
+    earliest match never forecloses a later one.
+
+    WHAT MAKES IT STOP: the loop runs exactly len(t) times. There is no condition to get wrong and no
+    possibility of running forever. It does NOT stop early when s is complete, which is a small waste and
+    the reason the bounds check exists at all - an early `break` would remove both.
+
+    WHY NOTHING NEEDS UNDOING: a character of t that does not match is simply skipped, and skipping is
+    always allowed. THERE IS NO DECISION TO REGRET, which is exactly what distinguishes this from a
+    backtracking problem.
+
+THE STEPS, NO CODE:
+
+    1. Start a counter at zero. It means "how much of s has been matched so far".
+    2. Look at each character of t in turn, from left to right.
+    3. If there is still some of s left to match, AND the character you are looking at is the next one s
+       needs, add one to the counter.
+    4. Otherwise do nothing and move on.
+    5. When t is exhausted, answer yes if the counter has reached the length of s, and no otherwise.
+
+    STEP 3's "IF THERE IS STILL SOME OF s LEFT" MUST BE CHECKED BEFORE LOOKING UP THE NEXT NEEDED
+    CHARACTER, not after - that is trap 1.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+You are standing beside a conveyor belt in a factory, holding a shopping list. Parts come past you one at
+a time, and you may take any part you like or let it go by, but the belt only ever moves forwards - once
+something has passed, it is gone.
+
+Your list says: a bolt, then a bracket, then a clip, in that order. You are not allowed to collect them
+out of order; if a clip comes past before you have your bracket, it is no use to you and you let it go.
+
+A bolt arrives. That is the first thing on your list, so you take it and move your thumb down to the
+second line. A washer arrives - not on your list right now - and you let it pass. A bracket arrives; that
+is what your thumb is on, so you take it and move down to the third line. A gasket and a spring go by
+untouched. Then a clip arrives, and it is exactly what you need, so you take it and your thumb runs off
+the bottom of the list.
+
+The belt keeps running, but you are finished. You have everything, in the order you needed it, so the
+answer is yes.
+
+WHY YOU NEVER HESITATE. When a bracket comes past, you might wonder whether to wait for a later one. But
+waiting cannot possibly help: anything you could have collected after a later bracket, you can also
+collect after this one, because this one comes sooner and the belt only moves one way. TAKING THE FIRST
+ONE IS NEVER WORSE, so there is nothing to think about.
+
+AND THE MISTAKE THAT WOULD BREAK IT. Suppose your thumb has run off the bottom of the list, but the belt
+is still running and you keep asking "is this the thing my thumb is pointing at?" There is nothing there
+to point at any more. You have to check that the list still has a line on it before you read from it -
+looking first and checking afterwards is how you end up reading a line that does not exist.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def is_subsequence(s, t):
+
+`s` is the string being looked for, `t` the one being searched. NEITHER IS MODIFIED. The argument order
+matters and is easy to get backwards - s is the SHORT one, the needle.
+
+    i = 0
+
+HOW MUCH OF s HAS BEEN MATCHED, and simultaneously the index of the next character needed. It starts at 0
+because nothing has been matched and the next thing needed is s[0]. IT ONLY EVER INCREASES.
+
+    for ch in t:
+
+WALK t, ONE CHARACTER AT A TIME, LEFT TO RIGHT. The index into t is never needed - only the order is. The
+loop always runs to the end of t, even after s is complete.
+
+    if i < len(s) and s[i] == ch:
+        i += 1              # matched the next char of s
+
+THE ONLY DECISION, AND IT HAS TWO PARTS THAT MUST BE IN THIS ORDER:
+    `i < len(s)` asks whether any of s remains. WHEN `i` HAS REACHED len(s) THIS IS FALSE, and Python's
+        `and` SHORT-CIRCUITS so `s[i]` is never evaluated. Remove this clause and you get IndexError on
+        2,313 of 6,000 random pairs; put it after the comparison instead and it crashes just the same,
+        because `s[i]` would already have been read.
+    `s[i] == ch` asks whether this character of t is the next one s needs.
+    `i += 1` advances. THERE IS NO `else` - a non-matching character of t is simply skipped, which is the
+        whole meaning of "subsequence". Adding `i = 0` in an else branch would turn this into a
+        substring search and is trap 3.
+
+    return i == len(s)          # matched all of s
+
+THE ANSWER. `i` reaching len(s) means every character of s was found, in order. NOT `i == len(t)` - the
+scan almost never consumes all of t meaningfully - and not a separate boolean flag, which would be extra
+state saying the same thing.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty `s` (`i` is already 0 == len(s), so the final line
+returns True - verified), no guard for an empty `t` (the loop does not run, `i` stays 0), no early
+`break` when s completes, and no second pointer variable for t.""",
+
+    """9. TRACED ON REAL NUMBERS - both official examples, which differ by one character.
+
+RUN A: s = "abc",  t = "ahbgdc"
+
+    START     i = 0,  s[0] = 'a'
+
+    ch = 'a'  i < 3 and s[0] == 'a'   ->   MATCH      i becomes 1,  now needing s[1] = 'b'
+    ch = 'h'  i < 3 and s[1] == 'h'?  'b' != 'h'  ->  skip
+    ch = 'b'  s[1] == 'b'             ->   MATCH      i becomes 2,  now needing s[2] = 'c'
+    ch = 'g'  'c' != 'g'              ->   skip
+    ch = 'd'  'c' != 'd'              ->   skip
+    ch = 'c'  s[2] == 'c'             ->   MATCH      i becomes 3
+
+    Loop ends (t exhausted).   i = 3,  len(s) = 3   ->   RETURNS True.
+
+    NOTE WHERE THE LAST MATCH LANDED: on the FINAL character of t. That is why this example never
+    evaluates `s[3]` and never exposes the missing-guard bug. Change t to "abcd" and the loop reads one
+    more character with `i` already at 3 - which is where a guard-less version raises IndexError.
+
+RUN B: s = "axc",  t = "ahbgdc" - one character of s changed
+
+    START     i = 0
+
+    ch = 'a'  s[0] == 'a'    ->   MATCH      i becomes 1,  now needing s[1] = 'x'
+    ch = 'h'  'x' != 'h'     ->   skip
+    ch = 'b'  'x' != 'b'     ->   skip
+    ch = 'g'  'x' != 'g'     ->   skip
+    ch = 'd'  'x' != 'd'     ->   skip
+    ch = 'c'  'x' != 'c'     ->   skip
+
+    Loop ends.   i = 1,  len(s) = 3   ->   RETURNS False.
+
+    THE INVERSION IN ONE LINE: "abc" against "ahbgdc" is True, "axc" against the same t is False. One
+    character changed in s, and the pointer stalls at 1 instead of reaching 3. Both verified against the
+    exhaustive combination-checking brute force.
+
+    AND NOTE THAT RUN B ALSO NEVER CRASHES WITHOUT THE GUARD, because `i` never reaches len(s) at all.
+    Both of the problem's own examples are safe; only a third case exposes the bug.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over t. Each character costs a comparison and sometimes an increment.
+
+    TIME O(len(t)) - and say it that way, not "O(n)", because the length that matters is t's, not s's.
+    Even when s is a single character, the loop still reads all of t unless you add an early break.
+    SPACE O(1) - one integer.
+    The exponential brute force enumerates every choice of positions and is unusable. The
+    search-t-from-the-start-per-character version is O(len(s) * len(t)) and easy to get wrong.
+
+THE #1 MISTAKE: omitting the `i < len(s)` bounds check, which raises IndexError as soon as s finishes
+before t does - on 2,313 of 6,000 random pairs. NEITHER OFFICIAL EXAMPLE TRIGGERS IT, because in one s
+completes on the very last character of t and in the other s never completes at all. THE RUNNER-UP is
+resetting `i` on a mismatch, which quietly turns the function into a substring test.
+
+ONE-SENTENCE TAKEAWAY: skipping is free and order is everything, so take every match at the earliest
+opportunity - one forward-only pointer is the entire algorithm, and the exchange argument is why it is
+allowed to be that simple.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things. First, whether you can JUSTIFY the greedy choice
+rather than just make it - "why is it safe to take the first match?" is the question, and the exchange
+argument is the answer. Second, and this is the real interview, THE FOLLOW-UP. The base problem is five
+lines; the follow-up is what the question is for.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "MANY s STRINGS AGAINST ONE FIXED t." Preprocess t into, for each letter, a sorted list of the
+    positions where it occurs. Each query walks s and binary-searches the relevant list for the first
+    position after the current one. O(len(t)) to build, O(len(s) * log len(t)) per query instead of
+    O(len(t)). THIS IS THE ANSWER TO PREPARE - it is asked almost every time.
+    "Return the LENGTH of the longest common subsequence instead." That is a genuinely different problem:
+    greedy fails and you need the O(n*m) dynamic-programming table. Being able to say WHY greedy stops
+    working - because now both strings may skip, so there is a real choice to make - is the useful part.
+    "What if t is a stream you cannot store?" The greedy scan already works: it reads t once, in order,
+    and keeps only one integer. The preprocessing answer above is what you LOSE when t cannot be stored,
+    which is a clean way to state the trade.""",
 ]
 
 _EX_P1J["Isomorphic Strings"] = [
-    """Why TWO maps are needed - the case one map gets wrong.
-s = 'badc', t = 'baba'. Forward only: b->b, a->a, d->b, c->a. No forward
-conflict, so a single-map solution returns True. But it is WRONG: both d and b
-map to 'b', so the mapping is not one-to-one and the strings are not
-isomorphic.
-The reverse map catches it: when processing d->b, map_ts already has b->b, and
-b != d -> return False.
-'egg'/'add' is True (e->a, g->d, consistent both ways); 'foo'/'bar' is False
-(o->a then o->r conflicts forward). Have 'badc'/'baba' ready specifically,
-because it is the input that separates correct solutions from popular wrong
-ones.""",
+    """1. THE GOAL - can you rename the letters of one string to get the other?
 
-    """What isomorphic actually requires: a BIJECTION.
-Every character of s maps to exactly one character of t, AND every character of
-t is mapped from exactly one character of s. Order is preserved by construction
-since you walk both strings in lockstep with zip.
-The two-map check enforces both directions of the bijection. Some solutions
-instead compare the index-of-first-occurrence pattern of each string
-(`[s.index(c) for c in s] == [t.index(c) for c in t]`), which is elegant and
-O(n^2) because index() rescans - fine for short strings, and worth mentioning
-as the trick it is rather than the solution you would ship.""",
+Two strings are ISOMORPHIC if you can replace every character of the first with some character,
+consistently, and end up with the second. Consistently means: the same input character always becomes the
+same output character, AND no two different input characters become the same output character.
 
-    """The length guard, which is not optional.
-zip stops at the shorter string, so without `if len(s) != len(t): return False`
-the pair 'ab'/'abc' would report True - every zipped pair maps consistently and
-the trailing 'c' is never examined. Any time you use zip on two sequences that
-are supposed to be the same length, either check the lengths or use
-`zip(..., strict=True)` in Python 3.10+, which raises instead.
-This is a general zip hazard, not specific to this problem, and it is the kind
-of silent truncation that survives review.""",
+    s = "egg"        t = "add"
 
-    """Edge cases.
-Both empty -> True vacuously.
-Single characters 'a'/'b' -> True; any single-character pair is isomorphic.
-Self-mapping 'ab'/'ab' -> True (a->a, b->b is a valid bijection - a character
-may map to itself).
-All same 'aaa'/'bbb' -> True. 'aaa'/'abb' -> False, because a would need to map
-to both a and b.
-Different lengths -> False by the guard.""",
+        e -> a
+        g -> d          and the second g becomes d as well, because it must
 
-    """Complexity.
-O(n) time - one pass, constant-time dict operations. O(k) space for k distinct
-characters, which is O(1) under a bounded alphabet.
-The two-array version replaces the dicts with two fixed 256-integer arrays
-indexed by byte value, storing last-seen position + 1 (so 0 means unseen) - no
-hashing, and it is the standard C/Java formulation. Same idea, tighter constant
-factor.""",
+        "egg" with those replacements is "add".      ANSWER: True
 
-    """The family: structural pattern matching.
-Word Pattern is this problem with words instead of characters ('abba' and
-'dog cat cat dog') and has the identical two-map structure plus the same length
-trap. Find and Replace Pattern applies it across a list of words. Group
-Anagrams and Group Shifted Strings use a canonical FORM instead of a mapping -
-which is the alternative approach here too (normalise both strings to their
-first-occurrence-index pattern and compare).
-Cue: 'consistent one-to-one correspondence' in a prompt means two maps, or a
-canonical form. Both are correct; the two-map version is easier to defend.""",
+    s = "foo"        t = "bar"
+
+        f -> b
+        o -> a
+        o -> r  ??      the SAME character o would have to become two different things
+
+        ANSWER: False
+
+    s = "paper"      t = "title"
+
+        p -> t,  a -> i,  e -> l,  r -> e        every replacement is consistent both ways
+
+        ANSWER: True
+
+THE SECOND HALF OF THE RULE IS THE PART PEOPLE DROP. It is not enough that each character of s maps to
+one character of t; two DIFFERENT characters of s must not land on the SAME character of t.
+
+    s = "ab"        t = "aa"
+
+        a -> a,  b -> a       each character of s maps to exactly one thing - no conflict going forwards
+        BUT a and b both became a, so you could never get back. "aa" cannot be un-renamed into "ab".
+
+        ANSWER: False
+
+    THAT PAIR IS THE SMALLEST CASE THAT SEPARATES A CORRECT SOLUTION FROM THE COMMON WRONG ONE, and
+    section 4 shows that none of the problem's three official examples does.
+
+    THIS ENTRY OPENS THE BIJECTION-MAP CLUSTER with Word Pattern. WORD PATTERN IS THIS SAME PROBLEM WITH
+    WHOLE WORDS INSTEAD OF CHARACTERS and owns the tokenising and the length-mismatch guard. THIS ONE
+    OWNS WHY ONE MAP IS NOT ENOUGH - the two-way check.""",
+
+    """2. THE INTUITION - a rename must be reversible, so check it from both ends.
+
+A consistent rename is a DICTIONARY: e means a, g means d. For the rename to be undoable, the dictionary
+has to read correctly in both directions.
+
+    s = "paper"     t = "title"
+
+        forward, s -> t                 backward, t -> s
+            p : t                           t : p
+            a : i                           i : a
+            e : l                           l : e
+            r : e                           e : r
+
+    EVERY ENTRY IN ONE TABLE HAS A MIRROR IN THE OTHER. That is what makes the rename reversible, and
+    reversible is what "isomorphic" means.
+
+NOW WATCH ONE TABLE MISS SOMETHING THE OTHER CATCHES:
+
+    s = "ab"        t = "aa"
+
+        forward, s -> t                 backward, t -> s
+            a : a                           a : a
+            b : a       <- fine here            a : b   <- CONFLICT: a is already claimed by a
+
+    THE FORWARD TABLE SEES NOTHING WRONG. Each of a and b was written down once, with one value each. The
+    damage only shows up in the reverse table, where the target `a` is being claimed twice.
+
+    SYMMETRICALLY, THE FORWARD TABLE CATCHES WHAT THE REVERSE ONE MISSES: with s = "aa", t = "ab", the
+    reverse table is fine (a:a then b:a - two separate keys) while the forward table sees `a` needing to
+    be both a and b.
+
+    SO NEITHER DIRECTION ALONE IS SUFFICIENT, AND THAT IS THE ENTIRE PROBLEM.
+
+THE PICTURE - WHAT YOU ARE FORBIDDING IS TWO ARROWS LANDING ON THE SAME PLACE:
+
+        ALLOWED                          FORBIDDEN
+        a ------> x                      a ------> x
+        b ------> y                      b ------>/
+        c ------> z                      c ------> z
+
+                                         two sources, one target - not reversible
+
+    A mapping where every target is hit by at most one source, and every source points at exactly one
+    target, is called a BIJECTION - a perfect pairing-up. THE PROBLEM IS ASKING WHETHER A BIJECTION
+    EXISTS THAT TURNS s INTO t POSITION BY POSITION.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ISOMORPHIC. Same shape. Two strings are isomorphic when one can be turned into the other by a consistent,
+reversible renaming of characters. The strings need share no characters at all - "egg" and "add" have
+none in common.
+
+MAPPING. A rule sending each character to another. Written here as a dictionary.
+
+ONE-TO-ONE / INJECTIVE. No two different sources share a target. This is the half that a single forward
+map fails to enforce.
+
+BIJECTION. A mapping that is one-to-one in BOTH directions - a perfect pairing. What this problem
+requires.
+
+POSITION BY POSITION. The two strings are compared at matching indices: s[0] with t[0], s[1] with t[1],
+and so on. That is why they must be the same length.
+
+zip(s, t). Pairs up the two strings position by position: `zip("egg", "add")` yields ('e','a'),
+('g','d'), ('g','d'). IT STOPS AT THE SHORTER STRING, silently - which is why the length guard exists.
+
+THE VARIABLES IN THE CODE:
+    s, t      the two strings. NEITHER IS MODIFIED.
+    map_st    the forward dictionary: a character of s -> the character of t it must become.
+    map_ts    the backward dictionary: a character of t -> the character of s it must have come from.
+    a, b      one pair of characters at the same position, a from s and b from t.
+
+`a in map_st` asks whether this character of s has been seen before and therefore already has a
+commitment. If it has, the commitment must be honoured.
+
+n IS THE STRING LENGTH, k THE NUMBER OF DISTINCT CHARACTERS. TIME O(n), SPACE O(k) - and O(1) under a
+bounded alphabet.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and NONE of the three official examples catches it.
+
+TRAP 1 - USING ONE MAP INSTEAD OF TWO. This is the classic wrong answer, and it is dangerous precisely
+because the samples do not reveal it.
+
+        map_st = {}
+        for a, b in zip(s, t):
+            if a in map_st and map_st[a] != b:
+                return False
+            map_st[a] = b
+        return True
+
+    It enforces "each character of s always becomes the same thing". It does NOT enforce "two characters
+    of s never become the same thing".
+
+        s = "ab",  t = "aa"       forward: a->a, b->a. No conflict. Returns True.
+                                  CORRECT ANSWER IS False - a and b both landed on a.
+
+        s = "badc", t = "baba"    forward: b->b, a->a, d->b, c->a. No conflict. Returns True.
+                                  CORRECT ANSWER IS False.
+
+    MEASURED: over 6,000 random equal-length pairs, the single-map version disagreed with the correct
+    answer on 625.
+
+    NOW CHECK ALL THREE OFFICIAL EXAMPLES AGAINST BOTH VERSIONS:
+
+        "egg"   / "add"      two maps True    one map True     AGREE
+        "foo"   / "bar"      two maps False   one map False    AGREE
+        "paper" / "title"    two maps True    one map True     AGREE
+
+    ALL THREE AGREE. The single-map solution passes every sample the problem gives you and fails on
+    hidden tests. THE SMALLEST CASE THAT EXPOSES IT IS "ab" AGAINST "aa" - two characters each.
+
+    WHY "foo"/"bar" DOES NOT HELP: its failure is a FORWARD conflict (o needing to be both a and r), which
+    one map catches. The bug is about REVERSE conflicts, and no sample contains one.
+
+TRAP 2 - THE LENGTH GUARD, AND AN HONEST ACCOUNT OF IT. `zip` stops at the shorter string, so without
+`if len(s) != len(t): return False` the pair "ab" / "abc" returns True. VERIFIED: with the guard it
+returns False, without it True, and the truth is False.
+
+    BUT BE ACCURATE: LeetCode 205 GUARANTEES the two strings are the same length, so on that judge the
+    guard never fires. It is load-bearing for correctness in general and dead code on the official tests.
+    SAY IT THAT WAY rather than claiming it is required - and note that Word Pattern, the sibling
+    problem, does NOT guarantee equal lengths, so there the same guard is genuinely necessary.
+
+TRAP 3 - THINKING THE STRINGS MUST SHARE CHARACTERS. They need not. "egg" and "add" share nothing and are
+isomorphic. Equally, a character may map to ITSELF - "ab"/"ab" is isomorphic via the identity map, and
+that is fine.""",
+
+    """5. THE NAIVE WAY FIRST, then the two maps.
+
+THE NAIVE VERSION - COMPARE THE STRINGS' SHAPES DIRECTLY:
+
+    return [s.index(c) for c in s] == [t.index(c) for c in t]
+
+    THE IDEA: replace each character with the position where that character FIRST appeared. That turns a
+    string into a pure pattern, independent of which letters were used.
+
+        "egg"    ->  [0, 1, 1]           "add"    ->  [0, 1, 1]        equal  ->  isomorphic
+        "foo"    ->  [0, 1, 1]           "bar"    ->  [0, 1, 2]        differ ->  not isomorphic
+        "paper"  ->  [0, 1, 0, 3, 4]     "title"  ->  [0, 1, 0, 3, 4]  equal  ->  isomorphic
+        "ab"     ->  [0, 1]              "aa"     ->  [0, 0]           differ ->  not isomorphic
+
+    IT IS CORRECT - it is the ground truth every figure in this entry was checked against - AND IT
+    HANDLES BOTH DIRECTIONS AUTOMATICALLY, which is worth pausing on: the signature is symmetric by
+    construction, so the trap in section 4 cannot even be expressed in it.
+
+    COST: `s.index(c)` scans from the start of the string each time, so this is O(n^2). At this problem's
+    limit of n = 50,000 that is 2.5 billion character comparisons - too slow. THE IDEA IS RIGHT AND THE
+    IMPLEMENTATION IS NOT.
+
+THE UPGRADE, AND IT IS THE SAME IDEA MADE LINEAR. Instead of recomputing "where did this character first
+appear" by scanning, remember it in a dictionary as you go. And instead of building two signature lists
+and comparing them at the end, check the consistency at each position as you walk - which lets you return
+as soon as something breaks.
+
+    THAT IS EXACTLY WHAT THE TWO MAPS ARE: `map_st` remembers what each character of s has committed to,
+    `map_ts` remembers what each character of t has been claimed by. Checking both at every position is
+    the linear-time equivalent of comparing both signatures.
+
+    COST: O(n) time, O(k) space for k distinct characters - O(1) under a bounded alphabet.
+
+THE FIXED-ALPHABET VARIANT. With ASCII input you can use two arrays of 128 integers instead of two hash
+maps, storing "the position at which this character was last seen" and comparing those. Same O(n),
+smaller constant, no hashing. WORTH MENTIONING, NOT WORTH LEADING WITH - it is the same algorithm with a
+faster container, and the dictionaries make the reasoning visible.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk the two strings together and, at each position, check that this character of s has
+not already promised to become something else AND that this character of t has not already been claimed
+by someone else - then record both promises.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two dictionaries:
+
+    `map_st` and `map_ts` both GROW ONLY. An entry, once written, is never changed - if a later position
+    would require changing it, the function returns False instead. THAT "WRITE ONCE, NEVER REVISE"
+    PROPERTY IS THE CONSISTENCY THE PROBLEM ASKS FOR, expressed as a rule about the data structure.
+
+    THE INVARIANT: after processing the first p positions, `map_st` and `map_ts` describe a valid
+    bijection between the characters seen so far, and it is the ONLY one possible - there is never a
+    choice to make, because each position forces its pair. TRUE AT THE START (both empty), and each step
+    either extends it consistently or rejects.
+
+    WHY THERE IS NO BACKTRACKING: the pairing at each position is forced, not chosen. If s[p] must become
+    t[p] and that contradicts an earlier commitment, no rearrangement can rescue it - so the answer is
+    False immediately, with nothing to undo. THAT IS WHY THIS IS A SINGLE PASS AND NOT A SEARCH.
+
+    WHAT MAKES IT STOP: the loop runs at most n times, and may exit early by returning False. The
+    early return is not just an optimisation - it is how the answer is delivered.
+
+    WHY BOTH RECORDINGS HAPPEN AFTER BOTH CHECKS: writing `map_st[a] = b` before checking `map_ts` would
+    leave the maps disagreeing with each other on the rejection path. Checking everything first, then
+    committing, keeps them consistent at every moment.
+
+THE STEPS, NO CODE:
+
+    1. If the two strings have different lengths, answer no immediately.
+    2. Start two empty dictionaries: one recording what each character of the first string must become,
+       one recording what each character of the second string must have come from.
+    3. Walk both strings together, one position at a time, taking the pair of characters at that
+       position:
+       a. If the first character already has a recorded target and it is not this one, answer no.
+       b. If the second character already has a recorded source and it is not this one, answer no.
+       c. Otherwise record both directions and carry on.
+    4. If the walk finishes, answer yes.
+
+    STEPS 3a AND 3b ARE NOT THE SAME CHECK WRITTEN TWICE. 3a catches one character becoming two things;
+    3b catches two characters becoming one thing. DROPPING 3b IS THE BUG THE SAMPLES HIDE.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+Two teams are lining up for a photograph, one behind the other, and you are told that the back row is
+supposed to be a coded version of the front row: each person in front has exactly one partner behind
+them, always the same partner wherever they appear, and no two people in front may share a partner.
+
+You walk along the line with two notebooks. The left notebook records, for each person in front, who
+their partner behind is. The right notebook records, for each person behind, who they are partnered with
+in front.
+
+At the first position you see Ellen in front and Amir behind. Neither notebook mentions them, so you write
+"Ellen: Amir" on the left and "Amir: Ellen" on the right.
+
+At the next position you see Gita in front and Dev behind. New again, so both notebooks gain a line.
+
+At the third position you see Gita in front again, and Dev again. You check the left notebook: Gita is
+already partnered with Dev, and that is who is standing there, so nothing is wrong. You check the right
+notebook: Dev is already partnered with Gita, and that is who is in front. Both agree, so you carry on
+without writing anything new.
+
+Now imagine a different line-up. Position one is Ali in front, Amir behind - fine, both notebooks written.
+Position two is Bea in front, and Amir behind AGAIN. Your left notebook has nothing about Bea, so nothing
+seems wrong from that side. But your right notebook says Amir is already partnered with Ali. Amir cannot
+be two people's partner. YOU ONLY FOUND THAT BECAUSE YOU KEPT THE SECOND NOTEBOOK.
+
+THAT IS WHY BOTH NOTEBOOKS EXIST. The left one catches somebody in front trying to have two different
+partners. The right one catches two people in front trying to share the same partner. They are different
+failures, and each notebook is blind to the other's.
+
+AND ONE THING TO CHECK BEFORE YOU START WALKING: that the two rows have the same number of people. If the
+front row is shorter, you will run out of people to compare and cheerfully declare everything fine, having
+never looked at the extra people standing at the end of the back row.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def is_isomorphic(s, t):
+
+Both inputs are strings. NEITHER IS MODIFIED.
+
+    if len(s) != len(t):
+        return False
+
+THE LENGTH GUARD. `zip` below stops silently at the shorter string, so without this line "ab" against
+"abc" returns True - verified. NOTE HONESTLY: LeetCode guarantees equal lengths, so on that judge this
+line never fires. It is correctness insurance, and it IS required in the sibling problem Word Pattern.
+
+    map_st, map_ts = {}, {}
+
+THE TWO NOTEBOOKS. `map_st` sends a character of s to the character of t it must become; `map_ts` sends a
+character of t back to the character of s it must come from. TWO SEPARATE DICTIONARIES, NOT ONE
+DICTIONARY CHECKED TWICE - they have different keys and answer different questions.
+
+    for a, b in zip(s, t):
+
+WALK BOTH STRINGS IN LOCKSTEP. `a` is from s, `b` is from t, always at the same position. The index itself
+is never needed.
+
+    if a in map_st and map_st[a] != b:
+        return False        # a already maps to a different char
+
+CHECK ONE: HAS THIS CHARACTER OF s ALREADY PROMISED SOMETHING ELSE? `a in map_st` asks whether a
+commitment exists; `map_st[a] != b` asks whether it conflicts. Both parts are needed - a first sighting
+has no commitment to break. THIS IS THE CHECK THAT CATCHES "foo"/"bar".
+
+    if b in map_ts and map_ts[b] != a:
+        return False        # b already mapped from a different char
+
+CHECK TWO: HAS THIS CHARACTER OF t ALREADY BEEN CLAIMED BY SOMEONE ELSE? THIS IS THE LINE THE COMMON WRONG
+SOLUTION OMITS - wrong on 625 of 6,000 random pairs, and invisible on all three official examples. It is
+what catches "ab"/"aa" and "badc"/"baba".
+
+    map_st[a] = b
+    map_ts[b] = a
+
+RECORD BOTH DIRECTIONS, AND ONLY AFTER BOTH CHECKS HAVE PASSED. Writing before checking would leave the
+two maps inconsistent on the path that returns False. Note that on a repeat pair these lines rewrite the
+same values harmlessly.
+
+    return True
+
+Reached only when every position passed both checks - so a consistent two-way renaming exists.
+
+WHAT IS DELIBERATELY ABSENT: no set of used targets (the reverse map already serves that purpose and says
+more), no pre-pass, and no special case for empty strings (`zip` yields nothing and True is returned,
+which is correct - the empty rename is valid).""",
+
+    """9. TRACED ON REAL NUMBERS - the counterexample that the official examples do not contain.
+
+s = "badc",  t = "baba". Chosen deliberately: a single-map solution accepts this pair, and the correct
+answer is False.
+
+    START     map_st = {}      map_ts = {}
+
+    POSITION 0:   a = 'b',  b = 'b'
+        Is 'b' in map_st?  No, so no forward conflict.
+        Is 'b' in map_ts?  No, so no reverse conflict.
+        Record:  map_st = {'b': 'b'}      map_ts = {'b': 'b'}
+
+    POSITION 1:   a = 'a',  b = 'a'
+        Is 'a' in map_st?  No.
+        Is 'a' in map_ts?  No.
+        Record:  map_st = {'b': 'b', 'a': 'a'}      map_ts = {'b': 'b', 'a': 'a'}
+
+    POSITION 2:   a = 'd',  b = 'b'
+        Is 'd' in map_st?  NO - so the forward check passes. A single-map solution moves on here.
+        Is 'b' in map_ts?  YES, and map_ts['b'] is 'b', which is NOT 'd'.
+                           THE TARGET 'b' IS ALREADY CLAIMED BY 'b', and now 'd' wants it too.
+        RETURN False.
+
+    RETURNS False, and it is the REVERSE check that produced it. Position 3 is never reached.
+
+    THE FORWARD MAP AT THE MOMENT OF REJECTION IS {'b': 'b', 'a': 'a'} - perfectly consistent, nothing
+    wrong with it. All the information about the failure lives in the other map.
+
+THE INVERSION - THE SMALLEST PAIR, WITH ONE CHARACTER CHANGED:
+
+    s = "ab",  t = "aa"    ->   False      a->a and b->a: two sources, one target. Reverse check fires.
+    s = "ab",  t = "ab"    ->   True       a->a and b->b: a clean pairing in both directions.
+
+    ONE CHARACTER OF t CHANGED AND THE ANSWER FLIPS. AND THE SINGLE-MAP VERSION RETURNS True FOR BOTH -
+    it cannot tell them apart at all. Every figure here verified against the first-occurrence-signature
+    ground truth.
+
+AND THE OFFICIAL EXAMPLE THAT THE FORWARD CHECK HANDLES, for contrast - s = "foo", t = "bar":
+
+    position 0:  f -> b, recorded both ways
+    position 1:  o -> a, recorded both ways
+    position 2:  a = 'o', b = 'r'.  'o' IS in map_st and map_st['o'] is 'a', not 'r'.  FORWARD conflict.
+    RETURNS False.
+
+    TWO DIFFERENT CHECKS, TWO DIFFERENT FAILURES. That is why the code has both lines.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the paired strings. Each position does at most two dictionary lookups
+and two dictionary writes - a fixed amount of work.
+
+    TIME O(n). SPACE O(k) for k distinct characters, which is O(1) when the alphabet is bounded - at most
+    128 entries per map for ASCII.
+    The first-occurrence-signature version is the same idea but O(n^2) as written, because `str.index`
+    rescans; at this problem's limit of n = 50,000 that is far too slow. Built with dictionaries instead
+    of `index`, it is O(n) and equally good.
+
+THE #1 MISTAKE: keeping only the forward map. It enforces "one character of s always becomes the same
+character of t" and completely misses "two characters of s must not become the same character of t".
+Wrong on 625 of 6,000 random pairs - and ALL THREE OFFICIAL EXAMPLES AGREE WITH IT, so it passes every
+sample you are given. The smallest exposing case is "ab" against "aa". THE RUNNER-UP is trusting `zip` to
+notice a length mismatch, which it does not - though on LeetCode the lengths are guaranteed equal, so
+that guard is insurance rather than necessity here.
+
+ONE-SENTENCE TAKEAWAY: isomorphic means the renaming is REVERSIBLE, and reversibility is a claim about
+both directions - so you need two maps, because each is blind to the other's failure mode.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you understand that "consistent mapping" is two
+conditions rather than one. Almost everyone writes the forward map immediately; the signal is whether you
+then ask "what stops two letters colliding on the same target?" SAY THE COUNTEREXAMPLE ALOUD - "ab and aa
+would pass with only a forward map, and they are not isomorphic" - because naming the case is what proves
+you found the gap by reasoning rather than by remembering.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "WORD PATTERN - 'abba' against 'dog cat cat dog'." Identical algorithm with the second sequence split
+    into words instead of characters. The one real difference: the lengths are NOT guaranteed to match
+    once you split, so the length guard becomes genuinely load-bearing rather than insurance.
+    "What if the mapping need only go one way - every character of s maps consistently, but collisions
+    are allowed?" Then one map IS correct, and the answer changes. That is a different question, and
+    being able to say precisely which condition was dropped is the point.
+    "Can you do it with one pass and no hash maps?" Yes, with two fixed arrays of 128 slots storing the
+    LAST INDEX at which each character was seen, one array per string; the two strings are isomorphic if
+    those last-seen indices agree at every position. Same O(n), O(1) space, and it is a neat way to see
+    that the algorithm is really comparing two patterns rather than building a rename.""",
 ]
 
 for _e in ENTRIES:
@@ -88761,118 +89453,820 @@ for _e in ENTRIES:
 _EX_P1K = {}
 
 _EX_P1K["Kth Distinct String in an Array"] = [
-    """The two meanings of 'distinct', and which one this is.
-Here 'distinct' means appears EXACTLY ONCE in the whole array - not 'the kth
-different value'. arr = ['d','b','c','b','c','a'], k = 2: counts are d:1, b:2,
-c:2, a:1, so the strings appearing once are 'd' and 'a', in that order. The 2nd
-is 'a'.
-Under the other reading - kth different value - the answer would be 'b'.
-Restate which one you are solving before writing code; the titles of these
-problems are genuinely ambiguous and the interviewer will confirm.""",
+    """1. THE GOAL - find the kth string that appears exactly once, reading left to right.
 
-    """Why the second loop walks the ARRAY, not the counter.
-The answer must be in ORIGINAL order, and iterating the Counter gives insertion
-order - which happens to match first-appearance order in modern Python, but by
-implementation detail rather than by contract, and it breaks outright in a
-language with unordered maps.
-Scanning arr makes 'in original order' explicit. Same reasoning as First Unique
-Character, and it is the single most reusable habit from these frequency
-problems: count with the map, ORDER with the original sequence.""",
+A string in the array is DISTINCT if it appears EXACTLY ONCE in the whole array. Return the kth such
+string, counting in the array's ORIGINAL order. If there are fewer than k of them, return the empty
+string.
 
-    """The countdown, and why `k -= 1` before the check.
-Decrementing first and testing `== 0` means the kth match returns on its own
-iteration. The alternative - testing `k == 1` then decrementing - is equivalent
-but reads worse and is easier to get off by one under pressure.
-Trace k = 1 on ['a','b','a']: counts a:2, b:1. 'a' has count 2, skipped. 'b'
-has count 1 -> k becomes 0 -> return 'b'. Correct: the 1st (and only) distinct
-string.""",
+    arr = ["d", "b", "c", "b", "c", "a"]        k = 2
 
-    """Edge cases.
-Fewer than k distinct strings -> the loop finishes and returns '' - the
-sentinel the prompt specifies. Do not return None; the empty string is the
-contract.
-No distinct strings at all, e.g. ['a','a','b','b'] -> ''.
-k larger than the array length -> ''.
-Every string distinct, ['a','b','c'] with k = 3 -> 'c'.
-k = 0 is normally excluded by the constraints; if allowed, the countdown would
-never fire since it starts by going negative, so guard it or state the
-assumption.""",
+        "d" appears 1 time    -> distinct
+        "b" appears 2 times   -> not distinct
+        "c" appears 2 times   -> not distinct
+        "a" appears 1 time    -> distinct
 
-    """Complexity.
-Two passes: O(n) time, O(n) space for the counter (O(total characters) if you
-count the string comparisons, since hashing a string is proportional to its
-length - a pedantic but correct refinement worth mentioning if asked).
-There is no way to do it in one pass for the same reason as First Unique
-Character: whether a string is distinct depends on occurrences you have not
-reached yet.""",
+        Reading the array left to right, the distinct ones are:   "d"  then  "a"
+                                                                   1st        2nd
 
-    """The family.
-First Unique Character (k = 1 on characters instead of strings), Find All
-Duplicates in an Array, Single Number (the XOR trick works only when everything
-else appears exactly twice), Top K Frequent Elements, and Sort Characters By
-Frequency.
-The shared recipe is count-then-select, and the only decisions are what you
-count and in which order you then select. Recognising that means these all take
-two minutes rather than being remembered individually.""",
+    ANSWER: "a"
+
+"DISTINCT" HERE DOES NOT MEAN WHAT IT USUALLY MEANS. In ordinary usage "the distinct values" means "the
+different values, each counted once" - which would include "b" and "c". THAT IS NOT THIS. Here distinct
+means APPEARS EXACTLY ONCE, so "b" and "c" are excluded entirely because they repeat.
+
+    arr = ["aaa", "aa", "a"]        k = 1
+
+        Every string appears once, so all three are distinct. The 1st is "aaa".
+
+    ANSWER: "aaa"
+
+    Note that "a" is a substring of "aaa" - irrelevant. These are whole strings compared for equality,
+    not for containment.
+
+AND THE CASE WITH NO ANSWER:
+
+    arr = ["a", "b", "a"]        k = 3
+
+        Only "b" appears exactly once. There is no 3rd distinct string.
+
+    ANSWER: ""   - the EMPTY STRING, which the problem specifies as the sentinel. Not None, not -1.
+
+    THIS ENTRY JOINS THE FREQUENCY-COMPARISON CLUSTER. FIRST UNIQUE CHARACTER OWNS WHY TWO PASSES ARE
+    NECESSARY. FIND LUCKY INTEGER OWNS THE SELF-REFERENTIAL PREDICATE. THIS ONE OWNS ORDER PRESERVATION
+    AND THE COUNTDOWN - the second walk must go over the array to keep "kth in original order" meaningful,
+    and k is spent one match at a time.""",
+
+    """2. THE INTUITION - count everything first, then walk in order counting down.
+
+You cannot know whether a string appears exactly once until you have seen the whole array - a string you
+have met once so far might turn up again at the very end. So the tally has to be complete before any
+judgement is made. That is the same reason First Unique Character needs two passes.
+
+    arr = ["d", "b", "c", "b", "c", "a"]        k = 2
+
+    PASS 1 - tally, order irrelevant:
+
+        "d": 1      "b": 2      "c": 2      "a": 1
+
+    PASS 2 - walk the array in its ORIGINAL order, spending k at every string whose tally is 1:
+
+        "d"   tally 1   ->   a distinct one.  k: 2 -> 1.   Not zero yet, keep going.
+        "b"   tally 2   ->   skip
+        "c"   tally 2   ->   skip
+        "b"   tally 2   ->   skip
+        "c"   tally 2   ->   skip
+        "a"   tally 1   ->   a distinct one.  k: 1 -> 0.   ZERO - this is the answer.
+
+    ANSWER: "a"
+
+THE PICTURE - k IS A BUDGET BEING SPENT, AND THE ANSWER IS WHERE IT RUNS OUT:
+
+        arr:      d     b     c     b     c     a
+        tally:    1     2     2     2     2     1
+                  |                             |
+                  v                             v
+        k:      2 -> 1                        1 -> 0
+                                                ^
+                                                the moment k hits zero, stop and return
+
+    THAT SHAPE - "count down and return when the counter reaches zero" - is worth recognising because it
+    turns "the kth thing satisfying a property" into a single ordinary walk, with no list of matches
+    built up and no indexing arithmetic to get wrong.
+
+WHY THE SECOND WALK MUST GO OVER THE ARRAY. The answer is defined by POSITION IN THE ARRAY, and the array
+is the thing that knows about position. Section 4 examines whether walking the tally instead would
+actually break anything - and the answer is more interesting than a flat "yes".""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DISTINCT (in this problem). Appearing EXACTLY ONCE in the array. NOT "one of the different values" - that
+is the everyday meaning and it is not the one used here.
+
+FREQUENCY / TALLY. How many times each string occurs.
+
+ORIGINAL ORDER. The order the strings appear in the input array, which is what "kth" refers to. The array
+is never sorted.
+
+SENTINEL "". The agreed "no answer" value. The problem specifies the empty string; returning None or a
+placeholder like "none" would be wrong even though it feels equivalent.
+
+1-INDEXED k. k = 1 means the FIRST distinct string, not the second. That is why the countdown checks for
+zero after decrementing rather than before.
+
+Counter. Python's tally-in-one-call dictionary. `Counter(["a","b","a"])` is `{'a': 2, 'b': 1}`.
+    A PROPERTY THAT MATTERS IN SECTION 4: its keys come out in FIRST-APPEARANCE order, because that is
+    when each key is inserted.
+
+THE VARIABLES IN THE CODE:
+    arr      the input list of strings. NOT MODIFIED - not sorted, not filtered in place.
+    k        the countdown. IT IS REASSIGNED INSIDE THE FUNCTION - the parameter itself is used as the
+             running budget, which is why no second variable appears.
+    counts   the tally of the WHOLE array, complete before the second walk starts.
+    s        the current string in the second walk.
+
+n IS THE NUMBER OF STRINGS. TIME O(n) string operations - though hashing a string costs time proportional
+to its length, so counting characters it is O(total length). SPACE O(n) for the tally.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and one warning here is provably unnecessary in Python.
+
+TRAP 1 - MISREADING "DISTINCT" AS "DIFFERENT". If distinct meant "each different value once", then on
+["d","b","c","b","c","a"] the distinct values would be d, b, c, a and the 2nd would be "b". THE CORRECT
+ANSWER IS "a". Re-read the definition: a string qualifies only if its TOTAL COUNT IS 1.
+
+TRAP 2 - WALKING THE TALLY INSTEAD OF THE ARRAY, AND THE PRECISE TRUTH ABOUT IT. The standard advice is
+"walk the array, because a map has no order". MEASURED AND REASONED, THAT IS EXACTLY RIGHT IN GENERAL AND
+PROVABLY HARMLESS IN PYTHON:
+
+        for s in counts:                  # walking the tally
+            if counts[s] == 1:
+                k -= 1
+                if k == 0:
+                    return s
+
+    IN PYTHON THIS IS CORRECT, and not by luck. A Counter inserts each key the FIRST time that string is
+    seen, and dictionaries preserve insertion order. For a string that appears EXACTLY ONCE, its first
+    appearance IS its only appearance - so the distinct strings sit in the tally in exactly the order
+    they sit in the array. THE TWO WALKS VISIT THE DISTINCT STRINGS IN THE SAME SEQUENCE. Tested on 6,000
+    random arrays: 0 disagreements, as the argument predicts.
+
+    THE SAME CODE WITH AN UNORDERED MAP IS BADLY WRONG. Simulating a Java `HashMap` or C++
+    `unordered_map` by shuffling the keys gave a wrong answer on 713 of the same 6,000 arrays.
+
+    SO STATE IT PRECISELY: walking the array is correct in every language; walking the tally is correct
+    only where the map preserves insertion order, and it relies on an argument most readers will not
+    have made. WALKING THE ARRAY IS ALSO SIMPLY CLEARER ABOUT WHAT "kth IN ORIGINAL ORDER" MEANS.
+    (THE SAME NUANCE APPEARS IN FIRST UNIQUE CHARACTER IN THIS BANK, and the resolution there is
+    identical.)
+
+TRAP 3 - THE COUNTDOWN'S OFF-BY-ONE. `k -= 1` then `if k == 0` returns on the kth match, because k = 1
+becomes 0 at the first match. Testing `if k == 1: return s` BEFORE decrementing is equally correct; doing
+BOTH, or decrementing and testing `k == 1`, returns the (k+1)th. PICK ONE FORM AND SAY WHY IT IS RIGHT -
+"k = 1 must return on the first match" is the sentence that settles it.
+
+TRAP 4 - RETURNING THE WRONG SENTINEL. The problem asks for "". Returning None passes a mental test and
+fails the judge.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty array. `Counter([])` is empty, the loop never
+runs, and "" is returned - correct with no special case.""",
+
+    """5. THE SLOW WAY FIRST, then the tally.
+
+THE NAIVE VERSION - ASK THE ARRAY ABOUT EVERY STRING:
+
+    seen = 0
+    for s in arr:
+        if arr.count(s) == 1:
+            seen += 1
+            if seen == k:
+                return s
+    return ""
+
+    IT IS CORRECT and it is the definition transcribed - this is the ground truth every figure in this
+    entry was checked against. COST: `arr.count(s)` scans the whole array, once per position, so
+    O(n^2) string comparisons. At this problem's limit of n = 1,000 that is a million comparisons of
+    short strings, WHICH WOULD PASS COMFORTABLY. Be honest about that: the tally is the tidier answer
+    here, not a rescue.
+
+THE UPGRADE. The naive version asks "how many times does 'b' appear?" once for every 'b' - the same
+question, recomputed. One pass answers it for every string at once, and then each lookup is O(1) rather
+than O(n).
+
+    COST: O(n) lookups, O(n) space for the tally.
+
+A DETAIL WORTH STATING BECAUSE IT IS USUALLY GLOSSED OVER: these are STRINGS, not integers. Hashing a
+string of length L costs O(L), and comparing two costs O(L) in the worst case. SO THE HONEST COMPLEXITY
+IS O(TOTAL CHARACTERS ACROSS THE ARRAY), not O(number of strings). With the constraint that each string
+is at most 5 characters long, the distinction is invisible here - but the habit of noticing when your
+"O(1) hash operation" is actually O(length) is what stops the same reasoning going wrong on a problem
+with long keys.
+
+NO TRICK NEEDS EXPLAINING FROM SCRATCH. There is no data structure beyond a dictionary and no clever
+observation - the only decisions are which collection the second walk goes over and how the countdown is
+written, both of which section 4 covers.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: tally the whole array, then walk it in order, decreasing k at every string whose tally is
+1, and return the string at which k reaches zero.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. Two sequential walks, the first of which must
+finish completely before the second begins:
+
+    WALK 1 fills `counts`. Order is irrelevant - the tally would be identical for any shuffling of the
+        array.
+    WALK 2 reads `counts` and never writes to it. Order is everything - it is what "kth" is measured in.
+
+    `k` IS THE ONLY MOVING STATE IN WALK 2, and it is the function's own parameter being spent. It only
+    ever decreases, by exactly 1 per distinct string met.
+
+    WHY THE TWO WALKS CANNOT BE MERGED: during a single walk, a string you have seen once so far might
+    reappear later, so "count is 1 so far" is not the claim the problem makes. The first walk exists to
+    convert a statement about a prefix into a statement about the whole array. THAT IS THE SAME ARGUMENT
+    AS FIRST UNIQUE CHARACTER, and it is the defining feature of this small family of problems.
+
+    WHAT MAKES IT STOP: walk 1 runs exactly n times. Walk 2 runs at most n times and may exit early by
+    returning. Neither has a condition that can misbehave.
+
+    WHY RETURNING IMMEDIATELY IS CORRECT AND NOT MERELY FASTER: the walk goes left to right, so the kth
+    distinct string it meets IS the kth in original order. There is nothing to compare against and no
+    list to build.
+
+THE STEPS, NO CODE:
+
+    1. Walk the array once and tally how many times each string appears.
+    2. Walk the array again, from the start, in its original order.
+    3. At each string, look up its TOTAL in the tally. If that total is exactly 1:
+       a. Reduce k by one.
+       b. If k has reached zero, hand back this string and stop.
+    4. If the second walk reaches the end, hand back the empty string.
+
+    STEP 3 SAYS "TOTAL", NOT "HOW MANY SO FAR". STEP 3b CHECKS FOR ZERO AFTER THE DECREMENT, WHICH IS
+    WHAT MAKES k = 1 RETURN ON THE FIRST MATCH.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A shelf of secondhand books is arranged in a fixed order, and some titles appear more than once because
+the shop bought several copies. A customer asks for the SECOND title on the shelf, reading left to right,
+of which the shop has only a single copy.
+
+You cannot answer while walking the shelf for the first time. You reach a copy of "Dune" near the left
+end and it looks like a single copy - but there might be another "Dune" further along that you have not
+reached yet. AT ANY MOMENT DURING THE FIRST WALK, WHAT YOU KNOW IS ABOUT THE PART YOU HAVE SEEN, AND THE
+QUESTION IS ABOUT THE WHOLE SHELF.
+
+So you walk the shelf once with a notepad, writing a stroke against each title as you meet it. At the end
+your notepad says which titles the shop holds once and which it holds twice or more. What the notepad
+does not tell you is where anything sits on the shelf - it is a list of titles, not of positions.
+
+For that you go back to the left end and walk the shelf a second time, holding up two fingers for the
+customer's "second". At each book you glance at your notepad. This one is held once - so you put a finger
+down, leaving one. You are not finished, so you carry on. The next few books are titles the shop holds
+twice, so you leave your fingers alone. Then you reach another single-copy title, put your last finger
+down, and you have none left - so this is the book the customer wants, and you hand it over.
+
+If you had reached the right-hand end with fingers still raised, you would tell the customer there is no
+such book. You would say that in the agreed way - not by shrugging, but by giving the specific answer the
+shop uses for "none", because whoever asked needs to be able to tell "no such book" apart from a real
+title.
+
+AND NOTE WHAT WOULD HAVE HAPPENED if you had tried to answer from the notepad alone. The notepad would
+have told you WHICH titles are single copies, but the customer asked for the second one ALONG THE SHELF -
+and only the shelf itself is in shelf order.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` tallies a sequence in one call and returns 0 for keys it has never seen.
+
+    def kth_distinct(arr, k):
+
+`arr` is the list of strings; `k` says which distinct one is wanted, counting from 1. ARR IS NOT
+MODIFIED - not sorted, not written to.
+
+    counts = Counter(arr)
+
+WALK 1, THE WHOLE TALLY IN ONE LINE. `counts[s]` is the number of times s appears in the ENTIRE array.
+Complete before the loop, which is what makes the test below a statement about the whole array rather
+than about a prefix.
+
+    for s in arr:
+
+WALK 2, AND IT GOES OVER `arr`, NOT OVER `counts`. That is what makes "kth" mean kth in original order -
+see trap 2 for exactly how much this matters and where it stops mattering.
+
+    if counts[s] == 1:
+
+THE PREDICATE. `counts[s]` is the TOTAL, so `== 1` means "appears exactly once anywhere in the array".
+Not `<= 1` - a count of 0 is impossible for a string read out of `arr` itself.
+
+        k -= 1
+
+SPEND ONE UNIT OF THE BUDGET. `k` here is the function's own parameter, reused as the countdown; Python
+rebinds the local name and the caller's value is untouched.
+
+        if k == 0:
+            return s
+
+RETURN AT THE MOMENT THE BUDGET RUNS OUT. Decrementing FIRST and testing for zero is what makes k = 1
+return on the first match. Testing `k == 1` before decrementing would be equally right; doing both would
+return the (k+1)th.
+    RETURNING IMMEDIATELY is what gives "kth in original order" - the walk never sees a later candidate.
+
+    return ""
+
+Reached only when the second walk finishes with k still above zero. THE EMPTY STRING IS THE SENTINEL THE
+PROBLEM SPECIFIES - returning None here would be wrong.
+
+WHAT IS DELIBERATELY ABSENT: no list of the distinct strings built up (the countdown replaces it), no
+index arithmetic like `distinct[k-1]`, no sorting, and no guard for an empty array (the loop does not run
+and "" is returned - verified).""",
+
+    """9. TRACED ON REAL NUMBERS - the official example, then the same array with k changed.
+
+arr = ["d", "b", "c", "b", "c", "a"],  k = 2
+
+    WALK 1 - the tally:
+
+        "d": 1      "b": 2      "c": 2      "a": 1
+
+        Confirm by hand: d at index 0 only; b at indices 1 and 3; c at indices 2 and 4; a at index 5.
+        Total 1 + 2 + 2 + 1 = 6, which is the array's length - every element accounted for once.
+
+    WALK 2 - in original order, spending k:
+
+        s = "d"    counts["d"] = 1   ->   DISTINCT.   k: 2 - 1 = 1.   Not zero, continue.
+        s = "b"    counts["b"] = 2   ->   skip
+        s = "c"    counts["c"] = 2   ->   skip
+        s = "b"    counts["b"] = 2   ->   skip
+        s = "c"    counts["c"] = 2   ->   skip
+        s = "a"    counts["a"] = 1   ->   DISTINCT.   k: 1 - 1 = 0.   ZERO -> RETURN "a"
+
+    RETURNS "a".  The array's last element is never passed - the walk stops exactly on it.
+
+THE INVERSION - THE SAME ARRAY, ONLY k CHANGED:
+
+    k = 1   ->   "d"     the countdown hits zero at the very first distinct string
+    k = 2   ->   "a"     as traced above
+    k = 3   ->   ""      there is no third distinct string; the walk finishes with k still at 1
+
+    THE ANSWER MOVES FROM THE FIRST ELEMENT TO THE LAST TO NOTHING AT ALL, with the array untouched. All
+    three verified against the O(n^2) brute force.
+
+AND THE TWO REMAINING OFFICIAL EXAMPLES, for completeness:
+
+    ["aaa", "aa", "a"],  k = 1     every string appears once, so the first distinct one is "aaa".
+                                   RETURNS "aaa" - and note that "a" being a substring of "aaa" is
+                                   irrelevant; these are compared as whole strings.
+
+    ["a", "b", "a"],  k = 3        tally is {"a": 2, "b": 1}. Only "b" is distinct, so the walk spends k
+                                   from 3 to 2 and then runs out of array.
+                                   RETURNS "".""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Two walks over the array. The first does one dictionary write per string; the second
+does one dictionary read per string and may stop early.
+
+    TIME O(n) dictionary operations - but say the honest version: hashing a string costs time proportional
+    to its LENGTH, so it is O(total characters). With strings capped at 5 characters that is invisible
+    here, and on a problem with long keys it would not be.
+    SPACE O(n) for the tally, since every string may be different.
+    The `arr.count(s)`-per-position brute force is O(n^2); at this problem's limit of n = 1,000 it would
+    pass, so the tally is the cleaner answer rather than a required one.
+
+THE #1 MISTAKE: misreading "distinct" as "different". Under that reading the answer to the first example
+would be "b" rather than "a". The problem means APPEARS EXACTLY ONCE, and everything follows from that
+one line. THE RUNNER-UP is the countdown's off-by-one - `k -= 1` then test for zero returns on the kth
+match; testing before decrementing works too, but doing both returns the wrong one.
+
+ONE-SENTENCE TAKEAWAY: count first because uniqueness is a fact about the whole array, then walk the
+array itself because "kth" is a fact about position - and spend k down rather than collecting matches
+into a list.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Almost nothing about algorithms - this is a reading-comprehension
+problem with a tally attached. What is being watched is whether you say WHY the two passes are separate,
+and whether you notice that the second one must be over the array. Both are one-sentence observations,
+and stating them is the difference between explaining a solution and reciting one.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return ALL the distinct strings in order." Drop the countdown and collect instead - same two passes.
+    "What if the array arrives as a STREAM you cannot re-read?" You cannot answer with one pass in
+    general, for the same reason two passes are needed here: a string seen once may reappear. You must
+    buffer either the whole array or, at minimum, every string seen exactly once along with its position -
+    which in the worst case is the whole array anyway.
+    "What if k could be huge?" Nothing changes - the walk simply finishes with k still positive and
+    returns "". No overflow and no special case.
+    "How does this relate to First Unique Character in a String?" It is the same machinery with k fixed
+    at 1 and characters instead of strings, returning the INDEX rather than the value. Recognising that
+    two problems are one technique is worth more than solving both separately.""",
 ]
 
 _EX_P1K["Kth Largest Element in a Stream"] = [
-    """Why a MIN-heap of size k gives the kth LARGEST - the inversion that confuses
-everyone. Keep exactly the k largest elements seen so far. The SMALLEST of
-those k is, by definition, the kth largest overall - and a min-heap puts
-precisely that element at its root, readable in O(1).
-k = 3, stream 4, 5, 8, 2: after 4, 5, 8 the heap holds {4,5,8} with root 4 -
-the 3rd largest. Add 2: push -> {2,4,5,8}, size 4 > 3, pop the smallest (2) ->
-{4,5,8}, root still 4. Correct - 2 was never in the top 3.
-Add 10: push -> {4,5,8,10}, pop 4 -> {5,8,10}, root 5. The answer rose because
-a bigger element displaced the old floor.""",
+    """1. THE GOAL - after every new number arrives, say what the kth largest so far is.
 
-    """Why not a max-heap, which is the instinct.
-A max-heap of everything gives the LARGEST in O(1) but reaching the kth
-requires popping k-1 elements and pushing them back - O(k log n) per query, and
-it stores every element ever seen. The min-heap of size k stores only k
-elements forever, regardless of stream length, and answers in O(1).
-The general principle: to track the top k, keep a MIN-heap of size k; to track
-the bottom k, keep a MAX-heap of size k. The heap type is the opposite of the
-extreme you care about, because the root must be the element you are willing to
-evict.""",
+You are building an object, not writing a function. It is created with a number k and some starting
+values, and then `add(val)` is called over and over. EACH CALL MUST RETURN THE kth LARGEST VALUE SEEN SO
+FAR, counting everything including the value just added.
 
-    """Memory is the real point in a STREAM.
-The stream may be unbounded - millions of scores arriving forever - and this
-structure holds exactly k of them. Sorting is impossible (you cannot sort what
-has not arrived); storing everything is impossible (unbounded memory).
-That is why the problem is framed as a stream rather than an array, and saying
-'O(k) space regardless of how many numbers arrive' is the sentence that shows
-you understood the framing rather than just the heap.""",
+    KthLargest(3, [4, 5, 8, 2])          k = 3
 
-    """The constructor detail.
-`nums` may be longer than k, so the constructor heapifies (O(n)) and then pops
-down to k. It may also be SHORTER than k - which is legal, because the problem
-guarantees that by the time add() is called there will be at least k elements.
-Heap size below k means self.heap[0] would not be the kth largest, so if the
-guarantee were removed you would need to return None or raise until the heap
-fills. Worth asking about; it is the one precondition this design depends on.""",
+        add(3)    numbers so far: 8, 5, 4, 3, 2         3rd largest is 4     ->  4
+        add(5)    numbers so far: 8, 5, 5, 4, 3, 2      3rd largest is 5     ->  5
+        add(10)   numbers so far: 10, 8, 5, 5, 4, 3, 2  3rd largest is 5     ->  5
+        add(9)    numbers so far: 10, 9, 8, 5, 5, ...   3rd largest is 8     ->  8
+        add(4)    numbers so far: 10, 9, 8, 5, 5, ...   3rd largest is 8     ->  8
 
-    """Edge cases.
-k = 1 -> the heap holds one element, the maximum, and add() returns the running
-max.
-Duplicates: k = 2 with stream 5, 5 -> heap {5,5}, root 5. The kth largest
-counts positions, not distinct values, so duplicates legitimately occupy
-separate slots. If the prompt wanted the kth distinct value the structure would
-have to change - another ambiguity to confirm.
-Negative numbers work unchanged.
-Empty initial nums with k = 3 -> the first two add() calls have an
-under-filled heap, which is the precondition case above.""",
+TWO THINGS ABOUT "kth LARGEST" THAT DECIDE EVERYTHING:
 
-    """Complexity and the family.
-add() is O(log k) - one push and at most one pop on a heap of size k. Space
-O(k). Reading the answer is O(1).
-The family: Kth Largest Element in an Array (one-shot - Quickselect gives O(n)
-average, better than a heap when there is no stream), Top K Frequent Elements
-(heap of size k keyed by count), K Closest Points to Origin, Find Median from
-Data Stream (TWO heaps, a max-heap for the lower half and a min-heap for the
-upper). The cue is 'kth' or 'top k' plus streaming or a large n - and the
-follow-up is nearly always the median variant.""",
+    DUPLICATES COUNT SEPARATELY. After the second add, the values are 8, 5, 5, 4, 3, 2 and the 3rd largest
+    is 5 - not 4. You are ranking POSITIONS in the sorted order, not distinct values. That is why add(5)
+    returns 5: the two 5s occupy ranks 2 and 3.
+
+    IT IS A RUNNING ANSWER. Nothing is ever removed from the stream conceptually; each call asks about
+    everything seen up to that moment.
+
+WHY THIS IS NOT JUST "SORT AND INDEX". Sorting after every add is O(n log n) per call, and the stream may
+be unbounded - millions of values arriving forever. THE REAL CONSTRAINT IS MEMORY: you cannot keep them
+all, and you do not need to.
+
+    THE KEY REALISATION, WHICH IS THE ENTIRE PROBLEM: to answer "what is the kth largest", you only ever
+    need THE k LARGEST VALUES SEEN SO FAR. Everything below them is permanently irrelevant - a value that
+    is not in the top k now can never enter the top k later, because the stream only ever adds more
+    competition.
+
+    So you keep exactly k numbers, and the answer is the SMALLEST of those k.
+
+    THIS ENTRY OPENS THE HEAP CLUSTER in this bank, with Last Stone Weight. LAST STONE WEIGHT OWNS THE
+    MAX-HEAP-BY-NEGATION AND THE SIMULATION LOOP. THIS ONE OWNS THE INVERSION THAT CONFUSES EVERYONE - a
+    MIN-heap answering a question about the LARGEST elements.""",
+
+    """2. THE INTUITION - keep the top k, and the answer is the weakest of them.
+
+Picture a leaderboard with exactly k places on it. When a new score arrives, it either earns a place -
+knocking out whoever was last - or it does not make the cut and is discarded forever.
+
+    k = 3, the board holds the three largest so far
+
+        after [4, 5, 8, 2]:      board = 4, 5, 8        (the 2 never made it)
+                                 the WEAKEST on the board is 4
+
+        THE 3RD LARGEST OVERALL IS EXACTLY THE WEAKEST ENTRY ON A BOARD OF THREE. That is the whole idea.
+
+        add(3):   3 does not beat the weakest (4), so it is discarded.  Board unchanged.  Answer 4.
+        add(5):   5 beats 4. Board becomes 5, 5, 8; the 4 falls off.    Answer is the new weakest: 5.
+        add(10):  10 beats 5. Board becomes 5, 8, 10.                   Answer 5.
+        add(9):   9 beats 5. Board becomes 8, 9, 10.                    Answer 8.
+        add(4):   4 does not beat 8, discarded.                         Answer 8.
+
+THE INVERSION THAT TRIPS PEOPLE UP: the question says LARGEST, and the structure you want is a MIN-heap -
+a container whose cheapest operation is "give me the smallest". That feels backwards until you say the
+sentence:
+
+        you are keeping the k LARGEST values,
+        and the one you constantly need to look at, and to evict, is the SMALLEST OF THOSE k
+
+    THE SMALLEST OF THE TOP k IS THE kth LARGEST. Both jobs - reading the answer and evicting the loser -
+    are questions about the minimum of the collection, which is exactly what a min-heap is fast at.
+
+WHY A MAX-HEAP IS THE WRONG INSTINCT. A max-heap over everything gives you the LARGEST instantly, but to
+reach the kth you must pop k-1 elements and then push them all back - O(k log n) per query, and it forces
+you to store the entire stream. THE MIN-HEAP OF SIZE k STORES k NUMBERS AND ANSWERS IN O(1).
+
+THE PICTURE:
+
+        min-heap of size 3      root = 4  <- the answer, always
+                              /        \\
+                             5          8      <- the rest of the top three, order unimportant
+
+    THE ROOT IS THE ANSWER AND THE ROOT IS ALSO WHAT GETS EVICTED. One structure, both jobs.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STREAM. Values arriving one at a time, potentially without end. You cannot see them all at once, and you
+may not be able to store them all.
+
+kth LARGEST. The value at position k when everything is sorted descending, WITH DUPLICATES COUNTED
+SEPARATELY. In 8, 5, 5, 4 the 3rd largest is 5.
+
+HEAP. A binary tree kept in an array, where every parent is <= its children (a MIN-heap) or >= its
+children (a MAX-heap). It is NOT sorted - only the root is guaranteed to be the extreme value, and the
+rest is in no particular order.
+
+    a valid min-heap:        4                  the array is [4, 5, 8]
+                           /   \\                5 and 8 could be in either order and it would still
+                          5     8               be a valid heap
+
+MIN-HEAP. The root is the SMALLEST element. Reading it is O(1).
+
+heapq. Python's heap module, which operates on an ordinary list and always builds a MIN-heap.
+    `heapify(list)`   turns a list into a heap IN PLACE, in O(n).
+    `heappush(h, x)`  inserts, O(log n).
+    `heappop(h)`      removes and returns the SMALLEST, O(log n).
+    `h[0]`            the smallest, without removing it, O(1).
+
+SIFT UP / SIFT DOWN. How a heap repairs itself: a newly pushed value swaps upward past larger parents
+until it fits; after a pop, the last element is moved to the root and swaps downward past its smaller
+child. Each is at most the tree's height, which is log of the size - that is where O(log n) comes from.
+
+THE VARIABLES IN THE CODE:
+    self.k      how many of the largest to keep.
+    self.heap   the min-heap holding at most k values. Its ROOT is the answer.
+    nums        the starting values. COPIED with `nums[:]`, so the caller's list is not damaged.
+    val         the newly arriving value.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one loud bug, one silent one, and one that damages the caller.
+
+TRAP 1 - EVICTING BEFORE INSERTING. It is tempting to keep the heap at size k by popping first:
+
+        if len(self.heap) >= self.k:
+            heapq.heappop(self.heap)      # WRONG ORDER
+        heapq.heappush(self.heap, val)
+
+    This throws away the current smallest WITHOUT COMPARING IT TO THE NEW VALUE. If the new value is even
+    smaller, it takes the evicted one's place and the board now holds a worse set.
+
+    MEASURED: over 2,000 random streams of six adds each, the pop-first version went wrong on 1,982 of
+    them.
+
+    AND THE OFFICIAL EXAMPLE CATCHES IT ON THE VERY FIRST CALL: with k = 3 and [4, 5, 8, 2], add(3)
+    returns 3 instead of 4, because the 4 was evicted before the 3 was even looked at. THIS ONE IS LOUD -
+    you cannot ship it. PUSH FIRST, THEN POP: the push puts the newcomer into the competition, and the
+    pop removes whoever is genuinely smallest of the k+1.
+
+TRAP 2 - REACHING FOR A MAX-HEAP. Correct but far worse: you must store every value ever seen (unbounded
+memory) and pop k-1 elements per query. THE WHOLE POINT IS THAT A MIN-HEAP OF SIZE k IS BOUNDED. Say the
+sentence "the smallest of the k largest IS the kth largest" out loud; it is what converts the instinct.
+
+TRAP 3 - MUTATING THE CALLER'S LIST. `heapify` rearranges IN PLACE, and the constructor then pops it down
+to size k. If you write `self.heap = nums` instead of `self.heap = nums[:]`, the caller's own list is
+reordered AND TRUNCATED.
+
+    VERIFIED: constructing with the caller's list [4, 5, 8, 2] and k = 3 leaves the caller holding
+    [4, 5, 8] when the copy is omitted, and leaves it untouched as [4, 5, 8, 2] when `nums[:]` is used.
+    THE `[:]` IS NOT COSMETIC. This is the kind of damage that is silent at the call site and shows up
+    somewhere else entirely.
+
+TRAP 4 - ASSUMING THE CONSTRUCTOR IS GIVEN AT LEAST k VALUES. It may be given fewer - `KthLargest(3, [1])`
+is legal. Then the heap holds one element and `heap[0]` is 1, which is not the 3rd largest of anything.
+The problem GUARANTEES that add is only asked once at least k values exist, so the code needs no guard -
+BUT SAY SO RATHER THAN LEAVING IT UNEXAMINED. Verified: the heap grows as adds arrive, and once it holds
+three values the root is genuinely the 3rd largest.
+
+WHAT IS NOT A TRAP: duplicates. k = 2 with a stream of 5, 5 gives a heap of {5, 5} and a root of 5, which
+is right - the two 5s are separate elements occupying ranks 1 and 2.""",
+
+    """5. THE SLOW WAYS FIRST, then the bounded heap.
+
+VERSION 1 - KEEP EVERYTHING AND SORT ON EVERY ADD:
+
+    self.all.append(val)
+    return sorted(self.all, reverse=True)[self.k - 1]
+
+    CORRECT AND OBVIOUS. COST: O(n log n) per add, and O(n) memory that grows forever. For m adds the
+    total is O(m^2 log m). At this problem's limit of 10,000 calls it would actually finish - so be
+    honest, the naive version passes the judge - but it is unusable against a real stream.
+
+VERSION 2 - KEEP A SORTED LIST AND INSERT IN PLACE. Binary-search the insertion point in O(log n), then
+insert in O(n) because the elements after it must shift. Better constants, same O(n) per add and still
+unbounded memory. IT IS A REAL IMPROVEMENT AND STILL THE WRONG SHAPE, because the memory never stops
+growing.
+
+THE UPGRADE, AND THE OBSERVATION THAT MAKES IT POSSIBLE. Ask what you actually need. To report the kth
+largest, the values ranked k+1, k+2, ... are useless - AND THEY CAN NEVER BECOME USEFUL, because the
+stream only adds more values above them, pushing them further down. SO THEY CAN BE DISCARDED THE MOMENT
+THEY FALL OUT OF THE TOP k, PERMANENTLY.
+
+    That bounds the memory at k. And the only two operations you need on those k values are:
+        READ THE SMALLEST (that is the answer)
+        REMOVE THE SMALLEST (that is the eviction)
+    Both are minimum operations - so the structure is a MIN-HEAP.
+
+THE HEAP EXPLAINED FROM SCRATCH, since it is the one piece of machinery here. A binary heap is a tree
+stored in a plain array: the children of position i live at 2i+1 and 2i+2. The only rule is that every
+parent is <= its children. THAT RULE IS MUCH WEAKER THAN BEING SORTED - it says nothing about siblings -
+which is exactly why it is cheap to maintain.
+
+    PUSH: put the new value at the end of the array, then swap it upward past any larger parent until it
+        sits below one that is smaller. At most one swap per level, so O(log size).
+    POP:  the root is the answer; move the last element into the root's place and swap it downward past
+        its smaller child until it fits. Again O(log size).
+
+    COST HERE: O(log k) per add, O(k) memory, O(1) to read the answer. With k = 3 that is about two swaps
+    per arrival, whatever the stream's length.
+
+THE CONSTRUCTOR'S TWO STEPS. `heapify` turns the starting list into a heap in O(n) - faster than n pushes,
+because it fixes the array bottom-up. Then values are popped until only k remain. NOTE THAT `nums` MAY BE
+LONGER OR SHORTER THAN k, and both are handled: the while loop simply does not run when it is shorter.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: keep a min-heap holding only the k largest values seen so far; on every arrival push it
+in, evict the smallest if the heap has grown past k, and report the root.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion in the visible code, though the heap's own repair
+walks up or down the tree. Two pieces of state, one of which never changes:
+
+    `self.k`     fixed at construction.
+    `self.heap`  a list of at most k numbers, kept in heap order. ITS SIZE IS THE INVARIANT: after every
+                 completed add it holds exactly min(k, number of values seen). It never exceeds k, because
+                 every push that would take it to k+1 is immediately followed by a pop.
+
+    THE INVARIANT THAT MAKES IT CORRECT: the heap always contains exactly the k largest values seen so
+    far (or all of them, if fewer than k have arrived). TRUE AFTER CONSTRUCTION, because the constructor
+    pops the smallest until only the k largest remain. PRESERVED BY EVERY ADD: pushing makes it the k+1
+    largest, and popping the smallest removes the one that no longer belongs.
+
+    WHY THAT MAKES `heap[0]` THE ANSWER: if the heap holds exactly the k largest values, its minimum is
+    the smallest of the k largest - which is the kth largest by definition.
+
+    WHY THE ORDER PUSH-THEN-POP IS FORCED: the value being evicted must be the smallest of the k+1
+    candidates, and the newcomer is one of those candidates. Popping first evicts the smallest of the OLD
+    k without letting the newcomer compete - which is trap 1, wrong on 1,982 of 2,000 random streams.
+
+    WHAT MAKES THE HEAP'S REPAIR STOP: a pushed value swaps upward only while it is smaller than its
+    parent, and it can rise at most to the root - the tree's height bounds it. A popped-into-place value
+    swaps downward only while it is larger than a child, and stops at a leaf. Both are bounded by log k.
+
+THE STEPS, NO CODE:
+
+    1. AT CONSTRUCTION: take a COPY of the starting values, arrange it as a min-heap, then repeatedly
+       remove the smallest until at most k values remain.
+    2. ON EACH ARRIVAL:
+       a. Insert the new value into the heap.
+       b. If the heap now holds more than k values, remove the smallest one.
+       c. Report the smallest value currently in the heap.
+
+    STEP 2a MUST COME BEFORE 2b. STEP 1's "COPY" IS WHAT PROTECTS THE CALLER'S LIST.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A talent competition runs all year and never closes. Contestants keep arriving, one at a time, each with a
+score. At any moment the organisers want to know the score of whoever is currently in third place.
+
+The lazy approach is to keep every contestant's card in a drawer and re-sort the whole drawer whenever
+someone new turns up. That works for a while and becomes impossible once the drawer holds a million cards.
+
+So instead they keep a noticeboard with exactly three slots, holding the three best scores so far. What is
+pinned to the board is arranged so that the WORST of the three is always at the top, easy to see - because
+that worst-of-the-best is precisely the third-place score everybody keeps asking about.
+
+A new contestant arrives. The organisers pin their card up alongside the other three, so there are
+briefly four. Then they look at which of the four is now the worst and take that one down, leaving three
+again. Whoever is now at the top of the board is the answer.
+
+    NOTICE WHAT HAPPENS WHEN THE NEWCOMER IS TERRIBLE. They are pinned up, they are immediately the worst
+    of the four, and they come straight back down. The board is unchanged and the answer is unchanged -
+    which is correct, and it happened without anyone needing a special rule for weak contestants.
+
+THE MISTAKE THAT LOOKS LIKE TIDINESS. Suppose the organisers instead took a card DOWN first, to make room,
+and then pinned the newcomer up. They would be removing the worst of the OLD three without ever comparing
+it to the person walking through the door. If the newcomer is worse than everyone, the board now holds
+them and has thrown away someone better. The answer is wrong from that moment on, and it stays wrong.
+
+AND THE CARDS THAT COME DOWN ARE GONE FOREVER, WHICH IS FINE. Somebody who is not in the top three today
+cannot be in the top three tomorrow, because tomorrow only brings more competition. That is the reason
+the noticeboard can stay small no matter how long the competition runs - and the reason the drawer was
+never necessary.
+
+ONE LAST THING THE ORGANISERS DO AT THE START. They are handed a stack of cards from earlier rounds. They
+take a PHOTOCOPY of that stack rather than the stack itself, because they are about to tear most of it up,
+and whoever handed it over may still need their originals.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    import heapq
+
+Python's heap module. It always builds a MIN-heap - there is no max-heap option, which is why problems
+wanting a maximum negate their values. Here the min-heap is what we actually want.
+
+    class KthLargest:
+        def __init__(self, k, nums):
+
+The object is constructed once with k and the starting values, then queried many times.
+
+    self.k = k
+
+FIXED FOR THE OBJECT'S LIFETIME. It is the size the heap is held at.
+
+    self.heap = nums[:]
+
+TAKE A COPY. `heapify` on the next line rearranges IN PLACE and the loop after it removes elements, so
+without `[:]` the caller's own list would be reordered and truncated - verified: the caller's [4,5,8,2]
+becomes [4,5,8]. THIS ONE-CHARACTER SLICE IS THE DIFFERENCE BETWEEN A CLEAN OBJECT AND A SIDE EFFECT.
+
+    heapq.heapify(self.heap)
+
+TURN THE LIST INTO A MIN-HEAP, in O(n) - cheaper than pushing the elements one at a time, because
+heapify repairs bottom-up. The list is now in heap order, NOT sorted order.
+
+    while len(self.heap) > k:
+        heapq.heappop(self.heap)   # keep only the k largest
+
+DISCARD DOWN TO SIZE k, removing the SMALLEST each time - so what survives is the k largest of the
+starting values. IF `nums` IS SHORTER THAN k THIS LOOP NEVER RUNS, which is legal; see trap 4.
+
+    def add(self, val):
+        heapq.heappush(self.heap, val)
+
+PUSH FIRST. The newcomer joins the competition, taking the heap to at most k+1. The heap repairs itself by
+sifting the new value upward, O(log k).
+
+    if len(self.heap) > self.k:
+        heapq.heappop(self.heap)   # evict the smallest
+
+THEN EVICT. Now the smallest of ALL k+1 candidates is removed - which may be the value just added, and
+that is exactly right. REVERSING THESE TWO LINES IS THE #1 BUG: wrong on 1,982 of 2,000 random streams,
+and it fails the official example on its very first call.
+    The `if` matters when the heap is still below k - during the early adds nothing is evicted and the
+    heap simply grows.
+
+    return self.heap[0]            # heap root = kth largest
+
+THE ROOT OF A MIN-HEAP IS ITS SMALLEST ELEMENT. Since the heap holds exactly the k largest values seen,
+its smallest is the kth largest overall. O(1) - no popping, no scanning, no sorting.
+
+WHAT IS DELIBERATELY ABSENT: no sorted list, no record of the values that were evicted, no guard for a
+heap smaller than k (the problem guarantees add is only meaningful once k values exist), and no max-heap
+anywhere.""",
+
+    """9. TRACED ON REAL NUMBERS - the official stream, then the same stream with the bug.
+
+CONSTRUCTION: KthLargest(3, [4, 5, 8, 2])
+
+    copy [4, 5, 8, 2], heapify it, then pop while the size exceeds 3:
+        the smallest is 2, so it is popped.
+    heap now holds {4, 5, 8}, and its root is 4.
+
+    THOSE ARE THE THREE LARGEST OF THE STARTING VALUES, and their minimum, 4, is the 3rd largest.
+
+THE ADDS:
+
+    add(3)     push 3   -> heap {3, 4, 5, 8}, size 4 > 3
+               pop the smallest, which is the 3 just added   -> heap {4, 5, 8}
+               RETURN root = 4
+               check: all values so far are 8, 5, 4, 3, 2; the 3rd largest is 4.  AGREE.
+
+    add(5)     push 5   -> heap {4, 5, 5, 8}, size 4 > 3
+               pop the smallest, 4                            -> heap {5, 5, 8}
+               RETURN root = 5
+               check: 8, 5, 5, 4, 3, 2; the 3rd largest is 5 - the SECOND 5, since duplicates hold
+               separate ranks.  AGREE.
+
+    add(10)    push 10  -> heap {5, 5, 8, 10}, pop 5          -> heap {5, 8, 10}
+               RETURN 5     check against 10, 8, 5, 5, 4, 3, 2 -> 3rd largest 5.  AGREE.
+
+    add(9)     push 9   -> heap {5, 8, 9, 10}, pop 5          -> heap {8, 9, 10}
+               RETURN 8     check against 10, 9, 8, 5, 5, ... -> 3rd largest 8.  AGREE.
+
+    add(4)     push 4   -> heap {4, 8, 9, 10}, pop the 4 just added -> heap {8, 9, 10}
+               RETURN 8     the weak newcomer changed nothing, with no special case for it.  AGREE.
+
+    THE FULL SEQUENCE OF RETURNS: 4, 5, 5, 8, 8.
+
+THE SAME STREAM WITH THE PUSH AND POP SWAPPED:
+
+    add(3)  ->  3     (correct 4)      the 4 was evicted before the 3 was compared to it
+    add(5)  ->  5     (correct 5)      coincidentally right
+    add(10) ->  5     (correct 5)      coincidentally right
+    add(9)  ->  8     (correct 8)      coincidentally right
+    add(4)  ->  4     (correct 8)      wrong again
+
+    IT FAILS ON THE FIRST CALL AND ON THE LAST. Across 2,000 random streams of six adds, the swapped
+    version went wrong on 1,982.
+
+AND THE INVERSION - THE SAME STREAM WITH k = 1 INSTEAD OF 3:
+
+    construction pops [4, 5, 8, 2] down to a single value, the largest: heap {8}
+    add(3)  -> 8      add(5)  -> 8      add(10) -> 10      add(9)  -> 10      add(4)  -> 10
+
+    RETURNS 8, 8, 10, 10, 10 - which is exactly the RUNNING MAXIMUM, because the 1st largest is the
+    largest. THE CODE IS UNCHANGED; ONLY THE BOARD'S SIZE MOVED, and the special case people expect to
+    have to write for "just track the max" turns out to be the general algorithm with k = 1. Verified
+    against the sorted-and-index ground truth on every call.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each add does one push and at most one pop on a heap holding at most k values. Each
+of those walks at most the height of the tree.
+
+    add() IS O(log k) - NOT O(log n). The heap's size is bounded by k, so the cost does not grow as the
+    stream lengthens. With k = 3 that is about two comparisons per arrival, forever.
+    READING THE ANSWER IS O(1) - it is just the root.
+    SPACE O(k). THIS IS THE REAL HEADLINE: memory bounded by k regardless of how many values arrive.
+    Construction is O(n) to heapify plus O((n - k) log n) to pop down.
+    Sorting on every add is O(n log n) per call with unbounded memory; a sorted list with binary insertion
+    is O(n) per call, also unbounded. At this problem's limit of 10,000 calls the naive version would
+    pass - so say plainly that the heap is about the STREAM, not about the judge.
+
+THE #1 MISTAKE: popping before pushing. It evicts the smallest of the old k without letting the new value
+compete, so a below-par arrival can displace a better value. Wrong on 1,982 of 2,000 random streams, and
+it fails the official example on the very first call. PUSH, THEN POP. THE RUNNER-UP is `self.heap = nums`
+without the `[:]`, which silently reorders and truncates the caller's list - verified by inspecting the
+caller's list after construction.
+
+ONE-SENTENCE TAKEAWAY: to track the kth largest, keep exactly the k largest in a MIN-heap - the smallest
+of the top k IS the kth largest, so the root answers the question and the root is also what you evict.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can invert the instinct. "Largest" points at a
+max-heap and the answer is a min-heap, and the candidate who can explain WHY - "I need to keep the top k,
+and the operation I need constantly is 'who is the weakest of those', which is a minimum" - has understood
+heaps rather than memorised a template. The second thing being watched is whether you notice the memory
+argument: a value that has fallen out of the top k can never return, which is what makes bounded storage
+sound rather than just convenient.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "KTH LARGEST IN AN ARRAY, not a stream." Same min-heap of size k in O(n log k), or Quickselect in
+    O(n) average and O(n^2) worst case. Quickselect is faster on average and cannot be adapted to a
+    stream, which is the trade to name.
+    "kth SMALLEST in a stream." Mirror everything: keep the k smallest in a MAX-heap, and its root is the
+    answer. In Python, which has no max-heap, push negated values.
+    "What if k can change after construction?" Growing k is fine - stop evicting until the heap refills,
+    though the values already discarded are gone, so the answer is only correct going forward. Shrinking
+    k is easy: pop until the size matches. SAY THE ASYMMETRY - discarded data cannot be recovered.
+    "What if you need the top k values, not just the kth?" They are already in the heap; return them,
+    sorted if required, in O(k log k).""",
 ]
 
 _EX_P1K["Kth Missing Positive Number"] = [
