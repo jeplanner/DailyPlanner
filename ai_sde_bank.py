@@ -68281,48 +68281,205 @@ for _e in ENTRIES:
 _EX_P1B = {}
 
 _EX_P1B["Symmetric Tree"] = [
-    """The symmetric case, traced as PAIRS.
-        1
-       / \\
-      2   2
-     / \\ / \\
-    3  4 4  3
-Call mirror(left=2, right=2): values match, so check two pairs.
-  Outer pair: mirror(a.left=3, b.right=3) -> match, both childless -> True.
-  Inner pair: mirror(a.right=4, b.left=4) -> match -> True.
-Both True, so the tree is symmetric.
-The crucial detail is WHICH children are compared: a.left against b.RIGHT and
-a.right against b.LEFT. Comparing left-with-left tests whether the two subtrees
-are IDENTICAL, which is a different question entirely.""",
+    """1. THE GOAL - is the tree its own reflection?
 
-    """The counterexample that shows identical is not mirrored.
-        1
-       / \\
-      2   2
-       \\   \\
-        3   3
-Both subtrees are the same shape (a node with a right child), so an
-identical-trees check returns True. But mirrored, the left subtree's RIGHT
-child (3) must pair with the right subtree's LEFT child (None) - one is None
-and the other is not, so mirror returns False. Correct: drawn on paper, the
-two 3s are both on the right-hand side, so the picture is not symmetric.
-This single tree is the fastest way to check whether a candidate wrote
-mirror(a.left, b.left) by mistake.""",
+Hold a mirror down the middle of the tree, through the root. IS WHAT YOU SEE THE SAME AS WHAT IS
+THERE?
 
-    """The three base cases, and why the order matters.
-1. Both None -> True. Two absent subtrees mirror each other trivially.
-2. Exactly one None -> False. Shape mismatch.
-3. Values differ -> False.
-Only then do you recurse. If you test `a.val != b.val` before checking for
-None, a single-child node throws AttributeError on the missing side. Writing
-the null checks first is not defensive padding - it is what makes the value
-comparison safe.
-Also note the top-level call: `root is None or mirror(root.left, root.right)`.
-An empty tree is symmetric, and a single node is symmetric because
-mirror(None, None) is True.""",
+            1
+           / \\
+          2   2
+         / \\ / \\
+        3  4 4  3
 
-    """The iterative version, which is the standard follow-up.
-Use a queue and push PAIRS rather than nodes:
+    Fold the picture along the vertical line through the root. The left 2 lands on the right 2. The
+    3 on the far left lands on the 3 on the far right. The 4s land on each other.
+
+    EVERYTHING MATCHES.  ANSWER: True.
+
+The definition, said precisely: A TREE IS SYMMETRIC IF ITS LEFT SUBTREE IS THE MIRROR IMAGE OF ITS
+RIGHT SUBTREE. And "mirror image" means, for any two nodes being compared:
+
+    THEIR VALUES ARE EQUAL, and
+    THE LEFT ONE'S LEFT CHILD MIRRORS THE RIGHT ONE'S RIGHT CHILD, and
+    THE LEFT ONE'S RIGHT CHILD MIRRORS THE RIGHT ONE'S LEFT CHILD.
+
+    THE CROSSING IN THOSE LAST TWO LINES IS THE WHOLE PROBLEM. Section 4 is about what happens when
+    you compare left-to-left and right-to-right instead - which is a perfectly sensible-looking
+    thing to write, and answers a completely different question.
+
+THE TRAP IN ONE PICTURE. Here are two trees made of the same five nodes, each 2 carrying exactly one
+child:
+
+        SYMMETRIC                    NOT SYMMETRIC
+            1                             1
+           / \\                           / \\
+          2   2                         2   2
+         /     \\                         \\   \\
+        3       3                         3   3
+
+    The left one folds perfectly. The right one does not - both 3s hang on the right, so folding
+    puts a 3 on top of nothing.
+
+    AND NOTICE: IN THE SECOND TREE THE TWO SUBTREES ARE IDENTICAL TO EACH OTHER. If your test is
+    "is the left subtree equal to the right subtree", it says True - confidently, and wrongly.""",
+
+    """2. THE INTUITION - compare PAIRS, not subtrees.
+
+Do not think of it as one tree. Think of TWO WALKERS descending in step, one down the left subtree
+and one down the right, and at every moment ask whether the pair they are standing on matches.
+
+    START:   walker A on the LEFT child of the root,  walker B on the RIGHT child.
+
+At each pair, if the values agree, the walkers split up and produce TWO NEW PAIRS - and the pairing
+is CROSSED:
+
+    THE OUTER PAIR:   A's LEFT   with   B's RIGHT     (the two outermost nodes)
+    THE INNER PAIR:   A's RIGHT  with   B's LEFT      (the two innermost nodes)
+
+Picture it on the symmetric tree, with the mirror line down the middle:
+
+            1
+           / \\
+          2   2            pair (2, 2)     - values match
+         / \\ / \\
+        3  4 4  3
+        ^  ^ ^  ^
+        |  | |  |
+        |  +-+  |          the INNER pair: A's right (4) with B's left (4)
+        +-------+          the OUTER pair: A's left  (3) with B's right (3)
+
+    Both pairs match, and each splits into two more pairs of empty children, which trivially match.
+    ANSWER: True.
+
+WHY CROSSED. Reflection reverses order. On a mirror line, the thing furthest to the LEFT on one side
+corresponds to the thing furthest to the RIGHT on the other. So A's leftmost descendant must be
+compared with B's rightmost. Comparing left with left is what you do to ask whether two trees are
+IDENTICAL - a different question with a different answer, as section 1's second picture shows.
+
+    IDENTICAL:   left-to-left,  right-to-right
+    MIRRORED:    left-to-right, right-to-left
+
+    ONE SWAP OF TWO ARGUMENTS SEPARATES THE TWO PROBLEMS.
+
+THE WALKERS ALWAYS MOVE TOGETHER. They are never at different depths, and they are never compared
+against a node from the same side. That lockstep is what makes this a two-argument recursion rather
+than an ordinary one-node walk.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY TREE. Each node has a value and up to two children, `left` and `right`.
+ROOT. The top node.
+SUBTREE. A node together with everything below it.
+
+SYMMETRIC / MIRROR IMAGE. The left subtree is the reflection of the right subtree. Reflection
+reverses left and right at EVERY level, not just at the top.
+
+IDENTICAL / SAME TREE. Same shape and same values, with left matching left. A DIFFERENT relation
+from mirrored, and section 4 shows a tree where the two disagree.
+
+LOCKSTEP RECURSION / TWO-NODE RECURSION. A function taking TWO nodes and recursing on two pairs of
+them. The skeleton behind a whole family of tree problems (section 10).
+
+BASE CASE. A condition that stops the recursion. There are three here, and their ORDER matters
+(section 4).
+
+SHORT-CIRCUIT EVALUATION. Python's `or` stops at the first true thing and `and` stops at the first
+false thing. It is what keeps `a.val` from being read when `a` is None, and what lets the second
+recursive call be skipped when the first already failed.
+
+a, b. In the code: the two nodes currently being compared as a mirrored pair. `a` comes from the
+      left-hand side, `b` from the right.
+mirror(a, b). The helper: do these two subtrees mirror each other?
+root. The whole tree's top node.
+
+n. The number of nodes. h. The tree's height.
+O(n) TIME, O(h) SPACE.""",
+
+    """4. THE COUNTEREXAMPLE - identical is not mirrored.
+
+TRAP 1 - COMPARING LEFT WITH LEFT. The natural thing to write is
+
+    return mirror(a.left, b.left) and mirror(a.right, b.right)      # WRONG
+
+which is the SAME-TREE test. It agrees with the correct version on the fully symmetric example, and
+it disagrees on this one:
+
+            1
+           / \\
+          2   2
+           \\   \\
+            3   3
+
+    Both subtrees are the same shape - a node with a single RIGHT child - and the same values. So:
+
+        LEFT-WITH-LEFT (the wrong pairing):
+            mirror(2L, 2R): values match.
+            mirror(2L.left = None, 2R.left = None)   ->  both None  ->  True
+            mirror(2L.right = 3,  2R.right = 3)      ->  values match, children all None  ->  True
+            RETURNS True.
+
+        LEFT-WITH-RIGHT (the correct pairing):
+            mirror(2L, 2R): values match.
+            mirror(2L.left = None, 2R.right = 3)     ->  exactly one is None  ->  FALSE
+            RETURNS False.
+
+    THE CORRECT ANSWER IS False. Fold the tree along the middle and the left 3 lands on empty space -
+    both 3s are on the right.
+
+    THE WRONG VERSION IS NOT NONSENSE. It correctly answers "are these two subtrees identical?" It
+    is simply not the question, and because the two questions coincide on the textbook example, the
+    bug survives the test everybody runs.
+
+TRAP 2 - THE ORDER OF THE THREE BASE CASES. They must be checked in this order:
+
+    1. BOTH None            ->  True.   Two absent subtrees mirror each other trivially.
+    2. EXACTLY ONE None     ->  False.  A shape mismatch: something faces nothing.
+    3. VALUES DIFFER        ->  False.
+
+    Check 3 before checks 1 and 2 and `a.val` is read off a None:
+        AttributeError: 'NoneType' object has no attribute 'val'
+
+    In the code the three are folded into two lines, and the second relies on short-circuiting:
+
+        if a is None or b is None or a.val != b.val:
+
+    Having already returned when BOTH are None, this line's first two tests catch exactly-one-None,
+    and `a.val` is only ever evaluated once both are known to exist. The ORDER INSIDE THE `or` IS
+    LOad-BEARING, not stylistic.
+
+TRAP 3 - CHECKING ONLY THE VALUES AND NOT THE SHAPE. Two trees can have matching values wherever
+both have nodes and still differ in where the gaps are - which is precisely the "exactly one None"
+case. Dropping that check makes the first tree above symmetric.
+
+TRAP 4 - STARTING THE RECURSION AT THE ROOT. `mirror(root, root)` compares the root with itself,
+which passes trivially and then compares root.left with root.right - so it happens to work, and it
+does one pointless comparison and obscures the intent. The natural start is `mirror(root.left,
+root.right)`: SYMMETRY IS A STATEMENT ABOUT THE TWO SUBTREES, and the root has nothing to be
+symmetric with.
+
+TRAP 5 - THE EMPTY TREE. `root is None or ...` returns True immediately. An empty tree is
+symmetric - there is nothing to fail. Without that guard, `root.left` would raise.""",
+
+    """5. THE ALTERNATIVES, AND WHY A ONE-NODE WALK CANNOT WORK.
+
+VERSION A - FLATTEN THE TWO SUBTREES AND COMPARE THE LISTS. Collect the left subtree's values in
+pre-order, collect the right subtree's in REVERSE pre-order, and check the lists match.
+
+    IT LOSES THE SHAPE, which is fatal. Pre-order of a node with one left child and pre-order of a
+    node with one right child are the SAME two-element list, so this cannot distinguish the two
+    trees in section 4. You would have to emit placeholders for the missing children to make it
+    work - at which point you are doing the same job with an extra O(n) list.
+
+VERSION B - COMPARE THE LEFT SUBTREE WITH A REVERSED COPY OF THE RIGHT. Build a mirrored copy of
+the right subtree, then run a standard same-tree comparison. CORRECT, and it allocates a whole
+second subtree - O(n) extra memory to avoid swapping two arguments.
+
+VERSION C - THE TWO-ARGUMENT RECURSION, which is the code here. No allocation, no flattening: the
+crossing lives in the argument order.
+
+VERSION D - ITERATIVE, WITH A QUEUE OF PAIRS. THE STANDARD FOLLOW-UP:
+
     from collections import deque
     def is_symmetric(root):
         if root is None: return True
@@ -68331,32 +68488,350 @@ Use a queue and push PAIRS rather than nodes:
             a, b = q.popleft()
             if a is None and b is None: continue
             if a is None or b is None or a.val != b.val: return False
-            q.append((a.left,  b.right))      # outer pair
-            q.append((a.right, b.left))       # inner pair
+            q.append((a.left, b.right))     # the outer pair
+            q.append((a.right, b.left))     # the inner pair
         return True
-Same three checks, same two pairings - the recursion has simply become an
-explicit queue. This is the answer to 'what if the tree is 100,000 nodes deep?',
-which would exceed Python's recursion limit.""",
 
-    """Complexity, stated precisely.
-Time O(n): each node is visited exactly once, as half of exactly one pair.
-Space O(h) for the recursive version, where h is the height - O(log n) for a
-balanced tree, O(n) for a skewed one. The iterative version is O(w) for the
-queue, bounded by the widest level.
-A common wrong answer is O(n log n) 'because it recurses twice per call' - but
-the two recursive calls split the work rather than duplicating it, exactly as
-in a single tree traversal.""",
+    THE QUEUE HOLDS PAIRS, NOT NODES - that is the whole adaptation, and the crossing is in the two
+    `append` lines exactly as it is in the recursive version. Same O(n) time; space becomes O(w),
+    the widest level, instead of O(h).
 
-    """The family this belongs to: lockstep two-node recursion.
-The same skeleton - handle both-None, one-None, value-mismatch, then recurse on
-a chosen pairing - solves a cluster of problems, and only the PAIRING changes:
-- Same Tree: recurse (a.left, b.left) and (a.right, b.right).
-- Symmetric Tree: recurse (a.left, b.right) and (a.right, b.left).
-- Merge Two Binary Trees: same pairing as Same Tree, but combine instead of
-  compare.
-- Invert Binary Tree: the single-tree cousin - swap the children at every node,
-  and note that a tree is symmetric exactly when it equals its own inversion.
-Recognising the skeleton means you only have to think about one line.""",
+    It matters concretely: a tree skewed 10,000 nodes deep makes the recursive version 10,000
+    frames deep against PYTHON'S DEFAULT LIMIT OF 1,000, so it raises RecursionError rather than
+    running slowly.
+
+WHY A ONE-NODE WALK CANNOT DO THIS. Every ordinary tree traversal visits one node at a time and asks
+something about it. But "is this node's position mirrored?" is not a question about a node - it is a
+question about a PAIR of nodes on opposite sides of the tree. A single walker has no idea what the
+node opposite it looks like.
+
+    SO THE FUNCTION MUST TAKE TWO ARGUMENTS. That is not an implementation detail; it is forced by
+    what is being asked. Section 10 lists the other problems with the same requirement.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK TWO NODES AT A TIME RATHER THAN ONE - STARTING WITH
+THE ROOT'S TWO CHILDREN - AND AT EACH PAIR CHECK THE VALUES MATCH, THEN RECURSE ON THE OUTER PAIR
+AND THE INNER PAIR, PAIRING EACH NODE'S LEFT WITH THE OTHER'S RIGHT BECAUSE A REFLECTION REVERSES
+SIDES.
+
+THIS VERSION IS RECURSIVE, and the mechanism matters:
+
+  - The helper takes TWO nodes and calls itself twice - once on the outer pair, once on the inner
+    pair. Each call PAUSES at the call site until the inner call reports back.
+  - Those paused calls form the CALL STACK, and it gets as deep as the tree is TALL. Section 5 gives
+    the depth at which that becomes fatal.
+  - WHAT MAKES IT STOP: three base cases, all of which answer immediately without recursing - two
+    absences, one absence, or a value mismatch. Every path downward reaches an absence, because the
+    tree is finite and has no cycles.
+  - WHY IT OFTEN STOPS EARLY: `and` short-circuits, so the moment the outer pair fails, the inner
+    pair is never examined and the failure propagates straight back up.
+
+THE STEPS:
+
+  1. IF THERE IS NO TREE AT ALL, IT IS SYMMETRIC. Nothing can fail to match.
+
+  2. OTHERWISE, ASK WHETHER THE ROOT'S TWO CHILDREN MIRROR EACH OTHER. The root itself is not
+     compared with anything - symmetry is a statement about the two sides, and the root is the line
+     they are reflected about.
+
+  THE MIRROR CHECK, given two nodes:
+
+  3. IF BOTH ARE ABSENT, THEY MIRROR. Two nothings match.
+
+  4. IF EXACTLY ONE IS ABSENT, THEY DO NOT. Something facing nothing is a shape mismatch, and this
+     is the check that stops two trees with matching values but different holes from passing.
+
+     CHECK BOTH OF THESE BEFORE LOOKING AT ANY VALUE. Asking a node that is not there what its value
+     is stops the program.
+
+  5. IF THEIR VALUES DIFFER, THEY DO NOT MIRROR.
+
+  6. OTHERWISE, BOTH OF THE FOLLOWING MUST HOLD:
+
+     - THE FIRST NODE'S LEFT CHILD MIRRORS THE SECOND NODE'S RIGHT CHILD.
+     - THE FIRST NODE'S RIGHT CHILD MIRRORS THE SECOND NODE'S LEFT CHILD.
+
+     CROSSED, BOTH TIMES. Pairing left with left and right with right asks whether the two subtrees
+     are identical, which is a different question that happens to give the same answer on the
+     textbook example.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a mobile hanging from the ceiling - the kind above a cot, with arms branching into smaller
+arms. You want to know whether it is perfectly balanced in appearance: whether the whole thing,
+seen in a mirror held down the middle, would look exactly as it does now.
+
+The wrong way to check is to describe the left half, describe the right half, and see whether the
+two descriptions match. That tells you the halves are the same as each other, which is not the same
+thing at all. Two arms that both dangle their ornament to the right are identical to one another,
+and a mirror would send one of them to the left - so the mobile is not symmetric, even though its
+halves are twins.
+
+The right way is to use two hands. Put one hand on the leftmost arm and the other on the rightmost
+arm, and always move them as a pair.
+
+At each pair, first check they are carrying the same ornament. Then move both hands onward - and
+here is the whole trick - crossing over. Your left hand goes to the OUTSIDE of its arm while your
+right hand goes to the OUTSIDE of its arm, which means one goes left and the other goes right. Then
+you come back and do the same for the two INSIDE branches, again in opposite directions.
+
+You are always comparing something on the far left against something on the far right, working
+inward together. That crossing is what a reflection is: the thing furthest out on one side
+corresponds to the thing furthest out on the other, and if you compare same-side to same-side you
+have simply forgotten to hold up the mirror at all.
+
+Three things can end a comparison immediately. If both hands find nothing there, that is fine - two
+absences balance. If one hand finds an arm and the other finds empty air, the mobile is lopsided and
+you can stop. And if the two ornaments differ, likewise.
+
+You must check for the empty air BEFORE you try to look at an ornament, for the obvious reason that
+there is no ornament there to look at.
+
+If your hands work all the way inward and down without ever finding a disagreement, the mobile is
+symmetric. And the root at the very top is never compared with anything, because it is not on either
+side - it is the line the reflection happens about.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the symmetric tree 1 / 2, 2 / (3, 4, 4, 3) beside you.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None.
+
+    def is_symmetric(root):
+        def mirror(a, b):
+
+THE HELPER, AND ITS SIGNATURE IS THE POINT. It takes TWO nodes, not one, because "is this position
+mirrored?" is a question about a PAIR - a single node has no idea what sits opposite it (section 5).
+
+    a  HOLDS the node from the LEFT-HAND side of the comparison.
+    b  HOLDS the node from the RIGHT-HAND side.
+
+Defined inside `is_symmetric` purely for tidiness - it uses nothing from the enclosing scope.
+
+            if a is None and b is None:
+                return True                 # both empty -> symmetric here
+
+BASE CASE ONE. Two absences mirror each other trivially. This must come FIRST, because the next line
+would otherwise report two absences as a mismatch.
+
+            if a is None or b is None or a.val != b.val:
+                return False                # one empty or values differ
+
+BASE CASES TWO AND THREE, FOLDED INTO ONE LINE, and the order inside the `or` is load-bearing.
+
+    `a is None or b is None`  DECIDES the shape mismatch. Having already returned when BOTH were
+                              None, this catches exactly-one-None - something facing nothing. This
+                              is the check that catches section 4's counterexample.
+    `a.val != b.val`          DECIDES the value mismatch. It is evaluated LAST and only ever reached
+                              when both nodes are known to exist, because `or` short-circuits. Put
+                              it first and it reads `.val` off a None (trap 2).
+
+                # outer pair and inner pair must both mirror
+                return mirror(a.left, b.right) and mirror(a.right, b.left)
+
+THE LINE THE WHOLE PROBLEM COMES DOWN TO. Both calls CROSS.
+
+    `mirror(a.left, b.right)`   THE OUTER PAIR - the two outermost nodes at the next level down.
+    `mirror(a.right, b.left)`   THE INNER PAIR - the two innermost.
+
+    Written as `mirror(a.left, b.left) and mirror(a.right, b.right)` this becomes the SAME-TREE
+    test, which returns True on section 4's tree where the answer is False. TWO ARGUMENTS SWAPPED,
+    and it is a different problem.
+
+`and` SHORT-CIRCUITS: if the outer pair fails, the inner pair is never examined, and the False
+propagates straight back up without touching the rest of the tree.
+
+        return root is None or mirror(root.left, root.right)
+
+TWO THINGS IN ONE LINE.
+
+    `root is None`  handles the empty tree - symmetric, trivially (trap 5). And because `or`
+                    short-circuits, `root.left` is never evaluated when there is no root.
+    `mirror(root.left, root.right)`  starts the comparison AT THE ROOT'S TWO CHILDREN, not at the
+                    root. The root is the mirror line itself; it has nothing to be compared with
+                    (trap 4).""",
+
+    """9. TRACED, PAIR BY PAIR - AND THE ANSWER INVERTING ON WHERE ONE CHILD HANGS.
+
+TRACE 1 - THE SYMMETRIC CASE.
+
+            1
+           / \\
+          2   2
+         / \\ / \\
+        3  4 4  3
+
+    is_symmetric(1):  root is not None, so evaluate mirror(root.left = 2L, root.right = 2R).
+
+    mirror(2L, 2R)
+        Both non-None, so base case one does not fire.
+        Neither is None, and 2 != 2 is false, so base case two does not fire.
+        Returns  mirror(2L.left, 2R.right)  and  mirror(2L.right, 2R.left)
+               = mirror(3, 3)               and  mirror(4, 4)
+
+        mirror(3, 3)      -  THE OUTER PAIR: the far-left 3 against the far-right 3.
+            Both exist, 3 == 3.
+            Returns mirror(None, None) and mirror(None, None)
+                  = True and True  ->  True
+
+        mirror(4, 4)      -  THE INNER PAIR.
+            Both exist, 4 == 4.  Both children absent on each side.
+            Returns True and True  ->  True
+
+        True and True  ->  True
+
+    RETURNS True.
+
+    NOTE THE PAIRING AT THE SECOND LEVEL. The 3s were compared with each other and the 4s with each
+    other - but that happened because of the CROSS, not in spite of it: 2L's LEFT (3) went with 2R's
+    RIGHT (3). On this tree the same-side pairing would also have matched the 3s with the 3s, which
+    is exactly why this example cannot detect trap 1.
+
+TRACE 2 - THE COUNTEREXAMPLE, where identical and mirrored disagree.
+
+            1
+           / \\
+          2   2
+           \\   \\
+            3   3
+
+    Both subtrees are a node with a single RIGHT child. They are IDENTICAL to each other.
+
+    mirror(2L, 2R)
+        Both exist, 2 == 2.
+        Returns  mirror(2L.left, 2R.right)  and  mirror(2L.right, 2R.left)
+               = mirror(None, 3)            and  mirror(3, None)
+
+        mirror(None, 3)     -  base case one: is `a is None and b is None`?  a is None but b is the
+                               node 3, so NO.
+                               base case two: `a is None` is TRUE  ->  RETURN False.
+
+        The `and` SHORT-CIRCUITS. mirror(3, None) is never called.
+
+        False  ->  RETURNS False.
+
+    RETURNS False.  Correct - fold the tree and the left 3 lands on empty air.
+
+    NOW THE SAME TREE WITH THE WRONG PAIRING (trap 1):
+        mirror(2L.left = None, 2R.left = None)   ->  both None  ->  True
+        mirror(2L.right = 3,   2R.right = 3)     ->  3 == 3, all children None  ->  True
+        True and True  ->  RETURNS True.
+
+    THE SAME FIVE NODES, TWO ARGUMENTS SWAPPED, AND True INSTEAD OF False.
+
+TRACE 3 - THE INVERSION, on the same five nodes. Move ONE child from the right side to the left:
+
+        NOT SYMMETRIC                      SYMMETRIC
+            1                                  1
+           / \\                                / \\
+          2   2                              2   2
+           \\   \\                            /     \\
+            3   3                          3       3
+
+    THE RIGHT-HAND TREE:
+        mirror(2L, 2R): both exist, 2 == 2.
+            mirror(2L.left = 3, 2R.right = 3)   ->  3 == 3, children all None  ->  True
+            mirror(2L.right = None, 2R.left = None)  ->  both None  ->  True
+            True and True  ->  True
+        RETURNS True.
+
+    SAME NODE VALUES - {1, 2, 2, 3, 3} - AND EACH 2 STILL CARRIES EXACTLY ONE CHILD. The only change
+    is which SIDE one of the 3s hangs on, and the answer flips from False to True. Symmetry is
+    entirely about position.
+
+TRACE 4 - A VALUE MISMATCH, to exercise the third base case. Change the far-right 3 to a 5 in the
+symmetric tree:
+
+            1
+           / \\
+          2   2
+         / \\ / \\
+        3  4 4  5
+
+    mirror(2L, 2R): both exist, 2 == 2.
+        mirror(2L.left = 3, 2R.right = 5):
+            base case one: not both None.
+            base case two: neither is None, but 3 != 5 is TRUE  ->  RETURN False.
+        SHORT-CIRCUIT - mirror(4, 4) is never called.
+    RETURNS False.
+
+    ONE LEAF VALUE CHANGED, AND True BECOMES False.
+
+THE TINY INPUTS:
+    root = None       `root is None` is True, so `or` short-circuits and returns True without ever
+                      touching `root.left`. An empty tree is symmetric.
+    A SINGLE NODE 5   mirror(None, None) - base case one  ->  True. A lone node is symmetric; it has
+                      nothing on either side to be lopsided.
+    TWO NODES, 1 with a LEFT child 2
+                      mirror(2, None): base case one fails, base case two fires on `b is None`  ->
+                      False. Correct - a single arm on one side cannot be symmetric.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: every node is visited exactly once, AS HALF OF EXACTLY ONE PAIR. The pairs partition
+the tree - each node on the left is matched with precisely one node on the right and never looked at
+again. Each comparison is constant work.
+
+    IN PRACTICE OFTEN FAR LESS, because `and` short-circuits: the first mismatch anywhere aborts the
+    remaining comparisons and the False propagates straight to the top. Trace 2 stops after three
+    calls.
+
+SPACE: O(h) for the recursion stack, where h is the tree's HEIGHT - O(log n) for a balanced tree,
+O(n) for a skewed one.
+
+    Python's default recursion limit is 1,000, so a chain of more than about a thousand nodes raises
+    RecursionError rather than running slowly. The queue-of-pairs version in section 5 uses O(w)
+    instead - the widest level - and has no such limit. Volunteering that trade before being asked
+    is the right move.
+
+THE FAMILY - LOCKSTEP TWO-NODE RECURSION. The same skeleton (handle both-None, handle one-None,
+handle a value mismatch, then recurse on a CHOSEN PAIRING) solves a whole set of problems, and the
+only thing that changes is which pairing you choose:
+
+    SAME TREE                    pair (a.left, b.left) and (a.right, b.right)
+    SYMMETRIC TREE               pair (a.left, b.right) and (a.right, b.left)      <- this entry
+    MERGE TWO BINARY TREES       same-side pairing, but build rather than compare
+    FLIP EQUIVALENT BINARY TREES try BOTH pairings and accept either
+    SUBTREE OF ANOTHER TREE      run Same Tree at every node of the larger tree
+    LEAF-SIMILAR TREES           collect each tree's leaves and compare the sequences
+
+    NOTE HOW SAME TREE AND SYMMETRIC TREE DIFFER BY EXACTLY TWO SWAPPED ARGUMENTS, and Flip
+    Equivalent is the problem that accepts either. Seeing that is worth more than any one of them -
+    and Merge Two Binary Trees in this bank is the same skeleton used constructively rather than as
+    a test.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it iteratively." A queue of PAIRS, section 5 - and give the reason: a 10,000-deep tree
+    exceeds Python's 1,000-frame limit.
+  - "What if the values may differ but the SHAPE must mirror?" Drop the value check and keep the two
+    None checks. Worth noticing that shape and value are independently testable here.
+  - "Is a tree symmetric if you may FLIP any node's children?" That is Flip Equivalent Binary Trees -
+    at each pair, accept either the same-side pairing or the crossed one.
+  - "Why start at the children rather than the root?" Symmetry is a relation between the two
+    subtrees; the root is the mirror line and has nothing to compare against.
+  - "Could you compare serialised strings?" Only with explicit placeholders for missing children -
+    otherwise the shape is lost and section 4's counterexample slips through (section 5, version A).
+
+THE #1 BEGINNER MISTAKE: pairing left with left and right with right, which silently answers "are
+the two subtrees identical?" instead. It gives the right answer on the textbook symmetric tree - so
+it passes the test everyone runs - and returns True for a tree whose two halves both lean the same
+way, which is the definition of not symmetric.
+
+RUNNER-UP: checking the values before checking for absence, so `a.val` is read off a node that is
+not there. The `or` in the second base case is ordered the way it is for that reason.
+
+TAKEAWAY: symmetry is a question about PAIRS of nodes rather than about single nodes, so the
+function takes two arguments and recurses on the CROSSED pairings - left with right and right with
+left - because a reflection reverses sides at every level, and pairing same-side to same-side asks
+whether the halves are twins rather than mirrors.""",
 ]
 
 _EX_P1B["Tokenization and Byte-Pair Encoding (BPE)"] = [
@@ -68883,128 +69358,1074 @@ depth signal.""",
 ]
 
 _EX_P1D["Best Time to Buy and Sell Stock with Cooldown"] = [
-    """A full trace, which is the only way this state machine becomes clear.
-prices = [1,2,3,0,2]. Start hold=-inf, sold=0, rest=0.
-day 1 (1): sold = -inf+1 = -inf; hold = max(-inf, 0-1) = -1; rest = max(0,0)=0
-day 2 (2): prev_sold=-inf; sold = -1+2 = 1; hold = max(-1, 0-2) = -1; rest = 0
-day 3 (3): prev_sold=1; sold = -1+3 = 2; hold = max(-1, 0-3) = -1; rest = max(0,1)=1
-day 4 (0): prev_sold=2; sold = -1+0 = -1; hold = max(-1, 1-0) = 1; rest = max(1,2)=2
-day 5 (2): prev_sold=-1; sold = 1+2 = 3; hold = max(1, 2-2) = 1; rest = max(2,-1)=2
-Answer max(sold, rest) = 3, from buy at 1, sell at 2, cooldown, buy at 0, sell
-at 2 - profit 1 + 2 = 3.""",
+    """1. THE GOAL - trade as often as you like, but rest a day after selling.
 
-    """What the three states mean, in one sentence each.
-HOLD: the best profit achievable while currently OWNING a share. It is negative
-early on because you have paid for the stock and not yet sold.
-SOLD: the best profit given that you sold TODAY - so tomorrow is a forced
-cooldown and you cannot buy.
-REST: the best profit while owning nothing and being FREE to buy - either you
-have been idle, or your cooldown has expired.
-The cooldown rule is expressed entirely by which state can flow into which,
-which is why no explicit day-counter or flag is needed anywhere.""",
+You are given the price of one share on each of a series of days. You may buy and sell AS MANY TIMES
+AS YOU LIKE, with two restrictions:
 
-    """The transitions, and where the cooldown is encoded.
-sold = hold + price          -> you can only sell if you were holding
-hold = max(hold, rest - price) -> you can only buy from REST, never from SOLD
-rest = max(rest, prev_sold)  -> today's rest may come from yesterday's sale
-That middle line is the cooldown: buying reads `rest`, and `rest` can only
-receive a sale after a one-day delay through `prev_sold`. If you wrote
-`hold = max(hold, sold - price)` you would allow buying the same day you sold,
-which is the unconstrained problem (Stock II) - one variable's difference
-between two different LeetCode problems.""",
+    YOU CAN HOLD AT MOST ONE SHARE AT A TIME. You must sell before you can buy again.
+    AFTER YOU SELL, YOU MUST SIT OUT THE NEXT DAY. That is the COOLDOWN - you may not buy on the day
+        immediately after a sale.
 
-    """Why prev_sold must be captured before sold is overwritten.
-The three updates are not independent: `rest` needs YESTERDAY's sold, but the
-line above has already replaced sold with today's value. Saving prev_sold at
-the top of the loop is what keeps the recurrence honest.
-Get this wrong and you allow a sale to become available for buying on the SAME
-day, silently inflating the profit. This is the same hazard as the tuple
-assignment in Fibonacci-style problems, and the general rule is: when several
-rolling variables update from each other, snapshot the ones you still need.""",
+    MAXIMISE THE TOTAL PROFIT.
 
-    """Edge cases.
-[] -> guarded, return 0. [5] -> one day: hold = -5, sold = -inf+5, rest = 0 ->
-answer 0. You cannot profit from a single price.
-Monotonically decreasing [5,4,3,2,1] -> every sale loses money, so sold stays
-negative and rest stays 0 -> answer 0. The max(sold, rest) at the end is what
-guarantees you never report a loss: doing nothing is always available.
-Why hold starts at -inf rather than 0: hold = 0 would claim you can own a share
-having paid nothing, which fabricates profit on day one.""",
+    prices = [1, 2, 3, 0, 2]        (day 1 costs 1, day 2 costs 2, and so on)
 
-    """The family, and how the states scale.
-Stock I (one transaction): track the minimum price so far. Stock II (unlimited):
-sum every positive difference. Stock with COOLDOWN: three states, as here.
-Stock with FEE: two states, subtracting the fee on sale. Stock III/IV (at most
-k transactions): 2k states, or a DP over (day, transactions used, holding).
-The unifying idea is that each variant is a small state machine, and the
-constraint is expressed purely as which edges exist. Drawing the three-node
-diagram - hold, sold, rest, with the arrows - takes twenty seconds and makes
-the code self-evident, so draw it before you write anything.""",
+    THE BEST PLAN:
+        day 1  buy  at 1
+        day 2  sell at 2            profit  +1
+        day 3  COOLDOWN - forced to sit out, even though the price is 3
+        day 4  buy  at 0
+        day 5  sell at 2            profit  +2
+
+    TOTAL: 3
+
+WHAT THE COOLDOWN COSTS. Without it you could also buy at 2 on day 2 and sell at 3 on day 3, for
+another +1 and a total of 4. THE ONE-DAY REST IS WORTH EXACTLY ONE POUND ON THIS INPUT - and section
+9 shows the code producing 4 the moment the cooldown is accidentally removed, which is the single
+most useful thing to know about this problem.
+
+WHY GREEDY FAILS. Without the cooldown there is a famous one-liner: add up every positive difference
+between consecutive days. With the cooldown that breaks, because taking a small profit today can
+block a larger one tomorrow. You cannot decide day by day in isolation - TODAY'S BEST MOVE DEPENDS ON
+WHAT YOU DID YESTERDAY, and specifically on whether you sold.
+
+    THAT DEPENDENCE IS THE PROBLEM'S REAL SHAPE. It is not "which days do I trade on" - it is "what
+    SITUATION am I in at the end of each day", and there are only three situations that matter.""",
+
+    """2. THE INTUITION - three situations, and how each day moves you between them.
+
+At the end of any day, you are in exactly ONE of three states:
+
+    HOLD   you own a share right now.
+    SOLD   you sold TODAY - so tomorrow you are forbidden to buy.
+    REST   you own nothing and you are free to buy tomorrow.
+
+For each state, keep THE BEST PROFIT ACHIEVABLE WHILE ENDING THE DAY IN THAT STATE. Three numbers,
+updated once per day.
+
+Now draw the moves. From each state, what can tomorrow look like?
+
+                buy (pay the price)
+        REST ─────────────────────────► HOLD
+         ▲                               │ │
+         │                               │ └── do nothing: stay HOLD
+         │                               │
+         │                     sell (receive the price)
+         │                               ▼
+         └────────────────────────────  SOLD
+              the cooldown day passes
+
+    NOTICE WHAT IS MISSING: THERE IS NO ARROW FROM SOLD DIRECTLY TO HOLD. That absence IS the
+    cooldown. Having sold, the only thing you can do next is move to REST - one wasted day - and
+    only from REST may you buy.
+
+    SELL  ->  (one day of REST)  ->  BUY.    Never SELL  ->  BUY.
+
+So each day, the three numbers are recomputed from YESTERDAY'S three:
+
+    the best way to end today HOLDING  =  you were already holding, or you were RESTING and bought
+    the best way to end today SOLD     =  you were HOLDING and sold
+    the best way to end today RESTING  =  you were already resting, or you SOLD YESTERDAY
+
+That last line is where the cooldown lives, and it is why the third rule reads "sold YESTERDAY"
+rather than "sold". Section 4 is about what happens when that word is dropped.
+
+AT THE END, THE ANSWER IS THE BEST OF SOLD AND REST - never HOLD, because ending the run still
+owning a share means you paid for something you never sold.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRANSACTION. One buy followed by one sell.
+COOLDOWN. The forced idle day immediately after a sale. You may not BUY on that day. (You could not
+sell either, since you own nothing.)
+
+STATE. A situation you can be in at the end of a day. Here there are exactly three.
+STATE MACHINE. A set of states plus the legal moves between them. Drawing it is usually the fastest
+way to solve this whole family of problems.
+
+DYNAMIC PROGRAMMING (DP). Computing each subproblem once and reusing it. Here the subproblem is
+"best profit ending day i in state S", and there are 3n of them.
+
+ROLLING VARIABLES. Keeping only the previous day's three values rather than a full n-by-3 table,
+because each day depends only on the day before. Gives O(1) space.
+
+float('-inf'). Negative infinity. Used as "this state is impossible so far", so that any real value
+beats it in a `max`. Section 5 explains why 0 would be wrong here.
+
+hold. Best profit while currently OWNING a share. Negative early on - you have paid out and not yet
+      sold.
+sold. Best profit having sold TODAY. Tomorrow is a cooldown.
+rest. Best profit while idle and FREE TO BUY.
+prev_sold. Yesterday's `sold`, captured before `sold` is overwritten. THE COOLDOWN DEPENDS ON IT.
+price. Today's share price.
+
+O(n) TIME, O(1) SPACE.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and it does not crash, it solves a different problem.
+
+TRAP 1 - USING TODAY'S `sold` INSTEAD OF YESTERDAY'S. The three updates are NOT independent, and
+this is the whole reason `prev_sold` exists.
+
+    prev_sold = sold
+    sold = hold + price
+    hold = max(hold, rest - price)
+    rest = max(rest, prev_sold)          <- YESTERDAY'S sold
+
+    `rest` needs YESTERDAY'S `sold`, because coming off cooldown takes a day. But the second line has
+    ALREADY overwritten `sold` with today's value. Write `rest = max(rest, sold)` and you are saying
+    "I sold today, therefore I am free to buy today" - WHICH REMOVES THE COOLDOWN ENTIRELY.
+
+    ON prices = [1, 2, 3, 0, 2]:
+
+        WITH prev_sold      ->  3      correct
+        WITHOUT prev_sold   ->  4
+
+    AND 4 IS NOT A RANDOM WRONG NUMBER. It is exactly the answer to BEST TIME TO BUY AND SELL STOCK
+    II - the same problem with no cooldown - whose greedy solution sums the positive differences:
+    (2−1) + (3−2) + (2−0) = 1 + 1 + 2 = 4.
+
+    THE BUG SILENTLY SOLVES THE EASIER PROBLEM. No exception, no obviously silly output - just a
+    plausible, slightly-too-good profit. That is what makes it dangerous, and it is why the trace in
+    section 9 runs both versions side by side.
+
+TRAP 2 - STARTING `hold` AT 0. It must be negative infinity, meaning "I cannot possibly be holding a
+share before the first day".
+
+    With `hold = 0`, the very first day computes `sold = hold + price = 0 + 1 = 1` - A PROFIT OF 1
+    FROM SELLING A SHARE YOU NEVER BOUGHT. Every later state is built on that phantom pound.
+
+    (`sold` and `rest` DO start at 0, and correctly: before trading begins you have made nothing and
+    you are idle. Only `hold` is impossible, so only `hold` is −inf.)
+
+TRAP 3 - RETURNING `hold`, OR `max` OF ALL THREE. The answer is `max(sold, rest)`. Ending the run
+still holding a share means you spent money and never got it back, so `hold` can never be the best
+final answer. Including it is harmless only because it will never win - but writing `max(sold, rest)`
+says what you mean.
+
+TRAP 4 - UPDATING `hold` BEFORE `sold`. `sold = hold + price` needs YESTERDAY'S `hold` - the share
+you are selling was bought on an earlier day. Compute `sold` FIRST, while `hold` still holds
+yesterday's value, then update `hold`. The order of the three assignment lines is load-bearing, and
+`prev_sold` exists precisely because one of the three dependencies runs the other way.
+
+TRAP 5 - THINKING THE COOLDOWN BLOCKS SELLING. It only blocks BUYING. The day after a sale you own
+nothing, so there is nothing to sell anyway - the restriction that bites is on the purchase.
+
+TRAP 6 - THE EMPTY LIST. `prices = []` is guarded and returns 0. Without the guard the loop simply
+never runs and the function returns `max(0, 0) = 0` anyway - so the guard is defensive rather than
+load-bearing here, which is worth knowing.""",
+
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
+
+VERSION A - THE GREEDY FROM STOCK II. "Add up every positive difference between consecutive days."
+
+    On [1, 2, 3, 0, 2] that gives 1 + 1 + 2 = 4, and the correct answer is 3. THE GREEDY IS WRONG,
+    and it is wrong in the direction of being too optimistic - it takes every rise, including ones
+    the cooldown forbids. Worth stating and rejecting, because it is the instinct everybody brings
+    from the easier problem.
+
+VERSION B - BRUTE FORCE OVER EVERY SET OF TRANSACTIONS. Try every choice of buy and sell days
+consistent with the rules. Exponential - for n days the number of trading patterns grows like the
+Fibonacci-ish count of ways to place non-adjacent blocks, so 30 days is already millions of
+possibilities.
+
+VERSION C - A FULL DP TABLE. `dp[i][state]` for each day and each of the three states: 3n entries,
+each computed from three entries of the previous row. O(n) time, O(n) space.
+
+VERSION D - THREE ROLLING VARIABLES, which is the code here. Each day depends ONLY on the day before,
+so the rest of the table is dead weight. O(n) time, O(1) SPACE.
+
+    This is the same reduction as Tribonacci (a window of three terms) and Climbing Stairs (two) -
+    the recurrence has a FIXED, SHALLOW dependency, so a handful of variables replaces the table.
+
+WHY THREE STATES AND NOT TWO - the argument, since an interviewer will ask why the easier problems
+need only two.
+
+    WITHOUT A COOLDOWN, two states suffice: you either hold a share or you do not, and "do not" is a
+    single situation because you are always free to buy.
+
+    THE COOLDOWN SPLITS "DO NOT HOLD" IN TWO, because two people owning nothing are not in the same
+    position: one sold today and may not buy tomorrow, the other has been idle and may. They have
+    DIFFERENT FUTURES, so they need different numbers. That is the entire reason for the third state.
+
+    THE GENERAL PRINCIPLE, and it transfers: ADD A STATE WHENEVER TWO SITUATIONS THAT LOOK ALIKE HAVE
+    DIFFERENT LEGAL MOVES AHEAD OF THEM. Get that right and the transitions write themselves.
+
+WHY float('-inf') RATHER THAN A LARGE NEGATIVE NUMBER. `hold` starts impossible, and `max` must never
+choose it. Infinity is safe because −inf + price is still −inf, so an impossible state cannot leak a
+finite value into `sold` on day 1. A big negative constant like −10^9 would eventually become a
+finite, comparable number and could be selected - the same argument as Coin Change's `float('inf')`
+sentinel, in the opposite direction.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: CARRY THREE RUNNING BEST-PROFITS - ONE FOR ENDING THE DAY
+OWNING A SHARE, ONE FOR HAVING SOLD TODAY, AND ONE FOR BEING IDLE AND FREE TO BUY - AND EACH DAY
+RECOMPUTE ALL THREE FROM YESTERDAY'S THREE, ALLOWING A PURCHASE ONLY OUT OF THE IDLE ONE.
+
+THERE IS NO RECURSION. The mechanism is A SINGLE FORWARD SWEEP CARRYING THREE NUMBERS:
+
+  - One pass over the prices, one day at a time, never looking back further than yesterday.
+  - The three numbers are the whole memory. Nothing else about the past matters - not which days you
+    traded on, not how many times.
+  - WHAT MAKES IT STOP: the loop's trip count is the number of days, fixed before it starts.
+  - THE ORDER OF THE THREE UPDATES MATTERS, because they depend on each other. Two of them need
+    yesterday's values of quantities that are about to be overwritten, so one value must be set
+    aside before the updates begin.
+
+THE STEPS:
+
+  1. IF THERE ARE NO PRICES, THE PROFIT IS ZERO.
+
+  2. SET UP THE THREE RUNNING BEST-PROFITS FOR "BEFORE ANY TRADING":
+
+     - OWNING A SHARE: IMPOSSIBLE. Mark it as impossible rather than as zero - a value of zero would
+       claim you already own a share that cost you nothing, and the first day would then let you sell
+       something you never bought.
+     - HAVING JUST SOLD: zero.
+     - BEING IDLE: zero. You have made nothing and you are free to buy.
+
+  3. FOR EACH DAY'S PRICE, IN ORDER:
+
+     a. SET ASIDE YESTERDAY'S "JUST SOLD" FIGURE, before anything overwrites it. Step d needs it, and
+        step b is about to destroy it.
+
+     b. THE BEST WAY TO END TODAY HAVING SOLD is to have been holding a share and to sell it now: the
+        holding figure plus today's price.
+
+        Use YESTERDAY'S holding figure - the share you are selling was bought on an earlier day - so
+        this must be computed before step c changes it.
+
+     c. THE BEST WAY TO END TODAY HOLDING is the better of two things: you were already holding and
+        did nothing, or you were IDLE and bought today, paying today's price.
+
+        IDLE - not "just sold". This is the cooldown: a purchase may only come out of the idle state.
+
+     d. THE BEST WAY TO END TODAY IDLE is the better of two things: you were already idle, or YOU
+        SOLD YESTERDAY and have now served your cooldown day.
+
+        YESTERDAY'S selling figure, which is why step a existed. Using today's would mean selling and
+        becoming free to buy on the very same day, which removes the restriction the problem is
+        entirely about.
+
+  4. THE ANSWER IS THE BETTER OF THE TWO FINAL FIGURES FOR HAVING SOLD AND FOR BEING IDLE. Never the
+     holding figure - ending while still owning a share means you paid out and never got it back.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine you are keeping three separate running accounts, and each evening you update all three.
+
+The first account answers: if I end today owning a share, what is the most money I could possibly be
+up by? Early on this is a negative number, because owning a share means you have paid for one and
+not yet sold it.
+
+The second answers: if I end today having just sold, what is the most I could be up by? Selling
+today has a consequence - tomorrow you are barred from buying.
+
+The third answers: if I end today owning nothing and free to trade tomorrow, what is the most I
+could be up by?
+
+Every evening you work out fresh values for all three, using only yesterday's three. You never need
+to remember which days you actually traded on, or how many times - the three numbers carry
+everything that matters about the past.
+
+To end today having just sold, you must have been holding a share yesterday and sold it at today's
+price. So take yesterday's holding account and add today's price.
+
+To end today holding, you either held yesterday and did nothing, or you were idle yesterday and
+bought today, paying out today's price. Take whichever is better. And notice what is not on that
+list: you cannot have sold yesterday and bought today. That is the whole restriction, and it is
+enforced simply by not offering the move.
+
+To end today idle, you either were idle yesterday and stayed put, or you sold YESTERDAY and have now
+served your day of rest. Take whichever is better.
+
+That word "yesterday" in the last sentence is the one to be careful about. By the time you get round
+to updating the idle account, you have already written today's figure over the selling account. If
+you use it, you are quietly saying that a sale frees you to buy on the very same day - and the whole
+restriction vanishes. The profit you end up reporting is not obviously wrong; it is simply the answer
+to the easier question where no rest day exists. So set yesterday's selling figure aside on a scrap
+of paper before you start.
+
+When the last day is done, the answer is the better of the selling account and the idle account. You
+would never want to finish while still owning a share: you paid for it and never turned it back into
+money.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep prices = [1, 2, 3, 0, 2] beside you, answer 3.
+
+    def max_profit_cooldown(prices):
+        if not prices:
+            return 0
+
+An empty list has no profit to make. (Defensive rather than load-bearing: with no prices the loop
+never runs and the final `max(0, 0)` would return 0 anyway - trap 6.)
+
+        hold = float('-inf')     # best profit while holding a stock
+
+    hold  HOLDS the best profit achievable while ENDING THE DAY OWNING A SHARE.
+
+    IT STARTS AT NEGATIVE INFINITY, meaning "impossible" - you cannot own a share before day one.
+    Starting at 0 would let day one compute `sold = 0 + price`, a profit from selling something you
+    never bought (trap 2). And −inf is chosen over a large negative constant because −inf + price is
+    still −inf, so the impossible state cannot leak a finite value.
+
+        sold = 0                 # best profit having just sold (cooldown next)
+        rest = 0                 # best profit resting (free to buy)
+
+    sold  HOLDS the best profit having SOLD TODAY - so tomorrow is a cooldown.
+    rest  HOLDS the best profit while IDLE AND FREE TO BUY.
+
+    Both start at 0: before trading you have made nothing, and both situations are reachable.
+
+        for price in prices:
+
+One pass, one day at a time, in order. Never looks back further than yesterday, which is what makes
+three variables enough instead of a table.
+
+            prev_sold = sold
+
+THE LINE THE COOLDOWN DEPENDS ON. It captures YESTERDAY'S `sold` before the very next line destroys
+it. The `rest` update three lines below needs it, and by then it would be gone (trap 1).
+
+            sold = hold + price              # sell today
+
+    `hold`   is still YESTERDAY'S holding figure at this moment - which is exactly right, because the
+             share being sold was bought on an earlier day. This must come BEFORE the `hold` update
+             on the next line (trap 4).
+    `+ price` is the money received today.
+
+On day one `hold` is −inf, so `sold` becomes −inf: you cannot sell on the first day. The sentinel
+carries that impossibility forward correctly.
+
+            hold = max(hold, rest - price)   # keep holding, or buy today
+
+    `hold`           - you were already holding and did nothing today.
+    `rest - price`   - you were IDLE and bought today, paying out `price`.
+
+    THE COOLDOWN IS ENCODED IN THIS LINE, BY WHAT IS ABSENT. The buy comes out of `rest`, and there
+    is no `sold - price` option anywhere. You can only buy from the idle state, and the idle state is
+    only reachable a day after selling.
+
+            rest = max(rest, prev_sold)      # rest, or come off cooldown
+
+    `rest`       - you were already idle and stayed put.
+    `prev_sold`  - YOU SOLD YESTERDAY and have now served your cooldown day.
+
+    `prev_sold`, not `sold`. Using `sold` here says a sale frees you to buy the same day, which
+    removes the cooldown and turns this into Stock II (trap 1). Section 9 traces both.
+
+        return max(sold, rest)
+
+The best final position. NOT `hold` - ending while still owning a share means you paid for it and
+never sold it, so that can never be the best outcome (trap 3).""",
+
+    """9. THE FULL TRACE, WHICH IS THE ONLY WAY THIS STATE MACHINE BECOMES CLEAR.
+
+TRACE 1 - prices = [1, 2, 3, 0, 2]. Expected 3.
+
+    START:  hold = -inf,  sold = 0,  rest = 0
+
+    DAY 1, price = 1
+        prev_sold = 0
+        sold = hold + price = -inf + 1 = -inf        <- cannot sell; nothing was ever bought
+        hold = max(-inf, rest - price) = max(-inf, 0 - 1) = -1     <- bought at 1
+        rest = max(0, prev_sold = 0) = 0
+        ->  hold = -1,  sold = -inf,  rest = 0
+
+    DAY 2, price = 2
+        prev_sold = -inf
+        sold = hold + price = -1 + 2 = 1             <- bought at 1, sold at 2: profit 1
+        hold = max(-1, rest - price) = max(-1, 0 - 2 = -2) = -1     <- keeping the day-1 share wins
+        rest = max(0, -inf) = 0
+        ->  hold = -1,  sold = 1,  rest = 0
+
+    DAY 3, price = 3
+        prev_sold = 1
+        sold = hold + price = -1 + 3 = 2             <- hold the day-1 share to day 3: profit 2
+        hold = max(-1, rest - price) = max(-1, 0 - 3 = -3) = -1
+        rest = max(0, prev_sold = 1) = 1             <- came off cooldown from the day-2 sale
+        ->  hold = -1,  sold = 2,  rest = 1
+
+        NOTE `rest` PICKING UP THE 1. That is the day-2 sale becoming spendable, one day later.
+
+    DAY 4, price = 0
+        prev_sold = 2
+        sold = hold + price = -1 + 0 = -1
+        hold = max(-1, rest - price) = max(-1, 1 - 0 = 1) = 1
+                                       ^^^^^^^^^^^^^^^^
+                THE KEY MOMENT: banked profit of 1, and buying today costs 0, so you can be holding a
+                share and STILL be up by 1. The buy came out of `rest`, which is only non-zero
+                because a day of cooldown had already passed.
+        rest = max(1, prev_sold = 2) = 2             <- the day-3 sale (profit 2) becomes spendable
+        ->  hold = 1,  sold = -1,  rest = 2
+
+    DAY 5, price = 2
+        prev_sold = -1
+        sold = hold + price = 1 + 2 = 3              <- bought at 0 while up 1, sold at 2
+        hold = max(1, rest - price) = max(1, 2 - 2 = 0) = 1
+        rest = max(2, -1) = 2
+        ->  hold = 1,  sold = 3,  rest = 2
+
+    RETURN max(sold, rest) = max(3, 2) = 3.
+
+    CHECK AGAINST THE PLAN IN SECTION 1: buy 1 / sell 2 gives +1, cooldown on day 3, buy 0 / sell 2
+    gives +2. Total 3. The state machine found exactly that.
+
+TRACE 2 - THE INVERSION: THE SAME PRICES WITH `rest = max(rest, sold)` INSTEAD OF `prev_sold`
+(trap 1).
+
+    START:  hold = -inf,  sold = 0,  rest = 0
+
+    DAY 1 (1):  sold = -inf;  hold = max(-inf, 0-1) = -1;  rest = max(0, -inf) = 0
+    DAY 2 (2):  sold = -1 + 2 = 1;  hold = max(-1, 0-2) = -1;  rest = max(0, sold = 1) = 1
+                                                                       ^^^^^^^^^^^^^^
+                        HERE IS THE BUG, VISIBLE. `rest` becomes 1 on the SAME DAY the sale happened,
+                        so tomorrow's purchase may draw on it. The cooldown never occurs.
+    DAY 3 (3):  sold = -1 + 3 = 2;  hold = max(-1, 1-3 = -2) = -1;  rest = max(1, 2) = 2
+    DAY 4 (0):  sold = -1 + 0 = -1;  hold = max(-1, 2-0 = 2) = 2;  rest = max(2, -1) = 2
+    DAY 5 (2):  sold = 2 + 2 = 4;  hold = max(2, 2-2 = 0) = 2;  rest = max(2, 4) = 4
+
+    RETURN max(4, 4) = 4.
+
+    FOUR INSTEAD OF THREE - AND 4 IS EXACTLY THE STOCK II ANSWER, the same prices with no cooldown at
+    all: (2−1) + (3−2) + (2−0) = 1 + 1 + 2 = 4.
+
+    ONE VARIABLE NAME, AND THE PROGRAM QUIETLY SOLVES A DIFFERENT PROBLEM. It does not crash, and the
+    number it returns is entirely plausible.
+
+TRACE 3 - MONOTONICALLY DECREASING. prices = [5, 4, 3, 2, 1]. Expected 0 - never trade.
+
+    DAY 1 (5):  prev_sold = 0;  sold = -inf;  hold = max(-inf, 0-5) = -5;  rest = max(0, 0) = 0
+    DAY 2 (4):  prev_sold = -inf;  sold = -5 + 4 = -1;  hold = max(-5, 0-4 = -4) = -4;  rest = 0
+    DAY 3 (3):  prev_sold = -1;  sold = -4 + 3 = -1;  hold = max(-4, 0-3 = -3) = -3;  rest = max(0, -1) = 0
+    DAY 4 (2):  prev_sold = -1;  sold = -3 + 2 = -1;  hold = max(-3, 0-2 = -2) = -2;  rest = max(0, -1) = 0
+    DAY 5 (1):  prev_sold = -1;  sold = -2 + 1 = -1;  hold = max(-2, 0-1 = -1) = -1;  rest = max(0, -1) = 0
+
+    RETURN max(-1, 0) = 0.
+
+    `rest` NEVER RISES ABOVE 0, because every possible sale loses money and `max(rest, prev_sold)`
+    keeps the 0. Doing nothing is always available, and the code discovers that without any special
+    case for "prices only fall".
+
+THE TINY INPUTS:
+    prices = []   the guard returns 0.
+    prices = [5]  DAY 1: prev_sold = 0; sold = -inf + 5 = -inf; hold = max(-inf, 0-5) = -5;
+                  rest = max(0, 0) = 0.  RETURN max(-inf, 0) = 0.
+                  Correct - you cannot profit from a single price. Note `sold` stayed at −inf, which
+                  is the sentinel doing its job: selling on day one is impossible, not merely bad.
+    prices = [1, 2]  DAY 1: hold = -1, sold = -inf, rest = 0.
+                     DAY 2: prev_sold = -inf; sold = -1 + 2 = 1; hold = max(-1, -2) = -1;
+                            rest = max(0, -inf) = 0.
+                     RETURN max(1, 0) = 1.  Buy at 1, sell at 2.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of days. One pass, a fixed handful of additions and comparisons per
+day. No sorting, no searching, no nested loop.
+
+SPACE: O(1). FOUR NUMBERS - `hold`, `sold`, `rest` and `prev_sold` - whatever the length of the input.
+
+    THAT IS THE REDUCTION FROM THE TABLE VERSION, which stores 3n entries. It is available because
+    each day depends only on the day immediately before - the same fixed-window argument that turns
+    Tribonacci's table into three variables.
+
+THE FAMILY, AND HOW THE STATES SCALE - this is the real prize, because every one of these is the same
+technique with a different number of states:
+
+    STOCK I    (one transaction)        track the MINIMUM PRICE SO FAR and the best profit against
+                                        it. Effectively two states.
+    STOCK II   (unlimited)              two states: holding, not holding. The famous greedy - sum
+                                        every positive difference - is this DP in disguise.
+    STOCK WITH COOLDOWN                 THREE states, because "not holding" splits into "sold today"
+                                        and "free to buy".                        <- this entry
+    STOCK WITH TRANSACTION FEE          two states again; subtract the fee on each sale. The
+                                        cooldown is a TIME restriction, the fee is a MONEY one, and
+                                        only the time restriction needs an extra state.
+    STOCK III  (at most 2 transactions) four states: bought once, sold once, bought twice, sold twice.
+    STOCK IV   (at most k transactions) 2k states - and when k exceeds n/2 it collapses to Stock II,
+                                        because you can never use more transactions than that.
+
+    THE RULE THAT GENERATES ALL OF THEM: ADD A STATE WHENEVER TWO SITUATIONS THAT LOOK IDENTICAL HAVE
+    DIFFERENT MOVES AVAILABLE NEXT. Someone who sold today and someone who has been idle both own
+    nothing - and one of them may buy tomorrow while the other may not. Different futures, different
+    states.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the cooldown were k days?" You need k+1 resting states, or a queue of the last k `sold`
+    values - the profit becomes available only after k days rather than one.
+  - "Return the actual trades, not just the profit." Record which choice won each `max` and walk
+    backwards from the final state.
+  - "Add a transaction fee as well." Subtract it in the `sold` line: `sold = hold + price - fee`. The
+    states do not change.
+  - "Why three states rather than two?" Section 5's argument - the cooldown splits "not holding" in
+    two because the two halves have different legal moves.
+  - "Could you do it greedily?" No - section 5, version A, gives 4 on [1,2,3,0,2] where the answer is
+    3. The greedy takes rises the cooldown forbids.
+
+THE #1 BEGINNER MISTAKE: using today's `sold` when updating `rest` instead of yesterday's. It removes
+the cooldown, and the code goes on running perfectly happily - returning 4 on the worked example
+instead of 3, which is precisely the answer to the no-cooldown version of the problem. THE BUG DOES
+NOT PRODUCE GARBAGE; IT PRODUCES THE SOLUTION TO AN EASIER QUESTION.
+
+RUNNER-UP: initialising `hold` to 0 rather than −inf, which lets day one sell a share that was never
+bought and inflates everything after it.
+
+TAKEAWAY: the cooldown means two people owning nothing are not in the same position, so split "not
+holding" into "sold today" and "free to buy" and carry three running bests - and capture yesterday's
+"sold" before overwriting it, because the one-day delay between selling and being free to buy is the
+entire problem.""",
 ]
 
 _EX_P1D["Binary Tree Zigzag Level-Order Traversal"] = [
-    """The standard example, level by level.
-        3
-       / \\
-      9   20
-         /  \\
-        15   7
-Level 0 (left_to_right = True): [3]. Flip.
-Level 1 (right-to-left): pop 9 then 20, but appendleft each -> deque becomes
-[9] then [20,9] -> [20,9]. Flip.
-Level 2 (left-to-right): pop 15 then 7, append -> [15,7].
-Result [[3],[20,9],[15,7]].
-The queue itself is ALWAYS processed left to right; only the order in which
-values are written into the level list alternates. Confusing those two is the
-main trap.""",
+    """1. THE GOAL - level order, but alternating direction.
 
-    """Why appendleft rather than reversing afterwards.
-`level.appendleft(v)` on a deque is O(1), so building a reversed level costs
-the same as building a forward one. Calling `level.reverse()` or `level[::-1]`
-on a list is also O(k) per level and O(n) overall, so honestly both are fine -
-but the deque version reads better and avoids an extra allocation.
-What is NOT fine is reversing the QUEUE: the traversal order of the queue
-determines which children are enqueued and in what order, so flipping it
-corrupts the next level rather than the current one.""",
+Read the tree one LEVEL at a time, top to bottom - but ALTERNATE the direction each level. The first
+level goes left to right, the second right to left, the third left to right again, and so on.
 
-    """The `for _ in range(len(queue))` idiom, which is the real technique.
-Capturing the queue length BEFORE the inner loop is what separates one level
-from the next: at that moment the queue contains exactly the current level's
-nodes, and the children appended during the loop belong to the next level.
-Write `while queue:` for the inner loop instead and you process the entire tree
-as one level. This single line is the level-order skeleton, and it also powers
-Level Order Traversal, Right Side View, Average of Levels, Maximum Width and
-Minimum Depth - learn it once, reuse it everywhere.""",
+            3
+           / \\
+          9   20
+             /  \\
+           15    7
 
-    """The DFS alternative, which is a genuinely good follow-up answer.
-Recurse with a depth parameter, appending each value into result[depth],
-creating the sublist when depth == len(result). Then reverse the odd-indexed
-sublists at the end.
-    def dfs(node, depth):
-        if not node: return
-        if depth == len(result): result.append([])
-        result[depth].append(node.val)
-        dfs(node.left, depth+1); dfs(node.right, depth+1)
-Same O(n) time, O(h) space instead of O(w). Worth knowing because it shows the
-zigzag is a presentation detail, not a traversal one - and because on a very
-wide tree the BFS queue is the memory bottleneck.""",
+    LEVEL 0  (left to right):   3
+    LEVEL 1  (RIGHT TO LEFT):   20, 9        <- the nodes are 9 then 20 in the tree; reversed here
+    LEVEL 2  (left to right):   15, 7
 
-    """Edge cases.
-None -> [] by the guard. Single node -> [[5]].
-A left-skewed chain 1->2->3: levels are [1], [2], [3] - each level has one
-node, so direction never visibly matters, and this is a poor test. Use a tree
-with at least two nodes on level 1 to actually exercise the flip.
-A complete tree of 7 nodes gives [[1],[3,2],[4,5,6,7]] - note level 2 comes out
-forward again, because the flag flips every level rather than every other.""",
+    ANSWER: [[3], [20, 9], [15, 7]]
 
-    """Complexity, and the shape that hurts.
-Time O(n) - each node is enqueued and dequeued once and written once. Space
-O(w) where w is the maximum level width; for a complete tree the last level
-holds about n/2 nodes, so worst-case space is O(n).
-That is the trade against DFS, which is O(h) - O(log n) balanced, O(n) skewed.
-So BFS is expensive on wide bushy trees and DFS on deep skinny ones, which is
-the same trade as in Minimum Depth. If an interviewer constrains memory, ask
-which shape the input is.""",
+    Compare with plain level order, which would be [[3], [9, 20], [15, 7]]. ONLY LEVEL 1 DIFFERS,
+    because it is the only level with more than one node - and that is worth noticing, because it
+    means most small test trees cannot tell the two apart.
+
+THE OUTPUT IS A LIST OF LISTS - one inner list per level, in top-to-bottom order, each already in
+the direction its level demands.
+
+THE PROBLEM IS REALLY TWO PROBLEMS STACKED:
+
+    HOW DO YOU GET ONE WHOLE LEVEL AT A TIME? A tree hands you a node and its children; nothing
+        about the structure says where a row ends. This is the frozen-level-size technique, and it
+        is the same machinery used by several siblings in this bank.
+
+    HOW DO YOU BUILD A LEVEL BACKWARDS WITHOUT PAYING FOR IT? Section 5 shows one obvious way that
+        is quietly quadratic and two that are not.
+
+THIS ENTRY IS PART OF A CLUSTER, and it is worth saying who owns what:
+
+    BINARY TREE RIGHT SIDE VIEW    owns the frozen-level-size mechanism in full detail.
+    AVERAGE OF LEVELS              owns what to do with a level once you have it, and the divisor.
+    MINIMUM DEPTH                  owns carrying the depth alongside each node, and the early exit.
+    THIS ENTRY                     owns the direction flip, and building a level in either order.""",
+
+    """2. THE INTUITION - a queue for the levels, a flag for the direction.
+
+A QUEUE is a waiting line: join the back, leave the front. Put the root in one and repeatedly take
+from the front, pushing each node's children onto the back, and the nodes come out in level order by
+themselves - shallower nodes joined earlier, so they leave earlier.
+
+BUT THE QUEUE DOES NOT SAY WHERE A LEVEL ENDS. Midway through the example the queue holds [20] and a
+moment later [15, 7], mixing what is left of level 1 with the start of level 2.
+
+THE FIX IS ONE LINE, and it is the technique the whole family shares:
+
+    BEFORE PROCESSING A ROW, WRITE DOWN HOW MANY NODES ARE IN THE QUEUE.
+
+Whatever is in there at that instant is exactly one complete level - nothing from the next level has
+been added yet. Take precisely that many, and everything you push meanwhile belongs to the row after.
+
+NOW THE PART THIS ENTRY OWNS. The nodes always come OUT of the queue left to right, whatever
+direction you want. So the direction is not about the traversal at all - it is about WHERE YOU PUT
+EACH VALUE AS IT ARRIVES:
+
+    GOING LEFT TO RIGHT   ->  add each value to the BACK of the level.
+    GOING RIGHT TO LEFT   ->  add each value to the FRONT of the level.
+
+    level 1, nodes arrive:   9        then      20
+    going right-to-left:   [9]              [20, 9]        <- 20 was pushed to the FRONT
+
+    THE TRAVERSAL NEVER CHANGES. Only the insertion end does, and a flag flipped once per level
+    decides which.
+
+    queue: [3]              n = 1.  take 3.  direction ->     level = [3]        flip
+    queue: [9, 20]          n = 2.  take 9  -> front: [9]
+                                    take 20 -> front: [20, 9]                    flip
+    queue: [15, 7]          n = 2.  take 15 -> back:  [15]
+                                    take 7  -> back:  [15, 7]                    flip
+
+    result = [[3], [20, 9], [15, 7]]
+
+THAT SEPARATION IS THE WHOLE DESIGN: walk the tree in one fixed order, and let a single boolean
+decide which end of the current row each value lands on.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+LEVEL / DEPTH. All nodes the same number of steps from the root. The root is level 0.
+LEVEL-ORDER TRAVERSAL / BFS. Visiting the tree row by row, top to bottom.
+ZIGZAG / SPIRAL ORDER. Level order with the direction alternating each level. Some sources call it
+spiral order; it is the same thing.
+
+QUEUE. First in, first out. Join the back, leave the front.
+deque. Python's DOUBLE-ENDED queue, from `collections`. It supports adding and removing at BOTH ends
+in constant time, which is why it appears twice here in two different roles.
+
+    `popleft()`     remove from the front - O(1).
+    `append(v)`     add to the back      - O(1).
+    `appendleft(v)` add to the FRONT     - O(1).  This is the one this problem needs.
+
+    A PLAIN LIST cannot do the last one cheaply: `list.insert(0, v)` shifts every existing element
+    up one place, so it is O(k). Section 5 puts numbers on what that costs.
+
+THE FROZEN LEVEL SIZE. Capturing `len(queue)` BEFORE processing a row, so children pushed during the
+row are not counted as part of it.
+
+FLAG / BOOLEAN TOGGLE. A True/False variable flipped once per level to track the direction.
+
+result. The list of levels being built.
+queue. The waiting line of nodes.
+level. The current row's values, built as a deque so either end is cheap.
+left_to_right. The direction flag. True means append to the back.
+node. The node taken from the front of the queue.
+_. Python's convention for an unused loop variable - the inner loop counts, it does not index.
+
+O(n) TIME, O(w) SPACE where w is the widest level.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - USING A LIST AND `insert(0, v)` TO BUILD A REVERSED LEVEL. It is the obvious translation of
+"put it at the front", it is correct, and it is QUADRATIC IN THE LEVEL'S WIDTH.
+
+    `list.insert(0, v)` has to shift every element already in the list up one position. Inserting k
+    items at the front of a list therefore costs 1 + 2 + ... + k = k(k+1)/2 element moves.
+
+    A COMPLETE TREE'S BOTTOM LEVEL HOLDS ABOUT HALF THE NODES. For a tree of 20,000 nodes that is a
+    level of about 10,000:
+
+        list.insert(0, v) x 10,000   ->  10,000 x 10,001 / 2 = 50,005,000 element shifts
+        deque.appendleft x 10,000    ->  10,000 constant-time operations
+
+    FIVE THOUSAND TIMES THE WORK on that one level, and it gets worse as the tree grows. The `deque`
+    is not a stylistic preference here.
+
+    (Note that building the level FORWARDS and calling `reverse()` at the end is also fine - that is
+    O(k) per level, so O(n) overall. The disaster is specifically `insert(0, ...)` on a list.)
+
+TRAP 2 - FORGETTING TO FLIP THE FLAG. Leave out `left_to_right = not left_to_right` and you have
+written plain level-order traversal: [[3], [9, 20], [15, 7]] instead of [[3], [20, 9], [15, 7]].
+
+    ONE LINE, AND IT IS A DIFFERENT PROBLEM - and note it produces perfectly well-formed output, so
+    nothing draws attention to it except comparing against an expected answer.
+
+TRAP 3 - FLIPPING IN THE WRONG PLACE. The flag must flip ONCE PER LEVEL, after the inner loop
+finishes. Put the flip inside the inner loop and the direction alternates per NODE, which scrambles
+each row into an interleaving rather than reversing it.
+
+TRAP 4 - NOT FREEZING THE LEVEL SIZE. If you decide where the row ends by looking at the queue DURING
+the row, children pushed a moment ago get swept into the current level. On the example tree: at
+level 1 you start with [9, 20], and the instant 20 is processed the queue holds [15, 7] - level 2
+nodes. Only the count taken beforehand knows that level 1 has exactly two nodes.
+
+TRAP 5 - REVERSING THE TRAVERSAL INSTEAD OF THE OUTPUT. It is tempting to try pushing children
+right-before-left on alternate levels. It does not work: the children of a reversed row would then
+need reversing again, and the interaction compounds so that every other level comes out wrong. THE
+TRAVERSAL SHOULD STAY FIXED; only the insertion end changes.
+
+TRAP 6 - FORGETTING `list(level)`. `level` is a deque, and appending it to `result` directly gives a
+list of deques rather than a list of lists. It prints differently and compares unequal to the
+expected answer, which is a maddening way to fail a test that is otherwise correct.
+
+TRAP 7 - THE EMPTY TREE. `deque([None])` would be a queue of LENGTH ONE holding nothing, so
+`while queue` is true and the first `node.val` raises AttributeError. The `if not root: return []`
+guard at the top is what prevents it - and it is present here, unlike in this cluster's Average of
+Levels entry, where its absence is a live defect.""",
+
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
+
+VERSION A - COLLECT EVERY LEVEL FORWARDS, THEN REVERSE THE ODD ONES AFTERWARDS. Do a plain
+level-order traversal into a list of lists, then walk the result reversing every second sublist.
+
+    Completely correct, and O(n) overall - reversing a level of k costs O(k), and the levels sum to
+    n. It costs one extra pass over the output and reads perfectly well. THIS IS A FINE ANSWER; say
+    so rather than pretending it is slow.
+
+VERSION B - BUILD EACH LEVEL DIRECTLY IN THE RIGHT ORDER USING A DEQUE, which is the code here. One
+pass, no second walk, and `appendleft` is O(1) so a backwards level costs exactly what a forwards
+one does.
+
+VERSION C - THE SAME IDEA WITH A LIST AND `insert(0, ...)`. Correct and quadratic per level - trap
+1. This is the version to recognise and reject.
+
+VERSION D - DFS WITH A DEPTH PARAMETER, and this is a genuinely good follow-up answer:
+
+    def zigzag_level_order(root):
+        result = []
+        def walk(node, depth):
+            if node is None: return
+            if depth == len(result):        # first node seen at this depth
+                result.append(deque())
+            if depth % 2 == 0: result[depth].append(node.val)
+            else:              result[depth].appendleft(node.val)
+            walk(node.left, depth + 1)
+            walk(node.right, depth + 1)
+        walk(root, 0)
+        return [list(d) for d in result]
+
+    IT WORKS EVEN THOUGH DFS VISITS NODES IN A COMPLETELY DIFFERENT ORDER, and the reason is worth
+    understanding: DFS still visits the nodes WITHIN a given depth strictly left to right, because
+    it always recurses left before right. So appending to the back builds a forward level and
+    appending to the front builds a reversed one, exactly as in the BFS version.
+
+    The trade is the usual one, and it runs in the opposite direction:
+
+        BFS  space O(WIDTH)   - the queue holds a level; a complete tree's bottom level is ~n/2.
+        DFS  space O(HEIGHT)  - the call stack holds one path.
+
+    So a very WIDE tree favours the DFS version and a very DEEP one favours BFS - and Python's
+    1,000-frame recursion limit makes the DFS version fail outright on a chain of more than about a
+    thousand nodes.
+
+WHY THE FROZEN COUNT IS CORRECT - the argument, since an interviewer will probe it. At the moment
+`len(queue)` is taken, the queue holds every node of the current level and nothing else. Why nothing
+else? The only way a node enters the queue is as somebody's child, and the only nodes processed so
+far are from the PREVIOUS level - whose children are exactly this level. So the first n dequeues
+take precisely this row, and everything pushed during them belongs to the next.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE TREE ONE WHOLE ROW AT A TIME WITH A QUEUE,
+FREEZING THE ROW'S SIZE BEFORE YOU START IT, AND LET A SINGLE FLAG DECIDE WHETHER EACH ARRIVING
+VALUE GOES ON THE BACK OR THE FRONT OF THE ROW - FLIPPING THAT FLAG ONCE WHEN THE ROW IS FINISHED.
+
+THERE IS NO RECURSION IN THIS VERSION, which is deliberate - the depth-first alternative in section 5
+uses stack space proportional to the tree's height. The mechanism is TWO NESTED LOOPS OVER A QUEUE
+THAT SHRINKS AND GROWS, PLUS A BOOLEAN:
+
+  - The outer loop runs once per LEVEL, while anything remains in the queue.
+  - The inner loop runs exactly the frozen number of times.
+  - THE TRAVERSAL ORDER NEVER CHANGES. Nodes always come out of the queue left to right, on every
+    level. The zigzag is produced entirely by which END of the row each value is added to.
+  - WHAT MAKES IT STOP: every node enters the queue once and leaves once, and a tree has no cycles,
+    so the queue must drain.
+
+THE STEPS:
+
+  1. IF THE TREE IS EMPTY, RETURN AN EMPTY LIST. Otherwise the queue would contain an absence, which
+     would be taken out and asked for its value.
+
+  2. START AN EMPTY ANSWER LIST, A QUEUE HOLDING JUST THE ROOT, AND A FLAG SET TO "LEFT TO RIGHT".
+
+  3. WHILE THE QUEUE IS NOT EMPTY - each pass handles one complete row:
+
+     a. WRITE DOWN HOW MANY NODES ARE IN THE QUEUE RIGHT NOW. Before anything is added.
+
+     b. START AN EMPTY ROW, in a structure that can be added to at EITHER end cheaply. A plain list
+        will not do: adding at the front of a list shifts everything already in it, which turns a
+        wide row into a great deal of work.
+
+     c. TAKE EXACTLY THAT MANY NODES FROM THE FRONT OF THE QUEUE, one at a time:
+
+        - IF THE FLAG SAYS LEFT TO RIGHT, PUT THE VALUE ON THE BACK OF THE ROW.
+        - OTHERWISE PUT IT ON THE FRONT.
+
+        - PUSH ITS LEFT CHILD ONTO THE BACK OF THE QUEUE, IF IT HAS ONE.
+        - PUSH ITS RIGHT CHILD ONTO THE BACK, IF IT HAS ONE.
+
+        Left before right, always, on every level - do not try to reverse the pushing.
+
+     d. ADD THE FINISHED ROW TO THE ANSWER, CONVERTED TO AN ORDINARY LIST.
+
+     e. FLIP THE FLAG. ONCE, HERE - after the whole row, not inside it. Flipping per node interleaves
+        the row instead of reversing it.
+
+  4. RETURN THE ANSWER.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a family tree drawn on a board, and you have been asked to read out every generation in turn -
+but boustrophedon, the way an ox ploughs a field: the first generation left to right, the next
+right to left, the next left to right again.
+
+You keep a waiting line of people still to be called. At the start the only person in it is the one
+at the top.
+
+You work in rounds, one per generation. At the start of each round you count how many people are
+standing in the line and write that number on your hand. That matters, because people are about to
+join the line while you work - as you call each person forward you ask them to send their children
+to the back - and without the number you would have no idea where one generation ended and the next
+began.
+
+Then you call exactly that many people forward, always from the front of the line. And here is the
+thing worth being clear about: YOU ALWAYS CALL THEM IN THE SAME ORDER. The line is not reversed on
+alternate rounds. What changes is where you write their name.
+
+You have a strip of paper for the current generation. On a left-to-right round you write each name
+onto the right-hand end of the strip as they come. On a right-to-left round you write each name onto
+the LEFT-hand end instead, so the strip fills up backwards. Same people, same order of calling,
+opposite end of the paper.
+
+For that to be quick, the strip has to be the kind you can write on at either end. If you use an
+ordinary list where adding at the front means shuffling everything else along one place, then a
+generation of ten thousand people costs you fifty million shuffles - for one generation. A strip
+that opens at both ends costs you ten thousand single strokes.
+
+When the round is over you put that strip with the others and turn your instruction over: whichever
+direction you have just used, next time use the other. Turn it over ONCE, at the end of the round.
+If you kept turning it over after every single person you would not reverse the generation at all -
+you would deal them alternately to each end and end up with them interleaved.
+
+When the waiting line is finally empty, the strips in order are the answer.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the tree 3 / 9, 20 / (20's children 15, 7) beside you, answer [[3], [20, 9], [15, 7]].
+
+    from collections import deque
+
+Used for TWO different jobs here - the queue of nodes, and each level being built. Both need
+constant-time operations at an end a plain list is bad at.
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+The node shape: a value and two child links, either of which may be None.
+
+    def zigzag_level_order(root):
+        if not root:
+            return []
+
+Trap 7. Without this, `deque([root])` builds a queue of LENGTH ONE containing None, so `while queue`
+is true and the first `node.val` raises AttributeError. The empty list is also the correct answer for
+an empty tree.
+
+        result = []
+
+    result  HOLDS the finished levels, in top-to-bottom order.
+
+        queue = deque([root])
+
+The waiting line of nodes to process. Starts with the only node that has no parent to push it.
+
+        left_to_right = True
+
+    left_to_right  DECIDES which end of the current row each arriving value goes on. Starts True
+                   because level 0 is read left to right.
+
+        while queue:
+
+One pass per LEVEL. Terminates because every node enters the queue once and leaves once, and a tree
+has no cycles.
+
+            level = deque()
+
+The row being built. A DEQUE, not a list, so that `appendleft` below is O(1) rather than O(k) -
+trap 1, which is a genuine five-thousand-fold difference on a wide level.
+
+            for _ in range(len(queue)):       # process exactly one level
+
+THE FROZEN LEVEL SIZE. `len(queue)` is evaluated ONCE, here, before any child is pushed - so the
+count is exactly this row's width (trap 4). `range` is built from that fixed number, so appends
+inside the loop cannot extend it.
+
+                node = queue.popleft()
+
+Take from the FRONT. First in, first out, which produces level order - and note this happens the
+same way on EVERY level. The traversal direction never changes (trap 5).
+
+                if left_to_right:
+                    level.append(node.val)      # normal order
+                else:
+                    level.appendleft(node.val)  # reversed order
+
+THE ZIGZAG, AND IT IS ENTIRELY HERE.
+
+    `append`      puts the value at the BACK, so the row fills forwards.
+    `appendleft`  puts it at the FRONT, so the row fills backwards.
+
+    Both are O(1) on a deque. The nodes arrived in the same order either way; only the destination
+    end differs.
+
+                if node.left: queue.append(node.left)
+                if node.right: queue.append(node.right)
+
+Push the children onto the back of the QUEUE, left before right, on every level without exception.
+The two guards prevent a None entering the queue and crashing the next `node.val`.
+
+            result.append(list(level))
+
+`list(level)` converts the deque to an ordinary list (trap 6) - appending `level` directly would
+give a list of deques, which compares unequal to the expected answer.
+
+            left_to_right = not left_to_right   # flip direction each level
+
+THE FLIP. ONCE PER LEVEL, after the inner loop has finished - flipping inside it would alternate per
+NODE and interleave the row instead of reversing it (trap 3). Removing this line altogether gives
+plain level-order traversal (trap 2).
+
+        return result""",
+
+    """9. TRACED, LEVEL BY LEVEL - AND THE ANSWER INVERTING ON ONE LINE.
+
+TRACE 1 - THE STANDARD EXAMPLE.
+
+            3
+           / \\
+          9   20
+             /  \\
+           15    7
+
+    root is not None.  result = [],  queue = [3],  left_to_right = True
+
+    OUTER PASS 1  (level 0)
+        level = deque()
+        len(queue) = 1  ->  the inner loop runs ONCE
+        i = 0:  node = 3.  queue = []
+                left_to_right is True  ->  level.append(3)  ->  level = [3]
+                node.left is 9   ->  queue = [9]
+                node.right is 20 ->  queue = [9, 20]
+        result = [[3]]
+        FLIP  ->  left_to_right = False
+
+    OUTER PASS 2  (level 1)
+        level = deque()
+        len(queue) = 2       <- FROZEN HERE, before any child is pushed
+        i = 0:  node = 9.  queue = [20]
+                left_to_right is False  ->  level.appendleft(9)  ->  level = [9]
+                9 has no children
+        i = 1:  node = 20.  queue = []
+                left_to_right is False  ->  level.appendleft(20)  ->  level = [20, 9]
+                node.left is 15  ->  queue = [15]
+                node.right is 7  ->  queue = [15, 7]
+
+                THE NODES CAME OUT 9 THEN 20 - the same order as always. The row reads [20, 9]
+                purely because each value was pushed onto the FRONT.
+
+                AND NOTE THE QUEUE NOW HOLDS [15, 7], both level 2. Had the row's end been decided
+                by looking at the queue at this moment rather than by the frozen 2, these would have
+                been swept into level 1 (trap 4).
+
+        result = [[3], [20, 9]]
+        FLIP  ->  left_to_right = True
+
+    OUTER PASS 3  (level 2)
+        level = deque()
+        len(queue) = 2
+        i = 0:  node = 15.  left_to_right is True  ->  level.append(15)  ->  [15]
+        i = 1:  node = 7.   level.append(7)  ->  [15, 7].  queue = []
+        result = [[3], [20, 9], [15, 7]]
+        FLIP  ->  left_to_right = False
+
+    queue is empty  ->  the outer loop ends.
+
+    RETURN [[3], [20, 9], [15, 7]].
+
+    THE INVERSION - DELETE THE FLIP LINE (trap 2). `left_to_right` stays True for every level, so
+    every row is built with `append`:
+
+        level 0:  [3]
+        level 1:  9 then 20 appended to the back  ->  [9, 20]
+        level 2:  [15, 7]
+
+        RETURN [[3], [9, 20], [15, 7]]  -  plain level-order traversal.
+
+    ONE LINE, AND IT IS A DIFFERENT PROBLEM. Note that only level 1 changed, because it is the only
+    row with more than one node - which is exactly why a small test tree can fail to detect this.
+
+TRACE 2 - A TREE WHERE THREE LEVELS ALL DIFFER, so the alternation is visible throughout.
+
+            1
+           / \\
+          2   3
+         / \\ / \\
+        4  5 6  7
+
+    PASS 1:  n = 1.  left_to_right True.   append(1)                     ->  [1]
+             queue = [2, 3].  FLIP -> False
+    PASS 2:  n = 2.  left_to_right False.  appendleft(2) -> [2]
+                                           appendleft(3) -> [3, 2]
+             queue = [4, 5, 6, 7].  FLIP -> True
+    PASS 3:  n = 4.  left_to_right True.   append(4) -> [4]
+                                           append(5) -> [4, 5]
+                                           append(6) -> [4, 5, 6]
+                                           append(7) -> [4, 5, 6, 7]
+             queue = [].  FLIP -> False
+
+    RETURN [[1], [3, 2], [4, 5, 6, 7]].
+
+    Level 1 is reversed and levels 0 and 2 are not, which is exactly the zigzag. And note again that
+    the nodes were dequeued 2 then 3, and 4, 5, 6, 7 - always left to right.
+
+THE TINY INPUTS:
+    root = None            the guard returns [] before any queue is built.
+    A SINGLE NODE 5        one pass: n = 1, append(5), result = [[5]], queue empties.
+                           RETURNS [[5]].
+    A LEFT-SKEWED CHAIN 1 -> 2 -> 3
+                           Every level has exactly ONE node, so each row is a single value and the
+                           direction never visibly matters: [[1], [2], [3]]. The flag flips
+                           faithfully on every level and changes nothing observable - which is why
+                           a skewed tree is useless as a test for this problem.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the number of nodes.
+
+In plain words: every node is enqueued once, dequeued once, and written into a level exactly once.
+Each of those is constant work - `popleft`, `append` and `appendleft` are all O(1) on a deque - so
+the total is proportional to the number of nodes.
+
+    THE `deque` IS WHAT MAKES THAT TRUE. With a list and `insert(0, ...)` the cost becomes quadratic
+    in each level's width: a level of 10,000 nodes costs about 50,005,000 element shifts rather than
+    10,000 operations (trap 1).
+
+SPACE: O(w), where w is the maximum LEVEL WIDTH - the queue holds one level at a time, and the level
+being built holds at most that many values. For a complete tree the bottom level is about half the
+nodes, so this can approach n/2.
+
+    THE SHAPE THAT HURTS is therefore a wide, bushy tree. The DFS version in section 5 uses O(height)
+    instead, so it is the one to reach for on a very wide tree - and the one to avoid on a very deep
+    one, where Python's 1,000-frame recursion limit bites.
+
+THE FAMILY - ONE LOOP, ONE LINE CHANGED. Every one of these is the same frozen-level-size walk with a
+different decision at the point where you record something:
+
+    LEVEL ORDER TRAVERSAL        collect the whole row into a sub-list
+    ZIGZAG LEVEL ORDER           the same, alternating which end you add to        <- this entry
+    AVERAGE OF LEVELS            sum the row and divide by the frozen count
+    MAXIMUM IN EACH LEVEL        keep the largest of the row
+    RIGHT SIDE VIEW              record only when the position is the row's last
+    LEFT SIDE VIEW               record only when the position is the row's first
+    MINIMUM DEPTH                stop at the first node with no children
+
+    Six problems, one loop. Saying that in an interview shows you saw a pattern rather than a puzzle -
+    and in this bank Right Side View owns the mechanism, Average of Levels owns the divisor, Minimum
+    Depth owns the early exit, and this entry owns the direction flip.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it depth-first." Section 5, version D - carry the depth, create each level's list the first
+    time that depth is seen, and choose `append` or `appendleft` by whether the depth is even. It
+    works because DFS still visits a given depth's nodes left to right.
+  - "Do it without a deque." Build every level forwards into a list and reverse the odd-numbered ones
+    at the end. Still O(n) - say so honestly; the thing to avoid is `insert(0, ...)`, not `reverse()`.
+  - "What if the tree is very wide?" BFS space is O(width) and can approach n/2. Use the DFS version.
+  - "Start with right-to-left instead." Initialise the flag to False. Nothing else changes.
+  - "N-ary tree?" Identical - push all the children instead of two, and everything else stands.
+
+THE #1 BEGINNER MISTAKE: trying to reverse the TRAVERSAL rather than the OUTPUT - pushing children
+right-before-left on alternate levels. It seems like the direct way to do it, and it compounds: a
+reversed row's children then need reversing again, so the levels come out wrong in an alternating
+pattern that is very hard to reason about. Keep the traversal fixed and change only which end each
+value lands on.
+
+RUNNER-UP: using a list with `insert(0, v)` for the reversed levels - correct, and quadratic in the
+width of every reversed row.
+
+TAKEAWAY: freeze the queue's length before each row so you know where the level ends, then build the
+row in a structure that is cheap at both ends and let one boolean decide which end each value goes
+on - because the nodes always arrive in the same order, and the zigzag is entirely a matter of where
+you put them.""",
 ]
 
 _EX_P1D["Bipartite Graph Check (BFS 2-coloring)"] = [
