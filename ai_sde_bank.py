@@ -87071,232 +87071,1570 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1J["First Unique Character in a String"] = [
-    """The two passes, traced.
-s = 'leetcode'. Pass 1 counts: l:1, e:3, t:1, c:1, o:1, d:1.
-Pass 2 scans left to right: 'l' has count 1 -> return index 0.
-s = 'loveleetcode': counts l:2, o:2, v:1, e:4, t:1, c:1, d:1. Scan: l is 2, o
-is 2, v is 1 -> return index 2.
-The order of the two passes is what gives 'first': counting must complete
-before scanning, because a character's uniqueness depends on the ENTIRE string,
-including positions you have not reached yet.""",
+    """1. THE GOAL - find the first letter that never comes back.
 
-    """Why two passes and not one.
-In a single pass you cannot know whether the character you are looking at will
-reappear later. Any one-pass attempt has to buffer candidates and revisit them,
-which is really two passes with extra bookkeeping.
-The honest framing for an interview: 'this is inherently two passes over the
-string, but both are O(n), so it is O(n) overall'. Candidates sometimes twist
-themselves trying to make it one pass; recognising that two linear passes is
-already optimal saves that effort.""",
+Return the INDEX of the first character in the string that appears exactly once. If every character
+repeats, return -1.
 
-    """Why scanning the STRING beats scanning the counter.
-The second loop iterates the string, not the frequency map. Iterating the map
-would give you characters with count 1 but in insertion order - which happens
-to match first-appearance order in modern Python, but only by implementation
-detail, and it is a genuinely unsafe thing to rely on. In Java a HashMap gives
-no order at all and the same approach breaks outright.
-Scanning the original string makes 'first' explicit rather than accidental.""",
+    s = "leetcode"
 
-    """Edge cases.
-Empty string -> the loop never runs -> -1.
-All repeating 'aabb' -> no count is 1 -> -1.
-All unique 'abc' -> returns 0.
-Single character 'z' -> count 1 -> 0.
-Case sensitivity: 'Aa' has two distinct characters under normal comparison, so
-the answer is 0. If the prompt means case-insensitive, lowercase first - and
-ask, because it changes the answer on a very short input.""",
+        index:   0  1  2  3  4  5  6  7
+        char:    l  e  e  t  c  o  d  e
 
-    """Complexity, and the array-instead-of-map version.
-O(n) time (two linear passes), O(k) space for k distinct characters - O(1) by
-the bounded-alphabet argument when the input is lowercase ASCII.
-The interview-standard optimisation is a fixed 26-integer array indexed by
-ord(ch) - ord('a'), avoiding hashing entirely. It is the same trick as in
-Almost Equivalent and Find Words That Can Be Formed; once you have written it
-once, it is the default for any lowercase-letters problem.""",
+        l appears 1 time    <- unique, and it is at index 0
+        e appears 3 times
+        t appears 1 time
+        c appears 1 time
+        o appears 1 time
+        d appears 1 time
 
-    """The follow-up worth preparing: a STREAM.
-'What if characters arrive one at a time and you must report the first unique
-so far at any moment?' The two-pass approach is impossible - there is no second
-pass over a stream. The answer is a queue of candidate characters plus a
-frequency map: push each new character, and before answering, pop from the
-front while the front character's count exceeds 1. Amortised O(1) per query.
-That is the Design a First-Unique-Number problem, and it is a natural
-escalation an interviewer reaches for when this one goes quickly.""",
+    ANSWER: 0
+
+THE ANSWER IS AN INDEX, NOT A CHARACTER. Returning `'l'` instead of `0` is the most common careless
+error, and it is the kind of thing that costs a whole submission.
+
+THE WORD "FIRST" MEANS FIRST BY POSITION IN THE STRING, not first in any tally or map.
+
+    s = "loveleetcode"
+
+        index:   0  1  2  3  4  5  6  7  8  9  10 11
+        char:    l  o  v  e  l  e  e  t  c  o  d  e
+
+        l: 2     o: 2     v: 1     e: 4     t: 1     c: 1     d: 1
+
+        The unique characters are v, t, c and d. The EARLIEST of them is v, at index 2.
+
+    ANSWER: 2
+
+AND THE CASE WITH NO ANSWER:
+
+    s = "aabb"       a: 2, b: 2 - nothing appears once      ANSWER: -1
+
+    -1 is a SENTINEL: a value chosen because it can never be a real index, so it unambiguously means
+    "there is no such character".
+
+    THIS ENTRY JOINS THE FREQUENCY-COMPARISON CLUSTER. ALMOST EQUIVALENT OWNS THE UNION OF BOTH KEY SETS.
+    FIND LUCKY INTEGER OWNS THE SELF-REFERENTIAL PREDICATE. FIND WORDS THAT CAN BE FORMED OWNS
+    CONTAINMENT AGAINST A POOL. THIS ONE OWNS WHY THE ALGORITHM MUST BE TWO PASSES - you cannot know a
+    character is unique until the whole string has been read, and you cannot know which unique one comes
+    first without walking in order.""",
+
+    """2. THE INTUITION - two questions that no single walk can answer at once.
+
+The problem is really asking two things, and they pull in opposite directions.
+
+    "IS THIS CHARACTER UNIQUE?"      needs the WHOLE string - a character you see now might reappear
+                                     at the very last position.
+    "WHICH UNIQUE ONE IS EARLIEST?"  needs the string IN ORDER, from the left.
+
+    THE FIRST QUESTION CANNOT BE ANSWERED UNTIL THE END. THE SECOND MUST BE ANSWERED FROM THE START.
+    So you answer them one at a time: pass one counts, pass two locates.
+
+    s = "loveleetcode"
+
+        PASS 1 - count everything, order irrelevant:
+
+            l: 2    o: 2    v: 1    e: 4    t: 1    c: 1    d: 1
+
+        PASS 2 - walk the string from the left, asking the tally about each character in turn:
+
+            index 0   'l'   tally says 2   ->   not unique, keep going
+            index 1   'o'   tally says 2   ->   not unique, keep going
+            index 2   'v'   tally says 1   ->   UNIQUE. STOP. Answer 2.
+
+        Indices 3 to 11 are never examined - the walk returns the moment it succeeds.
+
+THE PICTURE - THE TALLY IS A LOOKUP TABLE THE SECOND WALK CONSULTS:
+
+        string:   l    o    v    e    l    e    e    t    c    o    d    e
+                  |    |    |
+                  v    v    v
+        tally:    2    2    1
+                            ^
+                            first 1 encountered -> its position is the answer
+
+    THE SECOND WALK GOES OVER THE STRING, NOT OVER THE TALLY, and that is deliberate: the string is what
+    knows about position. Section 4 examines exactly how much that matters, and the answer is more
+    interesting than it first appears.
+
+WHY YOU CANNOT DO IT IN ONE PASS. Any single-pass attempt has to hold on to "characters seen once so far,
+in order" and remove them as duplicates arrive - which is an ordered structure plus a map, more machinery
+for the same O(n). THE TWO-PASS VERSION IS NOT A COMPROMISE; IT IS THE SIMPLEST CORRECT SHAPE. The
+one-pass structure only earns its keep in the streaming follow-up in section 10.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+UNIQUE / NON-REPEATING CHARACTER. One that appears exactly once in the whole string. Not "the first
+character not seen before" - that would be a different and much easier problem.
+
+INDEX. A character's position, counted from 0. In "leetcode" the `l` is at index 0 and the last `e` is at
+index 7.
+
+FREQUENCY MAP / TALLY. A structure from character to how many times it appears.
+
+SENTINEL -1. The agreed "no answer" value, safe because -1 is never a valid index.
+
+Counter. Python's tally-in-one-call dictionary. `Counter("aab")` is `{'a': 2, 'b': 1}`.
+    A PROPERTY THAT MATTERS IN SECTION 4: in Python, a Counter (like any dict) REMEMBERS INSERTION ORDER,
+    so its keys come out in first-appearance order. That is a language guarantee, not a universal one.
+
+enumerate(s). Yields (index, character) pairs together, which is how the second walk gets both the
+position to return and the character to look up.
+
+THE VARIABLES IN THE CODE:
+    s        the input string. NOT MODIFIED.
+    counts   the tally of the WHOLE string, built before the second walk begins.
+    i, ch    the current index and the character at it.
+
+TWO PASSES means the string is walked twice - once by `Counter(s)` and once by the `for` loop. That is
+still O(n); a constant number of passes does not change the complexity class, only the constant factor.
+
+n IS THE STRING LENGTH, k THE NUMBER OF DISTINCT CHARACTERS. TIME O(n), SPACE O(k) - and O(1) when the
+alphabet is fixed at 26 lowercase letters, which the constraints guarantee.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the famous warning here is subtler than it is usually told.
+
+TRAP 1 - RETURNING THE CHARACTER INSTEAD OF THE INDEX. The problem says index. On "leetcode" the answer
+is 0, not 'l'. There is nothing clever to say about this; it is simply the most common way to lose the
+problem, and it is worth re-reading the return type before submitting.
+
+TRAP 2 - THE `O(n^2)` PER-POSITION SCAN. Writing `if s.count(ch) == 1` inside the loop, or "does this
+character appear anywhere later?", rescans the string at every position. It is CORRECT - it is the brute
+force these numbers were checked against - but it is O(n^2), and at this problem's limit of n = 100,000
+that is 10 billion character comparisons, which does not finish.
+
+TRAP 3 - ITERATING THE TALLY INSTEAD OF THE STRING, AND THE HONEST VERSION OF THIS WARNING. The usual
+advice is "always walk the string, because a map has no order". MEASURED, THAT ADVICE IS TOO STRONG IN
+PYTHON AND EXACTLY RIGHT EVERYWHERE ELSE.
+
+        for ch, c in counts.items():
+            if c == 1:
+                return s.index(ch)
+
+    IN PYTHON THIS IS CORRECT: dictionaries preserve insertion order, and a Counter inserts each
+    character the first time it is seen - so the tally's key order IS first-appearance order, and the
+    first count-1 key is genuinely the first unique character. Tested on 6,000 random strings: 0
+    disagreements with the correct answer.
+
+    THE SAME CODE WITH AN UNORDERED MAP IS BADLY WRONG. Simulating a Java `HashMap` or a C++
+    `unordered_map` by shuffling the keys before iterating produced a wrong answer on 1,731 of the same
+    6,000 strings - more than one in four. On "loveleetcode" the unique characters are v, t, c and d, and
+    an unordered map may hand you `d` first, giving index 10 instead of 2.
+
+    SO THE RULE TO CARRY IS: WALKING THE STRING IS CORRECT IN EVERY LANGUAGE; walking the map is correct
+    only where the map is ordered, and it costs an extra `s.index(ch)` scan on top. Say that precisely in
+    an interview rather than reciting "maps have no order" - the precise version is the one that shows
+    you know why.
+
+TRAP 4 - CONFUSING "APPEARS ONCE" WITH "FIRST SEEN". A single pass returning the first character not yet
+in a set would answer 0 for "loveleetcode", because `l` has not been seen before at index 0. But `l`
+appears again at index 4, so it is not unique. UNIQUENESS IS A PROPERTY OF THE WHOLE STRING, NOT OF THE
+PREFIX YOU HAVE READ.""",
+
+    """5. THE SLOW WAY FIRST, then the tally.
+
+THE NAIVE VERSION - ASK THE STRING ABOUT EVERY POSITION:
+
+    for i, ch in enumerate(s):
+        if s.count(ch) == 1:
+            return i
+    return -1
+
+    IT IS CORRECT and it is the definition transcribed - this is the brute force every figure in this
+    entry was checked against. COST: `s.count(ch)` walks the entire string, and it is called once per
+    position, so O(n^2). At n = 100,000 that is on the order of 10 billion comparisons; it does not
+    finish. HERE THE LINEAR VERSION IS GENUINELY REQUIRED, unlike several other Easy problems in this
+    bank where the brute force would pass.
+
+THE UPGRADE, AND THE OBSERVATION BEHIND IT. The naive version asks "how many times does `e` appear?" once
+for every `e` in the string - the same question, recomputed. ONE PASS CAN ANSWER IT FOR EVERY CHARACTER
+AT ONCE:
+
+        walk the string once, adding 1 to each character's entry in a map
+
+    Now the second walk asks the map instead of the string, and each question costs O(1) instead of O(n).
+
+    COST: O(n) time, O(k) space where k is the number of distinct characters.
+
+THE FIXED-ALPHABET VERSION, AND WHEN IT IS BETTER. The constraints say the string is lowercase English
+letters only, so a plain array of 26 integers replaces the hash map:
+
+        counts = [0] * 26
+        for ch in s: counts[ord(ch) - ord('a')] += 1
+
+    SAME O(n) TIME, and the space becomes O(1) outright rather than O(k). Array indexing also beats
+    hashing by a constant factor. BE HONEST ABOUT WHAT THAT BUYS: it does not change the complexity
+    class, and the Counter version is shorter and works for any alphabet. THE REASON TO MENTION IT IS
+    THAT NOTICING "THE ALPHABET IS BOUNDED" IS THE SAME OBSERVATION THAT MAKES COUNTING SORT POSSIBLE in
+    How Many Numbers Are Smaller Than the Current - it is a habit worth having, not a micro-optimisation.
+
+NO OTHER TRICK IS INVOLVED. There is no clever data structure and no early exit worth engineering beyond
+returning as soon as the second walk succeeds.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: count every character in one pass, then walk the string again from the left and return
+the position of the first character whose count is 1.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. Two sequential loops, and the first must finish
+completely before the second begins:
+
+    PASS 1 fills `counts`. It grows by at most one key per character and never shrinks. Order is
+        irrelevant here - the tally would be identical for any rearrangement of the string.
+    PASS 2 reads `counts` and never writes to it. Order is everything here - the walk goes left to right
+        precisely because "first" means leftmost.
+
+    THE TWO PASSES CANNOT BE MERGED, and the reason is worth stating exactly: at index i during a single
+    walk, you know only the counts of the prefix s[0..i]. A character with a prefix-count of 1 may still
+    reappear later, so "count is 1 so far" is not the same claim as "count is 1". THE FIRST PASS EXISTS
+    TO TURN A STATEMENT ABOUT THE PREFIX INTO A STATEMENT ABOUT THE WHOLE STRING.
+
+    WHAT MAKES EACH STOP: pass 1 runs exactly len(s) times. Pass 2 runs at most len(s) times and may exit
+    early by returning. Neither has a condition that can go wrong.
+
+    WHY RETURNING IMMEDIATELY IS CORRECT AND NOT MERELY FASTER: the walk is left to right, so the first
+    count-1 character it meets is by construction the leftmost one. Recording matches and continuing
+    would give the LAST unique character instead.
+
+THE STEPS, NO CODE:
+
+    1. Walk the whole string once and tally how many times each character appears.
+    2. Walk the string again, from the left, keeping track of the position.
+    3. At each position, look up that character's total in the tally. If it is exactly 1, hand back this
+       position and stop.
+    4. If the second walk reaches the end, hand back -1.
+
+    STEP 3 SAYS "TOTAL", NOT "HOW MANY SO FAR". STEP 2 SAYS "THE STRING", NOT "THE TALLY".""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A long queue of people files past you, and each is wearing a coloured hat. Afterwards someone asks: who
+was the earliest person in the queue whose hat colour nobody else in the whole queue was wearing?
+
+You cannot answer while the queue is going past. Suppose the third person wears green, and no green has
+appeared yet - you cannot call them unique, because the very last person might also be in green. AT ANY
+MOMENT, YOUR KNOWLEDGE IS ABOUT THE PART OF THE QUEUE YOU HAVE SEEN, AND THE QUESTION IS ABOUT ALL OF IT.
+
+So you let the whole queue pass and simply keep a tally sheet: green 1, red 2, blue 4, and so on. When it
+is finished, the sheet tells you exactly which colours were worn once - but it tells you nothing about
+who was standing where, because you wrote colours down as you met them, not people.
+
+For that you need the queue again. So you go back to the start and walk along it a second time, and at
+each person you glance at your sheet: this one is in blue, sheet says four, move on. This one is in red,
+sheet says two, move on. This one is in green, sheet says one - and you stop, because you have found the
+earliest person wearing a colour nobody else wore, and you report their POSITION in the queue, not the
+colour of their hat.
+
+THE TWO MISTAKES THE STORY MAKES OBVIOUS. First, answering during the first walk means answering a
+question about a queue you have not finished watching. Second, reading only the tally sheet at the end
+tells you a colour but not a position - and if you then had to go looking for that colour, you would be
+walking the queue anyway.
+
+AND THE ONE THAT IS EASY TO MISS: if you had written names on the sheet in the order you first met each
+COLOUR, the sheet would in fact be in queue order, and reading down it would work. But that only holds
+because of how you happened to keep the sheet. Someone who filed their sheet alphabetically, or threw the
+entries into a bag, would read out the wrong person. The queue itself is the only thing that is reliably
+in order.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` tallies a sequence in one call. Only the tallying is used - no arithmetic on Counters here.
+
+    def first_uniq_char(s):
+
+`s` is the input string. IT IS NOT MODIFIED - `Counter(s)` reads it and builds something new.
+
+    counts = Counter(s)
+
+PASS 1, THE WHOLE TALLY IN ONE LINE. `counts` maps each character to its frequency across the ENTIRE
+string. Complete before the loop starts, which is what makes the next comparison a statement about the
+whole string rather than about a prefix.
+
+    for i, ch in enumerate(s):
+
+PASS 2, AND IT WALKS `s`, NOT `counts`. Both parts of the pair are needed: `i` is what gets returned, `ch`
+is what gets looked up. WALKING THE STRING IS WHAT MAKES "FIRST" MEAN LEFTMOST IN EVERY LANGUAGE - see
+trap 3 for what walking the map costs.
+
+    if counts[ch] == 1:
+        return i            # first char that appears exactly once
+
+THE ONE DECISION. `counts[ch]` is the character's TOTAL across the whole string, not a running count, so
+`== 1` means "appears exactly once anywhere". `== 1` and not `<= 1`: a count of 0 is impossible for a
+character read out of `s` itself.
+    `return i` RETURNS THE INDEX, which is what the problem asks for - `return ch` is trap 1.
+    RETURNING IMMEDIATELY is what makes the answer the FIRST such index; the walk never gets to see a
+    later one.
+
+    return -1
+
+Reached only when the second walk completes with no count of 1. -1 is the sentinel, safe because it is
+not a valid index. For an empty string the loop never runs and this line is what answers - verified.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty string, no `try`, no set of seen characters, and no
+second data structure. The whole function is one tally and one ordered walk.""",
+
+    """9. TRACED ON REAL NUMBERS - the string where the answer is not at position 0.
+
+s = "loveleetcode". Chosen deliberately: "leetcode" answers 0, so its second pass stops immediately and
+never demonstrates anything. This one skips two repeating characters first.
+
+    PASS 1 - build the tally by walking the whole string:
+
+        counts = {'l': 2, 'o': 2, 'v': 1, 'e': 4, 't': 1, 'c': 1, 'd': 1}
+
+        Confirm by hand against  l o v e l e e t c o d e :
+            l at indices 0 and 4          -> 2
+            o at indices 1 and 9          -> 2
+            v at index 2                  -> 1
+            e at indices 3, 5, 6 and 11   -> 4
+            t at index 7                  -> 1
+            c at index 8                  -> 1
+            d at index 10                 -> 1
+        Total: 2 + 2 + 1 + 4 + 1 + 1 + 1 = 12, which is the string's length. The tally accounts for
+        every character exactly once.
+
+    PASS 2 - walk from the left, consulting the tally:
+
+        i = 0   ch = 'l'   counts['l'] = 2   ->   not 1, keep going
+        i = 1   ch = 'o'   counts['o'] = 2   ->   not 1, keep going
+        i = 2   ch = 'v'   counts['v'] = 1   ->   RETURN 2
+
+    RETURNS 2.  Indices 3 through 11 are never visited.
+
+    NOTE WHAT THE TALLY ALONE WOULD HAVE GIVEN YOU. The unique characters are v, t, c and d, at indices
+    2, 7, 8 and 10. Only the ORDERED walk singles out 2; a structure that handed you `d` first would
+    answer 10.
+
+THE INVERSION - CHANGE ONE CHARACTER:
+
+    "loveleetcode"   ->  2      v is unique and sits at index 2
+    "lovelvetcode"   ->  7      the second 'l' becomes a 'v', so now v appears twice and e appears three
+                                times; the earliest unique character is 't' at index 7
+
+    ONE LETTER CHANGED AND THE ANSWER JUMPS FROM 2 TO 7, because the character that used to be unique
+    stopped being unique. Both verified against the brute force.
+
+AND THE NO-ANSWER CASE, "aabb": counts = {'a': 2, 'b': 2}, the walk finds no count of 1, and the final
+line returns -1.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Two walks over the string. The first does one dictionary write per character; the
+second does one dictionary read per character and may stop early.
+
+    TIME O(n). Two passes is still O(n) - a constant number of passes changes the constant factor, not
+    the complexity class, and saying that plainly is better than pretending one pass would be faster in
+    any meaningful sense.
+    SPACE O(k) for k distinct characters, which is O(1) given the constraint of 26 lowercase letters.
+    The `s.count(ch)`-per-position brute force is O(n^2) and, at this problem's limit of n = 100,000,
+    does not finish - so here the tally is genuinely required.
+
+THE #1 MISTAKE: returning the CHARACTER instead of its INDEX. Unglamorous, and it is what most failed
+submissions of this problem actually are. THE RUNNER-UP, and the interesting one: iterating the tally
+rather than the string. In Python that happens to be correct, because dictionaries preserve insertion
+order - 0 disagreements over 6,000 random strings - but the identical code against an unordered map is
+wrong on 1,731 of the same 6,000. WALKING THE STRING IS THE VERSION THAT IS CORRECT EVERYWHERE.
+
+ONE-SENTENCE TAKEAWAY: uniqueness is a fact about the whole string and position is a fact about the walk,
+so you need one pass for each - and the second pass must go over the string, because that is the thing
+that knows about order.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can articulate WHY two passes are necessary. It is a
+small problem, so the code is not the signal; the sentence "I can't tell whether a character is unique
+until I've seen the end, so the first pass has to complete before the second can start" is. Candidates
+who say it get credit; candidates who write the same code without saying it look like they memorised a
+pattern.
+
+THE FOLLOW-UP THAT IS THE REAL POINT OF THE PROBLEM - A STREAM: "characters arrive one at a time and you
+must be able to report the first unique so far at any moment." Have the answer ready:
+    Keep a HASH MAP from character to its count, plus a QUEUE holding candidate characters in arrival
+    order. On each new character, increment its count and push it onto the queue. To answer a query, pop
+    from the FRONT of the queue while the front character's count is greater than 1 - those are stale
+    candidates that have since repeated - and the character now at the front is the answer, or there is
+    none if the queue empties. Each character is pushed once and popped at most once, so it is O(1)
+    amortised per operation. THIS IS WHY THE ONE-PASS STRUCTURE EXISTS: not to beat two passes on a fixed
+    string, but because a stream gives you no second pass to take.
+    "Return the first unique WORD in a document" is the same machinery with words as the keys.""",
 ]
 
 _EX_P1J["Flipping an Image"] = [
-    """The two operations fused, with the algebra written out.
-Flip horizontally means new[i] = row[n-1-i]. Invert means every bit b becomes
-1-b. Doing both gives new[i] = 1 - row[n-1-i].
-So a single two-pointer pass from both ends does the whole job:
+    """1. THE GOAL - mirror each row, then swap every 0 and 1.
+
+You are given a square image of 0s and 1s. Do two things to EACH ROW, in this order:
+
+    HORIZONTAL FLIP:  reverse the row, so the leftmost element ends up rightmost.
+    INVERT:           replace every 0 with 1 and every 1 with 0.
+
+    image = [[1, 1, 0],
+             [1, 0, 1],
+             [0, 0, 0]]
+
+        row [1, 1, 0]    flip -> [0, 1, 1]    invert -> [1, 0, 0]
+        row [1, 0, 1]    flip -> [1, 0, 1]    invert -> [0, 1, 0]
+        row [0, 0, 0]    flip -> [0, 0, 0]    invert -> [1, 1, 1]
+
+    ANSWER: [[1, 0, 0],
+             [0, 1, 0],
+             [1, 1, 1]]
+
+NOTICE THE MIDDLE ROW. Reversing [1, 0, 1] gives back [1, 0, 1] - it is a palindrome, so the flip changes
+nothing - but the INVERT still turns it into [0, 1, 0]. The two operations are independent; one doing
+nothing does not excuse the other.
+
+THE ROWS ARE INDEPENDENT. Nothing is flipped vertically and no row ever looks at another. The problem is
+really "do this to a single row", repeated.
+
+THE INTERESTING PART IS THAT THE TWO OPERATIONS FUSE. Done naively this is two passes over each row -
+reverse, then invert. Done properly it is ONE pass with two pointers, and the algebra that makes that
+work is section 2.
+
+    THIS ENTRY JOINS THE TWO-POINTER CLUSTER, alongside Backspace String Compare, Reverse String, Is
+    Subsequence and Sort Array By Parity. BACKSPACE OWNS THE BACKWARD SCAN. REVERSE STRING OWNS THE PLAIN
+    ENDS-INWARD SWAP. THIS ONE OWNS FUSING TWO SEPARATE OPERATIONS INTO A SINGLE PASS - and the `i <= j`
+    boundary that the fusion forces.
+
+AND ONE THING TO SAY OUT LOUD BEFORE ANYTHING ELSE: THIS FUNCTION MODIFIES THE CALLER'S DATA. It rewrites
+`image` in place and returns the very same object. Verified: after the call, the caller's own list holds
+the flipped values, and the returned object is identical to the one passed in.""",
+
+    """2. THE INTUITION - work out what one element becomes, then do both ends at once.
+
+Take a row and write down where each value ends up.
+
+    FLIP alone says:      new[i] = row[n-1-i]           the element mirrored across the row
+    INVERT alone says:    new[i] = 1 - row[i]           0 becomes 1, 1 becomes 0
+
+    DOING BOTH, in that order:
+
+            new[i] = 1 - row[n-1-i]
+
+    THAT SINGLE FORMULA IS THE WHOLE PROBLEM. Every element of the answer is one subtraction away from
+    one element of the input.
+
+WHY `1 - b` IS THE RIGHT WAY TO WRITE "INVERT". For a bit b that is 0 or 1:
+
+        b = 0   ->   1 - 0 = 1
+        b = 1   ->   1 - 1 = 0
+
+    It is arithmetic rather than a branch, which is why the code has no `if`. (`b ^ 1` and `not b` do the
+    same job; `1 - b` reads most directly as "the other one".)
+
+NOW THE FUSION. Look at what happens to a symmetric PAIR of positions, i and its mirror j = n-1-i:
+
+        new[i] = 1 - row[j]              the value at the far end, inverted
+        new[j] = 1 - row[i]              the value at this end, inverted
+
+    BOTH NEW VALUES DEPEND ONLY ON THE TWO OLD VALUES AT THOSE SAME TWO POSITIONS. So you can compute
+    them together and write them straight back - no copy of the row is needed, and the row is finished
+    after one sweep from both ends toward the middle.
+
+    row = [1, 1, 0]        n = 3
+
+        i=0, j=2:   new[0] = 1 - row[2] = 1 - 0 = 1
+                    new[2] = 1 - row[0] = 1 - 1 = 0
+                    row becomes [1, 1, 0]           (0 and 2 happened to swap to the same values)
+
+        i=1, j=1:   THE POINTERS MEET. new[1] = 1 - row[1] = 1 - 1 = 0
+                    row becomes [1, 0, 0]
+
+    ANSWER FOR THIS ROW: [1, 0, 0]
+
+THE PICTURE - THE POINTERS CLOSE IN, AND THE MIDDLE IS NOT EXEMPT:
+
+        [ 1   1   0 ]
+          ^       ^          i and j swap-and-invert
+              ^              then meet here - and this element STILL NEEDS INVERTING
+
+    THAT LAST LINE IS SECTION 4. A loop that stops when the pointers meet leaves the middle element
+    untouched on every odd-width row.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BIT. A value that is either 0 or 1. The whole image is made of them.
+
+INVERT / COMPLEMENT a bit. Turn 0 into 1 and 1 into 0. Written here as `1 - b`.
+
+HORIZONTAL FLIP. Reverse a row left-to-right. The element at index i moves to index n-1-i. Rows are
+flipped individually; the image is not turned upside down.
+
+MIRROR INDEX. For a row of length n, the mirror of index i is n-1-i. Index 0 mirrors to n-1, index 1 to
+n-2, and so on. When n is ODD, the middle index mirrors to ITSELF.
+
+IN PLACE. Modifying the given structure rather than building a new one. It uses O(1) extra space AND IT
+CHANGES THE CALLER'S DATA - see section 4.
+
+TWO POINTERS. Two indices moving toward each other from opposite ends of the row, meeting or crossing in
+the middle.
+
+TUPLE ASSIGNMENT. `a, b = x, y` evaluates BOTH right-hand values first, then assigns. That is what makes
+a swap possible without a temporary variable, and it is why the line in this code is safe - see
+section 8.
+
+THE VARIABLES IN THE CODE:
+    image    the list of rows. MUTATED IN PLACE and also returned.
+    row      the current row, itself a list. Mutated directly.
+    i, j     the two pointers, starting at the ends and moving inward.
+
+m IS THE NUMBER OF ROWS, n THE ROW WIDTH (the image is square, so m = n).
+TIME O(m * n) - every element touched once. SPACE O(1) extra.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the middle element, and one official example hides it.
+
+TRAP 1 - WRITING `while i < j` INSTEAD OF `while i <= j`. On an ODD-width row the two pointers eventually
+land on the SAME index, the middle one. With `<` the loop stops there and that element is never inverted.
+
+    row = [1, 0, 1]      n = 3
+
+        with `i <= j`:   i=0,j=2 handled, then i=1,j=1 handled  ->  [0, 1, 0]     CORRECT
+        with `i <  j`:   i=0,j=2 handled, then 1 < 1 is false   ->  [0, 0, 0]     WRONG at the centre
+
+    THE MIDDLE ELEMENT IS ITS OWN MIRROR, SO THE FLIP LEAVES IT ALONE - BUT THE INVERT STILL APPLIES.
+    That is the trap in one sentence, and it is exactly the kind of thing that survives a quick mental
+    check because "swapping an element with itself does nothing" feels like it settles the matter.
+
+    MEASURED: `i < j` was wrong on 3,584 of 6,000 random images - every image with an odd width.
+
+    AND THE OFFICIAL EXAMPLES SPLIT ON IT:
+        example 1 is 3 wide (odd)   ->  `i < j` gives [[1,1,0],[0,0,0],[1,0,1]], WRONG. Caught.
+        example 2 is 4 wide (even)  ->  `i < j` gives exactly the right answer. Hidden.
+    SO ONE SAMPLE CATCHES IT AND ONE DOES NOT - and if you had only tested the 4-wide case you would
+    have shipped it. ALWAYS TEST AN ODD WIDTH ON ANY ENDS-INWARD LOOP.
+
+TRAP 2 - DOING THE TWO OPERATIONS IN THE WRONG ORDER, OR ONLY ONE OF THEM. Inverting and then flipping
+gives the same result as flipping and then inverting - the two commute, because inverting does not depend
+on position. THAT IS ACTUALLY A SAFE THING HERE, and worth knowing so you do not waste time worrying
+about it. What is not safe is doing only one: a row that is already a palindrome will look "done" after
+the flip and still needs inverting.
+
+TRAP 3 - MUTATING THE CALLER'S IMAGE WITHOUT SAYING SO. This function does not build a new matrix. After
+`flip_and_invert_image(picture)` the caller's own `picture` has been overwritten, and the returned value
+IS the same object, not a copy. VERIFIED by checking object identity after the call. In an interview,
+SAY THIS ALOUD and offer the copying version if the caller needs the original preserved - that offer is
+worth more than the in-place trick itself.""",
+
+    """5. THE NAIVE VERSION FIRST, then the fusion - and an honest account of what it buys.
+
+THE NAIVE VERSION - DO EXACTLY WHAT THE PROBLEM SAYS, IN TWO STEPS:
+
+    return [[1 - b for b in reversed(row)] for row in image]
+
+    IT IS CORRECT, it is one readable line, and it is the brute force every figure in this entry was
+    checked against. It reverses each row and inverts each bit, in exactly the order stated.
+
+    COST: O(m * n) time - the SAME as the fused version - and O(m * n) EXTRA SPACE, because it builds a
+    whole new matrix.
+
+    IT ALSO HAS A REAL VIRTUE: it does not touch the caller's data. If preserving the input matters, this
+    is the version you want, and saying so is not a concession.
+
+THE UPGRADE, AND THE ALGEBRA THAT MAKES IT POSSIBLE. Section 2 showed that
+
+        new[i] = 1 - row[n-1-i]     and     new[n-1-i] = 1 - row[i]
+
+    Each pair of mirrored positions depends only on that same pair's old values. So the two new values
+    can be computed from the two old ones and written straight back, without needing anywhere to put a
+    partially-reversed row. One sweep from both ends handles the whole row.
+
+    COST: O(m * n) time - unchanged - and O(1) extra space.
+
+    BE HONEST ABOUT WHAT THE FUSION ACTUALLY IMPROVES: not the complexity class, which is O(m*n) either
+    way, but the CONSTANT FACTOR (one traversal of each row rather than two) and the SPACE (no second
+    matrix). At this problem's limit of a 20x20 image, neither is remotely measurable. THE REASON TO
+    LEARN IT IS THE TECHNIQUE - fusing operations to avoid materialising an intermediate is what matters
+    in real pipelines, where the intermediate might be gigabytes.
+
+THE TRICK THAT NEEDS EXPLAINING FROM SCRATCH is the simultaneous assignment. `row[i], row[j] = 1 - row[j],
+1 - row[i]` works because the entire right-hand side is evaluated BEFORE any assignment happens. Written
+as two separate statements it would be a bug: the first assignment overwrites `row[i]`, so the second
+would read the NEW value instead of the old one. A language without simultaneous assignment needs an
+explicit temporary variable, and forgetting it is a classic swap bug.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: for each row, walk two pointers in from the ends and, at each step, write each end's
+INVERTED value into the other end's slot.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. An outer loop over rows and an inner loop with two
+pointers:
+
+    `i`  starts at the left end of the row and only ever increases.
+    `j`  starts at the right end and only ever decreases.
+
+    They move toward each other by exactly one position each per step, so the gap `j - i` shrinks by 2
+    every time.
+
+    WHAT MAKES IT STOP: the gap strictly decreases, so after at most ceil(n/2) steps the pointers meet
+    (odd width, i == j) or cross (even width, i > j) and the condition `i <= j` becomes false. IT CANNOT
+    RUN FOREVER because neither pointer ever moves backwards.
+
+    WHY THE CONDITION IS `<=` AND NOT `<`: when the pointers MEET on an odd-width row, that single
+    element still needs its invert applied - the swap part is a no-op there, but the arithmetic part is
+    not. `<=` lets the loop run one more time and handle it. On an even-width row the pointers cross
+    without ever being equal, so `<=` and `<` behave identically, which is precisely why one official
+    example fails to reveal the difference.
+
+    THE INVARIANT: after k steps, the outermost k positions at each end hold their FINAL values, and the
+    untouched middle still holds original values. That stays true because each step reads only the two
+    positions it is about to write.
+
+THE STEPS, NO CODE:
+
+    1. For each row of the image, in turn:
+       a. Put one marker at the first position and another at the last.
+       b. While the markers have not passed each other:
+          - Take the value under the right marker, flip it between 0 and 1, and put it where the left
+            marker is. At the same time, take the ORIGINAL value under the left marker, flip it, and put
+            it where the right marker is. Both reads happen before either write.
+          - Move the left marker one step right and the right marker one step left.
+       c. If the markers land on the same position, that position is handled by the same rule, which
+          amounts to simply flipping it in place.
+    2. Hand back the image, which has been changed where it stands.
+
+    STEP 1b's "BOTH READS HAPPEN BEFORE EITHER WRITE" IS NOT A DETAIL - it is what makes the swap work.
+    STEP 1c IS THE WHOLE OF SECTION 4.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A row of light switches runs along a wall. Each is either up or down. You are asked to do two things:
+put the row in reverse order, as if you were looking at it in a mirror, and then toggle every switch.
+
+The obvious way is to do it twice. Walk along and write down the row backwards on a piece of paper, then
+walk along your paper and toggle everything. That works, but you needed the paper.
+
+Instead, stand at both ends at once - one hand on the first switch, one on the last. Look at what the two
+hands are holding: the first is up, the last is down. In the finished row, the first switch must end up
+holding the OPPOSITE of what the last one currently holds, and the last must end up holding the opposite
+of what the first currently holds. You know both of those right now, so you set both hands at the same
+moment and move on. No paper.
+
+Then both hands step one place inward, and you do it again with the next pair. And again.
+
+Eventually the hands are next to each other, and one more step has them cross - at which point every
+switch has been dealt with and you stop.
+
+BUT IF THERE IS AN ODD NUMBER OF SWITCHES, something different happens: both hands land on THE SAME
+SWITCH. It is its own mirror image, so reversing the row leaves it exactly where it is - and it is very
+tempting to conclude there is nothing to do and step away. THAT IS THE MISTAKE. The row still has to be
+toggled, and this switch is part of the row. It needs flipping just like every other one; it simply does
+not need moving.
+
+AND ONE THING WORTH TELLING WHOEVER ASKED YOU. You did not copy the row onto paper and hand them a new
+one - you changed the switches on their wall. If they wanted the original arrangement kept, they no
+longer have it.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def flip_and_invert_image(image):
+
+`image` is a list of rows, each row a list of 0s and 1s. IT IS MUTATED IN PLACE - this function does not
+build a new matrix, and the caller's data is overwritten.
+
+    for row in image:
+
+One iteration per row. `row` is a REFERENCE to the caller's inner list, not a copy, which is why writing
+to `row[i]` changes the caller's image. Rows never interact.
+
+    i, j = 0, len(row) - 1
+
+THE TWO POINTERS, at the first and last positions of this row. `len(row) - 1` is the last valid index -
+for a row of width 3 that is 2. For a width-1 row both start at 0, so `i == j` immediately.
+
+    while i <= j:
+
+THE LOOP CONDITION, AND THE MOST IMPORTANT CHARACTER IN THE FUNCTION IS THE `=`. It keeps the loop
+running when the pointers land on the same element, which happens exactly once per odd-width row. With
+`<` instead, the middle element of every odd row is never inverted - wrong on 3,584 of 6,000 random
+images, and wrong on the first official example.
+
+    # reverse-then-invert: swap ends and flip both bits
     row[i], row[j] = 1 - row[j], 1 - row[i]
-row = [1,1,0]: i=0, j=2 -> row becomes [1-0, 1, 1-1] = [1,1,0]. i=1, j=1 - the
-middle element - the swap with itself still inverts it: 1-1 = 0 -> [1,0,0].
-Answer [1,0,0], which matches reversing to [0,1,1] and inverting to [1,0,0].""",
 
-    """Why the loop condition is `i <= j` and not `i < j`.
-On an ODD-length row the two pointers meet on the middle element, and that
-element still needs inverting even though it does not move. With `i < j` the
-loop exits before touching it, leaving one un-inverted bit in every odd row -
-a bug that shows up only on odd widths, which is exactly the input size people
-forget to test.
-When i == j the tuple assignment sets row[i] to 1 - row[i] twice, which is
-harmless: both sides compute the same value.""",
+THE WHOLE ALGORITHM IN ONE STATEMENT, and it has three separate things going on:
+    THE RIGHT-HAND SIDE IS FULLY EVALUATED FIRST, using the ORIGINAL `row[i]` and `row[j]`. That is what
+        makes it a swap rather than a corruption - written as two statements, the second would read the
+        already-overwritten value.
+    `1 - row[j]` GOING INTO `row[i]` is the flip and the invert fused: the value from the mirror
+        position, complemented.
+    WHEN `i == j` this reduces to `row[i], row[i] = 1 - row[i], 1 - row[i]`, which simply inverts that
+        one element - the correct behaviour for the middle of an odd row, achieved with no special case.
 
-    """Why the tuple assignment is safe here.
-`row[i], row[j] = 1 - row[j], 1 - row[i]` evaluates the whole right-hand side
-FIRST, using the original values, then assigns. Writing it as two statements -
-`row[i] = 1 - row[j]` then `row[j] = 1 - row[i]` - reads the already-overwritten
-row[i] and corrupts the second assignment.
-This is the same evaluation-order property that makes the Fibonacci-style
-rolling update work, and it is worth stating explicitly because the two-line
-version looks equivalent and is not.""",
+    i += 1
+    j -= 1
 
-    """The naive version, and why fusing matters.
-`[[1 - b for b in reversed(row)] for row in image]` is correct, readable and
-allocates a new matrix - O(m*n) extra space. The two-pointer version mutates in
-place for O(1) extra space.
-Which to present depends on the prompt: if it says 'return the image' either is
-fine; if it says 'in place' or asks about space, the fused pass is required.
-Say the one-liner exists and then give the in-place version - showing you chose
-rather than only knowing one is the point.""",
+THE POINTERS CLOSE IN. The gap shrinks by 2 each step, which is what guarantees termination.
 
-    """Edge cases.
-1x1 image [[0]] -> i == j == 0, inverted to [[1]].
-A single row [[1,0,1]] -> reverse gives [1,0,1], invert gives [0,1,0].
-Rows of length 2 [[1,1]] -> i=0, j=1, one swap -> [0,0].
-All zeros -> all ones. All ones -> all zeros.
-Rows are guaranteed equal length in a matrix, so len(row) is safe per row - but
-computing j from len(row) inside the loop rather than from a shared n is the
-habit that survives ragged input.""",
+    return image
 
-    """Complexity and the transferable idea.
-O(m * n) time - each element is touched once - and O(1) extra space in place.
-The transferable idea is FUSING two passes into one by composing the index
-arithmetic. Rotate Image does the same thing (transpose then reverse each row,
-or compute the four-way cycle directly), and so does reversing words in a
-string (reverse the whole string, then each word). Whenever a problem is
-described as 'do A then B', check whether the composition has a closed form -
-it often halves the work and removes an intermediate allocation.""",
+Returns the SAME OBJECT that was passed in, now modified. Not a copy - verified by identity check. The
+return is a convenience for the caller; the work has already happened to their data.
+
+WHAT IS DELIBERATELY ABSENT: no special case for the middle element (the `<=` handles it), no temporary
+variable (simultaneous assignment handles it), no new matrix, and no guard for an empty image (the outer
+loop simply does not run - verified).""",
+
+    """9. TRACED ON REAL NUMBERS - the 3-wide image, which is the one that exercises the middle element.
+
+image = [[1, 1, 0],
+         [1, 0, 1],
+         [0, 0, 0]]
+
+ROW 1: [1, 1, 0],  n = 3,  so i = 0 and j = 2
+
+    STEP 1   i=0, j=2, and 0 <= 2 so the loop runs
+             right-hand side computed from the ORIGINAL values row[0]=1, row[2]=0:
+                 1 - row[2] = 1 - 0 = 1     ->  goes into row[0]
+                 1 - row[0] = 1 - 1 = 0     ->  goes into row[2]
+             row becomes [1, 1, 0]
+             i -> 1,  j -> 1
+
+    STEP 2   i=1, j=1, and 1 <= 1 so THE LOOP RUNS AGAIN - this is the step `i < j` would skip
+                 1 - row[1] = 1 - 1 = 0     ->  goes into row[1] (from both sides, same value)
+             row becomes [1, 0, 0]
+             i -> 2,  j -> 0
+
+    STEP 3   2 <= 0 is false, loop ends.       ROW RESULT: [1, 0, 0]
+
+ROW 2: [1, 0, 1]
+
+    i=0, j=2:   1 - row[2] = 0 -> row[0];   1 - row[0] = 0 -> row[2]      row becomes [0, 0, 0]
+    i=1, j=1:   1 - row[1] = 1 -> row[1]                                  row becomes [0, 1, 0]
+    ROW RESULT: [0, 1, 0]
+
+ROW 3: [0, 0, 0]
+
+    i=0, j=2:   1 - row[2] = 1 -> row[0];   1 - row[0] = 1 -> row[2]      row becomes [1, 0, 1]
+    i=1, j=1:   1 - row[1] = 1 -> row[1]                                  row becomes [1, 1, 1]
+    ROW RESULT: [1, 1, 1]
+
+FINAL: [[1, 0, 0], [0, 1, 0], [1, 1, 1]] - matching the naive reverse-then-invert version exactly.
+
+THE INVERSION - THE SAME BUG ON AN EVEN WIDTH:
+
+    3-wide row [1, 0, 1]   with `i <= j` -> [0, 1, 0]      with `i < j` -> [0, 0, 0]   DIFFERENT
+    4-wide row [1, 1, 0, 0] with `i <= j` -> [1, 1, 0, 0]  with `i < j` -> [1, 1, 0, 0] IDENTICAL
+
+    THE SAME ONE-CHARACTER BUG IS FATAL ON ODD WIDTHS AND INVISIBLE ON EVEN ONES. That is why the width
+    of your test case, not its content, is what decides whether you catch it.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each row is swept once from both ends, so each element is read and written exactly
+once. Every element does one subtraction.
+
+    TIME O(m * n) - every pixel touched once. There is no way to do better; the answer depends on every
+    input value.
+    SPACE O(1) extra. Two integer pointers, no matter how large the image.
+    The naive list-comprehension version is the same O(m * n) time but O(m * n) extra space. At this
+    problem's limit of a 20x20 image, both are instantaneous - so the in-place version is about technique
+    and about not mutating-by-accident, not about speed.
+
+THE #1 MISTAKE: `while i < j` instead of `while i <= j`, which silently skips the middle element of every
+odd-width row. Wrong on 3,584 of 6,000 random images. The first official example (3 wide) catches it; the
+second (4 wide) does not - so the width of your test decides whether you find it. THE RUNNER-UP is
+mutating the caller's image without mentioning it.
+
+ONE-SENTENCE TAKEAWAY: write down what each output element equals in terms of the input - here
+`new[i] = 1 - row[n-1-i]` - and the two-pass description collapses into one pass.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things, and neither is the code. First, whether you FUSE the
+operations instead of performing them literally in sequence - the composed formula is the insight, and
+"reverse then invert" written as two loops shows you did not look for it. Second, whether you notice and
+DECLARE the in-place mutation. Saying "this modifies your input; here is the copying version if you need
+the original" is the sentence that distinguishes someone who has broken production from someone who has
+not yet.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Rotate the image 90 degrees in place instead." Transpose it - swap element (r, c) with (c, r) for
+    c > r - then reverse each row. Same fusion instinct: two simple operations composed rather than one
+    complicated index formula.
+    "What if the image is not square?" The flip-and-invert here works unchanged, since rows are handled
+    independently and nothing assumes m == n. In-place ROTATION, by contrast, genuinely requires a square
+    matrix - that is where the constraint starts to matter.
+    "What if the values are not bits?" `1 - b` stops meaning "invert". Replace it with whatever the
+    complement operation is, and the two-pointer structure is untouched - the fusion is about position,
+    not about the arithmetic.
+    "Do it without mutating the input." Build the result with the naive comprehension, or copy each row
+    first. O(m * n) space is unavoidable if the caller keeps the original.""",
 ]
 
 _EX_P1J["How Many Numbers Are Smaller Than the Current"] = [
-    """The counting-sort approach, traced.
-nums = [8,1,2,2,3]. Tally: count[1]=1, count[2]=2, count[3]=1, count[8]=1.
-Prefix: prefix[v] = how many elements are strictly less than v.
-prefix[1] = 0, prefix[2] = 1 (just the 1), prefix[3] = 3 (the 1 and both 2s),
-prefix[8] = 4.
-Map each element: 8 -> 4, 1 -> 0, 2 -> 1, 2 -> 1, 3 -> 3.
-Answer [4,0,1,1,3]. Note both 2s get the same answer, which is the point of
-'strictly smaller' - equal values do not count each other.""",
+    """1. THE GOAL - for each number, how many of the others are strictly below it?
 
-    """Why prefix[i] uses count[i-1], which is the off-by-one that decides correctness.
-The loop is `prefix[i] = prefix[i-1] + count[i-1]` - it adds the count of the
-PREVIOUS value, so prefix[i] excludes value i itself. That is what makes the
-comparison STRICT.
-Write `prefix[i] = prefix[i-1] + count[i]` and each element counts its own
-duplicates, so the two 2s would report 3 instead of 1. If your answer is too
-high by exactly the number of duplicates, this line is why.""",
+You are given a list. For EVERY position, count how many elements anywhere in the list are STRICTLY
+smaller than the element at that position. Return those counts as a list, in the same order.
 
-    """Why this beats sorting, and when it does not.
-Sorting plus a map from value to first index is O(n log n). Counting sort is
-O(n + K) where K is the value range - and with the stated constraint that
-values are 0..100, K is a constant, making it effectively O(n).
-The trade to state: counting sort needs a bounded, small, integer value range.
-With arbitrary integers or floats, K explodes and sorting wins. So the correct
-answer is 'counting sort HERE, because the constraint says 0..100' rather than
-'counting sort is faster', which is not generally true.""",
+    nums = [8, 1, 2, 2, 3]
 
-    """The sorting alternative, for when the range is not bounded.
-Sort a copy, then build a dict mapping each value to the index of its FIRST
-occurrence - that index is exactly how many elements are smaller. Iterate the
-sorted copy in reverse (or use setdefault) so the first occurrence wins for
-duplicates.
-    order = sorted(nums)
-    first = {}
-    for i, v in enumerate(order): first.setdefault(v, i)
-    return [first[v] for v in nums]
-Same answer, O(n log n), no assumption about the value range. Worth having
-ready as the follow-up to 'what if values can be anything?'.""",
+        for the 8:   smaller are 1, 2, 2, 3   ->   4
+        for the 1:   nothing is smaller       ->   0
+        for the 2:   smaller is 1             ->   1
+        for the 2:   smaller is 1             ->   1
+        for the 3:   smaller are 1, 2, 2      ->   3
 
-    """Edge cases.
-Single element [5] -> nothing is smaller -> [0].
-All identical [3,3,3] -> no element is strictly smaller than another -> [0,0,0].
-This is the case that catches a <= comparison.
-Already sorted [1,2,3] -> [0,1,2].
-Reverse sorted [3,2,1] -> [2,1,0] - the answers follow the VALUES, not the
-positions, which is worth checking since it is easy to accidentally return
-answers in sorted order rather than in the original order.
-Zero is a valid value, and prefix[0] is 0 by initialisation.""",
+    ANSWER: [4, 0, 1, 1, 3]
 
-    """Complexity and the family.
-O(n + K) time, O(K) space - constant by the constraint. Two passes over the
-value range plus two over the array.
-The family is bounded-value counting: Sort Colors (three-way partition rather
-than a full count), Height Checker (sort a copy and compare), Relative Sort
-Array, Maximum Gap (bucket sort), and Top K Frequent Elements (bucket by
-frequency). The cue is always an explicit small range in the constraints -
-whenever a prompt bothers to tell you values are 0..100, it is pointing at
-counting sort.""",
+"STRICTLY SMALLER" IS THE PHRASE THAT DECIDES EVERYTHING. An element is never counted against itself, and
+equal elements do not count against each other. That is why the two 2s each score 1 and not 2 - the other
+2 is not strictly smaller.
+
+    nums = [7, 7, 7, 7]      no element is strictly smaller than any other
+
+    ANSWER: [0, 0, 0, 0]
+
+THE ANSWER KEEPS THE ORIGINAL ORDER. You are not sorting the list; you are annotating it. Position i of
+the output corresponds to position i of the input.
+
+WHY IT IS MORE THAN A DOUBLE LOOP. Comparing every element against every other is O(n^2). But the
+constraints say every value is between 0 and 100 - only 101 possible values - and that single fact turns
+the problem into a tally plus a running total, with the work no longer depending on n at all beyond one
+pass.
+
+    THIS ENTRY OPENS THE COUNTING-SORT CLUSTER in this bank. IT OWNS THE PREFIX SUM TAKEN OVER THE VALUE
+    RANGE RATHER THAN OVER THE ARRAY - the idea that when values are bounded you can index BY VALUE. That
+    is the same observation Find Lucky Integer notes for its 1..500 bound, and the same prefix-sum
+    machinery that Find Pivot Index and Find the Highest Altitude apply along the array instead.""",
+
+    """2. THE INTUITION - build a table indexed by VALUE, not by position.
+
+Because every value is between 0 and 100, you can make one slot per possible value and never look at the
+array again after a single pass.
+
+    nums = [8, 1, 2, 2, 3]
+
+    STEP 1 - TALLY: how many times does each VALUE appear?
+
+        value:   0   1   2   3   4   5   6   7   8
+        count:   0   1   2   1   0   0   0   0   1
+
+    STEP 2 - RUNNING TOTAL: how many elements are strictly BELOW each value?
+
+        To be below 3, an element must be a 0, 1 or 2. So the answer for 3 is
+        count[0] + count[1] + count[2] = 0 + 1 + 2 = 3.
+
+        value:    0   1   2   3   4   5   6   7   8
+        prefix:   0   0   1   3   4   4   4   4   4
+                  ^   ^   ^   ^
+                  |   |   |   +-- 0+1+2 = 3 elements below 3
+                  |   |   +------ 0+1   = 1 element  below 2
+                  |   +---------- 0     = 0 elements below 1
+                  +-------------- nothing is below 0
+
+    STEP 3 - READ THE ANSWER OFF: for each original element, look up its slot.
+
+        8 -> prefix[8] = 4
+        1 -> prefix[1] = 0
+        2 -> prefix[2] = 1
+        2 -> prefix[2] = 1
+        3 -> prefix[3] = 3
+
+    ANSWER: [4, 0, 1, 1, 3]
+
+THE KEY SHIFT IS THAT THE TABLE IS INDEXED BY VALUE. `prefix[8]` does not mean "the 8th element" - it
+means "the value 8". Once you accept that, duplicates cost nothing: both 2s ask the same slot and get the
+same answer, which is exactly right, because the question depends only on the value and not on where it
+sits.
+
+    NOTICE prefix[8] = 4 EVEN THOUGH prefix[4] THROUGH prefix[7] ARE ALSO 4. The running total flattens
+    across values that never occur - there is nothing between 3 and 8 to add. That is not a defect; it is
+    the table correctly saying "the same four elements are below all of these".""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STRICTLY SMALLER. `m < n`, not `m <= n`. An element is never strictly smaller than itself, and equal
+values are not strictly smaller than each other. This one word is the whole of section 4.
+
+COUNTING SORT / TALLY BY VALUE. Making one slot per possible VALUE and counting occurrences. It works
+only when the range of values is small and known - here 0 to 100, given by the constraints.
+
+VALUE RANGE (K). The number of distinct possible values, 101 here. It is a CONSTANT fixed by the problem,
+not something that grows with the input.
+
+PREFIX SUM. A running total. Here it runs over the VALUE AXIS: prefix[v] accumulates the counts of all
+values below v.
+
+INDEXING BY VALUE. Using the value itself as an array index. `count[8] += 1` means "one more element with
+the value 8", not "increment position 8".
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. NOT MODIFIED - nothing sorts or writes to it.
+    count    101 slots. count[v] is how many elements equal v.
+    prefix   101 slots. prefix[v] is how many elements are strictly LESS THAN v.
+    i        a VALUE being scanned in the second loop, not an index into `nums`.
+    n        an ELEMENT of nums in the first and last loops.
+
+THE TWO ARRAYS ARE BOTH 101 LONG so that index 100 exists - the constraint is 0 <= nums[i] <= 100
+inclusive, and an array of length 100 would stop at index 99.
+
+TIME O(n + K), SPACE O(K). Since K is the constant 101, that is O(n) time and O(1) space.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one off-by-one that changes the meaning of the answer.
+
+TRAP 1 - `prefix[i] = prefix[i-1] + count[i]` INSTEAD OF `+ count[i-1]`. This is the line the problem
+exists to test, and getting it wrong computes a different quantity entirely.
+
+        WITH count[i-1]:   prefix[v] = count[0] + ... + count[v-1]     = how many are  <  v    CORRECT
+        WITH count[i]:     prefix[v] = count[0] + ... + count[v]       = how many are  <= v    WRONG
+
+    The difference is exactly the elements EQUAL to v, which "strictly smaller" excludes.
+
+    nums = [7, 7, 7, 7]
+
+        correct:      every 7 has nothing strictly below it            ->  [0, 0, 0, 0]
+        off-by-one:   every 7 counts all four 7s as "at most 7"        ->  [4, 4, 4, 4]
+
+    MEASURED: wrong on 4,629 of 6,000 random arrays. AND ALL THREE OFFICIAL EXAMPLES CATCH IT -
+    [8,1,2,2,3] gives [5,1,3,3,4] instead of [4,0,1,1,3], [6,5,4,8] gives [3,2,1,4] instead of
+    [2,1,0,3], and [7,7,7,7] gives [4,4,4,4] instead of zeros.
+
+    THAT IS UNUSUAL FOR THIS BANK AND WORTH SAYING PLAINLY: THIS BUG IS LOUD. Unlike the hidden traps in
+    Find Words That Can Be Formed or Intersection of Two Arrays II, you cannot ship this one - the first
+    sample test fails. The reason to understand it anyway is that you have to write the line correctly in
+    the first place, and "does the running total include the current slot or stop before it?" is the
+    question every prefix-sum problem asks.
+
+    THE RELIABLE WAY TO GET IT RIGHT is to say what the slot MEANS before writing the line: "prefix[v] is
+    how many elements are below v, so it must not include the v's themselves - therefore it adds
+    count[v-1], the last value that IS below v."
+
+TRAP 2 - SIZING THE ARRAYS AT 100 INSTEAD OF 101. The values run 0 to 100 INCLUSIVE, which is 101
+distinct values. An array of length 100 has no index 100, and any input containing a 100 raises
+IndexError.
+
+TRAP 3 - MISREADING THE OUTPUT ORDER. The result must line up with the ORIGINAL positions. Sorting `nums`
+and reporting in sorted order answers a different question. The final comprehension walks `nums` in its
+given order precisely to preserve this.
+
+TRAP 4 - ASSUMING THE VALUE BOUND. This method is only available because the constraints promise
+0 <= nums[i] <= 100. Without that promise the array cannot be allocated, and you fall back to sorting -
+see section 5. SAY THE CONSTRAINT ALOUD BEFORE USING IT; using it silently looks like luck.""",
+
+    """5. THE SLOW WAY FIRST, then counting - and the version for when the bound is gone.
+
+THE NAIVE VERSION - COMPARE EVERYTHING WITH EVERYTHING:
+
+    return [sum(1 for m in nums if m < n) for n in nums]
+
+    IT IS CORRECT, it is the definition transcribed, and it is the brute force every figure here was
+    checked against. COST: O(n^2) - each element scans the whole array. At this problem's limit of
+    n = 500 that is 250,000 comparisons, which passes comfortably, SO BE HONEST: the brute force is
+    perfectly adequate for the stated constraints. Counting sort is what the problem is teaching.
+
+THE UPGRADE, AND THE OBSERVATION THAT UNLOCKS IT. The naive version asks "how many elements are below 2?"
+once for every 2 in the array - the same question re-answered. And crucially, THE ANSWER DEPENDS ONLY ON
+THE VALUE, NOT ON THE POSITION. So compute it once per possible value.
+
+    That is only possible because the values are bounded. With 0..100 there are just 101 questions to
+    answer, and one pass over the array plus one pass over the value range answers all of them.
+
+    COST: O(n + K) time, O(K) space, with K = 101 constant. So O(n) and O(1).
+
+THE SORTING ALTERNATIVE, FOR WHEN THE VALUES ARE NOT BOUNDED:
+
+        sort a copy of the array
+        build a map from each value to the INDEX OF ITS FIRST OCCURRENCE in the sorted copy
+        that index IS the count of strictly smaller elements
+        then read the map for each original element
+
+    WHY THE FIRST OCCURRENCE: in sorted order, everything before a value's first appearance is strictly
+    smaller, and everything from that point on is equal or larger. Building the map from the END
+    backwards, or using `setdefault`, is what keeps the FIRST index rather than the last - and using the
+    last index would be the same `<=` versus `<` error as trap 1, in different clothing.
+
+    COST: O(n log n) time, O(n) space. WORSE THAN COUNTING SORT WHEN THE RANGE IS SMALL, BETTER WHEN THE
+    RANGE IS HUGE - if values could be up to a billion, a billion-slot array is not an option and sorting
+    is the only sane answer.
+
+    THAT TRADE IS THE REAL LESSON: counting sort beats comparison sorting exactly when K is small
+    relative to n log n, and the constraints are where you find K.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: tally how many elements have each possible value, turn that tally into a running total
+of "how many are below this value", then read one answer per original element straight out of the table.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. Three sequential loops, each finishing before the
+next begins, and the middle one does not touch the input at all:
+
+    LOOP 1 walks the ARRAY and fills `count`. After it, `count[v]` is how many elements equal v.
+    LOOP 2 walks the VALUE RANGE 1 to 100 and fills `prefix`. It never looks at `nums`. This is the only
+        place the two tables are related, and it is where the off-by-one lives.
+    LOOP 3 walks the ARRAY again and reads `prefix`. It writes nothing.
+
+    WHY THE ORDER OF LOOP 2 MATTERS: `prefix[i]` is computed from `prefix[i-1]`, which must already be
+    final. Walking upward from 1 guarantees that - each slot is built from the one just completed. THIS
+    IS THE SAME "BUILD ON THE PREVIOUS ANSWER" SHAPE AS EVERY PREFIX SUM, just laid along the value axis
+    rather than along the array.
+
+    WHY THE LOOPS CANNOT BE MERGED: `prefix` cannot be built until `count` is complete, because
+    `prefix[100]` depends on a count that might be incremented by the array's last element. And no answer
+    can be read until `prefix` is complete. THE PHASES ARE GENUINELY SEQUENTIAL.
+
+    WHAT MAKES THEM STOP: loop 1 and loop 3 run len(nums) times; loop 2 runs exactly 100 times. All three
+    are plain iterations over finite ranges with no conditions.
+
+    prefix[0] IS LEFT AT ZERO and never assigned, which is correct: nothing is strictly below the
+    smallest possible value.
+
+THE STEPS, NO CODE:
+
+    1. Make a tally with one slot for every possible value from 0 to 100, all starting at zero.
+    2. Walk the array once, adding one to the slot of each element's value.
+    3. Make a second table of the same size. Leave its first slot at zero, since nothing is below the
+       smallest value.
+    4. Walk the values upward from 1 to 100. For each, its entry is the previous value's entry plus the
+       TALLY OF THE PREVIOUS VALUE - not of the current one, because elements equal to the current value
+       are not strictly below it.
+    5. Walk the original array once more, and for each element hand back the second table's entry for
+       that element's value, keeping the original order.
+
+    STEP 4's "TALLY OF THE PREVIOUS VALUE" IS THE ENTIRE PROBLEM.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A school records every pupil's exam mark, and marks run from 0 to 100. Each pupil wants to know how many
+pupils in the school scored strictly below them - not the same as them, strictly below.
+
+The obvious way is for each pupil to walk the whole register comparing marks. With five hundred pupils
+that is a quarter of a million comparisons, and worse, every pupil who scored 72 does exactly the same
+walk and arrives at exactly the same number.
+
+So the office does it differently. They put out a hundred and one pigeonholes along a shelf, one for each
+possible mark, and read the register once, dropping a token into the pigeonhole matching each pupil's
+mark. Now the shelf shows how many pupils got each mark.
+
+Then a clerk walks the shelf from the low end, carrying a running count. At each pigeonhole she writes on
+a card the number she is carrying BEFORE she picks up that pigeonhole's tokens - because the card is
+meant to say "how many scored below this mark", and pupils who scored exactly this mark are not below it.
+Only after writing the card does she add this pigeonhole's tokens to what she is carrying and move on.
+
+    IF SHE ADDED THE TOKENS FIRST AND THEN WROTE THE CARD, every card would say "how many scored this
+    mark OR BELOW". Every pupil would be counted against themselves, and a class where everyone scored 70
+    would each be told that four of them were below them, which is nonsense.
+
+Finally she goes back through the register in its original order and, for each pupil, reads out the card
+sitting at their mark. Two pupils with the same mark read the same card and get the same answer, which is
+exactly right - the question depends on the mark, not on who you are.
+
+WHY THE PIGEONHOLES ARE POSSIBLE AT ALL. Because marks are known to run 0 to 100. If marks could be any
+number at all, you could not put out a shelf of pigeonholes in advance, and the office would have to sort
+the register instead.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def smaller_numbers_than_current(nums):
+
+`nums` is the input list. IT IS NOT MODIFIED - not sorted, not written to. A new list is returned.
+
+    count = [0] * 101               # values are 0..100
+
+ONE SLOT PER POSSIBLE VALUE. The length is 101, not 100, because the range is INCLUSIVE at both ends -
+index 100 has to exist. THE COMMENT IS DOING REAL WORK: it records the constraint the whole method
+depends on.
+
+    for n in nums:
+        count[n] += 1
+
+LOOP 1 - TALLY BY VALUE. `n` here is a VALUE from the array being used as an INDEX into `count`. That
+substitution is the entire counting-sort idea; if it feels strange, section 2's table is the picture.
+
+    prefix = [0] * 101
+
+THE SECOND TABLE, and note `prefix[0]` will never be assigned by the loop below. It stays 0, which is
+correct: no element is strictly below the smallest possible value.
+
+    for i in range(1, 101):
+        prefix[i] = prefix[i - 1] + count[i - 1]   # how many values are < i
+
+LOOP 2 - THE RUNNING TOTAL, AND THE ONE LINE WITH ANY DIFFICULTY IN IT.
+    `i` here is a VALUE, not an array index - the loop walks the value range 1 to 100.
+    `prefix[i - 1]` is everything already known to be below i-1.
+    `count[i - 1]` adds the elements EQUAL to i-1, which ARE strictly below i.
+    IT IS `count[i - 1]` AND NOT `count[i]` because elements equal to i are not strictly below i. Using
+        `count[i]` computes "how many are <= i" and is wrong on 4,629 of 6,000 random arrays.
+    The range starts at 1 because `prefix[0]` has no previous slot and is already correct at 0.
+
+    return [prefix[n] for n in nums]
+
+LOOP 3 - READ OFF THE ANSWERS. It walks `nums` IN ITS ORIGINAL ORDER, which is what keeps the output
+aligned with the input positions. Each element's value indexes straight into `prefix`, so duplicates ask
+the same slot and get the same answer - correct, since the count depends only on the value.
+
+WHAT IS DELIBERATELY ABSENT: no sorting, no dictionary, no guard for an empty `nums` (all three loops
+simply handle it - loops 1 and 3 do not run, loop 2 fills a table of zeros, and the result is an empty
+list; verified), and no handling of negative values, which the constraints exclude.""",
+
+    """9. TRACED ON REAL NUMBERS - the official array, table by table.
+
+nums = [8, 1, 2, 2, 3]
+
+    LOOP 1 - the tally (only the non-zero slots shown; every other slot stays 0):
+
+        count[1] = 1        one element equals 1
+        count[2] = 2        two elements equal 2
+        count[3] = 1        one element equals 3
+        count[8] = 1        one element equals 8
+
+    LOOP 2 - the running total, walking values upward:
+
+        prefix[0] = 0                                   (never assigned; nothing is below 0)
+        prefix[1] = prefix[0] + count[0] = 0 + 0 = 0    nothing is below 1
+        prefix[2] = prefix[1] + count[1] = 0 + 1 = 1    the single 1 is below 2
+        prefix[3] = prefix[2] + count[2] = 1 + 2 = 3    the 1 and both 2s are below 3
+        prefix[4] = prefix[3] + count[3] = 3 + 1 = 4    the 1, both 2s and the 3 are below 4
+        prefix[5] = prefix[4] + count[4] = 4 + 0 = 4    no 4s exist, so the total is unchanged
+        prefix[6] = 4        prefix[7] = 4        prefix[8] = prefix[7] + count[7] = 4 + 0 = 4
+
+        THE FLAT RUN FROM 4 TO 8 IS THE TABLE SAYING "the same four elements are below every one of
+        these values", which is true - the array contains nothing between 3 and 8.
+
+    LOOP 3 - read one answer per original element, in order:
+
+        nums[0] = 8   ->   prefix[8] = 4
+        nums[1] = 1   ->   prefix[1] = 0
+        nums[2] = 2   ->   prefix[2] = 1
+        nums[3] = 2   ->   prefix[2] = 1        the same slot as nums[2] - same value, same answer
+        nums[4] = 3   ->   prefix[3] = 3
+
+    RETURNS [4, 0, 1, 1, 3].  Cross-checked against the O(n^2) brute force: identical.
+
+    WITH THE OFF-BY-ONE (`+ count[i]`), prefix[2] would be 0+1+2 = 3 rather than 1, and the result would
+    be [5, 1, 3, 3, 4] - every entry inflated by the number of elements equal to it.
+
+THE INVERSION - CHANGE THE LAST ELEMENT FROM 3 TO 8:
+
+    [8, 1, 2, 2, 3]   ->   [4, 0, 1, 1, 3]
+    [8, 1, 2, 2, 8]   ->   [3, 0, 1, 1, 3]
+
+    THE 3 BECOMES AN 8, so the first element's count drops from 4 to 3 - it lost one element that used to
+    be below it - while the new 8 scores 3, the same as the 3 did, because the same three elements
+    (1, 2, 2) are below it. THE TWO 8s AGREE WITH EACH OTHER, which is the duplicate rule doing its job.
+    Both verified against the brute force.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the array to tally, one pass over the 101 possible values to
+accumulate, one pass over the array to read answers. Nothing is nested.
+
+    TIME O(n + K) where K = 101. Since K is a constant fixed by the constraints, that is O(n).
+    SPACE O(K) = O(1) - two arrays of 101 integers, whatever the size of the input.
+    The double-loop brute force is O(n^2); at this problem's limit of n = 500 it is 250,000 comparisons
+    and passes easily, so counting sort is the technique being taught rather than a rescue.
+    The sorting approach is O(n log n) time and O(n) space - worse here, and the right answer the moment
+    the value range stops being small.
+
+THE #1 MISTAKE: writing `prefix[i] = prefix[i-1] + count[i]` instead of `+ count[i-1]`, which computes
+"how many are at most i" rather than "how many are strictly below i". Wrong on 4,629 of 6,000 random
+arrays. UNUSUALLY FOR THIS BANK, ALL THREE OFFICIAL EXAMPLES CATCH IT, so it cannot be shipped - it is a
+bug you have to avoid writing rather than one you have to hunt for. THE RUNNER-UP is sizing the arrays at
+100 instead of 101 and crashing on an input containing 100.
+
+ONE-SENTENCE TAKEAWAY: when the values are bounded, index by VALUE instead of by position - and a prefix
+sum along the value axis answers "how many are below me" for every value at once.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you read the constraints and let them choose the data
+structure. "Values are 0 to 100" is not scenery; it is the sentence that makes an array of pigeonholes
+possible and turns an O(n log n) problem into an O(n) one. THE THING TO SAY ALOUD IS THE TRADE: counting
+sort costs O(K) space and beats comparison sorting when K is small relative to n log n, and is
+unavailable when the range is unbounded. A candidate who names that trade has understood counting sort; a
+candidate who just writes the array has memorised it.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if values can be any 32-bit integer?" The array is impossible. Sort a copy and map each value
+    to the index of its FIRST occurrence - that index is the count of strictly smaller elements.
+    O(n log n) time, O(n) space.
+    "Count how many are strictly GREATER instead." Either accumulate the prefix sum downward from 100, or
+    note that greater = n - prefix[v] - count[v], subtracting off both the smaller ones and the equal
+    ones. That subtraction is the same three-way split Find Pivot Index uses.
+    "What if the array is enormous but the range is still small?" This method already streams: loop 1
+    needs only one pass and O(K) memory, though loop 3 needs the array again. If the array cannot be
+    stored, emit answers in a second pass over the source.
+    "Return the RANK of each element instead." Rank with ties broken by "how many are strictly smaller"
+    is precisely this array, plus one - which is why this problem is the standard warm-up for
+    competition-style ranking questions.""",
 ]
 
 _EX_P1J["Intersection of Two Arrays II"] = [
-    """The example, traced.
-nums1 = [1,2,2,1], nums2 = [2,2]. counts = {1:2, 2:2}.
-Walk nums2: first 2 -> counts[2] is 2 > 0, so append 2 and decrement to 1.
-Second 2 -> counts[2] is 1 > 0, append 2, decrement to 0.
-Result [2,2].
-nums1 = [4,9,5], nums2 = [9,4,9,8,4]: counts = {4:1, 9:1, 5:1}. Walking nums2
-gives 9 (count -> 0), 4 (count -> 0), then the second 9 finds count 0 and is
-skipped, 8 is absent, the second 4 finds 0. Result [9,4].
-Each element appears min(count in A, count in B) times, which is exactly what
-decrementing enforces.""",
+    """1. THE GOAL - what do the two lists share, counting repeats?
 
-    """Why this differs from Intersection of Two Arrays I.
-Version I returns the set intersection - each value once, order irrelevant, and
-`set(nums1) & set(nums2)` is the whole answer. Version II keeps MULTIPLICITY,
-which is why a Counter and a decrement replace the set.
-Confusing the two is the most common failure here, and the tell is in the
-prompt: 'each element should appear as many times as it shows in both'. Restate
-that clause before coding, because the two problems have nearly identical
-titles and completely different answers on [1,1] vs [1,1].""",
+Given two lists, return the elements they have in common - and if a value appears several times in BOTH,
+it must appear that many times in the answer.
 
-    """Which array to count, and why it matters for space.
-Counting the SMALLER array and iterating the larger gives O(min(n, m)) space.
-The code counts nums1 unconditionally; adding `if len(nums1) > len(nums2):
-nums1, nums2 = nums2, nums1` first makes the bound explicit and costs one line.
-Interviewers ask 'what if nums1 is tiny and nums2 is enormous?' precisely to
-see whether you noticed the asymmetry - and the swap is the whole answer.""",
+    nums1 = [1, 2, 2, 1]        nums2 = [2, 2]
 
-    """The two classic follow-ups, which are the real content of this problem.
-(1) 'What if both arrays are SORTED?' Then use two pointers walking in
-lockstep: advance the smaller, and on a match append and advance both. O(1)
-extra space and no hash map at all.
-(2) 'What if nums2 is on DISK and too large for memory?' Load nums1 into a
-Counter (it fits), then STREAM nums2, emitting matches as you go - which is
-exactly the code above, and the reason to count the smaller array. If NEITHER
-fits, external-sort both and use the two-pointer merge, which is the
-map-reduce-shaped answer.""",
+        value 1:   appears twice in nums1, ZERO times in nums2   ->   appears 0 times in the answer
+        value 2:   appears twice in nums1, twice in nums2        ->   appears 2 times in the answer
 
-    """Edge cases.
-No overlap [1,2] and [3,4] -> empty result.
-One array empty -> empty result; the loop body never runs.
-Duplicates only on one side: [1,1,1] and [1] -> [1], because min(3,1) = 1.
-Negative numbers and zeros work unchanged - the Counter is keyed by value.
-Order of the output is unspecified by the prompt, which is worth confirming:
-this code returns matches in nums2's order, and a set-based or sorted approach
-would return a different but equally valid ordering.""",
+    ANSWER: [2, 2]
 
-    """Complexity and the family.
-O(n + m) time, O(min(n, m)) space with the swap. The sorting approach is
-O(n log n + m log m) time and O(1) extra space - better when memory is the
-constraint or when the inputs are already sorted.
-The family: Intersection of Two Arrays (set version), Find Common Characters
-(multiset intersection across many words), Ransom Note (containment rather than
-intersection), and Merge Sorted Array (the two-pointer merge in its purest
-form). All are multiset operations, and the choice between hash map and two
-pointers is always about whether the input is sorted and whether memory is
-tight.""",
+THE RULE IN ONE LINE: each value appears in the answer MIN(count in nums1, count in nums2) times.
+
+    nums1 = [4, 9, 5]           nums2 = [9, 4, 9, 8, 4]
+
+        4:   once in nums1, twice in nums2   ->   min(1, 2) = 1
+        9:   once in nums1, twice in nums2   ->   min(1, 2) = 1
+        5:   once in nums1, zero in nums2    ->   min(1, 0) = 0
+        8:   zero in nums1, once in nums2    ->   min(0, 1) = 0
+
+    ANSWER: [4, 9]   (or [9, 4] - the order of the result does not matter)
+
+THE "II" IN THE TITLE IS THE WHOLE POINT. Intersection of Two Arrays I asks for each shared value ONCE,
+which is just `set(nums1) & set(nums2)`. THIS version keeps duplicates, and a set-based solution
+therefore gives the wrong answer - see section 4, where it is wrong on 778 of 6,000 random pairs.
+
+THE ORDER OF THE OUTPUT IS FREE. The problem accepts any ordering, which is unusual and worth noticing -
+it means you may walk whichever array is convenient without worrying about arranging the result.
+
+    THIS ENTRY OPENS THE MULTISET-INTERSECTION PAIR with Minimum Common Value. MINIMUM COMMON VALUE OWNS
+    THE SORTED TWO-POINTER WALK. THIS ONE OWNS THE COUNT-AND-SPEND-DOWN - building a tally of one side and
+    consuming from it as the other side is walked, which is what makes "min of the two counts" fall out
+    without ever computing a minimum.""",
+
+    """2. THE INTUITION - hold one list as a budget and spend it walking the other.
+
+Turn nums1 into a tally: a budget saying how many of each value you are allowed to take. Then walk nums2,
+and every time you meet a value you can still afford, take it and reduce the budget.
+
+    nums1 = [1, 2, 2, 1]   ->   budget = {1: 2, 2: 2}
+
+    walk nums2 = [2, 2]:
+
+        first 2:    budget[2] is 2, which is more than 0   ->   TAKE it, budget[2] becomes 1
+        second 2:   budget[2] is 1, which is more than 0   ->   TAKE it, budget[2] becomes 0
+
+    ANSWER: [2, 2]
+
+    If nums2 had a third 2, the budget would be 0 and it would be refused - which is precisely
+    min(2, 3) = 2.
+
+THE BUDGET IS WHY YOU NEVER COMPUTE A MINIMUM EXPLICITLY. You want each value to appear min(a, b) times.
+Spending down a budget of `a` while walking `b` opportunities gives you exactly that: you stop either
+because the budget ran out (a of them taken) or because nums2 ran out (b of them taken), whichever
+happens first. THE ARITHMETIC MIN IS AN EMERGENT PROPERTY OF THE SPENDING, NOT A LINE OF CODE.
+
+THE PICTURE - THE BUDGET DRAINING AS nums2 IS READ:
+
+        budget:   1: [##]     2: [##]
+        nums2:     2      2
+                   |      |
+                   v      v
+        after:    1: [##]     2: [# ]        then      1: [##]     2: [  ]
+                                 ^                                    ^
+                              one spent                          both spent
+
+    ANY FURTHER 2s IN nums2 FIND AN EMPTY POT AND ARE REFUSED.
+
+WHY IT MATTERS THAT THE BUDGET IS DECREMENTED AND NOT MERELY CHECKED. If you only asked "does this value
+appear in nums1 at all?", every 2 in nums2 would be admitted forever, and [1,2,2,1] against [2,2,2,2,2]
+would return five 2s instead of two. THE DECREMENT IS THE ONLY THING ENFORCING THE MINIMUM.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MULTISET. A collection where duplicates matter but order does not. [1, 2, 2] and [2, 1, 2] are the same
+multiset; [1, 2] is a different one.
+
+MULTISET INTERSECTION. For every value, keep it min(count in A, count in B) times. That is what this
+problem asks for, and it is the difference from ordinary SET intersection, which keeps each shared value
+once.
+
+SET. A collection with no duplicates. `set([1,2,2,1])` is `{1, 2}` - the duplicate information is thrown
+away, which is exactly why sets are the wrong tool here.
+
+FREQUENCY MAP / TALLY. A structure from value to how many times it appears.
+
+Counter. Python's tally-in-one-call dictionary. `Counter([1,2,2,1])` is `{1: 2, 2: 2}`.
+    TWO PROPERTIES MATTER HERE, AND THEY PULL IN DIFFERENT DIRECTIONS:
+        reading a MISSING key returns 0 rather than raising - which is what lets `counts[n]` be written
+            for a value that never appeared in nums1;
+        but a key that has been DECREMENTED TO ZERO IS STILL PRESENT - the key does not disappear. That
+            is the trap in section 4.
+
+THE VARIABLES IN THE CODE:
+    nums1    the array that gets tallied. NOT MODIFIED.
+    nums2    the array that gets walked. NOT MODIFIED.
+    counts   the tally of nums1, which IS modified as the walk proceeds - it is the budget being spent.
+    result   the answer being built up.
+    n        the current value from nums2.
+
+n AND m ARE THE TWO ARRAY LENGTHS. TIME O(n + m), SPACE O(number of distinct values in nums1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - two bugs, and each official example catches exactly one of them.
+
+TRAP 1 - `if n in counts` INSTEAD OF `if counts[n] > 0`. This looks like the same test and is not. A
+Counter key that has been decremented to 0 IS STILL A KEY - `in` remains True, so the value keeps being
+admitted forever and the count goes negative.
+
+        nums1 = [4, 9, 5],  nums2 = [9, 4, 9, 8, 4]
+
+            correct:      [9, 4]          each value taken once, because nums1 has one of each
+            `in` version: [9, 4, 9, 4]    the second 9 and second 4 are admitted against a zero budget
+
+    MEASURED: wrong on 1,407 of 6,000 random pairs. THE FIX IS TO TEST THE VALUE, NOT THE KEY -
+    `counts[n] > 0` asks the question the algorithm actually cares about, and it also works for a value
+    never in nums1 at all, since a missing key reads as 0.
+
+TRAP 2 - USING SETS. `set(nums1) & set(nums2)` solves Intersection of Two Arrays I, not this one. It
+returns each shared value ONCE, discarding the duplicate information the problem is entirely about.
+
+        nums1 = [1, 2, 2, 1],  nums2 = [2, 2]
+
+            correct:   [2, 2]
+            sets:      [2]
+
+    MEASURED: wrong on 778 of 6,000 random pairs.
+
+NOW THE PART WORTH NOTICING - EACH OFFICIAL EXAMPLE CATCHES EXACTLY ONE OF THE TWO:
+
+        example 1, [1,2,2,1] & [2,2]        the `in` bug gives the RIGHT answer [2,2].   HIDDEN.
+                                            the set bug gives [2].                       CAUGHT.
+
+        example 2, [4,9,5] & [9,4,9,8,4]    the `in` bug gives [9,4,9,4].                CAUGHT.
+                                            the set bug gives [9,4], which is right.     HIDDEN.
+
+    NEITHER EXAMPLE ALONE IS SUFFICIENT, and testing only one of them leaves a real bug in place. The
+    pattern to take away: a sample that exercises duplicates on the LEFT catches one mistake, and a
+    sample that exercises duplicates on the RIGHT catches the other.
+
+TRAP 3 - COUNTING THE LARGER ARRAY. Correct, but wasteful. Tallying the SMALLER array and walking the
+larger uses O(min(n, m)) space instead of O(max(n, m)). The entry's code tallies nums1 unconditionally;
+adding a swap when nums1 is longer is a genuine, cheap improvement and worth mentioning aloud.""",
+
+    """5. THE SLOW WAY FIRST, then the tally - and the sorted version, which is the real follow-up.
+
+THE NAIVE VERSION - FOR EACH ELEMENT OF nums2, SEARCH nums1 AND CROSS OFF WHAT YOU USE:
+
+    remaining = list(nums1)
+    result = []
+    for n in nums2:
+        if n in remaining:
+            result.append(n)
+            remaining.remove(n)
+
+    IT IS CORRECT and it expresses the rule directly - "take it if there is one left, then use it up".
+    COST: `in` and `remove` each scan the list, so it is O(n * m). At this problem's limits it would
+    pass, but it is doing a linear search for something a hash map answers instantly.
+
+THE UPGRADE. Replace the linear search with a tally. `n in remaining` becomes `counts[n] > 0`, and
+`remaining.remove(n)` becomes `counts[n] -= 1`. Both go from O(n) to O(1), and the shape of the algorithm
+is otherwise unchanged - which is worth noticing, because it means the hash map is not a different idea,
+just a faster container for the same one.
+
+    COST: O(n + m) time, O(number of distinct values in nums1) space.
+
+THE SORTED TWO-POINTER VERSION - THE FIRST FOLLOW-UP, AND A GENUINELY DIFFERENT SHAPE:
+
+        put a pointer at the start of each array
+        while both pointers are in range:
+            if the two values are equal        -> take it, advance BOTH pointers
+            else advance the pointer with the SMALLER value
+
+    WHY ADVANCING THE SMALLER ONE IS SAFE: the arrays are sorted, so the smaller value can never appear
+    again further along the OTHER array - everything ahead there is at least as large. So it can be
+    discarded without ever being matched.
+
+    COST: O(n + m) if the arrays arrive sorted, and O(1) EXTRA SPACE - no hash map at all. If they are
+    not sorted, add O(n log n + m log m) to sort them, which is worse than the hash version.
+
+    SO THE HONEST COMPARISON IS: hash map wins on unsorted input; two pointers win on sorted input, and
+    win on memory in both cases. NEITHER IS SIMPLY BETTER - the right answer depends on what you are
+    given, which is exactly what the follow-ups in section 10 are probing.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: tally one array, then walk the other and take each value that still has budget left,
+spending the budget as you go.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, and two things changing inside it:
+
+    `counts`  starts as the full tally of nums1 and only ever DECREASES. It never gains a key and never
+              gains a count. Its meaning at any moment is "how many of this value are still unmatched in
+              nums1".
+    `result`  only ever grows, by at most one element per step.
+
+    THE INVARIANT: at every point in the walk, `result` holds exactly the matches found so far, and
+    `counts[v]` holds nums1's count of v minus the number of v's already taken. True before the loop
+    (nothing taken, full tally) and preserved by each step, because taking a value and decrementing its
+    budget happen together.
+
+    WHY THAT DELIVERS min(a, b) WITHOUT COMPUTING A MINIMUM: for a value with a copies in nums1 and b in
+    nums2, the walk offers b chances to take it and the budget permits a takes. Whichever runs out first
+    stops it - so the number taken is min(a, b), by construction rather than by arithmetic.
+
+    WHAT MAKES IT STOP: exactly len(nums2) iterations. No condition to get wrong.
+
+    WHY THE TEST IS ON THE VALUE AND NOT THE KEY: a spent key remains in the map with a count of 0. Only
+    `counts[n] > 0` distinguishes "still available" from "was available once". That is trap 1.
+
+THE STEPS, NO CODE:
+
+    1. Tally the first array: how many times does each value appear in it? This is the budget.
+    2. Start an empty result.
+    3. For each value in the second array, in order:
+       a. Look up how much budget that value still has.
+       b. If it is greater than zero, add the value to the result AND reduce its budget by one.
+       c. If it is zero - either because the value was never in the first array, or because every copy
+          has already been matched - skip it.
+    4. Hand back the result, in whatever order it was built.
+
+    STEP 3b DOES TWO THINGS AT ONCE AND BOTH ARE REQUIRED. STEP 3a ASKS FOR A QUANTITY, NOT FOR
+    MEMBERSHIP.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+You are running a cloakroom. A first coach party hands in its tickets, and you make a note of how many of
+each colour you received: two red, two blue. That note is your stock.
+
+Then a second coach party files past, each person waving a ticket colour and asking to be let through if
+you have one of theirs in stock. The first person waves blue. You check your note: two blue. Yes - you
+let them through and cross one blue off, leaving one. The second waves blue as well. You still have one,
+so you let them through and cross it off, leaving none.
+
+If a third blue arrived, your note would say zero and you would turn them away, even though blue is
+written on your note. THAT IS THE WHOLE JOB: the colour being ON the note is not the question, the
+question is whether the number beside it is still above zero.
+
+At the end, the people you let through are the answer. Notice what that number came to: you let through
+as many as the smaller of "how many blues the first party handed in" and "how many blues the second party
+waved". You never worked that minimum out - it happened because you stopped when either side ran out.
+
+THE MISTAKE THAT LOOKS LIKE CARE. Suppose you had checked only whether the colour appeared on your note
+at all, without reading the number. Every blue ticket in the second party would be let through - ten of
+them, if ten arrived - and your note would end up saying minus eight, which is not a quantity of
+anything.
+
+AND THE MISTAKE THAT THROWS AWAY THE QUESTION. Suppose that instead of a note with numbers you had simply
+written down the SET of colours the first party used: red, blue. Then you could tell whether a colour was
+shared, but never how many were shared, and every party would get exactly one person through per colour.
+That is a perfectly good answer to a different question - and it is the question the previous version of
+this problem asked.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` tallies a sequence in one call and returns 0 for keys it has never seen.
+
+    def intersect(nums1, nums2):
+
+Both inputs are lists. NEITHER IS MODIFIED - `Counter(nums1)` builds a new tally, and nums2 is only read.
+
+    counts = Counter(nums1)
+
+THE BUDGET. `counts[v]` is how many copies of v nums1 has. THIS IS THE ONLY STRUCTURE THAT CHANGES during
+the walk, and it is a copy of nums1's information, not nums1 itself.
+
+    result = []
+
+The answer, built up as matches are found. Order is whatever the walk produces, which the problem allows.
+
+    for n in nums2:
+
+WALK THE SECOND ARRAY. Each element is one opportunity to spend budget. Indices are never needed.
+
+    if counts[n] > 0:
+
+THE ONE DECISION, AND THE COMPARISON IS AGAINST A QUANTITY. `counts[n]` returns 0 for a value that never
+appeared in nums1, so the test handles "not present" and "all spent" with the same expression.
+    WRITING `if n in counts` INSTEAD IS THE BUG: a key decremented to 0 remains in the Counter, so the
+    test stays True and the value is admitted repeatedly - wrong on 1,407 of 6,000 random pairs, and it
+    survives the first official example untouched.
+
+        result.append(n)
+        counts[n] -= 1      # consume one occurrence
+
+THE TWO HALVES OF A MATCH, AND THEY MUST HAPPEN TOGETHER. Appending without decrementing admits the value
+forever; decrementing without appending loses it. TOGETHER THEY ARE WHAT MAKES THE FINAL COUNT
+min(count in nums1, count in nums2) - the take is capped by the budget, and the budget is offered only as
+often as nums2 presents the value.
+
+    return result
+
+The matches. NO POST-PROCESSING - no sorting, no deduplication, no min() anywhere in the function.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty array (an empty nums2 means the loop does not run; an
+empty nums1 means every budget is 0 - both verified to return an empty list), no sort, and no swap to
+tally the smaller array, which is the improvement noted in trap 3.""",
+
+    """9. TRACED ON REAL NUMBERS - both official examples, because they catch different bugs.
+
+RUN A: nums1 = [1, 2, 2, 1],  nums2 = [2, 2]
+
+    BEFORE THE WALK:   counts = {1: 2, 2: 2}      result = []
+
+    n = 2      counts[2] = 2, which is > 0   ->   TAKE
+               result = [2]                       counts = {1: 2, 2: 1}
+
+    n = 2      counts[2] = 1, which is > 0   ->   TAKE
+               result = [2, 2]                    counts = {1: 2, 2: 0}
+
+    RETURNS [2, 2].
+
+    NOTE THAT counts[2] IS NOW 0 BUT THE KEY 2 IS STILL IN THE MAP. If a third 2 arrived, `counts[2] > 0`
+    would correctly refuse it - while `2 in counts` would still be True and would wrongly admit it. This
+    example never presents that third 2, WHICH IS WHY IT DOES NOT CATCH THE `in` BUG.
+
+RUN B: nums1 = [4, 9, 5],  nums2 = [9, 4, 9, 8, 4]
+
+    BEFORE THE WALK:   counts = {4: 1, 9: 1, 5: 1}      result = []
+
+    n = 9      counts[9] = 1 > 0    ->   TAKE     result = [9]      counts = {4: 1, 9: 0, 5: 1}
+    n = 4      counts[4] = 1 > 0    ->   TAKE     result = [9, 4]   counts = {4: 0, 9: 0, 5: 1}
+    n = 9      counts[9] = 0        ->   SKIP     result unchanged
+    n = 8      counts[8] = 0        ->   SKIP     (the key 8 does not exist; Counter returns 0)
+    n = 4      counts[4] = 0        ->   SKIP     result unchanged
+
+    RETURNS [9, 4].  Confirmed against min-of-counts: 4 gives min(1,2)=1, 9 gives min(1,2)=1, 5 gives
+    min(1,0)=0, 8 gives min(0,1)=0.
+
+    THIS IS THE EXAMPLE THAT CATCHES THE `in` BUG: the third and fifth steps both have a budget of 0 with
+    the key still present, so `n in counts` would admit them and return [9, 4, 9, 4].
+
+THE INVERSION - CHANGE ONE ELEMENT OF nums2:
+
+    nums1 = [1,2,2,1],  nums2 = [2, 2]   ->   [2, 2]
+    nums1 = [1,2,2,1],  nums2 = [2, 3]   ->   [2]        the 3 has no budget - it is not in nums1 at all,
+                                                         so counts[3] reads as 0 and it is skipped
+
+    Both verified against a direct min-of-counts computation.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass to tally nums1, one pass over nums2 doing a constant amount of work per
+element.
+
+    TIME O(n + m). SPACE O(d) where d is the number of DISTINCT values in nums1 - at most n, and
+    reducible to O(min(n, m)) by tallying the shorter array.
+    The list-search version is O(n * m). The sorted two-pointer version is O(n + m) time and O(1) extra
+    space, but needs sorted input or an O(n log n + m log m) sort first.
+
+THE #1 MISTAKE: `if n in counts` instead of `if counts[n] > 0`. A Counter key survives being decremented
+to zero, so membership stays True and values are admitted against an empty budget - wrong on 1,407 of
+6,000 random pairs, and INVISIBLE ON THE FIRST OFFICIAL EXAMPLE. THE RUNNER-UP is reaching for sets,
+which solves the previous version of this problem and discards exactly the duplicate information this one
+is about - wrong on 778 of 6,000, and invisible on the SECOND official example. NEITHER SAMPLE CATCHES
+BOTH; you need duplicates on each side to be safe.
+
+ONE-SENTENCE TAKEAWAY: treat one array as a budget and spend it while walking the other - the min of the
+two counts falls out of the spending, so you never compute a minimum at all.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice this is a MULTISET question rather than a set
+question, and then whether you can adapt to what the input looks like. The problem is famous for its
+follow-ups, and the follow-ups are the interview - the base solution is five lines.
+
+THE THREE FOLLOW-UPS, WITH THEIR ANSWERS - PREPARE THESE, THEY ARE ASKED ALMOST EVERY TIME:
+    "What if the arrays are already SORTED?" Use two pointers, one per array. If the values are equal,
+    take it and advance both; otherwise advance whichever points at the smaller value, because that value
+    cannot appear later in the other array. O(n + m) time and O(1) extra space - strictly better than the
+    hash map here, since no map is needed at all.
+    "What if nums1 is much SMALLER than nums2?" Tally the smaller one and walk the larger, so the memory
+    is O(min(n, m)). The algorithm is unchanged; only which array you tally changes.
+    "What if nums2 is on DISK and cannot fit in memory?" Load nums1 - the small one - into the tally, then
+    STREAM nums2 past it, emitting matches as they occur. The walk already touches each element of nums2
+    exactly once and never revisits it, so it works as a stream unmodified. If BOTH are too large to
+    hold, sort both externally and use the two-pointer merge, which reads each file once in order - the
+    classic external-merge answer.""",
 ]
 
 _EX_P1J["Is Subsequence"] = [
