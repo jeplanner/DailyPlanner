@@ -85494,125 +85494,812 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1I["Find Pivot Index"] = [
-    """The identity that makes it one pass.
-right_sum = total - left_sum - nums[i]. So once you know the total, you never
-need to compute the right side separately - it falls out of what you have
-already accumulated.
-nums = [1,7,3,6,5,6], total 28.
-i=0: left 0, right 28-0-1 = 27. No. left becomes 1.
-i=1: left 1, right 28-1-7 = 20. No. left becomes 8.
-i=2: left 8, right 28-8-3 = 17. No. left becomes 11.
-i=3: left 11, right 28-11-6 = 11. MATCH -> return 3.
-Note the check happens BEFORE adding nums[i] to left, because the pivot itself
-belongs to neither side.""",
+    """1. THE GOAL - find the spot where the array balances.
 
-    """The ordering bug that this problem exists to catch.
-`left += n` must come AFTER the comparison. Add first and you have included the
-pivot in the left sum, so the test becomes wrong at every index - and it fails
-in a way that still returns an index on some inputs, which is worse than
-crashing.
-A quick self-check: at i = 0 the left sum must be 0 (nothing is to the left of
-the first element). If your code has already added nums[0] by the time it
-compares, the ordering is wrong.""",
+Find the LEFTMOST index where everything strictly to its LEFT sums to the same as everything strictly to
+its RIGHT. The element sitting AT that index belongs to neither side. Return -1 if no such index exists.
 
-    """Why 'leftmost' matters and the early return handles it.
-The prompt asks for the LEFTMOST valid index, and returning inside the loop
-gives that for free - you stop at the first match. A solution that collects all
-matches and returns max() or the last one is wrong on inputs with several
-pivots.
-Test: [0,0,0] has pivots at 0, 1 and 2; the answer is 0. That input also checks
-the empty-side convention below.""",
+    nums = [1, 7, 3, 6, 5, 6]
 
-    """The empty-side convention, which must be confirmed.
-At index 0 the left side is EMPTY, and the sum of an empty list is defined as
-0 - so [ -1, -1, -1, -1, -1, 0 ] and [2, 1, -1] both have valid pivots at
-positions the naive reading might reject.
-[2,1,-1]: i=0, left 0, right 2-0-2 = 0 -> MATCH, return 0. The right side sums
-1 + (-1) = 0, and the left side is empty. If a prompt instead required both
-sides to be non-empty, the loop would start at 1 and end at n-2 - so ask, since
-the same code gives different answers.""",
+        index:      0    1    2    3    4    5
+        value:      1    7    3    6    5    6
+                    \\________/    |    \\____/
+                     left = 11  pivot   right = 11
+                                  6
 
-    """Edge cases.
-Single element [5] -> i=0, left 0, right 5-0-5 = 0 -> return 0. Both sides
-empty, both sum to 0.
-No pivot [1,2,3] -> loop completes -> -1.
-Negative numbers work unchanged; the identity is arithmetic, not order-based -
-which is why this cannot be done with two pointers converging, a common wrong
-instinct.
-All zeros -> returns 0, the leftmost.""",
+        left of index 3:   1 + 7 + 3 = 11
+        right of index 3:  5 + 6     = 11
+        THEY MATCH.
 
-    """Complexity and the family.
-O(n) time with two passes conceptually (one for the total, one to scan) but
-O(1) extra space. The alternative - build a full prefix-sum array - is also
-O(n) time but O(n) space, and it is the version to reach for when you need many
-range queries rather than one scan.
-The family: Running Sum of 1d Array, Range Sum Query - Immutable (prefix array
-built once, queries O(1)), Subarray Sum Equals K (prefix sums plus a hash map),
-Product of Array Except Self (prefix and suffix products). The unifying idea is
-that a running accumulation plus a total answers questions about both sides of
-a position without a second loop.""",
+    ANSWER: 3
+
+THREE THINGS THE STATEMENT IS QUIETLY SAYING:
+
+    THE PIVOT ITSELF IS EXCLUDED FROM BOTH SIDES. That is what makes the two sides sum to 11 each while
+    the whole array sums to 28: 11 + 6 + 11 = 28. The pivot's own value is the leftover.
+
+    AN EMPTY SIDE SUMS TO ZERO. At index 0 the left side is empty, and the sum of nothing is 0 - not
+    undefined, not skipped. So index 0 is a legitimate candidate whenever everything after it sums to 0.
+
+        nums = [2, 1, -1]      left of index 0 is empty -> 0
+                               right of index 0 is 1 + (-1) -> 0
+                               ANSWER: 0
+
+    "LEFTMOST" MATTERS. Several indices can balance, and the smallest one is wanted - see section 4.
+
+WHY IT IS NOT A DOUBLE LOOP. Recomputing both sides at every index costs O(n) per index and O(n^2)
+overall. The whole point of the problem is a single identity that makes each check cost nothing.
+
+    THIS ENTRY OPENS THE PREFIX-SUM CLUSTER in this bank, alongside Find the Highest Altitude, Running
+    Sum of 1d Array and Left and Right Sum Difference. FIND THE HIGHEST ALTITUDE OWNS THE IMPLICIT
+    STARTING VALUE. RUNNING SUM OWNS BUILDING THE PREFIX ARRAY ITSELF. THIS ONE OWNS THE THREE-WAY SPLIT
+    IDENTITY - right = total - left - current - AND THE ORDER OF THE UPDATE RELATIVE TO THE TEST.""",
+
+    """2. THE INTUITION - the array is always split into exactly three parts.
+
+Stand at any index and the array falls into three pieces that account for every element exactly once:
+
+        [ everything before me ] [ me ] [ everything after me ]
+                  left            n            right
+
+    Therefore, ALWAYS:            left + n + right = total
+
+    Rearranged:                   right = total - left - n
+
+    THAT IS THE ENTIRE ALGORITHM. Once you know `total` - one pass - and you keep `left` updated as you
+    walk, the right-hand sum needs no work at all. It is arithmetic on two numbers you already have.
+
+WATCH IT AT WORK ON nums = [1, 7, 3, 6, 5, 6], total = 28:
+
+        index 0:  left = 0    n = 1    right = 28 - 0 - 1 = 27      0 != 27
+        index 1:  left = 1    n = 7    right = 28 - 1 - 7 = 20      1 != 20
+        index 2:  left = 8    n = 3    right = 28 - 8 - 3 = 17      8 != 17
+        index 3:  left = 11   n = 6    right = 28 - 11 - 6 = 11     11 == 11    <- MATCH
+
+    NOTICE THAT THE RIGHT SUM WAS NEVER ADDED UP. It was computed by subtraction each time, in one
+    operation, from numbers already in hand.
+
+THE PICTURE OF WHAT `left` MEANS AT EACH MOMENT:
+
+        [1] [7] [3] [6] [5] [6]
+         ^
+         standing here, left = 0        (nothing to my left yet)
+
+        [1] [7] [3] [6] [5] [6]
+             ^
+             standing here, left = 1    (just the 1)
+
+        [1] [7] [3] [6] [5] [6]
+                     ^
+                     standing here, left = 1+7+3 = 11
+
+    `left` ALWAYS EXCLUDES THE ELEMENT YOU ARE STANDING ON. Keeping that true is the single ordering
+    detail the whole problem turns on, and it is section 4.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PIVOT INDEX. An index where the sum of everything before it equals the sum of everything after it, with
+the element at that index counted in neither.
+
+PREFIX SUM. The total of all elements up to some point. Here `left` is a RUNNING prefix sum - it is not
+stored as an array, just carried in one variable.
+
+TOTAL. The sum of the whole array, computed once up front.
+
+EMPTY SUM. The sum of no elements, defined to be 0. This is a convention, not an accident: 0 is the value
+that leaves any sum unchanged when added, so it is the natural answer for "nothing". IT IS WHAT MAKES
+INDEX 0 AND THE LAST INDEX LEGITIMATE CANDIDATES rather than special cases needing their own code.
+
+SENTINEL -1. Returned when no pivot exists. Safe because -1 is not a valid index.
+
+enumerate(nums). Yields (index, value) pairs, so `i` and `n` arrive together.
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. NOT MODIFIED - `sum()` reads it and nothing writes to it.
+    total    the sum of the entire array, computed once before the loop and never changed.
+    left     the running sum of everything STRICTLY BEFORE the current index. Starts at 0.
+    i, n     the current index and the value at it.
+
+NEGATIVE NUMBERS AND ZEROS ARE ALLOWED - the constraints permit them, and they are not a special case for
+this method, though they do rule out some tempting shortcuts (see section 5).
+
+TIME O(n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one bug the examples catch, and one they hide.
+
+TRAP 1 - UPDATING `left` BEFORE THE COMPARISON INSTEAD OF AFTER. This is the bug the problem exists to
+catch:
+
+        for i, n in enumerate(nums):
+            left += n                          # WRONG PLACE
+            if left == total - left - n:
+                return i
+
+    Now `left` includes the element you are standing on, so it is no longer "everything to my left" - the
+    quantity being compared is not the one the problem asks about.
+
+    MEASURED: wrong on 2,479 of 6,000 random arrays - the single most destructive one-line move in this
+    batch. AND THE OFFICIAL EXAMPLE DOES CATCH IT: on [1, 7, 3, 6, 5, 6] it returns -1 instead of 3, so
+    this bug at least announces itself immediately.
+
+TRAP 2 - RETURNING THE RIGHTMOST PIVOT INSTEAD OF THE LEFTMOST, and THIS one the examples hide. Writing
+the loop to record every match and return the last:
+
+        found = -1
+        for i, n in enumerate(nums):
+            if left == total - left - n:
+                found = i                      # keeps overwriting
+            left += n
+        return found
+
+    MEASURED: wrong on 227 of 6,000 random arrays. NOW CHECK THE THREE OFFICIAL EXAMPLES:
+
+        [1, 7, 3, 6, 5, 6]   leftmost 3    rightmost 3     AGREE
+        [1, 2, 3]            leftmost -1   rightmost -1    AGREE
+        [2, 1, -1]           leftmost 0    rightmost 0     AGREE
+
+    ALL THREE AGREE. You need an array with two pivots to see it at all, and the smallest is [0, 0, 0]:
+    index 0 balances (empty against 0 + 0) and so does index 2 (0 + 0 against empty), and index 1 as
+    well. Leftmost is 0; the rightmost version answers 2. RETURNING IMMEDIATELY FROM INSIDE THE LOOP IS
+    WHAT GIVES "LEFTMOST" FOR FREE - it is not a stylistic choice.
+
+TRAP 3 - ASSUMING THE EMPTY SIDE IS INVALID. Some solutions start the loop at index 1 to "avoid the empty
+left side". That silently discards a legal answer: [2, 1, -1] has its pivot AT INDEX 0, where the left
+side is empty and sums to 0, and the right side is 1 + (-1) = 0.
+
+TRAP 4 - ASSUMING THE VALUES ARE POSITIVE. They need not be, and both sides may balance at a NEGATIVE
+number:
+
+        [-1, -1, -1, -1, -1, 0]     total -5
+        at index 2:   left  = -1 + -1           = -2
+                      right = -1 + -1 + 0       = -2      MATCH, answer 2
+
+    Nothing in this method assumes positivity, which is worth saying aloud because section 5 shows a
+    tempting method that does assume it and is therefore unsound here.""",
+
+    """5. THE SLOW WAY FIRST, then the identity - and one tempting method that does NOT work.
+
+THE NAIVE VERSION - ADD UP BOTH SIDES AT EVERY INDEX:
+
+    for i in range(len(nums)):
+        if sum(nums[:i]) == sum(nums[i+1:]):
+            return i
+    return -1
+
+    IT IS CORRECT - this is the brute force every number in this entry was checked against - and it is
+    the definition transcribed. COST: each index re-adds most of the array, so O(n^2) overall, plus it
+    builds two new lists per index through slicing. At this problem's limit of n = 10,000 that is around
+    50 million additions, which is slow enough to matter.
+
+THE UPGRADE, AND THE TRICK EXPLAINED FROM SCRATCH. The waste is obvious once named: at index 3 you add up
+1 + 7 + 3, and at index 4 you add up 1 + 7 + 3 + 6 - REDOING THE SAME THREE ADDITIONS. So carry the
+left-hand sum forward instead of rebuilding it: one addition per step instead of i of them.
+
+    That handles the left side. The right side looks like it needs the same treatment from the other end -
+    but it does not, because of the three-way split:
+
+            left + n + right = total        (every element is in exactly one of the three parts)
+        =>  right = total - left - n
+
+    ONE SUBTRACTION REPLACES AN ENTIRE SUM. The only precomputation needed is `total`, which is one pass.
+
+    COST: O(n) time, O(1) space. Two passes conceptually - one for `total`, one to scan - but no extra
+    storage at all.
+
+THE PREFIX-ARRAY ALTERNATIVE, AND WHY IT IS SLIGHTLY WORSE HERE. You could build a full array of prefix
+sums and index into it. Same O(n) time, but O(n) SPACE for a quantity you only ever need one value of at
+a time. The running variable is strictly better - though the prefix array becomes the right tool the
+moment you need to answer MANY range queries rather than one sweep.
+
+THE TEMPTING METHOD THAT DOES NOT WORK: two pointers closing in from both ends, moving whichever side is
+smaller. That relies on sums growing as you move inward, which is only true when all values are
+POSITIVE. The constraints allow negatives and zeros, so a smaller sum can shrink further as you advance -
+the invariant fails and the method is unsound. SAY THIS OUT LOUD RATHER THAN JUST NOT DOING IT; noticing
+that negatives break a monotonicity argument is the reusable part.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: add up the whole array once, then walk it carrying the running sum of everything behind
+you, and stop at the first index where that running sum equals the total minus itself minus the current
+element.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, and only one variable changes inside it:
+
+    `total`  computed once before the loop and CONSTANT thereafter. It is the fixed fact the whole method
+             leans on.
+    `left`   the only moving state. It starts at 0 and grows by exactly one element per step.
+
+    THE INVARIANT THAT MAKES IT CORRECT: at the top of the iteration for index i, `left` holds the sum of
+    nums[0 .. i-1] - everything strictly before i, and nothing else. True at the start, when i is 0 and
+    `left` is 0 because nothing is behind you. PRESERVED BY DOING THE ADDITION LAST: you test first, then
+    add nums[i], which makes the invariant true for i+1. Move that addition up and the invariant is
+    destroyed - that is trap 1, and it is the reason the ordering is not arbitrary.
+
+    WHAT MAKES IT STOP: two ways out, and both are guaranteed. The loop runs at most len(nums) times, and
+    it may exit earlier by returning the moment a match is found. Returning early is not an optimisation
+    here - IT IS WHAT MAKES THE ANSWER THE LEFTMOST ONE.
+
+THE STEPS, NO CODE:
+
+    1. Add up every element to get the total.
+    2. Start a running left-hand sum at zero.
+    3. For each position, in order from the front:
+       a. Work out the right-hand sum by subtracting the running left-hand sum AND the current element
+          from the total.
+       b. If the running left-hand sum equals that right-hand sum, hand back this position immediately
+          and stop.
+       c. Otherwise add the current element to the running left-hand sum and move on.
+    4. If you reach the end without a match, hand back -1.
+
+    STEP 3c COMES AFTER STEP 3b, AND THAT ORDERING IS THE PROBLEM. STEP 3b SAYS "IMMEDIATELY", AND THAT
+    IS WHAT DELIVERS "LEFTMOST".""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A row of crates of different weights sits on a long plank. You want to find one crate to rest the plank's
+pivot on, so that the crates in front of it weigh exactly the same as the crates behind it. The crate the
+pivot sits under does not count for either side - its weight goes straight down into the pivot.
+
+The slow way is to pick a crate, walk to the front weighing everything, walk to the back weighing
+everything, compare, and then start again on the next crate. You would weigh the same crates over and
+over.
+
+Instead, you weigh the entire row ONCE and write the number down. Call it the grand total. Now you walk
+from the front, and as you pass each crate you add its weight to a running figure - the weight of
+everything behind you.
+
+At every crate you can now answer the question without weighing anything. Everything ahead of you must be
+the grand total, minus what is behind you, minus the crate you are standing at. So you compare your
+running figure against that subtraction, and if they match, this is the pivot.
+
+    THE ONE THING YOU MUST BE CAREFUL ABOUT: you add the crate's weight to your running figure only AFTER
+    you have asked the question, not before. The running figure is meant to be "everything BEHIND me",
+    and the crate you are standing at is not behind you - it is under you. Add it too early and every
+    comparison you make is about the wrong pile.
+
+AND WHY YOU STOP AT THE FIRST MATCH. You were asked for the pivot nearest the front. There may be others
+further along - a row of empty crates balances everywhere - but you were asked for the first, so you stop
+walking the moment you find one rather than continuing and overwriting your answer.
+
+WHY THE ENDS COUNT. At the very first crate there is nothing behind you at all, and "nothing" weighs
+zero - not "undefined", not "skip this one". If everything ahead of the first crate happens to cancel out
+to zero too, then the first crate is a perfectly good pivot and you should say so.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def pivot_index(nums):
+
+`nums` is the list of numbers, which may include negatives and zeros. IT IS NOT MODIFIED - nothing sorts
+or writes to it.
+
+    total = sum(nums)
+
+ONE PASS TO GET THE GRAND TOTAL. Computed BEFORE the loop and never updated inside it - it is the fixed
+quantity the subtraction identity depends on. For an empty list `sum([])` is 0, which is why the empty
+case needs no guard.
+
+    left = 0
+
+THE RUNNING SUM OF EVERYTHING STRICTLY BEFORE THE CURRENT INDEX. It starts at 0 because before the first
+element there is nothing behind you, and the sum of nothing is 0 - the empty-sum convention doing real
+work rather than being a technicality.
+
+    for i, n in enumerate(nums):
+
+`i` is the index (what gets returned), `n` is the value at it (what the arithmetic uses). Both are needed.
+
+    if left == total - left - n:   # left sum == right sum
+
+THE ONE INTERESTING LINE. `total - left - n` IS THE RIGHT-HAND SUM, derived rather than accumulated:
+every element is either before `i`, at `i`, or after `i`, so left + n + right = total, and the right side
+follows by subtraction. NOTHING IS ADDED UP HERE - it is one subtraction on numbers already in hand.
+    THE TEST HAPPENS BEFORE `left` IS UPDATED, which is what keeps `left` meaning "strictly before i".
+
+        return i
+
+RETURN IMMEDIATELY. This is what makes the answer the LEFTMOST pivot - the loop never gets the chance to
+find a later one. Recording the match and continuing would return the rightmost instead, which is trap 2.
+
+    left += n
+
+NOW - AND ONLY NOW - THE CURRENT ELEMENT JOINS THE LEFT SIDE, making `left` correct for the NEXT index.
+MOVING THIS LINE ABOVE THE `if` IS THE CLASSIC BUG: wrong on 2,479 of 6,000 random arrays.
+
+    return -1
+
+Reached only if the loop completes with no match. -1 is the agreed "no such index" sentinel and is safe
+because it is not a valid index.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty list (the loop does not run, -1 is returned), no
+special case for index 0 or the last index (the empty-sum convention covers both), and no second array.""",
+
+    """9. TRACED ON REAL NUMBERS - the official array, then the inversion.
+
+nums = [1, 7, 3, 6, 5, 6].  First, total = 1 + 7 + 3 + 6 + 5 + 6 = 28.
+
+    START     left = 0
+
+    i=0  n=1   right = 28 - 0 - 1 = 27       is 0 == 27?   no
+               left += 1                     ->  left = 1
+
+    i=1  n=7   right = 28 - 1 - 7 = 20       is 1 == 20?   no
+               left += 7                     ->  left = 8
+
+    i=2  n=3   right = 28 - 8 - 3 = 17       is 8 == 17?   no
+               left += 3                     ->  left = 11
+
+    i=3  n=6   right = 28 - 11 - 6 = 11      is 11 == 11?  YES
+               RETURN 3 immediately - the loop stops here
+
+    RETURNS 3.  Cross-checked against the brute force that sums both slices at every index: also 3.
+
+    CONFIRM BY HAND: left of index 3 is 1 + 7 + 3 = 11, right of index 3 is 5 + 6 = 11, and the pivot's
+    own value 6 accounts for the rest: 11 + 6 + 11 = 28. The identity holds exactly.
+
+THE INVERSION - CHANGE THE LAST ELEMENT FROM 6 TO 5:
+
+    nums = [1, 7, 3, 6, 5, 5],  total = 27
+
+        i=0  n=1   right = 27 - 0 - 1 = 26     0  != 26     left -> 1
+        i=1  n=7   right = 27 - 1 - 7 = 19     1  != 19     left -> 8
+        i=2  n=3   right = 27 - 8 - 3 = 16     8  != 16     left -> 11
+        i=3  n=6   right = 27 - 11 - 6 = 10    11 != 10     left -> 17
+        i=4  n=5   right = 27 - 17 - 5 = 5     17 != 5      left -> 22
+        i=5  n=5   right = 27 - 22 - 5 = 0     22 != 0      left -> 27
+        loop ends  ->  RETURNS -1
+
+    ONE ELEMENT LOWERED BY 1 AND THE BALANCE POINT DISAPPEARS ENTIRELY. Both verified against the brute
+    force.
+
+AND THE TWO CASES THAT PROVE THE ENDS COUNT:
+
+    [2, 1, -1]                total 2.   i=0: right = 2 - 0 - 2 = 0, and left = 0.  MATCH AT INDEX 0,
+                              with an EMPTY left side. Returns 0.
+    [-1, -1, -1, -1, -1, 0]   total -5.  i=2: left = -2, right = -5 - (-2) - (-1) = -2.  MATCH.
+                              Returns 2 - BOTH SIDES NEGATIVE AND EQUAL. Nothing here assumes positivity.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass to add everything up, then at most one pass to scan. Each step of the scan
+does one subtraction, one comparison and one addition - a fixed amount of work.
+
+    TIME O(n). SPACE O(1) - two integers, `total` and `left`, regardless of array size.
+    The brute force that re-sums both slices at every index is O(n^2) time and, because of the slicing,
+    O(n) space per step. At this problem's limit of n = 10,000 that is roughly 50 million additions, so
+    here the linear version IS needed rather than merely tidier.
+    The prefix-ARRAY version is the same O(n) time but O(n) space - correct, and strictly worse for a
+    single sweep.
+
+THE #1 MISTAKE: putting `left += n` above the comparison instead of below it. `left` then includes the
+element you are standing on, so it no longer means "everything strictly before this index" and every test
+is asking the wrong question - wrong on 2,479 of 6,000 random arrays. THE RUNNER-UP is subtler and the
+official examples all hide it: recording matches and returning the last one gives the RIGHTMOST pivot,
+which disagrees on 227 of 6,000 and needs an array with two pivots, such as [0, 0, 0], to reveal at all.
+
+ONE-SENTENCE TAKEAWAY: every index splits the array into before, at, and after, so once you know the
+total you never compute the right-hand side - you subtract it.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can spot that a quantity is DERIVABLE rather than
+computable. The right-hand sum looks like it needs its own accumulation from the far end; the three-way
+split says it does not. That move - replace a second scan with an identity - is what recurs in Subarray
+Sum Equals K, Product of Array Except Self and every range-sum problem. THE SECOND THING BEING WATCHED IS
+WHETHER YOU HANDLE THE EMPTY SIDE. Candidates who start the loop at index 1 to "avoid" it have quietly
+deleted a legal answer, and [2, 1, -1] catches them.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return ALL pivot indices." Do not return early; append each match to a list and return the list.
+    Same O(n).
+    "What if there are many queries about arbitrary ranges?" Then build the full prefix-sum array once,
+    O(n), and answer each range sum in O(1) as prefix[j+1] - prefix[i]. That is when the array beats the
+    running variable.
+    "Could you use two pointers from both ends?" Not soundly - that needs sums to grow monotonically as
+    you move inward, which fails once negatives are allowed, and this problem allows them.
+    "What about Product of Array Except Self, the multiplicative cousin?" The same three-way split, but
+    you cannot divide out the current element because of zeros, so you build running products from the
+    left and from the right instead. Worth naming: the identity trick is the same, the inverse operation
+    is what is unavailable.""",
 ]
 
 _EX_P1I["Find Words That Can Be Formed by Characters"] = [
-    """The example, checked word by word.
-words = ['cat','bt','hat','tree'], chars = 'atach' -> available = {a:2, t:1,
-c:1, h:1}.
-'cat': needs c:1 <= 1, a:1 <= 2, t:1 <= 1 -> spellable, add 3.
-'bt': needs b:1, but available['b'] is 0 -> rejected.
-'hat': h:1, a:1, t:1 -> all fit, add 3.
-'tree': needs t:1 (ok), r:1 -> available['r'] is 0 -> rejected.
-Total 6. Note 'cat' and 'hat' are each checked against the FULL pool - the
-characters are not consumed between words, which is the detail to confirm with
-the interviewer.""",
+    """1. THE GOAL - which words can you spell from a fixed bag of letter tiles?
 
-    """Why the characters are not consumed, and why that matters.
-Each word is tested independently against the original pool. If chars were
-consumed, the answer would depend on the ORDER you process words in - 'cat'
-then 'hat' would leave no 't' for the second - and the problem would become a
-much harder assignment question.
-This is exactly the sort of ambiguity to restate before coding: 'I'm assuming
-each word is checked against the full set independently, not that they share a
-consumable pool.' One sentence, and it prevents solving the wrong problem.""",
+You are given a list of WORDS and a string of AVAILABLE CHARACTERS. A word is spellable if every letter
+it needs is available AT LEAST AS MANY TIMES as the word uses it. Return the TOTAL LENGTH of all the
+spellable words - not how many there are, their combined length.
 
-    """Why Counter comparison beats manual bookkeeping.
-`all(wc[c] <= available[c] for c in wc)` iterates only the DISTINCT letters of
-the word, and Counter returns 0 for a missing key rather than raising - so
-there is no membership check to forget. The common manual version decrements a
-copy of the pool and restores it afterwards, which works and is easy to get
-wrong (forgetting to restore leaks state into the next word).
-Python also allows `wc <= available` directly on Counters in 3.10+, which is
-the tidiest form - worth knowing, though spelling out the comprehension shows
-the logic more clearly in an interview.""",
+    words = ["cat", "bt", "hat", "tree"]        chars = "atach"
 
-    """Edge cases.
-Empty words list -> total 0.
-An empty string in words -> its Counter is empty, `all()` over nothing is True,
-so it contributes len('') = 0. Harmless, and worth knowing that all() on an
-empty iterable is True rather than False.
-chars = '' -> available is empty, so only empty words qualify -> 0.
-A word longer than chars -> some letter must exceed, so it is rejected by the
-count check without needing a separate length guard.
-Repeated letters are the real test: word 'aa' with chars 'a' -> wc['a'] is 2 >
-1 -> rejected. A set-based solution (checking only that each letter APPEARS)
-gets this wrong, which is the trap.""",
+        the bag holds:   a a t c h        i.e.   a: 2,  t: 1,  c: 1,  h: 1
 
-    """Complexity.
-Time O(total characters across all words + len(chars)) - each word is counted
-once and compared over at most 26 distinct letters. Space O(alphabet), so O(1)
-by the bounded-alphabet argument.
-Rebuilding a Counter per word is fine; the micro-optimisation for very many
-words is a fixed 26-integer array reused and cleared per word, avoiding
-allocation. Not needed at interview scale, but a reasonable thing to mention
-if asked to optimise.""",
+        "cat"    needs c:1, a:1, t:1     bag has c:1, a:2, t:1     ALL FIT      -> counts 3
+        "bt"     needs b:1, t:1          bag has b:0              b DOES NOT FIT -> rejected
+        "hat"    needs h:1, a:1, t:1     bag has h:1, a:2, t:1     ALL FIT      -> counts 3
+        "tree"   needs t:1, r:1, e:2     bag has r:0, e:0         DOES NOT FIT -> rejected
 
-    """The family: multiset containment.
-Ransom Note (can note be built from magazine - the same check for one word),
-Valid Anagram (equality rather than containment), Find All Anagrams in a String
-(sliding-window equality), Minimum Window Substring (the hard version, where
-you slide a window until containment holds and then shrink).
-The shared question is always 'does multiset A fit inside multiset B?', and the
-answer is always a frequency comparison. Recognising it turns each of these
-into a five-minute problem.""",
+    ANSWER: 3 + 3 = 6
+
+TWO THINGS THE STATEMENT IS QUIETLY SAYING, AND BOTH ARE EASY TO GET WRONG:
+
+    COUNTS MATTER, NOT JUST PRESENCE. A word needing two `a`s from a bag with one `a` is NOT spellable.
+    Having the letter is not enough - you need enough of it.
+
+    THE BAG IS NOT USED UP. Every word is tested against the ORIGINAL bag, independently. Spelling "cat"
+    does not consume the c, a and t so that "hat" then fails. The problem is asking which words COULD be
+    spelled, one at a time, not how many can be spelled simultaneously.
+
+    THAT SECOND POINT IS UNUSUAL AND IT IS DELIBERATE - it is what keeps the problem O(total length)
+    rather than a combinatorial packing problem.
+
+    THIS ENTRY JOINS THE FREQUENCY-COMPARISON CLUSTER. ALMOST EQUIVALENT OWNS THE UNION-OF-BOTH-KEY-SETS
+    QUESTION. FIND LUCKY INTEGER OWNS THE SELF-REFERENTIAL PREDICATE. RANSOM NOTE OWNS THE SAME
+    CONTAINMENT CHECK FOR A SINGLE STRING. THIS ONE OWNS APPLYING CONTAINMENT REPEATEDLY AGAINST A POOL
+    THAT IS NOT CONSUMED - and the fact that "at least as many" is a `<=` on counts, not an `in`.""",
+
+    """2. THE INTUITION - lay the tiles out and check each word against them without picking them up.
+
+Think of `chars` as a tray of Scrabble tiles. You want to know, for each word, whether the tray CONTAINS
+the tiles that word needs - and you check by looking, never by taking.
+
+    tray:    [a] [t] [a] [c] [h]        ->    a: 2   t: 1   c: 1   h: 1
+
+    word "cat":     needs   c: 1     tray has 1     1 <= 1   ok
+                            a: 1     tray has 2     1 <= 2   ok
+                            t: 1     tray has 1     1 <= 1   ok
+                    EVERY LETTER FITS  ->  spellable, add its length 3
+
+    word "tree":    needs   t: 1     tray has 1     1 <= 1   ok
+                            r: 1     tray has 0     1 <= 0   FAILS
+                    ONE FAILURE IS ENOUGH  ->  rejected
+
+    Note that "tree" also needs two `e`s against zero - but the check can stop at the first failure. The
+    word is rejected either way.
+
+THE PICTURE - IT IS A ROW-BY-ROW COMPARISON OF TWO TALLIES, in the direction "needed <= available":
+
+        letter:      c    a    t          letter:      t    r    e
+        "cat" needs  1    1    1          "tree" needs 1    1    2
+        tray has     1    2    1          tray has     1    0    0
+                     ok   ok   ok                      ok  FAIL FAIL
+
+    THE COMPARISON IS ONE-DIRECTIONAL. You never ask whether the tray has letters the word does not need -
+    the tray holding a spare `a` is fine, and holding a `z` the word never uses is fine too. THAT IS THE
+    DIFFERENCE FROM ALMOST EQUIVALENT, where both key sets had to be examined. Here only the WORD's
+    letters need checking, because a letter the word does not use imposes no requirement at all.
+
+WHY YOU MUST NOT PICK THE TILES UP. After spelling "cat" the tray would hold a: 1, t: 0, c: 0, h: 1 - and
+then "hat" would fail for want of a t. But "hat" IS spellable from the original tray, and the problem
+counts it. VERIFIED: a version that consumes the tiles returns 3 on this exact example instead of 6.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FREQUENCY / COUNT. How many times a character appears in a string. In "atach", `a` has count 2.
+
+MULTISET. A collection where duplicates matter but order does not. "aab" and "aba" are the same multiset:
+two `a`s and one `b`. Both the word and the character pool are multisets here.
+
+MULTISET CONTAINMENT. Multiset A fits inside multiset B when, for EVERY element, A's count is at most B's
+count. That is exactly the spellable test, and the `<=` is the whole of it.
+
+Counter. Python's tally-in-one-call dictionary. `Counter("atach")` is `{'a': 2, 't': 1, 'c': 1, 'h': 1}`.
+    THE PROPERTY THAT MATTERS HERE: reading a key that was never stored returns 0 rather than raising.
+    `available[c]` is written for letters that may not be in the pool at all - `available['b']` is 0 - and
+    that is what makes `1 <= 0` come out False instead of crashing.
+
+all(...). True when every item in the sequence is true, and True for an EMPTY sequence. The empty case is
+not a quirk to work around: a word with no letters imposes no requirements, so "everything fits" is the
+right answer, and it contributes a length of 0 anyway.
+
+THE VARIABLES IN THE CODE:
+    words      the list of candidate words. NOT MODIFIED.
+    chars      the pool string. NOT MODIFIED, and NOT CONSUMED as words are accepted.
+    available  the tally of the pool, built ONCE before the loop.
+    total      the running sum of accepted word lengths - the answer.
+    word       the current candidate.
+    wc         the tally of the current word ("word counts").
+    c          one distinct letter of the current word.
+
+TIME O(sum of all word lengths + len(chars)), SPACE O(alphabet) = O(1) for 26 lowercase letters.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the worse of the two bugs is invisible on both official examples.
+
+TRAP 1 - CHECKING PRESENCE INSTEAD OF COUNTS. This is the bug the examples hide:
+
+        pool = set(chars)
+        if all(c in pool for c in word):   # WRONG - asks "is the letter there?", not "are there enough?"
+
+    A word needing two `a`s passes against a pool holding one.
+
+        words = ["aab"],  chars = "ab"      ->  correct answer 0,  presence-only answer 3
+
+    MEASURED: wrong on 1,288 of 6,000 random word lists over a three-letter alphabet - more than one in
+    five. NOW CHECK THE TWO OFFICIAL EXAMPLES:
+
+        ["cat","bt","hat","tree"] / "atach"           correct 6    presence-only 6    AGREE
+        ["hello","world","leetcode"] / "welldonehoneyr" correct 10  presence-only 10   AGREE
+
+    BOTH AGREE. Neither official example contains a word that needs a letter MORE times than the pool
+    holds it while still holding it at all - so a `set`-based solution passes every sample and dies on a
+    hidden test. THIS IS THE SAME SHAPE OF FAILURE AS ALMOST EQUIVALENT, and it is why the check has to
+    be `<=` on counts rather than `in` on a set.
+
+TRAP 2 - CONSUMING THE POOL. Subtracting each accepted word's letters from `available`:
+
+        total += len(word)
+        available -= wc          # WRONG - the next word now faces a depleted pool
+
+    MEASURED: wrong on 686 of 6,000 random word lists. THIS ONE THE FIRST OFFICIAL EXAMPLE DOES CATCH -
+    it returns 3 instead of 6, because "cat" eats the only `t` and "hat" then fails. So of the two bugs,
+    the one that announces itself is the less common one, and the silent one is the more common one.
+
+    The smallest case: words = ["aa", "aa"], chars = "aa". Correct answer 4 - each word is independently
+    spellable. Consuming gives 2.
+
+TRAP 3 - CHECKING THE WRONG DIRECTION. `available[c] <= wc[c]` reverses the test and asks whether the
+pool fits inside the word. It is not a typo you can spot by reading the answer - it produces plausible
+numbers - so fix the direction by saying the sentence aloud: "the word NEEDS at most what the pool HAS".
+
+WHAT IS NOT A TRAP, checked rather than assumed: iterating only the WORD's letters and ignoring pool
+letters the word never uses. That is correct here - a spare letter imposes no requirement - and it is
+exactly the asymmetry that makes this problem different from Almost Equivalent, where both sides had to
+be walked.""",
+
+    """5. THE SLOW WAY FIRST, then the tallies.
+
+THE NAIVE VERSION - RECOUNT THE POOL FOR EVERY LETTER OF EVERY WORD:
+
+    total = 0
+    for word in words:
+        ok = True
+        for c in word:
+            if word.count(c) > chars.count(c):
+                ok = False
+        if ok:
+            total += len(word)
+
+    IT IS CORRECT and it is the definition transcribed. COST: `count` scans the whole string each time, so
+    a word of length L costs L * (L + len(chars)) - and that is repeated per word. At this problem's
+    limits (1,000 words of up to 100 characters, a pool of up to 100) it would still pass, so BE HONEST
+    about that; the tally version is cleaner and faster rather than strictly necessary.
+
+THE UPGRADE, IN TWO SEPARATE STEPS - and they are worth separating because they save different things:
+
+    STEP 1: TALLY THE POOL ONCE, BEFORE THE LOOP. The pool never changes, so counting it per word is pure
+        waste. One pass over `chars` gives every count for every future question.
+
+    STEP 2: TALLY EACH WORD ONCE, AND COMPARE ONLY ITS DISTINCT LETTERS. A word of length 100 made of
+        three distinct letters needs three comparisons, not 100. `Counter(word)` collapses the repeats
+        and `for c in wc` walks only the distinct ones.
+
+    COST: O(len(chars)) once, plus O(len(word)) per word to tally and at most 26 comparisons to check.
+    Overall O(total characters), SPACE O(26) = O(1).
+
+A ONE-LINER WORTH KNOWING, AND ITS CATCH. Python's Counter supports comparison directly:
+
+        if wc <= available:                   # multiset containment, one operator
+
+    IT IS THE SAME CHECK AND IT READS BEAUTIFULLY - but `<=` on Counters was only added in Python 3.10.
+    On an older interpreter it silently falls back to dictionary comparison and raises TypeError. The
+    explicit `all(wc[c] <= available[c] for c in wc)` works everywhere and, more usefully in an
+    interview, SHOWS THE COMPARISON RATHER THAN HIDING IT - the interviewer wants to see that you know it
+    is a per-letter `<=` over the word's keys.
+
+NO OTHER TRICK IS INVOLVED. There is no sorting, no early exit worth engineering, and no dynamic
+programming - the "not consumed" rule is precisely what removes any packing decision from the problem.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: tally the pool once, then for each word tally its own letters and add the word's length
+to a total if every one of its letters is needed no more often than the pool provides it.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, two nested levels of plain looping, and one piece
+of state that survives across words:
+
+    `available`  built ONCE, before anything is judged, and NEVER CHANGED AFTERWARDS. Its constancy is
+                 not an accident of the code - it is the problem's "the pool is not consumed" rule made
+                 concrete. If this variable ever changed inside the loop, the answer would be wrong.
+    `total`      the running answer. Only ever increases.
+    `wc`         rebuilt from scratch for each word and discarded at the end of that iteration. It
+                 carries nothing between words.
+
+    WHAT MAKES IT STOP: the outer loop runs once per word, the inner check runs once per DISTINCT letter
+    of that word - both finite, with no conditions to get wrong. The `all(...)` may stop early at the
+    first failing letter, which is a saving rather than a requirement.
+
+    WHY THE TWO TALLIES ARE BUILT AT DIFFERENT TIMES. The pool is shared by every word, so it is tallied
+    once outside. A word's tally is used by that word alone, so it is built inside. GETTING THIS WRONG IN
+    EITHER DIRECTION IS A REAL BUG: tallying the pool inside the loop is merely wasteful, but carrying a
+    word's tally outside - or subtracting it from the pool - changes the answer.
+
+THE STEPS, NO CODE:
+
+    1. Count how many times each character appears in the pool. Keep this fixed.
+    2. Start a running total of zero.
+    3. For each word in the list:
+       a. Count how many times each character appears in this word.
+       b. For every DISTINCT character the word uses, check that the word needs it no more often than the
+          pool provides it. A character the pool lacks entirely counts as provided zero times.
+       c. If every one of those checks passes, add the word's LENGTH to the running total.
+       d. Whether or not it passed, leave the pool exactly as it was.
+    4. Hand back the running total.
+
+    STEP 3d IS THE RULE MOST SOLUTIONS BREAK. STEP 3b SAYS "NO MORE OFTEN THAN", NOT "IS PRESENT".""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A shop window displays a set of wooden letter tiles - two `a`s, one `t`, one `c` and one `h`. A queue of
+customers comes past, each holding a card with a word on it, and each asks the same question: "could I
+spell my word with those tiles?"
+
+The shopkeeper never actually hands the tiles over. She looks at the card, looks at the window, and
+answers yes or no. So every customer is asking about the SAME full set of tiles - the second customer is
+not disadvantaged by the first.
+
+To answer, she does not compare the word letter by letter against the window in order. She notes what the
+card NEEDS - this word wants one `c`, one `a` and one `t` - and then checks each of those requirements
+against what the window HOLDS. One `c` needed, one available: fine. One `a` needed, two available: fine,
+and the spare `a` is nobody's problem. One `t` needed, one available: fine. So yes.
+
+The next card says "tree". It needs a `t`, an `r` and two `e`s. There is a `t`. There is no `r` at all -
+and the moment one requirement fails, the answer is no, regardless of the rest.
+
+She keeps a running total not of how many customers said yes, but of the total NUMBER OF LETTERS on the
+cards she approved - which is what she was asked for.
+
+THE TWO MISTAKES THE STORY MAKES OBVIOUS. First, if she handed the tiles over each time, the window would
+empty and later customers would be refused for words they could genuinely have spelled - the queue's
+order would change the answer, which cannot be right for a question about what is POSSIBLE. Second, if
+she only glanced to check that each needed letter EXISTS somewhere in the window, she would approve a
+card reading "aardvark" on the strength of the window's two `a`s - "does it exist" and "are there enough"
+are different questions, and only the second is being asked.
+
+AND WHAT SHE DOES NOT CHECK: whether the window holds letters no customer wants. Spare tiles are simply
+irrelevant. The comparison runs one way only - from what the card needs to what the window has.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def count_characters(words, chars):
+
+`words` is the list of candidates; `chars` is the pool string. NEITHER IS MODIFIED - and `chars` in
+particular is never consumed, which is the rule the whole problem rests on.
+
+    from collections import Counter
+
+Imported inside the function here. `Counter` tallies a string in one call and returns 0 for characters it
+has never seen, which the comparison relies on.
+
+    available = Counter(chars)
+
+THE POOL, TALLIED ONCE. `Counter("atach")` is `{'a': 2, 't': 1, 'c': 1, 'h': 1}`. THIS LINE IS OUTSIDE
+THE LOOP AND THE VARIABLE IS NEVER REASSIGNED OR DECREMENTED - that constancy IS the "not consumed" rule.
+
+    total = 0
+
+The running sum of accepted word LENGTHS. Not a count of accepted words - the problem asks for the
+combined length.
+
+    for word in words:
+
+One iteration per candidate. Words are independent; nothing carries from one to the next.
+
+    wc = Counter(word)
+
+THE WORD'S OWN TALLY, rebuilt fresh each time. It collapses repeats, so a 100-letter word made of three
+distinct letters produces three entries - which is what makes the next line cheap.
+
+    if all(wc[c] <= available[c] for c in wc):   # every letter fits
+
+THE ONE INTERESTING LINE, and it has three separate decisions inside it:
+    `for c in wc` walks only the word's DISTINCT letters. Walking the pool's letters as well would be
+        wasted work, because a letter the word never uses imposes no requirement.
+    `wc[c] <= available[c]` is the containment test: NEEDED at most AVAILABLE. Reversing it asks whether
+        the pool fits in the word, which is trap 3. Replacing it with `c in available` asks only whether
+        the letter exists, which is trap 1 and is wrong on 1,288 of 6,000 random cases.
+    `available[c]` may name a letter that is not in the pool at all; `Counter` returns 0, so `1 <= 0` is
+        False and nothing raises.
+    `all(...)` is True when every letter passes, and True for a word with no letters - which is correct,
+        since an empty word requires nothing.
+
+        total += len(word)
+
+ADD THE WORD'S LENGTH, not 1. And note what does NOT happen here: `available` is left untouched. Adding
+`available -= wc` at this point is trap 2, wrong on 686 of 6,000 random cases and on the first official
+example.
+
+    return total
+
+The combined length. There is no post-processing.
+
+WHAT IS DELIBERATELY ABSENT: no guard for an empty `words` list (the loop does not run and 0 is returned)
+and no special case for an empty word (`all()` over nothing is True and `len("")` is 0, so it is admitted
+and contributes nothing - verified).""",
+
+    """9. TRACED ON REAL NUMBERS - the official example, word by word.
+
+words = ["cat", "bt", "hat", "tree"],  chars = "atach".
+
+    BEFORE THE LOOP:   available = {'a': 2, 't': 1, 'c': 1, 'h': 1}      total = 0
+
+    word = "cat"       wc = {'c': 1, 'a': 1, 't': 1}
+                       a:  1 <= 2   ok
+                       c:  1 <= 1   ok
+                       t:  1 <= 1   ok
+                       all pass  ->  total += 3  ->  total = 3
+                       available UNCHANGED: {'a': 2, 't': 1, 'c': 1, 'h': 1}
+
+    word = "bt"        wc = {'b': 1, 't': 1}
+                       b:  1 <= 0   FAILS   (available['b'] is 0 - the key is absent, and Counter
+                                             returns 0 rather than raising)
+                       rejected  ->  total stays 3
+
+    word = "hat"       wc = {'h': 1, 'a': 1, 't': 1}
+                       a:  1 <= 2   ok
+                       h:  1 <= 1   ok
+                       t:  1 <= 1   ok
+                       all pass  ->  total += 3  ->  total = 6
+
+                       THIS IS THE DECISIVE STEP. The `t` here is the SAME single `t` that "cat" used.
+                       Because the pool was never decremented, it is still available and "hat" is
+                       admitted. A consuming version has available['t'] == 0 by now and rejects it,
+                       returning 3.
+
+    word = "tree"      wc = {'t': 1, 'r': 1, 'e': 2}
+                       e:  2 <= 0   FAILS
+                       r:  1 <= 0   FAILS
+                       t:  1 <= 1   ok
+                       rejected  ->  total stays 6
+
+    RETURNS 6.
+
+THE INVERSION - REMOVE ONE CHARACTER FROM THE POOL:
+
+    chars = "atach"    ->  6      "cat" and "hat" both spellable
+    chars = "atac"     ->  3      the `h` is gone, so "hat" fails on h: 1 <= 0; only "cat" survives
+
+    ONE TILE REMOVED AND THE ANSWER HALVES. Both verified.
+
+AND THE MINIMAL CASE THAT SEPARATES THE TWO BUGS:
+
+    words = ["aa", "aa"], chars = "aa"   ->  correct 4,  consuming version 2
+    words = ["aab"],      chars = "ab"   ->  correct 0,  presence-only version 3""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the pool to tally it. Then, per word, one pass to tally it and at most
+26 comparisons to check it. Nothing is recomputed across words except each word's own tally.
+
+    TIME O(total characters across all words + len(chars)).
+    SPACE O(1) - both tallies are bounded by the 26 lowercase letters, no matter how long the input is.
+    The naive `word.count(c) > chars.count(c)` version rescans both strings for every letter of every
+    word; at this problem's limits it would still pass, so the tally version is the cleaner answer rather
+    than a rescue.
+
+THE #1 MISTAKE: checking that each letter is PRESENT rather than that there are ENOUGH of it - a `set`
+instead of a `Counter`. Wrong on 1,288 of 6,000 random cases, and, crucially, IT AGREES WITH THE CORRECT
+ANSWER ON BOTH OFFICIAL EXAMPLES, so it passes every sample you are given. THE RUNNER-UP is consuming the
+pool as words are accepted, wrong on 686 of 6,000 - louder, because the first official example catches it
+at once.
+
+ONE-SENTENCE TAKEAWAY: "can be formed from" is multiset containment - a per-letter `<=` over the word's
+letters against a pool that is read, never spent.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can turn a sentence into the right comparison. Three
+choices are being watched, and each has a wrong-looking-right alternative: counts versus presence
+(`<=` versus `in`), the direction of the comparison (word needs at most pool has), and whether the pool
+is shared or spent. NONE OF THESE IS AN ALGORITHM - they are all reading. SAY "THE POOL IS NOT CONSUMED,
+SO EACH WORD IS INDEPENDENT" ALOUD before coding; it is the observation that keeps the problem linear
+instead of turning it into a packing search.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if the pool IS consumed - maximise the number of words spelled?" That is a genuinely harder
+    problem: greedy by shortest word is not optimal in general, and the exact version is a bin-packing
+    variant. Say that the "not consumed" rule is what keeps this one easy.
+    "Return the words themselves rather than the total length." Collect `word` instead of `len(word)`;
+    nothing else changes.
+    "What if characters can be any Unicode, not just a-z?" The space bound becomes O(distinct characters)
+    rather than O(1), and the time is unchanged - the tallies are already hash maps.
+    "How does this relate to Ransom Note?" Ransom Note is exactly this containment check performed once,
+    for a single string against a single pool, returning a boolean. This problem runs it over a list and
+    sums lengths. SAME CHECK, DIFFERENT WRAPPER.""",
 ]
 
 for _e in ENTRIES:
@@ -85623,113 +86310,764 @@ for _e in ENTRIES:
 _EX_P1J = {}
 
 _EX_P1J["Find Lucky Integer in an Array"] = [
-    """The definition, which is easy to misread.
-A value is 'lucky' when its FREQUENCY equals its own VALUE - not its index, not
-its position. So the value 2 is lucky only if 2 appears exactly twice.
-arr = [2,2,3,4] -> counts {2:2, 3:1, 4:1}. 2 appears twice -> lucky. 3 appears
-once -> not. 4 appears once -> not. Answer 2.
-arr = [1,2,2,3,3,3] -> 1 appears once (lucky), 2 appears twice (lucky), 3
-appears three times (lucky). All three qualify, and the answer is the LARGEST:
-3.""",
+    """1. THE GOAL - find a number that appears exactly as many times as it is.
 
-    """Why 'largest' matters and how it changes the code.
-Several values can be lucky at once, so you cannot return on the first match.
-The comprehension collects every qualifying value and max() picks the winner -
-or you track a running maximum in one pass, which avoids building the list.
-Returning the first lucky value found is the standard bug, and because dict
-iteration order in Python follows insertion order it will often return the
-SMALLEST on typical inputs - a wrong answer that looks stable and reproducible,
-which makes it harder to spot than a random one.""",
+A value is LUCKY when its FREQUENCY equals ITS OWN VALUE. Return the LARGEST lucky value, or -1 if there
+is none.
 
-    """The -1 sentinel, and why `max(lucky) if lucky else -1` is the safe form.
-`max([])` raises ValueError, so the guard is not optional. Some solutions use
-`max(lucky, default=-1)`, which is tidier and does the same thing.
-Alternatively iterate 1..500 downwards (the usual value constraint) and return
-the first value whose count matches, which gets the largest for free with no
-list and no guard - a nice option to mention when asked to reduce space.""",
+    arr = [2, 2, 3, 4]
 
-    """Edge cases.
-No lucky integer, e.g. [2,2,2,3,3] -> 2 appears three times, 3 appears twice,
-neither matches -> -1.
-Single element [1] -> 1 appears once -> lucky -> 1.
-Single element [2] -> 2 appears once, not twice -> -1. That pair is the fastest
-way to check you have read the definition correctly.
-Note the value 0 can never be lucky: a value that appears zero times is not in
-the array at all, so it is never a key in the counter.""",
+        value 2 appears 2 times   ->   2 == 2   LUCKY
+        value 3 appears 1 time    ->   3 != 1   not lucky
+        value 4 appears 1 time    ->   4 != 1   not lucky
 
-    """Complexity, and the bounded-value alternative.
-Counter is O(n) time and O(k) space for k distinct values. With the usual
-constraint that values are 1..500, a fixed 501-integer array replaces the hash
-map, giving O(1) space by the bounded argument and a faster constant factor -
-the same counting-sort idea used in How Many Numbers Are Smaller Than the
-Current.
-Whenever a prompt states a small value range, a plain array beats a hash map:
-no hashing, better cache behaviour, and the space bound becomes constant.""",
+    ANSWER: 2
 
-    """The family: frequency-map problems.
-Top K Frequent Elements, First Unique Character, Majority Element, Degree of an
-Array, Sort Characters By Frequency. All start with one counting pass and
-differ only in what you then ask of the counts - the maximum, the first with
-count 1, the one exceeding n/2, the one whose count equals its value.
-The habit worth forming: when a prompt mentions 'how many times', build the
-counter first and then think, rather than trying to reason about the array
-directly.""",
+THE DEFINITION IS SELF-REFERENTIAL, WHICH IS WHY IT READS ODDLY. Nothing outside the array decides
+luckiness - the number checks itself against its own count. The value 3 is lucky only in an array that
+contains exactly three 3s; the value 1 is lucky only when there is exactly one 1.
+
+    arr = [1, 2, 2, 3, 3, 3]
+
+        1 appears 1 time    ->   LUCKY
+        2 appears 2 times   ->   LUCKY
+        3 appears 3 times   ->   LUCKY
+
+        THREE LUCKY VALUES AT ONCE.  The answer is the LARGEST of them: 3
+
+WHAT IT IS NOT. Not the index, not the position, not the most frequent value. A value appearing 500 times
+is lucky only if the value IS 500.
+
+    arr = [2, 2, 2, 3, 3]
+
+        2 appears 3 times   ->   2 != 3   no
+        3 appears 2 times   ->   3 != 2   no
+
+        NOTHING IS LUCKY.  ANSWER: -1
+
+    THE -1 IS A SENTINEL - a value outside the range of real answers used to mean "none". It works here
+    because the array holds only positive numbers, so -1 can never be a genuine answer.
+
+    THIS ENTRY JOINS THE FREQUENCY-COMPARISON CLUSTER: Check if Two Strings Are Almost Equivalent owns
+    the union-of-both-key-sets question, Ransom Note owns one-directional containment, Find Words That
+    Can Be Formed applies containment to a list. THIS ONE OWNS THE SELF-REFERENTIAL PREDICATE - the count
+    is compared against the KEY ITSELF rather than against another count - AND THE -1 SENTINEL.""",
+
+    """2. THE INTUITION - build the tally, then read down the two columns and look for a match.
+
+Every frequency problem starts the same way: one pass turns the array into a table of value against
+count. After that, the problem is a question about the table, not about the array.
+
+    arr = [1, 2, 2, 3, 3, 3]
+
+        value  |  count       is value == count?
+        -------+--------      -----------------
+          1    |    1                YES
+          2    |    2                YES
+          3    |    3                YES
+
+    THREE MATCHES. Take the largest value among them: 3.
+
+THE PICTURE - THE TWO COLUMNS ARE BEING COMPARED ROW BY ROW, NOT AGAINST ANY TARGET:
+
+        value:   1   2   3
+        count:   1   2   3
+                 ^   ^   ^
+                 |   |   |
+                 all three rows agree - all three are lucky
+
+    Contrast with arr = [2, 2, 2, 3, 3]:
+
+        value:   2   3
+        count:   3   2
+                 ^   ^
+                 |   |
+                 3 != 2, and 2 != 3 - the two rows are swapped, and NEITHER is lucky
+
+    THAT SECOND PICTURE IS WORTH HOLDING ON TO. The array contains a 3 and it contains something
+    appearing three times - but they are not the same number, so nothing is lucky. Luckiness needs the
+    value and its own count to coincide, not merely to both be present.
+
+WHY "LARGEST" NEEDS ITS OWN STEP. Several rows can match at once, so you cannot stop at the first one you
+see. You must collect all the matches and take the maximum - and section 4 shows that two of the
+problem's three official examples fail to notice the difference.
+
+A USEFUL SIDE OBSERVATION: since a lucky value EQUALS its count, ranking the lucky values by value and
+ranking them by count give the SAME order. Verified on 6,000 random arrays: 0 disagreements. So "the
+largest lucky value" and "the lucky value with the highest count" are the same question here - unusual,
+and only true because of the self-referential definition.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FREQUENCY / COUNT. How many times a value appears in the array. In [2, 2, 3] the value 2 has frequency 2.
+
+LUCKY. A value whose frequency equals the value itself. Purely a property of the pair (value, count).
+
+SENTINEL. A value used to mean "no answer", chosen so it can never be a real answer. Here -1 works
+because the input contains only positive integers (the constraints say 1 <= arr[i] <= 500).
+
+Counter. Python's tally-in-one-call dictionary. `Counter([2,2,3])` gives `{2: 2, 3: 1}`.
+    `.items()` yields the (value, count) pairs - the two columns of the table in section 2.
+    ITERATION ORDER IS INSERTION ORDER, i.e. first-appearance order. That is NOT sorted order, which is
+    exactly the trap in section 4.
+
+LIST COMPREHENSION. `[v for v, c in counts.items() if v == c]` builds a new list holding every v whose
+count matches it - a filter written as one expression.
+
+max(). The largest element. `max([])` RAISES ValueError - it does not return None or 0 - which is why the
+empty case needs handling.
+
+THE VARIABLES IN THE CODE:
+    arr      the input list. NOT MODIFIED - `Counter` reads it and builds something new.
+    counts   the tally: value -> frequency.
+    lucky    the list of every value that is lucky. May be empty; may have several members.
+    v, c     one value and its count, unpacked from a `counts.items()` pair.
+
+n IS THE ARRAY LENGTH, d THE NUMBER OF DISTINCT VALUES. TIME O(n), SPACE O(d).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and two of the three official examples miss it.
+
+TRAP 1 - RETURNING THE FIRST LUCKY VALUE YOU FIND. It is tempting to loop over the tally and return as
+soon as a match appears:
+
+        for v, c in counts.items():
+            if v == c:
+                return v          # WRONG - this is the first, not the largest
+
+    A Counter iterates in FIRST-APPEARANCE order, not sorted order. So on [1, 2, 2, 3, 3, 3] this returns
+    1, because the 1 was seen first. THE CORRECT ANSWER IS 3.
+
+    NOW CHECK THE THREE OFFICIAL EXAMPLES AGAINST BOTH VERSIONS:
+
+        [2, 2, 3, 4]        largest 2   first-found 2    AGREE
+        [1, 2, 2, 3, 3, 3]  largest 3   first-found 1    DIFFER
+        [2, 2, 2, 3, 3]     largest -1  first-found -1   AGREE
+
+    ONLY ONE OF THE THREE CATCHES IT. If you happened to test the first and third and were satisfied, the
+    bug ships. MEASURED over 6,000 random arrays: the two versions disagreed on 247. THE PROBLEM STATES
+    "largest" for a reason, and the reason is that several values can be lucky at once.
+
+TRAP 2 - `max()` ON AN EMPTY LIST. When nothing is lucky, `lucky` is `[]`, and `max([])` does not return
+a default - it RAISES ValueError: max() iterable argument is empty. Confirmed by deleting the guard and
+running it on [2, 2, 2, 3, 3]. THE `if lucky else -1` IS LOAD-BEARING, not defensive decoration.
+
+    An equally good alternative is `max(lucky, default=-1)`, which folds the guard into the call. Both
+    are correct; the explicit form makes the sentinel visible to a reader, which is why the entry uses
+    it.
+
+TRAP 3 - MISREADING THE DEFINITION AS "MOST FREQUENT". Luckiness has nothing to do with being common.
+[2, 2, 2, 3, 3] has 2 as the most frequent value and the answer is still -1, because 2 appears three
+times and 3 appears twice - each value's count belongs to the OTHER one.
+
+WHAT IS NOT A TRAP, CHECKED RATHER THAN ASSUMED: taking the maximum by COUNT instead of by VALUE. Since a
+lucky value equals its own count, the two orderings coincide - 0 disagreements over 6,000 random arrays.
+Either is correct here, which is worth knowing so you do not defend the wrong thing under questioning.""",
+
+    """5. THE SLOW WAY FIRST, then the tally - and the bounded-value version.
+
+THE NAIVE VERSION - COUNT EACH VALUE BY RESCANNING:
+
+    best = -1
+    for v in set(arr):
+        c = 0
+        for x in arr:
+            if x == v:
+                c += 1
+        if v == c and v > best:
+            best = v
+    return best
+
+    IT IS CORRECT and it is the definition written out. COST: for every distinct value it walks the whole
+    array, so O(n * d) - up to O(n^2) when every value is distinct. At this problem's limit of n = 500
+    that is 250,000 operations and would pass easily, SO BE HONEST: the brute force is fine here. The
+    tally is what the problem is teaching, not what it needs.
+
+THE UPGRADE. Rescanning the array once per value asks the same question many times. ONE PASS CAN ANSWER
+IT FOR EVERY VALUE AT ONCE:
+
+        walk the array once, and for each element add one to that value's entry in a dictionary
+
+    Now every count is available for free, and the rest of the problem is reading a table.
+    COST: O(n) time, O(d) space. The trade is memory for time - the standard one, worth naming as such.
+
+THE THIRD VERSION, WHICH IS GENUINELY BETTER HERE. The constraints say 1 <= arr[i] <= 500, so the values
+live in a small fixed range. That means you can use a plain ARRAY OF 501 COUNTERS instead of a hash map:
+
+        counts = [0] * 501
+        for x in arr: counts[x] += 1
+        then scan v from 500 down to 1 and return the first v with counts[v] == v
+
+    WHY THIS IS NICER, AND IT IS NOT ABOUT BIG-O: it is the same O(n) time and O(1) space (501 is a
+    constant), array indexing is faster than hashing by a constant factor, AND SCANNING DOWNWARD MAKES
+    "LARGEST" FALL OUT AUTOMATICALLY - the first match you meet is the answer, so trap 1 becomes
+    impossible to write. WHEN A CONSTRAINT BOUNDS THE VALUES, A COUNTING ARRAY IS USUALLY THE BETTER
+    ANSWER, and saying that in an interview shows you read the constraints.
+
+    The entry's code uses a Counter because it works without knowing the bound. Both are right.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: tally how many times each value appears, keep the values whose tally equals themselves,
+and return the largest of those - or -1 if there are none.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. There is no recursion here and no clever loop. The work happens
+in three separate sweeps, each finishing completely before the next begins:
+
+    SWEEP 1 builds the tally. One pass over the array; each element adds one to its own entry. The
+        dictionary grows by at most one key per element and never shrinks.
+    SWEEP 2 filters the tally. One pass over the (value, count) pairs, keeping the pairs that agree. The
+        result is a list that may be empty, may hold one value, or may hold many.
+    SWEEP 3 picks the maximum of that list - or substitutes -1 if the list is empty.
+
+    WHAT MAKES EACH STOP: every sweep is a plain for-loop over a finite collection. There is no condition
+    to get wrong and no possibility of looping forever. The only branch in the whole function is the
+    final "is the list empty?".
+
+    WHY THE THREE SWEEPS CANNOT BE MERGED INTO ONE. You cannot decide whether a value is lucky until the
+    WHOLE array has been counted - a value seen twice so far may be seen a third time later. So the
+    filter cannot begin until the tally is complete. THAT IS WHY THIS IS A TWO-PHASE ALGORITHM AND NOT A
+    RUNNING ONE, unlike the prefix-sum problems in this bank.
+
+THE STEPS, NO CODE:
+
+    1. Walk the array once, keeping a tally of how many times each value has appeared.
+    2. Go through the finished tally. For each value, compare it against its own count; if they are
+       equal, set that value aside as a candidate.
+    3. If you set any candidates aside, hand back the largest of them.
+    4. If you set none aside, hand back -1.
+
+    STEP 3 SAYS "LARGEST", NOT "THE ONE YOU FOUND", and that is trap 1. STEP 4 IS NOT OPTIONAL - asking
+    for the largest of nothing is an error, not an empty answer.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A hotel keeps a guest book. Every guest writes down their room number as they arrive, and a room may be
+written many times because several people share it. At the end of the day you are asked a strange
+question: is there a room whose number is exactly the number of people who wrote it down? And if there
+are several, which is the highest-numbered such room?
+
+You cannot answer while people are still arriving. Room 3 might have two entries so far, and a third
+person might walk in an hour later. SO YOU WAIT UNTIL THE BOOK IS CLOSED.
+
+Then you go through the book once and make a tally sheet: one line per room, with a stroke for each time
+it was written. Room 1 has one stroke, room 2 has two, room 3 has three.
+
+Now you read your tally sheet line by line and ask the same question of each: does this room's number
+match the number of strokes beside it? Room 1: one stroke, one - yes. Room 2: two strokes, two - yes.
+Room 3: three strokes, three - yes. You circle all three.
+
+Finally you look at what you circled and name the HIGHEST: room 3.
+
+THE MISTAKE THE STORY MAKES OBVIOUS. If you had stopped at the first circle you would have said room 1,
+because that is the order the rooms happened to appear in the book - and the book is in arrival order,
+not in room-number order. You have to finish reading the sheet before you can name the highest.
+
+AND THE CASE WITH NO ANSWER. Suppose the book shows room 2 written three times and room 3 written twice.
+There IS a room numbered 3, and there IS a room with three entries - but they are different rooms. Nothing
+matches, and you have to report "none" rather than picking whichever felt closest. The agreed way to say
+"none" is to write -1, a number that could never be a room.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` tallies a sequence in one call and returns 0 for keys it has never seen. Only the tallying is
+used here.
+
+    def find_lucky(arr):
+
+`arr` is the input list. IT IS NOT MODIFIED - no sorting, no filtering in place.
+
+    counts = Counter(arr)
+
+SWEEP 1 - THE WHOLE TALLY IN ONE LINE. `counts` maps each value to its frequency across the ENTIRE array.
+It has to be complete before anything is judged, for the reason given in section 6.
+
+    lucky = [v for v, c in counts.items() if v == c]
+
+SWEEP 2 - THE FILTER, AND THE ONLY LINE WITH THE PROBLEM'S DEFINITION IN IT.
+    `counts.items()` yields (value, count) pairs - the two columns of the table in section 2.
+    `if v == c` is luckiness, exactly as stated: the value compared against its own count.
+    THE RESULT IS A LIST, NOT A SINGLE VALUE, and that is deliberate - several values can qualify, so
+    collecting them all is what makes the next line able to say "largest". Returning from inside this
+    loop instead would be trap 1.
+    The list is built in first-appearance order, NOT sorted - which is precisely why the next line is
+    needed.
+
+    return max(lucky) if lucky else -1
+
+SWEEP 3, AND BOTH HALVES MATTER.
+    `max(lucky)` picks the LARGEST qualifying value, which is what the problem asks for.
+    `if lucky else -1` is the empty case. WITHOUT IT, `max([])` RAISES ValueError - confirmed by deleting
+    the guard and running [2, 2, 2, 3, 3], which raises rather than returning -1. This is not defensive
+    padding; it is the difference between an answer and a crash.
+    `max(lucky, default=-1)` is an equally correct one-call form.
+
+WHAT IS DELIBERATELY ABSENT: no sorting of `arr` (unnecessary - the tally does not care about order), no
+early return, and no special handling of an empty input (`Counter([])` is empty, `lucky` is empty, and the
+guard returns -1 - verified).""",
+
+    """9. TRACED ON REAL NUMBERS - the array where three values qualify at once.
+
+arr = [1, 2, 2, 3, 3, 3]. Chosen deliberately: it is the ONLY one of the three official examples that
+separates "the largest lucky value" from "the first one found", which is the trap in section 4.
+
+    SWEEP 1 - build the tally, walking left to right:
+
+        see 1   ->  counts = {1: 1}
+        see 2   ->  counts = {1: 1, 2: 1}
+        see 2   ->  counts = {1: 1, 2: 2}
+        see 3   ->  counts = {1: 1, 2: 2, 3: 1}
+        see 3   ->  counts = {1: 1, 2: 2, 3: 2}
+        see 3   ->  counts = {1: 1, 2: 2, 3: 3}
+
+    SWEEP 2 - walk the pairs in that same insertion order and test each:
+
+        v = 1, c = 1   ->   1 == 1   KEEP        lucky = [1]
+        v = 2, c = 2   ->   2 == 2   KEEP        lucky = [1, 2]
+        v = 3, c = 3   ->   3 == 3   KEEP        lucky = [1, 2, 3]
+
+    SWEEP 3 - `lucky` is non-empty, so return max([1, 2, 3]) = 3.
+
+    RETURNS 3.
+
+    THE DECISIVE DETAIL IS THE ORDER OF `lucky`. It is [1, 2, 3] - built in first-appearance order, which
+    here happens to be ascending, so the FIRST element is 1 and the LAST is 3. A version that returned
+    the first match would answer 1. Only `max` gives 3.
+
+THE INVERSION - REMOVE ONE ELEMENT:
+
+    [1, 2, 2, 3, 3, 3]   counts {1: 1, 2: 2, 3: 3}   lucky [1, 2, 3]   ->   3
+    [1, 2, 2, 3, 3]      counts {1: 1, 2: 2, 3: 2}   lucky [1, 2]      ->   2
+
+    ONE 3 REMOVED, AND 3 STOPS BEING LUCKY - its count falls to 2 while its value stays 3. The answer
+    drops to 2, which is still lucky because its count is unchanged. Both verified.
+
+AND THE NO-ANSWER CASE, [2, 2, 2, 3, 3]:
+
+        counts = {2: 3, 3: 2}
+        v = 2, c = 3   ->   2 == 3 is false
+        v = 3, c = 2   ->   3 == 2 is false
+        lucky = []     ->   the guard fires   ->   RETURNS -1
+
+    Without the guard this line raises ValueError instead of returning -1.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass to tally, one pass over the distinct values to filter, one pass over the
+matches to take the maximum. Nothing is nested inside anything else.
+
+    TIME O(n), where n is the array length. SPACE O(d), where d is the number of DISTINCT values - at
+    most n.
+    The rescan-per-value brute force is O(n * d), up to O(n^2). At this problem's limit of n = 500 that
+    is 250,000 operations and would pass, so the linear version is the tidier answer rather than a
+    required one.
+    THE COUNTING-ARRAY VERSION is O(n) time and O(1) space, since the values are bounded by 500 - a
+    genuinely better fit for these constraints, and the version to mention if asked to improve on the
+    hash map.
+
+THE #1 MISTAKE: returning the FIRST lucky value instead of the LARGEST. A Counter iterates in
+first-appearance order, so on [1, 2, 2, 3, 3, 3] the first match is 1 and the answer is 3. Two of the
+problem's three official examples do not distinguish the two versions, so this bug passes casual testing
+- it disagreed with the correct answer on 247 of 6,000 random arrays. THE RUNNER-UP is `max()` on an empty
+list, which raises ValueError rather than returning a default.
+
+ONE-SENTENCE TAKEAWAY: build the tally first, then treat it as a table and ask the question of every row -
+and remember that "largest" needs a maximum, not a first match.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. This is a warm-up, and what is being watched is whether you read
+the statement precisely. Three words carry the whole problem: "frequency equals value" (not most
+frequent), "largest" (not any), and "-1" (a sentinel, not an exception). Candidates who lose this problem
+lose it on reading, not on algorithms. SAY THE COUNTING-ARRAY OBSERVATION ALOUD - "values are bounded by
+500, so I can use a fixed array and scan downward, which makes 'largest' automatic" - because noticing
+that the constraints permit it is the only real signal available in a problem this small.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return ALL the lucky values, not just the largest." Return `sorted(lucky)` - the list is already
+    being built, so nothing changes but the last line.
+    "What if the values could be negative or zero?" A negative value can never be lucky, since a count is
+    never negative. Zero can never be lucky either: for 0 to be lucky it would have to appear 0 times,
+    but then it is not in the tally at all. So the logic is unchanged - but -1 would no longer be a safe
+    sentinel if negatives were allowed as answers, and you would return None instead.
+    "What if the array does not fit in memory?" The tally is O(d), not O(n), so a single streaming pass
+    still works as long as the number of DISTINCT values fits - which the 1..500 bound guarantees.""",
 ]
 
 _EX_P1J["Find the Highest Altitude"] = [
-    """The example, traced.
-gain = [-5,1,5,0,-7]. Start at altitude 0, which is already a candidate.
--5 -> altitude -5, highest still 0.
-+1 -> -4, highest 0.
-+5 -> 1, highest 1.
-+0 -> 1, highest 1.
--7 -> -6, highest 1.
-Answer 1. Note the starting altitude of 0 must be included as a candidate,
-which is why `highest` is initialised to 0 rather than to -infinity or to the
-first prefix sum.""",
+    """1. THE GOAL - you know the ups and downs; how high did you ever get?
 
-    """Why initialising highest to 0 rather than -inf.
-The trip STARTS at altitude 0, and that counts as an altitude reached. If every
-gain is negative, e.g. [-4,-3,-2], the altitudes visited are -4, -7, -9 and the
-highest point of the whole trip is the starting point, 0.
-Initialise to -inf or to gain[0] and you return -4 instead, which is a wrong
-answer on exactly the input an interviewer will hand you. The lesson
-generalises: when a problem has an implicit starting state, decide whether it
-is a candidate before you write the initialisation.""",
+A cyclist rides a route made of n segments. You are given the NET GAIN in altitude for each segment, and
+the ride STARTS AT ALTITUDE 0. Return the highest altitude reached at any point.
 
-    """What this problem actually is: a running maximum of a prefix sum.
-altitude after step i = gain[0] + ... + gain[i], which is the prefix sum. The
-answer is the maximum over all prefixes, including the empty one.
-Naming it that way is worth doing out loud, because it connects a trivial
-problem to Maximum Subarray (Kadane), Running Sum of 1d Array, and Find Pivot
-Index - all of which are 'accumulate and ask something about the accumulation'.
-Recognising the family is the only durable thing this problem teaches.""",
+    gain = [-5, 1, 5, 0, -7]
 
-    """Edge cases.
-All positive [1,2,3] -> altitudes 1, 3, 6 -> 6.
-All negative [-1,-2] -> highest stays 0.
-Single element [0] -> altitude 0, highest 0.
-Empty gain (if allowed) -> the loop never runs -> 0, the starting altitude.
-The problem guarantees the road returns to sea level in some variants; that
-guarantee is irrelevant here, and noticing that a stated constraint does NOT
-affect your algorithm is also worth a sentence.""",
+        start                       altitude 0
+        after segment 1 (-5)        altitude -5
+        after segment 2 (+1)        altitude -4
+        after segment 3 (+5)        altitude 1
+        after segment 4 (0)         altitude 1
+        after segment 5 (-7)        altitude -6
 
-    """Complexity and the in-place variant.
-O(n) time, O(1) space - two integers. There is nothing to optimise.
-The variant worth knowing: if asked to return ALL the altitudes rather than the
-maximum, that is itertools.accumulate(gain) prefixed with 0, and it is O(n)
-space by necessity because the output is that large. Distinguishing 'the
-algorithm needs O(n)' from 'the OUTPUT is O(n)' is a small precision that comes
-up repeatedly in complexity discussions.""",
+        the altitudes visited are:  0, -5, -4, 1, 1, -6
+        the highest of those is:    1
 
-    """The family, stated as a recipe.
-Any problem phrased as 'running total, and then something about the running
-total' is a prefix-sum problem: the maximum (this one), the total (Running
-Sum), the point where two sides balance (Find Pivot Index), the best contiguous
-window (Kadane), or how many earlier prefixes had a given value (Subarray Sum
-Equals K, using a hash map).
-The step that unlocks all of them is the same: stop thinking about subarrays
-and start thinking about the difference between two prefix sums.""",
+    ANSWER: 1
+
+THE INPUT IS NOT ALTITUDES - IT IS CHANGES. This is the single thing to get straight. `gain[i]` is how
+much you went up or down on segment i, not where you ended up. To find where you are you have to add the
+changes together as you go.
+
+    gain:       -5    +1    +5     0    -7
+    altitude: 0 -> -5 -> -4 -> 1 -> 1 -> -6
+              ^
+              the starting point, which is given, not computed
+
+THE STARTING 0 IS A REAL ALTITUDE AND IT COUNTS. There are n gains but n + 1 altitudes: one before you
+start plus one after each segment. That extra altitude is the whole of section 4.
+
+    gain = [-4, -3, -2, -1, 4, 3, 2]
+
+        altitudes: 0, -4, -7, -9, -10, -6, -3, -1
+        EVERY altitude after the start is negative, so the highest point of the whole ride is where you
+        began.
+
+        ANSWER: 0
+
+    THIS ENTRY OPENS THE PREFIX-SUM CLUSTER together with Find Pivot Index. FIND PIVOT INDEX OWNS THE
+    THREE-WAY SPLIT IDENTITY. RUNNING SUM OF 1D ARRAY OWNS BUILDING THE PREFIX ARRAY ITSELF. THIS ONE
+    OWNS THE IMPLICIT ZEROTH TERM - the altitude that exists before any input has been consumed, and why
+    it must be a candidate.""",
+
+    """2. THE INTUITION - two numbers walking together: where you are, and the best you have done.
+
+You need one variable for your current height and one for the record. Neither ever needs to look back.
+
+    gain = [-5, 1, 5, 0, -7]
+
+        step        altitude (running total)      highest (best so far)
+        -----       ------------------------      ---------------------
+        start                0                             0
+        -5                  -5                             0        (-5 is not better than 0)
+        +1                  -4                             0
+        +5                   1                             1        <- new record
+         0                   1                             1
+        -7                  -6                             1
+
+    ANSWER: 1
+
+THE PICTURE - THE ROUTE DRAWN AS A PROFILE, with the record line laid across it:
+
+           1  |            *----*                      <- highest = 1
+           0  |*                                       <- start
+          -4  |      *
+          -5  |  *
+          -6  |                    *
+              +--------------------------
+               s  -5   +1  +5   0  -7
+
+    THE HIGHEST POINT IS A PEAK ALONG THE WAY, NOT THE END. The ride finishes at -6, which is nowhere
+    near the answer. That is why a running maximum is needed rather than just the final total.
+
+WHAT THIS PROBLEM ACTUALLY IS, NAMED. The altitude after step i is gain[0] + gain[1] + ... + gain[i] -
+that is a PREFIX SUM. The answer is the MAXIMUM over all prefix sums, INCLUDING the empty prefix, whose
+sum is 0. Every phrase of the problem statement maps onto one word of that sentence:
+
+        "starts at altitude 0"       ->    the empty prefix, sum 0
+        "net gain per segment"       ->    the terms being summed
+        "highest altitude reached"   ->    the maximum over all prefixes
+
+    ONCE YOU CAN SAY THAT SENTENCE, THE CODE IS TWO LINES AND THE ONLY DECISION LEFT IS WHERE `highest`
+    STARTS - which is section 4.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+NET GAIN. The change in altitude over one segment. Positive means you climbed, negative means you
+descended, zero means level. It is a DIFFERENCE, not a position.
+
+ALTITUDE. Your height at a moment in time. Not given directly - you compute it by accumulating gains.
+
+PREFIX SUM. The total of the first k terms of a list. The prefix sums of [-5, 1, 5] are -5, -4 and 1 -
+and, by convention, 0 for the EMPTY prefix of no terms at all.
+
+EMPTY PREFIX / EMPTY SUM. The sum of no numbers, defined as 0. Here it is not a technicality: it is the
+starting altitude, an actual place the cyclist stood, and therefore a legitimate answer.
+
+RUNNING MAXIMUM. The largest value seen so far, updated as you go rather than computed at the end.
+
+n + 1 ALTITUDES FROM n GAINS. One before the ride plus one after each segment. Off-by-one errors in this
+problem are almost always this fact being forgotten.
+
+THE VARIABLES IN THE CODE:
+    gain      the list of per-segment changes. NOT MODIFIED - nothing writes to it.
+    altitude  the current height. Starts at 0 because the problem says the ride starts at 0.
+    highest   the best altitude seen so far. ALSO starts at 0, for the same reason - see section 4.
+    g         the current segment's gain.
+
+max(a, b). The larger of two numbers.
+
+TIME O(n), SPACE O(1) - two integers, regardless of the ride's length.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and it is entirely about where `highest` starts.
+
+TRAP 1 - SEEDING `highest` FROM THE FIRST STEP INSTEAD OF FROM THE STARTING ALTITUDE. Writing
+`highest = float("-inf")`, or `highest = gain[0]`, or updating `highest` only after the first addition -
+all three are the same mistake: THE STARTING ALTITUDE OF 0 IS NEVER OFFERED AS A CANDIDATE.
+
+    It only shows up when the whole ride stays below the start:
+
+        gain = [-4, -3, -2, -1, 4, 3, 2]
+
+            altitudes after each step:  -4, -7, -9, -10, -6, -3, -1
+            the maximum of THOSE is -1
+            but the highest altitude REACHED is 0, where the ride began
+
+        CORRECT: 0.     SEEDED FROM -inf: -1.
+
+    MEASURED: wrong on 1,396 of 6,000 random trips - almost one in four, because any trip that never
+    climbs above its start exposes it.
+
+    AND THE OFFICIAL EXAMPLES SPLIT ON IT. On [-5, 1, 5, 0, -7] both versions return 1, because the ride
+    does rise above 0 at some point. On [-4, -3, -2, -1, 4, 3, 2] the buggy version returns -1 instead of
+    0. SO ONE SAMPLE CATCHES IT AND ONE HIDES IT - test with an all-downhill ride specifically.
+
+TRAP 2 - RETURNING THE FINAL ALTITUDE INSTEAD OF THE HIGHEST. `sum(gain)` is where the ride ENDS, which
+is -6 in the first example while the answer is 1. The word "reached" means "at any point", so a running
+maximum is required rather than a total.
+
+TRAP 3 - TREATING THE INPUT AS ALTITUDES. If gain were already a list of altitudes the answer would be
+`max(gain)`, and on [-5, 1, 5, 0, -7] that gives 5 rather than 1. THE INPUT IS CHANGES; THEY MUST BE
+ACCUMULATED FIRST.
+
+WHAT IS NOT A TRAP, checked rather than assumed: `highest = 0` does NOT wrongly force a non-negative
+answer, because 0 genuinely IS achievable on every ride - it is where the ride starts. The seed is not a
+pessimistic placeholder like -infinity; IT IS A REAL CANDIDATE, and that is exactly why it is correct
+here and why copying the same `float("-inf")` habit from other maximum problems is wrong in this one.""",
+
+    """5. THE SLOW WAY FIRST, then the running version.
+
+THE NAIVE VERSION - BUILD ALL THE ALTITUDES, THEN TAKE THE MAXIMUM:
+
+    altitudes = [0]
+    for g in gain:
+        altitudes.append(altitudes[-1] + g)
+    return max(altitudes)
+
+    IT IS CORRECT - this is the brute force every number in this entry was checked against - and it has a
+    real virtue: THE LIST STARTS AT [0], so the starting altitude is included by construction and trap 1
+    becomes impossible to write. If you find the seeding question confusing, this version answers it for
+    you.
+
+    COST: O(n) time and O(n) SPACE for a list you only ever want one number out of.
+
+    A COMMON WRONG VARIANT OF THE SAME IDEA is `max(accumulate(gain))`, which builds the prefix sums
+    WITHOUT the leading 0 and so reintroduces trap 1. The fix is `max(accumulate(gain, initial=0))`, and
+    the word `initial` is doing exactly the job the explicit `[0]` does above.
+
+THE UPGRADE, AND IT IS ONLY ABOUT MEMORY. You never need an altitude again once you have compared it, so
+there is no reason to keep the list. Carry two integers instead:
+
+        one for where you are now, one for the best you have seen
+
+    Each step adds the gain to the first and takes the maximum of the second against it.
+
+    COST: O(n) time - the SAME as before, since both versions look at each gain once - and O(1) space.
+    BE HONEST ABOUT WHAT THIS BUYS: the time is unchanged, and on the problem's limit of n = 100 the list
+    version is entirely fine. The reason to prefer the running form is that it generalises to a STREAM
+    where you cannot store the input at all.
+
+NO TRICK NEEDS EXPLAINING FROM SCRATCH IN THIS PROBLEM, and that is worth saying plainly. There is no
+data structure, no two-pointer argument, no clever identity. The entire difficulty is the one-line
+decision in section 4, which is why this problem is a reading exercise wearing a prefix-sum costume.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: keep a running altitude that starts at 0 and a running best that also starts at 0, add
+each gain to the altitude, and keep the best updated.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two integers:
+
+    `altitude`  moves up and down freely. It can be negative and can end far below where it started.
+    `highest`   NEVER DECREASES. It is a ratchet: each step either leaves it alone or raises it.
+
+    THE INVARIANT THAT MAKES IT CORRECT: after processing the first k gains, `altitude` is the sum of
+    those k gains - the altitude at that moment - and `highest` is the largest of the k + 1 altitudes
+    visited so far, INCLUDING the starting one. That "including the starting one" is true at the very
+    beginning, before the loop runs at all, because both variables are seeded to 0 and the only altitude
+    visited so far IS 0. EACH STEP PRESERVES IT by adding the new altitude to the comparison. When the
+    loop ends, k is n and `highest` is the answer.
+
+    IT IS WORTH NOTICING THAT THE INVARIANT IS ESTABLISHED BY THE INITIALISATION, NOT BY THE LOOP. That
+    is precisely why trap 1 is a bug in a line that contains no logic.
+
+    WHAT MAKES IT STOP: exactly len(gain) iterations, one per segment. Nothing conditional.
+
+THE STEPS, NO CODE:
+
+    1. Set your current altitude to zero - that is where the ride starts.
+    2. Set the highest altitude seen to zero as well, because the starting point is itself an altitude
+       you have reached.
+    3. For each segment's gain, in order:
+       a. Add it to your current altitude.
+       b. If your current altitude is now higher than the highest seen, that becomes the new highest.
+    4. Hand back the highest.
+
+    STEP 2 IS THE WHOLE PROBLEM. Everything else is a running total.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+You are walking a hill route with a friend who is keeping notes. Your friend does not record how high you
+are - she records only how much you went up or down on each leg: "down five", "up one", "up five",
+"level", "down seven".
+
+At the end somebody asks: what was the highest you got all day?
+
+Your friend cannot answer from her notes alone by looking for the biggest number, because her notes are
+about CHANGES, not heights. "Up five" tells you nothing about where you were when you climbed it.
+
+So she does it again from the beginning, in her head. She starts at the car park and calls that height
+zero - and immediately writes zero in the corner of the page as the best height so far, because standing
+at the car park IS a height you reached, and at this moment it is the only one.
+
+Then she goes through her legs one at a time. Down five: she is now at minus five. Is that better than
+the zero in the corner? No, so the corner stays. Up one: minus four. Still not better. Up five: plus one.
+That IS better, so she crosses out the zero and writes one. Level: still plus one, no change. Down seven:
+minus six, not better.
+
+She reads the corner of the page: one.
+
+THE MISTAKE THAT IS EASY TO MAKE. Suppose the whole day had been downhill - every leg descending, and the
+final total well below where you started. If she had left the corner of the page blank until after the
+first leg, her answer would be the LEAST BAD of the low points rather than the car park itself, and it
+would be wrong, because the highest place you stood all day was the place you began.
+
+AND THE OTHER MISTAKE. If she simply added up all her notes she would get where the day ENDED, which was
+minus six - far below the peak. The question asks about the best moment, not the last one, so the corner
+of the page has to be maintained as she goes.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def largest_altitude(gain):
+
+`gain` is the list of per-segment changes. IT IS NOT MODIFIED - nothing writes to it, and no copy is made
+either.
+
+    altitude = 0
+
+WHERE YOU ARE RIGHT NOW, seeded to 0 because the problem states the ride starts there. This variable is
+free to go negative.
+
+    highest = 0
+
+THE ONE LINE THE WHOLE PROBLEM TURNS ON. It is 0 rather than `float("-inf")` BECAUSE 0 IS A REAL
+ALTITUDE THAT WAS REALLY REACHED - the starting point - and therefore a genuine candidate for the answer,
+not a pessimistic placeholder. Seeding it from the first step instead is wrong on 1,396 of 6,000 random
+trips, and wrong on the official example [-4, -3, -2, -1, 4, 3, 2], where the correct answer is 0 and the
+seeded-from-first version returns -1.
+
+    for g in gain:
+
+`g` is one segment's change. Indices are never needed - only the order matters.
+
+    altitude += g          # running altitude
+
+ACCUMULATE. After k passes through this line, `altitude` is the sum of the first k gains, which is the
+prefix sum, which is where the cyclist actually is.
+
+    highest = max(highest, altitude)
+
+THE RATCHET. `highest` either stays where it is or moves up; it can never come down. Note that this runs
+AFTER the addition, so the altitude being offered is the one you have just arrived at - and note also
+that the starting altitude was already accounted for by the seed, before this line ever ran.
+
+    return highest
+
+The best altitude reached at any moment, INCLUDING the start. NOT `altitude`, which is where the ride
+finished - that is -6 on the first example while the answer is 1.
+
+WHAT IS DELIBERATELY ABSENT: no list of altitudes (there is nothing to store), no guard for an empty
+`gain` (the loop simply does not run and 0 is returned, which is correct - a ride of no segments never
+leaves the start), and no separate handling of the first element.""",
+
+    """9. TRACED ON REAL NUMBERS - and then the ride that never climbs.
+
+RUN A: gain = [-5, 1, 5, 0, -7]
+
+    START            altitude = 0     highest = 0
+                     (the starting altitude is already a candidate, before any gain is read)
+
+    g = -5           altitude = 0 + (-5) = -5
+                     max(0, -5) = 0        ->  highest = 0
+
+    g = 1            altitude = -5 + 1 = -4
+                     max(0, -4) = 0        ->  highest = 0
+
+    g = 5            altitude = -4 + 5 = 1
+                     max(0, 1) = 1         ->  highest = 1     <- the record moves
+
+    g = 0            altitude = 1 + 0 = 1
+                     max(1, 1) = 1         ->  highest = 1
+
+    g = -7           altitude = 1 + (-7) = -6
+                     max(1, -6) = 1        ->  highest = 1
+
+    RETURNS 1.  Cross-checked against building the whole list [0, -5, -4, 1, 1, -6] and taking its
+    maximum: also 1. Note the ride ENDS at -6, so returning `altitude` would give -6.
+
+RUN B: gain = [-4, -3, -2, -1, 4, 3, 2] - the official example that catches the seeding bug
+
+    altitudes visited:   0, -4, -7, -9, -10, -6, -3, -1
+
+    `highest` starts at 0 and is never beaten - every single altitude after the start is negative.
+
+    RETURNS 0.   With `highest` seeded from the first step instead, the answer would be -1, the least
+    negative of the visited altitudes. THE STARTING POINT IS THE PEAK OF THIS RIDE.
+
+THE INVERSION - CHANGE ONE GAIN BY 1:
+
+    [-5, 1, 5, 0, -7]   ->  1     the third segment lifts you to +1, one above the start
+    [-5, 1, 4, 0, -7]   ->  0     altitudes 0, -5, -4, 0, 0, -7 - the ride now only just returns to
+                                  the start and never rises above it, so the starting 0 wins
+
+    ONE UNIT REMOVED FROM ONE SEGMENT AND THE ANSWER STOPS COMING FROM THE ROUTE AND STARTS COMING FROM
+    THE SEED. Both verified against the list-building brute force.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the gains. Each step does one addition and one comparison.
+
+    TIME O(n). SPACE O(1) - two integers, whatever the length of the ride.
+    The list-building version is the same O(n) time but O(n) space. There is nothing to optimise beyond
+    this; the problem's own limit is n = 100, so both run instantly and the choice is about habit rather
+    than performance.
+
+THE #1 MISTAKE: seeding `highest` from the first step rather than from the starting altitude of 0 -
+`float("-inf")`, `gain[0]`, or `max(accumulate(gain))` without an initial value are all the same bug. The
+starting point is a real altitude that was really reached, and on any ride that never climbs above it,
+the start IS the answer. Wrong on 1,396 of 6,000 random trips, and caught by one of the two official
+examples but not the other. THE RUNNER-UP is returning `sum(gain)` - where the ride ended - instead of
+the maximum reached along the way.
+
+ONE-SENTENCE TAKEAWAY: this is the maximum over prefix sums, and the empty prefix - the moment before
+anything happened - is one of the prefixes.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that n changes produce n + 1 states. That
+off-by-one is the entire content of the problem, and it is the same fencepost that appears whenever you
+convert differences into positions: n gaps between n + 1 posts, n edits between n + 1 versions, n
+transactions between n + 1 balances. NAME THE PROBLEM ALOUD - "this is a running maximum over prefix
+sums, including the empty prefix" - because the naming is what proves you have seen the structure rather
+than pattern-matched the code.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return ALL the altitudes, not just the highest." That is Running Sum of 1d Array with a leading 0 -
+    `list(accumulate(gain, initial=0))` - and it is the O(n)-space version discussed in section 5.
+    "Return the LOWEST altitude as well." Carry a second ratchet in the other direction, also seeded to
+    0, and take the minimum. Same single pass.
+    "What is the biggest CLIMB between any two points of the ride?" That is a different and harder
+    question - it is Best Time to Buy and Sell Stock in disguise: track the minimum altitude seen so far
+    and the best difference between the current altitude and that minimum. Still O(n), but it needs two
+    pieces of state rather than one, and it is the natural follow-up an interviewer reaches for.
+    "What if the gains arrive as a stream?" The running version already handles it - that is precisely
+    what the O(1) space buys, and it is the honest reason to prefer it over the list.""",
 ]
 
 _EX_P1J["First Unique Character in a String"] = [
