@@ -69040,65 +69040,517 @@ for _e in ENTRIES:
 _EX_P1C = {}
 
 _EX_P1C["Find Right Interval"] = [
-    """The given example, traced.
-intervals = [[3,4],[2,3],[1,2]]
-starts sorted with their ORIGINAL indices: [(1,2),(2,1),(3,0)]
-start_values = [1,2,3]
-For [3,4]: bisect_left([1,2,3], 4) -> 3, which is past the end -> -1.
-For [2,3]: bisect_left([1,2,3], 3) -> 2 -> starts[2] is (3,0) -> index 0.
-For [1,2]: bisect_left([1,2,3], 2) -> 1 -> starts[1] is (2,1) -> index 1.
-Answer [-1, 0, 1]. Note the output is in the ORIGINAL order while the search
-happened in sorted order - carrying the index alongside the start is what makes
-that possible.""",
+    """1. THE GOAL - for each interval, who starts next?
 
-    """Why bisect_left and not bisect_right.
-The requirement is the smallest start that is >= this end, so a start EQUAL to
-the end qualifies. bisect_left returns the first position where the value could
-be inserted while keeping order, which is exactly the first element >= the
-target. bisect_right would skip over an exact match and return the interval
-after it.
-Concretely with start_values = [1,2,3] and end = 2: bisect_left gives 1 (the
-start 2 itself, correct), bisect_right gives 2 (the start 3, wrong). One
-character, wrong answer - and this is the detail the problem exists to test.""",
+You are given a list of intervals, each written as [start, end]. FOR EACH ONE, FIND THE INTERVAL
+WHOSE START IS THE SMALLEST VALUE THAT IS STILL AT LEAST AS BIG AS THIS INTERVAL'S END. That is
+called its RIGHT INTERVAL. Return its ORIGINAL INDEX, or −1 if there is none.
 
-    """Why you must sort a COPY that carries indices.
-The answer must reference the original positions, but the binary search needs
-sorted order. Sorting `intervals` itself destroys the mapping. The trick is to
-sort tuples of (start, original_index), then keep a parallel list of just the
-start values for bisect to search - bisect cannot search a list of tuples by
-the first element alone without a key argument (added only in Python 3.10).
-An alternative is `sorted(range(n), key=lambda i: intervals[i][0])` and index
-through that, which some find clearer.""",
+    intervals = [[3,4], [2,3], [1,2]]
+                   0       1       2      <- original indices
 
-    """Edge cases.
-Single interval [[1,2]]: starts = [(1,0)], bisect_left([1], 2) -> 1, past the
-end -> [-1]. An interval's right interval can be ITSELF only if its start >=
-its end, which for a valid interval means start == end (a point).
-[[1,1],[3,4]]: for [1,1], bisect_left([1,3], 1) -> 0 -> index 0, i.e. itself.
-That is correct by the definition, and a solution that explicitly excludes self
-gets it wrong.
-Duplicate starts: sorted() breaks ties by the second element (the index), so
-the smallest index wins - deterministic, and worth stating since the prompt
-usually allows any valid answer.""",
+    FOR [3,4], which ends at 4:  which starts are >= 4?  The starts are 3, 2 and 1.  NONE.
+                                 ANSWER: −1
+    FOR [2,3], which ends at 3:  which starts are >= 3?  Only the 3 belonging to interval 0.
+                                 ANSWER: 0
+    FOR [1,2], which ends at 2:  which starts are >= 2?  The 2 (interval 1) and the 3 (interval 0).
+                                 The SMALLEST of those is 2, belonging to interval 1.
+                                 ANSWER: 1
 
-    """Complexity and the alternative.
-Sorting is O(n log n) and each of the n binary searches is O(log n), so
-O(n log n) overall with O(n) space.
-The alternative without sorting: put every start in a balanced BST or a sorted
-container and query the successor - same complexity, more machinery. Brute
-force is O(n^2): for each interval scan all others for the smallest qualifying
-start. On n = 20,000 that is 400 million comparisons versus about 300,000 - the
-kind of gap that turns a passing solution into a timeout.""",
+    RESULT: [-1, 0, 1]
 
-    """The pattern, and where it recurs.
-This is 'sort one dimension, then binary-search into it' - the successor query.
-The same shape solves: Search Insert Position (bisect directly), Meeting Rooms
-II (binary search or heap over end times), Russian Doll Envelopes (sort by one
-dimension, LIS on the other), and any 'find the next event after time t'
-scheduling question.
-The recognition cue in the prompt is 'the smallest value that is at least X',
-which is literally the definition of bisect_left. When you hear it, reach for a
-sorted array plus binary search rather than a scan.""",
+FOUR THINGS THE QUESTION IS QUIETLY SAYING:
+
+    "AT LEAST AS BIG" INCLUDES EQUAL. An interval starting exactly where another ends qualifies -
+        that is how [2,3] finds interval 0, whose start of 3 equals its end of 3. Section 4 shows the
+        answer changing when this is got wrong.
+    "THE SMALLEST SUCH START" - not any qualifying one. [1,2] has two candidates and must pick the
+        nearer.
+    RETURN THE ORIGINAL INDEX, not the interval and not a sorted position. This is what forces the
+        careful bookkeeping in section 2.
+    AN INTERVAL MAY BE ITS OWN RIGHT INTERVAL, when its start is at least its end - which only
+        happens for a degenerate interval like [1,1].
+
+THE SHAPE OF THE PROBLEM: this is a SUCCESSOR QUERY. "Given a value, find the smallest thing in a
+collection that is at least as big." Doing that n times, once per interval, is what the whole
+solution is - and the way to make a successor query fast is to sort the collection once and binary
+search into it.""",
+
+    """2. THE INTUITION - sort the starts once, then binary search n times.
+
+The naive approach scans every interval for every interval: n × n comparisons. But notice that the
+question asked of each interval is always the same shape - "find me the smallest start that is at
+least X" - and only X changes.
+
+SO PREPARE THE STARTS ONCE, IN SORTED ORDER, AND ANSWER EVERY QUERY BY BINARY SEARCH.
+
+    intervals = [[3,4], [2,3], [1,2]]
+                   0       1       2
+
+    Pull out the starts, KEEPING THE ORIGINAL INDEX WITH EACH ONE:
+
+        (3, 0)   (2, 1)   (1, 2)
+
+    Sort by start:
+
+        (1, 2)   (2, 1)   (3, 0)
+         ^        ^        ^
+         start 1  start 2  start 3
+         from     from     from
+         index 2  index 1  index 0
+
+    THE INDEX TRAVELS WITH THE START. That is the whole bookkeeping trick - sorting rearranges the
+    starts, and without carrying the index along you would have no way back to the original position.
+
+Now each query is a binary search into the sorted start values [1, 2, 3]:
+
+    [3,4] ends at 4:  find the first start >= 4.  There is none - the search runs off the end.  -1
+    [2,3] ends at 3:  find the first start >= 3.  That is position 2, which carries index 0.     0
+    [1,2] ends at 2:  find the first start >= 2.  That is position 1, which carries index 1.     1
+
+    RESULT [-1, 0, 1]
+
+WHY BINARY SEARCH GIVES THE SMALLEST QUALIFYING START AUTOMATICALLY. In a sorted list, everything at
+or after the found position is >= the value, and everything before it is smaller. So THE FIRST
+POSITION THAT QUALIFIES holds the smallest qualifying start - the "smallest such" requirement is
+satisfied by construction rather than by a separate comparison.
+
+    sorted starts:   1    2    3
+                          ^
+                  looking for the first >= 2 lands HERE, and everything to the right is larger
+
+That is the same reasoning that makes "first position where the value could be inserted" the right
+tool - and section 4 is about which of the two insertion-point functions you need.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INTERVAL. A pair [start, end].
+RIGHT INTERVAL. The interval whose start is the smallest value >= this interval's end.
+SUCCESSOR QUERY. "Find the smallest element of a collection that is at least X." The general shape
+of this problem.
+
+BINARY SEARCH. Repeatedly halving a sorted range to locate a value or its insertion point. O(log n)
+per query rather than O(n).
+
+bisect. Python's standard binary-search module.
+bisect_left(a, x). Returns the FIRST position where x could be inserted keeping `a` sorted - which
+is the first index whose value is >= x. THIS IS THE ONE THIS PROBLEM NEEDS.
+bisect_right(a, x). Returns the LAST such position - the first index whose value is STRICTLY GREATER
+than x. Section 4 shows what that does to the answer.
+
+    On a = [1, 2, 3]:   bisect_left(a, 2) = 1        bisect_right(a, 2) = 2
+                        (points AT the 2)             (points PAST the 2)
+
+TUPLE. `(start, index)` - two values carried together, so sorting the starts does not lose track of
+where they came from.
+
+DEGENERATE INTERVAL. One where start equals end, like [1,1]. It qualifies as its own right interval.
+
+intervals. The input list. NOT modified by this function.
+starts. The list of (start, original index) tuples, sorted by start.
+start_values. Just the sorted start numbers, pulled out so `bisect` has a plain list to search.
+result. The answers, in the ORIGINAL order.
+iv. One interval from the input, inside the loop. `iv[0]` is its start, `iv[1]` its end.
+pos. The position binary search returned.
+
+O(n log n) TIME, O(n) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - USING bisect_right INSTEAD OF bisect_left. This is the mistake, and it is one identifier.
+
+    The requirement is the smallest start that is >= this end, so A START EQUAL TO THE END QUALIFIES.
+    `bisect_left` returns the first position whose value is >= the target - equal values included.
+    `bisect_right` skips past them, returning the first position STRICTLY GREATER.
+
+    On intervals = [[3,4], [2,3], [1,2]], with sorted starts [1, 2, 3] carrying indices [2, 1, 0]:
+
+        WITH bisect_left:                        WITH bisect_right:
+            [3,4] end 4 -> pos 3 -> -1               [3,4] end 4 -> pos 3 -> -1
+            [2,3] end 3 -> pos 2 -> index 0          [2,3] end 3 -> pos 3 -> -1      WRONG
+            [1,2] end 2 -> pos 1 -> index 1          [1,2] end 2 -> pos 2 -> index 0 WRONG
+
+        CORRECT:  [-1, 0, 1]        bisect_right:  [-1, -1, 0]
+
+    TWO OF THE THREE ANSWERS CHANGE. The second becomes −1 because the only qualifying start EQUALS
+    the end and gets skipped; the third picks a start that qualifies but is not the SMALLEST one.
+    Note the second failure mode is silent in a nastier way - it returns a real index, just the wrong
+    one.
+
+TRAP 2 - SORTING `intervals` ITSELF. The answer must reference ORIGINAL positions, but the binary
+search needs sorted order. Sorting the input list destroys the mapping between an interval and where
+it started out, and the final loop then walks a reordered list and reports positions in it.
+
+    THE FIX IS TO SORT A COPY THAT CARRIES THE INDICES - the `(start, index)` tuples. That is why the
+    code builds `starts` rather than touching `intervals`, and it is why this function does NOT mutate
+    its argument (unlike 3Sum, Assign Cookies, Meeting Rooms, Boats and several other entries in this
+    bank).
+
+TRAP 3 - FORGETTING THE PAST-THE-END CHECK. When no start qualifies, `bisect_left` returns
+`len(start_values)` - a position one past the last valid index. Indexing `starts[pos]` there raises
+IndexError; the guard `pos < len(starts)` is what turns it into −1.
+
+    In Python this is especially worth care because a NEGATIVE index would silently wrap to the end
+    of the list rather than raising - so the class of bug is familiar even if this particular one
+    does raise.
+
+TRAP 4 - SEARCHING THE TUPLES DIRECTLY. `bisect_left(starts, iv[1])` compares a NUMBER against
+`(start, index)` TUPLES, which in Python 3 raises TypeError. Hence `start_values`, a plain list of
+numbers, extracted for the search. (Comparing `(iv[1], -1)` against the tuples would also work and is
+fiddlier to reason about.)
+
+TRAP 5 - ASSUMING AN INTERVAL CANNOT BE ITS OWN ANSWER. For [1,1], the start 1 is >= the end 1, so it
+IS its own right interval and the answer is its own index. The code handles this with no special case
+- and it is worth checking, because a solution that deliberately excludes `i` from its own search
+would get it wrong.
+
+TRAP 6 - ASSUMING THE STARTS ARE DISTINCT. The problem guarantees it here, which is why any
+qualifying position gives an unambiguous index. If starts could repeat, "the smallest such start"
+would have several possible indices and the problem would have to say which one it wanted.""",
+
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
+
+VERSION A - FOR EACH INTERVAL, SCAN ALL THE OTHERS. For each of the n intervals, look at all n starts
+and keep the smallest one that is >= this end.
+
+    Correct, no sorting, and O(n^2). For n = 20,000 that is 400,000,000 comparisons against roughly
+    20,000 × log2(20,000) ≈ 286,000 for the sort plus 20,000 × 15 = 300,000 for the searches.
+    ABOUT SIX HUNDRED TIMES THE WORK, and the gap widens without limit.
+
+VERSION B - SORT THE STARTS AND BINARY SEARCH, which is the code here. O(n log n) overall.
+
+VERSION C - SORT BOTH THE STARTS AND THE ENDS, THEN SWEEP WITH TWO POINTERS. Process the ends in
+increasing order and advance a pointer through the sorted starts, which never moves backwards. That
+is O(n log n) too - dominated by the same sorting - but the sweep itself is O(n) rather than
+O(n log n).
+
+    IT IS NOT REALLY FASTER, because the sort dominates either way, and it needs the ends sorted with
+    their own indices as well. Worth naming as an alternative; the binary-search version is simpler
+    and the complexity is identical.
+
+VERSION D - A BALANCED BST OR SORTED CONTAINER, if the intervals arrive over time rather than all at
+once. Each insertion and each successor query is O(log n). This is the right answer when the question
+becomes "support adding intervals and querying interleaved", which the static sort cannot handle
+without re-sorting.
+
+WHY THE BINARY SEARCH ANSWERS "THE SMALLEST SUCH" FOR FREE - the argument, because it is the step
+people take on trust.
+
+    The starts are sorted ascending. `bisect_left(start_values, end)` returns the first position `p`
+    such that `start_values[p] >= end`. By sortedness:
+
+        everything BEFORE p is strictly less than `end`   ->  disqualified
+        everything AT OR AFTER p is at least `end`        ->  qualified
+
+    So the qualifying starts are exactly a SUFFIX of the sorted list, and the first element of a
+    suffix of an ascending list is its smallest member. THE ANSWER IS AT POSITION p, and no
+    comparison among the candidates is ever needed.
+
+    If p equals the length, the suffix is empty - nothing qualifies - which is exactly the −1 case.
+
+    THAT IS THE WHOLE REASON SORTING HELPS: it turns "find the minimum of the qualifying subset" into
+    "find where the qualifying subset begins", and a boundary is what binary search locates.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: PULL OUT EVERY INTERVAL'S START TOGETHER WITH WHERE IT
+CAME FROM, SORT THOSE BY START ONCE, AND THEN ANSWER EACH INTERVAL BY BINARY-SEARCHING FOR THE FIRST
+START THAT IS NOT SMALLER THAN ITS END.
+
+THERE IS NO RECURSION. The mechanism is ONE PREPARATION PASS FOLLOWED BY n INDEPENDENT LOOKUPS:
+
+  - The preparation happens once and is what makes every later query cheap. The queries do not change
+    it and do not depend on each other.
+  - Each lookup halves a range repeatedly, so it costs a logarithm rather than a scan.
+  - WHAT MAKES IT STOP: the preparation is a sort of a fixed-size list; each binary search halves its
+    range every step, so it finishes in about log-base-two-of-n steps; and the outer loop runs once
+    per interval.
+  - THE ORIGINAL ORDER IS PRESERVED because the answers are produced by walking the INPUT list, not
+    the sorted one.
+
+THE STEPS:
+
+  1. FOR EVERY INTERVAL, MAKE A PAIR OF ITS START AND ITS POSITION IN THE INPUT. Sort those pairs by
+     start.
+
+     THE POSITION MUST TRAVEL WITH THE START. Sorting rearranges everything, and the answer has to be
+     given as a position in the ORIGINAL list - so if the position is not carried along there is no
+     way back. This also means the input list itself is never disturbed.
+
+  2. MAKE A PLAIN LIST OF JUST THE SORTED START NUMBERS, so the search has something simple to look
+     through.
+
+  3. FOR EACH INTERVAL, IN THE ORIGINAL ORDER:
+
+     a. BINARY-SEARCH THE SORTED STARTS FOR THE FIRST ONE THAT IS NOT SMALLER THAN THIS INTERVAL'S
+        END.
+
+        NOT SMALLER - so a start exactly equal to the end counts. Ask for the first position where
+        the value could be inserted while keeping the order, not the last such position; the last one
+        would step past any equal value and give a wrong answer.
+
+     b. IF THE SEARCH CAME BACK WITH A POSITION PAST THE END OF THE LIST, NOTHING QUALIFIED. RECORD
+        MINUS ONE.
+
+     c. OTHERWISE RECORD THE ORIGINAL POSITION CARRIED BY THE PAIR SITTING THERE.
+
+        No further comparison is needed to make it the SMALLEST qualifying start: because the list is
+        sorted, everything before that point was too small and everything from it onwards qualifies,
+        so the first qualifying entry is automatically the least of them.
+
+  4. RETURN THE RECORDED ANSWERS, which are in the input's order because that is the order they were
+     produced in.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a pile of appointment cards, each with a start time and a finish time written on it, and the
+cards are in no particular order. For each card you want to know which other appointment begins
+soonest after this one finishes - and you have to answer by naming the card's position in the
+original pile, not by describing it.
+
+The plodding way is, for every card, to go through the entire pile looking at start times and keeping
+the best one. That means reading the whole pile once per card, and with a big pile that is an
+enormous amount of re-reading, because you are asking the same kind of question every time and
+starting from scratch each time.
+
+So instead you do one piece of preparation. You go through the pile once and write out a list of just
+the start times - but crucially, next to each start time you also note which card in the pile it came
+from. Then you sort that list by start time.
+
+That little note of where each one came from is the part that is easy to skip and impossible to do
+without. Sorting shuffles everything into a new order, and the answer you have to give is about the
+ORIGINAL order, so without the note you would find the right start time and have no idea whose it
+was. It also means you never have to disturb the pile itself, which stays exactly as it was.
+
+Now answering a card is quick. You take its finish time and look it up in your sorted list - not by
+reading through, but by opening the list in the middle, seeing whether you have gone too far or not
+far enough, and halving again. Within a handful of steps you arrive at the first start time in the
+list that is not earlier than the finish time you were asking about.
+
+And because the list is in order, that first one is automatically the soonest. Everything before it
+was too early to qualify and everything after it is later still, so there is no need to compare the
+candidates against each other - arriving at the boundary IS the answer.
+
+Two things to be careful about. An appointment beginning at exactly the moment yours finishes does
+count, so when you look up the finish time you want the position where that time itself sits, not the
+position just past it. Slide one place too far and you will skip a perfectly good answer and
+sometimes report a worse one instead.
+
+And if your finish time is later than every start time in the list, the search will run off the end
+of the page. That is not a failure - it simply means nothing starts after this appointment, and the
+answer is that there is none.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep intervals = [[3,4],[2,3],[1,2]] beside you, answer [-1, 0, 1].
+
+    def find_right_interval(intervals):
+        import bisect
+
+Python's binary-search module. `bisect_left` is the function used below.
+
+`intervals` is the list of [start, end] pairs. Returns a list of original indices or −1. THE INPUT IS
+NOT MODIFIED - `sorted(...)` builds a new list and nothing else writes to it (trap 2), which makes
+this one of the polite functions in this bank.
+
+        starts = sorted((iv[0], i) for i, iv in enumerate(intervals))
+
+THE PREPARATION, AND THE INDEX-CARRYING IS THE POINT.
+
+    `enumerate(intervals)`  yields (position, interval) pairs.
+    `(iv[0], i)`            builds (START, ORIGINAL POSITION) - the start first, so sorting orders by
+                            start.
+    `sorted(...)`           returns a NEW list. The input list is untouched.
+
+    starts  HOLDS the (start, original index) pairs in ascending order of start. Without the index
+            riding along, sorting would lose the connection back to the input (trap 2).
+
+For the example this is [(1, 2), (2, 1), (3, 0)].
+
+        start_values = [s for s, _ in starts]
+
+    start_values  HOLDS just the sorted start NUMBERS - [1, 2, 3] for the example.
+
+Needed because `bisect` compares its target against the list's elements, and comparing a number
+against a TUPLE raises TypeError in Python 3 (trap 4). `_` is the conventional name for the part of
+the tuple this line ignores.
+
+        result = []
+
+The answers, built in the input's order.
+
+        for iv in intervals:
+
+WALK THE ORIGINAL LIST, IN ITS ORIGINAL ORDER. This is what makes `result[i]` correspond to
+`intervals[i]`. The sorted list is only a lookup table.
+
+            pos = bisect.bisect_left(start_values, iv[1])   # first start >= end
+
+THE SEARCH, AND `bisect_left` IS THE WHOLE PROBLEM.
+
+    `iv[1]`         is THIS interval's END - the value being searched for.
+    `bisect_left`   returns the FIRST position whose value is >= the target, so a start EQUAL to the
+                    end qualifies. `bisect_right` would return the first position STRICTLY GREATER,
+                    skipping an equal start and giving a different answer on two of the three
+                    intervals in the example (trap 1).
+
+    pos  HOLDS that position, which may be `len(start_values)` if nothing qualifies.
+
+BY SORTEDNESS, everything before `pos` is too small and everything from `pos` onward qualifies - so
+position `pos` holds the SMALLEST qualifying start, with no further comparison (section 5).
+
+            result.append(starts[pos][1] if pos < len(starts) else -1)
+
+    `pos < len(starts)`  is the past-the-end guard (trap 3). When nothing qualifies, `bisect_left`
+                         returns exactly the list's length, and indexing there would raise
+                         IndexError.
+    `starts[pos][1]`     is the ORIGINAL INDEX carried by the pair at that position - `[0]` would be
+                         the start value, which is not what was asked for.
+    `-1`                 is the problem's convention for "no right interval".
+
+        return result""",
+
+    """9. TRACED, INTERVAL BY INTERVAL - AND THE ANSWER INVERTING ON ONE IDENTIFIER.
+
+TRACE 1 - THE GIVEN EXAMPLE. intervals = [[3,4], [2,3], [1,2]].
+
+    PREPARATION:
+        enumerate gives (0, [3,4]), (1, [2,3]), (2, [1,2])
+        the tuples built are (3, 0), (2, 1), (1, 2)
+        sorted by start:  starts = [(1, 2), (2, 1), (3, 0)]
+        start_values = [1, 2, 3]
+
+        READ THAT CAREFULLY: the start 1 came from index 2, the start 2 from index 1, and the start 3
+        from index 0. The original order is completely scrambled, which is exactly why the index has
+        to travel with the start.
+
+    QUERY 1 - interval [3,4], end = 4:
+        bisect_left([1, 2, 3], 4)  ->  4 is bigger than every element, so the insertion point is 3.
+        pos = 3.  Is 3 < len(starts) = 3?  NO.
+        append −1.
+
+    QUERY 2 - interval [2,3], end = 3:
+        bisect_left([1, 2, 3], 3)  ->  the first position whose value is >= 3 is position 2.
+        pos = 2.  Is 2 < 3?  YES.
+        starts[2] = (3, 0), so the original index is 0.
+        append 0.
+
+        THIS IS THE QUERY THAT NEEDS bisect_left. The only qualifying start is 3, which EQUALS the
+        end of 3. `bisect_right` would have returned 3 - past the end - and produced −1.
+
+    QUERY 3 - interval [1,2], end = 2:
+        bisect_left([1, 2, 3], 2)  ->  the first position whose value is >= 2 is position 1.
+        pos = 1.  starts[1] = (2, 1), so the original index is 1.
+        append 1.
+
+        TWO STARTS QUALIFIED HERE - the 2 and the 3 - and the search landed on the smaller of them
+        without any comparison between them, because the qualifying starts form a suffix of a sorted
+        list and its first element is its least.
+
+    RETURN [-1, 0, 1].
+
+TRACE 2 - THE INVERSION, the same input with `bisect_right` (trap 1).
+
+    QUERY 1 - end 4:  bisect_right([1,2,3], 4) = 3.  Past the end.  −1.        same
+    QUERY 2 - end 3:  bisect_right([1,2,3], 3) = 3.  Past the end.  −1.        WAS 0
+    QUERY 3 - end 2:  bisect_right([1,2,3], 2) = 2.  starts[2] = (3, 0)  ->  0. WAS 1
+
+    RESULT [-1, -1, 0] instead of [-1, 0, 1].
+
+    TWO OF THREE ANSWERS CHANGE, and they fail in two different ways. Query 2 loses a valid answer
+    entirely, because the only candidate was an EQUAL start and `bisect_right` steps past equals.
+    Query 3 still returns a real index - interval 0 does start at 3, which is indeed >= 2 - but it is
+    not the SMALLEST qualifying start, so it is quietly wrong rather than obviously wrong.
+
+TRACE 3 - AN INTERVAL THAT IS ITS OWN ANSWER (trap 5). intervals = [[1,1]].
+
+    starts = [(1, 0)],  start_values = [1]
+    QUERY - interval [1,1], end = 1:
+        bisect_left([1], 1) = 0.  Is 0 < 1?  YES.  starts[0] = (1, 0)  ->  index 0.
+
+    RETURN [0].   The interval's own start of 1 is >= its own end of 1, so it is its own right
+    interval. No special case was needed, and a solution that deliberately skipped `i` would get this
+    wrong.
+
+    (With `bisect_right` this would return [-1], which is the same trap in miniature.)
+
+TRACE 4 - A LONGER CASE. intervals = [[1,4], [2,3], [3,4]].
+
+    tuples: (1,0), (2,1), (3,2)  ->  already sorted.
+    starts = [(1,0), (2,1), (3,2)],  start_values = [1, 2, 3]
+
+    [1,4] end 4:  bisect_left([1,2,3], 4) = 3.  Past the end.  −1.
+    [2,3] end 3:  bisect_left([1,2,3], 3) = 2.  starts[2] = (3,2)  ->  2.
+    [3,4] end 4:  bisect_left([1,2,3], 4) = 3.  Past the end.  −1.
+
+    RETURN [-1, 2, -1].
+
+    Note interval 2 is [3,4] and interval 1's right interval is 2 - the interval starting at 3, which
+    is exactly where interval 1 ends. Another equality case, and another one `bisect_right` would
+    lose.
+
+THE TINY INPUTS:
+    intervals = [[1,2]]   starts = [(1,0)], start_values = [1].
+                          bisect_left([1], 2) = 1, which is not < 1.  RETURN [-1].
+                          Its own start of 1 is NOT >= its end of 2, so it is not its own answer.
+    intervals = []        `sorted` of nothing is empty, the loop never runs.  RETURN [].""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n).
+
+In plain words: sorting the n (start, index) pairs costs O(n log n), and then each of the n intervals
+does one binary search costing O(log n), for another O(n log n). The two terms are the same order, so
+the total is O(n log n) - and unlike most problems in this bank, THE SEARCHES ARE NOT FREE NEXT TO
+THE SORT; they are the same size.
+
+SPACE: O(n) for the `starts` pairs and the `start_values` list. The input itself is not modified.
+
+    AGAINST THE BRUTE FORCE at O(n^2): for n = 20,000 that is 400,000,000 comparisons against roughly
+    286,000 for the sort plus 300,000 for the searches - about six hundred times the work.
+
+THE PATTERN - "SORT ONE DIMENSION, THEN BINARY-SEARCH INTO IT", which is the SUCCESSOR QUERY. The
+same shape solves:
+
+    FIND RIGHT INTERVAL           the smallest start >= this end                  <- this entry
+    SEARCH INSERT POSITION        literally `bisect_left` on its own
+    TIME-BASED KEY-VALUE STORE    the latest timestamp <= the query time (the mirror image, using
+                                  `bisect_right` and stepping back one)
+    MY CALENDAR I                 does an interval conflict with any booked one
+    SUCCESSOR / PREDECESSOR       in any sorted collection
+    LONGEST INCREASING SUBSEQUENCE the O(n log n) version is a `bisect_left` per element
+
+    THE PART TO INTERNALISE IS THE bisect_left / bisect_right CHOICE. "At least X" wants
+    `bisect_left`; "strictly greater than X" wants `bisect_right`; "at most X" wants
+    `bisect_right` minus one. Getting it wrong produces answers that are off by exactly one element,
+    which is the hardest kind of wrong to spot.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it without binary search." Sort the ends too, then sweep with a pointer that never moves
+    backwards - O(n log n) overall still, since the sort dominates (section 5, version C).
+  - "What if intervals arrive one at a time and queries interleave?" A balanced BST or a sorted
+    container: O(log n) per insert and per query. The static sort cannot handle that without redoing
+    itself.
+  - "What if starts could repeat?" The problem guarantees they do not; if they could, "the smallest
+    such start" would name several intervals and the problem would have to say which to return.
+  - "What if you wanted the LARGEST start <= this end instead?" `bisect_right` minus one, and the
+    boundary case flips - a position of 0 then means nothing qualifies.
+  - "Does it modify the input?" No. `sorted` builds a new list, which is what allows the original
+    indices to remain meaningful.
+
+THE #1 BEGINNER MISTAKE: reaching for `bisect_right` instead of `bisect_left`. The requirement says
+"start >= end", which includes equality, and `bisect_right` steps past equal values. On the problem's
+own three-interval example it changes two of the three answers - one to −1, and one to a real but
+non-minimal index, which is the quieter failure of the two.
+
+RUNNER-UP: sorting the intervals themselves and losing the mapping back to the original positions.
+The answer is a list of ORIGINAL indices, so the index must travel with the start through the sort.
+
+TAKEAWAY: this is a successor query repeated n times, so sort the starts ONCE while carrying each
+one's original index along, and let `bisect_left` find the boundary where the qualifying starts begin
+- because in a sorted list the first qualifying element is automatically the smallest one, and no
+comparison among the candidates is ever needed.""",
 ]
 
 _EX_P1C["Integer Break (DP)"] = [
@@ -71994,61 +72446,539 @@ above me greater?" is the same question as "is the largest thing above me greate
 ]
 
 _EX_P1E["House Robber II (circular street)"] = [
-    """Why the circle reduces to two linear problems.
-In a circle, house 0 and house n-1 are adjacent, so they can never BOTH be
-robbed. That means every valid solution falls into one of two cases: it
-excludes the last house, or it excludes the first. (A solution excluding both
-is covered by either.)
-So run the ordinary linear House Robber on nums[0..n-2] and on nums[1..n-1] and
-take the better result. The circular constraint has been removed by
-construction rather than handled inside the DP - which is the trick the problem
-is testing, and it takes one sentence to explain.""",
+    """1. THE GOAL - the same street, bent into a ring.
 
-    """A trace on [2,3,2].
-rob_line([2,3]) - excluding the last house:
-  money 2: prev,curr = 0, max(0, 0+2) = 2
-  money 3: prev,curr = 2, max(2, 0+3) = 3   -> 3
-rob_line([3,2]) - excluding the first house:
-  money 3: prev,curr = 0, 3
-  money 2: prev,curr = 3, max(3, 0+2) = 3   -> 3
-Answer max(3,3) = 3. Correct: robbing house 1 alone yields 3, while 2+2 = 4 is
-illegal because houses 0 and 2 are adjacent in the circle. Note that a solution
-which forgot the circularity would happily return 4.""",
+Houses hold money. You may not rob TWO ADJACENT HOUSES. Maximise what you take.
 
-    """The linear recurrence, and the two-variable trick.
-dp[i] = max(dp[i-1], dp[i-2] + nums[i]) - 'skip this house' versus 'take it and
-add the best up to two houses back'.
-Because the recurrence reaches back only two steps, you do not need an array:
-`prev, curr = curr, max(curr, prev + money)` rolls the window in O(1) space.
-Read the tuple assignment carefully - the right-hand side is evaluated first,
-so `prev` in the expression is still the OLD prev. Splitting it into two
-statements is the classic bug.""",
+THE TWIST: THE HOUSES ARE ARRANGED IN A CIRCLE, so THE FIRST AND LAST ARE ALSO NEIGHBOURS.
 
-    """Edge cases, all of which are real test inputs.
-[5] -> the guard returns 5 immediately. Without it, nums[:-1] is empty and
-nums[1:] is empty, so both calls return 0 - a wrong answer of 0 for a single
-house. This guard is the most commonly missed line in the problem.
-[2,3] -> rob_line([2]) = 2, rob_line([3]) = 3 -> 3. Correct: with two houses in
-a circle they are adjacent both ways, so you take the larger.
-[1,2,3,1] -> excluding last: [1,2,3] -> 4; excluding first: [2,3,1] -> 3;
-answer 4 (houses 0 and 2).""",
+    nums = [2, 3, 2]
 
-    """Complexity.
-Two linear passes, each O(n) time and O(1) space, so O(n) and O(1) overall.
-The slicing `nums[:-1]` and `nums[1:]` does allocate two O(n) copies; if the
-interviewer objects, pass start and end INDICES into rob_line instead of
-slices and the space really is O(1). That is a small point but a good one to
-volunteer - it shows you know what a slice costs in Python, which is exactly
-the kind of detail that distinguishes candidates on an easy problem.""",
+              2  (house 0)
+             / \\
+    (house 2) 2   3  (house 1)
+             \\___/
 
-    """The family, and the general 'circular' technique.
-House Robber I is the linear base. House Robber III is the same idea on a TREE,
-where the recurrence becomes 'rob this node and skip children, or skip it and
-take the best of each child' - a postorder DFS returning a pair.
-More broadly, 'the array is circular' is nearly always handled by one of two
-tricks: (1) split into two linear cases, as here; or (2) concatenate the array
-with itself and slide a window of length n, as in Maximum Circular Subarray.
-Naming both options and picking the one that fits is a strong answer.""",
+    Rob house 1 alone:        3
+    Rob houses 0 and 2?       THEY ARE ADJACENT in the circle.  NOT ALLOWED.
+    Rob house 0 alone:        2
+    Rob house 2 alone:        2
+
+    ANSWER: 3
+
+    In a STRAIGHT street the same houses would allow 0 and 2 together for 4. The ring costs you 1.
+
+THIS IS HOUSE ROBBER I WITH ONE EXTRA EDGE. The straight-street version is a classic:
+`dp[i] = max(dp[i-1], dp[i-2] + nums[i])` - at each house, either skip it and keep the best so far,
+or take it and add the best from two houses back. That much is settled.
+
+    THE ONLY NEW THING IS THE WRAP-AROUND CONSTRAINT: house 0 and house n−1 may not both be taken.
+
+AND THAT ONE CONSTRAINT LOOKS AWKWARD, because the running recurrence has no way to remember, forty
+houses later, whether it took the very first one. Section 2 is the trick that removes the awkwardness
+entirely instead of trying to encode it.""",
+
+    """2. THE INTUITION - one constraint, two straight streets.
+
+The circular rule says exactly one thing: HOUSES 0 AND n−1 CANNOT BOTH BE ROBBED.
+
+So look at any valid plan. It must fall into at least one of two categories:
+
+    IT DOES NOT USE THE LAST HOUSE.        Then only houses 0 .. n−2 matter.
+    IT DOES NOT USE THE FIRST HOUSE.       Then only houses 1 .. n−1 matter.
+
+    (A plan using neither end falls into both, which is harmless - it just gets considered twice.)
+
+AND EACH OF THOSE IS A STRAIGHT STREET. Once the last house is off the table, house 0 has no
+wrap-around neighbour left to conflict with, so the ordinary linear problem applies unchanged. Same
+the other way round.
+
+            0 ── 1 ── 2 ── ... ── n-2      the circle CUT so the last house is excluded
+       1 ── 2 ── ... ── n-2 ── n-1         the circle CUT so the first house is excluded
+
+    SOLVE BOTH AS ORDINARY STRAIGHT STREETS, AND TAKE THE BETTER ANSWER.
+
+    nums = [2, 3, 2]
+
+        exclude the last:   rob a straight [2, 3]   ->  best is 3
+        exclude the first:  rob a straight [3, 2]   ->  best is 3
+        max(3, 3) = 3
+
+WHY THIS IS NOT AN APPROXIMATION - the argument matters, because "run it twice and take the max"
+sounds like a hack:
+
+    EVERY ANSWER CONSIDERED IS LEGAL. A plan found in the first street uses no wrap-around house at
+        all, so the circular constraint cannot be violated by it. Same for the second.
+    EVERY LEGAL PLAN IS CONSIDERED. A legal plan omits house 0, or omits house n−1, or both - so it
+        appears in the first street, the second, or both.
+
+    The two sets between them cover exactly the legal plans and nothing else, so the maximum over
+    them is the true maximum. That is a proof, not a heuristic.
+
+THE ONLY WRINKLE IS A SINGLE HOUSE. With n = 1, "all but the last" and "all but the first" are both
+EMPTY, and the answer would come out as 0 for a house full of money. Section 4 traces it.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ADJACENT. Next to each other. In a circle, house 0 and house n−1 are adjacent as well as the obvious
+pairs.
+
+NON-ADJACENT SUM. A selection of houses no two of which touch. The thing being maximised.
+
+DYNAMIC PROGRAMMING (DP). Solving small versions first and reusing the answers. Here the subproblem
+is "the best takings from the first i houses".
+
+THE LINEAR RECURRENCE. `dp[i] = max(dp[i-1], dp[i-2] + nums[i])` - SKIP this house and keep the best
+up to the previous one, or TAKE it and add the best from two houses back. The whole of House Robber I.
+
+ROLLING VARIABLES. Keeping only the last two values instead of the whole table, because the
+recurrence never reaches further back than two. Gives O(1) space - the same reduction as Tribonacci
+(a window of three) and Climbing Stairs (two).
+
+SIMULTANEOUS ASSIGNMENT. `prev, curr = curr, max(curr, prev + money)` - Python builds the ENTIRE
+right-hand side from the old values before assigning anything. Section 4 shows that splitting it into
+two statements robs the whole street.
+
+SLICING. `nums[:-1]` is every element except the last; `nums[1:]` is every element except the first.
+Both build NEW lists, so the caller's list is not modified.
+
+nums. The house values. NOT modified by this function.
+rob_line(houses). The helper solving one straight street.
+prev. The best takings up to TWO houses back - `dp[i-2]`.
+curr. The best takings up to the PREVIOUS house - `dp[i-1]`.
+money. The current house's value.
+
+O(n) TIME, O(1) SPACE for the logic (O(n) if the two slices are counted).""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - THE SINGLE HOUSE. This is why the guard at the top exists, and without it the answer is not
+merely wrong but absurd.
+
+    nums = [5]
+
+        `nums[:-1]` is []       - every house except the last, and the last IS the only house.
+        `nums[1:]`  is []       - every house except the first, likewise.
+
+        Both calls to `rob_line` see an empty street and return 0.  max(0, 0) = 0.
+        A HOUSE CONTAINING 5 IS ROBBED FOR NOTHING.
+
+    The `if len(nums) == 1: return nums[0]` guard handles it. The split into two streets assumes
+    there are at least two houses to split; with one, "exclude the first" and "exclude the last"
+    remove the same single house and leave nothing behind.
+
+    (n = 2 is fine without a special case: `nums[:-1]` and `nums[1:]` are each a single house, and
+    the answer is the larger of the two, which is correct - the two houses are adjacent both ways
+    round the tiny circle, so only one can be taken.)
+
+TRAP 2 - SPLITTING THE SIMULTANEOUS ASSIGNMENT INTO TWO STATEMENTS. The single most destructive
+mistake here, and it produces a beautifully wrong answer.
+
+    prev, curr = curr, max(curr, prev + money)
+
+    Python evaluates the whole right-hand side FIRST, using the OLD `prev` and `curr`, then assigns
+    both. Written as two lines in the obvious order:
+
+        prev = curr
+        curr = max(curr, prev + money)          <- `prev` is now the NEW prev, which equals curr
+
+    The second line has become `max(curr, curr + money)`, and since money is non-negative that is
+    ALWAYS `curr + money`. THE ADJACENCY RULE HAS VANISHED - every house is taken.
+
+        houses = [2, 3]           correct 3      split version 5      (= 2 + 3, both houses)
+        houses = [1, 2, 3]        correct 4      split version 6      (= 1 + 2 + 3)
+        houses = [2, 7, 9, 3, 1]  correct 12     split version 22     (= the entire street)
+
+    On the last one the broken version returns the SUM OF EVERY HOUSE. It does not crash and the
+    number looks like a triumphantly good robbery - which is exactly why it is dangerous.
+
+    (The fix if you must use separate statements: compute the new value into a temporary FIRST, then
+    shift. It is the same discipline as Tribonacci's three-variable slide.)
+
+TRAP 3 - TRYING TO ENCODE THE WRAP-AROUND INSIDE ONE PASS. It is tempting to carry an extra flag -
+"did I take house 0?" - through a single run. It works, and it doubles the state and the bookkeeping
+for no gain. Running the linear solver twice is simpler and provably equivalent (section 2).
+
+TRAP 4 - FORGETTING THAT THE TWO STREETS OVERLAP. `nums[:-1]` and `nums[1:]` share houses 1 through
+n−2, so a plan avoiding both ends is found twice. THAT IS HARMLESS - taking a maximum over a
+collection that contains duplicates gives the same result. The requirement is that every legal plan
+appears at least once, not exactly once.
+
+TRAP 5 - INITIALISING `prev` AND `curr` TO ANYTHING BUT ZERO. Both start at 0, meaning "the best
+takings from no houses at all is nothing". Since the problem guarantees non-negative money, no real
+value is ever worse than 0, so these starting values can never be wrongly selected.
+
+    (If house values could be NEGATIVE the recurrence would need thought - but they cannot, and
+    saying so shows you checked rather than assumed.)
+
+TRAP 6 - THE SLICES ARE COPIES. `nums[:-1]` and `nums[1:]` each allocate a new list of about n
+elements. The function therefore uses O(n) space despite the rolling-variable trick giving O(1)
+logic. Section 10 says how to avoid it if it matters - and note the upside, which is that the
+caller's list is never modified, unlike several sibling entries in this bank.""",
+
+    """5. THE ALTERNATIVES, AND WHY THE LINEAR RECURRENCE IS TWO VARIABLES.
+
+VERSION A - TRY EVERY SUBSET OF HOUSES. Check each for adjacency and keep the best legal one. 2^n
+subsets - for 30 houses that is 1,073,741,824. Correct and hopeless.
+
+VERSION B - RECURSION WITHOUT MEMOISATION. "Best from house i onward = max(skip it, take it and jump
+two)". The same subproblems are recomputed exponentially often; the call count grows like Fibonacci,
+so 40 houses is already hundreds of millions of calls.
+
+VERSION C - A FULL DP TABLE, `dp[0..n-1]`. O(n) time, O(n) space. Correct, and it stores n numbers
+when only two are ever consulted.
+
+VERSION D - TWO ROLLING VARIABLES, which is `rob_line` here. O(n) time, O(1) space.
+
+    THE RECURRENCE REACHES BACK EXACTLY TWO PLACES AND NEVER FURTHER, so everything older can be
+    discarded. `prev` is dp[i−2] and `curr` is dp[i−1]; each step computes the new dp[i] and slides
+    both along. The identical reduction as Tribonacci (window of three) and Climbing Stairs (two) -
+    only the width differs.
+
+VERSION E - THE CIRCULAR WRAPPER, which is `rob_circular`: run version D twice on two cut streets and
+take the better.
+
+WHY THE LINEAR RECURRENCE IS CORRECT, since everything rests on it:
+
+    At house i you have exactly two choices, and no others.
+
+        SKIP IT.  Then the best you can have is whatever was best up to house i−1, which is dp[i−1].
+        TAKE IT.  Then house i−1 is forbidden, so the best available before it is dp[i−2], and you
+                  add this house's money: dp[i−2] + nums[i].
+
+    There is no third option, and both branches are already-computed answers. So
+    dp[i] = max(dp[i−1], dp[i−2] + nums[i]).
+
+    NOTE THE SUBTLETY IN THE "TAKE" BRANCH: it uses dp[i−2], not "the best plan that ends at house
+    i−2". dp[i−2] is the best over the first i−1 houses, which may or may not include house i−2
+    itself - and either way it excludes house i−1, which is all that is required.
+
+WHY CUTTING THE CIRCLE IS SOUND - restating section 2's argument, because it is what an interviewer
+probes:
+
+    SOUNDNESS - nothing illegal is considered. A plan from `nums[:-1]` never uses house n−1, so the
+        pair (0, n−1) cannot both be taken. Likewise for `nums[1:]`.
+    COMPLETENESS - nothing legal is missed. Any legal circular plan omits house 0 or omits house n−1
+        (it cannot use both), so it lives in at least one of the two streets.
+
+    Together: the union of the two candidate sets is EXACTLY the set of legal plans, so the maximum
+    over the union is the answer.
+
+THE GENERAL TECHNIQUE, worth naming: TO HANDLE A CIRCULAR CONSTRAINT, BREAK THE CIRCLE BY FIXING ONE
+ELEMENT'S STATUS AND SOLVING THE LINEAR VERSION FOR EACH CASE. It recurs well beyond this problem.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: THE FIRST AND LAST HOUSES CAN NEVER BOTH BE ROBBED, SO
+SOLVE THE ORDINARY STRAIGHT-STREET PROBLEM TWICE - ONCE ON EVERYTHING EXCEPT THE LAST HOUSE, ONCE ON
+EVERYTHING EXCEPT THE FIRST - AND TAKE THE BETTER RESULT.
+
+THERE IS NO RECURSION. The mechanism is A SMALL HELPER THAT SWEEPS A STRAIGHT STREET, CALLED TWICE:
+
+  - The helper carries just TWO running numbers: the best takings up to the previous house, and the
+    best up to the house before that. Nothing older is ever consulted, so nothing older is kept.
+  - Each step computes one new best and slides both numbers along.
+  - WHAT MAKES IT STOP: the trip count is the length of the street, fixed before the sweep begins.
+  - THE TWO CALLS ARE COMPLETELY INDEPENDENT. Neither knows about the other; the circular constraint
+    is handled entirely by WHICH HOUSES EACH ONE IS GIVEN.
+
+THE STEPS:
+
+  1. IF THERE IS ONLY ONE HOUSE, ROB IT AND STOP.
+
+     This is not tidiness. With a single house, "everything except the last" and "everything except
+     the first" both remove that same house and leave nothing at all, so both sweeps would report
+     nothing and the answer would come out as zero.
+
+  THE STRAIGHT-STREET SWEEP, given a row of houses:
+
+  2. START TWO RUNNING FIGURES AT ZERO: the best takings up to the house before last, and the best up
+     to the last house considered. With no houses at all, both are nothing.
+
+  3. FOR EACH HOUSE IN TURN, THE NEW BEST IS THE BETTER OF TWO THINGS:
+
+     - SKIP THIS HOUSE, keeping whatever was best up to the previous one.
+     - TAKE THIS HOUSE, adding its money to the best from TWO houses back - because the immediately
+       previous house is then forbidden.
+
+     THEN SLIDE: what was the best up to the previous house becomes the best up to two back, and the
+     figure just computed becomes the best up to the previous house.
+
+     WORK OUT THE NEW BEST BEFORE SLIDING ANYTHING. Both quantities on the right are needed, and
+     sliding first destroys one of them - the sum then double-counts and the result is simply every
+     house added together.
+
+  4. THE ANSWER FOR THAT STREET IS THE LAST FIGURE COMPUTED.
+
+  THEN THE WRAPPER:
+
+  5. RUN THE SWEEP ON EVERY HOUSE EXCEPT THE LAST, AND AGAIN ON EVERY HOUSE EXCEPT THE FIRST.
+
+  6. RETURN THE BETTER OF THE TWO.
+
+     Both are legal, because neither used both ends. And nothing legal is missed, because any legal
+     plan must leave out one end or the other.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture a ring of houses around a village green, each with some money in it, and a rule that you may
+never rob two houses standing next to each other. Because the houses form a ring, the first and the
+last are neighbours too - which is the only thing that makes this harder than a row of houses along
+a road.
+
+That one extra neighbourly pair is awkward, because as you work your way round you would have to
+remember, right at the very end, whether you robbed the house you started at. Carrying that memory
+all the way round is a nuisance.
+
+So you sidestep it entirely with one observation: whatever you end up doing, you cannot rob BOTH the
+first house and the last one. So either you leave the last one alone, or you leave the first one
+alone - or both, which is fine too.
+
+That means you can solve two simpler problems instead. First, imagine the ring cut open just before
+the last house, so the last house is not in play at all: now it is an ordinary row of houses along a
+road, with no wrap-around to worry about. Solve that. Then imagine the ring cut the other way, with
+the first house out of play, and solve that ordinary row too. Whichever haul is bigger is your answer.
+
+This is not a rough approximation. Every plan you consider is genuinely allowed, because neither
+version ever touches both ends. And no allowed plan escapes you, because any allowed plan is missing
+one end or the other, so it turns up in one of the two versions. Between them the two versions cover
+exactly what is permitted and nothing more.
+
+Solving a row of houses is itself simple, and it needs only two numbers held in your head. Walking
+along, at each house you ask: am I better off skipping this one and keeping whatever I had, or taking
+this one and adding it to the best I could have had two houses back - since taking this one rules out
+the house right beside it? Whichever is larger becomes your new running best, and you shuffle your
+two numbers along and carry on.
+
+The shuffling has to happen after the sum, not before. If you slide the numbers along first, the
+"best from two houses back" is no longer two houses back - it is the house right next door - and you
+end up cheerfully adding every single house on the street, which is precisely the thing the rule
+forbids. The tally looks marvellous and is entirely illegal.
+
+One last thing. If the village has only ONE house, cutting the ring in either direction leaves you
+with no houses whatsoever, and you would report having stolen nothing at all from a house full of
+money. So check for that first and simply take it.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep nums = [2, 3, 2] beside you, answer 3.
+
+    def rob_circular(nums):
+
+`nums` is the list of house values, arranged in a circle. Returns the maximum non-adjacent sum. THE
+INPUT IS NOT MODIFIED - the slices below build new lists.
+
+        if len(nums) == 1:
+            return nums[0]
+
+THE GUARD, AND IT IS LOAD-BEARING (trap 1). With one house, both slices below are EMPTY, both sweeps
+return 0, and a house full of money is robbed for nothing.
+
+(n = 2 needs no guard: the slices are one house each and the answer is the larger, which is correct.)
+
+        def rob_line(houses):
+
+THE STRAIGHT-STREET SOLVER - House Robber I, unchanged. It knows nothing about circles; the circular
+constraint is handled entirely by which houses it is handed.
+
+            prev, curr = 0, 0
+
+    prev  HOLDS the best takings up to TWO houses back - dp[i−2].
+    curr  HOLDS the best takings up to the PREVIOUS house - dp[i−1].
+
+Both start at 0: with no houses considered yet, the best possible haul is nothing. Since house values
+are non-negative, these can never be wrongly chosen over a real option (trap 5). An empty street
+therefore returns 0, which is what makes the single-house case fail so quietly without the guard.
+
+            for money in houses:
+
+One pass, one house at a time. The trip count is fixed before the loop starts.
+
+                prev, curr = curr, max(curr, prev + money)  # skip vs take
+
+THE WHOLE OF HOUSE ROBBER I, IN ONE LINE - and the line that must not be split.
+
+    `curr`               - SKIP this house: keep the best up to the previous one.
+    `prev + money`       - TAKE this house: its money plus the best from TWO houses back, since the
+                           immediately previous house is now forbidden.
+    `max(...)`           - whichever is better becomes the new `curr`.
+    the left-hand `curr` - slides into `prev`, because what was "one back" is now "two back".
+
+    PYTHON BUILDS THE ENTIRE RIGHT-HAND SIDE FROM THE OLD VALUES BEFORE ASSIGNING EITHER. Split into
+    `prev = curr` then `curr = max(curr, prev + money)` and the second line reads the NEW `prev`,
+    which equals `curr` - so it becomes `max(curr, curr + money)`, always takes, and robs every house
+    on the street (trap 2).
+
+            return curr
+
+After the sweep, `curr` is the best over the whole street.
+
+        # never rob both ends: try [0..n-2] and [1..n-1], keep the max
+        return max(rob_line(nums[:-1]), rob_line(nums[1:]))
+
+THE CIRCULAR WRAPPER, AND THE COMMENT IS THE ARGUMENT.
+
+    `nums[:-1]`  every house EXCEPT THE LAST - so house 0 is safe to take, having no wrap-around
+                 neighbour left.
+    `nums[1:]`   every house EXCEPT THE FIRST - so house n−1 is safe.
+    `max(...)`   both candidates are legal, and every legal plan appears in at least one of them
+                 (section 5), so the larger is the true answer.
+
+Both slices are COPIES, which is why the input is untouched - and why the space is O(n) rather than
+O(1) (trap 6).""",
+
+    """9. TRACED, HOUSE BY HOUSE - AND THE STREET ROBBED ENTIRELY.
+
+TRACE 1 - THE WORKED EXAMPLE. nums = [2, 3, 2].
+
+    len(nums) is 3, so the guard does not fire.
+
+    FIRST CALL: rob_line(nums[:-1]) = rob_line([2, 3])   - the last house excluded
+
+        prev, curr = 0, 0
+        money = 2:  right-hand side from the OLD values:  curr = 0,  max(0, 0 + 2) = 2
+                    assign  ->  prev = 0,  curr = 2
+        money = 3:  right-hand side from prev = 0, curr = 2:  curr = 2,  max(2, 0 + 3) = 3
+                    assign  ->  prev = 2,  curr = 3
+        RETURNS 3.       (rob house 1 alone for 3, rather than house 0 for 2)
+
+    SECOND CALL: rob_line(nums[1:]) = rob_line([3, 2])   - the first house excluded
+
+        prev, curr = 0, 0
+        money = 3:  curr = 0,  max(0, 0 + 3) = 3   ->  prev = 0,  curr = 3
+        money = 2:  curr = 3,  max(3, 0 + 2) = 3   ->  prev = 3,  curr = 3
+        RETURNS 3.       (rob house 1 for 3; taking house 2 for 2 would be worse)
+
+    max(3, 3) = 3.
+
+    RETURN 3.
+
+    CHECK BY HAND: the only plans are {0}, {1}, {2} - since 0 and 2 are adjacent in the circle, no
+    pair is legal. The best single house holds 3. Correct.
+
+TRACE 2 - WHERE THE TWO STREETS DISAGREE. nums = [1, 2, 3, 1].
+
+    FIRST CALL: rob_line([1, 2, 3])   - excluding the last house
+
+        prev, curr = 0, 0
+        money = 1:  max(0, 0 + 1) = 1   ->  prev = 0,  curr = 1
+        money = 2:  max(1, 0 + 2) = 2   ->  prev = 1,  curr = 2
+        money = 3:  max(2, 1 + 3) = 4   ->  prev = 2,  curr = 4
+        RETURNS 4.       (houses 0 and 2:  1 + 3 = 4)
+
+    SECOND CALL: rob_line([2, 3, 1])   - excluding the first house
+
+        money = 2:  max(0, 0 + 2) = 2   ->  prev = 0,  curr = 2
+        money = 3:  max(2, 0 + 3) = 3   ->  prev = 2,  curr = 3
+        money = 1:  max(3, 2 + 1) = 3   ->  prev = 3,  curr = 3
+        RETURNS 3.       (house 2 alone for 3, or houses 1 and 3 for 2 + 1 = 3 - a tie)
+
+    max(4, 3) = 4.
+
+    RETURN 4.
+
+    HERE THE TWO STREETS GENUINELY DIFFER, and the winning plan - houses 0 and 2 - is one that the
+    second street could not even express, because it had no house 0. That is what the two-call
+    structure buys.
+
+TRACE 3 - THE SINGLE HOUSE (trap 1). nums = [5].
+
+    WITH THE GUARD:      len(nums) == 1  ->  RETURN 5.  Correct.
+
+    WITHOUT THE GUARD:
+        nums[:-1] is []   ->  rob_line([]) : the loop never runs, `curr` is still 0.  RETURNS 0.
+        nums[1:]  is []   ->  likewise.  RETURNS 0.
+        max(0, 0) = 0.
+        RETURN 0 - for a house containing 5.
+
+TRACE 4 - THE SPLIT-ASSIGNMENT BUG (trap 2), on the straight street [2, 7, 9, 3, 1].
+
+    CORRECT (simultaneous):
+        prev, curr = 0, 0
+        money = 2:  max(0, 0 + 2) = 2    ->  prev = 0,  curr = 2
+        money = 7:  max(2, 0 + 7) = 7    ->  prev = 2,  curr = 7
+        money = 9:  max(7, 2 + 9) = 11   ->  prev = 7,  curr = 11
+        money = 3:  max(11, 7 + 3) = 11  ->  prev = 11, curr = 11
+        money = 1:  max(11, 11 + 1) = 12 ->  prev = 11, curr = 12
+        RETURNS 12.      (houses 2, 9 and 1:  2 + 9 + 1 = 12)
+
+    SPLIT INTO TWO STATEMENTS:
+        Every step becomes `curr = max(curr, curr + money)`, which for non-negative money is always
+        `curr + money`. So the running total is 2, then 9, then 18, then 21, then 22.
+        RETURNS 22.
+
+    22 IS THE SUM OF EVERY HOUSE ON THE STREET - 2 + 7 + 9 + 3 + 1. The adjacency rule has been
+    silently deleted, and the answer looks like an excellent night's work.
+
+    Two more, for the pattern:  [2, 3] gives 3 correctly and 5 when split;  [1, 2, 3] gives 4
+    correctly and 6 when split. In every case the broken version returns the total of the whole
+    street.
+
+THE TINY INPUTS:
+    nums = [5]        the guard returns 5.
+    nums = [2, 3]     no guard needed. rob_line([2]) returns 2; rob_line([3]) returns 3.
+                      max(2, 3) = 3 - correct, since the two houses are adjacent both ways round a
+                      two-house circle and only one can be taken.
+    nums = [1, 2, 3]  rob_line([1,2]) = 2;  rob_line([2,3]) = 3.  max = 3. Correct - houses 0 and 2
+                      are adjacent in the circle, so no pair is legal and the best single house is 3.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n). Two linear sweeps, each visiting about n houses and doing one comparison and one addition
+per house. Two passes over n is still O(n).
+
+SPACE: O(1) FOR THE LOGIC - just `prev`, `curr` and `money` - but O(n) IN PRACTICE, because
+`nums[:-1]` and `nums[1:]` each allocate a copy.
+
+    TO GET GENUINE O(1): give `rob_line` a START and END index instead of a slice, and let it read
+    `nums` directly. The two calls become `rob_line(0, n-2)` and `rob_line(1, n-1)`. Worth
+    volunteering; the trade for the copies is that the caller's list is never modified, unlike 3Sum,
+    Assign Cookies, Meeting Rooms, Boats and Divide Players in this bank.
+
+THE FAMILY, AND HOW THE PROBLEM GROWS:
+
+    HOUSE ROBBER I      a straight street. The two-variable recurrence, and the base of everything.
+    HOUSE ROBBER II     a circle. Cut it two ways and take the max.                  <- this entry
+    HOUSE ROBBER III    a TREE. The recurrence becomes "for each node, return a PAIR - the best if I
+                        rob this node, and the best if I do not - and combine the children's pairs".
+                        The same skip-versus-take idea, carried up a tree instead of along a line.
+    DELETE AND EARN     re-index by VALUE so that taking value v forbids v−1 and v+1, then it is
+                        House Robber I on the value axis.
+    MAX SUM OF NON-ADJACENT ELEMENTS, and most "cannot pick two neighbours" problems - all the same
+                        recurrence.
+
+    AND THE FIXED-WINDOW SIBLINGS, where the same two-variable reduction applies: Climbing Stairs
+    (window of two), Tribonacci (three), Min Cost Climbing Stairs (two, with a cost). The width of
+    the window is what changes, not the idea.
+
+THE GENERAL "CIRCULAR" TECHNIQUE, which is the transferable part: WHEN A CONSTRAINT WRAPS AROUND,
+BREAK THE CIRCLE BY FIXING ONE ELEMENT'S STATUS AND SOLVE THE LINEAR VERSION FOR EACH CASE, THEN
+COMBINE. Here that is two cases; elsewhere it may be more. What must be checked is exactly what
+section 5 checks - that every case is legal, and that between them the cases cover everything legal.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Get it to genuine O(1) space." Pass indices rather than slices.
+  - "Which houses did you rob, not just how much?" Keep the full dp table and walk backwards,
+    checking at each step which branch of the `max` won.
+  - "What if the houses formed a tree?" House Robber III - return a pair (rob, skip) from each node.
+  - "What if you could skip two houses instead of one?" `dp[i] = max(dp[i-1], dp[i-3] + nums[i])` -
+    the window widens to three and you carry three variables.
+  - "What if values could be negative?" The recurrence needs care, since skipping might beat taking
+    even a free house. The problem guarantees non-negative, which is why `prev = curr = 0` is safe.
+
+THE #1 BEGINNER MISTAKE: splitting the simultaneous assignment into two statements, which turns
+`prev` into a copy of `curr` before it is used and makes the "take" branch always win. The function
+then returns the sum of EVERY house - 22 for [2,7,9,3,1] where the answer is 12 - with no error and
+a very pleasing-looking number.
+
+RUNNER-UP: forgetting the single-house guard, so that both slices are empty and a lone house full of
+money is robbed for zero.
+
+TAKEAWAY: the first and last houses can never both be taken, so cut the circle two ways and run the
+ordinary straight-street solver on each - a construction that is provably exact rather than
+approximate, because every plan it considers is legal and every legal plan appears in at least one of
+the two cuts.""",
 ]
 
 _EX_P1E["Jump Game II (fewest jumps)"] = [
@@ -72180,58 +73110,511 @@ for _e in ENTRIES:
 _EX_P1F = {}
 
 _EX_P1F["Divide Players Into Teams of Equal Skill"] = [
-    """The example, traced.
-skill = [3,2,5,1,3,4] -> sorted [1,2,3,3,4,5].
-target = skill[0] + skill[-1] = 1 + 5 = 6.
-Pair (1,5): sum 6 = target, product 5. total = 5.
-Pair (2,4): sum 6, product 8. total = 13.
-Pair (3,3): sum 6, product 9. total = 22.
-Answer 22. Every pair had to hit 6 - the first pair DEFINES the target, and
-every subsequent pair is a validation of it.""",
+    """1. THE GOAL - split everyone into pairs of equal strength.
 
-    """Why smallest-with-largest is the only possible pairing.
-If all teams must have the same total, the smallest player MUST partner the
-largest. Suppose not: the smallest pairs with someone smaller than the max,
-giving a total below target, while the max pairs with someone above the min,
-giving a total above it - so the two totals differ and no valid arrangement
-exists.
-That argument means there is no search here at all: the pairing is forced, so
-the algorithm is 'construct the only candidate, then verify it'. Recognising
-that a problem has a UNIQUE candidate solution is what turns a
-combinatorial-looking prompt into a linear scan.""",
+You have an EVEN number of players, each with a skill rating. Pair them all up into teams of TWO so
+that EVERY TEAM HAS THE SAME TOTAL SKILL.
 
-    """The failure case.
-skill = [1,1,2,3] -> sorted [1,1,2,3]. target = 1 + 3 = 4.
-Pair (1,3): sum 4, ok, product 3.
-Pair (1,2): sum 3 != 4 -> return -1.
-Correct: no arrangement gives two equal-skill teams here. Note the failure is
-detected on the SECOND pair, not the first - the first pair can never fail,
-because it defines the target. A solution that only checks the first pair
-always returns a number and is silently wrong.""",
+    If you can, return the SUM OF EACH TEAM'S PRODUCT - multiply the two skills on each team, then
+    add those products up.
+    If no such pairing exists, return −1.
 
-    """Why the target comes from the sorted ends, not from the average.
-You could compute target = 2 * sum(skill) / n, which is the same value when a
-solution exists. But when no solution exists that expression can be a
-non-integer or simply wrong, and you would then need a divisibility check.
-Taking skill[0] + skill[-1] sidesteps that: it is by construction the total of
-the only pair that can possibly be forced, and the loop verifies the rest.
-Fewer edge cases, and it makes the reasoning above explicit in the code.""",
+    skill = [3, 2, 5, 1, 3, 4]        six players, so three teams
 
-    """Edge cases.
-Two players [3,5] -> target 8, one pair, product 15. The minimum valid input.
-All identical [4,4,4,4] -> target 8, both pairs match, total 16 + 16 = 32.
-Odd length -> the problem guarantees 2n players; if it did not, you would
-return -1 immediately, and asking about that guarantee is worth ten seconds.
-Overflow: products of large skills summed over n/2 pairs can exceed a 32-bit
-int in Java or C++, though Python is immune - worth naming.""",
+    A pairing that works:   (1, 5)  total 6,  product 5
+                            (2, 4)  total 6,  product 8
+                            (3, 3)  total 6,  product 9
 
-    """Complexity and the family.
-Sorting dominates at O(n log n); the scan is O(n) with O(1) extra space.
-This is the 'sorted two-pointer, forced pairing' family: Two Sum on a sorted
-array, Boats to Save People, Assign Cookies, and Array Partition. The tell is a
-constraint linking the EXTREMES of the sorted order - either the smallest must
-go with the largest (equal sums, as here) or the largest must be handled first
-(boats). When you spot that, sort and close in from both ends.""",
+    Every team totals 6.  ANSWER: 5 + 8 + 9 = 22
+
+    skill = [1, 1, 2, 3]
+
+    Try (1, 3) - total 4. That leaves (1, 2) - total 3.  NOT EQUAL.
+    Try (1, 2) - total 3. That leaves (1, 3) - total 4.  NOT EQUAL.
+    Try (1, 1) - total 2. That leaves (2, 3) - total 5.  NOT EQUAL.
+    THERE IS NO VALID PAIRING.  ANSWER: −1
+
+TWO SEPARATE QUESTIONS ARE BEING ASKED AT ONCE, and the first is the hard one:
+
+    IS A VALID PAIRING POSSIBLE AT ALL? and if so,
+    WHAT IS THE SUM OF THE PRODUCTS?
+
+The second is trivial arithmetic once the pairing is known. THE WHOLE PROBLEM IS THE FIRST - and the
+answer turns out to be that if any valid pairing exists, THERE IS ESSENTIALLY ONLY ONE, and you can
+write it down without searching. Section 5 proves that, and it is what collapses a
+combinatorial-looking problem into a sort and one pass.
+
+NOTE THAT THE PRODUCT PLAYS NO PART IN DECIDING VALIDITY. Teams are equal by their SUM; the product
+is only the thing you report afterwards. Mixing those up is section 4.""",
+
+    """2. THE INTUITION - the smallest player has no choice.
+
+Sort everybody. Now ask one question: WHO CAN THE WEAKEST PLAYER POSSIBLY PARTNER?
+
+    sorted:   1    2    3    3    4    5
+
+If every team must total the same amount T, then the weakest player's team totals T, and so does the
+strongest player's team. THE WEAKEST PLAYER NEEDS THE BIGGEST HELP, and the strongest player can
+only afford the smallest partner. Those two facts point at each other:
+
+    THE WEAKEST MUST PARTNER THE STRONGEST.
+
+Once you accept that, everything follows mechanically. Pair them off from the outside in:
+
+        1    2    3    3    4    5
+        └──────────────────────┘        1 + 5 = 6      product  5
+             └────────────┘             2 + 4 = 6      product  8
+                  └──┘                  3 + 3 = 6      product  9
+
+    Every sum is 6, so the pairing is valid, and the answer is 5 + 8 + 9 = 22.
+
+AND THE TARGET COMES FOR FREE. You do not have to work out what T should be by some separate
+calculation - THE FIRST PAIR TELLS YOU. Whatever `smallest + largest` comes to is the only total any
+valid pairing could have, so take that as the target and check every other pair against it.
+
+    target = skill[0] + skill[-1] = 1 + 5 = 6
+
+WHEN IT FAILS, IT FAILS ON A SPECIFIC PAIR:
+
+        sorted [1, 1, 2, 3]      target = 1 + 3 = 4
+
+        1    1    2    3
+        └──────────────┘         1 + 3 = 4  ✓  matches the target
+             └────┘              1 + 2 = 3  ✗  does NOT match
+
+        RETURN −1 immediately. There is no point checking further - the forced pairing has already
+        broken, and section 5 shows no other pairing could have worked either.
+
+So the whole algorithm is: sort, take the target from the two ends, then walk inward checking each
+pair and accumulating products.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SKILL. A player's rating - just a number.
+TEAM. Exactly two players. The problem fixes this; it is not a parameter.
+TEAM SKILL / TEAM TOTAL. The SUM of the two players' skills. This is what must be equal across all
+teams.
+TEAM PRODUCT. The two skills MULTIPLIED. This is what you report, and it plays no part in deciding
+validity (section 4).
+
+TARGET. The total every team must reach. Here it is taken as `skill[0] + skill[-1]` after sorting.
+
+TWO POINTERS (OPPOSITE ENDS). Two indices starting at the two ends of a SORTED list and moving
+toward each other.
+
+FORCED PAIRING. A pairing with no freedom in it - the structure of the problem determines it
+completely, so no search is needed. Section 5 proves this one is forced.
+
+EXCHANGE ARGUMENT. The standard proof technique: take any valid solution and show it can be
+rearranged into the one your algorithm produces, without breaking anything.
+
+skill. The list of ratings. SORTED IN PLACE by this function - it mutates the caller's list.
+n. The number of players. Guaranteed even.
+target. The required team total.
+total. The running sum of products - the answer being built.
+left. Index of the weakest player not yet paired.
+right. Index of the strongest player not yet paired.
+
+O(n log n). The cost of the sort, which dominates the O(n) sweep.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - CHECKING THE PRODUCT INSTEAD OF THE SUM. The teams must be equal in SUM; the product is
+only what you report. It is an easy slip because both numbers are computed on the same line.
+
+    On [1, 2, 3, 3, 4, 5] the products are 5, 8 and 9 - all different, and the pairing is
+    nevertheless perfectly valid because the SUMS are all 6. A version that required equal products
+    would return −1 on the problem's own example.
+
+TRAP 2 - RETURNING −1 ONLY AFTER CHECKING EVERY PAIR, OR NOT AT ALL. The moment one pair misses the
+target the whole thing is impossible, and section 5 shows no rearrangement can save it. Returning
+immediately is not just an optimisation - continuing and accumulating products into `total` would
+leave you with a meaningless number if you then forgot to discard it.
+
+TRAP 3 - COMPUTING THE TARGET BY DIVISION. You could write
+
+    target = 2 * sum(skill) // n
+
+which is the same value WHENEVER A SOLUTION EXISTS, since n/2 teams each totalling T means
+sum = (n/2) × T.
+
+    IT IS MORE FRAGILE FOR TWO REASONS. It introduces a division, so you must think about whether
+    the sum is actually divisible - and if it is not, integer division silently truncates and you
+    end up comparing against a target that is simply wrong, rather than detecting impossibility.
+    Taking the target from the two sorted ends needs no division at all, and impossibility falls out
+    of the first mismatch.
+
+    (And it is still correct that a non-divisible total means impossible: if every pair matched the
+    target, the sum would be (n/2) × target and therefore divisible. So the ends-based version
+    catches that case too, via a mismatch.)
+
+TRAP 4 - THE FUNCTION MUTATES ITS INPUT. `skill.sort()` reorders the CALLER'S list in place. The
+same surprise as 3Sum's `nums.sort()`, Assign Cookies' `g.sort()`, Meeting Rooms' `intervals.sort()`,
+Count Pairs' `nums.sort()` and Boats to Save People's `people.sort()`. Use `skill = sorted(skill)` if
+the caller's order matters.
+
+TRAP 5 - PAIRING BY SOME OTHER RULE AND HOPING. Adjacent pairs, or halves-against-halves - "first
+half with second half in order" happens to give the same answer here, but only because sorting makes
+it identical to outside-in for the FIRST pair and then diverges. Do not guess a pairing; section 5
+shows the outside-in one is forced, which is a proof rather than a preference.
+
+TRAP 6 - `while left < right` versus `<=`. Here `<` is correct and `<=` would be a bug, which is the
+OPPOSITE of Boats to Save People, where `<=` is required.
+
+    The reason is the parity. There is an EVEN number of players, always, so `left` and `right` never
+    land on the same index - they cross straight past each other. With six players the pairs are
+    (0,5), (1,4), (2,3) and then left = 3, right = 2. There is never a lone player needing handling,
+    unlike Boats where an unpaired person still needs a boat of their own.""",
+
+    """5. WHY THE PAIRING IS FORCED - the proof that removes the search.
+
+VERSION A - TRY EVERY PAIRING. The number of ways to split 2m players into m unordered pairs is
+1 × 3 × 5 × ... × (2m−1). For just 10 players that is 945; for 20 players it is 654,729,075. Correct
+and hopeless.
+
+VERSION B - SORT AND PAIR OUTSIDE-IN, which is the code here - justified by the following.
+
+THE CLAIM: IF ANY VALID PAIRING EXISTS, THEN PAIRING THE WEAKEST WITH THE STRONGEST IS ALSO VALID.
+
+    Let S be the weakest player and L the strongest, and suppose some valid pairing exists in which
+    every team totals T. Suppose in that pairing S is partnered with P, and L is partnered with Q,
+    with P ≠ L (otherwise there is nothing to prove).
+
+        S + P = T        and        L + Q = T
+
+    Now use the two facts we know about S and L:
+
+        S is the WEAKEST, so   S <= Q
+        L is the STRONGEST, so P <= L
+
+    Add the two inequalities:   S + P <= Q + L
+
+    But S + P = T and Q + L = T, so S + P = Q + L. The inequality is therefore an EQUALITY, and a sum
+    of two "<=" relations can only be equal if BOTH are equal:
+
+        S = Q        and        P = L
+
+    So L's partner Q has exactly the same skill as S, and S's partner P has exactly the same skill as
+    L. Swapping them gives a pairing in which S is with L and Q is with P, with both teams still
+    totalling T.
+
+    THE WEAKEST-WITH-STRONGEST PAIRING IS THEREFORE ALWAYS AVAILABLE. Remove those two players and
+    repeat the argument on what remains - which is why the whole outside-in pairing is forced.
+
+TWO CONSEQUENCES, and both matter:
+
+    THE TARGET IS DETERMINED BY THE FIRST PAIR. Since the weakest and strongest must be together,
+    their sum IS T. No division, no guessing.
+
+    A SINGLE MISMATCH PROVES IMPOSSIBILITY. If the forced pairing breaks anywhere, no other pairing
+    could have worked either - so returning −1 at the first failure is sound, not merely fast.
+
+CONTRAST WITH BOATS TO SAVE PEOPLE, which is the same sort-and-close-in shape with a different
+proof. There, pairing the lightest with the heaviest is OPTIMAL among many legal options - an
+exchange argument about quality. Here, pairing the weakest with the strongest is FORCED - the only
+possibility. Same machinery, different strength of claim, and knowing which one you have is what
+tells you whether a mismatch means "try something else" or "give up".""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SORT EVERYBODY, TAKE THE WEAKEST AND STRONGEST TOGETHER
+AS THE REQUIRED TEAM TOTAL, THEN WORK INWARD PAIRING THE WEAKEST REMAINING WITH THE STRONGEST
+REMAINING - GIVING UP THE MOMENT ANY PAIR MISSES THAT TOTAL.
+
+THERE IS NO RECURSION AND NO SEARCH. The mechanism is TWO INDICES CLOSING IN ON EACH OTHER:
+
+  - One index starts on the weakest player, the other on the strongest, and they move toward each
+    other one step at a time.
+  - EVERY PASS FORMS EXACTLY ONE TEAM, so the loop runs half as many times as there are players.
+  - WHAT MAKES IT STOP: the two indices approach each other by two positions per pass, and because
+    there is an even number of players they cross without ever landing on the same person.
+  - WHY NO BACKTRACKING IS NEEDED: the pairing is FORCED, not merely a good guess (section 5). So a
+    failure means the whole task is impossible, and there is nothing else to try.
+
+THE STEPS:
+
+  1. SORT THE PLAYERS FROM WEAKEST TO STRONGEST.
+
+  2. WORK OUT THE REQUIRED TEAM TOTAL BY ADDING THE WEAKEST AND THE STRONGEST TOGETHER.
+
+     This is not an assumption - those two must be partners, so their sum IS the total every team has
+     to reach. No division and no averaging is needed.
+
+  3. START A RUNNING TOTAL OF PRODUCTS AT ZERO, AND PUT ONE MARKER ON THE WEAKEST PLAYER AND ANOTHER
+     ON THE STRONGEST.
+
+  4. WHILE THE TWO MARKERS HAVE NOT CROSSED:
+
+     a. ADD THE TWO PLAYERS THEY POINT AT. IF THAT SUM IS NOT THE REQUIRED TOTAL, NO VALID PAIRING
+        EXISTS AT ALL - ANSWER −1 AND STOP IMMEDIATELY.
+
+        Stop entirely, not just skip this pair. The pairing was forced, so if it breaks here nothing
+        else would have worked.
+
+     b. OTHERWISE THIS TEAM IS VALID. MULTIPLY THE TWO SKILLS AND ADD THAT TO THE RUNNING TOTAL.
+
+        Multiply for the running total, ADD for the validity check. They are different operations on
+        the same two numbers, one line apart, and swapping them is the easiest mistake here.
+
+     c. MOVE BOTH MARKERS INWARD - the weakest marker up one, the strongest marker down one. Both
+        players are now on a team.
+
+  5. RETURN THE RUNNING TOTAL OF PRODUCTS.
+
+Note the markers cross rather than meet, because the number of players is even. There is never a
+leftover player to deal with.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a group of players, each with a strength rating, and you have been asked to split them into
+pairs so that every pair is equally strong overall. If it can be done, you also have to report a
+particular tally; if it cannot, you say so.
+
+The instinct is to start trying combinations, and there are a great many of them. But there is a
+much better way in, and it comes from asking who the WEAKEST player can possibly be teamed with.
+
+Every pair has to come to the same strength. The weakest player is the furthest behind, so their
+partner has to make up the most ground - which means their partner has to be the strongest player
+there is. And that works from the other side too: the strongest player leaves the least room for a
+partner, so their partner has to be the weakest. The two of them point straight at each other.
+
+So there is no choice at all about the first pair. And once you have taken those two out of the
+group, exactly the same reasoning applies to whoever is left, so there is no choice about the second
+pair either, or any pair after that. What looked like an enormous number of possibilities is really
+only one, and you can simply write it down.
+
+That also hands you the target for free. Since the weakest and strongest must be partners, whatever
+their combined strength comes to is what every pair has to match. You do not need to work it out
+separately by averaging anything.
+
+So you line everybody up by strength, note the combined strength of the two on the ends, and then
+work your way in from both sides. Each time, you check the pair adds up to the target. If it does,
+you note down the two strengths multiplied together and keep going. If it does not, you stop
+immediately and report that the task is impossible - and you can be confident about that, because
+the pairing was never a guess. There was nothing else to try.
+
+The one thing to keep straight is that adding and multiplying are doing two completely different
+jobs here. Adding is how you check a pair is allowed. Multiplying is only for the tally you report at
+the end, and it has no say in whether anything is valid. The pairs in the worked example multiply out
+to five, eight and nine - all different - and the pairing is perfectly correct, because it is the
+sums that matter and they are all six.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep skill = [3,2,5,1,3,4] beside you, answer 22.
+
+    def divide_players(skill):
+
+`skill` is the list of ratings, guaranteed to have an even length. Returns the sum of team products,
+or −1. THE ARGUMENT IS MODIFIED - the next line reorders it.
+
+        skill.sort()
+
+THE SETUP THE WHOLE ALGORITHM RESTS ON. Ascending, so `skill[left]` is the weakest remaining and
+`skill[right]` the strongest.
+
+Section 5's proof cites the ordering twice - once for "S is the weakest" and once for "L is the
+strongest". Without the sort, neither inequality holds and the pairing is not forced.
+
+`.sort()` sorts IN PLACE (trap 4). `skill = sorted(skill)` avoids mutating the caller's list.
+
+        n = len(skill)
+
+The number of players. Used only to place the right-hand marker.
+
+        target = skill[0] + skill[-1]        # required team total
+
+THE TARGET, TAKEN FROM THE TWO ENDS.
+
+    `skill[0]`   is the weakest player, `skill[-1]` the strongest.
+    Their sum IS the required total, because those two are forced to be partners (section 5) - so
+    this is a derivation, not a guess.
+
+    No division is involved, which is why the divisibility question never has to be asked (trap 3).
+
+        total = 0
+
+    total  HOLDS the running sum of team PRODUCTS - the answer being built.
+
+        left, right = 0, n - 1
+
+    left   HOLDS the index of the weakest player not yet placed on a team.
+    right  HOLDS the index of the strongest player not yet placed.
+
+        while left < right:
+
+`<`, not `<=` (trap 6). There is an even number of players, so the two markers cross without ever
+landing on the same person - there is no lone player to handle. This is the OPPOSITE of Boats to
+Save People, where `<=` is required precisely because a single leftover person still needs a boat.
+
+            if skill[left] + skill[right] != target:
+                return -1                     # cannot make all teams equal
+
+THE VALIDITY CHECK, AND IT USES THE SUM.
+
+    `skill[left] + skill[right]`  must equal the target. ADDITION - the product on the next line has
+                                  no say in whether a pairing is legal (trap 1).
+
+    `return -1` RETURNS IMMEDIATELY, and that is justified rather than merely efficient: the pairing
+    was forced, so a mismatch here means no valid pairing exists at all (section 5, trap 2).
+
+            total += skill[left] * skill[right]
+
+THE ACCUMULATION, AND IT USES THE PRODUCT. Same two numbers as the line above, MULTIPLIED instead of
+added, one line apart - which is exactly why they get confused.
+
+Reached only when the pair is valid, so `total` only ever accumulates legitimate teams.
+
+            left += 1
+            right -= 1
+
+Both markers move inward, because BOTH players have now been placed on a team. Unlike Boats to Save
+People - where only the heavy marker always moves - here every pass consumes exactly two people.
+
+        return total""",
+
+    """9. TRACED, PAIR BY PAIR.
+
+TRACE 1 - THE WORKED EXAMPLE. skill = [3,2,5,1,3,4].
+
+    After skill.sort():  [1, 2, 3, 3, 4, 5]
+                          0  1  2  3  4  5      <- indices
+
+    n = 6
+    target = skill[0] + skill[-1] = 1 + 5 = 6
+    total = 0,  left = 0,  right = 5
+
+    PASS 1:  left 0 < right 5 - enter.
+        skill[0] + skill[5] = 1 + 5 = 6.  Is 6 != 6?  NO - the pair is valid.
+        total += 1 * 5 = 5        ->  total = 5
+        left = 1,  right = 4
+
+    PASS 2:  left 1 < right 4 - enter.
+        skill[1] + skill[4] = 2 + 4 = 6.  Valid.
+        total += 2 * 4 = 8        ->  total = 13
+        left = 2,  right = 3
+
+    PASS 3:  left 2 < right 3 - enter.
+        skill[2] + skill[3] = 3 + 3 = 6.  Valid.
+        total += 3 * 3 = 9        ->  total = 22
+        left = 3,  right = 2
+
+    LOOP CHECK: left 3 is not < right 2.  The markers have CROSSED.  Stop.
+
+    RETURN 22.
+
+    NOTE THE THREE PRODUCTS: 5, 8 and 9 - ALL DIFFERENT. The pairing is valid because the three SUMS
+    are all 6. A version that checked the products for equality would reject the problem's own
+    example (trap 1).
+
+    NOTE ALSO THAT THE MARKERS CROSSED RATHER THAN MET. Six players, three passes, and left jumped
+    from 2 to 3 while right dropped from 3 to 2. With an even number of players there is never a
+    lone person left over, which is why the loop condition is strict.
+
+TRACE 2 - THE FAILURE CASE. skill = [1, 1, 2, 3].
+
+    sorted: [1, 1, 2, 3]
+    target = skill[0] + skill[-1] = 1 + 3 = 4
+    total = 0, left = 0, right = 3
+
+    PASS 1:  skill[0] + skill[3] = 1 + 3 = 4.  Equals the target.  Valid.
+             total += 1 * 3 = 3    ->  total = 3
+             left = 1,  right = 2
+
+    PASS 2:  skill[1] + skill[2] = 1 + 2 = 3.  Is 3 != 4?  YES.
+             RETURN −1.
+
+    The accumulated `total` of 3 is discarded, which is correct - it described a partial pairing that
+    cannot be completed.
+
+    AND THE −1 IS SOUND, NOT HASTY. By section 5, the weakest player 1 had to be with the strongest
+    player 3, and the remaining two had to be with each other. There was no alternative arrangement
+    to fall back on. Checking by hand: (1,3) and (1,2) give 4 and 3; (1,2) and (1,3) give 3 and 4;
+    (1,1) and (2,3) give 2 and 5. None works.
+
+TRACE 3 - THE TWO EXTREME CASES.
+
+    THE MINIMUM VALID INPUT. skill = [3, 5]:
+        sorted [3, 5].  target = 3 + 5 = 8.
+        PASS 1: 3 + 5 = 8, valid.  total += 3 * 5 = 15.  left = 1, right = 0.
+        Loop ends.  RETURN 15.   One team, one product.
+
+    EVERYBODY IDENTICAL. skill = [4, 4, 4, 4]:
+        sorted [4, 4, 4, 4].  target = 4 + 4 = 8.
+        PASS 1: 4 + 4 = 8, valid.  total += 16.  left = 1, right = 2.
+        PASS 2: 4 + 4 = 8, valid.  total += 16  ->  total = 32.  left = 2, right = 1.
+        Loop ends.  RETURN 32.
+
+        With all values equal, EVERY pairing is valid - so this is the case where the "forced"
+        pairing is not unique, and it does not matter: any of them gives the same products and the
+        same answer.
+
+TRACE 4 - THE TARGET-BY-DIVISION COMPARISON (trap 3). On [1, 2, 3, 3, 4, 5]:
+
+    FROM THE ENDS:      target = 1 + 5 = 6.
+    BY DIVISION:        sum = 1 + 2 + 3 + 3 + 4 + 5 = 18.  Teams = 6 / 2 = 3.  18 / 3 = 6.
+
+    THE SAME VALUE - as it must be when a solution exists. The difference shows on an input where no
+    solution exists and the sum is not divisible: the division version would truncate to some number
+    and then compare against it, whereas the ends version simply finds a mismatch at the first pair
+    that does not fit. Same answer, fewer things to reason about.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n).
+
+In plain words: THE SORT IS THE ENTIRE COST. The sweep afterwards moves both markers inward on every
+pass, so it runs exactly n/2 times - linear, and free next to the sort. Given an already-sorted
+input this would be an O(n) problem.
+
+SPACE: O(1) beyond the input, since `.sort()` sorts in place. O(n) if you sort a copy to leave the
+caller's list untouched.
+
+    AGAINST THE BRUTE FORCE: splitting 20 players into 10 pairs can be done 654,729,075 ways. The
+    forcing argument reduces that to ONE candidate, which is why this is a sort rather than a search.
+
+THE FAMILY - SORTED TWO-POINTER, FORCED OR GREEDY PAIRING:
+
+    DIVIDE PLAYERS INTO TEAMS     the pairing is FORCED - a mismatch means impossible   <- this entry
+    BOATS TO SAVE PEOPLE          the pairing is OPTIMAL among many legal ones
+    TWO SUM II (sorted input)     move an end inward based on one comparison
+    COUNT PAIRS BELOW A TARGET    count a whole block, then retire an end
+    ASSIGN COOKIES                two sorted lists, retire whatever is finished
+    VALID PALINDROME              compare the two ends and step both inward
+
+    THE DISTINCTION WORTH CARRYING AWAY is between FORCED and OPTIMAL. Here the outside-in pairing is
+    the only one that can work, so a mismatch proves impossibility and you stop. In Boats it is
+    merely the best of many legal options, so a "mismatch" just means that person sails alone.
+    Knowing which kind of claim you have tells you what a failure means - give up, or try the other
+    branch.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Prove the pairing is forced." Section 5: S + P = L + Q = T, with S <= Q and P <= L, forces both
+    inequalities to be equalities, so S = Q and P = L and the swap is free.
+  - "What if teams could have three players?" The forcing argument collapses - three-way partitioning
+    into equal-sum groups is NP-hard in general. The two-player case is special precisely because
+    each player has exactly one partner to determine.
+  - "What if the number of players were odd?" The problem would be impossible by definition; you
+    would return −1 immediately. And the loop condition would then need care, since the markers would
+    meet rather than cross.
+  - "Can you avoid sorting?" You could count occurrences and match the smallest remaining value with
+    `target − value` using a hash map - O(n) if the target were known, but the target itself comes
+    from the extremes, so you would still need the minimum and maximum. In practice the sort is
+    simpler.
+  - "Does it modify the input?" Yes - `skill.sort()`. Say so, and offer `sorted(skill)`.
+
+THE #1 BEGINNER MISTAKE: checking that the PRODUCTS are equal rather than the SUMS. The two numbers
+are computed one line apart from the same pair, and the problem's own example has products 5, 8 and 9
+- all different - so this version returns −1 on the very first test case.
+
+RUNNER-UP: computing the target by dividing the total by the number of teams. It gives the same
+answer whenever one exists, and it drags in a divisibility question that the ends-based version never
+has to ask.
+
+TAKEAWAY: sort, and the pairing is not a choice but a consequence - the weakest player must partner
+the strongest, which both fixes the target from the first pair and means that any single mismatch
+proves the whole task impossible, so one pass either produces the answer or −1.""",
 ]
 
 _EX_P1F["Maximal Square (DP)"] = [
