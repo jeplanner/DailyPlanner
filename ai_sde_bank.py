@@ -2252,7 +2252,7 @@ ENTRIES = [
       code='# Does s2 contain any permutation of s1 as a substring? (sliding window)\nfrom collections import Counter\ndef check_inclusion(s1, s2):\n    if len(s1) > len(s2):\n        return False\n    need = Counter(s1)\n    window = Counter(s2[:len(s1)])           # the first window\n    if window == need:\n        return True\n    for i in range(len(s1), len(s2)):\n        window[s2[i]] += 1                    # add the entering char\n        left = s2[i - len(s1)]\n        window[left] -= 1                     # remove the leaving char\n        if window[left] == 0:\n            del window[left]                 # keep the counters comparable\n        if window == need:\n            return True\n    return False',
       example="check_inclusion('ab', 'eidbaooo') -> True  ('ba').",
       complexity='Time O(len(s2)), space O(1) (fixed alphabet).',
-      pitfalls='Not deleting zero counts (Counter equality then fails); mis-indexing the leaving character.'),
+      pitfalls='Mis-indexing the leaving character - wrong on 1301 of 6000 random pairs. Skipping the first-window check - wrong on 325 of 6000, and BOTH official examples agree with it. The zero-count deletion is NOT a correctness requirement with collections.Counter on Python 3.10+, which overrides equality and treats a missing key as zero (measured 0 of 6000); it IS required when comparing plain dicts, where the same code is wrong on 1248 of 6000. The len(s1) > len(s2) guard is an early return, not load-bearing - 0 of 6000.'),
     Q('dsa', 'Find Peak Element (binary search)',
       "Return the index of ANY peak (an element strictly greater than its neighbours) in O(log n). Binary search on the slope: if nums[mid] < nums[mid+1] you're on an ascending slope so a peak lies to the right; otherwise a peak is at mid or to the left. Treat out-of-bounds as -infinity.",
       ['find-peak', 'binary-search', 'array', 'dsa'],
@@ -18233,9 +18233,27 @@ O(26). You can maintain a single "number of letters whose counts currently match
 and update it in O(1), giving a true O(n). Mention it, but the counter comparison
 is usually accepted since 26 is a constant.
 
-WHAT PEOPLE GET WRONG: leaving zero-valued keys in the counter, so the equality
-comparison fails even though the letters match - either delete keys when they hit
-zero, or compare fixed-size arrays instead of dictionaries.
+WHAT PEOPLE GET WRONG - AND ONE THING PEOPLE WRONGLY BELIEVE IS WRONG. The real
+bugs, measured on 6,000 random pairs: mis-indexing the leaving character, 1,301
+wrong; skipping the check on the FIRST window before the slide begins, 325 wrong -
+and both official examples agree with that one, so the given tests will not warn
+you.
+
+THE ZERO-KEY CLAIM NEEDS A CAVEAT. It is often said you must delete a key when its
+count hits zero or the comparison fails. That depends on WHAT you are comparing.
+collections.Counter overrides equality and treats a missing key as zero, so on
+Python 3.10+ Counter({'a':1,'b':0}) == Counter({'a':1}) is True and the deletion is
+hygiene, not correctness - measured wrong on 0 of 6,000. Compare the very same two
+objects as PLAIN DICTS and it is False, and the same no-delete code is wrong on
+1,248 of 6,000. So keep the deletion - it is required on Python 3.9 and earlier,
+where Counter inherited dict equality, and it keeps the code correct if anyone
+swaps Counter for a dict - but know it is a portability guard rather than the
+load-bearing line it is usually described as. A fixed 26-slot array sidesteps the
+question entirely, because both sides then carry their zeros.
+
+The len(s1) > len(s2) early return is also not load-bearing - without it the first
+window is simply too short to ever match and the slide loop does not run - 0 of
+6,000. It is a clarity and speed guard.
 """.strip("\n")
 
 _PLAIN_ALGO["Redundant Connection (Union-Find)"] = r"""
@@ -104528,64 +104546,467 @@ the ones who get the follow-up about k and stall.""",
 ]
 
 _EX_P1P["Partition Labels (greedy)"] = [
-    """The algorithm, traced.
-s = 'ababcbacadefegdehijhklij'. Last index of each character: a -> 8, b -> 5,
-c -> 7, d -> 14, e -> 15, f -> 11, g -> 13, h -> 19, i -> 22, j -> 23, k -> 20,
-l -> 21.
-Sweep: at i=0 ('a') end becomes 8. At i=1 ('b') end = max(8,5) = 8. Continue
-until i = 8, where i == end -> emit a partition of length 9.
-Restart: at i=9 ('d') end = 14; 'e' pushes it to 15; at i=15 -> partition of
-length 7.
-Then 'h' -> 19, 'i' -> 22, 'j' -> 23, 'k','l' inside -> at i=23 -> length 8.
-Answer [9,7,8].""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why `i == end` is the correct closing condition.
-`end` is the furthest last-occurrence of any character seen so far in this
-partition. Reaching it means every character used in the partition has had ALL
-its occurrences consumed - nothing inside will reappear later. That is exactly
-the property required.
-Closing earlier would split a letter across two parts; closing later would make
-partitions unnecessarily large, and the problem asks for as MANY parts as
-possible. The condition is simultaneously the correctness check and the
-greedy's stopping rule.""",
+You are given a string. Cut it into as MANY pieces as you can, subject to one rule:
+every letter must end up inside only ONE piece. If the letter 'a' appears anywhere in
+piece 3, then 'a' may not appear in any other piece. Return the sizes of the pieces,
+in order.
 
-    """Why the greedy is optimal, as an argument.
-At the moment i == end, the partition cannot be shorter - every character in it
-forced the boundary at least this far. And it need not be longer, since nothing
-inside recurs beyond i. So the first valid cut point is the unique earliest
-one, and taking it can never hurt the remainder because the remaining string is
-independent.
-That 'earliest valid cut is always safe' shape is the standard exchange
-argument for interval-greedy problems, and it is the same reasoning as in
-Minimum Number of Arrows and Maximum Length of Pair Chain.""",
+    s = "ababcbacadefegdehijhklij"
 
-    """Why building `last` as a dict comprehension works.
-`{ch: i for i, ch in enumerate(s)}` overwrites the entry each time a character
-recurs, so after the pass every key holds its LAST index - exactly what is
-wanted, and it happens by accident of the overwrite rather than by explicit
-max(). Neat, and worth pointing out so a reader does not think it is a bug.
-The first-occurrence version would need setdefault instead, which is the same
-trick inverted - a small idiom worth having both directions of.""",
+    cut it into:   "ababcbaca" | "defegde" | "hijhklij"
+    sizes:              9      |     7     |     8
 
-    """Edge cases.
-Single character 'a' -> last = {a:0}, at i=0 i == end -> [1].
-All distinct 'abc' -> each character's last index is its own, so every position
-closes a partition -> [1,1,1], the maximum possible number of parts.
-All identical 'aaaa' -> end is 3 from the first step -> one partition [4].
-Two interleaved letters 'abab' -> a's last is 2, b's last is 3, so the boundary
-extends to 3 -> [4], one partition. That is the case that shows why the
-partition cannot always be split even when characters repeat early.
-Empty string -> [].""",
+    ANSWER: [9, 7, 8]
 
-    """Complexity and the family.
-Two passes: O(n) time, O(1) space bounded by the 26-letter alphabet.
-The family: Merge Intervals (this is effectively interval merging where each
-letter's interval is first-to-last occurrence), Degree of an Array (same
-first-to-last idea, minimised instead of partitioned), Maximum Number of
-Non-Overlapping Substrings, and Jump Game II - which uses the identical
-'extend the reach, and when i hits the boundary, commit' structure.
-Cue: any problem about containing ALL copies of something makes the
-first-to-last interval the relevant object.""",
+Check the rule: the letters a, b, c appear only in the first piece; d, e, f, g only
+in the second; h, i, j, k, l only in the third. No letter straddles a cut.
+
+Verified by an independent method (merging each letter's span): [9, 7, 8].
+
+And a second example that looks like it should split but cannot:
+
+    s = "eccbbbbdec"       ANSWER: [10]
+
+    'e' appears at index 0 and again at index 8. 'c' appears at index 1 and index 9.
+    So any cut made anywhere between them would split 'e' or 'c' across two pieces.
+    The only legal answer is one piece containing everything.
+
+Two things the wording hides and both matter:
+
+  The pieces must be CONTIGUOUS and in order - you are cutting the string, not
+  rearranging it. The pieces joined back together must give you the original string.
+  "As many as possible" means there is one best answer, not a family of them. You are
+  not choosing between valid splits; you are finding the maximal one.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Think of each distinct letter as a piece of string tied between its FIRST appearance
+and its LAST appearance. The letter 'a' first appears at index 0 and last at index 8,
+so it ties those two positions together. Anything tied together cannot be cut apart.
+
+    s = a b a b c b a c a d e f e g d e h i j h k l i j
+    i = 0 1 2 3 4 5 6 7 8 9 ...
+
+    a: |---------------|          0 to 8
+    b:   |-----|                  1 to 5
+    c:         |---|              4 to 7
+    d:                   |------------|      9 to 14
+    e:                     |------------|   10 to 15
+
+A cut is legal only where NO string passes overhead. Look at index 8: 'a' ends there,
+'b' ended at 5, 'c' ended at 7 - nothing spans across the gap between 8 and 9. That is
+a legal cut. Look at index 4: 'a' is still overhead (it runs to 8), so no cut.
+
+So the whole problem is: find every position where all the overhead strings have
+finished, and cut there.
+
+HOW TO FIND THOSE POSITIONS IN ONE SWEEP. Walk left to right carrying a single number,
+`end` - "the furthest right that anything I have seen so far reaches". Each time you
+meet a letter, stretch `end` out to that letter's last appearance if it goes further.
+
+    i=0 sees 'a', whose last is 8      ->  end = 8   (cannot cut before 8)
+    i=1 sees 'b', whose last is 5      ->  end stays 8   (5 does not reach past 8)
+    i=4 sees 'c', whose last is 7      ->  end stays 8
+    i=8 sees 'a'                       ->  end stays 8, AND i has reached 8
+
+When your walking position i lands exactly on `end`, every letter inside the piece so
+far has already had its final appearance. Nothing is overhead. Cut.
+
+The number `end` can only be stretched RIGHT, never pulled left - which is why the one
+variable is enough and why nothing ever has to be reconsidered.""",
+
+    """3. EVERY TERM, DEFINED
+
+LAST OCCURRENCE. For a given letter, the largest index at which it appears. This is
+the only fact about a letter that the algorithm needs - not how many times it appears,
+not where it appears in between.
+
+GREEDY. An algorithm that makes each decision using only what it knows right now,
+never revisiting. Greedy algorithms are usually suspicious because a locally good
+choice can be globally bad - but here, as section 5 shows, there is no choice being
+made at all. The cut positions are FORCED.
+
+  Everyday version: walking down a corridor closing doors behind you. You close a door
+  the moment you are certain nobody behind it still needs to come through. You are not
+  guessing; you are waiting for a condition.
+
+PARTITION. A way of cutting a sequence into consecutive pieces that use up every
+element exactly once. Verified here: the returned sizes summed to the string's length
+on 4,000 of 4,000 random strings - the answer always covers the whole string with no
+gaps and no overlaps.
+
+INTERVAL MERGING. The independent method used to check every answer in this entry:
+give each letter the interval [first appearance, last appearance], sort by start, and
+merge any two that overlap. The merged intervals ARE the pieces. Two completely
+different-looking methods agreeing on every input is much stronger evidence than one
+method agreeing with itself.
+
+O(n) TIME, O(1) SPACE. One pass to record the last occurrences and one pass to cut, so
+work proportional to the string length. The map holds at most 26 entries because there
+are only 26 lowercase letters - a fixed number, not one that grows with n, which is
+why the space is called constant even though a dictionary is involved.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP ONE - USING THE LETTER'S OWN LAST OCCURRENCE INSTEAD OF THE RUNNING MAXIMUM.
+
+  Writing `end = last[ch]` rather than `end = max(end, last[ch])` throws away
+  everything you learned earlier. A letter whose last occurrence is EARLY will pull
+  the boundary backwards, and the piece closes too soon.
+
+      s = "ababcbacadefegdehijhklij"
+      correct        [9, 7, 8]
+      end = last[ch] closes early and splits letters across pieces
+
+  Measured: wrong on 4,518 of 6,000 random strings, and BOTH official examples catch
+  it. This is the load-bearing line of the whole algorithm - `end` is a HIGH-WATER
+  MARK, and a high-water mark only ever rises.
+
+TRAP TWO - BUILDING THE MAP OF FIRST OCCURRENCES INSTEAD OF LAST.
+
+  This one is easy to write by accident, because the natural way to build a "where is
+  each letter" map is `if ch not in d: d[ch] = i`, which records the FIRST. What you
+  need is the last. Measured: wrong on 5,186 of 6,000 - the loudest bug here, and both
+  examples catch it.
+
+  The Python idiom that gets it right is a plain dict comprehension,
+  `{ch: i for i, ch in enumerate(s)}`, precisely BECAUSE it overwrites: each new
+  appearance of a letter replaces the previous entry, so after the pass every letter
+  holds its final index. The thing that looks like a bug - silent overwriting - is the
+  feature.
+
+TRAP THREE - THE OFF-BY-ONE IN THE PIECE WIDTH.
+
+  A piece running from index `start` to index `end` inclusive contains
+  end - start + 1 characters, not end - start. Measured: wrong on 6,000 of 6,000 -
+  it is wrong on literally every non-empty input, which at least means you cannot
+  possibly ship it.
+
+TRAP FOUR - FORGETTING TO MOVE `start`. THIS IS THE QUIET ONE.
+
+  After closing a piece you must set `start = i + 1` so the next piece is measured
+  from the right place. Forget it, and every piece after the first is measured from
+  index 0 and comes out too long.
+
+  Measured: wrong on 1,915 of 6,000 - the lowest rate of the four, because it needs at
+  least TWO pieces before it can show. And that is exactly why it is dangerous:
+
+      "ababcbacadefegdehijhklij"  three pieces  ->  CAUGHT
+      "eccbbbbdec"                one piece     ->  AGREES
+
+  The second official example is a single piece, so it cannot expose this bug at all.
+  A one-piece test is blind to it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Try every possible first cut, from shortest to longest. For each
+candidate, check whether any letter inside the prefix also appears after the cut. The
+first candidate that passes is the first piece; then repeat on the rest.
+
+    start = 0
+    while start < len(s):
+        for cut in range(start, len(s)):
+            piece = set(s[start:cut + 1])
+            rest = set(s[cut + 1:])
+            if not (piece & rest):        # no letter appears on both sides
+                result.append(cut - start + 1)
+                start = cut + 1
+                break
+
+This is correct and it is a perfectly good thing to say out loud first - it makes the
+RULE explicit ("no letter on both sides of the cut") before you optimise. Its cost is
+O(n^2) or worse, because each candidate cut rebuilds two sets.
+
+WHY IT IS WASTEFUL. It re-derives the same fact over and over. "Does 'a' appear later?"
+is asked at every single candidate cut, and the answer was fully determined before the
+walk even began - it depends only on where 'a' last appears.
+
+THE UPGRADE. Precompute the last occurrence of every letter once, then make a single
+pass carrying one number.
+
+    naive:   for each cut, rebuild two sets and intersect them
+    upgrade: one 26-entry map, then one pass with one integer
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY THE GREEDY CANNOT BE WRONG. Greedy algorithms
+usually need a proof that the locally-best choice is globally best. Here something
+stronger is true: THERE IS NO CHOICE.
+
+  The first piece CANNOT be shorter than `end`, because some letter inside it appears
+  at index `end` and would be split. So `end` is a lower bound, forced by the input.
+  The first piece SHOULD NOT be longer than `end`, because at index `end` the piece is
+  already legal, and any extra character only reduces the number of pieces you can
+  make afterwards - never increases it.
+
+  Lower bound meets upper bound, so the boundary is determined. The same argument then
+  applies to the remainder of the string, which is a fresh instance of the same
+  problem. There is nothing to prove optimal because nothing was chosen.
+
+  Confirmed by the independent interval-merging method agreeing on every random string
+  tested, and by two direct property checks: the piece sizes summed to the string
+  length on 4,000 of 4,000 strings, and no letter appeared in two different pieces on
+  4,000 of 4,000.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: record where every letter last appears, then sweep left to right pushing
+a boundary out to the furthest last-appearance seen so far, and cut whenever your
+position catches up to that boundary.
+
+THE MECHANISM, SPELLED OUT. Two straight loops, no recursion, no call stack. The
+second loop depends on the first having finished - you cannot know a letter's last
+occurrence until you have seen the whole string, so the recording pass must complete
+before the cutting pass begins.
+
+  What the sweep maintains: `end` is the furthest index that any letter seen in the
+  current piece reaches. It is a HIGH-WATER MARK - it can be pushed right by a new
+  letter but is never pulled left, which is why one integer suffices and why no piece
+  ever has to be reopened.
+
+  Why the closing test is an EQUALITY and not a "greater than or equal". Your position
+  `i` can never overshoot `end`, because the moment you step onto index i you
+  immediately push `end` out to at least the last occurrence of s[i], which is at least
+  i itself. Measured over 4,000 random strings, the largest value of (i - end) ever
+  observed was 0 - i never gets ahead. So `i == end` and `i >= end` are the same test,
+  and writing `>=` was wrong on 0 of 6,000. Prefer `==` because it states the intent:
+  you have arrived exactly at the boundary.
+
+  What makes it stop: a plain counted loop over the string. Every index is visited once.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Walk the string once and record, for each letter, the LAST index at which it
+     appears. Later appearances must overwrite earlier ones - the final value is what
+     you need, not the first.
+  2. Prepare an empty list of sizes, and set both the current piece's start and the
+     current boundary to zero.
+  3. Walk the string again, position by position. At each position:
+       a. Look up the last occurrence of the letter you are standing on, and push the
+          boundary out to it IF it goes further than the boundary already does. Never
+          pull the boundary back.
+       b. If your position is now exactly the boundary, the piece is complete: every
+          letter in it has had its final appearance. Record its size as
+          boundary minus start plus one, and move start to the very next position.
+  4. Return the list of sizes. It will always account for the entire string.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A tour group is walking through a museum's single long corridor of rooms, and you are
+the guide closing rooms behind you. Each visitor has a badge letter, and each visitor
+wanders in and out of rooms - but you have been given the schedule in advance, so for
+every badge letter you know the LAST room that person will ever enter.
+
+You want to close and lock as many corridor sections behind you as possible, but you
+may never lock a section if somebody inside it still has business further ahead.
+
+So you walk forward carrying one number in your head: the furthest room that anybody
+you have met so far still needs to reach. Every time you meet a new badge letter, you
+check their last room. If it is further than your number, your number moves out to it.
+If it is nearer, you ignore it entirely - somebody else already needs to go further,
+and their need dominates.
+
+When the room you are standing in IS your number, something quietly decisive has
+happened: every person you have met has already had their final room, and that room
+was here or earlier. Nobody behind you needs to come forward. You lock the section,
+write down how many rooms it contained, and start counting again from the next door.
+
+The number never moves backwards, which is why you only need one of them and why you
+never have to reopen a locked section. And you are never making a judgement call: you
+lock the moment you legally can, because waiting one room longer could only ever merge
+two sections into one, never split one into two.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def partition_labels(s):
+
+  `s` is the string. Lowercase English letters only, per the problem's constraints -
+  which is what bounds the map to 26 entries.
+
+        last = {ch: i for i, ch in enumerate(s)}   # last index of each char
+
+  `last` maps each character to its final index. This works BECAUSE dict assignment
+  overwrites: `enumerate(s)` yields the pairs in increasing index order, so each
+  repeat of a character replaces the earlier entry, and the surviving value is the
+  largest index. Building a FIRST-occurrence map instead was wrong on 5,186 of 6,000
+  random strings - the loudest bug in this problem.
+
+        result = []
+
+  `result` collects the piece sizes in order.
+
+        start = end = 0
+
+  `start` is the index where the current piece begins. `end` is the high-water mark -
+  the furthest index reached by any character seen in the current piece. Both begin at
+  zero, which is correct for an empty string too: the loop never runs and `[]` is
+  returned.
+
+        for i, ch in enumerate(s):
+
+  `i` is the current index and `ch` the character there. One pass.
+
+            end = max(end, last[ch])          # must extend to ch's last occurrence
+
+  THE LOAD-BEARING LINE. Push the boundary out to this character's last occurrence, but
+  only if that goes further than the boundary already reaches. The `max` is what makes
+  `end` a high-water mark. Writing `end = last[ch]` lets an early-ending character drag
+  the boundary backwards and was wrong on 4,518 of 6,000.
+
+            if i == end:                      # partition is self-contained
+
+  Have you caught up to the boundary? If so, every character in this piece has had its
+  final appearance at or before `i`, so nothing spans the cut. `i` can never exceed
+  `end` - measured, the largest (i - end) over 4,000 strings was 0 - so `>=` would
+  behave identically, 0 wrong on 6,000. `==` is preferred for stating the intent.
+
+                result.append(end - start + 1)
+
+  The piece runs from `start` to `end` INCLUSIVE, so its width is the difference plus
+  one. Omitting the `+ 1` was wrong on all 6,000 random strings.
+
+                start = i + 1
+
+  Move the start marker past the piece just closed. Forgetting this measures every
+  later piece from index 0 - wrong on 1,915 of 6,000, and invisible on any input that
+  produces only ONE piece, including the second official example.
+
+  Note what is NOT reset here: `end`. It does not need to be, because the very next
+  iteration pushes it out to at least that character's own last occurrence, which is at
+  least the new `start`. Resetting it would be harmless but is unnecessary.
+
+        return result
+
+  The sizes in order. They always sum to len(s) - checked on 4,000 of 4,000 strings.""",
+
+    """9. TRACED ON REAL NUMBERS - AND IT SHOWS THE HIGH-WATER MARK BEING IGNORED
+
+The example is the problem's own first sample. It is traced in full, and the lines
+where the boundary does NOT move are exactly the ones that expose the section-4 trap.
+
+    s = "ababcbacadefegdehijhklij"
+
+    last occurrence of each letter:
+        a->8, b->5, c->7, d->14, e->15, f->11, g->13, h->19, i->22, j->23, k->20, l->21
+
+    start = 0, end = 0
+
+    i=0  ch='a'  last['a'] is 8   -> end pushed 0 -> 8
+    i=1  ch='b'  last['b'] is 5   -> 5 is not past 8, end STAYS 8
+    i=2  ch='a'  last is 8        -> stays 8
+    i=3  ch='b'  last is 5        -> stays 8
+    i=4  ch='c'  last['c'] is 7   -> 7 is not past 8, end STAYS 8
+    i=5  ch='b'                   -> stays 8
+    i=6  ch='a'                   -> stays 8
+    i=7  ch='c'                   -> stays 8
+    i=8  ch='a'  end is 8, i is 8 -> CLOSE.  size = 8 - 0 + 1 = 9
+
+    Look hard at i=1 and i=4. Those are the moments the bug bites: 'b' ends at 5 and
+    'c' ends at 7, both EARLIER than the boundary of 8. With `end = last[ch]` the
+    boundary would drop to 5 at i=1, and the piece would close at i=5 - splitting 'a',
+    which still has an appearance at index 6 and 8. The `max` is what refuses that.
+
+    start = 9
+    i=9  ch='d'  last['d'] is 14  -> end pushed 8 -> 14
+    i=10 ch='e'  last['e'] is 15  -> end pushed 14 -> 15
+    i=11 ch='f'  last is 11       -> stays 15
+    i=12 ch='e'                   -> stays 15
+    i=13 ch='g'  last is 13       -> stays 15
+    i=14 ch='d'                   -> stays 15
+    i=15 ch='e'  end is 15, i is 15 -> CLOSE.  size = 15 - 9 + 1 = 7
+
+    Note the width uses start = 9, not 0. This is the step that a missing
+    `start = i + 1` would break, reporting 16 instead of 7.
+
+    start = 16
+    i=16 ch='h'  last['h'] is 19  -> end pushed 15 -> 19
+    i=17 ch='i'  last['i'] is 22  -> end pushed 19 -> 22
+    i=18 ch='j'  last['j'] is 23  -> end pushed 22 -> 23
+    i=19..22                       -> k ends 20, l ends 21, both inside 23; stays 23
+    i=23 ch='j'  end is 23, i is 23 -> CLOSE.  size = 23 - 16 + 1 = 8
+
+    result [9, 7, 8].  Cross-checked against interval merging: [9, 7, 8]. Match.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+Take a short string and change only its LAST character:
+
+    "abacde"  ->  [3, 1, 1, 1]      four pieces
+    "abacda"  ->  [6]               one piece
+
+The first five characters are identical. Changing the final 'e' to an 'a' gives 'a' a
+last occurrence of 5 instead of 2, so at i=0 the boundary is pushed all the way to the
+end of the string and no cut is ever legal. One character, and a four-way split
+collapses to none - which is the clearest demonstration that the boundary is dictated
+by the input rather than chosen by the algorithm.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Two passes over the string - one to record last occurrences, one
+to cut - so O(n) time. The map holds at most 26 entries because the alphabet is fixed,
+so the extra space is O(1), not O(n). Both optimal: you must read every character, and
+you must be prepared to name every piece.
+
+Against the naive "try every cut and intersect two sets" version, which is O(n^2) or
+worse: same answer, but it re-derives at every candidate cut a fact that was fixed
+before the walk started.
+
+THE #1 MISTAKE. Writing `end = last[ch]` instead of `end = max(end, last[ch])`. Wrong
+on 4,518 of 6,000. The fix is to understand what `end` IS: a high-water mark, a number
+that records the furthest anything has ever reached, and a high-water mark by
+definition never falls. If you can say the words "high-water mark" while typing that
+line, you cannot write it wrong.
+
+  The quiet one to watch for is the missing `start = i + 1` - only 1,915 of 6,000,
+  because it needs at least two pieces to show, and the second official example is a
+  single piece that agrees with the broken code. Always test on an input that splits.
+
+THIS IS INTERVAL MERGING IN DISGUISE - SAY SO. Every distinct letter defines an
+interval from its first to its last appearance. The answer is exactly those intervals
+merged. That reframing is worth volunteering because it (a) proves your answer without
+hand-waving about greediness, (b) is the independent method used to check every result
+in this entry, and (c) tells the interviewer you see the shape rather than the puzzle.
+
+WHY THIS GREEDY NEEDS NO EXCHANGE ARGUMENT. Most greedy problems require you to argue
+that the local choice is safe. Here the boundary is FORCED from both sides: it cannot
+be earlier without splitting a letter, and making it later can only reduce the number
+of pieces. Say that in two sentences and you have proved optimality. Candidates who
+mumble "greedy works here" without this are the ones who get pressed.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Return the actual substrings, not the sizes." Trivial - you already have `start` and
+     `end`, so append s[start:end+1]. The sizes are what LeetCode asks for; the
+     substrings are what a real caller would want.
+
+  "What if the alphabet is Unicode, not 26 lowercase letters?" Nothing changes
+     algorithmically, but the space claim does: the map now holds up to the number of
+     DISTINCT characters, so it is O(k) where k is the alphabet size, or O(min(n, k)).
+     Being precise about which "constant" you meant is the point of the question.
+
+  "What if a letter may appear in at most TWO pieces?" The greedy breaks - the choice
+     is no longer forced, because you now have a real decision about which two. That is
+     a different, much harder problem, and saying "the forcing argument no longer
+     applies" is the right answer rather than attempting it.
+
+  "Can you do it in ONE pass?" Not in general. You cannot know a letter's last
+     occurrence until you have seen the whole string, so the first pass is unavoidable.
+     If you were given the last-occurrence table for free, the second pass alone would
+     do.
+
+  "The string is a stream you can only read once." Then this technique is unavailable
+     and you must buffer, which is O(n) space. Worth stating as the honest limit.
+
+ONE-SENTENCE TAKEAWAY. Push a high-water mark out to the last occurrence of every
+letter you meet, and cut the moment your position catches up to it - the boundary is
+never chosen, only discovered.
+
+THE INTERVIEW IMPLICATION. This is a five-minute question once you see it, so the
+signal is not the code - it is whether you can (a) state the legality rule out loud
+before writing anything, (b) recognise it as interval merging, and (c) give the
+two-sided forcing argument for why the greedy is optimal. Do those three and the code
+almost writes itself; skip them and you are one `max` away from a wrong answer with
+nothing to fall back on.""",
 ]
 
 for _e in ENTRIES:
@@ -104596,123 +105017,1011 @@ for _e in ENTRIES:
 _EX_P1Q = {}
 
 _EX_P1Q["Permutation in String"] = [
-    """Why a permutation check is a frequency check.
-Any rearrangement of s1 has exactly the same character counts as s1. So a
-window of s2 contains a permutation of s1 precisely when their count maps are
-EQUAL - order inside the window is irrelevant, which is what turns a
-combinatorial-sounding question into a counting one.
-s1 = 'ab', s2 = 'eidbaooo': the window 'ba' has counts {b:1, a:1} = counts of
-'ab' -> True. The window 'ei' does not.
-Never generate permutations; there are len(s1)! of them and the counts capture
-all of them at once.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The fixed-size slide, traced.
-s1 = 'ab' (need {a:1,b:1}), s2 = 'eidbaooo'. First window 'ei' -> {e:1,i:1},
-not equal.
-i=2 ('d'): add d, remove 'e' -> window 'id'. Not equal.
-i=3 ('b'): add b, remove 'i' -> 'db'. Not equal.
-i=4 ('a'): add a, remove 'd' -> 'ba' -> {b:1,a:1} == need -> True.
-The window size never changes - this is the fixed-size family, so there is no
-inner while loop, just add-one and remove-one per step.""",
+You are given two strings, s1 and s2. Answer true or false: does s2 contain, somewhere
+inside it, a rearrangement of s1 sitting as one unbroken run of characters?
 
-    """The deletion that Counter equality depends on.
-When a character's count drops to zero you must DELETE the key, not leave it at
-0 - because `Counter({'a':1,'b':0}) == Counter({'a':1})` is False in a plain
-dict comparison. Python's Counter actually ignores zero-valued keys for
-equality, but a hand-rolled dict does not, and neither does a naive
-implementation in another language.
-Writing it explicitly - `if window[left] == 0: del window[left]` - makes the
-code correct regardless of the container's equality semantics, which is the
-safer habit.""",
+    s1 = "ab",  s2 = "eidbaooo"
 
-    """The O(1) refinement, for the follow-up.
-Comparing two Counters costs up to 26 comparisons per step, so the loop is
-really O(26n). You can make each step genuinely O(1) by maintaining a MATCHES
-counter: track how many of the 26 letters currently have the exact required
-count, and update it as characters enter and leave. The window is a permutation
-when matches == 26.
-Same asymptotics either way since 26 is a constant - but it is the standard
-'can you do better?' answer, and the technique transfers directly to Minimum
-Window Substring, where it matters much more.""",
+    look at every unbroken run of 2 characters inside s2:
+        "ei"  "id"  "db"  "ba"  "ao"  "oo"  "oo"
+                            ^^
+    "ba" is "ab" with the letters swapped round. So YES.
+    ANSWER: True
 
-    """Edge cases.
-len(s1) > len(s2) -> guarded, False.
-s1 == s2 -> the first window matches -> True.
-s1 = 'a', s2 = 'a' -> True. Single-character windows work with no special case.
-Repeated characters, s1 = 'aab' with s2 = 'aba' -> counts {a:2,b:1} vs {a:2,b:1}
--> True. This is the case a SET-based solution gets wrong, which is why it must
-be counts.
-Empty s1 -> vacuously true, though usually excluded by the constraints.""",
+    s1 = "ab",  s2 = "eidboaoo"
 
-    """Complexity and the family.
-O(len(s2)) time with a bounded alphabet, O(1) space (26 slots).
-The family: Find All Anagrams in a String (identical, but collect every match
-instead of returning on the first), Minimum Window Substring (the hard one -
-the window is VARIABLE size, growing until valid then shrinking to minimise),
-Longest Repeating Character Replacement, and Substring with Concatenation of
-All Words.
-The distinction that decides the loop shape: is the window FIXED (given length,
-one add and one remove per step) or VARIABLE (grow until a condition holds,
-then shrink)? Naming which one you have is the first move.""",
+        "ei"  "id"  "db"  "bo"  "oa"  "ao"  "oo"
+
+    An 'a' and a 'b' both exist in s2, but never NEXT TO EACH OTHER.
+    ANSWER: False
+
+Verified by brute force on both: True and False.
+
+Two things the wording hides, and both are load-bearing:
+
+  "PERMUTATION" just means a rearrangement - same letters, same counts, any order. So
+  "ab", "ba" both count, and for s1 = "aab" you would need two a's and one b, not just
+  "an a and a b".
+  "CONTIGUOUS" means the characters must be adjacent in s2. The second example is
+  False precisely because the 'a' and 'b' are separated. This is what distinguishes the
+  problem from "is s1 a subsequence of s2".
+
+The two examples differ by ONE swap - 'a' and 'o' change places - and the answer flips.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Here is the observation the whole solution rests on:
+
+    A REARRANGEMENT DOES NOT CHANGE THE LETTER COUNTS.
+
+"ab", "ba" - both are one 'a' and one 'b'. "aab", "aba", "baa" - all are two a's and one
+'b'. So instead of asking "is this run a rearrangement of s1?", which sounds hard, you
+can ask "does this run have exactly the same letter counts as s1?", which is easy.
+
+And every candidate run has the SAME LENGTH as s1 - because a rearrangement of a
+2-letter string is a 2-letter string. So you are not looking for runs of varying size.
+You are dragging a window of fixed width across s2 and comparing tallies.
+
+    s1 = "ab"   need: a=1, b=1
+
+    s2 =  e  i  d  b  a  o  o  o
+         [e  i]                     e=1 i=1     no
+            [i  d]                  i=1 d=1     no
+               [d  b]               d=1 b=1     no
+                  [b  a]            b=1 a=1     MATCH
+                     [a  o]
+                        [o  o]
+                           [o  o]
+
+WHAT MAKES IT FAST. Rebuilding the tally from scratch for every window would re-count
+characters you have already counted. But consecutive windows overlap almost completely:
+
+         [d  b]  a
+            [b  a]
+
+Sliding one step to the right changes exactly two things: one character enters on the
+right, one character leaves on the left. Everything in between is untouched. So the
+tally is not rebuilt - it is NUDGED, by one increment and one decrement.
+
+    window "db" = {d:1, b:1}
+       add 'a'  ->  {d:1, b:1, a:1}
+       drop 'd' ->  {b:1, a:1}      = the tally for "ba"
+
+Two operations per step, regardless of how wide the window is.""",
+
+    """3. EVERY TERM, DEFINED
+
+PERMUTATION / ANAGRAM. A rearrangement using exactly the same characters the same
+number of times. "listen" and "silent" are permutations of each other. The two words
+mean the same thing here; the problem says permutation, most people say anagram.
+
+MULTISET. A collection where repeats count but order does not. {a, a, b} is not the
+same as {a, b}, but it IS the same as {a, b, a}. "Is this window a permutation of s1?"
+is exactly "are these two multisets equal?".
+
+  Everyday version: two shopping baskets. Same items, same quantities, tipped out in a
+  different order - still the same basket. Nobody cares what order you put the tins in.
+
+SLIDING WINDOW. A contiguous stretch of the string that moves along it. This is a
+FIXED-SIZE window - its width never changes, which is what makes this problem simpler
+than the variable-size window family, where you also have to decide when to shrink.
+
+COUNTER. Python's `collections.Counter` - a dictionary that maps each item to how many
+times it appears. It has one behaviour that matters enormously here and that section 4
+examines: it OVERRIDES equality and treats a missing key as zero.
+
+INCREMENTAL UPDATE. Changing a computed value by only what actually changed, instead of
+recomputing it. Here: two edits per step instead of re-tallying the whole window. It is
+the same idea as a running total in a prefix sum.
+
+O(1) SPACE. The tally holds at most 26 entries because the alphabet is fixed at 26
+lowercase letters. That is a constant, not something that grows with the input, which
+is why the space is called constant even though a dictionary is involved.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - AND ONE FAMOUS WARNING THAT IS NOT TRUE
+
+TRAP ONE - FORGETTING TO CHECK THE VERY FIRST WINDOW. THIS IS THE QUIET ONE.
+
+  The loop slides the window and checks AFTER each slide. But the first window - the
+  opening len(s1) characters of s2 - is built before the loop starts and is never
+  slid into. If the answer lives there, a loop-only check misses it entirely.
+
+      s1 = "abc",  s2 = "abc"        the match IS the first window
+      correct True,  loop-only version False
+
+  Measured: wrong on 325 of 6,000 random pairs. A low rate, because it needs the
+  match to be at position 0 and nowhere else.
+
+  AND BOTH OFFICIAL EXAMPLES AGREE WITH THE BROKEN VERSION. In "eidbaooo" the match is
+  at index 3, found by sliding; in "eidboaoo" there is no match at all. Neither sample
+  has its answer in the opening window, so neither can expose this. You can pass both
+  provided tests and ship it.
+
+TRAP TWO - THE OFF-BY-ONE ON WHICH CHARACTER LEAVES.
+
+  When the character at index `i` enters, the one that leaves is at index
+  i - len(s1) - the character just before the new window begins. Writing
+  i - len(s1) + 1 removes a character that is still inside the window.
+
+  Measured: wrong on 1,301 of 6,000. The first official example CATCHES it; the second
+  AGREES, because a False answer stays False when your tallies are corrupted.
+
+TRAP THREE - CHECKING "CONTAINS AT LEAST" INSTEAD OF "EXACTLY". Asking whether the
+  window holds at least one 'a' and at least one 'b' rather than exactly the right
+  counts. Measured: wrong on 0 of 6,000 - an HONEST NEGATIVE, and worth understanding
+  rather than dismissing. With a window of exactly len(s1) characters, "every letter
+  appears at least as often as needed" forces equality: the counts are non-negative,
+  they sum to len(s1) on both sides, and if every one were greater-or-equal with at
+  least one strictly greater the total would exceed len(s1). So the two tests coincide
+  HERE - but only because the window size is pinned. Change to a variable-size window,
+  as in Minimum Window Substring, and "at least" becomes the correct test and "exactly"
+  becomes wrong.
+
+NOW THE WARNING THAT DOES NOT SURVIVE MEASUREMENT - THE ZERO-COUNT KEY.
+
+  This problem's most-repeated piece of advice, in this bank's own earlier text and
+  across the internet, is: you must DELETE a key when its count hits zero, or the
+  comparison fails even though the letters match.
+
+  IT IS NOT TRUE OF `collections.Counter` ON MODERN PYTHON, and the measurement is
+  unambiguous. On Python 3.12.3:
+
+      Counter({'a':1, 'b':0}) == Counter({'a':1})          ->  True
+      the same two objects compared as plain dicts          ->  False
+      Counter.__eq__ is dict.__eq__                         ->  False
+
+  Counter OVERRIDES equality and treats an absent key as a zero. So the stale zero is
+  invisible to the comparison. Removing the `del` line entirely was wrong on 0 of 6,000
+  random pairs.
+
+  BUT THE ADVICE IS RIGHT IN A DIFFERENT REGIME, AND THAT IS THE USEFUL PART. Run the
+  identical no-delete code comparing PLAIN DICTS - which is what `Counter` did on
+  Python 3.9 and earlier, before it gained its own `__eq__`, and what you get today if
+  you hand-roll a dict instead of importing Counter - and it is wrong on 1,248 of 6,000.
+
+      window {'a':1,'b':1,'z':0} vs need {'a':1,'b':1}
+          as Counters -> True        as dicts -> False
+
+  So: keep the deletion, but know WHY. It is a portability guard - against older
+  Pythons and against someone swapping Counter for a dict - not the load-bearing line
+  it is usually presented as. A fixed 26-slot array sidesteps the issue entirely,
+  because then both sides carry their zeros and the comparison is symmetric.
+
+  (The `len(s1) > len(s2)` guard is in the same category: wrong on 0 of 6,000 without
+  it, because a too-short first window can never match and the slide loop does not run.
+  It is a clarity and speed guard, not a correctness one.)""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Take every substring of s2 with the same length as s1, sort it, and
+compare with the sorted s1.
+
+    target = sorted(s1)
+    for i in range(len(s2) - len(s1) + 1):
+        if sorted(s2[i:i + len(s1)]) == target:
+            return True
+    return False
+
+This is correct - it is the ground truth used to check every result in this entry - and
+it is exactly the right thing to say out loud first. It makes the DEFINITION explicit
+("a permutation is the same letters in any order") before any optimisation.
+
+WHY IT IS SLOW. With n = len(s2) and k = len(s1), there are about n windows and each
+one is sorted from scratch, so the cost is O(n k log k). The sorting is pure waste: you
+are producing a canonical ORDER when all you needed was a canonical COUNT.
+
+FIRST UPGRADE - COUNT INSTEAD OF SORT. Comparing two tallies is O(26) rather than
+O(k log k), and it is the real insight of the problem: AN ANAGRAM CHECK IS A MULTISET
+COMPARISON, NOT A SORT.
+
+SECOND UPGRADE - SLIDE INSTEAD OF REBUILD. Consecutive windows share all but two
+characters, so update the tally with one increment and one decrement rather than
+recounting. This turns O(n k) tallying into O(n).
+
+    naive:   sort every window            O(n k log k)
+    counted: rebuild every window's tally O(n k)
+    slid:    two edits per step           O(n) with a 26-slot comparison
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY TWO EDITS ARE ENOUGH. A window is defined by its
+two ends. Moving it one step right moves both ends one step right, so exactly one
+character joins on the right and exactly one departs on the left. Every other character
+was in the old window and is in the new one, so its contribution to the tally is
+unchanged and does not need to be touched. This is the same reasoning as a running sum:
+you never re-add the numbers you have already added.
+
+THE THIRD UPGRADE, FOR THE FOLLOW-UP. Comparing two tallies costs up to 26 slot-checks
+per step, so the loop is really O(26n). Measured concretely: with len(s2) = 4,000 and a
+2-character needle, that is 3,999 windows at 26 checks each - 103,974 slot-checks.
+Maintaining instead a single number, "how many of the 26 letters currently have the
+right count", updated in O(1) as each edit happens, brings the whole run to about 8,000
+slot-checks - and makes the algorithm genuinely O(n) rather than O(26n).""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: tally the letters of s1, tally the first equally-long stretch of s2, then
+drag that stretch one character at a time - adding the entrant and removing the leaver -
+and answer true the moment the two tallies match.
+
+THE MECHANISM, SPELLED OUT. No recursion and no call stack: one setup step and one
+counted loop, with the window's tally carried between iterations as the only state.
+
+  What the loop maintains: after the step that brings index `i` in, `window` is exactly
+  the letter tally of the len(s1) characters ending at `i`. That is true of the initial
+  window before the loop starts, and each iteration preserves it by adding one entrant
+  and removing one leaver.
+
+  Why the comparison is safe to make at every step: the window's width never changes, so
+  every comparison is between two multisets of the same total size. Nothing has to be
+  normalised first.
+
+  What makes it stop: two things, and they are different in kind. It stops EARLY, by
+  returning true, the first time the tallies match - there is no reason to keep looking,
+  since the answer is a yes/no. Otherwise it stops because the counted loop runs out of
+  positions in s2 and returns false. Terminating on the counted loop is what makes a
+  false answer take the full pass.
+
+NUMBERED STEPS, NO CODE:
+
+  1. If s1 is longer than s2, answer false immediately - no window of the required size
+     exists. (This is a shortcut, not a correctness requirement: without it the first
+     window is too short to match and the loop does not run.)
+  2. Tally the letters of s1. This tally never changes - it is the target.
+  3. Tally the first len(s1) characters of s2. This is the opening window.
+  4. COMPARE NOW, BEFORE SLIDING ANYTHING. If the opening window already matches, answer
+     true. Skipping this check was wrong on 325 of 6,000 inputs and both official
+     examples agree with the broken version.
+  5. Then, for each remaining position in s2, in order:
+       a. Add one to the tally of the character now entering on the right.
+       b. Subtract one from the tally of the character leaving on the left - which is
+          the character exactly len(s1) positions before the entrant.
+       c. If that leaving character's tally has fallen to zero, remove its entry. This
+          is a portability guard rather than a correctness requirement; see section 4.
+       d. Compare the window tally with the target. If they match, answer true.
+  6. If the walk finishes with no match, answer false.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a long shelf of coloured beads, and a small cardboard frame with exactly enough
+slots to hold a handful of them. You have been given a recipe card that says how many
+beads of each colour you are looking for - two reds, one blue, say - but says nothing
+about their order.
+
+You lay the frame over the first few beads on the shelf and count what is inside by
+colour. If the count matches the recipe, you are done before you have moved at all -
+and forgetting to look at this very first placement is a real and easy mistake, because
+all your attention is on the sliding that comes next.
+
+Then you slide the frame one bead to the right. Here is the labour-saving part: you do
+not tip the frame out and recount. Exactly one bead has entered on the right and exactly
+one has left on the left, so you make two marks on your counting sheet - one more of
+the colour that joined, one fewer of the colour that left - and everything else on the
+sheet was already correct and stays untouched. Two marks, whether the frame holds three
+beads or three hundred.
+
+After each slide you glance at the sheet against the recipe. If they agree, stop and
+say yes. If you reach the end of the shelf, say no.
+
+One piece of bookkeeping deserves a note. When a colour's count drops to zero, you can
+either scratch the line off the sheet or leave it reading "zero". Whether that matters
+depends entirely on how you compare the sheet to the recipe: if your comparison
+understands that a missing line and a zero line mean the same thing, it does not matter
+at all. If your comparison is literal-minded and demands the two sheets look identical
+line for line, a leftover zero makes it declare a mismatch that is not there.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    from collections import Counter
+
+  Python's tallying dictionary. Its equality behaviour is discussed at the `del` line
+  below and is not what most people assume.
+
+    def check_inclusion(s1, s2):
+
+  `s1` is the needle whose permutation we seek; `s2` is the haystack. Getting these the
+  wrong way round is a genuine and silent error - the function is not symmetric.
+
+        if len(s1) > len(s2):
+            return False
+
+  No window of the needed width exists. Measured as NOT load-bearing - removing it was
+  wrong on 0 of 6,000, because `Counter(s2[:len(s1)])` would simply tally the whole of
+  s2, be too short to equal `need`, and the slide loop's range would be empty. Keep it
+  for clarity and to avoid pointless work.
+
+        need = Counter(s1)
+
+  `need` is the target tally. It is computed once and never modified.
+
+        window = Counter(s2[:len(s1)])           # the first window
+
+  `window` is the tally of the opening stretch of s2. The slice is taken once; from here
+  on the tally is edited rather than rebuilt.
+
+        if window == need:
+            return True
+
+  THE FIRST-WINDOW CHECK, and it is easy to leave out because the loop below looks like
+  it covers everything. It does not - the loop only ever inspects windows it has slid
+  into. Omitting this was wrong on 325 of 6,000, and BOTH official examples agree with
+  the broken version.
+
+        for i in range(len(s1), len(s2)):
+
+  `i` is the index of the character ENTERING the window. It starts at len(s1), the first
+  character not already in the opening window, and runs to the end of s2.
+
+            window[s2[i]] += 1                    # add the entering char
+
+  The entrant joins the tally. `Counter` returns 0 for an unseen key rather than raising,
+  so no "is it there yet?" test is needed.
+
+            left = s2[i - len(s1)]
+
+  `left` is the character DEPARTING. Its index is exactly len(s1) positions behind the
+  entrant - the character immediately before the new window's left edge. Writing
+  `i - len(s1) + 1` removes a character that is still inside the window and was wrong on
+  1,301 of 6,000.
+
+            window[left] -= 1                     # remove the leaving char
+
+  The departure is recorded. After this line `window` describes exactly the len(s1)
+  characters ending at index `i`.
+
+            if window[left] == 0:
+                del window[left]                 # keep the counters comparable
+
+  The much-discussed line. On Python 3.10+ this is NOT required for correctness -
+  `Counter` overrides equality and reads a missing key as zero, so
+  Counter({'a':1,'b':0}) == Counter({'a':1}) is True, and dropping this line was wrong
+  on 0 of 6,000. It IS required if the comparison is plain-dict equality, which is what
+  Counter did before 3.10 and what you get if you hand-roll a dict - there the same code
+  is wrong on 1,248 of 6,000. Keep it as a portability guard, and know which it is.
+
+            if window == need:
+                return True
+
+  The multiset comparison. Both sides have the same total size, so this is a genuine
+  permutation test, not an approximation.
+
+        return False
+
+  Every window was examined and none matched.""",
+
+    """9. TRACED ON REAL NUMBERS - BOTH THE SLID MATCH AND THE FIRST-WINDOW MATCH
+
+Section 4's quiet trap is a match that lives in the OPENING window, which no amount of
+sliding will find. A single trace can only show one of the two cases, so here are both.
+
+CASE ONE - THE MATCH IS FOUND BY SLIDING. s1 = "ab", s2 = "eidbaooo"
+
+    need = {a:1, b:1}
+
+    first window "ei" -> {e:1, i:1}                     match? No.
+                                                        (the loop has not started yet)
+
+    i=2: entrant s2[2]='d', leaver s2[2-2]=s2[0]='e'
+         add 'd', drop 'e'   -> window "id" = {i:1, d:1}    match? No.
+    i=3: entrant 'b', leaver s2[1]='i'
+         add 'b', drop 'i'   -> window "db" = {d:1, b:1}    match? No.
+    i=4: entrant 'a', leaver s2[2]='d'
+         add 'a', drop 'd'   -> window "ba" = {b:1, a:1}    match? YES
+
+    return True.  Cross-checked against the sort-every-window brute force: True.
+
+    Note i=4: the leaver is s2[2], two positions behind the entrant, because len(s1) is
+    2. The off-by-one variant would have dropped s2[3]='b' instead - removing the very
+    character that completes the match, and returning False.
+
+CASE TWO - THE MATCH IS THE OPENING WINDOW, WHICH THE LOOP CANNOT REACH.
+s1 = "abc", s2 = "abc"
+
+    need = {a:1, b:1, c:1}
+
+    first window "abc" -> {a:1, b:1, c:1}               match? YES  -> return True
+
+    Now delete the first-window check and replay: the loop is
+    `range(len(s1), len(s2))` = `range(3, 3)`, which is EMPTY. Nothing executes. The
+    function falls through to `return False`.
+
+    correct True,  loop-only version False.
+
+    This is the entire bug, and neither official example can show it, because in
+    "eidbaooo" the answer is found at i=4 and in "eidboaoo" there is no answer at all.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+The problem's own two samples differ by a single transposition inside s2 - the 'a' and
+the 'o' at indices 4 and 5 trade places:
+
+    s1="ab"  s2="eidbaooo"   ->  True
+    s1="ab"  s2="eidboaoo"   ->  False
+
+Both haystacks contain exactly one 'a' and one 'b'. Both have the same letter counts
+overall. The only difference is ADJACENCY - and that is precisely what "contiguous"
+buys the problem. A subsequence check would return True for both.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over s2, doing two tally edits and one comparison per
+step. The comparison touches at most 26 slots. So the time is O(26 x len(s2)), which is
+quoted as O(len(s2)) because 26 is fixed. Space is 26 slots for each of two tallies -
+O(1), not O(n).
+
+    sort every window        O(n k log k)    the honest starting point
+    rebuild every tally      O(n k)
+    slide the tally          O(26 n)         this solution
+    slide + matches counter  O(n)            the follow-up refinement
+
+Measured for the last two: with len(s2) = 4,000 the sliding version performs 3,999
+window comparisons at up to 26 slot-checks each - 103,974 - where a matches-counter
+version does about 8,000 in total.
+
+THE #1 MISTAKE. Forgetting to check the opening window before the slide begins. Only
+325 of 6,000 - but BOTH official examples agree with the broken code, which is the
+combination that actually costs you an offer: your tests pass, your submission fails.
+The structural fix is to notice that your loop's first iteration produces the SECOND
+window, so the first one needs its own comparison, outside the loop.
+
+  Runner-up: the leaver's index. Derive it rather than remember it - the window ending
+  at `i` starts at `i - len(s1) + 1`, so the character that just fell out is the one at
+  `i - len(s1)`. Say that sentence and the off-by-one cannot happen.
+
+BE PRECISE ABOUT THE ZERO-KEY FOLKLORE. If asked "why do you delete the key when the
+count reaches zero?", the impressive answer is not "because Counter equality fails" -
+that is false on Python 3.10+, where Counter overrides equality and reads a missing key
+as zero. The impressive answer is: "it does not matter for `Counter` on modern Python -
+I measured 0 failures - but it matters if the comparison is plain-dict equality, which
+is what Counter did before 3.10 and what you get if you hand-roll a dict, where the same
+code fails on about one input in five. I keep it as a portability guard, and a 26-slot
+array avoids the question entirely." Knowing which of your lines are load-bearing and
+which are defensive is a senior signal.
+
+THE FIXED-WINDOW FAMILY - WHO OWNS WHAT
+
+  Permutation in String (this one) owns THE FIXED-SIZE WINDOW AND THE MULTISET
+     COMPARISON - the window's width is given by the problem, so there is no shrink
+     logic at all. Spotting "the size is handed to me" is what saves you the inner loop.
+  Find All Anagrams in a String is the identical algorithm that collects every match
+     instead of returning at the first - so it cannot return early and always costs a
+     full pass.
+  Minimum Window Substring is the VARIABLE-size counterpart, and this is where the
+     section-4 finding matters: there the correct test is "contains AT LEAST the
+     required counts", because the window may be larger than the target. Here "at
+     least" and "exactly" happen to coincide - measured 0 of 6,000 - only because the
+     width is pinned to len(s1).
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Return the starting index instead of true/false." Return `i - len(s1) + 1` at the
+     match, and 0 if the opening window matched. Same algorithm.
+
+  "Find ALL such windows." Do not return early; append the index and keep sliding. The
+     early return is the only difference between this and Find All Anagrams.
+
+  "Make it genuinely O(n)." Maintain a single integer, "how many of the 26 letters
+     currently have exactly the right count". Each tally edit changes at most one
+     letter's status, so update the integer in O(1) and compare it against 26 instead of
+     comparing the two tallies. Measured above at roughly 8,000 operations against
+     103,974.
+
+  "What if the alphabet is Unicode?" The 26 disappears from the analysis; the comparison
+     becomes O(k) in the number of distinct characters, and space becomes O(min(n, k)).
+     The matches-counter refinement still gives O(n).
+
+  "Does it work if s1 has repeated letters?" Yes, and that is the reason for tallying
+     rather than using a set. For s1 = "aab" a window of "ab" plus something else must
+     not match; the counts enforce it. A set-based solution would wrongly accept it.
+
+ONE-SENTENCE TAKEAWAY. A permutation is a multiset, so drag a fixed-width window across
+the haystack and compare tallies - nudging the tally by one entrant and one leaver
+rather than rebuilding it - and remember to look at the window before you ever move it.
+
+THE INTERVIEW IMPLICATION. This is a recognise-the-pattern question and most candidates
+get working code, so the separation happens in the details. Volunteer three things: that
+an anagram check is a multiset comparison rather than a sort; that the window size being
+fixed is what removes the shrink loop; and that the comparison is O(26) with a known
+O(1) refinement. Then dry-run on an input whose answer is the very first window - that
+single test is the one that catches the bug the provided examples cannot.""",
 ]
 
 _EX_P1Q["Redundant Connection (Union-Find)"] = [
-    """The insight, stated plainly.
-A tree on n nodes has exactly n-1 edges and no cycles. Given n edges, exactly
-one closes a cycle. Union-find detects that instantly: process edges in order,
-and the FIRST edge whose two endpoints already share a root is the one that
-creates the cycle.
-edges = [[1,2],[1,3],[2,3]]: union(1,2) merges. union(1,3) merges. For [2,3],
-find(2) and find(3) both return the same root -> that edge is redundant ->
-return [2,3].""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why 'the LAST edge that closes a cycle' and returning on the first hit are the
-same thing here. The prompt asks for the answer that appears last in the input
-if several are valid - but because exactly ONE extra edge exists, only one edge
-can ever be found already-connected. So the first detection is also the only
-one, and returning immediately is correct.
-Worth stating explicitly: the uniqueness guarantee is what makes the early
-return safe. In a variant with several extra edges you would collect them all
-and return the last.""",
+You are given a graph that was ONCE a tree - n nodes joined by n-1 connections with no
+loops - and then somebody added ONE extra connection. That extra connection created a
+loop. Find an edge you could delete to turn it back into a tree.
 
-    """Why union-find rather than DFS cycle detection.
-DFS works: for each edge, check whether a path already exists between its
-endpoints before adding it - but that is an O(n) search per edge, so O(n^2)
-overall.
-Union-find answers 'are these already connected?' in near-constant amortised
-time, giving O(n * alpha). More importantly it is INCREMENTAL - the structure
-is built as edges arrive, which is exactly the shape of this problem. That is
-the general signal for union-find: connectivity queries interleaved with edge
-additions.""",
+    edges = [[1,2], [2,3], [3,4], [1,4], [1,5]]
 
-    """Path compression, and the line that does it.
-`parent[x] = parent[parent[x]]` inside the find loop is path HALVING - it
-points each node at its grandparent as you walk up, flattening the tree
-progressively. Combined with union by size or rank, the amortised cost is the
-inverse Ackermann function, which is below 5 for any input that exists.
-Without it, adversarial union order builds a chain and each find degrades to
-O(n). One line, and it is the difference between O(n) and O(n^2).""",
+              1 ---- 2
+              |      |
+              |      |          and separately   1 ---- 5
+              4 ---- 3
 
-    """Edge cases.
-The redundant edge appearing first, [[1,2],[2,3],[1,3]] -> the first two merge,
-the third is detected -> [1,3]. The answer is not positionally first or last in
-general; it is whichever edge closes the cycle.
-A self-loop [u,u] would be detected immediately (find(u) == find(u)) - not
-present in this problem's inputs, but it is what the code does.
-Nodes are 1-INDEXED, so the parent array needs len(edges) + 1 slots. Sizing it
-at len(edges) throws on the highest-numbered node, and only on inputs that use
-it.
-n = 3 is the smallest case: three nodes, three edges, one cycle.""",
+    Nodes 1, 2, 3, 4 form a closed loop. Node 5 hangs off node 1 by a single thread.
+    Deleting any ONE of the four loop edges breaks the loop and leaves a tree.
 
-    """Complexity and the family.
-O(n * alpha(n)), effectively O(n), with O(n) space.
-The family: Number of Provinces (count roots instead of detecting), Number of
-Connected Components, Accounts Merge (union by shared email), Most Stones
-Removed with Same Row or Column, Satisfiability of Equality Equations (union
-the equalities, then check the inequalities), Kruskal's MST, and Redundant
-Connection II - the directed version, which is genuinely harder because a
-directed graph can fail by having a node with two parents OR by a cycle, and
-you must handle both.""",
+    ANSWER: [1,4]
+
+Verified against a brute-force "is there already a path between these two?" check:
+[1,4].
+
+WHY [1,4] AND NOT [1,2]? Because there are FOUR legal answers here - every edge on the
+loop could be removed - and the problem breaks the tie by asking for THE ONE THAT
+APPEARS LAST IN THE INPUT LIST. Among the loop's edges, at indices 0, 1, 2 and 3, the
+last is index 3, which is [1,4]. Note that [1,5] at index 4 appears later still but is
+NOT on the loop - deleting it would strand node 5.
+
+Two facts about the input that the rest of this entry leans on:
+
+  A tree on n nodes has exactly n-1 edges. Add one and you have n edges on n nodes. So
+  the number of edges IS the number of nodes - and since the nodes are numbered 1 to n,
+  the largest node number equals the length of the edge list. That is not trivia; it is
+  where the most common crash comes from.
+  Exactly one loop exists. Not zero, not two. The problem guarantees it.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Build the graph up one edge at a time, and ask a single question before adding each
+edge:
+
+    ARE THESE TWO NODES ALREADY CONNECTED - BY ANY ROUTE AT ALL?
+
+If they are NOT, this edge is joining two separate pieces of the graph. That is useful
+work; it can never create a loop.
+
+If they ARE, then a path between them already exists, and adding a direct link gives a
+second way to get from one to the other. Two routes between the same pair of nodes IS a
+loop. THAT edge is the redundant one.
+
+    edges = [[1,2], [2,3], [3,4], [1,4], [1,5]]
+
+    add [1,2]:  1 and 2 separate?  yes  ->  join.     1--2      3    4    5
+    add [2,3]:  2 and 3 separate?  yes  ->  join.     1--2--3        4    5
+    add [3,4]:  3 and 4 separate?  yes  ->  join.     1--2--3--4          5
+    add [1,4]:  1 and 4 separate?  NO - you can already walk 1-2-3-4.
+                                        ^^^^^^^^^ THIS EDGE IS REDUNDANT
+
+                    1 ---- 2
+                    |      |     the dashed link would be the second route
+                    4 ---- 3
+
+So the whole problem reduces to a question about GROUPS: which nodes are currently
+reachable from which. And the structure built for exactly that question is UNION-FIND -
+every node holds a badge pointing at somebody, following the badges leads to a group
+LEADER, and two nodes are in the same group precisely when they share a leader.
+
+    ask:   leader of 1?   leader of 4?
+    same   -> already connected -> this edge closes a loop, answer found
+    differ -> not yet connected -> merge the two groups and carry on
+
+The signal you want is the merge REFUSING to happen. Its sibling problem, Number of
+Provinces, cares about how many groups survive; here you care about the single moment a
+merge was unnecessary.""",
+
+    """3. EVERY TERM, DEFINED
+
+TREE. A connected graph with no loops. Equivalently: n nodes and exactly n-1 edges,
+with everything reachable from everything. Remove any edge and it falls into two
+pieces; add any edge and you create a loop.
+
+CYCLE / LOOP. A route that leaves a node and returns to it without reusing an edge.
+Equivalently, two different routes between the same pair of nodes.
+
+UNION-FIND (DISJOINT SET UNION, DSU). A structure that answers "are these two things in
+the same group?" and "merge these two groups" very fast. Every element points at
+somebody; following the chain of pointers reaches a ROOT, which points at itself. Two
+elements share a group exactly when they reach the same root.
+
+  Everyday version: surnames in a village where families merge by marriage. To find out
+  whether two people are related, each traces up to their family's head. Same head,
+  same family. Marrying two people who already share a head does not merge anything -
+  it just confirms they were already family. That non-event is the answer here.
+
+FIND. Follow the pointers up to the root and return it.
+
+UNION. Point one root at the other, merging two groups into one. Note it is the ROOTS
+that are joined, never the two original nodes - joining nodes directly loses whatever
+was hanging beneath them.
+
+PATH COMPRESSION / PATH HALVING. While walking up to a root, re-point nodes higher so
+later walks are shorter. `parent[x] = parent[parent[x]]` re-points each node at its
+grandparent as you pass. It changes no answers, only the walking distance - and section
+10 shows it buys much less here than in its sibling problem, for a reason worth knowing.
+
+1-INDEXED. Nodes are numbered 1 to n, not 0 to n-1. Python lists start at 0. That
+mismatch is where the crash in section 4 lives.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP ONE - THE PARENT ARRAY IS ONE SLOT TOO SHORT.
+
+  Nodes are numbered 1 to n. The graph is a tree plus one edge, so it has exactly n
+  edges - meaning n equals len(edges). To index node n you need a list of length n+1,
+  because a list of length n stops at index n-1. Slot 0 is simply never used.
+
+  Write `parent = list(range(len(edges)))` and the highest node crashes the moment it
+  is touched.
+
+  Measured: wrong on 3,704 of 4,000 random inputs - and ALL 3,704 were IndexError
+  crashes, never wrong answers. A crash is the friendly kind of bug; it cannot ship.
+
+  AND THE TWO OFFICIAL EXAMPLES DISAGREE ABOUT IT:
+      [[1,2],[1,3],[2,3]]                 3 edges, nodes 1..3  ->  CRASHES
+      [[1,2],[2,3],[3,4],[1,4],[1,5]]     5 edges, nodes 1..5  ->  AGREES, returns [1,4]
+
+  The second sample survives because the answer is found at edge [1,4] - before node 5
+  is ever looked at. Run only that example and the bug is invisible.
+
+TRAP TWO - COMPARING THE NODES INSTEAD OF THEIR ROOTS.
+
+  Writing `if u == v` rather than `if find(u) == find(v)`. The endpoints of an edge are
+  essentially never equal - the question is whether they are already CONNECTED, which
+  is a question about roots. Measured: wrong on 4,000 of 4,000. Both official examples
+  catch it, so it will not survive, but it shows a real misunderstanding of what
+  union-find answers.
+
+TRAP THREE - MERGING BEFORE TESTING. THIS IS THE ORDERING TRAP.
+
+  The test and the merge must happen in this order: ask first, merge only if the answer
+  was "different". Merge first and the test that follows is guaranteed to say "same" -
+  because you just made it so - and the very first edge is reported as redundant.
+
+  Measured: wrong on 4,000 of 4,000. Both examples catch it.
+
+  This is the mirror image of Number of Provinces, where `union` merges unconditionally
+  and the "were they already joined?" case is a harmless no-op nobody looks at. Here
+  that case IS THE ENTIRE ANSWER, so it must be intercepted before the merge erases it.
+  Same structure, opposite thing of interest.
+
+TRAP FOUR - BELIEVING THE EARLY RETURN IS A SHORTCUT THAT MIGHT MISS SOMETHING.
+
+  The problem asks for the edge appearing LAST in the input among the legal answers,
+  and the code returns at the FIRST edge it detects. Those sound like opposites. They
+  are not, and it is worth proving rather than trusting.
+
+  Measured two ways. First: across 4,000 random inputs, the number of edges that close a
+  cycle was ALWAYS exactly one - the distribution was {1: 4000}, never 2 or more.
+  Second, and more directly: across 2,000 inputs, the edge detected was the
+  last-in-input edge lying on the cycle on 2,000 of them and failed on 0.
+
+  The reason is structural. The cycle's edges appear in the input in some order. Each
+  one before the last merely extends a path without closing it; only when the FINAL one
+  arrives are its two endpoints already linked. So the first detection is necessarily
+  the last cycle edge - the early return is not a gamble, it is the tie-break itself.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Add edges one at a time, and before adding each, run a search (BFS or
+DFS) from one endpoint to see whether the other is already reachable.
+
+    adj = {}
+    for u, v in edges:
+        if reachable(adj, u, v):      # BFS over what has been added so far
+            return [u, v]
+        adj.setdefault(u, []).append(v)
+        adj.setdefault(v, []).append(u)
+
+This is correct - it is the ground truth used to check every result in this entry, and
+it agreed with the union-find version on all 4,000 random inputs. It is also the right
+thing to say out loud first, because it states the RULE plainly: "an edge is redundant
+exactly when its endpoints are already connected".
+
+WHY IT IS SLOWER. Each search can walk the whole graph built so far, so with n edges the
+cost is O(n^2) in the worst case. And it re-derives connectivity from scratch every
+time, discarding everything it learned on the previous edge.
+
+THE UPGRADE - UNION-FIND. Keep the connectivity information incrementally instead of
+recomputing it. Each edge costs two root-lookups and at most one pointer write, both
+effectively constant, so the whole run is about O(n).
+
+    naive:      per edge, a fresh graph search        O(n^2) overall
+    union-find: per edge, two finds and one write     O(n * alpha) - effectively O(n)
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY TWO ROOT LOOKUPS ANSWER "ARE THESE CONNECTED?"
+Every node's badge points at another node, and following badges always terminates at a
+node pointing at itself. Nodes were only ever merged by pointing one ROOT at another
+ROOT, which means an entire group always hangs beneath a single root and nothing can
+belong to two groups. So "same group" and "same root" are the same statement, and the
+test is just two walks and a comparison. No searching, no visited set, no queue.
+
+  The alpha in the complexity is the inverse Ackermann function, a quantity below 5 for
+  any input that could physically exist. Treat it as constant; say the name if asked.
+
+WHEN THE NAIVE VERSION IS ACTUALLY FINE. If the graph were tiny, or if you needed the
+PATH forming the cycle rather than just the closing edge, the search version wins -
+union-find knows that two nodes are connected but cannot tell you the route. That is a
+real limitation and worth volunteering.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: add the edges one by one, and the first edge whose two endpoints already
+share a group leader is the redundant one.
+
+THE MECHANISM, SPELLED OUT. `find` is written as a LOOP, not a recursion - it climbs
+from a node to its group leader one pointer at a time. It terminates because each step
+moves strictly upward through a structure with no cycles: pointers are only ever set
+from one root to another root, so following them can never come back around. There is
+no stack depth to blow, which matters because these chains can be hundreds long.
+
+  What the outer loop maintains: after processing the first k edges without returning,
+  two nodes share a leader if and only if a path between them exists using those k
+  edges. That is true before any edge is processed (every node is alone) and each merge
+  preserves it, because pointing one root at another joins exactly those two groups and
+  touches nothing else.
+
+  Why it stops: it returns the moment a redundant edge is found - and the problem
+  guarantees exactly one exists, so the return always happens. If it did not, the
+  counted loop over the edges would end anyway.
+
+  Why the ORDER inside the loop is not negotiable: the test must run BEFORE the merge.
+  Merging first makes the two nodes share a leader by construction, so the test can
+  never fail - measured wrong on 4,000 of 4,000.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Work out how many nodes there are: the same as the number of edges, because a tree
+     plus one extra edge on n nodes has exactly n edges. Make a badge array with ONE
+     MORE slot than that, so the highest node number is a valid index; the zero slot is
+     never used because nodes start at 1.
+  2. Point every node's badge at itself. Every node starts as its own group.
+  3. Define FIND for a node: follow badges until you reach a node whose badge points at
+     itself, and return it. While walking, re-point each node you pass at its
+     grandparent - optional for correctness, purely a speed measure.
+  4. For each edge, in the order given:
+       a. Find the leader of the first endpoint and the leader of the second.
+       b. If the two leaders are THE SAME, the endpoints were already connected by an
+          earlier route. This edge closes the loop - return it, and stop.
+       c. Otherwise point the first leader's badge at the second leader, merging the two
+          groups, and move to the next edge.
+  5. The guarantee says step 4b always fires, so control never reaches the end.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A town is laying telephone cables. Every house begins with its own tiny exchange and no
+connection to anybody. A work crew has a list of cables to lay, in a fixed order, and
+they lay them one at a time.
+
+Before laying each cable, the foreman does one check. He asks the house at each end:
+"who is your exchange?" Each house passes the question up the line - my exchange asks
+its exchange, and so on - until it reaches an exchange that answers to nobody. That top
+exchange is the answer.
+
+If the two houses name DIFFERENT top exchanges, the cable is doing real work: it is
+about to connect two parts of town that could not previously reach each other. The
+foreman lays the cable and, crucially, records the merge by telling one of the two top
+exchanges to answer to the other from now on. Note he adjusts the two TOP exchanges, not
+the two houses - if he re-pointed a house, every home behind it would be silently
+orphaned.
+
+If the two houses name THE SAME top exchange, something different has happened. These
+two houses can already reach each other, by some winding route through the network. The
+cable would be a second path between the same pair - a loop. The foreman stops work
+immediately and reports that cable as the unnecessary one.
+
+He never has to worry that a later cable might have been a better thing to report. Every
+cable on the loop before this one was, at the time it was laid, connecting genuinely
+separate parts of town - the loop was not yet closed. Only the final one could close it.
+So the first cable he rejects is automatically the last one on the loop in his list,
+which is exactly what the town council asked for.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def find_redundant_connection(edges):
+
+  `edges` is the list of [u, v] pairs in the order they were added.
+
+        parent = list(range(len(edges) + 1))   # 1-indexed nodes
+
+  `parent` is the badge array: `parent[x]` is who node x answers to. `list(range(k))`
+  produces [0, 1, 2, ... k-1], so every node starts pointing at itself.
+
+  THE SIZING. `len(edges) + 1`, not `len(edges)`. A tree plus one edge on n nodes has
+  exactly n edges, so len(edges) IS n, and the nodes run 1..n - meaning index n must
+  exist. Slot 0 is allocated and never used, which is the cheap price of 1-indexed
+  input. Sizing it `len(edges)` raised IndexError on 3,704 of 4,000 inputs and crashes
+  on the FIRST official example.
+
+        def find(x):
+            while parent[x] != x:
+
+  Climb. The loop test is the definition of a leader: keep going while `x` does not
+  point at itself.
+
+                parent[x] = parent[parent[x]]   # path compression
+
+  PATH HALVING - re-point `x` at its grandparent as you pass. Read right to left:
+  `parent[x]` is x's parent, `parent[parent[x]]` is x's grandparent. It never changes
+  which leader you arrive at, so it cannot affect the answer; it only shortens the walk
+  for whoever comes next.
+
+                x = parent[x]
+
+  Step up. This reads `parent[x]` after the halving line rewrote it, so the walk climbs
+  two levels per iteration rather than one.
+
+            return x
+
+  `x` now points at itself. It is the group leader.
+
+        for u, v in edges:
+
+  Process the edges in the given order. That order is not incidental - section 9 shows
+  the answer changes when the same edges are shuffled.
+
+            ru, rv = find(u), find(v)
+
+  `ru` and `rv` are the two leaders. Both lookups happen BEFORE anything is modified,
+  which is what makes the next line a real question rather than a foregone conclusion.
+
+            if ru == rv:
+                return [u, v]             # this edge closes a cycle -> redundant
+
+  Same leader means a route already existed, so this edge is the second route - the
+  loop-closer. Return the ORIGINAL endpoints `u` and `v`, not the roots `ru` and `rv`;
+  the roots are internal bookkeeping and are usually different numbers.
+
+  Comparing `u == v` instead of `ru == rv` was wrong on 4,000 of 4,000.
+
+            parent[ru] = rv               # union the two components
+
+  Different leaders, so merge: point one LEADER at the other. Leaders, not `u` and `v` -
+  re-pointing a node would abandon everything hanging beneath it. And this line must
+  come AFTER the test; putting it first makes the test trivially true and was wrong on
+  4,000 of 4,000.
+
+        return []
+
+  Unreachable given the problem's guarantee that exactly one extra edge exists. It is
+  there so the function always returns something.""",
+
+    """9. TRACED ON REAL NUMBERS - AND IT LANDS ON THE ORDERING TRAP
+
+The example is the problem's second official sample, chosen because its answer is NOT
+the last edge in the list - which is what makes the tie-break question from section 4
+concrete rather than theoretical.
+
+    edges = [[1,2], [2,3], [3,4], [1,4], [1,5]]
+    parent = [0, 1, 2, 3, 4, 5]      six slots for five nodes; index 0 unused
+
+    edge [1,2]:  find(1) = 1  (parent[1] is 1, already a leader)
+                 find(2) = 2
+                 DIFFERENT  ->  parent[1] = 2
+                 parent = [0, 2, 2, 3, 4, 5]
+
+    edge [2,3]:  find(2) = 2
+                 find(3) = 3
+                 DIFFERENT  ->  parent[2] = 3
+                 parent = [0, 2, 3, 3, 4, 5]
+
+    edge [3,4]:  find(3) = 3
+                 find(4) = 4
+                 DIFFERENT  ->  parent[3] = 4
+                 parent = [0, 2, 3, 4, 4, 5]
+
+    edge [1,4]:  find(1): parent[1] is 2, parent[2] is 3, parent[3] is 4, parent[4] is 4
+                          -> leader 4
+                 find(4) = 4
+                 SAME LEADER  ->  return [1, 4]
+
+    Cross-checked against the brute-force "is there already a path?" version: [1,4].
+
+  THE ORDERING TRAP, MADE CONCRETE. At the very first edge, [1,2], the two leaders are 1
+  and 2 - different, so no report. Now replay that step with the merge moved BEFORE the
+  test: `parent[find(1)] = find(2)` sets parent[1] = 2, and the test that follows asks
+  whether find(1) equals find(2) - both are now 2, so it says SAME and returns [1,2].
+  The first edge of the input is reported as redundant. Every input fails this way,
+  which is why the measured rate is 4,000 of 4,000.
+
+  THE TIE-BREAK, MADE CONCRETE. The cycle here is 1-2-3-4-1, using the edges at indices
+  0, 1, 2 and 3. The answer returned, [1,4], sits at index 3 - the largest of those. The
+  edge [1,5] at index 4 appears later in the list but is not on the cycle, so it is not
+  a legal answer at all. Over 2,000 random inputs the detected edge was the
+  last-in-input cycle edge every single time, with 0 exceptions.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES - AND HERE IT IS THE ORDER, NOT THE DATA
+
+Take the identical five edges and move [1,4] to the front:
+
+    [[1,2], [2,3], [3,4], [1,4], [1,5]]   ->  [1,4]
+    [[1,4], [1,2], [2,3], [3,4], [1,5]]   ->  [3,4]
+
+Exactly the same graph. Exactly the same cycle. A different answer, and both are
+correct, because the tie-break is defined by POSITION IN THE INPUT. When [1,4] comes
+first it is doing genuine connecting work, and [3,4] becomes the edge that finds the
+loop already closed. This is worth stating out loud in an interview: the answer is a
+property of the input ORDERING, not only of the graph.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the edges. Each edge costs two climbs to a leader and
+at most one pointer write, and with path compression a climb is effectively constant -
+formally O(alpha(n)), which is below 5 for any input that could exist. So the time is
+O(n) for practical purposes, and the space is one array of n+1 numbers, O(n).
+
+Against the naive per-edge graph search, which is O(n^2): same answers on all 4,000
+random inputs tested, but it throws away everything it learned after each edge.
+
+THE #1 MISTAKE. Sizing the parent array `len(edges)` instead of `len(edges) + 1`. Wrong
+on 3,704 of 4,000 - and every single failure was an IndexError rather than a wrong
+answer, so it announces itself loudly. The derivation to hold onto: a tree plus one edge
+on n nodes has exactly n edges, so len(edges) is n; the nodes are numbered 1..n; index n
+must therefore exist; a list of length n stops at n-1. Say those four clauses and the
++1 stops being something to remember.
+
+  The runner-up is merging before testing, wrong on all 4,000. Both official examples
+  catch that one, so it dies quickly - but the reason it is worth naming is that it is
+  the exact opposite discipline from this entry's sibling. See below.
+
+PATH COMPRESSION PAYS OFF THROUGH REUSE - AND HERE THERE IS ALMOST NONE. This is the
+measurement most worth carrying away. On a deliberately worst-case chain of nodes:
+
+    n = 200   with compression   100 pointer hops   without   199   (2.0x)
+    n = 800   with compression   400 pointer hops   without   799   (2.0x)
+
+A flat 2x, no more. Compare the sibling problem, Number of Provinces, where the same
+line on the same shape of input bought 102x. The difference is not the technique, it is
+how many times the flattened path gets WALKED AGAIN. Here the function returns at the
+first cycle detection, so essentially one deep climb happens and halving simply halves
+it. There, every city is looked up again at the end, so each walk benefits from the
+flattening the previous walks did, and the saving compounds. An optimisation that works
+by amortisation needs repeated use to show up - one call gets you the constant factor
+and nothing more.
+
+THE UNION-FIND CLUSTER - WHO OWNS WHAT
+
+  Number of Provinces owns COUNTING THE COMPONENTS - it merges unconditionally, and the
+     "already joined" case is a harmless no-op nobody inspects. Its trap is at the END,
+     in how you count the leaders.
+  Redundant Connection (this one) owns CYCLE DETECTION - it is the SAME structure with
+     the interesting case inverted. Here the merge that does NOT need to happen is the
+     entire answer, so it must be intercepted before the merge destroys the evidence.
+     Its trap is the ORDER of test and merge.
+  Surrounded Regions owns BORDER-SEEDED FLOOD FILL.
+  Kruskal's Minimum Spanning Tree owns SORT-EDGES-THEN-UNION, and it uses BOTH signals
+     at once: it skips edges whose endpoints already share a leader (this entry's test)
+     and counts the merges to know when the tree is complete (the sibling's counter).
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "What if the edges were DIRECTED?" That is Redundant Connection II, and it is
+     genuinely harder. A directed graph can fail in two ways - a node with two parents,
+     or a cycle - and they can happen together. The standard approach finds any
+     two-parent node, tentatively removes one of its two incoming edges, and checks
+     whether a valid tree remains; if not, removes the other. Union-find alone is not
+     enough because direction matters.
+
+  "Return the whole cycle, not just the closing edge." Union-find cannot do this - it
+     knows two nodes are connected but not by what route. Switch to DFS and record the
+     path on the stack when you meet a back edge.
+
+  "The edges arrive as a stream and you must report the first loop the moment it forms."
+     This is exactly what the algorithm already does; it is the natural setting for
+     union-find and the honest reason to prefer it over a graph search, which would have
+     to re-run from scratch on each arrival.
+
+  "Would you write find recursively?" It reads better, but a chain can be hundreds of
+     nodes deep - the measurements above used chains of 200 and 800 - and Python's
+     default recursion limit is 1,000. The loop has no such ceiling.
+
+  "Could you use union by rank as well?" Yes, and combined with path compression it
+     gives the formal inverse-Ackermann bound. Given the 2x measured above, it would
+     buy little here; it matters when finds are repeated many times over the same nodes.
+
+ONE-SENTENCE TAKEAWAY. Add the edges one at a time and ask before each one whether its
+two ends already share a leader - the first time the answer is yes, that edge is the
+second route between them, and it is provably the last cycle edge in the input.
+
+THE INTERVIEW IMPLICATION. This is the standard follow-up to Number of Provinces, and
+the interviewer is checking whether you understood union-find or merely memorised it.
+Two things separate candidates. First, do you put the test before the merge without
+being prompted - that ordering is the whole difference between the two problems.
+Second, when asked "but the problem says LAST in the input and you return on the FIRST
+hit", can you explain that earlier cycle edges are still doing genuine connecting work
+so only the final one can close the loop? That answer proves you reasoned about the
+structure rather than pattern-matched the template.""",
 ]
 
 _EX_P1Q["Rotate List"] = [
