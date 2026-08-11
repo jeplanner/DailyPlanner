@@ -35144,272 +35144,480 @@ is never a letter by itself and `int("06")` hides its leading zero.""",
 ]
 
 _EX_P0B["Generate Parentheses (backtracking)"] = [
-    """What "well-formed" means, before any code.
+    """1. THE GOAL - what "well-formed" means, before any code.
 
-You are given a number n and asked for every arrangement of n opening brackets
-and n closing brackets that is WELL-FORMED - meaning every "(" has a matching
-")" after it, and you never close a bracket you have not opened.
+You are given a number n and asked for EVERY arrangement of n opening brackets and n closing
+brackets that is WELL-FORMED - every "(" is eventually closed, and no ")" ever appears before
+there is something for it to close.
 
-Take n = 2, so two "(" and two ")". Write out every arrangement you can think of
-and check each one by hand, reading left to right and keeping a running count of
-how many brackets are currently open:
+    n = 1  ->  ["()"]
 
-  "(())"  ->  open 1, open 2, close 1, close 0.  Never negative, ends at 0. GOOD
-  "()()"  ->  open 1, close 0, open 1, close 0.  GOOD
-  "())("  ->  open 1, close 0, close -1 ... you just closed a bracket that was
-              never opened. BAD
-  ")(()"  ->  starts by closing nothing at all. BAD
-  "(()("  ->  ends with a bracket still open. BAD
+    n = 2  ->  ["(())", "()()"]
 
-So for n = 2 the answer is exactly two strings: "(())" and "()()".
+    n = 3  ->  ["((()))", "(()())", "(())()", "()(())", "()()()"]
 
-That hand-check gives us the two rules that the whole solution rests on:
+Two ways to say what "well-formed" means, and they are the same rule seen from two angles:
 
-  RULE 1: the running count of open brackets must never go below zero.
-  RULE 2: it must be exactly zero at the end.
+    THE CANCELLING RULE. Read left to right keeping a running count: +1 for "(", -1 for ")".
+    The count must NEVER go negative, and must end at exactly zero.
 
-Now here is the idea that makes this efficient. Instead of generating every
-arrangement and then testing it, we will only ever ADD a bracket when doing so
-keeps the rules true. Bad strings are then never built in the first place.""",
+        (())    1  2  1  0     never negative, ends at 0.   VALID
+        ())(    1  0 -1  0     goes NEGATIVE at position 3.  INVALID
+        (()     1  2  1        never negative, but ends at 1. INVALID
 
-    """What BACKTRACKING is, in plain words.
+    THE MATCHING RULE. Every ")" has a "(" to its left that has not already been used up.
 
-BACKTRACKING means: build the answer one piece at a time; at each step try every
-legal next piece; when a piece leads nowhere useful, undo it and try the next
-one. It is how you solve a maze with a piece of chalk - walk down a corridor,
-and if it dead-ends, walk back and take a different one.
+Notice that ")((" and "())(" both contain exactly two of each bracket and both are illegal. THE
+COUNTS BEING RIGHT IS NOT ENOUGH - the ORDER has to be right too, and that is the whole difficulty.
 
-Here the "pieces" are single characters, and there are only two of them to try
-at each step: "(" or ")".
+The number of valid strings is the nth CATALAN NUMBER: 1, 2, 5, 14, 42, 132 for n = 1 to 6. It
+grows fast, so the answer itself is large - which section 5 uses to rule out the lazy approach.""",
 
-We carry three things as we build:
-- current: the string built so far, e.g. "((".
-- open_count: how many "(" we have placed.
-- close_count: how many ")" we have placed.
+    """2. THE INTUITION - build the string one character at a time, and never write an illegal one.
 
-Now translate the two rules from the last example into conditions on those
-counts:
+At every moment you are holding a partly-built string, and you know two numbers: how many "("
+you have used and how many ")". There are only ever TWO possible next characters, and each has
+exactly one condition:
 
-  We may add "("   if open_count < n.
-      In words: we have not used up our supply of opening brackets yet. Adding
-      one can never break anything - an open bracket can always be closed later.
+    MAY I ADD "("?     Yes, as long as I have not already used all n of them.
+                       CONDITION:  open < n
 
-  We may add ")"   if close_count < open_count.
-      In words: there is at least one bracket currently open and waiting to be
-      closed. This single condition IS Rule 1 - it makes it impossible for the
-      running count to ever go negative, because we refuse to close more than we
-      have opened.
+    MAY I ADD ")"?     Yes, as long as there is an unclosed "(" waiting.
+                       CONDITION:  close < open
 
-And we are FINISHED when the string has reached length 2n. At that point
-open_count must be n (we could never exceed it) and close_count must be n too
-(the string is 2n long), so the string is automatically well-formed - Rule 2
-comes for free. There is no validity check anywhere in the code, because
-invalidity was never allowed to happen.
+That second condition is the entire problem in one comparison, and it is NOT `close < n`.
+Section 4 shows what breaks if you write `close < n`.
 
-By the way: this is a recursive walk, and each nested call sits on the CALL
-STACK - the pile of paused calls waiting for the one above to finish. When a
-call finishes and returns, we are back in its caller with the shorter string,
-which is what "undoing a choice" looks like in practice.""",
+Draw the whole search for n = 2. At each node the two questions above are asked:
 
-    """The whole search drawn out for n = 2, with the reason at every branch.
+                         ""  (0,0)
+                        /
+              may add "(" since 0 < 2
+                      /
+                    "("  (1,0)
+                   /        \\
+        add "(": 1<2      add ")": 0<1
+                 /            \\
+            "(("  (2,0)      "()"  (1,1)
+                |                 |
+       add "(": 2<2 NO       add "(": 1<2 yes
+       add ")": 0<2 yes      add ")": 1<1 NO
+                |                 |
+            "(()"  (2,1)      "()("  (2,1)
+                |                 |
+            "(())"  (2,2)     "()()"  (2,2)
+             LENGTH 4          LENGTH 4
+             KEEP IT           KEEP IT
 
-Start with current = "", open = 0, close = 0. At each node the two questions
-are: may I add "(" (is open < 2)? may I add ")" (is close < open)?
+    result = ["(())", "()()"]
 
-    ""            open=0 close=0
-      "(" allowed (0 < 2).  ")" NOT allowed (close 0 is not < open 0) -
-                            correctly refusing to start with a closing bracket.
-    "("           open=1 close=0
-      "(" allowed (1 < 2).  ")" allowed (0 < 1).  Two branches - this is where
-                            "(())" and "()()" part company.
-      |
-      +-- "(("    open=2 close=0
-      |     "(" NOT allowed (2 is not < 2) - out of opening brackets.
-      |     ")" allowed (0 < 2).
-      |   "(()"   open=2 close=1
-      |     "(" still not allowed.  ")" allowed (1 < 2).
-      |   "(())"  length 4 = 2n -> RECORD IT, and return.
-      |
-      +-- "()"    open=1 close=1
-            "(" allowed (1 < 2).  ")" NOT allowed (1 is not < 1) - nothing is
-                                  currently open, so we cannot close.
-          "()("   open=2 close=1
-            "(" not allowed.  ")" allowed.
-          "()()"  length 4 -> RECORD IT, and return.
+LOOK AT WHERE THE BRANCHES DIED. At "((" the "(" branch is refused because all two are used.
+At "()" the ")" branch is refused because nothing is open. NO ILLEGAL STRING IS EVER BUILT, not
+even partly - the search never enters a dead end, so it never has to back out of one.
 
-Result: ["(())", "()()"] - exactly the two we found by hand, and in that order.
+That last point is what makes this a well-behaved backtracking problem: the conditions are
+CHECKED BEFORE THE MOVE IS MADE, so every leaf reached is an answer. There are no wasted leaves
+at all.""",
 
-Look at what did NOT happen. We never built "())(", never built ")(()", never
-built anything invalid at all. Every branch we refused to take was refused by
-one of the two conditions, at the earliest possible moment. That is the payoff
-of checking legality BEFORE placing a character rather than after.""",
+    """3. EVERY TERM, defined the first time you meet it.
 
-    """Why not just generate everything and filter? The numbers say no.
+WELL-FORMED / BALANCED. Every ")" closes an earlier "(", and nothing is left open at the end.
 
-The lazy approach: produce every possible string of length 2n made of "(" and
-")", then keep the well-formed ones. Each of the 2n positions has 2 choices, so
-that is 2^(2n) strings, which is 4^n.
+BACKTRACKING. Build the answer one piece at a time; at each step try every legal next piece; when
+a branch is finished (or hopeless), go back and try the next piece instead. It is depth-first
+search over the space of partial answers.
 
-For n = 10 that is 4^10 = about 1.05 MILLION strings to build and test. How many
-survive? 16,796.
+PARTIAL ANSWER / PATH. The string built so far - `current` in the code. Not yet an answer, but
+still legal.
 
-So over 98% of the work is spent building strings that are immediately thrown
-away. And it gets worse fast: at n = 15, you would build about a billion strings
-to keep 9.7 million.
+PRUNING. Refusing to explore a branch that cannot lead anywhere. Here the pruning is total: the
+two conditions mean an illegal branch is never entered in the first place.
 
-That surviving count has a name - the CATALAN NUMBERS: 1, 1, 2, 5, 14, 42, 132,
-429, ... for n = 0, 1, 2, 3, ... You do not need to memorise the formula, but it
-is worth knowing the sequence exists and that it grows roughly like 4^n divided
-by n^1.5 - much smaller than 4^n, but still exponential.
+RECURSION. A function calling itself. Each call PAUSES at the call site and resumes there when the
+inner call returns.
 
-The backtracking version builds ONLY the survivors. It never wastes a step on a
-string that cannot be completed. This idea - refusing a choice at the moment it
-becomes illegal, rather than discovering the problem at the end - is called
-PRUNING, and it is the single most valuable habit in backtracking problems.""",
+THE CALL STACK. The pile of paused calls. Each holds its own `current`, `open_count` and
+`close_count`, which is why the search can go deep and still come back to the right place.
 
-    """The tiny inputs, and the one real trap in the code.
+BASE CASE. The condition that stops the recursion - here, `len(current) == 2 * n`.
 
-n = 1. The only string is "()". Trace it: from "" we may only add "(" (close is
-not less than open). From "(" both are legal, but adding "(" again is blocked
-because open would exceed n... actually at n = 1, open is already 1, so
-open < n is false and only ")" is available. We reach "()", length 2 = 2n,
-record it. One answer. Correct.
+CATALAN NUMBER. The count of valid strings for n pairs: 1, 2, 5, 14, 42, 132, 429, 1430...
+Formula (2n)! / (n! (n+1)!). It grows roughly like 4^n / n^1.5.
 
-n = 0. The length target is 0, so the very first call finds len(current) == 0 ==
-2n and immediately records the empty string. The answer is [""], a list holding
-one empty string - not an empty list. That is the mathematically right answer
-(there is exactly one way to arrange no brackets), and it matches the Catalan
-sequence starting 1, 1, 2, 5.
+result. In the code: the list where finished strings land.
+current. The string built so far.
+open_count. How many "(" are in `current`.
+close_count. How many ")" are in `current`.
 
-Now the trap. In many languages you would build the string by APPENDING to a
-shared buffer, and then you must REMOVE the character again after the recursive
-call returns - the literal "backtrack" step:
+CLOSURE. `backtrack` is defined inside `generate_parenthesis`, so it can see `result` and `n`
+without them being passed as arguments.""",
 
-    current.append('(')
-    backtrack(...)
-    current.pop()        <- forget this line and every branch is polluted by
-                            the choices of the branch before it
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the wrong closing condition.
 
-The Python code below sidesteps this entirely by passing current + "(" as a NEW
-string. Strings in Python are immutable, so the caller's own string is untouched
-and there is nothing to undo - the undo happens automatically when the call
-returns and we are back with the caller's shorter string. It costs a little
-copying, but it removes the most common source of bugs in backtracking code.
-Worth saying out loud in an interview, because the interviewer is watching for
-whether you know the undo step exists at all.""",
+The natural first guess is that the two conditions should be symmetric:
 
-    """The cost, and the family of problems this shape covers.
+    if open_count < n:   add "("
+    if close_count < n:  add ")"        <-- WRONG
 
-Time and space: the answer itself contains a Catalan number of strings, each 2n
-characters long, so simply WRITING the output costs about 4^n / n^1.5 x n steps.
-No algorithm can beat that, because it has to produce all of them. The usual way
-to state it is O(4^n / sqrt(n)), and the important part of the sentence is "and
-that is optimal, because the output is that large". The recursion depth is 2n,
-so the call stack is O(n) on top of the output.
+It reads beautifully. It is also completely wrong, and here is exactly how wrong, on n = 2.
 
-The same build-one-piece-at-a-time-with-a-legality-rule shape solves:
-- Permutations: at each step place any number you have not used yet.
-- Subsets: at each step choose to include or exclude the next item.
-- Combination Sum: at each step add any coin, stopping when you overshoot the
-  target - the overshoot check is the pruning rule.
-- N-Queens: at each step place a queen in a column, refusing any square attacked
-  by a queen already placed.
-- Word Search: at each step step to a neighbouring letter, refusing squares
-  already used in this path.
+With `close_count < n`, the very first call - `current = ""`, open = 0, close = 0 - passes BOTH
+tests. `0 < 2` for the open branch, and `0 < 2` for the close branch. So the search happily begins
+building a string that starts with ")".
 
-Every one of them is: a partial answer, a set of candidate next moves, a rule
-that says which moves are legal, and a base case that says when the partial
-answer is finished. Learn the skeleton here, where the rules are only two lines
-long, and the harder ones become a matter of writing the right condition.
+    From "" it builds ")".  From ")" it builds "))" and ")(", and so on.
 
-In plain words, the takeaway: never build a bad string. Add "(" while you still
-have some left, add ")" only while something is open, and stop at length 2n -
-then everything you produce is valid by construction and no checking is needed.""",
+The condition has stopped checking anything about legality; it only counts. What comes out is
+EVERY arrangement of two "(" and two ")":
 
-    """What the code does, in plain language - read this before the line-by-line.
+    (())   ()()   ()(       -> the two valid ones, plus
+    ())(   )(()   )()(   ))((
 
-The code grows a string one character at a time, and it is only ever allowed to
-add a character that keeps the string legal. Because of that, every string it
-finishes is automatically well-formed - there is no checking step anywhere.
+    SIX STRINGS instead of TWO. (Six is "choose 2 positions out of 4" = 4!/(2!2!) = 6, which is
+    exactly what you get when order is unconstrained.)
 
-It carries three things as it grows: the string so far, how many "(" it has
-placed, and how many ")" it has placed. At each step it asks two questions, and
-it may answer yes to both:
+    FOUR OF THE SIX ARE ILLEGAL, and every one of them goes negative on the cancelling count from
+    section 1.
 
-  "May I add an opening bracket?" Yes, as long as it has not already used all n
-  of them. Adding an opening bracket can never break anything - whatever you
-  open, you can close later.
+THE INVERSION IS SHARP: change one variable name in one comparison - `n` to `open_count` - and the
+answer for n = 2 goes from 6 to 2, and for n = 3 from 20 down to 5.
 
-  "May I add a closing bracket?" Yes, but only if it has placed more opening
-  brackets than closing ones - that is, only if something is actually open and
-  waiting to be closed. This single condition is what makes it impossible to
-  ever write a stray ")".
+WHY `close < open` IS THE RIGHT TEST. The cancelling rule says the running count must never go
+negative. The running count IS `open_count - close_count`. So "never negative" means
+`open_count - close_count >= 0` at all times, and to keep it so after adding a ")" you need
+`open_count - close_count > 0` before adding it - which is exactly `close_count < open_count`.
 
-When both answers are yes, it takes BOTH routes, one after the other. It follows
-the first choice all the way down to a finished string, then comes back to where
-it was and follows the second. That is why the answer contains more than one
-string: the search branches wherever a genuine choice existed.
+The condition is not a heuristic. IT IS THE DEFINITION OF WELL-FORMED, restated as a guard.
 
-It knows it is finished when the string has reached 2n characters. At that point
-there is nothing left to check - n opening and n closing brackets, every one of
-them placed legally - so it simply writes the string down and stops.
+TRAP 2 - CHECKING `open_count == close_count == n` AS THE BASE CASE instead of the length. It
+happens to work, but it is a weaker statement of the same thing: length 2n and the counts being
+capped at n already forces both to equal n.
 
-The important thing this AVOIDS is worth naming. The lazy approach builds every
-possible arrangement of brackets and then throws away the bad ones, which at
-n = 10 means building about a million strings to keep sixteen thousand. This
-code never builds a single bad string, because a bad string is refused at the
-exact character that would have made it bad.
+TRAP 3 - EXPECTING TO NEED AN "UNDO" STEP. Most backtracking code appends to a list and then pops
+it back off. This code never does, and section 5 explains why.
 
-In one sentence: add an opening bracket while you still have some left, add a
-closing bracket only while something is open, stop at 2n characters - and
-everything you produce is valid because nothing invalid was ever allowed.""",
+TRAP 4 - n = 0. The base case fires immediately on the empty string, so the answer is [""] - a
+list containing one empty string, not an empty list. Both are defensible readings; the code
+produces [""], and knowing which is worth saying out loud.""",
 
-    """Now the code, line by line, against the search tree we just drew.
+    """5. WHY NOT JUST GENERATE EVERYTHING AND FILTER? THE NUMBERS SAY NO.
 
-Keep n = 2 and that tree beside you.
+VERSION A - THE LAZY APPROACH. Produce every possible string of length 2n made of "(" and ")",
+then keep the well-formed ones. Simple, obviously correct, and here is what it costs.
 
-    result = []
-Where finished strings land. Ours ended as ["(())", "()()"], in exactly the
-order the tree visits them - the "((" branch is explored fully before the "()"
-branch, because the "(" line comes first in the code.
+There are 2 choices per position and 2n positions, so 2^(2n) = 4^n strings to generate and test.
+The number you keep is the Catalan number.
 
-    def backtrack(current, open_count, close_count):
-The three things we carry, exactly as described earlier: the string so far, and
-how many of each bracket it contains. Defining it INSIDE generate_parenthesis
-lets it see result and n without passing them down through every call.
+    n = 3     4^3   =            64  strings generated,        5  kept   ->  7.8% useful
+    n = 6     4^6   =         4,096                          132        ->  3.2%
+    n = 12    4^12  =    16,777,216                      208,012        ->  1.24%
+    n = 15    4^15  = 1,073,741,824                    9,694,845        ->  0.90%
 
-    if len(current) == 2 * n:
-        result.append(current)
-        return
-The BASE CASE - the condition that stops the recursion. A string of length 2n
-must contain n of each bracket, and every character was placed legally, so it
-needs no validity check: record it and stop. The return is what makes us climb
-back UP the tree and try the branch we have not taken yet.
+    AT n = 12 THE FILTER APPROACH DOES ABOUT 80 TIMES THE WORK OF THE BACKTRACKER
+    (16,777,216 / 208,012 = 80.7), and at n = 15 about 111 times.
 
-    if open_count < n:
-        backtrack(current + "(", open_count + 1, close_count)
-The first choice: add an opening bracket, allowed while we still have some in
-our supply. In the tree this is the line that took us from "" to "(" to "((".
-Notice current + "(" builds a NEW string - the caller's own current is
-untouched, which is why no undo step is needed.
+    And that is only the generation. Each string must also be CHECKED, which is another 2n
+    operations, so the real gap is wider still.
 
-    if close_count < open_count:
-        backtrack(current + ")", open_count, close_count + 1)
-The second choice: add a closing bracket, allowed only while something is open.
-This is the guard that refused to start the string with ")" (at "", close 0 is
-not less than open 0) and refused ")" at "()" (1 is not less than 1). One
-condition, and every invalid string in the language is unreachable.
+VERSION B - GENERATE ONLY BALANCED-COUNT STRINGS, then check order. Better - "choose n positions
+out of 2n" = C(2n, n) instead of 4^n. For n = 12 that is 2,704,156 instead of 16.7 million. Still
+13 times the 208,012 answers, because it fixes the counts and does nothing about the ORDER, which
+is the actual constraint.
 
-These two ifs are deliberately NOT if/else. At "(" in the tree both were true,
-and we took both - first the "(" branch all the way down to "(())", then, when
-that returned, the ")" branch down to "()()". That is what makes it a search
-over a tree rather than a single path.
+VERSION C - BACKTRACK WITH THE TWO CONDITIONS, which is the code here. EVERY LEAF REACHED IS AN
+ANSWER. Nothing is generated and thrown away - the illegal branches are never entered.
 
-    backtrack("", 0, 0)
-Start at the root of the tree: nothing built, nothing used.
+    The total number of function calls for n = 2 is 8, and it produces 2 answers. For n = 3 it is
+    roughly 2 x Catalan calls. The work is proportional to the OUTPUT, which is the best any
+    algorithm could possibly do, since the output has to be written out anyway.
 
-    return result
-The finished list, ["(())", "()()"] for n = 2.""",
+THE TRICK THAT LOOKS MISSING - WHY THERE IS NO "UNDO" STEP.
+
+Textbook backtracking looks like this:
+
+    path.append(choice)
+    recurse()
+    path.pop()          # <- undo, so the next branch starts clean
+
+This code has no pop. The reason is that `current` is a PYTHON STRING, and strings are IMMUTABLE -
+they cannot be changed in place. `current + "("` does not modify `current`; it builds a BRAND NEW
+string and passes that down. The caller's own `current` is untouched, so when the inner call
+returns there is nothing to undo. The "undo" is free, done by the language.
+
+    the price: each concatenation copies the string, costing O(length). With a mutable list plus
+    an explicit pop you avoid the copying, at the cost of having to remember the pop. For this
+    problem the strings are short and the copying is dwarfed by the size of the output.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: GROW A STRING ONE CHARACTER AT A TIME, ALLOWING AN
+OPENING BRACKET WHILE YOU STILL HAVE ONE SPARE AND A CLOSING BRACKET ONLY WHILE SOMETHING IS
+ACTUALLY OPEN, AND WHENEVER THE STRING REACHES FULL LENGTH, KEEP IT.
+
+THIS VERSION IS RECURSIVE, and the mechanism matters:
+
+  - The function calls itself once per legal next character - so up to twice, never more.
+  - Each call PAUSES at the call site. It holds its own copy of the string so far and its own two
+    counts, which is why the second branch starts from exactly the state the first branch began
+    with, with no cleaning up required.
+  - The paused calls form the CALL STACK, and it gets exactly 2n deep - one level per character.
+    That is small: for n = 100 it is 200 frames, nowhere near any recursion limit.
+  - WHAT MAKES IT STOP: every call adds exactly one character, so the string strictly grows, and
+    at length 2n the base case fires and returns without recursing further. It cannot run forever.
+  - WHY NOTHING NEEDS UNDOING: the string is rebuilt for each call rather than modified in place
+    (section 5).
+
+THE STEPS:
+
+  1. MAKE AN EMPTY LIST for the finished strings.
+
+  2. DEFINE A WALK that takes three things: the string built so far, how many opening brackets it
+     contains, and how many closing brackets.
+
+     a. IF THE STRING HAS REACHED LENGTH TWICE n, it is finished and it is legal - because every
+        character was only ever added under a condition that kept it legal. Add it to the list
+        and stop this branch.
+
+     b. IF YOU HAVE NOT USED ALL n OPENING BRACKETS, try adding one: run the same walk on the
+        string with "(" on the end, with the opening count one higher.
+
+     c. IF THERE ARE MORE OPENING BRACKETS THAN CLOSING ONES IN THE STRING SO FAR, try adding a
+        closing bracket: run the same walk with ")" on the end and the closing count one higher.
+
+        MORE OPENING THAN CLOSING - not "fewer than n closing". That distinction is the whole
+        problem, and section 4 is what happens if you get it wrong.
+
+  3. START THE WALK on the empty string with both counts at zero.
+
+  4. RETURN THE LIST.
+
+Note that steps b and c are both plain `if`s, not `if`/`else`. Most of the time BOTH apply, and
+that is where the branching comes from.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine writing brackets on a strip of paper, one at a time, with two rules pinned above your desk.
+
+The first rule: you were issued exactly n opening brackets, and you may write one whenever you
+still have some left.
+
+The second rule: you may write a closing bracket only when there is an opening bracket on the
+strip that has not yet been closed. If everything you have opened is already closed, a closing
+bracket would have nothing to close, so you may not write it.
+
+You work like someone exploring a maze who never enters a corridor they cannot get out of. At
+each point you look at what the two rules allow. If both are allowed, you try the first, follow it
+all the way to the end, and then come back and try the second. If only one is allowed, you take
+it. There is never a third option.
+
+Because both rules are checked BEFORE you write anything, you can never end up holding a strip
+that has already gone wrong. There is no moment of discovering a mistake and rubbing something
+out. Every strip you are ever holding is still on its way to being a valid answer.
+
+When a strip reaches the full length - twice n characters - you are done with it. You do not need
+to inspect it, because it cannot be anything other than valid: every character on it was written
+under a rule that kept it valid. You file it away and go back to the last point where you had a
+second option.
+
+And here is the pleasant part about backing up. When you go back, you do not have to erase
+anything. Each time you tried something you effectively wrote out a fresh copy of the strip with
+the new character added, leaving your own copy alone. So the older, shorter strip is still sitting
+there exactly as it was, ready for the other option.
+
+When there are no options left anywhere, the filed strips are every well-formed arrangement there
+is - no duplicates, nothing missing, and not one illegal string ever written down.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep n = 2 and the tree from section 2 beside you.
+
+    def generate_parenthesis(n):
+
+n is the number of PAIRS - so the finished strings are 2n characters long. Returns a list of
+strings.
+
+        result = []
+
+Where finished strings land. `backtrack` appends to it from inside; because it is a list being
+mutated rather than reassigned, the inner function can reach it without any declaration.
+
+        def backtrack(current, open_count, close_count):
+
+The walk. Defined inside so it can see `result` and `n`.
+
+    current       HOLDS the string built so far. Always legal, never complete until the base case.
+    open_count    HOLDS how many "(" are in `current`.
+    close_count   HOLDS how many ")" are in `current`.
+
+Note the counts are passed as arguments rather than counted from the string each time. Counting
+`current.count('(')` would work and would cost O(length) per call for no reason.
+
+            if len(current) == 2 * n:
+                result.append(current)          # used all n pairs
+                return
+
+THE BASE CASE. A string of length 2n has used all its budget - and it is guaranteed well-formed,
+because no character was ever added except under a condition that preserved legality. There is
+NO VALIDITY CHECK HERE, and that absence is the point of the whole design.
+
+`return` ends this branch. Without it the two `if`s below would run - both would be false at this
+point, so nothing would break, but the intent would be muddied.
+
+            if open_count < n:
+                backtrack(current + "(", open_count + 1, close_count)   # add '('
+
+THE OPEN BRANCH.
+
+    the condition `open_count < n` DECIDES whether any opening brackets remain in the budget.
+    `current + "("` builds a NEW string (section 5) - `current` in this call is untouched, which
+    is why the close branch below starts from the right state with no undo.
+
+            if close_count < open_count:        # only close what is open
+                backtrack(current + ")", open_count, close_count + 1)
+
+THE CLOSE BRANCH, AND THE MOST IMPORTANT LINE IN THE PROBLEM.
+
+    the condition `close_count < open_count` DECIDES whether there is an unclosed "(" for this
+    ")" to close. It is the "running count never goes negative" rule from section 1, written as a
+    guard.
+
+    IT IS NOT `close_count < n`. Section 4 traces what that produces: six strings instead of two
+    for n = 2, four of them illegal.
+
+Note this is a separate `if`, not an `elif`. When both conditions hold - which is most of the
+time - BOTH branches run, and that is where the tree branches in two.
+
+            backtrack("", 0, 0)
+
+Start from nothing: an empty string, no brackets of either kind used.
+
+        return result
+
+Every branch has run to its end, so `result` holds every well-formed string and nothing else.""",
+
+    """9. THE WHOLE SEARCH TRACED FOR n = 2 - AND THE SAME SEARCH WITH THE WRONG GUARD.
+
+CALL 1:  backtrack("", 0, 0)
+    len("") = 0, not 4.
+    open_count 0 < 2  YES  ->  call backtrack("(", 1, 0)
+    close_count 0 < open_count 0?  NO - nothing is open yet. THE BRANCH IS REFUSED.
+        (This single refusal is what stops every string beginning with ")".)
+
+  CALL 2:  backtrack("(", 1, 0)
+      len 1, not 4.
+      open 1 < 2  YES  ->  call backtrack("((", 2, 0)
+      close 0 < open 1  YES  ->  call backtrack("()", 1, 1)
+
+    CALL 3:  backtrack("((", 2, 0)
+        len 2, not 4.
+        open 2 < 2?  NO - the budget of two "(" is spent. REFUSED.
+        close 0 < open 2  YES  ->  call backtrack("(()", 2, 1)
+
+      CALL 4:  backtrack("(()", 2, 1)
+          len 3, not 4.
+          open 2 < 2?  NO.
+          close 1 < open 2  YES  ->  call backtrack("(())", 2, 2)
+
+        CALL 5:  backtrack("(())", 2, 2)
+            len 4 == 2 * 2  ->  result = ["(())"].  return.
+
+    CALL 6:  backtrack("()", 1, 1)
+        len 2, not 4.
+        open 1 < 2  YES  ->  call backtrack("()(", 2, 1)
+        close 1 < open 1?  NO - one open, one closed, nothing outstanding. REFUSED.
+
+      CALL 7:  backtrack("()(", 2, 1)
+          len 3, not 4.
+          open 2 < 2?  NO.
+          close 1 < open 2  YES  ->  call backtrack("()()", 2, 2)
+
+        CALL 8:  backtrack("()()", 2, 2)
+            len 4  ->  result = ["(())", "()()"].  return.
+
+    RETURN ["(())", "()()"].   Two strings - and Catalan(2) is 2. Correct.
+
+    COUNT THE WORK: 8 calls, 2 answers. Not one call built an illegal string, and not one leaf
+    was discarded. The two refusals - at call 1 and call 6 - are the only pruning that happened,
+    and both happened BEFORE the illegal character was written.
+
+THE SAME SEARCH WITH `close_count < n` INSTEAD - the section-4 bug, from the very first call:
+
+    backtrack("", 0, 0):
+        open 0 < 2  YES  ->  "(" branch, as before.
+        close 0 < 2  YES  ->  ")" BRANCH IS NOW TAKEN, building ")".
+
+    From ")" it goes on to build "))", ")(", and everything below them. The search no longer
+    prunes anything at all - it just counts brackets - and finishes with all six arrangements:
+
+        "(())"  valid       "()()"  valid
+        "())("  INVALID     ")(()"  INVALID     ")()("  INVALID     "))(("  INVALID
+
+    Six instead of two, four of them illegal. ONE VARIABLE NAME IN ONE COMPARISON.
+
+THE INVERSION ON n:  n = 1 gives ["()"] (1 string), n = 2 gives 2, n = 3 gives 5, n = 4 gives 14.
+The counts are Catalan numbers, not powers of two - the growth comes from the branching, and the
+restraint comes from the two guards.
+
+THE TINY INPUTS:
+    n = 1   From "" only "(" is allowed (close 0 < open 0 is false). From "(" only ")" is allowed
+            (open 1 < 1 is false). "()" reaches length 2. Result ["()"]. Correct.
+    n = 0   len("") == 0 == 2 * 0, so the base case fires immediately and result is [""] - a list
+            holding one empty string. Trap 4: that is the code's answer, and it is worth stating
+            rather than assuming the interviewer wants [].""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(4^n / sqrt(n)) - which is the size of the OUTPUT, not overhead.
+
+In plain words: there are Catalan(n) answers, each 2n characters long, so simply WRITING THEM
+OUT costs that much. The Catalan number is about 4^n / (n^1.5 x sqrt(pi)), and multiplying by the
+2n characters per string gives 4^n / sqrt(n) up to constants.
+
+    THE HONEST WAY TO SAY THIS IN AN INTERVIEW: "It is exponential, but only because the answer is
+    exponential - there are Catalan(n) valid strings and we have to produce all of them. The
+    search itself does no wasted work: every leaf it reaches is an answer."
+
+    That framing matters. Version A in section 5 is ALSO exponential, but wastes 98.8% of its work
+    at n = 12. Same big-O family, wildly different algorithms.
+
+SPACE: O(n) for the recursion stack - exactly 2n frames deep, one per character - plus the output
+itself, which is unavoidable.
+
+THE FAMILY THIS SHAPE COVERS. The pattern is "grow a partial answer, guarded by conditions checked
+BEFORE the move":
+
+    LETTER COMBINATIONS OF A PHONE NUMBER    the guard is just "which digit am I on"
+    SUBSETS / COMBINATIONS                   guard: only pick indices after the current one
+    PERMUTATIONS                             guard: skip anything already used
+    N-QUEENS                                 guard: no queen shares a row, column or diagonal
+    WORD SEARCH                              guard: the cell matches and is not on the path
+    SUDOKU SOLVER                            guard: the digit is legal in row, column and box
+
+In every one of them the quality of the solution is the quality of the guard. A weak guard
+generates junk and filters it later; a guard that IS the definition of the constraint - as
+`close_count < open_count` is here - never generates junk at all.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Can you do it iteratively?" Yes - build the answers for n from the answers for smaller n:
+    every string for n is "(" + A + ")" + B where A and B are valid strings whose pair counts sum
+    to n - 1. That is the Catalan recurrence directly.
+  - "Just count them, do not list them." Then it is the Catalan number: (2n)! / (n! (n+1)!), or a
+    small DP. O(n) instead of exponential, because you are not writing the output.
+  - "Why is there no undo step?" Strings are immutable, so `current + "("` builds a new one and
+    the caller's copy is untouched. With a list you would need an explicit pop.
+  - "Multiple bracket types - (), [], {}?" Counts alone are no longer enough; you need a STACK to
+    remember which bracket is currently innermost.
+
+THE #1 BEGINNER MISTAKE: writing the closing condition as `close_count < n` by symmetry with the
+opening one. It looks right, it reads right, and it turns the algorithm into "generate all
+arrangements" - six strings instead of two at n = 2, twenty instead of five at n = 3. The correct
+test compares the two counts to EACH OTHER, because "you cannot close what you have not opened" is
+a statement about their relationship, not about the budget.
+
+TAKEAWAY: check legality BEFORE you add the character, with `open < n` for an opening bracket and
+`close < open` for a closing one, and then every complete string of length 2n is valid by
+construction - no validity check, no wasted branch, and no undo.""",
 ]
 
 _EX_P0B["Longest Substring Without Repeating Characters"] = [
@@ -36918,38 +37126,41 @@ for _e in ENTRIES:
 _EX_P0C = {}
 
 _EX_P0C["Linked Lists — reversal & fast/slow pointers"] = [
-    """What a LINKED LIST is, drawn as a train.
+    """1. THE GOAL - what a LINKED LIST is, drawn as a train.
 
-Think of a train. Each carriage holds some cargo, and it is coupled to exactly
-one carriage behind it. To get to carriage 4 you must walk through 1, 2 and 3 -
-there is no way to jump straight there.
+Think of a train. Each carriage holds some cargo, and it is coupled to exactly ONE carriage behind
+it. To get to carriage 3 you must start at the front and walk through 1 and 2 - there is no way to
+jump straight there.
 
-That is a LINKED LIST. Each item is a NODE, and each node holds two things: a
-value, and a link to the next node. The last node's link points at NOTHING,
-written as None in Python, which is how you know the list has ended.
+    [1] -> [2] -> [3] -> None
 
-    head
-     |
-     v
-    [1] -> [2] -> [3] -> [4] -> None
+Each box is a NODE. It holds a value and one link - `.next` - pointing at the next node. The last
+node's link is None, which is how you know the train has ended. You are given only the FIRST node,
+called the HEAD; everything else is reached by walking.
 
-The vocabulary as it appears:
-- HEAD is the first node. It is the only node you are given; everything else is
-  reached by following links.
-- .next is the link a node holds. node.next is "the node after this one".
-- None at the end is the TAIL marker - "nothing follows".
+WHAT YOU CANNOT DO, and it shapes every linked-list problem:
 
-Compare with an ordinary array [1,2,3,4]. An array is a row of boxes side by
-side, so you can jump straight to box 3. A linked list cannot do that - reaching
-the k-th node always costs k steps. What the linked list gives you in exchange
-is cheap INSERTION and DELETION in the middle: to remove a carriage you just
-re-couple its neighbours, whereas in an array you must shuffle everything after
-it along.
+    - You cannot ask for "the 5th node" directly. You must walk to it. (An array can; a list cannot.)
+    - You cannot ask how long the list is without walking the whole thing.
+    - You cannot walk BACKWARDS. Each node knows what comes after it and nothing about what came
+      before.
 
-Two techniques cover most linked-list interview questions, and they are the two
-in this entry: REVERSAL, and the FAST/SLOW pointer pair.""",
+WHAT YOU CAN DO CHEAPLY, and it is why linked lists exist at all:
 
-    """Reversing the list by hand, before any code.
+    - Insert or remove a node in the middle in constant time, IF you are already holding the node
+      before it. Just re-point one link. An array would have to shift everything.
+
+TWO TECHNIQUES COVER MOST LINKED-LIST INTERVIEW QUESTIONS, and this entry is both of them:
+
+    (1) REVERSAL - walk the list flipping each link to point backwards.
+    (2) FAST & SLOW POINTERS - two walkers moving at different speeds, which finds the MIDDLE in
+        one pass and DETECTS A CYCLE without any extra memory.
+
+They share one habit of mind: you are never allowed to lose your grip on the list. The moment you
+overwrite a link without having saved what it pointed at, the rest of the train is gone. Section 4
+is exactly that mistake.""",
+
+    """2. THE INTUITION - reversing the list by hand, before any code.
 
 We want to turn this:
 
@@ -36959,256 +37170,535 @@ into this:
 
     [3] -> [2] -> [1] -> None
 
-The list is not a row of boxes we can shuffle - all we can do is change which
-node each link points at. So reversing means: walk along, and flip each node's
-arrow to point BACKWARDS instead of forwards.
+The list is not moved and the nodes are not copied. THE SAME THREE NODES STAY WHERE THEY ARE, and
+only the ARROWS change direction.
 
-Now the danger, and it is the whole reason this problem is asked. The moment you
-flip node 1's arrow to point backwards, you have DESTROYED the only thing that
-told you where node 2 was. The rest of the train is gone - uncoupled, with no
-way to reach it.
+Do it with your hands. Hold three fingers on the train:
 
-So you need three fingers, not one:
+    prev  - the last carriage of the part you have ALREADY flipped (behind you)
+    curr  - the carriage you are flipping RIGHT NOW
+    nxt   - the carriage after it, saved because you are about to destroy the link to it
 
-- CURR: the node whose arrow you are about to flip.
-- PREV: the node that curr should now point at - the part already reversed,
-  sitting behind curr. It starts as None, because the original first node must
-  end up pointing at nothing.
-- NXT: a temporary hold of curr.next, saved BEFORE the flip, so you still know
-  where to go next.
+    START:      prev = None      curr = [1]
+                None    [1] -> [2] -> [3] -> None
 
-The four steps, in this exact order, repeated until curr falls off the end:
+    ROUND 1:    save nxt = [2].  flip [1] to face prev (None).  step both forward.
+                None <- [1]      curr = [2]
+                                 [2] -> [3] -> None
 
-  1. nxt = curr.next      save the rest of the train
-  2. curr.next = prev     flip this carriage to face backwards
-  3. prev = curr          this carriage is now the front of the reversed part
-  4. curr = nxt           step forward onto the saved carriage
+    ROUND 2:    save nxt = [3].  flip [2] to face [1].  step both forward.
+                None <- [1] <- [2]     curr = [3]
+                                       [3] -> None
 
-Step 1 must come before step 2. Swap those two and the list breaks - that single
-ordering is what the question is really testing.""",
+    ROUND 3:    save nxt = None. flip [3] to face [2].  step both forward.
+                None <- [1] <- [2] <- [3]      curr = None
 
-    """The reversal trace, with the reason on every line.
+    curr is None, so the walk is over. THE NEW HEAD IS prev, which is [3].
 
-Starting list: [1] -> [2] -> [3] -> None.  prev = None, curr = [1].
+THE ORDER INSIDE EACH ROUND IS NOT NEGOTIABLE. Save, then flip, then step. The instant you write
+`curr.next = prev`, the only link to the rest of the list is gone - so the save must come first.
+Section 4 traces what actually happens if you do it the other way round, and it is worse than you
+might guess.
 
-ROUND 1.  curr is [1].
-  nxt = [2]           save it - we are about to lose the link to it
-  1.next = None       flip: 1 now points at prev, which is None. So 1 has become
-                      the END of the list. Correct - it was the front, and the
-                      front becomes the back.
-  prev = [1]          the reversed part is now just [1] -> None
-  curr = [2]          step forward
-  Picture now:  reversed: [1] -> None      remaining: [2] -> [3] -> None
+NOW THE SECOND TECHNIQUE - TWO FINGERS AT DIFFERENT SPEEDS.
 
-ROUND 2.  curr is [2].
-  nxt = [3]           save
-  2.next = [1]        flip: 2 now points back at 1
-  prev = [2]          reversed part is [2] -> [1] -> None
-  curr = [3]
-  Picture now:  reversed: [2] -> [1] -> None    remaining: [3] -> None
+Put both fingers at the front. Move one finger ONE carriage per step and the other TWO.
 
-ROUND 3.  curr is [3].
-  nxt = None          3 was the last node, so there is nothing after it
-  3.next = [2]        flip
-  prev = [3]          reversed part is [3] -> [2] -> [1] -> None
-  curr = None
-  The loop condition "while curr" is now false, so we stop.
+    [1] -> [2] -> [3] -> [4] -> [5] -> None
 
-Return prev, which is [3] - the new head. Note we return PREV, not curr: curr
-has walked off the end and is None. prev is always the last node we successfully
-flipped, which after the final round is the new front of the list.
+    start:   slow = 1,  fast = 1
+    step 1:  slow = 2,  fast = 3
+    step 2:  slow = 3,  fast = 5
+    fast has no next-next, so stop.   SLOW IS AT 3 - THE MIDDLE.
 
-Read the three pictures again in order. The reversed part grows from the left
-while the remaining part shrinks from the left, and the two never overlap.""",
+Of course it is. The fast finger covers twice the distance, so when it reaches the end the slow
+one has covered half. ONE PASS, NO COUNTING, NO SECOND WALK, and no memory beyond two variables.
 
-    """The FAST/SLOW pointer pair - finding the middle in one pass.
+The same two fingers detect a LOOP, and section 5 proves why they MUST meet.""",
 
-Second technique. You want the middle node of a list, but you do not know how
-long the list is, and walking it twice (once to count, once to reach the middle)
-feels wasteful.
+    """3. EVERY TERM, defined the first time you meet it.
 
-The trick: send two fingers along at DIFFERENT SPEEDS. SLOW moves one node per
-step; FAST moves two. When fast reaches the end, slow is at the middle - because
-in the same amount of time, slow covered exactly half the ground fast did.
+NODE. One carriage: a value and a `.next` link.
 
-Trace on [1] -> [2] -> [3] -> [4] -> [5]:
+HEAD. The first node. Usually the only thing you are given.
 
-  Start:   slow = 1, fast = 1
-  Step 1:  slow = 2, fast = 3
-  Step 2:  slow = 3, fast = 5
-  Step 3:  fast.next is None, so fast cannot take two more steps - stop.
-  slow = 3. That is the middle of five nodes. Correct.
+TAIL. The last node - the one whose `.next` is None.
 
-On an EVEN-length list [1,2,3,4] there are two middles, so you must decide which
-one you want, and the loop condition is what decides it:
+SINGLY LINKED. Each node links forward only. (A DOUBLY linked list also links backwards, which
+makes most of this entry unnecessary and costs a second pointer per node.)
 
-  while fast and fast.next:      -> slow lands on the SECOND middle (node 3)
-  while fast.next and fast.next.next: -> slow lands on the FIRST middle (node 2)
+None / NULL. The end-of-list marker, and also what an empty list looks like.
 
-Neither is more correct; the problem tells you which. Say which one your
-condition gives, because "off by one middle" is the most common bug here.
+IN PLACE. Rearranging the existing nodes rather than building new ones. The reversal here is in
+place: no new node is ever created, so it uses O(1) extra memory.
 
-The two guards in "while fast and fast.next" both matter. fast might already be
-None (odd-length list, fast ran exactly off the end), and fast.next might be
-None (even-length list). Reading fast.next.next without both checks crashes.""",
+POINTER / REFERENCE. A variable holding "which node". Assigning one pointer to another does not
+copy the node; both names now refer to the SAME node.
 
-    """The same two fingers detect a LOOP - and here is why they must meet.
+prev, curr, nxt. The three pointers in the reversal.
+    prev  HOLDS the head of the already-reversed part.
+    curr  HOLDS the node being flipped now.
+    nxt   HOLDS the rest of the original list, saved before the link is destroyed.
+    (The name is `nxt`, not `next`, because `next` is a Python built-in function and shadowing it
+    inside a larger file is a real nuisance.)
 
-Now suppose the train's last carriage is coupled back to an earlier one, so it
-runs in a circle:
+FLOYD'S CYCLE DETECTION / "TORTOISE AND HARE". The fast-and-slow pointer technique.
 
-    [1] -> [2] -> [3] -> [4]
-                   ^      |
-                   |______|
+CYCLE. A list whose tail links back to an earlier node instead of None. Walking it never ends.
 
-Walking this list never ends. How do you detect that without remembering every
-node you have seen?
+DUMMY HEAD / SENTINEL. A fake node placed in front of the real head so that "delete the first
+node" needs no special case. Section 5.
 
-Send the same two fingers. Slow moves one step, fast moves two. If the list ends
-normally, fast falls off the end and you are done - no loop. But if there IS a
-loop, both fingers eventually enter it and can never leave.
+O(n) TIME, O(1) SPACE. One pass over n nodes, using a fixed number of variables regardless of n.""",
 
-Once both are inside the loop, think about the GAP between them, measured
-forwards around the circle. Each step, fast gains exactly one node on slow -
-because fast moves two and slow moves one. So the gap shrinks by one every
-single step: 5, 4, 3, 2, 1, 0. It cannot jump over zero, because it only ever
-changes by one. So the gap MUST hit exactly zero, which means the two fingers
-land on the same node. They meet.
+    """4. THE MISTAKE THAT DESTROYS THE LIST - overwriting before saving.
 
-That is the proof, and it is worth being able to say in two sentences: they are
-trapped in a circle, the gap between them closes by exactly one each step, and a
-quantity that decreases by one at a time cannot skip zero.
+The reversal has three statements inside the loop and they look interchangeable. They are not.
 
-This is called FLOYD'S CYCLE DETECTION, or the tortoise and hare. It uses O(1)
-extra memory - just two variables - where the obvious alternative (a set of
-every node seen) uses O(n).
-
-Handy extra: to find WHERE the loop starts, once the fingers meet, move one of
-them back to the head and then advance BOTH one step at a time. They meet again
-exactly at the loop's entry point.""",
-
-    """The tiny inputs, the DUMMY HEAD trick, and the cost.
-
-Empty list. head is None, so in the reversal the while loop never runs and we
-return prev, which is still None. Correct - reversing nothing gives nothing. No
-special case needed.
-
-Single node [1]. Round 1: nxt = None, 1.next = None (it already was), prev = 1,
-curr = None, loop ends, return 1. Correct, and again no special case.
-
-Now the trick that removes most of the remaining edge cases in linked-list
-problems: the DUMMY HEAD. Create one throwaway node that sits in front of the
-real head:
-
-    [dummy] -> [1] -> [2] -> [3] -> None
-
-Why bother? Because "delete the first node" and "insert before the first node"
-are normally special cases - there is no node in front of the head to re-couple.
-With a dummy there, the real head has a predecessor like every other node, so
-one piece of code handles every position. At the end you return dummy.next
-rather than dummy. Merging two sorted lists, removing the n-th node from the
-end, and removing duplicates all get noticeably shorter this way.
-
-Cost of everything in this entry: reversal touches each node once, so O(n) time
-and O(1) extra memory - the three pointers, no matter how long the list is. The
-fast/slow techniques are the same: one pass, two variables.
-
-Beware the recursive reversal. It is elegant in three lines but uses O(n) call
-stack, so on a list of a million nodes Python's recursion limit stops it. The
-iterative version below has no such problem, which is why it is the one to
-write.
-
-In plain words, the takeaway: to reverse, keep three fingers and always save the
-next node BEFORE you flip the current one. To find a middle or a loop with no
-extra memory, send one finger at twice the speed of the other. Both are O(n)
-time and O(1) space.""",
-
-    """What the code does, in plain language - read this before the line-by-line.
-
-The code below reverses the list. It walks from the front to the back, and as it
-passes each node it turns that node's arrow around to point at the node behind
-it instead of the node in front.
-
-The whole difficulty is that a node's arrow is the ONLY thing that tells you
-where the rest of the list is. The moment you turn it around, everything after
-it becomes unreachable - the rest of the train is uncoupled and rolling away.
-
-So the code holds three fingers at once:
-
-  One on the node it is currently flipping.
-  One on the part it has already reversed, which sits behind - this is what the
-    current node's arrow gets pointed at. It starts as "nothing", which is
-    exactly right, because the original first node has to end up as the new last
-    node, pointing at nothing.
-  One temporary finger holding the node in front, saved a moment BEFORE the flip
-    so there is still a way to step forward afterwards.
-
-Each round is four small moves in a fixed order: save what is in front, flip the
-arrow backwards, move the "already reversed" finger onto the node just flipped,
-and step forward onto the saved node. Repeat until you step off the end.
-
-At that point the "already reversed" finger is sitting on what used to be the
-last node, which is now the first - so that is what gets handed back.
-
-Nothing is copied and no new nodes are made. The same nodes are still there in
-the same places in memory; only the arrows between them changed. That is why it
-needs no extra memory beyond the three fingers, however long the list is.
-
-In one sentence: walk the list turning each arrow backwards, always saving the
-next node before you flip the current one, and hand back the node you finished
-on.""",
-
-    """Now the code, line by line, against the trace we just did by hand.
-
-Keep [1] -> [2] -> [3] beside you, and the three pictures from the trace.
-
-    def reverse(head):
-head is the only thing we are given - the first node. Everything else is reached
-by following .next links.
-
-    prev = None
-The reversed part, which starts out empty. Setting it to None rather than to
-head is what makes the ORIGINAL first node end up pointing at nothing - and a
-node pointing at nothing is exactly what "end of list" means. In round 1 of the
-trace this is the value that got written into 1.next.
-
-    curr = head
-The node whose arrow we are about to flip. It starts at the front and walks to
-the end.
+THE WRONG ORDER - flip first, then save:
 
     while curr:
-Keep going while curr is an actual node. When curr becomes None we have walked
-off the end and every arrow has been flipped. In the trace this became false
-after round 3.
+        curr.next = prev         # <- destroys the link to the rest of the list
+        nxt = curr.next          # <- now reads the link we just overwrote
+        prev = curr
+        curr = nxt
 
-    nxt = curr.next
-STEP 1, and it must be first. Save where the rest of the list is, because the
-very next line overwrites curr.next and that link is the only way to reach it.
-In round 1 this saved [2]; had we skipped it, nodes 2 and 3 would have been
-stranded with nothing pointing at them.
+Trace it on [1] -> [2] -> [3] -> None, with prev = None and curr = [1]:
 
-    curr.next = prev
-STEP 2, the actual reversal, and the only line that changes the list. This node
-now points BACKWARDS, at whatever we have already reversed. Round 1 wrote None
-here; round 2 wrote [1]; round 3 wrote [2].
+    ROUND 1:
+        curr.next = prev     ->  [1].next = None.   THE LINK TO [2] IS NOW GONE.
+                                 Nothing anywhere in the program refers to [2] any more.
+        nxt = curr.next      ->  nxt = None   (it reads back the None we just wrote)
+        prev = [1]
+        curr = None
 
-    prev = curr
-STEP 3. The node we just flipped is now the front of the reversed part, so it
-becomes the new prev for the next round. After round 2 this was [2], and indeed
-the reversed part was [2] -> [1] -> None.
+    The loop condition `while curr` is now false, so it ends after ONE round.
 
-    curr = nxt
-STEP 4. Step forward onto the node we saved in step 1. This is the only reason
-step 1 existed.
+    return prev  ->  [1] -> None
 
-    return prev
-Return PREV, not curr. By the time the loop exits, curr is None - it walked off
-the end. prev is the last node we successfully flipped, which is the old tail
-and therefore the new head. In the trace that was [3].
+    THE FUNCTION RETURNS A ONE-NODE LIST. Nodes [2] and [3] are not corrupted - they are
+    UNREACHABLE, which is worse, because there is no error and no crash. Python's garbage
+    collector quietly frees them. A ten-thousand-node list comes back with one node in it and
+    the program carries on as though everything is fine.
 
-Four lines in the loop body, and their ORDER is the entire problem. Write step 2
-before step 1 and you get a list of length 1; return curr instead of prev and
-you get None. Both are worth checking on paper before you say you are done.""",
+    THE INVERSION: move ONE line - the save - above the flip, and the same input returns
+    [3] -> [2] -> [1] -> None. Same three statements, same variables, correct answer.
+
+TRAP 2 - RETURNING THE WRONG POINTER. The loop ends when `curr` is None. So:
+
+    return curr     ->  returns None. An empty list, every time, for every input.
+    return head     ->  returns the node that is now the TAIL, whose .next is None - a
+                        one-node list, and the caller sees the reversal as having deleted
+                        everything except the original first element.
+    return prev     ->  correct. prev is the last node the loop flipped, which is the old tail.
+
+TRAP 3 - THE FAST/SLOW LOOP CONDITION IN THE WRONG ORDER.
+
+    while fast and fast.next:      correct
+    while fast.next and fast:      crashes with AttributeError when fast is None
+
+Python's `and` SHORT-CIRCUITS: it evaluates the left side first and skips the right side if the
+left is false. So the correct version checks `fast` exists before daring to read `fast.next`. The
+reversed version reads `fast.next` first, and on an even-length list `fast` becomes None exactly
+at the end, so it crashes on the very last check.
+
+TRAP 4 - ASSUMING THE MIDDLE IS UNIQUE. For an even-length list there are two middles.
+`while fast and fast.next` lands `slow` on the SECOND of them. For 1-2-3-4 it returns 3, not 2.
+Whether you want the first or the second depends on the problem (splitting a list for merge sort
+usually wants the FIRST), and you get the first by starting `fast = head.next`. Say which one you
+are returning; do not leave it implied.""",
+
+    """5. THE SLOWER VERSIONS FIRST, THEN THE REAL ONES, AND WHY THE HARE MUST CATCH THE TORTOISE.
+
+REVERSAL - VERSION A: COPY THE VALUES INTO A LIST, REVERSE IT, WRITE THEM BACK. Two passes and
+O(n) extra memory. Also it moves VALUES rather than nodes, which is wrong the moment anything else
+in the program holds a reference to a particular node.
+
+REVERSAL - VERSION B: RECURSION. Reverse the rest of the list, then attach the current node at the
+end. Elegant, O(n) stack depth - which on a 100,000-node list exceeds Python's default recursion
+limit of 1000 and raises RecursionError.
+
+REVERSAL - VERSION C: THE THREE-POINTER LOOP, which is the code here. One pass, O(1) memory, no
+recursion. This is what an interviewer wants.
+
+MIDDLE OF THE LIST - VERSION A: WALK ONCE TO COUNT, THEN WALK HALF AGAIN. Two passes. Perfectly
+correct and worth mentioning - and if you are only allowed ONE pass (a streaming list, or a list
+you cannot re-traverse), it is not available.
+
+MIDDLE - VERSION B: FAST AND SLOW. One pass, O(1) memory.
+
+CYCLE DETECTION - VERSION A: A SET OF VISITED NODES. Walk, and stop if you see a node twice.
+Correct, easy, and O(n) MEMORY. On a list of ten million nodes that is a serious cost.
+
+CYCLE DETECTION - VERSION B: FAST AND SLOW, using TWO VARIABLES. If the list ends, `fast` reaches
+None and you return False. If it loops, the two pointers eventually meet.
+
+WHY THEY MUST MEET - the argument, since "eventually they meet" is the part people wave at.
+
+Once BOTH pointers are inside the cycle, look at the GAP between them, measured as the number of
+steps `slow` is behind `fast` going forward round the loop. Each step, `fast` moves 2 and `slow`
+moves 1, so:
+
+    THE GAP SHRINKS BY EXACTLY ONE, EVERY SINGLE STEP.
+
+A quantity that decreases by exactly 1 each step, and is at most the cycle length L, must reach 0
+within L steps. And because it shrinks by exactly one - never two - it cannot JUMP OVER zero. They
+land on the same node.
+
+    Concretely, with 1 -> 2 -> 3 -> 4 -> 5 -> back to 3 (a cycle of length 3):
+
+        start:   slow = 1,  fast = 1
+        step 1:  slow = 2,  fast = 3
+        step 2:  slow = 3,  fast = 5
+        step 3:  slow = 4,  fast = 4      MET, after 3 steps - and L is 3.
+
+FINDING WHERE THE CYCLE STARTS - Floyd's second phase, which looks like magic and is not:
+
+    after they meet, put one pointer back at the head, leave the other at the meeting point,
+    and move BOTH one step at a time. They meet at the cycle's entrance.
+
+    Same list. They met at node 4. Reset one to the head:
+        p1 = 1,  p2 = 4
+        step:  p1 = 2,  p2 = 5
+        step:  p1 = 3,  p2 = 3      MET AT NODE 3 - which is exactly the cycle entrance.
+
+    WHY: let a be the distance from head to the entrance (here 1->2->3 is a = 2) and b the
+    distance from the entrance to the meeting point (3->4 is b = 1). `slow` walked a + b; `fast`
+    walked twice that, and the difference between them is a whole number of laps, so a + b is a
+    multiple of L. Here a + b = 3 = L exactly. Therefore walking a further steps from the meeting
+    point lands you back at the entrance - which is also a steps from the head. Both pointers
+    arrive together.
+
+THE DUMMY HEAD, since it belongs with these techniques. When an operation might remove or replace
+the FIRST node, put a fake node in front:
+
+    dummy = Node(0); dummy.next = head
+    ... do the work using dummy as a normal predecessor ...
+    return dummy.next
+
+Now "delete the first node" is the same code as "delete any other node" - there is always a node
+before the one you are touching - and you return `dummy.next` rather than `head`, which correctly
+reflects a head that changed.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+THE REVERSAL. The one sentence that holds it: WALK FORWARD THROUGH THE LIST TURNING EACH LINK TO
+POINT AT THE NODE YOU CAME FROM, ALWAYS SAVING WHERE YOU WERE GOING BEFORE YOU OVERWRITE THE LINK
+THAT TELLS YOU.
+
+THIS VERSION IS A LOOP, NOT RECURSION, and that is deliberate - the recursive version in section 5
+uses stack depth equal to the list length and dies on long lists. The mechanism is THREE POINTERS
+SLIDING FORWARD IN LOCKSTEP:
+
+  - `prev` trails behind, always pointing at the front of the part already flipped.
+  - `curr` is the node being flipped now.
+  - `nxt` is a temporary holding the rest of the list for exactly one statement.
+  - WHAT MAKES IT STOP: `curr` advances one node every round and the list is finite, so it reaches
+    None. There is no way round - the list is walked strictly forward.
+  - WHY THE ANSWER IS `prev` AND NOT `curr`: when the loop ends, `curr` is None and `prev` is the
+    node it flipped last - which is the original tail, and therefore the new head.
+
+THE STEPS:
+
+  1. START WITH "THE REVERSED PART" EMPTY - that is, nothing behind you - and stand on the first
+     node.
+
+  2. WHILE YOU ARE STANDING ON A REAL NODE:
+
+     a. SAVE WHERE THIS NODE POINTS. Do this FIRST. In one moment you will overwrite that link,
+        and it is the only route to the rest of the list.
+
+     b. POINT THIS NODE BACKWARDS, at whatever was behind you.
+
+     c. STEP BOTH POINTERS FORWARD: what you were standing on is now behind you, and you move on
+        to the node you saved.
+
+  3. WHEN THERE IS NO NODE TO STAND ON, the whole list has been flipped. The answer is whatever is
+     behind you - the original last node.
+
+THE FAST/SLOW PAIR. The one sentence: SEND TWO WALKERS FROM THE FRONT, ONE MOVING TWICE AS FAST AS
+THE OTHER, AND READ THE ANSWER OFF WHERE THEY END UP.
+
+  1. PUT BOTH WALKERS ON THE FIRST NODE.
+
+  2. WHILE THE FAST WALKER HAS SOMEWHERE TO GO - meaning it exists AND the node after it exists,
+     checked in that order because checking the second on a missing node crashes:
+
+     a. MOVE THE SLOW WALKER ONE NODE.
+     b. MOVE THE FAST WALKER TWO NODES.
+     c. FOR CYCLE DETECTION ONLY: if the two are now standing on the same node, there is a loop -
+        stop and say so.
+
+  3. IF THE LOOP ENDED because the fast walker ran out of list, then there is no cycle - and the
+     slow walker is standing on the middle, because it went exactly half as far.
+
+WHAT MAKES THE CYCLE VERSION STOP: either the fast walker reaches the end (no cycle), or the gap
+between the walkers shrinks by exactly one each step until it is zero (cycle). Section 5 is the
+argument.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Picture a line of railway carriages, each coupled to the one in front of it, and you want the
+whole train facing the other way - without moving a single carriage. Only the couplings change.
+
+You walk along the train with three things in mind at all times: the carriage you have just
+finished with, the carriage you are working on now, and the carriage you were about to go to next.
+
+That third one is the one people forget, and forgetting it is fatal. The only thing telling you
+where the rest of the train is, is the coupling on the carriage you are about to alter. So before
+you touch it, you note down where it points. Then, and only then, you unhook it from the carriage
+in front and hook it to the carriage behind. Then you shuffle along: the carriage you just did
+becomes "behind you", and you move to the one you noted down.
+
+Do that until there is nothing left to stand on. The carriage behind you at that moment is the one
+that used to be at the very back, and it is now the front of the train. That is what you hand
+back - not the carriage you started at, which is now the very last one, and not the empty space
+in front of you, which is nothing at all.
+
+The second technique needs no couplings changed and no notes taken. You send two people walking
+from the front of the train. One strolls, one carriage at a time. The other runs, two at a time.
+
+If the train has an end, the runner reaches it first - having covered twice the ground - and at
+that exact moment the stroller is standing precisely halfway. You have found the middle without
+ever counting the carriages, and without walking the train twice.
+
+If instead the train's last carriage is secretly coupled back to one in the middle, so it runs in
+a circle, the runner never finds an end. Round and round they both go - but the runner gains
+exactly one carriage on the stroller every single step. A gap that shrinks by exactly one, and
+can never skip past zero, must eventually become zero. The runner taps the stroller on the
+shoulder, and that is your proof there is a loop.
+
+And if you then walk one person back to the front of the train and let both of them stroll at the
+same pace, they will meet again at exactly the carriage where the circle begins - which is the
+coupling somebody wired up wrong.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep [1] -> [2] -> [3] beside you, and the three pictures from section 2.
+
+    def reverse(head):
+
+`head` is the first node, or None for an empty list. Returns the NEW head. The nodes are
+rearranged IN PLACE - the caller's original head pointer will afterwards be pointing at the TAIL
+of the reversed list, which is worth telling the caller.
+
+        prev = None                  # the part already reversed (behind curr)
+
+    prev  HOLDS the front of the already-flipped section. It starts at None for two reasons at
+          once: there is nothing flipped yet, AND the first node must end up with `.next = None`
+          because it becomes the new tail. One initial value does both jobs.
+
+        curr = head
+
+    curr  HOLDS the node being flipped this round. Starts at the front.
+
+        while curr:
+
+Runs while there is a real node to work on. Stops when `curr` becomes None - which happens exactly
+once, after the last node, because `curr` advances one node per round through a finite list.
+
+For an empty list (`head` is None) the body never runs at all, and the function returns `prev`,
+still None. The empty case needs no special handling.
+
+            nxt = curr.next          # save the rest BEFORE we overwrite the pointer
+
+THE LINE THAT MUST COME FIRST.
+
+    nxt  HOLDS the remainder of the original list. The very next statement destroys `curr.next`,
+         and this is the only other reference to what it pointed at.
+
+Put this line second and the list is severed - section 4 traces the one-round collapse that
+follows.
+
+            curr.next = prev         # flip this node to face backwards
+
+THE FLIP - the only line that modifies the list at all. `curr` now points at the node behind it
+rather than in front. On the first round this sets `head.next = None`, correctly making the old
+first node the new last node.
+
+            prev = curr              # advance both pointers forward
+            curr = nxt
+
+THE STEP. What we just flipped is now "behind"; we move on to the saved remainder. Note this uses
+`nxt` and not `curr.next` - `curr.next` now points BACKWARDS, and using it here would send the
+walk into the part already reversed and loop forever.
+
+        return prev                  # prev is the new head (old tail)
+
+`prev`, not `curr` and not `head`. When the loop ends `curr` is None; `head` is now the tail.
+`prev` is the last node flipped, which is the original tail and therefore the new head. Trap 2.
+
+THE FAST/SLOW SHAPE, for reference, in the same style:
+
+    slow = fast = head
+    while fast and fast.next:
+        slow = slow.next
+        fast = fast.next.next
+    # here: slow is the middle (the SECOND middle if the length is even)
+
+    the condition `fast and fast.next`  DECIDES whether a two-step move is even possible. Both
+        halves are needed: `fast` for odd lengths (fast lands exactly on the last node), `fast.next`
+        for even lengths (fast lands exactly on None). And they must be in THAT order - trap 3.
+    `fast.next.next`  is the double step, safe only because the condition just proved both links
+        exist.
+
+    For cycle detection, add `if slow is fast: return True` immediately after the two moves, and
+    `return False` after the loop. Use `is` rather than `==`: you are asking whether they are THE
+    SAME NODE, not whether two nodes hold equal values.""",
+
+    """9. TRACED, POINTER BY POINTER.
+
+TRACE 1 - REVERSAL of [1] -> [2] -> [3] -> None.
+
+    SETUP:  prev = None,  curr = [1]
+            list:  [1] -> [2] -> [3] -> None
+
+    ROUND 1.  curr is [1], which is truthy, so the body runs.
+        nxt = curr.next        ->  nxt = [2]        (saved BEFORE anything is destroyed)
+        curr.next = prev       ->  [1].next = None
+                                   picture:  None <- [1]      [2] -> [3] -> None
+                                   The link from [1] to [2] is gone - and `nxt` is the only
+                                   thing that still knows where [2] is.
+        prev = curr            ->  prev = [1]
+        curr = nxt             ->  curr = [2]
+
+    ROUND 2.  curr is [2].
+        nxt = curr.next        ->  nxt = [3]
+        curr.next = prev       ->  [2].next = [1]
+                                   picture:  None <- [1] <- [2]      [3] -> None
+        prev = curr            ->  prev = [2]
+        curr = nxt             ->  curr = [3]
+
+    ROUND 3.  curr is [3].
+        nxt = curr.next        ->  nxt = None        ([3] was the tail)
+        curr.next = prev       ->  [3].next = [2]
+                                   picture:  None <- [1] <- [2] <- [3]
+        prev = curr            ->  prev = [3]
+        curr = nxt             ->  curr = None
+
+    LOOP CHECK: curr is None -> the loop ends.
+
+    return prev  ->  [3],  and following the links from [3] gives [3] -> [2] -> [1] -> None.
+
+    NOTE WHAT `head` IS NOW. The caller's `head` still points at [1] - which is the TAIL of the
+    reversed list, with `.next = None`. Anyone who kept the old head and did not take the return
+    value now believes the list has one element. Say this out loud in an interview; it is the most
+    common real-world bug with in-place reversal.
+
+    COMPARE WITH THE BROKEN ORDER from section 4 on the SAME input: it finishes after one round
+    and returns a one-node list, having silently orphaned [2] and [3]. One line's position, and
+    the difference between a correct reversal and losing the whole list with no error.
+
+TRACE 2 - FINDING THE MIDDLE, odd length: [1] -> [2] -> [3] -> [4] -> [5] -> None.
+
+    start:   slow = [1],  fast = [1]
+    check:   fast is [1], fast.next is [2]  ->  both truthy, enter.
+             slow = [2],  fast = [3]
+    check:   fast is [3], fast.next is [4]  ->  enter.
+             slow = [3],  fast = [5]
+    check:   fast is [5], fast.next is None ->  the second half is false. STOP.
+
+    slow = [3].  The list has 5 nodes and [3] is the third - the exact middle. Correct.
+    slow took 2 steps; fast took 4. Exactly double, which is the whole argument.
+
+TRACE 3 - EVEN LENGTH, the case in trap 4: [1] -> [2] -> [3] -> [4] -> None.
+
+    start:   slow = [1],  fast = [1]
+    check:   fast [1], fast.next [2]  ->  enter.  slow = [2], fast = [3]
+    check:   fast [3], fast.next [4]  ->  enter.  slow = [3], fast = [4].next = None
+    check:   fast is None  ->  the FIRST half is false, so `fast.next` is never evaluated.
+             STOP without crashing.
+
+    slow = [3] - the SECOND of the two middles ([2] and [3] are both middles of a 4-node list).
+
+    THIS TRACE IS ALSO THE PROOF FOR TRAP 3. At the final check, `fast` is None. The correct
+    condition `fast and fast.next` short-circuits and stops safely. The reversed condition
+    `fast.next and fast` would evaluate `None.next` and raise AttributeError - on this exact
+    input, an ordinary four-element list.
+
+TRACE 4 - CYCLE DETECTION on [1] -> [2] -> [3] -> [4] -> [5] -> back to [3].
+
+    start:   slow = [1],  fast = [1]
+    step 1:  slow = [2],  fast = [3]        slow is fast?  no
+    step 2:  slow = [3],  fast = [5]        no
+    step 3:  slow = [4],  fast = [4]        YES - THEY MEET. Return True.
+
+    Three steps, and the cycle has length 3 ([3] -> [4] -> [5] -> [3]) - matching the bound in
+    section 5, which says they meet within L steps of both being inside the loop.
+
+    NOW FIND WHERE THE CYCLE STARTS. Reset one pointer to the head; move both one step at a time:
+        p1 = [1],  p2 = [4]
+        step:  p1 = [2],  p2 = [5]
+        step:  p1 = [3],  p2 = [3]     MET AT [3] - which is exactly the node the tail loops back
+                                       to. Correct.
+    Check the algebra: a (head to entrance) = 2 steps, b (entrance to meeting point) = 1 step,
+    a + b = 3 = the cycle length L, exactly as the argument in section 5 requires.
+
+THE TINY INPUTS:
+    EMPTY LIST (head is None)   reversal: the while body never runs, returns prev = None.
+                                fast/slow: `fast` is None, the loop never runs, slow is None.
+    ONE NODE [1]                reversal: one round, nxt = None, [1].next = None, prev = [1],
+                                curr = None. Returns [1]. Unchanged, correctly.
+                                fast/slow: `fast.next` is None, loop never runs, slow = [1] - the
+                                middle of a one-node list is that node.
+    TWO NODES [1] -> [2]        reversal returns [2] -> [1]. fast/slow: one round, slow = [2] -
+                                the second middle again.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+REVERSAL - TIME: O(n). One pass; each node is visited once and has its link rewritten once.
+REVERSAL - SPACE: O(1). THREE POINTERS, whether the list has 3 nodes or 3 million. No new node is
+ever allocated - the same nodes are re-linked in place.
+
+    (The recursive version is also O(n) time but O(n) stack, and dies at Python's default limit of
+    1000 frames. Worth naming as the reason you chose the loop.)
+
+FAST/SLOW - TIME: O(n). The fast pointer covers the list at most twice for cycle detection.
+FAST/SLOW - SPACE: O(1). TWO POINTERS - against O(n) for the visited-set version, which is the
+whole reason Floyd's method is worth knowing.
+
+THE FAMILY THESE TWO TECHNIQUES UNLOCK - most linked-list interview questions are one of them,
+sometimes both:
+
+    REVERSE A SUB-LIST between positions m and n     reversal, plus a dummy head
+    PALINDROME LINKED LIST                            find the middle, reverse the second half,
+                                                      compare - both techniques in one problem
+    REORDER LIST (1->n->2->n-1->...)                  middle, reverse, then interleave
+    REMOVE THE Nth NODE FROM THE END                  two pointers n apart, plus a dummy head
+    MERGE TWO SORTED LISTS                            dummy head
+    DETECT AND REMOVE A CYCLE                         Floyd, then the second phase from section 5
+    SWAP NODES IN PAIRS                               dummy head plus careful re-linking
+
+Notice how often the DUMMY HEAD appears. Any problem where the first node might be deleted or
+replaced is simpler with one, because it removes the "what if it is the head" special case
+entirely.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it recursively." Reverse the rest, then set `head.next.next = head` and `head.next = None`.
+    O(n) stack - say so.
+  - "Reverse in groups of k." Same three-pointer loop, run k times, then splice the group back in
+    with a dummy head. This is the standard hard follow-up.
+  - "Where does the cycle start?" Floyd's second phase - reset one pointer to the head and move
+    both one step. Section 5 has the trace and the reason.
+  - "Find the middle without fast/slow." Count in one pass, then walk half again. Two passes -
+    fine unless the problem forbids it.
+  - "Which middle for an even-length list?" `while fast and fast.next` gives the second; starting
+    `fast = head.next` gives the first. Merge sort wants the first.
+
+THE #1 BEGINNER MISTAKE: overwriting `curr.next` before saving it. The list is severed at the
+first node, the loop exits after ONE round, and the function returns a single-node list with NO
+ERROR AND NO CRASH - the rest of the nodes simply become unreachable. Silence is what makes it
+dangerous; there is nothing to see in a stack trace.
+
+RUNNER-UP: returning `curr` (always None) or `head` (now the tail) instead of `prev`. And in the
+fast/slow loop, writing the condition as `fast.next and fast`, which crashes on every even-length
+list because `and` checks the left side first.
+
+TAKEAWAY: for reversal, SAVE-FLIP-STEP in that exact order and return `prev`, because the pointer
+you are about to overwrite is your only route to the rest of the list; for everything about
+middles and cycles, two walkers at different speeds turn "how long is it?" and "does it loop?"
+into one pass with two variables.""",
 ]
 
 _EX_P0C["Longest Increasing Subsequence (patience + binary search)"] = [
