@@ -64578,128 +64578,1029 @@ for _e in ENTRIES:
 # promoted these four easies into it. P0 carries a five-worked-examples bar, so
 # they get the same treatment as the rest of the band.
 _EX_P0H["Merge Similar Items"] = [
-    """The given example, traced through the map.
-items1 = [[1,1],[4,5],[3,8]], items2 = [[3,1],[1,5]]
-Walk both lists into one dictionary, adding as you go:
-  [1,1] -> {1:1}          [4,5] -> {1:1, 4:5}     [3,8] -> {1:1, 4:5, 3:8}
-  [3,1] -> 3 already present, 8+1 = 9
-  [1,5] -> 1 already present, 1+5 = 6
-Dictionary is {1:6, 4:5, 3:9}. Sort the KEYS -> [1,3,4] and emit
-[[1,6],[3,9],[4,5]]. Note the output is sorted by value, not by weight - read
-the required order back off the prompt before you write the return line.""",
+    """1. THE GOAL - a shopping-basket merge.
 
-    """Why a dictionary rather than a merge of two sorted lists.
-The two-pointer merge people reach for first works only if both inputs are
-already sorted by value, and the prompt does not promise that. The dictionary
-version does not care about input order at all, which is why it is the safer
-answer under time pressure.
-Costs: the map pass is O(n+m) and the final sort is O(k log k) over the k
-distinct values, so O(n log n) overall. If the inputs WERE guaranteed sorted,
-a two-pointer merge would be O(n+m) with no sort - worth saying out loud as
-the follow-up optimisation.""",
+You are given TWO lists of items. Each item is written as [value, weight].
 
-    """No overlap at all.
-items1 = [[1,3],[2,2]], items2 = [[7,1],[2,2],[10,3]]
-Map: {1:3, 2:2} then 7 is new -> {7:1}, 2 collides -> 2+2 = 4, 10 is new.
-Result [[1,3],[2,4],[7,1],[10,3]].
-Two things to notice: values present in only one list pass through untouched,
-and the single collision on value 2 is handled by exactly the same line of code
-as the non-collisions. There is no special case, which is the sign the data
-structure was the right choice.""",
+    Think of `value` as a PRODUCT CODE and `weight` as HOW MANY you have. Two people bring their
+    baskets and you want one combined basket.
 
-    """Everything collides.
-items1 = [[5,1],[5,2]] - note the DUPLICATE value inside ONE list.
-items2 = [[5,3]]
-Map: 5 -> 1, then 5 -> 1+2 = 3, then 5 -> 3+3 = 6. Result [[5,6]].
-A solution that assumed values are unique within a list (say, by building a
-dict per list with plain assignment rather than accumulation) silently drops
-the [5,1] and returns [[5,5]]. Always accumulate with `get(value, 0) + weight`
-rather than assigning, and test a within-list duplicate.""",
+    items1 = [[1,1], [4,5], [3,8]]
+    items2 = [[3,1], [1,5]]
 
-    """Empty inputs and the single-element case.
-merge_similar_items([], []) -> {} -> [] . The loop body never executes and the
-sort of an empty key set is empty, so no guard is needed.
-merge_similar_items([], [[3,4]]) -> [[3,4]]: concatenating the lists means an
-empty side costs nothing.
-merge_similar_items([[2,0]], [[2,0]]) -> [[2,0]]: a zero total weight is still
-a legitimate entry, so do NOT filter zeros out unless the prompt says to. That
-is a plausible-sounding assumption that changes the answer.""",
+    Product 1: the first basket has 1, the second has 5   ->  6
+    Product 3: the first basket has 8, the second has 1   ->  9
+    Product 4: only the first basket has any, 5           ->  5
 
-    """Where this pattern shows up beyond the puzzle.
-This is a GROUP BY with a SUM, which is why the shape is so common:
-- Shopping baskets: merge two carts, adding quantities of the same SKU.
-- Inventory: combine stock counts for the same product across two warehouses.
-- Analytics: fold per-shard event counts into one total per event type.
-- Sparse vectors: adding two sparse vectors stored as (index, value) pairs is
-  exactly this function.
-In SQL it is one line, and recognising 'this is a group-by-and-sum' is what
-lets you write the map version in thirty seconds instead of reasoning about
-pointers.""",
+    RETURN THE COMBINED BASKET, SORTED BY PRODUCT CODE:
+
+        [[1,6], [3,9], [4,5]]
+
+THREE THINGS THE PROBLEM IS ASKING FOR, and each one shapes the code:
+
+    MATCH BY VALUE. Items with the same value belong together, wherever they came from.
+    SUM THE WEIGHTS. Not maximum, not average - add them.
+    SORT THE OUTPUT BY VALUE. The result must be in ascending order of value, whatever order the
+        inputs arrived in.
+
+WHAT MAKES IT SLIGHTLY MORE THAN A ONE-LINER. The inputs are NOT promised to be sorted, and a value
+appearing in one list may or may not appear in the other. So you cannot walk the two lists in
+lockstep - which is the first thing most people reach for, and section 5 explains exactly when that
+approach is and is not available.
+
+THE SHAPE, NAMED: this is a GROUP BY VALUE, SUM WEIGHT, ORDER BY VALUE. If you have written SQL,
+you have written this query. Recognising it is worth more than the puzzle, because section 10 lists
+half a dozen everyday problems that are the same three lines.""",
+
+    """2. THE INTUITION - one dictionary, one pass, then sort the keys.
+
+A DICTIONARY (also called a map or hash map) stores key-to-value pairs and finds a key in constant
+time. Use the item's VALUE as the key and the running WEIGHT TOTAL as the stored value.
+
+Walk EVERY item from BOTH lists through one dictionary, adding as you go:
+
+    start:                          weights = {}
+
+    [1,1]  from items1   ->  1 is new            ->  weights = {1: 1}
+    [4,5]  from items1   ->  4 is new            ->  weights = {1: 1, 4: 5}
+    [3,8]  from items1   ->  3 is new            ->  weights = {1: 1, 4: 5, 3: 8}
+    [3,1]  from items2   ->  3 is there: 8 + 1   ->  weights = {1: 1, 4: 5, 3: 9}
+    [1,5]  from items2   ->  1 is there: 1 + 5   ->  weights = {1: 6, 4: 5, 3: 9}
+
+    THEN SORT THE KEYS and read the answer off:
+
+        sorted keys:  1, 3, 4
+        output:       [[1,6], [3,9], [4,5]]
+
+NOTICE WHAT THE DICTIONARY REMOVED FROM THE PROBLEM. It does not matter:
+
+    which list an item came from      - both lists are poured into the same map
+    what order the items arrive in    - addition does not care
+    whether a value appears in one list, both, or twice in the same list
+
+    ALL THREE CASES ARE THE SAME LINE OF CODE: "add this weight to whatever is already recorded for
+    this value, treating a missing entry as zero". There is no branching at all.
+
+THE SORT COMES LAST AND SEPARATELY. Building the totals is unordered work; the ordering is a
+presentation requirement applied once at the end, to the DISTINCT VALUES only - which is a smaller
+list than the inputs whenever anything collided.
+
+    (This split - accumulate in any order, sort once at the end - is exactly why the dictionary
+    beats trying to keep things sorted as you go.)""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ITEM. A two-element list [value, weight].
+VALUE. The identifier to group by. Think product code.
+WEIGHT. The quantity to sum.
+
+DICTIONARY / MAP / HASH MAP. A structure storing key-to-value pairs with constant-time lookup and
+insertion. Python's `dict`.
+
+KEY COLLISION - in the everyday sense here, not the hashing sense. Two items sharing a value, so
+their weights must be combined rather than one overwriting the other.
+
+GROUP BY / AGGREGATE. Collecting records that share a field and reducing each group to one number.
+Exactly what SQL's `GROUP BY value` with `SUM(weight)` does.
+
+TUPLE UNPACKING. `for value, weight in ...` splits each two-element item into two named variables in
+one step, rather than writing `item[0]` and `item[1]`.
+
+LIST CONCATENATION. `items1 + items2` builds a NEW list containing everything from both. It does
+NOT modify either input - which makes this one of the few functions in this bank that leaves its
+arguments alone (section 4).
+
+`.get(key, default)`. A dictionary method: return the stored value if the key is present, otherwise
+return `default` WITHOUT storing anything. Here the default of 0 is what makes "first time seen"
+and "seen before" the same line.
+
+LIST COMPREHENSION. `[expr for x in iterable]` - a compact way to build a list.
+
+`sorted(dict)`. Iterating a dictionary yields its KEYS, so `sorted(weights)` gives the distinct
+values in ascending order.
+
+weights. The dictionary from value to accumulated weight.
+value, weight. The two halves of one item, inside the loop.
+v. One distinct value, inside the comprehension.
+
+O(n + m + k log k). n and m are the input lengths; k is the number of DISTINCT values.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - LEAVING OUT `sorted`, AND GETTING AWAY WITH IT SOMETIMES. This is the one worth knowing,
+because Python hides the bug.
+
+    Since Python 3.7, DICTIONARIES PRESERVE INSERTION ORDER. So writing
+
+        return [[v, weights[v]] for v in weights]        # no sorted
+
+    returns the values in the order they were FIRST SEEN, which on the worked example is 1, 4, 3:
+
+        [[1,6], [4,5], [3,9]]        <- 4 before 3.  WRONG.
+
+    But feed it inputs that happen to arrive in ascending order and it produces exactly the right
+    answer. IT PASSES YOUR OWN TEST AND FAILS A HIDDEN ONE - the classic profile of a bug that
+    ships. The sort is a requirement of the problem, not a tidy-up.
+
+TRAP 2 - OVERWRITING INSTEAD OF ACCUMULATING. `weights[value] = weight` rather than
+`weights[value] = weights.get(value, 0) + weight`. On the worked example the second [3,1] would
+REPLACE the 8 with 1, and the answer for product 3 would be 1 instead of 9. The whole point of the
+problem is the summing, and this quietly discards it.
+
+TRAP 3 - `weights[value] + weight` WITHOUT A DEFAULT. Reading a key that is not there raises
+KeyError, so the very first item of the first list crashes. `.get(value, 0)` is what supplies the
+zero. The alternatives are `collections.defaultdict(int)`, which invents a 0 on first access, or
+`collections.Counter`, which is built for exactly this and supports `Counter(a) + Counter(b)`.
+
+TRAP 4 - ASSUMING THE INPUTS ARE SORTED and reaching for a two-pointer merge. The problem makes no
+such promise. Section 5 shows what breaks.
+
+TRAP 5 - DUPLICATE VALUES WITHIN ONE LIST. items1 = [[5,1], [5,2]] has the value 5 twice.
+
+    The map handles it with no special case: 5 -> 1, then 5 -> 1 + 2 = 3. Add items2 = [[5,3]] and
+    you get 6, so the answer is [[5,6]].
+
+    LeetCode's version of this problem promises the values within each list are distinct, so this
+    case never arises there - but THE CODE IS MORE GENERAL THAN THE PROMISE, which is a good thing
+    to notice and say. A two-pointer merge would need extra handling here.
+
+TRAP 6 - THIS FUNCTION DOES NOT MUTATE ITS INPUTS, and that is worth stating because so many
+sibling entries do. `items1 + items2` CONCATENATES into a brand-new list; neither argument is
+touched. Contrast with 3Sum's `nums.sort()`, Assign Cookies' `g.sort()`, Meeting Rooms'
+`intervals.sort()` and Insert Interval's `new[]`, all of which reorder or rewrite what the caller
+passed in. The cost of being polite here is one temporary list of size n + m - see section 10 for
+how to avoid even that.
+
+TRAP 7 - EMPTY INPUTS. `merge_similar_items([], [])` concatenates to an empty list, the loop body
+never runs, `sorted({})` is empty, and the comprehension produces `[]`. Correct, with no special
+case anywhere.""",
+
+    """5. THE ALTERNATIVE PEOPLE REACH FOR FIRST, AND WHY IT DOES NOT APPLY.
+
+VERSION A - THE TWO-POINTER MERGE. If both lists were sorted by value, you could walk them in
+lockstep exactly like merging two sorted halves in merge sort: compare the two front values, emit
+the smaller, and when they are equal emit their sum and advance both. O(n + m), no dictionary, no
+sort at the end.
+
+    IT IS A GOOD INSTINCT AND IT IS NOT AVAILABLE HERE, for two independent reasons:
+
+    THE INPUTS ARE NOT PROMISED TO BE SORTED. items1 = [[1,1],[4,5],[3,8]] is not - the 4 comes
+        before the 3. Run the lockstep merge on it and it emits 1, then compares 4 against items2's
+        front, and produces nonsense.
+    IT WOULD NEED EXTRA HANDLING FOR DUPLICATES WITHIN A LIST (trap 5), which the dictionary
+        absorbs for free.
+
+    You could of course SORT both inputs first and then merge - but that costs O(n log n + m log m),
+    which is WORSE than the dictionary's O(n + m + k log k) whenever values collide, since k is at
+    most n + m and usually much smaller. Sorting two lists to avoid sorting one smaller list is a
+    bad trade.
+
+VERSION B - NESTED LOOPS. For each item in items1, scan items2 for a matching value. O(n x m), and
+it still needs a pass to pick up the items2 values that matched nothing. For lists of 1,000 items
+each that is 1,000,000 comparisons against the dictionary's 2,000 insertions.
+
+VERSION C - THE DICTIONARY, which is the code here. One pass to accumulate, one sort of the
+DISTINCT keys to present.
+
+VERSION D - A COUNTING ARRAY, when the values are small integers. LeetCode's constraints put every
+value between 1 and 1,000, so you can skip hashing and sorting entirely:
+
+    counts = [0] * 1001
+    for value, weight in items1 + items2: counts[value] += weight
+    return [[v, counts[v]] for v in range(1001) if counts[v]]
+
+    O(n + m + 1000) with NO SORT AT ALL, because walking the array in index order IS sorted order.
+    For large inputs this is genuinely faster - and it is completely useless the moment values can
+    be arbitrary integers or strings, which is why the dictionary is the answer to give first and
+    this is the answer to give when asked "can you do better?".
+
+WHY THE SORT IS ONLY OVER THE DISTINCT VALUES. `sorted(weights)` iterates the dictionary's KEYS.
+If the two lists share many values, k is far smaller than n + m - in the extreme case of
+items1 = [[5,1],[5,2]] and items2 = [[5,3]], three items collapse to ONE key and the sort is
+trivial. The accumulation shrinks the problem before the sort ever sees it.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: POUR EVERY ITEM FROM BOTH LISTS INTO A SINGLE LOOKUP
+TABLE KEYED BY VALUE, ADDING EACH WEIGHT TO WHATEVER IS ALREADY RECORDED THERE, AND THEN READ THE
+TABLE BACK OUT IN ASCENDING ORDER OF KEY.
+
+THERE IS NO RECURSION. The mechanism is ONE ACCUMULATION PASS FOLLOWED BY ONE ORDERING PASS, and
+keeping those two jobs separate is the design:
+
+  - The accumulation does not care about order at all, so it can be a single flat loop over both
+    lists with no branching and no comparisons.
+  - The ordering happens once, at the end, over the DISTINCT values only - which is a smaller
+    collection than the input whenever anything shares a value.
+  - WHAT MAKES IT STOP: both loops have trip counts fixed before they start - the total number of
+    items, and then the number of distinct values.
+
+THE STEPS:
+
+  1. START AN EMPTY LOOKUP TABLE, from value to running total.
+
+  2. GO THROUGH EVERY ITEM IN BOTH LISTS, one after the other. The two lists are treated as one
+     long stream - which list an item came from makes no difference to the answer.
+
+     FOR EACH ITEM:
+
+     a. LOOK UP ITS VALUE IN THE TABLE. IF IT IS NOT THERE, TREAT THE STORED TOTAL AS ZERO.
+
+        This one rule is what makes "first time I have seen this value" and "I have seen it before"
+        the same step. Without it, the first item of the first list has nothing to add to and the
+        program stops with an error.
+
+     b. ADD THIS ITEM'S WEIGHT TO THAT TOTAL AND STORE IT BACK.
+
+        ADD. Not replace. Replacing is the mistake that silently throws away everything the problem
+        is about.
+
+  3. TAKE THE DISTINCT VALUES OUT OF THE TABLE AND PUT THEM IN ASCENDING ORDER.
+
+  4. FOR EACH VALUE IN THAT ORDER, EMIT A PAIR OF THE VALUE AND ITS TOTAL.
+
+     The sort is a requirement, not a nicety. Skipping it happens to give the right answer whenever
+     the inputs arrived in ascending order, which is exactly what makes leaving it out dangerous
+     rather than obviously broken.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine two people arriving at a stockroom, each with a list of what they have brought: a product
+code and how many of that product. You have to produce one combined stock list, in product-code
+order.
+
+You do not try to match the two lists against each other. That would mean, for every line on the
+first list, hunting through the second for the same code - and hunting again for anything on the
+second list that never appeared on the first.
+
+Instead you get out a ledger with one line per product code, and you simply work through both
+lists, one item after another, without caring at all which list you are currently reading from.
+
+For each item you turn to that product's line in the ledger. If the product has no line yet, you
+start one at zero. Then you add this item's quantity to whatever is written there.
+
+That single habit - start at zero if there is no line - is what makes every case identical. A
+product that appears on both lists gets added to twice. A product on only one list gets added to
+once. A product listed twice on the SAME list, which nobody promised would not happen, gets added
+to twice as well. None of these needs thinking about; they are all just "add to the running total".
+
+The important word is ADD. If you wrote the new quantity over the top of the old one instead, the
+second person's delivery would simply erase the first person's, and the whole exercise would have
+been pointless while still producing a perfectly plausible-looking stock list.
+
+When both lists are exhausted, the ledger holds one line per product with the correct total on it -
+but the lines are in whatever order the products happened to turn up. So the last thing you do is
+copy the ledger out into a clean list with the product codes in order.
+
+That final sorting step is easy to forget, and there is a trap in forgetting it: if the two people
+happened to bring their goods in code order to begin with, the ledger is already in order and the
+output looks perfect. It is only when somebody brings their items out of order that the omission
+shows - and by then the code is long since written.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep items1 = [[1,1],[4,5],[3,8]] and items2 = [[3,1],[1,5]] beside you, answer [[1,6],[3,9],[4,5]].
+
+    def merge_similar_items(items1, items2):
+
+Two lists of [value, weight] pairs, in any order. Returns a new list sorted by value. NEITHER INPUT
+IS MODIFIED (trap 6).
+
+        weights = {}
+
+    weights  HOLDS the running total for each value seen so far.
+             the KEY   is the item's VALUE - the thing being grouped by.
+             the VALUE is the accumulated WEIGHT.
+
+Starting empty means the first item of the first list will find nothing there, which is why the
+default on the next line matters.
+
+        for value, weight in items1 + items2:
+
+TWO THINGS HAPPEN IN THIS LINE.
+
+    `items1 + items2`  CONCATENATES into a brand-new list of length n + m. It does not modify either
+                       argument, and it is why this function is polite where its siblings are not.
+                       The cost is one temporary list; section 10 says how to avoid it.
+    `value, weight`    UNPACKS each two-element item into two named variables, so the body reads
+                       `weight` rather than `item[1]`.
+
+Note that the loop is entirely indifferent to WHICH list an item came from. That indifference is
+the reason there is no branching in the body.
+
+            weights[value] = weights.get(value, 0) + weight
+
+THE ONE LINE THE WHOLE PROBLEM COMES DOWN TO.
+
+    `.get(value, 0)`  DECIDES what "nothing recorded yet" means: zero. Plain `weights[value]` would
+                      raise KeyError on the first item (trap 3).
+    `+ weight`        ACCUMULATES. Writing `weights[value] = weight` instead overwrites, and the
+                      second [3,1] would replace the 8 with 1 rather than making 9 (trap 2).
+
+    First time a value is seen:   0 + weight
+    Every time after:             running total + weight
+
+    ONE LINE, NO `if`, and it covers a value appearing in one list, in both, or twice in the same
+    list (trap 5).
+
+        return [[v, weights[v]] for v in sorted(weights)]
+
+THE OUTPUT, built in one comprehension.
+
+    `sorted(weights)`  iterating a dictionary yields its KEYS, so this is the DISTINCT VALUES in
+                       ascending order. It sorts k items, not n + m - the accumulation has already
+                       shrunk the problem.
+    `[v, weights[v]]`  rebuilds each item as a two-element list, in the format the problem asks for.
+
+DROPPING `sorted` HERE IS TRAP 1, and it is subtle: Python dictionaries preserve insertion order,
+so the result would come out in first-seen order - correct whenever the inputs happened to be
+ascending, wrong otherwise.""",
+
+    """9. TRACED, ITEM BY ITEM.
+
+TRACE 1 - THE GIVEN EXAMPLE. items1 = [[1,1],[4,5],[3,8]], items2 = [[3,1],[1,5]].
+
+    items1 + items2 = [[1,1], [4,5], [3,8], [3,1], [1,5]]        <- one flat stream of five items
+
+    weights = {}
+
+    [1,1]:  value = 1, weight = 1
+            weights.get(1, 0) = 0        <- 1 is not in the map, so the default fires
+            weights[1] = 0 + 1 = 1       ->  weights = {1: 1}
+
+    [4,5]:  value = 4, weight = 5
+            weights.get(4, 0) = 0
+            weights[4] = 0 + 5 = 5       ->  weights = {1: 1, 4: 5}
+
+    [3,8]:  value = 3, weight = 8
+            weights.get(3, 0) = 0
+            weights[3] = 0 + 8 = 8       ->  weights = {1: 1, 4: 5, 3: 8}
+
+    [3,1]:  value = 3, weight = 1
+            weights.get(3, 0) = 8        <- THE FIRST COLLISION. The default does not fire.
+            weights[3] = 8 + 1 = 9       ->  weights = {1: 1, 4: 5, 3: 9}
+
+    [1,5]:  value = 1, weight = 5
+            weights.get(1, 0) = 1
+            weights[1] = 1 + 5 = 6       ->  weights = {1: 6, 4: 5, 3: 9}
+
+    sorted(weights) iterates the KEYS and orders them:  [1, 3, 4]
+        (the insertion order was 1, 4, 3 - the sort is what fixes that)
+
+    output:  [[1, 6], [3, 9], [4, 5]]
+
+    CHECK BY HAND: product 1 is 1 + 5 = 6, product 3 is 8 + 1 = 9, product 4 is 5 alone. Correct.
+
+    THE INVERSION - DROP `sorted` (trap 1). Iterating `weights` directly gives its insertion order,
+    which is 1, 4, 3:
+
+        [[1, 6], [4, 5], [3, 9]]         <- 4 before 3.  NOT sorted by value.
+
+    Same totals, wrong order. And note that had items1 been [[1,1],[3,8],[4,5]] - the same items in
+    ascending order - the unsorted version would have produced exactly the right answer. That is
+    what makes the omission dangerous: it is correct on tidy input.
+
+TRACE 2 - NO OVERLAP AT ALL. items1 = [[1,3],[2,2]], items2 = [[7,1],[2,2],[10,3]].
+
+    stream: [[1,3], [2,2], [7,1], [2,2], [10,3]]
+
+    [1,3]:   get(1,0) = 0   ->  weights = {1: 3}
+    [2,2]:   get(2,0) = 0   ->  weights = {1: 3, 2: 2}
+    [7,1]:   get(7,0) = 0   ->  weights = {1: 3, 2: 2, 7: 1}
+    [2,2]:   get(2,0) = 2   ->  weights[2] = 2 + 2 = 4       <- the one collision
+    [10,3]:  get(10,0) = 0  ->  weights = {1: 3, 2: 4, 7: 1, 10: 3}
+
+    sorted keys: [1, 2, 7, 10]
+    output: [[1,3], [2,4], [7,1], [10,3]]
+
+    Four distinct values from five items. Insertion order happened to be ascending here, so the
+    sort changed nothing - which is precisely the case that hides trap 1.
+
+TRACE 3 - EVERYTHING COLLIDES, INCLUDING WITHIN ONE LIST (trap 5).
+items1 = [[5,1], [5,2]], items2 = [[5,3]].
+
+    stream: [[5,1], [5,2], [5,3]]
+
+    [5,1]:  get(5,0) = 0  ->  weights = {5: 1}
+    [5,2]:  get(5,0) = 1  ->  weights = {5: 3}      <- a collision WITHIN items1
+    [5,3]:  get(5,0) = 3  ->  weights = {5: 6}
+
+    sorted keys: [5]
+    output: [[5, 6]]
+
+    THREE ITEMS COLLAPSED TO ONE, and the duplicate inside a single list needed no special handling
+    whatsoever - the accumulate-with-default line does not know or care which list it is reading.
+    A two-pointer merge (section 5) would have needed extra code for exactly this.
+
+THE TINY INPUTS:
+    ([], [])            the concatenation is empty, the loop never runs, sorted({}) is empty,
+                        the comprehension produces [].  RETURNS [].
+    ([[1,1]], [])       one item, one key.  RETURNS [[1,1]].
+    ([], [[9,4]])       the empty first list contributes nothing.  RETURNS [[9,4]].
+    All correct with no special case, because an empty list simply contributes no loop iterations.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n + m + k log k), where n and m are the input lengths and k is the number of DISTINCT
+values.
+
+In plain words: one pass over every item, doing constant work each - a hash lookup and an addition.
+Then a sort, but only of the distinct values, not of all the items. When the two lists share a lot
+of values, k is much smaller than n + m and the sort is cheap; in the worst case nothing collides,
+k equals n + m, and the sort dominates at O((n+m) log(n+m)).
+
+SPACE: O(n + m) - the dictionary holds k entries, and `items1 + items2` builds a temporary list of
+n + m items.
+
+    THAT TEMPORARY IS AVOIDABLE if it matters: loop over the two lists separately, or use
+    `itertools.chain(items1, items2)`, which streams through both without copying anything. On
+    lists of a million items that is a real saving; on anything ordinary the concatenation reads
+    better and costs nothing you will notice.
+
+THE COUNTING-ARRAY VERSION, when the values are bounded: LeetCode's constraints put every value
+between 1 and 1,000, so an array of 1,001 counters removes both the hashing and the sort -
+O(n + m + 1000), because walking the array in index order IS sorted order. Offer it as the "can you
+do better" answer, and say plainly that it dies the moment values can be arbitrary.
+
+WHERE THIS PATTERN SHOWS UP BEYOND THE PUZZLE - it is a GROUP BY with a SUM, which is why it is
+everywhere:
+
+    SHOPPING BASKETS            merge two carts, adding quantities for the same product.
+    INVENTORY / STOCK LEVELS    combine deliveries from several warehouses.
+    WORD FREQUENCY              merge per-document counts into a corpus-wide count.
+    LOG AGGREGATION             sum request counts per endpoint across several servers.
+    SPARSE VECTOR ADDITION      each vector is a map from index to value; adding them is this
+                                function exactly.
+    MAP-REDUCE                  this IS the reduce step - the mapper emits (key, value) pairs and
+                                the reducer sums them per key.
+
+    IN SQL:  SELECT value, SUM(weight) FROM (items1 UNION ALL items2) GROUP BY value ORDER BY value
+    IN PYTHON: `Counter(dict(items1)) + Counter(dict(items2))` does the accumulation in one
+               expression - though note `+` on Counters DROPS non-positive totals, which matters if
+               weights can be zero or negative.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if both lists are already sorted by value?" Then the two-pointer merge applies and it is
+    O(n + m) with no sort and no dictionary - strictly better. Say what changed: the promise.
+  - "What if the values are bounded small integers?" The counting array above.
+  - "What if there were k lists rather than 2?" Identical - loop over all of them into the same map.
+    The dictionary approach scales in a way the two-pointer merge does not, since merging k sorted
+    lists needs a heap.
+  - "What if weights could be negative, and you must drop values summing to zero?" Add a filter to
+    the comprehension - and note that `Counter`'s `+` would silently do this for you, which is a
+    trap if you did not want it.
+  - "Avoid the temporary list." `itertools.chain`, or two loops.
+
+THE #1 BEGINNER MISTAKE: overwriting instead of accumulating - `weights[value] = weight`. It
+produces a well-formed answer of the right length with the right keys, in which every collided value
+holds only the LAST weight seen. The summing is the entire problem, and this discards it without a
+murmur.
+
+RUNNER-UP: omitting the final sort. Python dictionaries preserve insertion order, so the output is
+correct whenever the inputs happened to arrive in ascending order - which is exactly the input you
+will test with.
+
+TAKEAWAY: pour both lists into one dictionary keyed by value, adding each weight to a total that
+defaults to zero, and sort only at the end over the distinct keys - because grouping is unordered
+work and ordering is a presentation step, and keeping them separate is what makes every case, from
+no overlap to total overlap, the same single line.""",
 ]
 
 _EX_P0H["Merge Two Binary Trees"] = [
-    """The overlap case, node by node.
-t1 =    1          t2 =    2
-       / \\                / \\
-      3   2              1   3
-Root: both exist -> 1+2 = 3.
-Left: both exist -> 3+1 = 4.
-Right: both exist -> 2+3 = 5.
-Result preorder [3,4,5]. Every node overlapped, so every value is a sum - the
-easy case, and the one that hides the interesting behaviour below.""",
+    """1. THE GOAL - lay one tree on top of the other.
 
-    """The case that carries the whole idea: one side is missing.
-t1 =    1          t2 =    2
-       /                    \\
-      3                      7
-                            /
-                           9
-Root: 1+2 = 3.
-Left: t2 has no left child, so `if t2 is None: return t1` returns t1's ENTIRE
-left subtree unchanged - not a copy, the subtree itself.
-Right: t1 has no right child, so the whole [7 with child 9] subtree comes
-across in one step.
-This is why the base cases return the surviving NODE rather than recursing
-further: an absent subtree means there is nothing left to merge, so you stop.""",
+You are given TWO binary trees. Imagine printing each on a transparent sheet and stacking the
+sheets so the two roots line up. Wherever nodes land on top of each other, ADD their values.
+Wherever only one tree has a node, that node simply shows through.
 
-    """Both empty, and one tree entirely empty.
-merge_trees(None, None) -> the first check returns t2, which is None. Correct
-and needs no special case.
-merge_trees(None, t2) -> returns t2: merging with nothing is identity.
-merge_trees(t1, None) -> returns t1.
-Note the ORDER of the two guards matters for readability but not correctness
-here; what does matter is that both are checked BEFORE dereferencing .val, or
-a single-child tree throws AttributeError on the first missing node.""",
+    t1 =    1          t2 =    2
+           / \\                / \\
+          3   2              1   3
 
-    """In-place versus a new tree - the follow-up that always comes.
-The version above allocates a new node per overlap, using O(min(n1,n2)) extra
-space for the merged spine while REUSING whole subtrees from the inputs.
-The in-place variant mutates t1: `t1.val += t2.val; t1.left = merge(t1.left,
-t2.left); ...; return t1`, using only O(h) recursion stack.
-The trade to state: in-place is cheaper but destroys the input, and the result
-SHARES subtrees with t2 - so a later mutation through one tree is visible
-through the other. If the caller keeps using the originals, that aliasing is a
-real bug, and it is exactly what the interviewer is probing.""",
+    root:   both exist  ->  1 + 2 = 3
+    left:   both exist  ->  3 + 1 = 4
+    right:  both exist  ->  2 + 3 = 5
 
-    """Complexity, said precisely.
-Time is O(min(n1, n2)), NOT O(n1 + n2): recursion stops the moment one side is
-None, so nodes that exist in only one tree are attached in a single step
-without being visited. That is a genuinely non-obvious bound and stating it
-correctly is worth marks.
-Space is O(h) for the recursion stack, where h is the height of the OVERLAP.
-For a skewed tree of 10,000 nodes that is 10,000 frames, which will exceed
-Python's default limit - the follow-up fix is an explicit stack holding pairs
-of nodes, pushing (t1.left, t2.left) and (t1.right, t2.right) when BOTH
-children exist and attaching the survivor directly when only one does.""",
+    merged =    3
+               / \\
+              4   5
 
-    """Why this is a template, not a one-off.
-'Walk two trees in lockstep' solves a family of problems with one skeleton:
-- Same Tree: recurse both, return False the moment structure or values differ.
-- Symmetric Tree: recurse (left.left, right.right) and (left.right, right.left).
-- Subtree of Another Tree: at each node of the big tree, run Same Tree.
-- Merge Two Sorted Lists: the identical base-case shape in one dimension.
-Recognise the shape and the base cases write themselves: if one side is None,
-return the other; otherwise combine and recurse on the matching children.""",
+THE INTERESTING CASE IS NOT THE OVERLAP. It is what happens where only ONE tree has a node:
+
+    t1 =    1          t2 =    2
+           /                    \\
+          3                      7
+
+    root:   both exist  ->  1 + 2 = 3
+    left:   only t1 has anything  ->  take t1's whole left subtree
+    right:  only t2 has anything  ->  take t2's whole right subtree
+
+    merged =    3
+               / \\
+              3   7
+
+    Nothing is added on the left or the right, because there was nothing to add to.
+
+TWO POINTS THAT SOUND OBVIOUS AND ARE NOT:
+
+    "TAKE WHICHEVER EXISTS" MEANS THE WHOLE SUBTREE, not just that one node. If t1's left child had
+        a hundred descendants and t2 had nothing there, all hundred come across in one step. There
+        is nothing to compare them against, so there is nothing to walk.
+
+    THAT STEP IS WHERE THE COST GOES, AND WHERE A SUBTLETY HIDES. The code attaches that subtree by
+        REFERENCE rather than copying it - so the merged tree shares nodes with its inputs. Section
+        4 shows why that matters and section 9 demonstrates it.""",
+
+    """2. THE INTUITION - walk both trees in lockstep, and stop the moment one runs out.
+
+Put a finger on each tree's root and move both fingers together. At every position, exactly THREE
+things can be true:
+
+    BOTH FINGERS ARE ON A NODE       ->  make a new node holding the SUM, then move both fingers
+                                          left together, and both right together.
+
+    ONLY THE FIRST TREE HAS A NODE   ->  there is nothing to add. Hand back that entire subtree and
+                                          STOP DESCENDING - there is no second tree to compare it
+                                          against, so there is nothing left to decide.
+
+    ONLY THE SECOND TREE HAS A NODE  ->  mirror image. Hand back that subtree, stop.
+
+    (A fourth case - neither has a node - falls out of the second or third automatically: handing
+    back "the other one" hands back nothing, which is exactly right.)
+
+    step 1:  t1 = 1, t2 = 2.         BOTH  ->  new node 3.  Recurse left and right.
+      left:  t1 = 3, t2 = None.      ONLY t1  ->  hand back t1's node 3 and everything under it.
+      right: t1 = None, t2 = 7.      ONLY t2  ->  hand back t2's node 7 and everything under it.
+
+    result:      3
+                / \\
+               3   7
+
+THE PICTURE OF WHAT GETS BUILT versus what gets borrowed:
+
+              NEW node (a sum)
+                    3
+                   / \\
+                  3   7
+                  ^   ^
+                  |   |
+        t1's ORIGINAL node   t2's ORIGINAL node
+
+    ONLY THE OVERLAPPING PART IS FRESHLY BUILT. Everything else is the input's own nodes, attached
+    as they are. That is why the work is proportional to the OVERLAP and not to the total size -
+    section 10 states that precisely - and it is why the merged tree is not independent of its
+    inputs.
+
+WHAT MAKES THE WALK STOP. Every recursive step moves strictly downward in both trees at once, and
+the moment either side is absent the function returns without recursing. Trees are finite and have
+no cycles, so the descent must end.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY TREE. Each node has a value and up to two children, `left` and `right`.
+ROOT. The top node. The only thing you are handed.
+SUBTREE. A node together with everything below it.
+LEAF. A node with no children.
+
+None. The absence of a node - an empty tree, or a missing child.
+
+LOCKSTEP TRAVERSAL. Walking two structures at the same time, taking the same step in both. The
+skeleton behind a whole family of two-tree problems (section 10).
+
+RECURSION. A function calling itself on a smaller piece. Each call PAUSES at the call site and
+resumes when the inner call returns.
+
+THE CALL STACK. The pile of paused calls. Its depth here is the height of the OVERLAPPING region.
+
+BASE CASE. The condition that stops the recursion. There are two of them here, and between them
+they cover the "one side missing" and "both sides missing" cases.
+
+REFERENCE versus COPY. `return t2` hands back THE SAME OBJECT, not a duplicate. Two names now point
+at one node, so a change through either is visible through the other. This is the subtlety in
+section 4.
+
+DEEP COPY. Rebuilding every node so the result shares nothing with the input. NOT what this code
+does.
+
+PRE-ORDER. Visit the node, then left, then right - the order `preorder` uses to flatten a tree into
+a list for checking.
+
+t1, t2. The two subtrees currently being merged - the two fingers.
+merged. The new node built when both exist.
+node. The parameter of `preorder`.
+
+O(min(n1, n2)). The cost - proportional to the SMALLER tree, and section 10 says why.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - THE MERGED TREE SHARES NODES WITH ITS INPUTS. This is the one that surprises people, and
+it is not a bug so much as a design decision that must be stated.
+
+    When only one side exists, `return t1` (or `return t2`) hands back THE ORIGINAL NODE OBJECT, not
+    a copy. So the merged tree is a HYBRID: freshly built nodes wherever the trees overlapped, and
+    the inputs' own nodes everywhere else.
+
+    CONSEQUENCE: changing the merged tree can change an input tree.
+
+        t1 = 1 with left child 3;   t2 = 2 with right child 7
+        merged = merge_trees(t1, t2)      ->      3
+                                                 / \\
+                                                3   7
+        merged.left IS t1's node 3.  merged.right IS t2's node 7.
+
+        Now set  merged.left.val = 99.
+        Walk t1: its left child's value is now 99 too. THE INPUT TREE CHANGED.
+
+        But set  merged.val = 99  and nothing happens to t1 or t2 - that node is new.
+
+    SO THE SAME TREE BEHAVES TWO DIFFERENT WAYS depending on which part you touch, which is the
+    worst kind of surprise. Section 9 traces it. If the caller needs a genuinely independent result,
+    deep-copy the non-overlapping subtrees instead of returning them - at the cost of O(n1 + n2)
+    time and space, which is exactly the cost the current version avoids.
+
+TRAP 2 - RECURSING WHEN ONE SIDE IS MISSING. A version that keeps descending after one tree runs
+out - passing None down and rebuilding the surviving nodes one at a time - is still CORRECT, and it
+is slower: it becomes O(n1 + n2) instead of O(min(n1, n2)), because it now walks every node of the
+larger tree. It also allocates a new node for each of them. Attaching the subtree whole is the
+optimisation, and the reason it is safe is that with nothing to compare against there is nothing
+left to decide.
+
+TRAP 3 - HANDLING "BOTH None" SEPARATELY. It needs no handling. `if t1 is None: return t2` returns
+None when t2 is also None, which is exactly right. An explicit `if t1 is None and t2 is None:
+return None` before it is dead code.
+
+TRAP 4 - THE ORDER OF THE TWO GUARDS. Swapping them changes nothing: if both are None the first
+guard fires either way and returns None. Worth checking rather than assuming, since guard order
+often does matter.
+
+TRAP 5 - USING `if not t1` INSTEAD OF `if t1 is None`. Here they behave identically, because a
+`Node` object with no `__bool__` or `__len__` defined is always truthy - even one whose `val` is 0.
+But `if not t1` is testing truthiness, not absence, and on a class that DID define `__len__` it
+would silently start treating some real nodes as missing. Say what you mean.
+
+TRAP 6 - ASSUMING THE ANSWER IS SYMMETRIC IN A STRONGER SENSE THAN IT IS. The VALUES of
+`merge_trees(t1, t2)` and `merge_trees(t2, t1)` are identical, because addition commutes. But WHICH
+INPUT'S NODES GET SHARED differs, so the two results have different aliasing. If you are relying on
+trap 1's behaviour, the argument order matters even though the printed tree does not.""",
+
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
+
+VERSION A - FLATTEN BOTH TREES INTO LISTS, ADD THE LISTS, REBUILD. Tempting and wrong, because a
+flattened traversal loses the SHAPE. Pre-order of a tree with one left child and pre-order of a tree
+with one right child both give two values, and there is no way to tell from the lists which
+position each node occupied. The merge is a POSITIONAL operation and needs the structure.
+
+VERSION B - LOCKSTEP RECURSION THAT ALWAYS DESCENDS. Recurse on both children regardless, treating
+a missing node as a value of 0 and rebuilding every node. Correct, and it costs O(n1 + n2) time and
+allocates a node for every position in the union - see trap 2. The one thing it buys is that the
+result shares nothing with the inputs, which fixes trap 1. THAT IS A REAL TRADE, not a mistake:
+independence for cost.
+
+VERSION C - LOCKSTEP RECURSION THAT STOPS EARLY, which is the code here. New nodes only where the
+trees overlap; surviving subtrees attached whole. O(min(n1, n2)) time, and O(min(n1, n2)) new nodes.
+
+VERSION D - MERGE IN PLACE INTO t1. Allocate nothing at all:
+
+    def merge_trees(t1, t2):
+        if t1 is None: return t2
+        if t2 is None: return t1
+        t1.val += t2.val
+        t1.left  = merge_trees(t1.left,  t2.left)
+        t1.right = merge_trees(t1.right, t2.right)
+        return t1
+
+    O(1) extra space beyond the recursion stack, and it DESTROYS t1 - the caller's first tree is now
+    the merged tree, and it has borrowed pieces of t2 as well. This is the standard follow-up, and
+    the right answer is to name the trade rather than to prefer one version: allocate and keep the
+    inputs intact, or mutate and keep the memory.
+
+WHY THE EARLY STOP IS SAFE - the argument, since it is the only non-obvious step.
+
+When `t2` is None, the merged tree at this position must contain exactly `t1`'s subtree, unchanged:
+there is no node from t2 at this position, nor at ANY position beneath it - a missing node has no
+children. So every node in t1's subtree overlaps with nothing, and every one of them would be
+copied across with its value unaltered.
+
+    RECURSING WOULD PRODUCE AN IDENTICAL SHAPE WITH IDENTICAL VALUES, one node at a time. Returning
+    the subtree whole produces the same answer in one step. The only difference is whether the
+    nodes are fresh objects or the originals - which is trap 1, and is precisely the price of the
+    speed-up.
+
+WHY THE COST IS min(n1, n2) AND NOT n1 + n2. The function only recurses when BOTH sides are present.
+Every recursive call therefore corresponds to a position occupied in both trees, and there cannot be
+more such positions than the smaller tree has nodes. Everything else is attached in constant time.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK BOTH TREES AT THE SAME TIME FROM THEIR ROOTS, AND
+AT EACH POSITION EITHER BUILD A NEW NODE HOLDING THE SUM OF THE TWO AND CARRY ON DOWN BOTH SIDES, OR
+- IF ONE TREE HAS NOTHING HERE - HAND BACK THE OTHER TREE'S WHOLE SUBTREE AND STOP.
+
+THIS VERSION IS RECURSIVE, and the mechanism matters:
+
+  - The function calls itself twice per overlapping position: once for the pair of left children,
+    once for the pair of right children. Each call PAUSES at the call site, holding its own two
+    subtrees and the new node it is assembling.
+  - Those paused calls form the CALL STACK, and it gets as deep as the OVERLAPPING region is tall -
+    not as deep as the taller tree, because the descent stops the moment one side runs out.
+  - WHAT MAKES IT STOP: two base cases. If either side is absent, the function returns immediately
+    without recursing. Every other step moves strictly downward in both trees at once, and trees are
+    finite with no cycles, so absence is always reached.
+  - WHY IT CANNOT LOOP: there is no path back upward. Every call is on a strictly smaller pair of
+    subtrees.
+
+THE STEPS:
+
+  1. IF THE FIRST TREE IS ABSENT HERE, HAND BACK THE SECOND ONE - the whole of it, exactly as it is.
+     There is nothing to add to it, and since a missing node has no children there is nothing
+     beneath this position to merge either.
+
+     If the second one is also absent, this hands back nothing, which is the correct answer for two
+     absences. No separate case is needed.
+
+  2. IF THE SECOND TREE IS ABSENT HERE, HAND BACK THE FIRST ONE, for the mirror-image reason.
+
+  3. OTHERWISE BOTH ARE PRESENT. MAKE A NEW NODE whose value is the two values added together.
+
+  4. ITS LEFT CHILD IS WHATEVER YOU GET BY RUNNING THIS SAME PROCEDURE ON THE TWO LEFT CHILDREN.
+
+  5. ITS RIGHT CHILD IS WHATEVER YOU GET BY RUNNING THIS SAME PROCEDURE ON THE TWO RIGHT CHILDREN.
+
+  6. HAND BACK THE NEW NODE.
+
+ONE THING TO BE AWARE OF RATHER THAN TO FIX. Steps 1 and 2 hand back the input's OWN subtree, not a
+duplicate of it. So the answer is partly built and partly borrowed, and altering the borrowed parts
+alters the tree they were borrowed from. If that is unacceptable, those two steps must copy instead -
+which costs a full walk of whatever they hand back, and is the whole of the speed difference
+between this version and the plodding one.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture two family trees drawn on separate sheets of tracing paper, and you want a single combined
+chart. You lay one sheet exactly over the other so the two people at the top line up.
+
+You start at the top and work down, keeping a finger on each sheet at the same position.
+
+If both sheets have somebody at the position your fingers are on, you write a new person onto a
+fresh chart, giving them the two numbers added together. Then you move both fingers to the
+left-hand child position and repeat, and afterwards to the right-hand child position and repeat
+again.
+
+If one of the sheets has nobody at that position, something much simpler happens. There is nothing
+to add, and - this is the part worth pausing on - there is nothing further down that side either,
+because a person who does not exist has no children. So the entire branch from the other sheet
+belongs in the combined chart exactly as it stands, however large it is. You do not trace it out
+person by person. You lift that whole branch across in one movement and you are done with that
+position.
+
+And if NEITHER sheet has anybody there, lifting across "whatever the other sheet has" lifts across
+nothing at all, which is precisely correct. That case takes care of itself.
+
+Now, lifting a branch across rather than tracing it has a consequence you should know about before
+somebody discovers it for you. The branch on your combined chart is not a copy - it is the original,
+now appearing on two charts at once. If you later go and change a name on one of those lifted
+branches, it changes on the old sheet too, because it is the same piece of paper. The parts you
+wrote fresh, where the two sheets overlapped, are yours alone and behave normally.
+
+That is a bargain, not an accident. Tracing every lifted branch would give you a fully independent
+chart and would cost you the time to redraw every last person in both families. Lifting them
+wholesale means the work you do is only ever proportional to the part where the two families
+actually overlapped - which is usually far smaller.
+
+When the fingers have nowhere left to go, the fresh chart is the combined one.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep t1 = 1 with children 3 and 2, and t2 = 2 with children 1 and 3 beside you. Answer 3 / 4, 5.
+
+    class Node:
+        def __init__(self, val, left=None, right=None):
+            self.val = val
+            self.left = left
+            self.right = right
+
+The node shape: a value and two child links, either of which may be None. Note `val` has no default
+here - a node must be given a value.
+
+    def merge_trees(t1, t2):
+
+    t1, t2  HOLD the two subtrees currently lined up against each other. At the top level these are
+            the two roots; deeper in, they are whatever pair of positions the walk has reached.
+            EITHER MAY BE None.
+
+Returns the merged subtree. Does NOT modify either input's values - but the result SHARES nodes with
+them (trap 1).
+
+        if t1 is None:
+            return t2
+
+BASE CASE ONE, doing two jobs at once.
+
+    IF ONLY t2 EXISTS: hand back t2's entire subtree. There is nothing to add to it, and nothing
+        beneath this position in t1 either, so no further walking is needed (section 5).
+    IF NEITHER EXISTS: `t2` is also None, so this returns None - the right answer for two absences,
+        with no separate case (trap 3).
+
+`return t2` hands back THE ORIGINAL OBJECT. That is where the sharing comes from.
+
+        if t2 is None:
+            return t1
+
+BASE CASE TWO, the mirror. Reached only when `t1` is present, so this genuinely means "only t1
+exists".
+
+        merged = Node(t1.val + t2.val)           # overlap: sum the values
+
+THE ONLY LINE THAT CREATES ANYTHING. Reached only when BOTH sides are present, which is the
+definition of an overlap.
+
+    `t1.val + t2.val`  is the merge rule. A fresh node, so writing to `merged.val` later cannot
+                       affect either input.
+
+The new node's children default to None and are filled in by the next two lines.
+
+        merged.left = merge_trees(t1.left, t2.left)
+
+THE LEFT PAIR, walked in lockstep. Both fingers move left together.
+
+Note it passes `t1.left` and `t2.left` - the two LEFT CHILDREN, one from each tree. Passing
+`t1.left` and `t2.right` would be merging mismatched positions, which is the sort of typo that
+produces a plausible tree with the wrong shape.
+
+Either child may be None; the base cases above deal with that on entry to the call.
+
+        merged.right = merge_trees(t1.right, t2.right)
+
+The right pair. Same reasoning.
+
+        return merged
+
+Hand the assembled node back to whoever asked - either the caller's `merged.left`/`merged.right`
+assignment, or the original caller.
+
+    def preorder(node):
+        if node is None:
+            return []
+        return [node.val] + preorder(node.left) + preorder(node.right)
+
+A helper for CHECKING the result, not part of the merge. It flattens a tree into a list by visiting
+the node, then everything on its left, then everything on its right.
+
+Useful for comparing against an expected answer - and a reminder of why version A in section 5 fails:
+this flattening is LOSSY, since two differently-shaped trees can produce the same list.""",
+
+    """9. TRACED, POSITION BY POSITION.
+
+TRACE 1 - FULL OVERLAP.
+
+    t1 =    1          t2 =    2
+           / \\                / \\
+          3   2              1   3
+
+    merge_trees(t1=1, t2=2)
+        t1 is not None, t2 is not None  ->  merged = Node(1 + 2) = Node(3)
+        merged.left = merge_trees(t1.left = 3, t2.left = 1)
+            both present  ->  merged = Node(3 + 1) = Node(4)
+            merged.left  = merge_trees(None, None)  ->  t1 is None, return t2 which is None
+            merged.right = merge_trees(None, None)  ->  None
+            RETURNS Node(4)
+        merged.right = merge_trees(t1.right = 2, t2.right = 3)
+            both present  ->  Node(2 + 3) = Node(5), both children None
+            RETURNS Node(5)
+        RETURNS Node(3) with children Node(4) and Node(5)
+
+    preorder gives [3, 4, 5].
+
+    NOTE THE `merge_trees(None, None)` CALLS - four of them. Each returns None via the first guard,
+    because `t2` is None. No special "both empty" case was needed anywhere (trap 3).
+
+    EVERY NODE HERE IS FRESH. The trees overlapped completely, so nothing was borrowed.
+
+TRACE 2 - THE CASE THAT CARRIES THE WHOLE IDEA: one side missing.
+
+    t1 =    1          t2 =    2
+           /                    \\
+          3                      7
+
+    merge_trees(t1=1, t2=2)
+        both present  ->  merged = Node(1 + 2) = Node(3)
+
+        merged.left = merge_trees(t1.left = node 3, t2.left = None)
+            t1 is not None, so the first guard does not fire.
+            t2 IS None  ->  RETURN t1  -  that is t1's ACTUAL node 3, attached as it stands.
+            NO RECURSION HAPPENED. Had node 3 carried a hundred descendants, all hundred would have
+            come across in this single step.
+
+        merged.right = merge_trees(t1.right = None, t2.right = node 7)
+            t1 IS None  ->  RETURN t2  -  t2's actual node 7.
+
+        RETURNS Node(3) with left = t1's node 3, right = t2's node 7
+
+    preorder gives [3, 3, 7].
+
+    COUNT THE WORK: ONE new node was created, and TWO subtrees were attached by reference. Three
+    calls to `merge_trees` in total. The overlap was a single position, and the cost matched it.
+
+TRACE 3 - THE SHARING, MADE VISIBLE (trap 1). Continue from trace 2.
+
+    merged.left IS t1's node 3 - the same object, not a copy.
+
+    SET  merged.left.val = 99
+
+        preorder(merged)  ->  [3, 99, 7]     as expected
+        preorder(t1)      ->  [1, 99]        THE INPUT TREE CHANGED. t1's left child is now 99.
+
+    NOW SET  merged.val = 99   (the root, which was freshly built)
+
+        preorder(t1)      ->  [1, 99]        unchanged by this second edit
+        preorder(t2)      ->  [2, 7]         unchanged
+
+    THE SAME TREE BEHAVES TWO WAYS. Writing to a node that came from an overlap is safe; writing to
+    a node that was attached wholesale reaches back into an input. That is the price of not copying,
+    and it is worth volunteering before an interviewer asks.
+
+TRACE 4 - THE COMMUTATIVITY, AND ITS LIMIT (trap 6). Run trace 2 with the arguments swapped:
+
+    merge_trees(t2, t1):
+        both roots present  ->  Node(2 + 1) = Node(3)         same value, addition commutes
+        left:  merge_trees(t2.left = None, t1.left = node 3)  ->  t1-parameter is None, RETURN the
+               t2-parameter, which is the tree originally called t1's node 3.  Same node.
+        right: merge_trees(t2.right = node 7, t1.right = None)  ->  RETURN node 7.  Same node.
+
+    preorder gives [3, 3, 7] - IDENTICAL to trace 2.
+
+    The printed answer does not change. What changes in general is which side's nodes get borrowed
+    when both trees have something at a position and one runs out deeper down - so if you are
+    depending on the aliasing, the argument order is not irrelevant even though the values are.
+
+THE TINY INPUTS:
+    merge_trees(None, None)   the first guard returns t2, which is None.  Correct, no special case.
+    merge_trees(None, t2)     the first guard returns the whole of t2, untouched and unshared-with-
+                              anything-new.  Correct.
+    merge_trees(t1, None)     the second guard returns the whole of t1.  Correct.
+    TWO SINGLE NODES, 4 and 6 ->  Node(10) with both children None, since all four child merges are
+                              merge_trees(None, None).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(min(n1, n2)) - proportional to the SMALLER tree, NOT to the sum.
+
+In plain words: the function only recurses when BOTH sides have a node. So every recursive call
+corresponds to a position occupied in both trees, and there cannot be more of those than the
+smaller tree has nodes. Everything else - a whole subtree that exists in only one tree, however
+enormous - is attached in a single constant-time step.
+
+    THAT IS A GENUINELY SURPRISING BOUND and worth stating explicitly, because "we visit every node
+    of both trees" is the reflex answer and it is wrong for this code. Merge a 10-node tree with a
+    10,000,000-node tree and the work is on the order of 10 steps, not 10,000,010.
+
+SPACE: O(min(n1, n2)) for the new nodes created at overlaps, plus O(h) for the recursion stack,
+where h is the height of the OVERLAPPING region.
+
+    The in-place version (section 5, version D) drops the node allocation to zero and destroys t1
+    instead. The deep-copying version raises the cost to O(n1 + n2) and buys a result that shares
+    nothing with its inputs. THREE VERSIONS, THREE TRADES, and naming them is the interview answer.
+
+WHY THIS IS A TEMPLATE, NOT A ONE-OFF. "Walk two trees in lockstep" solves a family of problems with
+one skeleton - handle the four presence cases, then recurse on the two pairs of children:
+
+    SAME TREE                     return False the moment presence or value differs
+    MERGE TWO BINARY TREES        sum on overlap, attach the survivor otherwise    <- this entry
+    SYMMETRIC TREE                walk the tree against ITSELF, pairing left with RIGHT
+    SUBTREE OF ANOTHER TREE       try Same Tree at every node of the larger tree
+    FLIP EQUIVALENT BINARY TREES  Same Tree, but allow the children to be swapped
+    LEAF-SIMILAR TREES            collect the leaves of each and compare the sequences
+
+    THE ONLY THINGS THAT CHANGE are what you do when both are present, and what you do when exactly
+    one is. Getting that skeleton into your fingers is worth more than any single one of them.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Do it in place." Version D - mutate t1, allocate nothing, and say plainly that t1 is destroyed
+    and ends up holding pieces of t2.
+  - "Make the result independent of the inputs." Deep-copy in the two base cases rather than
+    returning the subtree. O(n1 + n2), and it removes trap 1 entirely.
+  - "Do it iteratively." A stack of PAIRS of nodes. Push (t1, t2); on each pop, sum the values and
+    push the two child pairs where both exist, attaching the survivor otherwise.
+  - "Merge k trees." Fold the merge across them - but note that with the sharing behaviour, the
+    intermediate results alias earlier inputs, so an in-place fold gets confusing fast.
+  - "What if the merge rule were max instead of sum?" One line changes. The structure is the
+    interesting part, not the arithmetic.
+
+THE #1 BEGINNER MISTAKE: continuing to recurse after one side has run out - passing None downward
+and rebuilding the surviving nodes one at a time. It is CORRECT, which is what makes it hard to
+spot, and it silently converts an O(min(n1, n2)) algorithm into an O(n1 + n2) one that allocates a
+node for every position in the union.
+
+RUNNER-UP: not realising the result shares nodes with the inputs. The merged tree looks like a new
+object and behaves like one until somebody writes to a borrowed subtree and an input tree changes
+underneath them.
+
+TAKEAWAY: walk both trees in lockstep, build a fresh node only where BOTH have one, and where only
+one has a node hand back its entire subtree without descending - because with nothing to compare
+against there is nothing left to decide, which is what makes the cost proportional to the overlap
+rather than to the trees.""",
 ]
 
 _EX_P0H["N-th Tribonacci Number"] = [
