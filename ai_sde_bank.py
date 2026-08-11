@@ -60475,126 +60475,1047 @@ answer to "how big is it?".""",
 ]
 
 _EX_P0H["Insert Interval"] = [
-    """The textbook case, traced through the three phases.
-intervals = [[1,3],[6,9]], new = [2,5].
-Phase 1 - copy everything ending before new starts: is 3 < 2? No. Nothing
-copied.
-Phase 2 - merge everything that overlaps: [1,3] has 1 <= 5, so new becomes
-[min(2,1), max(5,3)] = [1,5]. Next, [6,9] has 6 <= 5? No -> stop.
-Append new -> [[1,5]].
-Phase 3 - copy the rest: [6,9].
-Answer [[1,5],[6,9]].""",
+    """1. THE GOAL, as a calendar you are already looking at.
 
-    """Swallowing several intervals at once.
-intervals = [[1,2],[3,5],[6,7],[8,10],[12,16]], new = [4,8].
-Phase 1: [1,2] ends at 2 < 4 -> copied.
-Phase 2: [3,5] starts 3 <= 8 -> new = [3,8]. [6,7] starts 6 <= 8 -> new = [3,8].
-[8,10] starts 8 <= 8 -> new = [3,10]. [12,16] starts 12 <= 10? No -> stop.
-Append [3,10]; phase 3 copies [12,16].
-Answer [[1,2],[3,10],[12,16]] - three intervals absorbed by one insert. Note the
-touching case [8,10]: 8 <= 8 counts as overlapping here, which is the convention
-this problem wants.""",
+You have a day's bookings, already sorted by start time, and none of them overlap:
 
-    """The two extremes: entirely before, entirely after.
-new = [17,20] on the same list: phase 1 copies every interval (all end before
-17), phase 2 merges nothing, and new is appended last ->
-[[1,2],[3,5],[6,7],[8,10],[12,16],[17,20]].
-new = [0,0]: phase 1 copies nothing (1 is not < 0... careful: the test is
-intervals[i][1] < new[0], i.e. 2 < 0, false), phase 2 checks 1 <= 0 - false - so
-nothing merges, new is appended FIRST, then phase 3 copies everything.
-Both extremes fall out of the same three loops with no special-casing, which is
-the elegance of the three-phase structure.""",
+        [1,3]          [6,9]
+    ----XXX------------XXXX-----------
+        1 2 3  4  5  6 7 8 9  10 ...
 
-    """Empty list, and inserting into a single interval.
-intervals = [], new = [5,7]: all three loops are empty except the append ->
-[[5,7]].
-intervals = [[1,5]], new = [2,3] (fully contained): phase 2 gives
-[min(2,1), max(3,5)] = [1,5]; the result is unchanged, [[1,5]]. The min/max is
-what makes containment work - taking new's own bounds would shrink the existing
-interval.""",
+Somebody now wants to book [2,5]. It clashes with the [1,3] meeting - so the two have to become
+ONE block covering everything from 1 to 5:
 
-    """Why this is O(n) and Merge Intervals is O(n log n).
-Merge Intervals must SORT first because the input is arbitrary: O(n log n).
-Insert Interval is given a sorted, non-overlapping list, so a single left-to-right
-sweep suffices: O(n), no sort.
-If you solve it by appending new, re-sorting, and calling merge(), you get the
-right answer at O(n log n) - and you have thrown away the guarantee the problem
-handed you. Say that explicitly; it is the whole reason the problem exists
-separately.""",
+        [1,5]          [6,9]
+    ----XXXXXXX--------XXXX-----------
 
-    """The real-world shape of this.
-- Booking a meeting into an existing calendar and merging adjoining blocks.
-- Marking a byte range as downloaded in a resumable-download manager.
-- Recording a new maintenance window into a schedule of outages.
-- Adding an interval to an interval tree / range set (Python's `portion`, Java's
-  RangeSet do exactly this).
-The generalisation worth naming: keeping a set of disjoint ranges under
-insertion. Once ranges are also DELETED, or the volume is large, you move up to a
-balanced interval tree or a segment tree - the same reason DSU gives way to
-link-cut trees when edges can be removed.""",
+    intervals = [[1,3],[6,9]],  new = [2,5]   ->   [[1,5],[6,9]]
+
+THE TWO PROMISES THE INPUT MAKES, and both are worth an enormous amount:
+
+    SORTED by start time. So you can sweep left to right and never look back.
+    NON-OVERLAPPING. So the existing blocks are already tidy - the only mess is the one you are
+    about to create by inserting.
+
+Those promises are what makes this an O(n) problem. The sibling question, MERGE INTERVALS, gets an
+arbitrary unsorted list and must sort first, which costs O(n log n). Section 10 puts the two side
+by side.
+
+A LARGER EXAMPLE, where the new booking swallows several:
+
+    intervals = [[1,2],[3,5],[6,7],[8,10],[12,16]],  new = [4,8]
+
+    [1,2] is finished before 4, so it is untouched.
+    [3,5], [6,7] and [8,10] all clash with [4,8] - they collapse into one block [3,10].
+    [12,16] starts after 10, so it is untouched.
+
+    result = [[1,2],[3,10],[12,16]]
+
+Notice the new interval is not merely inserted - IT GREW IN BOTH DIRECTIONS, from [4,8] to [3,10],
+because it absorbed intervals that started earlier and ended later than it did.""",
+
+    """2. THE INTUITION - the list splits into exactly three regions.
+
+Walk left to right. Every existing interval falls into exactly one of three groups, and the groups
+come in this order because the list is sorted:
+
+        BEFORE            OVERLAPPING              AFTER
+    ends before new     touches new at all     starts after new
+    starts                                     ends
+    ------------      ------------------      -------------
+       copy as-is       swallow into new         copy as-is
+
+    intervals = [[1,2],[3,5],[6,7],[8,10],[12,16]]      new = [4,8]
+
+         [1,2]        [3,5] [6,7] [8,10]              [12,16]
+        BEFORE   |      OVERLAPPING          |         AFTER
+                 |                           |
+        copy     |   merge into one: [3,10]  |         copy
+
+So the algorithm is THREE LOOPS IN ONE SWEEP, sharing a single index that never goes backwards:
+
+    LOOP 1  while the current interval ENDS BEFORE new STARTS    ->  copy it out
+    LOOP 2  while the current interval STARTS BEFORE new ENDS    ->  absorb it into new
+    LOOP 3  everything remaining                                 ->  copy it out
+
+    and between loop 2 and loop 3, write out the grown `new`.
+
+WHY THE THREE GROUPS CANNOT INTERLEAVE. The list is sorted by start time and the intervals do not
+overlap, so once you have found the first interval that touches `new`, every interval before it
+ended earlier and every interval after it starts later. There is no way to get a "before" interval
+after an "overlapping" one - which is exactly why one forward pass with one index works and no
+sorting is needed.
+
+THE ABSORPTION, in one picture:
+
+    new  = [4, 8]
+    meet [3,5]:   the block now has to cover from 3     ->  new = [3, 8]
+    meet [6,7]:   entirely inside; nothing changes      ->  new = [3, 8]
+    meet [8,10]:  the block now has to reach 10         ->  new = [3, 10]
+
+Take the smallest start seen and the largest end seen. That is all "merge" means.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INTERVAL. A pair [start, end] meaning a stretch of time or numbers. Here they are lists of two
+numbers, and they are treated as CLOSED - the endpoints are included.
+
+SORTED (by start). intervals[0][0] <= intervals[1][0] <= ... The problem guarantees it.
+
+NON-OVERLAPPING. No two existing intervals share any point. This is guaranteed about the INPUT;
+it is not guaranteed once `new` is added, which is the whole problem.
+
+OVERLAP. Two intervals [a,b] and [c,d] overlap if a <= d AND c <= b. Both conditions, and the
+code tests exactly these two, one per loop.
+
+TOUCHING / ADJACENT. [1,2] and [2,5] share the single point 2. Whether that counts as overlapping
+is a JUDGEMENT the problem has to make, and section 4 shows the code's answer changing on one
+character.
+
+MERGE. Replace several overlapping intervals with one covering all of them: [min of the starts,
+max of the ends].
+
+SWEEP / ONE PASS. Walking the list once, forward only.
+
+result. The output list being built.
+i. The index into `intervals`. It only ever increases, across all three loops - it is not reset.
+n. len(intervals), captured once.
+new. The interval being inserted, AND the accumulator that grows as it swallows others. It is
+     MUTATED, which section 4 flags.
+
+O(n). Work proportional to the number of intervals. Each is looked at by exactly one of the three
+loops, so the total is n.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - touching intervals, and a mutated argument.
+
+TRAP 1 - DOES TOUCHING COUNT AS OVERLAPPING? Take:
+
+    intervals = [[1,2]],   new = [2,5]
+
+    They share exactly the point 2. Is the answer [[1,5]] or [[1,2],[2,5]]?
+
+    THE CODE SAYS [[1,5]], and the decision lives in one character. Loop 1's condition is
+
+        intervals[i][1] < new[0]        ->   2 < 2   is FALSE
+
+    so [1,2] is NOT copied out as a "before" interval; it falls through to loop 2 and gets merged.
+    Change that `<` to `<=` and 2 <= 2 is TRUE, [1,2] is copied out untouched, and the answer
+    becomes [[1,2],[2,5]].
+
+    ONE CHARACTER, TWO DIFFERENT ANSWERS. Neither is wrong in the abstract - it depends on whether
+    the intervals are CLOSED (a meeting from 1 to 2 is still going at 2, so it clashes) or
+    HALF-OPEN (it ends the instant 2 begins, so it does not). ASK. And if nobody is available to
+    ask, say which convention you chose and why.
+
+TRAP 2 - THE FUNCTION MUTATES ITS ARGUMENT.
+
+        new[0] = min(new[0], intervals[i][0])
+        new[1] = max(new[1], intervals[i][1])
+
+`new` is a LIST, and these two lines change it in place. The caller's own variable is modified:
+pass in [4,8], and after the call it holds [3,10]. This is the same class of surprise as 3Sum's
+`nums.sort()` reordering the caller's array.
+
+    Say it out loud, and say the fix: `new = list(new)` at the top of the function, at the cost of
+    one small allocation. Some interviewers care a lot about this; all of them notice when you
+    raise it yourself.
+
+TRAP 3 - DROPPING THE min OR THE max, WHICH LOSES DATA SILENTLY.
+
+Take the big example: intervals = [[1,2],[3,5],[6,7],[8,10],[12,16]], new = [4,8].
+
+    WITHOUT `new[0] = min(...)`:  the result is [[1,2],[4,10],[12,16]].
+        The [3,5] interval was consumed by loop 2 - `i` moved past it - but the block that
+        replaced it starts at 4. THE STRETCH FROM 3 TO 4 HAS VANISHED. Somebody's meeting is gone
+        from the calendar, and nothing raised an error.
+
+    WITHOUT `new[1] = max(...)`:  the result is [[1,2],[3,8],[12,16]].
+        [8,10] was consumed but the block ends at 8. THE STRETCH FROM 8 TO 10 HAS VANISHED.
+
+    The loops decide WHICH intervals disappear from the output; the min and max are what make the
+    replacement actually cover them. Consuming without absorbing is the worst kind of bug because
+    the output still looks well-formed.
+
+TRAP 4 - RESETTING `i` BETWEEN THE LOOPS. All three loops share one index, deliberately. Restart
+it at 0 and loop 3 re-copies everything, including the intervals already merged into `new`.
+
+TRAP 5 - THE EMPTY INPUT. intervals = [], new = [5,7]. `n` is 0, so all three loops are skipped
+and only the append runs, giving [[5,7]]. Correct with no special case - but check it, because a
+version that indexes `intervals[0]` anywhere outside a loop guard will crash here.""",
+
+    """5. THE SLOWER VERSIONS FIRST, THEN THIS ONE.
+
+VERSION A - APPEND AND RE-SORT. Push `new` onto the list, sort by start time, then run the
+standard MERGE INTERVALS sweep. Correct, simple to reason about, and O(n log n) - it throws away
+the fact that the input was already sorted, which is the most valuable thing you were given.
+
+VERSION B - BINARY SEARCH FOR THE INSERTION POINT, then merge locally. O(log n) to find the spot -
+but you still have to copy the untouched intervals into the output, which is O(n) anyway. THE
+BINARY SEARCH BUYS NOTHING unless you can modify the list in place and are allowed to shift
+elements, and even then the shifting is O(n).
+
+    This is worth saying in an interview, because reaching for binary search on a sorted array is
+    a good instinct that happens to be wrong here, and explaining why shows you thought about it.
+
+VERSION C - THE THREE-PHASE SWEEP, which is the code here. One pass, O(n) time, and the only
+memory used is the output list itself.
+
+WHY THE TWO LOOP CONDITIONS ARE THE TWO HALVES OF THE OVERLAP TEST - because this is the part
+people memorise instead of understanding.
+
+Two intervals [a,b] and [c,d] overlap exactly when:
+
+        a <= d    AND    c <= b
+
+Now put [a,b] = intervals[i] and [c,d] = new:
+
+    LOOP 1's condition is  intervals[i][1] < new[0]  - that is  b < c, the NEGATION of  c <= b.
+        So loop 1 runs exactly while the interval fails the second half of the overlap test:
+        it finishes before `new` even begins.
+
+    LOOP 2's condition is  intervals[i][0] <= new[1]  - that is  a <= d, the first half.
+        By the time loop 2 starts, loop 1 has already guaranteed  c <= b  for the current
+        interval. So this one remaining test is enough to confirm a genuine overlap.
+
+    LOOP 3 needs no condition at all: anything reaching it failed loop 2's test, so it starts
+        after `new` ends - and because the list is sorted, so does everything behind it.
+
+THE TWO CONDITIONS ARE NOT ARBITRARY; THEY ARE THE OVERLAP DEFINITION SPLIT IN HALF, with the
+sortedness supplying whichever half is not being tested. That is why the code needs no `else`
+branches and no re-checking.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SWEEP THE SORTED LIST ONCE WITH A SINGLE INDEX -
+COPYING OUT EVERYTHING THAT FINISHES BEFORE THE NEW INTERVAL BEGINS, THEN SWALLOWING EVERYTHING
+THAT TOUCHES IT BY STRETCHING THE NEW INTERVAL TO COVER THEM, THEN COPYING OUT THE REST.
+
+THERE IS NO RECURSION. The mechanism is THREE SEQUENTIAL LOOPS SHARING ONE INDEX:
+
+  - The index starts at zero and NEVER RESETS. Each loop picks up exactly where the previous one
+    stopped, which is what makes the whole thing one pass rather than three.
+  - Each loop stops on a condition that is guaranteed to stay false afterwards, because the list
+    is sorted by start time - so a loop that has stopped can never need to restart.
+  - WHAT MAKES IT STOP: every iteration of every loop advances the index by one, and the index is
+    bounded by the list length. Each interval is handled by exactly one of the three loops.
+
+THE STEPS:
+
+  1. START AN EMPTY OUTPUT LIST, and an index at the beginning of the input.
+
+  2. FIRST LOOP - THE ONES THAT FINISH TOO EARLY. While there are intervals left AND the current
+     one ENDS BEFORE the new one STARTS, copy it straight to the output and move on. These cannot
+     possibly clash.
+
+     "Ends before it starts" is a strict comparison here, which means an interval ending exactly
+     where the new one begins is treated as CLASHING, not as finishing early. That is a decision -
+     see section 4.
+
+  3. SECOND LOOP - THE ONES THAT CLASH. While there are intervals left AND the current one STARTS
+     BEFORE OR EXACTLY WHERE the new one ENDS, it overlaps. Do NOT copy it. Instead:
+
+     a. STRETCH THE NEW INTERVAL'S START back to whichever start is earlier.
+     b. STRETCH THE NEW INTERVAL'S END forward to whichever end is later.
+     c. MOVE ON.
+
+     Both stretches are needed. Skip either and an interval gets consumed by the loop without
+     being covered by the block replacing it - a stretch of the calendar silently disappears.
+
+     Note that the end being stretched is the same value the loop condition reads on its next
+     check, so a merge can extend the block's reach.
+
+  4. NOW WRITE OUT THE NEW INTERVAL. It has grown to cover itself and everything it swallowed.
+
+  5. THIRD LOOP - THE REST. Copy every remaining interval to the output unchanged. No condition is
+     needed: anything left starts after the new interval ends, and so does everything behind it.
+
+  6. RETURN THE OUTPUT.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Picture a day planner with meetings already blocked out, tidy and in order, none of them
+overlapping. You have one new meeting to add, and any meetings it clashes with have to be absorbed
+into a single longer block.
+
+You start at the top of the day and work downwards, and you never go back up.
+
+First you deal with everything that finishes before your new meeting even begins. Those are no
+trouble at all - they cannot possibly clash - so you copy each one straight onto a fresh page,
+unchanged, and carry on down. You stop the moment you reach a meeting that is still going when
+your new one starts.
+
+Now you are in the messy part. Every meeting from here on that begins before your new one ends is
+in the way. You do not copy any of them. Instead you grow your new meeting to cover them: if one
+of them started earlier than yours, your block now starts then instead; if one of them runs later
+than yours, your block now runs until then. Each meeting you absorb this way simply disappears
+from the planner - it has been folded into the block. You keep going until you find a meeting that
+begins after your block has finished.
+
+Both directions of growing matter. If you absorbed a meeting but forgot to pull your block's start
+back to cover it, that meeting has now vanished from the day and nothing replaced it. Same at the
+other end. Absorbing without covering is how a booking silently ceases to exist.
+
+Once nothing more is in the way, you write your grown block onto the fresh page. It goes in at
+exactly this point, which is the right place, because everything above it happened earlier and
+everything below it happens later.
+
+Then you copy the rest of the day down, unchanged. You do not have to check any of them: the
+planner was in order to begin with, so if this one starts after your block, every one after it
+does too.
+
+One pass down the page, every meeting looked at exactly once, and the day comes out tidy again.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep intervals = [[1,3],[6,9]] and new = [2,5] beside you, answer [[1,5],[6,9]].
+
+    def insert_interval(intervals, new):
+
+`intervals` is sorted by start and non-overlapping. `new` is the interval to insert - AND it is
+modified in place (trap 2). Returns a new list; `intervals` itself is not modified, though the
+interval OBJECTS inside it are shared with the output rather than copied.
+
+        result = []
+
+The output. Built in order, so no sorting is ever needed at the end.
+
+        i, n = 0, len(intervals)
+
+    i  HOLDS the current position in `intervals`. IT IS SHARED BY ALL THREE LOOPS AND NEVER RESET -
+       that is what makes this one pass rather than three (trap 4).
+    n  HOLDS the length, captured once rather than recomputed in three loop conditions.
+
+        while i < n and intervals[i][1] < new[0]:      # ends before new starts
+            result.append(intervals[i]); i += 1
+
+LOOP 1 - THE INTERVALS THAT FINISH TOO EARLY.
+
+    `i < n`                      DECIDES whether there is anything left; it must come FIRST,
+                                 because `and` short-circuits and `intervals[i]` would raise
+                                 IndexError once i reaches n.
+    `intervals[i][1] < new[0]`   DECIDES whether this interval's END is before `new`'s START.
+
+The comparison is STRICT. An interval ending exactly at `new[0]` fails this test and falls through
+to loop 2, where it gets merged - the closed-interval convention from trap 1.
+
+        while i < n and intervals[i][0] <= new[1]:      # overlaps new -> merge
+            new[0] = min(new[0], intervals[i][0])
+            new[1] = max(new[1], intervals[i][1])
+            i += 1
+
+LOOP 2 - THE MERGE, and the heart of the function.
+
+    `intervals[i][0] <= new[1]`  DECIDES whether this interval STARTS before `new` ENDS. Combined
+                                 with what loop 1 already established, that is a genuine overlap -
+                                 section 5 has the argument.
+
+    `new[0] = min(...)`  STRETCHES the block backwards to cover an interval that started earlier.
+    `new[1] = max(...)`  STRETCHES it forwards to cover one that ended later.
+
+Nothing is appended in this loop. The intervals are consumed - `i` moves past them - and the ONLY
+thing representing them afterwards is the stretched `new`. That is exactly why dropping either
+line loses data rather than producing a merely untidy answer (trap 3).
+
+Note `new[1]` is both written here and read by the loop condition on the next check, so absorbing
+one interval can extend the block's reach to the next.
+
+        result.append(new)
+
+The grown block goes in HERE - after everything that ended before it and before everything that
+starts after it. The output stays sorted for free.
+
+        while i < n:                                    # the rest, after new
+            result.append(intervals[i]); i += 1
+
+LOOP 3 - EVERYTHING LEFT. No condition beyond "is there more". Anything reaching here failed loop
+2's test, so it starts after `new` ends - and because the input was sorted by start, so does every
+interval behind it. There is nothing left to check.
+
+        return result""",
+
+    """9. TRACED, INTERVAL BY INTERVAL.
+
+TRACE 1 - THE TEXTBOOK CASE. intervals = [[1,3],[6,9]], new = [2,5]. Expected [[1,5],[6,9]].
+
+    i = 0, n = 2, result = []
+
+    LOOP 1:  i < 2 yes.  intervals[0][1] = 3.  new[0] = 2.  Is 3 < 2?  NO.
+             The loop does not run even once - [1,3] is still going when `new` starts.
+
+    LOOP 2:  i < 2 yes.  intervals[0][0] = 1.  new[1] = 5.  Is 1 <= 5?  YES - overlap.
+                 new[0] = min(2, 1) = 1        <- the block reaches back to 1
+                 new[1] = max(5, 3) = 5        <- [1,3] ended at 3, already covered
+                 new is now [1,5].  i = 1.
+             i < 2 yes.  intervals[1][0] = 6.  new[1] = 5.  Is 6 <= 5?  NO.  Stop.
+
+    APPEND new:  result = [[1,5]]
+
+    LOOP 3:  i = 1 < 2.  append [6,9].  i = 2.  Loop ends.
+
+    return [[1,5],[6,9]].   Correct.
+
+TRACE 2 - SWALLOWING SEVERAL AT ONCE.
+intervals = [[1,2],[3,5],[6,7],[8,10],[12,16]], new = [4,8]. Expected [[1,2],[3,10],[12,16]].
+
+    i = 0, n = 5, result = []
+
+    LOOP 1:  intervals[0] = [1,2].  Is 2 < 4?  YES  ->  result = [[1,2]], i = 1
+             intervals[1] = [3,5].  Is 5 < 4?  NO.  Stop.
+
+    LOOP 2:  intervals[1] = [3,5].  Is 3 <= 8?  YES
+                 new[0] = min(4, 3) = 3        <- THE BLOCK GROWS LEFT
+                 new[1] = max(8, 5) = 8
+                 new = [3,8].  i = 2.
+             intervals[2] = [6,7].  Is 6 <= 8?  YES
+                 new[0] = min(3, 6) = 3        <- unchanged; [6,7] sits entirely inside
+                 new[1] = max(8, 7) = 8        <- unchanged
+                 new = [3,8].  i = 3.
+             intervals[3] = [8,10].  Is 8 <= 8?  YES - touching counts (trap 1)
+                 new[0] = min(3, 8) = 3
+                 new[1] = max(8, 10) = 10      <- THE BLOCK GROWS RIGHT
+                 new = [3,10].  i = 4.
+             intervals[4] = [12,16].  Is 12 <= 10?  NO.  Stop.
+
+    APPEND new:  result = [[1,2],[3,10]]
+
+    LOOP 3:  append [12,16].  i = 5.  Loop ends.
+
+    return [[1,2],[3,10],[12,16]].   Correct.
+
+    THREE INTERVALS WERE CONSUMED AND NONE WAS APPENDED. The block [3,10] is the only thing
+    representing them - which is the point of trap 3. Run the same trace with the min line
+    deleted and the block is [4,10]: the stretch from 3 to 4 has silently gone. Delete the max
+    line instead and the block is [3,8]: 8 to 10 has gone. Same shape of output, missing data.
+
+TRACE 3 - THE TWO EXTREMES, on the same five intervals.
+
+    new = [17,20]:  LOOP 1 copies all five (every end is below 17). LOOP 2 never runs - i is
+                    already 5. Append [17,20]. LOOP 3 has nothing.
+                    result = [[1,2],[3,5],[6,7],[8,10],[12,16],[17,20]].
+    new = [0,0]:    LOOP 1 - is 2 < 0? No, stops immediately. LOOP 2 - is 1 <= 0? No, never runs.
+                    Append [0,0] FIRST. LOOP 3 copies all five behind it.
+                    result = [[0,0],[1,2],[3,5],[6,7],[8,10],[12,16]].
+
+    Both correct, and neither needed a special case. Every interval passed through exactly one of
+    the three loops.
+
+TRACE 4 - THE TOUCHING INVERSION, which is trap 1 made concrete.
+intervals = [[1,2]], new = [2,5].
+
+    AS WRITTEN (`<`):   LOOP 1 - is 2 < 2?  NO.  Falls through.
+                        LOOP 2 - is 1 <= 5?  YES  ->  new = [min(2,1), max(5,2)] = [1,5].  i = 1.
+                        result = [[1,5]].
+    WITH `<=` INSTEAD:  LOOP 1 - is 2 <= 2?  YES  ->  [1,2] copied out, i = 1.
+                        LOOP 2 - i is 1, not < n = 1.  Never runs.
+                        result = [[1,2],[2,5]].
+
+    ONE CHARACTER, and the calendar either shows one long meeting or two back-to-back ones.
+
+THE TINY INPUTS:
+    intervals = [], new = [5,7]      n = 0, all three loops skipped, only the append runs.
+                                     Returns [[5,7]]. Correct, no special case.
+    intervals = [[1,5]], new = [2,3] LOOP 1: 5 < 2? no. LOOP 2: 1 <= 3? yes, new becomes
+                                     [min(2,1), max(3,5)] = [1,5]. Returns [[1,5]] - the new
+                                     interval was entirely inside an existing one and vanished
+                                     into it, correctly.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n) - ONE PASS.
+
+In plain words: the three loops share one index that only moves forward, so every interval is
+looked at by exactly one of them. There is no sorting, no searching and no second pass.
+
+SPACE: O(n) for the output list, which is unavoidable since the answer is a list of that size.
+O(1) beyond that - just `i` and `n`.
+
+    Note the output SHARES the interval objects with the input rather than copying them. If the
+    caller later mutates one of those inner lists, the "copy" changes too. Worth a sentence.
+
+WHY THIS IS O(n) AND MERGE INTERVALS IS O(n log n) - the comparison an interviewer is fishing for:
+
+    MERGE INTERVALS gets an ARBITRARY list and must sort it first, which is O(n log n) and
+    dominates everything else. The sort is not incidental; the sweep is meaningless without it.
+
+    INSERT INTERVAL is HANDED a sorted list. The sortedness is the gift, and the whole design -
+    one forward index, three loops, no re-checking - exists to spend it. Sorting again, as version
+    A in section 5 does, throws the gift away and turns an O(n) problem into an O(n log n) one.
+
+    THE GENERAL LESSON: when an input comes with a promise attached (sorted, non-overlapping,
+    bounded, distinct), the intended solution almost always spends that promise. If your approach
+    would work just as well without the promise, you have probably missed the point of the
+    question.
+
+WHERE THIS SHAPE SHOWS UP FOR REAL:
+
+    - Booking a meeting into a calendar and merging adjoining blocks.
+    - Marking a byte range as downloaded in a resumable download - the ranges are kept sorted and
+      merged as chunks arrive.
+    - Free-space tracking in a memory allocator: freeing a block merges it with adjacent free ones.
+    - Coalescing time-series alert windows so one incident is not reported five times.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the list is not sorted?" Then it is Merge Intervals: sort by start, O(n log n).
+  - "What if you must insert many intervals?" Doing this per insertion is O(n) each, so O(kn) for
+    k inserts. Better: collect them all and do one Merge Intervals pass, or keep the intervals in
+    a balanced tree / sorted container for O(log n) locating.
+  - "Do touching intervals merge?" Ask - and section 4 shows it is one character either way.
+  - "Can you avoid mutating the input interval?" `new = list(new)` at the top.
+  - "REMOVE an interval instead of inserting one." Same three phases, but the middle phase SPLITS
+    intervals rather than absorbing them - an interval straddling the removed range becomes two.
+
+THE #1 BEGINNER MISTAKE: appending the new interval and re-sorting. It is correct, it is the first
+thing everyone thinks of, and it is O(n log n) on an input that was handed to you sorted precisely
+so you would not have to.
+
+RUNNER-UP: consuming intervals in the merge loop without stretching BOTH bounds. The output still
+looks like a tidy list of intervals, so nothing draws your attention to the fact that a chunk of
+the timeline has quietly disappeared.
+
+TAKEAWAY: because the list is already sorted and tidy, the intervals split into three consecutive
+regions - too early, clashing, too late - so one forward index and three loops handle each interval
+exactly once, and "merge" is nothing more than taking the smallest start and the largest end.""",
 ]
 
 _EX_P0H["Trie (Prefix Tree)"] = [
-    """Inserting three words, drawn.
-insert("cat"), insert("car"), insert("dog"):
+    """1. THE GOAL - a tree whose EDGES are letters.
+
+A TRIE (say "try", from re-TRIE-val) stores a set of words in a tree where each step down the tree
+is one CHARACTER. Words that begin the same way share the same path.
+
+Insert "cat", "car", "dog":
+
     root
-     |-- c -- a -- t*        (* = is_word)
+     |-- c -- a -- t*          (* = a complete word ends here)
      |          \\-- r*
      |-- d -- o -- g*
-"cat" and "car" share the path c -> a, so the prefix is stored ONCE. That sharing
-is the entire data structure: with 100,000 English words the common prefixes
-collapse into a fraction of the nodes a list of strings would need.""",
 
-    """search vs startsWith - why the is_word flag exists.
-On the trie above:
-search("car") -> walk c,a,r; the node exists AND is_word is True -> True.
-search("ca")  -> the node exists but is_word is False -> False. "ca" is a prefix,
-not a stored word.
-startsWith("ca") -> the node exists -> True.
-Without the flag you could not tell those two cases apart, and autocomplete would
-happily suggest "ca" as a word. One boolean per node, and it is the difference
-between a working trie and a broken one.""",
+Read a path from the root and you spell a word. "cat" is root -> c -> a -> t. "car" is root -> c
+-> a -> r - THE SAME FIRST TWO STEPS. The shared prefix "ca" is stored ONCE, not twice.
 
-    """Cost, compared with the obvious alternatives.
-insert/search on a word of length L: O(L), INDEPENDENT of how many words are
-stored. Searching a million words costs the same as searching ten.
-A hash set also gives O(L) for exact lookup (hashing the string reads all L
-characters) - so for pure membership a set is simpler and usually faster.
-The trie wins on PREFIX questions: 'all words starting with car' is a walk to the
-node plus a DFS of its subtree; a hash set would have to scan every key.
-Space: O(total characters) nodes, and each node carries a dict - which in Python
-is heavy. For a fixed lowercase alphabet, a 26-slot list per node is smaller and
-faster.""",
+WHAT THIS BUYS YOU, and it is one thing rather than a general speed-up:
 
-    """Autocomplete, worked.
-Store cat, car, card, care, dog. User types "car":
-walk c -> a -> r, then DFS the subtree collecting words: car (the node itself is
-a word), card, care.
-Rank them by a frequency counter stored on each node and return the top 3.
-That is a production autocomplete in two steps. The refinement used at scale is
-to precompute and CACHE the top-k completions at each node, so a keystroke is one
-lookup instead of a subtree walk - a good answer to 'how do you make this fast
-for a million QPS?'""",
+    "IS `car` A STORED WORD?"                three steps down the tree. O(length of the word).
+    "DOES ANY STORED WORD START WITH `ca`?"  two steps. O(length of the prefix).
 
-    """Edge cases: the empty string, and a word that is a prefix of another.
-insert(""): the loop body never runs and root.is_word becomes True. search("")
-then returns True. Decide whether that is legal for your problem and say so.
-insert("car") then insert("card"): "car"'s node keeps is_word True and gains a
-child d whose node is also is_word. search("car") and search("card") are both
-True - a word being a prefix of another is normal and needs no special handling.
-Deletion is the case that does: you must unmark is_word and only prune nodes that
-have no children AND are not words themselves, walking back up.""",
+    NEITHER COST DEPENDS ON HOW MANY WORDS ARE STORED. Searching among a million words costs the
+    same as searching among ten.
 
-    """Where tries earn their keep.
-- Autocomplete and search suggestions (the canonical use).
-- Spell-check and fuzzy matching: a DFS with an edit-distance budget prunes
-  enormous parts of the tree.
-- IP routing tables: longest-prefix match on binary tries.
-- Word Search II: a trie of the word list turns 'try every word on the board'
-  into one board DFS that prunes the moment a prefix is not in the trie - the
-  single biggest speedup on that problem.
-- Compressed variants: a radix/PATRICIA trie collapses single-child chains, which
-  matters when keys are long and sparse (URLs, file paths).""",
+THE SECOND QUESTION IS THE ONE THAT MATTERS. A plain hash set answers the first question just as
+fast. It cannot answer the second at all without examining every word it holds - and section 5
+puts numbers on how bad that is.
+
+THE STAR IN THE PICTURE IS NOT DECORATION. Look at the node after c -> a. Nothing marks it, because
+"ca" is a prefix of stored words but is not itself a stored word. The trie must be able to tell
+those apart, and that is what the `is_word` flag is for. Section 4 is about what happens without
+it.""",
+
+    """2. THE INTUITION - what one node actually holds.
+
+Forget trees for a moment. ONE NODE HOLDS EXACTLY TWO THINGS:
+
+    A MAP FROM CHARACTER TO CHILD NODE    "if the next letter is 'a', go over there"
+    A TRUE/FALSE FLAG                     "a complete word ends right here"
+
+That is the entire data structure. Everything else is walking.
+
+    root
+      children: {'c': nodeC, 'd': nodeD}       is_word: False
+        nodeC
+          children: {'a': nodeCA}              is_word: False
+            nodeCA
+              children: {'t': nodeCAT, 'r': nodeCAR}    is_word: False
+                nodeCAT   children: {}   is_word: TRUE      <- "cat"
+                nodeCAR   children: {}   is_word: TRUE      <- "car"
+
+NOTE WHAT IS NOT STORED. No node holds the string "cat". No node even holds the letter 'c' - the
+LETTER IS THE EDGE, recorded as a key in the parent's map. A node's identity is entirely "the
+place you reach by spelling this prefix".
+
+THE THREE OPERATIONS ARE ALL THE SAME WALK:
+
+    INSERT       walk down, CREATING any node that is missing, then set the flag at the end.
+    SEARCH       walk down, FAILING if any node is missing, then REPORT THE FLAG.
+    STARTS_WITH  walk down, FAILING if any node is missing, then REPORT THAT YOU ARRIVED.
+
+    Search and startsWith differ in ONE LINE - whether you check the flag after arriving. That
+    difference is the whole reason the flag exists.
+
+WHY THIS IS FAST, in one sentence: at each step you do a single dictionary lookup on one
+character, which is constant time, and you take exactly as many steps as the word has letters. The
+number of words in the trie never enters into it, because you only ever look at the children of the
+node you are standing on.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRIE / PREFIX TREE. A tree where each edge is a character and each path from the root spells a
+prefix.
+
+PREFIX. The first however-many characters of a word. "c", "ca" and "car" are prefixes of "card".
+Every word is a prefix of itself.
+
+NODE. One position in the tree - equivalently, one prefix. In THIS implementation the class is
+called `Trie` and every node IS a `Trie`, including the root. There is no separate Node class,
+which is why `insert` starts with `node = self`.
+
+EDGE. A character, stored as a key in the parent's `children` dictionary.
+
+ROOT. The node for the empty prefix. Every walk starts here.
+
+is_word. The flag saying "a complete word ends at this node". Without it, a trie can only answer
+"is this a prefix of something" and never "is this actually a word" (section 4).
+
+children. A dictionary mapping one character to one child `Trie`.
+
+setdefault(key, default). A dictionary method: return the value at `key` if it exists; otherwise
+store `default` there and return it. It turns "look up, and create if missing" into one line - and
+it has a subtlety worth knowing, in section 5.
+
+L. The length of the word or prefix being handled. All three operations are O(L).
+
+_find(prefix). The private helper doing the shared walk. The leading underscore is Python's
+convention for "internal; not part of the public interface".
+
+DFS. Depth-first search - used for autocomplete, to collect every word beneath a prefix node.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - a prefix is not a word.
+
+Insert "cat", "car" and "dog". Now ask:
+
+    search("ca")   ->  should be FALSE.  "ca" is not a word anybody stored.
+    starts_with("ca") -> should be TRUE.  Both "cat" and "car" begin with it.
+
+BOTH WALKS END AT EXACTLY THE SAME NODE. The walk cannot distinguish them, because arriving
+somewhere only tells you the prefix exists. The ONLY thing separating the two answers is the flag:
+
+    search      returns  node is not None AND node.is_word     ->  node exists, flag is False  ->  FALSE
+    starts_with returns  node is not None                       ->  node exists                ->  TRUE
+
+    DELETE THE `is_word` FLAG and `search` collapses into `starts_with`. Every prefix of every
+    stored word starts reporting as a stored word: search("c"), search("ca"), search("do") would
+    all return True. The trie would still be a perfectly good prefix index and a completely broken
+    dictionary.
+
+THE HARDER VERSION OF THE SAME POINT - A WORD THAT IS A PREFIX OF ANOTHER. Insert "car" and then
+"card":
+
+    root -- c -- a -- r* -- d*
+
+    The node for "car" has is_word True AND has a child. Both facts are true at once. So:
+
+        search("car")   -> True    (the flag is set)
+        search("card")  -> True    (walk one further, that flag is set too)
+        search("ca")    -> False   (no flag)
+
+    A COMMON WRONG SHORTCUT IS "A WORD ENDS WHERE A NODE HAS NO CHILDREN" - treating leaves as
+    words. On this trie that makes "car" invisible, because its node has a child. Insert "car"
+    after "card" and you would also need the flag on an already-existing node, which the leaf rule
+    cannot express at all.
+
+TRAP 2 - THE EMPTY STRING. `insert("")` runs a loop over zero characters, so `node` is still the
+root, and it sets `root.is_word = True`. After that `search("")` returns True, which is right.
+    BUT NOTE: `starts_with("")` returns True ALWAYS, even on a completely empty trie - the walk
+    over zero characters trivially succeeds and returns the root, which is not None. That is
+    arguably correct (every word starts with the empty prefix) but it surprises people.
+
+TRAP 3 - DELETION IS NOT THE MIRROR OF INSERTION. The obvious "walk down and remove the nodes" is
+wrong: deleting "car" from a trie containing "card" must NOT remove the c-a-r path. The correct
+deletion clears the flag, then removes a node only if it has no children AND is not itself a word.
+That is why `delete` is missing here and is a standard follow-up.
+
+TRAP 4 - ASSUMING 26 LOWERCASE LETTERS. A fixed array of 26 children is faster and smaller than a
+dictionary WHEN the alphabet really is 26 letters - and breaks the moment a digit, an apostrophe,
+an accent or a Unicode character appears. The dictionary version here handles any alphabet at the
+cost of a hash lookup per step.""",
+
+    """5. THE ALTERNATIVES, WITH THE NUMBERS THAT DECIDE BETWEEN THEM.
+
+VERSION A - A LIST OF WORDS. `search` is O(N x L) - compare against every word. `starts_with` is
+the same. Fine for a hundred words, hopeless for a million.
+
+VERSION B - A HASH SET. `search("car")` hashes the string - which costs O(L), since hashing reads
+every character - and does one lookup. SO EXACT SEARCH IS ALREADY O(L), THE SAME AS A TRIE. If
+exact lookup is all you need, USE A SET; a trie is more code, more memory and no faster.
+
+    BUT `starts_with` IS THE WALL. A hash of "car" tells you nothing whatsoever about "card" -
+    hashing deliberately destroys any relationship between similar strings. So the only way to
+    answer "does any word start with car?" is to examine every word in the set.
+
+    PUT NUMBERS ON IT. One million words averaging 8 characters:
+
+        HASH SET, prefix query:  scan all 1,000,000 words, comparing up to 3 characters each
+                                 ->  on the order of 3,000,000 character comparisons
+        TRIE, prefix query:      3 dictionary lookups. THREE.
+
+        That is a factor of roughly a million, and it does not shrink as you optimise the
+        constant factors - it is the difference between O(N x L) and O(L).
+
+VERSION C - A SORTED ARRAY WITH BINARY SEARCH. This DOES support prefix queries: binary search for
+the first word >= the prefix and check whether it starts with it. Cost O(L log N) - for a million
+words that is about 20 comparisons of up to L characters each, so ~160 character operations
+against the trie's 3.
+
+    THE REAL PROBLEM IS UPDATES. Inserting one word into a sorted array is O(N) because everything
+    after it shifts. A trie inserts in O(L) regardless of size. For a dictionary that never
+    changes, the sorted array is genuinely competitive and uses far less memory; for one that grows,
+    it is not.
+
+VERSION D - THE TRIE. O(L) for all three operations, independent of N, and it supports enumerating
+everything under a prefix, which the others cannot do at all.
+
+    WHAT IT COSTS - and be honest about this, because it is the trie's real weakness. Every node
+    is a full Python object holding a dictionary. A million words averaging 8 characters is up to
+    8 million nodes in the worst case (shared prefixes reduce it, often greatly, but English
+    vocabularies are not that redundant deep in the tree). At roughly a hundred bytes per node
+    once the object header and the dict are counted, that is hundreds of megabytes for data whose
+    raw text is 8 MB. THE TRIE TRADES A LOT OF MEMORY FOR PREFIX QUERIES. Say so.
+
+THE setdefault SUBTLETY, since it is in the code and is a genuine trap:
+
+    node = node.children.setdefault(ch, Trie())
+
+`setdefault` returns the existing child if `ch` is present, and otherwise stores the new `Trie()`
+and returns that. Neat - but PYTHON EVALUATES THE ARGUMENT BEFORE CALLING THE METHOD, so
+`Trie()` IS CONSTRUCTED ON EVERY SINGLE CHARACTER, including the overwhelming majority of steps
+where the child already exists and the new object is thrown away immediately.
+
+    Inserting a million 8-character words allocates EIGHT MILLION Trie objects, of which only the
+    genuinely new nodes survive. The two-line version allocates only what it keeps:
+
+        if ch not in node.children:
+            node.children[ch] = Trie()
+        node = node.children[ch]
+
+    Same behaviour, no wasted allocations. Worth mentioning; it is the kind of detail that
+    separates "used setdefault because it is short" from "knows what it does".""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: STORE WORDS AS PATHS DOWN A TREE WHERE EACH STEP IS ONE
+CHARACTER, SO THAT SHARED BEGINNINGS ARE SHARED PATHS - THEN INSERT, SEARCH AND PREFIX-SEARCH ARE
+ALL THE SAME WALK, DIFFERING ONLY IN WHETHER A MISSING STEP CREATES A NODE OR FAILS, AND IN WHETHER
+YOU CHECK THE FLAG WHEN YOU ARRIVE.
+
+THERE IS NO RECURSION IN ANY OF THE THREE OPERATIONS - they are plain loops, one iteration per
+character. The mechanism is A POINTER THAT WALKS DOWNWARD:
+
+  - A variable holds "the node I am standing on", starting at the root.
+  - Each character replaces it with one of its children.
+  - WHAT MAKES IT STOP: the word is finite, so the loop runs exactly as many times as there are
+    characters. Nothing depends on the size of the trie.
+  - (Recursion appears only in autocomplete, which must explore an entire subtree rather than
+    follow one path.)
+
+INSERTING A WORD:
+
+  1. STAND ON THE ROOT.
+  2. FOR EACH CHARACTER: look for a child under that character. If there is one, step onto it. If
+     there is not, create a new empty node under that character and step onto that.
+  3. WHEN THE CHARACTERS RUN OUT, MARK THE NODE YOU ARE STANDING ON as the end of a word.
+     Marking is idempotent - inserting the same word twice changes nothing the second time.
+
+THE SHARED WALK, used by both queries:
+
+  1. STAND ON THE ROOT.
+  2. FOR EACH CHARACTER: if there is no child under it, STOP AND REPORT FAILURE - no stored word
+     has this prefix.
+  3. OTHERWISE STEP ONTO THAT CHILD.
+  4. IF YOU GET THROUGH ALL THE CHARACTERS, REPORT THE NODE YOU LANDED ON.
+
+SEARCHING FOR A WHOLE WORD:
+
+  1. RUN THE SHARED WALK.
+  2. IF IT FAILED, the answer is no.
+  3. IF IT ARRIVED, the answer is whatever the flag on that node says. ARRIVING IS NOT ENOUGH -
+     that is the whole content of section 4.
+
+PREFIX SEARCH:
+
+  1. RUN THE SHARED WALK.
+  2. THE ANSWER IS SIMPLY WHETHER IT ARRIVED. Do not look at the flag.
+
+AUTOCOMPLETE, since it is what tries are actually for:
+
+  1. RUN THE SHARED WALK to the prefix node. If it failed, there are no suggestions.
+  2. EXPLORE EVERYTHING BENEATH THAT NODE, keeping track of the characters on the way down, and
+     collect the string at every node whose flag is set - INCLUDING the prefix node itself, if the
+     prefix happens to be a word in its own right.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a vast filing cabinet where every drawer is labelled with a single letter, and inside each
+drawer is another cabinet, also with lettered drawers.
+
+To file the word "cat", you stand in front of the cabinet and open the drawer marked C. If there
+is no C drawer you build one. Inside is another cabinet; you open its A drawer, building it if
+needed. Inside that, the T drawer. And in the T drawer you place a small red sticker meaning
+"a word ends here".
+
+Now file "car". You open C - it already exists, so you use it. You open A - already there too. Only
+when you get to R do you have to build anything. The C and the A are shared: the cabinet does not
+hold two copies of the beginning of the word, and it never will, no matter how many words start
+with "ca".
+
+Looking a word up is the same journey without the building. Follow the letters. If at any point
+the drawer you want simply is not there, you can stop immediately - nothing filed here begins that
+way, and you have learned that after opening only as many drawers as the word has letters, no
+matter how many words are filed in total.
+
+If you do get all the way to the end, you have one more thing to check: is there a red sticker?
+Arriving somewhere only proves that words pass through here. Follow C then A and you arrive
+perfectly well, but there is no sticker, because nobody ever filed the word "ca" - they filed "cat"
+and "car", which merely travel through. This is the difference between asking "is this a word" and
+asking "does any word start like this". The journey is identical; only the sticker is consulted.
+
+And that second question is the whole reason for the cabinet. If you had simply thrown all the
+words into a big unsorted heap, finding an exact word would be quick enough. But "show me
+everything beginning with car" would mean picking up every single word in the heap and looking at
+it. In the cabinet you walk three drawers and everything below you is an answer.
+
+The price is space. Every drawer you build is real, and there are a great many of them - far more
+storage than the words themselves would take written on a page. You are paying in shelving for the
+ability to ask about beginnings.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the cat/car/dog picture beside you.
+
+    class Trie:
+        def __init__(self):
+            self.children = {}       # char -> child Trie node
+            self.is_word = False     # True if a word ends exactly here
+
+ONE CLASS SERVES AS BOTH THE TRIE AND ITS NODES. The object you create is the root; every child is
+another `Trie`. That is why `insert` below begins with `node = self` rather than `node = self.root`.
+
+    self.children  HOLDS the map from one character to one child node. The CHARACTER IS THE KEY -
+                   it is not stored inside the child.
+    self.is_word   DECIDES whether a complete word ends at this node. Starts False; the root is
+                   not a word unless "" is inserted.
+
+Note both are created fresh per instance inside `__init__`. Declaring them as class attributes
+instead would make every node share one dictionary - the trie would collapse into a single node.
+
+        def insert(self, word):
+            node = self
+
+    node  HOLDS where we are standing. Starts at the root, which is `self`.
+
+            for ch in word:                      # walk/create a path per character
+                node = node.children.setdefault(ch, Trie())
+
+THE WHOLE OF INSERTION, in one line. `setdefault` returns the existing child if `ch` is already
+there, and otherwise stores a brand-new `Trie()` and returns that - so "walk if you can, build if
+you must" is a single expression.
+
+The subtlety from section 5: `Trie()` is evaluated on EVERY iteration, even when the child already
+exists, so a wasted node object is allocated and discarded on every step down an existing path.
+
+            node.is_word = True                  # mark the final node as a word
+
+THE FLAG. After the loop, `node` is the node for the last character. Setting it here is what makes
+"cat" a word rather than merely a path.
+
+Assigning True to something already True is harmless, which is why inserting the same word twice
+is a no-op.
+
+        def _find(self, prefix):                 # node at end of prefix, or None
+            node = self
+            for ch in prefix:
+                if ch not in node.children:
+                    return None
+                node = node.children[ch]
+            return node
+
+THE SHARED WALK, and the reason `search` and `starts_with` are one line each.
+
+    the `if ch not in node.children` DECIDES failure: no child under this character means no
+        stored word continues this way, so stop immediately - there is no point walking further.
+    the return value  HOLDS the node reached, or None. It says NOTHING about whether the prefix is
+        a word; that is deliberately left to the caller.
+
+Returning the NODE rather than a boolean is what lets both public methods share this - the extra
+information is exactly what distinguishes them.
+
+        def search(self, word):                  # is `word` a stored word?
+            node = self._find(word)
+            return node is not None and node.is_word
+
+TWO CONDITIONS, AND BOTH ARE LOAD-BEARING. `node is not None` means the path exists;
+`node.is_word` means a word ends there. Drop the second and this becomes `starts_with` under a
+different name - section 4.
+
+The order matters: `and` short-circuits, so `node.is_word` is only read after `node` is known not
+to be None.
+
+        def starts_with(self, prefix):           # does any word start with `prefix`?
+            return self._find(prefix) is not None
+
+THE SAME WALK, FLAG IGNORED. Arriving is the whole answer: if the path exists at all, some insert
+built it, and every insert ends by marking a word - so there is a word underneath.""",
+
+    """9. TRACED, NODE BY NODE.
+
+BUILDING THE TRIE. Start with an empty root: children = {}, is_word = False.
+
+    insert("cat"):   node = root
+        ch = 'c'   'c' not in root.children       ->  create nodeC.   root.children = {'c': nodeC}
+                                                      node = nodeC
+        ch = 'a'   'a' not in nodeC.children      ->  create nodeCA.  node = nodeCA
+        ch = 't'   't' not in nodeCA.children     ->  create nodeCAT. node = nodeCAT
+        nodeCAT.is_word = True
+        NODES CREATED: 3
+
+    insert("car"):   node = root
+        ch = 'c'   'c' IS in root.children        ->  REUSE nodeC.    node = nodeC
+        ch = 'a'   'a' IS in nodeC.children       ->  REUSE nodeCA.   node = nodeCA
+        ch = 'r'   'r' not in nodeCA.children     ->  create nodeCAR. node = nodeCAR
+        nodeCAR.is_word = True
+        NODES CREATED: 1
+
+        THE SHARING IS VISIBLE HERE. "car" is three characters long and cost ONE new node,
+        because "ca" was already on the tree. That is the whole economy of a trie.
+        (And note that two `Trie()` objects were built and thrown away on the 'c' and 'a' steps,
+        by `setdefault` - section 5.)
+
+    insert("dog"):   3 new nodes (nodeD, nodeDO, nodeDOG). nodeDOG.is_word = True.
+
+    TOTAL: root + c, a, t, r + d, o, g = 8 NODES for 3 words of 9 characters between them.
+
+    root
+     |-- c -- a -- t*
+     |          \\-- r*
+     |-- d -- o -- g*
+
+NOW THE QUERIES.
+
+    search("car"):
+        _find("car"):  'c' in root.children      -> node = nodeC
+                       'a' in nodeC.children     -> node = nodeCA
+                       'r' in nodeCA.children    -> node = nodeCAR
+                       return nodeCAR
+        nodeCAR is not None  AND  nodeCAR.is_word is True   ->  TRUE
+
+    search("ca"):     THE CASE FROM SECTION 4.
+        _find("ca"):   walks 'c' then 'a'   ->  returns nodeCA
+        nodeCA is not None -> passes the first test.
+        nodeCA.is_word is FALSE - nobody ever inserted "ca".
+        ->  FALSE
+
+    starts_with("ca"):
+        _find("ca") returns nodeCA, which is not None   ->  TRUE
+
+        THE SAME NODE, TWO DIFFERENT ANSWERS. Only the flag separates them, and this pair of lines
+        is the entire justification for `is_word` existing.
+
+    search("cab"):
+        _find("cab"):  'c' ok, 'a' ok, then 'b' not in nodeCA.children  ->  RETURN None
+                       (it stops after 3 steps, having never looked at "dog" or anything else)
+        node is None  ->  FALSE
+    starts_with("cab"):  _find returns None  ->  FALSE
+
+    WORK DONE: every query above took at most 3 dictionary lookups. Add another million words to
+    this trie and it is still 3 - the walk only ever inspects the children of the node it is
+    standing on.
+
+THE WORD-INSIDE-A-WORD CASE. Now also insert("card"):
+
+        ch = 'c','a','r' all exist  ->  walks to nodeCAR (which is_word is already True)
+        ch = 'd'  ->  creates nodeCARD.  nodeCARD.is_word = True
+
+    root -- c -- a -- r* -- d*
+
+    search("car")   -> nodeCAR.is_word is True   -> TRUE   (still a word, though it now has a child)
+    search("card")  -> nodeCARD.is_word is True  -> TRUE
+    search("ca")    -> nodeCA.is_word is False   -> FALSE
+
+    THE "A WORD IS A LEAF" SHORTCUT WOULD NOW REPORT search("car") AS FALSE, because nodeCAR has a
+    child. The flag is the only thing that gets this right.
+
+AUTOCOMPLETE, WORKED. Store cat, car, card, care, dog. The user types "car":
+
+    walk c -> a -> r  (3 lookups)
+    then explore everything beneath nodeCAR, collecting nodes whose flag is set:
+        nodeCAR   is_word -> "car"
+        nodeCARD  is_word -> "card"
+        nodeCARE  is_word -> "care"
+    suggestions: car, card, care
+
+    The prefix node ITSELF is included, because "car" is a word in its own right. Forgetting to
+    check the flag on the starting node is the standard autocomplete bug.
+    Cost: O(prefix length) to walk down, plus O(size of the subtree) to collect - and the subtree
+    contains only matching words, so nothing is examined that is not an answer.
+
+THE EMPTY STRING (trap 2):
+    insert(""):       the for loop runs zero times, node is still the root, root.is_word = True.
+    search(""):       _find("") returns the root; is_word is True  ->  TRUE
+    starts_with(""):  _find("") returns the root, not None  ->  TRUE - and this is true even on a
+                      trie where nothing was ever inserted, since the root always exists.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(L) for insert, search and startsWith, where L is the length of the word or prefix.
+INDEPENDENT OF HOW MANY WORDS ARE STORED.
+
+In plain words: you take one step per character, and each step is a single dictionary lookup on
+the node you are standing on. Adding a million more words adds children to nodes you may never
+visit; it cannot make your walk longer.
+
+SPACE: O(total characters across all words) in the worst case, reduced by shared prefixes.
+
+    AND BE HONEST ABOUT THE CONSTANT. Each node is a Python object holding a dictionary - on the
+    order of a hundred bytes. A million 8-character words can approach 8 million nodes, so
+    hundreds of megabytes to hold text whose raw form is 8 MB. THE TRIE BUYS PREFIX QUERIES WITH
+    MEMORY. If you only need exact lookup, a set is smaller AND equally fast.
+
+THE COMPARISON THAT DECIDES WHETHER TO USE ONE AT ALL:
+
+    HASH SET             exact search O(L). PREFIX SEARCH IMPOSSIBLE without scanning all N words.
+    SORTED ARRAY         prefix search O(L log N). Insert O(N) - shifting. Good for a fixed
+                         dictionary, bad for a growing one.
+    TRIE                 everything O(L), plus enumerate-under-a-prefix, at a heavy memory cost.
+
+    THE ONE-LINE RULE: reach for a trie when the question is about BEGINNINGS OF STRINGS. If it is
+    about whole strings, use a set.
+
+WHERE TRIES EARN THEIR KEEP:
+
+    - Autocomplete and search suggestions - the canonical use, and the reason every search box has
+      one behind it.
+    - Spell-check and fuzzy matching: a DFS with an edit-distance budget prunes whole subtrees at
+      once, which a flat word list cannot do.
+    - WORD SEARCH II (find many words in a letter grid): put the words in a trie and walk the grid
+      once, pruning the moment the path stops being a prefix of anything. Without the trie you
+      would re-scan the grid per word.
+    - IP routing tables - longest-prefix match on the bits of an address is literally a trie.
+    - T9 / phone keypad prediction, and word-break style DP where prefixes are tested repeatedly.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Implement delete." Clear the flag; then remove a node only if it has NO children and is NOT
+    itself a word, walking back up. Deleting "car" must not disturb "card" (trap 3).
+  - "Return the k most popular completions." Store a count on each node, or keep a heap per node.
+  - "Support wildcard search, e.g. `c.t`." DFS instead of a single walk - at a '.', try every child.
+    This is the Design Add and Search Words problem.
+  - "Reduce the memory." A fixed 26-slot array per node if the alphabet allows it (trap 4), or a
+    compressed / radix trie that collapses single-child chains into one edge holding a whole
+    substring.
+  - "Why is `setdefault` slightly wasteful here?" It constructs the default on every call - section 5.
+
+THE #1 BEGINNER MISTAKE: leaving out the `is_word` flag, or trying to infer word-ness from a node
+having no children. Without the flag, `search` and `startsWith` become the same function, and every
+prefix of every stored word reports as a word. The leaf-node shortcut fails on any word that is a
+prefix of another - "car" inside "card" - which is not an exotic case; it is most dictionaries.
+
+RUNNER-UP: using a trie where a hash set would do. Exact lookup is O(L) in both, so the trie is
+more code and far more memory for nothing. The trie is justified by PREFIX queries and by nothing
+else.
+
+TAKEAWAY: a trie stores characters on the EDGES so that words sharing a beginning share a path,
+which makes every operation cost the length of the word rather than the size of the dictionary -
+and the `is_word` flag is what keeps "this prefix exists" and "this is a word" as two different
+questions.""",
 ]
 
 _EX_P0H["Assign Cookies"] = [
