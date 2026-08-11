@@ -69493,69 +69493,463 @@ believed the need was real.""",
 ]
 
 _EX_P0LP["STAR: Delivering under a hard deadline with scope trade-offs (Deliver Results / Bias for Action)"] = [
-    """A full student-scale answer.
-SITUATION: Our five-person capstone had a fixed demo date, and with ten days
-left the model, the API and the web UI were all half-finished.
-TASK: I owned the API and had become the de facto integrator.
-ACTION: I ranked the three by what the EXAMINERS were actually grading - the
-rubric weighted the technical approach and the evaluation, not the interface.
-So I proposed cutting the UI to a single hard-coded query page and moving that
-person onto evaluation. I said it out loud on day two rather than day eight, so
-the person losing scope had time to re-plan rather than being told their work
-was binned. I also froze the API contract that morning so the front end and the
-model could finish against a stable interface instead of a moving one.
-RESULT: Demoed on time with a plain UI and a genuinely strong evaluation
-section, which is what the rubric rewarded. We scored higher than the previous
-year's group that shipped a polished UI and thin evaluation.""",
+    """1. THE GOAL - shipping something real when the date will not move.
 
-    """Cutting scope beats slipping the date - and why that is the LP.
-Deliver Results is 'focus on the key inputs and deliver them with the right
-quality and in a timely fashion; despite setbacks, rise to the occasion and
-never settle'. The graded behaviour is that you protected the DATE by choosing
-what not to build, rather than protecting the SCOPE by moving the date.
-So every strong answer here contains an explicit list of what was dropped and
-the reason. If your story has nothing dropped, it is a 'we worked hard and
-finished' story, which is common and unremarkable.""",
+    AMAZON LEADERSHIP PRINCIPLE - DELIVER RESULTS: "Leaders focus on the key inputs for their
+    business and deliver them with the right quality and in a timely fashion. Despite setbacks,
+    they rise to the occasion and never settle."
 
-    """Communicating early is the half candidates skip.
-The sentence 'I said it on day two rather than day eight' is worth more than
-the technical decision, because the failure that damages a real team is not
-missing a date - it is missing it SILENTLY. A manager told on day two has
-options; told on day eight they have none.
-The pattern to state: escalate early, with the trade and a recommendation, not
-an apology. 'Here are the two options - a partial result Friday or the full one
-Monday; I recommend the partial because the rubric weights evaluation' is what
-a manager wants to hear. It also transfers directly to the workplace, which is
-what the interviewer is extrapolating to.""",
+The trap in that sentence is "never settle", because scope cuts look like settling. They are
+not, and the distinction is the whole content of a good answer:
 
-    """The weak version.
-'We were behind so I worked late every night for a week and we finished
-everything.' No prioritisation, no trade-off, no communication - and it quietly
-signals that your response to a slipping plan is to absorb it personally, which
-does not scale and hides the problem from the people who could help.
-Also weak: 'we agreed to move the deadline.' Sometimes correct in life, but it
-is not this LP, and if the date is genuinely fixed (a demo, a launch, an exam)
-it is not available.""",
+    SETTLING          shipping something worse than you could have, because you ran out of
+                      effort or attention.
+    TRADING           shipping something DIFFERENT from what you planned, deliberately,
+                      because the deadline is fixed and you chose which dimension to protect.
 
-    """The probes.
-'What did you cut, and how did you decide?' - name the criterion, ideally an
-external one like the rubric, not your own preference. 'How did the person
-losing their work take it?' - this is really a collaboration probe hiding
-inside a delivery question; the answer should involve talking to them first,
-not announcing it. 'What if you couldn't cut anything?' - then the honest
-answer is escalate with options, and say who you would tell and when. 'Did
-quality suffer?' - Deliver Results says the RIGHT quality, so name what you
-held the bar on and what you deliberately let be rough.""",
+A fixed deadline means something must give. The only question is WHETHER YOU CHOSE WHAT GAVE,
+or whether it was chosen for you at the last minute by running out of time.
 
-    """Why the two LPs pair, and how to signal both.
-Deliver Results is about hitting the date with the right quality; Bias for
-Action is about the speed of the DECISIONS inside that. The story above hits
-both: the scope call was made in a day on incomplete information (bias for
-action) and the date held (deliver results). Saying 'I made that call on day
-two with imperfect information because the cost of being wrong was one person's
-two days, while waiting cost everyone the demo' explicitly hits both principles
-in one sentence, which is efficient in a round where you have four stories and
-forty-five minutes.""",
+So the story must show:
+
+    1. the deadline was genuinely FIXED - not a preference
+    2. you noticed the collision EARLY enough to have a choice
+    3. you chose WHICH DIMENSION to sacrifice, and can say why that one
+    4. you shipped, with a number
+
+THIS ENTRY IS AN INDEX over the story bank, drawing on the DELIVERY shape, and uses the same
+capstone as the cluster. A NOTE ON THE OVERLAP, since it matters: its sibling "STAR: Acting
+decisively with incomplete information" tells the SAME scope cut as a BIAS FOR ACTION story,
+and owns the two-way-door reasoning - was it reversible, what did reversing cost. THIS entry
+owns something different: WHY FOUR MEASURED CATEGORIES BEAT TWELVE UNMEASURED ONES. That is a
+quality argument rather than a speed one, and section 5 derives it with statistics.""",
+
+    """2. THE INTUITION - the three dimensions, and which one you protect.
+
+Every project has three things that can move, and a fixed deadline removes one of them:
+
+        SCOPE            how much you build
+        QUALITY          how well it works, and how well you KNOW it works
+        TIME             when it ships          <- FIXED. Removed from the table.
+
+    With time fixed, scope and quality trade against each other directly:
+
+        keep all the scope   ->  quality falls, and so does your KNOWLEDGE of the quality
+        cut the scope        ->  the part you keep can be finished AND measured
+
+Drawn as what you can actually deliver on the demo date:
+
+    OPTION A - keep 12 categories
+        [############################]  built
+        [##..........................]  measured
+        -> "we support twelve categories" and no defensible number for any of them
+
+    OPTION B - cut to 4 categories
+        [#########]                      built
+        [#########]                      measured
+        -> "we support four categories at 87%, measured on 200 queries"
+
+The second is smaller and stronger, and the reason is not effort - it is that EVALUATION IS
+PART OF THE DELIVERABLE. A feature nobody has measured is not finished; it is written.
+
+That is the argument that makes a scope cut into Deliver Results rather than settling. And it
+has an arithmetic form: with a fixed budget of labelled test queries, spreading them across
+twelve categories leaves too few per category to say anything. Section 5 computes exactly how
+few, and the number is worse than most people expect.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DELIVER RESULTS. The Amazon principle: focus on key inputs, deliver with the right quality, on
+time, and do not settle.
+
+HARD DEADLINE. A date that will not move - a demo, a launch, a conference, an exam. Distinct
+from a target, which will.
+
+SCOPE. How much you build.
+
+SCOPE CUT. Deliberately building less, chosen in advance. Distinct from running out of time,
+which produces the same result without the choice.
+
+THE IRON TRIANGLE. Scope, quality, time - fix one and the other two must absorb the pressure.
+
+TRADE-OFF. What you gave up, chosen deliberately. A candidate who cannot name what they
+sacrificed usually did not make a decision.
+
+STAGED DELIVERY. Shipping a subset now with a written plan for the rest. What turns "we cut
+that" into "we deferred that" - and it is a real distinction, not a rhetorical one, because the
+plan exists.
+
+EVALUATION SET. The labelled examples you measure against. In the capstone, 200 hand-labelled
+queries.
+
+PER-CATEGORY SAMPLE SIZE. How many test examples fall in each category. The quantity that
+decides whether a per-category number means anything.
+
+STANDARD ERROR. Roughly how much a measured percentage would bounce around if you re-drew the
+test set. It shrinks with the square root of the sample size, which is why small samples are so
+much worse than people expect.
+
+CONFIDENCE INTERVAL. The range the true value plausibly sits in. Section 5 computes it for 17
+queries and for 50, and the difference decides the whole argument.
+
+DEFENSIBLE NUMBER. A measurement you can state to a panel without it collapsing under one
+question about sample size.
+
+STAR. Situation, Task, Action, Result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - PRESENTING A SCOPE CUT AS A FAILURE. The instinct is apologetic: "we could not finish
+everything, so we had to drop some features." Said that way it IS settling, and it invites the
+interviewer to agree.
+
+    THE SAME FACTS, FRAMED AS A DECISION: "I chose to protect measured quality over feature
+    count, because a demo of four categories we could defend was worth more than twelve we could
+    not." Identical outcome; one is a decision and the other is a shortfall.
+
+TRAP 2 - NO EVIDENCE THE DEADLINE WAS REAL. If the date could have moved, the story is about
+poor planning rather than about trading under constraint. Say why it was fixed - a scheduled
+demo, an external panel, a booked room.
+
+TRAP 3 - CUTTING LATE. A scope decision made in the final week is not a trade-off, it is
+triage. The signal is in noticing the collision EARLY, while you still had options. In the
+capstone the collision was noticed at week four of six - and even that is presented in the
+sibling entries as a planning failure, because it could have been week one.
+
+TRAP 4 - CUTTING WITHOUT A PLAN FOR THE REST. "We dropped eight categories" is a loss. "We
+shipped four and wrote down exactly how the other eight get added" is staged delivery, and the
+written plan is what makes the difference real rather than verbal. In the capstone Arun wrote
+that plan, which is worth crediting.
+
+TRAP 5 - NOT SAYING WHAT YOU PROTECTED. Every cut protects something. If you cannot name what
+you were protecting, you were not trading, you were shedding load. In the capstone, what was
+protected was the ability to MEASURE - which is a more interesting answer than "we protected
+the deadline", and it is the one the interviewer has not heard before.
+
+TRAP 6 - NO NUMBER AT THE END. "We shipped on time and it worked well" is not a result. "We
+shipped on the demo date at 87% retrieval accuracy on 200 hand-labelled queries" is - and the
+sample size in that sentence is doing real work, because it pre-empts the obvious challenge.
+
+TRAP 7 - CONFUSING THIS WITH BIAS FOR ACTION. They use the same events and score different
+things. Bias for Action asks WAS IT REVERSIBLE AND WHAT DID REVERSING COST. Deliver Results asks
+WHAT DID YOU PROTECT AND DID YOU SHIP. Telling the reversibility version to a Deliver Results
+prompt answers a question nobody asked.""",
+
+    """5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE - WITH THE STATISTICS.
+
+THE NAIVE APPROACH: keep the full scope and work harder.
+
+It feels like the principled choice - "never settle" - and it is the one most teams take. What
+happens is predictable: everything gets built, nothing gets finished, and the demo shows twelve
+features of which several fail live.
+
+THE REAL APPROACH: decide which dimension to protect, and protect it deliberately.
+
+In the capstone, the dimension protected was NOT features and NOT effort. It was THE ABILITY TO
+MEASURE - and here is the argument, which is the part that makes this a Deliver Results story
+rather than a speed story.
+
+THE ITERATION ARGUMENT (which the Bias for Action sibling covers):
+
+    9 hours per re-index  ->  1 experiment/day  ->  about 10 experiments before the demo
+    40 minutes            ->  8 experiments/day ->  about 80 experiments
+
+THE EVALUATION ARGUMENT, which is this entry's own and is stronger:
+
+    The team had 200 hand-labelled test queries. That budget was fixed - labelling more took
+    time they did not have.
+
+        ACROSS 12 CATEGORIES:  200 / 12 = about 17 queries per category
+        ACROSS  4 CATEGORIES:  200 /  4 = 50 queries per category
+
+    Now ask what a measured accuracy of 87% actually MEANS at each sample size. The standard
+    error of a proportion is the square root of p(1-p)/n:
+
+        n = 17:   square root of (0.87 x 0.13 / 17) = square root of 0.006653 = 0.082
+                  -> roughly plus or minus 8.2 points, so a 95% interval of about 71% to 100%
+
+        n = 50:   square root of (0.87 x 0.13 / 50) = square root of 0.002262 = 0.048
+                  -> roughly plus or minus 4.8 points, so a 95% interval of about 77% to 96%
+
+    AT SEVENTEEN QUERIES PER CATEGORY, "87%" MEANS "SOMEWHERE BETWEEN 71% AND 100%". That is not
+    a measurement, it is a rumour. The first person on the panel to ask "how many test queries
+    per category?" would have ended the conversation.
+
+    At fifty it is still a wide interval, and it is a defensible one - you can state it, state
+    the sample size, and survive the question.
+
+    SO THE SCOPE CUT WAS NOT ONLY ABOUT BUILDING FASTER. IT WAS ABOUT WHETHER ANY NUMBER COULD
+    BE DEFENDED AT ALL. Twelve categories would have shipped with twelve numbers, all of them
+    meaningless.
+
+THE INVERSION, which shows the reasoning rather than the conclusion:
+
+    Suppose the team had 2,000 labelled queries instead of 200.
+
+        ACROSS 12 CATEGORIES:  2,000 / 12 = about 167 per category
+                  standard error = square root of (0.1131/167) = 0.026, about plus or minus 2.6
+                  points
+
+    NOW TWELVE CATEGORIES ARE PERFECTLY MEASURABLE, and the evaluation argument for cutting
+    scope EVAPORATES. Only the iteration-speed argument would remain, and it might not have been
+    enough on its own.
+
+    SAME PROJECT, SAME DEADLINE, ONE PARAMETER CHANGED - and the trade-off inverts. That is what
+    demonstrates the reasoning was real rather than a rationalisation after the fact.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: SHOW THAT YOU SAW THE COLLISION EARLY, CHOSE WHICH
+DIMENSION TO PROTECT AND CAN SAY WHY THAT ONE, TURNED THE CUT INTO A DEFERRAL WITH A WRITTEN
+PLAN, AND SHIPPED WITH A NUMBER YOU CAN DEFEND.
+
+THE LOOP IS THE PROJECT'S OWN CHECKPOINT RHYTHM, and its stopping rule is the deadline itself -
+which is unusual and worth naming:
+
+  - Each pass: measure where you are against what remains, and decide whether the plan still
+    fits the time.
+  - WHAT MAKES IT STOP: the date. It is not negotiable, which is exactly what makes the
+    trade-off necessary rather than optional.
+  - WHAT MAKES IT GO WRONG: not running the loop at all until the end, at which point the
+    decision is made for you by running out of time. That is the difference between trading and
+    triage, and it is decided weeks earlier than it looks.
+
+THE STEPS:
+
+  1. ESTABLISH THAT THE DEADLINE WAS FIXED, and why. Without this, the story is about planning.
+
+  2. SAY WHEN YOU NOTICED THE COLLISION, and how. "At week four I measured the re-index at nine
+     hours" - a measurement, not a feeling.
+
+  3. NAME THE THREE DIMENSIONS and which one you could not move. Time was fixed, so scope and
+     quality were trading against each other.
+
+  4. SAY WHAT YOU CHOSE TO PROTECT, and why THAT. This is the sentence the whole answer turns
+     on. "I protected our ability to measure" is a better answer than "I protected the
+     deadline", and it is true.
+
+  5. GIVE THE ARITHMETIC. Both arguments if you have them: the iteration one (10 experiments
+     against 80) and the evaluation one (17 test queries per category against 50).
+
+  6. TURN THE CUT INTO A DEFERRAL. A written plan for the rest. Say who wrote it - crediting
+     Arun costs nothing and demonstrates something.
+
+  7. SHIP, AND SAY THE NUMBER WITH ITS SAMPLE SIZE. "87% on 200 hand-labelled queries."
+     Volunteering the sample size pre-empts the obvious challenge and signals you know why it
+     matters.
+
+  8. SAY WHAT YOU WOULD CHANGE. In the capstone: notice the collision in week one, not week
+     four.
+
+  9. PREPARE THE CHALLENGE: "was that not just doing less?" Section 10 has the answer.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You have agreed to cook dinner for eight people at seven o'clock, and you planned five dishes.
+
+At four you realise, honestly, that five dishes is not going to happen. There is a version of
+this where you say nothing, keep cooking all five, and at seven serve five dishes of which two
+are undercooked and one you never got to taste. Everybody notices. What they remember is not
+that there were five things; it is the one that was wrong.
+
+The other version is that at four - while there is still time to change plans - you decide to
+make three dishes properly. You taste all three. You know they are right, because you checked.
+
+At seven you serve three good dishes and you say, without apology, "I made three rather than
+five - I would rather everything on the table was right." Nobody experiences that as a failure.
+
+Two things about the second version are worth pulling out.
+
+The first is that YOU DECIDED AT FOUR. At six you would not have been choosing, you would have
+been abandoning whatever was furthest from done, and the thing abandoned would be chosen by
+accident rather than by you.
+
+The second is subtler, and it is the real reason three beat five. With five dishes there was no
+time to TASTE anything. The problem was never that five dishes is too much food - it is that
+five dishes leaves no capacity to check any of them. Cutting to three did not just reduce the
+cooking; it created the room to be sure. What you protected was not effort, it was knowing.
+
+And if you had had a second cook, the arithmetic changes and five dishes might have been fine.
+The right number is not three in general; it is three given what you had. Being able to say
+which fact would have changed your answer is what shows you decided rather than gave up.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the goal, and THE FIXED DATE with the reason it was fixed.
+        DECIDES: whether a trade-off was forced. Without a genuinely immovable deadline this is
+        a planning story.
+
+    TASK (1 sentence)
+        HOLDS: what you owned, and what was at risk of not landing.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats:
+            (a) WHEN AND HOW YOU NOTICED the collision - a measurement, with a date
+            (b) THE THREE DIMENSIONS, and which was immovable
+            (c) WHAT YOU CHOSE TO PROTECT, AND WHY THAT ONE     <- the answer's centre
+            (d) THE ARITHMETIC supporting the choice
+            (e) THE DEFERRAL - the written plan for what was cut
+        DECIDES: everything. (c) is what separates a decision from a shortfall, and (e) is what
+        separates a deferral from a loss.
+
+    RESULT (2-3 sentences)
+        HOLDS: shipped on the date, with a number AND its sample size.
+        DECIDES: whether "delivered" is a claim or a fact.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you would do earlier next time.
+
+--- THE THREE DIMENSIONS ---
+
+    TIME      fixed here. Removing it is what creates the problem.
+    SCOPE     how much you build. The usual thing to cut, and the visible one.
+    QUALITY   how well it works AND HOW WELL YOU KNOW IT WORKS. The second half is the part
+              people forget, and it is where this entry's argument lives.
+
+--- WHAT "PROTECTING MEASURABILITY" MEANS, CONCRETELY ---
+
+    HOLDS: a fixed budget of 200 labelled test queries.
+    DECIDES: how many categories you can evaluate at all.
+
+        12 categories -> about 17 queries each -> plus or minus 8.2 points -> a rumour
+         4 categories -> 50 queries each       -> plus or minus 4.8 points -> a statement
+
+    The scope cut did not just make building faster. It made the evaluation MEAN something,
+    because the same 200 queries concentrated on a quarter of the surface.
+
+--- THE DIFFERENCE BETWEEN A CUT AND A DEFERRAL ---
+
+    A CUT:      "we dropped eight categories."       - a loss
+    A DEFERRAL: "we shipped four, and wrote down
+                 exactly how the other eight get
+                 added."                             - staged delivery
+
+    THE PLAN IS WHAT MAKES IT REAL. Without a written plan, "we will add them later" is a hope,
+    and the interviewer can hear the difference.""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - AND BOTH ARGUMENTS.
+
+THE PROMPT: "Tell me about a time you had to deliver under a tight deadline."
+
+OPEN WITH THIS SENTENCE - it puts the decision first and pre-empts the "so you did less" reading:
+
+    "I cut two thirds of our scope to protect the one thing that mattered more than feature
+     count - being able to prove any of it worked."
+
+THE FULL ANSWER (about 110 seconds):
+
+    SITUATION: "Four-person final-year capstone, six weeks, and the demo date was fixed - it was
+    a scheduled panel with external examiners, so it could not move. We had planned a
+    lost-and-found image search across twelve item categories."
+
+    TASK: "I owned the indexing pipeline. At week four I measured a full re-index at nine hours,
+    which meant one experiment a day with ten working days left."
+
+    ACTION: "Time was fixed, so scope and quality had to trade. I chose to protect quality - and
+    specifically our ability to MEASURE quality - and I can give two reasons.
+
+    The first is iteration. At nine hours we had about ten experiments left before the demo. At
+    forty minutes we would have about eighty.
+
+    The second is the one that actually decided it. We had 200 hand-labelled test queries and no
+    time to label more. Spread across twelve categories that is about seventeen per category -
+    at which point a measured accuracy of 87% has an error bar of roughly plus or minus eight
+    points, so it means somewhere between 71% and 100%. That is not a number you can defend to a
+    panel. Across four categories it is fifty per category, an error bar of about five points,
+    and a statement you can stand behind.
+
+    So we would have shipped twelve categories with twelve meaningless numbers, or four with
+    four real ones.
+
+    Arun disagreed initially - twelve was our proposal commitment - and what resolved it was
+    turning the cut into a deferral. He wrote the staging plan for adding the other eight, and
+    presented it as deliberate staging rather than a shortfall."
+
+    RESULT: "We shipped on the demo date at 87% retrieval accuracy, measured on 200 hand-labelled
+    queries across four categories. The panel asked about the sample size and we had the answer."
+
+    REFLECTION: "I should have measured iteration speed in week one. The trade was right; needing
+    it at week four was my planning failure."
+
+THE TWO ARGUMENTS, side by side, so the follow-up is easy:
+
+    ITERATION:   9 hours -> 1 experiment/day  -> about 10 before the demo
+                 40 min  -> 8 experiments/day -> about 80 before the demo
+
+    EVALUATION:  200 queries / 12 categories = about 17 each -> error bar +/- 8.2 points
+                 200 queries /  4 categories = 50 each       -> error bar +/- 4.8 points
+
+THE INVERSION, ready if they push:
+
+    "If we had had 2,000 labelled queries instead of 200, twelve categories would have given
+     about 167 each - an error bar of about 2.6 points, perfectly defensible. The evaluation
+     argument would have disappeared and only the iteration one would have been left, which on
+     its own might not have justified the cut. The right amount of scope was not four in
+     general; it was four given the evaluation budget we had."
+
+    Saying this unprompted demonstrates that the reasoning was real rather than a story
+    assembled afterwards to justify doing less.
+
+THE CHALLENGE TO EXPECT - "Was that not just doing less work?"
+
+    "It was less scope and more finished work. Twelve categories built and none of them
+     measured is not more delivered than four built and measured - it is the same effort with
+     nothing you can stand behind. And it was deferred rather than dropped: the plan for the
+     other eight existed in writing before the demo."
+
+--- HOW THIS DIFFERS FROM THE BIAS FOR ACTION SIBLING, since they share the events ---
+
+    BIAS FOR ACTION asks: was the decision reversible, and what did reversing cost? Its numbers
+    are 35 experiments gained against 2 days of rework.
+
+    DELIVER RESULTS asks: what did you protect, and did you ship? Its numbers are 17 test queries
+    per category against 50.
+
+    Same scope cut, two different questions. Answering the wrong one is trap 7.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about an hour, since this is an INDEX over an existing story. The
+hour goes on computing the evaluation arithmetic so it can be produced on demand, rehearsing the
+"was that not just doing less?" challenge, and being clear about how this differs from the Bias
+for Action telling of the same events.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns WHAT YOU PROTECTED. Its siblings own the other
+angles on the same capstone - "STAR: Acting decisively with incomplete information" owns
+reversibility and the two-way door, "STAR: Diving deep" owns the profiling that found the cause,
+"STAR: Disagreeing with a decision then fully committing" owns Arun's objection, and "Building a
+story bank" explains why one experience serves all of them.
+
+THE FOLLOW-UPS, with what to say:
+
+  - "Was that not just doing less?" The centre of the question. Less scope, more finished work -
+    and it was deferred rather than dropped, with a written plan.
+  - "How did you decide what to cut?" By what could be measured with the evaluation budget you
+    had. Give the 17-versus-50 arithmetic.
+  - "What if the panel had wanted all twelve?" Then the staging plan is the answer - it shows the
+    commitment was deferred rather than abandoned, and the ordering was deliberate.
+  - "Would you make the same call again?" Yes, and say what would change it - a larger evaluation
+    budget would have removed the main argument. Naming the condition that would flip your answer
+    is what shows the reasoning was real.
+  - "What did the rest of the team think?" Arun objected, and what he did next is the interesting
+    part - he wrote and presented the staging plan.
+
+THE #1 MISTAKE: presenting the scope cut apologetically. "We could not finish everything so we
+had to drop features" invites the interviewer to score it as settling, which is explicitly what
+the principle warns against. The identical facts framed as a choice - what you protected, and why
+that dimension - read as judgement instead. The words do all the work here, and the facts do not
+change.
+
+RUNNER-UP: no number, or a number without its sample size. "87%" alone invites the question that
+undoes it; "87% on 200 hand-labelled queries" answers the question before it is asked and signals
+that you know why it matters.
+
+TAKEAWAY: a fixed deadline means something must give, so the whole question is whether you CHOSE
+what gave - name the dimension you protected and why, turn the cut into a written deferral, and
+ship a number you can defend rather than a feature count nobody can check.""",
 ]
 
 _EX_P0LP["STAR: Disagreeing with a decision then fully committing (Have Backbone; Disagree and Commit)"] = [
@@ -70027,137 +70421,949 @@ did to make the decision you opposed actually work.""",
 ]
 
 _EX_P0LP["STAR: Diving deep to find a root cause others missed (Dive Deep)"] = [
-    """A full student-scale answer.
-SITUATION: Our group's model scored 0.91 on validation and about 0.62 on the
-held-out test set the supervisor kept. The team's read was 'overfitting, add
-dropout'.
-TASK: Nobody had checked WHY, and dropout was a guess.
-ACTION: Rather than tuning, I went down a level. I plotted the score by data
-source and found the gap was almost entirely in rows that came from one of the
-three CSVs we had concatenated. Opening that file, the label column had been
-exported with a different encoding, so roughly 8% of its labels were shifted by
-one row. It was not overfitting at all - a third of our training labels for
-that source were simply wrong, and the model had faithfully learned the noise.
-RESULT: Fixing the join took an afternoon; the test score went to 0.88 with no
-model change. We added a row-count and label-distribution assertion to the
-loader so a silent mis-join could not recur.""",
+    """1. THE GOAL - going past the symptom to the thing that caused it.
 
-    """What 'dive deep' is actually testing.
-The LP is 'leaders operate at all levels, stay connected to the details, audit
-frequently, and are sceptical when metrics and anecdote differ'. So the graded
-behaviour is that you did not accept the first plausible explanation. In the
-example, the tell is 'the team's read was overfitting' followed by measurement
-that contradicted it - a hypothesis that was reasonable and wrong, disproved
-with evidence rather than argument.
-A story where you dug into details that everyone already agreed on does not
-demonstrate the LP. There must be a prevailing assumption that your digging
-overturned.""",
+    AMAZON LEADERSHIP PRINCIPLE - DIVE DEEP: "Leaders operate at all levels, stay connected to
+    the details, audit frequently, and are sceptical when metrics and anecdote differ. No task
+    is beneath them."
 
-    """The weak version.
-'The model wasn't performing well so I tried several hyperparameter
-combinations and eventually found one that worked better.' That is search, not
-diagnosis - you never learned WHY, so you cannot prevent it and cannot explain
-it. Interviewers hear this constantly from students because it is what tuning
-scripts encourage.
-Also weak: 'I read through all the code carefully.' Diving deep is not
-thoroughness for its own sake; it is following a specific signal to a specific
-root cause. Name the signal you followed.""",
+The phrase doing the work is "SCEPTICAL WHEN METRICS AND ANECDOTE DIFFER". Diving deep is not
+"I worked hard on a difficult problem". It is:
 
-    """The five-whys shape, which is a good structure to narrate.
-Test score is low -> WHY? Because errors concentrate in one data source ->
-WHY? Because its labels disagree with the features -> WHY? Because the label
-column is offset by one row -> WHY? Because the CSV had a different encoding
-and our join silently mismatched -> WHY? Because the loader never asserted that
-row counts matched after the join.
-Notice the last why is the one that produces the systemic fix. Stopping at
-'the labels were wrong' fixes today; stopping at 'the loader had no assertion'
-fixes the class. Interviewers listen for whether you got to the last one.""",
+    THE OBVIOUS EXPLANATION WAS WRONG, AND I FOUND THAT OUT BY MEASURING RATHER THAN BY
+    ASSUMING.
 
-    """The probe that separates real dives from tidy narratives.
-'How did you know to look at the data source rather than the model?' The honest
-answer usually involves a cheap diagnostic step - plotting error by segment,
-looking at the worst-scoring examples by hand, checking the label distribution
-- and 'I looked at fifty of the misclassified rows' is a very strong sentence
-because almost nobody does it.
-Second probe: 'what else could it have been, and how did you rule that out?'
-Have two alternatives you eliminated with evidence. A root cause with no
-discarded hypotheses sounds reverse-engineered.""",
+So the story must contain a moment where you STOPPED GUESSING AND CHECKED - and ideally a
+moment where the check contradicted what everybody, including you, believed.
 
-    """Where Dive Deep becomes a negative signal.
-The LP is not licence to micromanage or to rebuild something from scratch
-because you do not trust it. If your story is 'I rewrote my teammate's module
-because I wanted to understand it', that reads as poor collaboration.
-Similarly, diving deep into something that did not matter - a two-day
-investigation of a 0.2% discrepancy under deadline - shows poor judgement about
-where detail pays. The strong version always includes why the detail was worth
-the time: 'a third of one source's labels were wrong' justifies an afternoon;
-a rounding difference does not.""",
+    symptom            ->  the thing anyone can see
+    assumed cause      ->  what everybody said, including you
+    the measurement    ->  the part that makes this Dive Deep rather than persistence
+    actual cause       ->  usually somewhere nobody was looking
+    the systemic fix   ->  which is what turns it into an engineering story
+
+THIS ENTRY IS AN INDEX over the story bank, not new material. It draws on the FAILURE shape -
+because the honest version of a dive-deep story starts with you being wrong - and uses the same
+capstone as the rest of the cluster: the lost-and-found image search whose re-index took nine
+hours. Its siblings foreground the same events differently: "Tell me about your most
+challenging technical project" makes it a DEPTH story, "STAR: Acting decisively with incomplete
+information" makes it an AMBIGUITY story, and "STAR: Disagreeing..." makes it a CONFLICT story.
+
+WHAT THIS ENTRY OWNS: MEASUREMENT OVER ASSUMPTION - the two days spent optimising the wrong
+thing, and the forty minutes of profiling that would have prevented them.""",
+
+    """2. THE INTUITION - the five whys, and where the answer actually was.
+
+A dive-deep story is a chain, and narrating the chain is most of the delivery:
+
+    the re-index takes 9 hours
+        |
+        WHY?  ->  the index build is about 80% of the time (measured, not assumed)
+        |
+        WHY?  ->  we build 12 separate indexes, one per item category
+        |
+        WHY?  ->  we chose per-category indexes so filtering by category would be cheap
+        |
+        WHY?  ->  in week one we assumed filtering had to be STRUCTURAL - a separate index -
+                  rather than a metadata field checked at query time
+        |
+        ROOT CAUSE: an architectural assumption made in week one and never revisited
+
+Notice where that lands. Not in the model, not in the hardware, not in anyone's code being
+slow. IN A DECISION NOBODY HAD LOOKED AT SINCE THE FIRST WEEK, because it had never caused a
+visible problem until the deadline made iteration speed matter.
+
+That is what "others missed" means in practice. Nobody missed it through carelessness - it was
+simply not where anyone was looking, because everyone was looking at the thing that was
+obviously slow.
+
+And here is the shape of the mistake that makes the story honest:
+
+    WEEK 4, DAYS 1-2:  "the embedding model must be the bottleneck"  -> tried smaller models
+                       -> no meaningful improvement. TWO DAYS SPENT.
+    WEEK 4, DAY 3:     profiled each stage separately - 40 minutes of work
+                       -> the model was a small fraction; the index build was 80%
+
+FORTY MINUTES OF MEASUREMENT WOULD HAVE SAVED SIXTEEN HOURS OF GUESSING. Section 9 does that
+arithmetic, and it is the most useful number in the entry - because it converts "measure before
+you optimise" from advice into a price.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIVE DEEP. The Amazon principle: stay in the details, audit, be sceptical when the numbers and
+the story disagree.
+
+SYMPTOM. The visible problem. "The re-index takes nine hours."
+
+ROOT CAUSE. The thing that, if fixed, makes the symptom stop happening permanently. Distinct
+from a workaround, which makes it stop happening this time.
+
+FIVE WHYS. Asking "why?" repeatedly until you reach something that is a decision rather than a
+consequence. A structure for narrating a dive, not a magic number - three whys is often enough
+and eight is sometimes needed.
+
+PROFILING. Measuring where time actually goes, stage by stage, instead of reasoning about where
+it probably goes. The single act that makes a story Dive Deep rather than persistence.
+
+INSTRUMENTATION. Adding measurement to code so it can be profiled. Often the real work.
+
+ANECDOTE vs METRIC. What people say is happening versus what the numbers say. The principle
+names the gap between them explicitly as the place to look.
+
+BOTTLENECK. The one stage that limits the whole. Everything else can be made infinitely fast
+and the total barely moves - which is why finding it matters more than optimising anything
+else.
+
+AMDAHL'S LAW, informally: if a stage is 20% of the time, making it infinitely fast can improve
+the total by at most 20%. This is precisely why the two days on the embedding model could never
+have worked, and saying it names the principle behind the failure.
+
+SYSTEMIC FIX. A change that prevents the class of problem, not just this instance. What
+converts a debugging story into an engineering one.
+
+WORKAROUND. Fixing this occurrence and leaving the cause. Sometimes correct under a deadline -
+and if that is what you did, say so, and say what the real fix would have been.
+
+STAR. Situation, Task, Action, Result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE WEAK VERSION, which is extremely common:
+
+    "The model was not performing well so I tried several hyperparameter combinations and
+     eventually found one that worked better."
+
+THAT IS SEARCH, NOT DIVING DEEP. You changed things until something improved, and you still do
+not know why the original was bad. The principle is about understanding, and this story shows
+none - it would read identically if the improvement had been luck, which it may have been.
+
+The distinguishing feature of a real dive is that YOU CAN STATE THE CAUSE, and the fix follows
+from it rather than from search.
+
+TRAP 2 - NO WRONG TURN. A dive-deep story where the first hypothesis was correct is either
+trivial or tidied. The two days on the embedding model are not an embarrassment to be edited
+out - THEY ARE THE STORY, because they establish that the eventual answer came from measurement
+rather than from having been clever. Leave them in.
+
+TRAP 3 - NOT ANSWERING "HOW DID YOU KNOW WHERE TO LOOK?" This is the probe that separates real
+dives from narrated ones, and the honest answer is usually "I did not - I stopped guessing and
+measured everything, and the measurement told me". That answer is BETTER than a story of
+inspired intuition, because it is repeatable. Intuition does not transfer to the next problem;
+"profile before optimising" does.
+
+TRAP 4 - WHERE DIVE DEEP BECOMES A NEGATIVE SIGNAL. The principle is not licence to
+micromanage, or to rebuild something you did not write because you do not trust it. If your
+story is "I did not trust my teammate's component so I reimplemented it", that reads as poor
+collaboration, whatever the outcome.
+
+    THE TEST: DID THE DEPTH CHANGE A DECISION YOU OWNED? If profiling would not have changed
+    what you did, it was curiosity rather than diving deep. In the capstone the depth changed
+    everything - it moved the work from the model to the index structure.
+
+TRAP 5 - STOPPING AT THE FIRST PLAUSIBLE CAUSE. "The index build is slow" is a symptom one
+level down, not a root cause. Keep asking why until you hit a DECISION - in the capstone, the
+week-one choice to make filtering structural. Decisions can be changed; consequences cannot.
+
+TRAP 6 - NO SYSTEMIC FIX. Ending at "so I fixed it" leaves the class of problem alive. The
+sentence that completes the story is about preventing recurrence - in the capstone, measuring
+iteration speed in week one of any project from then on.""",
+
+    """5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE - AND THE PRICE OF GUESSING.
+
+THE NAIVE APPROACH: reason about where the problem probably is, and start fixing there.
+
+It feels efficient. You know the system, you have a strong hypothesis, and profiling takes
+setup time that seems like a detour. In the capstone that reasoning went:
+
+    "Embedding a few thousand images through a neural network is the expensive-sounding part.
+     The index build is just writing to disk. So the model is the bottleneck."
+
+Perfectly sensible, and wrong. Two days of trying smaller models produced no meaningful
+improvement, because the model was never the problem.
+
+WHY THE HYPOTHESIS FELT SO SAFE - and this is worth understanding rather than just regretting:
+the model was the part that SOUNDED expensive. Neural networks are famously slow; writing to
+disk is not. The reasoning was about reputations rather than about this system.
+
+THE REAL APPROACH: MEASURE FIRST, AND MEASURE EVERY STAGE.
+
+    time image loading            separately
+    time embedding                separately
+    time index build              separately
+    time disk write               separately
+
+Forty minutes of instrumentation. The result:
+
+    index build     about 80% of the nine hours
+    embedding       a small fraction
+    everything else the remainder
+
+THE PRICE OF SKIPPING IT, computed:
+
+    two days of guessing      = 16 working hours = 960 minutes, yielding NOTHING
+    profiling                 = 40 minutes, yielding the whole answer
+
+    960 / 40 = 24
+
+    THE MEASUREMENT WOULD HAVE COST ONE TWENTY-FOURTH OF THE GUESSING, and it was the only one
+    of the two that worked.
+
+AND THE DEEPER REASON THE GUESS COULD NEVER HAVE PAID OFF - name this and the story stops being
+about luck:
+
+    If a stage is 20% of the total time, then making it INFINITELY FAST improves the total by
+    at most 20%. The embedding was a small fraction of nine hours - so even a perfect
+    optimisation of it could not have produced the eight-fold improvement that was needed.
+
+    THE TWO DAYS WERE NOT UNLUCKY. THEY WERE ARITHMETICALLY INCAPABLE OF SUCCEEDING, and forty
+    minutes of measurement would have shown that before the first day was spent.
+
+That is the general lesson worth extracting: OPTIMISING WITHOUT MEASURING IS NOT MERELY RISKY,
+IT IS OFTEN PROVABLY FUTILE - and the proof is cheap.
+
+THE UPGRADE PATH:
+
+    1. NOTICE THE SYMPTOM.
+    2. MEASURE, before forming attachments to a hypothesis.
+    3. FOLLOW THE MEASUREMENT DOWN until you reach a DECISION rather than a consequence.
+    4. FIX THE DECISION if you can, or work around it and say what the real fix is.
+    5. PREVENT THE CLASS - what would have caught this earlier?""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: SHOW THAT YOU HELD A REASONABLE BELIEF, MEASURED
+INSTEAD OF TRUSTING IT, FOLLOWED THE MEASUREMENT DOWN TO A DECISION SOMEBODY MADE, AND THEN
+CHANGED THAT DECISION AND PREVENTED THE CLASS.
+
+THE LOOP IS THE CHAIN OF WHYS, and it needs a stopping rule or it becomes philosophy:
+
+  - Each step takes the current answer and asks what caused it.
+  - WHAT MAKES IT STOP: reaching a DECISION rather than a consequence. "The index build is slow"
+    is a consequence. "We chose per-category indexes in week one" is a decision - somebody chose
+    it, so somebody can unchoose it.
+  - WHAT MAKES IT STOP TOO EARLY: accepting the first plausible cause. If your answer is
+    something nobody decided, keep going.
+  - WHAT MAKES IT NOT STOP: continuing past the point where you can act. "Because the deadline
+    was tight" and "because we were inexperienced" are true and unactionable. Stop at the last
+    decision you or your team could change.
+
+THE STEPS:
+
+  1. STATE THE SYMPTOM WITH A NUMBER. "A full re-index took nine hours, so we could test one
+     change a day."
+
+  2. STATE WHAT EVERYONE BELIEVED, INCLUDING YOU. This is what makes the eventual finding a
+     finding rather than a lookup.
+
+  3. SAY WHAT YOU TRIED ON THAT BELIEF, AND THAT IT FAILED. Two days on smaller models. Leave
+     it in - it is the evidence that what came next was measurement rather than cleverness.
+
+  4. DESCRIBE THE MEASUREMENT SPECIFICALLY. Not "I investigated" but "I timed each stage
+     separately: loading, embedding, index build, disk write."
+
+  5. GIVE THE NUMBER THAT CONTRADICTED THE BELIEF. The index build was about 80%.
+
+  6. FOLLOW IT DOWN TO A DECISION, narrating the whys out loud. This is the part that sounds
+     like Dive Deep rather than debugging.
+
+  7. SAY WHAT YOU CHANGED, and what it produced. Nine hours to forty minutes.
+
+  8. SAY WHAT WOULD HAVE CAUGHT IT EARLIER - the systemic fix. Measure iteration speed in week
+     one.
+
+  9. PREPARE THE PROBE: "how did you know where to look?" The honest answer - "I did not, I
+     measured" - is the better one.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A house is cold. Everyone agrees the boiler must be failing, because boilers fail and that is
+what a cold house means.
+
+So you spend two days on the boiler. You service it, replace a part, run it harder. The house
+stays cold. The boiler, it turns out, was fine all along - and you now know that only because
+you spent two days proving it.
+
+Then you do something you could have done at the start. You buy a thermometer and take the
+temperature in each room, and at the radiators, and outside.
+
+Forty minutes of measuring, and the answer is immediate: the radiators are hot, the rooms are
+cold, and one room is barely above the outside temperature. The heat is being made perfectly
+well and it is leaving through a window that does not close properly.
+
+Now keep asking. Why does the window not close? Because the frame swelled. Why was that not
+fixed? Because when it was noticed in the spring, it did not matter - nobody was heating the
+house. The real cause is not a broken thing at all; it is a DECISION made in a season when the
+consequence was invisible.
+
+Two things about this are worth carrying over.
+
+The first is that the boiler hypothesis was not stupid. It was the sensible guess. It was
+simply about boilers in general rather than about this house - and the thermometer settled in
+forty minutes what two days of theorising could not.
+
+The second is the difference between fixing the window and fixing the habit. Fixing the window
+makes this house warm. Adding "check the windows before the cold arrives" makes every future
+autumn easier. The first is a repair, and the second is why anyone would want you doing the
+repairs.
+
+And one thing worth saying about the two wasted days: even a perfect boiler could not have
+heated a house with a hole in it. The effort was not merely unlucky - it could not have worked,
+and the thermometer would have said so before it started.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the symptom, WITH A NUMBER, and why it mattered.
+        DECIDES: whether there was a real problem to dive into. "It was slow" is not a
+        situation; "nine hours per re-index meant one experiment a day with ten days left" is.
+
+    TASK (1 sentence)
+        HOLDS: what you specifically were responsible for finding out.
+        DECIDES: that the dive was yours.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats, in this order:
+            (a) WHAT EVERYONE BELIEVED, including you
+            (b) WHAT YOU TRIED ON THAT BELIEF, AND THAT IT FAILED     <- do not edit this out
+            (c) THE MEASUREMENT, described specifically enough to be checkable
+            (d) THE NUMBER THAT CONTRADICTED THE BELIEF
+            (e) THE CHAIN OF WHYS down to a DECISION
+        DECIDES: everything. (b) makes it honest, (c) makes it Dive Deep rather than
+        persistence, (e) makes it a root cause rather than a symptom one level down.
+
+    RESULT (2-3 sentences)
+        HOLDS: what changed, with numbers, AND the systemic fix.
+        DECIDES: whether this was debugging or engineering. The systemic fix is the difference.
+
+    REFLECTION (1 sentence)
+        HOLDS: what would have caught it earlier.
+        DECIDES: whether you learned a transferable habit or just solved one problem.
+
+--- THE FIVE-WHYS CHAIN, and what each level is ---
+
+    LEVEL 0  the symptom            "re-index takes nine hours"
+    LEVEL 1  a measurement          "index build is 80% of it"     <- measured, not assumed
+    LEVEL 2  a structural fact      "we build 12 separate indexes"
+    LEVEL 3  a design choice        "per-category indexes make filtering cheap"
+    LEVEL 4  THE DECISION           "in week one we assumed filtering had to be structural"
+
+    STOP AT LEVEL 4. It is a decision, so it can be changed. Level 5 would be "because we were
+    inexperienced", which is true and useless.
+
+--- WHAT SEPARATES THE STRONG VERSION FROM THE WEAK ONE ---
+
+    WEAK:   "I tried things until it got better."          - search, no understanding
+    BETTER: "I measured and found the index build."        - a real finding, stops too early
+    STRONG: "I measured, found the index build, traced it
+             to a week-one assumption about filtering,
+             changed that, and now measure iteration
+             speed in week one of every project."          - cause, fix, and prevention""",
+
+    """9. THE CAPSTONE, TOLD FOR THIS PROMPT - AND THE ARITHMETIC.
+
+THE PROMPT: "Tell me about a time you dug into the details to solve a hard problem."
+
+OPEN WITH THIS SENTENCE - it puts the wrong turn first, which is the honest and stronger move:
+
+    "I spent two days optimising the wrong thing, and then spent forty minutes measuring and
+     found the real cause somewhere nobody had looked since week one."
+
+THE FULL ANSWER (about 110 seconds):
+
+    SITUATION: "Four-person capstone, six weeks, fixed demo date. I owned the indexing pipeline.
+    At week four a full re-index took nine hours, which meant one experiment a day with ten
+    working days left."
+
+    TASK: "I had to work out why, and fix it, before the deadline made it academic."
+
+    ACTION: "Everyone including me assumed the embedding model was the bottleneck - it is the
+    part that sounds expensive. I spent two days trying smaller and faster models, and got
+    almost no improvement.
+
+    Then I stopped guessing and instrumented the pipeline - timed image loading, embedding,
+    index build and disk write separately. About forty minutes of work. The index build was
+    roughly 80% of the nine hours and the embedding was a small fraction.
+
+    So I followed it down. Why was the index build so slow? Because we built twelve separate
+    indexes, one per item category. Why per-category? Because that made filtering by category
+    cheap at query time. Why did filtering need a separate index? Because in week one we had
+    assumed filtering had to be structural rather than a metadata field checked at query time.
+
+    The root cause was an architectural decision made in week one that had never caused a
+    visible problem until iteration speed started to matter."
+
+    RESULT: "Cutting to four categories took the re-index from nine hours to forty minutes -
+    eight experiments a day instead of one. We shipped on the demo date at 87% retrieval
+    accuracy. And I now measure iteration speed in week one of any project, which is the change
+    that actually mattered."
+
+    REFLECTION: "The two days were the real lesson. Forty minutes of measurement would have
+    saved sixteen hours of work, and I had the tools to do it the whole time."
+
+THE ARITHMETIC, ready for the follow-up:
+
+    guessing:    2 days = 16 working hours = 960 minutes, yielding no improvement
+    measuring:   40 minutes, yielding the entire answer
+
+    960 / 40 = 24
+
+    The measurement cost ONE TWENTY-FOURTH of the guessing and was the only one that worked.
+
+AND THE REASON THE GUESS COULD NOT HAVE WORKED - the part that turns regret into a principle:
+
+    If a stage is a small fraction of the total, then making it infinitely fast improves the
+    total by at most that fraction. The embedding was a small share of nine hours, so no
+    optimisation of it - not even reducing it to zero - could have produced the eight-fold
+    improvement needed.
+
+    THOSE TWO DAYS WERE NOT UNLUCKY, THEY WERE ARITHMETICALLY INCAPABLE OF SUCCEEDING. Forty
+    minutes of measurement would have proved that before the first hour was spent.
+
+THE PROBE THAT SEPARATES REAL DIVES FROM TIDY NARRATIVES:
+
+    "How did you know to look at the index build rather than the model?"
+
+    "I did not. That is the point - I believed the opposite and spent two days on it. What
+     changed things was measuring every stage instead of reasoning about which one sounded
+     expensive."
+
+    That answer is stronger than a story of intuition, because it is REPEATABLE. Intuition does
+    not transfer to the next problem; "profile before optimising" does.
+
+THE INVERSION - when the same behaviour is a NEGATIVE signal:
+
+    Suppose the slow component had been Arun's query path rather than her own indexing pipeline,
+    and she had instrumented and rewritten it without telling him.
+
+    Same depth. Same measurement. Now it reads as not trusting a teammate and working around
+    him rather than with him - which fails on collaboration whatever it finds.
+
+    THE TEST: DID THE DEPTH CHANGE A DECISION YOU OWNED? In the capstone it did - the indexing
+    pipeline was hers. Had it been his, the dive-deep behaviour would have been to bring him the
+    measurement, not the rewrite.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about an hour, since the story already exists in the bank - this is
+an INDEX over material rather than new material. The hour goes on fixing the two numbers (960
+minutes of guessing against 40 of measuring), rehearsing the five-whys chain out loud so it
+sounds like a chain rather than a list, and preparing the "how did you know where to look?"
+answer.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns MEASUREMENT OVER ASSUMPTION. Its siblings tell
+the same capstone from other angles - "Tell me about your most challenging technical project"
+foregrounds technical DEPTH under probing, "STAR: Acting decisively with incomplete information"
+foregrounds the two-way door, "STAR: Disagreeing with a decision then fully committing"
+foregrounds Arun, and "Building a story bank" explains why one experience serves all of them.
+
+THE FOLLOW-UPS, with what each is checking and what to say:
+
+  - "How did you know where to look?" THE probe. Answer honestly: you did not, you measured.
+    Repeatable beats inspired.
+  - "What would have caught this earlier?" The systemic fix. Measure iteration speed in week
+    one. Without this the story is debugging rather than engineering.
+  - "Did you consider that it might be something else?" Yes - and you spent two days on
+    exactly that. Having the wrong turn in the story makes this question comfortable instead of
+    awkward.
+  - "How did you instrument it?" Be ready with the specifics - timing each stage separately -
+    because vagueness here suggests the measurement is decoration.
+  - "What if you had not been able to change the architecture?" The workaround answer: cut
+    scope, and say plainly what the real fix would have been. Naming a workaround as a
+    workaround scores; presenting it as a fix does not.
+
+THE #1 MISTAKE: telling a search story instead of a dive story. "I tried several combinations
+and eventually one worked" contains no understanding, would read identically if the improvement
+had been luck, and leaves you unable to answer "so what was actually wrong?" The distinguishing
+feature of a real dive is that YOU CAN STATE THE CAUSE and the fix follows from it.
+
+RUNNER-UP: editing out the wrong turn to make the narrative tidy. The two wasted days are the
+strongest evidence in the answer, because they prove the finding came from measurement rather
+than from having been clever.
+
+TAKEAWAY: diving deep means being sceptical of the explanation everyone finds obvious - so
+measure every stage before optimising any of them, follow the numbers down until you reach a
+DECISION rather than a consequence, and finish with what would have caught it earlier.""",
 ]
 
 _EX_P0LP["STAR: Earning trust after a mistake / owning an incident (Earn Trust / Ownership)"] = [
-    """A full student-scale answer.
-SITUATION: During my internship I ran a backfill script against what I believed
-was staging. It was production, and it overwrote a column for about 12,000
-rows with a default value.
-TASK: Contain it and be honest, in that order, fast.
-ACTION: I noticed within about two minutes because the output row count did not
-match staging's size. I told my mentor immediately, and because it was late
-afternoon I also said it in the team channel so nobody built on the bad data
-while she and I worked. We restored from the previous night's backup within the
-hour, and I wrote the reconciliation query that proved every affected row
-matched the backup. Then the part I care about more: the root cause was that my
-shell prompt did not show the environment and the migration tool took a
-connection string with no confirmation. I added an environment banner to the
-shared setup script and a required --confirm-production flag.
-RESULT: About a 50-minute window, no downstream impact. Two other interns later
-told me the banner had stopped them making the same mistake.""",
+    """1. THE GOAL - owning it, quickly, and fixing the cause rather than the instance.
 
-    """Speed of disclosure is the graded behaviour.
-Earn Trust is 'leaders listen attentively, speak candidly, and treat others
-respectfully; they are vocally self-critical, even when doing so is awkward'.
-The single most important sentence in this story is that the candidate told
-people within minutes, in public, before the damage was contained. That is the
-thing being tested - not the technical recovery, which anyone can do.
-A story where you fixed it quietly and mentioned it later fails the LP even if
-the outcome was identical, and interviewers will ask 'who did you tell, and
-when?' precisely to find out.""",
+    AMAZON LEADERSHIP PRINCIPLES - EARN TRUST: "Leaders listen attentively, speak candidly and
+    treat others respectfully. They are vocally self-critical, even when doing so is awkward or
+    embarrassing." And OWNERSHIP: "Leaders act on behalf of the entire company, beyond just
+    their own team. They never say 'that's not my job'."
 
-    """Owning it in the first person, without theatre.
-'That was my mistake' is a sentence to practise saying cleanly, because
-interviewers notice candidates who cannot. Two failure modes bracket it.
-Deflection: 'the staging and production configs were confusingly named' - true,
-and it reads as blaming the environment. Wallowing: two minutes of
-self-criticism, which reads as fragile rather than accountable.
-The calibrated version states the error plainly in one sentence, spends the
-rest on containment and the systemic fix, and mentions the contributing factor
-only as the thing you then FIXED - which is what the environment banner does
-here.""",
+The behaviour being graded here is narrower and harder than "admit mistakes". It is:
 
-    """The systemic fix is what converts a confession into an engineering story.
-Anyone can apologise. What Amazon wants is the sentence 'and I made it
-impossible for anyone to do that again' - a test, a guard, a required flag, a
-CI check, a runbook. In this story the banner and the --confirm-production flag
-are worth more than the backup restore, because they persist after you leave.
-If your mistake genuinely admits no systemic fix, say what you changed about
-your own process instead ('I now dry-run every migration against a row count
-first') - weaker, but honest.""",
+    HOW FAST DID YOU TELL PEOPLE, WHAT DID YOU OWN, AND DID YOU FIX THE CAUSE OR JUST THE
+    DAMAGE?
 
-    """Choosing the story, since the stakes have to be real.
-It must be a genuine mistake with genuine consequences - 'I once worked too
-hard' or 'I was too detail-oriented' is transparent and mildly insulting. But
-it should not be an integrity failure or a judgement catastrophe: data loss, a
-broken shared build, a bug that cost a teammate a day, a wrong number in a
-report someone presented are all ideal. Student-scale is fine - force-pushing
-over a teammate's branch is a perfectly good version of this story.""",
+Speed of disclosure is the part candidates underweight. A mistake disclosed in ten minutes is a
+problem; the same mistake disclosed the next morning is a problem AND a trust question, because
+somebody now knows you sat on it.
 
-    """The probes.
-'What did your manager say?' - real feedback makes it credible; a story where
-nobody reacted sounds invented. 'Has it happened again?' - the answer should be
-no, because of the systemic fix, and if a related thing did happen, say what
-you learned the second time. 'Why did you tell the whole channel rather than
-just your mentor?' - because others were about to build on the data, which
-shows you thought about blast radius rather than about your own embarrassment.
-That last one is the answer that earns the LP its name.""",
+The story therefore needs four things:
+
+    1. A REAL MISTAKE THAT WAS YOURS, with genuine consequences
+    2. FAST, PLAIN DISCLOSURE - what you said, to whom, how quickly
+    3. THE IMMEDIATE FIX
+    4. THE SYSTEMIC FIX - "and I made it impossible for that to happen again"
+
+The fourth is what converts a confession into an engineering story. Anyone can apologise.
+
+THIS ENTRY IS AN INDEX over the story bank. It draws on the FAILURE shape. A NOTE ON STORY
+CHOICE, and it is worth being straight about: THE CAPSTONE'S MISTAKE IS LOW-STAKES. Owning a
+planning failure on a student project is honest, and it is weaker than a story where something
+actually broke. Section 5 explains why, and section 9 gives both versions so she can use the
+capstone if that is all she has and reach for something stronger if she has it.""",
+
+    """2. THE INTUITION - the disclosure clock.
+
+Two identical mistakes, different only in when they were disclosed:
+
+    DISCLOSED IMMEDIATELY
+
+        10:00  mistake happens
+        10:08  "I think I've just broken X - I'm looking at it now"
+        10:40  fixed
+
+        cost:  40 minutes of one problem
+        what people learn about you: you tell them things
+
+    DISCLOSED THE NEXT MORNING
+
+        10:00  mistake happens
+        10:05  you notice
+        10:06  you decide to fix it quietly first
+        16:00  three other people have built on the broken state
+        09:00  next day, you disclose
+
+        cost:  the original problem, PLUS everything built on top of it,
+               PLUS the fact that you knew for 23 hours
+        what people learn about you: you sat on it
+
+THE SECOND COST IS THE ONE THAT DOES NOT GO AWAY. The technical damage gets repaired; the
+knowledge that you delayed does not, and it changes how much people rely on what you tell them
+in future.
+
+That is why "vocally self-critical, even when awkward or embarrassing" is in the principle
+verbatim. The awkwardness is the point - disclosing when it is comfortable demonstrates
+nothing.
+
+And the second axis, which is subtler: WHAT YOU CHOOSE TO OWN.
+
+    the visible symptom     "I cut the scope"                    <- what people saw
+    the actual cause        "I did not measure iteration speed
+                             in week one"                         <- what you should own
+
+Owning the wrong thing is a common and revealing error. Apologising for the visible symptom
+sounds like ownership and shows you have not understood the failure. Section 9 works this
+through on the capstone, where the cut was a good decision and the planning was the failure.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+EARN TRUST. The Amazon principle: listen, speak candidly, be vocally self-critical, own
+mistakes.
+
+OWNERSHIP. Acting on behalf of the whole, never "that is not my job". Includes owning outcomes
+you did not personally cause.
+
+VOCALLY SELF-CRITICAL. Saying the critical thing about yourself, out loud, before someone else
+has to. The word "vocally" is doing work - thinking it does not count.
+
+DISCLOSURE. Telling the people affected. The graded behaviour, and its SPEED is most of the
+grade.
+
+BLAST RADIUS. How far the damage reaches, and how fast it spreads. Disclosing early shrinks it;
+this is the practical reason speed matters, quite apart from the trust one.
+
+BLAME-SHIFTING. Any construction that moves the failure away from you - "the environment was
+confusingly named", "nobody told me". Even when TRUE, it reads as evasion in this answer.
+Section 4 explains how to include a real contributing factor without it landing as an excuse.
+
+IMMEDIATE FIX. Repairing the damage.
+
+SYSTEMIC FIX. Making the class of mistake impossible or much harder. What converts a confession
+into an engineering story.
+
+POST-MORTEM. A written account of what happened and why, focused on causes rather than people.
+
+BLAMELESS POST-MORTEM. The convention that a system allowing a person to cause that damage is
+the finding, not the person. Worth naming - it signals you know how mature engineering teams
+handle incidents.
+
+STAKES. What was actually at risk. A story with none demonstrates nothing, which is why "I once
+worked too hard" fails.
+
+STAR. Situation, Task, Action, Result.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE FAKE MISTAKE. "I once cared too much about quality and spent too long polishing."
+This is a strength wearing a confession's clothes, every interviewer has heard it, and it fails
+the question completely - because a story with no real consequence cannot demonstrate how you
+behave when there is one.
+
+    THE TEST: DID SOMEONE ELSE HAVE A WORSE DAY BECAUSE OF WHAT YOU DID? If not, find another
+    story.
+
+TRAP 2 - BLAME-SHIFTING IN THE SUBORDINATE CLAUSE. "The staging and production configs were
+confusingly named, so I ran it against the wrong one." The contributing factor may be entirely
+real - and putting it in the same sentence as the mistake converts ownership into explanation.
+
+    THE FIX IS ORDER, not omission. Own it first, cleanly, in its own sentence. Then, later, in
+    the SYSTEMIC FIX section, the naming problem reappears as something you improved: "and I
+    renamed the configs so they cannot be confused." Same fact, and now it is a fix rather than
+    a defence.
+
+TRAP 3 - NOT SAYING THE SENTENCE. "That was my mistake" is worth practising until it comes out
+cleanly, without softening. Interviewers notice candidates who cannot say it - the answer
+arrives wrapped in passive voice ("the script was run against production") and the evasion is
+audible.
+
+TRAP 4 - NO SYSTEMIC FIX. Ending at "I fixed it and apologised" leaves the story as a
+confession. What Amazon wants is the next sentence: "and I made it impossible for that to
+happen again." A guard, a rename, a confirmation prompt, a check in the process.
+
+TRAP 5 - OWNING THE WRONG THING. Apologising for the visible symptom rather than the actual
+cause. In the capstone, the scope cut was a GOOD decision - apologising for it would be
+confused. The thing to own is not measuring iteration speed in week one. What you choose to own
+reveals whether you understood the failure.
+
+TRAP 6 - A STORY WHERE NOBODY REACTED. "I told my manager and she said it was fine." That
+sounds invented, because real mistakes produce real reactions. Include what was actually said,
+including if it was uncomfortable - "she was not happy, and she asked me to write up what
+happened" is far more credible than universal understanding.
+
+TRAP 7 - HAVING NO ANSWER TO "HAS IT HAPPENED AGAIN?" This is the question that tests whether
+the systemic fix was real. "No, because X now makes it structurally impossible" is the answer.
+"No, I have been more careful" is not - carefulness is not a mechanism.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE.
+
+THE NAIVE VERSION: pick the smallest mistake you can find, so you look competent.
+
+The instinct is understandable and it inverts the scoring. A trivial mistake produces a trivial
+answer, because none of the graded behaviours can appear - there was nothing to disclose
+urgently, nobody to face, and no system worth changing.
+
+    THE PARADOX WORTH UNDERSTANDING: THE BIGGER THE MISTAKE, THE MORE ROOM THERE IS TO
+    DEMONSTRATE THE BEHAVIOUR. What is being assessed is not whether you make mistakes -
+    everyone does - but what happens next. A small mistake gives you nothing to show.
+
+THE REAL VERSION, in order of strength:
+
+    STRONGEST:  a real mistake with consequences for other people, disclosed within minutes,
+                fixed, and followed by a change that makes the class of mistake impossible.
+    STRONG:     the same without the systemic fix - a confession rather than an engineering
+                story.
+    WEAK:       a real mistake disclosed late, or one where the story quietly explains why it
+                was not really your fault.
+    USELESS:    a disguised strength.
+
+WHY SPEED OF DISCLOSURE IS THE GRADED BEHAVIOUR - the argument, since it is the part people
+underweight:
+
+    A mistake has two costs. The DAMAGE, which is fixed and usually repairable. And the BLAST
+    RADIUS, which GROWS WITH TIME - every hour the broken state persists, more work is built on
+    top of it, more decisions are made on wrong information, and more people are affected.
+
+    Disclosing early is therefore not merely honest, it is the single most effective way to
+    reduce the total cost. That is a practical argument, not a moral one, and it is the one to
+    make in an interview because it shows you understand WHY the behaviour is valued rather than
+    that you have been told to value it.
+
+    And there is the second, permanent cost: the damage is repaired, and the fact that you sat
+    on it is not. It becomes information about you.
+
+APPLIED TO THE CAPSTONE - and here is the honest assessment:
+
+    The capstone's mistake is that at week four she discovered the pipeline could only support
+    one experiment a day, and that was a PLANNING failure - it should have been measured in week
+    one.
+
+    Was it disclosed fast? Yes - she brought the arithmetic to the team the same day.
+    Were there consequences? Yes, but modest: two days of her own work wasted, and the team
+    entered week four with less runway than they thought.
+    Was there a systemic fix? Yes: measure iteration speed in week one of any project.
+
+    IT IS AN HONEST STORY AND A LOW-STAKES ONE. Nobody else was harmed and nothing broke. IF SHE
+    HAS A STORY WHERE SOMETHING ACTUALLY BROKE - a script run against the wrong environment, a
+    commit that took down a shared build, data overwritten - THAT IS THE BETTER ANSWER, and
+    section 9 gives its shape.
+
+    Saying this plainly is more useful than pretending the capstone serves every prompt equally
+    well. It serves most of them; this is the one where it is weakest.""",
+
+    """6. HOW TO BUILD AND TELL IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: NAME THE MISTAKE AS YOURS IN A CLEAN SENTENCE, SAY
+HOW FAST YOU TOLD PEOPLE AND WHAT YOU SAID, DESCRIBE THE FIX - AND THEN THE CHANGE THAT MADE
+THAT CLASS OF MISTAKE IMPOSSIBLE.
+
+THE LOOP HERE IS THE INCIDENT RESPONSE, and its stopping rule is what distinguishes ownership
+from panic:
+
+  - Notice, disclose, contain, fix, prevent.
+  - WHAT MAKES IT STOP: the systemic fix is in place - not when the damage is repaired. Stopping
+    at "repaired" is the most common place to stop and it is one step short.
+  - THE ORDER MATTERS AND IS COUNTERINTUITIVE: DISCLOSE BEFORE YOU FIX. The instinct is to fix
+    it quietly first and report a solved problem. That instinct is what turns a forty-minute
+    problem into a trust question, because while you are fixing, other people are still building
+    on the broken state.
+
+THE STEPS:
+
+  1. CHOOSE A STORY WITH REAL STAKES. Someone else had a worse day. If nobody did, choose again.
+
+  2. IDENTIFY WHAT YOU ACTUALLY OWN. Not the visible symptom - the decision or omission that
+     caused it. This is the judgement being tested.
+
+  3. WRITE THE OWNING SENTENCE, and practise it plainly. "That was my mistake - I ran the
+     backfill against production." No passive voice, no contributing factors yet.
+
+  4. STATE THE DISCLOSURE WITH A TIME. "Within about five minutes I told the team lead." The
+     number is the evidence.
+
+  5. SAY WHAT YOU SAID. Candour is the principle, so quote yourself roughly. "I said I thought I
+     had just overwritten production data and I was not yet sure how much."
+
+  6. DESCRIBE THE IMMEDIATE FIX, and who helped. Accepting help is part of it; insisting on
+     fixing it alone is not ownership, it is pride.
+
+  7. DESCRIBE THE SYSTEMIC FIX - the mechanism, not the intention. A guard, a rename, a
+     confirmation, a check. "I will be more careful" is not a mechanism.
+
+  8. INCLUDE THE REAL REACTION. If your manager was unhappy, say so. Universal understanding
+     sounds invented.
+
+  9. NOW, AND ONLY NOW, the contributing factor can appear - as part of the systemic fix rather
+     than as an explanation.
+
+ 10. PREPARE "HAS IT HAPPENED AGAIN?" The answer must point at the mechanism.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are cooking in a shared kitchen and you knock a pan off the counter. It lands badly and
+cracks the tile floor.
+
+The instinct is to look around, see that nobody noticed, and think about whether you could just
+put the rug over it. Somebody will find it eventually, and by then it might not be obviously
+yours.
+
+What that instinct is really doing is trading a small immediate problem for a larger delayed
+one. Because in the meantime, somebody will walk on it barefoot. Somebody else will move the
+rug and find it, and the first thing they will know is that it was hidden. The crack was
+repairable in ten minutes; the fact that you covered it is not repairable at all.
+
+The other version takes about eight seconds. You say, out loud, to whoever is there: "I've just
+cracked the floor - I dropped a pan. I'm going to sort it." Nobody enjoys hearing it. Everyone
+now knows two things: the floor is cracked, and you are the sort of person who says so.
+
+Then there is the part that separates a decent response from a good one.
+
+The decent response is to fix the tile. The good response is to notice that the pan fell because
+the rack it hung on was too shallow, and that anyone using that rack was eventually going to
+drop something. So you fix the tile AND you change the rack.
+
+Now the story is not "I broke something and admitted it". It is "I found out why this kitchen
+breaks things, and it does not do that any more."
+
+And one detail that matters more than it seems. If somebody asks why it happened and you say
+"well, the rack is badly designed", that is true and it sounds like an excuse - because you said
+it while explaining the crack. Say "I dropped it, that one is mine" first, and then bring the
+rack up later as the thing you fixed. Identical facts. Completely different impression, and only
+one of them gets you asked to help with the next kitchen.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+STAR, with what each part must hold for THIS principle:
+
+    SITUATION (2 sentences)
+        HOLDS: the context and THE STAKES - what was at risk and for whom.
+        DECIDES: whether anything is being demonstrated at all. A mistake with no consequence
+        gives the answer nothing to work with.
+
+    TASK (1 sentence)
+        HOLDS: what you were doing and what you were responsible for.
+        DECIDES: that the mistake was genuinely yours to own.
+
+    ACTION (the bulk, ~60%)
+        HOLDS: five beats, and the ORDER is load-bearing:
+            (a) THE OWNING SENTENCE - clean, first person, no contributing factors
+            (b) THE DISCLOSURE, WITH A TIME - how fast, to whom, and roughly what you said
+            (c) THE CONTAINMENT - what you did to stop it getting worse
+            (d) THE IMMEDIATE FIX, including who helped
+            (e) THE SYSTEMIC FIX - the mechanism that prevents recurrence
+        DECIDES: everything. (a) and (b) are Earn Trust; (e) is what makes it engineering rather
+        than confession.
+        THE ORDER RULE: any contributing factor - a badly named config, a missing guard -
+        appears in (e) as something you FIXED, never in (a) as something that CAUSED it. Same
+        fact, and the position determines whether it reads as ownership or excuse.
+
+    RESULT (2-3 sentences)
+        HOLDS: what happened, what the real reaction was, and whether it has recurred.
+        DECIDES: credibility. A story where nobody reacted sounds invented; include the
+        discomfort.
+
+    REFLECTION (1 sentence)
+        HOLDS: what you now do differently as a matter of habit.
+
+--- THE TWO AXES BEING GRADED ---
+
+    SPEED OF DISCLOSURE
+        HOLDS: minutes, ideally.
+        DECIDES: most of the grade. The damage is repairable; the delay is not.
+        THE EVIDENCE: a number. "Within five minutes" beats "quickly".
+
+    WHAT YOU CHOSE TO OWN
+        HOLDS: the actual cause, not the visible symptom.
+        DECIDES: whether you understood the failure. Owning the symptom sounds like ownership
+        and demonstrates the opposite.
+
+--- THE SENTENCE THAT COMPLETES THE STORY ---
+
+    "...and I made it impossible for that to happen again, by [mechanism]."
+
+    Without it you have apologised. With it you have engineered. It is one sentence and it is
+    the difference between the two readings of the whole answer.""",
+
+    """9. TWO VERSIONS, AND WHICH TO USE.
+
+--- VERSION A: THE CAPSTONE (honest, and LOW-STAKES) ---
+
+    Use this if it is what you have. Be aware of its ceiling: nothing broke and nobody else was
+    harmed, so the disclosure-speed and blast-radius behaviours have little room to show.
+
+    OPEN WITH: "The mistake I own from that project is not the scope cut - that was the right
+    call. It is that I did not measure our iteration speed until week four, when I could have
+    measured it in week one."
+
+    SITUATION: "Four-person capstone, six weeks, fixed demo date. I owned the indexing
+    pipeline."
+
+    ACTION: "At week four I finally measured a full re-index and found it took nine hours -
+    one experiment a day, with ten working days left. That was not a surprise the pipeline
+    sprang on us; it was true from week one and I had never checked.
+
+    I told the team the same afternoon, with the arithmetic: ten experiments left at the current
+    rate, about eighty if we cut scope. I did not soften it - our runway was much shorter than
+    everyone believed, and that was my omission.
+
+    I also owned the two days I had just spent optimising the embedding model on an assumption
+    instead of profiling first."
+
+    RESULT: "We cut scope, went from nine hours to forty minutes, and shipped at 87%. The change
+    I made permanent is that I now measure iteration speed in week one of any project - which is
+    a mechanism rather than an intention."
+
+    REFLECTION: "What I got wrong was not the decision under pressure, it was that the pressure
+    was avoidable."
+
+    WHAT THIS DEMONSTRATES: candour, owning the CAUSE rather than the symptom, and a systemic
+    fix. WHAT IT CANNOT DEMONSTRATE: behaviour when something is genuinely broken and other
+    people are affected.
+
+--- VERSION B: THE SHAPE OF A HIGHER-STAKES STORY ---
+
+    If she has something like this, it is the better answer for this prompt.
+
+    SITUATION: "During my internship I ran a backfill script against what I believed was
+    staging. It was production, and it overwrote about four hours of a shared dataset that two
+    other people were using."
+
+    ACTION: "I realised within about two minutes, from the row counts. I did not try to fix it
+    quietly - I told the team lead immediately and said plainly that I had run it against
+    production and did not yet know how much was affected.
+
+    We stopped the two dependent jobs before they consumed the corrupted rows, which is the
+    thing that actually limited the damage - if I had spent twenty minutes investigating first,
+    those jobs would have finished on bad data.
+
+    Then we restored from the previous snapshot, which took about ninety minutes with my lead's
+    help.
+
+    Afterwards I added a guard to the script: it refuses to run unless the target environment is
+    passed explicitly, and it prints the environment and row count and waits for confirmation.
+    I also renamed the two config files, because they differed by one character and I was not
+    going to be the last person to confuse them."
+
+    RESULT: "About ninety minutes of lost work and no permanent data loss. My lead was not happy
+    - she asked me to write it up - and the write-up became the reason the guard got added to
+    two other scripts as well. It has not happened again, and it cannot, because the script will
+    not run without an explicit environment."
+
+    THE ARITHMETIC THAT MAKES THE DISCLOSURE POINT CONCRETE:
+
+        DISCLOSED AT 2 MINUTES:  two dependent jobs stopped before consuming bad data.
+                                 total cost: 90 minutes of restore.
+
+        HAD SHE INVESTIGATED FOR 20 MINUTES FIRST: both jobs complete on corrupted rows.
+                                 total cost: 90 minutes of restore, PLUS re-running both jobs,
+                                 PLUS every downstream number computed in between, PLUS
+                                 explaining an eighteen-minute silence.
+
+    THE EIGHTEEN MINUTES SHE DID NOT SPEND INVESTIGATING WERE WORTH MORE THAN THE INVESTIGATION
+    COULD POSSIBLY HAVE BEEN. That is the practical case for disclosing before fixing, and it is
+    stronger than the moral one.
+
+    NOTE WHERE THE CONFUSING CONFIG NAMES APPEAR: not in "I ran it against the wrong environment
+    because the names were similar" - which would be an excuse - but in the systemic fix, as
+    something she changed. Same fact, and the position is the whole difference.
+
+--- THE PROBES ---
+
+    "What did your manager say?" Real feedback makes it credible. "She was not happy and asked
+    me to write it up" beats "she said it was fine".
+
+    "Has it happened again?" Point at the MECHANISM. "No - the script cannot run without an
+    explicit environment flag." Not "no, I have been more careful."
+
+    "Why did you tell them before fixing it?" Because two other jobs were about to consume the
+    bad data, and every minute of silence widened the blast radius. Answer with the reasoning,
+    not with virtue.""",
+
+    """10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about an hour, and the hardest part is choosing the story rather
+than writing it. Most candidates spend that hour looking for a mistake that makes them look
+good, which is the wrong search - look for one where the response was good.
+
+WHERE THIS SITS IN THE CLUSTER: this entry owns DISCLOSURE AND THE SYSTEMIC FIX. Its siblings
+tell the capstone from other angles - "STAR: Diving deep" owns measurement over assumption and
+shares the same two wasted days, "STAR: Acting decisively with incomplete information" owns the
+two-way door, "STAR: Disagreeing with a decision then fully committing" owns Arun, and
+"Building a story bank" explains why one experience serves several prompts.
+
+THE FOLLOW-UPS, with what each is checking:
+
+  - "What did your manager say?" Credibility. Include the discomfort. Universal understanding
+    sounds invented.
+  - "Has it happened again?" Whether the systemic fix was a mechanism or an intention. Point at
+    the mechanism.
+  - "Why did you not fix it first?" Blast radius - every minute of delay meant more work built
+    on the broken state. Answer practically rather than morally.
+  - "What would you have done if you had not noticed for a week?" Tests whether you understand
+    that detection is part of the system too. The honest answer usually involves adding the
+    monitoring that would have caught it.
+  - "Tell me about a time you took ownership beyond your role." The Ownership half, often asked
+    separately. Same structure, different content - something that was nobody's job and you did
+    it anyway.
+
+THE #1 MISTAKE: the disguised strength - "I care too much about quality", "I take on too much".
+It fails the question outright, because with no real consequence there is nothing to disclose,
+nobody to face, and no system worth changing. The behaviours being graded cannot appear.
+
+RUNNER-UP: putting the contributing factor in the same sentence as the mistake. "The configs
+were confusingly named, so I ran it against production" is true and reads as evasion. Own it
+first in its own sentence; bring the naming back later as something you FIXED.
+
+TAKEAWAY: what is graded here is not the mistake but the response - so tell people within
+minutes, own the actual cause rather than the visible symptom, and finish with the mechanism
+that makes it impossible next time, because that sentence is what turns a confession into an
+engineering story.""",
 ]
 
 _EX_P0LP["STAR: Insisting on the right long-term solution over a quick hack (Are Right, A Lot / Insist on Highest Standards)"] = [
