@@ -23736,81 +23736,554 @@ what moves the number.
 """.strip("\n")
 
 _EXAMPLES_LLM["Why do LLMs hallucinate, and how do you reduce it?"] = [
-    """The canonical case: fabricated citations.
-Ask for academic references on a niche topic and you may get:
-  "Chen, L. et al. (2019). Attention-based methods for supply chain
-   forecasting. Journal of Operations Management, 47(3), 218-240."
-Plausible author, plausible journal, plausible volume - and it does not exist.
-The model has learned the FORM of a citation extremely well and is generating a
-well-formed instance. It was never storing a bibliography.
-This has produced real-world consequences: lawyers have been sanctioned for
-filing briefs containing fabricated case law. The lesson is that fluency of
-format is completely uncorrelated with existence of the referent.""",
+    """1. THE GOAL - what this question is really asking.
 
-    """The numeric version - where the risk concentrates.
-A team measured hallucination rate on 500 internal questions:
-  questions about common, well-documented topics:   3% wrong
-  questions about rare entities (one customer, one
-  internal tool mentioned in a single document):   34% wrong
-Same model, same prompt. The eleven-fold difference is entirely explained by
-how much support the fact had in the data. This tells you where to spend the
-grounding effort: rare, specific, long-tail entities. A blanket "make the model
-better" would have missed it; segmenting the eval set found it.""",
+A HALLUCINATION is fluent output that is factually wrong or unsupported - stated with
+exactly the same confidence as everything the model gets right.
 
-    """The stale-knowledge case, which is not really hallucination but is
-diagnosed the same way.
-"What is the current pricing for [cloud service]?" The model answers with the
-price from its training cutoff, confidently and with no hedging. The fact WAS
-true; it is no longer. No amount of prompting fixes this - the information is
-not in the model.
-Fix: retrieval from a live source, or a tool call. This is worth separating
-from true fabrication in an interview, because the diagnosis is different -
-one is a data-freshness problem, the other is a grounding problem.""",
+    You: "Can you give me some papers on sparse attention for time series?"
 
-    """The case where the fix made things worse - a real trap.
-A team saw hallucinations and set temperature to 0, expecting determinism to
-mean correctness. Hallucination rate barely moved. Temperature 0 makes the
-model pick the MOST LIKELY token; if the most likely continuation is a
-confident fabrication, you now get that same fabrication every time, more
-reliably.
-Temperature reduces VARIANCE, not error. The team's actual problem was that
-nothing was grounded - adding RAG dropped the rate from 22% to 4%, and
-temperature 0 on top of that helped consistency. Ordering the fixes correctly
-is what the question is really about.""",
+    Model: "Chen, L. et al. (2019). Attention-based methods for sparse time-series
+            forecasting. Proceedings of NeurIPS, pp. 1123-1135."
 
-    """Self-consistency as a usable uncertainty signal.
-Ask the same factual question five times at temperature 0.7:
-  Run 1: "The policy allows 20 days."
-  Run 2: "The policy allows 20 days."
-  Run 3: "The policy allows 20 days."
-  Run 4: "The policy allows 25 days."
-  Run 5: "The policy allows 20 days."
-The disagreement is the signal. Consistent answers correlate with correctness
-far better than the model's own stated confidence does, which is close to
-useless. In production you can route low-consistency answers to a human or to a
-fallback, at 5x the inference cost - a real trade-off worth naming rather than
-presenting self-consistency as free.""",
+That citation has a plausible author, a plausible year, a real conference, and a
+plausible page range. It does not exist.
 
-    """The interview application - designing for it rather than promising it away.
-"We are building an AI assistant for medical dosage questions. How do you
-handle hallucination?"
-The answer that lands is NOT a list of prompt tricks. It is:
-  1. This is a high-stakes domain, so the system must be designed on the
-     assumption that some output will be wrong.
-  2. Ground every answer in an approved formulary, retrieved at query time -
-     never from weights.
-  3. Require a citation for every dosage claim, and verify programmatically
-     that the cited text contains the number. Refuse if it does not.
-  4. Constrain the output to a schema so free-text invention is impossible in
-     the dosage field.
-  5. Abstain by default: if retrieval confidence is below a threshold, say so
-     and route to a pharmacist.
-  6. Log everything, evaluate against a clinician-reviewed golden set in CI,
-     and monitor the abstention rate as a health metric.
-  7. Do not ship it as an authority - ship it as a lookup aid with a human in
-     the loop.
-Saying "you cannot eliminate it, so here is how the product absorbs it" is the
-senior answer.""",
+The interviewer is not asking you to list mitigations. They are asking whether you
+understand that this is NOT A BUG. Nothing in the training objective ever asked the
+model for truth. It asked for the most likely next token. A fabricated citation in
+perfect academic format is an extremely likely next token when the prompt asks for a
+citation.
+
+So the honest framing, and the one to say out loud:
+
+    YOU REDUCE HALLUCINATION. YOU DO NOT ELIMINATE IT.
+
+Any answer that promises elimination is wrong, and any system design that assumes it
+has been eliminated is dangerous. The engineering question is not "how do I stop the
+model being wrong" but "how do I make sure a wrong answer cannot reach the user
+unchecked".
+
+One distinction to get straight immediately, because it changes the fix entirely:
+
+    HALLUCINATION   - the model never knew, and invented something.
+    STALE KNOWLEDGE - the model knew, but the world changed after its cutoff.
+
+Both produce a confident wrong answer. The first is fixed by grounding, the second by
+retrieval of current data. Diagnosing them the same way is fine; treating them with the
+same fix is not.""",
+
+    """2. THE INTUITION - a machine that cannot leave a gap.
+
+Picture someone taking an exam where blank answers score zero and wrong answers are not
+penalised. What is the rational strategy? Never leave anything blank. Write the
+most plausible-looking thing you can, in the right format, with confidence.
+
+That is the entire training incentive of an LLM, made explicit.
+
+Now look at how the next-token machinery produces this. Ask about something the model
+saw thousands of times:
+
+    "The Eiffel Tower is in the city of ___"
+
+        Paris   ############################################  0.92
+        France  ##                                            0.03
+        Lyon    #                                             0.01
+
+Sharp, confident, correct. Now ask about something it never saw:
+
+    "The parental leave policy at [your company] allows ___"
+
+        20      ########                       0.09
+        25      #######                        0.08
+        12      #######                        0.07
+        26      ######                         0.06
+        ... a long flat tail
+
+There is no peak because there is no fact. But the machine's job is to pick a token, so
+it picks one - and then the NEXT token is conditioned on that choice, and the sentence
+completes itself fluently around it. The output reads exactly like the Paris answer.
+
+    "The parental leave policy at [your company] allows 20 days."
+
+Nothing in the final text carries any trace of that flat distribution. The confidence in
+the WORDING is unrelated to confidence in the FACT.
+
+That gap is the whole topic. And it also hands you the most useful practical tool on
+this page: if the distribution was flat, then asking the same question several times
+will produce DIFFERENT answers, because you are resampling from a flat distribution.
+Asking about Paris five times gives Paris five times. Section 9 turns that into a
+measurement.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HALLUCINATION. Fluent output that is factually wrong or unsupported by any source. Also
+called confabulation, which is arguably the better word - the model is not perceiving
+something false, it is filling a gap smoothly.
+
+INTRINSIC vs EXTRINSIC hallucination. INTRINSIC contradicts the source text you
+supplied ("the document says 26 weeks", model says 20). EXTRINSIC adds something the
+source never mentioned. Worth distinguishing because intrinsic ones are catchable
+automatically - you have the source to compare against.
+
+GROUNDING. Supplying the facts in the prompt and instructing the model to answer only
+from them. The single most effective mitigation.
+
+RAG (Retrieval-Augmented Generation). The machinery for doing that at scale: fetch the
+relevant documents, paste them in, answer from them, cite them.
+
+TEMPERATURE. The dial on randomness in token selection. 0 always takes the most likely
+token; higher values sample more widely. Section 4 explains why lowering it is NOT the
+fix people expect.
+
+CALIBRATION. Whether a model's stated confidence matches its actual accuracy. A
+well-calibrated model saying "80% sure" would be right 80% of the time. LLMs are poorly
+calibrated in their WORDING - fluency is not evidence.
+
+SELF-CONSISTENCY. Sampling the same question several times and comparing the answers.
+Agreement is weak evidence of knowledge; disagreement is strong evidence of its
+absence.
+
+TOOL CALLING / FUNCTION CALLING. Letting the model invoke a real system - a calculator,
+a database, a search API - instead of generating the answer itself. The right fix for
+anything requiring exactness.
+
+GUARDRAIL / VALIDATOR. A separate check on the output before it reaches the user: does
+every cited source exist, does every number appear in the retrieved text, does the
+output match the required schema.
+
+REFUSAL / ABSTENTION. The model saying "I don't know". Base models are poor at this
+because the objective never rewarded it; instruction tuning and RLHF teach it, and it
+remains fragile.
+
+KNOWLEDGE CUTOFF. The date training data ends. Everything after is invisible.
+
+FAITHFULNESS. Whether the answer is supported by the supplied source. Distinct from
+CORRECTNESS - an answer can be faithful to a document that is itself out of date.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE BIG ONE, and it is the case where the fix made things WORSE.
+
+A team saw hallucinations and set temperature to 0, reasoning that determinism would
+mean correctness.
+
+What actually happened: the model now returned the SAME answer every time. Which felt
+much better. The hallucination rate barely moved - because if the fact was never
+learned, the most-likely token is still a fabrication, and temperature 0 just picks that
+fabrication reliably instead of picking a different one each time.
+
+And here is the part that makes this a genuine regression rather than a no-op: they had
+just destroyed the only cheap uncertainty signal available to them. At temperature 0.7,
+asking five times and getting five different numbers is a loud warning that the model
+does not know. At temperature 0 you get the same wrong number five times, which is
+indistinguishable from confident correctness.
+
+The intervention made the problem harder to DETECT while looking like it had helped.
+That is worth saying in an interview, because it shows you evaluate a fix by measuring
+the outcome rather than by whether it sounds sensible.
+
+Temperature 0 IS right for factual tasks - it removes needless variance. It is simply
+not a hallucination fix, and it must be paired with something that actually supplies
+facts.
+
+TRAP 2: confusing hallucination with stale knowledge. "What is the current pricing for
+[cloud service]?" gets a confident, precisely formatted, out-of-date answer. The model
+is not inventing - it is reporting what was true in its training data. Grounding fixes
+hallucination; only fresh retrieval fixes staleness. Same symptom, different fix.
+
+TRAP 3: "just tell it not to hallucinate." Adding "do not make anything up" to the
+prompt helps a little and cannot work in general, because the model has no internal flag
+marking which of its outputs are inventions. It cannot filter for a property it cannot
+detect. What DOES help is giving it a licence to abstain and something to abstain in
+favour of: "if the answer is not in the text above, reply exactly: not found in the
+provided documents."
+
+TRAP 4: assuming a bigger model solves it. Bigger models hallucinate less, and their
+remaining hallucinations are more convincing - better formatted, more internally
+consistent, harder to catch by eye. Scaling shifts the problem from frequent-and-obvious
+to rare-and-subtle, which for a high-stakes application may be worse.
+
+TRAP 5: treating fluency as confidence. There is no relationship. The Paris answer and
+the invented-policy answer are equally well written, because the wording is generated by
+the same machinery in both cases.
+
+TRAP 6: letting the model do arithmetic. It predicts plausible digits. For anything
+requiring exactness - totals, dosages, dates, conversions - call a tool. The model's job
+is to decide WHAT to compute, not to compute it.""",
+
+    """5. THE NAIVE MENTAL MODEL FIRST, THEN THE REAL ONE.
+
+THE NAIVE MODEL: "the model has a store of facts and sometimes retrieves the wrong one."
+
+This is how most people first picture it, and every conclusion drawn from it is wrong.
+It suggests the fix is a better lookup, a bigger store, or an instruction to look more
+carefully. It also implies the model could in principle know when it is unsure, since a
+lookup either finds something or does not.
+
+THE REAL MODEL: there is no store and no lookup. There is a probability distribution
+over next tokens, and a fact well-represented in training produces a SHARP one while a
+fact never seen produces a FLAT one. Generation samples from whichever it gets, and the
+resulting sentence is equally fluent either way.
+
+Four consequences follow, and each is really an answer to a question you will be asked:
+
+  1. THE MODEL CANNOT RELIABLY KNOW IT IS HALLUCINATING. There is no distinct internal
+     state for "invented". There is only a flatter distribution - a signal that exists
+     inside the model but is not exposed in the output text.
+
+  2. HALLUCINATION CONCENTRATES WHERE TRAINING DATA WAS SPARSE. Common topics: rare.
+     Niche, private, or recent topics: common. This is predictable, which means it is
+     manageable - you can know in advance which of your queries are dangerous.
+
+  3. FORMAT IS LEARNED SEPARATELY FROM CONTENT. The model has seen thousands of
+     citations, so it produces flawless citation FORMAT regardless of whether the cited
+     work exists. The polish of a wrong answer carries no information.
+
+  4. IT CANNOT VERIFY. There is no step between generating and emitting where anything
+     is checked. Verification must be added from outside.
+
+THE FIXES, in increasing sophistication - and the ordering is the answer to "what would
+you do first?":
+
+  LEVEL 1 - PROMPT HYGIENE. Ask for citations. Give explicit permission to say "I don't
+  know", with the exact words to use. Set temperature to 0 for factual work. Cheap,
+  worth doing, and nowhere near sufficient.
+
+  LEVEL 2 - GROUNDING (RAG). Retrieve the relevant text and instruct the model to answer
+  only from it. This is the big one, and the reason is structural: you have converted a
+  RECALL task, which the model is bad at, into a READING task, which it is excellent at.
+  That sentence is the whole justification, and it is what an interviewer is listening
+  for. Residual failures now come mostly from retrieval, which is measurable and
+  fixable.
+
+  LEVEL 3 - TOOL CALLING. For anything exact - arithmetic, current data, database
+  lookups - do not generate the answer, call the real system. This does not reduce
+  hallucination so much as remove the opportunity for it.
+
+  LEVEL 4 - VALIDATION AFTER GENERATION. Check the output before the user sees it. Does
+  every cited document exist in the index? Does every number in the answer appear in the
+  retrieved text? Does the output parse as the required schema? Intrinsic hallucinations
+  are mechanically catchable this way, because you have the source to compare against.
+
+  LEVEL 5 - UNCERTAINTY SIGNALS. Sample several times and compare (section 9). Or use a
+  second model to judge whether the answer is supported by the source. Neither is free,
+  and both are worth it where the cost of being wrong is high.
+
+  LEVEL 6 - INTERFACE DESIGN. Show sources inline. Make the citation clickable. Make
+  verification a one-click action rather than a research project. This does not reduce
+  the hallucination rate at all - it changes who catches it, and it is often the highest
+  value-per-effort change in the whole list.""",
+
+    """6. HOW TO REDUCE IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: STOP ASKING THE MODEL TO RECALL AND START
+ASKING IT TO READ - THEN CHECK ITS ANSWER AGAINST WHAT YOU GAVE IT BEFORE ANYONE SEES
+IT.
+
+THERE IS A LOOP HERE, and it needs an explicit stopping rule or it runs forever:
+
+  - Each pass makes one change and re-measures on a fixed evaluation set of questions
+    with known answers.
+  - The set does not change during the loop, or the numbers are not comparable.
+  - WHAT MAKES IT STOP: the measured rate reaches the threshold agreed BEFORE you
+    started, for the risk level of the application. Not zero - a target.
+  - Without a pre-agreed target this loop does not terminate, because there is always
+    one more prompt tweak to try and the rate never reaches zero.
+
+THE STEPS:
+
+  1. MEASURE FIRST. Assemble a few hundred real questions with known correct answers.
+     Record the current hallucination rate. Everything below is unfalsifiable without
+     this, and most teams do not have it.
+
+  2. SEGMENT THE FAILURES BY TOPIC FREQUENCY - common, niche, post-cutoff. The rate
+     will differ enormously between them (section 9 has real figures), and that tells
+     you where to spend effort. A uniform fix for a non-uniform problem wastes most of
+     the work.
+
+  3. SEPARATE HALLUCINATION FROM STALENESS. For each failure, ask: could the model ever
+     have known this? If yes but it is out of date, that is a freshness problem. If no,
+     that is a grounding problem.
+
+  4. GROUND EVERYTHING YOU CAN. Build retrieval over the authoritative sources. Instruct
+     the model to answer only from the retrieved text, to cite which part supports each
+     claim, and to say plainly - with exact wording you specify - when the answer is not
+     there.
+
+  5. REPLACE GENERATION WITH TOOLS wherever exactness matters. Arithmetic, live data,
+     record lookups. The model chooses the tool and the arguments; the tool produces the
+     value.
+
+  6. VALIDATE THE OUTPUT before it is shown. Every citation resolves to a real
+     retrieved chunk. Every figure appears in the source. Schema parses. Reject or
+     regenerate on failure.
+
+  7. ADD AN UNCERTAINTY SIGNAL where stakes are high. Sample the same question several
+     times; if the answers disagree materially, do not show one - escalate or say so.
+
+  8. DESIGN THE INTERFACE FOR VERIFICATION. Sources visible, inline, clickable. Assume
+     the model will be wrong sometimes and make that cheap to discover.
+
+  9. RE-MEASURE against the same set, and compare with step 1.
+
+ 10. MONITOR IN PRODUCTION. Log answers with their retrieved sources, sample them for
+     review, and give users a one-click "this is wrong" that lands somewhere a human
+     reads.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine an extremely well-read colleague with one unusual condition: they are physically
+incapable of saying "I don't know".
+
+Ask them something they know well and they answer perfectly. Ask them something they
+have never encountered - your company's leave policy, what shipped last week, a paper on
+an obscure topic - and they do not pause, frown, or hedge. They produce an answer in the
+same steady voice, with the same detail, in the same format.
+
+They are not lying. Lying requires knowing the truth and choosing otherwise. They have
+no sense that anything different has happened. Internally, the difference between
+recalling and inventing is a matter of degree that never reaches their mouth.
+
+Now think about what this means for you as the person relying on them.
+
+Telling them to try harder does nothing - they are not aware of straining. Asking them
+to flag uncertainty does not work either, because they cannot detect the state you are
+asking them to report. Asking them to be more careful just produces a more carefully
+worded invention.
+
+What DOES work is changing the task. Put the document in front of them and ask them to
+answer from it, quoting where each part comes from. Now they are reading rather than
+reaching, and reading is something they do superbly. When they are wrong you can see why
+- they misread a line you can point at.
+
+And you build one more habit: before passing anything on, you check the quotes are real.
+Not because you distrust them, but because the one thing they cannot do is check
+themselves.
+
+There is a tell, though, and it is useful. Ask the same question five separate times. On
+things they know, you get the same answer five times. On things they are inventing, you
+get five different answers - because each time they are constructing something new
+rather than recalling something fixed. That variation is the closest thing to a
+confidence signal they have.""",
+
+    """8. THE CAUSES AND THE DEFENCES, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each cause named, with what it produces and which
+defence addresses it. Matching cause to defence is the substance of this topic - most
+answers list defences without connecting them to anything.
+
+--- THE CAUSES ---
+
+    NO NOTION OF TRUTH
+        What it is: the training objective rewards likely tokens, never true ones.
+        What it produces: confident invention indistinguishable in style from fact.
+        Addressed by: grounding (level 2) - supply the truth rather than hoping for it.
+        NOT addressed by: better prompts, bigger models, lower temperature.
+
+    SPARSE TRAINING DATA ON A TOPIC
+        What it is: a flat next-token distribution where a sharp one would be needed.
+        What it produces: hallucination concentrated on niche, private and recent
+        topics.
+        Addressed by: retrieval, and by knowing in advance which query types are risky.
+
+    FROZEN KNOWLEDGE
+        What it is: the cutoff.
+        What it produces: confidently out-of-date answers. Technically not
+        hallucination.
+        Addressed by: retrieval of current data. Nothing else.
+
+    THE PRESSURE TO STAY FLUENT
+        What it is: having emitted a token, everything after is conditioned on it.
+        What it produces: a small early error elaborated into a detailed wrong answer.
+        Addressed by: making abstention an explicit, easy option with wording supplied.
+
+    FORMAT LEARNED SEPARATELY FROM CONTENT
+        What it is: citation shapes, dosage shapes and legal-clause shapes are all
+        heavily represented in training regardless of the specific content.
+        What it produces: perfectly formatted fabrications - the hardest kind to spot.
+        Addressed by: validating that cited things exist. Never by eye.
+
+    NO VERIFICATION STEP
+        What it is: nothing sits between generating and emitting.
+        What it produces: no internal filter at all.
+        Addressed by: adding one from outside (level 4).
+
+--- THE DEFENCE STACK, and what each layer holds ---
+
+    PROMPT LAYER
+        Holds: instructions, the citation requirement, the exact abstention wording,
+        temperature.
+        Decides: whether the model has permission to decline. Cheap; insufficient alone.
+
+    RETRIEVAL LAYER
+        Holds: the authoritative source text.
+        Decides: whether this is a recall task or a reading task. The largest single
+        improvement available, because it changes what is being asked of the model.
+
+    TOOL LAYER
+        Holds: calculators, databases, search, code execution.
+        Decides: which parts of the answer are computed rather than generated. Removes
+        the opportunity for error rather than reducing its rate.
+
+    VALIDATION LAYER
+        Holds: the retrieved sources and the generated answer, side by side.
+        Decides: whether the answer ships. Every citation resolves; every number appears
+        in the source; the schema parses.
+
+    UNCERTAINTY LAYER
+        Holds: several samples of the same question, or a judge model's verdict.
+        Decides: whether to show an answer at all, or to escalate.
+
+    INTERFACE LAYER
+        Holds: the sources, displayed.
+        Decides: how expensive it is for the user to catch the error. Changes no rate
+        at all, and is frequently the best value in the stack.""",
+
+    """9. TRACED WITH REAL NUMBERS.
+
+MEASUREMENT 1 - WHERE THE RISK ACTUALLY SITS.
+
+A team measured the hallucination rate on 500 internal questions, segmented by how well
+represented the topic would have been in training data. (Illustrative figures; the shape
+is what matters and it is consistent across real evaluations.)
+
+    common, well-documented topics       3%   hallucination rate
+    niche or internal topics            27%
+    topics after the knowledge cutoff   61%
+
+Read that as a design instruction rather than a curiosity. The risk is NOT spread evenly
+across your traffic - it is concentrated in exactly the queries that motivated building
+the assistant in the first place, since nobody builds an internal tool to answer
+questions about the Eiffel Tower. A single uniform mitigation applied to all traffic
+spends most of its effort on the 3% band.
+
+AFTER ADDING RETRIEVAL over the internal corpus:
+
+    overall rate            20%  ->  4%
+    and the residual 4% breaks down as:
+        retrieval returned the wrong chunk        3%
+        right chunk retrieved, model misread it   1%
+
+That split is the actionable part. Three quarters of what remains is a RETRIEVAL problem
+and no amount of prompt work touches it - which is the same lesson as recall@k in the
+RAG entry, arrived at from the other direction.
+
+MEASUREMENT 2 - SELF-CONSISTENCY AS AN UNCERTAINTY SIGNAL.
+
+Ask the same factual question five times at temperature 0.7.
+
+    Question: "How many days of leave does the policy allow?"
+
+        Run 1: "The policy allows 20 days."
+        Run 2: "The policy allows 25 days."
+        Run 3: "The policy allows 20 days."
+        Run 4: "The policy allows 15 days."
+        Run 5: "The policy allows 25 days."
+
+    Three distinct answers across five samples. The model does not know.
+
+    Contrast with a question it does know:
+
+        Run 1-5: "Paris." five times.
+
+WHY THIS WORKS, stated as the mechanism rather than as a heuristic: sampling draws from
+the next-token distribution. A fact well represented in training gives a sharp
+distribution, so every sample lands on the same token. A fact never learned gives a flat
+one, so samples scatter. The VARIANCE ACROSS SAMPLES IS A DIRECT READOUT OF THE FLATNESS
+OF THE DISTRIBUTION - which is precisely the internal signal that never made it into the
+output text.
+
+Cost: five calls instead of one. Worth it exactly where being wrong is expensive.
+
+MEASUREMENT 3 - THE INTERVENTION THAT INVERTED.
+
+Same team, earlier attempt. They set temperature to 0.
+
+    BEFORE (temperature 0.7):
+        hallucination rate                          20%
+        same question asked 5x, answers agreed      61% of the time
+        -> the 39% disagreement rate was a usable warning signal
+
+    AFTER (temperature 0):
+        hallucination rate                          19%
+        same question asked 5x, answers agreed     100% of the time
+        -> no signal at all
+
+The rate moved by one point. The DETECTABILITY went to zero. Every wrong answer now
+arrived with the perfect consistency of a right one, and the team's confidence in the
+system went UP.
+
+Same change, opposite verdict depending on what you measure: judged on determinism it
+succeeded completely; judged on how many wrong answers reach a user, it made things
+worse. This is why the evaluation set has to exist before the interventions do.
+
+Temperature 0 is still correct for factual work. It is a variance control, not a truth
+control, and it must be paired with grounding and validation - which is what the team
+did next, taking the rate from 19% to 4%.""",
+
+    """10. THE LIMITS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE FIXES COST:
+
+  - GROUNDING: retrieved chunks are billed on every request - typically 2,000+ extra
+    input tokens per question - plus the whole retrieval pipeline to build and maintain.
+    By far the best return in the list.
+  - TOOL CALLING: an extra round trip per tool, so latency grows; and every tool is a
+    new failure mode and a new attack surface.
+  - VALIDATION: cheap when mechanical (does this citation resolve?), expensive when it
+    needs a second model call per answer.
+  - SELF-CONSISTENCY: multiplies cost by however many samples you take. Reserve it for
+    high-stakes queries rather than applying it to everything.
+  - NONE OF THEM REACH ZERO. Budget for a residual rate and design for it.
+
+THE SYSTEM-DESIGN QUESTION, and the answer that distinguishes candidates:
+
+    "We are building an AI assistant for medical dosage questions. How do you handle
+     hallucination?"
+
+The weak answer lists mitigations and implies the problem can be engineered away. The
+strong answer starts by refusing that premise: you cannot guarantee correctness from a
+generative model, so the design must ensure a wrong answer cannot reach a patient
+unchecked. Then:
+
+  - Retrieve only from an approved formulary. Never from the model's own memory.
+  - Constrain the model to QUOTING the source rather than paraphrasing it, so intrinsic
+    hallucination is mechanically detectable.
+  - Require a citation for every clinical claim, and validate programmatically that each
+    quoted dosage string appears verbatim in the retrieved document. Reject the answer
+    if it does not.
+  - Never let the model do the arithmetic - weight-based calculations go to a tool.
+  - Refuse out-of-scope questions by design rather than by instruction.
+  - Show the source alongside every answer, and require clinician confirmation before
+    anything is acted on.
+  - Log everything for audit, and monitor the refusal rate as closely as the answer
+    rate - a system that stops refusing has probably started inventing.
+
+The judgement being tested is whether you will say out loud that the model cannot be
+trusted to be right, and design accordingly. Candidates who promise to eliminate
+hallucination fail this question regardless of how many techniques they can name.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Does RAG eliminate hallucination?" No. It converts most of it into retrieval
+    failures, which are measurable and fixable, and leaves a residue where the model
+    misreads correctly retrieved text.
+  - "Can the model tell us its confidence?" Not from its wording, which is uncorrelated
+    with accuracy. Token probabilities and sampling variance are far better signals, and
+    both come from outside the text.
+  - "Will bigger models fix this?" They reduce the rate and make the survivors more
+    convincing. For high-stakes use that trade may be unfavourable.
+
+THE #1 MISTAKE: treating hallucination as a defect to be patched rather than a property
+of the mechanism. It leads directly to the wrong fixes - sterner prompts, lower
+temperature, a bigger model - and to system designs that assume correctness and have no
+verification path when it fails.
+
+TAKEAWAY: the model was trained to produce plausible text, never true text, so it cannot
+tell recalling from inventing - which means the fix is never to ask it more firmly, but
+to hand it the source, let tools do anything exact, and check the answer before anyone
+sees it.""",
 ]
 
 
