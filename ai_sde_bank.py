@@ -10610,58 +10610,589 @@ levers, and everything on the technique list is one of them in disguise.
 """.strip("\n")
 
 _EXAMPLES_ML["Overfitting — what it is and how to prevent it"] = [
-    """The textbook case, traced epoch by epoch.
-Small CNN on 2,000 cat/dog images:
-  epoch  2: train 68%, val 66%
-  epoch 10: train 86%, val 82%
-  epoch 18: train 96%, val 83%   <- val flat, train still climbing: it starts here
-  epoch 40: train 100%, val 74%  <- val actively worse than at epoch 18
-The model reached 100% train accuracy, which on 2,000 images with millions of
-parameters simply means it memorised them. Adding random flips and crops
-(augmentation) changed the curve to train 91% / val 89% at epoch 40 - the model
-could no longer memorise because it never saw the same pixels twice.""",
+    """1. THE GOAL - what overfitting is, in plain English.
 
-    """A second case in a different domain - tabular, no neural net in sight.
-A decision tree with no depth limit on 5,000 loan applications grows to depth 34
-and 4,100 leaves. Train accuracy 100%, test 68%. Many leaves hold ONE training
-row - literally a lookup table with an if-else spelling. Setting
-max_depth=6, min_samples_leaf=50 gives train 82% / test 79%. You gave up 18
-points of training accuracy that were fake and gained 11 points of real accuracy.""",
+A model OVERFITS when it memorises the particular data it was trained on, including the
+accidents in it, instead of learning the pattern that generalises.
 
-    """The edge case: overfitting with NO gap, hidden by a leak.
-A churn model shows train 94% and validation 93% - textbook healthy - but
-collapses to 61% live. The cause was not classic overfitting but leakage: the
-feature `days_since_last_login` was computed AFTER the churn date, so it encoded
-the answer. Validation shared the leak, so it could not catch it. The lesson:
-a healthy train/val gap proves nothing if the split itself is wrong. For
-time-based problems always split by TIME, never randomly.""",
+The everyday version: a student who memorises the answers to last year's exam paper. Ask
+them last year's questions and they score 100%. Ask them this year's questions on the
+same syllabus and they collapse - because they never learned the subject, they learned
+the paper.
 
-    """The case that breaks the obvious fix.
-Team sees overfitting and adds dropout 0.5 to every layer INCLUDING the input,
-plus L2 = 0.1, plus reduces the model to 2 layers, all in one commit. Result:
-train 64%, val 63%. They over-corrected into underfitting and cannot tell which
-of the three changes was responsible. Correct method: change ONE knob, re-read
-train AND val, keep it only if val improved. Dropout 0.3 alone got val to 88%.""",
+The tell is a GAP:
 
-    """A numeric look at WHY regularization works.
-Two candidate weights for a noisy feature that reduces training loss by 0.001:
-  without L2 the optimiser sets w = 4.0 because it reduces loss, full stop.
-  with L2 (lambda = 0.01) the cost of that weight is 0.01 * 4.0^2 = 0.16,
-  which is 160x more than the 0.001 it saves, so the optimiser drives w to ~0.
-Meanwhile a genuine feature that cuts loss by 0.8 easily pays its 0.16 penalty
-and keeps its weight. Regularization is a price list: weak patterns cannot
-afford to exist, strong ones can. That is the whole mechanism in one line.""",
+    training accuracy   96%     <- what it scores on data it has seen
+    validation accuracy 79%     <- what it scores on data it has not
 
-    """The interview version - and the trap inside it.
-'You get 99% on training and 99% on validation but 70% in production. Overfit?'
-The answer is no - or at least, not to the training set. Equal train and
-validation means the model generalises fine WITHIN the data you have. A 29-point
-production drop points at distribution shift: production traffic differs from the
-data you collected (new user segment, new season, a UI change altering behaviour),
-or your validation set is not representative (random split on time-ordered data).
-The fix is monitoring input distributions and re-splitting by time, not dropout.
-Being able to say 'that is not overfitting, that is drift' is what separates a
-memorised answer from an understood one.""",
+    a 17-point gap, and validation going DOWN while training goes UP
+
+That gap is the entire diagnosis. A model that is genuinely learning improves on both
+curves together. A model that is memorising improves on training while validation
+stalls and then reverses.
+
+Why it happens, in one sentence: real data contains SIGNAL (the pattern that will hold
+next time) and NOISE (accidents of this particular sample). A model with enough capacity
+will happily fit both, because the training loss does not distinguish them - reducing
+error on a noisy point is worth exactly as much as reducing error on a real one.
+
+This entry owns the DIAGNOSIS and the PREVENTION TOOLKIT. Its siblings own the
+neighbouring ideas: BIAS-VARIANCE TRADE-OFF explains WHY the capacity dial has two
+failure modes; CROSS-VALIDATION is how you measure generalisation reliably when data is
+scarce; L1 vs L2 REGULARIZATION goes deeper on two of the tools listed here.""",
+
+    """2. THE INTUITION - two curves, and the moment they part.
+
+Train a model and record both scores after every pass over the data:
+
+    accuracy
+     100% |                                    ___________  training
+          |                              _____/
+          |                        _____/
+      90% |                  _____/
+          |            _____/        ___
+          |      _____/         ____/   \\____
+      80% |  ___/          ____/             \\______  validation
+          | /         ____/                         \\____
+      70% |/     ____/
+          +------------------------------------------------> epochs
+           0    5    10   12   15   20   25   30
+                          ^
+                          |
+                    validation peaks here - this is the model you want
+
+Three phases, and naming them is most of the skill:
+
+    UNDERFITTING (epochs 0-8).    Both curves rising, small gap. The model has not yet
+                                  learned the pattern. More training helps.
+
+    THE SWEET SPOT (around 12).   Validation at its highest. This is the best model that
+                                  will ever exist in this run - and if you keep training,
+                                  you will destroy it.
+
+    OVERFITTING (after 12).       Training keeps climbing; validation turns DOWN. Every
+                                  additional epoch is now buying memorisation of noise at
+                                  the cost of generalisation.
+
+The picture also tells you what to do, which is why "always plot both curves" is the
+standing advice. The SHAPE of the divergence names the disease:
+
+    both low, small gap        -> underfitting: model too simple, or trained too little
+    both high, small gap       -> healthy (or leaking - see trap 2)
+    train high, val much lower -> overfitting
+    both collapse in production-> neither; the data changed (trap 2 again)
+
+One number worth internalising: it is not the gap alone that matters, it is whether
+VALIDATION IS STILL IMPROVING. A 10-point gap with validation still climbing is fine. A
+3-point gap with validation falling is not.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRAINING SET. The data the model learns from, and the only data whose answers it is shown.
+
+VALIDATION SET. Held-out data used DURING development to measure generalisation and to
+make choices - when to stop, which architecture, which hyperparameters.
+
+TEST SET. Held out and touched ONCE, at the very end, to report an honest number. Every
+time you look at it and change something, it quietly becomes a validation set.
+
+GENERALISATION. Performing well on data never seen. The only thing anybody actually
+wants; training accuracy is a means, not an end.
+
+SIGNAL AND NOISE. Signal is the pattern that will hold on new data. Noise is the accident
+of this sample - a mislabelled row, an unusual customer, sensor jitter. The training loss
+cannot tell them apart, which is the root of the whole problem.
+
+CAPACITY. How complicated a function the model can represent. More parameters, deeper
+trees, higher polynomial degree - all more capacity. Capacity is the dial: too little
+underfits, too much overfits.
+
+EPOCH. One full pass over the training data.
+
+REGULARIZATION. Anything that discourages complexity. Usually a penalty added to the loss
+for large weights, so the optimiser only grows a weight when the data really justifies it.
+
+L2 / RIDGE. Adds the sum of SQUARED weights to the loss. Shrinks weights toward zero
+without usually reaching it.
+
+L1 / LASSO. Adds the sum of ABSOLUTE weights. Drives some weights exactly to zero, so it
+also selects features.
+
+LAMBDA. The strength of the regularization penalty. Too small does nothing; too large
+underfits.
+
+DROPOUT. During training, randomly switch off a fraction of neurons each step, so the
+network cannot depend on any single one. Applied at training time only.
+
+EARLY STOPPING. Stop training when validation stops improving, and restore the weights
+from the best epoch.
+
+PATIENCE. How many epochs of no improvement to tolerate before stopping. Validation
+scores are noisy, so patience of zero stops too early.
+
+DATA AUGMENTATION. Manufacturing more training examples by transforming existing ones -
+flipping, cropping, rotating images. More effective data without more labelling.
+
+PRUNING. For decision trees, cutting back branches that do not improve validation.
+
+DATA LEAKAGE. Information from the answer, or from the test set, sneaking into training.
+Produces excellent training AND validation scores with terrible production performance -
+which is why it is the impostor that section 4 is about.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE OVER-CORRECTION, and it is the most common one in practice.
+
+A team sees overfitting and applies everything at once: dropout 0.5 on every layer
+INCLUDING the input, L2 = 0.1, and the model cut from six layers to two.
+
+    before:  train 96%, validation 79%    (17-point gap - overfitting)
+    after:   train 61%, validation 60%    ( 1-point gap - "fixed"!)
+
+The gap is gone. The model is far worse. They have traded overfitting for underfitting,
+and the metric they were watching - the gap - improved all the way down.
+
+THE RULE THAT PREVENTS THIS: CLOSING THE GAP IS NOT THE GOAL. RAISING VALIDATION IS THE
+GOAL. A gap of 17 with validation at 79 beats a gap of 1 with validation at 60, every
+time. Watch the validation number itself, and change ONE thing at a time so you know
+which change moved it.
+
+(Dropout on the INPUT layer is separately worth flagging - it randomly deletes raw
+features and is rarely what you want. Dropout belongs on hidden layers.)
+
+TRAP 2 - THE IMPOSTOR: NO GAP AT ALL, AND STILL BROKEN.
+
+A churn model shows training 94%, validation 93%. Textbook healthy. In production it
+scores 61%.
+
+This is NOT overfitting - the validation set agreed with training, so nothing was
+memorised that the validation set could detect. Two things cause it:
+
+    DATA LEAKAGE. A feature contains information that would not exist at prediction
+    time. The classic: a "cancellation_reason" field that is only ever filled in for
+    customers who already churned. The model learned to read the answer. Training and
+    validation both contain the leak, so both look wonderful, and production - where the
+    field is empty at prediction time - does not.
+
+    DISTRIBUTION SHIFT. Training and validation came from the same historical slice;
+    production is a different population or a later time period.
+
+Why this matters so much: THE OBVIOUS FIX MAKES IT WORSE. Adding regularization to a
+leaking model just makes a worse model that still reads the answer. The fix is to audit
+the features for anything unavailable at prediction time, and to validate on a LATER
+TIME PERIOD rather than a random split whenever the data has a time dimension.
+
+TRAP 3: tuning on the test set. Look at test performance, adjust, look again - and it has
+silently become a validation set. Your final number is now optimistic by an unknown
+amount. Touch it once.
+
+TRAP 4: a random split when the data is temporal. Randomly splitting time-series data
+lets the model train on Thursday and validate on Wednesday - it has seen the future. Split
+by time.
+
+TRAP 5: assuming more data always fixes it. More data does help, and it is often the
+single most effective intervention - but not if the extra data carries the same bias, and
+not if the problem is leakage.
+
+TRAP 6: watching the training loss at all. It is not evidence of anything except that the
+optimiser is working. Every decision should be made on validation.""",
+
+    """5. THE NAIVE VIEW FIRST, THEN THE REAL ONE.
+
+THE NAIVE VIEW: "training accuracy went up, so the model got better."
+
+This is the instinct, and it is why overfitting catches people - the number you are
+watching keeps improving right up until the model becomes useless. Nothing warns you.
+Training accuracy can be driven to 100% on almost any dataset by adding enough capacity,
+and a model at 100% training accuracy is usually a model that has memorised.
+
+THE REAL VIEW: there is a CAPACITY DIAL, and both ends are bad.
+
+    too little capacity          just right              too much capacity
+    UNDERFITTING                                         OVERFITTING
+    train 68 / val 66            train 89 / val 83       train 99 / val 74
+    cannot even fit the          learns the pattern      learns the pattern AND
+    training data                                        the noise
+
+The job is not "minimise training error". It is "find the point where validation error is
+lowest" - which is a completely different objective, and it is why a validation set is not
+optional bookkeeping but the instrument you steer by.
+
+THE PREVENTION TOOLKIT, in the order worth trying:
+
+  1. MORE DATA - or AUGMENTED data. The most reliable fix. Noise is what varies between
+     samples; signal is what repeats. Give the model more samples and the noise averages
+     out while the signal does not. Augmentation (flips, crops, rotations for images)
+     manufactures more effective data without more labelling.
+
+  2. EARLY STOPPING. Free, and it is the first thing to do on any iterative model. Watch
+     validation, keep the weights from the best epoch, stop when it has not improved for
+     N epochs. Costs nothing and often recovers most of the gap.
+
+  3. REGULARIZATION (L2, L1, dropout). Directly penalise complexity.
+
+  4. A SIMPLER MODEL. Fewer layers, fewer parameters, shallower trees. Works, and is
+     underrated - but it is a blunt instrument compared with regularization, which lets
+     the data decide which parts of the capacity to use.
+
+  5. CROSS-VALIDATION - to MEASURE reliably rather than to prevent. With small data, a
+     single validation split is noisy enough to mislead you.
+
+  6. PRUNING / DEPTH LIMITS for trees. An unpruned tree grows until every leaf is pure,
+     which is memorisation by construction.
+
+WHY REGULARIZATION WORKS - the mechanism, with the arithmetic, because "it penalises
+large weights" is not an explanation.
+
+Suppose a feature is pure noise, but by chance it correlates slightly with the target in
+this sample, so using it reduces training loss a little - say the loss falls by 0.001 for
+each unit of weight given to it.
+
+    WITHOUT REGULARIZATION: the optimiser has no reason to stop. Any weight that reduces
+    training loss at all is worth increasing. It might settle at w = 4.2, giving that
+    noisy feature enormous influence on predictions - influence that will be actively
+    wrong on new data, where the coincidence does not repeat.
+
+    WITH L2 (penalty lambda x w-squared, lambda = 0.01): now growing w costs something.
+    The penalty's marginal cost is its derivative, 2 x lambda x w = 0.02w. The optimiser
+    increases w only while the benefit exceeds that cost:
+
+            0.001  =  0.02 w        ->      w = 0.05
+
+    The noisy feature gets weight 0.05 instead of 4.2 - about eighty times smaller.
+
+Now do the same for a genuinely useful feature whose marginal benefit is 0.4:
+
+            0.4  =  0.02 w          ->      w = 20
+
+    Barely restrained at all.
+
+THAT is why regularization works, and it is worth stating this way in an interview: it
+does not blindly shrink everything, it imposes a PRICE ON COMPLEXITY, so weights survive
+in proportion to how much the data actually justifies them. Noise, which justifies little,
+gets crushed. Signal, which justifies a lot, does not.""",
+
+    """6. HOW TO DIAGNOSE AND FIX IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: PLOT TRAINING AND VALIDATION TOGETHER, FIND
+THE EPOCH WHERE VALIDATION PEAKS, AND FIX THE GAP BY ADDING DATA OR PENALISING COMPLEXITY
+- WHILE WATCHING THE VALIDATION NUMBER ITSELF RATHER THAN THE SIZE OF THE GAP.
+
+THIS IS A LOOP, and its stopping rule is what separates it from endless tinkering:
+
+  - Each pass changes ONE thing, retrains, and reads validation.
+  - Changing two things at once means you cannot attribute the movement, and you will
+    keep both when only one helped.
+  - WHAT MAKES IT STOP: validation stops improving across a full pass of candidate
+    changes, OR it reaches the target agreed before you started.
+  - WHAT MAKES IT NOT TERMINATE: watching the gap instead of validation. The gap can
+    always be reduced by weakening the model, so that objective has a trivial minimum
+    (a model that predicts one class always has no gap at all) and you will walk
+    straight toward it.
+  - And the test set stays sealed for the whole loop.
+
+THE STEPS:
+
+  1. SPLIT THE DATA before anything else. Train / validation / test. If there is a time
+     dimension, split BY TIME - train on earlier, validate on later - because a random
+     split lets the model see the future.
+
+  2. TRAIN, RECORDING BOTH SCORES every epoch. Not just the final numbers - the curves
+     are the diagnosis.
+
+  3. PLOT THEM TOGETHER and read the shape:
+        both low, small gap        -> underfitting. Go to step 7.
+        train high, val much lower -> overfitting. Go to step 4.
+        both high, small gap       -> possibly healthy. Go to step 6 and check for the
+                                      impostor before celebrating.
+
+  4. APPLY EARLY STOPPING FIRST, since it is free: keep the weights from the best
+     validation epoch, with a patience of several epochs so ordinary noise does not stop
+     you prematurely.
+
+  5. THEN ADD ONE INTERVENTION AT A TIME, re-measuring validation after each:
+        more data or augmentation (try first if available)
+        L2, starting small and increasing
+        dropout on HIDDEN layers, around 0.2 to 0.5
+        a simpler model
+     Keep the change only if VALIDATION rose. Not if the gap shrank.
+
+  6. BEFORE BELIEVING A GOOD RESULT, audit for leakage. For every feature ask: WOULD THIS
+     VALUE EXIST, WITH THIS VALUE, AT THE MOMENT OF PREDICTION? Anything derived from the
+     outcome, filled in afterwards, or computed using the full dataset's statistics is a
+     leak. This step is what catches trap 2, and it is the step everyone skips.
+
+  7. IF UNDERFITTING: the opposite moves. More capacity, less regularization, longer
+     training, better features.
+
+  8. WITH LITTLE DATA, USE CROSS-VALIDATION rather than a single split, so your
+     measurement is not itself noise.
+
+  9. TOUCH THE TEST SET ONCE, at the end, and report that number.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Two students prepare for the same exam using the same ten past papers.
+
+The first works through them trying to understand the reasoning - why this method, when
+does it apply, what would change if the numbers were different. She gets about 80% on the
+practice papers. She keeps making small errors, and the errors annoy her.
+
+The second memorises all ten papers, answer by answer. Eventually he can reproduce every
+one perfectly. 100%. He is visibly ahead, and by the only measure either of them is
+looking at, he is.
+
+Then the real exam arrives, with different questions on the same syllabus. She scores
+around 78 - close to her practice score, because what she learned transfers. He scores
+50, because almost nothing he memorised appears.
+
+Two things about this are worth carrying over.
+
+The first is that HIS PRACTICE SCORE KEPT RISING RIGHT UP TO THE END. Nothing warned him.
+More memorisation always improved the number he was watching. The only way he could have
+known was to test himself on a paper he had never seen - which is exactly what a
+validation set is, and why it is the instrument you steer by rather than a formality.
+
+The second is the failure at the other end. Suppose he had been told he was over-preparing
+and had responded by studying much less. He would score badly on the practice papers AND
+badly on the exam. His gap would have closed beautifully. That is not an improvement - and
+it is precisely the mistake a team makes when they pile on every regularization technique
+at once and celebrate that the two numbers now agree.
+
+And one more, the sly one. Imagine the practice papers accidentally had the answers
+printed faintly on the back, and so did the mock exam. Both scores would be superb, they
+would agree with each other, and the real exam would still be a disaster - because the
+problem was never memorisation. It was that both practices contained information the real
+exam does not. Working harder or studying less would fix nothing; only noticing the
+printing would.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code in this entry, so what follows is each diagnostic and each tool taken apart -
+what it holds, what it decides, and what it costs.
+
+--- THE DIAGNOSTICS ---
+
+    TRAINING SCORE
+        HOLDS: performance on data the model has already seen.
+        DECIDES: almost nothing on its own. It tells you the optimiser is working.
+        NEVER: make a decision on this number alone.
+
+    VALIDATION SCORE
+        HOLDS: performance on held-out data.
+        DECIDES: everything - when to stop, which model, which hyperparameters. This is
+        the number you are actually maximising.
+
+    THE GAP (training minus validation)
+        HOLDS: how much of the model's performance does not transfer.
+        DECIDES: the DIAGNOSIS, not the objective. A large gap says "overfitting"; it does
+        not follow that a smaller gap is better, because the gap can be closed by making
+        everything worse.
+
+    THE CURVES OVER EPOCHS
+        HOLDS: how both scores move as training proceeds.
+        DECIDES: which of the three phases you are in, and the epoch at which validation
+        peaked. Nothing else shows you the moment they part.
+
+--- THE PREVENTION TOOLS ---
+
+    MORE DATA / AUGMENTATION
+        HOLDS: additional examples.
+        DECIDES: how much noise averages out. Noise varies between samples; signal
+        repeats. The most reliable fix available.
+        COSTS: labelling effort, or augmentation that must preserve the label (flipping a
+        cat is a cat; flipping a "6" is not a 6).
+
+    EARLY STOPPING
+        HOLDS: the best-validation weights, and a patience counter.
+        DECIDES: how long to train. Effectively a free regulariser and the first thing to
+        reach for.
+        COSTS: nothing. Needs a validation set and a patience value big enough to ride out
+        noise.
+
+    L2 (RIDGE)
+        HOLDS: lambda times the sum of squared weights, added to the loss.
+        DECIDES: how expensive large weights are. Shrinks weights toward zero in
+        proportion to how little the data justifies them (section 5's arithmetic).
+        COSTS: one hyperparameter. Too large underfits.
+
+    L1 (LASSO)
+        HOLDS: lambda times the sum of absolute weights.
+        DECIDES: the same, plus it drives some weights exactly to ZERO, so it selects
+        features as a side effect. Useful when you suspect most features are useless.
+
+    DROPOUT
+        HOLDS: a probability of switching each neuron off, per training step.
+        DECIDES: whether the network can rely on any single neuron. Forces redundant
+        representations.
+        APPLIES: at training time only - at inference the full network is used.
+        COSTS: slower convergence. And it belongs on HIDDEN layers; on the input layer it
+        is just deleting features at random.
+
+    A SIMPLER MODEL
+        HOLDS: fewer parameters, shallower depth.
+        DECIDES: the ceiling on complexity, bluntly. Works, but removes capacity you
+        might have wanted somewhere, whereas regularization lets the data choose.
+
+    CROSS-VALIDATION
+        HOLDS: several train/validation splits, averaged.
+        DECIDES: how much to TRUST the validation number. A measurement tool, not a
+        prevention tool - and essential when the dataset is small enough that one split is
+        mostly luck.
+
+    PRUNING / MAX DEPTH (trees)
+        HOLDS: a limit on how far a tree may grow, or a post-hoc cutback.
+        DECIDES: whether the tree memorises. Unrestricted trees grow until each leaf holds
+        one example, which is memorisation by construction.
+
+--- WHAT NONE OF THESE FIX ---
+
+    DATA LEAKAGE. No amount of regularization removes a feature that contains the answer.
+    Only auditing the features does.""",
+
+    """9. TRACED ON REAL NUMBERS - AND THE FIX THAT MADE IT WORSE.
+
+A small convolutional network on 2,000 cat/dog images. Both scores recorded per epoch:
+
+    epoch    train     val      gap     what is happening
+    -----    -----    -----    -----    -----------------------------------------
+       2      68%      66%       2      underfitting - both rising, still learning
+       6      79%      77%       2      still healthy
+      10      86%      82%       4      gap opening slightly
+      12      89%      83%       6      VALIDATION PEAKS HERE
+      18      96%      79%      17      overfitting - val has turned DOWN
+      24      99%      76%      23      worse
+      30    99.6%      74%      26      training nearly perfect, val in decline
+
+    Read the val column alone: 66, 77, 82, 83, 79, 76, 74. It rises, peaks at epoch 12,
+    then falls. Everything after epoch 12 made the model WORSE while the training number
+    was still improving - which is exactly why training accuracy is not evidence.
+
+    EARLY STOPPING with patience 5: validation last improved at epoch 12; by epoch 17 it
+    has not improved for 5 epochs, so training halts and the weights from EPOCH 12 are
+    restored. Final model: 83% validation, not 74%. Nine points recovered for free, with
+    no change to the architecture at all.
+
+NOW THE FIX THAT MADE IT WORSE - the over-correction from trap 1.
+
+The team, seeing the 17-point gap at epoch 18, applies everything at once: dropout 0.5 on
+every layer including the input, L2 = 0.1, and the network cut from 6 layers to 2.
+
+                        train      val      gap
+    before               96%       79%       17
+    after                61%       60%        1
+
+    The gap fell from 17 to 1 - a 94% reduction in the thing they were watching.
+    Validation fell from 79 to 60.
+
+    THE ANSWER INVERTS DEPENDING ON WHAT YOU MEASURE. Judged on the gap, this was an
+    enormous success. Judged on validation accuracy - the only number anyone should care
+    about - it destroyed nineteen points of performance, and it is worse than simply
+    stopping early and doing nothing else.
+
+    The correct comparison of all three:
+
+        do nothing, train to epoch 30       val 74%
+        over-regularise                     val 60%
+        early stopping alone                val 83%
+
+    The free intervention beat the elaborate one by 23 points.
+
+AND THE IMPOSTOR - same symptoms, completely different disease.
+
+    A churn model:  train 94%,  validation 93%,  gap 1  -> textbook healthy
+                    production 61%
+
+    Nothing was memorised - the validation set would have caught that. An audit finds a
+    feature called `cancellation_reason`, populated only for customers who have already
+    churned. In the historical data used for both training and validation it is a
+    near-perfect predictor. At prediction time, for a customer who has not churned, it is
+    empty.
+
+    Adding regularization here would produce a worse model that still reads the answer.
+    Adding data would produce more rows containing the same leak. The only fix is to
+    remove the feature and re-measure - after which the honest validation score turns out
+    to be around 68%, and the real work begins.
+
+    THE DIAGNOSTIC QUESTION that would have caught it in ten minutes, asked of every
+    feature: WOULD THIS VALUE EXIST, WITH THIS VALUE, AT THE MOMENT OF PREDICTION?
+
+REGULARIZATION ARITHMETIC, to see it act on one weight (lambda = 0.01, L2):
+
+    a NOISE feature, marginal training benefit 0.001 per unit of weight
+        the optimiser grows w while  0.001 > 0.02w      ->  stops at w = 0.05
+        (without L2 it settled at w = 4.2)
+
+    a SIGNAL feature, marginal training benefit 0.4 per unit of weight
+        the optimiser grows w while  0.4 > 0.02w        ->  stops at w = 20
+
+    Same penalty, applied identically to both. The noise weight is crushed by a factor of
+    eighty; the signal weight is barely touched. Regularization is not blind shrinkage -
+    it is a price on complexity, and features pay it in proportion to how little they
+    are worth.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT EACH FIX COSTS:
+
+  - MORE DATA: labelling time and money. Most reliable, usually least available.
+  - AUGMENTATION: nearly free, but the transformation must preserve the label. Flipping a
+    cat photo horizontally is still a cat; flipping a photo of the digit 6 is not a 6, and
+    plenty of teams have quietly poisoned a dataset this way.
+  - EARLY STOPPING: free. Requires a validation set and a sensible patience.
+  - L2 / L1: one hyperparameter, needs tuning. Too large is underfitting.
+  - DROPOUT: slower convergence, another hyperparameter, and it belongs on hidden layers.
+  - SIMPLER MODEL: gives up capacity everywhere, including where you needed it.
+  - CROSS-VALIDATION: k times the training cost. Worth it when data is small.
+
+WHERE THIS SITS IN THE CLUSTER, so you know which entry answers what:
+  - THIS ENTRY: what overfitting is, how to diagnose it, the prevention toolkit.
+  - BIAS-VARIANCE TRADE-OFF: why the capacity dial has two failure modes at all.
+  - CROSS-VALIDATION: how to measure generalisation reliably on small data.
+  - L1 vs L2 REGULARIZATION: how those two penalties differ and when to prefer each.
+
+THE INTERVIEW QUESTION, AND THE TRAP INSIDE IT:
+
+    "You get 99% on training and 99% on validation, but 70% in production. Is the model
+     overfitting?"
+
+The answer is NO - or at least, not in the sense the word usually means. Overfitting shows
+up as a gap between training and validation, and there is no gap. Something is wrong with
+the DATA rather than with the model's capacity. Two candidates, and you should name both:
+
+    LEAKAGE - a feature carrying information unavailable at prediction time. Both
+    training and validation contain it, so both look excellent.
+
+    DISTRIBUTION SHIFT - production data differs from the historical sample, by
+    population or by time period.
+
+Then say what you would DO: audit every feature against "would this exist at prediction
+time?", and re-validate on a later time slice rather than a random split. Candidates who
+answer "yes, overfitting, add regularization" have pattern-matched on the symptom and
+would make the model worse.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "How do you know it is overfitting and not just a hard problem?" The direction of the
+    validation curve. Hard problems have both scores low; overfitting has training high
+    and validation falling.
+  - "Can a linear model overfit?" Yes - with many features relative to rows, or with
+    high-degree polynomial features. Capacity is not the same as depth.
+  - "Is 100% training accuracy always bad?" Not necessarily on a genuinely separable
+    problem, but it is a strong prompt to go looking for leakage.
+
+THE #1 MISTAKE: optimising the GAP instead of the VALIDATION SCORE. The gap can always be
+reduced by weakening the model, so that objective walks you straight into underfitting
+while every number you are watching improves. Watch validation; use the gap only to
+diagnose.
+
+RUNNER-UP: changing several things at once, so you cannot tell which helped and keep all
+of them.
+
+TAKEAWAY: overfitting is memorising the noise instead of learning the pattern, and the
+only instrument that can see it is a held-out set - so plot both curves, stop where
+validation peaks, and remember that a smaller gap is not the goal, a higher validation
+score is.""",
 ]
 
 

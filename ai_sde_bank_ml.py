@@ -1006,12 +1006,667 @@ ndcg([3, 2, 3, 0, 1, 2])     # rewards putting the most relevant items FIRST
 '''),
           example="Cancer screening versus spam. Screening: a missed tumour is catastrophic and a false alarm costs one follow-up test, so optimise RECALL and accept low precision. Spam: a lost real email is worse than a seen spam, so optimise PRECISION. Same maths, opposite thresholds - and the choice is a business decision, not a modelling one. Saying that sentence is the whole point of the question.",
           examples=[
-              "The 99%-accuracy trap, with the arithmetic. 1,000 transactions, 10 of them fraud. A model that predicts 'not fraud' for everything scores 990/1000 = 99% accuracy, and catches zero fraud: precision undefined, recall 0.0, F1 0.0. Any candidate reporting accuracy here has told the interviewer they do not understand the problem. The moment the positive class is under about 10% of the data, quote precision, recall and PR-AUC instead, and say why.",
-              "Precision and recall computed from one confusion matrix. Out of 1,000 transactions with 10 frauds, the model flags 100 and 8 of them are genuinely fraud. TP = 8, FP = 92, FN = 2, TN = 898. Precision = 8/100 = 0.08 (92% of the alerts are wasted analyst time), recall = 8/10 = 0.80 (we caught 8 of 10 frauds), F1 = 2*0.08*0.80/0.88 = 0.145. Whether this model is good depends entirely on what an analyst hour costs versus what a missed fraud costs - and computing that expected cost is the answer, not the F1.",
-              "Why ROC-AUC flatters an imbalanced model, in the same numbers. With 990 negatives, those 92 false positives give a false-positive rate of 92/990 = 0.093 - which looks excellent on an ROC curve because the denominator is huge. PRECISION uses the alerts as the denominator (92/100) and reports the truth: nine of ten alerts are junk. So ROC-AUC can sit at 0.95 while the model is operationally useless. Rule of thumb: when the positive class is rare AND you care about the alerts you generate, PR-AUC is the honest curve.",
-              "Choosing a threshold from cost, worked. A fraud model with probabilities. At threshold 0.5: 8 caught, 2 missed, 92 false alarms. At 0.3: 9 caught, 1 missed, 210 false alarms. At 0.7: 6 caught, 4 missed, 30 false alarms. With a missed fraud at 500 euro and a review at 5 euro: 0.5 costs 2*500 + 92*5 = 1,460; 0.3 costs 1*500 + 210*5 = 1,550; 0.7 costs 4*500 + 30*5 = 2,150. Threshold 0.5 wins here, but only because of those specific costs - change the review cost to 2 euro and 0.3 becomes best. The point is that the threshold is computed, not assumed.",
-              "Regression metrics, and which sentence each one gives a stakeholder. Predicting delivery time in minutes, errors [2, 3, 1, 4, 60]. MAE = 14 minutes ('the typical error is 14 minutes' - though the median error is 3, so quote that too). RMSE = sqrt((4+9+1+16+3600)/5) = 26.8 minutes, dominated entirely by the one 60-minute miss. If those big misses are the thing customers complain about, RMSE is the right metric because it punishes them; if they are data errors, MAE is. MAPE would be a bad choice if any true value is near zero, since dividing by it explodes.",
-              "NDCG, and why ranking needs its own metric. Search returns 5 results with relevance [3, 2, 3, 0, 1]. DCG = 3/log2(2) + 2/log2(3) + 3/log2(4) + 0/log2(5) + 1/log2(6) = 3 + 1.26 + 1.5 + 0 + 0.39 = 6.15. The ideal ordering [3,3,2,1,0] gives an ideal DCG of 3 + 1.89 + 1 + 0.43 + 0 = 6.32, so NDCG = 0.97. The logarithmic discount is the point: moving a relevant result from position 5 to position 1 improves the score far more than moving it from position 50 to position 46, which matches how users actually behave.",
+              r"""1. THE GOAL - this entry is the MAP, not the territory.
+
+Every model needs a number that says how well it is doing. There are dozens of candidate
+numbers, they disagree with each other, and choosing the wrong one is how teams ship
+models that score beautifully and fail in production.
+
+The rule underneath all of it, and it is one sentence:
+
+    PICK THE METRIC THAT MATCHES THE DECISION AND THE COST OF EACH ERROR - THEN JUSTIFY
+    IT.
+
+Not "which metric is best" - there is no such thing. A metric is a claim about what you
+care about. Accuracy claims that all errors cost the same. RMSE claims that one error of
+60 is worse than sixty errors of 1. NDCG claims that position 1 matters more than
+position 5. Each of those claims is right for some problems and wrong for others.
+
+WHAT THIS ENTRY OWNS, AND WHAT ITS SIBLINGS OWN - worth stating, because there are three
+overlapping entries and reading all of them should not feel repetitive:
+
+    THIS ENTRY  - the complete map across ALL task types, the routing rules, and
+                  REGRESSION and RANKING metrics in depth. Plus the code that computes
+                  them.
+    PRECISION vs RECALL (sibling) - the confusion matrix and the choice between those two
+                  in depth, plus the 95%-accuracy trap.
+    ROC, AUC & CHOOSING A THRESHOLD (sibling) - the threshold sweep, ranking quality
+                  versus operating point, and ROC versus PR under imbalance.
+
+So classification is summarised here and developed there. Regression and ranking are
+developed here, because nothing else covers them.""",
+              r"""2. THE INTUITION - a routing table, keyed on what kind of answer the model gives.
+
+Start from the SHAPE of the prediction, because that alone eliminates most of the menu:
+
+    WHAT THE MODEL OUTPUTS            WHICH FAMILY OF METRICS
+    ------------------------------    -------------------------------------------------
+    a CLASS (spam / not spam)      -> accuracy, precision, recall, F1
+    a PROBABILITY (0.83)           -> ROC-AUC, PR-AUC, log loss, Brier score
+    a NUMBER (42.7 minutes)        -> RMSE, MAE, MAPE, R-squared
+    an ORDERED LIST (10 results)   -> precision@k, recall@k, MAP, NDCG, MRR
+    GROUPS with no labels          -> silhouette, Davies-Bouldin
+
+Then, within a family, the question is what the errors cost:
+
+    CLASSIFICATION
+        classes balanced, errors equally bad          -> accuracy is fine
+        false alarms expensive                        -> precision
+        misses expensive                              -> recall
+        want one number, errors roughly equal         -> F1
+        want one number, errors NOT equal             -> F-beta
+        judging the RANKING, classes balanced         -> ROC-AUC
+        judging the RANKING, positives rare           -> PR-AUC
+        the PROBABILITIES themselves get used         -> log loss
+
+    REGRESSION
+        big errors disproportionately bad             -> RMSE
+        "the typical error is X minutes"              -> MAE
+        errors matter in PERCENTAGE terms             -> MAPE (never near zero)
+        "how much variance is explained"              -> R-squared
+
+    RANKING
+        only the first page matters                   -> precision@k
+        position within the page matters              -> NDCG
+        one right answer, how far down is it          -> MRR
+
+The single most useful habit on this page: BEFORE choosing, write down what a wrong
+answer costs in each direction, in real units. Once that is written, the metric usually
+picks itself, and the choice becomes defensible rather than conventional.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+CONFUSION MATRIX. The 2x2 table of TP, FP, FN, TN. Everything in classification is
+arithmetic on it. (Developed in the Precision vs Recall sibling.)
+
+ACCURACY = (TP+TN)/total. Fraction correct. Meaningless on imbalanced data because TN
+dominates.
+
+PRECISION = TP/(TP+FP). Of what you flagged, how much was real.
+
+RECALL = TP/(TP+FN). Of what was real, how much you caught. Also called sensitivity and
+true positive rate.
+
+SPECIFICITY = TN/(TN+FP). Of the true negatives, how many you correctly ignored.
+
+F1 = harmonic mean of precision and recall. Low if either is low.
+
+F-BETA. F1 generalised so recall counts beta times as much as precision. beta = 2 weights
+recall more; beta = 0.5 weights precision more.
+
+ROC-AUC. Area under the true-positive-rate versus false-positive-rate curve.
+Threshold-independent; measures RANKING. Optimistic under heavy imbalance.
+
+PR-AUC. Area under the precision-recall curve. The honest choice when positives are rare.
+Its random baseline is the BASE RATE, not 0.5.
+
+LOG LOSS (cross-entropy). Measures the quality of the PROBABILITIES themselves, not just
+the class. Punishes confident wrongness enormously - predicting 0.99 for something that
+was false costs far more than predicting 0.6. Use it when the probability feeds a
+decision, such as expected-value calculations in bidding or pricing.
+
+BRIER SCORE. Mean squared error of the probabilities. Same purpose as log loss, gentler
+on confident mistakes.
+
+CALIBRATION. Whether a predicted 0.7 really happens about 70% of the time. A model can
+rank perfectly (great AUC) and be badly calibrated.
+
+RMSE (Root Mean Squared Error). Square the errors, average, square-root. Same units as
+the target. Squaring means one large error outweighs many small ones.
+
+MAE (Mean Absolute Error). Average of absolute errors. Robust to outliers, and the one
+that supports the sentence a stakeholder actually understands: "we are typically off by
+14 minutes".
+
+MAPE (Mean Absolute Percentage Error). Average of |error / actual|. Scale-free, and it
+explodes when the true value is near zero - dividing by 0.001 produces a percentage in the
+thousands.
+
+R-SQUARED. Share of the target's variance the model explains. 1.0 perfect, 0 no better
+than predicting the mean, and it can be negative. It NEVER DECREASES when you add a
+feature, even a useless one - which is why adjusted R-squared exists.
+
+PRECISION@k. Precision computed on only the top k results, because users see one page.
+
+NDCG (Normalised Discounted Cumulative Gain). Ranking metric that rewards putting the
+most relevant items HIGHEST, with a logarithmic discount by position, normalised against
+the perfect ordering so it lands between 0 and 1.
+
+MRR (Mean Reciprocal Rank). 1 divided by the position of the first correct answer,
+averaged. For problems with one right answer.
+
+SILHOUETTE. Clustering metric: how much closer a point is to its own cluster than to the
+nearest other one. From -1 to 1.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1: reporting accuracy on imbalanced data. 1,000 transactions with 10 frauds - a
+model predicting "not fraud" for everything scores 990/1000 = 99%. Always compare accuracy
+against the majority-class baseline. (Developed fully in the Precision vs Recall sibling.)
+
+TRAP 2 - THE REGRESSION VERSION OF THE SAME MISTAKE: quoting RMSE when MAE is what the
+audience means.
+
+    Delivery-time errors in minutes: [2, 3, 1, 4, 60]
+
+        MAE  = (2+3+1+4+60)/5 = 70/5 = 14 minutes
+        RMSE = sqrt((4+9+1+16+3600)/5) = sqrt(726) = 26.9 minutes
+
+    Both are correct. They differ by nearly a factor of two, and they say different
+    things. MAE says "we are typically off by 14 minutes" - which is nearly true for four
+    of the five deliveries. RMSE says 26.9, a number matching NONE of the five errors,
+    because the single 60 dominates the squared average.
+
+    Neither is wrong. RMSE is right if one 60-minute failure is much worse than sixty
+    1-minute delays - which for a delivery promise it probably is. MAE is right if you
+    want to describe typical experience. THE GAP BETWEEN THEM IS ITSELF A DIAGNOSTIC: when
+    RMSE is much larger than MAE, you have outliers, and that is worth knowing before you
+    pick either.
+
+TRAP 3: MAPE near zero. Predicting demand of 0.5 units and being off by 1 gives a 200%
+error; enough near-zero actuals and MAPE becomes meaningless. Note the code guards this
+with a clip - which prevents a crash and does NOT make the number trustworthy.
+
+TRAP 4: R-squared always improving. Add a column of random noise as a feature and
+R-squared goes UP, because it can only decrease if the new feature is perfectly useless
+AND the fit is exact. It never penalises complexity. Use adjusted R-squared, or judge on
+held-out data.
+
+TRAP 5: optimising a metric that is not the decision. A team maximises F1 and ships. But
+F1 asserts precision and recall matter equally - and if a miss costs twenty-five times a
+false alarm, the F1-optimal threshold is simply the wrong point. (The ROC sibling works
+that arithmetic in full.)
+
+TRAP 6: ignoring log loss when the PROBABILITY is the product. If downstream systems
+multiply the probability by a value to make a bid or a triage decision, then a model that
+ranks correctly but is systematically overconfident will lose money while showing an
+excellent AUC. AUC cannot see calibration at all - it only sees order.
+
+TRAP 7: comparing metrics across datasets. AUC 0.90 here and 0.85 there does not establish
+that the first model is better; separability differs between populations.
+
+TRAP 8: a ranking metric that ignores position. Precision@10 gives the identical score
+whether the one relevant result is at position 1 or position 10. If position matters -
+and for search it always does - you need NDCG or MRR.""",
+              r"""5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE.
+
+THE NAIVE APPROACH: use the default metric for the model type. Accuracy for
+classification, R-squared for regression, and move on.
+
+It is what every tutorial reports, so it feels standard. It fails because a metric is not
+a neutral description of quality - it is an assertion about what matters, and the defaults
+assert things that are usually false:
+
+    ACCURACY asserts   every error costs the same and the classes are balanced.
+    RMSE asserts       an error of 10 is a hundred times worse than an error of 1.
+    R-SQUARED asserts  explained variance is what you care about, and it silently rewards
+                       adding features.
+    PRECISION@k asserts position within the top k is irrelevant.
+
+Any of those can be exactly right. The mistake is not choosing them - it is choosing them
+without noticing you made a claim.
+
+THE REAL APPROACH: start from the decision, work backwards to the metric.
+
+  1. WHAT DECISION does this prediction drive? Block a card, order stock, show a result,
+     alert a doctor.
+  2. WHAT DOES EACH KIND OF ERROR COST, in real units? Money, time, harm.
+  3. WHICH METRIC HAS THOSE COSTS BUILT INTO IT? If none does, build a cost function
+     directly - that is always legitimate and is often better than any named metric.
+
+THE UPGRADE PATH, in increasing sophistication - and the direction to move as you get more
+serious about a problem:
+
+    LEVEL 1 - a single default metric. Fast, and asserts something you have not checked.
+
+    LEVEL 2 - the RIGHT named metric for the error costs. Precision when false alarms
+    hurt, recall when misses hurt, MAE when typical error is the story, NDCG when position
+    matters.
+
+    LEVEL 3 - a CUSTOM COST FUNCTION in real units. total_cost = FP x cost_of_false_alarm
+    + FN x cost_of_miss. This is what the code's best_threshold does, and it is strictly
+    better than any named metric when you can get the numbers, because it encodes the
+    actual objective rather than a proxy for it.
+
+    LEVEL 4 - a CONSTRAINED objective when costs are unavailable: "recall must be at least
+    0.95; among the thresholds meeting that, take the highest precision." Encodes a real
+    requirement without needing a price list.
+
+WHY NDCG DISCOUNTS BY log2 OF THE POSITION - the trick, from scratch, because it is the
+one formula here that looks arbitrary.
+
+You want a ranking metric where being at position 1 is worth more than position 2, which
+is worth more than position 3. So divide each item's relevance by something that grows
+with position. But how fast should the value fall?
+
+    DIVIDE BY THE POSITION ITSELF (1, 2, 3, 4...): position 2 is worth half of position 1.
+    That is a steep drop - it says the second result barely matters, which does not match
+    how people actually read a results page.
+
+    DIVIDE BY log2(position + 1)  (1, 1.58, 2, 2.32, 2.58...): position 2 is worth 63% of
+    position 1, position 4 is worth 50%, position 8 about 33%. The value decays, but
+    gently, and it keeps decaying forever without ever hitting zero.
+
+The logarithm is chosen because it matches observed behaviour - attention falls off with
+depth, but a result at position 8 is not worthless. The +1 exists so the first position
+gives log2(2) = 1, dividing by one rather than by zero.
+
+Then NORMALISE: compute the same score for the PERFECT ordering of the same items and
+divide. That is what turns DCG into NDCG and puts it on a 0-to-1 scale, so scores are
+comparable across queries that have different numbers of relevant results.""",
+              r"""6. HOW TO CHOOSE - the procedure, step by step.
+
+The one sentence that holds the whole idea: NAME THE DECISION, PRICE EACH KIND OF ERROR,
+AND PICK THE METRIC WHOSE ARITHMETIC ALREADY ENCODES THAT PRICING - OR WRITE THE COST
+FUNCTION DIRECTLY AND SKIP THE NAMED METRICS ENTIRELY.
+
+THERE IS A LOOP HERE - selecting the metric and then the operating point - and it needs a
+stopping rule:
+
+  - Each pass proposes a metric or a threshold, evaluates it on validation data, and
+    checks whether the resulting behaviour is what the business actually wants.
+  - WHAT MAKES IT STOP: the metric is agreed BEFORE modelling begins, and the operating
+    point is then chosen by a fixed objective (minimum cost, or a stated constraint).
+  - WHAT MAKES IT NOT TERMINATE: choosing the metric AFTER seeing results. There is
+    always some metric under which the current model looks good, and searching for it
+    feels like analysis. Fix the metric first; that is the whole discipline.
+
+THE STEPS:
+
+  1. NAME THE DECISION the prediction drives. If nobody can name one, stop - you do not
+     have a metric problem, you have a product problem.
+
+  2. IDENTIFY THE OUTPUT SHAPE - class, probability, number, ranked list, clustering. This
+     eliminates most of the menu immediately.
+
+  3. GET THE BASE RATE for classification. It determines whether accuracy means anything
+     and whether to prefer ROC or PR.
+
+  4. PRICE THE ERRORS in real units. What does a false alarm cost? What does a miss cost?
+     For regression: is one big error worse than several small ones, or not?
+
+  5. CHOOSE THE METRIC WHOSE ARITHMETIC MATCHES that pricing, using the routing table in
+     section 2.
+
+  6. IF THE PROBABILITIES ARE USED DOWNSTREAM, add log loss or a calibration check. AUC
+     is blind to calibration - it only sees order.
+
+  7. FIX THE METRIC BEFORE MODELLING. Write it down. This is what stops the search for a
+     flattering number later.
+
+  8. REPORT MORE THAN ONE. A single number always hides something - report precision AND
+     recall, or MAE AND RMSE. The gap between two metrics is itself informative (RMSE far
+     above MAE means outliers).
+
+  9. CHOOSE THE OPERATING POINT by cost or by constraint, on validation data, never on
+     test.
+
+ 10. RE-CHECK PERIODICALLY. Base rates drift, and precision moves with them even when the
+     model has not changed at all.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine judging three completely different competitions and being handed the same
+scoresheet for all of them.
+
+In the first, a baker must produce a hundred identical rolls. What matters is consistency,
+so you measure the average deviation from the target weight. One roll wildly wrong is
+about as bad as several slightly wrong - all your customers get one roll each.
+
+In the second, a bridge engineer submits a hundred load calculations. Here one wildly
+wrong answer is not like several slightly wrong ones; it is catastrophically worse,
+because the bridge falls down once. So you square the errors before averaging, which makes
+a single large mistake dominate the score - deliberately.
+
+In the third, a librarian is asked for the ten most useful books on a subject. Now it is
+not about how wrong the answers are but about ORDER. Ten good books in a bad order is a
+worse answer than the same ten with the best first, because the person asking will read
+the first two and leave.
+
+Same word - "how well did they do?" - three genuinely different questions. Handing the
+baker's scoresheet to the engineer would pass a bridge that falls down, because the one
+disastrous calculation gets averaged away by ninety-nine fine ones.
+
+And there is a fourth situation, the sly one. Suppose someone does not need the librarian's
+ordering at all, but needs to know how CONFIDENT she is in each recommendation, because
+they are betting money on it. Now a librarian who is always right but says "I'm 99% sure"
+about everything, including the ones she gets wrong, is dangerous in a way that no ordering
+score can detect. That is what measuring the probabilities rather than the ranking is for.
+
+So the first question is never "what is the score". It is "what is the decision, and what
+does it cost me to be wrong in each direction".""",
+              r"""8. THE CODE, LINE BY LINE, in the real variable names.
+
+    import numpy as np
+
+    def confusion(y, pred):
+
+y is the array of true labels (1 for positive, 0 for negative); pred is the array of
+predicted labels. Returns the four counts. Neither array is modified.
+
+        tp = int(((pred == 1) & (y == 1)).sum());  fp = int(((pred == 1) & (y == 0)).sum())
+
+Read it inside out. `pred == 1` produces an array of True/False, one per item. `y == 1`
+likewise. The single `&` is ELEMENTWISE and - True only where both are True at the same
+position. `.sum()` counts the Trues, since True counts as 1. So tp is "predicted positive
+AND actually positive", and fp is "predicted positive AND actually negative". `int(...)`
+converts numpy's integer type to a plain Python one so the returned dictionary prints
+cleanly.
+
+        fn = int(((pred == 0) & (y == 1)).sum());  tn = int(((pred == 0) & (y == 0)).sum())
+
+The other two boxes. fn is the misses, tn the correct rejections. These four always sum to
+the total, which is the fastest check that a confusion matrix is right.
+
+    def report(y, pred):
+        tp, fp, fn, tn = confusion(y, pred)
+
+Unpack the four counts. Every metric below is arithmetic on these.
+
+        precision = tp / (tp + fp) if tp + fp else 0.0     # of flagged, how many real
+
+The guard matters. If NOTHING was flagged, tp + fp is 0 and this would be 0/0. The
+convention - and what scikit-learn does, with a warning - is to report 0.0. A model that
+flags nothing does not have perfect precision; it has no precision.
+
+        recall    = tp / (tp + fn) if tp + fn else 0.0     # of real, how many caught
+
+Same guard for the case where there are no actual positives at all in the sample.
+
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+The harmonic mean. The guard covers precision and recall both being 0, which would
+otherwise divide by zero. Note the harmonic mean is 0 whenever either input is 0 - that is
+the property that makes it a useful summary, since a model perfect on one axis and useless
+on the other should not score halfway.
+
+        return {"accuracy": (tp + tn) / len(y), ...
+
+accuracy uses len(y) as the denominator - the total number of items - which is the same as
+tp+fp+fn+tn. Note this is the metric that includes tn, and therefore the one that breaks
+under imbalance.
+
+                "specificity": tn / (tn + fp) if tn + fp else 0.0}
+
+specificity is recall's mirror image for the negative class: of everything actually
+negative, how much was correctly ignored. It equals 1 - FPR, the quantity on the ROC
+curve's horizontal axis.
+
+    y = np.array([0] * 990 + [1] * 10)          # 1% fraud
+    always_zero = np.zeros(1000)
+    report(y, always_zero)
+
+The 99%-accuracy trap made executable. 990 negatives, 10 positives, and a "model" that
+predicts 0 for everything. Traced in section 9.
+
+    def best_threshold(y, probs, cost_fp=1.0, cost_fn=10.0):
+
+probs is the array of predicted PROBABILITIES rather than classes. cost_fp and cost_fn are
+what one false alarm and one miss cost, in whatever unit you choose - they only need to be
+consistent with each other. The defaults encode "a miss costs ten false alarms".
+
+        best, best_cost = 0.5, float("inf")
+
+Start with the conventional threshold and an impossibly high cost, so the first real
+candidate always wins.
+
+        for t in np.linspace(0.01, 0.99, 99):
+
+99 candidate thresholds evenly spaced from 0.01 to 0.99. A finite grid, which is why this
+loop terminates - it is a sweep, not a search.
+
+            tp, fp, fn, tn = confusion(y, (probs >= t).astype(int))
+
+`probs >= t` gives True/False per item; `.astype(int)` turns that into 1s and 0s so it can
+be fed to confusion. This is where a probability becomes a decision, and it is the only
+place the threshold enters.
+
+            cost = fp * cost_fp + fn * cost_fn
+
+The objective, in real units. Note what is ABSENT: tp and tn contribute nothing, because
+correct answers cost nothing. Only mistakes are priced.
+
+            if cost < best_cost:
+                best, best_cost = t, cost
+        return best, best_cost
+
+Keep the cheapest. Strictly-less-than means the first threshold achieving a given cost
+wins ties, so the lowest threshold is preferred on a tie - worth knowing if you ever see a
+suspiciously low answer.
+
+    def rmse(y, p): return float(np.sqrt(np.mean((y - p) ** 2)))
+
+Errors, SQUARED, averaged, then square-rooted. The squaring is the whole character of this
+metric: it makes one error of 10 count as much as a hundred errors of 1. The final
+square-root returns it to the target's units, which is what makes it reportable.
+
+    def mae(y, p):  return float(np.mean(np.abs(y - p)))
+
+Absolute errors, averaged. No squaring, so an outlier contributes in proportion to its
+size rather than its square. This is the one that supports "we are typically off by X".
+
+    def mape(y, p): return float(np.mean(np.abs((y - p) / np.clip(np.abs(y), 1e-9, None))) * 100)
+
+Percentage error. `np.clip(np.abs(y), 1e-9, None)` forces the denominator to be at least
+one billionth, preventing division by zero. Read that guard honestly: it stops a CRASH, it
+does not make the answer meaningful. Dividing by 1e-9 produces an astronomically large
+percentage that will dominate the mean. If actuals can be near zero, MAPE is the wrong
+metric, not a metric needing a guard.
+
+    def r2(y, p):   return float(1 - ((y - p) ** 2).sum() / ((y - y.mean()) ** 2).sum())
+
+One minus (the model's squared error) divided by (the squared error of just predicting the
+mean). So 1.0 is perfect, 0 means no better than the mean, and NEGATIVE means worse than
+predicting the mean - which is possible and worth knowing.
+
+    def dcg(relevances):
+        return sum(r / np.log2(i + 2) for i, r in enumerate(relevances))
+
+Discounted Cumulative Gain. i counts from 0, so the divisor is log2(2) = 1 for the first
+item, log2(3) = 1.585 for the second, log2(4) = 2 for the third. Each item's relevance is
+divided by that position discount and summed. The +2 is what makes the first position
+divide by 1 rather than by log2(1) = 0.
+
+    def ndcg(relevances, k=10):
+        ideal = sorted(relevances, reverse=True)[:k]
+        return dcg(relevances[:k]) / (dcg(ideal) or 1.0)
+
+`ideal` is the SAME relevance values sorted best-first - the perfect ranking of this exact
+result set. Dividing by its DCG normalises to a 0-to-1 scale, so scores are comparable
+across queries with different numbers of relevant results. `or 1.0` guards the case where
+every relevance is 0, which would make the ideal DCG zero and the division undefined.""",
+              r"""9. THE CODE TRACED WITH REAL NUMBERS - AND THE COST OPTIMUM MOVING.
+
+TRACE 1 - report() ON THE 99%-ACCURACY TRAP.
+
+    y = np.array([0]*990 + [1]*10)     990 legitimate, 10 fraudulent
+    always_zero = np.zeros(1000)       predict "not fraud" for everything
+
+    confusion(y, always_zero):
+        tp = count where (pred==1 AND y==1)  ->  pred is never 1  ->  0
+        fp = count where (pred==1 AND y==0)  ->                       0
+        fn = count where (pred==0 AND y==1)  ->  all 10 frauds     -> 10
+        tn = count where (pred==0 AND y==0)  ->  all 990 legit     -> 990
+        check: 0 + 0 + 10 + 990 = 1000  ✓
+
+    report(y, always_zero):
+        precision   = tp+fp is 0        -> guard fires -> 0.0
+        recall      = 0 / (0 + 10)      -> 0.0
+        f1          = precision+recall is 0 -> guard fires -> 0.0
+        accuracy    = (0 + 990) / 1000  -> 0.99
+        specificity = 990 / (990 + 0)   -> 1.0
+
+    ACCURACY 0.99 AND SPECIFICITY 1.0 - two metrics reporting near-perfection for a model
+    containing no logic whatsoever. Recall 0.0 is the only number telling the truth. This
+    is why the guards matter too: without them this call would have crashed on 0/0 rather
+    than quietly returning 0.
+
+TRACE 2 - best_threshold(), AND THE ANSWER INVERTING ON COST.
+
+    A fraud model over 1,000 transactions with 10 frauds. At four of the 99 candidate
+    thresholds the sweep finds:
+
+        threshold     TP    FN     FP
+        ---------    ----  ----  -----
+          0.3          9     1     210
+          0.5          8     2      92
+          0.7          6     4      30
+          0.9          3     7       5
+
+    With the DEFAULTS, cost_fp = 1 and cost_fn = 10:
+
+        cost = fp * 1 + fn * 10
+
+          0.3:   210 + 10 =  220
+          0.5:    92 + 20 =  112
+          0.7:    30 + 40 =   70      <-- minimum
+          0.9:     5 + 70 =   75
+
+        best_threshold returns (0.7, 70.0).
+
+    NOW CHANGE ONE ARGUMENT. Suppose the business enters a regulated market where an
+    undetected fraud also carries a penalty, so cost_fn = 100 instead of 10:
+
+        cost = fp * 1 + fn * 100
+
+          0.3:   210 + 100 =  310
+          0.5:    92 + 200 =  292      <-- minimum
+          0.7:    30 + 400 =  430
+          0.9:     5 + 700 =  705
+
+        best_threshold returns (0.5, 292.0).
+
+    THE MODEL DID NOT CHANGE. THE DATA DID NOT CHANGE. The optimal threshold moved from
+    0.7 to 0.5 purely because one cost constant changed - and the system now accepts 92
+    false alarms instead of 30, because each miss became ten times dearer.
+
+    That is the argument for level 3 of section 5: a cost function in real units answers
+    the question directly, where a named metric can only approximate it.
+
+TRACE 3 - REGRESSION, AND WHY TWO METRICS DISAGREE.
+
+    Delivery-time errors, in minutes: [2, 3, 1, 4, 60]
+
+        mae:  (2 + 3 + 1 + 4 + 60) / 5  =  70 / 5  =  14.0 minutes
+
+        rmse: squares are 4, 9, 1, 16, 3600
+              sum = 3630,  mean = 726,  sqrt(726) = 26.94 minutes
+
+    MAE says 14. RMSE says 26.9. Both are correct arithmetic on the same five numbers.
+
+    MAE describes four of the five deliveries well. RMSE matches NONE of the individual
+    errors - it is inflated by the single 60, exactly as designed, because squaring makes
+    3600 dwarf the other four values combined (which total 30).
+
+    THE RATIO IS ITSELF A DIAGNOSTIC: RMSE nearly twice MAE says there are outliers. If
+    the two were close, the errors would be evenly spread.
+
+    WHICH TO REPORT: MAE to a stakeholder who wants to know the typical experience; RMSE
+    if one 60-minute failure genuinely matters more than sixty 1-minute delays - which for
+    a delivery promise it probably does. Report both, and say why they differ.
+
+TRACE 4 - ndcg(), COMPUTED FULLY.
+
+    ndcg([3, 2, 3, 0, 1, 2]) with the default k = 10.
+
+    The list has 6 items, so relevances[:10] is all of them.
+
+    dcg([3, 2, 3, 0, 1, 2]):
+        i=0:  3 / log2(2) = 3 / 1.0000 = 3.0000
+        i=1:  2 / log2(3) = 2 / 1.5850 = 1.2619
+        i=2:  3 / log2(4) = 3 / 2.0000 = 1.5000
+        i=3:  0 / log2(5) = 0 / 2.3219 = 0.0000
+        i=4:  1 / log2(6) = 1 / 2.5850 = 0.3869
+        i=5:  2 / log2(7) = 2 / 2.8074 = 0.7124
+        DCG = 3.0000 + 1.2619 + 1.5000 + 0.0000 + 0.3869 + 0.7124 = 6.8612
+
+    ideal = sorted([3,2,3,0,1,2], reverse=True) = [3, 3, 2, 2, 1, 0]
+
+    dcg([3, 3, 2, 2, 1, 0]):
+        i=0:  3 / 1.0000 = 3.0000
+        i=1:  3 / 1.5850 = 1.8928
+        i=2:  2 / 2.0000 = 1.0000
+        i=3:  2 / 2.3219 = 0.8614
+        i=4:  1 / 2.5850 = 0.3869
+        i=5:  0 / 2.8074 = 0.0000
+        IDCG = 3.0000 + 1.8928 + 1.0000 + 0.8614 + 0.3869 + 0.0000 = 7.1411
+
+    NDCG = 6.8612 / 7.1411 = 0.961
+
+    Read what the number means: this ordering captures 96.1% of the value the perfect
+    ordering of these same items would have delivered. The main loss is that a relevance-3
+    item sits at position 3 instead of position 2, and the relevance-2 item at position 6
+    should have been higher.
+
+    AND THE CONTRAST WITH precision@k, which is why ranking needs its own metric:
+    precision@6 counts how many of the six are relevant and gives the SAME answer for
+    [3,2,3,0,1,2] and for [0,1,2,2,3,3] - the worst possible ordering of the identical
+    items. NDCG gives 0.961 for the first and would give roughly 0.79 for the second. Only
+    NDCG can see the difference, because only NDCG has a position discount.""",
+              r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT EACH METRIC COSTS TO COMPUTE, since this occasionally matters at scale:
+
+  - The classification metrics are one pass over the predictions. Free.
+  - A threshold sweep is one pass PER CANDIDATE threshold - 99 passes in this code. Still
+    cheap, but do it on validation data rather than on everything.
+  - ROC-AUC and PR-AUC require sorting by score: O(n log n).
+  - NDCG requires sorting the relevances for the ideal ranking, per query.
+  - The expensive part is never the arithmetic. It is obtaining the LABELS - and for
+    ranking, human relevance judgements, which is why offline ranking evaluation is
+    expensive and why teams lean on click data as a noisy proxy.
+
+THE ROUTING SUMMARY - the thing to be able to reproduce under pressure:
+
+    CLASSIFICATION
+        balanced, errors equal              accuracy
+        false alarms expensive              precision
+        misses expensive                    recall
+        one number, errors comparable       F1  (F-beta if not comparable)
+        ranking quality, balanced           ROC-AUC
+        ranking quality, rare positives     PR-AUC
+        probabilities used downstream       log loss + a calibration check
+    REGRESSION
+        outliers matter more                RMSE
+        typical error is the story          MAE
+        relative error, actuals far from 0  MAPE
+        variance explained                  R-squared (adjusted, or held-out)
+    RANKING
+        only the page matters               precision@k
+        position matters                    NDCG
+        one right answer                    MRR
+    CLUSTERING
+        no labels available                 silhouette, Davies-Bouldin
+
+    AND ABOVE ALL OF THEM: if you can price the errors, write the cost function directly.
+    It beats every named metric because it encodes the real objective instead of a proxy.
+
+THE INTERVIEW QUESTIONS, WITH THEIR ANSWERS:
+
+  - "Which metric would you use for X?" Never answer immediately. Ask what decision the
+    prediction drives and what each error costs. The question is testing whether you reach
+    for a default or reason from the problem.
+  - "Our model is 99% accurate." Ask the base rate. (Precision vs Recall sibling.)
+  - "Our AUC is 0.94, ship it?" Ask the base rate and the operating threshold. (ROC
+    sibling.)
+  - "Why is RMSE so much higher than MAE?" Outliers. And that is a finding about the data,
+    not a problem with the metric.
+  - "R-squared went up when we added a feature - is the model better?" Not necessarily.
+    R-squared never decreases when features are added. Check on held-out data or use
+    adjusted R-squared.
+  - "The model ranks well but our bidding system loses money." Calibration. AUC sees only
+    order, not whether a 0.7 really means 70%. Measure log loss and plot a calibration
+    curve.
+
+THE #1 MISTAKE: choosing the metric AFTER seeing the results. There is always some metric
+under which the current model looks good, and hunting for it feels like analysis while
+being the opposite. Fix the metric before modelling, write it down, and report more than
+one number so a single figure cannot hide the failure mode.
+
+RUNNER-UP: reporting one number at all. Precision without recall, or RMSE without MAE,
+each conceals exactly the thing the other would reveal.
+
+TAKEAWAY: a metric is a claim about what errors cost, not a neutral measure of quality -
+so name the decision, price the mistakes in real units, and pick the metric whose
+arithmetic already encodes that pricing, or write the cost function yourself and skip the
+named metrics entirely.""",
           ],
           pitfalls="Reporting accuracy on imbalanced data; ROC-AUC when positives are under about 5% of the data; a fixed 0.5 threshold with no cost analysis; comparing metrics computed on different splits; reporting a metric with no baseline; optimising a metric the business never asked for.",
           followups="'Your model has 0.95 precision and 0.3 recall - is that good?' It depends entirely on the cost ratio; ask what happens on a miss versus a false alarm, then compute the expected cost at several thresholds. 'How do you evaluate a model with no labels?' Proxy signals and human evaluation, plus monitoring input drift and downstream business metrics."),
