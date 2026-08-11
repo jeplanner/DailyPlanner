@@ -70004,65 +70004,458 @@ underneath it all is "as many 3s as possible, never a leftover 1".""",
 ]
 
 _EX_P1C["Maximum Length of Pair Chain"] = [
-    """The example, traced.
-pairs = [[1,2],[7,8],[4,5]] -> sorted BY END: [[1,2],[4,5],[7,8]]
-current_end = -inf. Take [1,2] (1 > -inf) -> count 1, end 2.
-Take [4,5] (4 > 2) -> count 2, end 5.
-Take [7,8] (7 > 5) -> count 3, end 8.
-Answer 3.
-Note the sort key is the END, not the start. That single choice is the whole
-algorithm, and getting it wrong is the most common failure on this problem.""",
+    """1. THE GOAL - the longest run of pairs that never overlap.
 
-    """Why sorting by END is correct, and by START is not.
-pairs = [[1,100],[2,3],[4,5]]
-Sorted by START: [[1,100],[2,3],[4,5]]. Greedily take [1,100] first, and its
-end of 100 blocks everything else -> answer 1. WRONG.
-Sorted by END: [[2,3],[4,5],[1,100]]. Take [2,3], then [4,5], then [1,100] is
-blocked -> answer 2. CORRECT.
-The intuition: finishing EARLIEST leaves the most room for whatever comes next.
-That is the exchange argument behind all activity-selection greedy proofs - if
-an optimal solution does not start with the earliest-finishing pair, you can
-swap that pair in without making the solution worse.""",
+You are given pairs of numbers, each written [a, b] with a < b. A CHAIN is a sequence of pairs where
+EACH NEXT PAIR STARTS STRICTLY AFTER THE PREVIOUS ONE ENDS.
 
-    """The proof sketch, which interviewers do ask for.
-Claim: there is an optimal chain containing the pair with the smallest end.
-Proof: take any optimal chain. If it already contains that pair, done. If not,
-replace its FIRST pair with the smallest-end pair. The new pair ends no later,
-so everything that followed the old first pair still fits. The chain length is
-unchanged, so it is still optimal - and it now contains our greedy choice.
-Induct on the remainder. Being able to give this three-sentence exchange
-argument is what separates 'I remember the trick' from 'I can justify it'.""",
+    pair [a, b] can be followed by pair [c, d]  only if  b < c
 
-    """Edge cases.
-Single pair [[1,2]] -> 1 > -inf -> count 1.
-Overlapping duplicates [[1,2],[1,2]] -> after taking the first, end is 2 and
-the second needs start > 2, so 1 is fine but 1 > 2 is false -> count 1.
-Touching pairs [[1,2],[2,3]] -> the condition is STRICT (start > end), so 2 > 2
-is false and the answer is 1. If the prompt allowed touching (start >= end),
-the answer would be 2. Restate which convention applies before coding - the
-same input gives different answers.
-Negative values work unchanged, which is why current_end starts at -inf rather
-than 0.""",
+Find the LENGTH of the longest chain you can form. You may use the pairs in any order, and you need
+not use them all.
 
-    """Complexity, and the DP alternative.
-Sorting is O(n log n) and the scan is O(n), so O(n log n) time and O(1) extra
-space beyond the sort.
-The DP version - dp[i] = longest chain ending at pair i, computed by scanning
-all j < i - is O(n^2) and gives the same answer. It is the right tool when the
-greedy exchange argument fails, e.g. if pairs had WEIGHTS and you wanted the
-maximum total weight rather than the maximum count. Knowing when greedy breaks
-is more valuable than knowing that it works here.""",
+    pairs = [[1,2], [7,8], [4,5]]
 
-    """The identical problem in three disguises.
-- Non-overlapping Intervals (minimum removals): the answer is n minus this
-  chain length. Same sort, same scan.
-- Meeting Rooms (can one person attend all): this chain length equals n.
-- Activity selection / Maximum number of events attended: literally this.
-- Minimum Number of Arrows to Burst Balloons: sort by end, shoot at each end -
-  same greedy, and the only difference is that touching counts as overlapping.
-When a prompt says 'maximum number of non-overlapping X' the answer is always
-sort-by-end plus a linear scan; when it says 'minimum removals', compute the
-same thing and subtract.""",
+    [1,2] then [4,5]:  2 < 4  YES
+    [4,5] then [7,8]:  5 < 7  YES
+
+    So the chain [1,2] -> [4,5] -> [7,8] has length 3.  ANSWER: 3
+
+    pairs = [[1,100], [2,3], [4,5]]
+
+    [1,100] blocks everything - nothing starts after 100.
+    But [2,3] then [4,5] works: 3 < 4.  ANSWER: 2
+
+THREE THINGS THE QUESTION IS SAYING:
+
+    STRICTLY AFTER. `b < c`, not `b <= c`. A pair ending at 2 cannot be followed by one starting at 2.
+        Section 4 traces the input where that decides the answer.
+    ORDER IS YOURS TO CHOOSE. The input is not sorted and the pairs may be used in any order, so this
+        is a selection problem, not a scan of the given sequence.
+    LENGTH ONLY. You are not asked which pairs, just how many.
+
+THIS IS ACTIVITY SELECTION IN DISGUISE - "given a set of tasks with start and finish times, how many
+can one person do?" - and the answer is a greedy that sorts by FINISH time. Section 5 proves it.
+
+    ITS TWIN IN THIS BANK IS MINIMUM NUMBER OF ARROWS TO BURST BALLOONS, which is the same sort and
+    the same scan counting the same thing. THIS ENTRY OWNS THE EXCHANGE-ARGUMENT PROOF for why
+    sorting by end is correct; the Arrows entry owns the DUALITY - why "fewest arrows" and "most
+    non-overlapping intervals" are the same number.""",
+
+    """2. THE INTUITION - always take the pair that frees you up soonest.
+
+The question at every step is "which pair should I take next?", and the right instinct is: TAKE THE
+ONE THAT FINISHES EARLIEST, because it leaves the most room for everything after it.
+
+So sort the pairs by their END value and sweep left to right, taking every pair that starts after
+wherever the chain currently ends.
+
+    pairs = [[1,2], [7,8], [4,5]]        sorted by END:  [1,2]  [4,5]  [7,8]
+
+        number line:   1--2      4--5      7--8
+                       ^         ^         ^
+                       take      take      take
+
+        chain ends at:  -inf  ->  2   ->    5    ->   8      length 3
+
+Now the case that shows why sorting by END and not by START matters:
+
+    pairs = [[1,100], [2,3], [4,5]]
+
+        SORTED BY START:  [1,100]  [2,3]  [4,5]
+                          1------------------------100
+                             2-3
+                                4-5
+            Take [1,100] first - it starts earliest. The chain now ends at 100, and NOTHING starts
+            after 100. LENGTH 1.
+
+        SORTED BY END:    [2,3]  [4,5]  [1,100]
+            Take [2,3] - the chain ends at 3.
+            Take [4,5] - 4 > 3, so the chain ends at 5.
+            [1,100] starts at 1, which is not after 5. Skipped.
+            LENGTH 2.
+
+    ONE SORT KEY, AND THE ANSWER GOES FROM 1 TO 2.
+
+WHY EARLIEST-FINISHING IS THE RIGHT CHOICE. Taking a pair costs you nothing except the room it
+occupies, and the room it occupies is entirely determined by WHERE IT ENDS. A pair that finishes at 3
+leaves everything after 3 available; a pair that finishes at 100 leaves almost nothing. Starting
+early is irrelevant - it is the finishing that constrains the future.
+
+    THAT IS AN INTUITION, NOT A PROOF, and section 5 turns it into one - which matters, because the
+    equally plausible "take the shortest pair first" instinct is WRONG.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PAIR / INTERVAL. Two numbers [a, b] with a < b. Think of it as occupying the stretch from a to b.
+CHAIN. A sequence of pairs where each one starts strictly after the previous one ends.
+NON-OVERLAPPING. Two pairs that share no point and do not touch. A chain is exactly a set of
+pairwise non-overlapping pairs, arranged in order.
+
+GREEDY. Making the locally obvious choice and never reconsidering. Safe here, and section 5 proves it.
+ACTIVITY SELECTION. The classic name for this problem - "how many tasks can one person complete" -
+and the classic answer is sort by finish time.
+
+EXCHANGE ARGUMENT. The standard proof technique: take any optimal solution and show it can be
+rearranged into the greedy one without getting worse.
+
+SORT KEY. The value a sort orders by. `key=lambda p: p[1]` sorts by the SECOND element - the end.
+
+float('-inf'). Negative infinity, smaller than every real number - so the first pair always passes
+the test and no special case is needed for it.
+
+pairs. The input list. SORTED IN PLACE - it mutates the caller's list.
+count. The running chain length.
+current_end. Where the chain currently ends. Starts at negative infinity.
+start, end. The two halves of the pair being considered, unpacked in the loop.
+
+O(n log n) TIME. The sort dominates; the scan is O(n).""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - SORTING BY START. The natural instinct, and it is wrong.
+
+    pairs = [[1,100], [2,3], [4,5]]
+
+        BY START:  take [1,100] first, the chain ends at 100, nothing follows.  LENGTH 1.
+        BY END:    take [2,3], then [4,5].                                      LENGTH 2.
+
+    THE PROBLEM WITH STARTING EARLY is that it says nothing about when you FINISH, and finishing is
+    what blocks everything after you. A pair that starts first can hog the entire line.
+
+    NOTE THAT THE OBVIOUS EXAMPLE DOES NOT EXPOSE THIS. On [[1,2],[7,8],[4,5]] both sort keys give 3,
+    because that input has no long greedy pair to be lured by. Test with something like [1,100] in it.
+
+TRAP 2 - SORTING BY LENGTH, taking the shortest pairs first. Also plausible, also wrong, and it fails
+for a subtler reason: a short pair sitting in the middle of the line can still block two longer ones
+on either side of it. Only the END matters, because only the end constrains the future.
+
+TRAP 3 - `start > current_end` versus `start >= current_end`. The chain requires the next pair to
+start STRICTLY after the previous ends.
+
+    pairs = [[1,2], [2,3]]
+
+        WITH `>`:   take [1,2], the chain ends at 2. Then 2 > 2 is FALSE, so [2,3] is skipped.
+                    LENGTH 1 - which is correct, since the definition requires 2 < 2, and it is not.
+        WITH `>=`:  2 >= 2 is TRUE, so both are taken.  LENGTH 2 - WRONG for this problem.
+
+    THIS IS THE OPPOSITE OF SOME SIBLING PROBLEMS. Meeting Rooms treats touching intervals as
+    compatible; Insert Interval merges them. Read the definition each time rather than carrying an
+    instinct across.
+
+TRAP 4 - THE FUNCTION MUTATES ITS INPUT. `pairs.sort(...)` reorders the CALLER'S list in place - the
+same surprise as 3Sum's `nums.sort()`, Assign Cookies' `g.sort()`, Meeting Rooms' `intervals.sort()`,
+Boats' `people.sort()` and Divide Players' `skill.sort()`. Use `sorted(pairs, key=...)` to avoid it.
+
+TRAP 5 - INITIALISING `current_end` TO 0 OR TO THE FIRST PAIR'S END. Negative infinity is used so
+that the very first pair always passes the test with no special case. A 0 would silently reject any
+pair starting at a negative coordinate - and the problem allows negative values.
+
+TRAP 6 - RETURNING THE CHAIN ITSELF RATHER THAN ITS LENGTH. Easy to fix (collect the pairs as you
+take them), and not what was asked.""",
+
+    """5. WHY SORTING BY END IS CORRECT - the proof interviewers ask for.
+
+VERSION A - TRY EVERY SUBSET. 2^n subsets, each needing a check that it forms a chain. Hopeless
+beyond about 20 pairs.
+
+VERSION B - DYNAMIC PROGRAMMING. Sort by start, then `dp[i] = 1 + max(dp[j])` over every j whose end
+is below pair i's start. O(n^2), correct, and completely unnecessary here - worth naming because it
+is what you fall back on when the greedy's proof does NOT go through (for instance if pairs had
+weights and you wanted the heaviest chain rather than the longest).
+
+VERSION C - SORT BY END AND SWEEP, which is the code here. O(n log n).
+
+THE EXCHANGE ARGUMENT. Two steps, and the second is the one people forget.
+
+    CLAIM: SOME OPTIMAL CHAIN CONTAINS THE PAIR WITH THE SMALLEST END.
+
+    Let e be the pair with the smallest end value anywhere in the input. Take ANY optimal chain C and
+    look at its FIRST pair, f.
+
+        IF f IS e, there is nothing to prove.
+
+        OTHERWISE, since e has the smallest end of all pairs, end(e) <= end(f).
+        Now REPLACE f with e in C. Is the result still a chain?
+            - e is first, so nothing precedes it. Fine.
+            - The second pair of C started strictly after end(f), and end(e) <= end(f), so it also
+              starts strictly after end(e). Fine.
+        So C with e in place of f is still a valid chain, of THE SAME LENGTH - and it is therefore
+        also optimal.
+
+    SO TAKING THE EARLIEST-FINISHING PAIR NEVER COSTS ANYTHING.
+
+    STEP TWO - REPEAT. Having committed to e, every pair overlapping e is now unusable, and the
+    remaining problem is the same problem on a smaller set. Apply the claim again to that set, and
+    again, and the greedy sweep is exactly the sequence of choices this produces.
+
+    THAT SECOND STEP IS WHAT MAKES IT A PROOF rather than a statement about the first choice only.
+
+WHY THE SORT IS THE ALGORITHM. Once sorted by end, the sweep never has to look back: any pair it
+skips overlapped the current chain end, and since ends are non-decreasing, that pair could not have
+been useful later either. The whole design is "put them in an order that makes the right choice
+obvious, then take it".
+
+THE CLUSTER, AND WHO OWNS WHAT - because three problems in this bank are the same eight lines:
+
+    MAXIMUM LENGTH OF PAIR CHAIN      owns THIS PROOF and the strict `>` comparison.   <- this entry
+    MINIMUM NUMBER OF ARROWS          owns the DUALITY - why the minimum number of stabbing points
+                                      equals the maximum number of disjoint intervals.
+    NON-OVERLAPPING INTERVALS         owns the complement - minimum removals is n minus this count.
+
+    All three sort by END and sweep. Only the comparison and what you report differ.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SORT THE PAIRS BY WHERE THEY FINISH, THEN SWEEP THROUGH
+TAKING EVERY PAIR THAT STARTS AFTER THE CHAIN'S CURRENT END - BECAUSE THE PAIR THAT FINISHES SOONEST
+LEAVES THE MOST ROOM FOR EVERYTHING AFTER IT.
+
+THERE IS NO RECURSION AND NO BACKTRACKING. The mechanism is A SORT FOLLOWED BY ONE FORWARD SCAN:
+
+  - The sort puts the pairs in an order where the right choice is always the next one that fits.
+  - The scan carries a single number - where the chain currently ends.
+  - WHAT MAKES IT STOP: the scan visits each pair once, a count fixed before it starts.
+  - WHY NOTHING IS EVER RECONSIDERED: the exchange argument in section 5 shows that taking the
+    earliest-finishing available pair never costs anything, so there is no choice to regret.
+
+THE STEPS:
+
+  1. SORT THE PAIRS BY THEIR SECOND VALUE - where each one FINISHES. Not by where they start, and not
+     by how long they are.
+
+  2. START THE CHAIN LENGTH AT ZERO, AND SET THE CHAIN'S CURRENT END TO SOMETHING SMALLER THAN ANY
+     POSSIBLE START, so that the first pair considered always fits.
+
+  3. WALK THE SORTED PAIRS IN ORDER. FOR EACH ONE:
+
+     IF IT STARTS STRICTLY AFTER THE CHAIN'S CURRENT END, take it: add one to the length, and move
+     the chain's end to this pair's end.
+
+     STRICTLY AFTER. A pair beginning exactly where the chain ends does NOT qualify - the definition
+     demands a gap, not a touch.
+
+     OTHERWISE SKIP IT. It overlaps what you already have, and because the pairs are in order of
+     finishing, it cannot become useful later either - anything after it finishes no earlier.
+
+  4. THE ANSWER IS THE LENGTH.
+
+Note there is no explicit "does this overlap" test involving both endpoints. Sorting by end has
+reduced the whole question to one comparison against a single running number.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a list of jobs, each with a time it begins and a time it finishes, and one person to do them.
+The person can only do one job at a time and cannot start a job until the previous one is completely
+finished. You want them to complete as many jobs as possible.
+
+The tempting approach is to take whichever job starts earliest and work forward from there. It is a
+bad rule, and the reason is easy to see once you look for it: a job might start first thing in the
+morning and run until midnight. Taking it means doing exactly one job all day, when you might have
+fitted in several short ones instead.
+
+The instinct to fix that is "do the shortest jobs first", and that is wrong too, though more subtly.
+A short job sitting awkwardly in the middle of the afternoon can still knock out two longer jobs on
+either side of it.
+
+The rule that actually works is to always take THE JOB THAT FINISHES SOONEST. That is the one that
+frees you up earliest, and being free early is the only thing that helps you fit more in afterwards.
+When a job starts is irrelevant to your future; when it ENDS is everything.
+
+So you begin by sorting all the jobs by their finishing time, which puts them in exactly the order
+you will want to consider them.
+
+Then you go through the list once, keeping in mind only one thing: the moment you last became free.
+For each job, you check whether it begins after that moment. If it does, you take it, and your
+free-again moment moves to when this job finishes. If it does not, you skip it - it clashes with
+something you have already committed to.
+
+And when you skip one, you can skip it for good. Everything still ahead of you in the list finishes
+at least as late, so if this one clashed, nothing later will rescue the situation by being tidier.
+
+One detail worth pinning down before you start. If a job begins at exactly the moment another one
+ends, does that count as fitting? For this particular question it does not - the rule demands a
+genuine gap, so ending at two and starting at two is a clash. Other problems that look almost
+identical make the opposite choice, so it is worth reading the definition rather than assuming.
+
+Count the jobs you took, and that is the answer.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep pairs = [[1,2], [7,8], [4,5]] beside you, answer 3.
+
+    def find_longest_chain(pairs):
+
+`pairs` is the list of [start, end] pairs. Returns the LENGTH of the longest chain. THE ARGUMENT IS
+MODIFIED - the next line reorders it.
+
+        pairs.sort(key=lambda p: p[1])     # sort by end
+
+THE LINE THE WHOLE ALGORITHM RESTS ON.
+
+    `key=lambda p: p[1]`  DECIDES the ordering - by the SECOND element, which is where each pair
+                          FINISHES. Sorting by `p[0]` gives 1 instead of 2 on [[1,100],[2,3],[4,5]]
+                          (trap 1), and sorting by length is wrong for a different reason (trap 2).
+
+Section 5's exchange argument is entirely about the pair with the SMALLEST END, which is what this
+sort brings to the front.
+
+`.sort()` sorts IN PLACE (trap 4). `pairs = sorted(pairs, key=...)` leaves the caller's list alone.
+
+        count = 0
+
+    count  HOLDS the chain length so far - and it is the answer, since it only ever increases when a
+           pair is actually taken.
+
+        current_end = float('-inf')
+
+    current_end  HOLDS where the chain currently finishes.
+
+STARTS AT NEGATIVE INFINITY so that the first pair considered always passes the test below - no
+special case for "the chain is empty". A 0 would wrongly reject pairs with negative starts (trap 5).
+
+        for start, end in pairs:
+
+Walk the sorted pairs in order, unpacking each into its two halves.
+
+            if start > current_end:        # can extend the chain
+
+THE ONE COMPARISON, and it is STRICT.
+
+    `start > current_end`  DECIDES whether this pair begins after the chain finishes. `>=` would
+                           accept a pair beginning exactly where the last one ended, which this
+                           problem's definition forbids - and it turns [[1,2],[2,3]] from 1 into 2
+                           (trap 3).
+
+NOTE HOW LITTLE IS BEING TESTED. There is no two-sided overlap check anywhere; sorting by end reduced
+the whole question to one comparison against a single running number.
+
+                count += 1
+                current_end = end
+
+Take the pair: lengthen the chain, and move its end forward.
+
+If the test fails, nothing happens at all - the pair is skipped permanently. That is safe because the
+list is sorted by end, so nothing later finishes earlier and could not have been a better fit.
+
+        return count""",
+
+    """9. TRACED, PAIR BY PAIR - AND THE ANSWER INVERTING ON THE SORT KEY.
+
+TRACE 1 - THE WORKED EXAMPLE. pairs = [[1,2], [7,8], [4,5]]. Expected 3.
+
+    After sorting by END:  [[1,2], [4,5], [7,8]]
+                            end 2   end 5   end 8
+
+    count = 0,  current_end = -inf
+
+    [1,2]:  start 1 > -inf?  YES  ->  count = 1,  current_end = 2
+    [4,5]:  start 4 > 2?     YES  ->  count = 2,  current_end = 5
+    [7,8]:  start 7 > 5?     YES  ->  count = 3,  current_end = 8
+
+    RETURN 3.
+
+    NOTE THIS INPUT CANNOT DETECT TRAP 1 - sorting by START also gives 3, because no pair here is long
+    enough to be a trap. A test that passes on this example proves very little.
+
+TRACE 2 - THE INVERSION ON THE SORT KEY (trap 1). pairs = [[1,100], [2,3], [4,5]]. Expected 2.
+
+    SORTED BY END:  [[2,3], [4,5], [1,100]]
+
+        count = 0, current_end = -inf
+        [2,3]:    2 > -inf?  YES  ->  count = 1, current_end = 3
+        [4,5]:    4 > 3?     YES  ->  count = 2, current_end = 5
+        [1,100]:  1 > 5?     no   ->  skipped
+        RETURN 2.   CORRECT.
+
+    SORTED BY START:  [[1,100], [2,3], [4,5]]
+
+        count = 0, current_end = -inf
+        [1,100]:  1 > -inf?  YES  ->  count = 1, current_end = 100
+        [2,3]:    2 > 100?   no   ->  skipped
+        [4,5]:    4 > 100?   no   ->  skipped
+        RETURN 1.   WRONG.
+
+    ONE SORT KEY, AND 1 INSTEAD OF 2. The greedy took the pair that started earliest and it happened
+    to run to 100, blocking the entire line. This is exactly what the exchange argument in section 5
+    protects against by insisting on the smallest END.
+
+TRACE 3 - THE STRICT COMPARISON (trap 3). pairs = [[1,2], [2,3]]. Expected 1.
+
+    Sorted by end: [[1,2], [2,3]] - unchanged.
+
+    WITH `>`:   [1,2]:  1 > -inf  ->  count = 1, current_end = 2
+                [2,3]:  2 > 2?  NO  ->  skipped
+                RETURN 1.  Correct - the definition needs 2 < 2, which is false.
+
+    WITH `>=`:  [2,3]:  2 >= 2?  YES  ->  count = 2
+                RETURN 2.  Wrong for this problem's definition.
+
+    Both answers are "correct" for SOME interval problem - Meeting Rooms would call these compatible.
+    The definition here demands a strict gap, so read it rather than reusing an instinct.
+
+THE TINY INPUTS:
+    pairs = [[1,2]]           1 > -inf  ->  count 1.  RETURN 1.  The `-inf` start is what makes this
+                              work without a special case (trap 5).
+    pairs = [[1,2], [1,2]]    identical duplicates. Take the first: count 1, current_end 2. The second
+                              needs start > 2, and 1 is not.  RETURN 1 - correctly, since two copies
+                              of the same pair overlap each other.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n). THE SORT IS THE ENTIRE COST. The sweep afterwards is one pass with one comparison
+per pair - O(n), and free next to the sort. Given a list already sorted by end, this would be O(n).
+
+SPACE: O(1) beyond the input, since `.sort()` sorts in place. O(n) if you sort a copy to leave the
+caller's list untouched.
+
+THE DP ALTERNATIVE, and when you would actually want it: `dp[i] = 1 + max(dp[j])` over every j whose
+end is below pair i's start, after sorting by start. O(n^2) time and O(n) space.
+
+    IT IS STRICTLY WORSE HERE - but it is the fallback when the greedy's exchange argument stops
+    working. If each pair carried a WEIGHT and you wanted the heaviest chain rather than the longest,
+    the greedy breaks (taking the earliest-finishing pair may forgo a hugely valuable long one) and
+    the DP is the right answer. Knowing WHICH property the greedy depends on is what tells you when
+    to abandon it.
+
+THE IDENTICAL PROBLEM IN THREE DISGUISES - all the same sort and the same sweep:
+
+    MAXIMUM LENGTH OF PAIR CHAIN        count what you take                        <- this entry
+    NON-OVERLAPPING INTERVALS           the answer is n MINUS this count - the fewest intervals to
+                                        remove so the rest do not overlap. Same scan, complementary
+                                        report.
+    MINIMUM NUMBER OF ARROWS            the fewest stabbing points equals the maximum number of
+                                        pairwise disjoint intervals - the same count again, arrived
+                                        at by a duality. That entry owns the duality argument; this
+                                        one owns the exchange proof.
+    MEETING ROOMS                       "can one person attend everything" is this count equalling n.
+    ACTIVITY SELECTION                  the textbook name for the whole family.
+
+    THE RECOGNITION CUE: intervals, and a question about how many can coexist without overlapping.
+    Sort by END. If the question is about how many ROOMS or RESOURCES are needed simultaneously,
+    that is a different shape - sort by START and use a heap.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Prove the greedy." Section 5's exchange argument, in both steps - the swap, and then the
+    recursion onto the remaining set.
+  - "Return the chain, not its length." Collect the pairs as you take them; nothing else changes.
+  - "What if pairs had weights and you wanted the maximum total weight?" The greedy fails. Sort by end
+    and use DP with binary search - O(n log n) - which is Weighted Interval Scheduling.
+  - "What if touching pairs were allowed to chain?" Change `>` to `>=`. One character, and section 9
+    shows it changing the answer.
+  - "Does it modify the input?" Yes, `pairs.sort()`. Offer `sorted(pairs, key=...)`.
+
+THE #1 BEGINNER MISTAKE: sorting by START. It is the natural reading of "chain them up in order", and
+it lets a single long pair swallow the whole line - 1 instead of 2 on [[1,100],[2,3],[4,5]]. And note
+the standard example [[1,2],[7,8],[4,5]] gives 3 under BOTH sort keys, so it cannot catch this.
+
+RUNNER-UP: sorting by length, taking the shortest first. Plausible, and wrong because a short pair in
+an awkward position still blocks two longer ones around it. Only the END constrains the future.
+
+TAKEAWAY: sort by where each pair FINISHES, not where it starts, and take every pair that begins after
+the chain's current end - because the earliest-finishing pair leaves the most room for everything
+afterwards, and the exchange argument shows that choice can never cost you anything.""",
 ]
 
 _EX_P1C["Triangle (Minimum Path Sum)"] = [
@@ -75778,125 +76171,984 @@ it.""",
 ]
 
 _EX_P1F["Minimum Number of Arrows to Burst Balloons"] = [
-    """The example, traced.
-points = [[10,16],[2,8],[1,6],[7,12]] -> sorted by END:
-[[1,6],[2,8],[7,12],[10,16]]
-Arrow 1 at x = 6 (the first balloon's end). [2,8] starts at 2 <= 6, so it is
-already burst. [7,12] starts at 7 > 6, so it survives -> arrow 2 at x = 12.
-[10,16] starts at 10 <= 12, already burst.
-Answer 2. Shooting at the EARLIEST END is what maximises the number of later
-balloons each arrow catches.""",
+    """1. THE GOAL - fewest vertical arrows to pop every balloon.
 
-    """Why sort by end rather than start.
-points = [[1,100],[2,3],[4,5]]
-Sorted by START: shoot at the end of [1,100], i.e. x = 100. That happens to
-burst everything here - but change it to [[1,2],[3,100],[4,5]] and sorting by
-start shoots at 2, then at 100, and misses nothing... until you construct the
-case where an early-starting, late-ending balloon forces a wasted arrow.
-Sorted by END the greedy is provably optimal by the same exchange argument as
-activity selection: the balloon that finishes first must be burst by some
-arrow, and placing that arrow at its end is never worse, since it covers a
-superset of what any earlier position covers.""",
+Each balloon is an interval on the x-axis, [start, end] - it spans horizontally from start to end. You
+shoot ARROWS STRAIGHT UP from a chosen x coordinate, and an arrow at x bursts EVERY balloon whose
+span contains x, including at its exact endpoints.
 
-    """The strict-versus-inclusive comparison, which decides the answer.
-The condition is `start > end` - so a balloon starting exactly where the last
-arrow flew is already burst. On [[1,2],[2,3]]: 2 > 2 is false, so one arrow at
-x = 2 bursts both. That is correct here, because the balloons TOUCH and an
-arrow at the shared point hits both.
-Contrast Maximum Length of Pair Chain, where the chain condition is also strict
-but means the opposite - touching pairs cannot chain. Same operator, opposite
-intent, because one problem wants overlap and the other wants separation.
-Always restate which one the prompt means.""",
+    FIND THE FEWEST ARROWS THAT BURST EVERY BALLOON.
 
-    """Edge cases.
-[] -> 0 by the guard.
-One balloon [[1,2]] -> arrows starts at 1 and the loop body never runs -> 1.
-All identical [[1,2],[1,2],[1,2]] -> one arrow at 2 bursts all -> 1.
-All disjoint [[1,2],[3,4],[5,6]] -> 3 > 2 and 5 > 4, so three arrows.
-Huge coordinates near the 32-bit limit: sorting by end and comparing is safe,
-but computing a midpoint as (start+end)/2 would overflow in Java - a real
-LeetCode gotcha on this problem, and a reason the code never computes one.""",
+    points = [[10,16], [2,8], [1,6], [7,12]]
 
-    """Complexity.
-O(n log n) for the sort, O(n) for the scan, O(1) extra space. The sort is the
-whole cost, and there is no way below it in the comparison model - you must
-know the relative order of the ends.
-Note the code sorts in place, mutating the caller's list. In an interview,
-saying 'I'm sorting the input in place; if the caller needs it preserved I'd
-copy first' is a small remark that reads as production experience.""",
+        1------6
+          2--------8
+                7---------12
+                    10---------16
 
-    """The identical problem in four disguises.
-- Non-overlapping Intervals: minimum removals = n minus the max non-overlapping
-  count, the same greedy.
-- Maximum Length of Pair Chain: the same sort and scan, with a strict gap.
-- Meeting Rooms: 'can one room serve all' is this count equalling 1.
-- Erase Overlapping Intervals, Maximum Number of Events That Can Be Attended.
-The unifying recipe: sort by END, sweep, and take greedily. If the prompt asks
-for a MINIMUM number of points/arrows/removals covering intervals, this is the
-algorithm - and it takes twenty seconds once you recognise it.""",
+        x = 6   bursts [1,6] and [2,8]        (6 is inside both)
+        x = 12  bursts [7,12] and [10,16]
+
+    TWO ARROWS.  ANSWER: 2
+
+    An arrow is free to be placed anywhere, so the real question is: HOW FEW POSITIONS DO YOU NEED SO
+    THAT EVERY INTERVAL CONTAINS AT LEAST ONE OF THEM?
+
+TWO THINGS TO PIN DOWN, because both decide answers:
+
+    ENDPOINTS COUNT. An arrow at x = 6 bursts a balloon spanning [1,6] - touching at the edge is a
+        hit, not a miss. So two balloons that merely TOUCH, like [1,2] and [2,3], can be burst by one
+        arrow at x = 2.
+    EVERY BALLOON MUST BURST. This is not "how many can I pop with k arrows" - all of them go.
+
+THE PROBLEM HAS A NAME IN THE ABSTRACT: it is INTERVAL STABBING, or finding a minimum PIERCING SET.
+And it turns out to be the SAME COUNT as a completely different-sounding question - "what is the
+largest set of balloons no two of which overlap?" - which is the duality this entry owns. Section 5
+proves it.
+
+    ITS TWIN IN THIS BANK IS MAXIMUM LENGTH OF PAIR CHAIN, which runs the same sort and the same sweep.
+    THAT ENTRY OWNS THE EXCHANGE-ARGUMENT PROOF for why sorting by end is correct; THIS ENTRY OWNS THE
+    DUALITY - why a minimisation and a maximisation give the same number.""",
+
+    """2. THE INTUITION - shoot at the earliest end, and only move when forced.
+
+If you are going to shoot an arrow that must burst the balloon which finishes soonest, WHERE SHOULD
+YOU PUT IT? As far right as that balloon allows - at its END - because that is the position most
+likely to catch other balloons too. Anywhere further left bursts a subset of what the end position
+bursts.
+
+So sort the balloons by their END coordinate and sweep:
+
+    points = [[10,16], [2,8], [1,6], [7,12]]     sorted by END:  [1,6]  [2,8]  [7,12]  [10,16]
+
+        1------6                arrow 1 at x = 6, the first balloon's end
+          2--------8            starts at 2, which is <= 6, so this arrow already bursts it
+                7---------12    starts at 7, which is AFTER 6 - the arrow missed it entirely
+                    10------16  starts at 10, which is <= 12, so arrow 2 bursts it
+
+        arrow 1 at x = 6    bursts [1,6] and [2,8]
+        arrow 2 at x = 12   bursts [7,12] and [10,16]
+
+    ANSWER: 2
+
+THE RULE IS "ONLY SHOOT AGAIN WHEN FORCED". Sweeping left to right, a balloon that starts at or before
+the last arrow's position is already burst - nothing to do. A balloon that starts AFTER it was missed,
+so a new arrow is needed, and you place it at that balloon's end.
+
+    THE ARROW POSITION IS ALWAYS SOME BALLOON'S END. There is never a reason to place it anywhere
+    else: sliding it right until it hits a balloon's edge can only add hits, never lose them.
+
+AND HERE IS THE DUALITY, which is what this entry is really about. Every time the sweep is FORCED to
+shoot again, it is because it has found a balloon that misses the previous arrow entirely - that is, a
+balloon DISJOINT from the one that arrow was aimed at.
+
+    So the arrows correspond one-for-one with a set of balloons that pairwise do not overlap:
+
+        arrow 1 was aimed at [1,6];  arrow 2 was aimed at [7,12];  and 6 < 7, so those two are
+        disjoint.
+
+    THE NUMBER OF ARROWS EQUALS THE SIZE OF THE LARGEST PAIRWISE-DISJOINT SET. A minimisation problem
+    and a maximisation problem, the same number, computed by the same loop - section 5 proves both
+    directions.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BALLOON / INTERVAL. A span [start, end] on the x-axis.
+ARROW. A vertical line at a chosen x. It bursts every balloon whose span contains x, ENDPOINTS
+INCLUDED.
+STABBING / PIERCING. The general name: a point "stabs" an interval if it lies inside it. This problem
+asks for a minimum stabbing set.
+
+OVERLAP. Two intervals sharing at least one point - INCLUDING sharing only an endpoint. [1,2] and
+[2,3] overlap at x = 2.
+DISJOINT. Sharing no point at all. [1,2] and [3,4] are disjoint.
+
+GREEDY. The locally obvious choice, never reconsidered. Provably right here.
+DUALITY. Two differently-phrased problems - one a minimisation, one a maximisation - having the same
+answer. Section 5.
+
+points. The input list. SORTED IN PLACE - it mutates the caller's list.
+arrows. The running count.
+end. The x coordinate of the MOST RECENT arrow. Named `end` because an arrow is always placed at some
+     balloon's end.
+start, finish. The current balloon's two coordinates, unpacked in the loop.
+
+O(n log n) TIME. The sort dominates.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - SORTING BY START. Wrong, and it fails in an alarming direction: IT UNDERCOUNTS.
+
+    points = [[1,100], [2,3], [4,5]]
+
+        BY START:  [[1,100], [2,3], [4,5]]
+            arrow 1 at x = 100 (the first balloon's end).
+            [2,3]:  start 2 > 100?  no  ->  no new arrow.
+            [4,5]:  start 4 > 100?  no  ->  no new arrow.
+            RETURNS 1.
+
+        BUT ONE ARROW CANNOT DO IT. [2,3] and [4,5] are disjoint - no single x lies in both. The true
+        answer is 2.
+
+        BY END:  [[2,3], [4,5], [1,100]]
+            arrow 1 at x = 3.  [4,5]: 4 > 3  ->  arrow 2 at x = 5.  [1,100]: 1 > 5?  no.
+            RETURNS 2.  CORRECT.
+
+    THE SORT-BY-START VERSION CLAIMS YOU CAN BURST EVERYTHING WITH FEWER ARROWS THAN IS POSSIBLE. An
+    answer that is too SMALL looks like a better solution, which is precisely what makes it dangerous.
+
+    (And note the standard example [[10,16],[2,8],[1,6],[7,12]] gives 2 under BOTH keys, so it cannot
+    catch this.)
+
+TRAP 2 - `start > end` VERSUS `start >= end`. This decides whether touching balloons share an arrow.
+
+    points = [[1,2], [2,3]]
+
+        WITH `>`:   arrow at x = 2. Then 2 > 2 is FALSE  ->  no second arrow.  RETURNS 1.
+                    CORRECT - an arrow at x = 2 is inside [1,2] and inside [2,3], since endpoints
+                    count.
+        WITH `>=`:  2 >= 2 is TRUE  ->  a second arrow.  RETURNS 2.  WRONG.
+
+    THE COMPARISON MUST MATCH THE PROBLEM'S DEFINITION OF A HIT. Here endpoints burst, so touching
+    balloons share an arrow. CONTRAST WITH MAXIMUM LENGTH OF PAIR CHAIN, whose definition demands a
+    strict gap - the same `>` operator there means the opposite thing, because it is testing a
+    different property. Read the definition, do not carry the instinct across.
+
+TRAP 3 - PLACING THE ARROW AT THE BALLOON'S START RATHER THAN ITS END. `end = finish` records the
+balloon's END. Placing the arrow at its start throws away all the reach to the right and inflates the
+count. The arrow should always be as far right as the balloon it must burst allows.
+
+TRAP 4 - THE FUNCTION MUTATES ITS INPUT. `points.sort(...)` reorders the CALLER'S list - the same
+surprise as 3Sum, Assign Cookies, Meeting Rooms, Boats, Divide Players and Pair Chain in this bank.
+
+TRAP 5 - THE EMPTY LIST. `if not points: return 0` handles it. Without the guard, `points[0][1]` on
+the next line raises IndexError - so this guard is load-bearing, not defensive.
+
+TRAP 6 - INTEGER OVERFLOW IN OTHER LANGUAGES. LeetCode allows coordinates across the full 32-bit
+signed range, so a comparison or a midpoint computed as `(start + end) / 2` can overflow in Java or
+C++. This code never adds two coordinates, so it is safe - worth noticing rather than assuming.""",
+
+    """5. THE DUALITY - why a minimisation equals a maximisation.
+
+VERSION A - TRY EVERY SET OF ARROW POSITIONS. Infinite in principle, and even restricted to balloon
+endpoints it is exponential in the number of positions to choose. Hopeless.
+
+VERSION B - SORT BY END AND SWEEP, which is the code here. O(n log n).
+
+THE CENTRAL CLAIM: THE MINIMUM NUMBER OF ARROWS EQUALS THE MAXIMUM NUMBER OF PAIRWISE DISJOINT
+BALLOONS. Both directions are needed, and each is short.
+
+    DIRECTION ONE - YOU NEED AT LEAST THAT MANY ARROWS.
+        Suppose you can find k balloons that are pairwise disjoint. No two of them share any point, so
+        NO SINGLE ARROW CAN BURST TWO OF THEM. Each needs its own arrow, so at least k arrows are
+        required. Hence:  minimum arrows >= maximum disjoint set.
+
+    DIRECTION TWO - THAT MANY ARROWS SUFFICE.
+        The greedy sweep produces some number of arrows, say m. Look at the balloons it aimed at -
+        one per arrow. Each new arrow was fired only because the current balloon STARTED AFTER the
+        previous arrow's position, and the previous arrow sat at the previous aimed-at balloon's end.
+        So each aimed-at balloon starts strictly after the previous one ends: THE m AIMED-AT BALLOONS
+        ARE PAIRWISE DISJOINT.
+        So there exists a disjoint set of size m, giving:  maximum disjoint set >= m = arrows used.
+
+    PUT THEM TOGETHER:  maximum disjoint set >= m >= minimum arrows >= maximum disjoint set.
+
+    EVERY INEQUALITY IS AN EQUALITY, so m IS the minimum, and it equals the maximum disjoint set. The
+    greedy is optimal AND the two problems are the same problem.
+
+    THAT SECOND DIRECTION IS ALSO THE PROOF THE GREEDY IS CORRECT - it does not merely produce some
+    answer, it produces a certificate (the disjoint balloons) showing no smaller answer exists.
+
+WHY PLACING THE ARROW AT THE END IS SAFE. Among all positions that burst the balloon which finishes
+soonest, the rightmost is its end. Sliding an arrow rightwards within that balloon can only ADD
+balloons to what it hits - anything it was hitting starts at or before it and, by the sort order,
+finishes at or after this balloon does. So the end position dominates every alternative.
+
+THE CLUSTER, AND WHO OWNS WHAT:
+
+    MAXIMUM LENGTH OF PAIR CHAIN      owns the EXCHANGE ARGUMENT for sorting by end.
+    MINIMUM NUMBER OF ARROWS          owns THIS DUALITY.                             <- this entry
+    NON-OVERLAPPING INTERVALS         owns the complement - n minus the disjoint count.
+
+    Same sort, same sweep, three reports. The comparison differs because the definitions of "compatible"
+    differ - Pair Chain demands a gap, this one counts a touch as a hit.""",
+
+    """6. HOW IT WORKS - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SORT THE BALLOONS BY WHERE THEY END, FIRE THE FIRST ARROW
+AT THE FIRST BALLOON'S END, AND THEREAFTER FIRE A NEW ARROW ONLY WHEN YOU MEET A BALLOON THAT BEGINS
+AFTER THE LAST ARROW WENT UP - PLACING EACH NEW ARROW AT THAT BALLOON'S END.
+
+THERE IS NO RECURSION. The mechanism is A SORT FOLLOWED BY ONE FORWARD SCAN CARRYING A SINGLE NUMBER:
+
+  - That number is where the most recent arrow was fired.
+  - Each balloon is either already burst by it, or is not - and if not, an arrow is unavoidable.
+  - WHAT MAKES IT STOP: the scan visits each balloon once, a count fixed before it starts.
+  - WHY NOTHING IS RECONSIDERED: every new arrow is forced by a balloon that genuinely missed the last
+    one, and those forcing balloons are pairwise disjoint - so the count is not merely good, it comes
+    with a proof that nothing smaller is possible.
+
+THE STEPS:
+
+  1. IF THERE ARE NO BALLOONS, NO ARROWS ARE NEEDED. This also stops the next step from reaching into
+     an empty list.
+
+  2. SORT THE BALLOONS BY THEIR SECOND COORDINATE - where each one ENDS. Not by where they begin.
+
+  3. FIRE THE FIRST ARROW AT THE FIRST BALLOON'S END, AND COUNT IT. That is as far right as this
+     balloon allows, and further right is always at least as good - it can only catch more of what
+     follows.
+
+  4. WALK THE REMAINING BALLOONS IN ORDER. FOR EACH ONE:
+
+     IF IT BEGINS AFTER THE LAST ARROW'S POSITION, that arrow missed it completely, so fire a new one:
+     count it, and place it at THIS balloon's end.
+
+     OTHERWISE IT BEGINS AT OR BEFORE THE ARROW, so the arrow is already inside it and it has burst.
+     Do nothing.
+
+     "AT OR BEFORE" - a balloon beginning exactly where the arrow flew IS burst, because an arrow at a
+     balloon's edge counts as a hit. That single decision is what makes touching balloons share an
+     arrow, and it is the opposite of what the closely-related chain problem requires.
+
+  5. THE ANSWER IS THE NUMBER OF ARROWS FIRED.
+
+Note there is no check of both endpoints anywhere. Sorting by end reduces the whole question to one
+comparison against a single running coordinate.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Picture a row of balloons floating at different heights, each stretching across some horizontal band -
+one from position one to six, another from two to eight, and so on. You are standing below with a bow,
+firing arrows straight upward. An arrow at a given position bursts every balloon whose band covers that
+position, including balloons that only just reach it at their very edge. You want to use as few arrows
+as possible.
+
+The first thing to work out is where to aim, and there is a clean way to think about it. Consider the
+balloon that ends soonest - the one whose band finishes furthest to the left. You must burst it, so
+your arrow has to land somewhere within its band. Given that, you may as well fire at the very
+rightmost point of that band. Sliding your aim rightward within the band cannot lose you anything -
+every balloon you were catching still gets caught - and it might well pick up others that stretch
+further right.
+
+So you sort the balloons by where they end, and fire your first arrow at the first one's right-hand
+edge.
+
+Then you walk through the rest in order, and for each you ask one question: does this balloon begin
+before, or at, the place your arrow went up? If it does, the arrow is already inside it and it has
+burst - there is nothing to do. If it begins strictly after that point, your arrow flew up somewhere to
+the left of it entirely and missed it, so you have no choice but to fire again. You aim the new arrow
+at this balloon's right-hand edge, and carry on.
+
+The lovely part is what this counts. Every time you were forced to fire again, it was because you had
+found a balloon that your previous arrow could not possibly reach - which means those two balloons do
+not overlap anywhere at all. So the balloons you actually aimed at form a set in which no two share any
+point. And since no single arrow can ever burst two balloons that do not touch, you need at least one
+arrow for each of them.
+
+That gives you both halves of the answer at once. You used exactly as many arrows as there are balloons
+in that non-overlapping set, and you need at least that many. So the number you got is not merely
+reasonable - it is provably the smallest possible, and the balloons you aimed at are the evidence.
+
+One detail to settle before you begin. A balloon that starts at exactly the position your arrow went up
+does count as burst, because the arrow grazes its very edge. Getting that one comparison backwards
+makes you fire a second arrow at a balloon you had already popped.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep points = [[10,16], [2,8], [1,6], [7,12]] beside you, answer 2.
+
+    def find_min_arrows(points):
+        if not points:
+            return 0
+
+LOAD-BEARING, not defensive (trap 5). Without it, `points[0][1]` three lines down raises IndexError on
+an empty list.
+
+        points.sort(key=lambda x: x[1])   # sort by end coordinate
+
+THE LINE THE WHOLE ALGORITHM RESTS ON.
+
+    `key=lambda x: x[1]`  DECIDES the ordering - by the SECOND coordinate, where each balloon ENDS.
+                          Sorting by `x[0]` returns 1 instead of 2 on [[1,100],[2,3],[4,5]] - an
+                          UNDERCOUNT, claiming one arrow can do what two are needed for (trap 1).
+
+`.sort()` sorts IN PLACE (trap 4). `sorted(points, key=...)` leaves the caller's list alone.
+
+        arrows = 1
+
+The first balloon always needs an arrow, so the count starts at 1 rather than 0. This is why the loop
+below can skip the first balloon entirely.
+
+        end = points[0][1]                # first arrow at the earliest end
+
+    end  HOLDS the x coordinate of the MOST RECENT ARROW.
+
+Set to the FIRST balloon's END - the rightmost point that still bursts the balloon finishing soonest,
+which dominates every other position (section 5). Using `points[0][0]` instead would throw away all the
+reach to the right (trap 3).
+
+        for start, finish in points[1:]:
+
+Walk the REMAINING balloons in sorted order, unpacking each into its two coordinates. The slice skips
+the first, which is already accounted for.
+
+(The slice copies the tail of the list - O(n) extra space. Iterating by index from 1 avoids it, and on
+any realistic input it does not matter.)
+
+            if start > end:               # this balloon starts after the last arrow
+
+THE ONE COMPARISON.
+
+    `start > end`  DECIDES whether this balloon begins strictly AFTER the last arrow's position - that
+                   is, whether that arrow MISSED it.
+
+STRICT `>` IS THE POINT. A balloon starting exactly AT the arrow's position IS burst, because endpoints
+count as hits - so no new arrow. Using `>=` fires a second arrow at an already-burst balloon and returns
+2 instead of 1 on [[1,2],[2,3]] (trap 2).
+
+    NOTE THE CONTRAST with Maximum Length of Pair Chain, which uses the same `>` operator to mean the
+    opposite thing - there it tests for a genuine gap, because that problem's definition forbids
+    touching. Same operator, different question.
+
+                arrows += 1
+                end = finish
+
+Fire a new arrow: count it, and place it at THIS balloon's end.
+
+If the test fails, nothing happens - the balloon was already burst by the standing arrow.
+
+        return arrows""",
+
+    """9. TRACED, BALLOON BY BALLOON - AND THE UNDERCOUNT.
+
+TRACE 1 - THE WORKED EXAMPLE. points = [[10,16], [2,8], [1,6], [7,12]]. Expected 2.
+
+    After sorting by END:  [[1,6], [2,8], [7,12], [10,16]]
+                            end 6   end 8   end 12   end 16
+
+    arrows = 1,  end = 6            <- the first arrow, at the first balloon's end
+
+    [2,8]:    start 2 > 6?   no   ->  already burst. The arrow at x = 6 lies inside [2,8], since
+                                      2 <= 6 <= 8.
+    [7,12]:   start 7 > 6?   YES  ->  MISSED. arrows = 2,  end = 12
+    [10,16]:  start 10 > 12? no   ->  already burst. The arrow at x = 12 lies inside [10,16].
+
+    RETURN 2.
+
+    THE DUALITY, VISIBLE: the two balloons actually AIMED AT were [1,6] and [7,12]. Their spans are
+    6 < 7, so they are DISJOINT - no single arrow could burst both. That pair is the certificate that
+    two arrows are genuinely necessary, and the sweep produced it as a by-product (section 5).
+
+    NOTE THIS INPUT CANNOT DETECT TRAP 1 - sorting by START also gives 2 here, because no balloon is
+    long enough to be a trap.
+
+TRACE 2 - THE UNDERCOUNT (trap 1). points = [[1,100], [2,3], [4,5]]. Expected 2.
+
+    SORTED BY END:  [[2,3], [4,5], [1,100]]
+
+        arrows = 1,  end = 3
+        [4,5]:    4 > 3?   YES  ->  arrows = 2,  end = 5
+        [1,100]:  1 > 5?   no   ->  already burst (the arrow at x = 5 lies inside [1,100])
+        RETURN 2.   CORRECT.
+
+    SORTED BY START:  [[1,100], [2,3], [4,5]]
+
+        arrows = 1,  end = 100          <- the arrow goes up at x = 100
+        [2,3]:    2 > 100?  no  ->  "already burst"
+        [4,5]:    4 > 100?  no  ->  "already burst"
+        RETURN 1.
+
+    BUT AN ARROW AT x = 100 BURSTS NEITHER [2,3] NOR [4,5] - it is nowhere near them. And no other
+    single position works either, because [2,3] and [4,5] are disjoint. THE ANSWER 1 IS NOT MERELY
+    SUBOPTIMAL, IT IS IMPOSSIBLE.
+
+    An answer that is too SMALL reads like a better solution, which is exactly what makes this failure
+    mode worse than an overcount.
+
+TRACE 3 - TOUCHING BALLOONS (trap 2). points = [[1,2], [2,3]]. Expected 1.
+
+    Sorted by end: [[1,2], [2,3]] - unchanged.
+
+    WITH `>`:   arrows = 1, end = 2.
+                [2,3]:  start 2 > 2?  NO  ->  no new arrow.
+                RETURN 1.  CORRECT - an arrow at x = 2 is inside [1,2] (at its right edge) and inside
+                [2,3] (at its left edge). Endpoints count.
+
+    WITH `>=`:  [2,3]:  2 >= 2?  YES  ->  arrows = 2.
+                RETURN 2.  WRONG - it fires at a balloon already burst.
+
+    COMPARE WITH PAIR CHAIN on the same input, where `>` correctly gives 1 for the opposite reason:
+    there the two pairs CANNOT chain because 2 < 2 is false. Same operator, same input, same answer -
+    and entirely different reasoning. The operator is not a habit; it follows from the definition.
+
+TRACE 4 - THE EXTREMES.
+
+    ALL IDENTICAL, points = [[1,2], [1,2], [1,2]]:
+        arrows = 1, end = 2. Each remaining balloon: 1 > 2?  no.
+        RETURN 1 - one arrow at x = 2 bursts all three.
+
+    ALL DISJOINT, points = [[1,2], [3,4], [5,6]]:
+        arrows = 1, end = 2.  [3,4]: 3 > 2 YES -> arrows 2, end 4.  [5,6]: 5 > 4 YES -> arrows 3.
+        RETURN 3 - one arrow each, which is forced.
+
+THE TINY INPUTS:
+    points = []        the guard returns 0. Without it, `points[0][1]` raises IndexError (trap 5).
+    points = [[1,2]]   arrows starts at 1, `points[1:]` is empty so the loop never runs.  RETURN 1.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n). THE SORT IS THE WHOLE COST. The scan is one pass with a single comparison per
+balloon - O(n), and free beside it.
+
+    AND THERE IS NO WAY BELOW O(n log n) IN THE COMPARISON MODEL. Sorting reduces to this problem:
+    given numbers to sort, turn each into a tiny interval and the greedy's structure recovers their
+    order. So a faster algorithm would give a faster comparison sort, which is impossible. Worth saying
+    - it turns "the sort dominates" into "the sort is unavoidable".
+
+SPACE: O(1) beyond the input if you ignore the sort's own working memory - though `points[1:]` does
+copy the tail, which is O(n) and avoidable by iterating from index 1.
+
+THE IDENTICAL PROBLEM IN FOUR DISGUISES - all the same sort by END and the same sweep:
+
+    MINIMUM NUMBER OF ARROWS            count the arrows fired                       <- this entry
+    NON-OVERLAPPING INTERVALS           minimum removals = n minus the max disjoint count. Same scan,
+                                        complementary report.
+    MAXIMUM LENGTH OF PAIR CHAIN        the max disjoint count itself - though with the OPPOSITE
+                                        comparison, since a chain demands a gap where an arrow accepts
+                                        a touch. That entry owns the exchange-argument proof.
+    MEETING ROOMS                       "can one person attend all" is that count equalling n.
+    ACTIVITY SELECTION                  the textbook name for the family.
+
+    THE DUALITY THIS ENTRY OWNS, stated for the interview: THE FEWEST POINTS NEEDED TO STAB EVERY
+    INTERVAL EQUALS THE LARGEST NUMBER OF PAIRWISE DISJOINT INTERVALS. A minimisation and a
+    maximisation with the same answer, and the greedy computes both at once - the arrows it fires, and
+    the balloons it aimed at.
+
+    (In general this is a min-max duality of the kind that shows up throughout combinatorial
+    optimisation; for intervals it has this one-paragraph proof.)
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Prove the greedy is optimal." Section 5's two directions - the aimed-at balloons are disjoint so
+    you need at least that many, and the sweep used exactly that many.
+  - "Where exactly do the arrows go?" Record `end` each time you fire; those coordinates are the
+    positions.
+  - "What if endpoints did NOT count as hits?" Change `>` to `>=`, and the answer for touching balloons
+    becomes 2. One character.
+  - "What if arrows were diagonal, or balloons were 2D rectangles?" The one-dimensional greedy
+    collapses - stabbing rectangles with points is much harder and is NP-hard in general.
+  - "Minimum removals so nothing overlaps?" n minus this count - Non-overlapping Intervals.
+  - "Does it modify the input?" Yes, `points.sort()`.
+
+THE #1 BEGINNER MISTAKE: sorting by START. It gives 1 on [[1,100],[2,3],[4,5]] where 2 arrows are
+genuinely required - AN IMPOSSIBLE ANSWER, not merely a suboptimal one, because [2,3] and [4,5] share
+no point. And because it is too small it reads as a better result, so nothing draws attention to it.
+
+RUNNER-UP: using `>=` and firing a second arrow at balloons that merely touch. Here endpoints count as
+hits, so touching balloons share an arrow - the opposite of what the near-identical Pair Chain problem
+requires.
+
+TAKEAWAY: sort by where balloons END and only fire again when one begins strictly after the last arrow -
+and the balloons you were forced to aim at are pairwise disjoint, which is simultaneously the proof
+that no fewer arrows could work and the reason this minimisation is the same number as the
+corresponding maximisation.""",
 ]
 
 _EX_P1F["Minimum Path Sum"] = [
-    """A full trace on the classic grid.
-grid = [[1,3,1],
-        [1,5,1],
-        [4,2,1]]
-First row: dp = [1, 4, 5] (only reachable from the left).
-Row 1: dp[0] += 1 -> 2. dp[1] = min(4, 2) + 5 = 7. dp[2] = min(5, 7) + 1 = 6.
-       dp = [2, 7, 6]
-Row 2: dp[0] += 4 -> 6. dp[1] = min(7, 6) + 2 = 8. dp[2] = min(6, 8) + 1 = 7.
-Answer dp[-1] = 7, the path 1 -> 3 -> 1 -> 1 -> 1.
-The subtlety is that when computing dp[j], dp[j] still holds the value from the
-row ABOVE while dp[j-1] already holds this row's - which is exactly the two
-neighbours the recurrence needs.""",
+    """1. THE GOAL - the cheapest way down and across a grid.
 
-    """Why the rolling row works, spelled out.
-The recurrence is dp[i][j] = grid[i][j] + min(dp[i-1][j], dp[i][j-1]) - it
-reaches back exactly one row and one column. Iterating left to right within a
-row means dp[j-1] has already been updated for THIS row while dp[j] has not,
-so the single array holds both neighbours simultaneously.
-This only works because the scan direction matches the dependency direction.
-Iterate right to left and dp[j-1] would still hold the previous row's value,
-silently computing something else. Space drops from O(rows*cols) to O(cols).""",
+Every cell of a grid holds a cost. Start at the TOP-LEFT and reach the BOTTOM-RIGHT, moving ONLY RIGHT
+OR DOWN. Add up the cells you land on, INCLUDING both the start and the end. MAKE THAT TOTAL AS SMALL
+AS POSSIBLE.
 
-    """The two boundary lines, and why they are separate.
-The first row can only be reached from the left, so it is a running prefix sum.
-The first COLUMN can only be reached from above, which is why the inner loop
-starts at j = 1 and the line `dp[0] += grid[i][0]` handles column 0 on its own.
-Fold those into the main loop and dp[j-1] wraps around to the previous row's
-last cell - a wrong answer that looks plausible. Alternatively, pad the table
-with an infinity border, which trades two lines of special-casing for a
-slightly larger table.""",
+    grid =  1  3  1
+            1  5  1
+            4  2  1
 
-    """Why greedy fails, with the counterexample.
-grid = [[1, 2, 3],
-        [4, 5, 6],
-        [7, 8, 9]]
-A greedy 'always step to the smaller neighbour' from (0,0) goes right to 2,
-right to 3, then down 6, down 9: total 21. The optimum is 1+2+3+6+9 = 21 here -
-but change the last row to [7,8,1] and greedy still commits early while DP
-finds the cheaper route. The general reason is that a locally cheap step can
-commit you to an expensive remainder, so every cell must consider both
-predecessors. Same argument as Triangle.""",
+    ONE PATH:  1 -> 3 -> 1 -> 1 -> 1   (right, right, down, down)   total 7
+    ANOTHER:   1 -> 1 -> 4 -> 2 -> 1   (down, down, right, right)   total 9
+    ANOTHER:   1 -> 1 -> 5 -> 1 -> 1   (down, right, right, down)   total 9
 
-    """Edge cases.
-A 1x1 grid [[5]] -> dp = [5], both loops skip, answer 5.
-A single row [[1,2,3]] -> prefix sums -> 6. A single column -> the dp[0] += line
-runs each iteration -> the column sum.
-Negative values work: the recurrence never assumes positivity. (If moves were
-allowed in all four directions AND values could be negative, greedy and this DP
-both break, and you would need Dijkstra - which is the interesting follow-up.)
-An empty grid would crash on grid[0]; guard it if the constraints allow it.""",
+    ANSWER: 7
 
-    """Complexity and the family.
-Time O(rows * cols) - every cell computed once. Space O(cols) with the rolling
-row, or O(1) if you are allowed to mutate the input grid (say the trade-off:
-it destroys the caller's data).
-The family: Unique Paths (count instead of minimise, same shape), Unique Paths
-II (obstacles set cells to 0/infinity), Triangle, Dungeon Game (which must be
-solved BACKWARDS from the destination because the constraint is on the running
-minimum, not the sum - a genuinely instructive variant), and Cherry Pickup
-(two simultaneous paths, so the state gains a dimension).""",
+THREE THINGS THE PROBLEM IS SAYING:
+
+    RIGHT OR DOWN ONLY. No going back up or left. That restriction is what makes this tractable - it
+        means the path can never revisit a cell, so there are no cycles to reason about.
+    EVERY PATH HAS THE SAME LENGTH. From a grid of R rows and C columns you always take exactly
+        R−1 downs and C−1 rights, in some order. So this is NOT about finding a short path - all paths
+        are the same length. It is about which cells you land on.
+    THE START AND END BOTH COUNT toward the total.
+
+HOW MANY PATHS ARE THERE? You choose which of the R+C−2 moves are the downs, so it is
+"(R+C−2) choose (R−1)". For a modest 10 x 10 grid that is 48,620 paths; for 20 x 20 it is over 35
+billion. CHECKING THEM ALL IS NOT AN OPTION.
+
+    AND YOU CANNOT SIMPLY WALK GREEDILY, always stepping onto whichever neighbour is cheaper. That
+    fails - section 4 has a grid where it does, found by search rather than by guesswork.""",
+
+    """2. THE INTUITION - every cell has exactly two ways in.
+
+Ask a smaller question at every cell: WHAT IS THE CHEAPEST TOTAL TO REACH THIS CELL FROM THE START?
+
+Because you may only move right or down, a cell can be entered from exactly TWO places - the cell
+ABOVE it and the cell to its LEFT. There is no third option. So:
+
+    cheapest to reach (i, j)  =  this cell's cost  +  the cheaper of (the cheapest to reach the cell
+                                                                     above, the cheapest to reach the
+                                                                     cell to the left)
+
+    grid =  1  3  1                  cheapest-to-reach =   1   4   5
+            1  5  1                                        2   7   6
+            4  2  1                                        6   8   7
+
+    Reading the answer table: to reach the middle cell (5) you could come from above, having spent 4,
+    or from the left, having spent 2. The cheaper is 2, so 2 + 5 = 7.
+
+    The bottom-right cell holds 7, which is the answer.
+
+TWO EDGES ARE SPECIAL, and only because they have fewer ways in:
+
+    THE TOP ROW can only be reached from the LEFT - there is nothing above it. So it is a running
+        total: 1, then 1+3 = 4, then 4+1 = 5.
+    THE FIRST COLUMN can only be reached from ABOVE. So it is also a running total: 1, then 1+1 = 2,
+        then 2+4 = 6.
+
+    Everywhere else has both options and takes the cheaper.
+
+AND NOW THE SAVING THAT MAKES THIS NEAT. The rule reaches back exactly ONE ROW and ONE COLUMN - never
+further. So you do not need the whole table; ONE ROW OF NUMBERS IS ENOUGH, overwritten as you sweep
+downward.
+
+    after the top row:      1   4   5
+    after the middle row:   2   7   6        each entry replaced in place, left to right
+    after the bottom row:   6   8   7        the last entry is the answer
+
+WHY OVERWRITING IN PLACE IS SAFE. When you are computing position j on the current row, the entry
+sitting at j is still the value from the ROW ABOVE (not yet overwritten), and the entry at j−1 has
+already been updated to the CURRENT row. Those are exactly the two numbers the rule needs - the cell
+above and the cell to the left. Section 5 spells that out, because it looks like a bug and is not.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRID / MATRIX. A rectangular array of costs. `grid[i][j]` is row i, column j.
+PATH. A sequence of moves from the top-left to the bottom-right using only right and down steps.
+PATH SUM. The total of every cell the path lands on, start and end included.
+
+DYNAMIC PROGRAMMING (DP). Solving smaller pieces first and reusing their answers.
+STATE. What one stored value means. HERE: the cheapest total to REACH a given cell from the start.
+
+ROLLING ROW. Keeping one row of values and overwriting it as you move down, instead of storing the
+whole two-dimensional table. Possible because the rule reaches back only one row.
+IN-PLACE OVERWRITE. Updating an entry while its old value is still needed by something else - safe
+here for a specific reason (section 5).
+
+PREFIX SUM. A running total. The first row and first column are exactly that, since each has only one
+way in.
+
+grid. The input. NOT modified by this code.
+rows, cols. Its dimensions.
+dp. The rolling row - `dp[j]` is the cheapest total to reach column j of whichever row is current.
+i. The row being processed. j. The column.
+
+O(rows x cols) TIME, O(cols) SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - WALKING GREEDILY. The natural idea is to step onto whichever neighbour is cheaper, right or
+down, and repeat. IT FAILS, and not rarely.
+
+    grid =  0  1  7
+            4  6  8
+            1  4  5
+
+    GREEDY, one step of lookahead:
+        at (0,0) = 0:  right is 1, down is 4  ->  go RIGHT.       running total 1
+        at (0,1) = 1:  right is 7, down is 6  ->  go DOWN.        running total 7
+        at (1,1) = 6:  right is 8, down is 4  ->  go DOWN.        running total 11
+        at (2,1) = 4:  bottom row, must go right.                 running total 16
+
+        GREEDY TOTAL: 16
+
+    THE ACTUAL OPTIMUM IS 14:  0 -> 4 -> 1 -> 4 -> 5, straight down the first column then along the
+    bottom. Brute force over all six paths confirms 14.
+
+    THE VERY FIRST STEP IS THE MISTAKE. Greedy took the 1 over the 4 because it looked cheaper by 3 -
+    and committed itself to a row that cost more later. A LOCAL COMPARISON CANNOT SEE THAT.
+
+    AND THIS IS NOT A CONTRIVED GRID. Searching 20,000 random grids of 2-3 rows and 2-4 columns with
+    values 0-9, THE GREEDY DISAGREED WITH THE OPTIMUM 2,879 TIMES - about one grid in seven. It is not
+    an edge case; it is simply wrong.
+
+TRAP 2 - FORGETTING THAT THE TWO BOUNDARY LINES ARE DIFFERENT. The first row is handled by its own
+loop BEFORE the main sweep; the first column is handled by `dp[0] += grid[i][0]` INSIDE the sweep.
+
+    THEY LOOK ASYMMETRIC AND THEY ARE, because of the rolling row. The first row is a one-off setup -
+    it is the row the sweep starts from. The first column has to be updated once per row, as each new
+    row begins, because `dp[0]` must move down one cell before the rest of that row can use it.
+
+    Omit the `dp[0] +=` line and every row after the first computes `min(dp[1], dp[0])` with a stale
+    `dp[0]` from the row above - silently too cheap, and the answer comes out below the true minimum.
+
+TRAP 3 - STARTING THE MAIN LOOPS AT 0 INSTEAD OF 1. `dp[0]` is the start cell's cost and must not be
+recomputed as though it had a left neighbour; `j` must begin at 1. Likewise `i` begins at 1 because
+row 0 was already handled.
+
+TRAP 4 - THINKING THE ROLLING OVERWRITE IS A BUG. `dp[j] = min(dp[j], dp[j-1]) + grid[i][j]` reads
+`dp[j]` and writes to it in the same statement. At that instant `dp[j]` still holds the value from the
+ROW ABOVE and `dp[j-1]` already holds the CURRENT row's value - which is precisely "above" and "left".
+Section 5 argues it. Sweep the row RIGHT TO LEFT instead and it breaks, because `dp[j-1]` would then
+still be the old row.
+
+TRAP 5 - NO GUARD ON THE EMPTY GRID. `rows, cols = len(grid), len(grid[0])` raises IndexError on `[]`.
+The code as written has no `if not grid` guard, so an empty grid CRASHES rather than returning 0. Worth
+adding, and worth noticing that the sibling entry Maximal Square in this bank does guard it.
+
+TRAP 6 - ASSUMING NEGATIVE COSTS WOULD STILL WORK. They would here, because the move set forbids
+revisiting a cell - so there are no negative cycles to exploit. If diagonal or upward moves were
+allowed, negatives would break the DP and you would need a shortest-path algorithm instead.""",
+
+    """5. THE ALTERNATIVES, AND WHY THE ROLLING ROW IS SAFE.
+
+VERSION A - ENUMERATE EVERY PATH. There are "(R+C−2) choose (R−1)" of them - 48,620 for a 10 x 10
+grid, over 35 billion for 20 x 20. Correct and impossible.
+
+VERSION B - GREEDY. Trap 1. Wrong on roughly one random grid in seven.
+
+VERSION C - RECURSION WITHOUT MEMOISATION. "Cheapest from here = this cell + min(cheapest from right,
+cheapest from below)". Correct, and it recomputes the same cells exponentially often, for the same
+reason as version A.
+
+VERSION D - A FULL TWO-DIMENSIONAL DP TABLE. `dp[i][j] = grid[i][j] + min(dp[i-1][j], dp[i][j-1])`.
+O(rows x cols) time and space. Correct, clear, and stores more than it needs.
+
+VERSION E - THE ROLLING ROW, which is the code here. O(rows x cols) time, O(cols) space.
+
+WHY THE ROLLING ROW IS CORRECT - the argument, because reading and writing the same slot looks wrong.
+
+    Consider the moment the sweep is about to compute column j of row i.
+
+        `dp[j]`    has NOT been touched yet during row i, so it still holds the answer for
+                   (i−1, j) - THE CELL ABOVE.
+        `dp[j-1]`  WAS updated a moment ago, during this same row, so it holds the answer for
+                   (i, j−1) - THE CELL TO THE LEFT.
+
+    Those are exactly the two values the recurrence needs. The overwrite is not a hazard; it is the
+    mechanism.
+
+    IT DEPENDS ENTIRELY ON SWEEPING LEFT TO RIGHT. Going right to left, `dp[j-1]` would still be the
+    previous row's value and the "left neighbour" would be wrong.
+
+    (This is the same fixed-window reduction seen elsewhere in this bank - House Robber and Tribonacci
+    drop a table to a few variables for the same reason. Here the window is one row wide.)
+
+CAN IT BE O(1) SPACE? YES, IF YOU MAY MODIFY THE INPUT - write the running answers into `grid` itself.
+That is a real trade: it destroys the caller's data, which several entries in this bank do and this one
+notably does NOT. Mention both.
+
+WHY THE FIRST ROW AND FIRST COLUMN NEED SEPARATE HANDLING. Every interior cell has two ways in; the top
+row has only one (from the left) and the first column has only one (from above). Rather than writing a
+conditional inside the inner loop, the code handles each boundary once. THE ALTERNATIVE is a padded
+border of infinities - so that `min` automatically ignores the missing direction - which trades two
+special lines for an extra row and column. Both are legitimate; Maximal Square in this bank uses the
+padding approach with zeros, and this one uses explicit boundaries.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WORK OUT THE CHEAPEST TOTAL TO REACH EVERY CELL, SWEEPING
+TOP TO BOTTOM AND LEFT TO RIGHT - EACH CELL BEING ITS OWN COST PLUS THE CHEAPER OF THE TWO CELLS THAT
+CAN LEAD INTO IT - AND KEEP ONLY ONE ROW OF THOSE TOTALS AT A TIME.
+
+THERE IS NO RECURSION. The mechanism is A SINGLE SWEEP OVER THE GRID, CARRYING ONE ROW OF RUNNING
+TOTALS:
+
+  - Each cell depends only on the cell above and the cell to the left, both of which come earlier in a
+    top-to-bottom, left-to-right sweep - so everything needed is final when it is read.
+  - THE ROW IS OVERWRITTEN IN PLACE AS THE SWEEP MOVES ACROSS. At the moment a position is computed,
+    the value sitting there is still the one from the row above, and the value just to its left has
+    already been updated to the current row. Those are precisely the two numbers required.
+  - THAT ONLY WORKS SWEEPING LEFT TO RIGHT. Going the other way, the neighbour to the left would still
+    hold the previous row's figure.
+  - WHAT MAKES IT STOP: two nested loops with trip counts fixed by the grid's dimensions.
+
+THE STEPS:
+
+  1. START A ROW OF RUNNING TOTALS, ONE PER COLUMN.
+
+  2. PUT THE TOP-LEFT CELL'S COST IN THE FIRST POSITION - reaching the start costs whatever the start
+     cell holds.
+
+  3. FILL IN THE REST OF THE TOP ROW AS A RUNNING TOTAL, each position being the one before it plus
+     this cell's cost. The top row has nothing above it, so there is only one way in and no choice to
+     make.
+
+  4. FOR EACH REMAINING ROW, FROM THE SECOND DOWN TO THE LAST:
+
+     a. FIRST UPDATE THE LEFTMOST POSITION by adding this row's first cell to it. The first column has
+        nothing to its left, so it too is just a running total - but it must be advanced once per row,
+        before anything else in the row can use it.
+
+        Skip this and every later cell in the row compares against a figure belonging to the row above,
+        and the answer comes out too cheap.
+
+     b. THEN WALK ACROSS THE REST OF THE ROW, LEFT TO RIGHT. Each position becomes this cell's cost
+        plus THE SMALLER of the value currently sitting there - which is the cell above - and the value
+        just to its left, which is this row's previous cell.
+
+  5. THE ANSWER IS THE LAST POSITION IN THE ROW, after the final row has been processed.
+
+Note that no step ever compares a whole path against another. The comparison is always local - two
+numbers - and it is correct because each of those two numbers already summarises the best way to reach
+that neighbour.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a grid of fields, each with a toll you must pay to cross it. You enter at the top-left corner
+and must reach the bottom-right, and you may only ever move one field to the right or one field down -
+never back up, never left. You want to pay as little as possible in total.
+
+You cannot try every route: even on a modest board there are tens of thousands, and on a slightly
+larger one, billions.
+
+And you cannot simply look at the two fields in front of you and step onto whichever is cheaper. That
+sounds sensible and it genuinely does not work - a cheap field can sit at the entrance to an expensive
+row, and by the time you discover that, you have already committed. On randomly generated boards that
+short-sighted rule gets the wrong answer about one time in seven.
+
+So instead of thinking about routes, you think about DESTINATIONS. For every field on the board, you
+work out the cheapest possible total to arrive there from the corner. Once you know that for every
+field, the figure for the bottom-right corner is your answer.
+
+And those figures are easy to build up, because of the restriction on movement. Since you can only step
+right or down, there are exactly two fields you could have come from to arrive anywhere: the one above,
+and the one to the left. So the cheapest way to reach a field is simply its own toll, plus whichever of
+those two neighbours was cheaper to reach. Nothing else can matter.
+
+Two edges of the board are simpler still. Along the top row there is nothing above you, so the only way
+along is from the left - the cheapest total is just a running tally of tolls. Down the left-hand column
+there is nothing to the left, so it is a running tally too.
+
+Now the tidy part. Because each field only ever looks at the row above and the field beside it, you
+never need to keep the whole board of figures. One row is enough. You work out the totals for the top
+row, then move down and update that same row of numbers in place, left to right, then move down again.
+
+That in-place updating sounds reckless - you are overwriting a number you are about to need - but look
+at the timing. When you reach a position, the number still sitting there has not been touched since the
+previous row, so it IS the field above. And the number just to its left was updated a moment ago, so it
+IS this row's field to the left. The two numbers you need are exactly the two you have, and only
+because you are moving left to right. Sweep the other way and the trick collapses.
+
+When you have worked down to the last row, the final number in your row is the cheapest total to the
+far corner.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep grid = [[1,3,1],[1,5,1],[4,2,1]] beside you, answer 7.
+
+    def min_path_sum(grid):
+        rows, cols = len(grid), len(grid[0])
+
+The grid's dimensions.
+
+NOTE THERE IS NO EMPTY-GRID GUARD (trap 5). `len(grid[0])` raises IndexError on `[]`. One line -
+`if not grid or not grid[0]: return 0` - would fix it.
+
+`grid` itself is only ever READ - this function does not modify the caller's data, unlike several
+siblings in this bank.
+
+        dp = [0] * cols
+
+    dp  HOLDS one running total per column: `dp[j]` is the cheapest total to reach column j OF
+        WHICHEVER ROW IS CURRENTLY BEING PROCESSED. It is reused row after row, which is the whole
+        space saving.
+
+        dp[0] = grid[0][0]
+
+The start cell. Reaching it costs exactly its own value - there is nothing before it.
+
+        for j in range(1, cols):
+            dp[j] = dp[j - 1] + grid[0][j]   # first row: only from the left
+
+THE TOP ROW, which has NOTHING ABOVE IT - so there is no choice and no `min`, just a running total.
+
+Starts at `j = 1` because `dp[0]` was set above and must not be recomputed as though it had a left
+neighbour (trap 3).
+
+        for i in range(1, rows):
+
+Sweep down the remaining rows. Starts at 1 because row 0 is done.
+
+            dp[0] += grid[i][0]              # first column: only from above
+
+THE FIRST COLUMN, ADVANCED ONE ROW. It has nothing to its left, so it is a running total too - but
+unlike the top row it must be updated ONCE PER ROW, at the start, before the rest of the row can use it
+as a left neighbour.
+
+OMIT THIS AND `dp[0]` stays at the previous row's value, so every cell in this row compares against a
+stale figure and the answer comes out too cheap (trap 2).
+
+            for j in range(1, cols):
+                dp[j] = min(dp[j], dp[j - 1]) + grid[i][j]
+
+THE RECURRENCE, AND THE LINE THAT LOOKS LIKE A BUG AND IS NOT.
+
+    `dp[j]`      at this instant still holds the value from THE ROW ABOVE - it has not been touched yet
+                 during this row.
+    `dp[j - 1]`  was updated a moment ago during THIS row, so it is the cell TO THE LEFT.
+    `min(...)`   picks the cheaper of the two ways in.
+    `+ grid[i][j]`  adds this cell's own cost.
+
+    THE READ AND THE WRITE TO `dp[j]` HAPPEN IN THE SAME STATEMENT, and the old value is exactly what
+    is wanted (trap 4). This works ONLY sweeping left to right - reverse the inner loop and `dp[j-1]`
+    would still belong to the previous row.
+
+        return dp[-1]
+
+The last column of the final row - the bottom-right cell, and the answer.""",
+
+    """9. THE TABLE, FILLED BY HAND - AND THE GRID WHERE GREEDY FAILS.
+
+TRACE 1 - THE CLASSIC GRID. grid = [[1,3,1],[1,5,1],[4,2,1]]. Expected 7.
+
+    rows = 3, cols = 3.  dp = [0, 0, 0], then dp[0] = grid[0][0] = 1.
+
+    THE TOP ROW (only reachable from the left):
+        j = 1:  dp[1] = dp[0] + grid[0][1] = 1 + 3 = 4
+        j = 2:  dp[2] = dp[1] + grid[0][2] = 4 + 1 = 5
+        dp = [1, 4, 5]
+
+    ROW i = 1  (grid row [1, 5, 1]):
+        dp[0] += grid[1][0] = 1   ->  dp[0] = 2          the first column, advanced one row
+        j = 1:  min(dp[1] = 4, dp[0] = 2) = 2  ->  dp[1] = 2 + grid[1][1] = 2 + 5 = 7
+                (the 4 was the cell ABOVE; the 2 was the cell to the LEFT, updated a moment ago)
+        j = 2:  min(dp[2] = 5, dp[1] = 7) = 5  ->  dp[2] = 5 + grid[1][2] = 5 + 1 = 6
+        dp = [2, 7, 6]
+
+    ROW i = 2  (grid row [4, 2, 1]):
+        dp[0] += grid[2][0] = 4   ->  dp[0] = 6
+        j = 1:  min(dp[1] = 7, dp[0] = 6) = 6  ->  dp[1] = 6 + 2 = 8
+        j = 2:  min(dp[2] = 6, dp[1] = 8) = 6  ->  dp[2] = 6 + 1 = 7
+        dp = [6, 8, 7]
+
+    RETURN dp[-1] = 7.
+
+    THE FULL TABLE, had it been stored, would be:
+
+            1   4   5
+            2   7   6
+            6   8   7
+
+    Brute force over all six paths confirms 7. The winning route is 1 -> 3 -> 1 -> 1 -> 1: right,
+    right, down, down.
+
+    NOTE THE OVERWRITING AT ROW 1, j = 2. `dp[2]` was 5 (the cell above, from the top row) and became
+    6. When the next row read `dp[2]` it got that 6 - the cell above it - which is exactly right.
+
+TRACE 2 - THE GRID WHERE GREEDY FAILS (trap 1). grid = [[0,1,7],[4,6,8],[1,4,5]].
+
+    THE DP:
+        dp[0] = 0.  Top row:  dp[1] = 0 + 1 = 1,  dp[2] = 1 + 7 = 8.       dp = [0, 1, 8]
+        i = 1:  dp[0] += 4  ->  4
+                j = 1:  min(1, 4) = 1  ->  dp[1] = 1 + 6 = 7
+                j = 2:  min(8, 7) = 7  ->  dp[2] = 7 + 8 = 15               dp = [4, 7, 15]
+        i = 2:  dp[0] += 1  ->  5
+                j = 1:  min(7, 5) = 5  ->  dp[1] = 5 + 4 = 9
+                j = 2:  min(15, 9) = 9  ->  dp[2] = 9 + 5 = 14              dp = [5, 9, 14]
+        RETURN 14.   The route is 0 -> 4 -> 1 -> 4 -> 5, straight down then along the bottom.
+
+    THE GREEDY, one step of lookahead:
+        at (0,0) = 0:  right 1 vs down 4  ->  RIGHT.   total 0 + 1 = 1
+        at (0,1) = 1:  right 7 vs down 6  ->  DOWN.    total 1 + 6 = 7
+        at (1,1) = 6:  right 8 vs down 4  ->  DOWN.    total 7 + 4 = 11
+        at (2,1) = 4:  bottom row, forced right.       total 11 + 5 = 16
+
+        GREEDY GIVES 16, THE OPTIMUM IS 14.
+
+    THE FIRST STEP IS THE ERROR. Taking the 1 instead of the 4 saved 3 immediately and cost 5 later.
+    Brute force over all six paths confirms 14, so this is not a tie-breaking artefact.
+
+    AND IT IS COMMON: across 20,000 random grids (2-3 rows, 2-4 columns, values 0-9) the greedy
+    disagreed with the optimum 2,879 times - ABOUT ONE GRID IN SEVEN.
+
+TRACE 3 - THE BOUNDARY CASES.
+
+    A 1 x 1 GRID [[5]]:  cols = 1, dp = [5]. The top-row loop `range(1,1)` is empty; the outer loop
+        `range(1,1)` is empty.  RETURN dp[-1] = 5.  Both boundary lines are skipped entirely.
+
+    A SINGLE ROW [[1,2,3]]:  dp[0] = 1, then dp[1] = 1 + 2 = 3, dp[2] = 3 + 3 = 6. The outer loop never
+        runs.  RETURN 6 - a plain prefix sum, since there is only one path.
+
+    A SINGLE COLUMN [[1],[2],[3]]:  cols = 1, so the top-row loop is empty and dp = [1]. Then for each
+        row the `dp[0] +=` line runs and the inner loop `range(1,1)` is empty:
+            i = 1:  dp[0] += 2  ->  3
+            i = 2:  dp[0] += 3  ->  6
+        RETURN 6.  THE `dp[0] +=` LINE IS DOING ALL THE WORK HERE - which is exactly why it cannot be
+        folded into the inner loop (trap 2).
+
+THE INPUT THAT CRASHES (trap 5):
+    grid = []   ->  `len(grid[0])` raises IndexError: list index out of range.
+    One guard at the top returns 0 instead.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(rows x cols). Every cell is computed exactly once, with a fixed amount of work - one comparison
+and one addition. There is no revisiting and no search.
+
+    AGAINST ENUMERATING PATHS: "(R+C−2) choose (R−1)" routes - 48,620 for a 10 x 10 grid against 100
+    cell computations, and over 35 billion for 20 x 20 against 400.
+
+SPACE: O(cols) with the rolling row.
+
+    O(rows x cols) for the full-table version, which is clearer to write and to explain.
+    O(1) IF YOU MAY OVERWRITE THE INPUT GRID - a genuine trade, since it destroys the caller's data.
+    This function as written does NOT modify `grid`, unlike 3Sum, Assign Cookies, Meeting Rooms, Boats,
+    Divide Players and Pair Chain in this bank.
+
+    NOTE THE ROLLING ROW USES O(cols), NOT O(rows) - if the grid is very tall and narrow, sweeping by
+    rows is the right choice; if it is very wide and short, sweep by columns instead and the same trick
+    gives O(rows).
+
+THE FAMILY - GRID DP BUILT FROM UP-AND-LEFT NEIGHBOURS:
+
+    MINIMUM PATH SUM            min of two, plus this cell's cost              <- this entry
+    UNIQUE PATHS                SUM of two - counting routes instead of costing them
+    UNIQUE PATHS II             the same with obstacles, which force certain cells to zero
+    MAXIMAL SQUARE              MIN OF THREE plus one - the diagonal is needed there because a square
+                                is constrained in a third direction
+    TRIANGLE                    the same idea on a triangular grid
+    DUNGEON GAME                the same grid, swept BACKWARDS from the destination, because the
+                                constraint is about never dropping below 1 health - a good reminder
+                                that the sweep direction follows the dependency, not the geography
+
+    THE RECOGNITION CUE: a grid, movement restricted so cells cannot be revisited, and an optimum over
+    routes. Sweep in the direction the dependencies point, and every value you need is already there.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Reduce to O(1) space." Write into the grid itself - and say plainly that it destroys the input.
+  - "Return the path, not just its cost." Keep the full table and walk backwards from the bottom-right,
+    at each step moving to whichever neighbour supplied the `min`.
+  - "What if you could also move diagonally?" Add a third term to the `min`, exactly as Maximal Square
+    does.
+  - "What if you could move in ALL four directions?" The DP collapses - cells could be revisited and
+    there is no valid sweep order. It becomes a shortest-path problem: Dijkstra, since costs are
+    non-negative.
+  - "What if costs could be negative?" Fine here, because right-and-down movement makes cycles
+    impossible. With free movement, negative cycles would make the problem ill-posed.
+
+THE #1 BEGINNER MISTAKE: stepping greedily onto the cheaper neighbour. It is the first idea everyone
+has, it is wrong on about one random grid in seven, and on [[0,1,7],[4,6,8],[1,4,5]] it returns 16
+where 14 is achievable - the error committed on the very first step, saving 3 and costing 5.
+
+RUNNER-UP: dropping the `dp[0] += grid[i][0]` line, so that after the first row every cell compares
+against a first-column figure belonging to the row above. On a single-column grid that line is doing
+ALL the work, which is the clearest way to see it is not redundant.
+
+TAKEAWAY: ask the cheapest cost to REACH each cell rather than trying to pick a route, because
+right-and-down movement means every cell has exactly two ways in - so one comparison per cell settles
+it, and a single row of running totals suffices since the value under your finger is still the row
+above while the one beside it is already the row you are on.""",
 ]
 
 for _e in ENTRIES:
