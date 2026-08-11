@@ -33684,265 +33684,487 @@ final node of each one.""",
 ]
 
 _EX_P0B["Clone Graph (DFS)"] = [
-    """What "clone a graph" actually means, with a picture.
+    """1. THE GOAL - what "clone a graph" actually means.
 
-A GRAPH is a set of items with connections between them - think of four friends
-and who is friends with whom. Each item is a NODE; each connection is an EDGE.
-Unlike a tree, a graph is allowed to loop back on itself.
+A GRAPH is a set of items with connections between them. Think of four friends and who is friends
+with whom:
 
-Our graph, four people standing in a square, each friends with the two beside
-them:
+        1 --- 2          1 is friends with 2 and 4
+        |     |          2 is friends with 1 and 3
+        4 --- 3          3 is friends with 2 and 4
+                         4 is friends with 3 and 1
 
-    1 --- 2
-    |     |
-    4 --- 3
+You are handed ONE of these people - say person 1 - and asked to build a COMPLETE SEPARATE COPY
+of the whole friendship network. Four brand-new people, with the same numbers, wired together the
+same way.
 
-So 1's neighbours are 2 and 4; 2's are 1 and 3; 3's are 2 and 4; 4's are 1 and 3.
+WHAT "SEPARATE" HAS TO MEAN, precisely:
 
-To CLONE it means: build a completely NEW set of four nodes, wired together in
-exactly the same pattern, sharing nothing with the original. Afterwards, if you
-change a neighbour list in the copy, the original must be untouched. This is
-sometimes called a DEEP COPY - "deep" because you copy the things inside too,
-not just the outer container.
+    - Every node in the copy is a NEW object. If you later change the copy, the original must not
+      change, and vice versa.
+    - No link in the copy may point back at an original node. Not one.
+    - The shape must be identical: copy-1's neighbours must be copy-2 and copy-4, and nothing else.
 
-The naive attempt is to walk the graph and make a new node each time you arrive
-somewhere. Watch what goes wrong. Start at 1, make a new 1. Walk to 2, make a
-new 2. From 2 walk back to 1... and make a SECOND new 1. Then from that one walk
-to 2 again, making a second new 2. Forever.
+That last requirement is harder than it looks, because THE GRAPH HAS A CYCLE. Walk 1 to 2 to 3 to
+4 and you are back at 1. A naive "visit each node and copy it" walk goes round that loop forever.
 
-The graph loops, so a plain walk loops too. That is the entire difficulty of
-this problem, and everything below is about solving it.""",
+    1 -> 2 -> 3 -> 4 -> 1 -> 2 -> 3 -> 4 -> 1 -> ...   never stops
 
-    """The fix: a MAP that remembers who has already been copied.
+So the real problem is not "how do I copy a node" - that is one line. It is: HOW DO I VISIT EVERY
+NODE EXACTLY ONCE WHEN THE CONNECTIONS LOOP BACK ON THEMSELVES? Section 2 is the answer, and it is
+one dictionary.""",
 
-A MAP (also called a dictionary or hash map) stores pairs: given a key, it hands
-back a value, quickly. Ours will store "this original node -> its finished
-copy".
+    """2. THE INTUITION - a map that remembers who has already been copied.
 
-The rule, in plain words:
+A MAP (also called a dictionary or hash map) stores pairs: given a key, it hands back a value,
+quickly. Here the key is an ORIGINAL node and the value is ITS CLONE.
 
-    Before exploring a node's neighbours, put its copy in the map.
+    cloned = {  original-1 : copy-1,
+                original-2 : copy-2,  ...  }
 
-Read that twice, because the ORDER is the whole solution. Two things happen:
+Now the whole algorithm is three sentences:
 
-1. When the walk loops back to a node you have already started, you look it up
-   in the map, find its copy, and just return that copy - no new node, no
-   further walking. The loop is broken.
-2. The copy that comes back is the SAME object every time, so all the edges
-   point at one shared copy per original, exactly as in the original graph.
+    WHEN YOU ARRIVE AT A NODE, first look it up in the map.
+    IF IT IS THERE, you have already copied it - hand back the copy and go no further.
+    IF IT IS NOT, make the copy, PUT IT IN THE MAP, and then go and copy its neighbours.
 
-The walk itself is DEPTH-FIRST SEARCH (DFS): go as deep as you can down one path
-before backing up and trying the next. In code this is usually plain recursion -
-a function that calls itself. Each nested call sits on the CALL STACK, the pile
-of paused function calls waiting for the one above to finish.
+The map is doing two jobs at once, and it is worth separating them because most explanations only
+mention the first:
 
-So the function does exactly four things, in this order:
-  1. If this node is already in the map, return the stored copy. Stop.
-  2. Make a bare new node with the same value, no neighbours yet.
-  3. Put it in the map RIGHT NOW, before going anywhere.
-  4. For each neighbour of the original, call yourself and append whatever comes
-     back to the new node's neighbour list.""",
+    JOB 1 - IT PREVENTS INFINITE LOOPS. Second time you reach node 1, the map answers instead of
+            the walk continuing.
+    JOB 2 - IT GIVES YOU THE RIGHT OBJECT. When node 3 needs to link to node 4's copy, and node 4
+            has already been copied elsewhere in the walk, the map hands back THAT SAME copy -
+            not a second, duplicate copy-4. Without this you would end up with more nodes than
+            you started with, all correctly numbered and all wrong.
 
-    """The trace on the square, with the reason on every line.
+THE ORDER IS EVERYTHING, and it is the one thing this problem is really testing:
 
-    1 --- 2          neighbours: 1:[2,4]  2:[1,3]  3:[2,4]  4:[1,3]
-    |     |
-    4 --- 3
+    make the copy
+    PUT IT IN THE MAP        <- before you go anywhere
+    then visit the neighbours
 
-We write 1' for "the copy of 1". Start with an empty map.
+Put it in the map AFTER visiting the neighbours and the code recurses forever on any cycle -
+because when the walk comes back round, the node is still not registered. Section 4 shows that
+failure on the smallest possible graph.""",
 
-dfs(1): not in the map. Make 1'. Register 1 -> 1'. Map = {1:1'}.
-        Now walk 1's neighbours, which are 2 then 4.
+    """3. EVERY TERM, defined the first time you meet it.
 
-  dfs(2): not in the map. Make 2'. Register. Map = {1:1', 2:2'}.
-          Walk 2's neighbours: 1 then 3.
-    dfs(1): IS in the map -> return 1' at once. Append 1' to 2'. No new work -
-            this is the loop being cut.
-    dfs(3): not in the map. Make 3'. Register. Map = {1:1', 2:2', 3:3'}.
-            Walk 3's neighbours: 2 then 4.
-      dfs(2): in the map -> return 2'. Append to 3'.
-      dfs(4): not in the map. Make 4'. Register. Map now has all four.
-              Walk 4's neighbours: 1 then 3.
-        dfs(1): in the map -> return 1'. Append to 4'.
-        dfs(3): in the map -> return 3'. Append to 4'.
-              4' now has neighbours [1', 3']. Return 4'.
-            Append 4' to 3'. 3' has [2', 4']. Return 3'.
-          Append 3' to 2'. 2' has [1', 3']. Return 2'.
-        Append 2' to 1'.
-  dfs(4): in the map -> return 4'. Append to 1'.
-        1' has [2', 4']. Return 1'.
+GRAPH. Items (NODES, or vertices) joined by connections (EDGES).
 
-Four copies made, each original visited once. Compare the neighbour lists with
-the originals at the top - they match exactly. And nothing in the copy points at
-anything in the original.""",
+UNDIRECTED. Every friendship goes both ways: if 1 lists 2 as a neighbour, 2 lists 1. This is why
+the walk keeps coming back to where it started.
 
-    """What happens if you register LATE - the bug worth seeing once.
+NEIGHBOURS. The nodes directly connected to a given node. Here, a list on each node.
 
-Take the simplest looping graph, two nodes pointing at each other:
+CYCLE. A path that returns to where it began - 1, 2, 3, 4, 1. Cycles are what make this problem
+more than a one-liner.
 
-    1 --- 2
+CONNECTED. Every node reachable from every other. The problem promises this, which is why
+starting from one node is enough. Section 10 says what changes if it is not promised.
 
-WRONG order (explore first, register afterwards):
-  dfs(1): make 1'. Walk neighbours -> dfs(2).
-    dfs(2): make 2'. Walk neighbours -> dfs(1).
-      dfs(1): 1 is NOT in the map yet, because we never registered it. So make
-              ANOTHER 1'. Walk its neighbours -> dfs(2)...
-        dfs(2): 2 is not in the map either. Make ANOTHER 2'...
+DEEP COPY. New objects all the way down, sharing nothing with the original. The opposite is a
+SHALLOW COPY, which copies the node but reuses the same neighbour list - so editing the copy
+would edit the original.
 
-This never ends. It runs until the call stack fills up and the program dies with
-a stack overflow (in Python, a RecursionError).
+DFS (DEPTH-FIRST SEARCH). Follow one path as far as it goes, then back up and try the next.
+The alternative is BFS (breadth-first), which spreads out level by level. Both work here; section
+5 says when to pick which.
 
-RIGHT order (register, then explore):
-  dfs(1): make 1'. REGISTER 1 -> 1'. Then dfs(2).
-    dfs(2): make 2'. REGISTER. Then dfs(1) -> found in map, returns 1' at once.
-            2' gets [1']. Return.
-  1' gets [2']. Done, two nodes, two edges.
+RECURSION. A function calling itself on a smaller piece of the problem. Each call PAUSES where it
+is, waits for the inner call to finish, then carries on from exactly that point.
 
-The map is doing two jobs at once and it is worth naming them separately: it is
-the "have I seen this?" marker that stops infinite walking, AND it is the lookup
-table that gives every edge the one correct copy to point at. That is why one
-map is enough - you do not also need a separate visited set.""",
+THE CALL STACK. The pile of paused calls. Every paused call keeps its own `cur`, `copy` and its
+position in the neighbour loop, which is why the walk can resume correctly after diving deep.
 
-    """The small inputs, and one assumption worth saying out loud.
+MEMOISATION / VISITED MAP. Storing an answer so it is computed once. `cloned` is both at once.
 
-A single node with no edges. dfs makes the copy, registers it, the neighbour
-loop has nothing to run, and the copy is returned. Correct, no special case.
+cloned. In the code: the map from original node to its clone.
+cur. The original node the current call is working on.
+copy. The clone being built for `cur`.
+nb. One neighbour of `cur`, inside the loop.
 
-No node at all (an empty input). Return nothing immediately, before touching the
-map - otherwise you would try to read the value of something that is not there.
+O(V + E). Cost proportional to the number of nodes plus the number of edges - the standard way
+graph costs are written.""",
 
-Now the subtle one: what should the map be keyed BY?
+    """4. THE BUG WORTH SEEING ONCE - registering LATE.
 
-Key it by the NODE OBJECT, not by the node's value. In a general graph two
-DIFFERENT nodes are allowed to hold the same value - two people both labelled 5.
-If you key by value, both collapse into a single copy, and two separate parts of
-your graph get silently welded together. Keying by the node itself keeps them
-distinct, because two distinct objects are distinct keys even when their
-contents match. In Python this works out of the box, since objects are hashable
-by identity unless you override it.
+Take the smallest graph that loops: two nodes pointing at each other.
 
-And the assumption: this solution starts from one node and reaches only the part
-of the graph connected to it. If the graph came in several disconnected pieces,
-you would need an outer loop over all nodes, sharing one map. The standard
-problem statement promises the graph is connected, so a single entry point is
-correct - but noticing the assumption and saying so is worth real credit.""",
+        1 --- 2          1's neighbours: [2]      2's neighbours: [1]
 
-    """The BFS version, and the cost.
+THE WRONG ORDER - copy, recurse, THEN register:
 
-If the graph is very deep - a chain of 100,000 nodes - the recursive version
-piles up 100,000 paused calls and blows the call stack. The cure is to keep the
-same idea but hold the pending work in a QUEUE (a waiting line) instead of on
-the call stack:
+    def dfs(cur):
+        if cur in cloned: return cloned[cur]
+        copy = Node(cur.val)
+        for nb in cur.neighbors:
+            copy.neighbors.append(dfs(nb))
+        cloned[cur] = copy          # <- REGISTERED TOO LATE
+        return copy
 
-  Make the start node's copy, register it, put the ORIGINAL in the queue.
-  While the queue is not empty:
-    Take a node off the front.
-    For each of its neighbours:
-      If the neighbour is not in the map: make its copy, register it, and put
-        the neighbour in the queue.
-      Append the neighbour's copy to the current node's copy's neighbour list.
+    dfs(1):  1 not in cloned (it is empty).  make copy-1.  loop to neighbour 2 ->
+      dfs(2):  2 not in cloned (STILL EMPTY - copy-1 was never registered).  make copy-2.
+               loop to neighbour 1 ->
+        dfs(1):  1 not in cloned.  make ANOTHER copy-1.  loop to neighbour 2 ->
+          dfs(2):  2 not in cloned.  make another copy-2 ...
 
-Notice the rule has not changed at all - it has just moved. "Register before you
-explore" becomes "register at the moment you enqueue". Same guarantee: a node is
-in the map before anything can walk back to it.
+    ... and so on until Python raises RecursionError: maximum recursion depth exceeded.
 
-The cost either way: every node is created once and every edge is looked at
-once, so the work is O(V + E) - V for the number of nodes (vertices) and E for
-the number of edges. The extra memory is the map, holding one entry per node,
-plus the stack or queue: O(V).
+    NOT ONE SINGLE ENTRY IS EVER WRITTEN TO THE MAP, because no call ever reaches its registering
+    line - each is stuck waiting on the next.
 
-In plain words, the takeaway: copying a looping structure needs a memory of what
-you have already copied, and that memory must be written BEFORE you follow any
-edge - otherwise the loop sends you back to a node you are still in the middle
-of copying, and you copy it again forever.""",
+THE RIGHT ORDER - copy, REGISTER, then recurse:
 
-    """What the code does, in plain language - read this before the line-by-line.
+    dfs(1):  make copy-1.  cloned = {1: copy-1}.  loop to neighbour 2 ->
+      dfs(2):  make copy-2.  cloned = {1: copy-1, 2: copy-2}.  loop to neighbour 1 ->
+        dfs(1):  1 IS in cloned  ->  return copy-1 immediately.
+      copy-2.neighbors = [copy-1].  return copy-2.
+    copy-1.neighbors = [copy-2].  done.
 
-The code keeps a notebook - the map - with one line per node, saying "this
-original node has this copy". Then it walks the graph, and at every node it
-arrives at, it does the same four things:
+ONE LINE MOVED, and the same input goes from a crash to a correct answer. That is the inversion
+worth remembering: it is not that registering early is tidier - it is the only thing that
+terminates.
 
-  1. Look the node up in the notebook. If it is already written down, hand back
-     the copy that is recorded there and go no further. This is the step that
-     stops the walk going round a loop forever.
-  2. Otherwise, make a brand-new node holding the same value. Its list of
-     neighbours is deliberately left EMPTY for the moment.
-  3. Write that pairing into the notebook immediately - before going anywhere
-     else at all.
-  4. Now go through the original node's neighbours one by one, ask for each
-     one's copy (which means starting this same procedure at that neighbour),
-     and attach whatever comes back to the new node's neighbour list.
+WHY IT IS SAFE TO REGISTER A HALF-BUILT COPY. At the moment `cloned[cur] = copy` runs, `copy` has
+the right value but an EMPTY neighbour list. Handing that out feels premature. It is fine, and the
+reason is that everyone stores a REFERENCE to the same object: when the neighbour list is filled
+in a moment later, every holder of that reference sees the filled list. Nobody ever gets a
+snapshot of the empty version.
 
-Step 3 is the entire solution, and its POSITION is what makes it work. The walk
-will come back round the loop to a node it is still in the middle of copying. If
-that node was written in the notebook first, the walk finds it, hands back the
-half-finished copy, and stops - and that half-finished copy will be completed by
-the call still working on it further up. If it was not written down yet, the
-walk starts copying it a second time, and a third, and never stops.
+TRAP 2 - KEYING THE MAP BY VALUE INSTEAD OF BY NODE. `cloned[cur.val] = copy` looks equivalent and
+is not: two distinct nodes may legitimately share a value, and then one would overwrite the other.
+Key by the node OBJECT. Python hashes objects by identity by default, which is exactly the
+behaviour wanted here - though note that if someone had given Node a custom `__eq__` without a
+`__hash__`, the node would become unhashable and this line would raise TypeError.
 
-The notebook is doing two jobs at once with one line of storage: it is the
-"already been here" marker, and it is the lookup table that tells every edge
-which copy to point at. That is why there is no separate visited set anywhere.
+TRAP 3 - RETURNING THE ORIGINAL NODE BY ACCIDENT. `copy.neighbors.append(nb)` instead of
+`append(dfs(nb))` builds a copy whose links point back into the original graph. It runs, it looks
+right, and it is a shallow copy wearing a disguise.
 
-In one sentence: copy each node, write it in the notebook BEFORE following any
-of its edges, and whenever you arrive somewhere already in the notebook, hand
-back what is written there instead of copying it again.""",
+TRAP 4 - FORGETTING THE None INPUT. `clone_graph(None)` must return None, not crash on
+`node.neighbors`.""",
 
-    """Now the code, line by line, against the trace we just did by hand.
+    """5. THE ALTERNATIVES, IN INCREASING SOPHISTICATION.
+
+VERSION A - COPY EACH NODE AS YOU WALK, NO MAP. Infinite loop on any cycle. Section 1.
+
+VERSION B - A "VISITED" SET PLUS A SEPARATE LOOKUP. Keep a set of visited nodes to stop the loop,
+and some other structure to find the right clone when wiring neighbours. This works but it is two
+structures doing one job - and the two can fall out of step. Collapsing them into one map from
+original to clone is the improvement, because "have I seen this?" and "which copy is it?" are
+answered by the same lookup.
+
+VERSION C - DFS WITH THE MAP, which is the code here. One dictionary, one recursive function.
+
+VERSION D - BFS WITH THE MAP AND A QUEUE. Same map, same logic, no recursion:
+
+    make the clone of the start node, register it, put the ORIGINAL in a queue
+    while the queue is not empty:
+        take an original node from the front
+        for each of its neighbours:
+            if the neighbour is not in the map, clone it, register it, and enqueue it
+            append the neighbour's clone to this node's clone's neighbour list
+
+WHEN THE BFS VERSION IS NOT OPTIONAL - and this is a concrete number rather than a preference.
+Python's default recursion limit is 1000. A graph that is a long chain of 100,000 nodes:
+
+        1 --- 2 --- 3 --- ... --- 100000
+
+makes the DFS version pile up 100,000 paused calls, each holding its own `cur`, `copy` and loop
+position. It dies at depth ~1000 with RecursionError long before it finishes. The BFS version
+holds the same nodes in a QUEUE ON THE HEAP instead of on the call stack, and completes.
+
+    DFS   stack depth is O(longest path)   - a chain graph is the worst case
+    BFS   queue size is O(widest frontier) - a star graph is the worst case
+
+Both are O(V + E) in time and O(V) in the map. The difference is only WHERE the pending work is
+stored, and which shape of graph makes that pile up.
+
+WHY EVERY EDGE IS TOUCHED TWICE. The graph is undirected, so edge 1-2 appears in 1's neighbour
+list AND in 2's. The walk therefore traverses each edge from both ends. The second traversal is
+always a map hit - it costs a lookup and returns immediately. Section 9 counts these exactly.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE GRAPH FROM THE GIVEN NODE, AND KEEP ONE
+NOTEBOOK MAPPING EACH ORIGINAL NODE TO ITS COPY - WRITING THE COPY INTO THE NOTEBOOK BEFORE
+FOLLOWING ANY OF ITS LINKS, SO THAT A LOOP BACK TO A NODE ALREADY IN PROGRESS IS ANSWERED FROM THE
+NOTEBOOK INSTEAD OF WALKED AGAIN.
+
+THIS VERSION IS RECURSIVE, and the mechanism is worth spelling out because the recursion is what
+makes it short:
+
+  - The function calls itself once per neighbour. Each call PAUSES at the exact point of the call,
+    holding on to which node it is copying, which copy it is building, and how far through the
+    neighbour list it had got.
+  - Those paused calls form the CALL STACK. When an inner call finally returns a clone, the
+    caller resumes exactly where it left off, appends that clone, and moves to its next neighbour.
+  - WHAT MAKES IT STOP: the map. Every node is registered the instant it is first seen, so the
+    second arrival at any node returns immediately without recursing. There are finitely many
+    nodes, so the walk must run out of new ones.
+  - WHAT WOULD MAKE IT NOT STOP: registering after the neighbour loop instead of before it. The
+    recursion then has no base case at all on a cyclic graph. This is section 4.
+  - HOW DEEP THE STACK GETS: as deep as the longest path the walk follows. Section 5 gives the
+    100,000-node chain where that is fatal.
+
+THE STEPS:
+
+  1. IF YOU WERE GIVEN NOTHING, return nothing.
+
+  2. START AN EMPTY NOTEBOOK mapping original nodes to their copies.
+
+  3. DEFINE THE WALK, which takes one original node and returns its copy:
+
+     a. LOOK THE NODE UP IN THE NOTEBOOK. If it is there, hand back the copy already recorded and
+        stop - do not walk any further from here. This is both the loop-breaker and the guarantee
+        that everyone links to the SAME copy.
+
+     b. MAKE A NEW NODE with the same value and an empty neighbour list.
+
+     c. WRITE IT IN THE NOTEBOOK IMMEDIATELY, before doing anything else. Its neighbour list is
+        still empty and that is fine - everyone stores a reference to this same object, so they
+        will all see the list once it is filled.
+
+     d. FOR EACH NEIGHBOUR OF THE ORIGINAL NODE, run this same walk on it - which either finds an
+        existing copy or builds a new one - and append whatever comes back to the new node's
+        neighbour list.
+
+     e. HAND BACK THE NEW NODE.
+
+  4. RUN THE WALK ON THE NODE YOU WERE GIVEN, and return its copy.
+
+The step people get wrong is 3c - doing it after 3d instead of before.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine you have been given one person from a group of friends, and asked to build an identical
+group of stand-ins - one stand-in per person, with exactly the same friendships between them.
+
+You carry a notebook. Every line in it says: "this original person's stand-in is that one."
+
+You start with the person you were handed. You check the notebook - empty, so they are not in it.
+You hire a stand-in for them, give the stand-in the same name, and IMMEDIATELY write the pairing
+into the notebook, before doing anything else. The stand-in has no friends yet. That does not
+matter, because everyone you hand this stand-in to is holding the same person, not a photograph -
+when you introduce their friends later, everyone sees it.
+
+Now you ask the original person for their friends, and you deal with them one at a time. For each
+one, you do exactly what you just did: check the notebook, and either find their stand-in already
+listed, or hire one, write it down, and go on to their friends. Whatever stand-in comes back, you
+introduce them to the stand-in you are currently building.
+
+The notebook is what makes this finish. Friendship goes both ways, so sooner or later you will
+follow a chain of friends and arrive back at someone you have already dealt with. When that
+happens, you look them up, find their stand-in already listed, and hand that same stand-in over
+without going any further. You do not hire a second one, and you do not walk their friends again.
+
+And the moment you write in the notebook is the whole trick. If you waited until you had finished
+introducing all of somebody's friends before writing them down, then a chain of friends looping
+back to them would find no entry, and you would start hiring them all over again - and again, and
+again, until you collapsed. Writing them down first is not tidiness. It is the only reason the
+job ends.
+
+When there is nobody new left to meet, every original has exactly one stand-in, every stand-in
+knows exactly the right other stand-ins, and not one of them has ever been introduced to an
+original.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
 
 Keep the square beside you: 1-2, 2-3, 3-4, 4-1.
 
-    if node is None:
-        return None
-The empty-input guard. Nothing to copy, nothing to return.
+    class Node:
+        def __init__(self, val=0, neighbors=None):
+            self.val = val
+            self.neighbors = neighbors if neighbors is not None else []
 
-    cloned = {}
-The map, and it is created ONCE, out here - not inside dfs. If it lived inside
-dfs it would be rebuilt empty on every recursive call, remember nothing, and the
-infinite loop would come straight back.
+The node shape the problem gives you: a value and a list of neighbours.
 
-    def dfs(cur):
-A function defined inside another function so it can see and share the single
-cloned map. cur is "the original node I am standing on right now". In the trace
-cur was 1, then 2, then 3, then 4.
+The `neighbors if neighbors is not None else []` is worth a word. It exists so that each new node
+gets a FRESH empty list. Writing `def __init__(self, val=0, neighbors=[])` would create ONE list
+shared by every node made with the default - Python's classic mutable-default bug - and appending
+to one node's neighbours would appear on all of them.
 
-    if cur in cloned:
-        return cloned[cur]
-The loop-breaker. This is the line that fired when dfs(1) was called from inside
-dfs(2) - node 1 was already registered, so its finished copy came straight back
-and the walk stopped there instead of going round the square again. Every
-"IS in the map -> return" line in the trace is this one line.
+    def clone_graph(node):
+        if node is None:
+            return None
 
-    copy = Node(cur.val)
-Make the new node, carrying the same value but with an EMPTY neighbour list. It
-is deliberately blank at birth - the edges get filled in below, after the
-neighbours have been cloned.
+Trap 4. Nothing to copy, so nothing to return. Without this, `node.neighbors` below would raise
+AttributeError.
 
-    cloned[cur] = copy
-The most important line in the whole solution, and its position matters more
-than its content. Registering HERE - after creating the copy but BEFORE the loop
-below - is what makes the check at the top succeed when the walk comes back
-round. Move this line below the loop and you get the infinite recursion from the
-earlier example.
+        cloned = {}                        # original node -> its clone
 
-    for nb in cur.neighbors:
-        copy.neighbors.append(dfs(nb))
-Walk the ORIGINAL node's neighbours, and for each one ask dfs for its copy. Two
-things can come back: an already-finished copy from the map (cheap, immediate),
-or a brand-new copy that dfs just built by recursing deeper. Either way you
-append the COPY, never the original - that is what keeps the two graphs
-completely separate. In the trace, this loop is where 2' collected [1', 3'].
+THE ONE STRUCTURE THE WHOLE ALGORITHM RESTS ON.
 
-    return copy
-Hand this node's copy back to whoever asked - either the caller one level up,
-or, for the very first call, the outside world.
+    the KEY   is the ORIGINAL node object - by identity, not by value. Trap 2 is what goes wrong
+              if you key on `cur.val` instead.
+    the VALUE is its clone.
+    it DECIDES both "have I been here before?" and "which object should I link to?" - one lookup
+              answering both questions is exactly why one map beats a set plus a lookup table.
 
-    return dfs(node)
-Kick the whole thing off at the starting node. Everything else happens inside.
+        def dfs(cur):
 
-One last thing to notice: the map is doing two jobs with one line of storage -
-it is the "already visited" marker AND the lookup table of finished copies. That
-is why there is no separate visited set anywhere in this code.""",
+Defined inside `clone_graph` so it can see `cloned` without it being passed around. Takes an
+ORIGINAL node, returns ITS CLONE - and that return value is what makes the neighbour wiring in the
+loop below a single expression.
+
+            if cur in cloned:
+                return cloned[cur]          # already copied -> reuse it
+
+THE BASE CASE - the line that terminates the recursion. Two jobs in one, as above: it stops the
+walk going round the cycle again, and it guarantees everybody links to the SAME clone object
+rather than to a second copy of it.
+
+            copy = Node(cur.val)            # make the clone first
+
+A new node with the same value and - importantly - an EMPTY neighbour list. The links are added
+below.
+
+            cloned[cur] = copy              # register BEFORE recursing (cycles!)
+
+THE LINE THIS WHOLE PROBLEM IS ABOUT. Registered while `copy.neighbors` is still empty, which is
+safe because everyone holds a reference to this same object and will see the list once it is
+filled.
+
+Move this line below the loop and the code recurses forever on any cycle - section 4 traces that
+on the two-node graph.
+
+            for nb in cur.neighbors:
+                copy.neighbors.append(dfs(nb))  # clone each neighbour
+
+Walk the ORIGINAL's neighbour list (`cur.neighbors`), and append to the CLONE's (`copy.neighbors`).
+Mixing those two up is easy and produces nonsense.
+
+`dfs(nb)` either finds `nb`'s clone in the map and returns instantly, or builds it. Either way
+what gets appended is a CLONE - never `nb` itself, which is trap 3.
+
+Note the original graph is only ever READ here. `clone_graph` does not modify its input in any way.
+
+            return copy
+
+Hand the finished clone back to whoever asked - which is either the caller's neighbour loop, or
+the final line.
+
+        return dfs(node)
+
+Kick the walk off at the node you were given. Because the graph is connected, this one call
+reaches everything.""",
+
+    """9. TRACED, CALL BY CALL - ON THE SQUARE, WHERE THE CYCLE ACTUALLY CLOSES.
+
+        1 --- 2      neighbours:  1: [2, 4]
+        |     |                   2: [1, 3]
+        4 --- 3                   3: [2, 4]
+                                  4: [1, 3]
+
+Write 1' for the clone of 1, and so on. Indentation shows the call stack depth.
+
+    dfs(1)          1 not in cloned.  make 1'.  cloned = {1:1'}.  loop over [2, 4]:
+      dfs(2)        2 not in cloned.  make 2'.  cloned = {1:1', 2:2'}.  loop over [1, 3]:
+        dfs(1)      1 IS in cloned  ->  return 1'.        <-- CYCLE BROKEN, 1st time
+                    2'.neighbors = [1']
+        dfs(3)      3 not in cloned.  make 3'.  cloned = {1:1', 2:2', 3:3'}.  loop over [2, 4]:
+          dfs(2)    2 IS in cloned  ->  return 2'.        <-- CYCLE BROKEN, 2nd time
+                    3'.neighbors = [2']
+          dfs(4)    4 not in cloned.  make 4'.  cloned = {1:1', 2:2', 3:3', 4:4'}.  loop over [1, 3]:
+            dfs(1)  1 IS in cloned  ->  return 1'.        <-- 3rd
+                    4'.neighbors = [1']
+            dfs(3)  3 IS in cloned  ->  return 3'.        <-- 4th, AND THE IMPORTANT ONE
+                    4'.neighbors = [1', 3']
+                    return 4'
+                    3'.neighbors = [2', 4']
+                    return 3'
+                    2'.neighbors = [1', 3']
+                    return 2'
+                    1'.neighbors = [2']
+        dfs(4)      4 IS in cloned  ->  return 4'.        <-- 5th
+                    1'.neighbors = [2', 4']
+                    return 1'
+
+    RESULT:   1' : [2', 4']        original 1 : [2, 4]
+              2' : [1', 3']        original 2 : [1, 3]
+              3' : [2', 4']        original 3 : [2, 4]
+              4' : [1', 3']        original 4 : [1, 3]
+
+    Identical shape, four brand-new objects, and no clone points at an original. Correct.
+
+    THE ONE MARKED "AND THE IMPORTANT ONE": at that moment, dfs(3) is still PAUSED higher up the
+    stack - it has not finished filling 3'.neighbors, which is still just [2']. Yet 4' is handed
+    3' and links to it. That is only safe because 3' was registered in the map BEFORE dfs(3) went
+    walking, and because 4' holds a REFERENCE to 3' rather than a snapshot. When dfs(3) resumes a
+    moment later and appends 4' to 3'.neighbors, 4' sees the completed list. This is the exact
+    situation section 4's "why registering a half-built copy is safe" describes, happening for
+    real.
+
+    COUNT THE WORK:  9 calls to dfs in total - the 1 top-level call plus one per directed edge
+    traversal. The square has 4 undirected edges, each walked from both ends, so 8. Of those 9
+    calls, 4 built a node and 5 were map hits that returned immediately. Nodes created: exactly 4,
+    one per original. Nothing was cloned twice.
+
+    That count is the O(V + E) claim made concrete: 4 nodes plus 8 directed edge traversals.
+
+SECOND TRACE - THE TWO-NODE GRAPH, side by side, the RIGHT way:
+
+    1 --- 2
+    dfs(1): make 1', cloned={1:1'}, loop [2]:
+      dfs(2): make 2', cloned={1:1',2:2'}, loop [1]:
+        dfs(1): IN MAP -> 1'.  2'.neighbors=[1'].  return 2'
+      1'.neighbors=[2'].  return 1'
+
+    Compare with section 4's WRONG order on the same graph, where the map stays empty forever and
+    Python raises RecursionError. Same graph, same three lines, one moved - crash versus correct.
+
+THE SMALL INPUTS:
+    None            returns None at the guard.
+    ONE NODE, no edges     dfs makes the copy, registers it, the neighbour loop has nothing to
+                           run, returns it. One node, no links. Correct.
+    ONE NODE with a SELF-LOOP (its own neighbour list contains itself)
+                           make the copy, register it, then dfs on itself finds it in the map and
+                           returns it - so the copy's neighbour list contains the copy. Correct,
+                           and it works only because of the register-first order.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(V + E) - V nodes, E edges.
+
+In plain words: every node is created exactly once, and every edge is walked exactly twice (once
+from each end, since the graph is undirected). The second walk of an edge is a map lookup that
+returns immediately. Nothing is done more than a constant number of times per node or per edge.
+The square in section 9 does it in 9 calls: 4 creations, 5 lookups.
+
+SPACE: O(V) for the map - one entry per node - PLUS the recursion depth, which is O(longest path)
+and can reach V on a chain graph.
+
+    THAT SECOND TERM IS THE ONE THAT BITES. Python's recursion limit is 1000 by default, so a
+    chain of 100,000 nodes crashes with RecursionError before it finishes. The BFS version in
+    section 5 stores the same pending work in a queue on the heap and completes.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the graph is disconnected?" DFS from one node only reaches its own component. You
+    would need the full node list and a loop starting a fresh walk from any node not yet in the
+    map. The map itself needs no change - which is a good sign the design was right.
+  - "What if it is directed?" The code is unchanged. It never assumed the edge went both ways;
+    the map handles cycles either way.
+  - "What if the graph is very deep?" Use the BFS version - the 100,000-chain above.
+  - "What if two nodes have the same value?" Fine, because the map is keyed by the node OBJECT,
+    not by its value. This is exactly trap 2, and being able to say why is the point.
+  - "Could you do it iteratively with an explicit stack?" Yes - same map, replace the call stack
+    with your own list. Same complexity, no recursion limit.
+
+THE #1 BEGINNER MISTAKE: registering the clone in the map AFTER recursing into the neighbours
+instead of before. On a graph with no cycles it works perfectly, which is what makes it so easy to
+ship - and on the very smallest cyclic graph, two nodes pointing at each other, it recurses until
+Python gives up. The map is not a cache you fill in when convenient; it is the base case of the
+recursion, and a base case that runs last is not a base case.
+
+RUNNER-UP: appending the original neighbour rather than its clone. The code runs, the shape looks
+right, and you have built a copy whose links reach back into the original graph - a shallow copy
+that will surprise somebody much later.
+
+TAKEAWAY: keep one map from each original node to its clone, and write the clone into it the
+instant you create it and before you follow a single link - because that map is simultaneously
+the loop-breaker, the deduplicator, and the only reason the recursion has a base case at all.""",
 ]
 
 _EX_P0B["Coin Change (fewest coins)"] = [
@@ -34416,256 +34638,509 @@ exponential search into one pass.""",
 ]
 
 _EX_P0B["Decode Ways (DP)"] = [
-    """The question, as a secret code your friend sent you.
+    """1. THE GOAL, as a secret code your friend sent you.
 
-You and a friend agreed on a simple code: A = 1, B = 2, C = 3, all the way to
-Z = 26. To send a message you write the numbers with no spaces between them.
+You and a friend agreed on a simple code: A = 1, B = 2, C = 3, all the way to Z = 26. To send
+"BAD" you write 2, then 1, then 4, and the message goes out as:
 
-Your friend sends you: 226
+    214
 
-The trouble is that the spaces are gone, so YOU have to decide where one letter
-ends and the next begins. Try it by hand - read the digits left to right and at
-each point choose to take one digit or two:
+The trouble is that your friend writes the digits with NO SPACES. So when 214 arrives, you have
+to work out where the letters were split - and there is more than one way to do it:
 
-  2 | 2 | 6   ->  B, B, F     ->  "BBF"
-  22 | 6      ->  V, F        ->  "VF"
-  2 | 26      ->  B, Z        ->  "BZ"
+    2 | 1 | 4   ->  B A D
+    21 | 4      ->  U D
+    2 | 14      ->  B N
 
-Is there a fourth? "226" as one chunk would be letter number 226, and there is
-no such letter. So there are exactly THREE ways.
+THREE READINGS OF THE SAME STRING, all legal.
 
-The question does not ask you to list them - only to COUNT them. And that
-difference is what makes a fast solution possible: counting lets you add numbers
-together instead of building every message.""",
+THE QUESTION IS NOT "which one did they mean" - nobody can know that. The question is: HOW MANY
+LEGAL READINGS ARE THERE? For "214" the answer is 3.
 
-    """Spotting the shape: at every step there are only two moves.
+    "226"   ->  3      (2|2|6 = BBF,  22|6 = VF,  2|26 = BZ)
+    "12"    ->  2      (1|2 = AB,     12 = L)
+    "06"    ->  0      (nothing starts with a zero - there is no letter number 0)
+    "27"    ->  1      (2|7 = BG only - 27 is past Z)
 
-Stand at some position in the digit string and ask: how did I ARRIVE here?
+Notice that last one. "26" has two readings and "27" has only one, because 26 is Z and 27 is
+nothing. THE ANSWER CHANGES WITH THE VALUE OF THE DIGITS, not just their count - which is why
+this cannot be answered with a formula on the length.
 
-There are only two possibilities. Either the previous letter used ONE digit, so
-I arrived from one position back. Or it used TWO digits, so I arrived from two
-positions back. Nothing else - no letter is three digits long, because 26 is the
-largest and it has two digits.
+And zero is the real villain of the problem. Section 4 is entirely about it.""",
 
-So, writing ways(i) for "the number of ways to decode the first i digits":
+    """2. THE INTUITION - at every step there are only two moves.
 
-    ways(i) = ways(i-1)   [if the single digit at position i is decodable]
-            + ways(i-2)   [if the two digits ending at position i form 10..26]
+Stand at some position in the digit string and ask: HOW DID I ARRIVE HERE?
 
-If that shape looks familiar, it should - it is exactly Climbing Stairs, where
-you may take one step or two. The only difference is that here each move has a
-CONDITION attached: a move is allowed only if the digits it swallows form a real
-letter.
+There are only two possible answers, and that is the whole insight:
 
-Which means we never have to build the messages at all. We just carry two
-running counts up the string, adding as we go. And since ways(i) only ever looks
-back two places, we do not even need a whole table - two variables are enough.
-That is why the code has just prev and curr rather than a list.
+    I took ONE digit  (the one just behind me)   - legal if that digit is not '0'
+    I took TWO digits (the two just behind me)   - legal if that pair reads 10 to 26
 
-Seeds: ways(0) = 1 ("there is exactly one way to decode nothing - do nothing"),
-and ways(1) = 1 for a valid first digit. The empty-string 1 feels odd, but it is
-what makes the two-digit move come out right at the very start.""",
+So the number of ways to reach this position is:
 
-    """The trace on "226", with the reason attached to every line.
+    (ways to reach one step back)  +  (ways to reach two steps back)
 
-    s  =  2   2   6
-    i  =  0   1   2
+    ways(here) = ways(one back) + ways(two back)
 
-Start: prev = 1 (ways to decode nothing), curr = 1 (ways to decode just "2").
+THAT IS THE FIBONACCI SHAPE. Each answer is the sum of the two before it. And it genuinely
+behaves like Fibonacci when every digit is friendly - take "11111", where every single digit is
+legal and every pair (11) is in range:
 
-i = 1, the digit is '2':
-  Single-digit move: is '2' on its own decodable? Yes - it is not '0', and every
-    digit 1-9 is a letter. So add curr (= 1) to this position's count. cur = 1.
-    In words: every way of decoding "2" can be extended by the letter B.
-  Two-digit move: the pair ending here is "22". Is 22 between 10 and 26? Yes.
-    So add prev (= 1). cur = 2.
-    In words: every way of decoding nothing can be extended by the letter V.
-  Slide the window: prev = 1 (the old curr), curr = 2.
-  Meaning: there are 2 ways to decode "22" - "BB" and "V". Check by hand: yes.
+    "1"      ->  1
+    "11"     ->  2      (1|1, 11)
+    "111"    ->  3      (1|1|1, 11|1, 1|11)
+    "1111"   ->  5
+    "11111"  ->  8
 
-i = 2, the digit is '6':
-  Single-digit move: '6' is fine on its own, so add curr (= 2). cur = 2.
-    Those are "BB" + F and "V" + F.
-  Two-digit move: the pair is "26". Between 10 and 26? Yes, just barely.
-    So add prev (= 1). cur = 3.
-    That is "B" + Z.
-  Slide: prev = 2, curr = 3.
+    1, 2, 3, 5, 8 - Fibonacci, exactly.
 
-The loop ends. curr = 3.
+But it is Fibonacci WITH GATES. Each of the two terms is only added IF its move was legal:
 
-Answer 3 - and the three messages are exactly BBF, VF and BZ, the ones we listed
-by hand at the start. Notice we never built a single string; we only ever added
-two numbers together.""",
+           position:   0     1     2
+                       2     2     6
 
-    """Zero is the villain of this problem. Four cases worth knowing.
+           ways:       1     2     3
+                             ^     ^
+                             |     |
+                  1 (took '2' alone) + 1 (took "22" as V)
+                                          2 (took '6' alone) + 1 (took "26" as Z)
 
-There is no letter number 0, so a '0' can never stand alone. It is only ever
-legal as the second half of 10 or 20. Every wrong answer to this problem comes
-from mishandling a zero.
+The picture to hold: you are walking left to right along the digits, and at each step you may
+step one square or two squares - but only if the square (or pair) you land on spells a real
+letter. Count the distinct walks.
 
-s = "06". The very first character is '0'. There is nothing before it to pair
-it with, so it can never decode. Answer 0, and the code returns it immediately,
-before the loop even starts.
+Two counters are enough to do this, because you only ever look one and two steps back - which is
+why the space is O(1) and not O(n). Section 5 makes that concrete.""",
 
-s = "10". At i = 1 the digit is '0': the single-digit move is BLOCKED (add
-nothing). The two-digit move sees "10", which is in 10..26, so it adds prev = 1.
-Total 1 way - the single letter J. Correct.
+    """3. EVERY TERM, defined the first time you meet it.
 
-s = "100". At i = 1 we get 1 way ("10" = J), so prev = 1, curr = 1. At i = 2 the
-digit is '0': single-digit move blocked. Two-digit move sees "00", which is not
-in 10..26, so blocked too. cur = 0. Answer 0 - and rightly, because that last
-'0' can never be attached to anything.
+DECODE. Split the digit string into pieces, each 1 or 2 digits long, where every piece reads as a
+number from 1 to 26.
 
-s = "30". At i = 1 the digit is '0': single blocked. Two-digit move sees "30",
-above 26, blocked. cur = 0. Answer 0. A '0' after a 3 or higher is always fatal.
+VALID SINGLE. One digit from '1' to '9'. NOT '0' - there is no letter number 0.
 
-The pattern to remember: a zero kills the single-digit move outright, and
-survives only if the digit in front of it is a 1 or a 2. Once a position reaches
-a count of 0, everything after it is 0 too - the zero propagates, which is
-exactly what should happen.""",
+VALID PAIR. Two digits reading 10 to 26. NOT 01 through 09 (a leading zero is not how you write
+a number), and NOT 27 or above (past Z).
 
-    """Why the two-digit test is 10 to 26, and not 1 to 26.
+DYNAMIC PROGRAMMING (DP). Solving small versions first, writing down the answers, and building
+the bigger ones from them. Here the "small version" is the count for a prefix of the string.
 
-The upper limit is easy: 26 is Z, the last letter.
+STATE. What one stored answer means. Here: "the number of ways to decode the first i characters".
 
-The lower limit is the interesting one. Why start at 10 and not at 1? Because
-the two-digit move looks at a pair of characters, and a pair whose first
-character is '0' - like "06" - is NOT the number 6. Writing a letter as "06"
-was never part of the code; B is written "2", never "02". Testing
-1 <= two <= 26 would accept "06" as the letter F and count messages that cannot
-exist.
+TRANSITION. A legal move from one state to another - here, taking one digit or two.
 
-Requiring the pair to be at least 10 says exactly one thing: "the first of these
-two characters is not a zero". It is a compact way of writing a leading-zero
-check, and that is all it is doing.
+BASE CASE. The answer you know without computing: there is exactly ONE way to decode an empty
+string, namely by writing nothing. That 1 is what every other count is built out of, and section
+5 explains why it must be 1 and not 0.
 
-One more subtlety worth naming: the two moves are added, not chosen between.
-This trips people up. At i = 2 of "226" we did NOT pick the better of the two
-moves - we added both counts, because the single-digit route and the two-digit
-route lead to DIFFERENT messages and the question asks for the total number of
-messages. Whenever a problem asks "how many ways", you add; when it asks
-"what is the best", you take a min or a max. Reading the question for that one
-word tells you which operator belongs in your recurrence.""",
+ROLLING VARIABLES. Keeping only the last two answers instead of the whole table, because the
+recurrence never reaches further back than two.
 
-    """The cost, and the variants.
+prev. In the code: the count for the string ending TWO positions back.
+curr. The count for the string ending ONE position back.
+cur. The count being computed for the current position. (Note prev/curr/cur are three different
+names in the real code and it is easy to misread `curr` and `cur` - they differ by one letter.)
 
-Time: one pass over the string, doing a fixed amount of work at each character -
-O(n) for a string of length n. Space: two integers, so O(1). You never store a
-table at all, which is why this is the cleanest example of "a DP that has been
-squeezed down to rolling variables".
+two. The two-digit number formed by the current character and the one before it.
 
-If you did write the full table first - dp[0..n] - and then noticed that dp[i]
-only ever reads dp[i-1] and dp[i-2], collapsing it to two variables is a
-mechanical final step. In an interview it is perfectly good to write the table
-version first and then say "and since each cell only looks back two places, I
-can drop the array". That shows the reasoning rather than a memorised trick.
+O(n) TIME / O(1) SPACE. One pass over the string, and a fixed number of variables regardless of
+how long the string is.""",
 
-The variants:
-- Decode Ways II adds a wildcard '*' that can stand for any digit 1-9. The shape
-  is identical, but each move's count is multiplied by how many digits the
-  wildcard could be: a lone '*' contributes 9 ways, "1*" contributes 9 (11..19),
-  "2*" contributes 6 (21..26), and so on. The answers get big, so they are taken
-  modulo 10^9 + 7.
-- If you were asked to LIST the messages rather than count them, this approach
-  would not do - you would switch to backtracking, and the answer count can be
-  exponential, which is exactly why the counting version is the one asked.
+    """4. ZERO IS THE VILLAIN - four cases worth knowing cold.
 
-In plain words, the takeaway: at each digit you either took one digit or two, so
-the count at each position is the sum of the counts one and two positions back -
-each added only if the digits it swallows form a real letter. Zeros are the only
-thing that can break a move. Time O(n), space O(1).""",
+There is no letter number 0. So a '0' CAN NEVER STAND ALONE. It is only ever legal as the second
+half of "10" or "20". Every hard case in this problem is a zero somewhere awkward.
 
-    """What the code does, in plain language - read this before the line-by-line.
+    CASE A - A LEADING ZERO.        "06"   ->  0 ways
+        Nothing can start with '0'. There is no first letter to take. The code catches this
+        before the loop even begins.
 
-The code reads the digits from left to right, carrying just two running counts
-with it, and never builds a single message.
+    CASE B - A ZERO WITH A LEGAL PARTNER.   "206"  ->  1 way
+        The '0' cannot stand alone, but "20" is T. So the only reading is 20 | 6 = "TF".
+        Note what did NOT happen: 2 | 06 is not a reading, because "06" is not a number in the
+        1-26 sense.
 
-Picture yourself standing on one digit. Two questions, and only two:
+    CASE C - A ZERO WITH NO LEGAL PARTNER.  "230"  ->  0 ways
+        "23" is W, fine so far - but then the '0' is stranded. It cannot stand alone, and "30" is
+        past Z, so it has no partner either. THE WHOLE STRING DIES. Not "fewer ways" - ZERO ways.
+        This is the case that surprises people: the string has a perfectly good prefix and the
+        answer is still 0.
 
-  "Can this digit be a letter on its own?" It can, unless it is a '0'. If it
-  can, then every message that decoded everything up to the digit BEFORE this
-  one can be extended by one more letter - so all of those messages carry
-  forward.
+    CASE D - TWO ZEROS IN A ROW.   "100"  ->  0 ways
+        "10" is J, good. Then the last '0' is stranded exactly as in case C - it cannot stand
+        alone, and "00" is not a number. Zero ways.
 
-  "Can this digit team up with the one in front of it to make a letter?" It can,
-  if the pair reads as a number between 10 and 26. If it can, then every message
-  that decoded everything up to TWO digits back can be extended by that
-  two-digit letter - so all of those carry forward too.
+WHY THE TWO-DIGIT TEST IS 10 TO 26 AND NOT 1 TO 26 - this is the subtlest line in the code.
 
-Add the two counts together and that is the number of messages up to and
-including where you are standing. Then take one step right and do it again.
-
-Notice both counts are ADDED, not chosen between. The one-digit route and the
-two-digit route produce genuinely different messages, and the question asks how
-many messages there are in total. That is the difference between a "how many
-ways" problem, which adds, and a "what is the best" problem, which takes a
-minimum or maximum.
-
-Because you only ever look back one digit and two digits, you never need to keep
-the whole table - two variables are enough, and they get shuffled along at the
-end of each step. Zeros are the only thing that can shut a route down, and once
-a position's count reaches zero everything after it is zero too, which is
-exactly right: an undecodable digit poisons the whole message.
-
-In one sentence: at each digit, add up the count from one step back (if the
-digit alone is a letter) and the count from two steps back (if the pair is a
-letter), and carry those two counts along to the end.""",
-
-    """Now the code, line by line, against the trace we just did by hand.
-
-Keep "226" beside you, and the counts we produced: 1, 2, 3.
-
-    if not s or s[0] == '0':
-        return 0
-Two impossible inputs handled up front: an empty string, and a string starting
-with '0' (our "06" case). It has to be checked here rather than in the loop
-because the loop starts at i = 1 and never examines the first character on its
-own.
-
-    prev, curr = 1, 1
-The two seeds. curr is "ways to decode the first digit", which is 1 because we
-just proved the first digit is not '0'. prev is "ways to decode nothing", which
-is 1 by the convention explained earlier - it exists so that the very first
-two-digit move has something correct to add.
-
-    for i in range(1, len(s)):
-Start at the SECOND character. The first one is already accounted for by the
-seeds, so there is nothing for the loop to do at i = 0.
-
-    cur = 0
-The count being built for THIS position. It starts at zero and the two moves
-below add into it. If neither move is legal it stays 0 - which is precisely the
-"100" case, where the answer collapses to zero and stays there.
-
-    if s[i] != '0':
-        cur += curr
-The SINGLE-digit move. Any digit except '0' is a letter on its own, so every way
-of decoding up to the previous character extends by one more letter - hence we
-add curr, the count at the previous position. At i = 2 of "226" this added 2.
+The upper limit is obvious: 26 is Z. The lower limit is the interesting one. The code computes
+the pair as an integer:
 
     two = int(s[i-1:i+1])
-Slice out the two characters ending at position i and read them as a number.
-At i = 2 of "226" the slice s[1:3] is "26", so two = 26.
 
-    if 10 <= two <= 26:
-        cur += prev
-The TWO-digit move, with the range test explained in the previous example: at
-least 10 means "no leading zero", at most 26 means "a real letter". Because this
-move swallows two characters, it extends the count from TWO positions back -
-hence prev, not curr. At i = 2 this added prev = 1, giving 3.
+For the pair "06", `int("06")` is 6. SIX. A test written as `1 <= two <= 26` would accept it, and
+the code would happily count "06" as a legal way of writing F - which it is not. The leading zero
+has silently vanished into the integer conversion.
 
-Note the += on both moves rather than an if/else: both routes can be legal at
-once, and their messages are different, so both counts belong in the total.
+    int("06") == 6      would pass 1 <= two <= 26      WRONG
+    int("06") == 6      fails    10 <= two <= 26       correct
 
-    prev, curr = curr, cur
-Slide the two-character window one step right. What was "the previous position"
-becomes "two back", and the position we just finished becomes "the previous
-one". Python assigns the whole right side first, so this swap needs no temporary
-variable - written as two separate statements it would be a classic bug.
+So the lower bound of 10 is not a stylistic choice - it is the only thing standing between the
+code and counting every leading-zero pair as valid. Section 9 traces "206" to watch it work.
 
-    return curr
-After the last character, curr holds the count for the whole string - 3 for our
-input.""",
+TRAP 5 - RETURNING 0 versus RETURNING 1 for the empty string. The base case says an empty string
+has ONE decoding. That feels wrong until you see why in section 5 - and getting it backwards
+makes every answer zero.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE REAL ONE.
+
+VERSION A - TRY EVERY SPLIT BY RECURSION.
+
+    ways(s) = (ways(s without first char)   if the first char is not '0')
+            + (ways(s without first two)    if the first two read 10..26)
+
+Correct, and exponentially slow. On a string of n friendly digits it explores about Fibonacci(n)
+branches - for n = 50 that is around 12 billion calls, because the same suffixes are re-solved
+over and over from different paths.
+
+VERSION B - THE SAME RECURSION WITH MEMOISATION. Remember each suffix's answer the first time you
+compute it. Now every position is solved once: O(n) time, O(n) space, plus recursion depth n.
+
+VERSION C - A FULL DP TABLE. `dp[i]` = ways to decode the first i characters. Fill left to right.
+O(n) time, O(n) space, no recursion.
+
+VERSION D - TWO ROLLING VARIABLES, which is the code here. The recurrence only ever reaches ONE
+and TWO steps back, so the rest of the table is dead weight. Keep two numbers and slide them
+along: O(n) time, O(1) SPACE.
+
+    the slide, in one line:      prev, curr = curr, cur
+
+    Read it as: what was one-back becomes two-back, and what we just computed becomes one-back.
+    Both right-hand values are read BEFORE either assignment happens, which is why this works as
+    a single simultaneous swap and would be wrong if written as two separate statements in the
+    obvious order.
+
+WHY THE EMPTY STRING COUNTS AS ONE WAY - the base case that looks wrong.
+
+`prev` starts at 1, representing "the number of ways to decode nothing". Zero would feel more
+natural. Here is why it must be 1:
+
+    Take "12". The reading "12" = L consumes BOTH characters at once, leaving nothing behind. Its
+    count comes from `prev` - the count for what was left over, which is the empty string.
+
+    If prev were 0, that reading would contribute 0 x 1 = 0, and "12" would come out as 1 way
+    instead of 2. THE WHOLE PAIR-TAKING BRANCH WOULD BE DEAD.
+
+The rule underneath it: an empty thing has exactly one arrangement - the empty one. It is the
+same reason 0! = 1 and the same reason an empty product is 1. Set it to 0 and every count that
+depends on it collapses to zero.
+
+`curr` also starts at 1: the first character, having survived the leading-zero guard, is a valid
+single digit, so there is exactly one way to decode the first character.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE DIGITS LEFT TO RIGHT CARRYING TWO RUNNING
+COUNTS - HOW MANY WAYS TO DECODE UP TO ONE STEP BACK AND UP TO TWO STEPS BACK - AND AT EACH
+DIGIT ADD THEM TOGETHER, BUT ONLY INCLUDING EACH TERM IF ITS MOVE WAS LEGAL.
+
+THERE IS NO RECURSION IN THIS VERSION, which is the point - the recursive versions in section 5
+use stack depth proportional to the string length. The mechanism here is A SINGLE FORWARD SWEEP
+WITH TWO SLIDING COUNTERS:
+
+  - One loop, one pass over the string, starting at the SECOND character (the first is handled by
+    the setup before the loop).
+  - Each step computes one new count from the two carried ones, then slides both along.
+  - WHAT MAKES IT STOP: the loop has a fixed trip count - the length of the string minus one.
+    Nothing depends on the values.
+  - WHY TWO COUNTERS SUFFICE: the rule never reaches further back than two positions, so anything
+    older can be thrown away the moment it has been used.
+
+THE STEPS:
+
+  1. IF THE STRING IS EMPTY OR STARTS WITH A ZERO, the answer is 0 - there is no legal first
+     letter. Stop here.
+
+  2. SET UP TWO COUNTS. The count for "nothing at all" is ONE (see section 5 for why it is not
+     zero). The count for "just the first character" is also ONE, since that character survived
+     step 1 and so is a valid single digit.
+
+  3. FOR EACH REMAINING CHARACTER, left to right:
+
+     a. START A FRESH COUNT AT ZERO for this position.
+
+     b. IF THIS CHARACTER IS NOT A ZERO, it can stand alone as a letter - so add the count from
+        one step back.
+
+     c. FORM THE TWO-DIGIT NUMBER from the previous character and this one. IF IT READS BETWEEN
+        TEN AND TWENTY-SIX, that pair is a letter - so add the count from two steps back.
+
+        Ten, not one - a pair like "06" reads as the number 6 once you convert it, and only the
+        lower bound of ten keeps it out.
+
+     d. SLIDE THE TWO COUNTS ALONG: one-step-back becomes two-steps-back, and the count just
+        computed becomes one-step-back.
+
+     Note that if BOTH tests fail - a stranded zero - the fresh count stays at zero, and from
+     that moment every later count is built from a zero and stays zero. The string is dead, and
+     nothing special has to detect that.
+
+  4. THE ANSWER IS THE LAST COUNT COMPUTED.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine reading a long line of digits out loud, one at a time, and keeping a running tally on two
+sticky notes in front of you.
+
+The left note says: how many ways there were to read everything up to TWO digits back.
+The right note says: how many ways there were to read everything up to ONE digit back.
+
+Before you start, you glance at the very first digit. If it is a zero, you stop immediately - no
+letter is numbered zero, so there is no way to begin at all, and the answer is none.
+
+Otherwise you write ONE on both notes. The right note is one because there is exactly one way to
+read a single digit. The left note is one for a stranger reason: it stands for reading nothing at
+all, and there is exactly one way to read nothing - by not reading. That will matter shortly.
+
+Now you move to the next digit and ask two questions.
+
+FIRST: can this digit stand on its own? It can, unless it is a zero. If it can, then every
+reading that got you to the previous digit can simply be extended by this one letter - so you
+take the number on the right note.
+
+SECOND: do this digit and the one before it, taken together, spell a letter? They do if the pair
+reads between ten and twenty-six. If they do, then every reading that got you to two digits back
+can be extended by that one two-digit letter - so you take the number on the left note as well.
+This is where "one way to read nothing" earns its keep: when the pair is the first two digits,
+what came before it IS nothing, and the count of that had better not be zero or the whole branch
+would vanish.
+
+Add whichever of the two applied. That is your new tally. Then slide the notes along - the right
+note moves to the left, and the new tally goes on the right - and step to the next digit.
+
+If a digit is a zero AND it has no legal partner in front of it, neither question is answered
+yes, and your new tally is nothing at all. From then on every tally is built from nothing and
+stays nothing. The line of digits is simply unreadable, and the running total says so all by
+itself without anyone having to check for it.
+
+When you run out of digits, the right note holds the answer.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep "226" beside you, and the counts it produces: 1, 2, 3.
+
+    def num_decodings(s):
+
+s is the digit string. Returns the number of legal decodings. The string is never modified.
+
+        if not s or s[0] == '0':
+            return 0                       # leading zero can't decode
+
+Two rejections in one line. An empty string has nothing to decode, and a string starting with '0'
+has no legal first letter - case A of section 4. This also guarantees the setup below is honest:
+after this line, the first character is definitely decodable on its own.
+
+        prev, curr = 1, 1                  # dp[i-2], dp[i-1]
+
+The two sliding counters.
+
+    prev  HOLDS the count for the string ending TWO positions back. It starts at 1 meaning
+          "there is exactly one way to decode nothing" - the base case argued in section 5.
+    curr  HOLDS the count for the string ending ONE position back. It starts at 1 because the
+          first character survived the guard above, so there is exactly one way to read it.
+
+        for i in range(1, len(s)):
+
+Start at index 1, not 0 - position 0 was already accounted for by `curr = 1`. Runs len(s) - 1
+times, a count fixed before the loop starts.
+
+            cur = 0
+
+The count being built for THIS position. Note the name: `cur`, one letter shorter than `curr`.
+They are different variables and mixing them up is the single easiest way to break this code.
+Starting at 0 is what lets a stranded zero produce zero, with no special case.
+
+            if s[i] != '0':                # single-digit decode is valid
+                cur += curr
+
+THE ONE-DIGIT MOVE. Any digit except '0' spells a letter on its own, so every decoding that
+reached the previous position extends by one letter. `curr` DECIDES how many of those there are.
+
+If this character IS '0', nothing is added here - the zero cannot stand alone.
+
+            two = int(s[i-1:i+1])          # the two-digit number
+
+The pair made of the previous character and this one. `s[i-1:i+1]` is a two-character slice; the
+`+1` is because Python slices exclude their end.
+
+    two  HOLDS the pair as an INTEGER, which is exactly why the next line's lower bound matters:
+         int("06") is 6, and the leading zero is gone.
+
+            if 10 <= two <= 26:            # valid pair 10..26
+                cur += prev
+
+THE TWO-DIGIT MOVE, and the most easily-mistyped line in the problem.
+
+    the lower bound 10  DECIDES that leading-zero pairs are rejected. `1 <= two` would let "06"
+                        through as 6, counting a reading that does not exist.
+    the upper bound 26  DECIDES that nothing past Z is taken.
+    prev                DECIDES how many decodings existed before this pair began.
+
+            prev, curr = curr, cur
+
+THE SLIDE. What was one-back becomes two-back; what was just computed becomes one-back. Python
+evaluates the whole right-hand side first, so both use their pre-slide values - writing it as two
+separate statements in this order would clobber `curr` before `cur` could use it.
+
+        return curr
+
+After the loop, `curr` holds the count for the whole string - because the last thing the slide
+did was move the final `cur` into it.""",
+
+    """9. TRACED, VARIABLE BY VARIABLE - INCLUDING THE ZEROS THAT BREAK PEOPLE.
+
+TRACE 1 - "226", the friendly case. Expected: 3.
+
+        s  =  2   2   6
+        i  =  0   1   2
+
+    setup: guard passes ('2' is not '0'). prev = 1, curr = 1.
+
+    i = 1  (character '2')
+        cur = 0
+        s[1] = '2', not '0'      ->  cur += curr  ->  cur = 0 + 1 = 1
+        two = int(s[0:2]) = int("22") = 22
+        10 <= 22 <= 26  YES      ->  cur += prev  ->  cur = 1 + 1 = 2
+        slide: prev = 1 (old curr), curr = 2 (the cur just built)
+
+    i = 2  (character '6')
+        cur = 0
+        s[2] = '6', not '0'      ->  cur += curr  ->  cur = 0 + 2 = 2
+        two = int(s[1:3]) = int("26") = 26
+        10 <= 26 <= 26  YES      ->  cur += prev  ->  cur = 2 + 1 = 3
+        slide: prev = 2, curr = 3
+
+    return 3.     Check by hand: 2|2|6 = BBF, 22|6 = VF, 2|26 = BZ. Three. Correct.
+
+    THE INVERSION - change ONE character and watch the answer drop. "227":
+        i = 2: s[2] = '7' is not '0'  ->  cur = 0 + 2 = 2
+               two = int("27") = 27.  10 <= 27 <= 26 is FALSE - 27 is past Z. Nothing added.
+        return 2.    (2|2|7 = BBG, 22|7 = VG. The 2|27 reading does not exist.)
+    Same length, same first two digits, one different final digit, and the count falls from 3 to
+    2 - because the upper bound of 26 is a real constraint and not decoration.
+
+TRACE 2 - "206", CASE B of section 4: a zero rescued by its partner. Expected: 1.
+
+    setup: '2' is not '0', guard passes. prev = 1, curr = 1.
+
+    i = 1  (character '0')
+        cur = 0
+        s[1] = '0'               ->  the single-digit branch is SKIPPED. Nothing added.
+                                     (This is the whole point: '0' is not a letter.)
+        two = int(s[0:2]) = int("20") = 20
+        10 <= 20 <= 26  YES      ->  cur += prev  ->  cur = 0 + 1 = 1
+        slide: prev = 1, curr = 1
+
+        NOTE WHAT JUST HAPPENED: the only surviving reading is one where the '0' was swallowed
+        into "20" = T. The count did not grow, and it did not die.
+
+    i = 2  (character '6')
+        cur = 0
+        s[2] = '6', not '0'      ->  cur += curr  ->  cur = 0 + 1 = 1
+        two = int(s[1:3]) = int("06") = 6
+        10 <= 6 is FALSE         ->  nothing added.
+
+        THIS IS THE LINE SECTION 4 WARNED ABOUT. int("06") is 6, a perfectly ordinary number
+        between 1 and 26. Had the test been written `1 <= two <= 26`, this pair would have been
+        accepted and the answer would have come out as 2 - counting a reading "2 | 06" that
+        does not exist. The lower bound of 10 is the only thing rejecting it.
+
+        slide: prev = 1, curr = 1
+
+    return 1.     Check by hand: 20|6 = TF. That is the only reading. Correct.
+
+TRACE 3 - "230", CASE C: a stranded zero kills a healthy prefix. Expected: 0.
+
+    setup: prev = 1, curr = 1.
+
+    i = 1  (character '3')
+        cur = 0
+        '3' is not '0'           ->  cur = 0 + 1 = 1
+        two = int("23") = 23, in range  ->  cur = 1 + 1 = 2
+        slide: prev = 1, curr = 2      (so far "23" has two readings: 2|3 and 23)
+
+    i = 2  (character '0')
+        cur = 0
+        s[2] = '0'               ->  single-digit branch SKIPPED
+        two = int("30") = 30.  10 <= 30 <= 26 is FALSE - past Z.  Nothing added.
+        cur is still 0.
+        slide: prev = 2, curr = 0
+
+    return 0.
+
+    LOOK AT WHAT HAPPENED. Two perfectly good readings existed at i = 1, and the string still
+    ends with zero ways - because that final '0' can neither stand alone nor pair with the 3.
+    A healthy prefix does not save you. The zero came out of `cur = 0` never being added to, and
+    no special-case code was needed to detect it.
+
+TRACE 4 - "100", CASE D: two zeros. Expected: 0.
+
+    setup: prev = 1, curr = 1.
+    i = 1  ('0'):  single skipped.  two = int("10") = 10, in range -> cur = 0 + 1 = 1.
+                   slide: prev = 1, curr = 1.
+    i = 2  ('0'):  single skipped.  two = int("00") = 0.  10 <= 0 is FALSE.  cur stays 0.
+                   slide: prev = 1, curr = 0.
+    return 0.     Correct: "10" is J, and then the last '0' has nowhere to go.
+
+THE TINY INPUTS:
+    ""       the guard returns 0.
+    "0"      the guard returns 0.
+    "7"      guard passes, the loop `range(1, 1)` never runs, returns curr = 1. Correct.
+    "10"     i=1: '0' skipped; two = 10, in range, cur = 0 + prev = 1. Returns 1. (J only.)""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n) for a string of length n. One pass, and each character costs a fixed amount - one
+comparison, one slice-and-convert, one range test, two additions.
+
+SPACE: O(1). THREE INTEGERS, no matter how long the string is - `prev`, `curr` and `cur`. That is
+the payoff of noticing the recurrence never looks further back than two.
+
+    (The full-table version in section 5 is O(n) space and identical in time. Being able to say
+    "and I can drop that to O(1) because the window is only two wide" is a standard follow-up and
+    worth volunteering rather than waiting to be asked.)
+
+THE FAMILY THIS BELONGS TO. This is CLIMBING STAIRS with legality gates. Climbing stairs asks how
+many ways to climb n steps taking 1 or 2 at a time, and the answer is Fibonacci. Here every move
+is the same - take one, take two - but each is allowed only if the digits it lands on spell a
+letter. Recognising that in an interview is worth more than the code: it says you saw the shape,
+not just the puzzle.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the string can contain '*' meaning any digit 1-9?" (Decode Ways II.) Same two-term
+    recurrence, but each term is multiplied by how many digits the wildcard could be: a lone '*'
+    is 9 ways; "1*" is 9 pairs (11-19); "2*" is 6 (21-26); "**" is 15.
+  - "Return the actual decodings, not the count." Different problem class - the count can be
+    exponential (about Fibonacci(n)), so listing them cannot be done in O(n). Backtracking, and
+    say the output size is the reason.
+  - "Could you do it recursively?" Yes, with memoisation - same complexity, but O(n) stack depth,
+    which overflows on long strings.
+  - "Why does prev start at 1 and not 0?" See section 5. There is exactly one way to decode
+    nothing, and the pair-taking branch multiplies by it.
+
+THE #1 BEGINNER MISTAKE: testing the pair with `1 <= two <= 26` instead of `10 <= two <= 26`.
+Because `int("06")` is 6, that version silently counts leading-zero pairs as real letters. It
+passes "226" and "12" and every friendly test, and fails the moment a zero appears in the middle
+- exactly the kind of bug that survives your own testing and dies on a hidden case.
+
+RUNNER-UP: forgetting that a stranded '0' zeroes the whole answer rather than merely reducing it,
+and trying to "recover" from it. Nothing needs recovering: `cur` starts at 0, neither branch fires,
+and the zero propagates forward on its own.
+
+TAKEAWAY: at every digit there are only two possible last moves - take one digit or take two - so
+the count is Fibonacci with a legality gate on each term, and the only real difficulty is that '0'
+is never a letter by itself and `int("06")` hides its leading zero.""",
 ]
 
 _EX_P0B["Generate Parentheses (backtracking)"] = [
