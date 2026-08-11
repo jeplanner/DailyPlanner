@@ -47558,127 +47558,906 @@ is always just removing whatever sits at the front.""",
 ]
 
 _EX_P0G["Find Median from Data Stream (two heaps)"] = [
-    """Adding 1, then 2, then 3 - traced.
-add(1): push -1 onto low -> low=[-1]. Move low's top to high: high=[1], low=[].
-high is bigger -> move back: low=[-1], high=[].
-  median: low is bigger -> 1. Correct.
-add(2): push -2 -> low=[-2,-1]; move top (2) to high -> low=[-1], high=[2].
-Sizes equal.
-  median: (1 + 2)/2 = 1.5. Correct.
-add(3): push -3 -> low=[-3,-1]; move top (3) to high -> low=[-1], high=[2,3].
-high bigger -> move 2 back -> low=[-2,-1], high=[3].
-  median: low bigger -> 2. Correct.""",
+    """1. THE GOAL, in plain English.
 
-    """Why the push-then-pop-then-rebalance dance.
-The naive 'put small numbers in low, big ones in high' needs a comparison and
-two branches, and it is easy to get wrong at the boundary.
-The trick used here is unconditional: ALWAYS push onto low, then immediately
-move low's maximum into high. That guarantees every element of low is <= every
-element of high, no comparison required. The only thing left is to keep the
-sizes within one, which is the single `if`.
-Three lines, no branching on values - that is why this version is the one to
-memorise.""",
+Numbers arrive one at a time, forever, and at any moment somebody may ask: "what is
+the median of everything so far?"
 
-    """Out-of-order and duplicate input.
-add(5), add(1), add(5), add(1):
-after 5 -> median 5. after 1 -> (1+5)/2 = 3. after 5 -> median 5. after 1 ->
-(1+5)/2 = 3.
-Duplicates are handled naturally: the heaps do not care about uniqueness, only
-about order. The invariant is a PARTITION by value, not a set.""",
+    add 1        -> median is 1
+    add 2        -> median is 1.5      (average of 1 and 2)
+    add 3        -> median is 2
+    add 100      -> median is 2.5      (average of 2 and 3)
 
-    """Why not just keep a sorted list?
-Insertion into a sorted Python list via bisect.insort is O(log n) to find the
-spot but O(n) to shift the elements. On 10^5 additions that is about 5 x 10^9
-element moves.
-Two heaps make every add O(log n) and every median query O(1). That is the whole
-point of the structure, and it is what the interviewer is testing.
-For completeness: a balanced BST with subtree sizes (an order-statistic tree)
-also gives O(log n) and additionally answers 'what is the kth smallest?' - but
-Python has no such structure in the standard library, so heaps are the practical
-answer.""",
+MEDIAN means the middle value when everything is lined up in order. With an ODD count
+there is a genuine middle one. With an EVEN count there are two middles, and the
+median is their average.
 
-    """The follow-ups from LeetCode 295, and their answers.
-'What if all numbers are in [0,100]?' - keep a 101-slot counting array; the
-median is found by scanning cumulative counts. O(1) add, O(100) query, tiny
-memory.
-'What if 99% are in [0,100]?' - counting array for the common range plus two
-small heaps (or sorted lists) for the outliers below and above.
-'Sliding-window median?' - two heaps plus LAZY DELETION: mark removed elements
-in a dict and pop them off a heap top when they surface. That is the standard
-answer, and it is much harder than the base problem.""",
+    sorted so far: 1  2  3        -> median 2      (one middle)
+    sorted so far: 1  2  3  100   -> median 2.5    ((2+3)/2)
 
-    """Where a streaming median is actually needed.
-- p50 latency on a live service dashboard (and the same structure generalises to
-  arbitrary percentiles).
-- Sensor readings where the median rejects outliers that would wreck a mean.
-- Real-time fraud thresholds set at the median transaction size.
-At production scale you would usually switch to an approximate sketch - t-digest
-or HdrHistogram - which gives any percentile in fixed memory. Two heaps are the
-exact, single-machine answer; sketches are the distributed one. Knowing when to
-switch is the senior-level distinction.""",
+Two things make this harder than it sounds:
+
+  - It is a STREAM. You do not get the numbers up front, you cannot make a second
+    pass, and there may be tens of millions of them.
+  - BOTH operations must be fast. Adding a number happens constantly; asking for the
+    median may also happen constantly.
+
+Sorting everything after each arrival would work and would be far too slow. The
+question is what to keep, and in what arrangement, so that the middle is always
+within reach.
+
+This is a real production pattern, not a puzzle: the p50 latency number on a live
+service dashboard is exactly this computation.""",
+
+    """2. THE INTUITION - split the numbers into two piles at the middle.
+
+You do not need everything sorted. You only need to know what is in the MIDDLE. So
+cut the data into two piles:
+
+    LOW pile: the smaller half        HIGH pile: the larger half
+
+    LOW  = { 1, 2 }                   HIGH = { 3, 100 }
+
+If you maintain two promises about these piles, the median is free:
+
+  PROMISE A: every number in LOW is <= every number in HIGH.
+  PROMISE B: the two piles differ in size by at most one.
+
+Given those, the median is right at the boundary between the piles - which means it
+is the LARGEST number in LOW, or the SMALLEST number in HIGH, or the average of the
+two.
+
+    LOW  = { 1, 2 }        HIGH = { 3, 100 }        equal sizes
+                  ^          ^
+              largest    smallest        median = (2 + 3) / 2 = 2.5
+
+    LOW  = { 1, 2, 3 }     HIGH = { 100 }           LOW has one more
+                     ^
+                 largest                            median = 3
+
+So you never need the piles fully sorted. From LOW you only ever need its MAXIMUM;
+from HIGH you only ever need its MINIMUM. And "a container that instantly knows its
+maximum" and "a container that instantly knows its minimum" are exactly what heaps
+are.
+
+    LOW  is a MAX-heap  -> its top is the largest of the small half
+    HIGH is a MIN-heap  -> its top is the smallest of the large half
+
+Picture them facing each other across the median line:
+
+        LOW (max-heap)          |          HIGH (min-heap)
+        ... 1                2  |  3                100 ...
+                          top   |  top
+
+Every new number gets placed on the correct side, and then the piles are rebalanced
+if one got too big. Both operations touch only the tops.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+STREAM. Data arriving over time with no known end. You cannot look ahead, and you
+usually cannot afford to keep re-processing what has already arrived.
+
+MEDIAN. The middle value in sorted order; with an even count, the average of the two
+middles. Different from the MEAN (the average of everything) - the median is not
+dragged around by one huge outlier, which is exactly why dashboards report it.
+
+MIN-HEAP. A container that always knows its SMALLEST item and can hand it over
+immediately. Push and remove-smallest each cost about log(size) steps. It is not
+sorted; it answers only that one question.
+
+MAX-HEAP. The same, for the LARGEST item.
+
+heapq. Python's heap module - and it only provides a MIN-heap. There is no max-heap
+in the standard library, which is why the code does something that looks strange at
+first; see the negation trick below.
+
+THE NEGATION TRICK. To get a max-heap out of a min-heap, store every number with its
+sign flipped. The smallest STORED value is then the largest REAL value.
+
+    real numbers:    1,   5,   3
+    stored as:      -1,  -5,  -3
+    the min-heap's top is -5, and -(-5) = 5, the true maximum.
+
+Flip on the way in, flip again on the way out. That is all the minus signs in the code
+are doing.
+
+low AND high. The two piles. low is the max-heap of the smaller half (stored
+negated); high is the min-heap of the larger half (stored normally).
+
+heap[0]. The top of a heap - the smallest stored item - readable without removing it,
+in O(1). Since low stores negatives, -low[0] is the true largest of the low half.
+
+INVARIANT. Something true before and after every operation. Here there are two,
+Promise A and Promise B from section 2, and the whole method is just: make each
+operation preserve them.
+
+AMORTISED / O(log n) vs O(1). Adding costs O(log n) because heaps are touched. Asking
+for the median costs O(1) because you only READ two tops without removing anything.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1: forgetting that Python has no max-heap. People write heapq.heappush(low, num)
+for the low half and get a MIN-heap of the small values, whose top is the smallest of
+the small half - completely useless. Every number going into low must be negated, and
+every number coming out of low must be negated back. Miss one of the four minus signs
+in this code and the answers are quietly wrong.
+
+TRAP 2: putting the number in the "obvious" pile with an if-statement.
+
+    if not low or num <= -low[0]:
+        heapq.heappush(low, -num)
+    else:
+        heapq.heappush(high, num)
+    ... then rebalance both ways ...
+
+This is correct if you write it perfectly, and it has an empty-heap special case, a
+comparison, two branches, and then a two-directional rebalance. It is where most
+people introduce their bug. The code on this page avoids all of it with the
+push-then-move dance in section 5, which needs no comparison and no special case for
+the first number.
+
+TRAP 3: rebalancing in the wrong direction, or not at all. If the sizes drift apart,
+the boundary between the piles is no longer the middle of the data and the median is
+wrong - and it will look right for a while, because with small inputs the drift has
+not accumulated yet.
+
+TRAP 4: integer division on the even case. (-low[0] + high[0]) / 2 uses a single
+slash, which in Python 3 gives a float: (1 + 2) / 2 = 1.5. Writing // instead gives
+1, and the median of [1, 2] is not 1. The problem expects a float.
+
+TRAP 5: "why not just keep a sorted list and use bisect?" bisect.insort finds the
+insertion point in O(log n) - but then the list must physically SHIFT every element
+after that point to make room, which is O(n). On 100,000 additions that is billions
+of element moves. Finding the spot fast does not help if putting it there is slow.
+Say this out loud; it is a common follow-up.
+
+TRAP 6: assuming duplicates or out-of-order arrivals are a problem. They are not.
+Nothing here assumes the numbers arrive sorted, and equal values sit happily in either
+pile - the invariants use <=, not <. add(5), add(1), add(5), add(1) gives medians
+5, 3, 5, 3, all correct.""",
+
+    """5. THE SLOW VERSIONS FIRST, THEN THE UPGRADE.
+
+SLOW VERSION A - keep everything, sort on demand.
+
+    store every number in a list
+    find_median: sort the list, take the middle
+
+Adding is O(1), but every median query costs O(n log n). Fine if medians are asked for
+rarely; disastrous on a dashboard refreshing every second.
+
+SLOW VERSION B - keep the list sorted as you go.
+
+    add: bisect.insort(data, num)
+    find_median: read the middle directly
+
+Median is now O(1), and adding LOOKS fast because bisect finds the position in
+O(log n). But inserting into the middle of an array physically shifts everything after
+it: O(n) per add. Trap 5.
+
+THE UPGRADE - two heaps, O(log n) add and O(1) median.
+
+Keep the low half in a max-heap and the high half in a min-heap, maintaining the two
+promises from section 2. Then the median is always one or two array reads away.
+
+THE TRICK, EXPLAINED FROM SCRATCH: the push-then-move dance.
+
+The code does something that looks wasteful:
+
+    push num onto low
+    move low's top over to high
+    if high is now bigger than low, move high's top back to low
+
+Three heap operations for one number, with no comparison anywhere. Why is this
+correct, and why is it better than an if-statement?
+
+Step 1, push num onto low. num might not belong in the low half at all. That is fine -
+this is temporary.
+
+Step 2, move low's TOP to high. low's top is the largest value in low, which after
+step 1 means the largest of (the old low half, plus num). Two things follow:
+
+  - Everything LEFT in low is <= the value that moved. True by definition of maximum.
+  - The value that moved is <= everything already in high. Why? Before this add, every
+    element of low was <= every element of high (Promise A). The moved value is either
+    num itself or an old member of low. If it is an old member of low, it was already
+    <= all of high. If it is num, then num was larger than every old low member, and
+    num is now being placed as the new smallest of high - and any old low member that
+    stayed behind is smaller still. In both cases Promise A survives.
+
+So after step 2, Promise A holds, and it held without a single comparison being
+written. The heap did the comparing.
+
+Step 3, rebalance. Step 2 removed one from low and added one to high, so high may now
+be one larger than low. If it is, move high's minimum back to low. That minimum is >=
+everything in low (Promise A) and <= everything remaining in high (it was the
+minimum), so moving it preserves Promise A too. Sizes are now equal or low is one
+bigger, which is Promise B.
+
+The result: low is always the same size as high or exactly one bigger - never smaller.
+That is deliberate, and it is what makes find_median so simple: with an odd total, the
+extra element is always in low, so the median is always low's top.
+
+Cost: three heap operations per add, each O(log n), so O(log n) overall. The constant
+factor is slightly worse than the if-statement version; the correctness is far easier
+to argue, and there is no empty-heap special case at all.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP THE SMALLER HALF IN A MAX-HEAP AND
+THE LARGER HALF IN A MIN-HEAP, KEEP THEIR SIZES WITHIN ONE OF EACH OTHER, AND THE
+MEDIAN IS ALWAYS SITTING ON TOP OF ONE OR BOTH OF THEM.
+
+THERE IS NO RECURSION HERE. Nothing calls itself; there is no call stack and no base
+case. The mechanism to understand instead is THE PAIR OF INVARIANTS:
+
+  - Promise A: everything in low <= everything in high.
+  - Promise B: low's size equals high's size, or is exactly one greater.
+
+Both are true at the start, when both piles are empty. Every add is designed so that
+if they were true before, they are true after. Therefore they are true forever, and
+that is what makes reading the median off the tops valid at every moment. This
+"true at the start, preserved by each step, therefore always true" reasoning is the
+same shape as a proof by induction, and it is the standard way to justify a data
+structure in an interview.
+
+SETTING UP:
+
+  1. Make two empty heaps. low will hold the smaller half as a max-heap; high will
+     hold the larger half as a min-heap. Since the language only offers min-heaps,
+     everything stored in low goes in with its sign flipped.
+
+ADDING A NUMBER:
+
+  2. Push the new number onto low, flipping its sign on the way in. Do not compare it
+     to anything - it may not belong there, and that is handled next.
+
+  3. Remove low's top (the largest of the small half, so flip its sign back to get the
+     real value) and push it onto high. After this, everything in low is guaranteed
+     to be no bigger than everything in high, with no comparison written by you.
+
+  4. Check the sizes. If high is now bigger than low, remove high's top (the smallest
+     of the large half) and push it onto low, flipping the sign on the way in. Now
+     low is either equal in size to high or exactly one bigger.
+
+FINDING THE MEDIAN:
+
+  5. If low is bigger than high, the total count is odd and the extra element - the
+     true middle - is low's top. Return it, flipping the sign back.
+
+  6. Otherwise the sizes are equal, the count is even, and the two middles are low's
+     top and high's top. Return their average, using ordinary division so the result
+     can be a fraction.
+
+Note that step 5 and 6 only READ the tops. Nothing is removed, so asking for the
+median does not disturb the structure and costs no heap work at all.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine two waiting rooms with a doorway between them, and a rule: everyone in the
+LEFT room must be shorter than everyone in the RIGHT room. The left room can hold one
+more person than the right, but never fewer.
+
+Each room has a single designated person standing at the doorway. In the left room it
+is the TALLEST person there. In the right room it is the SHORTEST person there. Nobody
+else needs to be arranged in any particular order - the rooms are crowds, not queues.
+
+Someone new arrives. You do not measure them against anybody. You simply send them
+into the LEFT room. Then you ask the left room's doorway person - its tallest - to
+step through into the right room. Whoever is now tallest in the left room takes their
+place at the doorway.
+
+That little shuffle is enough to keep the rule true. Whoever ends up moving right is,
+by construction, taller than everyone left behind - and no taller than anyone already
+on the right.
+
+Now count heads. If the right room has more people than the left, ask the right room's
+doorway person - its shortest - to step back left. Balance restored.
+
+To answer "who is the middle-height person?", you look only at the two people standing
+at the doorway. If the left room has one extra person, the middle person is the one at
+the left doorway. If the rooms are equal, the middle falls exactly between the two
+doorway people, so you average their heights.
+
+You never line anybody up. Two people at a doorway, and the answer is instant no
+matter whether the rooms hold ten people or ten million.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    import heapq
+    class MedianFinder:
+        def __init__(self):
+
+The structure lives across many calls, so it is a class - state persists between
+add_num and find_median.
+
+            self.low = []      # max-heap (negated) of the smaller half
+
+The left room. Stored NEGATED, so that Python's min-heap behaviour gives max-heap
+results: the smallest stored number is the largest real one. self.low[0] is the top,
+and -self.low[0] is the true largest of the small half.
+
+            self.high = []     # min-heap of the larger half
+
+The right room. Stored normally - this one really is a min-heap, so self.high[0] is
+the smallest of the large half.
+
+        def add_num(self, num):
+            heapq.heappush(self.low, -num)                        # add to low half
+
+Step 2 of the dance. The new number goes into low unconditionally, sign flipped. No
+comparison, no empty-heap check - even on the very first call this is valid.
+
+            heapq.heappush(self.high, -heapq.heappop(self.low))   # move its top over
+
+Step 3, and the busiest line in the code. Read it inside out:
+
+  - heapq.heappop(self.low) removes and returns low's smallest STORED value, which is
+    the largest REAL value of the small half - the person at the left doorway.
+  - The leading minus flips it back to its true positive value.
+  - heapq.heappush(self.high, ...) puts that true value into high.
+
+After this line, Promise A is guaranteed: everything in low is <= everything in high,
+by the argument in section 5. Note that low has shrunk by one and high has grown by
+one relative to before this line.
+
+            if len(self.high) > len(self.low):                    # rebalance
+
+Step 4. The previous line moved one across, so high may now hold one more than low.
+
+                heapq.heappush(self.low, -heapq.heappop(self.high))
+
+Move it back: pop high's smallest (a true value), flip its sign, push onto low.
+Afterwards low is equal in size to high, or exactly one bigger - never smaller. That
+"never smaller" is what find_median relies on.
+
+        def find_median(self):
+            if len(self.low) > len(self.high):
+                return -self.low[0]                               # odd -> low's top
+
+The odd case. Because the rebalance always favours low, any extra element lives in
+low, so the middle value is low's top. Flip the sign to get the real number. Note
+self.low[0] READS the top without removing it - O(1), and the structure is unchanged.
+
+            return (-self.low[0] + self.high[0]) / 2              # even -> avg of tops
+
+The even case. -self.low[0] is the larger of the two middles from the left;
+self.high[0] is the smaller of the two middles from the right. Average them. The
+single slash gives a float, so [1, 2] correctly yields 1.5 rather than 1.
+
+This class does mutate its own state on every add_num - that is the point of it - but
+it never touches anything the caller owns; num is just a number.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+Start: low = [], high = [].
+
+add_num(1)
+  push -1 onto low.                       low = [-1],  high = []
+  pop low's top: -1. Negate: 1. Push onto high.
+                                          low = [],    high = [1]
+  len(high) = 1 > len(low) = 0 -> rebalance.
+  pop high's top: 1. Negate: -1. Push onto low.
+                                          low = [-1],  high = []
+
+find_median()
+  len(low) = 1 > len(high) = 0 -> return -low[0] = -(-1) = 1.
+  Correct: the only number so far is 1.
+
+add_num(2)
+  push -2 onto low.                       low stores {-2, -1}, top is -2
+                                          high = []
+  pop low's top: -2. Negate: 2. Push onto high.
+                                          low stores {-1},  high = [2]
+  len(high) = 1 > len(low) = 1? No -> no rebalance.
+                                          low = [-1],  high = [2]
+
+find_median()
+  len(low) = 1 > len(high) = 1? No -> even case.
+  return (-low[0] + high[0]) / 2 = (1 + 2) / 2 = 1.5.
+  Correct: sorted so far is 1, 2, and the two middles average to 1.5.
+
+add_num(3)
+  push -3 onto low.                       low stores {-3, -1}, top is -3
+                                          high = [2]
+  pop low's top: -3. Negate: 3. Push onto high.
+                                          low stores {-1},  high stores {2, 3}, top 2
+  len(high) = 2 > len(low) = 1 -> rebalance.
+  pop high's top: 2. Negate: -2. Push onto low.
+                                          low stores {-2, -1}, top is -2
+                                          high = [3]
+
+find_median()
+  len(low) = 2 > len(high) = 1 -> return -low[0] = -(-2) = 2.
+  Correct: sorted so far is 1, 2, 3, and the middle is 2.
+
+Check the two promises at this point. low holds the real values {1, 2}; high holds
+{3}. Every value in low is <= every value in high - Promise A holds. Sizes are 2 and
+1, differing by one with low the larger - Promise B holds. The median sat on low's
+top exactly as designed.
+
+Notice that in add_num(2) the rebalance did NOT fire, and in add_num(1) and
+add_num(3) it did. The dance handles all three situations with the same three lines
+and no special cases.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: add_num is O(log n); find_median is O(1).
+
+In plain words: adding does a fixed number of heap operations - at most three pushes
+and two pops - and each one costs about log n steps on a heap holding roughly half the
+data. Asking for the median just reads one or two array positions and does no heap
+work at all, which is why it is constant time.
+
+Compare the alternatives: sort-on-demand is O(n log n) per query; a sorted list via
+bisect is O(n) per add because of the shifting. Two heaps beat both.
+
+SPACE: O(n) - every number that arrives is kept, split across the two heaps. There is
+no way around that if arbitrary medians must be answerable; you cannot forget data and
+still know the middle.
+
+THE FOLLOW-UPS from LeetCode 295, and their answers, because they are always asked:
+
+  - "What if all numbers are in the range 0 to 100?" Keep a 101-slot counting array.
+    Adding is O(1); the median is found by scanning cumulative counts, which is at most
+    101 steps - a constant. Heaps are unnecessary.
+
+  - "What if 99% of numbers are in 0 to 100?" Use the counting array for the common
+    range and keep two small overflow structures for the outliers, then account for
+    their counts when locating the middle.
+
+  - "What about arbitrary percentiles, not just p50?" The two-heap trick is
+    specifically a median trick - it splits at one point. For general percentiles use
+    an order-statistic tree or an approximate sketch like t-digest, which is what real
+    monitoring systems use for p95 and p99.
+
+THE #1 BEGINNER MISTAKE: getting the negation wrong somewhere. There are four sign
+flips in this code - going into low, coming out of low inside add_num, coming back
+into low during the rebalance, and coming out of low in find_median. Miss any one and
+the code still runs and still returns a number; it is just the wrong number. Say the
+rule to yourself: NEGATE ON EVERY CROSSING OF low'S BOUNDARY, in both directions.
+
+Runner-up: using // instead of / in the even case, turning 1.5 into 1.
+
+TAKEAWAY: you do not need the data sorted to know its middle - you need it split into a
+smaller half and a larger half of nearly equal size, and two heaps facing each other
+keep exactly that split for O(log n) per arrival.""",
 ]
 
 _EX_P0G["Merge k Sorted Lists (min-heap)"] = [
-    """The textbook case, traced.
-lists = [[1,4,5],[1,3,4],[2,6]].
-Seed the heap with each list's head: (1,0,0), (1,1,0), (2,2,0).
-Pop (1,0,0) -> out [1], push (4,0,1).
-Pop (1,1,0) -> out [1,1], push (3,1,1).
-Pop (2,2,0) -> out [1,1,2], push (6,2,1).
-Pop (3,1,1) -> [1,1,2,3], push (4,1,2).
-Pop (4,0,1) -> ... continuing gives [1,1,2,3,4,4,5,6].
-The heap never holds more than k=3 entries, which is the whole point.""",
+    """1. THE GOAL, in plain English.
 
-    """Why the tuple carries the list index.
-Push only the value and Python compares equal values fine - but tie-breaking on
-a tuple falls through to the NEXT element, and if that were a list or a node
-object Python would raise TypeError ('<' not supported between instances of
-ListNode).
-Including the list index i as the second field guarantees the comparison always
-terminates on an int. On the two 1s above, (1,0,0) < (1,1,0) because 0 < 1 - a
-deterministic, safe tie-break.
-This exact TypeError is the most common runtime failure on this problem when the
-inputs are linked-list nodes rather than arrays.""",
+You are handed several lists. Each one is ALREADY sorted on its own. Produce one
+sorted list containing everything.
 
-    """Edge cases: empty lists mixed in, all empty, k = 1.
-[[], [1,2], []] -> only non-empty lists are seeded (the `if lst` guard), so the
-heap starts with one entry and the answer is [1,2].
-[[], []] -> the heap is never seeded, the loop never runs, result [].
-[[1,2,3]] -> degenerates to copying the single list.
-Forgetting the `if lst` guard would raise IndexError on lst[0] for an empty
-list - a one-word guard that a hidden test will find.""",
+    lists = [[1, 4, 5],
+             [1, 3, 4],
+             [2, 6]]
 
-    """Cost, and the divide-and-conquer alternative.
-N total elements across k lists. Each element is pushed and popped exactly once
-from a heap of size <= k: O(N log k). Space O(k).
-Alternative: merge lists pairwise, like a tournament - merge 1 with 2, 3 with 4,
-then merge the results, and so on. log k rounds, each touching all N elements:
-also O(N log k), and it needs no heap.
-Naive alternative: merge them one at a time into an accumulator - the accumulator
-is re-walked every round, giving O(N x k). On k=100 that is 100x worse; it is the
-answer to avoid.""",
+    answer = [1, 1, 2, 3, 4, 4, 5, 6]
 
-    """The linked-list version, which is what is usually asked.
-Same algorithm, but push (node.val, i, node) and rebuild pointers as you pop:
-    dummy = tail = ListNode(0)
+The everyday picture: three queues of people, each queue already standing in order of
+height, and you must merge them into one line in order of height. You never need to
+look further than the FRONT of each queue - the shortest person overall must be at
+the front of one of the three queues, because everyone behind them in their own queue
+is taller.
+
+That observation is the whole problem. At every moment, the next value to output is
+one of only k candidates - the current front of each list - and you never have to
+look deeper.
+
+Two quantities matter throughout and it is worth naming them now:
+
+    k = how many lists there are            (3 here)
+    N = how many elements there are in total (8 here)
+
+The naive approach costs O(N log N); this one costs O(N log k). When you are merging
+1000 sorted files of a million records each, that difference is the difference
+between a job that finishes and one that does not.""",
+
+    """2. THE INTUITION - only the fronts can win.
+
+Lay the three lists out and mark the front of each:
+
+    list 0:  [1] 4  5
+    list 1:  [1] 3  4
+    list 2:  [2] 6
+
+The smallest value in the whole collection MUST be one of the three marked ones. It
+cannot be the 4 in list 0, because the 1 sitting in front of it in that same list is
+smaller. Every element is protected by whatever sits in front of it in its own list.
+
+So: take the smallest of the fronts, output it, and let that list's next element step
+forward.
+
+    output: 1                 list 0 advances
+    list 0:  1 [4] 5
+    list 1: [1] 3  4
+    list 2: [2] 6
+
+    output: 1 1               list 1 advances
+    list 0:  1 [4] 5
+    list 1:  1 [3] 4
+    list 2: [2] 6
+
+    output: 1 1 2             list 2 advances
+    ... and so on.
+
+Now, how do you find "the smallest of the fronts" quickly? With k = 3 you could just
+look at all three. With k = 1000 you do not want to scan a thousand fronts for every
+single one of a billion outputs.
+
+You want a container that holds the k fronts and can hand you the smallest instantly.
+That container is a MIN-HEAP. Push the k fronts into it; pop the smallest; push the
+replacement from the same list; repeat. The heap never holds more than k things, so
+each operation costs log k rather than log N.
+
+    heap holds:  1(from list 0), 1(from list 1), 2(from list 2)
+    pop the smallest -> 1, and immediately push 4, list 0's next
+    heap holds:  1(from list 1), 2(from list 2), 4(from list 0)
+    pop -> 1, push 3
+    ...
+
+The heap is a small window onto the fronts, never onto the whole data.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SORTED. Smallest to largest. Each input list is sorted; the output must be too.
+
+k. The number of lists. N. The total number of elements across all of them.
+
+MIN-HEAP. A container with exactly one talent: it always knows its SMALLEST item and
+can hand it over immediately. Pushing costs about log(size) steps; removing the
+smallest costs about log(size). It is NOT a sorted list - ask it for its second
+smallest and it does not know without removing the first. That narrowness is why it
+is cheap.
+
+heapq. Python's built-in min-heap, operating on an ordinary list. heapq.heappush(h,
+x) adds; heapq.heappop(h) removes and returns the smallest. The list h is kept in
+heap order, which is not sorted order - printing h shows a jumble with the smallest
+at position 0.
+
+TUPLE. A fixed group of values written with commas: (1, 0, 0). Python compares tuples
+POSITION BY POSITION - it compares the first items, and only if those are equal does
+it look at the second, and so on. This behaviour is doing real work in this
+algorithm; see section 4.
+
+enumerate. Walks a list handing you both the position and the item, so
+`for i, lst in enumerate(lists)` gives i = 0 with lst = the first list, and so on.
+
+SEED. To fill the heap with its starting contents - here, the first element of every
+non-empty list.
+
+O(N log k). N elements, each costing about log k steps of heap work. With k = 3 that
+log is under 2; with k = 1000 it is about 10. Either way it is far smaller than
+log N when N is huge.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the famous one: PUSHING ONLY THE VALUE, OR ONLY (value, node).
+
+If two lists have the same value at their front - and here two lists both start with
+1 - the heap must break the tie somehow. If you push bare values it is fine, because
+integers compare cleanly. But the usual version of this problem uses LINKED LISTS,
+and people write:
+
+    heapq.heappush(heap, (node.val, node))        # CRASHES
+
+When two nodes have equal val, Python moves on to compare the second items - the
+ListNode objects themselves - and a ListNode has no notion of being less than another
+ListNode. Python raises TypeError: '<' not supported between instances of 'ListNode'.
+
+The fix is exactly what this code does: put an always-distinct integer in the middle.
+
+    heapq.heappush(heap, (lst[0], i, 0))
+
+i is the list index, and no two entries in the heap ever come from the same list at
+the same time, so the comparison always resolves at the first or second position and
+never reaches the third. The tie-break is not decoration - it is what stops the crash.
+
+TRAP 2: forgetting the empty-list guard. `if lst:` skips lists with nothing in them.
+Without it, lst[0] raises IndexError on the first empty list you meet. Inputs like
+[[], [1,2], []] are standard test cases.
+
+TRAP 3: pushing the next element from the WRONG list. After popping a value that came
+from list i, the replacement must come from list i - not from the next list, not from
+all lists. That is what the i carried in the tuple is for: the heap forgets nothing,
+so when the value comes back out you still know where it came from.
+
+TRAP 4: pushing past the end of a list. `if j + 1 < len(lists[i])` checks there IS a
+next element before pushing. When a list runs dry, it simply stops contributing, and
+the heap shrinks. The loop ends when the heap empties, which happens exactly when
+every list has been drained.
+
+TRAP 5 - a judgement call, not a bug: "why not concatenate everything and sort?" That
+is O(N log N) and, for small k, it is genuinely fine and much shorter to write. Say
+so. The heap version wins when k is much smaller than N (log k beats log N), and it
+wins ENORMOUSLY when the lists do not fit in memory at once - a heap of k fronts fits
+in memory even when N is a terabyte. That memory argument is the real reason this
+algorithm exists.""",
+
+    """5. THE SLOW VERSIONS FIRST, THEN THE UPGRADE.
+
+SLOW VERSION A - concatenate and sort.
+
+    everything = []
+    for lst in lists: everything += lst
+    everything.sort()
+
+Cost O(N log N). Completely correct. It throws away the fact that the inputs were
+already sorted, which is the information the problem is testing whether you notice.
+
+SLOW VERSION B - scan the k fronts each time.
+
+Keep a pointer into each list. Each round, look at all k fronts, pick the smallest,
+output it, advance that pointer. Cost: k comparisons per output, N outputs, so
+O(N x k). For k = 3 this is fine and easy to explain. For k = 1000 it is a thousand
+comparisons per element.
+
+THE UPGRADE - keep the k fronts in a MIN-HEAP.
+
+The only wasteful part of version B is re-scanning k fronts to find the smallest,
+when k-1 of them have not changed since last time. A heap remembers.
+
+Cost: O(N log k). Each of the N elements is pushed exactly once and popped exactly
+once, and every heap operation touches a structure of size at most k.
+
+WHY THE HEAP NEVER EXCEEDS k ENTRIES - and why that is what makes this work. Look at
+the loop: every pop is followed by at most one push, and that push always comes from
+the same list as the value just removed. So each list has AT MOST ONE representative
+in the heap at any moment. k lists, k entries maximum. That bound is what turns log N
+into log k, and it is the sentence to say out loud in an interview.
+
+WHY IT IS SAFE TO OUTPUT THE HEAP'S MINIMUM IMMEDIATELY - the proof. Claim: the
+smallest value still unprocessed anywhere is always sitting in the heap right now.
+Every element that has not yet been output is either (a) in the heap, or (b) behind
+some element of its own list that is still in the heap or still unprocessed. In case
+(b) the element in front of it is smaller, because its list is sorted. So nothing
+outside the heap can be smaller than everything inside it. The heap's minimum is
+therefore the global minimum of what remains, and outputting it can never be
+premature.
+
+THE OTHER O(N log k) SOLUTION - divide and conquer. Merge the lists in pairs: merge
+list 0 with list 1, list 2 with list 3, and so on, halving the number of lists each
+round. After log k rounds there is one list, and each round touches all N elements,
+so it is also O(N log k). Mention it; interviewers like hearing that two different
+routes reach the same bound. The heap version is preferred when the data streams in
+rather than sitting in memory.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP THE CURRENT FRONT OF EVERY LIST IN A
+MIN-HEAP, REPEATEDLY TAKE THE SMALLEST ONE OUT AND WRITE IT DOWN, AND EACH TIME
+IMMEDIATELY PUT IN THE NEXT ELEMENT FROM THE LIST THAT ONE CAME FROM.
+
+THERE IS NO RECURSION HERE. Nothing calls itself, so no call stack, no base case. The
+mechanism to understand instead is THE HEAP AS A FIXED-SIZE WINDOW:
+
+  - The heap holds at most one element per list, so its size never exceeds k.
+  - Every pop is matched by at most one push, so the size never grows.
+  - When a list is exhausted its pop is not matched by a push, so the heap shrinks by
+    one.
+  - The loop ends when the heap is empty, which happens exactly when every list has
+    been drained. That is the termination guarantee - the heap can only shrink k
+    times.
+
+The steps:
+
+  1. Make an empty heap.
+
+  2. For each list, if it is not empty, put its FIRST element into the heap. Store
+     three things together: the value, WHICH list it came from, and WHERE in that
+     list it sat. Skip empty lists entirely.
+
+  3. Make an empty output list.
+
+  4. Repeat while the heap still has something in it:
+
+     a. Remove the smallest entry. Unpack it into the value, the list it came from,
+        and the position it came from.
+
+     b. Append that value to the output.
+
+     c. Look at the next position in the SAME list. If that position exists, put that
+        element into the heap, tagged with the same list number and the new position.
+        If the list has run out, put nothing in.
+
+  5. When the heap empties, the output holds all N elements in sorted order.
+
+The step people get wrong is 2's bookkeeping. It is tempting to push just the value,
+but then when it comes back out you have no idea which list to refill from. The tag
+is not optional.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Three queues of people are waiting, and each queue is already arranged shortest at the
+front. You need one single line, shortest to tallest.
+
+You do not measure everybody. You ask only the three people at the FRONT of the
+queues to step forward onto a small platform. Whoever is shortest among those three
+must be the shortest person in the entire hall - because everybody else is standing
+behind somebody taller than themselves... which is to say, behind somebody who is
+already on the platform or will be later.
+
+Take the shortest one off the platform and put them at the head of your new line. Then
+immediately call forward the next person FROM THAT SAME QUEUE - and only that queue,
+because the other two queues have not moved.
+
+The platform always has at most three people on it, no matter whether the queues hold
+ten people or ten million. That is the entire economy of the method: you are only ever
+comparing three people, never the whole hall.
+
+Each person you call forward wears a badge saying which queue they came from, so when
+you take them off the platform you know exactly which queue to call the replacement
+from. Without the badge you would have no idea.
+
+If a queue empties, nobody replaces its person on the platform, and the platform
+quietly gets smaller. When the platform is finally empty, everybody is in the line and
+you are done.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    import heapq
+    def merge_k_sorted(lists):
+
+lists is a list OF lists, each already sorted. The function returns one new sorted
+list. It does not modify lists - it only reads from it, so the caller's data comes
+back untouched.
+
+    heap = []
+
+The platform. An ordinary Python list that heapq will maintain in heap order. Empty
+to start.
+
+    for i, lst in enumerate(lists):
+
+Walk the input lists, keeping track of the position i as well as the list lst itself.
+i is the badge number - which queue this is.
+
+        if lst:
+
+The guard from trap 2. An empty list has no front element to offer, so skip it
+entirely. Without this line, lst[0] on the next line raises IndexError.
+
+            heapq.heappush(heap, (lst[0], i, 0))
+
+Seed the platform with this list's front. Three things go in as one tuple:
+
+  - lst[0], the value. It is first in the tuple because that is what the heap should
+    order by.
+  - i, which list it came from. Needed later to know where to refill from - and, just
+    as importantly, it is an always-distinct integer that resolves ties so the
+    comparison never reaches the third item.
+  - 0, the position within that list. The front is position 0.
+
+After this loop the heap holds one entry per non-empty list: at most k entries, and it
+will never hold more.
+
+    result = []
+
+Where the merged output accumulates, in order.
+
     while heap:
-        val, i, node = heapq.heappop(heap)
-        tail.next = node; tail = node
-        if node.next: heapq.heappush(heap, (node.next.val, i, node.next))
-    return dummy.next
-The dummy head removes the 'is this the first node?' branch - the same trick as
-in Remove Nth Node From End. Note the nodes are RELINKED, not copied, so the
-space is O(k) for the heap and nothing else.""",
 
-    """Where k-way merge is the real workload.
-- External sort: sort chunks that each fit in memory, write them to disk, then
-  k-way merge the sorted runs. This is how sort(1) and every database's external
-  sort operator work.
-- LSM-tree compaction (RocksDB, Cassandra): merge k sorted SSTables.
-- Merging per-shard sorted results at a query coordinator.
-- Combining time-ordered log streams from many servers into one timeline.
-When an interviewer asks 'how would you sort 100GB with 8GB of RAM?', the answer
-is chunked sort plus this exact k-way merge.""",
+Keep going until the platform is empty. An empty heap means every list has been fully
+drained, because a list stops contributing only when it runs out.
+
+        val, i, j = heapq.heappop(heap)
+
+Take the smallest entry off and unpack it: val is the value, i is which list it came
+from, j is where in that list it sat. By the proof in section 5, val is the smallest
+value remaining anywhere - not just the smallest on the platform.
+
+        result.append(val)
+
+Write it down. Because val is the global minimum of what remains, appending it keeps
+result sorted.
+
+        if j + 1 < len(lists[i]):
+
+Does list i have anything after position j? len(lists[i]) is how long that list is,
+so the last valid position is len - 1. If j was already the last, this is False and
+list i is finished - it simply stops contributing.
+
+            heapq.heappush(heap, (lists[i][j + 1], i, j + 1))  # next from list i
+
+Refill from THE SAME list i - this is what the badge was for. The new tuple carries
+the next value, the same list number, and the advanced position. One pop, one push,
+so the heap size is unchanged; when the guard is False, one pop and no push, so it
+shrinks.
+
+    return result
+
+The heap emptied, so every element of every list has been popped exactly once and
+appended exactly once. result holds all N values in sorted order.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    lists = [[1, 4],
+             [2, 3]]
+
+SEEDING.
+  i = 0, lst = [1, 4]. lst is non-empty -> push (1, 0, 0).
+  i = 1, lst = [2, 3]. lst is non-empty -> push (2, 1, 0).
+  heap holds {(1,0,0), (2,1,0)}.  result = [].
+
+PASS 1.
+  heap is not empty, enter.
+  heappop gives the smallest tuple: (1, 0, 0).  val = 1, i = 0, j = 0.
+  result = [1].
+  j + 1 = 1. len(lists[0]) = 2. Is 1 < 2? Yes -> push (lists[0][1], 0, 1) = (4, 0, 1).
+  heap holds {(2,1,0), (4,0,1)}.
+
+PASS 2.
+  heappop gives (2, 1, 0).  val = 2, i = 1, j = 0.
+  result = [1, 2].
+  j + 1 = 1. len(lists[1]) = 2. Is 1 < 2? Yes -> push (lists[1][1], 1, 1) = (3, 1, 1).
+  heap holds {(3,1,1), (4,0,1)}.
+
+PASS 3.
+  heappop gives (3, 1, 1).  val = 3, i = 1, j = 1.
+  result = [1, 2, 3].
+  j + 1 = 2. len(lists[1]) = 2. Is 2 < 2? No -> push nothing. List 1 is finished.
+  heap holds {(4,0,1)}.  Notice the heap shrank from 2 to 1.
+
+PASS 4.
+  heappop gives (4, 0, 1).  val = 4, i = 0, j = 1.
+  result = [1, 2, 3, 4].
+  j + 1 = 2. len(lists[0]) = 2. Is 2 < 2? No -> push nothing.
+  heap is now empty.
+
+The while condition fails. return [1, 2, 3, 4].
+
+Two things to notice. The heap held at most 2 entries throughout, which is k, even
+though N was 4 - and with a million elements per list it would still have held 2.
+And each element was pushed exactly once and popped exactly once, which is where
+O(N log k) comes from.
+
+NOW THE TIE CASE, to see the middle number of the tuple earning its keep:
+
+    lists = [[1], [1]]
+
+  Seed: push (1, 0, 0) and (1, 1, 0).
+  heappop must compare (1,0,0) against (1,1,0). The first items are equal - both 1 -
+  so Python moves to the second items: 0 against 1. 0 wins, so (1,0,0) comes out
+  first. The comparison never needs to look at the third item.
+
+  If the tuples had been (1, node_a) and (1, node_b) with linked-list nodes, that
+  second comparison would have been node_a < node_b, which raises TypeError. The
+  integer in the middle is what prevents it.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(N log k), where N is the total number of elements and k is the number of
+lists.
+
+In plain words: every element enters the heap once and leaves once - that is 2N heap
+operations - and each one works on a structure holding at most k things, costing
+about log k steps. Concatenate-and-sort would be O(N log N). When k is 3 and N is a
+billion, log k is under 2 and log N is about 30, so this is roughly fifteen times less
+comparison work.
+
+SPACE: O(k) for the heap, plus O(N) for the output. The heap part is the interesting
+number: it does not depend on N at all. This is what makes the algorithm usable when
+the data does not fit in memory - you hold k fronts, not N elements.
+
+WHERE THIS IS THE REAL WORKLOAD: external sorting (sort chunks that each fit in
+memory, write them to disk, then k-way merge the sorted runs - this is how databases
+sort data larger than RAM), merging sorted shards from k database partitions, and
+merging time-ordered log streams from k servers. In every case N is enormous, k is
+modest, and the O(k) memory is the whole point.
+
+THE #1 BEGINNER MISTAKE: pushing tuples whose tie-break can reach an object that
+cannot be compared - (node.val, node) in the linked-list version. It works perfectly
+until two lists happen to hold the same value, then dies with TypeError. Always put a
+distinct integer between the value and anything unorderable.
+
+Runner-up: refilling the heap from the wrong list, or forgetting to refill at all -
+which produces output that is sorted but missing most of the data.
+
+TAKEAWAY: the next smallest element is always at the front of one of the k lists, so
+keep just those k fronts in a min-heap - the heap stays tiny no matter how much data
+flows through it, and that is what lets this run on data far too big for memory.""",
 ]
 
 _EX_P0G["Minimum Window Substring (sliding window)"] = [
