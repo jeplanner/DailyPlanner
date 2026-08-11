@@ -63076,117 +63076,998 @@ the wrong one collapses the whole tree to zero.""",
 ]
 
 _EX_P0H["Count Pairs Whose Sum is Less than Target"] = [
-    """The textbook case, traced.
-nums = [-1,1,2,3,1], target = 2. Sort -> [-1,1,1,2,3]. left=0, right=4.
--1+3 = 2 < 2? No -> right=3.
--1+2 = 1 < 2 -> every element between left and right also pairs with -1 to give
-something <= 1, so add right-left = 3 pairs at once: (-1,1), (-1,1), (-1,2).
-count=3, left=1.
-1+2 = 3 < 2? No -> right=2.
-1+1 = 2 < 2? No -> right=1. Now left == right, loop ends.
-Answer 3.""",
+    """1. THE GOAL, in one line and one example.
 
-    """Why `count += right - left` is valid - the counting argument.
-When nums[left] + nums[right] < target and the array is sorted, every index k
-with left < k <= right satisfies nums[k] <= nums[right], so
-nums[left] + nums[k] <= nums[left] + nums[right] < target.
-That is right - left pairs, all counted in O(1) instead of one at a time.
-Miss this and you write a nested loop: O(n^2), which times out at n = 10^5. The
-whole trick is realising the sorted order lets you count a whole BLOCK of valid
-pairs from one comparison.""",
+Given a list of numbers and a target, COUNT HOW MANY PAIRS ADD UP TO LESS THAN THE TARGET.
 
-    """Why sorting is safe here (and when it is not).
-The question asks for the COUNT of pairs (i,j) with i<j, not for their indices.
-Sorting destroys the original indices but preserves the multiset of pairs, so the
-count is unchanged.
-Compare with Two Sum, which must return the original indices - there, sorting
-forces you to carry the indices along or to use a hash map instead.
-Always ask: does the answer depend on positions, or only on values? If only
-values, sorting is free to use.""",
+    A "pair" means two DIFFERENT positions in the list, and each unordered pair is counted once.
+    Formally: how many index pairs (i, j) with i < j satisfy nums[i] + nums[j] < target.
 
-    """Edge cases: fewer than two elements, no valid pairs, all valid.
-nums = [5], any target: left == right immediately, answer 0.
-nums = [] -> 0.
-nums = [5,6], target = 3: 5+6 = 11, not less -> right shrinks, loop ends, 0.
-nums = [-5,-4,-3], target = 0: -5+-3 = -8 < 0 -> add 2, left=1; -4+-3 = -7 < 0 ->
-add 1, left=2 == right. Total 3 = all C(3,2) pairs.
-That last one is the useful upper-bound check: the answer can never exceed
-n(n-1)/2.""",
+    nums = [-1, 1, 2, 3, 1],   target = 2
 
-    """Duplicates count as distinct pairs.
-nums = [1,1,1], target = 3: sorted [1,1,1]. 1+1 = 2 < 3 -> add right-left = 2,
-left=1. 1+1 = 2 < 3 -> add 1, left=2. Total 3.
-There are indeed three index pairs - (0,1), (0,2), (1,2) - even though the values
-are identical. The problem counts INDEX pairs, not distinct value pairs; if it
-wanted the latter you would dedupe first, and the answer would be 0 or 1.""",
+    Write out every pair and its sum:
 
-    """The neighbours, and the one that needs binary search.
-- 3Sum Smaller: fix the first index, then run this exact two-pointer count on the
-  rest -> O(n^2).
-- Two Sum II (sorted, find the pair): the same pointers, different stopping rule.
-- Count pairs with sum GREATER than target: mirror the logic, adding right-left
-  when the sum is too big and moving right inward otherwise.
-- Count pairs with a DIFFERENCE less than k: sort, then a sliding window or
-  binary search per element - the two-pointer block trick does not transfer,
-  because the relation is not monotone in the same way. Knowing which variants
-  the trick survives is the real test.""",
+        (-1, 1) = 0     <  2   YES
+        (-1, 2) = 1     <  2   YES
+        (-1, 3) = 2     <  2   no  (2 is not less than 2 - strict)
+        (-1, 1) = 0     <  2   YES     <- the OTHER 1, at a different index
+        ( 1, 2) = 3            no
+        ( 1, 3) = 4            no
+        ( 1, 1) = 2            no
+        ( 2, 3) = 5            no
+        ( 2, 1) = 3            no
+        ( 3, 1) = 4            no
+
+    ANSWER: 3
+
+FOUR THINGS THAT SENTENCE IS SAYING, and each one matters later:
+
+    STRICTLY LESS THAN. A sum exactly equal to the target does NOT count. (-1) + 3 = 2 is excluded.
+    i < j, SO EACH PAIR ONCE. (nums[0], nums[1]) and (nums[1], nums[0]) are the same pair.
+    A NUMBER CANNOT PAIR WITH ITSELF. Two distinct positions.
+    DUPLICATE VALUES ARE STILL DISTINCT POSITIONS. The two 1s in the list give two separate pairs
+        with the −1, and both count.
+
+THE OBVIOUS METHOD IS TO CHECK EVERY PAIR - which is exactly what the table above does, and it is
+O(n^2). Section 5 prices that. The whole question is how to get the same count without looking at
+every pair individually, and the answer is that once the list is sorted you can count a whole
+BLOCK of pairs with a single subtraction.""",
+
+    """2. THE INTUITION - sort, then count a whole row at a time.
+
+Sort the numbers and put a finger on each end.
+
+    sorted:   -1    1    1    2    3
+              ^                    ^
+             left                right
+
+Now ask ONE question: DOES THE SMALLEST PLUS THE LARGEST BEAT THE TARGET?
+
+    CASE A - THE SUM IS ALREADY TOO BIG (>= target).
+        Then `nums[right]` is hopeless. Pair it with the SMALLEST number available and it still
+        fails - so pairing it with anything else, all of which are bigger, fails too. THIS NUMBER
+        CANNOT BE IN ANY REMAINING PAIR. Drop it: move `right` inwards.
+
+    CASE B - THE SUM IS SMALL ENOUGH (< target).
+        Then `nums[left]` paired with the LARGEST available number works - so it works with every
+        number in between as well, since they are all smaller. EVERY PAIR STARTING AT `left` AND
+        ENDING ANYWHERE FROM left+1 TO right QUALIFIES, ALL AT ONCE.
+
+        HOW MANY IS THAT?  right − left  of them.
+
+        Then `left` is finished with - every pair it belongs to has been counted - so move it in.
+
+    -1  +  3  =  2.  Not < 2.  Drop the 3.        right moves in
+    -1  +  2  =  1.  Yes!  Every partner from index 1 to index 3 works:
+                     (-1,1), (-1,1), (-1,2)  -  that is right − left = 3 − 0 = THREE pairs,
+                     counted with one subtraction rather than three comparisons.
+                     left moves in.
+     1  +  2  =  3.  Not < 2.  Drop the 2.
+     1  +  1  =  2.  Not < 2.  Drop it.  Now left == right, so we stop.
+
+    TOTAL: 3.   Which matches the hand count in section 1.
+
+THAT IS THE WHOLE ALGORITHM, and the crucial line is `count += right - left` rather than
+`count += 1`. On a success you are not counting ONE pair; you are counting a whole row of them.
+
+Each step either drops a number from the right or finishes a number on the left, so the window
+shrinks by one every time. At most n steps, and each is constant work.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PAIR. Two different positions i and j with i < j. The values may be equal; the positions may not.
+
+STRICTLY LESS THAN. `<`, not `<=`. A sum equal to the target is excluded.
+
+TWO POINTERS (OPPOSITE ENDS). Two indices starting at the two ends of a SORTED array and moving
+toward each other. Distinct from the "merge-like" flavour where both walk forward through two
+lists.
+
+WINDOW. The stretch of the array between `left` and `right` inclusive - the numbers still in play.
+
+MONOTONICITY. The property that makes the pointer moves safe: because the array is sorted, knowing
+one pair's answer tells you about a whole block of others without testing them.
+
+BATCH COUNTING. Adding `right - left` in one go instead of counting pairs one at a time. The
+reason this is O(n) rather than O(n^2).
+
+nums. The input list. SORTED IN PLACE by this function - it mutates the caller's list.
+target. The threshold.
+left. Index of the smallest number still in play.
+right. Index of the largest number still in play.
+count. The running answer.
+
+O(n log n). The cost of the sort, which dominates the O(n) sweep that follows.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - WRITING `count += 1` INSTEAD OF `count += right - left`. This is the mistake, and it
+turns a correct algorithm into a badly wrong one while still looking like a two-pointer solution.
+
+    On nums = [-1,1,1,2,3], target = 2:
+
+        AS WRITTEN:      -1+3 fails -> right in.  -1+2 works -> count += 3, left in.
+                         1+2 fails -> right in.  1+1 fails -> right in.  left == right, stop.
+                         COUNT 3.  Correct.
+
+        WITH `count += 1`:  the same four steps, but the one success adds 1 instead of 3.
+                            COUNT 1, where the answer is 3.
+
+    THE POINTER MOVES ONLY WORK BECAUSE OF THE BATCH. When `left` advances, it is on the
+    understanding that EVERY pair involving `left` has already been accounted for. Counting one
+    pair and then advancing throws the rest of them away permanently - they are never revisited,
+    because neither pointer ever moves back.
+
+TRAP 2 - THE FUNCTION MUTATES ITS INPUT. `nums.sort()` reorders the CALLER'S list in place. Pass
+in [-1,1,2,3,1] and afterwards your variable holds [-1,1,1,2,3]. Same class of surprise as 3Sum's
+`nums.sort()`, Assign Cookies' `g.sort()` and Insert Interval's `new[]`. Use `nums = sorted(nums)`
+if the caller needs the original order.
+
+TRAP 3 - AND THE REASON SORTING IS ALLOWED AT ALL. Sorting DESTROYS the original indices. That is
+fine HERE because the question asks for the COUNT of pairs, and a count does not care which
+positions produced it. IT WOULD NOT BE FINE if the question asked you to RETURN the index pairs -
+then sorting would hand back positions in the wrong array.
+
+    THE TEST TO APPLY: does the answer depend on WHERE the numbers were, or only on WHAT they were?
+    Count - only what. Two Sum (return the indices) - where, which is why Two Sum uses a hash map
+    instead of sorting.
+
+TRAP 4 - `<` vs `<=` ON THE TARGET. The problem says strictly less. On nums = [-1,1,1,2,3],
+target = 2, the pair (−1, 3) sums to exactly 2:
+
+        WITH `<`:   -1 + 3 = 2 is not < 2.  The 3 is dropped.  ANSWER 3.
+        WITH `<=`:  -1 + 3 = 2 is <= 2.  count += 4 − 0 = 4, and left advances.
+                    Then 1+3 = 4, drop; 1+2 = 3, drop; 1+1 = 2 <= 2, count += 2 − 1 = 1.
+                    ANSWER 5.
+
+    Three versus five, on one character. Read the problem statement, and say which one you
+    implemented.
+
+TRAP 5 - `while left < right` vs `while left <= right`. It must be `<` because a pair needs two
+DISTINCT positions - a number cannot pair with itself. In this particular code `<=` happens to be
+harmless: when left == right, `right - left` is 0 so nothing is added, and either pointer move ends
+the loop. But do not rely on that; write what you mean.
+
+TRAP 6 - FEWER THAN TWO ELEMENTS. nums = [5] gives left = 0 and right = 0, so `left < right` is
+false immediately and the answer is 0. nums = [] gives right = −1 and the same. Both correct with
+no special case - but a version that reads `nums[0]` before the loop crashes on the empty list.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE COUNTING ARGUMENT IN FULL.
+
+VERSION A - CHECK EVERY PAIR.
+
+    for i in range(len(nums)):
+        for j in range(i+1, len(nums)):
+            if nums[i] + nums[j] < target: count += 1
+
+Obviously correct, and O(n^2). The number of pairs is n(n−1)/2:
+
+    n = 100      4,950 pairs
+    n = 1,000    499,500 pairs           against a sort of roughly 1,000 x log2(1,000) ~ 10,000
+                                          operations plus a 1,000-step sweep
+    n = 10,000   49,995,000 pairs        against roughly 140,000 + 10,000
+
+    AT n = 1,000 THE NAIVE VERSION DOES ABOUT FORTY-FIVE TIMES THE WORK; at n = 10,000, about four
+    hundred times. And the gap grows without limit, because one is quadratic and the other is very
+    nearly linear.
+
+VERSION B - SORT, THEN BINARY SEARCH FOR EACH ELEMENT. For each i, binary search for the largest j
+with nums[i] + nums[j] < target. O(n log n) overall - the same complexity as version C, and more
+code, with off-by-one hazards in the search. Worth naming; not worth writing.
+
+VERSION C - SORT AND SWEEP FROM BOTH ENDS, which is the code here.
+
+THE TWO CLAIMS THAT MAKE IT CORRECT. Both need proving, and an interviewer will ask for at least
+one:
+
+    CLAIM 1 - WHEN THE SUM QUALIFIES, SO DOES EVERY PAIR IN BETWEEN.
+        Suppose nums[left] + nums[right] < target, and take any k with left < k <= right.
+        The array is sorted, so nums[k] <= nums[right].
+        Therefore nums[left] + nums[k] <= nums[left] + nums[right] < target.
+        Every such k qualifies. There are (right − left) of them - the indices left+1 through
+        right inclusive.
+        AND THERE ARE NO OTHERS involving `left`, because everything past `right` was already
+        eliminated by claim 2. So `left` is completely finished with, and advancing it loses
+        nothing.
+
+    CLAIM 2 - WHEN THE SUM FAILS, THE RIGHT-HAND NUMBER IS USELESS TO EVERYBODY.
+        Suppose nums[left] + nums[right] >= target. Take any k with left <= k < right.
+        The array is sorted, so nums[k] >= nums[left].
+        Therefore nums[k] + nums[right] >= nums[left] + nums[right] >= target.
+        NO REMAINING NUMBER CAN PAIR WITH nums[right]. Discarding it loses nothing.
+
+    THE TWO CLAIMS ARE MIRROR IMAGES, and notice that each one leans on the sortedness in the
+    opposite direction - claim 1 uses "everything to the left of `right` is smaller", claim 2 uses
+    "everything to the right of `left` is bigger". That is why BOTH ends have to be sorted ends,
+    and why this shape only works on a sorted array.
+
+    (The same pair of arguments appears in Assign Cookies, where a cookie too small for the least
+    greedy child is too small for everyone. Recognising the shape is worth more than either
+    problem.)""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SORT THE NUMBERS, PUT A FINGER ON EACH END, AND
+REPEATEDLY EITHER COUNT AN ENTIRE BLOCK OF PAIRS AT ONCE AND RETIRE THE LEFT FINGER'S NUMBER, OR
+THROW AWAY THE RIGHT FINGER'S NUMBER AS USELESS TO EVERYBODY.
+
+THERE IS NO RECURSION. The mechanism is TWO INDICES CLOSING IN ON EACH OTHER:
+
+  - They start at the two ends and move only inward. Neither ever goes back.
+  - EVERY ITERATION MOVES EXACTLY ONE OF THEM, so the gap between them shrinks by one each time.
+  - WHAT MAKES IT STOP: the gap starts at n − 1 and shrinks by one per iteration, so the loop runs
+    fewer than n times. It cannot spin, because there is no branch that leaves both pointers where
+    they were.
+  - WHY NOTHING IS EVER REVISITED: each move is justified by a proof that the retired number can
+    contribute nothing further (section 5). That is what buys the linear sweep.
+
+THE STEPS:
+
+  1. SORT THE NUMBERS FROM SMALLEST TO LARGEST. Everything below depends on it.
+
+  2. PUT ONE INDEX AT THE FIRST NUMBER AND ANOTHER AT THE LAST. START THE COUNT AT ZERO.
+
+  3. WHILE THE TWO INDICES HAVE NOT MET:
+
+     a. ADD THE TWO NUMBERS THEY POINT AT.
+
+     b. IF THE TOTAL IS BELOW THE TARGET:
+
+        - EVERY PARTNER FROM JUST AFTER THE LEFT INDEX UP TO AND INCLUDING THE RIGHT INDEX ALSO
+          WORKS, because they are all no larger than the right-hand number. ADD HOW MANY THAT IS -
+          the distance between the two indices - TO THE COUNT IN ONE GO.
+
+          Not one. The distance. Adding one here is the mistake that halves or worse the answer,
+          because the left-hand number is retired immediately afterwards and its other partners are
+          never looked at again.
+
+        - MOVE THE LEFT INDEX IN. Every pair that number belongs to has now been counted.
+
+     c. OTHERWISE THE TOTAL IS TOO BIG. The right-hand number failed even against the SMALLEST
+        number available, so it fails against every other one too. MOVE THE RIGHT INDEX IN,
+        discarding it, and count nothing.
+
+  4. RETURN THE COUNT.
+
+Note that step 3b counts and moves the LEFT index, while step 3c moves the RIGHT one - so exactly
+one pointer moves per pass, and which one depends entirely on the comparison.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a row of weights laid out on a bench, and a rule: any two weights you pick up together
+must come to less than some limit. You want to know how many different two-weight combinations
+satisfy the rule.
+
+The first thing you do is put the weights in order, lightest on the left and heaviest on the right.
+Everything that follows depends on that.
+
+Now you put one hand on the lightest weight and the other on the heaviest, and you lift both.
+
+If they are over the limit, you learn something quite strong. That heavy weight has just been
+paired with the LIGHTEST thing on the bench, and it still failed. Nothing else on the bench can
+help it - everything else is heavier. So that weight cannot be part of any combination at all, and
+you set it aside for good. Your right hand moves one place inward.
+
+If instead they come in under the limit, you learn something even more useful, and this is where
+the time is saved. The lightest weight has just been paired with the HEAVIEST thing available and
+it worked. So it will work with everything in between, too, because they are all lighter than the
+one you just tried. Every single combination involving that lightest weight is fine - and you can
+count them all at once by seeing how many weights lie between your two hands, rather than lifting
+each one individually.
+
+That is the whole saving. On a good pair you are not recording one combination; you are recording
+a whole row of them with a single count. Then the lightest weight is finished with - every
+combination it belongs to has been tallied - so your left hand moves inward too.
+
+Either way, one of your hands moves in every round, so the two must eventually meet, and when they
+do you have looked at each weight a handful of times rather than trying every pair.
+
+The mistake to avoid is recording just one combination on a good pair instead of the whole row.
+Your left hand moves on immediately afterwards and never comes back, so those uncounted
+combinations are gone for good - and the tally comes out far too small while the method still
+looks perfectly sensible.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep nums = [-1,1,2,3,1] and target = 2 beside you, answer 3.
+
+    def count_pairs(nums, target):
+
+`nums` is the list of numbers, `target` the threshold. Returns the count. `nums` IS MODIFIED - the
+next line reorders the caller's list.
+
+        nums.sort()
+
+THE SETUP THE WHOLE ALGORITHM RESTS ON. Ascending. Both of section 5's claims cite the sortedness,
+one in each direction.
+
+`.sort()` sorts in place (trap 2). The non-mutating version is `nums = sorted(nums)`, at the cost
+of one copy.
+
+Sorting is LEGAL here only because the answer is a COUNT and not a set of indices (trap 3).
+
+        left, right = 0, len(nums) - 1
+
+    left   HOLDS the index of the smallest number still in play.
+    right  HOLDS the index of the largest number still in play.
+
+For an empty list `right` is −1, which is harmless: the loop condition below is false at once.
+
+        count = 0
+
+The running answer.
+
+        while left < right:
+
+Continue while there are at least two distinct positions in the window. `<` not `<=`, because a
+pair needs two different indices (trap 5).
+
+This terminates because every branch below moves exactly one pointer inward, so the gap shrinks by
+one per iteration.
+
+            if nums[left] + nums[right] < target:
+
+THE ONE COMPARISON. `<` is strict - a sum equal to the target does not qualify (trap 4).
+
+                count += right - left        # all pairs (left, left+1..right) qualify
+
+THE LINE THIS PROBLEM IS ABOUT.
+
+    `right - left`  DECIDES how many pairs are being counted at once: the partners at indices
+                    left+1, left+2, ..., right. That is exactly right − left of them - count them
+                    on your fingers for left = 0 and right = 3 and you get indices 1, 2, 3, which
+                    is three.
+    Every one of them qualifies by claim 1 of section 5: they are all no larger than nums[right],
+    which already worked.
+
+`count += 1` here instead is trap 1 - and because `left` retires on the very next line, the pairs
+you did not count are never seen again.
+
+                left += 1
+
+Retire the left-hand number. Justified because EVERY pair involving it has just been counted -
+those with partners inside the window by the line above, and those outside the window by claim 2,
+which is what removed them.
+
+            else:
+                right -= 1                    # sum too big, shrink from the right
+
+Discard the right-hand number. It failed against the SMALLEST number available, so by claim 2 it
+fails against everything else remaining. Nothing is counted here, and nothing is lost.
+
+        return count""",
+
+    """9. TRACED, POINTER BY POINTER - AND THE ANSWER INVERTING ON THE TARGET.
+
+TRACE 1 - THE TEXTBOOK CASE. nums = [-1,1,2,3,1], target = 2.
+
+    After nums.sort():  [-1, 1, 1, 2, 3]
+                          0  1  2  3  4     <- indices
+
+    left = 0, right = 4, count = 0
+
+    ITERATION 1:  left 0 < right 4 - enter.
+        nums[0] + nums[4] = -1 + 3 = 2.  Is 2 < 2?  NO - strict comparison (trap 4).
+        right = 3.        <- the 3 is discarded. By claim 2, nothing left can pair with it:
+                             even the smallest number, -1, was not enough.
+
+    ITERATION 2:  left 0 < right 3 - enter.
+        nums[0] + nums[3] = -1 + 2 = 1.  Is 1 < 2?  YES.
+        count += right - left = 3 - 0 = 3      ->  count = 3
+
+            WHICH THREE PAIRS?  (index 0, index 1) = (-1, 1) = 0
+                                (index 0, index 2) = (-1, 1) = 0
+                                (index 0, index 3) = (-1, 2) = 1
+            All three are under 2, and all three were counted by ONE subtraction. This is the
+            batch, and it is why `count += 1` would have recorded only the last of them.
+
+        left = 1.         <- -1 is now completely finished with.
+
+    ITERATION 3:  left 1 < right 3 - enter.
+        nums[1] + nums[3] = 1 + 2 = 3.  Is 3 < 2?  NO.
+        right = 2.
+
+    ITERATION 4:  left 1 < right 2 - enter.
+        nums[1] + nums[2] = 1 + 1 = 2.  Is 2 < 2?  NO.
+        right = 1.
+
+    LOOP CHECK: left 1 is not < right 1.  Stop.
+
+    return 3.
+
+    CHECK AGAINST SECTION 1's HAND TABLE: the three qualifying pairs there were (-1,1), (-1,2) and
+    (-1,1) - all three involving the −1, exactly the batch counted in iteration 2. Correct.
+
+    WORK DONE: 4 iterations for a 5-element list. The naive version would have tested all
+    5 x 4 / 2 = 10 pairs.
+
+TRACE 2 - THE INVERSION. Same list, target = 3 instead of 2.
+
+    sorted: [-1, 1, 1, 2, 3],  left = 0, right = 4, count = 0
+
+    ITERATION 1:  -1 + 3 = 2.  Is 2 < 3?  YES  ->  count += 4 - 0 = 4.  left = 1.
+                  (Four pairs: -1 with each of 1, 1, 2, 3.)
+    ITERATION 2:  1 + 3 = 4.  Is 4 < 3?  NO.  right = 3.
+    ITERATION 3:  1 + 2 = 3.  Is 3 < 3?  NO - still strict.  right = 2.
+    ITERATION 4:  nums[1] + nums[2] = 1 + 1 = 2.  Is 2 < 3?  YES  ->  count += 2 - 1 = 1.
+                  count = 5.  left = 2.
+    LOOP CHECK: left 2 is not < right 2.  Stop.
+
+    return 5.
+
+    THE TARGET MOVED BY ONE AND THE ANSWER WENT FROM 3 TO 5. Check by hand: raising the bar to 3
+    newly admits (−1, 3) = 2 and (1, 1) = 2 - two more pairs, 3 + 2 = 5. Correct.
+
+    Note iteration 1 counted FOUR pairs in one subtraction here, where iteration 2 of trace 1
+    counted three. The batch size is exactly the width of the window, and it changes as the window
+    shrinks.
+
+TRACE 3 - DUPLICATES AS DISTINCT PAIRS. nums = [1,1,1], target = 3.
+
+    sorted: [1, 1, 1],  left = 0, right = 2, count = 0
+
+    ITERATION 1:  1 + 1 = 2 < 3  YES  ->  count += 2 - 0 = 2.  left = 1.
+                  (The pairs (0,1) and (0,2).)
+    ITERATION 2:  nums[1] + nums[2] = 1 + 1 = 2 < 3  YES  ->  count += 2 - 1 = 1.  count = 3.
+                  left = 2.
+    LOOP CHECK: left 2 is not < right 2.  Stop.
+
+    return 3.
+
+    Three identical values give three pairs - (0,1), (0,2), (1,2) - because pairs are about
+    POSITIONS, not values. The algorithm needs no special handling for duplicates at all; it never
+    compares values for equality.
+
+THE TINY INPUTS:
+    nums = [5], any target       left = 0, right = 0.  `left < right` is false.  RETURNS 0.
+    nums = []                    right = −1.  Loop never runs.  RETURNS 0.
+    nums = [5,6], target = 100   5 + 6 = 11 < 100  ->  count += 1 − 0 = 1.  left = 1.  Stop.
+                                 RETURNS 1 - the single pair, correctly.
+    nums = [5,6], target = 2     11 < 2 is false, right = 0, stop.  RETURNS 0.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n).
+
+In plain words: THE SORT IS THE ENTIRE COST. The sweep afterwards moves one of the two pointers on
+every single iteration, and they start n − 1 apart, so it runs fewer than n times - linear, and
+free next to the sort. If the input arrived already sorted this would be an O(n) problem, and
+saying so shows you know where the time goes.
+
+SPACE: O(1) beyond the input, since `.sort()` sorts in place. O(n) if you sort a copy to leave the
+caller's list alone.
+
+    AGAINST THE NAIVE O(n^2): at n = 1,000 that is 499,500 pair tests against roughly 10,000
+    sort operations plus 1,000 sweep steps - about forty-five times the work, growing to four
+    hundred times at n = 10,000.
+
+THE NEIGHBOURS, and the one that needs a different tool:
+
+    3SUM SMALLER              fix the first index, then run THIS EXACT two-pointer count on the
+                              rest. O(n^2) overall, and the inner loop is this function verbatim.
+    3SUM / 3SUM CLOSEST       same sort-then-two-pointer shape, one level deeper.
+    TWO SUM (return indices)  CANNOT sort - the answer is about POSITIONS, so sorting destroys it.
+                              Use a hash map, O(n). This is the contrast worth knowing.
+    TWO SUM II (sorted input) the same two-pointer sweep, looking for an exact sum rather than
+                              counting a threshold.
+    CONTAINER WITH MOST WATER opposite-end two pointers again, with a different discard rule -
+                              always move the SHORTER wall inward.
+    BOATS TO SAVE PEOPLE      opposite-end two pointers with a pairing rule instead of a count.
+
+    THE FAMILY RESEMBLANCE: sort, put a finger on each end, and prove that one end can always be
+    retired on the basis of one comparison. If you cannot state that proof, the two-pointer sweep
+    is not justified.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Return the actual pairs, not the count." Now the output can be quadratic in size, so no
+    algorithm can be better than O(n^2) - and sorting is only acceptable if the pairs are wanted as
+    VALUES, not as original indices.
+  - "What if the input is already sorted?" O(n). Say it.
+  - "Sum less than OR EQUAL to the target?" One character: `<=`. It changes the answer, so confirm
+    which is wanted - section 4 shows 3 becoming 5.
+  - "Count pairs with sum in a RANGE [lo, hi]?" Run this twice and subtract: count(< hi+1) −
+    count(< lo).
+  - "Can you avoid mutating the input?" `sorted(nums)`, at O(n) extra space.
+
+THE #1 BEGINNER MISTAKE: writing `count += 1` on a qualifying pair. It looks like a two-pointer
+solution, it runs in O(n), and it undercounts badly - 1 instead of 3 on the worked example - because
+the left pointer retires immediately and every other pair involving that number is silently lost.
+The batch is not an optimisation on top of the sweep; it is what makes the sweep correct.
+
+RUNNER-UP: sorting when the question wants indices. Here it is safe because a count does not care
+where the numbers were - but the identical instinct on Two Sum returns positions in an array the
+caller has never seen.
+
+TAKEAWAY: sort and close in from both ends, and on a qualifying pair count the whole block at once
+with `right − left`, because everything between the two fingers is no larger than the number that
+already worked - so a single subtraction records a row of pairs that the naive method would test
+one at a time.""",
 ]
 
 _EX_P0H["DI String Match"] = [
-    """The textbook case, traced.
-s = "IDID", n = 4, so the permutation uses 0..4. low=0, high=4.
-'I' -> take low 0, low=1.     result [0]
-'D' -> take high 4, high=3.   result [0,4]
-'I' -> take low 1, low=2.     result [0,4,1]
-'D' -> take high 3, high=2.   result [0,4,1,3]
-Append low (== high == 2) -> [0,4,1,3,2].
-Check it: 0<4 (I), 4>1 (D), 1<3 (I), 3>2 (D). Matches "IDID".""",
+    """1. THE GOAL - reconstruct a sequence from its shape.
 
-    """All 'I' and all 'D' - the two extremes.
-s = "III": low counts up 0,1,2 and the final append gives 3 -> [0,1,2,3], which
-is strictly increasing. Correct.
-s = "DDD": high counts down 3,2,1 and the final append gives 0 -> [3,2,1,0],
-strictly decreasing. Correct.
-These two also show why low and high must meet exactly at the end: each character
-consumes exactly one of them, so after len(s) characters the gap has closed to
-zero.""",
+You are given a string of 'I's and 'D's describing how a sequence goes UP and DOWN:
 
-    """Why the greedy always works - the invariant.
-At every step, the numbers not yet used form the contiguous range [low, high].
-For an 'I' you need the next value to be SMALLER than whatever comes after it; by
-taking the current MINIMUM you leave the largest possible pool above it, so any
-later requirement can be met.
-Symmetrically, for a 'D' you take the current MAXIMUM, leaving the largest pool
-below.
-The greedy never paints itself into a corner - which is why the problem accepts
-ANY valid permutation and this simple rule finds one.""",
+    'I' means INCREASE - the next number is bigger.
+    'D' means DECREASE - the next number is smaller.
 
-    """The final append, and what happens if you forget it.
-The pattern has n characters but the permutation has n+1 numbers, so exactly one
-number is left over at the end - and by the invariant low == high at that point.
-Omit `result.append(low)` and you return a list of length n that is not a
-permutation of 0..n at all. The bug is silent on the pattern check (every
-adjacent pair still matches) and only shows up as a length or
-missing-number failure.""",
+    s = "IDID"      up, down, up, down
 
-    """A single-character pattern, and the empty pattern.
-s = "I": low=0, high=1. Take 0, then append low=1 -> [0,1]. 0<1, correct.
-s = "D": take high=1, then append low=0 -> [1,0]. 1>0, correct.
-s = "": the loop never runs and the append gives [0] - a single-element
-permutation of 0..0, which vacuously satisfies an empty pattern.
-Three tiny cases, no special code - the sign that the two-pointer setup is
-right.""",
+Your job: BUILD ANY PERMUTATION OF THE NUMBERS 0, 1, 2, ..., n THAT FOLLOWS THAT SHAPE, where n is
+the length of the string.
 
-    """The pattern behind it: consume from both ends of a shrinking range.
-Same idea in:
-- Reconstructing an array from a comparison pattern (this problem).
-- Boats to Save People and other 'pair the extremes' greedies.
-- Building a 'wiggle' arrangement (a < b > c < d) by interleaving the smallest
-  and largest halves.
-- Assigning the smallest sufficient resource first (Assign Cookies).
-The recognition cue is a constraint that only ever refers to the RELATIVE order
-of neighbours, never to specific values. When only relative order matters, you
-are free to hand out the extremes greedily.""",
+    s has 4 characters, so n = 4, and the permutation uses ALL FIVE of 0, 1, 2, 3, 4 - each exactly
+    once.
+
+    ONE VALID ANSWER:  [0, 4, 1, 3, 2]
+
+        0 -> 4    up      matches 'I'
+        4 -> 1    down    matches 'D'
+        1 -> 3    up      matches 'I'
+        3 -> 2    down    matches 'D'
+
+TWO THINGS THAT SENTENCE IS QUIETLY SAYING, and both matter:
+
+    THE STRING HAS n CHARACTERS BUT THE ANSWER HAS n + 1 NUMBERS. Each character describes a STEP
+    BETWEEN two numbers, and four steps need five numbers - the same reason four fence panels need
+    five posts. Section 4 is about the one line that supplies the extra number.
+
+    "ANY" PERMUTATION. The answer is NOT unique. [1, 4, 2, 3, 0] also fits "IDID" - check it:
+    1 < 4, 4 > 2, 2 < 3, 3 > 0. The problem does not care which valid answer you produce, which is
+    a strong hint that a simple constructive rule exists rather than a search.
+
+WHY IT IS NOT OBVIOUS. Pick a first number and you have constrained everything after it. Start
+"IDID" with a 2 and the next must be bigger, then smaller, then bigger, then smaller - and you may
+paint yourself into a corner where no unused number is small enough. THE TRICK IS TO NEVER COMMIT
+TO A MIDDLE VALUE. Section 2.""",
+
+    """2. THE INTUITION - always spend from the end you can afford to lose.
+
+Keep the unused numbers as a RANGE with two ends, `low` and `high`. At the start that is the whole
+range:
+
+    s = "IDID",  n = 4
+
+    unused:  [0 .. 4]        low = 0, high = 4
+
+Now read the pattern one character at a time, and follow ONE rule:
+
+    'I' - THE NEXT NUMBER MUST BE BIGGER.  So output the SMALLEST unused number.
+          Whatever you pick next comes from what is left, and everything left is bigger. GUARANTEED.
+
+    'D' - THE NEXT NUMBER MUST BE SMALLER. So output the LARGEST unused number.
+          Everything left is smaller. GUARANTEED.
+
+    step 1:  'I'  ->  output low = 0.   low becomes 1.   unused [1..4]     result [0]
+    step 2:  'D'  ->  output high = 4.  high becomes 3.  unused [1..3]     result [0,4]
+    step 3:  'I'  ->  output low = 1.   low becomes 2.   unused [2..3]     result [0,4,1]
+    step 4:  'D'  ->  output high = 3.  high becomes 2.  unused [2..2]     result [0,4,1,3]
+
+    ONE NUMBER IS LEFT: 2, and low == high == 2. Append it.       result [0,4,1,3,2]
+
+THE PICTURE, showing the range being eaten from both ends:
+
+    [0 1 2 3 4]     take 0 from the left    ('I')
+      [1 2 3 4]     take 4 from the right   ('D')
+      [1 2 3]       take 1 from the left    ('I')
+        [2 3]       take 3 from the right   ('D')
+        [2]         one left - append it
+
+WHY THIS CAN NEVER GET STUCK. Every output is the smallest or the largest of what remains, so it is
+never boxed in - by construction the very next number is on the correct side of it. You never have
+to look ahead, never have to backtrack, and never have to reconsider.
+
+And notice the counting. Each of the n characters eats exactly one end of the range, so a range
+that started with n + 1 numbers ends with exactly ONE - which is the leftover the final append
+picks up, and it is why `low` and `high` are equal by then.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PERMUTATION OF 0..n. An arrangement using each of the numbers 0, 1, ..., n EXACTLY ONCE. Length
+n + 1.
+
+PATTERN / DI STRING. The input, made of 'I' and 'D'. Length n.
+
+'I' (INCREASE). The next number is strictly larger than this one.
+'D' (DECREASE). The next number is strictly smaller.
+
+    Note there is no "equal" character, and none is needed: a permutation has no repeats, so
+    consecutive numbers are never equal.
+
+GREEDY. Making the locally obvious choice at each step and never reconsidering. Here the greedy is
+provably safe because of the invariant below - unlike Coin Change, where the greedy instinct is
+wrong.
+
+INVARIANT. Something true before and after every step of a loop. HERE: THE UNUSED NUMBERS ALWAYS
+FORM THE CONTIGUOUS RANGE [low, high]. Everything rests on this, and section 5 argues it.
+
+CONTIGUOUS. With no gaps - 2, 3, 4 is contiguous, 2, 4 is not. It is what lets two numbers describe
+the entire set of unused values.
+
+low. The smallest unused number. Starts at 0.
+high. The largest unused number. Starts at len(s) - which is n, NOT n − 1 (trap 2).
+result. The permutation being built.
+ch. The current pattern character.
+
+O(n). One pass over the pattern, constant work per character.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - the off-by-one, twice.
+
+TRAP 1 - FORGETTING THE FINAL APPEND. The pattern has n characters and the answer needs n + 1
+numbers. The loop produces exactly one number per character, so it produces n - ONE SHORT.
+
+    s = "IDID":  the loop produces [0, 4, 1, 3].  Four numbers, and 2 never appears.
+
+    That is not a permutation of 0..4 at all - the number 2 is missing. And four numbers describe
+    only THREE steps (0<4, 4>1, 1<3), so a four-character pattern is not fully described either.
+    IT IS WRONG IN TWO WAYS AT ONCE, a missing number and a missing step, which is why forgetting
+    this line tends to get caught quickly - unlike trap 2, which produces a list of exactly the
+    right length.
+
+    `result.append(low)` is the fix. At that moment `low == high`, so appending either works; `low`
+    is chosen by convention.
+
+TRAP 2 - INITIALISING `high` TO len(s) - 1. This is the dangerous one, because the code still runs
+and still returns a list of the right length.
+
+    Set high = 3 instead of 4 for "IDID", so the range is [0..3] - only FOUR numbers for FIVE slots:
+
+        'I'  ->  output low = 0.   low = 1.
+        'D'  ->  output high = 3.  high = 2.
+        'I'  ->  output low = 1.   low = 2.
+        'D'  ->  output high = 2.  high = 1.
+        final append low = 2.
+
+        RESULT: [0, 3, 1, 2, 2]
+
+    FIVE NUMBERS, AS EXPECTED - but 2 appears TWICE and 4 never appears at all. It is not a
+    permutation. It even satisfies the pattern except at the last step (2 > 2 is false), so a
+    casual glance at the shape does not reveal it.
+
+    THE RULE TO REMEMBER: the numbers are 0..n where n is the LENGTH of the pattern, so the largest
+    is len(s), not len(s) − 1. Off by one, and the whole output is invalid.
+
+TRAP 3 - TAKING THE WRONG END. Output `high` on an 'I' and you have chosen the LARGEST unused
+number at the exact moment you promised the next one would be bigger. There is nothing bigger.
+    s = "I" with the branches swapped: output high = 1, then append low = 0, giving [1, 0] - which
+    is a DECREASE where an INCREASE was demanded. The rule is counter-intuitive for about ten
+    seconds and then obvious: to go UP next, spend your SMALLEST now.
+
+TRAP 4 - EXPECTING A UNIQUE ANSWER. The problem says ANY valid permutation. [0,4,1,3,2] and
+[1,4,2,3,0] both fit "IDID". A test that compares against one specific expected list is testing the
+wrong thing; the check is "is it a permutation of 0..n AND does it follow the pattern".
+
+TRAP 5 - THE EMPTY PATTERN. s = "" gives n = 0, low = high = 0, the loop never runs, and the final
+append produces [0] - a permutation of 0..0 with no steps to satisfy. Correct, and it falls out
+with no special case.""",
+
+    """5. THE ALTERNATIVES, AND THE INVARIANT THAT MAKES THE GREEDY SAFE.
+
+VERSION A - TRY EVERY PERMUTATION AND KEEP ONE THAT FITS. There are (n+1)! permutations. For a
+pattern of length 10 that is 11! = 39,916,800; for length 12, 13! = 6,227,020,800. Hopeless, and
+the problem allows patterns of length 10,000, where the number of permutations has over 35,000
+digits.
+
+VERSION B - BACKTRACKING. Place numbers one at a time, checking the pattern as you go, and undo
+when stuck. Vastly better than version A and still exponential in the worst case - and completely
+unnecessary, because the greedy below NEVER gets stuck and so never needs to undo anything.
+
+VERSION C - THE TWO-ENDED GREEDY, which is the code here. One pass, O(n).
+
+THE INVARIANT, stated precisely and then argued:
+
+    BEFORE AND AFTER EVERY STEP, THE NUMBERS NOT YET USED ARE EXACTLY THE CONTIGUOUS RANGE
+    low, low+1, ..., high.
+
+    TRUE AT THE START: nothing has been used, low = 0, high = n, and 0..n is the whole set.
+    PRESERVED BY EVERY STEP: each step removes either `low` (and raises low by 1) or `high` (and
+        lowers high by 1). Removing an END of a contiguous range leaves a contiguous range.
+
+Now the correctness of each branch follows in one line each:
+
+    ON 'I' WE OUTPUT `low`, THE SMALLEST UNUSED NUMBER.
+        Whatever is output next comes from the remaining range [low+1, high], and every one of
+        those is strictly greater than `low`. THE INCREASE IS GUARANTEED whatever happens later.
+
+    ON 'D' WE OUTPUT `high`, THE LARGEST UNUSED NUMBER.
+        Whatever comes next is from [low, high−1], all strictly less. THE DECREASE IS GUARANTEED.
+
+    THE POINT IS THAT NEITHER CHOICE CONSTRAINS THE FUTURE. Every output sits at the boundary of
+    what remains, so the very next character - whichever it is - can be satisfied. That is why no
+    lookahead and no backtracking are ever required, and it is what separates this from a search
+    problem.
+
+WHY `low` AND `high` MEET EXACTLY AT THE END. The range starts with n + 1 numbers. Each of the n
+characters consumes exactly one. So after the loop, n + 1 − n = 1 number remains, which means low
+and high are equal and both point at it. The final append is not a special case bolted on; it is
+the arithmetic of the loop.
+
+    (This is the same "one more post than panel" counting as trap 1. Every off-by-one in this
+    problem is the same off-by-one seen from a different angle.)""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP THE UNUSED NUMBERS AS A RANGE WITH A BOTTOM AND A
+TOP, AND FOR EVERY 'I' SPEND THE BOTTOM WHILE FOR EVERY 'D' SPEND THE TOP - BECAUSE WHATEVER YOU
+SPEND FROM AN END, EVERYTHING STILL AVAILABLE IS ON THE SIDE THE PATTERN DEMANDS.
+
+THERE IS NO RECURSION AND NO BACKTRACKING - which is the whole point, since versions A and B in
+section 5 both search and this does not. The mechanism is A RANGE EATEN FROM BOTH ENDS:
+
+  - Two numbers describe the entire set of unused values, because that set is always contiguous.
+  - Each pattern character consumes exactly one end.
+  - WHAT MAKES IT STOP: the loop runs once per character, a count fixed before it starts. Nothing
+    depends on the values.
+  - WHY IT NEVER GETS STUCK: every number written down is either the smallest or the largest thing
+    left, so it can never be boxed in - the next number is on the required side automatically.
+
+THE STEPS:
+
+  1. SET THE BOTTOM OF THE RANGE TO ZERO AND THE TOP TO THE LENGTH OF THE PATTERN.
+
+     The LENGTH, not the length minus one. A pattern of four characters describes five numbers, so
+     the largest is four. Getting this wrong produces a list of the right size with a repeat in it
+     and a missing value (section 4).
+
+  2. START AN EMPTY ANSWER LIST.
+
+  3. FOR EACH CHARACTER OF THE PATTERN:
+
+     a. IF IT SAYS INCREASE, WRITE DOWN THE BOTTOM OF THE RANGE, then raise the bottom by one.
+
+        The smallest available number, precisely because everything that remains is bigger than it -
+        so whatever comes next is guaranteed to be an increase.
+
+     b. OTHERWISE IT SAYS DECREASE, SO WRITE DOWN THE TOP OF THE RANGE, then lower the top by one.
+
+        Same reasoning mirrored: everything remaining is smaller.
+
+  4. ONE NUMBER IS STILL UNUSED - the range started with one more number than the pattern has
+     characters, and each character consumed one. WRITE IT DOWN. The bottom and the top are now the
+     same number, so either will do.
+
+  5. RETURN THE LIST.
+
+Note there is nothing to check and nothing to undo. Every step is forced, and every step is safe.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine you have a deck of cards numbered nought upwards, laid out in order in a long tray, and
+somebody hands you a list of instructions: up, down, up, down. You have to lay the cards out in a
+new row so that each card is higher or lower than the one before it, exactly as instructed, and
+every card gets used exactly once.
+
+The temptation is to start with a card from the middle, and that is how you get stuck. Choose a
+middle card and you have committed: the next card must be above it, then below, then above, and
+sooner or later you find that everything you need has already been spent.
+
+The trick is never to choose from the middle at all. Only ever take from one of the two ends of the
+tray.
+
+When the instruction says the next card must be HIGHER, you lay down the LOWEST card in the tray.
+This feels backwards for a moment and then becomes obvious: once you have played the lowest card,
+every single card still in the tray is higher than it, so whatever you play next - whatever it turns
+out to be - is guaranteed to be an increase. You have not committed to anything.
+
+When the instruction says the next card must be LOWER, you do the mirror image and lay down the
+HIGHEST card. Everything remaining is below it, so the decrease takes care of itself.
+
+Either way, the tray shrinks by one card from one of its ends, so what is left is still an unbroken
+run of cards, and you can go on describing the whole tray with just its two ends.
+
+You work straight down the list of instructions with no hesitation, never looking ahead and never
+picking a card back up. When the instructions run out, there is exactly one card left in the tray -
+the tray held one more card than there were instructions, and each instruction spent one - and you
+lay that final card down at the end of the row.
+
+Two mistakes will ruin it, and they are the same mistake wearing different hats. One is forgetting
+that last card, so a number goes missing. The other is starting with a tray one card short, so the
+row comes out the right length by using some card twice. Four instructions, five cards - the same
+reason a fence with four panels needs five posts.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep s = "IDID" beside you, and the answer [0, 4, 1, 3, 2].
+
+    def di_string_match(s):
+
+`s` is the pattern of 'I' and 'D'. Returns a list of len(s) + 1 numbers. Nothing is modified - the
+string is only read.
+
+        low, high = 0, len(s)
+
+    low   HOLDS the SMALLEST unused number. Starts at 0.
+    high  HOLDS the LARGEST unused number. Starts at `len(s)` - THE LENGTH, not the length minus
+          one. A pattern of 4 characters describes 5 numbers, 0 through 4, so the largest is 4
+          (trap 2).
+
+Together they DECIDE the entire set of unused numbers, because that set is always contiguous - the
+invariant from section 5.
+
+        result = []
+
+The permutation being built, in order.
+
+        for ch in s:
+
+One pass, one character at a time, one number produced per character. The trip count is fixed
+before the loop starts, so it cannot spin.
+
+            if ch == 'I':
+                result.append(low); low += 1     # leave room to increase next
+
+THE INCREASE BRANCH.
+
+    appending `low`  writes down the smallest available number - which is what GUARANTEES the next
+                     number is bigger, since everything remaining is above it.
+    `low += 1`       removes it from the range. The range stays contiguous, which is what keeps
+                     two variables sufficient to describe it.
+
+The comment says it exactly: taking the smallest LEAVES ROOM to increase. Taking `high` here would
+be trap 3 - you would have promised an increase and then spent the largest number there is.
+
+            else:
+                result.append(high); high -= 1   # leave room to decrease next
+
+THE DECREASE BRANCH, the exact mirror. Write the largest available number, so everything remaining
+is smaller and the decrease is guaranteed.
+
+Note this is a plain `else`, not `elif ch == 'D'`. Anything that is not 'I' is treated as 'D' - fine
+for this problem, whose alphabet is exactly two characters, and worth noticing if the input were
+ever less trustworthy.
+
+        result.append(low)                        # low == high at the end
+
+THE FINAL NUMBER, and the line people delete.
+
+The range began with len(s) + 1 numbers and the loop consumed exactly len(s) of them, so ONE
+remains - which means `low` and `high` are now equal and both point at it. Appending `low` and
+appending `high` are the same thing here; `low` is chosen by convention.
+
+Without this line the result has len(s) numbers instead of len(s) + 1, and one value is missing
+entirely (trap 1).
+
+        return result""",
+
+    """9. TRACED, CHARACTER BY CHARACTER.
+
+TRACE 1 - THE TEXTBOOK CASE. s = "IDID", so len(s) = 4 and the numbers are 0..4.
+
+    SETUP:  low = 0, high = 4, result = []
+            unused: {0, 1, 2, 3, 4}
+
+    ch = 'I':  append low = 0.  low = 1.
+               result = [0].            unused: {1, 2, 3, 4}   -> the range [1, 4]
+    ch = 'D':  append high = 4.  high = 3.
+               result = [0, 4].         unused: {1, 2, 3}      -> the range [1, 3]
+    ch = 'I':  append low = 1.  low = 2.
+               result = [0, 4, 1].      unused: {2, 3}         -> the range [2, 3]
+    ch = 'D':  append high = 3.  high = 2.
+               result = [0, 4, 1, 3].   unused: {2}            -> the range [2, 2]
+
+    LOW AND HIGH ARE NOW BOTH 2 - exactly as section 5's counting predicts: 5 numbers minus 4
+    characters leaves 1.
+
+    FINAL APPEND: result = [0, 4, 1, 3, 2]
+
+    CHECK THE PATTERN:   0 -> 4   up    'I'  YES
+                         4 -> 1   down  'D'  YES
+                         1 -> 3   up    'I'  YES
+                         3 -> 2   down  'D'  YES
+    CHECK IT IS A PERMUTATION: {0,4,1,3,2} = {0,1,2,3,4}, five numbers, no repeats.  YES.
+
+    NOTE THE UNUSED SET STAYED CONTIGUOUS at every single step - {1,2,3,4}, {1,2,3}, {2,3}, {2}.
+    That is the invariant holding, and it is what makes two variables enough to track it.
+
+TRACE 2 - THE TWO EXTREMES.
+
+    s = "III":  low = 0, high = 3.
+        'I' -> append 0, low = 1.   'I' -> append 1, low = 2.   'I' -> append 2, low = 3.
+        final append low = 3.
+        RESULT [0, 1, 2, 3] - strictly increasing throughout. Correct, and `high` was never touched.
+
+    s = "DDD":  low = 0, high = 3.
+        'D' -> append 3, high = 2.  'D' -> append 2, high = 1.  'D' -> append 1, high = 0.
+        final append low = 0.
+        RESULT [3, 2, 1, 0] - strictly decreasing. Correct, and `low` was never touched.
+
+    THE INVERSION ON ONE CHARACTER. Change the last character of "III" to 'D':
+    s = "IID":  low = 0, high = 3.
+        'I' -> append 0, low = 1.  'I' -> append 1, low = 2.  'D' -> append high = 3, high = 2.
+        final append low = 2.
+        RESULT [0, 1, 3, 2].  Check: 0<1 'I', 1<3 'I', 3>2 'D'.  Correct.
+
+    One character changed and the last two numbers swap roles - 3 is pulled from the TOP of the
+    range instead of 2 being taken from the bottom, precisely so that something smaller is left
+    over to fall to.
+
+TRACE 3 - THE OFF-BY-ONE, side by side (trap 2). s = "IDID" with `high = len(s) - 1 = 3`:
+
+        'I' -> append low = 0.   low = 1.
+        'D' -> append high = 3.  high = 2.
+        'I' -> append low = 1.   low = 2.
+        'D' -> append high = 2.  high = 1.
+        final append low = 2.
+
+        RESULT [0, 3, 1, 2, 2]
+
+        FIVE NUMBERS - the right LENGTH, which is what makes this so easy to miss. But 2 appears
+        twice and 4 never appears, so it is not a permutation of 0..4. The pattern check also fails
+        at the last step, since 2 > 2 is false.
+
+    Compare with the correct [0, 4, 1, 3, 2]. One character in one initialisation.
+
+TRACE 4 - THE MISSING FINAL APPEND (trap 1). s = "IDID", correct setup, but no last line:
+
+        RESULT [0, 4, 1, 3] - four numbers for a four-character pattern, when five are needed.
+        The number 2 is simply absent, and the list describes only three steps.
+
+THE TINY INPUTS:
+    s = "I":   low = 0, high = 1.  append 0, low = 1.  final append 1.  -> [0, 1].  0 < 1.  Correct.
+    s = "D":   low = 0, high = 1.  append 1, high = 0.  final append low = 0.  -> [1, 0].  1 > 0.
+               Correct - and note the final append used `low`, which is 0, while `high` is also 0.
+    s = "":    low = high = 0.  The loop never runs.  Final append gives [0] - a permutation of
+               0..0 with no steps to satisfy. Correct, with no special case (trap 5).""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n), where n is the length of the pattern. One pass, one append and one increment per
+character, plus one final append. There is no sorting, no searching and no backtracking.
+
+SPACE: O(n) for the output list, which is unavoidable since the answer has n + 1 numbers. O(1)
+beyond that - just `low` and `high`.
+
+    THIS IS AS FAST AS ANY ALGORITHM COULD BE, because you cannot produce n + 1 numbers in less
+    than O(n) time. Worth saying: the interesting claim is not the speed, it is that NO SEARCH IS
+    NEEDED AT ALL - versions A and B in section 5 are factorial and exponential respectively, and
+    the invariant is what collapses the problem to a single pass.
+
+THE PATTERN - CONSUME FROM BOTH ENDS OF A SHRINKING RANGE. The family:
+
+    DI STRING MATCH           spend the low end for 'I', the high end for 'D'.
+    BOATS TO SAVE PEOPLE      pair the lightest with the heaviest, and drop the heaviest alone if
+                              they do not fit.
+    CONTAINER WITH MOST WATER always move the SHORTER wall inward.
+    TWO SUM II (sorted)       move left in if the sum is too small, right in if too big.
+    VALID PALINDROME          compare the two ends and step both inward.
+    ASSIGN COOKIES            two sorted lists rather than one range, but the same "retire an end
+                              you can prove is finished" reasoning.
+
+    THE COMMON THREAD IS A PROOF, NOT A HABIT: in each case you can argue that the value at one
+    end can be retired on the basis of a single comparison. If you cannot state that argument, the
+    two-ended sweep is not justified.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Is the answer unique?" No - [0,4,1,3,2] and [1,4,2,3,0] both fit "IDID". The problem says ANY,
+    which is the hint that a constructive rule exists.
+  - "How many valid permutations are there for a given pattern?" That is a genuinely harder
+    counting problem - the answer involves Eulerian-style DP over (position, value rank), O(n^2).
+    Worth knowing that CONSTRUCTING one is easy while COUNTING them is not.
+  - "What if the pattern could contain 'E' for equal?" Impossible with a permutation, since no
+    value repeats. You would need to relax the output from a permutation to a multiset.
+  - "Produce the LEXICOGRAPHICALLY SMALLEST valid permutation." Different algorithm - build 1..n+1
+    in order and REVERSE each maximal run of 'D's. The greedy here does not give the smallest one.
+  - "Validate rather than construct: does this permutation match this pattern?" One pass comparing
+    adjacent elements, O(n).
+
+THE #1 BEGINNER MISTAKE: the off-by-one, in either of its two forms. Setting `high = len(s) - 1`
+gives a range one number short, so the output has the right length but contains a duplicate and
+omits the largest value - and it looks plausible enough to survive a glance. Forgetting the final
+append gives a list one number short outright.
+
+    THE THING TO INTERNALISE: n characters describe n + 1 numbers. Four fence panels, five posts.
+    Both bugs are that one sentence, ignored in two different places.
+
+RUNNER-UP: taking the wrong end - outputting the largest number when the pattern demands an
+increase. The rule reads backwards for about ten seconds: to go UP next, spend your SMALLEST now,
+because that is what leaves everything else above you.
+
+TAKEAWAY: track the unused numbers as a contiguous range and always spend an END of it - the bottom
+for 'I', the top for 'D' - because a number taken from an end can never box you in, which turns
+what looks like a search problem into one forward pass with nothing to check and nothing to undo.""",
 ]
 
 
@@ -63196,53 +64077,495 @@ for _e in ENTRIES:
 
 
 _EX_P0H["Meeting Rooms (can attend all)"] = [
-    """The textbook case, traced.
-intervals = [[0,30],[5,10],[15,20]] -> sorted by start, unchanged.
-i=1: 5 < 30 -> the second meeting starts before the first ends -> return False.
-One person cannot attend all three; they would have to be in two places at 5.
-Contrast [[7,10],[2,4]]: sorted -> [[2,4],[7,10]]; 7 < 4 is false, so True.""",
+    """1. THE GOAL - one person, one calendar, yes or no.
 
-    """Why the sort is mandatory.
-Unsorted [[7,10],[2,4]] without sorting: compare 2 < 10 -> reports a conflict
-that does not exist.
-Sorting by START is what makes adjacency meaningful: once sorted, if any pair
-overlaps then some ADJACENT pair overlaps, so checking neighbours is enough.
-That claim is the correctness argument - say it out loud, because a checker that
-compares every pair is O(n^2) and the sort makes it O(n log n).""",
+You are given a list of meetings, each written as [start, end]. ONE PERSON has to attend all of
+them. Can they?
 
-    """Touching endpoints - the convention that decides the answer.
-[[1,4],[4,5]]: the test is 4 < 4, which is false -> True, they do not conflict.
-A meeting ending at 4 and one starting at 4 can both be attended, which matches
-how calendars work.
-Use <= instead and the same input returns False. Merge Intervals treats this
-touch as an overlap and this problem does not - identical inputs, opposite
-answers, because the QUESTIONS differ. Always restate the convention before
-coding.""",
+    They can if and only if NO TWO MEETINGS OVERLAP - because a single person cannot be in two
+    places at once.
 
-    """Edge cases: empty, one meeting, identical meetings.
-[] -> the loop never runs -> True. No meetings is trivially attendable.
-[[1,5]] -> True.
-[[1,5],[1,5]] -> 1 < 5 -> False. Two meetings at exactly the same time conflict,
-which is right even though they are identical.
-[[1,5],[2,3]] (nested) -> 2 < 5 -> False. Containment is a conflict too, and
-sorting by start catches it without a special case.""",
+    intervals = [[0,30], [5,10], [15,20]]
 
-    """The relationship to Meeting Rooms II.
-This problem asks 'is one room enough?'; Meeting Rooms II asks 'how many rooms?'
-So this is exactly `min_meeting_rooms(intervals) <= 1` - correct, but O(n log n)
-with a heap when a plain neighbour scan suffices.
-Knowing that the boolean version is the degenerate case of the counting version
-is what lets you answer the follow-up 'now return how many rooms' without
-starting over: keep the sort, add a min-heap of end times.""",
+    ----XXXXXXXXXXXXXXXXXXXXXXXXXXXX----------      [0,30]
+    ---------XXXXX----------------------------      [5,10]
+    -------------------XXXXX------------------      [15,20]
+        0    5    10   15   20   25   30
 
-    """Where this shows up.
-- Calendar apps: warning a user that an invite conflicts with an existing event.
-- Booking a single resource: one meeting room, one test rig, one operating
-  theatre.
-- Checking that a schedule of cron jobs on one machine never overlaps.
-- Validating that non-preemptive tasks assigned to one worker are feasible.
-The generalisation: any question of the form 'can ONE server handle all these
-requests?' is this problem, and 'how many servers?' is Meeting Rooms II.""",
+    The 0-to-30 meeting swallows both of the others. ANSWER: False.
+
+    intervals = [[7,10], [2,4]]
+
+    --XXX-------------------------------------      [2,4]
+    ---------XXXX-----------------------------      [7,10]
+        2  4      7   10
+
+    Nothing overlaps. ANSWER: True. (Note the list was given out of order - which matters
+    enormously, and is section 4.)
+
+THE OUTPUT IS A SINGLE BOOLEAN. You are not asked which meetings clash, or how many rooms would be
+needed, or how to rearrange anything. Just: is this schedule attendable by one person.
+
+    THAT LAST POINT IS THE HINGE OF THE WHOLE PROBLEM. Because the answer is yes-or-no, you can
+    stop the instant you find ONE conflict. And because you can stop early, you never need to
+    examine every pair - which is what section 5 is about.
+
+THE SIBLING QUESTION, worth naming immediately: MEETING ROOMS II asks HOW MANY rooms are needed.
+This problem is exactly "is that number at most 1?" - and it is a much easier question, solvable
+with a sort and a single scan, where counting rooms needs a heap or a sweep line.""",
+
+    """2. THE INTUITION - sort by start, then only check neighbours.
+
+The naive worry is that you have to compare every meeting with every other one. You do not, and
+the reason is one sentence: SORT THE MEETINGS BY START TIME, AND THEN A CONFLICT CAN ONLY HAPPEN
+BETWEEN CONSECUTIVE MEETINGS.
+
+    sorted by start:   [0,30]   [5,10]   [15,20]
+
+    ----XXXXXXXXXXXXXXXXXXXXXXXXXXXX----------      [0,30]
+    ---------XXXXX----------------------------      [5,10]     starts at 5, but the previous
+                                                               meeting runs until 30.  CLASH.
+
+Once the meetings are in start order, walk the list and ask one question at each step:
+
+    DOES THIS MEETING START BEFORE THE PREVIOUS ONE ENDS?
+
+    YES ->  they overlap. Return False immediately; there is nothing more to learn.
+    NO  ->  no clash here. Move on.
+
+    Get to the end without a clash and the answer is True.
+
+WHY ADJACENT PAIRS ARE ENOUGH - the argument, because this is the claim an interviewer probes.
+
+Suppose every adjacent pair is fine: for every i, start[i] >= end[i-1]. Now take any two meetings
+i and j with j > i + 1 - not neighbours - and ask whether THEY could overlap.
+
+    start[j] >= start[i+1]     because the list is sorted by start and j comes after i+1
+    start[i+1] >= end[i]       because the adjacent check at i+1 passed
+
+    Therefore  start[j] >= end[i].  MEETING j BEGINS AFTER MEETING i HAS FINISHED. No overlap.
+
+    So if no NEIGHBOURING pair clashes, no pair clashes at all. The sortedness does the work: it
+    turns a question about all n(n−1)/2 pairs into a question about n−1 of them.
+
+    (Note the argument only needs to hold when every adjacent check passes - if one fails you have
+    already returned False and there is nothing left to prove.)
+
+THAT IS THE ENTIRE ALGORITHM: sort, then one linear scan comparing each meeting's start against the
+previous meeting's end.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+INTERVAL / MEETING. A pair [start, end]. Here they arrive as two-element lists.
+
+OVERLAP / CONFLICT. Two meetings sharing any moment of time. For [a,b] and [c,d] with a <= c, they
+overlap when c < b - the later one begins before the earlier one has finished.
+
+TOUCHING / ADJACENT IN TIME. [1,4] and [4,5] share exactly the instant 4. Whether that counts as a
+conflict is a CONVENTION the problem has to fix, and section 4 shows the code's answer changing on
+one character.
+
+HALF-OPEN INTERVAL [start, end). Includes the start, excludes the end. Under this reading a meeting
+ending at 4 is over by the time one starting at 4 begins, so they do not clash. THIS IS THE
+CONVENTION THIS CODE USES.
+
+CLOSED INTERVAL [start, end]. Includes both ends, so touching intervals DO clash. Insert Interval
+in this bank uses the closed convention and merges touching intervals - two entries, two
+conventions, both defensible, which is exactly why you ask.
+
+SORT KEY. The value a sort orders by. `key=lambda x: x[0]` sorts by the first element - the start
+time.
+
+lambda. An anonymous one-expression function. `lambda x: x[0]` means "given x, hand back x[0]".
+
+EARLY RETURN. Stopping the moment the answer is known. What makes this O(n) after the sort rather
+than needing a full pass.
+
+intervals. The input list. SORTED IN PLACE - it mutates the caller's list.
+i. The index of the meeting being checked, starting at 1 because meeting 0 has no predecessor.
+
+O(n log n). The cost of the sort, which dominates the O(n) scan.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - SKIPPING THE SORT. The comparison is between a meeting and THE ONE BEFORE IT IN THE LIST,
+which only means "the one before it in time" if the list is sorted.
+
+    intervals = [[7,10], [2,4]]      as given, unsorted
+
+    WITHOUT SORTING:  i = 1.  intervals[1][0] = 2,  intervals[0][1] = 10.
+                      Is 2 < 10?  YES  ->  RETURN False.
+
+    But [2,4] and [7,10] do not overlap at all - the first ends at 4 and the second starts at 7.
+    THE CORRECT ANSWER IS True.
+
+    The code reported a conflict that does not exist, purely because it compared a meeting's start
+    against the end of a LATER meeting. Sorting by START is what makes "the previous element" and
+    "the previous meeting in time" the same thing - and it is what makes the adjacent-only argument
+    in section 2 valid.
+
+TRAP 2 - TOUCHING ENDPOINTS. This decides real answers, and it is one character.
+
+    intervals = [[1,4], [4,5]]
+
+    AS WRITTEN (`<`):   i = 1.  Is 4 < 4?  NO.  ->  RETURN True.  The meetings do not conflict.
+    WITH `<=` INSTEAD:  Is 4 <= 4?  YES.  ->  RETURN False.  They do conflict.
+
+    Which is right depends on what an "end" time means. A calendar entry ending at 4pm is normally
+    over by 4pm, so you can walk into the next meeting - the half-open reading, and the one the code
+    implements. If instead the end time is INCLUSIVE (a resource booked THROUGH minute 4), touching
+    is a clash.
+
+    ASK. And if there is nobody to ask, state which convention you implemented and why.
+
+    CONTRAST WITH INSERT INTERVAL IN THIS BANK, which uses `intervals[i][1] < new[0]` in the
+    opposite direction and therefore MERGES touching intervals. Two problems, two conventions.
+    Neither is wrong; the mistake is assuming.
+
+TRAP 3 - SORTING BY THE WRONG THING. Sorting by END time also produces a correct algorithm for
+THIS problem, but only if you then compare correctly - and it is the wrong instinct to carry
+forward, because sorting by end is the tool for "how many meetings can I fit in" (activity
+selection), while sorting by start is the tool for overlap and room-counting questions. Sort by
+start here.
+
+TRAP 4 - THE FUNCTION MUTATES ITS INPUT. `intervals.sort(...)` reorders the CALLER'S list. Pass in
+[[7,10],[2,4]] and afterwards your variable holds [[2,4],[7,10]]. Same class of surprise as 3Sum's
+`nums.sort()`, Assign Cookies' `g.sort()` and Insert Interval's `new[]`. Use
+`intervals = sorted(intervals, key=...)` if the caller's order matters.
+
+TRAP 5 - COMPARING AGAINST THE WRONG PREDECESSOR. Once you have returned False on the first
+conflict there is no issue, but a version that tries to continue scanning must be careful: after a
+clash the "previous end" that matters for later meetings is the MAXIMUM end seen so far, not the
+last one. [[1,100],[2,3],[4,5]] - meeting [4,5] does not clash with [2,3], but it does clash with
+[1,100]. The early return sidesteps this entirely, which is a good reason to keep it.
+
+TRAP 6 - EMPTY AND SINGLE INPUTS. `[]` gives `range(1, 0)`, an empty loop, so the answer is True -
+no meetings is trivially attendable. `[[1,5]]` gives `range(1, 1)`, also empty, also True. Both
+correct with no special case.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE REAL ONE.
+
+VERSION A - CHECK EVERY PAIR. For all i < j, test whether meetings i and j overlap:
+
+    for i in range(n):
+        for j in range(i+1, n):
+            if intervals[i][0] < intervals[j][1] and intervals[j][0] < intervals[i][1]:
+                return False
+
+Correct, needs no sorting, and O(n^2). Note the overlap test needs BOTH conditions when the
+meetings are in arbitrary order - which is itself a small trap, since people often write only one.
+
+    THE COST. The number of pairs is n(n−1)/2:
+
+        n = 1,000     499,500 pair tests     against a sort of roughly 10,000 operations plus a
+                                             999-step scan
+        n = 10,000    49,995,000             against roughly 140,000 + 9,999
+
+    ABOUT FORTY-FIVE TIMES THE WORK AT n = 1,000, and four hundred times at n = 10,000. The gap
+    grows without limit because one is quadratic and the other is n log n.
+
+VERSION B - SORT BY START, THEN SCAN, which is the code here. The sort costs O(n log n), the scan
+O(n), and the overlap test collapses from two conditions to ONE - `intervals[i][0] <
+intervals[i-1][1]` - because sorting has already guaranteed the other half.
+
+    THAT SIMPLIFICATION IS THE REAL PAYOFF OF SORTING, and it is easy to miss. In version A you had
+    to check "i starts before j ends AND j starts before i ends" because you did not know which came
+    first. After sorting you DO know, so half the test is free.
+
+VERSION C - A SWEEP LINE / EVENT COUNT. Turn each meeting into two events, +1 at the start and −1
+at the end, sort all 2n events by time, and sweep, keeping a running count of meetings in progress.
+If the count ever exceeds 1, return False.
+
+    Also O(n log n), and it is the natural generalisation: the MAXIMUM value that running count
+    reaches is exactly the number of rooms MEETING ROOMS II asks for. So version C answers both
+    questions and version B answers only this one.
+
+    Worth naming for exactly that reason - if the interviewer's next question is "and how many
+    rooms?", you want to have already mentioned the machinery that answers it.
+
+WHY THE EARLY RETURN IS FREE. The answer is a single boolean, so the first conflict settles it.
+There is nothing to accumulate and nothing to compare against later. In the worst case - no
+conflicts at all - the scan still runs to the end, so the early return improves the typical case
+and not the worst case. It also, incidentally, sidesteps trap 5.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: PUT THE MEETINGS IN ORDER OF WHEN THEY START, THEN WALK
+THROUGH THEM ASKING ONLY WHETHER EACH ONE BEGINS BEFORE THE ONE BEFORE IT HAS FINISHED - BECAUSE
+ONCE THEY ARE IN START ORDER, A CLASH BETWEEN ANY TWO MEETINGS MUST ALSO SHOW UP AS A CLASH BETWEEN
+TWO NEIGHBOURS.
+
+THERE IS NO RECURSION. The mechanism is A SORT FOLLOWED BY A SINGLE FORWARD SCAN:
+
+  - The scan starts at the SECOND meeting, because the first has nothing before it to clash with.
+  - Each step compares exactly two numbers and either continues or stops.
+  - WHAT MAKES IT STOP: either a clash is found, in which case the answer is known immediately and
+    nothing further can change it, or the list runs out. The trip count is fixed before the loop
+    begins.
+  - WHY NEIGHBOURS ARE ENOUGH: the argument in section 2. If every meeting starts after its
+    immediate predecessor ends, then because the starts are in order, every meeting also starts
+    after every EARLIER meeting ends.
+
+THE STEPS:
+
+  1. SORT THE MEETINGS BY THEIR START TIME, EARLIEST FIRST.
+
+     By start, not by end, and not at all is not an option - without this, "the previous item in
+     the list" has nothing to do with "the previous meeting in time", and the comparison below is
+     meaningless (section 4).
+
+  2. WALK FROM THE SECOND MEETING TO THE LAST. For each one:
+
+     a. COMPARE ITS START TIME AGAINST THE PREVIOUS MEETING'S END TIME.
+
+     b. IF IT STARTS STRICTLY BEFORE THE PREVIOUS ONE ENDS, the two overlap and one person cannot
+        attend both. ANSWER NO, AND STOP - no later meeting can undo a conflict already found.
+
+        STRICTLY BEFORE. A meeting beginning at the exact instant the previous one ends is treated
+        as fine. That is a decision about whether an end time is inclusive, and it is worth stating
+        rather than assuming.
+
+  3. IF THE WALK FINISHES WITHOUT FINDING A CLASH, ANSWER YES.
+
+Note what is NOT tracked: there is no running maximum, no count, no list of conflicts. The question
+is a single yes-or-no, so the first conflict ends the matter.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a stack of meeting invitations thrown onto a desk in no particular order, and one person
+who has been invited to all of them. The question is simply whether they can physically attend
+every one.
+
+The first thing you do is shuffle the invitations into the order the meetings begin - earliest
+first. This is not tidiness. It is the whole method, and here is why.
+
+Once the invitations are in start order, you no longer have to compare every meeting against every
+other one. You only have to compare each meeting against the one immediately before it. If a
+meeting begins after its immediate predecessor has finished, then - because the meetings are in
+order of starting time - it must also begin after everything earlier than that has finished too.
+Checking neighbours is enough to rule out every clash.
+
+So you go through the pile from the second invitation onwards. For each one you ask a single
+question: does this meeting start before the previous one has ended? If it does, the person would
+have to be in two places at once, and you can stop right there. You do not need to look at the rest
+of the pile, because nothing later can undo a clash you have already found. The answer is no.
+
+If you get all the way to the bottom of the pile without ever finding that, then no meeting steps
+on the toes of the one before it, so none of them overlap at all, and the answer is yes.
+
+Two things will quietly ruin this. The first is not shuffling the pile at all: then "the previous
+invitation" is just whichever one happened to be underneath, which might be a meeting that has not
+even started yet, and you end up reporting a clash between two meetings that are hours apart.
+
+The second is deciding what to do when one meeting ends at exactly the moment another begins.
+Ending at four and starting at four is usually fine - the first is over. But if the end time means
+the room is booked THROUGH that moment, it is not fine. Either reading is defensible; the mistake
+is choosing one without noticing you have chosen.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep intervals = [[0,30],[5,10],[15,20]] beside you, answer False.
+
+    def can_attend_meetings(intervals):
+
+`intervals` is a list of [start, end] pairs, in ANY order. Returns True if one person can attend
+them all. THE ARGUMENT IS MODIFIED - the next line reorders the caller's list.
+
+        intervals.sort(key=lambda x: x[0])   # by start time
+
+THE LINE THE WHOLE ALGORITHM RESTS ON.
+
+    `key=lambda x: x[0]`  DECIDES the ordering: by the FIRST element of each pair, which is the
+                          START time. `x` is one interval; `x[0]` is its start.
+
+Sorting by start is what makes "the previous element of the list" mean "the previous meeting in
+time" - which is the only reason the neighbours-only check below is valid (trap 1).
+
+`.sort()` sorts IN PLACE and returns None (trap 4). The non-mutating form is
+`intervals = sorted(intervals, key=lambda x: x[0])`.
+
+    (In Python, `intervals.sort()` with no key would sort by start and then by end, which also
+    works here. Naming the key makes the intent explicit and survives someone later changing the
+    tuple's shape.)
+
+        for i in range(1, len(intervals)):
+
+Start at 1, not 0. Meeting 0 has nothing before it to clash with, and `intervals[-1]` would wrap
+around to the LAST meeting in Python, silently comparing the earliest meeting against the latest.
+
+`range(1, len(intervals))` is empty for a list of 0 or 1 meetings, which is why those cases need no
+special handling (trap 6).
+
+            if intervals[i][0] < intervals[i - 1][1]:
+
+THE ONE COMPARISON.
+
+    `intervals[i][0]`      HOLDS this meeting's START.
+    `intervals[i - 1][1]`  HOLDS the previous meeting's END.
+    `<`                    DECIDES the touching convention. Strict, so a meeting starting exactly
+                           when the previous one ends is NOT a conflict (trap 2). `<=` here flips
+                           [[1,4],[4,5]] from True to False.
+
+NOTE HOW LITTLE IS BEING TESTED. In the unsorted version (section 5) an overlap needs two
+conditions, because you do not know which meeting came first. After sorting you do know - meeting
+i starts no earlier than meeting i−1 - so the other half of the test is guaranteed and this single
+comparison is the whole of it.
+
+                return False                 # starts before previous ends -> overlap
+
+EARLY RETURN. The answer is a single boolean and a conflict settles it; nothing later can make an
+overlapping pair stop overlapping. This also sidesteps trap 5 - a version that kept scanning would
+have to compare against the MAXIMUM end so far, not the last one.
+
+        return True
+
+The loop finished with no clash. By the argument in section 2, no adjacent conflict means no
+conflict at all.""",
+
+    """9. TRACED, MEETING BY MEETING - AND THE ANSWER INVERTING TWICE.
+
+TRACE 1 - THE TEXTBOOK CASE. intervals = [[0,30], [5,10], [15,20]]. Expected False.
+
+    After sorting by start: [[0,30], [5,10], [15,20]] - already in start order, so unchanged.
+
+    i = 1:  intervals[1][0] = 5        this meeting's start
+            intervals[0][1] = 30       the previous meeting's end
+            Is 5 < 30?  YES  ->  RETURN False.
+
+    The [0,30] meeting is still running when [5,10] begins. One person cannot do both.
+    The loop stops after ONE comparison - meeting [15,20] is never looked at, and does not need to
+    be, because a conflict already found cannot be undone.
+
+TRACE 2 - THE CASE THAT PROVES THE SORT IS MANDATORY (trap 1). intervals = [[7,10], [2,4]].
+Expected True.
+
+    AS WRITTEN, WITH THE SORT:
+        After sorting by start: [[2,4], [7,10]]
+        i = 1:  intervals[1][0] = 7,  intervals[0][1] = 4.
+                Is 7 < 4?  NO.
+        Loop ends.  RETURN True.       Correct - [2,4] finishes at 4 and [7,10] starts at 7.
+
+    WITHOUT THE SORT:
+        i = 1:  intervals[1][0] = 2,  intervals[0][1] = 10.
+                Is 2 < 10?  YES  ->  RETURN False.
+
+        THE SAME TWO MEETINGS, THE SAME COMPARISON, THE OPPOSITE ANSWER. The unsorted version
+        compared the start of the EARLIER meeting against the end of the LATER one, which is not a
+        meaningful question at all. It happens to be true for almost any pair of meetings, so this
+        bug reports conflicts almost everywhere.
+
+TRACE 3 - THE TOUCHING CONVENTION (trap 2). intervals = [[1,4], [4,5]].
+
+    Sorted: [[1,4], [4,5]] - unchanged.
+
+    AS WRITTEN (`<`):   i = 1:  intervals[1][0] = 4,  intervals[0][1] = 4.
+                                Is 4 < 4?  NO.
+                        Loop ends.  RETURN True.   The 4pm meeting is over; you can walk into the
+                                                   next one.
+    WITH `<=` INSTEAD:  i = 1:  Is 4 <= 4?  YES  ->  RETURN False.
+
+    ONE CHARACTER, AND THE PERSON EITHER CAN OR CANNOT ATTEND BOTH MEETINGS. This is a decision
+    about whether an end time is inclusive, not a bug in either direction - but it must be a
+    decision, not an accident.
+
+TRACE 4 - A LONGER SCHEDULE THAT SUCCEEDS. intervals = [[15,20], [0,5], [7,10]].
+
+    After sorting by start: [[0,5], [7,10], [15,20]]
+
+    i = 1:  intervals[1][0] = 7,   intervals[0][1] = 5.    Is 7 < 5?  NO.  Continue.
+    i = 2:  intervals[2][0] = 15,  intervals[1][1] = 10.   Is 15 < 10?  NO.  Continue.
+    Loop ends.  RETURN True.
+
+    TWO COMPARISONS FOR THREE MEETINGS. The naive version would have tested all
+    3 x 2 / 2 = 3 pairs - and at n = 1,000, 999 comparisons against 499,500.
+
+    CHECK SECTION 2's ARGUMENT ON THIS INPUT: meetings 0 and 2 were never compared directly. Are
+    they safe? start[2] = 15 >= start[1] = 7 (sorted), and start[1] = 7 >= end[0] = 5 (the i = 1
+    check passed), so start[2] >= end[0]. Meeting 2 begins after meeting 0 has finished. The
+    comparison was genuinely unnecessary.
+
+TRACE 5 - IDENTICAL MEETINGS. intervals = [[1,5], [1,5]].
+
+    Sorted: unchanged (equal starts).
+    i = 1:  intervals[1][0] = 1,  intervals[0][1] = 5.  Is 1 < 5?  YES  ->  RETURN False.
+
+    Two meetings at exactly the same time obviously clash, and the code says so without needing a
+    duplicate check anywhere.
+
+THE TINY INPUTS:
+    intervals = []       `range(1, 0)` is empty, the loop never runs.  RETURN True.
+                         No meetings is trivially attendable.
+    intervals = [[1,5]]  `range(1, 1)` is empty.  RETURN True.  A single meeting cannot clash with
+                         itself.
+    Both correct with no special case, because the loop starting at index 1 handles them.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n log n).
+
+In plain words: THE SORT IS THE ENTIRE COST. The scan afterwards is one pass doing one comparison
+per meeting, which is O(n) and free next to the sort. If the meetings arrived already sorted by
+start, this would be an O(n) problem - worth saying, because it shows you know where the time goes.
+
+SPACE: O(1) beyond the input, since `.sort()` sorts in place. O(n) if you sort a copy to leave the
+caller's list alone. (Python's sort itself uses O(n) auxiliary space in the worst case, which is a
+fair thing to mention and rarely what the question is after.)
+
+    AGAINST THE NAIVE ALL-PAIRS VERSION: 499,500 pair tests at n = 1,000 against roughly 10,000
+    sort operations plus 999 comparisons - about forty-five times the work, four hundred times at
+    n = 10,000.
+
+THE RELATIONSHIP TO MEETING ROOMS II, which is the follow-up you will get:
+
+    THIS PROBLEM      "is one room enough?"       ->  a boolean
+    MEETING ROOMS II  "how many rooms?"           ->  a number
+
+    THIS IS EXACTLY `min_meeting_rooms(intervals) <= 1`. The harder version needs either a MIN-HEAP
+    of end times (push each meeting's end, pop any that have finished before the current start; the
+    heap's maximum size is the answer) or the SWEEP LINE from section 5 (+1 at each start, −1 at
+    each end, sort all 2n events, and take the running count's maximum).
+
+    Mentioning the sweep line while solving THIS problem is a strong move, because it is the same
+    machinery and it answers both questions.
+
+THE FAMILY - SORT BY ONE ENDPOINT, THEN SWEEP:
+
+    MEETING ROOMS (this one)       sort by START, compare adjacent
+    MEETING ROOMS II               sort by START, heap of ENDs
+    MERGE INTERVALS                sort by START, extend or emit
+    INSERT INTERVAL                already sorted - three phases, no sort needed, so O(n)
+    NON-OVERLAPPING INTERVALS      sort by END, greedily keep the earliest finisher
+    MINIMUM ARROWS TO BURST        sort by END, same greedy
+    ACTIVITY SELECTION             sort by END - the classic
+
+    NOTE THE SPLIT: sort by START for overlap and merging questions; sort by END for "how many can
+    I fit in" questions. Getting that the wrong way round is the most common interval-problem
+    error, and it is worth learning as a pair rather than case by case.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "How many rooms would you need?" Meeting Rooms II - heap or sweep line, as above.
+  - "Which meetings conflict?" Remove the early return and collect the clashing pairs - but then
+    you must compare against the MAXIMUM end seen so far, not the previous end (trap 5).
+  - "Do touching meetings clash?" Ask - it is one character, and section 4 shows the answer
+    flipping.
+  - "The meetings arrive one at a time; answer after each." Keep them in a sorted structure (a
+    balanced BST or a sorted list) and check only the neighbours of the insertion point - O(log n)
+    per meeting. This is the "My Calendar I" problem.
+  - "Can you avoid mutating the input?" `sorted(intervals, key=...)`, at O(n) extra space.
+
+THE #1 BEGINNER MISTAKE: comparing adjacent meetings WITHOUT sorting first. The code looks
+identical, runs faster, and reports conflicts almost everywhere - [[7,10],[2,4]] returns False when
+the correct answer is True, because it compares the earlier meeting's start against the later
+meeting's end, which is not a question about anything.
+
+RUNNER-UP: assuming the touching convention instead of deciding it. [[1,4],[4,5]] is True with `<`
+and False with `<=`, and Insert Interval in this same bank uses the opposite convention - so
+"obviously it's like the other interval problem" is not a safe instinct.
+
+TAKEAWAY: sort by start time and then compare only each meeting against its immediate predecessor -
+because in start order, any clash at all must show up as a clash between neighbours, which turns
+n(n−1)/2 pair checks into n−1 comparisons and lets you stop at the first one that fails.""",
 ]
 
 
