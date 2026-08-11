@@ -46228,121 +46228,958 @@ that cannot beat it, because the shortlist only ever gets stronger.""",
 ]
 
 _EX_P0G["Two Pointers — recognize & apply"] = [
-    """The textbook case, traced.
-a = [2,7,11,15], target = 9. i=0, j=3.
-2+15 = 17 > 9 -> the sum is too big, and since the array is sorted the only way
-to shrink it is to move j left: j=2.
-2+11 = 13 > 9 -> j=1.
-2+7 = 9 -> return [0,1].
-Three probes instead of the six pairs a double loop would check - and the gap
-widens fast: for n=1000 it is 1000 steps versus 500,000.""",
+    """1. THE GOAL, in plain English.
 
-    """No pair exists - the pointers cross.
-a = [1,2,3,9], target = 100. 1+9=10 < 100 -> i=1. 2+9=11 -> i=2. 3+9=12 -> i=3.
-Now i == j, the loop condition i < j fails, return [].
-The condition is i < j, not i <= j: an element may not pair with itself. If the
-problem DOES allow reusing an element, the condition changes - another reason to
-ask before coding.""",
+This is not one problem - it is a TECHNIQUE, and the skill being tested is
+recognising when to reach for it. So the goal has two halves:
 
-    """Why moving the pointer is safe - the discard argument.
-When a[i] + a[j] < target, every pair (i, k) for k < j is even smaller, because
-the array is sorted. So no pair involving i and anything left of j can work: i
-can be discarded entirely, and i += 1 does that.
-That is a PROOF, not a hunch, and it is exactly what the interviewer wants to
-hear. It also tells you the precondition: without sortedness the argument
-collapses and you must use a hash map instead.""",
+  (a) Learn the move: instead of one index walking the list, use TWO, and let each
+      step of the comparison tell you which one to move.
 
-    """The unsorted case - a different tool.
-For unsorted input, two pointers do not apply; use a hash map in one pass:
-    seen = {}
-    for i, x in enumerate(a):
-        if target - x in seen: return [seen[target-x], i]
-        seen[x] = i
-O(n) time, O(n) space, and it returns the ORIGINAL indices - which matters,
-because sorting first would scramble them. LeetCode 1 (Two Sum) is the unsorted
-version and LeetCode 167 is the sorted one; using the wrong technique on either
-is the standard trap.""",
+  (b) Learn the tell: spot, within about ten seconds of reading a problem, that this
+      is a two-pointer problem.
 
-    """The three shapes of 'two pointers'.
-1. Converging from both ends (this problem, Container With Most Water, valid
-   palindrome, Trapping Rain Water): needs sorted or symmetric structure.
-2. Fast and slow in the same direction (cycle detection, middle of a linked
-   list, Find the Duplicate Number): the RATIO of speeds is the trick.
-3. Slow write pointer, fast read pointer (Move Zeroes, Remove Duplicates, Sort
-   Colors): in-place compaction.
-They share a name and nothing else. Saying which of the three you mean is the
-recognition step; the code follows in four lines.""",
+The worked example on this page is the cleanest instance of it. You are given a list
+that is ALREADY SORTED and a target, and asked to find two numbers in it that add up
+to the target:
 
-    """Extending it - 3Sum, and why the sort is worth it.
-3Sum: sort the array, fix each index i, then run the two-pointer scan on the
-subarray to its right looking for -nums[i].
-Cost: O(n log n) for the sort plus O(n) inner scan per i -> O(n^2), against
-O(n^3) for three nested loops. On n=1000 that is a million operations instead of
-a billion.
-The sort also makes duplicate-skipping easy (`if i > 0 and nums[i] == nums[i-1]:
-continue`), which is the part most candidates get wrong - the algorithm is
-right, but the same triplet comes out three times.""",
+    a = [2, 7, 11, 15],  target = 9
+    answer = positions [0, 1]      because a[0] + a[1] = 2 + 7 = 9
+
+The lazy answer tries every pair: 2+7, 2+11, 2+15, 7+11, 7+15, 11+15. Six pairs for
+four numbers; for a thousand numbers it is half a million pairs. The two-pointer
+answer looks at three pairs and stops.
+
+What makes the saving possible is the sortedness. Section 2 shows why, and section 5
+proves it - because "it feels right" is not enough when an interviewer asks you to
+justify throwing away half the possibilities.""",
+
+    """2. THE INTUITION - stand at both ends and squeeze.
+
+Put one finger on the leftmost number and one on the rightmost.
+
+    a =  [2,  7, 11, 15]
+          ^           ^
+          i           j
+
+Add what the two fingers point at: 2 + 15 = 17. You wanted 9. Too big.
+
+Now the key thought. The LEFT finger is already on the smallest number in the list.
+There is nothing smaller to swap in on that side. So if this pair is too big, the
+blame lies with the RIGHT finger - and the only way to make the sum smaller is to
+move it left, onto a smaller number.
+
+    a =  [2,  7, 11, 15]
+          ^       ^
+          i       j
+
+2 + 11 = 13. Still too big. Move the right finger again.
+
+    a =  [2,  7, 11, 15]
+          ^   ^
+          i   j
+
+2 + 7 = 9. Found it.
+
+Three checks, not six. And notice what happened each time you moved a finger: you did
+not just skip one pair, you eliminated an entire GROUP of pairs at once. When you
+moved j off 15, you were declaring "no pair containing 15 can work" - that is three
+pairs gone in one move, and it will be a thousand pairs gone in one move on a big
+list.
+
+The general shape of the technique: TWO POSITIONS, AND A COMPARISON THAT TELLS YOU
+WHICH ONE TO MOVE. Because every move advances one of them and neither ever goes
+backwards, the two together take at most n steps before they meet.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POINTER (here). Just an index - a position number in the list. Nothing to do with
+memory addresses in C. i = 0 means "I am looking at the first item".
+
+SORTED. Arranged smallest to largest. This is the precondition for the converging
+form of the technique, and section 4 is about what happens without it.
+
+CONVERGING POINTERS. The two start at opposite ends and move toward each other. They
+finish when they meet.
+
+FAST / SLOW POINTERS. Both start at the front, but one moves two steps for every one
+the other takes. Used for cycle detection and finding the middle of a linked list.
+
+SAME-DIRECTION POINTERS. Both move forward, one lagging behind the other, the gap
+between them being a window or a write position.
+
+IN PLACE. Modifying the given list directly rather than building a new one. Uses O(1)
+extra space. Watch out - it also means the CALLER'S list is changed.
+
+O(n) - "LINEAR TIME". Work proportional to the number of items. Double the input,
+double the work.
+
+O(n^2) - "QUADRATIC TIME". Work proportional to the SQUARE of the number of items.
+Double the input and the work goes up four times. For n = 1000 that is a million
+operations; for n = 100,000 it is ten billion, which will time out. Turning O(n^2)
+into O(n) is exactly what this technique buys you.
+
+INVARIANT. A statement that is true every time you arrive back at the top of the
+loop. Here: "any pair that adds to the target, if one exists, has both its positions
+somewhere between i and j inclusive." Proving your invariant is how you prove the
+method correct.""",
+
+    """4. WHEN THE TECHNIQUE APPLIES - and when it does not.
+
+This is the section that actually earns marks in an interview, because recognising
+the pattern is the transferable skill; the code is ten lines you will remember once
+you have written it twice.
+
+THE TELLS - reach for two pointers when you see:
+
+  - The word SORTED in the problem statement, or an array you are allowed to sort.
+  - "Find a PAIR / TRIPLET that sums to..." (Two Sum II, 3Sum, 3Sum Closest).
+  - Anything comparing the two ENDS of something (valid palindrome, reverse a string
+    in place, Container With Most Water, Trapping Rain Water).
+  - "Do it IN PLACE with O(1) extra space" (remove duplicates from a sorted array,
+    move zeroes, remove element).
+  - A LINKED LIST where you need the middle, the cycle, or the k-th from the end.
+  - A CONTIGUOUS window whose size or contents you grow and shrink (this is the
+    sliding-window family - same machinery, both pointers moving forward).
+
+THE THREE SHAPES, and what each needs:
+
+  1. CONVERGING FROM BOTH ENDS. Needs the list SORTED, or needs some quantity that
+     behaves predictably as the ends move (Container With Most Water is not sorted,
+     but the width shrinks every step no matter what, which is enough).
+
+  2. FAST AND SLOW, both from the front. Needs a linked list or a sequence you can
+     only walk forwards. Detects cycles (if there is a loop, the fast one laps the
+     slow one), finds the middle (when fast reaches the end, slow is halfway).
+
+  3. SAME DIRECTION, one lagging. A read pointer scans and a write pointer marks
+     where the next kept item goes; or the two ends of a window. Needs the property
+     that moving the front pointer only ever makes things worse and moving the back
+     pointer only ever makes them better.
+
+WHEN IT DOES NOT APPLY - be just as quick to say this:
+
+  - UNSORTED input where you must return positions in the ORIGINAL order. Sorting
+    destroys the original positions. Use a hash map in one pass instead:
+
+        seen = {}
+        for i, x in enumerate(a):
+            if target - x in seen:
+                return [seen[target - x], i]
+            seen[x] = i
+
+    That is O(n) time and O(n) space and does not care about order. This is plain
+    Two Sum (LeetCode 1), and confusing it with Two Sum II (LeetCode 167, sorted) is
+    the most common mix-up in this whole area.
+
+  - No usable ordering and no monotone quantity. If moving a pointer does not
+    reliably push the answer in a known direction, you have no rule for which one to
+    move, and the technique has nothing to stand on.
+
+  - Sums with NEGATIVE numbers in the sliding-window form. Growing a window is
+    supposed to only ever increase the sum; a negative value breaks that promise, so
+    the shrink-when-too-big rule becomes invalid. Use prefix sums with a hash map
+    instead.
+
+TRAP: sorting first is not free. It costs O(n log n) and, if you sort the caller's
+list in place, IT CHANGES THEIR DATA. Sort a copy (sorted(a) rather than a.sort())
+unless you have been told mutation is fine. For 3Sum the sort is worth it anyway,
+because it turns an O(n^3) triple loop into O(n^2).
+
+TRAP: the loop condition. `while i < j` stops when the pointers meet, so an item is
+never paired with itself. If a problem genuinely allows using the same element twice,
+you need `while i <= j` - but for Two Sum it does not, and `<=` would let a[2] + a[2]
+count as a valid pair.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE - AND THE PROOF.
+
+THE SLOW VERSION - check every pair.
+
+    for i from 0 to n-1:
+        for j from i+1 to n-1:
+            if a[i] + a[j] == target: return [i, j]
+    return []
+
+Correct, and worth saying out loud before you optimise. Cost: about n^2 / 2 pairs.
+For n = 100,000 that is five billion checks - far too slow.
+
+THE UPGRADE - converge from the ends, O(n).
+
+Now the part interviewers actually probe: WHY IS IT SAFE TO THROW AWAY A WHOLE
+POINTER? The claim is that when you move a pointer, you are not skipping over an
+answer. Here is the argument in full.
+
+CASE 1: a[i] + a[j] is TOO SMALL.
+
+j is currently the RIGHTMOST position still in play, so a[j] is the LARGEST partner
+available to a[i]. If a[i] paired with its biggest available partner still falls short
+of the target, then a[i] paired with any smaller partner falls even shorter:
+
+    for every k with i < k < j:   a[i] + a[k]  <=  a[i] + a[j]  <  target
+
+So NO pair involving position i can ever reach the target. Position i is finished -
+not just this pair, but the entire row of pairs beginning at i. Moving i one step
+right discards all of them at once, and discards nothing that could have been an
+answer.
+
+CASE 2: a[i] + a[j] is TOO BIG.
+
+Mirror image. i is the LEFTMOST position still in play, so a[i] is the SMALLEST
+partner available to a[j]. If even the smallest partner overshoots, every other
+partner overshoots too:
+
+    for every k with i < k < j:   a[k] + a[j]  >=  a[i] + a[j]  >  target
+
+So no pair involving position j can work. Moving j one step left discards that whole
+column, safely.
+
+Both cases lean on exactly one fact: THE LIST IS SORTED. Take that away and both
+inequalities collapse, which is precisely why the technique needs it.
+
+Every step of the loop eliminates either a row or a column, and there are only n rows
+and n columns, so the loop runs at most n times. That is the O(n).
+
+TERMINATION: each pass moves i right or j left, so the gap j - i strictly shrinks
+every pass. It cannot shrink forever, so the loop ends - either by finding a pair or
+by the pointers meeting, and the pointers meeting means every row and every column
+was eliminated, which is a proof that no pair exists.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: PUT ONE INDEX AT EACH END OF THE SORTED
+LIST, AND REPEATEDLY COMPARE THEIR SUM TO THE TARGET - TOO SMALL MOVES THE LEFT ONE
+RIGHT, TOO BIG MOVES THE RIGHT ONE LEFT - UNTIL THEY MATCH OR MEET.
+
+THERE IS NO RECURSION HERE. Nothing calls itself, so there is no call stack to
+follow, no pausing, no base case. The mechanism to understand instead is THE
+SHRINKING GAP:
+
+  - Two indices, i and j, mark the region still under consideration.
+  - Every single pass moves one of them inward. Neither ever moves back outward.
+  - So the gap between them shrinks by at least one every pass, which guarantees the
+    loop ends after at most n passes.
+  - When the gap closes entirely - i meets j - there is nothing left to consider, and
+    that emptiness is your proof the answer does not exist, not a guess.
+
+The steps:
+
+  1. Confirm the list is sorted. If it is not, either sort a COPY of it first (and
+     remember the positions you return will refer to the sorted copy, not the
+     original), or use a hash map instead.
+
+  2. Put i at position 0 and j at the last position.
+
+  3. Repeat while i is still to the LEFT of j - strictly to the left, so an element
+     is never paired with itself:
+
+     a. Add the two values the pointers are on. Call that sum s.
+
+     b. If s equals the target, you have the answer. Return the two positions.
+
+     c. If s is too SMALL, the left value is too small to ever work with anything
+        available. Move i one step right, onto a bigger value.
+
+     d. If s is too BIG, the right value is too big to ever work with anything
+        available. Move j one step left, onto a smaller value.
+
+  4. If the loop ends without a match, the pointers have met and every possibility
+     has been ruled out. Report that no pair exists.
+
+The detail beginners get wrong: in step 3c and 3d, only ONE pointer moves. Moving
+both is tempting for symmetry and it skips over valid answers - you would step past
+the pair (i+1, j-1) without ever checking it.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Picture a row of weights on a bench, laid out lightest on the left, heaviest on the
+right. You need two of them that together weigh exactly nine kilos.
+
+You do not lift every possible pair. You put your left hand on the lightest weight
+and your right hand on the heaviest, and you weigh just those two: seventeen kilos.
+Too heavy.
+
+Here is the thought that saves you all the work. The weight in your left hand is the
+lightest thing on the bench. Nothing you could swap into your left hand would be
+lighter. So the problem must be the right hand - and the heavy weight it is holding
+cannot possibly be part of the answer, because even paired with the lightest thing
+available it is already too heavy. That whole weight is out of the running. Put it
+aside.
+
+Right hand moves one place left. Weigh again: thirteen. Still too heavy, same
+reasoning, put that one aside too.
+
+Right hand moves again. Weigh: nine. Done.
+
+Three weighings. And if the two hands had ever met in the middle without hitting
+nine, you would know for certain no such pair exists - because every weight you
+pushed aside was pushed aside with a reason, not a shrug.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def two_sum_sorted(a, target):
+
+a is the SORTED input list; target is the sum you are hunting for. The function
+returns a list of two positions, or an empty list if there is no such pair. The name
+says "sorted" for a reason - hand it unsorted input and it will silently return
+wrong answers.
+
+    i, j = 0, len(a) - 1         # i starts at the left end, j at the right end
+
+The two hands. i on the smallest value, j on the largest. len(a) - 1 is the last
+valid position - four items means positions 0 through 3.
+
+    while i < j:                 # keep going until the two pointers meet
+
+Strictly less-than, which is what stops an element being paired with itself. When i
+and j become equal there is only one item left between them, no pair is possible, and
+the loop is done. This condition is also the termination guarantee: the gap shrinks
+every pass, so it must eventually fail.
+
+    s = a[i] + a[j]              # sum of the current pair
+
+Weigh the two things currently in your hands. s is the only value computed inside the
+loop.
+
+    if s == target:              # found a matching pair
+        return [i, j]
+
+Exact match - return the positions immediately. Note it returns POSITIONS, not the
+values themselves. And note these are positions in a, so if the caller sorted a copy
+to get here, the indices refer to that copy, not their original list.
+
+    if s < target:               # sum too small -> we need a bigger number
+        i += 1                   #   move the LEFT pointer right (values go up)
+
+Case 1 from section 5. a[i] is paired with the largest partner still available and
+still falls short, so no pair starting at i can ever work. Discard the whole row by
+stepping i right - onto a larger value, since the list is sorted. Only i moves.
+
+    else:                        # sum too big -> we need a smaller number
+        j -= 1                   #   move the RIGHT pointer left (values go down)
+
+Case 2. a[j] is paired with the smallest partner still available and still overshoots,
+so no pair ending at j can work. Discard the whole column by stepping j left - onto a
+smaller value. Only j moves.
+
+    return []                    # pointers crossed with no match found
+
+The loop ended, which means i met j. Every row and every column was eliminated with a
+reason, so there is genuinely no pair. Returning an empty list rather than None keeps
+the return type consistent, which callers appreciate.
+
+One thing worth saying out loud in an interview: this function does NOT modify a. It
+only reads it. If you had to sort first, that is where mutation would sneak in -
+a.sort() changes the caller's list, sorted(a) does not.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    a = [2, 7, 11, 15]
+    target = 9
+
+START.  i = 0, j = len(a) - 1 = 3.
+
+PASS 1.
+  i = 0, j = 3. Is 0 < 3? Yes, enter.
+  s = a[0] + a[3] = 2 + 15 = 17.
+  s == target? 17 == 9, no.
+  s < target? 17 < 9, no -> take the else branch: j = 3 - 1 = 2.
+  Meaning: 15 can never be part of the answer. One value eliminated.
+
+PASS 2.
+  i = 0, j = 2. Is 0 < 2? Yes.
+  s = a[0] + a[2] = 2 + 11 = 13.
+  s == target? No.
+  s < target? 13 < 9, no -> j = 2 - 1 = 1.
+  Meaning: 11 is eliminated too.
+
+PASS 3.
+  i = 0, j = 1. Is 0 < 1? Yes.
+  s = a[0] + a[1] = 2 + 7 = 9.
+  s == target? 9 == 9, yes -> return [0, 1].
+
+Three passes. The slow version would have checked six pairs.
+
+NOW A CASE WITH NO ANSWER, so you can watch the loop prove absence:
+
+    a = [1, 2, 3, 9]
+    target = 100
+
+  i = 0, j = 3.  s = 1 + 9 = 10.  10 < 100 -> i = 1.
+  i = 1, j = 3.  s = 2 + 9 = 11.  11 < 100 -> i = 2.
+  i = 2, j = 3.  s = 3 + 9 = 12.  12 < 100 -> i = 3.
+  Check the condition: i = 3, j = 3. Is 3 < 3? No. The loop ends.
+  return [].
+
+Watch the gap j - i shrink: 3, then 2, then 1, then 0. It can only ever go down, so
+the loop cannot run forever, and reaching zero means every position was ruled out for
+a stated reason.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n) if the list arrives sorted. O(n log n) if you have to sort it yourself,
+because the sort then dominates the linear scan.
+
+In plain words: each pass permanently retires one value from consideration, and there
+are only n values, so there can only be n passes. Compare the naive version, which
+examines roughly n^2 / 2 pairs - for a hundred thousand items that is five billion
+checks versus a hundred thousand.
+
+SPACE: O(1) - constant. Only i, j and s are stored, no matter how long the list is.
+The hash-map alternative for unsorted input costs O(n) space instead; that space is
+the price you pay for not being allowed to sort.
+
+THE #1 BEGINNER MISTAKE: using two pointers on an UNSORTED array. The code runs, it
+returns something, and the something is wrong - it fails silently, which is the worst
+kind of failure. The entire justification for moving a pointer (section 5) rests on
+sortedness, and without it the two inequalities are simply false. Before you write
+the first line, say out loud: "this needs the array sorted - is it?"
+
+Runner-up mistakes: moving BOTH pointers on a mismatch, which skips valid pairs;
+using `while i <= j`, which lets an element pair with itself; and sorting the
+caller's array in place when the problem asked for positions in the ORIGINAL order,
+which quietly destroys the answer you were meant to give.
+
+TAKEAWAY: two pointers turns O(n^2) into O(n) by making every comparison retire an
+entire row or column of possibilities - and that only works when the data is ordered,
+so the first question to ask is never "how do I move the pointers" but "is this
+sorted, and if not, may I sort it?".""",
 ]
 
 _EX_P0G["Union-Find / Disjoint Set Union (DSU)"] = [
-    """Building components step by step.
-n=5, so parent = [0,1,2,3,4] - five singleton sets.
-union(0,1): roots 0 and 1 differ, ranks equal (0,0) -> parent[1]=0, rank[0]=1.
-union(2,3): parent[3]=2, rank[2]=1.
-union(1,3): find(1)=0, find(3)=2. Ranks equal (1,1) -> parent[2]=0, rank[0]=2.
-Now {0,1,2,3} is one set with root 0, and {4} is alone.
-union(0,1) again: both find to 0 -> returns False, no change. That False return
-is what makes DSU a cycle detector.""",
+    """1. THE GOAL, in plain English.
 
-    """Path compression, watched in action.
-Build a chain by unioning carefully so that 3 -> 2 -> 1 -> 0.
-find(3) walks 3, 2, 1 to root 0. On the way, the line
-`self.parent[x] = self.parent[self.parent[x]]` re-points each node to its
-GRANDPARENT, halving the path.
-After one find(3), the chain is roughly 3 -> 0 and 2 -> 0.
-The next find(3) is a single hop. This is why the amortised cost is
-alpha(n) - the inverse Ackermann function, which is below 5 for any n you can
-store on Earth. In practice: constant.""",
+You have a pile of separate things - people, cities, computers, cells in a grid - and
+connections keep arriving one at a time. You need to answer two questions, fast, at
+any moment:
 
-    """Union by rank - what goes wrong without it.
-Union 1 into 0, then 2 into 1, then 3 into 2, always attaching the bigger tree
-under the smaller root, and you build a linked list of depth n; every find is
-O(n).
-Union by rank always attaches the SHORTER tree under the taller root, so depth
-grows only when two trees of equal height merge - which can happen at most
-log n times.
-Rank vs size: union by SIZE (attach the smaller count under the larger) gives the
-same guarantee and is easier to reason about; either is accepted, but say which
-you are using.""",
+    "Are these two things in the same group?"
+    "Merge the group containing this with the group containing that."
 
-    """Cycle detection in an undirected graph - the classic use.
-edges = [[0,1],[1,2],[2,0]].
-union(0,1) -> True. union(1,2) -> True. union(2,0) -> find(2) and find(0) are
-both root 0 -> returns False, meaning 2 and 0 were ALREADY connected, so this
-edge closes a cycle.
-Same test drives 'Graph Valid Tree': a graph on n nodes is a tree iff every
-union returns True (no cycle) and you performed exactly n-1 of them
-(connected).""",
+That is all Union-Find does. Two operations, and it does both in what is effectively
+constant time.
 
-    """Counting components as you go.
-Start count = n and decrement on every successful union:
-    count = n
-    for a, b in edges:
-        if uf.union(a, b): count -= 1
-On n=5 with edges [[0,1],[1,2],[3,4]]: three unions all succeed, count = 2.
-This is the streaming advantage over DFS: with DFS you must re-run the whole
-traversal after each new edge, O(V+E) each time; with DSU each edge costs
-near-constant time and the count is always current.""",
+The everyday picture is friendship circles. Everybody starts alone. Then you hear
+"Anu and Bala are friends" - now they are one circle. Then "Bala and Chitra are
+friends" - now Anu, Bala and Chitra are all one circle, even though nobody ever told
+you Anu and Chitra know each other. Later somebody asks "are Anu and Chitra in the
+same circle?" and you must answer instantly.
 
-    """Where DSU is the right answer.
-- Kruskal's minimum spanning tree: sort edges, add one if union succeeds.
-- Number of Islands II (islands added one cell at a time - the streaming case).
-- Accounts Merge / friend circles / 'is A related to B?' queries.
-- Redundant Connection: return the first edge whose union fails.
-- Detecting cycles while building a dependency graph incrementally.
-The recognition cue is 'connected?' or 'merge these groups' arriving OVER TIME.
-For a one-shot connectivity question on a static graph, plain DFS is simpler -
-do not reach for DSU just because you know it.""",
+Notice what makes this hard. The groups keep MERGING, and merging is the awkward
+operation. If you stored each circle as an actual list of members, then merging two
+circles of size 500 means copying 500 names, and doing that repeatedly is slow.
+Union-Find never copies anybody. It just re-points one arrow.
+
+The name says exactly what it is:
+  FIND  - which group is this thing in?
+  UNION - put these two groups together.
+DISJOINT SET UNION (DSU) is the same structure under a more formal name. "Disjoint"
+means the groups never overlap - every element belongs to exactly one.""",
+
+    """2. THE INTUITION - every group elects a leader.
+
+The trick is that a group does not need a member list. It needs a NAME. And the
+cheapest possible name for a group is: one of its own members, agreed on by all of
+them.
+
+So give every element an arrow pointing at somebody in the same group. Follow the
+arrows and you eventually reach an element pointing at ITSELF - that one is the
+leader, or ROOT. The root's identity IS the group's name.
+
+Everyone starts alone, so everyone starts as their own leader:
+
+    0->0    1->1    2->2    3->3    4->4
+
+Now "0 and 1 are connected". Point one leader at the other:
+
+    0->0
+    ^
+    1
+
+Now "2 and 3 are connected":
+
+    0->0        2->2
+    ^           ^
+    1           3
+
+Now "1 and 3 are connected". Do NOT point 1 at 3 - that would only merge two members,
+not two groups. Walk up from each to find their LEADERS (0 and 2), and point one
+leader at the other:
+
+         0->0
+        / \\
+       1   2
+            \\
+             3
+
+Answering "are 1 and 3 in the same group?" is now: walk up from 1, reach 0; walk up
+from 3, reach 2 then 0. Same root, so yes.
+
+The whole structure is a forest of arrows, and the two operations are:
+  FIND  = walk up to the root.
+  UNION = find both roots, point one at the other.
+
+There is one danger, and everything clever in this data structure exists to prevent
+it. If you always point the bigger tree under the smaller one, you can end up with a
+single long chain:
+
+    0 <- 1 <- 2 <- 3 <- 4 <- ... <- 999
+
+and now every FIND walks a thousand steps. The two optimisations in section 5 keep
+the trees flat instead.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SET / GROUP / COMPONENT. A collection of elements that are all connected to each
+other, directly or through others. These three words are used interchangeably here.
+
+DISJOINT. Non-overlapping. Every element sits in exactly one group, never two.
+
+PARENT. The single arrow each element carries, pointing at another element in the
+same group. Stored in the list `parent`, so parent[3] is the element that 3 points at.
+
+ROOT / LEADER / REPRESENTATIVE. The element that points at ITSELF: parent[x] == x.
+Every group has exactly one, and it serves as the group's name.
+
+FIND(x). Follow parent arrows from x until you reach the root, and return that root.
+"Which group is x in?"
+
+UNION(a, b). Find both roots. If they are already the same, nothing to do. Otherwise
+point one root at the other, merging the two groups into one.
+
+TREE / FOREST. A tree is a set of elements connected by arrows with no cycles and one
+root. A forest is several trees. Union-Find maintains a forest, one tree per group.
+
+RANK. A rough estimate of a tree's HEIGHT - how many arrows you would follow from the
+deepest element to the root. It is only an upper bound, not an exact height, because
+path compression flattens trees without updating ranks. That is fine; it is used to
+decide which tree to hang under which, and an upper bound is enough for that.
+
+PATH COMPRESSION. While walking up during a FIND, re-point the elements you pass so
+they sit closer to the root. Future FINDs on those elements then take fewer steps.
+This is the key insight: THE FIND OPERATION PAYS FOR ITSELF BY MAKING THE STRUCTURE
+BETTER AS IT GOES.
+
+UNION BY RANK. When merging, hang the SHORTER tree under the TALLER one. This keeps
+the combined tree from getting taller than it needs to be.
+
+AMORTISED. Averaged over a long run of operations. One individual FIND might take
+several steps, but across m operations the total work divided by m is essentially
+constant. When someone says DSU is "nearly O(1)", they mean amortised.
+
+INVERSE ACKERMANN, written a(n). The true cost per operation with both optimisations.
+It is a function that grows so slowly it is under 5 for any n you could ever store -
+for n the number of atoms in the universe it is still under 5. Treat it as a small
+constant, and say "effectively constant time" in an interview.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the big one: UNIONING THE ELEMENTS INSTEAD OF THE ROOTS.
+
+    def union(self, a, b):
+        self.parent[b] = a          # WRONG
+
+This points b at a. But b might be the leader of a hundred other elements, or it
+might be a mere member deep inside another group. Either way you have attached one
+NODE to another node, not one GROUP to another group, and the structure quietly
+becomes wrong - elements that should now be connected still report different roots.
+Every correct union starts by calling find on both arguments.
+
+TRAP 2: forgetting the already-connected check. If find(a) and find(b) give the same
+root and you go ahead and set parent[root] = root, you have created a self-loop that
+is harmless; but if you set parent[root] = some other node in the same tree, you
+create a CYCLE, and the next find walks round it forever. More practically: that
+already-connected case is not an error, it is INFORMATION. It means the new edge
+joins two things that were already connected - which in an undirected graph means you
+just found a CYCLE. That is why union returns True or False rather than nothing.
+
+TRAP 3: writing find recursively and blowing the stack. The recursive form is
+elegant:
+
+    def find(self, x):
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])
+        return self.parent[x]
+
+and it does FULL path compression, which is slightly better than the iterative
+version. But on a long chain built before any compression, it recurses as deep as the
+chain is long, and Python's default recursion limit is about 1000. With 100,000
+elements that is a crash. The iterative version on this page cannot blow the stack.
+
+TRAP 4: using DSU on a DIRECTED graph. Union-Find has no notion of direction - it
+only knows "these are in the same blob". Cycle detection in a DIRECTED graph needs
+depth-first search with a colouring scheme (white / grey / black), not DSU. Saying
+this distinction out loud in an interview is worth real credit.
+
+TRAP 5: expecting DSU to answer questions it cannot. It cannot tell you the PATH
+between two elements, or the DISTANCE between them, or split a group back apart.
+There is no "un-union". If the problem needs edges removed over time, the usual trick
+is to process everything BACKWARDS in time, so removals become additions.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE TWO UPGRADES.
+
+THE SLOW VERSION - keep a group id for each element.
+
+    group = [0, 1, 2, 3, 4]      # every element in its own group
+
+    find(x)  -> group[x]                       # instant
+    union(a, b) -> pick group[a]'s id, then walk the WHOLE array
+                   relabelling every element with group[b]'s id
+
+FIND is O(1), which is lovely. UNION is O(n), which is fatal - n unions cost n^2, and
+for 100,000 elements that is ten billion operations.
+
+THE TREE VERSION - arrows instead of labels. Union becomes O(1) once you know the
+roots, because you only re-point ONE arrow. But find now has to walk up the tree, and
+in the worst case that tree is a chain of length n. You have traded one O(n)
+operation for another.
+
+Neither is good enough. The fix is not a different structure - it is two small
+maintenance habits that keep the trees short.
+
+UPGRADE 1 - UNION BY RANK. When merging, always hang the SHORTER tree under the
+TALLER one.
+
+Why it works: hanging a short tree under a tall one does not change the tall tree's
+height at all - the short tree's root now sits one level down, but it was shallow, so
+everything in it still ends up no deeper than the tall tree's existing depth. The
+combined height only grows when the two trees are EXACTLY the same height, and in
+that case the result is one taller. To get a tree of height h this way you must merge
+two trees of height h-1, each of which needed two of height h-2... which means a tree
+of height h contains at least 2^h elements. Turn that around: with n elements the
+height can never exceed log2(n). For a million elements, 20 levels - and that is the
+worst case, before compression even helps.
+
+This is exactly why the code tracks rank and only increments it when the two ranks
+are EQUAL. In every other case the taller tree absorbs the shorter one and its height
+is unchanged, so its rank must not change either.
+
+UPGRADE 2 - PATH COMPRESSION. Every time you walk up during a find, shorten the path
+for next time.
+
+Why it is safe: re-pointing a node at its grandparent (or straight at the root) does
+NOT change which group it belongs to. The root at the end of the walk is the same
+root either way - you have only removed intermediate stops. Group membership is
+preserved exactly; only the travel time changes. This is the crucial point to make in
+an interview, because it is the reason you are allowed to modify the structure during
+a read operation.
+
+The specific line in this code:
+
+    self.parent[x] = self.parent[self.parent[x]]
+
+points x at its GRANDPARENT rather than all the way at the root. This variant is
+called PATH HALVING - each step up the chain also halves the remaining chain for
+whoever comes next. It is a little weaker than full compression per operation, but it
+needs no recursion and no second pass, and it achieves the same amortised bound. Be
+precise about this if asked: the comment says "path compression", the mechanism is
+path halving, and the guarantee is the same.
+
+TOGETHER: with both upgrades, m operations on n elements cost O(m x a(n)), where a is
+the inverse Ackermann function from section 3 - under 5 for any realistic n. Say
+"effectively constant time per operation, amortised".
+
+With only ONE of the two you still get O(log n) per operation, which is usually fine
+in practice. With NEITHER you get O(n) and a timeout.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: GIVE EVERY ELEMENT AN ARROW TO SOMEONE IN
+ITS OWN GROUP, CALL THE ELEMENT THAT POINTS AT ITSELF THE GROUP'S NAME, AND MERGE TWO
+GROUPS BY POINTING ONE NAME AT THE OTHER.
+
+THERE IS NO RECURSION in this implementation - find is written as a loop, deliberately,
+so it cannot exhaust the call stack. But it is worth knowing what the recursive
+version would do, because it is the version most books show:
+
+  - find(x) would call find on x's parent. That PAUSES the current call: Python
+    records where it stopped and what x was, on the CALL STACK, a pile of paused
+    calls.
+  - Each deeper call moves one step closer to the root.
+  - WHAT MAKES IT STOP: an element whose parent is itself. That call returns without
+    calling deeper - the BASE CASE.
+  - The answer then travels back DOWN the pile of paused calls. Each one wakes up,
+    receives the root, and re-points its own x directly at it before passing it
+    along. That downward journey is what performs full path compression.
+  - The catch: the pile is as deep as the chain is long, so a 100,000-long chain
+    crashes. Hence the loop.
+
+SETTING UP:
+
+  1. Make an array `parent` of length n where parent[i] = i. Everyone is their own
+     leader; there are n groups, each of size one.
+
+  2. Make an array `rank` of length n, all zeros. A lone element is a tree of
+     height zero.
+
+FIND(x) - which group is x in?
+
+  3. While x is not pointing at itself:
+     a. Re-point x at its grandparent - the element its parent points at. This is the
+        compression, and it is free: you already have to look at the parent anyway.
+     b. Step up to x's (new) parent.
+
+  4. When x points at itself, x is the root. Return it.
+
+UNION(a, b) - merge two groups.
+
+  5. Find the root of a and the root of b. Call them ra and rb.
+
+  6. If ra equals rb, they were already in the same group. Report "no merge happened"
+     - and remember that in an undirected graph, this means the edge you were adding
+     closes a cycle.
+
+  7. Otherwise decide which one hangs under which: if ra's tree is shorter than rb's,
+     swap the two names so that ra always refers to the taller tree.
+
+  8. Point rb at ra. One arrow changed; two groups are now one. No member lists are
+     copied.
+
+  9. If the two trees were exactly the same height, the merged tree is one taller, so
+     increase ra's rank by one. In every other case leave the rank alone - absorbing
+     a shorter tree does not make the taller one any taller.
+
+ 10. Report "a merge happened".
+
+The step people skip is 5. Merging must operate on ROOTS, never on the elements
+handed in.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a town where everyone belongs to some club, but nobody keeps a membership
+list. Instead, every person can name ONE other person in their club - "ask her, she
+knows more than me". Follow that chain of referrals far enough and you reach a person
+who says "ask me, I am the one who decides." That person is the club president, and
+in this town the club has no name other than its president.
+
+To ask "are these two people in the same club?", you follow each one's chain of
+referrals up to a president. Same president, same club.
+
+Here is the habit that keeps this fast. As you walk up somebody's chain of referrals,
+you tell each person along the way: "actually, skip a step - next time refer people
+straight to the person your contact refers to." Nobody's club membership changes
+by this; you have only shortened the referral chain. So the very act of ASKING makes
+the town faster to ask next time.
+
+To merge two clubs, you do not photocopy membership lists. You find both presidents,
+and one president says to the other, "from now on, you are the one who decides." One
+sentence, and every member of the first club - however many thousands - is now in the
+second club, because their referral chains all end at their old president, who now
+refers upward to the new one.
+
+And which president steps down? The one whose club has the SHORTER referral chains.
+Hanging a short chain under a tall one costs nothing, because the tall chain was
+already that long. Get this backwards repeatedly and the town turns into one enormous
+queue where every question takes forever.
+
+Finally: if you go to merge two clubs and discover both people already have the same
+president, nothing happens - but that fact is itself worth reporting, because it means
+these two were already connected by some other route.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    class UnionFind:
+        def __init__(self, n):
+
+n is how many elements you have, numbered 0 through n-1. The structure is built once
+up front with all elements present.
+
+            self.parent = list(range(n))   # each node starts as its own root
+
+parent is the arrows. list(range(5)) gives [0,1,2,3,4], so parent[0] is 0, parent[1]
+is 1, and so on - everybody points at themselves, so everybody is their own leader.
+n separate groups of size one. This is "everyone starts as their own club president".
+
+            self.rank = [0] * n
+
+rank is the height estimate for each tree. A lone element has height 0. Only the entry
+for a ROOT is ever meaningful; ranks stored against non-roots are stale leftovers and
+are never read.
+
+        def find(self, x):
+            while self.parent[x] != x:
+
+Walk up until x is its own parent. That condition - parent[x] == x - is the definition
+of a root. This is a loop, not recursion, precisely to avoid the stack overflow from
+trap 3.
+
+                self.parent[x] = self.parent[self.parent[x]]   # path compression
+
+The compression step, read from the inside out. self.parent[x] is x's parent;
+self.parent[self.parent[x]] is x's GRANDPARENT. The line re-points x at its
+grandparent, cutting one link out of x's chain permanently. It is safe because it does
+not change which root x eventually reaches - only how long the walk takes. (Strictly
+this is path HALVING; see section 5.) If x's parent is already the root, the
+grandparent is the root too, so this line does nothing harmful.
+
+                x = self.parent[x]
+
+Step up. Because of the line above, this jumps TWO levels of the original chain, not
+one - which is why a chain gets roughly halved every time it is traversed.
+
+            return x
+
+x now points at itself, so x is the root. This is the group's name.
+
+        def union(self, a, b):
+            ra, rb = self.find(a), self.find(b)
+
+The step everybody skips. Find the ROOT of each side first. ra and rb are the two
+club presidents. Never touch parent[a] or parent[b] directly.
+
+Note this call also compresses both paths as a side effect, so union quietly improves
+the structure too.
+
+            if ra == rb:
+                return False               # already in the same set
+
+Same president means same club - nothing to merge. Returning False is not a failure
+signal; it is the information "these two were already connected". In cycle detection
+this False is exactly the moment a cycle is found.
+
+            if self.rank[ra] < self.rank[rb]:
+                ra, rb = rb, ra            # attach the smaller tree under the larger
+
+Union by rank. After this swap, ra is guaranteed to name the tree that is at least as
+tall. The swap costs nothing and means the line below only ever needs to be written
+one way round.
+
+            self.parent[rb] = ra
+
+The merge itself. ONE arrow changes and two groups become one. Every element that
+used to reach rb now walks one extra step and reaches ra. Nothing is copied, nothing
+is renamed, no membership list exists to update.
+
+            if self.rank[ra] == self.rank[rb]:
+                self.rank[ra] += 1
+
+The only case where the merged tree is taller than before. If the two trees had equal
+height h, stacking one under the other gives height h+1. If ra was strictly taller,
+rb's tree tucks in underneath without adding a level, so the rank stays put. Getting
+this condition wrong - incrementing every time - inflates ranks, misleads future
+merges, and slowly loses the height guarantee.
+
+            return True
+
+A merge genuinely happened. Callers use this to count components: start a counter at n
+and decrement it every time union returns True.
+
+Note that this structure DOES mutate its own arrays on every operation, including on
+find, which most people expect to be read-only. If you need a snapshot of the state
+before some operations, copy the arrays yourself.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    uf = UnionFind(5)
+
+    parent = [0, 1, 2, 3, 4]
+    rank   = [0, 0, 0, 0, 0]
+    Five separate groups.
+
+union(0, 1)
+    find(0): parent[0] == 0, the loop never runs. ra = 0.
+    find(1): parent[1] == 1, the loop never runs. rb = 1.
+    ra != rb, so continue.
+    rank[0] = 0, rank[1] = 0. Is 0 < 0? No, so no swap. ra stays 0, rb stays 1.
+    parent[1] = 0.
+    rank[ra] == rank[rb]? 0 == 0, yes -> rank[0] = 1.
+    return True.
+
+    parent = [0, 0, 2, 3, 4]
+    rank   = [1, 0, 0, 0, 0]
+    Groups: {0,1}, {2}, {3}, {4}.
+
+union(2, 3)
+    find(2) = 2, find(3) = 3. ra = 2, rb = 3.
+    rank[2] = 0, rank[3] = 0. No swap.
+    parent[3] = 2.
+    Ranks equal -> rank[2] = 1.
+    return True.
+
+    parent = [0, 0, 2, 2, 4]
+    rank   = [1, 0, 1, 0, 0]
+    Groups: {0,1}, {2,3}, {4}.
+
+union(1, 3)
+    find(1): parent[1] = 0, and 0 != 1, so enter the loop.
+             parent[1] = parent[parent[1]] = parent[0] = 0.  (Unchanged - 1's parent
+             was already the root, so halving has nothing to cut.)
+             x = parent[1] = 0. Now parent[0] == 0, loop ends. ra = 0.
+    find(3): parent[3] = 2, and 2 != 3, so enter the loop.
+             parent[3] = parent[parent[3]] = parent[2] = 2.  (Also already at the
+             root.)
+             x = parent[3] = 2. parent[2] == 2, loop ends. rb = 2.
+    ra = 0, rb = 2, and they differ.
+    rank[0] = 1, rank[2] = 1. Is 1 < 1? No, so no swap.
+    parent[2] = 0.
+    Ranks equal -> rank[0] = 2.
+    return True.
+
+    parent = [0, 0, 0, 2, 4]
+    rank   = [2, 0, 1, 0, 0]
+    Groups: {0,1,2,3}, {4}.
+
+NOW WATCH PATH HALVING ACTUALLY DO SOMETHING - find(3):
+    parent[3] = 2, and 2 != 3, so enter the loop.
+      parent[3] = parent[parent[3]] = parent[2] = 0.   <- 3 now points STRAIGHT at
+                                                          the root, skipping 2.
+      x = parent[3] = 0.
+    parent[0] == 0, so the loop ends and 0 is returned.
+
+    parent = [0, 0, 0, 0, 4]
+
+3's walk to the root used to take two steps; it now takes one, and it will for every
+future query. The read operation improved the structure.
+
+union(0, 3)
+    find(0) = 0. find(3) = 0.
+    ra == rb -> return False.
+    Nothing changed. In a graph, this False means the edge 0-3 closes a CYCLE, because
+    0 and 3 were already connected through 1 and 2.
+
+Component count check: start at 5, decrement on each True. Three Trues were returned,
+so 5 - 3 = 2 components: {0,1,2,3} and {4}. That matches the arrays.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(a(n)) amortised per operation, where a is the inverse Ackermann function -
+under 5 for any n that fits in a computer. In an interview, say "effectively constant
+time per operation, amortised", and be ready to explain that the true bound is
+inverse Ackermann and why that counts as constant in practice.
+
+In plain words: union by rank keeps the trees at most log n tall, and path halving
+flattens whatever paths actually get used, so after a few operations almost everything
+points directly at its root. A sequence of m operations on n elements costs about m
+steps in total, not m log n.
+
+Without BOTH optimisations: one of them alone still gives O(log n) per operation,
+which passes most interview constraints. Neither gives O(n) per operation and a
+timeout on large inputs.
+
+SPACE: O(n) - two integer arrays of length n. No member lists, no edge lists, nothing
+that grows as merges happen. Merging a group of a million into a group of a million
+costs one array write.
+
+WHERE IT IS THE RIGHT TOOL: connectivity questions where the connections ARRIVE OVER
+TIME. Number of Connected Components, Redundant Connection, Accounts Merge, Number of
+Islands II, Kruskal's minimum spanning tree (sort the edges by weight, keep an edge
+exactly when union returns True), and equation-consistency problems. If the whole
+graph is handed to you at once and you only need components, plain BFS or DFS is
+simpler and just as fast - reach for DSU when edges stream in, or when the same
+connectivity question is asked many times.
+
+THE #1 BEGINNER MISTAKE: writing parent[b] = a in union instead of finding both roots
+first. It merges two NODES instead of two GROUPS. The code runs without error and
+the answers are silently wrong - elements that should now be connected still report
+different roots. Every union begins with two finds, without exception.
+
+Runner-up: incrementing rank on every merge instead of only when the two ranks are
+equal. That inflates the ranks, makes future merges pick the wrong tree to hang
+under, and gradually loses the height guarantee that made the whole thing fast.
+
+TAKEAWAY: Union-Find replaces "which members are in this group" with "who is this
+group's leader", so merging two groups of any size is a single arrow re-pointed - and
+the two habits of hanging short trees under tall ones and shortening paths as you walk
+them are what keep every question effectively instant.""",
 ]
 
 _EX_P0G["Design an LRU Cache"] = [
