@@ -197,12 +197,538 @@ def build(Q):
           mnemonic="Six stories, not thirty answers: DELIVERY, FAILURE, CONFLICT, AMBIGUITY, LEARNING, HELPING. Each in STAR, under two minutes, containing a number, a decision, and a 'what I'd change'. Then index which questions each one answers.",
           example="One story, three angles. A capstone where you rescoped a feature to hit a demo date. Asked about DELIVER RESULTS, emphasise the deadline, the trade you made and the number. Asked about DEALING WITH AMBIGUITY, emphasise that the requirement was unclear, the assumption you wrote down, and the checkpoint. Asked about CONFLICT, emphasise the teammate who wanted to ship it complete and late, how you argued it, and how you converged. Same facts, three different first sentences - and the interviewer never hears a recycled answer because you led with the part they asked about.",
           examples=[
-              "The six shapes, and what each one covers. DELIVERY (shipped something hard under a constraint) covers Deliver Results, Ownership, prioritisation, 'most challenging project'. FAILURE (got it wrong, fixed the cause) covers failure, mistake affecting others, Earn Trust, humility, feedback. CONFLICT (disagreed and resolved it) covers difficult teammate, Have Backbone, disagreeing with a manager. AMBIGUITY (moved without complete information) covers Bias for Action, Are Right A Lot. LEARNING (taught yourself something fast) covers Learn and Be Curious. HELPING (made someone else effective) covers collaboration, mentoring, Googleyness. Six stories, about thirty prompts.",
-              "One story, three angles - the skill that makes six stories enough. A capstone where you rescoped a feature to hit a demo date. Asked about DELIVER RESULTS: lead with the deadline, the trade, the number. Asked about AMBIGUITY: lead with the unclear requirement, the assumption you wrote down, the checkpoint. Asked about CONFLICT: lead with the teammate who wanted it complete-and-late, how you argued it, how you converged. Same facts, three different first sentences - and the interviewer never hears a recycled answer because you led with the part they asked about.",
-              "The headline sentence, which is the delivery skill. When a question lands, take two seconds, pick the story AND the angle, then open with one sentence saying where you are going: 'This is about a time I shipped a rescoped feature rather than a late complete one.' The interviewer now knows the shape and can follow the detail. Without it they spend your first thirty seconds working out which question you think you are answering, which is thirty seconds of your two minutes gone.",
-              "What each story must contain, as a checklist to write against. A NUMBER (latency, percentage, days saved, people affected) - without one it is an anecdote. A DECISION you personally made, stated as 'I decided', because a story where things merely happened to you scores nothing. A 'WHAT I'D DO DIFFERENTLY', because it is the most common follow-up in the entire set and 'nothing' is a failing answer. Under two minutes spoken - time yourself, since most first drafts run four.",
-              "Why not to memorise word-for-word. A recited answer sounds recited, and it shatters on the first follow-up ('what did your teammate think?') because you rehearsed a paragraph rather than knowing the events. Write each story as five bullets - situation, task, the two or three actions, result with a number, lesson - and speak from the bullets. You will phrase it differently every time, which is exactly right.",
-              "Two practical constraints people miss. First, Amazon interviewers COMPARE NOTES afterwards, and each round asks about different principles - so telling the same story in four rounds is visible and reads as a thin CV. Build six, and know which two rounds each is for. Second, do not source all six from one project: 'my final-year project' six times says you have done one thing. Spread them across coursework, an internship, a personal project and a group assignment - and a genuinely non-technical one (a society, a team, a part-time job) is fine and often more memorable.",
+              r"""1. THE GOAL - what this is and why it is the highest-leverage prep you can do.
+
+Behavioural rounds ask what look like thirty different questions:
+
+    Tell me about a time you failed.
+    Tell me about a conflict with a teammate.
+    Tell me about a time you had to decide without enough information.
+    Tell me about your most challenging project.
+    Tell me about a time you disagreed with your manager.
+    ... and twenty-five more
+
+Almost everybody prepares by trying to have thirty answers. That fails in two ways: you
+cannot hold thirty rehearsed answers in your head under pressure, and the ones you do
+hold come out sounding recited.
+
+THE INSIGHT THAT CHANGES THE WORK:
+
+    THERE ARE NOT THIRTY QUESTIONS. THERE ARE ABOUT SIX STORY SHAPES.
+    ONE WELL-BUILT STORY ANSWERS SEVERAL PROMPTS WITH A SHIFT OF EMPHASIS.
+
+Build six stories you know cold, learn to re-angle them live, and you have covered the
+whole surface - with material you actually remember, because six real experiences are
+easier to hold than thirty rehearsed paragraphs.
+
+The goal of this page is therefore not "prepare answers". It is:
+
+    (a) build six stories, each in a specific structure, each containing three specific
+        things;
+    (b) build the INDEX that maps questions to story-plus-angle, so that when a question
+        lands you are choosing rather than composing.
+
+That second part is what almost nobody does, and it is what makes the difference between
+freezing for eight seconds and opening confidently.""",
+              r"""2. THE INTUITION - six stories, thirty doors.
+
+Draw it as a mapping, and the leverage becomes obvious:
+
+    THE SIX STORIES              THE QUESTIONS THEY OPEN
+
+    DELIVERY   -------------->   most challenging project
+               \                 tell me about something you shipped
+                \--------------> how do you prioritise
+                 \-------------> a time you took ownership
+
+    FAILURE    -------------->   tell me about a failure
+               \---------------> a mistake that affected others
+                \--------------> how do you take feedback
+                 \-------------> something you would do differently
+
+    CONFLICT   -------------->   a difficult teammate
+               \---------------> disagreeing with a manager
+                \--------------> convincing someone who disagreed
+
+    AMBIGUITY  -------------->   deciding without enough data
+               \---------------> a time you had to act fast
+                \--------------> handling an unclear requirement
+
+    LEARNING   -------------->   learning something hard, fast
+               \---------------> out of your depth
+                \-------------->  picking up a new technology
+
+    HELPING    -------------->   collaboration
+               \---------------> mentoring someone
+                \--------------> making the team better
+
+Six sources, roughly thirty destinations.
+
+And there is a second multiplier, which is the actual skill: ONE STORY TOLD THREE
+DIFFERENT WAYS. The same set of events, opened with a different sentence and weighted
+toward a different part, answers genuinely different questions. Section 9 does this in
+full with a single story - it is the part worth practising most, because it is what
+turns six stories from "not quite enough" into "comfortably enough".
+
+The shape of the work:
+
+    six real experiences  ->  written in a fixed structure  ->  each re-angleable three
+    ways  ->  indexed against the question list""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+BEHAVIOURAL INTERVIEW. A round that asks about things you have actually done, on the
+theory that past behaviour predicts future behaviour. Distinct from a technical round;
+at Amazon and Google it carries real weight and can sink an otherwise strong candidate.
+
+STAR. The standard structure for telling one of these stories:
+    SITUATION - the context, in one or two sentences.
+    TASK      - what you specifically were responsible for.
+    ACTION    - what YOU did, step by step. The heart of it.
+    RESULT    - what happened, with a number.
+Some people add R for REFLECTION - what you would do differently. Treat it as required;
+it is what turns a story into evidence of judgement.
+
+STORY SHAPE. One of the six categories above. Not a specific anecdote - a TYPE of
+experience.
+
+ANGLE. Which aspect of a story you emphasise for a given question. Same events,
+different opening sentence, different weighting.
+
+HEADLINE SENTENCE. The one sentence you open with that states what the story is about.
+It buys you thinking time and tells the interviewer immediately that you understood the
+question.
+
+LEADERSHIP PRINCIPLES (LPs). Amazon's fourteen stated values - Ownership, Bias for
+Action, Have Backbone Disagree and Commit, Deliver Results, Earn Trust, Learn and Be
+Curious, and others. Amazon interviewers ask explicitly against them and score against
+them.
+
+GOOGLEYNESS. Google's rough equivalent - comfort with ambiguity, collaboration,
+intellectual humility, bias to action.
+
+THE BAR RAISER. At Amazon, an interviewer from outside the hiring team whose job is to
+hold the standard. Often the toughest behavioural round.
+
+FOLLOW-UP QUESTIONS. The probing after your story - "what did your teammate think?",
+"what would you do differently?", "how did you know that was the right call?". These
+are where memorised answers fall apart, and they are the actual test.
+
+THE "I" VERSUS "WE" PROBLEM. Interviewers listen for what YOU did. Candidates who say
+"we" throughout leave the room having described a team, with no evidence about
+themselves.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the fatal one: MEMORISING WORD FOR WORD.
+
+A recited answer sounds recited. Worse, it shatters on the first follow-up, because you
+rehearsed a paragraph rather than remembering an experience. "What did your teammate
+think about that?" is not in the paragraph, and the gap between the polished narrative
+and the sudden groping is obvious from across the table.
+
+Learn the STRUCTURE and the NUMBERS. Let the words come out fresh each time. You should
+be able to tell the story in three minutes or in forty-five seconds depending on what
+the room needs, which is impossible if you memorised one fixed version.
+
+TRAP 2: no number in the result. "It went well and the team was happy" is an anecdote.
+"We cut re-index time from nine hours to forty minutes, which took us from one
+experiment a day to eight" is evidence. Every story needs at least one figure - latency,
+percentage, days saved, people affected, size of the thing.
+
+TRAP 3: saying "we" throughout. The interviewer is evaluating YOU. Describe the team's
+situation, then be specific and unembarrassed about your own actions: "I proposed", "I
+wrote", "I decided", "I was wrong about". This feels boastful and is not - it is the
+information they are there to gather. Not providing it is the actual error.
+
+TRAP 4: a failure story where you were not at fault. "My biggest failure was when a
+teammate did not deliver" is not a failure story; it is a complaint. The story must have
+a decision YOU made that was wrong, and what you changed as a result. Choosing a
+safe-but-fake failure is the single most common way this question is wasted.
+
+TRAP 5 - the practical constraint people miss: AMAZON INTERVIEWERS COMPARE NOTES
+AFTERWARDS, and each round is assigned different principles. Telling the same story in
+three rounds is visible to them and reads as a thin candidate. This is precisely why six
+is the minimum, not a comfortable surplus - four rounds, no repeats, and one held in
+reserve.
+
+TRAP 6: front-loading the situation. Most people spend 80% of the time on background and
+20% on what they did. Invert it. The interviewer needs two sentences of context; they
+need two minutes of your actions and reasoning. If they are still hearing setup at the
+ninety-second mark, you have lost the round.
+
+TRAP 7: no reflection. "What would you do differently?" gets asked almost every time,
+and "nothing, it worked out well" is a bad answer - it reads as either dishonest or
+incurious. Have a real one prepared for each story, and make it specific.
+
+TRAP 8: stories with no stakes. "I had a tight deadline so I worked hard and finished"
+contains no decision. A usable story needs a moment where you could have gone two ways
+and had to choose, because the choice is the thing being evaluated.""",
+              r"""5. THE NAIVE APPROACH FIRST, THEN THE REAL ONE.
+
+THE NAIVE APPROACH: prepare an answer per question.
+
+Find a list of thirty common behavioural questions. Write an answer to each. Try to
+remember them.
+
+Why it fails, concretely:
+  - THIRTY IS TOO MANY. Under pressure you will retrieve maybe five reliably.
+  - IT PRODUCES RECITATION, which sounds like recitation and collapses on follow-ups.
+  - THE LIST IS NEVER COMPLETE. The real question is phrased differently from your
+    thirty, and now you are composing from scratch anyway, having practised the wrong
+    skill entirely.
+  - IT IS FRAGILE. You prepared "tell me about a failure"; they ask "tell me about a
+    time you had to admit you were wrong to someone senior". Same story needed,
+    different framing, and your rehearsed paragraph does not fit the frame.
+
+THE REAL APPROACH: six stories, deeply built, indexed by question.
+
+You prepare six EXPERIENCES rather than thirty ANSWERS. Each is written out once in
+STAR, with its numbers fixed and its reflection thought through. Then you build an index
+of which question maps to which story and which angle.
+
+WHY SIX IS THE RIGHT NUMBER - the argument, since "six" needs justifying:
+
+Look at what behavioural questions actually probe. Nearly all of them are asking about
+one of six things: can you SHIP, can you own a MISTAKE, can you handle DISAGREEMENT, can
+you act under UNCERTAINTY, can you LEARN, and do you make OTHERS better. Those are the
+six shapes. They are not arbitrary - they map closely onto Amazon's principles and onto
+what Google means by Googleyness, because both are attempts to describe the same set of
+underlying behaviours.
+
+Below six, you have a gap - some question arrives with nothing behind it. Above six,
+you dilute; the seventh and eighth stories are never as well built as the first six, and
+they are the ones that fall apart under probing.
+
+Six also satisfies the practical constraint from trap 5: four or five rounds, no
+repeats, one in reserve.
+
+THE UPGRADE THAT MAKES SIX SUFFICIENT - re-angling.
+
+This is the skill that separates prepared candidates from well-prepared ones. The same
+story, told with a different opening sentence and a different weighting, answers
+genuinely different questions. You are not being evasive - the events really do contain
+all of those aspects, and choosing which to foreground is exactly what a good answer
+does. Section 9 demonstrates it on one story, three ways.
+
+Practise this out loud. It is the only part of the whole exercise that does not work on
+paper.""",
+              r"""6. HOW TO BUILD IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: WRITE SIX REAL EXPERIENCES IN STAR WITH A
+NUMBER, A DECISION AND A REGRET IN EACH, THEN BUILD AN INDEX FROM QUESTIONS TO
+STORY-PLUS-ANGLE SO THAT ANSWERING BECOMES CHOOSING RATHER THAN COMPOSING.
+
+THIS IS A LOOP, and it needs a clear stopping rule or you will keep polishing forever:
+
+  - Each pass takes one story, writes or refines it, then tests it by answering the
+    questions it is supposed to cover - OUT LOUD, timed.
+  - Failures show up as: running over two minutes, missing a number, having no answer to
+    "what would you do differently", or realising the story does not actually fit a
+    question you assigned it to.
+  - WHAT MAKES IT STOP: every question on your list maps to at least one story and
+    angle, AND you can tell each story in under two minutes without notes, AND you can
+    answer three follow-ups on each without hesitating.
+  - Without that stopping rule this becomes endless rewriting of stories that were
+    already good enough, which is the most common failure mode of behavioural prep.
+
+THE STEPS:
+
+  1. LIST YOUR RAW MATERIAL. Every project, internship, group assignment, hackathon,
+     club role, part-time job. Twenty lines, no filtering. Most people underestimate
+     what they have, and academic projects count - they contain real constraints, real
+     teammates and real decisions.
+
+  2. SORT THE MATERIAL INTO THE SIX SHAPES. Delivery, failure, conflict, ambiguity,
+     learning, helping. Some experiences fit two or three - note that, it is the
+     re-angling opportunity.
+
+  3. PICK ONE PER SHAPE. Choose the one with the clearest DECISION and the most
+     available NUMBERS. Prefer recent, prefer ones where your role was central, prefer
+     ones you can talk about honestly.
+
+  4. WRITE EACH IN STAR. Two sentences of situation. One sentence of task. Then the
+     bulk on action - what you did, in order, in first person singular. Then the result,
+     with a figure.
+
+  5. CHECK EACH AGAINST THE THREE-ITEM CHECKLIST:
+       - A NUMBER in the result.
+       - A DECISION you personally made, where the other choice was real.
+       - A REFLECTION - something you would do differently, specific and honest.
+     A story missing any of these is not finished.
+
+  6. TIME IT SPOKEN. Under two minutes. Out loud, not in your head - written prose takes
+     far longer to say than it looks. Cut the situation first; it is always too long.
+
+  7. BUILD THE INDEX. Take a list of common behavioural questions and, for each one,
+     write down which story and which angle. Where a question has no story, go back to
+     step 3 and reconsider your picks.
+
+  8. WRITE THE HEADLINE SENTENCE for each story-angle pair - the one sentence you open
+     with. This is what you actually deploy in the room.
+
+  9. REHEARSE THE FOLLOW-UPS. For each story, have someone ask: what did the others
+     think, what would you do differently, how did you know that was right, what was the
+     hardest part, what did you get wrong. If you cannot answer these fluently, you
+     memorised rather than remembered.
+
+ 10. PRACTISE RE-ANGLING OUT LOUD. Take one story and tell it three times for three
+     different questions. This is the highest-value rehearsal and the one people skip
+     because it feels repetitive.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Think about a musician preparing for an audition where the panel will call out requests.
+
+The nervous approach is to learn thirty pieces note for note. It does not work. Thirty is
+more than anyone holds securely, the playing comes out stiff, and the moment the panel
+asks for one in a different key everything falls apart.
+
+What experienced musicians do instead is learn six pieces properly - properly enough to
+play them slower, faster, in a different key, with a different emphasis. Then when the
+panel asks for something in a style they have not literally prepared, they reach for the
+piece that fits and bend it.
+
+The preparation is not "have an answer ready". It is "know six things so well that you
+can shape them to whatever is asked".
+
+There is a second half, and it is the part people skip. The musician also knows, in
+advance, which piece to reach for on each kind of request. That decision is made at home
+with time to think, not on stage. On stage there are two seconds, and two seconds is
+enough to CHOOSE but nowhere near enough to DECIDE.
+
+That is the whole method. Six pieces you can bend, and a decided-in-advance map from
+request to piece. When the question lands, you are not composing an answer - you are
+picking one up, and everyone in the room can hear the difference.""",
+              r"""8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is the structure taken apart - each part named, with what
+it holds and what it decides.
+
+--- THE STAR STRUCTURE, part by part ---
+
+    SITUATION
+        Holds: the context. Who, where, what was going on.
+        Length: TWO SENTENCES. This is the part everyone over-writes.
+        Decides: whether the interviewer can follow the rest. Nothing more. It is
+        scaffolding, not content.
+
+    TASK
+        Holds: what YOU specifically were responsible for - not the team's goal, yours.
+        Length: one sentence.
+        Decides: whether the actions that follow are creditable to you. Skip this and
+        your achievements sound like the group's.
+
+    ACTION
+        Holds: what you did, in order, in first person singular, including the reasoning
+        behind the key decision.
+        Length: roughly 60% of the whole story. This is the answer.
+        Decides: everything. This is the part being scored. If you are describing what
+        the team did rather than what you did, you are not answering the question.
+
+    RESULT
+        Holds: what happened, WITH A NUMBER.
+        Length: two or three sentences.
+        Decides: whether this was consequential. Without a figure it is an anecdote.
+
+    REFLECTION (the unofficial fifth part)
+        Holds: what you would do differently, specifically.
+        Length: one or two sentences.
+        Decides: whether you look like someone who learns. Asked nearly every time, so
+        prepare it rather than improvising it.
+
+--- THE SIX SHAPES, and what each one covers ---
+
+    DELIVERY - you shipped something hard under a real constraint.
+        Covers: Deliver Results, Ownership, prioritisation, "most challenging project",
+        "tell me about something you built".
+        Must contain: the constraint, and the trade-off you chose.
+
+    FAILURE - you got something wrong and fixed the cause.
+        Covers: failure, a mistake affecting others, Earn Trust, humility, receiving
+        feedback.
+        Must contain: your own decision that was wrong. Not someone else's.
+
+    CONFLICT - you disagreed with someone and resolved it.
+        Covers: difficult teammate, Have Backbone, disagreeing with a manager,
+        collaboration under tension.
+        Must contain: the other person's position stated fairly, and how it ended.
+
+    AMBIGUITY - you moved without complete information.
+        Covers: ambiguity, Bias for Action, Are Right A Lot, incomplete data, unclear
+        requirements.
+        Must contain: what you did NOT know, and why waiting was worse than acting.
+
+    LEARNING - you taught yourself something hard, fast, because you needed it.
+        Covers: Learn and Be Curious, new technology, being out of your depth.
+        Must contain: how you learned it, not just that you did.
+
+    HELPING - you made someone else more effective.
+        Covers: collaboration, mentoring, Hire and Develop the Best, Googleyness.
+        Must contain: the effect on THEM, measured if possible.
+
+--- THE INDEX ---
+
+    Holds: for each likely question, which story and which angle, plus the headline
+    sentence you open with.
+    Decides: your response time in the room. This is the artefact that converts
+    preparation into performance, and it is the one almost nobody builds.
+
+--- THE HEADLINE SENTENCE ---
+
+    Holds: one sentence naming what the story is about, framed for THIS question.
+    Decides: the first impression, and it buys you the two seconds you need. Compare:
+        weak:   "So, um, in my final year project, there were four of us, and we were
+                 building..."
+        strong: "The clearest example is when I cut our project's scope by two thirds
+                 four weeks in, to protect a fixed demo date."
+    The second one tells the interviewer immediately that you understood the question
+    and have a real answer.""",
+              r"""9. ONE STORY, TOLD IN FULL - THEN RE-ANGLED THREE WAYS.
+
+THE RAW MATERIAL (final-year capstone, four people, six weeks, fixed demo date):
+
+    The team built a campus lost-and-found image search - upload a photo of something
+    you lost, get back matching found items. Twelve item categories planned.
+    At week four, the image indexing pipeline took NINE HOURS for a full re-index, so
+    the team could test at most ONE change per day. Two weeks left.
+    She proposed cutting from twelve categories to four - bags, phones, keys, bottles -
+    which brought re-index time to FORTY MINUTES and allowed EIGHT experiments a day.
+    One teammate objected strongly: twelve categories was what they had promised in the
+    proposal.
+    She made the case on iteration speed rather than on scope, and they agreed to ship
+    four categories with a written plan for adding the rest.
+    Demo delivered on time, 87% retrieval accuracy on the four categories. The
+    alternative was twelve categories at an accuracy nobody would have had time to
+    measure.
+
+NOW THE SAME EVENTS, OPENED THREE DIFFERENT WAYS.
+
+--- ANGLE A: "Tell me about your most challenging project." (DELIVER RESULTS) ---
+
+    HEADLINE: "The hardest call I made was cutting our capstone's scope by two thirds
+    four weeks in, to protect a fixed demo date."
+
+    SITUATION (2 sentences): four-person capstone, six weeks, hard demo date. Lost-and-
+    found image search, twelve categories planned.
+    TASK: I owned the indexing pipeline.
+    ACTION (the bulk): at week four I measured our actual iteration speed and found the
+    full re-index took nine hours - one experiment per day, ten working days left, so
+    at most ten more experiments total. I worked out what was driving it, established
+    that category count was the dominant factor, and calculated that four categories
+    would bring it to forty minutes. I proposed cutting to four.
+    RESULT: forty minutes instead of nine hours, eight experiments a day instead of
+    one, demo delivered on time at 87% accuracy on four categories.
+    REFLECTION: I should have measured iteration speed in week one. The cut was the
+    right call; needing it at week four was my planning failure.
+
+    Emphasis: the constraint, the measurement, the trade-off, the number.
+
+--- ANGLE B: "Tell me about a time you disagreed with a teammate." (HAVE BACKBONE) ---
+
+    HEADLINE: "I pushed hard against a teammate who wanted to keep our full scope, and
+    what changed his mind was reframing it from what we'd promised to how fast we could
+    learn."
+
+    SITUATION: same two sentences, briefer.
+    TASK: I had proposed cutting twelve categories to four; one teammate objected
+    strongly, on the grounds that twelve was what we had committed to in the proposal.
+    ACTION (the bulk): I took his objection seriously - it was a real commitment and he
+    was right that we had made it. But I thought we were comparing the wrong things. I
+    showed him the arithmetic: at one experiment a day we had ten experiments left, and
+    we had no measurement of accuracy on ANY category. At eight a day we had eighty. I
+    proposed that we ship four categories properly and write up exactly how the other
+    eight would be added, so the commitment became deferred rather than dropped. He
+    agreed to that, and he wrote the extension plan.
+    RESULT: same numbers, and - the part that matters for this angle - he stayed
+    invested. He wrote the plan, and we presented the cut as a deliberate decision
+    rather than a shortfall.
+    REFLECTION: I opened by arguing for my conclusion instead of asking what he was
+    optimising for. It cost us most of a day.
+
+    Emphasis: the other person's position stated fairly, the reframing, and disagree-
+    and-commit landing on both sides.
+
+--- ANGLE C: "Tell me about a decision you made without enough information." (AMBIGUITY) ---
+
+    HEADLINE: "I cut two thirds of our project's scope without knowing whether what was
+    left would be enough for a convincing demo."
+
+    SITUATION: same.
+    TASK: decide at week four whether to keep scope or protect iteration speed.
+    ACTION (the bulk): what I did NOT know was whether four categories would be
+    persuasive to the panel, or whether 87% - or whatever we reached - would be good
+    enough. Nobody could tell me. What I DID know was measurable: our iteration rate,
+    and how many experiments remained at each scope. So I decided on the thing I could
+    measure rather than the thing I could only guess at, on the reasoning that a
+    measured 87% on four categories was defensible in a way that an unmeasured twelve
+    never would be. I also set a checkpoint - if we were not above 80% by day eight, we
+    would cut to two categories.
+    RESULT: 87% on four categories, demo on time, checkpoint never triggered.
+    REFLECTION: the checkpoint was the best part of the decision and I nearly did not
+    set it. I now try to make every irreversible-feeling decision reversible by putting
+    a measurable trigger on it.
+
+    Emphasis: what was unknown, why acting beat waiting, and the safeguard.
+
+WHAT THIS DEMONSTRATES: three genuinely different answers, to three genuinely different
+questions, from ONE experience. Not evasion - the events really do contain all three
+aspects, and the skill is choosing which to foreground. Six stories times three angles
+is eighteen distinct answers, which covers the thirty questions comfortably once you
+account for overlap.
+
+AND THE INVERSION WORTH NOTICING: the SAME story is a strong answer or a weak one
+depending entirely on the angle. Told in Angle A's form when asked about conflict, it
+answers the wrong question and reads as though you did not listen - the disagreement is
+never even mentioned. Choosing the angle is not presentation polish; it is the answer.""",
+              r"""10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION ACTUALLY COSTS:
+
+  - Listing raw material: an hour, once.
+  - Writing six stories in STAR: about an hour each, so six hours.
+  - Building the index and headline sentences: two hours.
+  - Rehearsing out loud, including re-angling and follow-ups: three or four sessions of
+    an hour.
+  Roughly twelve to fifteen hours in total, and it is the best-returning twelve hours in
+  the whole interview process - because unlike DSA practice, it has a definite end. You
+  finish it, and it stays finished.
+
+WHEN TO DO IT: early, not the night before. The stories need to settle so you remember
+them as experiences rather than as text. Write them three weeks out, rehearse in the
+last week.
+
+THE FOLLOW-UPS TO PREPARE FOR, per story, because these are the actual test:
+  - "What did the other people think?"
+  - "What would you do differently?"
+  - "How did you know that was the right call?"
+  - "What was the hardest part?"
+  - "What did you get wrong?"
+If you can answer all five fluently on all six stories, you are prepared. If you cannot,
+you have memorised rather than remembered, and the room will find that out.
+
+TWO PRACTICAL CONSTRAINTS PEOPLE MISS:
+
+  1. AMAZON INTERVIEWERS COMPARE NOTES afterwards, and each round is assigned different
+     leadership principles. Repeating a story across rounds is visible and reads as a
+     thin candidate. Six is the minimum for four or five rounds with one in reserve -
+     not a comfortable surplus.
+
+  2. GOOGLE WEIGHTS COLLABORATION AND AMBIGUITY more heavily; AMAZON asks explicitly
+     against named principles and expects you to answer against them. Same stories, and
+     you should know which principle each angle is serving so you can name it when the
+     question does.
+
+THE #1 MISTAKE: preparing answers instead of preparing stories. Thirty rehearsed
+paragraphs cannot be held under pressure, come out sounding recited, and collapse on the
+first follow-up - because you practised producing text rather than remembering an
+experience. Six well-built stories with an index beat thirty memorised answers, and take
+less work.
+
+RUNNER-UP: no numbers. A story without a figure is an anecdote, and interviewers
+discount anecdotes heavily.
+
+TAKEAWAY: there are six story shapes, not thirty questions - so build six experiences
+you know cold, practise telling each one three different ways, and decide the
+question-to-story map at home so that in the room you are choosing rather than
+composing.""",
           ],
           pitfalls="Memorising word-for-word, which sounds robotic and collapses under a follow-up; six stories from the same project (you will run out and it looks thin); stories with no number; forgetting that Amazon interviewers compare notes, so reusing the identical story in four rounds is visible - vary them; no 'what I'd do differently' prepared, which is the most common follow-up in the set.",
           followups="'Do you have another example?' - the reason you need more than one story per shape. 'What did your team think?' - prepare the other people's perspective for each story, since that is where thin stories fall apart."),
