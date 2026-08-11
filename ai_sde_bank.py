@@ -27189,76 +27189,586 @@ shrinks everything without eliminating anything.
 """.strip("\n")
 
 _EXAMPLES_ML2["L1 vs L2 regularization"] = [
-    """The behaviour side by side on the same data.
-Linear model, 100 features, only 8 of which genuinely matter.
-  No regularization: all 100 weights non-zero, several large ones fitted to
-  noise. Train R^2 0.99, test R^2 0.61.
-  L2 (lambda tuned): all 100 weights non-zero but small - the irrelevant ones
-  sit around 0.001 to 0.02. Test R^2 0.83.
-  L1 (lambda tuned): 89 weights are EXACTLY 0.0; 11 survive, including all 8
-  real ones. Test R^2 0.85, and the model now names its own features.
-Same data, same base model. L1 additionally answered "which features matter?"
-for free - and that interpretability is often worth more than the marginal
-accuracy.""",
+    """1. THE GOAL - two ways to charge a model for complexity.
 
-    """The gradient argument as arithmetic - why zeros appear.
-Take a weight currently at w = 0.01 with lambda = 0.1.
-  L2: gradient contribution = 2 x lambda x w = 2 x 0.1 x 0.01 = 0.002.
-      A tiny nudge. Next step the weight is 0.0098, and the nudge shrinks
-      again. It asymptotes toward zero forever.
-  L1: gradient contribution = lambda x sign(w) = 0.1.
-      Fifty times larger, and it does NOT shrink as w does. It drives the
-      weight to zero and pins it there.
-This is the whole mechanism in two lines of arithmetic, and computing it
-explicitly is far more convincing than the diamond-versus-circle picture.""",
+Both L1 and L2 do the same job: add a PENALTY on the weights to the loss, so the optimiser
+only grows a weight when the data genuinely justifies it. Both reduce overfitting. They
+differ in one striking way:
 
-    """The failure case: L1 with correlated features.
-Two features are 0.98 correlated - say "height in cm" and "height in inches"
-recorded separately by a data pipeline bug.
-  L2 splits the weight roughly evenly between them: 0.4 and 0.4.
-  L1 picks ONE and zeroes the other: 0.8 and 0.0 - and WHICH one it picks can
-  flip between retrains on slightly different data.
-For a model whose feature importances are reported to stakeholders, that
-instability is a real problem: the story changes every month for no substantive
-reason. Elastic net is the standard fix, because the L2 component keeps
-correlated features together while the L1 component still produces sparsity.""",
+    L2 (RIDGE)   penalises the SQUARE of each weight.
+                 Weights shrink smoothly toward zero and essentially never reach it.
 
-    """Where each one is actually used in practice.
-* Neural networks: L2, almost always, under the name weight decay - typically
-  1e-4 to 1e-2. Sparsity is not the goal; smooth shrinkage is.
-* High-dimensional genomics or text with 50,000 features and 500 samples: L1,
-  because you need the model to select a handful of features and you want to
-  know which.
-* Recommender and embedding models: L2 on the embedding norms to stop rare
-  items acquiring huge vectors.
-* Compressed sensing and signal recovery: L1, precisely because it recovers
-  sparse signals.
-Naming weight decay as L2 is a small thing that signals you have trained
-networks rather than only read about regularization.""",
+    L1 (LASSO)   penalises the ABSOLUTE VALUE of each weight.
+                 Some weights land EXACTLY on zero and stay there.
 
-    """Tuning lambda - the part that is actually the work.
-Sweep it logarithmically and watch train and validation error together:
-  lambda 0.0001: train 0.02, val 0.31 - barely regularized, still overfitting
-  lambda 0.01:   train 0.08, val 0.12 - the sweet spot
-  lambda 1.0:    train 0.29, val 0.30 - underfitting; the penalty dominates
-  lambda 100:    train 0.51, val 0.52 - all weights near zero, predicting the
-                 mean
-The U-shape in validation error is the same shape as the bias-variance curve,
-because that is exactly what lambda is trading. Choose it by cross-validation,
-never by intuition - and re-tune it if you change the feature scaling.""",
+That second behaviour is the whole reason anyone cares about the distinction. A weight of
+exactly zero means the feature is GONE - it contributes nothing, and you can delete the
+column. So L1 does feature selection as a side effect of fitting.
 
-    """The interview version, and the trap inside it.
-"Your model overfits. Would you use L1 or L2?"
-The answer is a question: do you want feature selection, and are your features
-correlated? Then:
-  * Many weak signals, correlated features, a neural network -> L2.
-  * Few strong signals, want interpretability, very high dimensional -> L1.
-  * Both concerns -> elastic net.
-The trap: candidates often say "L1 because it prevents overfitting more". It
-does not necessarily - it prevents overfitting DIFFERENTLY, by eliminating
-features rather than by shrinking all of them. And the follow-up that catches
-people is "did you standardise your features first?" - without that, the
-penalty is applied inconsistently and the comparison is meaningless.""",
+    100 features, 8 of which actually matter:
+
+        no regularization:  100 non-zero weights, several of them large and wrong
+        L2:                 100 non-zero weights, all of them small and sensible
+        L1:                 12 non-zero weights, 88 EXACTLY zero
+
+Both fix the overfitting. Only one hands you a shorter list of features.
+
+The question this page has to answer, and the one an interviewer actually asks, is WHY the
+squared penalty never quite reaches zero while the absolute-value penalty lands on it
+precisely. It is not a quirk of the solver - it falls out of the arithmetic, and section 5
+derives it two ways.
+
+WHAT THIS ENTRY OWNS, so the cluster does not repeat itself:
+
+    THIS ENTRY - how the two penalties DIFFER, why L1 produces exact zeros, and how to
+                 choose between them.
+    "OVERFITTING" (sibling) - the full prevention toolkit these two belong to.
+    "BIAS-VARIANCE TRADE-OFF" (sibling) - why penalising complexity helps at all: you are
+                 buying variance reduction by paying bias.""",
+
+    """2. THE INTUITION - a constant push versus a fading one.
+
+Picture the optimiser trying to settle each weight. Two forces act on it:
+
+    THE DATA pulls the weight toward whatever value best fits the training set.
+    THE PENALTY pushes it back toward zero.
+
+The weight comes to rest where the two balance. The entire difference between L1 and L2 is
+HOW THE PENALTY'S PUSH BEHAVES AS THE WEIGHT GETS SMALL:
+
+    L2's push, at weight w:      proportional to w        (it FADES as w shrinks)
+    L1's push, at weight w:      constant                  (it does NOT fade)
+
+Drawn against the weight's current size:
+
+    push
+     |
+     |   L1: ------------------------------  constant, right up to zero
+     |
+     |                              /
+     |                        /          L2: proportional - vanishes near zero
+     |                  /
+     |            /
+     |      /
+     +--/-------------------------------> weight
+     0
+
+Now the consequence is obvious. Under L2, as a weight approaches zero the force pushing it
+there weakens, so it drifts closer and closer and never arrives - like something slowing as
+it approaches a wall. Under L1 the force is undiminished all the way in, so the weight is
+driven onto exactly zero, and once there the penalty holds it.
+
+The second picture, which is how it is usually drawn in textbooks, says the same thing
+geometrically. Think of the penalty as a BUDGET on total weight size, and the fit as
+contour lines expanding until they touch that budget:
+
+        L2 budget: a CIRCLE            L1 budget: a DIAMOND
+                                       (corners sit ON the axes)
+
+            w2                              w2
+            |                               |
+         ___|___                            /\\
+        /   |   \\                          /  \\
+    ----+---+---+----  w1            -----+----+-----  w1
+        \\   |   /                          \\  /
+         ---|---                            \\/
+            |                               |
+
+        contours touch a smooth        contours touch a CORNER,
+        curve - both weights            and a corner has one
+        end up non-zero                 coordinate exactly zero
+
+A circle has no corners, so the first point of contact almost never has a coordinate of
+exactly zero. A diamond's corners stick out toward the contours and sit precisely on the
+axes - so touching at a corner means one weight is exactly zero, and corners are the most
+likely place to touch.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+REGULARIZATION. Adding a penalty for complexity to the loss, so the optimiser must justify
+every weight it grows.
+
+WEIGHT / COEFFICIENT. One learned number, typically multiplying one feature. Its size is
+how much that feature influences the prediction.
+
+L2 / RIDGE / TIKHONOV / WEIGHT DECAY. Penalty equal to lambda times the sum of SQUARED
+weights. In deep learning it is usually called weight decay.
+
+L1 / LASSO. Penalty equal to lambda times the sum of ABSOLUTE weights. "Lasso" stands for
+Least Absolute Shrinkage and Selection Operator - the word "selection" is in the name
+because of the zeros.
+
+LAMBDA. The penalty strength. Zero means no regularization; large means the penalty
+dominates and everything is crushed toward zero. The one hyperparameter you must tune.
+
+SPARSITY. Having many weights exactly zero. A sparse model is smaller, faster and easier to
+explain, because most features have literally dropped out.
+
+FEATURE SELECTION. Deciding which features to keep. L1 does it automatically as part of
+fitting, rather than as a separate step.
+
+GRADIENT. The direction and size of steepest increase in the loss. The optimiser steps
+against it. For our purposes: how hard each term PUSHES a weight.
+
+SUB-GRADIENT. The absolute-value function has a sharp corner at zero and no ordinary
+derivative there, so solvers use a sub-gradient (or coordinate descent, or proximal
+methods). This corner is not an inconvenience - it is exactly the thing that produces the
+zeros.
+
+SOFT THRESHOLDING. The rule L1 effectively implements: shrink every weight toward zero by a
+fixed amount, and if it would cross zero, set it to zero and stop.
+
+ELASTIC NET. Both penalties at once. Gets L1's sparsity with L2's stability on correlated
+features.
+
+CORRELATED FEATURES. Features carrying nearly the same information - height in centimetres
+and height in inches. Section 4 shows why L1 behaves badly here and L2 does not.
+
+CLOSED FORM. A direct formula for the answer. Ridge has one; Lasso does not, because of that
+corner - it needs an iterative solver.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE THAT MATTERS IN PRACTICE: L1 WITH CORRELATED FEATURES.
+
+Two features are 0.98 correlated - say a data pipeline recorded "height in cm" and "height
+in inches" as separate columns. Together they need a total influence of about 2.0.
+
+    L2 SPLITS IT:   weight 1.0 on each. Stable - refit on a slightly different sample and
+                    you get roughly 1.0 and 1.0 again.
+
+    L1 PICKS ONE:   weight 2.0 on one, EXACTLY 0.0 on the other. And WHICH one it picks is
+                    close to arbitrary. Refit on a bootstrap resample and it may flip.
+
+Predictions are fine either way. But the FEATURE SELECTION is unstable, and that matters
+enormously if anyone is reading the non-zero weights as "these are the important features".
+Run it on Monday and inches matters; run it on Tuesday and centimetres does. Anyone drawing
+conclusions from that list is drawing conclusions from a coin flip.
+
+Why it happens: to L1 the pair are nearly interchangeable, so putting all the weight on one
+costs the same in fit and LESS in penalty than splitting - because the penalty is on the sum
+of absolute values, and |2.0| + |0| equals |1.0| + |1.0|, so there is no penalty reason to
+split but there IS a sparsity solution the solver will find. L2 genuinely prefers splitting,
+because squaring makes 1.0^2 + 1.0^2 = 2.0 cheaper than 2.0^2 + 0 = 4.0.
+
+That is a real derivation worth remembering: THE SQUARED PENALTY PREFERS SPREADING WEIGHT
+OUT; THE ABSOLUTE PENALTY IS INDIFFERENT TO HOW IT IS SPREAD. Elastic Net exists precisely
+to get sparsity without this instability.
+
+TRAP 2: forgetting to STANDARDISE the features first. The penalty treats every weight
+identically, but a feature measured in millimetres needs a weight a thousand times larger
+than the same feature in metres to have the same effect - so it gets penalised a thousand
+times more heavily for no reason at all. ALWAYS scale features before regularising. This is
+not a refinement; unscaled inputs make the penalty arbitrary.
+
+TRAP 3: penalising the intercept. The bias/intercept term should normally be excluded from
+the penalty. It sets the overall level of the prediction and shrinking it toward zero just
+biases every prediction toward zero for no benefit. Most libraries handle this; hand-rolled
+implementations often do not.
+
+TRAP 4: assuming L1 is "better because it is simpler". Sparsity is a property, not a virtue.
+For neural networks, L2 (as weight decay) is used almost universally and L1 almost never -
+you do not want individual weights zeroed in a dense network, you want all of them small.
+
+TRAP 5: reading a zero as "this feature is useless". It means "this feature was not worth
+its penalty GIVEN the other features present" - which for correlated features means it lost
+a near-tie, not that it carries no information.
+
+TRAP 6: tuning lambda on the test set, or not tuning it at all. It is the only hyperparameter
+here and it changes everything; the default is rarely right. Section 9 sweeps it.""",
+
+    """5. THE NAIVE VIEW FIRST, THEN THE DERIVATION.
+
+THE NAIVE VIEW: "L1 gives zeros and L2 does not - that is just how they behave."
+
+True, and useless in an interview, because the follow-up is always "why?" Here are two
+derivations. The first is arithmetic and takes thirty seconds; the second is geometric and
+is the one textbooks draw.
+
+DERIVATION 1 - THE GRADIENT ARGUMENT, WITH NUMBERS.
+
+The optimiser moves a weight according to how hard each term pushes. Take lambda = 0.1 and
+watch the penalty's push as the weight gets small:
+
+    the penalty's push on w:
+
+        L2 penalty is lambda x w^2      ->  its gradient is 2 x lambda x w
+        L1 penalty is lambda x |w|      ->  its gradient is lambda x sign(w)
+
+    at w = 0.01:
+        L2 push = 2 x 0.1 x 0.01  =  0.002
+        L1 push = 0.1                        <- FIFTY TIMES STRONGER
+
+    at w = 0.001:
+        L2 push = 2 x 0.1 x 0.001 =  0.0002
+        L1 push = 0.1                        <- FIVE HUNDRED TIMES STRONGER
+
+    at w = 0.0001:
+        L2 push = 0.00002
+        L1 push = 0.1                        <- FIVE THOUSAND TIMES STRONGER
+
+L2's push VANISHES as the weight approaches zero. There is always some tiny amount of fit
+improvement that outweighs a push of 0.00002, so the weight settles at some small non-zero
+value and stops. L1's push is 0.1 no matter how close to zero the weight gets - it never
+weakens, so it drives the weight all the way onto zero, and once there it holds it.
+
+That is the whole mechanism, and it is worth being able to produce those numbers on a
+whiteboard.
+
+WHERE EACH ONE COMES TO REST - the equilibrium, which makes it concrete.
+
+A weight settles where the data's pull equals the penalty's push. Suppose a feature's
+marginal benefit to the fit is b per unit of weight, with lambda = 0.1:
+
+    UNDER L2:  the weight grows while  b > 2 x lambda x w,  so it stops at  w = b / (2 x lambda)
+        feature worth b = 0.05  ->  w = 0.05 / 0.2 = 0.25      non-zero
+        feature worth b = 0.40  ->  w = 0.40 / 0.2 = 2.00      non-zero
+        NOTHING IS EVER EXACTLY ZERO, however useless the feature.
+
+    UNDER L1:  the push is a constant 0.1 regardless of w. So:
+        feature worth b = 0.05  ->  0.05 < 0.1, the penalty always wins  ->  w = 0 EXACTLY
+        feature worth b = 0.40  ->  0.40 > 0.1, it survives (shrunk by the constant push)
+        THERE IS A THRESHOLD: any feature worth less than lambda is zeroed outright.
+
+Same two features, same lambda. L2 gives (0.25, 2.00). L1 gives (0, 2.00-ish). That
+threshold behaviour is called SOFT THRESHOLDING and it is what "automatic feature selection"
+actually means.
+
+DERIVATION 2 - THE GEOMETRIC ARGUMENT, which is the picture people draw.
+
+Think of the penalty as a BUDGET: "the weights must stay inside this region". The loss is
+drawn as contour lines - ellipses centred on the unpenalised best fit - which expand until
+they first touch the budget region. That touching point is the answer.
+
+    L2's budget region is a CIRCLE (w1^2 + w2^2 <= t). Smooth everywhere. An expanding
+    ellipse touching a circle almost surely touches at a point where BOTH coordinates are
+    non-zero - the set of points on a circle with a zero coordinate is just two points out
+    of infinitely many.
+
+    L1's budget region is a DIAMOND (|w1| + |w2| <= t). Its CORNERS lie exactly on the axes,
+    and they stick OUT toward the incoming contours. An expanding ellipse is far more likely
+    to meet a protruding corner first than a flat edge - and at a corner, one coordinate is
+    exactly zero.
+
+The sharp corner is the source of the sparsity. It is also why Lasso has no closed-form
+solution while Ridge does: that corner has no derivative, so you cannot solve it by setting
+a gradient to zero.
+
+WHICH TO USE, as a consequence rather than a rule:
+    Many features, most suspected useless, and you want a shorter list -> L1.
+    Correlated features, or you just want a general smoother                -> L2.
+    Both                                                                    -> Elastic Net.""",
+
+    """6. HOW TO USE THEM - the procedure, step by step.
+
+The one sentence that holds the whole idea: ADD A PENALTY ON WEIGHT SIZE SO EVERY WEIGHT
+MUST EARN ITS KEEP - SQUARED IF YOU WANT ALL OF THEM SMALL, ABSOLUTE IF YOU WANT MOST OF
+THEM GONE - AND TUNE THE STRENGTH BY SWEEPING IT AGAINST VALIDATION ERROR.
+
+THE TUNING LOOP, with its stopping rule:
+
+  - Each pass sets one value of lambda, fits, and records BOTH training and validation error.
+  - Sweep LOGARITHMICALLY - 0.0001, 0.001, 0.01, 0.1, 1, 10 - not linearly. The interesting
+    behaviour spans orders of magnitude, and a linear sweep from 0 to 1 in steps of 0.1
+    would miss everything below 0.1 where the answer often lives.
+  - WHAT MAKES IT STOP: validation error stops falling and starts rising. That turning point
+    is the answer.
+  - WHAT MAKES IT NOT TERMINATE: watching the gap between train and validation rather than
+    the validation level. The gap shrinks monotonically as lambda rises - all the way to a
+    model that predicts a constant - so that objective has a trivial minimum and walks you
+    into underfitting.
+
+THE STEPS:
+
+  1. STANDARDISE THE FEATURES. Every feature to comparable scale, before anything else.
+     Without this the penalty is applied arbitrarily - a feature's units decide how hard it
+     is punished (trap 2).
+
+  2. EXCLUDE THE INTERCEPT from the penalty. It sets the baseline level, and shrinking it
+     just biases predictions toward zero.
+
+  3. CHOOSE THE PENALTY from what you want, not from what sounds sophisticated:
+        want a shorter feature list, suspect many are junk    -> L1
+        features are correlated, or you want general smoothing -> L2
+        want sparsity but the features are correlated          -> Elastic Net
+        it is a neural network                                 -> L2, called weight decay
+
+  4. SWEEP LAMBDA logarithmically, recording training and validation error at each value.
+
+  5. PICK THE LAMBDA THAT MINIMISES VALIDATION ERROR. Not the one that closes the gap.
+
+  6. IF THE DATA IS SMALL, do the sweep inside cross-validation rather than on a single
+     split - the differences between neighbouring lambdas are often smaller than the noise
+     of one split.
+
+  7. IF YOU USED L1, LOOK AT WHICH WEIGHTS SURVIVED - and before reporting them as "the
+     important features", refit on a resample and check the SAME ones survive. With
+     correlated features they frequently do not (trap 1).
+
+  8. RE-CHECK AFTER ANY FEATURE CHANGE. Adding or removing features changes what each
+     remaining weight is worth, which changes which ones L1 zeroes.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine you are packing for a trip and every item costs you something to bring. Two possible
+charging schemes, and they produce completely different suitcases.
+
+UNDER THE FIRST SCHEME the charge grows with the SQUARE of an item's weight. A heavy item is
+punished severely - but a very light item is charged almost nothing. A pack of tissues
+weighing ten grams costs you essentially nothing, so you might as well bring it. And the
+next near-weightless thing. And the next.
+
+You end up with a suitcase containing everything you own, but only tiny amounts of each: a
+few tissues, a small bottle, one spare sock. Nothing is heavy, nothing has been left behind.
+
+UNDER THE SECOND SCHEME there is a flat charge per item, no matter how light. Now the
+tissues cost the same as anything else. Suddenly the question for every marginal item is:
+is this worth the flat fee at all? For most things the answer is no, and they simply do not
+go in the case.
+
+You end up with a suitcase containing a dozen items you actually need, and everything else
+left at home entirely. Not "a small amount of" - none.
+
+That is the whole difference. The squared charge lets useless things ride along in tiny
+quantities because it barely notices them. The flat charge asks each item to justify itself
+as an item, and most cannot.
+
+Which you want depends on the trip. If you would rather have a bit of everything just in
+case, take the first. If you want a short packing list you can read at a glance - and you
+are prepared to leave things behind - take the second.
+
+One warning about the flat-fee scheme. If you own two nearly identical jumpers, it will take
+one and leave the other, and which one is more or less arbitrary. Pack the same trip twice
+and you may get different jumpers. So if somebody is going to read your packing list and
+conclude "this is the jumper she needs", they will be over-reading it.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each piece of the penalised loss - what it holds, what it
+decides, and how it behaves.
+
+--- THE OBJECTIVE ---
+
+    TOTAL LOSS  =  FIT ERROR  +  lambda x PENALTY
+
+    FIT ERROR
+        HOLDS: how badly the model predicts the training data.
+        DECIDES: the pull that grows weights. Alone, it produces the unregularised fit.
+
+    lambda (THE PENALTY STRENGTH)
+        HOLDS: the exchange rate between fit and simplicity.
+        DECIDES: everything about the outcome. lambda = 0 removes the penalty entirely;
+        very large crushes every weight toward zero and predicts the mean.
+        TUNED BY: a logarithmic sweep against validation error. It is the only
+        hyperparameter here, and the default is rarely right.
+
+    PENALTY
+        HOLDS: a number measuring the total size of the weights.
+        DECIDES: the push toward zero - and the SHAPE of that push is the entire subject.
+
+--- THE TWO PENALTIES, TERM BY TERM ---
+
+    L2 (RIDGE):   penalty = sum of w^2
+
+        THE PUSH ON ONE WEIGHT: 2 x lambda x w  - PROPORTIONAL to the weight.
+        AS w -> 0: the push -> 0. This is why nothing lands exactly on zero.
+        EQUILIBRIUM: a feature worth b settles at w = b / (2 x lambda). Always non-zero.
+        ON CORRELATED FEATURES: prefers to SPLIT the weight, because 1^2 + 1^2 = 2 is
+        cheaper than 2^2 + 0 = 4. This is what makes it stable.
+        GEOMETRY: a circular budget region. Smooth, no corners.
+        SOLVABLE: yes, in closed form.
+        KNOWN AS: weight decay, in deep learning.
+
+    L1 (LASSO):   penalty = sum of |w|
+
+        THE PUSH ON ONE WEIGHT: lambda x sign(w)  - CONSTANT, whatever the weight's size.
+        AS w -> 0: the push stays at lambda. This is why weights land exactly on zero.
+        EQUILIBRIUM: a feature worth less than lambda is zeroed OUTRIGHT; one worth more
+        survives, shrunk by a constant amount. This threshold behaviour is SOFT
+        THRESHOLDING.
+        ON CORRELATED FEATURES: INDIFFERENT to how weight is split, because |2| + |0| =
+        |1| + |1|. So it picks one arbitrarily - the source of the instability in trap 1.
+        GEOMETRY: a diamond budget region whose CORNERS lie on the axes.
+        SOLVABLE: no closed form - the corner has no derivative, so it needs coordinate
+        descent or a proximal method.
+
+    ELASTIC NET:  penalty = a x sum|w| + b x sum w^2
+
+        HOLDS: both penalties with their own weights.
+        DECIDES: sparsity from the L1 part, stability from the L2 part. Correlated features
+        get selected as a GROUP rather than arbitrarily one of them.
+        COSTS: two hyperparameters to tune instead of one.
+
+--- WHAT MUST HAPPEN BEFORE ANY OF THIS ---
+
+    FEATURE STANDARDISATION. The penalty treats all weights identically, so features must
+    be on comparable scales or the punishment is decided by their units.
+
+    INTERCEPT EXCLUSION. The intercept sets the prediction's baseline level; penalising it
+    biases every prediction toward zero for no gain.""",
+
+    """9. WORKED WITH REAL NUMBERS.
+
+CASE 1 - THE PUSH, AS A WEIGHT APPROACHES ZERO. lambda = 0.1.
+
+    weight w        L2 push (2 x 0.1 x w)      L1 push (0.1)        ratio
+    --------        ---------------------      -------------        -----
+    1.0             0.2                        0.1                  L2 stronger
+    0.5             0.1                        0.1                  EQUAL - the crossover
+    0.1             0.02                       0.1                  L1 5x stronger
+    0.01            0.002                      0.1                  L1 50x
+    0.001           0.0002                     0.1                  L1 500x
+    0.0001          0.00002                    0.1                  L1 5,000x
+
+    Read the L2 column downward: 0.2, 0.1, 0.02, 0.002, 0.0002, 0.00002 - heading to
+    nothing. Any scrap of fit improvement beats a push of 0.00002, so the weight parks
+    somewhere small and stays.
+
+    Read the L1 column: 0.1, every time. It never lets up, so the weight is driven onto
+    exactly zero.
+
+    Note the crossover at w = 0.5: ABOVE it L2 pushes harder, BELOW it L1 does. So L2 is the
+    more aggressive penalty on large weights and the more forgiving one on small weights -
+    which is exactly the wrong way round if what you want is to eliminate features.
+
+CASE 2 - WHERE TWO FEATURES COME TO REST. lambda = 0.1.
+
+    Feature A is nearly useless: marginal benefit to the fit b = 0.05 per unit of weight.
+    Feature B genuinely matters:                             b = 0.40 per unit of weight.
+
+    UNDER L2, a weight stops where b = 2 x lambda x w, so w = b / 0.2:
+        Feature A:  w = 0.05 / 0.2 = 0.25
+        Feature B:  w = 0.40 / 0.2 = 2.00
+        Both survive. The useless feature keeps a quarter of a unit of influence forever.
+
+    UNDER L1, the push is a flat 0.1:
+        Feature A:  0.05 < 0.1  ->  the penalty always exceeds the benefit  ->  w = 0 EXACTLY
+        Feature B:  0.40 > 0.1  ->  survives
+        The useless feature is GONE - the column can be deleted.
+
+    Same data, same lambda, same two features: L2 gives (0.25, 2.00), L1 gives (0, ~2.00).
+
+CASE 3 - THE INVERSION: CHANGE lambda AND L1'S ANSWER FLIPS.
+
+    Keep the same two features and move lambda:
+
+        lambda = 0.01:   A: 0.05 > 0.01  -> SURVIVES        B: survives
+        lambda = 0.10:   A: 0.05 < 0.10  -> ZEROED          B: survives
+        lambda = 0.50:   A: zeroed                          B: 0.40 < 0.50 -> ZEROED TOO
+
+    At lambda 0.5 BOTH features are eliminated and the model predicts a constant. The
+    "automatic feature selection" is entirely a function of a hyperparameter you chose -
+    which is why "L1 tells you which features matter" is a claim to make carefully. It tells
+    you which features are worth more than lambda.
+
+CASE 4 - THE lambda SWEEP, and where the answer actually is.
+
+        lambda      train error    validation error
+        --------    -----------    ----------------
+        0.0001      0.02           0.31
+        0.01        0.08           0.19
+        0.1         0.14           0.16          <- minimum
+        1.0         0.28           0.29
+        10          0.55           0.56
+
+    Read training error downward: 0.02, 0.08, 0.14, 0.28, 0.55 - monotonically worse, as it
+    must be, since every increase in lambda restricts the fit further.
+
+    Read validation: 0.31, 0.19, 0.16, 0.29, 0.56 - a clear U with its minimum at 0.1.
+
+    And note the trap: the GAP is 0.29, 0.11, 0.02, 0.01, 0.01. It keeps shrinking past the
+    optimum, all the way to the useless model at lambda 10 where the gap is smallest of all.
+    Minimising the gap would have chosen the worst row on the table.
+
+CASE 5 - CORRELATED FEATURES, AND THE INSTABILITY.
+
+    Two features 0.98 correlated (height in cm, height in inches). The pair together need
+    about 2.0 of total influence.
+
+        L2 chooses:  1.0 and 1.0
+            Why: it is cheaper. 1.0^2 + 1.0^2 = 2.00, whereas 2.0^2 + 0^2 = 4.00. The
+            squared penalty ACTIVELY PREFERS spreading weight out.
+
+        L1 chooses:  2.0 and 0.0  (or 0.0 and 2.0 - it does not care)
+            Why: |2.0| + |0| = 2.00 and |1.0| + |1.0| = 2.00. IDENTICAL cost. The absolute
+            penalty is completely indifferent between them, so the choice falls to
+            tie-breaking inside the solver.
+
+    Refit on a bootstrap resample and L1 may well swap them. L2 will report about 1.0 and 1.0
+    again. If anyone is reading the non-zero weights as a list of important features, L1's
+    answer here is not reproducible - which is what Elastic Net is for.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THEY COST:
+
+  - COMPUTE: L2 has a closed-form solution for linear models, so it is essentially free.
+    L1 needs an iterative solver (coordinate descent, proximal gradient) because of the
+    non-differentiable corner - slower, though rarely a bottleneck.
+  - TUNING: one hyperparameter each, needing a logarithmic sweep, ideally inside
+    cross-validation on small data. Elastic Net needs two.
+  - PREPROCESSING: standardisation becomes mandatory rather than optional.
+  - BIAS: both trade bias UP for variance DOWN. They do not reduce error for free - they
+    move you along the curve in the Bias-Variance sibling, and past the optimum they make
+    things worse.
+
+WHERE EACH IS ACTUALLY USED:
+
+    NEURAL NETWORKS: L2 almost always, under the name WEIGHT DECAY, typically 1e-4 to 1e-2.
+    Sparsity is not the goal there - you want every weight small, not most weights absent.
+    L1 on a dense network mostly just makes optimisation harder.
+
+    LINEAR MODELS WITH MANY FEATURES: L1 or Elastic Net, especially when features outnumber
+    rows - genomics, text with large vocabularies, wide tabular data - because a shorter
+    model is genuinely easier to deploy and defend.
+
+    GRADIENT-BOOSTED TREES: neither, in this form. Complexity is controlled by depth, leaf
+    count and learning rate instead, though the leaf weights themselves are often L2
+    penalised.
+
+    ANY MODEL WITH CORRELATED FEATURES: L2 or Elastic Net, never plain L1 if you intend to
+    interpret the surviving weights.
+
+THE INTERVIEW QUESTION, AND THE TRAP INSIDE IT:
+
+    "Your model overfits. Would you use L1 or L2?"
+
+The answer is a question back: DO YOU WANT FEATURE SELECTION, AND ARE THE FEATURES
+CORRELATED? Then:
+
+    many features, most likely irrelevant, want a shorter model  -> L1
+    correlated features, or just want smoothing                  -> L2
+    both conditions                                              -> Elastic Net
+    it is a neural network                                       -> L2 (weight decay)
+
+And add the thing most candidates omit: either way, standardise the features first and tune
+lambda against validation error, because an untuned penalty is as likely to underfit as the
+original model was to overfit.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why does L1 give exact zeros?" The gradient argument from section 5 - L2's push fades
+    to nothing as the weight shrinks, L1's stays constant. Be ready with the 0.002 versus 0.1
+    numbers; they are more convincing than the diamond picture and faster to say.
+  - "Why does Ridge have a closed form and Lasso not?" The absolute value has a corner at
+    zero with no derivative, so you cannot solve by setting a gradient to zero.
+  - "Can I use L1 for feature selection and then refit without a penalty?" Yes - it is a
+    common two-stage recipe. Just check the selected set is stable across resamples first.
+  - "What does increasing lambda do to bias and variance?" Raises bias, lowers variance. Past
+    the optimum you are trading away more than you gain.
+
+THE #1 MISTAKE: failing to standardise the features before regularising. The penalty is
+identical for every weight, so a feature's UNITS end up deciding how heavily it is punished -
+the same measurement in millimetres and metres gets penalised a thousandfold differently.
+The model runs, produces plausible numbers, and is quietly arbitrary.
+
+RUNNER-UP: reading L1's surviving weights as "the important features" when the features are
+correlated, where the selection is closer to a coin flip than a finding.
+
+TAKEAWAY: L2's push toward zero fades as a weight shrinks so nothing ever quite arrives,
+while L1's push stays constant all the way in and lands weights exactly on zero - so choose
+L2 when you want everything small and L1 when you want most things gone, and standardise
+first or the penalty means nothing.""",
 ]
 
 
@@ -54979,73 +55489,587 @@ dataset.""",
 ]
 
 _EX_P0H["How gradient descent works (batch vs SGD vs mini-batch)"] = [
-    """One step, computed by hand.
-Fit y = w*x with a single sample (x=2, y=6) and start at w=1.
-Prediction 1*2 = 2. Loss = (2-6)^2 = 16.
-Gradient of (w*x - y)^2 with respect to w is 2*(w*x - y)*x = 2*(2-6)*2 = -16.
-Step with lr = 0.01: w <- 1 - 0.01*(-16) = 1.16. New prediction 2.32, loss 13.5.
-Repeat and w climbs toward 3, where the loss is zero.
-The gradient's SIGN says which way to move and its MAGNITUDE says how urgently -
-the minus sign in the update is what turns 'uphill' into 'downhill'.""",
+    """1. THE GOAL - walking downhill without being able to see the valley.
 
-    """The learning rate, shown failing in both directions.
-Same problem, w starts at 1, optimum 3.
-lr = 0.001: w goes 1.016, 1.032, ... it needs hundreds of steps. Correct but
-wasteful - and on a real model it looks like 'the loss is barely moving'.
-lr = 0.2: gradient -16 -> w = 1 + 3.2 = 4.2, overshooting past 3. Next gradient
-is positive and larger, so w swings to -1.4, then further out. The loss
-DIVERGES to NaN.
-The symptom pair to memorise: loss stuck flat -> lr too small (or dead ReLUs);
-loss exploding to NaN within a few steps -> lr too large. Standard practice is a
-warmup then a cosine decay.""",
+A model has parameters. Some settings of those parameters predict well, most predict badly.
+Training means finding good ones.
 
-    """Batch vs SGD vs mini-batch on 60,000 MNIST images.
-BATCH: one update uses all 60,000 images. The gradient is the true gradient -
-smooth, deterministic - but one epoch equals ONE update, and the whole dataset
-must fit in memory. Converges in few steps but each is enormous.
-SGD (batch size 1): 60,000 updates per epoch. Extremely noisy; the loss curve
-zig-zags. That noise is not purely bad - it can knock the model out of a sharp
-local minimum - but it never settles precisely, and it wastes the GPU, which is
-built for parallel arithmetic.
-MINI-BATCH 128: 469 updates per epoch, gradient averaged over 128 samples so the
-noise is reduced by about sqrt(128) ~ 11x, and the matmul is big enough to
-saturate the hardware. This is why essentially all real training is
-mini-batch.""",
+You cannot simply solve for them - for anything beyond the simplest models there is no
+formula. What you CAN do, at any particular setting, is work out which direction makes the
+error worse fastest. Then step the other way.
 
-    """Why the noise in SGD is a feature, illustrated.
-Picture a loss surface with a shallow dip at w=1 (loss 0.4) and the true minimum
-at w=5 (loss 0.05).
-Full-batch descent starting near w=1 computes the exact gradient, which is ~0 at
-the bottom of the dip, and stops there forever.
-SGD's per-sample gradients disagree with each other; that jitter can push the
-parameters over the small ridge and into the better basin.
-Modern framing: mini-batch noise acts as a regulariser and biases training toward
-FLAT minima, which generalise better than sharp ones. It is also why very large
-batch sizes can hurt test accuracy unless you also scale the learning rate and
-add warmup.""",
+    w  <-  w  -  learning_rate x gradient
 
-    """Choosing the batch size in practice - the trade-off table.
-batch 32-64:   noisier, often better generalisation, low memory, more steps.
-batch 256-1024: smoother, faster per epoch on a GPU, needs a larger lr (the
-               linear scaling rule: double the batch, double the lr) and warmup.
-batch = all:   only viable for small datasets or classic convex problems.
-Practical constraint: the batch must fit in GPU memory alongside the activations.
-Gradient ACCUMULATION simulates a large batch on a small GPU - run 8 micro-batches
-of 16, sum the gradients, then step once. Naming that trick answers the common
-follow-up 'what if the batch does not fit?'""",
+That single line is gradient descent. Read it in words: MOVE EACH PARAMETER A LITTLE WAY IN
+THE DIRECTION THAT MOST REDUCES THE ERROR, AND REPEAT.
 
-    """Beyond plain SGD - what the optimisers add.
-MOMENTUM: keep a running average of past gradients, v <- 0.9v + grad, and step
-with v. On a ravine-shaped surface it damps the side-to-side oscillation and
-accelerates along the valley floor.
-RMSProp: divide by a running average of squared gradients, giving each parameter
-its own effective learning rate - useful when features have wildly different
-scales.
-ADAM: momentum + RMSProp + bias correction. The default for Transformers, usually
-with lr around 1e-4 to 3e-4 and weight decay (AdamW).
-Say what each fixes rather than listing names: momentum fixes oscillation,
-adaptive rates fix per-parameter scaling, and AdamW fixes the fact that L2
-regularisation and adaptive rates interact badly.""",
+    error
+      |  \\
+      |   \\                              you are here
+      |    \\                                  |
+      |     \\                                 v
+      |      \\___                          .
+      |          \\____                  ./
+      |               \\______      ___./
+      |                      \\____/
+      +---------------------------------------> parameter
+                              ^
+                        where you want to be
+
+You cannot see the whole curve - you only ever know the slope where you are standing. So you
+feel the ground, step downhill, and feel again.
+
+Two things then have to be decided, and they are what this entry is about:
+
+    HOW BIG A STEP?     The LEARNING RATE. Section 9 shows one problem with four learning
+                        rates producing four completely different outcomes - including
+                        landing exactly on the answer in a single step, and flying off to
+                        infinity.
+
+    HOW MUCH DATA PER STEP?  All of it (BATCH), one example (STOCHASTIC), or a small group
+                        (MINI-BATCH). This decides how accurate each step is and how many
+                        steps you get.
+
+WHAT THIS ENTRY OWNS: the optimisation LOOP - the update rule, the learning rate, and the
+batch-size choice. Its sibling "BACKPROPAGATION WORKED BY HAND" owns how the gradient is
+COMPUTED in a network with layers. Here we take the gradient as given.""",
+
+    """2. THE INTUITION - three ways to decide which way is downhill.
+
+You are on a foggy hillside and want to reach the bottom. You cannot see anything; you can
+only feel the slope under your feet. The question is how much ground to survey before each
+step.
+
+    BATCH GRADIENT DESCENT - survey the ENTIRE hillside before every step.
+
+        Perfectly accurate direction. Also enormously slow: with 60,000 data points you do
+        60,000 measurements to take ONE step.
+
+            step 1 ------------------------> (after surveying all 60,000)
+            step 2 ------------------------> (after surveying all 60,000 again)
+
+    STOCHASTIC GRADIENT DESCENT (SGD) - feel the ground at ONE point and step immediately.
+
+        The direction is rough - one data point is not the whole picture - but you take
+        60,000 steps in the time batch took one.
+
+            step 1 -> step 2 -> step 3 -> ... -> step 60,000
+
+        Drawn as a path, batch walks a smooth line and SGD staggers:
+
+            batch:  \\___                    SGD:  \\  /\\
+                        \\___                       \\/  \\  /\\
+                            \\___                        \\/  \\/\\___
+
+        The staggering looks like a defect. Section 5 shows it is sometimes the reason SGD
+        finds a better answer than batch does.
+
+    MINI-BATCH - feel the ground at, say, 128 points, then step.
+
+        Direction accurate enough, steps frequent enough, and - the decisive point - modern
+        hardware measures 128 points in barely more time than 1, because it does them
+        simultaneously. This is why mini-batch is the default everywhere.
+
+The trade in one line:
+
+    accuracy of each step:   batch  >  mini-batch  >  SGD
+    number of steps:         SGD    >  mini-batch  >  batch
+    use of the hardware:     mini-batch  >  batch  >  SGD
+
+Mini-batch wins the third row outright, which is why it wins in practice.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PARAMETER / WEIGHT (w). A number the model learns. Training adjusts these.
+
+LOSS / COST. A single number saying how badly the model is doing. Lower is better. Training
+minimises it.
+
+GRADIENT. For each parameter, how much the loss would increase if that parameter increased
+slightly. It points UPHILL, which is why the update subtracts it.
+
+LEARNING RATE (lr, or alpha). How far to step. The most important hyperparameter in
+training, and section 9 shows why.
+
+EPOCH. One complete pass through the training data.
+
+ITERATION / STEP / UPDATE. One application of the update rule. The number of iterations per
+epoch depends entirely on the batch size, and confusing epochs with iterations is a common
+source of muddle.
+
+BATCH GRADIENT DESCENT. One update per epoch, using all the data.
+
+STOCHASTIC GRADIENT DESCENT (SGD). One update per EXAMPLE. Strictly, "stochastic" means
+batch size 1 - though in practice everyone says "SGD" for mini-batch too.
+
+MINI-BATCH. A small group, typically 32 to 512 examples, used for one update.
+
+BATCH SIZE. How many examples per update.
+
+CONVERGENCE. The loss settling and stopping improving.
+
+DIVERGENCE. The loss growing without bound because the steps are too big. Section 9 shows
+it happening and gives the exact threshold.
+
+LOCAL MINIMUM. A dip that is lower than everything nearby but not the lowest overall.
+Gradient descent can stop in one, because the slope there is zero.
+
+SADDLE POINT. A place where the slope is zero but it is not a minimum - downhill in some
+directions, uphill in others. In high dimensions these are far more common than local
+minima, and they are what most often stalls training.
+
+MOMENTUM. Keeping a running average of recent gradients and stepping with that instead, so
+consistent directions build speed and oscillations cancel.
+
+ADAPTIVE OPTIMISERS (RMSProp, Adam). Methods that maintain a separate effective step size
+per parameter. Adam is the usual default.
+
+LEARNING RATE SCHEDULE. Reducing the learning rate as training proceeds - big steps early to
+cover ground, small steps late to settle.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE LEARNING RATE, FAILING IN BOTH DIRECTIONS AT ONCE.
+
+Beginners tune the learning rate by trying one value and concluding "gradient descent does
+not work". Both failure modes look nothing alike:
+
+    TOO SMALL:  the loss falls, but so slowly that training appears stuck. Hundreds of steps
+                to cover ground that should take five. It is not broken, it is crawling -
+                and the giveaway is that the loss IS decreasing, just barely.
+
+    TOO LARGE:  the loss goes UP. Each step overshoots the minimum and lands further up the
+                far side than it started, so the next step is bigger, and the loss explodes
+                to infinity or NaN within a few iterations.
+
+The diagnostic is straightforward once you know to look: PLOT THE LOSS PER ITERATION. Falling
+slowly means raise it. Rising or oscillating means lower it - usually by a factor of ten,
+not a little.
+
+Section 9 works the exact threshold on a real problem: below 0.25 it converges, above it
+diverges, and at 0.125 it lands exactly on the answer in a single step.
+
+TRAP 2: confusing EPOCHS with ITERATIONS. With 60,000 examples and a batch size of 128, one
+epoch is 469 updates. Saying "I trained for 100 steps" is meaningless without the batch size,
+and comparing two runs by epoch count when they used different batch sizes compares different
+amounts of work.
+
+TRAP 3: forgetting to shuffle between epochs. If the data is ordered - all the cats then all
+the dogs - then without shuffling each mini-batch contains one class, every gradient points
+somewhere unhelpful, and training will not work at all. This is a genuinely common bug and it
+looks like a modelling failure rather than a data-loading one.
+
+TRAP 4 - THE ONE PEOPLE OVER-WORRY ABOUT: local minima. In two dimensions they look like the
+central danger. In high dimensions they are rare, because a point is only a local minimum if
+the surface curves upward in EVERY one of the millions of directions at once - and that is
+statistically very unlikely. SADDLE POINTS, where some directions go up and others down, are
+the far more common stall, and momentum-based methods exist largely to push through them.
+
+TRAP 5: raising the batch size without touching the learning rate. A larger batch gives a
+less noisy gradient, which can support a larger step. The common rule is LINEAR SCALING -
+multiply the batch size by k and multiply the learning rate by k - otherwise a big-batch run
+underperforms a small-batch one and it looks like the batch size was the problem.
+
+TRAP 6: not normalising the inputs. If one feature ranges over 0-1 and another over
+0-100,000, the loss surface is a long thin ravine, and any learning rate that is stable for
+the steep direction is uselessly small for the shallow one. Feature scaling is an
+optimisation issue as much as a modelling one.
+
+TRAP 7: assuming Adam removes the need to tune the learning rate. It reduces the sensitivity,
+it does not eliminate it. Adam's default of 0.001 is a starting point, not an answer.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+THE NAIVE VERSION - try lots of parameter values and keep the best.
+
+With one parameter you could try a thousand values and pick the winner. With two, a thousand
+by a thousand is a million. With a million parameters - a small neural network - the number
+of combinations exceeds the number of atoms in the universe. Random search cannot work here,
+and neither can any exhaustive method.
+
+THE INSIGHT THAT MAKES TRAINING POSSIBLE: you do not need to see the whole surface. AT ANY
+POINT YOU CAN COMPUTE WHICH WAY IS DOWNHILL, cheaply and exactly, for all million parameters
+at once. So you never search - you walk.
+
+BATCH GRADIENT DESCENT is that idea applied literally: compute the gradient using all the
+data, step, repeat. The direction is exactly right. It is also, on 60,000 examples, 60,000
+measurements per step.
+
+UPGRADE 1 - STOCHASTIC GRADIENT DESCENT. Use ONE example per step.
+
+The gradient from one example is a poor estimate of the true gradient. But it is an UNBIASED
+one - averaged over all examples it equals the true gradient exactly - so the errors are
+noise around the right direction rather than a systematic pull the wrong way. And in the time
+batch takes one step, SGD takes 60,000. Many roughly-right steps beat one exactly-right step.
+
+WHY THE NOISE IS A FEATURE, not just a tolerable cost - the argument worth having ready:
+
+    Picture a loss surface with a shallow dip at w = 1, where the loss is 0.4, and the true
+    minimum at w = 5, where the loss is 0.05.
+
+    FULL-BATCH gradient descent arriving at w = 1 computes the true gradient there, which is
+    exactly zero - it is a genuine local minimum of the averaged loss. The update becomes
+    w <- w - lr x 0, so nothing moves. It is stuck permanently.
+
+    SGD at w = 1 computes the gradient from ONE example, which is NOT zero - individual
+    examples disagree with the average. Some of them push left, some right. A few pushes in
+    the right direction carry it out of the shallow dip, and once out, the overall slope
+    takes it down to w = 5.
+
+    The noise is what lets it escape. A perfectly accurate optimiser would have stopped at
+    0.4 and reported success.
+
+UPGRADE 2 - MINI-BATCH. Use a small group, typically 32 to 512.
+
+This is the practical answer, and the decisive reason is hardware rather than mathematics.
+Computing the gradient for 128 examples on a GPU takes barely longer than for 1, because the
+128 calculations happen SIMULTANEOUSLY across thousands of cores. So SGD's one-example steps
+waste almost all of the machine, while batch's full-dataset steps waste almost all of the
+update opportunities.
+
+    per epoch, on 60,000 examples:
+
+        BATCH:              1 update,   60,000 gradients per update
+        MINI-BATCH (128):   469 updates,   128 gradients per update
+        SGD:                60,000 updates,  1 gradient per update
+
+    All three compute exactly 60,000 gradients per epoch - the same arithmetic. They differ
+    by a factor of 60,000 in how many times the parameters actually move, and mini-batch is
+    the only one that also keeps the hardware busy.
+
+UPGRADE 3 - BETTER STEP RULES. Plain gradient descent uses the same step size for every
+parameter and has no memory. Three additions fix specific failures:
+
+    MOMENTUM. Keep a running average: v <- 0.9 x v + gradient, and step with v. On a
+    ravine-shaped surface where plain descent oscillates across the valley and creeps along
+    it, the oscillating components cancel between steps while the consistent downhill
+    component accumulates. The result is faster progress along the valley floor.
+
+    RMSProp. Divide each parameter's step by a running average of its own recent gradient
+    magnitudes. Parameters with consistently large gradients take smaller steps, and vice
+    versa - so one learning rate can suit parameters of very different scales.
+
+    ADAM. Both together: momentum for direction, per-parameter scaling for size. The default
+    choice, and the reason people can often get away with less learning-rate tuning.""",
+
+    """6. HOW IT WORKS - the loop, step by step.
+
+The one sentence that holds the whole idea: WORK OUT WHICH DIRECTION MAKES THE ERROR WORSE,
+STEP A SMALL DISTANCE THE OTHER WAY, AND REPEAT - USING A HANDFUL OF EXAMPLES PER STEP SO THE
+STEPS ARE BOTH FREQUENT AND ACCURATE ENOUGH.
+
+THIS IS THE LOOP, and unusually for this collection it does not stop on its own, which is
+worth being precise about:
+
+  - Each iteration computes a gradient on the current batch and moves every parameter once.
+  - Nothing about the mathematics terminates. The gradient at a minimum is zero, so the
+    update becomes a no-op, but noise means it never sits exactly there.
+  - WHAT MAKES IT STOP, in practice - and you must choose one:
+        a fixed number of epochs;
+        the validation loss has not improved for N epochs (EARLY STOPPING - the usual
+            choice, and it also guards against overfitting);
+        the loss change per epoch falls below a threshold;
+        the time or compute budget runs out.
+  - WHAT MAKES IT FAIL TO TERMINATE USEFULLY: a learning rate above the stability threshold.
+    Then the loss increases every step and runs to infinity or NaN - the loop is still
+    running, it is simply going the wrong way. Section 9 computes the exact threshold.
+
+THE STEPS:
+
+  1. INITIALISE THE PARAMETERS - small random values, not all zeros. In a network, identical
+     starting weights make every neuron in a layer compute the same thing forever, since they
+     receive identical gradients.
+
+  2. SHUFFLE THE TRAINING DATA. Every epoch. Without this, ordered data gives mini-batches
+     containing a single class and training simply does not work (trap 3).
+
+  3. TAKE THE NEXT MINI-BATCH - typically 32 to 512 examples.
+
+  4. FORWARD PASS: run those examples through the model and compute the loss.
+
+  5. COMPUTE THE GRADIENT of that loss with respect to every parameter. In a network this is
+     backpropagation - the sibling entry covers how. Here it is a given.
+
+  6. UPDATE EVERY PARAMETER: subtract the learning rate times its gradient. Every parameter
+     moves once, simultaneously.
+
+  7. REPEAT FROM STEP 3 until the data is exhausted. That completes one EPOCH.
+
+  8. EVALUATE ON VALIDATION DATA. This is the number that decides everything; training loss
+     only tells you the optimiser is working.
+
+  9. REPEAT FROM STEP 2 until a stopping condition fires.
+
+ 10. WATCH THE LOSS CURVE THROUGHOUT. Falling steadily is healthy; falling imperceptibly
+     means raise the learning rate; rising or oscillating means lower it, usually tenfold.
+
+The step most often skipped is 2, and the step most often misjudged is the learning rate in
+6.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+You are somewhere on a vast foggy hillside and you want to reach the lowest point. You cannot
+see further than your own boots. All you can do is feel which way the ground slopes and walk
+that way.
+
+Two decisions, and everything depends on them.
+
+The first is HOW BIG A STRIDE. Shuffle forward in tiny increments and you will be there next
+year. Take enormous leaps and you will bound straight over the valley and land higher up the
+opposite slope - and then, standing on steeper ground, leap even further the next time. People
+watching would say you were getting worse at walking, and they would be right.
+
+The second is HOW MUCH GROUND TO FEEL BEFORE EACH STEP. You could crawl around surveying the
+whole hillside to be certain which way is down - perfectly accurate, and you would take about
+one step a day. Or you could feel the ground directly under one foot and step immediately -
+rough, occasionally wrong, but you would take thousands of steps in the same time. In
+practice you sweep an arm's width, get a good-enough direction, and keep moving.
+
+Now the part that surprises people. Suppose the hillside has a small hollow partway down. If
+you are surveying the whole hillside very carefully, you will walk into that hollow, find that
+every direction from its centre leads upward, and stop there - correctly concluding you are at
+a low point, and wrongly concluding you have finished.
+
+Whereas if you are stepping roughly, feeling only patches of ground, your steps are slightly
+random. One of them will carry you over the hollow's rim, and once out you carry on down to
+the real bottom.
+
+The sloppy walker beats the careful one, because the careful one is precise about a
+measurement that was misleading. That is not an argument for sloppiness in general - it is an
+argument that a bit of noise is a cheap way to avoid stopping at the first flat place you
+find.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is the update rule and its settings - what each holds, what it
+decides, and how it fails.
+
+--- THE UPDATE RULE ---
+
+    w  <-  w  -  lr x gradient
+
+    w (THE PARAMETER)
+        HOLDS: the current setting. Every parameter has its own, and all are updated
+        simultaneously from the same gradient computation.
+
+    THE MINUS SIGN
+        DECIDES: direction. The gradient points UPHILL - the direction of steepest INCREASE
+        in loss - so you subtract it to go down. Getting this sign wrong makes the loss climb
+        smoothly, which looks like a learning-rate problem and is not.
+
+    lr (THE LEARNING RATE)
+        HOLDS: the step size, the same for every parameter in plain gradient descent.
+        DECIDES: whether the process converges at all, and how fast.
+        FAILS: too small crawls; too large diverges. There is an exact threshold for a given
+        problem - section 9 computes it.
+        TYPICAL: 0.001 to 0.1, tuned logarithmically. Adam's usual default is 0.001.
+
+    gradient
+        HOLDS: for each parameter, the slope of the loss with respect to it.
+        DECIDES: direction and relative magnitude. Computed by backpropagation in a network -
+        the sibling entry.
+        NOTE: it is a LOCAL measurement. It knows the slope where you stand and nothing about
+        the shape of the surface elsewhere, which is precisely why local minima and saddle
+        points can trap the process.
+
+--- THE BATCH SIZE, AND WHAT IT DECIDES ---
+
+    BATCH (all the data)
+        HOLDS: the exact gradient of the average loss.
+        DECIDES: a smooth, deterministic path. Same start, same answer, every time.
+        COSTS: one update per epoch, and the whole dataset must fit in memory.
+        FAILS AT: escaping shallow local minima, because at one the true gradient is exactly
+        zero and the update does nothing.
+
+    STOCHASTIC (one example)
+        HOLDS: a noisy but UNBIASED estimate - averaged over examples it equals the true
+        gradient.
+        DECIDES: a staggering path, many updates, and the ability to escape shallow dips.
+        COSTS: wastes parallel hardware almost entirely, and the noise means it never settles
+        precisely at the minimum.
+
+    MINI-BATCH (32 to 512)
+        HOLDS: a reasonably accurate gradient estimate.
+        DECIDES: the practical default. Frequent updates AND full use of the hardware.
+        THE TRADE:
+            32 to 64:      noisier, often better generalisation, low memory, more steps
+            256 to 1024:   smoother, better hardware utilisation, may need the learning rate
+                           scaled up to match
+
+--- THE ADDITIONS, AND THE SPECIFIC FAILURE EACH FIXES ---
+
+    MOMENTUM (v <- 0.9v + gradient, step with v)
+        FIXES: oscillation across a narrow ravine while creeping along it. Perpendicular
+        components alternate sign and cancel; the consistent along-valley component
+        accumulates.
+
+    RMSProp (divide by a running average of squared gradients)
+        FIXES: one learning rate having to suit parameters whose gradients differ by orders
+        of magnitude. Each parameter effectively gets its own step size.
+
+    ADAM (both)
+        FIXES: both at once. The default, and the reason less learning-rate tuning is needed -
+        though not none.
+
+    LEARNING RATE SCHEDULE
+        FIXES: needing big steps early and small steps late. Decay it over training, or warm
+        it up for the first few hundred iterations then decay.""",
+
+    """9. TRACED BY HAND, WITH REAL NUMBERS.
+
+THE PROBLEM. Fit y = w x x on a single sample: x = 2, y = 6. The right answer is w = 3, since
+3 x 2 = 6. Start at w = 1.
+
+    loss(w)      = (w x 2 - 6)^2
+    gradient     = 2 x (w x 2 - 6) x 2  =  4 x (2w - 6)
+
+ONE STEP, WITH lr = 0.1:
+
+    prediction = 1 x 2 = 2
+    loss       = (2 - 6)^2 = 16
+    gradient   = 4 x (2 - 6) = -16          negative, so the loss falls as w increases
+    update     = 1 - 0.1 x (-16) = 1 + 1.6 = 2.6
+
+    new prediction = 2.6 x 2 = 5.2
+    new loss       = (5.2 - 6)^2 = 0.64      down from 16
+
+STEP TWO:
+
+    gradient = 4 x (5.2 - 6) = -3.2
+    update   = 2.6 - 0.1 x (-3.2) = 2.6 + 0.32 = 2.92
+    loss     = (5.84 - 6)^2 = 0.0256
+
+    Loss so far: 16, 0.64, 0.0256. Converging on w = 3.
+
+NOW THE SAME PROBLEM AT FOUR LEARNING RATES - and the outcome changes qualitatively at each:
+
+    lr = 0.001   w: 1 -> 1.016 -> 1.032 -> ...
+                 Correct direction, hundreds of steps needed. It looks broken; it is crawling.
+
+    lr = 0.1     w: 1 -> 2.6 -> 2.92 -> 2.984 -> ...
+                 Converges smoothly. A sensible choice.
+
+    lr = 0.125   w: 1 - 0.125 x (-16) = 1 + 2 = 3
+                 EXACTLY the optimum, IN ONE STEP. Loss 0. This is not luck: for a quadratic,
+                 stepping by 1 / curvature lands precisely on the minimum. The curvature here
+                 is 2 x x^2 = 8, and 1/8 = 0.125.
+
+    lr = 0.5     w: 1 - 0.5 x (-16) = 1 + 8 = 9
+                 prediction 18, loss (18 - 6)^2 = 144  - WORSE than the 16 it started at.
+                 gradient = 4 x (18 - 6) = 48
+                 w = 9 - 0.5 x 48 = -15,  loss = (-30 - 6)^2 = 1296
+                 DIVERGING. Loss: 16, 144, 1296 - up by roughly nine times per step.
+
+    THE EXACT THRESHOLD: for this loss the curvature is 8, and gradient descent is stable when
+    lr < 2 / curvature = 2 / 8 = 0.25.
+        0.001 and 0.1 are below it -> converge.
+        0.125 is below it, and equals 1/curvature -> converges in ONE step.
+        0.5 is above it -> diverges.
+
+    SAME PROBLEM, SAME DATA, SAME CODE. One number, four qualitatively different outcomes:
+    crawl, converge, land exactly, explode. That is why the learning rate is the
+    hyperparameter to tune first.
+
+BATCH SIZES ON 60,000 MNIST IMAGES:
+
+    BATCH (all 60,000)
+        updates per epoch:        1
+        gradients per update:     60,000
+        gradient quality:         exact, deterministic
+        100 epochs gives:         100 parameter updates
+
+    SGD (batch size 1)
+        updates per epoch:        60,000
+        gradients per update:     1
+        gradient quality:         very noisy, unbiased
+        100 epochs gives:         6,000,000 parameter updates
+
+    MINI-BATCH (128)
+        updates per epoch:        60,000 / 128 = 468.75, so 469 (the last holds 96 images)
+        gradients per update:     128
+        gradient quality:         good enough
+        100 epochs gives:         46,900 parameter updates
+
+    ALL THREE COMPUTE 60,000 GRADIENTS PER EPOCH - identical arithmetic. What differs is how
+    often the parameters actually move: 1 versus 469 versus 60,000. And because a GPU computes
+    128 gradients in barely more wall-clock time than 1, mini-batch gets 469 updates for
+    roughly the same cost in time that batch pays for 1.
+
+    That is the whole case for mini-batch, and it is about hardware rather than mathematics.
+
+THE NOISE ESCAPING A SHALLOW MINIMUM:
+
+    A surface with a shallow dip at w = 1 (loss 0.4) and the true minimum at w = 5 (loss 0.05).
+
+    FULL BATCH at w = 1: the true gradient is exactly 0. Update: w <- 1 - lr x 0 = 1.
+    Stuck permanently, reporting a loss of 0.4.
+
+    SGD at w = 1: individual examples give gradients that are not zero - some positive, some
+    negative. A few steps in the outward direction clear the rim, and the overall slope then
+    carries it to w = 5 and a loss of 0.05.
+
+    The less accurate method reaches the answer that is eight times better.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - PER UPDATE: one forward pass and one backward pass over the batch. The backward pass costs
+    roughly twice the forward one, so a training step is about three times an inference step.
+  - PER EPOCH: the same total arithmetic whatever the batch size - every example is processed
+    once. Only the number of updates changes.
+  - MEMORY: scales with batch size, because activations for every example in the batch must be
+    held for the backward pass. This is usually what caps the batch size, not any principle.
+  - CONVERGENCE: not guaranteed to a global minimum for non-convex problems. In practice deep
+    networks find solutions that are good enough, which is an empirical finding rather than a
+    theorem.
+
+CHOOSING THE BATCH SIZE - the practical table:
+
+    32 to 64        noisier gradients, often better generalisation, low memory, more steps.
+                    A good default when unsure.
+    128 to 512      the common range. Good hardware utilisation.
+    1024 and above  smoothest gradients and best hardware use, but generalisation often
+                    suffers, and the learning rate must be scaled up to compensate.
+
+    THE LINEAR SCALING RULE: multiply the batch size by k and multiply the learning rate by k.
+    Without it, large-batch runs underperform and the batch size gets blamed for what is
+    really an unadjusted step size.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "How do you choose the learning rate?" Sweep logarithmically - 0.0001, 0.001, 0.01, 0.1 -
+    and plot loss against iteration. Or use a learning-rate finder: increase it steadily during
+    one short run and take the value just before the loss turns upward.
+  - "What if training loss is going up?" The learning rate is above the stability threshold.
+    Divide by ten. If it still climbs, check the sign of the update and whether the inputs are
+    normalised.
+  - "Why not always use batch gradient descent, since it is exact?" One update per epoch, the
+    whole dataset in memory, and at a shallow local minimum the exact gradient is exactly zero
+    so it can never escape. Exactness is not the goal; progress is.
+  - "Does SGD find better solutions than batch?" Often, yes - the noise both escapes shallow
+    minima and tends toward flatter ones, which generalise better. Worth saying, because it
+    reframes noise as a feature rather than a compromise.
+  - "What does Adam actually do?" Momentum for direction plus a per-parameter step size from a
+    running average of squared gradients. It reduces learning-rate sensitivity; it does not
+    remove it.
+  - "Are local minima the main problem in deep learning?" No - saddle points are. A local
+    minimum requires the surface to curve upward in every one of millions of directions
+    simultaneously, which is vanishingly unlikely. This answer signals current understanding
+    rather than a textbook from twenty years ago.
+
+THE #1 MISTAKE: treating the learning rate as a setting to leave at its default. It is the
+single most consequential number in training - section 9 shows one problem where four values
+give crawling, convergence, exact one-step convergence and explosion. Tune it first, before
+touching the architecture.
+
+RUNNER-UP: forgetting to shuffle between epochs, which on ordered data makes every mini-batch
+single-class and stops training working at all - while looking like a modelling failure.
+
+TAKEAWAY: gradient descent is walking downhill using only the slope where you stand, so the
+two decisions that matter are how big a step to take and how much data to consult before
+taking it - and mini-batch wins not because its gradient is best but because hardware computes
+128 examples almost as fast as one.""",
 ]
 
 _EX_P0H["Ensembles — Bagging vs Boosting"] = [
