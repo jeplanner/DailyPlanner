@@ -106025,172 +106025,1570 @@ structure rather than pattern-matched the template.""",
 ]
 
 _EX_P1Q["Rotate List"] = [
-    """The circle trick, traced.
-list 1 -> 2 -> 3 -> 4 -> 5, k = 2. Walk to find length 5 and tail 5.
-k %= 5 -> 2. Join tail to head, making a ring.
-The new tail is at position length - k = 3 steps from the head, i.e. node 3.
-Walk three nodes: 1, 2, 3. New head is 3.next = 4. Break: 3.next = None.
-Result 4 -> 5 -> 1 -> 2 -> 3.
-Forming the ring means you never have to reason about two separate pieces -
-one walk and one cut does the whole rotation.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why `k %= length` is mandatory.
-k can far exceed the list length - k = 1,000,000 on a 5-node list. Rotating by
-the length returns the original, so only k mod length matters. Without the
-modulo the walk runs a million steps around the ring, which is correct but
-absurdly slow, or overruns entirely if you did not form the ring.
-And after the modulo, `k == 0` means no rotation at all - so the early return
-is needed, otherwise you would walk `length` steps and cut in exactly the place
-you started, which happens to work but only by luck.""",
+You have a linked list - a chain of boxes, each holding a value and an arrow to the
+next box. Rotate it to the RIGHT by k places: the last k boxes move to the front, in
+order, and everything else shuffles back to make room.
 
-    """Why the new tail is at length - k, not at k.
-Rotating RIGHT by k moves the last k nodes to the front. So the break must
-happen k nodes from the END, which is length - k nodes from the head.
-k = 2 on a 5-node list: the last two (4, 5) move to the front, so the new tail
-is node 3 = position 5 - 2. Getting this backwards rotates LEFT instead, and
-the result looks superficially plausible - it is a rotation, just the wrong
-one. Trace one small example to confirm the direction before committing.""",
+    list:  1 -> 2 -> 3 -> 4 -> 5      k = 2
 
-    """Edge cases.
-Empty list or single node -> guarded, returned unchanged.
-k = 0 -> returned unchanged by the first guard.
-k equal to the length -> after the modulo k becomes 0 -> unchanged. This is the
-case the second guard catches, and it is easy to miss.
-k a multiple of the length, k = 10 on 5 nodes -> same.
-Two nodes with k = 1 -> length 2, k = 1, new tail at position 1 (node 1), new
-head node 2 -> 2 -> 1. Correct.""",
+    the last 2 boxes are 4 and 5. Move them to the front, keeping their order:
 
-    """Complexity and the alternative.
-O(n) time - one pass to measure, at most one more to reach the cut point - and
-O(1) space.
-The two-pointer alternative avoids computing the length explicitly: advance a
-fast pointer k steps, then move both until fast reaches the tail; slow is then
-the new tail. But you still need the length to reduce k modulo it, so you
-either measure first anyway or handle k > n separately. The ring version is
-cleaner precisely because it makes the modulo natural.""",
+    result: 4 -> 5 -> 1 -> 2 -> 3
 
-    """The family: linked-list pointer surgery.
-Rotate List, Reverse Linked List, Reorder List (find the middle, reverse the
-second half, interleave), Swap Nodes in Pairs, Odd Even Linked List, Remove Nth
-Node From End (two pointers k apart), and Split Linked List in Parts.
-Two habits that make all of them tractable: DRAW the pointers before coding -
-three arrows is where people lose these - and ask whether the head can change,
-because that is what decides whether you need a dummy node.""",
+    ANSWER: 4 -> 5 -> 1 -> 2 -> 3
+
+Verified against a brute-force list slice: [4, 5, 1, 2, 3].
+
+Now the second official example, which is the one that matters:
+
+    list:  0 -> 1 -> 2      k = 4
+
+    There are only three boxes but you are asked to rotate by four. Rotating by 3 -
+    the full length - puts everything back exactly where it started. So rotating by 4
+    is the same as rotating by 1.
+
+    result: 2 -> 0 -> 1
+
+    ANSWER: 2 -> 0 -> 1     (verified: [2, 0, 1])
+
+THAT SECOND EXAMPLE IS THE WHOLE PROBLEM. k is not bounded by the list length -
+LeetCode allows k up to two billion on a list of at most 500 nodes. Walking k steps
+one at a time is not merely slow, it is the wrong idea. Rotating by the length is
+the identity, so only k modulo the length has any effect:
+
+    [1,2,3,4,5]  k = 2         ->  [4, 5, 1, 2, 3]
+    [1,2,3,4,5]  k = 7         ->  [4, 5, 1, 2, 3]      because 7 mod 5 = 2
+    [1,2,3,4,5]  k = 1000002   ->  [4, 5, 1, 2, 3]      because 1000002 mod 5 = 2
+
+All three verified identical.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Rotating a line is awkward because a line has ends. Rotating a RING is trivial because
+a ring has none - you just decide where to cut it.
+
+So: join the tail to the head, turning the list into a closed loop. Now "rotate" means
+nothing at all; every arrangement is already present in the ring. All that remains is
+to choose where to break it.
+
+    1 -> 2 -> 3 -> 4 -> 5              the line
+
+    join tail to head:
+
+         +-> 1 -> 2 -> 3 -> 4 -> 5 -+
+         |                          |
+         +--------------------------+       the ring
+
+    to rotate right by 2, the answer must START at 4:
+
+         +-> 1 -> 2 -> 3 |  4 -> 5 -+
+         |               ^          |
+         |          cut here        |
+         +--------------------------+
+
+    reading from 4 round the ring:  4 -> 5 -> 1 -> 2 -> 3       done.
+
+WHERE EXACTLY DOES THE CUT GO? Rotating right by k means the last k boxes come to the
+front. So the new first box is the k-th box counting BACK from the end - and the cut
+goes immediately before it. Counting forward from the head, that new first box sits at
+position length - k + 1, so the box just before it - the NEW TAIL - is at position
+length - k.
+
+    length 5, k 2:   new tail is at position 5 - 2 = 3, which is the box holding 3.
+                     new head is the box after it, holding 4.
+
+That is why the code walks length - k steps and not k. Walking k steps instead was
+measured wrong on 2,849 of 6,000 random cases.
+
+And because it is a ring, you never walk more than the length once - which is what
+makes an enormous k harmless the moment you reduce it with a modulo.""",
+
+    """3. EVERY TERM, DEFINED
+
+LINKED LIST. A chain of nodes. Each node holds a value (`val`) and a reference to the
+next node (`next`). The final node's `next` is None. There is no indexing - to reach
+the fifth node you walk through four.
+
+HEAD / TAIL. The head is the first node; the tail is the node whose `next` is None.
+Finding the tail requires walking the whole list, which is why the first pass exists.
+
+ROTATE RIGHT BY k. Every element moves k places later, and elements pushed off the end
+wrap round to the front. Rotating right by 1 on [1,2,3] gives [3,1,2].
+
+  Everyday version: a group of people sitting in a circle passing round a plate. After
+  two passes everyone is holding what the person two seats to their left had. Nobody
+  moved; the plates did.
+
+MODULO (`%`). The remainder after division. `7 % 5` is 2. Here it converts "rotate by
+7" into the equivalent, much smaller "rotate by 2". This works because rotating by
+exactly the length returns the list unchanged, so any whole multiple of the length can
+be thrown away.
+
+CIRCULAR LIST / RING. A list whose last node points back at the first instead of at
+None. Walking it never terminates, which is why the code must break the ring again
+before returning - forgetting to was wrong on 3,460 of 6,000 cases and leaves a
+structure that hangs anything that tries to read it.
+
+IN PLACE, O(1) SPACE. A fixed number of extra variables regardless of list length -
+here `length`, `tail`, `steps`, `new_tail`, `new_head`. No new nodes are made.
+
+  Proven, not asserted: for the 5-node input, the set of node object identities before
+  and after the call is IDENTICAL - 5 nodes in, the same 5 objects out. Only arrows
+  moved.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP ONE - FORGETTING `k %= length`. THIS IS THE PROBLEM'S REASON FOR EXISTING.
+
+  k can be far larger than the list. Without the modulo, `steps = length - k` goes
+  NEGATIVE, and in Python `range(negative)` is simply empty - so the walk never
+  happens, `new_tail` stays at the head, and the list is cut in the wrong place. No
+  crash, no warning, just a quietly wrong answer.
+
+      [1,2,3,4,5] k = 7    steps = 5 - 7 = -2, range(-3) is empty
+          correct                [4, 5, 1, 2, 3]
+          without the modulo     [2, 3, 4, 5, 1]     - a LEFT rotation by 1
+
+      [1,2,3,4,5] k = 12   steps = 5 - 12 = -7, also empty
+          without the modulo     [2, 3, 4, 5, 1]     - the same wrong answer
+
+  Measured: wrong on 1,301 of 6,000 random pairs.
+
+  AND THE TWO OFFICIAL EXAMPLES DISAGREE ABOUT IT:
+      [1,2,3,4,5] k=2   k is smaller than the length  ->  AGREES
+      [0,1,2]     k=4   k exceeds the length          ->  caught
+
+  The first sample cannot possibly expose it. If you only hand-check that one, the bug
+  survives - which is presumably why LeetCode put a k greater than the length into the
+  second sample deliberately.
+
+TRAP TWO - CUTTING AT k INSTEAD OF AT length - k. Walking k steps puts the cut at the
+  wrong end. Measured: wrong on 2,849 of 6,000. Both official examples catch it.
+
+TRAP THREE - THE OFF-BY-ONE IN THE WALK. You want `new_tail` to LAND on the node at
+  position length - k, and you start already standing on position 1, so you take
+  steps - 1 moves, not steps. Measured: `range(steps)` was wrong on 3,457 of 6,000.
+  Both examples catch it.
+
+TRAP FOUR - LEAVING THE RING CLOSED. If you never set `new_tail.next = None`, the
+  returned list is still circular. Measured wrong on 3,460 of 6,000 - and note this is
+  worse than a wrong answer: anything that walks the result loops forever.
+
+TWO GUARDS THAT ARE NOT WHAT THEY LOOK LIKE - MEASURED, NOT ASSUMED.
+
+  The SECOND `if k == 0: return head`, placed after the modulo, is NOT a correctness
+  requirement. Measured: removing it was wrong on 0 of 6,000. When k mod length is 0
+  the code walks the entire ring, lands back on the original tail, and cuts exactly
+  where the list was already cut - returning the original head. It is a SPEED guard
+  that skips a pointless full-length walk.
+
+  In the FIRST guard, only the `head is None` part is load-bearing. Keeping just that
+  and dropping `head.next is None` and `k == 0` was wrong on 0 of 6,000 - a single-node
+  list has length 1, so k mod 1 is 0 and the second guard returns it unchanged; and
+  k = 0 is caught by the modulo too. Those two clauses are also speed guards.
+
+  Knowing which of your guards are correctness and which are speed is exactly the kind
+  of distinction an interviewer probes.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Rotate right by one, k times: find the tail, move it to the front,
+repeat.
+
+    for _ in range(k):
+        # walk to the second-to-last node, detach the tail, put it at the front
+        prev = head
+        while prev.next.next:
+            prev = prev.next
+        last = prev.next
+        prev.next = None
+        last.next = head
+        head = last
+
+Correct, and worth saying out loud because it makes the DEFINITION concrete. But its
+cost is O(n) per rotation, so O(n * k) overall - and k can be two billion. On a 5-node
+list with k = 1,000,002 that is five million pointer walks to produce an answer
+identical to rotating by 2.
+
+FIRST UPGRADE - THE MODULO. Rotating by the length is the identity, so
+`k %= length` collapses any k to a value below the length. That single line takes k
+from "up to two billion" to "at most n - 1" and is the difference between the problem
+being hard and being routine.
+
+SECOND UPGRADE - DO IT IN ONE CUT INSTEAD OF k CUTS. Even after the modulo, repeating
+a single rotation k times is O(n * k) with k up to n - 1, so O(n^2). Instead, work out
+where the final answer begins and cut there ONCE.
+
+    naive:   O(n * k), k up to 2,000,000,000
+    modulo:  O(n^2) worst case
+    ring:    O(n) - one pass to measure, at most one more to reach the cut
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY CLOSING THE RING HELPS. A rotation is only
+awkward because the list has two loose ends that must be re-tied. Joining the tail to
+the head removes both ends, and once there are no ends there is nothing to rotate - the
+ring already contains every rotation simultaneously. Choosing an answer becomes
+choosing a starting point, which is one pointer walk, and turning it back into a list
+is one assignment. You have replaced "move k things" with "cut once", and the k has
+vanished into the arithmetic that decides where.
+
+  Note this is a genuine restructuring, not a micro-optimisation: the naive version's
+  cost depends on k, and after this transformation nothing does.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: measure the list, reduce k by the length, tie the tail to the head to
+make a ring, walk to the node at position length - k, and cut there.
+
+THE MECHANISM, SPELLED OUT. No recursion, no call stack - two counted walks and a few
+pointer assignments. The two walks are for different purposes and cannot be merged: the
+first must finish before k can be reduced, because the reduction needs the length, and
+the cut position needs the reduced k.
+
+  The first walk terminates on `tail.next` being None - the ordinary end-of-list test -
+  and it is the last moment at which that test is available, because the very next
+  action destroys it by closing the ring.
+
+  Between closing the ring and cutting it, the structure is circular and NOTHING may
+  walk it with an end-of-list test; only the counted walk of exactly steps - 1 moves is
+  safe. That counted walk is what makes the middle section terminate.
+
+  The final assignment restores the invariant that the list has an end. Skipping it
+  leaves a ring, and any later traversal spins forever - measured wrong on 3,460 of
+  6,000, but "wrong" understates it: the caller hangs.
+
+NUMBERED STEPS, NO CODE:
+
+  1. If the list is empty, return it. (A single-node list and a k of zero also need no
+     work, but as measured, they fall out correctly anyway - those checks are for
+     speed.)
+  2. Walk from the head to the last node, counting as you go. You now have both the
+     length and the tail. This is the only chance to find the tail cheaply.
+  3. Replace k by its remainder when divided by the length. Rotating by a whole number
+     of lengths changes nothing, so this discards all the useless work. If the
+     remainder is zero the list is already in its final arrangement and can be
+     returned immediately.
+  4. Point the tail's arrow at the head. The list is now a closed ring.
+  5. Work out how far to walk: length minus the reduced k. That is the position of the
+     node which must become the NEW TAIL.
+  6. Starting at the head - which is already position 1 - take one fewer move than that
+     number, so that you LAND on the new tail rather than passing it.
+  7. The node after the new tail is the new head. Remember it.
+  8. Set the new tail's arrow to nothing, breaking the ring.
+  9. Return the new head.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A model train sits on a straight length of track: five carriages, an engine at the
+front, a guard's van at the back. You are asked to shunt the last two carriages round
+to the front. The obvious way is to uncouple the rear carriage, walk it all the way to
+the front, couple it on, and repeat - which is a lot of walking, and if somebody asks
+for a million shuffles you will be there all week.
+
+Instead you do something a little bit clever. First you walk the length of the train
+once, counting carriages, so you know there are five and you know which one is at the
+back.
+
+Then you notice that a million shuffles of a five-carriage train is the same as two
+shuffles, because every five shuffles puts everything back exactly where it started.
+So you throw away the millions and keep the two. This single realisation is what turns
+an all-week job into a two-minute one.
+
+Now you couple the back of the train to the front, making a closed circle of track. The
+train is no longer a train with ends - it is a loop, and a loop has no arrangement at
+all until you decide where the front is.
+
+You walk round the loop to the carriage that ought to be last, counting three steps
+because the new front should be the third-from-the-end. You uncouple there. Instantly
+the loop becomes a straight train again, with a new engine end and a new back end, and
+it is in exactly the arrangement that was asked for.
+
+The one thing you must not forget is the uncoupling. Leave the circle joined and it is
+not a train at all - anybody who tries to walk from the front to the back will go round
+and round for ever, never finding an end.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    class ListNode:
+        def __init__(self, val=0, next=None):
+            self.val = val; self.next = next
+
+  One node: `val` is the payload, `next` is the arrow.
+
+    def rotate_right(head, k):
+
+  `head` is the first node or None; `k` is how far to rotate right, and may be enormous.
+
+        if head is None or head.next is None or k == 0:
+            return head
+
+  Only the FIRST clause is load-bearing: everything below reads `head.next`, which
+  would fail on None. The other two are speed guards - measured, dropping them was
+  wrong on 0 of 6,000, because a single-node list has length 1 so k mod 1 is 0, and a
+  k of 0 also survives the modulo. Keep them; know what they are.
+
+        length = 1
+        tail = head
+
+  `length` counts nodes and starts at 1 because `head` itself is already one node.
+  `tail` will walk to the end.
+
+        while tail.next:
+            tail = tail.next
+            length += 1
+
+  One full pass. On exit `tail` is the last node - the only moment this is cheap to
+  discover, since the next statement destroys the end-of-list marker.
+
+        k %= length
+
+  THE LINE THE PROBLEM IS BUILT AROUND. Rotating by the length is the identity, so only
+  the remainder matters. Without it `steps` goes negative, `range` of a negative number
+  is empty, and the cut lands at the head - wrong on 1,301 of 6,000, and the FIRST
+  official example agrees with the broken version because its k is already smaller than
+  the length.
+
+        if k == 0:
+            return head
+
+  A SPEED guard, not a correctness one - measured 0 of 6,000 without it. When k mod
+  length is 0 the code below walks the whole ring and cuts exactly where it already was.
+
+        tail.next = head                     # make the list circular
+
+  Close the ring. From here until the break, the structure has no end and must not be
+  walked with an end-of-list test.
+
+        steps = length - k                   # walk to the new tail
+
+  Rotating right by k brings the last k nodes forward, so the new head is the k-th node
+  from the end, which is position length - k + 1, so the new TAIL sits at position
+  length - k. Using `k` here instead was wrong on 2,849 of 6,000.
+
+        new_tail = head
+        for _ in range(steps - 1):
+            new_tail = new_tail.next
+
+  `new_tail` starts at position 1, so reaching position `steps` takes steps - 1 moves.
+  Using `range(steps)` overshoots by one node and was wrong on 3,457 of 6,000.
+
+        new_head = new_tail.next
+
+  The node after the new tail. Because the ring is closed, this is well defined even
+  when `new_tail` is the original last node.
+
+        new_tail.next = None                 # break the circle
+
+  Restore an ending. Omitting this returns a circular list - wrong on 3,460 of 6,000,
+  and it hangs any caller that walks the result rather than merely printing a wrong one.
+
+        return new_head
+
+  The new first node. Note `head` is NOT returned - after a real rotation the original
+  head is somewhere in the middle.""",
+
+    """9. TRACED ON REAL NUMBERS - BOTH k < length AND k > length
+
+Section 4's trap only appears when k exceeds the list length, and a trace with a small
+k cannot reach it. So here are both.
+
+CASE ONE - k SMALLER THAN THE LENGTH. list 1 -> 2 -> 3 -> 4 -> 5, k = 2
+
+    walk to measure:  length = 5, tail = the node holding 5
+    k %= length    ->  2 % 5 = 2       (the modulo changes nothing here)
+    k is not 0, so continue
+    tail.next = head  ->  the ring is  1->2->3->4->5->back to 1
+    steps = length - k = 5 - 2 = 3
+
+    new_tail starts at 1, and takes steps - 1 = 2 moves:
+        walk 1:  new_tail = 2
+        walk 2:  new_tail = 3
+
+    new_tail = 3, new_head = new_tail.next = 4
+    new_tail.next = None   ->  break the ring after 3
+
+    result: 4 -> 5 -> 1 -> 2 -> 3
+
+    Cross-checked against a brute-force slice: [4, 5, 1, 2, 3]. Match.
+
+    Note the modulo was a no-op here. This trace CANNOT show the trap.
+
+CASE TWO - k LARGER THAN THE LENGTH, WHICH IS WHERE THE MODULO EARNS ITS KEEP.
+list 1 -> 2 -> 3 -> 4 -> 5, k = 7
+
+    length = 5, tail = 5
+    k %= length    ->  7 % 5 = 2       THE MODULO DOES REAL WORK
+    everything below is now identical to case one, and the answer is [4, 5, 1, 2, 3] -
+    verified equal to the k = 2 answer.
+
+    NOW REMOVE THE MODULO AND REPLAY:
+        steps = length - k = 5 - 7 = -2
+        range(steps - 1) is range(-3), which in Python is EMPTY - no error, no warning
+        new_tail never moves, so new_tail = 1
+        new_head = new_tail.next = 2
+        new_tail.next = None  ->  break the ring after 1
+
+        result: [2, 3, 4, 5, 1]
+
+    That is a LEFT rotation by one, on a request to rotate RIGHT by seven. And with
+    k = 12 the same thing happens - range(-8) is also empty - so it produces the same
+    wrong answer regardless of how large k gets. The failure does not scale with k; it
+    silently collapses to one fixed wrong answer.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+    [1,2,3,4,5]  k = 2  ->  [4, 5, 1, 2, 3]
+    [1,2,3,4,5]  k = 3  ->  [3, 4, 5, 1, 2]
+
+One step of k, and every element moves. Note the new head walks BACKWARD through the
+original list as k increases - which is the visual reminder that the cut point is
+length - k, not k.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass to measure the length and find the tail, then at most one
+more partial pass to reach the cut point. So O(n) time, and it does not depend on k at
+all once the modulo has been applied. Five extra variables regardless of list size, so
+O(1) space, and no node is allocated - the same objects come back out, verified by
+identity.
+
+Against the naive repeat-a-single-rotation version, which is O(n * k) with k up to two
+billion: on a 5-node list with k = 1,000,002 that is about five million pointer walks
+for an answer identical to rotating by 2.
+
+THE #1 MISTAKE. Forgetting `k %= length`. Wrong on 1,301 of 6,000, and the first
+official example agrees with the broken code because its k is already below the length.
+Worse, the failure is SILENT - `range` of a negative number is empty in Python rather
+than an error, so there is nothing to notice.
+
+  The habit that prevents it: whenever a problem gives you a shift, a rotation, or a
+  jump count, ask "is this bounded by the size of my data?" before writing anything. If
+  the answer is no, the modulo goes in first, not as an afterthought.
+
+  The runner-up is the off-by-one in the walk - 3,457 of 6,000 - and it is prevented by
+  saying out loud "I am already standing on node 1, so to reach node m I take m - 1
+  steps" rather than trusting the range.
+
+THE LINKED-LIST POINTER-SURGERY CLUSTER - WHO OWNS WHAT
+
+  Rotate List (this one) owns FIND-THE-LENGTH-THEN-MOD and the CLOSE-THE-RING-THEN-CUT
+     technique. Its distinguishing feature is that the parameter k is unbounded, so the
+     arithmetic - not the pointer work - is the hard part.
+  Odd Even Linked List owns THE TWO-CHAIN UNZIP and the PARITY GUARD, where the loop
+     condition needs two clauses because odd and even lengths end differently.
+  Swap Nodes in Pairs owns the DUMMY-HEAD idiom, for when the head itself moves and you
+     want to avoid special-casing it.
+  Linked List Cycle owns FAST-AND-SLOW pointers - and it is the natural companion to
+     this entry, because the ring you deliberately build here is exactly the structure
+     that problem is trying to detect.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Rotate LEFT by k instead." Rotating left by k is rotating right by length - k, so
+     replace `steps = length - k` with `steps = k` after the modulo. Say it as a
+     transformation rather than rewriting the algorithm.
+
+  "Could you avoid the second pass?" Yes, with two pointers: advance a lead pointer
+     k mod length nodes ahead, then move both until the lead reaches the end - the
+     trailing pointer is then the new tail. But you still need the length to reduce k,
+     so for an unbounded k the first pass is unavoidable. If k were guaranteed smaller
+     than the length, the two-pointer version genuinely saves a pass.
+
+  "What if k is negative?" Python's `%` already returns a non-negative result for a
+     positive divisor, so `-1 % 5` is 4 and a right-rotation by -1 correctly becomes a
+     right-rotation by 4. In Java or C++ the sign follows the dividend, so `-1 % 5` is
+     -1 and you must add the length and take the modulo again. This is a genuinely good
+     thing to volunteer.
+
+  "Does it mutate the caller's list?" Yes - the same node objects come back, verified
+     by comparing identities before and after, with only `next` fields changed. The
+     caller's old head reference now points into the middle of the result, which is a
+     real hazard worth mentioning.
+
+  "What if the list is already circular?" The first pass never terminates. Nothing here
+     detects that, and the problem guarantees it does not happen.
+
+ONE-SENTENCE TAKEAWAY. Reduce k by the length first, then close the list into a ring so
+that rotating becomes choosing where to cut - and remember to cut, because a ring that
+is never reopened hangs whoever reads it.
+
+THE INTERVIEW IMPLICATION. There is no algorithmic insight to discover here, so the
+entire signal is in whether you handle the unbounded k without being told. Volunteer it
+early: "k can be much larger than the list, and rotating by the length is the identity,
+so I will reduce it first". Then draw the ring before writing code, and state the cut
+position as length - k with the reason. Candidates who start by writing the pointer
+juggling and only later notice k = 2,000,000,000 have already spent the time they
+needed for the off-by-one.""",
 ]
 
 _EX_P1Q["Shortest Path in Binary Matrix (8-directional BFS)"] = [
-    """Why BFS and not DFS or Dijkstra.
-Every move costs the same (one cell), so this is an UNWEIGHTED shortest path -
-and BFS explores in strictly increasing distance order, so the first time it
-reaches the destination it has done so by a shortest route. DFS would find a
-path but not necessarily the shortest; Dijkstra would work but its heap is
-pointless overhead when all weights are equal.
-The rule: unweighted -> BFS, non-negative weights -> Dijkstra, negative ->
-Bellman-Ford. Naming which one applies and why is the first thing to say.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The 8 directions, and why the count is CELLS not steps.
-Neighbours include the four diagonals, so the offsets are all combinations of
--1, 0, +1 excluding (0,0) - eight of them.
-The answer counts CELLS on the path, so the starting cell is 1, not 0. That is
-why the queue is seeded with (0, 0, 1). A 1x1 grid of [[0]] therefore answers 1,
-not 0 - which is the fastest check that you got the convention right.
-Off-by-one here is the most common wrong answer on this problem.""",
+You have a square grid of 0s and 1s. A 0 is a cell you may stand on; a 1 is blocked.
+Starting at the top-left corner, reach the bottom-right corner, and you may step to any
+of the EIGHT neighbouring cells - up, down, left, right, and all four diagonals.
 
-    """Marking visited at ENQUEUE, not at dequeue.
-`seen.add((nr,nc))` must happen when you push, not when you pop. Otherwise the
-same cell can be enqueued many times by different neighbours before any of them
-is processed, and the queue blows up exponentially on open grids while still
-producing the right answer - so it passes small tests and times out on large
-ones.
-The invariant: a cell enters the queue exactly once, at the moment the first
-(and therefore shortest) wave reaches it.""",
+Return how many CELLS the shortest such path visits, counting the start and the end. If
+no path exists, return -1.
 
-    """The guards, and the one that is easy to forget.
-Blocked START or END -> return -1 immediately. The end check is the one people
-omit: BFS would simply never reach it and the loop would exhaust, so the answer
-is still correct - but returning early is cheaper and clearer.
-Bounds checks on every neighbour are mandatory since diagonals can step off two
-edges at once from a corner.
-Also note the cell value must be 0 to be passable; 1 is an obstacle, which is
-the reverse of some similar problems - read the prompt rather than assuming.""",
+    grid = [[0, 1],
+            [1, 0]]
 
-    """Edge cases.
-[[0]] -> start is also the end -> 1.
-[[1]] -> blocked start -> -1.
-[[0,1],[1,0]] -> the diagonal move from (0,0) to (1,1) is legal, so the answer
-is 2 even though both orthogonal routes are blocked. This is THE case that
-distinguishes 8-directional from 4-directional, and it is worth trying
-deliberately.
-A fully blocked grid -> -1 after the queue empties.
-An n x n grid of all zeros -> the answer is n (walk the diagonal), not 2n-1,
-which is another consequence of diagonal movement.""",
+        (0,0) is clear.  (0,1) is blocked.
+        (1,0) is blocked. (1,1) is clear - and it is the target.
 
-    """Complexity and the family.
-O(n^2) time and space - every cell is enqueued at most once.
-The family: Rotting Oranges and 01 Matrix (multi-source BFS - seed all sources
-at once), Word Ladder (BFS over word transformations rather than a grid), Open
-the Lock, Number of Islands (connectivity, so DFS is fine), and Path with
-Minimum Effort - which is Dijkstra, because there the cost of a path is the
-maximum edge rather than the count, so the moves are no longer uniform.
-The deciding question is always whether every move costs the same.""",
+        From (0,0) you cannot go right or down, but you CAN go DIAGONALLY to (1,1).
+
+        path: (0,0) -> (1,1)     that is 2 cells.
+        ANSWER: 2
+
+Verified against an independent level-by-level expansion: 2.
+
+    grid = [[0, 0, 0],
+            [1, 1, 0],
+            [1, 1, 0]]
+
+        The left side is walled off. The only route is along the top row and down the
+        right column:  (0,0) -> (0,1) -> (1,2) -> (2,2)   using one diagonal.
+        ANSWER: 4      (verified: 4)
+
+    grid = [[1, 0, 0],
+            [1, 1, 0],
+            [1, 1, 0]]
+
+        The START ITSELF is blocked. You cannot even begin.
+        ANSWER: -1     (verified: -1)
+
+Two details the wording hides, and both cost marks:
+
+  It asks for the number of CELLS, not the number of MOVES. A path of 4 cells contains
+  3 moves. Starting the count at 0 instead of 1 was measured wrong on 1,947 of 4,000.
+  The single-cell grid [[0]] answers 1, not 0 - the start is also the end, and one cell
+  has been visited.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Every move costs exactly the same: one cell. When all steps cost the same, the shortest
+route is found by exploring outward in RINGS - first everything one cell away, then
+everything two cells away, and so on. The first time you touch the target, you are
+holding the shortest answer, because you would have touched it in an earlier ring
+otherwise.
+
+    ring 1:  just the start
+    ring 2:  every clear cell you can reach in one move
+    ring 3:  every clear cell reachable from ring 2 that you have not already seen
+
+    . . . . .            S . . . .            S 1 . . .            S 1 2 . .
+    . . . . .    ->      . . . . .    ->      1 1 . . .    ->      1 1 2 . .
+    . . . . .            . . . . .            . . . . .            2 2 2 . .
+       start                ring 1               ring 2               ring 3
+
+Notice the shape of the expansion: because diagonals are allowed, the frontier grows as
+a SQUARE, not a diamond. That is the whole difference between this problem and its
+four-directional siblings, and it is worth seeing rather than being told:
+
+    4 directions (diamond)        8 directions (square)
+
+          . X .                       X X X
+          X S X                       X S X
+          . X .                       X X X
+
+The practical consequence, measured on an open grid with no obstacles at all:
+
+    5 x 5 open grid:  8-directional answer 5 cells,  4-directional answer 9 cells
+    9 x 9 open grid:  8-directional answer 9 cells,  4-directional answer 17 cells
+
+Diagonally you simply walk the main diagonal - n cells. Orthogonally you must cover n-1
+rows plus n-1 columns - 2n-1 cells. So the eight-direction answer is roughly half.
+
+The structure that expands in rings is a QUEUE: you add newly discovered cells to the
+back and always take the next cell from the front, so everything at distance d is dealt
+with before anything at distance d+1.""",
+
+    """3. EVERY TERM, DEFINED
+
+BFS - BREADTH-FIRST SEARCH. Explore everything one step away, then everything two steps
+away, and so on. It uses a QUEUE - first in, first out.
+
+  Everyday version: a rumour spreading through an office. Everyone who hears it today
+  tells everyone they sit near tomorrow. The number of days it takes to reach a
+  particular person IS the shortest social distance to them - nobody hears it sooner
+  than they possibly could.
+
+UNWEIGHTED SHORTEST PATH. Every edge costs the same. This is the precise condition
+under which BFS gives shortest paths. If moves had different costs - say diagonals cost
+1.4 - BFS would be wrong and you would need Dijkstra's algorithm and a priority queue.
+Saying which of those you need, and why, is the point of the question.
+
+QUEUE (`deque`). A line. `append` adds to the back, `popleft` removes from the front.
+Python's `deque` does both in constant time; a plain list's `pop(0)` is O(n) and turns
+the whole algorithm quadratic.
+
+VISITED SET (`seen`). The cells already discovered. Without it, BFS revisits cells
+endlessly and never terminates.
+
+FRONTIER. The cells at the current distance - everything sitting in the queue with the
+same length value.
+
+WHY NOT DFS. Depth-first search plunges down one route to the end before trying
+alternatives, so the first time it reaches the target it has found A path, not the
+SHORTEST one. You would have to explore every path and take the minimum. BFS gets the
+shortest by construction, from the order it visits things.
+
+WHY NOT DIJKSTRA. Dijkstra handles varying edge costs by always expanding the cheapest
+frontier cell, which needs a priority queue and costs an extra log factor. With uniform
+costs a plain queue already keeps things in cost order, so Dijkstra would be correct but
+slower for no benefit.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP ONE - COUNTING MOVES INSTEAD OF CELLS.
+
+  The problem asks for the number of cells on the path. Starting the counter at 0 - the
+  natural instinct, since you have taken no steps yet - reports one less than the
+  answer everywhere. Measured: wrong on 1,947 of 4,000. Both of the reachable official
+  examples catch it, so it dies quickly, but it costs a submission.
+
+  The tell is the single-cell grid [[0]]: the answer is 1, and any formulation that
+  reports 0 there is counting the wrong thing.
+
+TRAP TWO - USING ONLY FOUR DIRECTIONS. Easy to do by habit, since most grid problems
+  are four-directional. Measured: wrong on 1,509 of 4,000, and it does not merely give
+  a longer answer - on grids like [[0,1],[1,0]] the diagonal is the ONLY route, so
+  four-directional returns -1 where the answer is 2.
+
+TRAP THREE - THE BLOCKED START. THIS IS THE QUIET ONE.
+
+  If the top-left cell is itself a 1, there is no path and the answer is -1. But the
+  code seeds the queue with (0,0) before ever looking at it. Without an explicit check,
+  BFS happily begins walking from a cell it is not allowed to stand on, and reports a
+  route that starts illegally.
+
+      [[1, 0],            correct -1,   without the start guard: 2
+       [0, 0]]
+
+      [[1, 0, 0],         correct -1,   without the start guard: 3
+       [0, 0, 0],
+       [0, 0, 0]]
+
+  Measured: wrong on 489 of 4,000. And of the three official examples, ONLY THE THIRD
+  catches it - the first two have clear starts, so they agree with the broken version.
+  It is the sample that exists precisely to test this, and if you skim past it the bug
+  survives.
+
+TWO THINGS THAT ARE NOT WHAT THEY LOOK LIKE - MEASURED, NOT ASSUMED.
+
+  THE BLOCKED-END CHECK IS AN OPTIMISATION. If the target is a 1, BFS simply never
+  reaches it and falls out of the loop to return -1 anyway. Measured: removing that
+  guard was wrong on 0 of 4,000. It saves a pointless full search of the grid, which is
+  worth having - but it is not correctness, and it is not symmetric with the start
+  check even though the two look like a matched pair. That asymmetry is the interesting
+  bit: the start is seeded without being validated, the end is validated by being
+  reached.
+
+  MARKING VISITED ON DEQUEUE IS A PERFORMANCE BUG, NOT A WRONG ANSWER. The usual
+  warning is to mark cells when you PUSH them, not when you POP them. Measured across
+  4,000 grids, the mark-on-dequeue version was wrong on 0 - BFS still returns the
+  correct distance, because the first arrival at a cell is still the shortest. What it
+  costs is duplicate work:
+
+      n = 12 grid (144 cells):  enqueues 122 marking on push, 368 marking on pop  (3.0x)
+      n = 20 grid (400 cells):  enqueues 336 marking on push, 1042 marking on pop (3.1x)
+
+  Three times the queue traffic and three times the memory high-water mark, for an
+  identical answer. So it is a real thing to fix and a real thing to be able to explain -
+  but describe it accurately as wasted work rather than as a wrong answer.
+
+  (One more non-issue: the direction loops include the offset (0, 0), which lands on the
+  cell you are standing on. No explicit skip is needed, because that cell is already in
+  `seen` and the membership test rejects it. Measured difference: 0 of 4,000.)""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Enumerate paths with depth-first search and keep the shortest.
+
+    best = infinity
+    def walk(r, c, length, visited):
+        if (r, c) is the target: best = min(best, length); return
+        for each of the 8 neighbours that is clear and unvisited:
+            walk(neighbour, length + 1, visited + {neighbour})
+
+This is correct but catastrophic: it explores every simple path, and the number of
+paths through an open grid grows exponentially. It also has to keep and unwind a
+per-path visited set, because a cell excluded from one route must be available to
+another.
+
+WHY BFS IS BETTER, AND IT IS NOT JUST SPEED. BFS reaches each cell by its shortest route
+FIRST, so a single shared `seen` set is enough - once a cell is reached, no later route
+to it can be shorter, so it never needs re-examining. That is why BFS gets away with
+marking a cell permanently and DFS cannot. The saving is not a trick; it follows from
+the order of exploration.
+
+    naive DFS:  exponential, per-path visited set, must explore everything
+    BFS:        O(n^2) - every cell enters the queue at most once
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY FIRST ARRIVAL IS SHORTEST. The queue holds cells
+in non-decreasing order of distance: it starts with distance 1, and every cell pushed is
+one more than the cell it came from, so distances only ever go up as you move along the
+queue. When a cell is first popped, everything of smaller distance has already been
+processed - so no shorter route to it can still be waiting. The first time you touch the
+target you may stop, and this is why the code returns immediately rather than continuing
+to look for something better.
+
+WHEN BFS WOULD BE THE WRONG CHOICE. If the diagonals cost more than the straight moves -
+say 1.4 for a diagonal - distances would no longer be integers advancing one at a time,
+the queue would no longer be in cost order, and you would need Dijkstra. Naming this
+condition is worth more in an interview than the code, because it shows you know why
+BFS is licensed here rather than just that it works.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: expand outward from the top-left cell one ring at a time, marking each
+cell the moment you discover it, and the first time the bottom-right cell comes off the
+queue you are holding the shortest answer.
+
+THE MECHANISM, SPELLED OUT. No recursion and no call stack - a queue does the
+remembering that a recursive version would push onto the stack, which is why this scales
+to large grids without a depth limit.
+
+  What the queue maintains: the cells waiting to be expanded, in non-decreasing order of
+  distance from the start. This holds at the beginning - one cell at distance 1 - and
+  each expansion appends cells one greater than the cell being expanded, so the ordering
+  survives.
+
+  What the `seen` set maintains: every cell that has ever been PUT INTO the queue. Adding
+  to it at push time is what guarantees each cell is queued at most once, which bounds
+  the total work at the number of cells.
+
+  What makes it stop: two things, and they mean different things. It stops EARLY by
+  returning when the target is popped - correct because of the ordering above. Otherwise
+  it stops when the queue empties, which happens because every cell can be added only
+  once and there are finitely many; reaching that point means the target is unreachable,
+  and -1 is returned.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Let n be the grid's side length.
+  2. If the starting cell is blocked, or the target cell is blocked, answer -1. The
+     first of these is a correctness requirement - the search would otherwise begin on a
+     cell it may not occupy. The second is an early exit; the search would fail to reach
+     a blocked target anyway.
+  3. Put the starting cell into a queue, paired with the path length 1 - ONE, not zero,
+     because the start is itself a cell on the path.
+  4. Record the starting cell as seen.
+  5. While the queue is not empty:
+       a. Take the cell at the FRONT of the queue, along with its length.
+       b. If it is the bottom-right cell, answer that length and stop.
+       c. Otherwise look at all eight neighbouring positions - every combination of
+          minus one, zero and plus one for the row and column offsets.
+       d. For each neighbour that lies inside the grid, is clear, and has not been seen:
+          mark it as seen IMMEDIATELY, then add it to the back of the queue with a
+          length one greater. Marking at this moment, rather than when it is later taken
+          off the queue, is what stops the same cell being queued from several
+          neighbours - measured at three times the queue traffic otherwise.
+  6. If the queue empties without reaching the target, answer -1.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a flooded field laid out as a square of paving slabs, some of them sound and
+some collapsed. You want to know the fewest slabs you must tread on to cross from the
+near corner to the far corner, and you are agile enough to step diagonally as well as
+straight.
+
+Rather than trying routes one at a time, you pour water in at the near corner and watch.
+
+In the first second the water covers only the starting slab. In the next second it
+spreads to every sound slab touching that one - including the diagonal corners, which is
+why the wet patch grows as a square rather than a diamond. In the second after that it
+spreads again from everywhere it has already reached.
+
+Water does not visit a slab twice, and that is the crucial economy: the moment a slab is
+wet, you paint a mark on it, and no later spreading bothers with it again. Because the
+water spread outward evenly, the second in which a slab first got wet IS its true
+distance from the corner - nothing could have arrived sooner.
+
+So you simply wait, and the second in which the far corner gets wet is your answer.
+
+Two details decide whether this works. First, mark a slab the instant the water touches
+it, not when you later get round to inspecting it - otherwise several neighbouring wet
+slabs each queue up the same dry one, and you do three times the bookkeeping for the
+same result. Second, look at the starting slab before you pour: if the near corner has
+already collapsed, there is nowhere to pour the water at all, and no amount of watching
+will tell you that if you never checked.
+
+And if the water eventually stops spreading with the far corner still dry, there is no
+route - not a long one, none.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    from collections import deque
+
+  A double-ended queue. `popleft` is constant time; a plain list's `pop(0)` is O(n) and
+  would make the whole search quadratic in the number of cells.
+
+    def shortest_path_binary_matrix(grid):
+
+  `grid` is the n-by-n list of lists of 0s and 1s.
+
+        n = len(grid)
+
+  The side length. The grid is square, so one dimension is enough.
+
+        if grid[0][0] == 1 or grid[n-1][n-1] == 1:
+            return -1                     # blocked start or end
+
+  Two guards that look symmetric and are not. The START check is load-bearing: the queue
+  is seeded with (0,0) WITHOUT the loop ever testing whether it is clear, so without this
+  the walk begins on a blocked cell - wrong on 489 of 4,000, and only the third official
+  example catches it. The END check is an early exit - measured 0 of 4,000 without it,
+  since BFS never reaches a blocked target and returns -1 anyway.
+
+        queue = deque([(0, 0, 1)])        # (row, col, cells in path so far)
+
+  The starting cell with a length of 1. ONE, not zero - the start is a cell on the path.
+  Seeding with 0 was wrong on 1,947 of 4,000.
+
+        seen = {(0, 0)}
+
+  Cells that have ever been queued. The start is marked immediately, which is also what
+  makes the (0,0) direction offset harmless later.
+
+        while queue:
+
+  Keep going while anything is waiting. Emptying means the target is unreachable.
+
+            r, c, length = queue.popleft()
+
+  Take from the FRONT. This is what makes it breadth-first; taking from the back would
+  make it depth-first and the first arrival would no longer be shortest.
+
+            if r == n - 1 and c == n - 1:
+                return length
+
+  The target, popped for the first time - so `length` is the shortest. Returning here
+  rather than continuing is licensed by the queue's ordering, not by luck.
+
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+
+  All nine offsets, which is the eight neighbours plus (0, 0). The self-offset needs no
+  explicit skip because that cell is already in `seen` - measured difference from adding
+  a skip: 0 of 4,000. Restricting these to the four orthogonal moves was wrong on 1,509
+  of 4,000.
+
+                    nr, nc = r + dr, c + dc
+
+  The candidate neighbour's coordinates.
+
+                    if 0 <= nr < n and 0 <= nc < n and grid[nr][nc] == 0 and (nr, nc) not in seen:
+
+  Four conditions in one line, and the order matters: the bounds checks must come FIRST,
+  because `grid[nr][nc]` would otherwise index outside the grid. In Python a negative
+  index silently wraps to the far end rather than raising, so a missing lower-bound check
+  would read the wrong cell rather than crash.
+
+                        seen.add((nr, nc))
+
+  MARK AT PUSH TIME. Doing this when the cell is later popped instead still returns the
+  right answer - measured 0 wrong of 4,000 - but triples the queue traffic: 368 enqueues
+  against 122 on a 12x12 grid, 1,042 against 336 on a 20x20.
+
+                        queue.append((nr, nc, length + 1))
+
+  One more cell on the path than the cell it came from.
+
+        return -1
+
+  The queue emptied. Every cell reachable from the start was examined and the target was
+  not among them.""",
+
+    """9. TRACED ON REAL NUMBERS - AND THE SECOND TRACE IS THE BLOCKED START
+
+Section 4's quiet trap is a blocked STARTING cell, and a trace on a grid with a clear
+start cannot reach it. So here are both.
+
+CASE ONE - A NORMAL SEARCH. grid = [[0,0,0], [1,1,0], [1,1,0]], n = 3
+
+    queue = [ (0,0) at length 1 ],  seen = {(0,0)}
+
+    pop (0,0) length 1.  Not the target (target is (2,2)).
+        neighbours: (0,1) clear -> push at length 2
+                    (1,0) is 1, (1,1) is 1 - both blocked and skipped
+        push (0,1)@2
+
+    pop (0,1) length 2.  Not the target.
+        (0,2) clear -> push at 3
+        (1,2) clear -> push at 3      <- a DIAGONAL move, down and right
+        (1,0), (1,1) blocked
+        push (0,2)@3, (1,2)@3
+
+    pop (0,2) length 3.  Not the target.
+        every clear neighbour - (0,1) and (1,2) - is already in `seen`
+        push nothing
+
+    pop (1,2) length 3.  Not the target.
+        (2,2) clear and unseen -> push at 4      <- again available only because
+                                                    (2,1) is blocked
+        push (2,2)@4
+
+    pop (2,2) length 4.  IS THE TARGET  ->  return 4
+
+    Cross-checked against an independent level-by-level expansion: 4. Match.
+
+    Note the third pop pushed NOTHING. That is `seen` doing its job - (0,1) and (1,2)
+    were already marked at push time by earlier cells. Under mark-on-dequeue they would
+    have been queued a second time here, which is where the measured 3x comes from.
+
+CASE TWO - THE BLOCKED START, WHICH THE FIRST TRACE CANNOT SHOW. grid = [[1,0], [0,0]]
+
+    The correct answer is -1: (0,0) holds a 1, so there is nowhere to begin.
+
+    With the guard:  `grid[0][0] == 1` is true  ->  return -1 immediately.
+
+    Now DELETE the start guard and replay:
+
+        queue = [ (0,0) at length 1 ],  seen = {(0,0)}
+        pop (0,0) length 1.  Nothing ever checked that this cell is legal to stand on.
+            Not the target (target is (1,1)).
+            neighbours (0,1), (1,0), (1,1) are all clear -> pushed at length 2
+        pop (0,1) length 2.  Not the target.
+        ... eventually pop (1,1) length 2  ->  return 2
+
+        It reports a two-cell path whose first cell is a wall.
+
+    On the 3x3 version, [[1,0,0],[0,0,0],[0,0,0]], the same deletion returns 3 instead
+    of -1. Measured across 4,000 random grids: wrong on 489.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES
+
+Take the first official example and block one more cell - the target's only reachable
+neighbour turns out to be the target itself:
+
+    [[0,1],          ->  2      the single diagonal step (0,0) -> (1,1)
+     [1,0]]
+
+    [[0,1],          ->  -1     (1,1) is now blocked, so there is no target to reach
+     [1,1]]
+
+One cell, and a two-step answer becomes no answer at all. It also flips which guard
+produces the result: the first is answered by the search, the second by the blocked-end
+early exit - or, without that exit, by the queue emptying.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Every cell enters the queue at most once, and each one looks at
+eight neighbours - a fixed number. So the time is proportional to the number of cells:
+O(n^2) for an n-by-n grid. The `seen` set and the queue each hold at most every cell, so
+the space is also O(n^2). Both optimal in the sense that you may have to look at the
+whole grid to prove there is no path.
+
+Against the naive path-enumerating DFS, which is exponential: BFS wins not by being a
+cleverer search but by being allowed to mark cells permanently, which it earns from
+visiting them in distance order.
+
+THE #1 MISTAKE. The blocked START. Wrong on 489 of 4,000, and only ONE of the three
+official examples catches it. It is easy to miss because the guard looks like a
+throwaway symmetric pair with the end check - and the end check genuinely is
+throwaway. The asymmetry is the thing to hold onto: THE START IS SEEDED WITHOUT BEING
+VALIDATED, so it must be validated separately; every other cell is validated by the
+`grid[nr][nc] == 0` test on the way in.
+
+  The runner-up is counting moves instead of cells - 1,947 of 4,000 - and the check that
+  catches it instantly is the one-cell grid [[0]], whose answer is 1.
+
+BE PRECISE ABOUT MARK-ON-ENQUEUE. If asked "why mark when you push?", the accurate
+answer is not "otherwise you get the wrong answer" - measured 0 wrong of 4,000. It is:
+"BFS still returns the correct distance either way, because first arrival is still
+shortest; but marking on pop lets several neighbours queue the same cell, which measured
+three times the enqueues - 368 against 122 on a 12x12 grid. It is wasted work and wasted
+memory, not a wrong answer." Knowing which of your rules protect correctness and which
+protect performance is a senior distinction, and this is a clean example of one that is
+almost always taught as the former.
+
+THE GRID BFS CLUSTER - WHO OWNS WHAT
+
+  Shortest Path in Binary Matrix (this one) owns EIGHT-DIRECTIONAL movement and the
+     MARK-AT-PUSH discipline. Its distinguishing feature is a SINGLE source and an early
+     return the moment the target is popped.
+  01 Matrix owns MULTI-SOURCE SEEDING - every zero cell goes into the queue before the
+     search starts, so one pass computes the distance for every cell at once. It cannot
+     return early, because it needs all the answers.
+  Rotting Oranges is multi-source too, but counts the number of RINGS rather than a
+     distance to one target - so it tracks the level number, not a per-cell length.
+
+  The contrast worth carrying: this problem stops at the first target and pays O(n^2)
+  worst case; 01 Matrix deliberately never stops early because seeding all sources makes
+  one sweep answer every query - measured elsewhere in this bank at 900 dequeues against
+  596,584 for repeating a single-source search per cell.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "Return the path itself, not its length." Store a parent pointer for each cell as you
+     mark it, then walk backwards from the target. O(n^2) extra space and no change to
+     the running time.
+
+  "What if diagonal moves cost more than straight ones?" BFS is no longer valid - the
+     queue would not be in cost order. Switch to Dijkstra with a priority queue, at an
+     extra log factor. This is the single most likely follow-up and the reason the
+     question is asked.
+
+  "The grid is enormous and mostly open." Use A* - the same search with a priority queue
+     ordered by distance-so-far plus a lower bound on the distance remaining. With eight
+     directions the natural bound is the Chebyshev distance, max(row gap, column gap),
+     which is exactly the number of cells on an unobstructed diagonal route.
+
+  "Search from both ends at once." Bidirectional BFS. Expanding two frontiers that meet
+     in the middle explores roughly the square root of the cells a single frontier would,
+     because each frontier only has to reach half the distance.
+
+  "Why is the answer on an open n x n grid exactly n?" Because you walk the main
+     diagonal, one cell per row, and with diagonal moves permitted no route can be
+     shorter than max(row gap, column gap) + 1. Verified: 5 on a 5x5, 9 on a 9x9, against
+     9 and 17 for the four-directional version.
+
+ONE-SENTENCE TAKEAWAY. Uniform step costs mean the first arrival is the shortest, so
+expand in rings with a queue, mark cells the moment you discover them - and check the
+starting cell, because it is the one cell the loop never validates.
+
+THE INTERVIEW IMPLICATION. Recognising BFS here takes seconds, so the separation happens
+elsewhere. Volunteer three things: WHY BFS rather than DFS or Dijkstra, in terms of
+uniform edge cost; that the answer counts cells so the counter starts at 1; and that the
+start cell needs its own check because it is seeded rather than tested. Then be ready for
+"what if diagonals cost 1.4" - that question is coming, and the right answer is a
+one-word switch to Dijkstra with a reason, not an attempt to patch the BFS.""",
 ]
 
 _EX_P1Q["String Compression (in place)"] = [
-    """The two-pointer scheme, traced.
-chars = ['a','a','b','b','c','c','c'].
-read counts the run of 'a' (2), write puts 'a' then '2' -> positions 0,1.
-Run of 'b' (2): write 'b','2' -> positions 2,3.
-Run of 'c' (3): write 'c','3' -> positions 4,5.
-Return 6, with chars[:6] = ['a','2','b','2','c','3'].
-The two pointers never collide because the compressed form is never longer than
-what has already been read - which is the property that makes in-place
-possible.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why counts must be written DIGIT BY DIGIT.
-A run of 12 becomes the two characters '1' and '2', not the single value 12 -
-the array holds characters, so a multi-digit count occupies multiple slots.
-`for digit in str(count): chars[write] = digit; write += 1` handles any length.
-Writing `chars[write] = count` stores an integer into a character array, which
-either raises or silently corrupts depending on the language. And a run of 100
-occupies three slots, which is why the 'never longer than the input' argument
-below needs checking rather than assuming.""",
+You are given an array of single characters. Compress it by replacing each RUN of
+repeated characters with that character followed by how many times it repeated - but
+only write the count when the run is longer than one.
 
-    """Why a run of 1 writes NO count.
-'a' alone compresses to 'a', not 'a1' - the count is omitted when it is 1. That
-is what keeps the output no longer than the input: a single character costs one
-slot either way.
-Check the worst case: 'ab' -> 'ab', same length, no saving but no growth. A run
-of 2 -> two slots ('a','2'), same as before. A run of 3 -> two slots, a saving.
-So the compressed form is never longer, which is the invariant that lets write
-safely trail read.""",
+You must do this IN PLACE, writing back into the same array, and return the new length.
 
-    """Why in-place is the whole point.
-Building a new list and returning it is trivial and O(n) space. The constraint
-here is O(1) extra space, which forces the write pointer to overwrite cells
-that read has already consumed.
-The safety argument is the one above: write never overtakes read because the
-compressed prefix is never longer than the scanned prefix. State that invariant
-explicitly - it is what makes the mutation obviously safe rather than
-apparently lucky.""",
+    chars = ['a','a','b','b','c','c','c']
 
-    """Edge cases.
-Single character ['a'] -> run of 1, no count -> length 1.
-All identical ['a']*10 -> 'a','1','0' -> length 3, and this is the multi-digit
-case that catches naive implementations.
-No repeats ['a','b','c'] -> 'abc', length 3, no compression achieved.
-Empty input -> 0.
-A run of exactly 9 vs 10 is the boundary worth testing: 9 writes one digit, 10
-writes two.""",
+    runs:   'a' twice,  'b' twice,  'c' three times
+    write:  'a','2',    'b','2',    'c','3'
 
-    """Complexity and the family.
-O(n) time - read advances monotonically through the array - and O(1) extra
-space beyond the output, which is written in place.
-The family is the read/write two-pointer: Remove Duplicates from Sorted Array,
-Remove Element, Move Zeroes, and Sort Colors. All share the shape of one
-pointer scanning and another marking where the next kept value goes.
-The distinguishing skill here is the invariant argument - being able to say WHY
-write can never overtake read, rather than just observing that it does not on
-the examples.""",
+    the array becomes ['a','2','b','2','c','3', ...] and you return 6
+    ANSWER: 6
+
+Verified against a fresh-string ground truth: a2b2c3, length 6.
+
+    chars = ['a']
+
+    A run of ONE. The count is omitted, so it compresses to just 'a'.
+    ANSWER: 1     (verified: "a")
+
+    chars = ['a','b','b','b','b','b','b','b','b','b','b','b','b']
+
+    'a' once - no count. Then 'b' twelve times - and twelve is written as the two
+    separate characters '1' and '2', because the array holds CHARACTERS.
+    the array becomes ['a','b','1','2', ...] and you return 4
+    ANSWER: 4     (verified: "ab12", length 4)
+
+That third example is doing two jobs at once and both are traps: it has a run of one
+(no count) and a run of twelve (a two-character count). Section 4 measures both.
+
+Note what "return the length" means: the caller reads only the first that-many entries.
+Whatever is left in the array beyond that point is stale rubbish and is nobody's
+problem - verified below, where a leftover 'c' survives past the returned length.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Two fingers move along the same array. One READS and one WRITES, and the reader is
+always ahead.
+
+    chars:   a  a  b  b  c  c  c
+             ^
+           both fingers start here
+
+    The reader runs forward while the character stays the same, counting:
+
+    chars:   a  a  b  b  c  c  c
+             W     R                read counted 2 a's, and stopped at 'b'
+
+    Now the writer lays down what that run compresses to - 'a' then '2' - and both
+    fingers have advanced by the same amount:
+
+    chars:   a  2  b  b  c  c  c
+                   W  R
+
+    Repeat for 'b':
+
+    chars:   a  2  b  2  c  c  c
+                         W  R
+
+    And for 'c', a run of three that writes only two characters:
+
+    chars:   a  2  b  2  c  3  c
+                               W     R (past the end)
+                                     ^ leftover, ignored
+
+    the writer stopped at 6, so the answer is 6.
+
+WHY IT IS SAFE TO OVERWRITE THE ARRAY YOU ARE STILL READING. This is the only thing
+that could go wrong, and it cannot. When the reader finishes a run of L characters, it
+has consumed L slots, and the writer needs at most... well, that is exactly the
+question, and section 4 answers it with arithmetic. The short version: the writer never
+gets ahead of the reader, so it never destroys a character that has not been read yet.
+
+Measured over 4,000 random arrays, the largest value of (write position minus read
+position) at any moment was 0. The writer touches the reader's heel and never passes.""",
+
+    """3. EVERY TERM, DEFINED
+
+RUN. A maximal stretch of identical adjacent characters. In "aabbccc" the runs are
+"aa", "bb" and "ccc". Maximal means you cannot extend it - the character before and
+after differ.
+
+  Everyday version: reading out a knitting pattern. You do not say "knit, knit, knit,
+  knit, knit"; you say "knit five". And you never say "knit one" - you just say "knit".
+
+RUN-LENGTH ENCODING. The general name for this compression. It works brilliantly on
+data with long runs - scanned black-and-white documents, simple graphics - and badly on
+data without them, where it can make things longer. That is why the run-of-one rule
+exists.
+
+IN PLACE / O(1) EXTRA SPACE. You may use a fixed number of extra variables - here
+`write`, `read`, `n`, `ch`, `count` - regardless of the array's size. Building a new
+list and returning it is trivial and O(n) space, and it is what the problem exists to
+forbid.
+
+TWO POINTERS, READ AND WRITE. The technique: one index consumes input, another produces
+output, both moving through the same storage. The whole approach depends on the output
+never being longer than the input consumed so far.
+
+RETURNING A LENGTH RATHER THAN AN ARRAY. A convention borrowed from C, where an array
+cannot be resized. The caller is told how much of the buffer is meaningful. Everything
+past that point is untouched leftovers - demonstrated below.
+
+DIGIT BY DIGIT. A count of 12 must become the two characters '1' and '2', because each
+slot holds one character. `str(count)` turns the number into its digits and the loop
+writes them one at a time. Writing the number as a single element was measured wrong on
+1,376 of 6,000 arrays - and is invisible until a run reaches 10.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP ONE - WRITING A MULTI-DIGIT COUNT AS ONE ELEMENT. THIS IS THE QUIET ONE.
+
+  The array holds characters. A run of 12 must be stored as '1' followed by '2' - two
+  slots - not as the single value "12" in one slot. The code that gets this wrong looks
+  perfectly reasonable.
+
+  AND IT IS COMPLETELY INVISIBLE FOR EVERY RUN SHORTER THAN TEN:
+
+      run of 3    correct 'a3'    one-element version ['a','3']     SAME
+      run of 9    correct 'a9'    one-element version ['a','9']     SAME
+      run of 10   correct 'a10'   one-element version ['a','10']    DIFFERENT
+      run of 12   correct 'a12'   one-element version ['a','12']    DIFFERENT
+
+  Below ten the string form of the count is one character long, so the two versions are
+  literally identical. Any hand-written test using short runs will pass.
+
+  Measured: wrong on 1,376 of 6,000 random arrays. Of the official examples, the first
+  two AGREE with the broken version - neither has a run of ten or more - and only the
+  third catches it. That third example exists for exactly this reason.
+
+TRAP TWO - EMITTING A COUNT FOR A RUN OF ONE. AND IT DOES NOT JUST GIVE A WRONG ANSWER.
+
+  'a' alone compresses to 'a', not 'a1'. Skipping the `if count > 1` test looks like a
+  harmless simplification. It is not, and the reason is worth understanding rather than
+  memorising.
+
+  A run of length 1 occupies ONE slot in the input. Writing 'a1' needs TWO. So the
+  output grows past the input and the write pointer runs off the end of the array.
+
+      ['a']            correct 'a'      always-count: IndexError
+      ['a','b']        correct 'ab'     always-count: IndexError
+      ['a','a','b']    correct 'a2b'    always-count: IndexError
+
+  Measured: wrong on 3,767 of 6,000 - and 3,453 of those were IndexError CRASHES rather
+  than wrong answers. Two of the three official examples crash on it.
+
+TRAP THREE - THE OFF-BY-ONE THAT IS NOT THERE. It is tempting to worry that the writer
+  will overwrite characters the reader has not seen. It cannot, and here is the
+  arithmetic - which also explains trap two.
+
+  After counting a run of length L starting at position p, the reader sits at p + L, and
+  the writer is at most at p. So the run has L slots available. What does it need?
+
+      L == 1  ->  emits just the character:            1 slot,  has 1   FITS exactly
+      L >= 2  ->  emits the character plus digits(L):  1 + digits(L) slots
+
+      L=1     needs 1 of 1        L=10    needs 3 of 10
+      L=2     needs 2 of 2        L=99    needs 3 of 99
+      L=3     needs 2 of 3        L=100   needs 4 of 100
+      L=9     needs 2 of 9        L=1000  needs 5 of 1000
+
+  The tightest cases are L = 1 and L = 2, where it fits with nothing to spare. Every
+  larger run leaves slack, and the slack grows, because digits(L) grows logarithmically
+  while L grows linearly.
+
+  NOW APPLY THE SAME ARITHMETIC TO THE ALWAYS-COUNT VERSION: it needs 1 + digits(L) for
+  every L, including L = 1, where that is 2 slots for 1 available. AND L = 1 IS THE ONLY
+  VALUE WHERE IT OVERFLOWS - at L = 2 it needs 2 of 2 and fits again. So the entire
+  reason for the `count > 1` rule is a single value of L, and runs of length 1 are
+  common enough that the crash rate is 58 percent.
+
+  Measured directly: over 4,000 arrays the largest value of (write - read) at any moment
+  was 0. The writer never gets ahead.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION. Build the answer in a fresh list, then copy it back.
+
+    out = []
+    i = 0
+    while i < len(chars):
+        j = i
+        while j < len(chars) and chars[j] == chars[i]:
+            j += 1
+        out.append(chars[i])
+        if j - i > 1:
+            out.extend(list(str(j - i)))
+        i = j
+    chars[:len(out)] = out
+    return len(out)
+
+Correct - it is the ground truth used to check everything in this entry - and it is the
+right thing to say out loud first, because it separates the LOGIC (what compresses to
+what) from the MECHANICS (where to put it). Getting the logic agreed before worrying
+about pointers is how you avoid debugging both at once.
+
+WHY IT IS REJECTED. `out` grows with the input, so this is O(n) extra space. The problem
+demands O(1). That is the only difference - the naive version is exactly as fast.
+
+THE UPGRADE. Write the output back into the input array as you go, with a second index.
+
+    naive:    read into a fresh list, then copy back      O(n) extra space
+    in place: one array, two indices                      O(1) extra space
+
+THE TRICK EXPLAINED FROM SCRATCH - WHY THIS IS EVEN POSSIBLE. Overwriting an array you
+are still reading is normally reckless. It works here because of one guaranteed
+property: THE COMPRESSED FORM OF ANY RUN IS NEVER LONGER THAN THE RUN ITSELF. Section 4
+proves it case by case, and it is precisely the `count > 1` rule that makes it true -
+without that rule a run of one would compress to something LONGER than itself, and the
+whole scheme collapses, which is why the always-count variant does not merely answer
+wrongly but crashes.
+
+  So the rule that looks like a cosmetic detail of the output format ("don't write a1")
+  is actually the structural precondition for the algorithm. That connection is the
+  thing worth carrying away from this problem.
+
+WHEN COMPRESSION MAKES THINGS WORSE. On "abcdef" - all runs of one - the output is
+"abcdef", the same length. Run-length encoding never wins on data without runs, and with
+a naive format that always emits a count it would actively lose. Real formats handle
+this with escape markers; this problem handles it by omitting the count.""",
+
+    """6. HOW TO CODE IT / HOW IT WORKS
+
+ONE SENTENCE: run a reading index forward through each block of identical characters,
+counting them, then have a separate writing index lay down the character and, if the
+block was longer than one, the digits of its length.
+
+THE MECHANISM, SPELLED OUT. No recursion and no call stack - two nested loops with two
+indices into a single array.
+
+  The OUTER loop is not a counted loop over positions; it is a loop over RUNS. It stops
+  when the reading index has passed the end of the array. It terminates because the
+  inner loop always consumes at least one character, so the reading index strictly
+  increases every time round.
+
+  The INNER loop consumes one run. It stops on either of two conditions - the array ends,
+  or the character changes - and the array-end test must be written first, because the
+  character test would otherwise index past the end.
+
+  The invariant that makes the whole thing safe: at the top of each outer iteration, the
+  writing index is less than or equal to the reading index, so everything from the
+  reading index onward is still original, unread input. Section 4 shows this survives
+  each run, because the compressed form of a run never needs more slots than the run
+  occupied. Measured: the largest (write - read) ever observed was 0.
+
+  Note the writing index never resets and never moves backwards. Its final value IS the
+  answer, which is why the function returns it directly.
+
+NUMBERED STEPS, NO CODE:
+
+  1. Set both a writing position and a reading position to the start of the array, and
+     note the array's length.
+  2. While the reading position is still inside the array:
+       a. Remember the character sitting at the reading position - this is the run's
+          character.
+       b. Advance the reading position while it is still inside the array AND the
+          character there is that same one, counting how many you passed. The
+          inside-the-array test must be checked first.
+       c. Write the run's character at the writing position, and move the writing
+          position on by one.
+       d. If the run was longer than one, convert its length to its decimal digits and
+          write those digits one at a time, moving the writing position on for each. A
+          length of 12 becomes two separate characters. Do NOT do this for a run of one -
+          not merely because the output format says so, but because a run of one has only
+          one slot to write into and two characters would not fit.
+  3. Return the writing position. The caller treats only the array up to that point as
+     meaningful; anything beyond it is leftover and is not cleared.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a long shelf of numbered pigeonholes, each holding one letter tile, and you have
+been asked to rewrite the shelf in shorthand - using the SAME shelf, because there is no
+second shelf in the building.
+
+Two people work along it. The reader walks ahead. Whenever she starts on a new letter
+she keeps walking while the letter stays the same, calling out a tally as she goes:
+"three c's". Then she stops and waits.
+
+The writer stands behind her. On hearing "three c's" he puts a 'c' tile into the next
+free pigeonhole and then a '3' tile into the one after. On hearing "two b's" he puts
+down 'b' and '2'. On hearing just "one a" he puts down 'a' and nothing else.
+
+The thing that makes this possible without a second shelf is that the writer is always
+laying down fewer tiles than the reader has already taken past. Three c's frees three
+pigeonholes and only two get refilled. Two b's frees two and refills two - tight, but
+it fits. And a single 'a' frees one and refills one - also tight, and also fine.
+
+That last case is the fragile one, and it is why the writer says nothing after a lone
+letter. If he insisted on announcing "one a" by putting down both 'a' and '1', he would
+need two pigeonholes where the reader had only freed one - so he would be putting a tile
+into a hole the reader has not reached yet, destroying a letter nobody has read. On a
+real shelf he would eventually walk off the end of it entirely.
+
+When the reader reaches the end of the shelf, the writer stops wherever he happens to be
+and reports his position. Everything past that point still holds old tiles from before -
+stale, meaningless, and left exactly where they were, because clearing them would be
+extra work nobody asked for.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def compress(chars):
+
+  `chars` is the list of single-character strings. It is MODIFIED IN PLACE - the caller's
+  own list changes - and the return value tells them how much of it to read.
+
+        write = 0
+        read = 0
+        n = len(chars)
+
+  `write` is where the next output character goes. `read` is where the next input
+  character is consumed. `n` is the fixed original length. Both indices start at 0, and
+  the invariant `write <= read` holds from here on.
+
+        while read < n:
+
+  The outer loop, once per RUN rather than once per character. It ends when the input is
+  exhausted, and it always makes progress because the inner loop advances `read` at
+  least once.
+
+            ch = chars[read]
+
+  `ch` is the character this run is made of. It must be captured BEFORE the inner loop
+  moves `read` on.
+
+            count = 0
+
+  How long the run turns out to be.
+
+            while read < n and chars[read] == ch:
+                read += 1; count += 1     # count the current run
+
+  Consume the run. The order of the two conditions is load-bearing: `read < n` must be
+  tested first, because `chars[read]` on an exhausted array would index out of range.
+  Python's `and` short-circuits, which is what makes writing them in this order
+  sufficient.
+
+            chars[write] = ch; write += 1
+
+  Emit the character itself. This is written unconditionally - every run contributes its
+  character, whatever its length.
+
+            if count > 1:
+
+  THE RULE THAT MAKES THE WHOLE ALGORITHM POSSIBLE. A run of one contributes no count.
+  Beyond matching the required output format, this is what keeps the compressed form no
+  longer than the input: a run of one has exactly one slot available, and emitting a
+  count would need two. Removing this test was wrong on 3,767 of 6,000 arrays, and 3,453
+  of those were IndexError crashes rather than wrong answers.
+
+                for digit in str(count):
+                    chars[write] = digit; write += 1
+
+  Write the count DIGIT BY DIGIT. `str(count)` turns 12 into the two-character string
+  "12" and the loop stores '1' and '2' in separate slots. Assigning `str(count)` into one
+  slot instead was wrong on 1,376 of 6,000 - and is invisible for every run shorter than
+  ten, since below that the string is a single character. Note the digits are naturally
+  produced most-significant-first, which is the order they must appear in.
+
+        return write
+
+  `write` ended up at the number of characters produced, which is exactly the compressed
+  length. Nothing beyond this index is cleared - the array's tail keeps whatever was
+  there. Verified: compressing ['a','a','b','b','c','c','c'] leaves the array as
+  ['a','2','b','2','c','3','c'], with a stale 'c' in the last slot, and the caller is
+  expected to read only the first 6.""",
+
+    """9. TRACED ON REAL NUMBERS - AND THE SECOND TRACE IS THE MULTI-DIGIT CASE
+
+Section 4's quiet trap needs a run of ten or more, and a trace on short runs cannot
+reach it. So here are both.
+
+CASE ONE - SHORT RUNS. chars = ['a','a','b','b','c','c','c'], n = 7
+
+    write = 0, read = 0
+
+    run of 'a' starting at index 0:
+        inner loop consumes indices 0 and 1        count = 2, read = 2
+        emit 'a' at position 0                     write = 1
+        count > 1, so emit str(2) = "2", one digit at position 1
+                                                   write = 2
+        array now  a  2  b  b  c  c  c
+                         W  R          - write and read are level
+
+    run of 'b' starting at index 2:
+        consumes indices 2 and 3                   count = 2, read = 4
+        emit 'b' at 2, then '2' at 3               write = 4
+        array now  a  2  b  2  c  c  c
+                               W  R
+
+    run of 'c' starting at index 4:
+        consumes indices 4, 5 and 6                count = 3, read = 7
+        emit 'c' at 4, then '3' at 5               write = 6
+        array now  a  2  b  2  c  3  c
+                                     W        R (past the end)
+
+    read is 7, which is not less than n, so the outer loop ends.
+    return 6.  Array head = ['a','2','b','2','c','3'].
+
+    Cross-checked against the fresh-list ground truth: "a2b2c3", length 6. Match.
+
+    Watch `write` and `read` at each stage: 2 and 2, then 4 and 4, then 6 and 7. Write
+    is level with read twice and behind it once. It never leads.
+
+CASE TWO - A TWO-DIGIT RUN, WHICH THE FIRST TRACE CANNOT SHOW.
+chars = ['a'] + twelve 'b's, n = 13
+
+    run of 'a' starting at 0:
+        consumes index 0                           count = 1, read = 1
+        emit 'a' at 0                              write = 1
+        count is 1, so NO count is written - and note there was exactly one slot free
+        and exactly one character emitted.
+
+    run of 'b' starting at 1:
+        consumes indices 1 through 12              count = 12, read = 13
+        emit 'b' at 1                              write = 2
+        count > 1, so emit str(12) = "12":
+            digit '1' at position 2                write = 3
+            digit '2' at position 3                write = 4
+
+    return 4.  Array head = ['a','b','1','2'].   Verified: "ab12", length 4.
+
+    NOW REPLACE THE DIGIT LOOP WITH A SINGLE ASSIGNMENT and replay: position 2 receives
+    the two-character string "12" as one element, giving ['a','b','12'] and a returned
+    length of 3. Wrong - and note it would have been RIGHT for any run under ten.
+
+    AND NOW REMOVE THE `count > 1` TEST and replay from the start: the run of 'a' emits
+    'a' at 0 and then '1' at 1, so write = 2 while read = 1. The writer has overtaken the
+    reader and has just destroyed the first 'b'. On a one-element array like ['a'] there
+    is no position 1 at all and it raises IndexError immediately.
+
+THE ANSWER INVERTING WHEN ONE PARAMETER CHANGES - AND HERE IT DOES NOT
+
+    "aabbccc"   ->  "a2b2c3"   length 6
+    "aabbcccc"  ->  "a2b2c4"   length 6
+
+One more character in the input, and the output length does not move at all - only the
+digit changes from '3' to '4'. That is run-length encoding's whole economics: growing a
+run is free until it crosses a power of ten. Extending that run to ten characters would
+finally push the length to 7, because "c10" needs three slots instead of two.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. `read` only ever moves forward and visits each position once, and
+`write` moves forward at most as often. So the time is O(n) - one pass, despite the
+nested loops, because the inner loop's total work across all runs is exactly n. The
+extra space is five scalar variables regardless of input size, so O(1), which is the
+entire point of the exercise.
+
+The naive fresh-list version is also O(n) time. It is not slower - it is just O(n)
+space, and that is the only thing being tested here.
+
+THE #1 MISTAKE. Writing a multi-digit count into a single slot. Wrong on 1,376 of 6,000,
+and INVISIBLE for every run shorter than ten - so hand-testing with "aabbccc" will never
+show it. Two of the three official examples agree with the broken version. The habit
+that prevents it: whenever you put a NUMBER into an array of CHARACTERS, stop and ask how
+many slots that number occupies. The answer is never "one" in general.
+
+  The runner-up is emitting a count for a run of one - 3,767 of 6,000, of which 3,453 are
+  crashes. It is loud, so it will not ship, but the reason it crashes is the insight of
+  the problem and is worth being able to state.
+
+THE CONNECTION WORTH CARRYING AWAY. The rule "no count for a run of one" looks like a
+detail of the output format. It is actually the PRECONDITION FOR IN-PLACE WORKING. The
+compressed form of a run must never be longer than the run, and L = 1 is the ONLY length
+at which that would fail - at L = 2 the naive rule needs 2 slots of 2 and fits again. One
+value of L is the entire reason the algorithm is legal. When a problem lets you overwrite
+your own input, there is always a fact like this holding it up, and finding it is the
+real work.
+
+  Verified rather than argued: over 4,000 random arrays the largest value of
+  (write - read) at any moment was 0.
+
+SAY THAT IT MUTATES THE CALLER'S DATA. It does, deliberately, and the tail beyond the
+returned length is NOT cleared - ['a','a','b','b','c','c','c'] comes back as
+['a','2','b','2','c','3','c'] with a stale 'c' in the last slot. A caller who ignores the
+returned length and prints the whole array sees rubbish. Volunteering this shows you
+understand the C-style contract the problem is imitating.
+
+THE TWO-POINTER FAMILY - WHO OWNS WHAT
+
+  String Compression (this one) owns READ-AND-WRITE INTO ONE ARRAY, where the two
+     pointers move at DIFFERENT rates and the safety argument is an arithmetic one about
+     output never exceeding input.
+  Remove Duplicates from Sorted Array and Move Zeroes own the simpler form, where the
+     writer advances only on a keeper and the output is trivially no longer than the
+     input - no arithmetic needed.
+  Odd Even Linked List owns the pointer-surgery version of the same instinct, where
+     nothing is copied at all and only links are re-aimed.
+
+NAMED FOLLOW-UPS AND THEIR ANSWERS
+
+  "What if the input can contain digits?" The output becomes ambiguous - "a12" could be
+     one 'a' followed by the literal characters '1','2', or twelve a's. You would need an
+     escape convention, and the problem's constraint of letters and symbols only is what
+     avoids it. Spotting the ambiguity unprompted is a strong signal.
+
+  "Decompress it again." Read a character, then read digits while they are digits,
+     defaulting to 1 if there are none. Note this CANNOT be done in place - the output is
+     longer than the input, so the direction that made this problem work does not run
+     backwards.
+
+  "Why not always write the count, for a simpler format?" Because a run of one would then
+     need two slots where one is available, which breaks the in-place property - measured
+     as an IndexError on 3,453 of 6,000 arrays. The uneven format is what buys the O(1)
+     space.
+
+  "What if runs could be a million long?" Nothing changes - a count of 1,000,000 is seven
+     digits and needs 8 slots out of a million available. The slack grows as runs grow,
+     because digits grow logarithmically.
+
+  "Compress with a threshold - only encode runs of 4 or more." Then the safety argument
+     must be redone: a run of 3 written as three characters needs 3 of 3, which still
+     fits, so it remains legal. Being asked to re-derive the bound is the natural
+     follow-up to having derived it once.
+
+ONE-SENTENCE TAKEAWAY. Two pointers along one array, the reader counting runs and the
+writer emitting a character plus the DIGITS of the count - and the rule that a run of one
+gets no count is not cosmetic, it is the single fact that stops the writer overtaking the
+reader.
+
+THE INTERVIEW IMPLICATION. The compression logic is easy and everyone gets it, so the
+signal is entirely in the in-place mechanics. Volunteer the safety argument before you
+write the loop - "the compressed form of a run is never longer than the run, so the writer
+can never pass the reader" - and name L = 1 as the case that makes it tight. Then test
+your own code on a run of twelve, because that is the input your examples will not give
+you and the one that separates a working answer from one that merely looks right.""",
 ]
 
 for _e in ENTRIES:
