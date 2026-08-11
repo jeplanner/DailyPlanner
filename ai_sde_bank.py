@@ -23084,90 +23084,587 @@ touch the prompt.
 """.strip("\n")
 
 _EXAMPLES_LLM["What is RAG (Retrieval-Augmented Generation)?"] = [
-    """The full pipeline traced end to end on one question.
-Corpus: 4,000 internal HR and IT pages. Question: "How many days of parental
-leave do I get?"
-  1. Embed the question -> a 1536-dimension vector.
-  2. Search the vector store -> top 5 chunks by cosine similarity, e.g.
-     "Parental Leave Policy v3, section 2" (0.89), "Leave entitlements
-     summary" (0.84), "Parental Leave Policy v2 - superseded" (0.83), ...
-  3. Build the prompt: instructions + those 5 chunks + the question.
-  4. The model answers "20 weeks, per Parental Leave Policy v3" and cites the
-     chunk.
-Notice the superseded v2 document also scored highly - that is a real and
-common problem, and it is fixed with metadata filtering on document status,
-not with a better model.""",
+    """1. THE GOAL - what problem RAG actually solves.
 
-    """A numeric look at why chunking dominates quality.
-A 40-page policy PDF, chunked three ways:
-  * 2000-token chunks: few chunks, each containing lots of irrelevant text.
-    Retrieval is imprecise and you burn context budget.
-  * 200-token chunks: precise, but "20 weeks" ends up in a chunk that never
-    mentions "parental leave" because the heading was two chunks earlier. The
-    embedding is therefore about weeks-in-general and never matches.
-  * 500-token chunks with 50-token overlap, and each chunk prefixed with its
-    document title and section heading: the heading travels with the content,
-    so the embedding captures what the passage is ABOUT.
-The third option typically lifts recall@5 by double digits with no model
-change. This is why "improve the chunking" is nearly always the highest-return
-first fix.""",
+An LLM's knowledge is frozen at training time, general rather than yours, and stored as
+statistical tendencies rather than retrievable records. So it cannot answer:
 
-    """The failure case: retrieval succeeded, the answer was still wrong.
-Question: "What is our refund policy for enterprise customers?"
-The retriever returned the CONSUMER refund policy, which is textually very
-similar - same vocabulary, same structure. The model dutifully answered from
-it and produced a confident, well-cited, wrong answer.
-Diagnosis: semantic similarity cannot distinguish two near-identical documents
-that differ by one attribute. Fixes: metadata filtering on customer segment,
-a reranker (a cross-encoder that reads query and chunk together and is far
-better at fine distinctions), and making the model quote the source so a human
-spots the mismatch.
-The lesson generalises: high similarity is not the same as relevance.""",
+    "How many days of parental leave do I get?"        (your policy, not on the internet)
+    "What did we ship last week?"                       (after the knowledge cutoff)
+    "What is this customer's current plan?"             (private data)
 
-    """RAG versus fine-tuning - the contrast interviewers always ask for.
-"Should we fine-tune the model on our documents instead?"
-  Fine-tuning teaches STYLE, FORMAT and TASK behaviour well. It teaches FACTS
-  unreliably - the model may produce something that looks like your content
-  without being it, and you cannot cite a source.
-  RAG gives grounding, citations, instant updates (re-index, no retraining),
-  access control per document, and cheap corrections (fix the document).
-  Cost: RAG adds retrieval latency and consumes context tokens on every call.
-The usual right answer: RAG for knowledge, fine-tuning for behaviour, and both
-together when you need a specific output format over private knowledge. An
-answer that just says "fine-tuning is better because it is baked in" is the
-common wrong one.""",
+Ask anyway and it will not say "I don't know". It will produce a fluent, plausible,
+confidently-worded answer - because producing plausible continuations is the only thing
+it was ever trained to do.
 
-    """Evaluating it - which is where most teams have nothing.
-Build a golden set of 100 real questions with known answers and known source
-documents. Then measure the two stages SEPARATELY, because they fail
-separately:
-  RETRIEVAL: recall@k - was the correct chunk in the top k? If this is 60%,
-  your ceiling is 60% and no prompt engineering will move it.
-  GENERATION: faithfulness (is every claim supported by the retrieved text?)
-  and answer relevance.
-A worked case: one team's end-to-end accuracy was 62%. Splitting the metrics
-showed recall@5 at 68% and faithfulness at 91% - so the generator was fine and
-the retriever was the whole problem. They added a reranker and raised k from 5
-to 20 before reranking; recall went to 89% and end-to-end to 81%. Measuring
-the stages separately is what told them where to spend the effort.""",
+RAG's idea is almost embarrassingly simple:
 
-    """The system-design version of this question.
-"Design a RAG chatbot over 10 million internal documents."
+    DON'T ASK THE MODEL TO REMEMBER. FIND THE RIGHT DOCUMENT, PASTE IT INTO THE PROMPT,
+    AND ASK THE MODEL TO ANSWER FROM IT.
+
+    Instead of:   "How many days of parental leave do I get?"
+
+    You send:     "Here is the relevant section of the HR policy:
+                   <the actual text of the policy>
+                   Using only the text above, answer: how many days of parental
+                   leave do I get? Cite the section."
+
+The model stops recalling and starts READING. That single change buys four things at
+once: knowledge it never had, knowledge newer than its cutoff, private knowledge, and
+- because the answer is grounded in text you supplied - citations you can check.
+
+The name splits neatly: RETRIEVAL (find the right text) AUGMENTED (added to the prompt)
+GENERATION (the model writes the answer). Two systems, and the retriever is where
+almost all the difficulty lives. Section 4 is about the failures, and nearly all of
+them are retrieval failures wearing a generation costume.""",
+
+    """2. THE INTUITION - closed book becomes open book.
+
+Two students sit the same exam.
+
+    CLOSED BOOK - a plain LLM.
+    Everything must come from memory. On well-known material they are excellent. On
+    your company's 2024 leave policy they have no memory to draw on, and rather than
+    leaving it blank they write something that reads exactly like a leave policy.
+    Fluent, formatted, wrong.
+
+    OPEN BOOK - RAG.
+    Before answering, someone finds the right page and puts it in front of them. Now
+    they are reading and summarising, which is something LLMs are genuinely excellent
+    at.
+
+The whole engineering problem is FINDING THE RIGHT PAGE. Handing over the entire
+50,000-page manual is useless - it does not fit in the context window, and even if it
+did, burying the answer in noise makes the model worse, not better.
+
+So the pipeline splits into two halves that run at completely different times:
+
+    OFFLINE, once (and on every document update):
+
+        documents -> cut into chunks -> turn each chunk into a vector -> store
+                                                                          |
+                                                                   [vector index]
+
+    ONLINE, per question:
+
+        question -> turn into a vector -> find the nearest chunks -> paste into prompt
+                                                                          |
+                                                                       LLM -> answer
+
+"Turn into a vector" is the part that deserves a picture. An EMBEDDING converts text
+into a long list of numbers positioned so that SIMILAR MEANINGS LAND NEAR EACH OTHER -
+regardless of the words used:
+
+        "parental leave entitlement"   *
+        "time off after having a baby"  *        <- near each other, no shared words
+        "maternity policy duration"    *
+
+        "expense reimbursement limits"                 *   <- far away
+        "VPN setup instructions"                            *
+
+This is why RAG beats keyword search. Somebody asking "how long do I get off when my
+baby is born" never types the word "parental", and a keyword search returns nothing.
+The embedding puts the question next to the right chunk anyway, because it matches on
+MEANING rather than on words.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+RETRIEVER. The half that finds relevant text. GENERATOR. The LLM that writes the answer
+from it.
+
+CORPUS. Your whole document collection.
+
+CHUNK. A piece of a document, typically a few hundred tokens. You retrieve chunks, not
+whole documents, because a whole document is mostly irrelevant to any one question and
+context space is scarce and billed.
+
+CHUNKING STRATEGY. How you cut. Fixed size, by paragraph, by section heading, or
+recursively by structure. Section 5 shows why this one choice dominates quality.
+
+OVERLAP. Repeating the last few sentences of one chunk at the start of the next, so an
+answer that straddles a boundary is not cut in half.
+
+EMBEDDING. A list of numbers - typically 384 to 3,072 of them - representing a piece of
+text's meaning, produced by a small model trained so that similar meanings land near
+each other. Also called a vector.
+
+DIMENSION. How many numbers are in that list. 1,536 is common.
+
+COSINE SIMILARITY. The usual measure of "how close are these two vectors" - the cosine
+of the angle between them. 1 means identical direction, 0 unrelated. This is the
+arithmetic behind "find similar chunks".
+
+SEMANTIC SEARCH. Searching by meaning (embeddings) rather than by exact words.
+
+KEYWORD SEARCH / BM25. Classic word-matching search. Better than embeddings at exact
+identifiers - product codes, error numbers, surnames - which embeddings often blur.
+
+HYBRID SEARCH. Running both and combining the results. Usually beats either alone,
+because their failure modes are different.
+
+VECTOR DATABASE. A store built to answer "which vectors are nearest this one" quickly.
+
+ANN (Approximate Nearest Neighbour). At small scale you can compare against every
+vector. At millions, you use an index like HNSW or IVF that finds ALMOST the nearest
+neighbours in a fraction of the time. The "approximate" is a real trade, and at scale
+it is the right one.
+
+TOP-K. How many chunks you retrieve. Typically 3 to 10.
+
+RERANKING. A second, slower, more accurate model that re-scores the top 20 or 50
+retrieved chunks and keeps the best 5. Cheap to add, and usually the single largest
+quality improvement available after chunking.
+
+GROUNDING. Instructing the model to answer only from the supplied text.
+
+CONTEXT STUFFING. Pasting the retrieved chunks into the prompt.
+
+RECALL@k. Of the questions whose answer exists in the corpus, the fraction where the
+correct chunk appeared in the top k retrieved. THE metric for the retriever, and the
+one most teams never measure.
+
+HALLUCINATION. A confident false statement. RAG reduces it but does not eliminate it -
+the model can still misread or over-generalise from correct retrieved text.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the one that defines the whole field: RETRIEVAL SUCCEEDED, THE ANSWER WAS
+STILL WRONG.
+
+    Question: "What is our refund policy for enterprise customers?"
+    The retriever returned the CONSUMER refund policy - textually almost identical,
+    semantically almost identical, and about a different customer segment.
+    The model dutifully answered from it. Fluent, grounded, cited, and wrong.
+
+This is the characteristic RAG failure, and it is why "we added RAG so hallucinations
+are solved" is wrong. The model did exactly what it was told. The retriever handed it
+the wrong page.
+
+The fixes are all on the retrieval side: METADATA FILTERING (tag chunks with
+segment/product/date and filter before the similarity search), RERANKING (a second
+model that notices "enterprise" is the distinguishing word), and HYBRID SEARCH (keyword
+matching catches the exact term that the embedding blurred).
+
+TRAP 2: not measuring the two halves separately. When an answer is wrong, there are two
+possible causes, and they have opposite fixes:
+    - the right chunk was never retrieved       -> fix the retriever
+    - the right chunk was retrieved and misused -> fix the prompt or the model
+If you only measure end-to-end answer quality, you cannot tell which. Measure RECALL@k
+independently. If recall@5 is 60%, no amount of prompt engineering will get you above
+60% correct answers, and every hour spent on the prompt is wasted.
+
+TRAP 3: chunking as an afterthought. It is the highest-leverage decision in the system
+and it is usually made in five minutes with a default value. Section 5 works through
+what each choice does.
+
+TRAP 4: assuming more retrieved chunks is better. Retrieving 20 instead of 5 dilutes
+the prompt with irrelevant text, costs more, is slower, and measurably degrades answers
+- models attend less reliably to material buried in the middle of a long context. Fewer,
+better chunks beat more, worse ones.
+
+TRAP 5: not telling the model what to do when the answer is not there. Without explicit
+instruction, it will fall back on its training data and answer anyway - reintroducing
+exactly the hallucination you built RAG to prevent. The prompt must say: if the answer
+is not in the supplied text, say so.
+
+TRAP 6: forgetting the index goes stale. Documents change. If nothing re-indexes them,
+RAG confidently serves last year's policy - and it will cite it, which makes it MORE
+convincing than an ordinary hallucination.
+
+TRAP 7: ignoring access control. If retrieval ignores permissions, an employee can ask
+a question and receive a chunk of a document they are not allowed to read. Permission
+filtering must happen in the RETRIEVAL step, before anything reaches the model - you
+cannot instruct the model to keep a secret it has already been shown.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADES.
+
+NAIVE VERSION A - paste everything into the prompt.
+
+If the corpus is small, skip retrieval entirely. Ten pages of documentation fit
+comfortably in a modern context window. Say this out loud in an interview - it shows
+you reach for the simplest thing that works, and for a small FAQ it genuinely is the
+right answer. It stops working when the corpus exceeds the context window, and it is
+wasteful long before that, since you pay for every token on every call.
+
+NAIVE VERSION B - keyword search, then paste the matches.
+
+Classic search over the documents, take the top hits, paste them in. Genuinely useful,
+and still the best approach for exact identifiers. It fails when the question uses
+different words than the document: ask "how long do I get off when my baby is born" and
+a keyword search for those words finds nothing in a page titled "Parental Leave
+Entitlement".
+
+THE UPGRADE - semantic retrieval with embeddings. Match on MEANING, so different
+wording still finds the right chunk.
+
+THE TRICK, EXPLAINED FROM SCRATCH: why comparing lists of numbers finds meaning.
+
+An embedding model is trained on enormous numbers of text pairs with one objective:
+put texts that mean similar things close together in a high-dimensional space, and push
+unrelated texts apart. After training, the POSITION of a piece of text encodes its
+meaning.
+
+So "similar meaning" becomes "small angle between two vectors", which is ordinary
+arithmetic - multiply the two lists element by element, add up, divide by their lengths.
+A computer can do this millions of times a second, and an approximate index can do it
+across a billion vectors without comparing them all.
+
+That is the entire foundation. Meaning has been turned into geometry, and search into
+distance.
+
+NOW THE UPGRADE THAT MATTERS MOST - CHUNKING, with numbers.
+
+Take a 40-page policy PDF, about 20,000 tokens, and cut it three ways:
+
+    2,000-TOKEN CHUNKS -> about 10 chunks.
+        Each chunk contains the answer plus a great deal of unrelated policy. Retrieval
+        looks successful, but the model receives mostly noise, and five such chunks
+        consume 10,000 tokens of context. Precision is poor.
+
+    500-TOKEN CHUNKS -> about 40 chunks.
+        Each is roughly one topic. The retrieved chunk is mostly about the thing asked.
+        Five chunks cost 2,500 tokens. This is the usual sweet spot.
+
+    100-TOKEN CHUNKS -> about 200 chunks.
+        Too small to hold a complete thought. "Parental leave is 26 weeks" may be split
+        from "for employees with 12 or more months of service" - so the model retrieves
+        a true fragment and states an incomplete rule, which is worse than retrieving
+        nothing.
+
+That last failure is the important one, and it is why OVERLAP exists: repeat the final
+50 tokens of each chunk at the start of the next, so a fact split across a boundary
+survives in at least one chunk intact.
+
+Better still, chunk along the document's OWN structure - by heading or section - so
+each chunk is a semantically complete unit rather than an arbitrary slice.
+
+THE FURTHER UPGRADES, in order of payoff:
+
+  1. RERANKING. Retrieve 30 candidates cheaply, then re-score them with a slower,
+     more accurate model and keep the best 5. Usually the largest single quality gain
+     after chunking, because the cheap first pass only has to get the answer into the
+     top 30 rather than the top 5.
+  2. HYBRID SEARCH. Add keyword matching alongside embeddings and merge the rankings.
+     Catches exact identifiers that embeddings blur.
+  3. METADATA FILTERING. Restrict by date, department, product, permission BEFORE the
+     similarity search. This is what would have prevented trap 1.
+  4. QUERY REWRITING. Turn a vague follow-up ("what about for contractors?") into a
+     standalone question using the conversation history, since the raw follow-up
+     embeds to nothing useful on its own.""",
+
+    """6. HOW IT WORKS - the pipeline, step by step.
+
+The one sentence that holds the whole idea: CUT YOUR DOCUMENTS INTO CHUNKS AND STORE
+EACH ONE'S MEANING AS A VECTOR; AT QUESTION TIME, TURN THE QUESTION INTO A VECTOR, PULL
+THE NEAREST CHUNKS, AND ASK THE MODEL TO ANSWER USING ONLY THOSE.
+
+The pipeline is two separate processes that run at different times. Confusing them is
+the most common misunderstanding of RAG - the expensive part happens once, offline.
+
+OFFLINE - INDEXING, run once and repeated whenever documents change:
+
+  1. GATHER the documents and extract clean text - PDFs, wikis, tickets, whatever. This
+     step is dull and is where most real projects lose the most time.
+
+  2. CHUNK each document into pieces of a few hundred tokens, ideally along its own
+     structure, with a small overlap between neighbours.
+
+  3. ATTACH METADATA to every chunk: source document, section, date, department,
+     permission level. You will need all of it later for filtering and citation.
+
+  4. EMBED each chunk into a vector using an embedding model.
+
+  5. STORE the vectors, with their metadata and original text, in a vector index.
+
+ONLINE - ANSWERING, run per question:
+
+  6. (Optionally) REWRITE the question into a standalone form using conversation
+     history, so follow-ups embed to something meaningful.
+
+  7. EMBED the question with the SAME model used for the chunks. This must be the same
+     model - two different embedding models produce vectors in incompatible spaces, and
+     comparing them yields nonsense rather than an error.
+
+  8. FILTER by metadata - date range, department, and above all the user's permissions.
+     Before the search, not after.
+
+  9. SEARCH for the nearest chunks. Retrieve generously here, say 30.
+
+ 10. RERANK those candidates with a more accurate model and keep the best 5.
+
+ 11. BUILD THE PROMPT: the retrieved chunks, the question, and explicit instructions -
+     answer using only the supplied text, cite the source of each claim, and say so
+     plainly if the answer is not present.
+
+ 12. GENERATE the answer.
+
+ 13. RETURN it with its citations, so a human can check the source.
+
+IS THERE A LOOP? In basic RAG, no - it is a straight pipeline, one pass. But the
+AGENTIC variant does loop, and it is worth knowing how it stops: the model reads what
+was retrieved, judges whether it is sufficient, and if not issues a NEW search query and
+goes round again. What makes it terminate is a hard cap on iterations plus a
+"sufficient" judgement from the model; without the cap it can search indefinitely,
+which is a real production failure and not a theoretical one.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a librarian with an extraordinary gift for explaining things, and no memory for
+where anything is.
+
+Ask them a question cold and they will answer beautifully and sometimes invent the
+facts, because explaining is what they do and they have no way to check.
+
+So you build them a system.
+
+Beforehand, you go through every book in the library and copy each section onto its own
+index card - not whole books, because a whole book is mostly not about any one question.
+On the back of every card you note where it came from: which book, which chapter, what
+date, who is allowed to read it.
+
+Then you file the cards in an unusual way. Not alphabetically, and not by subject
+heading. You file them by MEANING, in a vast room where cards about similar ideas sit
+physically near each other. A card about time off after a baby is born sits right beside
+a card about parental leave entitlement, even though they share no words at all.
+
+Now someone asks a question. You walk into the room, stand where the question's meaning
+belongs, and pick up the thirty cards nearest to you. You glance through them properly -
+that is the reranking - and keep the best five. You throw away any card the person
+asking is not allowed to see, and you do that BEFORE you hand anything over, because
+once the librarian has read something aloud you cannot un-say it.
+
+You put those five cards in front of the librarian and say: answer using only these, tell
+me which card each part came from, and if the answer is not on these cards, say so
+rather than filling in the gap.
+
+Now they are reading rather than remembering. And when they are wrong, you can usually
+tell why by looking at the cards you handed over - which is the real difference. A
+librarian who invents things is a mystery; a librarian handed the wrong card is a
+fixable problem.""",
+
+    """8. THE PIPELINE, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each component named, with what it holds and what it
+decides.
+
+--- OFFLINE ---
+
+    DOCUMENT LOADER
+        Holds: raw files - PDFs, HTML, wiki exports, tickets.
+        Decides: nothing clever, but this is where real projects lose the most time.
+        Tables, columns, headers and footers in PDFs are genuinely hard, and garbage
+        extracted here poisons everything downstream.
+
+    CHUNKER
+        Holds: the chunk size, the overlap, and the splitting rule.
+        Decides: more of your final quality than any other component. See section 5.
+        Typical: 300-800 tokens, 10-15% overlap, split on structure where available.
+
+    METADATA ATTACHER
+        Holds: source document, section title, date, author, department, permission
+        level.
+        Decides: what you can filter by later, and what your citations can point at.
+        Metadata not captured here cannot be recovered afterwards.
+
+    EMBEDDING MODEL
+        Holds: a fixed mapping from text to a vector of, say, 1,536 numbers.
+        Decides: what "similar" means in your system. MUST be the same model for
+        chunks and for queries - vectors from two different models occupy different
+        spaces and comparing them produces confident nonsense, not an error.
+
+    VECTOR INDEX
+        Holds: every chunk's vector, plus its metadata and original text.
+        Decides: how fast search is, and whether it is exact or approximate. Below
+        roughly 100,000 vectors, compare against all of them exactly. Above that, an
+        ANN index (HNSW, IVF) trades a little accuracy for a large speed gain.
+
+--- ONLINE ---
+
+    QUERY REWRITER (optional)
+        Holds: the conversation so far.
+        Decides: whether "what about for contractors?" becomes a searchable standalone
+        question. Without it, follow-up questions retrieve badly.
+
+    METADATA FILTER
+        Holds: the user's identity, permissions, and any scoping.
+        Decides: what is eligible before similarity is even considered. This is where
+        access control MUST live.
+
+    SIMILARITY SEARCH
+        Holds: the query vector and the index.
+        Decides: the candidate set. Retrieve generously - 20 to 50 - because the
+        reranker will trim it.
+
+    RERANKER
+        Holds: the question and each candidate chunk, scored TOGETHER rather than
+        separately - which is why it is more accurate and also slower.
+        Decides: the final 3-5 chunks. Usually the biggest quality win after chunking.
+
+    PROMPT BUILDER
+        Holds: the chunks, the question, and the instructions.
+        Decides: grounding. Three instructions matter: answer only from the supplied
+        text; cite the source of each claim; say plainly when the answer is not
+        present. Omit the third and the model fills gaps from training data.
+
+    GENERATOR (the LLM)
+        Holds: the assembled prompt.
+        Decides: the wording of the answer. Notice how little of the system's quality
+        actually rests here - by this point the answer either is or is not in the
+        context.
+
+    CITATION RENDERER
+        Holds: the chunk metadata.
+        Decides: whether a human can verify the answer. This is what makes RAG
+        auditable, and it is the reason regulated industries can use it at all.""",
+
+    """9. TRACED END TO END, with real numbers.
+
+CORPUS: 4,000 internal HR and IT pages, roughly 500 words each.
+QUESTION: "How many days of parental leave do I get?"
+
+OFFLINE - INDEXING (done once).
+
+    Total text:      4,000 pages x 500 words     = 2,000,000 words
+                     at ~1.33 tokens per word     ~ 2,700,000 tokens
+
+    Chunking at 500 tokens with 50-token overlap gives ~450 new tokens per chunk:
+                     2,700,000 / 450             ~ 6,000 chunks
+
+    Embedding each chunk at 1,536 dimensions, 4 bytes per number:
+                     1,536 x 4                    = 6,144 bytes ~ 6 KB per chunk
+                     6,000 x 6 KB                 ~ 36 MB of vectors
+
+    36 MB fits in memory with room to spare. At this scale you do not need an
+    approximate index at all - comparing a query against 6,000 vectors is a few
+    million multiplications, well under a millisecond. ANN indexes start earning
+    their keep somewhere above 100,000 vectors.
+
+ONLINE - ANSWERING (per question).
+
+  1. EMBED the question with the same model -> one vector of 1,536 numbers.
+
+  2. FILTER by metadata: this user's department and permission level. Suppose that
+     leaves 5,200 of the 6,000 chunks eligible.
+
+  3. SEARCH: cosine similarity against those 5,200 vectors. Top results:
+
+         0.89   "Parental Leave" section of HR Policy 2024, p.12
+         0.86   "Parental Leave" continued, p.13 (the overlap earned its keep here)
+         0.81   "Leave Types Overview", p.4
+         0.74   "Adoption Leave", p.15
+         0.71   "Sick Leave", p.9
+         ... 25 more, scores trailing off
+
+     Note the shape: two chunks clearly above the rest, then a gentle decline. A flat
+     distribution with no clear winners is a signal that the answer is probably not in
+     the corpus at all - worth surfacing rather than ignoring.
+
+  4. RERANK the top 30 with a cross-encoder. It scores the p.12 and p.13 chunks
+     highest and demotes "Sick Leave", which the embedding had rated more highly than
+     it deserved.
+
+  5. KEEP the top 4 chunks: 4 x 500 = 2,000 tokens.
+
+  6. BUILD THE PROMPT:
+         retrieved chunks                          2,000 tokens
+         the question                                 15 tokens
+         instructions (answer only from the text,
+         cite sources, say so if absent)             120 tokens
+         ----------------------------------------------------
+         total input                               ~2,135 tokens
+
+     Compare with pasting the whole corpus: 2,700,000 tokens. That is the entire point
+     of retrieval - a 1,250-fold reduction, and the model sees only material that is
+     actually about the question.
+
+  7. GENERATE:
+         "Employees with 12 or more months of service are entitled to 26 weeks of
+          parental leave, of which the first 6 weeks are at full pay.
+          [HR Policy 2024, section 4.2, p.12]"
+
+  8. RETURN with the citation, so the employee can open p.12 and check.
+
+NOW THE FAILURE CASE, on the same corpus:
+
+    QUESTION: "What is our refund policy for enterprise customers?"
+
+    Retrieval returns, at 0.91 similarity, the CONSUMER refund policy - nearly
+    identical language, different segment. No enterprise chunk appears in the top 5.
+    The model answers from what it was given, grounded and cited, and it is wrong.
+
+    Recall@5 for this question is 0. NOTHING in the prompt could have saved it. That is
+    why the two halves are measured separately: the generator did its job perfectly.
+
+    The fix is a metadata tag of customer_segment on every chunk, filtered before the
+    search - the same mechanism used for permissions in step 2.
+
+EVALUATION, which is where most teams have nothing:
+
+    Build a golden set of 100 real questions with known answers and known source
+    documents. Then measure two numbers, separately:
+
+        RECALL@5     - did the correct chunk appear in the top 5?   e.g. 82%
+        ANSWER QUALITY - given the right chunk, was the answer right? e.g. 94%
+
+    Those two numbers tell you where to spend your time. 82% recall caps your
+    end-to-end accuracy at 82% no matter what you do to the prompt. Chunking and
+    reranking raise the first number; prompt work raises the second. Without the split
+    you are guessing.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT IT COSTS:
+
+  - INDEXING: one embedding call per chunk, once, plus re-embedding whenever a
+    document changes. For 6,000 chunks this is minutes and cents. For 10 million
+    documents it is a real pipeline with real cost, and incremental updating stops
+    being optional.
+  - STORAGE: roughly 6 KB per chunk at 1,536 dimensions. 36 MB for 6,000 chunks;
+    around 60 GB for 10 million chunks, which changes your infrastructure choice.
+  - PER QUERY: one embedding call, one vector search (sub-millisecond at small scale,
+    single-digit milliseconds with an ANN index at large scale), optionally a
+    reranking pass, then the LLM call. The LLM call dominates both latency and cost.
+  - CONTEXT TOKENS: retrieved chunks are billed on every request. Retrieving 5 chunks
+    of 500 tokens adds 2,500 input tokens per question. This is why "retrieve more to
+    be safe" is expensive as well as counterproductive.
+
+THE SYSTEM-DESIGN VERSION: "design a RAG chatbot over 10 million internal documents."
 The parts that actually matter:
-  * Ingestion: a pipeline that re-indexes on document change, with metadata
-    (owner, ACL, status, date) attached to every chunk.
-  * Access control: filter by the USER's permissions at query time - a
-    retrieval system that ignores ACLs is a data breach that answers politely.
-  * Retrieval: hybrid (BM25 + vector) with a cross-encoder reranker; ANN index
-    such as HNSW because exact nearest-neighbour over 10m vectors is too slow.
-  * Serving: semantic caching for repeated questions, prompt caching for the
-    fixed instruction prefix, streaming responses for perceived latency.
-  * Guardrails: refuse when retrieval confidence is low rather than answering
-    unsupported, and always return citations.
-  * Evaluation: golden set in CI, so a chunking change cannot silently regress
-    recall.
-Leading with access control and evaluation - rather than with the embedding
-model - is what marks an engineer who has actually shipped one of these.""",
+
+  - INGESTION: a pipeline that handles new and CHANGED documents incrementally.
+    Re-indexing everything nightly does not survive contact with 10 million documents.
+  - CHUNKING AND METADATA: decided once, painful to change later, and the main driver
+    of quality.
+  - VECTOR STORE: at this scale an ANN index is mandatory, and you must decide the
+    accuracy/latency trade explicitly rather than by accepting a default.
+  - PERMISSIONS: filtered at retrieval time, per user. This is usually the hardest
+    requirement in an enterprise deployment and the one most designs forget.
+  - FRESHNESS: how quickly a changed document is reflected. State a target.
+  - CACHING: repeated questions are extremely common; cache both retrievals and
+    answers.
+  - EVALUATION AND MONITORING: recall@k and answer quality tracked continuously, not
+    measured once at launch. Retrieval quality drifts as the corpus grows.
+  - FALLBACK: what happens when retrieval finds nothing good. Saying "I don't know,
+    here is who to ask" is a feature, not a failure.
+
+RAG VERSUS FINE-TUNING - the contrast interviewers always want:
+
+    RAG supplies KNOWLEDGE. Fine-tuning teaches BEHAVIOUR.
+    RAG updates by re-indexing one document. Fine-tuning updates by retraining.
+    RAG can cite its sources. Fine-tuning cannot.
+    RAG costs context tokens on every call. Fine-tuning costs a shorter prompt.
+
+    They are not competitors. The common production answer is both: fine-tune for the
+    house format and tone, retrieve for the facts.
+
+THE #1 MISTAKE: treating RAG as a generation problem. When answers are wrong, teams
+rewrite the prompt, adjust the temperature, and try a bigger model - when the correct
+chunk was never retrieved and none of that could possibly help. Measure recall@k first.
+If it is 60%, your ceiling is 60%, and every hour spent on the prompt is wasted.
+
+TAKEAWAY: RAG turns a closed-book exam into an open-book one, so the hard part is no
+longer the model - it is chunking, filtering and ranking well enough to put the right
+page in front of it.""",
 ]
 
 
@@ -23390,79 +23887,504 @@ failed to do.
 """.strip("\n")
 
 _EXAMPLES_LLM["Pretraining vs Fine-tuning vs Prompting (how to adapt an LLM)"] = [
-    """The textbook decision, worked through.
-Task: classify incoming support tickets into 12 categories.
-  Prompting attempt: an instruction listing the 12 categories with a one-line
-  description each, plus 3 examples. Result: 88% accuracy, shipped in an
-  afternoon.
-  Is that enough? If the downstream action is routing to a queue where a human
-  reads it anyway, yes - ship it and stop.
-  If 88% is not enough: collect 2,000 labelled tickets and fine-tune. Result
-  typically 94-96%, plus a much shorter prompt (no need to list the categories
-  every call), which cuts token cost per request substantially at volume.
-The decision hinges on whether the extra 6-8 points justify the data
-collection - which is a product question, not a modelling one.""",
+    """1. THE GOAL - what this question is really asking.
 
-    """The classic expensive mistake.
-A team wanted the model to answer questions about their 50,000 internal
-documents. They fine-tuned on the documents.
-Result: the model produced text that SOUNDED like their documentation - right
-tone, right vocabulary, right structure - and invented specifics. No citations,
-no way to tell which parts were real, and every document update meant
-retraining.
-They should have used RAG. Fine-tuning taught the model to imitate the style of
-their corpus, which is exactly what fine-tuning is good at, and precisely not
-what they needed. This is the single most common misapplication in the field
-and it is worth being able to name it instantly.""",
+You have a task. A general-purpose LLM does not do it well enough yet. What do you
+change?
 
-    """The numeric comparison that makes the trade-off concrete.
-Task: extract structured data from invoices, 1 million calls per month.
-  PROMPTING: 800-token instruction with examples + 500-token invoice = 1,300
-  input tokens per call. At roughly $3 per million input tokens that is about
-  $3,900/month, forever.
-  FINE-TUNED: behaviour is baked in, so a 50-token instruction + 500-token
-  invoice = 550 tokens, about $1,650/month, plus a one-off training cost of a
-  few hundred dollars and the engineering to build the dataset.
-  Payback: roughly one month at this volume.
-At 10,000 calls a month instead of a million, the same maths says never
-fine-tune. Volume is what flips this decision, and quoting that is what turns
-an opinion into an analysis.""",
+There are exactly three levers, and they differ by ORDERS OF MAGNITUDE in cost:
 
-    """The case for prompting that people underrate - contrast with the instinct
-to train.
-Task: make the model respond in a specific JSON schema.
-  Instinct: fine-tune on thousands of schema-conforming outputs.
-  Reality: structured output / JSON mode with a supplied schema solves it
-  deterministically at the decoding level, with zero training, because the
-  sampler is constrained to valid tokens.
-The general lesson: before training, check whether a platform FEATURE already
-solves it. Structured output, function calling, and system prompts each remove
-whole categories of would-be fine-tuning work.""",
+    PRETRAINING    build the base model from scratch      millions of dollars
+    FINE-TUNING    train an existing model further         hundreds to thousands
+    PROMPTING      change only the text you send it        free, and instant
 
-    """When fine-tuning is genuinely the right call.
-A legal-tech company needed contract clauses drafted in their firm's specific
-house style - particular hedging language, clause ordering and defined-term
-conventions built up over decades.
-Prompting got close but was inconsistent across long documents, and the style
-guide was too long and too tacit to express as instructions. This is exactly
-the fine-tuning sweet spot: a BEHAVIOUR that is easy to demonstrate with
-examples and hard to describe in rules.
-They fine-tuned with LoRA on 3,000 clause pairs. Consistency improved sharply
-and the prompt shrank. Note the shape: they were not teaching facts, they were
-teaching a way of writing.""",
+The interviewer is not testing whether you know the definitions. They are testing
+whether you reach for the CHEAPEST lever that could work, and whether you can say what
+evidence would make you escalate to the next one. Teams routinely burn months
+fine-tuning a problem that a better prompt would have solved in an afternoon - section
+4 has the canonical example.
 
-    """The interview version, and the follow-up that separates candidates.
-"Our support bot gives inconsistent answers. Should we fine-tune?"
-Correct response: diagnose before prescribing. Ask what KIND of inconsistency.
-  * Wrong facts about our product? That is a knowledge problem -> RAG. Fine-
-    tuning would make it confidently wrong in a more on-brand voice.
-  * Right facts, but tone and format vary and it sometimes ignores the escalation
-    rules? That is a behaviour problem -> tighten the prompt first, and fine-
-    tune if the prompt is already good and still inconsistent.
-  * Inconsistent between identical calls? That is sampling -> lower the
-    temperature.
-Three completely different fixes behind one symptom. The candidate who asks
-which one it is before answering is the one who has actually done this.""",
+The rule of thumb, stated up front so the rest of the page can justify it:
+
+    Try PROMPTING first.
+    If the model lacks KNOWLEDGE, add RETRIEVAL (put the facts in the prompt).
+    FINE-TUNE only when you need a specific STYLE, FORMAT or SKILL that prompting
+    cannot produce reliably - or when the volume makes a shorter prompt worth paying
+    for.
+    PRETRAIN essentially never. A handful of labs do this.
+
+Notice what that ordering is really about: the first two options change the INPUT, and
+only the third changes the MODEL. Changing the input is reversible, testable in
+minutes, and costs nothing to abandon.""",
+
+    """2. THE INTUITION - hiring an expert, and the three ways to get what you want.
+
+You have hired someone brilliant and extremely well-read. They start on Monday. They
+do not yet do your job the way you need it done. Three options:
+
+    PROMPTING  =  giving them instructions and examples
+
+        "Here's the format we use. Here are three tickets I've already categorised.
+         Do the next one the same way."
+
+        Takes five minutes. Costs nothing. Works immediately for anything they are
+        already capable of and simply were not told. If it does not work, you have
+        lost five minutes.
+
+    FINE-TUNING  =  putting them through a training course
+
+        Weeks of drilling on a thousand of your examples until your house style is
+        automatic and they no longer need reminding.
+
+        Real cost, real delay, and it CHANGES them - they now behave this way by
+        default. Excellent for style, format, and consistency. Terrible for facts,
+        because a course does not install a filing cabinet.
+
+    PRETRAINING  =  raising a person from birth
+
+        Not a thing you do.
+
+And the fourth option, which is really a flavour of prompting but matters enough to
+name separately:
+
+    RETRIEVAL (RAG)  =  putting the right document on their desk before they answer
+
+        They were never going to remember your 2024 parental leave policy. Nobody
+        expects them to. You hand them the page.
+
+Drawn as effort against what it changes:
+
+    PROMPTING     |  changes the INPUT   |  instant   |  free       |  no risk
+    RETRIEVAL     |  changes the INPUT   |  days      |  low        |  no risk
+    FINE-TUNING   |  changes the MODEL   |  weeks     |  moderate   |  can regress
+    PRETRAINING   |  builds the MODEL    |  months    |  enormous   |  not yours
+
+The single most useful diagnostic question, and the one that decides between the
+middle two: DOES THE MODEL NOT KNOW SOMETHING, OR DOES IT NOT BEHAVE THE WAY I WANT?
+Missing knowledge is a retrieval problem. Wrong behaviour is a prompting problem
+first, and a fine-tuning problem only if prompting fails.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PRETRAINING. The original, enormous training run: predict the next token across
+trillions of tokens of text. This is where essentially all of the model's knowledge and
+language ability comes from. Costs millions of dollars and months of compute.
+
+BASE MODEL. What comes out of pretraining. It completes text, but does not reliably
+follow instructions - ask it a question and it may reply with more questions, because
+that is what a list of questions looks like.
+
+FINE-TUNING. Taking a trained model and training it FURTHER on a smaller, curated
+dataset. The weights change. Measured in hundreds or thousands of examples and hundreds
+of dollars, not trillions and millions.
+
+FULL FINE-TUNING. Updating every parameter. For a 7-billion-parameter model that means
+holding the model, its gradients, and the optimiser state in memory at once - roughly
+12 to 16 times the model's own size. Expensive and rarely necessary.
+
+PARAMETER-EFFICIENT FINE-TUNING (PEFT). Updating only a tiny fraction of the weights.
+
+LoRA (Low-Rank Adaptation), the common PEFT method, explained from scratch. A big
+weight matrix inside the model might be 4096 by 4096 - about 16.8 million numbers.
+Instead of updating all of them, FREEZE it and learn a small CORRECTION expressed as
+the product of two thin matrices: one 4096 by 16, and one 16 by 4096. That is
+65,536 + 65,536 = 131,072 numbers - about 0.8% of the original. You train only those.
+The result is a small "adapter" file of tens of megabytes rather than a new 14-gigabyte
+model, and you can host one base model with many adapters swapped in per customer.
+
+PROMPTING / IN-CONTEXT LEARNING. Changing only the text you send. No weights change at
+all. The model is not learning in any lasting sense - it is reading instructions.
+
+ZERO-SHOT. Instructions only, no examples. FEW-SHOT. Instructions plus a handful of
+worked examples inside the prompt.
+
+SYSTEM PROMPT. Standing instructions prepended to every request - role, format, rules.
+
+RAG (Retrieval-Augmented Generation). Fetch relevant documents and paste them into the
+prompt so the model answers from them rather than from memory.
+
+INSTRUCTION TUNING. A fine-tuning stage on (instruction, good answer) pairs, which is
+what turns a base model into something that answers questions.
+
+RLHF. Humans rank competing answers; those rankings train a reward model; the LLM is
+optimised against it. Shapes helpfulness, tone and refusals.
+
+CATASTROPHIC FORGETTING. When fine-tuning on a narrow dataset degrades abilities the
+model previously had. The reason fine-tuning carries risk that prompting does not.
+
+DISTILLATION. Training a small, cheap model to imitate a large one's outputs. The usual
+answer to "this works but costs too much per call".""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the expensive mistake, told properly.
+
+THE CANONICAL FAILURE: fine-tuning to install knowledge.
+
+A team wanted their assistant to answer questions about 50,000 internal documents. They
+fine-tuned the model on those documents. It cost weeks and a meaningful budget.
+
+The result: the model produced answers that SOUNDED exactly like their internal
+documentation - right vocabulary, right tone, right structure - and the facts were
+frequently wrong. Worse, it now stated wrong facts with the confident house style,
+which made them harder to spot.
+
+Why this happens follows directly from the mechanism. Fine-tuning adjusts the
+statistical tendencies of next-token prediction. It is very good at teaching SHAPE -
+format, tone, vocabulary, structure. It is unreliable at teaching FACTS, because a fact
+that appears a handful of times in the training data leaves only a faint trace across
+billions of weights, and nothing in the training objective distinguishes "this is true"
+from "this reads like the sort of thing that is true".
+
+The correct answer was RAG: retrieve the relevant document and put it in the prompt,
+where the model can actually READ it. Same 50,000 documents, days instead of weeks, and
+the answers cite a source you can check.
+
+The rule worth memorising: FINE-TUNING TEACHES BEHAVIOUR. RETRIEVAL SUPPLIES
+KNOWLEDGE. Confusing them is the most expensive mistake in this area.
+
+TRAP 2: assuming prompting cannot produce structured output. The instinct when you need
+strict JSON is to fine-tune. Usually unnecessary: a clear schema in the prompt, one or
+two examples, and - critically - the API's structured-output or constrained-decoding
+mode will produce valid JSON essentially every time, because the format is enforced
+during generation rather than hoped for. Try that before training anything.
+
+TRAP 3: fine-tuning without a baseline. If you cannot state your current accuracy, you
+cannot know whether fine-tuning helped. Build the evaluation set FIRST - a few hundred
+real examples with known correct answers. It is the thing most teams skip and the thing
+that makes every later decision possible.
+
+TRAP 4: forgetting that fine-tuning freezes your model choice. A better base model
+ships every few months. A prompt moves across in an afternoon; a fine-tune has to be
+redone. This is a real strategic cost that rarely gets counted.
+
+TRAP 5: ignoring that fine-tuning can make the model WORSE at everything else.
+Catastrophic forgetting is real. A model drilled hard on ticket classification may
+become noticeably worse at general conversation. Always evaluate on tasks OUTSIDE your
+fine-tuning target too.""",
+
+    """5. THE NAIVE MENTAL MODEL FIRST, THEN THE REAL ONE.
+
+THE NAIVE MODEL: "the model does not do what I want, so I need to train it."
+
+This is the instinct almost everyone arrives with, and it comes from classical machine
+learning, where training was the ONLY lever. If your classifier was wrong, you got more
+labelled data and retrained. There was no other move.
+
+It is the wrong instinct for LLMs, and understanding why is the actual content of this
+topic. A pretrained LLM already contains an enormous amount of general capability. Most
+of the time the problem is not that it CANNOT do your task - it is that you have not
+told it clearly what the task is, or you have not given it the information it needs.
+Training is how you fix an incapable model. Most LLM failures are not incapability.
+
+THE REAL MODEL: a ladder, and you climb it only as far as the evidence forces you.
+
+    RUNG 1 - ZERO-SHOT PROMPTING. Just ask clearly. Minutes.
+
+    RUNG 2 - FEW-SHOT PROMPTING. Add 3 to 5 worked examples inside the prompt. This
+    fixes a surprising amount, because most "the model does not understand the task"
+    problems are really "the task description was ambiguous and the examples
+    disambiguate it".
+
+    RUNG 3 - RETRIEVAL. If the failures are about FACTS the model could not know -
+    your policies, your data, anything after the knowledge cutoff - no amount of
+    prompting fixes it. Fetch the documents and put them in the context.
+
+    RUNG 4 - PARAMETER-EFFICIENT FINE-TUNING (LoRA). If the failures are about
+    BEHAVIOUR that prompting cannot make consistent - a very specific house style, a
+    rigid output format, a domain skill - now train. Hundreds to low thousands of
+    examples.
+
+    RUNG 5 - FULL FINE-TUNING. Rarely needed over LoRA. Justified when the domain is
+    genuinely far from anything in pretraining.
+
+    RUNG 6 - PRETRAINING. Not you.
+
+THE PROOF THAT THE ORDER IS RIGHT - and this is the part to say out loud, because it
+is an argument rather than a preference:
+
+Each rung is strictly more expensive, strictly slower to iterate on, and strictly
+harder to undo than the one below. Rungs 1 to 3 change only the INPUT: you can try ten
+variants in an hour, and abandoning one costs nothing. Rung 4 upward changes the MODEL:
+each experiment costs hours or days, and it can silently degrade abilities you were not
+testing.
+
+So the expected cost of trying a lower rung first is small, and the information you get
+is valuable EVEN WHEN IT FAILS - because the WAY it fails tells you which higher rung
+you need. Wrong facts point to rung 3. Right facts in the wrong shape point to rung 4.
+Skipping straight to rung 4 throws that diagnostic information away and is what
+produced the failure in section 4.
+
+THE ONE CASE WHERE THE LADDER INVERTS - worth knowing, because it is the strongest
+argument FOR fine-tuning and it is not about quality at all. At very high volume, a
+fine-tuned model needs a much shorter prompt, and prompt tokens are billed on every
+single call. Section 9 works the arithmetic. At a million calls a month the savings are
+real; at a thousand they are noise.""",
+
+    """6. HOW TO DECIDE - the procedure, step by step.
+
+The one sentence that holds the whole idea: DIAGNOSE WHETHER THE MODEL LACKS KNOWLEDGE
+OR LACKS THE RIGHT BEHAVIOUR, FIX KNOWLEDGE WITH RETRIEVAL AND BEHAVIOUR WITH BETTER
+PROMPTS, AND ONLY FINE-TUNE WHEN A MEASURED PROMPT-BASED BASELINE HAS STOPPED
+IMPROVING.
+
+THIS IS A LOOP, and it is worth being precise about how it runs and what stops it:
+
+  - Each pass makes ONE change, then re-measures against a fixed evaluation set.
+  - The evaluation set never changes during the loop. If it changes, your numbers are
+    not comparable and the loop tells you nothing.
+  - Each pass moves up at most one rung, so you always know which change caused which
+    movement.
+  - WHAT MAKES IT STOP: either the metric reaches the target you agreed before you
+    started, or a full pass produces no meaningful improvement - which is the signal
+    to climb, not to keep tinkering at the same rung.
+  - Without a target agreed in advance, this loop does not terminate. That is not a
+    theoretical concern; it is how teams end up six months into prompt engineering.
+
+THE STEPS:
+
+  1. BUILD THE EVALUATION SET FIRST. A few hundred real inputs with known correct
+     outputs. Before any other work. Everything below is meaningless without it.
+
+  2. MEASURE THE BASELINE. Run the plain model with a straightforward prompt. Write
+     the number down. You now have something every later change can be compared to.
+
+  3. READ THE FAILURES - actually read them, one by one. Sort each into:
+       (a) the model did not KNOW something -> knowledge gap
+       (b) the model knew, but produced the wrong shape, tone or format -> behaviour gap
+       (c) the task itself was ambiguously specified -> prompt clarity gap
+     This classification decides everything that follows, and you cannot do it from
+     aggregate accuracy - only by reading individual failures.
+
+  4. FIX CLARITY GAPS FIRST, since they are free. Sharpen the instructions. Add three
+     to five worked examples covering the cases that failed. Re-measure.
+
+  5. FIX KNOWLEDGE GAPS WITH RETRIEVAL. Get the relevant documents into the prompt. Do
+     NOT fine-tune for this. Re-measure.
+
+  6. ONLY NOW CONSIDER FINE-TUNING, and only for behaviour gaps that survived steps 4
+     and 5. Gather several hundred to a few thousand examples of the behaviour you
+     want. Use LoRA rather than full fine-tuning unless you have a reason not to.
+
+  7. AFTER FINE-TUNING, EVALUATE ON TASKS OUTSIDE YOUR TARGET TOO, to catch
+     catastrophic forgetting. A model that got better at your task and worse at
+     everything else may be a net loss.
+
+  8. SEPARATELY, CHECK THE ECONOMICS. If volume is high, compute what a shorter prompt
+     would save per month against the cost of training and hosting. That calculation
+     can justify fine-tuning even when quality alone would not.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+A new colleague joins. They are extraordinarily well read and pick things up fast. On
+their first day you ask them to sort the incoming post, and they do it badly.
+
+Your first move is not to send them on a course. It is to notice WHY they got it wrong.
+
+Maybe you never explained the categories properly, and two of them sound alike. You
+explain more carefully and show them five letters you have already sorted. Now they get
+it. Total cost: ten minutes. Most problems are this problem.
+
+Maybe they sorted correctly on everything except letters mentioning a product launched
+last month, which they have never heard of. No amount of explaining fixes that - the
+information is simply not in their head. So you pin the product sheet above their desk.
+Now they are fine. You did not need to change the person; you needed to change what was
+in front of them.
+
+Maybe they get everything right but write their summaries in a style that does not
+match your team's, and no matter how many times you describe the style, it drifts back.
+THIS is the case for the course. Weeks of drilling on your examples until the style is
+automatic. Real cost, real delay - and a risk worth naming: someone drilled hard on one
+narrow task can come back slightly worse at everything else.
+
+And nobody suggests raising a new person from birth because the post is being sorted
+wrong.
+
+The whole skill is telling those three situations apart by looking at the actual
+mistakes. Each one has a cheap correct fix and several expensive wrong ones, and the
+expensive wrong ones look responsible and thorough, which is exactly why teams choose
+them.""",
+
+    """8. THE THREE OPTIONS, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each lever taken apart - what it touches, what it
+costs, what it is good and bad at.
+
+--- PRETRAINING ---
+
+    WHAT CHANGES:   every parameter, from random initialisation.
+    INPUT DATA:     trillions of tokens of general text, unlabelled.
+    OBJECTIVE:      predict the next token (self-supervised - the text is its own
+                    answer key, which is why it scales to internet-sized data).
+    COST:           millions of dollars, thousands of accelerators, months.
+    PRODUCES:       a base model that completes text but does not follow instructions.
+    WHO DOES IT:    a handful of labs.
+    WHEN YOU DO IT: you do not.
+
+--- FINE-TUNING ---
+
+    WHAT CHANGES:   the weights of an already-trained model.
+    INPUT DATA:     hundreds to tens of thousands of curated (input, desired output)
+                    pairs. Quality matters far more than quantity here - a thousand
+                    carefully checked examples beat ten thousand scraped ones.
+    OBJECTIVE:      still next-token prediction, but on YOUR examples.
+
+    TWO FLAVOURS:
+      FULL - update every parameter. Memory needed is roughly 12-16x the model size,
+             because you hold the weights, the gradients, and the optimiser state.
+      LoRA - freeze the original weights; learn a low-rank correction alongside them.
+             A 4096x4096 matrix (16.8M numbers) gets a correction built from a
+             4096x16 and a 16x4096 matrix: 131,072 numbers, about 0.8%. You train
+             only those. The adapter is tens of MB, so one hosted base model can
+             serve many customers with different adapters swapped in.
+
+    GOOD AT:        style, tone, output format, consistency, domain-specific skills,
+                    and shortening the prompt (which matters at volume).
+    BAD AT:         installing facts. Facts land unreliably and cannot be updated
+                    without retraining.
+    RISK:           catastrophic forgetting - other abilities can degrade.
+    LOCKS IN:       your choice of base model, until you redo the work.
+
+--- PROMPTING (IN-CONTEXT LEARNING) ---
+
+    WHAT CHANGES:   nothing inside the model. Only the text you send.
+    COST:           zero to set up. But the prompt is billed on EVERY call, so a long
+                    prompt is a permanent per-request tax.
+
+    THE LEVERS, in increasing power:
+      ZERO-SHOT       - instructions only.
+      FEW-SHOT        - instructions plus 3-5 worked examples. Fixes ambiguity, which
+                        is the most common failure.
+      SYSTEM PROMPT   - standing rules applied to every request.
+      CHAIN OF THOUGHT- "work through it step by step", which helps on multi-step
+                        reasoning because each intermediate token conditions the next.
+      STRUCTURED OUTPUT - schema enforced during generation, so valid JSON is
+                        guaranteed rather than hoped for.
+      RETRIEVAL (RAG) - fetch documents and paste them in. This is how you supply
+                        knowledge.
+
+    GOOD AT:        everything the model can already do but has not been told to do;
+                    supplying facts (via retrieval); fast iteration; staying portable
+                    across models.
+    BAD AT:         behaviour that must be identical every single time; very long
+                    instructions that would be cheaper baked in at high volume.""",
+
+    """9. A CONCRETE DECISION, WORKED WITH REAL NUMBERS.
+
+TASK: extract structured data from invoices. One million calls per month. (Illustrative
+prices; the structure of the calculation is the point.)
+
+FIRST, THE QUALITY QUESTION.
+
+    Baseline: zero-shot prompt describing 14 fields.       Field accuracy 91%.
+    Read the failures: most are on two ambiguous fields - "invoice date" versus
+    "due date", and how to handle multi-currency totals. That is a CLARITY gap,
+    not a knowledge or behaviour gap.
+
+    Add few-shot: 4 worked examples covering exactly those two cases.
+                                                            Field accuracy 97%.
+    Six points gained, in one afternoon, at no training cost. This is the step that
+    fine-tuning-first teams never get to run.
+
+    Remaining failures are unusual layouts. A fine-tune on 2,000 labelled invoices
+    reaches                                                 Field accuracy 98.5%.
+
+    So fine-tuning bought 1.5 points on top of good prompting - not the 7.5 points it
+    would appear to buy if you had measured it against the zero-shot baseline. Always
+    compare against a WELL-PROMPTED baseline, or you will credit fine-tuning with gains
+    that better instructions gave you for free.
+
+NOW THE ECONOMICS, which is where fine-tuning actually earns its place here.
+
+    PROMPTING at scale:
+        instruction block + 4 examples  =   800 tokens
+        the invoice itself              = 1,200 tokens
+        per call                        = 2,000 input tokens
+        per month  2,000 x 1,000,000    = 2,000,000,000 input tokens
+        at $3 per million tokens        = $6,000 per month
+
+    FINE-TUNED (the examples are baked into the weights, so the prompt shrinks):
+        short instruction               =    50 tokens
+        the invoice itself              = 1,200 tokens
+        per call                        = 1,250 input tokens
+        per month  1,250 x 1,000,000    = 1,250,000,000 input tokens
+        at $3 per million tokens        = $3,750 per month
+
+    SAVING: $2,250 per month, plus the 1.5 accuracy points.
+    ONE-OFF COST: labelling 2,000 invoices, plus a training run.
+
+    At this volume the training cost is recovered in weeks, and it keeps paying.
+
+    AT 1,000 CALLS PER MONTH the same calculation gives $6.00 versus $3.75 - a saving
+    of $2.25 a month. The labelling effort alone would never be recovered. Identical
+    task, identical quality gain, opposite decision.
+
+That is the point worth carrying into an interview: THE RIGHT ANSWER DEPENDS ON VOLUME,
+and a candidate who asks "how many calls per month?" before recommending anything is
+demonstrating exactly the judgement being tested.
+
+THE CONTRASTING CASE, so the boundary is visible:
+
+    TASK: answer employee questions about 50,000 internal documents.
+    Fine-tuning on the documents: weeks of work, fluent answers, facts often wrong,
+    and no way to update a policy without retraining.
+    RAG: days of work, answers grounded in a retrieved page, citations you can check,
+    and updating a policy means re-indexing one document.
+
+    Same instinct ("train it on our data"), completely different correct answer -
+    because this failure was a KNOWLEDGE gap and the invoice one was not.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COMPARISON, condensed:
+
+                    changes    setup time   iteration   ongoing cost      undo?
+    PROMPTING       input      minutes      minutes     prompt tokens     free
+    RETRIEVAL       input      days         hours       retrieval + tokens free
+    LoRA FINE-TUNE  model      days-weeks   hours       cheaper prompts   redo
+    FULL FINE-TUNE  model      weeks        days        cheaper prompts   redo
+    PRETRAINING     model      months       n/a         n/a               no
+
+THE INTERVIEW QUESTION AND THE FOLLOW-UP THAT SEPARATES CANDIDATES:
+
+    "Our support bot gives inconsistent answers. Should we fine-tune?"
+
+The weak answer says yes and describes how. The strong answer refuses to answer yet and
+diagnoses first: inconsistent HOW? If it invents policies that do not exist, that is a
+knowledge gap and the fix is retrieval. If it gets facts right but wanders in tone and
+length, that is a behaviour gap - and even then, try a firmer system prompt with worked
+examples before training. If it is inconsistent between identical calls, check the
+temperature setting before doing anything at all, because that may be the entire
+problem and costs one line to fix.
+
+Then ask what the evaluation set looks like. Usually there is not one, and that is the
+real finding - without it, nobody can tell whether any intervention helped.
+
+OTHER FOLLOW-UPS WORTH HAVING READY:
+
+  - "It works but costs too much per call." Distil: use the big model to generate
+    high-quality outputs, then fine-tune a small cheap model to imitate them. Also
+    shorten the prompt and cache repeated prefixes.
+
+  - "How much data do we need to fine-tune?" Hundreds for style and format; low
+    thousands for a genuine skill. Quality dominates quantity - a thousand carefully
+    checked examples beat ten thousand noisy ones, because the model learns the noise
+    just as faithfully as the signal.
+
+  - "Can we fine-tune AND use RAG?" Yes, and it is often the right combination:
+    fine-tune for the house format and tone, retrieve for the facts. They fix
+    different problems, so they compose rather than compete.
+
+  - "What breaks when a better base model ships?" Prompts and retrieval indexes move
+    across in an afternoon. Fine-tunes must be redone. Worth pricing in before you
+    start.
+
+THE #1 MISTAKE: fine-tuning to teach the model FACTS. It is expensive, it produces
+confidently wrong answers dressed in the right house style, and it cannot be updated
+without retraining. Facts belong in the prompt, via retrieval. Fine-tuning is for
+behaviour.
+
+TAKEAWAY: climb the ladder from cheapest to dearest - prompt, then retrieve, then
+fine-tune - and let the WAY your failures look, not your instinct to train something,
+decide when to climb.""",
 ]
 
 
