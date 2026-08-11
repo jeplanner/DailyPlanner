@@ -32716,257 +32716,491 @@ for _e in ENTRIES:
 _EX_P0B = {}
 
 _EX_P0B["3Sum"] = [
-    """First, what is actually being asked - in plain words.
+    """1. THE GOAL, in plain English.
 
-You are handed a list of numbers. You must find every group of THREE numbers
-from that list that add up to exactly zero. And you must not report the same
-group twice.
-
-Our list:
+You are handed a list of numbers. Find every group of THREE numbers from it that add up to
+zero - and each distinct group only once.
 
     nums = [-1, 0, 1, 2, -1, -4]
 
-Try it by hand for a moment. -1 + 0 + 1 = 0, so that is one group. -1 + -1 + 2
-= 0, so that is another. Anything else? No. So the answer is those two groups.
+    answer = [-1, -1, 2]  and  [-1, 0, 1]
 
-The obvious way to find them is to try every possible trio: pick a first
-number, pick a second, pick a third, add, check. With 6 numbers that is only 20
-trios. But with 1,000 numbers it is about 166 million trios, and with 10,000 it
-is over a hundred billion. Written as a formula that is n x n x n steps, usually
-written O(n^3) - "roughly n-cubed work". Far too slow.
+Check the first: -1 + -1 + 2 = 0. The second: -1 + 0 + 1 = 0.
 
-So we need a better idea. The better idea starts with SORTING.""",
+Three details decide whether your solution is right, and the third is the whole difficulty:
 
-    """The trick: sort the list first, then use TWO POINTERS.
+  - THE THREE NUMBERS MUST BE AT DIFFERENT POSITIONS. You cannot use the same entry twice. But
+    two entries that happen to hold the SAME VALUE are different entries - which is why
+    [-1, -1, 2] is legal here, since there are two separate -1s in the list.
 
-A POINTER here just means a finger. Put one finger on a position in the list,
-put another finger somewhere else, and slide them. That is all "two pointers"
-means - no special data structure, just two positions you move.
+  - THE ORDER INSIDE A TRIPLET DOES NOT MATTER. [-1, 0, 1] and [0, -1, 1] are the same answer.
 
-Sort our list from smallest to largest:
+  - NO DUPLICATE TRIPLETS IN THE OUTPUT. This list contains two -1s, so the pair (0, 1) can be
+    completed by EITHER of them - and both give [-1, 0, 1]. You must report it once.
 
-    [-4, -1, -1, 0, 1, 2]
-      0    1   2  3  4  5      <- the positions (indexes)
+That last requirement is what makes 3Sum harder than it looks. Finding the triplets is
+straightforward. NOT FINDING THE SAME TRIPLET TWICE is the part that catches people, and
+sections 4 and 9 are mostly about it.""",
 
-Now here is the plan. FIX the first number - say we fix -4 at position 0. We now
-need two more numbers, from the positions to its right, that add up to +4 (so
-the total lands on zero).
+    """2. THE INTUITION - fix one number, then it is Two Sum.
 
-Put one finger LO at the left end of the remaining stretch (position 1) and one
-finger HI at the right end (position 5). Add the three numbers.
+The brute-force idea is three nested loops: try every combination of three positions. For 100
+numbers that is about 161,700 combinations; for 3,000 it is about 4.5 billion. Too slow.
 
-- If the total is TOO SMALL, we need a bigger number. Because the list is
-  sorted, everything to the right of LO is bigger - so slide LO one step right.
-- If the total is TOO BIG, slide HI one step left, for the mirror reason.
-- If the total is exactly zero, we found a group. Record it, then move BOTH
-  fingers inward and keep going.
+The move that fixes it: FIX ONE NUMBER, AND THE PROBLEM BECOMES TWO SUM.
 
-The fingers only ever move toward each other, so for each fixed first number
-they take at most n steps. Fixing each number in turn gives n x n steps, O(n^2).
-For 10,000 numbers that is 100 million instead of a hundred billion - the
-difference between instant and impossible.
+    if the first number is -4, then the other two must add to +4
+    if the first number is -1, then the other two must add to +1
 
-Notice WHY sorting earned its keep: it is what tells us which direction to move.
-In an unsorted list "the total is too small" tells you nothing about where a
-bigger number lives.""",
+So you only ever have to solve "find two numbers adding to a target", n times over.
 
-    """The full trace, one line at a time, with the reason attached.
+And two numbers adding to a target has a beautiful solution IF THE LIST IS SORTED: put one
+finger at each end and squeeze.
+
+    sorted:  [-4, -1, -1,  0,  1,  2]
+              i    lo               hi
+
+    fixed number -4, so lo and hi must add to +4.
+
+    -1 + 2 = 1, too small  ->  move LO right, because the list is sorted so
+                               everything right of lo is larger
+    -1 + 2 = 1, too small  ->  move LO right again
+     0 + 2 = 2, too small  ->  move LO right
+     1 + 2 = 3, too small  ->  move LO right
+    lo meets hi            ->  no pair with -4. Move on.
+
+Each comparison retires a whole position, so scanning all pairs for one fixed number costs a
+single pass rather than a nested loop.
+
+    THREE NESTED LOOPS  ->  n x n x n
+    FIX ONE + TWO POINTERS  ->  n x n
+
+For 3,000 numbers that is 4.5 billion against 9 million - about 500 times less work.
+
+SORTING IS WHAT MAKES ALL OF THIS POSSIBLE, and it buys a second thing besides: it puts equal
+values NEXT TO EACH OTHER, which is what turns duplicate-skipping from a hard problem into two
+one-line checks.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+TRIPLET. Three numbers from the list, at three different positions.
+
+UNIQUE TRIPLETS. Each distinct set of three VALUES reported once, however many ways the list
+allows you to build it.
+
+SORTED. Arranged smallest to largest. Here it does two jobs: it makes the two-pointer squeeze
+valid, and it groups equal values together so duplicates are adjacent.
+
+TWO POINTERS. Two positions, lo and hi, starting at opposite ends of the remaining range and
+moving toward each other. Covered in full by the "Two Pointers - recognize & apply" entry; this
+problem is its most common application.
+
+lo AND hi. The two fingers. lo starts just after the fixed element; hi starts at the end.
+
+s. The running sum of the three current numbers: nums[i] + nums[lo] + nums[hi].
+
+FIXING AN ELEMENT. Choosing nums[i] as the first member of the triplet and then searching only
+the part of the list to its RIGHT. Searching only rightward is what stops you finding the same
+triplet in a different order.
+
+THE OUTER SKIP. `if i > 0 and nums[i] == nums[i-1]: continue` - do not use the same VALUE as the
+fixed element twice.
+
+THE INNER SKIP. `while lo < hi and nums[lo] == nums[lo-1]: lo += 1` - after recording a triplet,
+step lo past any repeats of the value just used.
+
+O(n^2) - "QUADRATIC TIME". Doubling the input quadruples the work. For n = 3,000 that is about 9
+million operations, which is fast; the three-loop version would be 4.5 billion, which is not.
+
+res. The list of triplets found so far. The function's output.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - duplicates, and there are TWO of them.
+
+This is the entire difficulty of 3Sum, and there are two separate duplicate problems needing two
+separate fixes.
+
+PROBLEM ONE: THE SAME FIXED ELEMENT, TWICE.
 
     sorted: [-4, -1, -1, 0, 1, 2]
-             0    1   2  3  4  5
+                  ^    ^
+                  i=1  i=2   both hold -1
 
-i = 0, fixed number -4. LO = 1, HI = 5.
-  -4 + (-1) + 2 = -3. Too small (we need 0), so slide LO right. LO = 2.
-  -4 + (-1) + 2 = -3. Still too small. LO = 3.
-  -4 + 0 + 2 = -2. Too small. LO = 4.
-  -4 + 1 + 2 = -1. Too small. LO = 5. Now LO and HI have met - stop.
-  Nothing found with -4. That is fine, it just means -4 has no partners.
+    With i = 1 you find [-1, 0, 1]. With i = 2 you would find [-1, 0, 1] AGAIN, from the other
+    -1. Same triplet, reported twice.
 
-i = 1, fixed number -1. LO = 2, HI = 5.
-  -1 + (-1) + 2 = 0. HIT. Record [-1, -1, 2]. Move both fingers inward:
-  LO = 3, HI = 4.
-  -1 + 0 + 1 = 0. HIT. Record [-1, 0, 1]. Move both inward - the fingers cross,
-  so stop.
+    THE FIX:  if i > 0 and nums[i] == nums[i-1]: continue
 
-i = 2, fixed number -1 again. STOP - we already did -1 at position 1, and doing
-  it again would find [-1, 0, 1] a second time. Skip it. (More on this next.)
+    Skip a fixed element whose value equals the previous one. Note `i > 0` - the FIRST element
+    must never be skipped, and nums[-1] in Python would silently wrap to the end of the list and
+    compare against the wrong thing.
 
-i = 3, fixed number 0. LO = 4, HI = 5.
-  0 + 1 + 2 = 3. Too big, slide HI left. HI = 4, fingers meet, stop.
+PROBLEM TWO: THE SAME PAIR, TWICE, INSIDE ONE FIXED ELEMENT.
 
-The outer loop stops at position 3 because a group of three needs two more
-numbers to its right.
+    sorted: [-2, 0, 0, 2, 2]
 
-Answer: [[-1, -1, 2], [-1, 0, 1]]. Exactly what we found by hand.""",
+    With i = 0 (fixed -2) you find [-2, 0, 2] using lo = 1 and hi = 4. Move both inward: lo = 2,
+    hi = 3. Now nums[2] = 0 and nums[3] = 2 - the SAME VALUES again, so you would record
+    [-2, 0, 2] a second time.
 
-    """The duplicate problem, and the two skips that fix it.
+    THE FIX:  while lo < hi and nums[lo] == nums[lo-1]: lo += 1
 
-The hardest part of this problem is not finding the groups - it is not finding
-the SAME group twice. Here is the worst case:
+    After recording, step lo forward past any repeat of the value just used.
 
-    nums = [0, 0, 0, 0]
+BOTH SKIPS ARE NECESSARY. Fixing only the outer one still produces duplicates on inputs like
+[-2, 0, 0, 2, 2]; fixing only the inner one still produces them on [-1, 0, 1, 2, -1, -4]. Section
+9 traces one of each.
 
-Every trio of zeros adds to zero. There are four ways to pick three of these
-positions, so a naive run reports [0,0,0] four times. But they are all the same
-group of VALUES, so the correct answer is exactly one [0,0,0].
+TRAP 3: sorting the caller's list. `nums.sort()` MODIFIES THE LIST THAT WAS PASSED IN. The
+caller's data comes back reordered. Usually acceptable for this problem, and worth saying out
+loud in an interview - if it is not acceptable, use `nums = sorted(nums)` to work on a copy.
 
-Because the list is sorted, equal numbers sit next to each other. That makes the
-fix a one-line neighbour check, in two places:
+TRAP 4: `range(len(nums) - 2)`. The fixed element needs at least two elements after it, so the
+loop must stop two short of the end. Using `range(len(nums))` makes lo and hi cross immediately
+on the last two iterations - harmless here, but it signals you have not thought about the
+boundary.
 
-SKIP 1 - the fixed number. Before fixing nums[i], check: is nums[i] the same as
-nums[i-1]? If yes, every group starting with this value has already been found,
-so skip straight to the next i.
+TRAP 5: deduplicating with a set at the end. Converting each triplet to a tuple and putting them
+in a set works and produces the right answer. It also costs O(n^2) extra memory in the worst
+case and, more importantly, tells the interviewer you did not see the structure that makes the
+skips easy. Sorting already grouped the duplicates for you; use it.""",
 
-SKIP 2 - after a hit. Once you record a group, slide LO right while nums[LO] is
-the same as the value you just used. Otherwise the identical value at the next
-position produces the identical group again.
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE.
 
-Trace on [0,0,0,0]:
-  i = 0 (value 0): LO = 1, HI = 3. Sum 0. HIT, record [0,0,0]. Now SKIP 2 slides
-    LO past every remaining 0, so LO reaches HI and the inner walk ends.
-  i = 1 (value 0): equals nums[0], so SKIP 1 fires. Same for i = 2.
-  Done. One group. Correct.
+THE SLOW VERSION - three nested loops.
 
-Both skips exist only because the list is sorted. That is the second thing
-sorting bought us: duplicates became neighbours, so "have I seen this before?"
-became "is it the same as the one next to me?" - no extra memory needed.""",
+    for i in range(n):
+        for j in range(i+1, n):
+            for k in range(j+1, n):
+                if nums[i] + nums[j] + nums[k] == 0: record it
 
-    """The empty answers and the small inputs - all handled with no special code.
+Correct, and worth saying out loud first. Cost: about n-cubed / 6 combinations.
 
-nums = [1, 2, 3]. Sorted, i = 0: 1 + 2 + 3 = 6, too big, slide HI left; the
-fingers meet immediately. Nothing found, and the answer is an empty list. That
-is a legitimate answer, not an error.
+    n =   100:    161,700 combinations       fine
+    n = 3,000:  4.5 billion                  far too slow
+    n = 10,000: 167 billion                  hopeless
 
-nums = [1, 2] or nums = [] or nums = [5]. The outer loop only runs while there
-are at least two positions to the right of i, so with fewer than three numbers
-the loop body never executes at all. Empty list returned. No "if len < 3" guard
-needed - the loop bounds already say it.
+And it still has the duplicate problem, now with no sorted order to help you solve it.
 
-One free speed-up worth mentioning out loud: once the fixed number nums[i] is
-POSITIVE, you can stop the whole outer loop. Why? The list is sorted, so if the
-SMALLEST of the three numbers is already above zero, the other two are bigger
-still, and three positive numbers can never add to zero. On a list that is
-mostly positive this turns the run from n-squared work into almost nothing. It
-is not required for correctness - it is the kind of observation that shows you
-understand what sorting gave you.""",
+UPGRADE 1 - FIX ONE, HASH THE REST. For each fixed nums[i], walk the rest with a hash set
+looking for the complement. O(n^2) time, O(n) space, and NO SORT - which matters if you must
+preserve the original order for some other reason. Deduplication becomes awkward, because
+without sorting, equal values are scattered.
 
-    """The family of problems this one unlocks.
+UPGRADE 2 - SORT, THEN FIX ONE AND USE TWO POINTERS. The version on this page. O(n^2) time,
+O(1) extra space, and deduplication becomes two one-line checks.
 
-Once the "fix one, two-finger the rest" shape clicks, four other questions
-become small edits rather than new problems:
+WHY THE POINTER MOVE IS SAFE - the argument, because this is what an interviewer probes:
 
-- 4Sum: find four numbers adding to a target. Fix TWO numbers with nested loops,
-  then two-finger the remainder. That is n x n x n work, O(n^3).
-- kSum in general: keep peeling off one fixed index per level of recursion until
-  only two are left, then two-finger those. O(n^(k-1)).
-- 3Sum Closest: you are no longer looking for exactly zero, but for the trio
-  whose sum lands NEAREST a target. Same sweep, same finger movement - you just
-  remember the smallest gap you have seen instead of testing for an exact match.
-- 3Sum Smaller: count trios whose sum is BELOW a target. When LO and HI give a
-  small enough sum, every position between them also works, because everything
-  between is smaller than nums[HI]. So you add (HI - LO) to the count in one go
-  and slide LO. Counting a whole block at once is what keeps it O(n^2).
+    Suppose nums[i] + nums[lo] + nums[hi] is TOO SMALL.
 
-In plain words, the takeaway: sort the list so it tells you which way to move,
-walk two fingers inward, and skip over any value equal to the one you just used.
-Time O(n^2) after an O(n log n) sort; extra space O(1) beyond the output.""",
+    hi is the largest remaining partner available to nums[lo]. If nums[lo] paired with the
+    largest thing left still falls short, then nums[lo] paired with anything smaller falls
+    shorter still:
 
-    """What the code does, in plain language - read this before the line-by-line.
+        for every k with lo < k < hi:  nums[i] + nums[lo] + nums[k] <= s < 0
 
-The code does three things, in this order.
+    So NO triplet using position lo can work. Moving lo right discards that entire row of
+    possibilities at once, and discards nothing that could have been an answer.
 
-FIRST it sorts the list. That one step buys two separate things: the numbers now
-run from smallest to largest, so "my total is too small" tells you which
-direction to move; and equal numbers are now sitting next to each other, so
-spotting a repeat is just a glance at the neighbour.
+    The mirror argument covers "too big": nums[hi] paired with the smallest available partner
+    already overshoots, so no triplet using hi can work.
 
-SECOND it walks through the list picking one number at a time to be the FIXED
-first member of the trio. For each fixed number, it puts one finger just to the
-right of it and another finger at the far right end of the list, and slides the
-two fingers toward each other. If the three numbers add up to less than zero, it
-slides the left finger right to pick up something bigger. If they add up to more
-than zero, it slides the right finger left to pick up something smaller. If they
-add up to exactly zero, it writes the trio down and moves both fingers inward.
-The fingers only ever move toward each other and never back, so each fixed
-number costs one sweep of the list and no more.
+Every step retires a whole row or column, and there are only n of each - which is why the inner
+scan is one pass rather than a nested loop. THE ENTIRE ARGUMENT DEPENDS ON THE LIST BEING
+SORTED; without that, both inequalities are false.
 
-THIRD, in two places, it refuses to use a number that is the same as the one it
-just used - once for the fixed number, once for the left finger after a hit.
-That is the only thing standing between you and the same trio being reported
-several times.
+WHY SORTING COSTS NOTHING HERE: O(n log n) for the sort against O(n^2) for the search. At
+n = 3,000 that is about 35,000 against 9,000,000 - the sort is a quarter of one per cent of the
+work, and it buys both the pointer argument and the duplicate grouping.""",
 
-Nothing is stored except the answers themselves. There is no hash map, no set,
-no second copy of the list - just two positions being nudged along.
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
 
-In one sentence: sort the list so it tells you which way to walk, then for each
-starting number squeeze two fingers together from both ends until they meet,
-skipping any number identical to the one you just used.""",
+The one sentence that holds the whole idea: SORT THE LIST, THEN WALK THROUGH IT FIXING EACH
+NUMBER IN TURN AND USING TWO FINGERS CLOSING IN FROM BOTH ENDS OF WHAT IS LEFT TO FIND THE PAIR
+THAT COMPLETES IT - SKIPPING ANY VALUE YOU HAVE ALREADY USED IN THE SAME ROLE.
 
-    """Now the code, line by line, against the trace we just did by hand.
+THERE IS NO RECURSION HERE. Nothing calls itself, so there is no call stack. The mechanism to
+understand is TWO NESTED SWEEPS, and the inner one has the shrinking-gap property:
 
-Keep the traced list beside you: sorted [-4, -1, -1, 0, 1, 2].
+  - The outer loop walks the fixed element from left to right. It runs at most n - 2 times.
+  - The inner loop has two positions closing toward each other. Every pass moves at least one of
+    them inward, so the gap strictly shrinks and the loop must end.
+  - When lo meets hi there is nothing left between them, and that emptiness is the proof that no
+    remaining pair completes this fixed element.
 
-    nums.sort()
-Sorts the list in place. This is the line that turns [-1,0,1,2,-1,-4] into
-[-4,-1,-1,0,1,2] - the ordering that made "too small -> move LO right" true and
-put the two -1s next to each other.
+THE STEPS:
 
+  1. SORT THE LIST. Everything below depends on it - both the pointer reasoning and the
+     duplicate skipping. Note this changes the caller's list unless you sort a copy.
+
+  2. MAKE AN EMPTY LIST FOR THE ANSWERS.
+
+  3. WALK A POSITION i FROM THE START, stopping two short of the end - a fixed element needs at
+     least two elements after it.
+
+  4. IF THIS VALUE EQUALS THE PREVIOUS ONE, SKIP IT. You have already found every triplet
+     starting with that value. Do not apply this to the very first element.
+
+  5. PUT ONE FINGER JUST AFTER i AND ONE AT THE END. Searching only to the right of i is what
+     stops the same triplet being found in a different order.
+
+  6. WHILE THE FINGERS HAVE NOT MET:
+
+     a. Add the three numbers.
+
+     b. IF THE SUM IS TOO SMALL, move the left finger right - onto a bigger number, since the
+        list is sorted.
+
+     c. IF THE SUM IS TOO BIG, move the right finger left - onto a smaller number.
+
+     d. IF IT IS EXACTLY ZERO, record the triplet. Then move BOTH fingers inward - the current
+        pair is used up, and moving only one would just make the sum wrong in a predictable
+        direction. Then step the left finger past any repeat of the value it just used, so the
+        same pair is not recorded twice.
+
+  7. WHEN THE OUTER WALK FINISHES, return the answers.
+
+The step most often got wrong is 6d: after a hit, BOTH fingers must move, and then the left one
+must skip duplicates.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a row of weights laid out on a bench, arranged lightest on the left to heaviest on the
+right. You need every set of three that balances exactly against nothing - some negative, some
+positive, cancelling out.
+
+You work through the bench one weight at a time. Pick up the leftmost weight and hold it. Now
+the question is narrower: among everything still on the bench to the right of where you are
+standing, which two weights exactly cancel the one in your hand?
+
+For that you use both hands. Left hand on the lightest remaining weight, right hand on the
+heaviest. Weigh all three together.
+
+Too light? The problem is the left hand - it is already holding the lightest thing available,
+so nothing lighter could help. Slide it right. Too heavy? The right hand is on the heaviest
+thing available, so slide it left. Exactly balanced? Write the three down, and move BOTH hands
+inward, because that pair is now spent.
+
+When your hands meet, you have proved there is no other pair for the weight you are holding.
+Put it down, step one place right, and start again.
+
+Two habits stop you writing the same trio down twice.
+
+The first: if the weight you are about to pick up is identical to the one you just finished
+with, do not bother - you already found everything that weight can do. Skip it.
+
+The second: after writing down a trio, if your left hand lands on another weight of exactly the
+same value it just used, slide past it. Otherwise you would find the identical trio again one
+position along.
+
+Both habits only work because the bench is SORTED. Identical weights sit next to each other, so
+"is this the same as the last one?" is a glance rather than a search. That is the second thing
+sorting buys, and it is why sorting is the first thing you do.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def three_sum(nums):
+
+nums is the list of numbers. Returns a list of triplets. NOTE IT MODIFIES nums - see the sort
+below.
+
+        nums.sort()                       # sorting enables two pointers + dedup
+
+The line everything depends on, doing two jobs. It makes the pointer argument valid (moving lo
+right always increases the sum), and it puts equal values adjacent so the duplicate checks below
+are a single comparison.
+
+It also MUTATES THE CALLER'S LIST. If that matters, `nums = sorted(nums)` works on a copy
+instead - worth saying out loud in an interview.
+
+        res = []
+
+Where the triplets accumulate.
+
+        for i in range(len(nums) - 2):
+
+The fixed element. The `- 2` is deliberate: a fixed element needs at least two elements after it
+to form a triplet, so the walk stops two short of the end.
+
+            if i > 0 and nums[i] == nums[i-1]:
+                continue                  # skip duplicate first elements
+
+THE OUTER SKIP - problem one from section 4. If this value equals the previous one, every triplet
+starting with it has already been found. `i > 0` guards the first element, and it also prevents
+nums[-1] from wrapping around to the END of the list in Python and comparing against the wrong
+value.
+
+            lo, hi = i + 1, len(nums) - 1
+
+The two fingers. lo starts JUST AFTER i, which is what keeps the search to the right and stops
+the same triplet appearing in a different order. hi starts at the last position.
+
+            while lo < hi:
+
+Strictly less-than, so a position is never paired with itself. Also the termination guarantee:
+every pass below moves lo right or hi left, so the gap always shrinks.
+
+                s = nums[i] + nums[lo] + nums[hi]
+
+The three current numbers. s is the only value computed in the loop.
+
+                if s < 0:
+                    lo += 1               # need a bigger sum
+
+Too small. By the argument in section 5, no triplet using position lo can work, so the entire
+row is discarded in one move. lo steps onto a larger value because the list is sorted.
+
+                elif s > 0:
+                    hi -= 1               # need a smaller sum
+
+Too big. Mirror image - no triplet using hi can work.
+
+                else:
+                    res.append([nums[i], nums[lo], nums[hi]])
+
+Exactly zero. Record the values, not the positions.
+
+                    lo += 1
+                    hi -= 1
+
+BOTH fingers move. The current pair is spent, and moving only one would leave the sum wrong in a
+guaranteed direction - move lo alone and the sum can only rise above zero, move hi alone and it
+can only fall below.
+
+                    while lo < hi and nums[lo] == nums[lo-1]:
+                        lo += 1           # skip duplicate second elements
+
+THE INNER SKIP - problem two from section 4. After recording, step past any repeat of the value
+lo just used, or the identical triplet would be found again one position along. The `lo < hi`
+guard stops the skip running off the end of the range.
+
+        return res
+
+Every fixed element has been tried, and for each one the two fingers met - which is the proof
+that no further pair completes it.""",
+
+    """9. TRACED, VARIABLE BY VARIABLE - AND BOTH SKIPS FIRING.
+
+TRACE 1 - the classic input, exercising the OUTER skip.
+
+    nums = [-1, 0, 1, 2, -1, -4]
+    after nums.sort():  [-4, -1, -1, 0, 1, 2]
+                          0    1   2  3  4  5
     res = []
-The answers we collect. It started empty and finished with two groups.
 
-    for i in range(len(nums) - 2):
-i is the position of the FIXED first number. The "- 2" is why the loop stopped
-at i = 3 in our trace: a group needs two more numbers to the right of i, so
-starting at the last two positions is pointless. This is also what silently
-handles a list of fewer than three numbers - the range is empty, the body never
-runs.
+    i = 0, nums[0] = -4.  i > 0 is false, no skip.  lo = 1, hi = 5.
+        s = -4 + (-1) + 2 = -3.   -3 < 0  ->  lo = 2
+        s = -4 + (-1) + 2 = -3.   -3 < 0  ->  lo = 3
+        s = -4 +   0  + 2 = -2.   -2 < 0  ->  lo = 4
+        s = -4 +   1  + 2 = -1.   -1 < 0  ->  lo = 5
+        lo = 5, hi = 5.  5 < 5 is false  ->  inner loop ends. No triplet with -4.
 
-    if i > 0 and nums[i] == nums[i-1]:
-        continue
-This is SKIP 1. In the trace it fired at i = 2, where nums[2] == nums[1] == -1,
-and jumped straight to i = 3. The "i > 0" guard is there because at i = 0 there
-is no nums[-1] to compare with - well, in Python there is, and it is the LAST
-element, which would be a silent bug. Hence the guard.
+    i = 1, nums[1] = -1.  nums[1] == nums[0]?  -1 == -4, no.  lo = 2, hi = 5.
+        s = -1 + (-1) + 2 = 0   ->  RECORD [-1, -1, 2].  res = [[-1,-1,2]]
+            lo = 3, hi = 4.
+            inner skip: nums[3] = 0, nums[2] = -1.  Not equal, no skip.
+        s = -1 +   0  + 1 = 0   ->  RECORD [-1, 0, 1].  res = [[-1,-1,2], [-1,0,1]]
+            lo = 4, hi = 3.
+            inner skip: lo < hi is 4 < 3, false. Does not run.
+        while lo < hi:  4 < 3 false  ->  inner loop ends.
 
-    lo, hi = i + 1, len(nums) - 1
-The two fingers. LO starts just past the fixed number, HI at the far right end.
-At i = 1 in our trace that gave lo = 2, hi = 5.
+    i = 2, nums[2] = -1.  nums[2] == nums[1]?  -1 == -1  ->  YES.  SKIP.
 
-    while lo < hi:
-Keep going while the fingers have at least one gap between them. The moment they
-meet or cross, this fixed number is finished. In the trace at i = 0 the loop
-ended when lo reached 5 and hi was 5.
+        THIS IS THE OUTER SKIP EARNING ITS KEEP. Without it, i = 2 would run with lo = 3,
+        hi = 5 and find s = -1 + 0 + 1 = 0 again, recording [-1, 0, 1] A SECOND TIME.
 
-    s = nums[i] + nums[lo] + nums[hi]
-The current total of the three. At i=1, lo=2, hi=5 this was -1 + -1 + 2 = 0.
+    i = 3, nums[3] = 0.  nums[3] == nums[2]?  0 == -1, no.  lo = 4, hi = 5.
+        s = 0 + 1 + 2 = 3.   3 > 0  ->  hi = 4.
+        lo = 4, hi = 4.  4 < 4 false  ->  ends.
 
-    if s < 0:  lo += 1
-Too small - and because the list is sorted, everything right of LO is bigger, so
-moving LO right is the only move that can help. This is the line that ran four
-times in a row at i = 0.
+    range(len(nums) - 2) is range(4), so i ran 0,1,2,3. Done.
 
-    elif s > 0: hi -= 1
-Too big - move HI left toward smaller numbers. This fired at i = 3, where
-0 + 1 + 2 = 3.
+    return [[-1, -1, 2], [-1, 0, 1]]
 
-    else:
-        res.append([nums[i], nums[lo], nums[hi]])
-        lo += 1
-        hi -= 1
-Exactly zero: record the group, then move BOTH fingers inward. Why both? Because
-keeping either finger still with the other one moving can only make the total
-wrong in one direction - the current pair is used up, so both must change.
+TRACE 2 - a different input, exercising the INNER skip.
 
-    while lo < hi and nums[lo] == nums[lo-1]:
-        lo += 1
-This is SKIP 2, the line that saved us on [0,0,0,0]: after recording a group, if
-the number LO now points at is the same as the one just used, it would produce
-the identical group again, so slide past it. The "lo < hi" keeps the slide from
-running off the end.
+    nums = [-2, 0, 0, 2, 2]   (already sorted)
+             0  1  2  3  4
+    res = []
 
-    return res
-The collected groups - [[-1,-1,2], [-1,0,1]] for our input, in the order we
-found them.""",
+    i = 0, nums[0] = -2.  No skip (i = 0).  lo = 1, hi = 4.
+        s = -2 + 0 + 2 = 0  ->  RECORD [-2, 0, 2].  res = [[-2,0,2]]
+            lo = 2, hi = 3.
+            inner skip: lo < hi is 2 < 3 true, and nums[2] = 0 == nums[1] = 0  ->  lo = 3.
+            check again: lo < hi is 3 < 3, false  ->  skip stops.
+
+            THIS IS THE INNER SKIP EARNING ITS KEEP. Without it, lo = 2 and hi = 3 gives
+            s = -2 + 0 + 2 = 0 and records [-2, 0, 2] A SECOND TIME.
+
+        while lo < hi:  3 < 3 false  ->  ends.
+
+    i = 1, nums[1] = 0.  nums[1] == nums[0]?  0 == -2, no.  lo = 2, hi = 4.
+        s = 0 + 0 + 2 = 2.   2 > 0  ->  hi = 3.
+        s = 0 + 0 + 2 = 2.   2 > 0  ->  hi = 2.
+        lo = 2, hi = 2  ->  ends.
+
+    i = 2, nums[2] = 0.  nums[2] == nums[1]?  0 == 0  ->  SKIP.
+
+    range(3) so i ran 0,1,2. Done.
+
+    return [[-2, 0, 2]]
+
+BOTH TRACES TOGETHER SHOW WHY BOTH SKIPS ARE NEEDED: trace 1's duplicate would survive the inner
+skip alone, and trace 2's would survive the outer skip alone. Removing either one produces wrong
+output on one of these two inputs.
+
+THE SMALL INPUTS, handled with no special code:
+
+    nums = [1, 2, 3]   sorted, i = 0 only. s = 1 + 2 + 3 = 6 > 0, hi moves, fingers meet.
+                       return [] - correct, no triplet sums to zero.
+    nums = [0, 0]      range(len - 2) is range(0), the loop body never runs. return [].
+    nums = [0, 0, 0]   i = 0, lo = 1, hi = 2, s = 0  ->  record [0,0,0]. Then lo = 2, hi = 1,
+                       loop ends. return [[0,0,0]] - correct, exactly once.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2).
+
+In plain words: the outer walk visits each position once, and for each one the two fingers make
+a single pass toward each other. n positions times one pass each is n squared. The sort adds
+O(n log n), which is dwarfed by it - at n = 3,000 the sort is about 35,000 operations against
+9,000,000 for the search, so a quarter of one per cent.
+
+Compare the three-loop version at about n-cubed / 6: for n = 3,000 that is 4.5 billion against 9
+million, roughly 500 times more work.
+
+SPACE: O(1) extra, not counting the output and whatever the sort uses internally. Only i, lo, hi
+and s are stored. The OUTPUT can be large - there can be O(n^2) distinct triplets in the worst
+case - so if the answer is enormous, the answer is what costs, not the algorithm.
+
+NOTE THE MUTATION: nums.sort() reorders the caller's list. Say this out loud in an interview; it
+is the kind of detail that separates people who have thought about the function's contract from
+people who have memorised it.
+
+THE FAMILY THIS UNLOCKS - and this is the real value of the pattern:
+
+  - TWO SUM II (sorted input): the inner half of this, on its own.
+  - 3SUM CLOSEST: same sweep, but track the sum nearest zero instead of exactly zero. No
+    duplicate handling needed at all, which makes it easier.
+  - 4SUM: one more outer loop around this whole thing, with a duplicate skip at each level.
+    O(n^3).
+  - 3SUM SMALLER (count triplets below a target): when the sum is too small, EVERY position
+    between lo and hi also works with the current lo, so add (hi - lo) to the count in one step
+    rather than testing them.
+
+Once "fix one, two-finger the rest" is in place, these are small edits rather than new problems.
+
+THE #1 BEGINNER MISTAKE: handling only one of the two duplicate cases. Almost everyone writes
+the outer skip and forgets the inner one, because the classic test input [-1,0,1,2,-1,-4] does
+not expose it - trace 2's [-2,0,0,2,2] does. If your solution passes the famous example and
+fails a hidden test, this is why.
+
+RUNNER-UP: moving only one pointer after recording a hit. The sum then moves in a guaranteed
+direction and you either miss triplets or loop.
+
+TAKEAWAY: fix one number and the rest is Two Sum on a sorted list - so sort first, squeeze two
+fingers inward, and remember that sorting was as much about making duplicates adjacent as about
+making the squeeze valid.""",
 ]
 
 _EX_P0B["Binary Tree Right Side View"] = [
@@ -34251,280 +34485,450 @@ The finished list, ["(())", "()()"] for n = 2.""",
 _EX_P0B["Longest Substring Without Repeating Characters"] = [
     """1. THE GOAL, in plain English.
 
-You are given a piece of text. Find the longest stretch of it, taken as one
-unbroken run of characters, in which no character repeats. You only have to
-report HOW LONG that stretch is, not what it says.
+Given a piece of text, find the longest stretch of it - one unbroken run of characters - in which
+no character repeats.
 
-The word for "an unbroken run taken out of a string" is a SUBSTRING. It has to
-be contiguous - the characters must sit next to each other in the original. So
-in "abcabcbb", "abc" is a substring, and so is "cab", but "acb" is not, because
-those three letters are not next to each other in that order.
+    s = "abcabcbb"     answer 3     ("abc")
+    s = "bbbbb"        answer 1     ("b")
+    s = "pwwkew"       answer 3     ("wke")
 
-Try our example by hand: s = "abcabcbb".
+Note "pwwkew" carefully. "pwke" is NOT an answer, because it is not unbroken - you cannot skip
+the second w. The run must be CONTIGUOUS.
 
-    a b c a b c b b
-    0 1 2 3 4 5 6 7
+The function returns the LENGTH, not the substring itself. (Returning the substring is a small
+extension - track where the best window started as well as how long it was.)
 
-Starting at position 0: a, b, c - all different so far. Next comes 'a' at
-position 3, but we already have an 'a', so this run has to stop. Length 3.
-Starting at position 1: b, c, a - fine - then 'b' at position 4 repeats. Length
-3 again. Starting at position 2: c, a, b then 'c' repeats. Length 3.
+The brute-force approach checks every possible stretch, which is about n-squared/2 of them, and
+checking each one for repeats costs more again. For a 100,000-character string that is far too
+slow. The method here does it in a single pass.
 
-The answer is 3. And notice something useful: the answer is 3 several times
-over, from several different starting points.""",
+WHAT THIS ENTRY OWNS: the SLIDING WINDOW with a last-seen map, and specifically the stale-position
+trap that section 4 is about. Its sibling "Sliding Window - recognize & apply" owns the general
+pattern and when to reach for it; "Minimum Window Substring" owns the shrink-while-valid variant.""",
 
-    """2. THE INTUITION - and first, the simple-but-slow version.
+    """2. THE INTUITION - a window that only ever moves right.
 
-THE SLOW VERSION, so you can see what we are speeding up. Try every possible
-substring. Pick a start, pick an end, then check whether that stretch has any
-repeats. For a string of length n there are about n x n / 2 substrings, and
-checking each one for repeats costs up to n more steps. That is roughly n-cubed
-work, written O(n^3). For a 1,000-character string that is a billion steps. It
-is correct, and it is unusable.
+Keep a WINDOW over the string, marked by two edges. Everything inside it has no repeats.
 
-THE UPGRADE - a SLIDING WINDOW. Picture a window cut out of a piece of card,
-laid over the text so that you can only see part of it:
+    s = "a b c a b c b b"
+         0 1 2 3 4 5 6 7
 
-    a b c a b c b b
-    [     ]              <- the window currently shows "abc"
-    ^     ^
-   left  right
+    [a b c]                 window 0..2, all distinct, length 3
+       [b c a]              the 'a' at 3 repeats the 'a' at 0, so the left edge jumps past it
+          [c a b]           and so on
 
-The window has a left edge and a right edge. The rule we enforce is simple: the
-characters inside the window are always all different. Then:
+The right edge marches steadily along the string, one character per step, and never goes back.
+The left edge jumps forward only when a repeat forces it. NEITHER EDGE EVER MOVES LEFT.
 
-  Move the RIGHT edge one step right, taking in a new character.
-  If that character is already inside the window, the rule is broken - so drag
-  the LEFT edge rightwards, just far enough to leave the old copy behind.
-  Whatever the window's width is now, if it is the widest we have ever seen,
-  remember it.
+That is the property that makes this O(n) rather than O(n^2): across the entire run, the right
+edge takes n steps and the left edge takes at most n steps, so the total work is about 2n even
+though the code looks like a loop inside a loop.
 
-Neither edge ever moves backwards. The right edge walks the string once, and the
-left edge walks it at most once. So the total work is about 2n steps - O(n).
-From a billion steps down to two thousand, on the same input.
+Now the question that decides the whole solution: WHEN A REPEAT APPEARS, WHERE SHOULD THE LEFT
+EDGE JUMP TO?
 
-That is the whole idea. The only thing left is to make the "drag the left edge
-far enough" step fast, and that is what the next section is for.""",
+    ...  [ a b c ] a ...
+           ^         ^
+           left      the new 'a', repeating the one at the left edge
 
-    """3. DEFINING THE TERMS this solution uses.
+The window must no longer contain the OLD 'a'. So the left edge jumps to ONE PAST the old
+position - not one step right, not to the new character, but exactly past the previous
+occurrence.
 
-WINDOW: the stretch of the string between the two edges, left to right
-inclusive. If left = 1 and right = 3 the window covers positions 1, 2 and 3, so
-its WIDTH is right - left + 1 = 3. That "+1" catches people out; check it on a
-window where left and right are the same position - one character, and
-3 - 3 + 1 = 1. Correct.
+    left = (position where this character was last seen) + 1
 
-HASH MAP (also called a dictionary, and written {} in Python): a set of pairs
-where you look something up by a key and instantly get its value. Ours is called
-last_seen, and it stores "character -> the most recent position where I saw it".
-After reading "abca", last_seen holds {'a': 3, 'b': 1, 'c': 2} - note 'a' says 3,
-not 0, because we overwrite it with the newest position every time.
+To do that you need to know where each character was last seen, which is what the map is for.
 
-Why a hash map rather than searching the window? Because looking a character up
-in a hash map takes the same tiny amount of time no matter how big the map is -
-this is what "O(1) lookup" means. Searching the window character by character
-would cost as much as the window is wide, and would drag us back toward the slow
-version.
+    last_seen = { 'a': 0, 'b': 1, 'c': 2 }
 
-Now the important consequence of storing POSITIONS rather than just "yes I have
-seen this". When the right edge takes in a character we have seen before, we do
-not need to shuffle the left edge along one step at a time checking as we go. We
-already know exactly where the old copy sits, so we can JUMP the left edge to
-one position past it, in a single move.
+And there is a subtlety hiding in this, which section 4 is entirely about: the map remembers
+EVERY character ever seen, including ones that have already fallen OUT of the window - and
+jumping to a position that is already behind the left edge would move the window BACKWARDS.""",
 
-One catch, and it is the subtle line in the code. The map remembers every
-character ever seen, including ones the left edge has already slid past - those
-are outside the window and must be ignored. So before jumping, we check that the
-remembered position is at or after the left edge. If it is behind the left edge,
-that copy is no longer in the window and is not a repeat at all.""",
+    """3. EVERY TERM, defined the first time you meet it.
 
-    """4. THE CASE THAT CATCHES PEOPLE - a stale position in the map.
+SUBSTRING. A contiguous run of characters. "abc" is a substring of "abcabc"; "acb" is not.
 
-s = "abba". Watch what happens if you jump the left edge without checking
-whether the old position is still inside the window.
+WINDOW. The stretch currently under consideration, from left to right inclusive. If left = 1 and
+right = 3, the window is characters 1, 2 and 3.
 
-  right = 0, 'a': not seen. Map {'a':0}. left = 0. Width 1. best = 1.
-  right = 1, 'b': not seen. Map {'a':0,'b':1}. Width 2. best = 2.
-  right = 2, 'b': seen at 1, and 1 >= left(0), so it IS in the window. Jump
-    left to 1 + 1 = 2. Map {'a':0,'b':2}. Window is just "b". Width 1.
-  right = 3, 'a': seen at 0. Now the question that matters. Is 0 >= left(2)?
-    NO - position 0 is behind the left edge, so that 'a' was left behind long
-    ago and is not in the window. Do NOT move the left edge.
-    Window becomes "ba", width 2. best stays 2.
+SLIDING WINDOW. The technique: move the edges over the data rather than re-examining every
+possible stretch from scratch.
 
-Answer 2, which is right: "ab", "bb" is invalid, "ba" - the longest is 2.
+LEFT / RIGHT EDGE. The two boundaries. Here `left` is an index and `right` comes from the loop.
 
-Now the bug. Drop the "and last_seen[ch] >= left" check, and at right = 3 you
-would jump left to 0 + 1 = 1. The left edge would move BACKWARDS, from 2 to 1,
-the window would become "bba" which contains two b's, and the width would come
-out as 3. Wrong answer, and worse, the left edge going backwards breaks the
-guarantee that makes this O(n) at all.
+last_seen. A dictionary from character to THE MOST RECENT POSITION it appeared at. The whole
+solution rests on it.
 
-The rule to remember: the left edge must never move backwards. Every jump must
-be forward-only, so many implementations write it as
-left = max(left, last_seen[ch] + 1), which says the same thing in one line
-instead of two.""",
+enumerate. Walks the string handing you both the position and the character, so
+`for right, ch in enumerate(s)` gives right = 0 with ch = s[0], and so on.
 
-    """5. THE SMALL INPUTS, and a second look at the width formula.
+best. The largest window length seen so far. The answer.
 
-Empty string "". The loop never runs, best stays 0, answer 0. Correct.
+WINDOW WIDTH. right - left + 1. The `+ 1` is because both edges are INCLUSIVE - a window from 2
+to 3 contains two characters, and 3 - 2 = 1, so the +1 is what makes it 2.
 
-All the same character, "bbbb". right = 0 gives width 1. right = 1 sees 'b' at
-0, which is inside the window, so left jumps to 1 - the window is just that one
-'b', width 1. Same at every step. Answer 1. Correct: the longest run with no
-repeats is a single character.
+STALE POSITION. An entry in last_seen pointing at a position that has already fallen behind the
+left edge - so the character is in the MAP but not in the WINDOW. The source of the bug in
+section 4.
 
-All different, "abcdef". No character is ever seen twice, so the left edge never
-moves at all. The window just grows: 1, 2, 3, 4, 5, 6. Answer 6, the whole
-string.
+AMORTISED. Averaged over the whole run. The left edge may jump several places in one step, but
+across the entire string it moves at most n places in total, which is why the nested-looking
+work is still linear.
 
-One character, "a". Width 1 - 0 + 1... careful, left = 0 and right = 0, so
-0 - 0 + 1 = 1. Answer 1.
+O(n) - "LINEAR TIME". Work proportional to the length of the string.""",
 
-Two things worth saying about the answer. First, we track best as we go rather
-than only at the end, because the window at the END of the run is not
-necessarily the widest one we ever had - in "abcabcbb" the final window is only
-"b". Second, we never need to know WHAT the best substring said; if the question
-asked for the text rather than the length, you would also record the left edge
-at the moment best was updated, and slice the string at the end.""",
+    """4. THE CASE THAT CATCHES MOST PEOPLE - the stale position.
 
-    """6. WHAT THE CODE DOES, in plain language.
+Take s = "abba" and watch what happens WITHOUT the `>= left` check:
 
-The code walks a single pointer along the string from left to right. That
-pointer is the RIGHT edge of the window. Alongside it, it keeps two other
-things: a LEFT edge, which only ever moves right, and a small lookup table
-recording, for every character it has met, the most recent position it appeared
-at.
+    right = 0, 'a'   last_seen = {a:0}                 window "a",   best 1
+    right = 1, 'b'   last_seen = {a:0, b:1}            window "ab",  best 2
+    right = 2, 'b'   'b' was at 1. Jump left to 2.     window "b",   best 2
+                     last_seen = {a:0, b:2}
+    right = 3, 'a'   'a' is in the map, at position 0.
+                     JUMP LEFT TO 0 + 1 = 1  ?
 
-For each new character it reads, it asks one question: "have I seen you before,
-and was that inside the stretch I am currently holding?" There are two answers.
+That jump is WRONG, and wrong in a direction that is easy to miss: THE LEFT EDGE MOVES
+BACKWARDS, from 2 to 1. The window becomes positions 1 to 3, which is "bba" - and that contains
+two b's.
 
-If NO - either the character is brand new, or its only previous appearance is
-behind the left edge and therefore no longer in the window - it does nothing to
-the edges. The window simply got one character wider.
+    best would become 3 - 1 + 1 = 3, and the answer for "abba" would be reported as 3.
+    The correct answer is 2.
 
-If YES - the character really is a repeat inside the window - then the window is
-no longer valid, so it drags the left edge forward to sit one position past that
-earlier copy. Everything up to and including the old copy is thrown out of the
-window in one jump, and the window is valid again.
+WHY IT HAPPENED: the 'a' at position 0 had ALREADY FALLEN OUT of the window when left jumped to
+2. Its entry in the map is stale - it records where 'a' last appeared in the STRING, not in the
+WINDOW. Jumping to it drags the left edge back over characters that were deliberately excluded.
 
-Either way, it then records this character's new position in the lookup table
-(overwriting any older position), measures how wide the window is now, and keeps
-the measurement if it beats the best so far.
-
-When the right edge runs off the end of the string, the best measurement it ever
-took is the answer.
-
-The reason this is fast is that neither edge ever goes backwards. Each one
-travels the length of the string at most once, so the total work is proportional
-to the length of the string, not to the number of substrings in it.""",
-
-    """7. THE CODE, line by line.
-
-Keep "abba" beside you from section 4.
-
-    last_seen = {}
-The lookup table: character -> the most recent position it was seen at. It
-starts empty because we have not read anything yet.
-
-    left = 0
-The left edge of the window, starting at the front of the string.
-
-    best = 0
-The widest valid window seen so far. Starting at 0 is what makes the empty
-string return 0 without any special case.
-
-    for right, ch in enumerate(s):
-enumerate walks the string handing back BOTH the position and the character at
-once, so right is the position and ch is the character sitting there. right is
-the right edge of the window, and it moves one step per loop - it is the only
-thing driving the whole process forward.
+THE FIX is the second half of the condition:
 
     if ch in last_seen and last_seen[ch] >= left:
-The two-part question from section 6, and both halves are essential.
-"ch in last_seen" asks whether we have ever seen this character.
-"last_seen[ch] >= left" asks whether that sighting is still INSIDE the window.
-In the "abba" trace, at right = 3 the first half was true ('a' was seen) but the
-second was false (position 0 is behind left = 2), so the whole condition was
-false and the left edge correctly stayed put.
 
-    left = last_seen[ch] + 1
-The jump. Move the left edge to just past the old copy, throwing that copy and
-everything before it out of the window in one move. This is what a hash map
-storing POSITIONS buys us - without it we would have to shuffle the left edge
-forward one character at a time.
+Only jump if the previous occurrence is STILL INSIDE the window. If it is behind the left edge,
+it is irrelevant and no jump is needed.
 
-    last_seen[ch] = right
-Record where this character is NOW, overwriting any older position. This line
-sits outside the if, because it must happen whether or not we jumped - every
-character read has to have its position updated.
+With the check, right = 3 sees last_seen['a'] = 0, checks 0 >= 2, finds it false, and does not
+jump. The window stays 2..3 = "ba", best stays 2. Correct.
 
-    best = max(best, right - left + 1)
-Measure the current window and keep it if it is the widest yet. The "+1" is
-because both edges are included: a window from position 2 to position 3 holds
-two characters, and 3 - 2 + 1 = 2. Measuring on EVERY step, not just at the end,
-is what catches a wide window that appears in the middle and is later destroyed.
+THE REASON THIS IS THE #1 BUG: "abc" and "abcabcbb" both pass WITHOUT the check. You need a
+string where a character recurs AFTER its earlier position has already been excluded - "abba" is
+the smallest such case. A solution that passes the famous example and fails a hidden test almost
+always fails here.
 
-    return best
-The widest window ever measured.""",
+TRAP 2: writing `left = last_seen[ch]` instead of `+ 1`. That leaves the repeated character
+itself inside the window.
 
-    """8. TRACING THE CODE, variable by variable.
+TRAP 3: getting the width wrong. It is `right - left + 1` because both edges are inclusive. Using
+`right - left` under-counts by one, which silently gives an answer one too small on every input.
 
-s = "abcabcbb". Start: last_seen = {}, left = 0, best = 0.
+TRAP 4: updating `last_seen[ch]` before doing the jump check. The order in the code is: check,
+then jump, then record. Recording first would make every character look like a repeat of itself
+at the current position.""",
 
-right=0, ch='a'  'a' not in map -> no jump.
-                 map = {'a':0}.  width = 0-0+1 = 1.  best = 1.
-right=1, ch='b'  not in map.  map = {'a':0,'b':1}.  width = 1-0+1 = 2. best = 2.
-right=2, ch='c'  not in map.  map = {'a':0,'b':1,'c':2}. width = 3. best = 3.
-right=3, ch='a'  in map at 0, and 0 >= left(0) -> it IS in the window. JUMP:
-                 left = 0+1 = 1.  map['a'] = 3.
-                 window is now positions 1..3 = "bca". width = 3-1+1 = 3.
-                 best stays 3.
-right=4, ch='b'  in map at 1, and 1 >= left(1) -> in the window. JUMP:
-                 left = 1+1 = 2.  map['b'] = 4.
-                 window = positions 2..4 = "cab". width = 3. best stays 3.
-right=5, ch='c'  in map at 2, and 2 >= left(2) -> in window. JUMP: left = 3.
-                 map['c'] = 5. window = "abc". width = 3. best stays 3.
-right=6, ch='b'  in map at 4, and 4 >= left(3) -> in window. JUMP: left = 5.
-                 map['b'] = 6. window = positions 5..6 = "cb". width = 2.
-                 best stays 3.
-right=7, ch='b'  in map at 6, and 6 >= left(5) -> in window. JUMP: left = 7.
-                 map['b'] = 7. window = position 7 only = "b". width = 1.
-                 best stays 3.
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE.
 
-Loop ends. return best = 3.
+THE SLOW VERSION - try every substring.
 
-Read the left column: right went 0,1,2,3,4,5,6,7 and never went back. Read the
-left edge: 0,0,0,1,2,3,5,7 - it only ever went forward too. That is the whole
-efficiency argument, visible in the trace.""",
+    best = 0
+    for start in range(n):
+        for end in range(start, n):
+            if s[start..end] has no repeats:
+                best = max(best, end - start + 1)
 
-    """9. COMPLEXITY, COMMON MISTAKES, and the takeaway.
+Correct, and the right thing to say first in an interview. Cost: about n-squared / 2 substrings,
+and checking each for repeats costs up to n more - so roughly n-cubed unless you are careful, or
+n-squared with a set maintained as `end` extends.
 
-TIME: O(n). The right edge takes exactly n steps. The left edge only ever moves
-forward, so across the whole run it also takes at most n steps in total - not n
-steps per character. Adding those together is still proportional to n. Every
-other operation inside the loop - a map lookup, a map write, a comparison - takes
-a fixed amount of time regardless of input size.
+    n =     100:   about 5,000 substrings          fine
+    n = 100,000:   about 5 billion                 hopeless
 
-SPACE: O(k), where k is the number of DIFFERENT characters that can appear. For
-lowercase English letters that is at most 26 entries in the map, no matter
-whether the string is a hundred characters or a million; people often write this
-as O(1) for that reason, and say O(min(n, alphabet size)) to be exact.
+THE OBSERVATION THAT FIXES IT: when the window from left to right is valid and you extend right
+by one, you do not need to re-check the whole window. Only the NEW character can have caused a
+repeat, and only against characters already inside.
 
-MISTAKE 1 - letting the left edge move backwards. Forgetting the
-"last_seen[ch] >= left" half of the condition lets a stale position drag the
-left edge back, which both gives wrong answers (as we saw on "abba") and
-destroys the O(n) guarantee. Writing left = max(left, last_seen[ch] + 1) makes
-the forward-only rule impossible to get wrong.
+UPGRADE 1 - A SET AND A SHRINKING LEFT EDGE. Keep the window's characters in a set. When the new
+character is already in the set, remove characters from the left ONE AT A TIME until it is gone.
+O(n) overall, and it takes several steps to shrink.
 
-MISTAKE 2 - measuring the window as right - left instead of right - left + 1,
-which reports every answer as one too small. Test it on a single character: a
-window from 0 to 0 holds one character, and only the "+1" version says so.
+UPGRADE 2 - THE LAST-SEEN MAP, which is the version here. Instead of shrinking one character at
+a time, JUMP the left edge straight past the previous occurrence in a single move.
 
-ONE-SENTENCE TAKEAWAY: slide a window along the string, and whenever the new
-character is a repeat that is still inside the window, jump the left edge past
-its previous position - because the edges never move backwards, the whole thing
-costs one pass.""",
+    with a set:   "abcda" -> remove 'a', done. One step. Fine.
+                  "abcdea...a" -> may remove several before reaching the duplicate.
+    with a map:   left = last_seen[ch] + 1, always ONE assignment regardless of the distance.
+
+Both are O(n) overall; the map version has a smaller constant and, more usefully, is simpler to
+reason about - there is no inner loop at all.
+
+THE TRICK, EXPLAINED FROM SCRATCH: why is `last_seen[ch] + 1` the right place to jump?
+
+The window must satisfy one property: no repeats inside it. The new character at `right` is a
+repeat of the one at `last_seen[ch]`. To restore the property, the window must EXCLUDE that old
+occurrence - and it must exclude as little else as possible, because we want the longest window.
+
+The smallest exclusion that removes the old occurrence is to start just after it. Hence
+`last_seen[ch] + 1`. Anything further right throws away valid characters; anything further left
+keeps the duplicate.
+
+AND WHY THE `>= left` GUARD IS NECESSARY: the map is a record of the whole STRING, not of the
+window. If `last_seen[ch]` is already behind `left`, that occurrence is not in the window, the
+property is not violated, and no jump is needed - jumping would move the edge BACKWARDS and
+re-admit characters that were excluded for good reason. Section 4 traces exactly that.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WALK THE RIGHT EDGE ALONG THE STRING ONE CHARACTER AT
+A TIME, AND WHENEVER THE NEW CHARACTER ALREADY APPEARS INSIDE THE CURRENT WINDOW, JUMP THE LEFT
+EDGE TO JUST PAST THAT EARLIER OCCURRENCE - RECORDING THE WIDEST WINDOW SEEN.
+
+THERE IS NO RECURSION AND, DESPITE APPEARANCES, NO NESTED LOOP. The mechanism is TWO FORWARD-ONLY
+EDGES:
+
+  - The right edge advances exactly once per character, in the single loop. It never goes back.
+  - The left edge only ever JUMPS FORWARD, and only when forced. It never goes back either - which
+    is precisely what the `>= left` guard protects.
+  - Because both edges only move right and neither passes the end, the total number of edge
+    movements across the whole run is at most 2n. That is why this is linear.
+  - Termination: the loop runs exactly once per character of the string.
+
+THE STEPS:
+
+  1. MAKE AN EMPTY LOOKUP TABLE from character to the last position it was seen at.
+
+  2. PUT THE LEFT EDGE AT POSITION 0, and set the best length so far to 0.
+
+  3. WALK THE RIGHT EDGE ACROSS THE STRING, one character at a time. For each character:
+
+     a. ASK WHETHER YOU HAVE SEEN IT BEFORE, AND WHETHER THAT EARLIER SIGHTING IS STILL INSIDE
+        THE CURRENT WINDOW. Both halves matter - a sighting that has already fallen behind the
+        left edge is irrelevant.
+
+     b. IF SO, MOVE THE LEFT EDGE TO ONE PAST THAT EARLIER POSITION. Not one step right - straight
+        to just past it, in a single move. This is the smallest jump that removes the duplicate
+        while keeping as much of the window as possible.
+
+     c. RECORD THIS CHARACTER'S CURRENT POSITION in the table, overwriting any older entry. Do
+        this AFTER the check, never before.
+
+     d. MEASURE THE WINDOW - right minus left, plus one, because both edges are inclusive - and
+        keep it if it is the widest so far.
+
+  4. RETURN THE WIDEST WINDOW MEASURED.
+
+The step people get wrong is 3a: omitting the second half of the question, which is the bug in
+section 4. The step people get wrong second is the order of 3a and 3c.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine reading along a shelf of books, left to right, collecting them into a bag as you go. The
+rule is that the bag may never contain two copies of the same title.
+
+You take each book in turn and drop it in. Most of the time nothing happens - the bag grows, and
+you note whenever it is the biggest it has ever been.
+
+Then you pick up a book whose title is already in the bag. You cannot just take that one copy
+out, because the bag has to hold an unbroken run from the shelf - so instead you empty everything
+from the left-hand end up to and including the earlier copy, in one motion, and carry on.
+
+To do that in one motion you need to remember WHERE each title was on the shelf. So you keep a
+notebook: title, and the position you last saw it. When a repeat turns up, you look up the old
+position and empty the bag to just past it.
+
+Two things about the notebook matter.
+
+You update it AFTER checking, not before. If you wrote down the new position first, every book
+would look like a repeat of itself.
+
+And the notebook remembers titles that are no longer in the bag - it is a record of the whole
+shelf, not of what you are carrying. So before acting on an entry, you must ask whether that old
+copy is still in the bag at all. If you already emptied past it, it is gone, and there is nothing
+to do.
+
+That second check is the one everybody forgets. Skip it and you will occasionally empty the bag
+back to a point BEFORE where it currently starts - putting back books you deliberately removed,
+and quietly reporting a longer run than actually exists.
+
+You never walk backwards along the shelf, and you never put anything back in at the left end
+except by that mistake. Which is why the whole job takes one pass.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def length_of_longest_substring(s):
+
+s is the input string. Returns an integer - the LENGTH of the longest repeat-free run, not the
+run itself. Nothing is modified.
+
+        last_seen = {}
+
+The lookup table: character to the most recent position it appeared at. Empty at the start, and
+it will only ever grow to the number of DISTINCT characters - at most 128 for ASCII, whatever the
+length of the string.
+
+        left = 0
+
+The left edge of the window, inclusive. It will only ever move right.
+
+        best = 0
+
+The widest window measured so far. Starting at 0 is what makes the empty string return 0
+correctly, with no special case.
+
+        for right, ch in enumerate(s):
+
+The right edge walks the whole string exactly once. `right` is the position, `ch` the character.
+This is the only loop in the function.
+
+            if ch in last_seen and last_seen[ch] >= left:
+
+THE CONDITION THE WHOLE PROBLEM TURNS ON, and it asks TWO questions.
+
+`ch in last_seen` - have we ever seen this character?
+
+`last_seen[ch] >= left` - and is that sighting still INSIDE the current window? The map records
+the whole string, so an entry may point at a position that has already fallen behind the left
+edge. Acting on such an entry would move the left edge BACKWARDS. This half is the fix for
+section 4's bug, and omitting it still passes "abcabcbb" while failing "abba".
+
+                left = last_seen[ch] + 1     # shrink past the previous occurrence
+
+Jump the left edge to just past the earlier occurrence - one assignment, however far away it is.
+The `+ 1` matters: landing ON the old position would leave the duplicate inside the window. And
+this is the SMALLEST jump that removes the duplicate, which is what keeps the window as wide as
+possible.
+
+            last_seen[ch] = right
+
+Record where this character is now, overwriting any older entry. AFTER the check, never before -
+recording first would make the condition see the current position and treat every character as a
+repeat of itself.
+
+            best = max(best, right - left + 1)
+
+Measure and keep the widest. `right - left + 1` because both edges are inclusive: a window from 2
+to 3 holds two characters, and 3 - 2 is 1, so the +1 is what makes it 2.
+
+        return best
+
+The right edge has covered the whole string. Every window that was ever valid has been measured
+as it was reached, so the largest of them is the answer.""",
+
+    """9. TRACED, VARIABLE BY VARIABLE - ON THE INPUT THAT EXPOSES THE TRAP.
+
+    s = "abba"
+    start: last_seen = {}, left = 0, best = 0
+
+    right = 0, ch = 'a'
+        'a' in last_seen?  No  ->  no jump.
+        last_seen = {'a': 0}
+        best = max(0, 0 - 0 + 1) = 1          window = "a"
+
+    right = 1, ch = 'b'
+        'b' in last_seen?  No  ->  no jump.
+        last_seen = {'a': 0, 'b': 1}
+        best = max(1, 1 - 0 + 1) = 2          window = "ab"
+
+    right = 2, ch = 'b'
+        'b' in last_seen?  Yes, at 1.  Is 1 >= left = 0?  Yes  ->  JUMP.
+        left = 1 + 1 = 2
+        last_seen = {'a': 0, 'b': 2}
+        best = max(2, 2 - 2 + 1) = max(2, 1) = 2      window = "b"
+
+    right = 3, ch = 'a'
+        'a' in last_seen?  Yes, at 0.  Is 0 >= left = 2?  NO  ->  NO JUMP.
+
+        THIS IS THE GUARD EARNING ITS KEEP. The 'a' at position 0 fell out of the window when
+        left jumped to 2. Its map entry is stale. Without the `>= left` half of the condition,
+        left would be set to 0 + 1 = 1 - MOVING THE EDGE BACKWARDS from 2 to 1 - and the window
+        would become "bba", which contains two b's.
+
+        last_seen = {'a': 3, 'b': 2}
+        best = max(2, 3 - 2 + 1) = max(2, 2) = 2      window = "ba"
+
+    return 2.   Correct - "ab" and "ba" are both length 2, and no length-3 run is repeat-free.
+
+    WITHOUT THE GUARD the same trace ends: left = 1, best = max(2, 3 - 1 + 1) = 3, and the
+    function returns 3 for a string whose true answer is 2.
+
+TRACE 2 - the standard example, where the guard never fires.
+
+    s = "abcabcbb"
+    last_seen = {}, left = 0, best = 0
+
+    right=0 'a'  not seen             last_seen={a:0}            best = 0-0+1 = 1
+    right=1 'b'  not seen             last_seen={a:0,b:1}        best = 1-0+1 = 2
+    right=2 'c'  not seen             last_seen={a:0,b:1,c:2}    best = 2-0+1 = 3
+    right=3 'a'  at 0, 0 >= 0 yes     left = 1,  last_seen[a]=3  best = max(3, 3-1+1) = 3
+    right=4 'b'  at 1, 1 >= 1 yes     left = 2,  last_seen[b]=4  best = max(3, 4-2+1) = 3
+    right=5 'c'  at 2, 2 >= 2 yes     left = 3,  last_seen[c]=5  best = max(3, 5-3+1) = 3
+    right=6 'b'  at 4, 4 >= 3 yes     left = 5,  last_seen[b]=6  best = max(3, 6-5+1) = 3
+    right=7 'b'  at 6, 6 >= 5 yes     left = 7,  last_seen[b]=7  best = max(3, 7-7+1) = 3
+
+    return 3.   Correct - "abc".
+
+    NOTE THAT EVERY CHECK IN THIS TRACE PASSED. That is why "abcabcbb" cannot detect the missing
+    guard, and why the bug survives casual testing.
+
+THE SMALL INPUTS, all handled with no special code:
+
+    s = ""       the loop never runs, best stays 0.  return 0.
+    s = "b"      one pass, no repeat, best = 0-0+1 = 1.  return 1.
+    s = "bbbb"   every step jumps left to right, so the window is always one character.
+                 best = 1.  return 1.
+    s = "pwwkew" the answer is 3 ("wke"), not 4 - "pwke" is not contiguous.
+
+COUNTING THE WORK on "abcabcbb": the right edge moved 8 times and the left edge moved 5 times, so
+13 movements for an 8-character string. Never more than 2n, which is the linear claim made
+concrete.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n).
+
+In plain words, and this is the follow-up question for this problem: THERE IS ONLY ONE LOOP, and
+inside it every operation is constant time - a dictionary lookup, an assignment, a comparison. The
+right edge takes exactly n steps. The left edge only ever moves forward and never passes the end,
+so across the WHOLE RUN it moves at most n times in total. Total work is about 2n, not n squared.
+
+Compare the brute-force version at about n-squared / 2 substrings: for a 100,000-character string
+that is 5 billion against 100,000.
+
+SPACE: O(min(n, alphabet size)). The map holds one entry per DISTINCT character - at most 128 for
+ASCII, or 26 for lowercase letters, regardless of how long the string is. For a million-character
+lowercase string the map has at most 26 entries.
+
+WHICH FAMILY THIS BELONGS TO, because recognising it is the transferable part:
+
+  - SHRINK WHILE INVALID (this problem): grow the window, and when it breaks the rule, shrink or
+    jump until it is legal again. Record the MAXIMUM. Also: Longest Repeating Character
+    Replacement.
+  - SHRINK WHILE VALID: grow until the window satisfies a condition, then shrink as far as
+    possible, recording the MINIMUM. That is Minimum Window Substring, which has its own entry.
+  - FIXED SIZE: the window never changes length, it just steps along. Find All Anagrams,
+    Permutation in String.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why is this O(n) when there appears to be a nested loop?" There is no nested loop in this
+    version - the map lets the jump happen in one assignment. In the set-based variant there IS an
+    inner loop, and it is still O(n) because the left edge moves at most n times in total.
+  - "Return the substring, not the length." Track the start of the best window as well as its
+    width, then slice at the end.
+  - "What if the alphabet is huge - Unicode?" The map still holds only the distinct characters
+    actually present, so it is bounded by the string length rather than the alphabet.
+  - "What if you had to allow up to k repeats?" Different problem - keep counts rather than
+    positions, and shrink while any count exceeds k.
+
+THE #1 BEGINNER MISTAKE: omitting the `>= left` half of the condition. It passes "abcabcbb", it
+passes "bbbbb", and it fails "abba" by reporting 3 instead of 2 - because it acts on a stale map
+entry and drags the left edge BACKWARDS. If your solution passes the famous examples and fails a
+hidden test, this is almost certainly why.
+
+RUNNER-UP: `right - left` instead of `right - left + 1`, which under-reports by exactly one on
+every input and is easy to miss because the answer still looks plausible.
+
+TAKEAWAY: slide a window rightwards and jump the left edge past the previous occurrence whenever
+a character repeats INSIDE it - and the phrase "inside it" is the whole problem, because the map
+remembers the entire string while the window does not.""",
 ]
 
 _EX_P0B["Lowest Common Ancestor of a Binary Tree"] = [
