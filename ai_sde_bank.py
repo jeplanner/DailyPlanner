@@ -41326,88 +41326,418 @@ squares that appear in both.""",
 ]
 
 _EX_P0D["Graphs — BFS, DFS, and when to use each"] = [
-    """What a GRAPH is, and why a grid is secretly one.
+    """1. THE GOAL - what a GRAPH is, and why a grid is secretly one.
 
-A GRAPH is just a set of things plus the connections between them. Each thing is
-a NODE (sometimes called a vertex); each connection is an EDGE. Friends and
-friendships, cities and roads, web pages and links - all graphs.
+A GRAPH is a set of things plus the connections between them. Each thing is a NODE; each
+connection is an EDGE. That is all.
 
-Now look at a grid of squares:
+    cities and the roads between them          nodes = cities,   edges = roads
+    people and who follows whom                nodes = people,   edges = follows
+    web pages and the links between them       nodes = pages,    edges = links
+    courses and their prerequisites            nodes = courses,  edges = "must take first"
 
-    1 1 0 0
-    1 1 0 0
-    0 0 1 0
-    0 0 0 1
+AND HERE IS THE ONE THAT CATCHES PEOPLE OUT: A GRID IS A GRAPH. Every square is a node, and each
+square is connected to the four squares up, down, left and right of it.
 
-Here '1' means land and '0' means water. This does not look like a graph, but it
-is one in disguise: every square is a NODE, and two squares are joined by an
-EDGE if they sit directly side by side (up, down, left or right - not diagonally,
-unless the problem says so).
+    grid:      col 0 1 2 3          the square at (1,1) is connected to
+        row 0      1 1 0 0              (0,1) above it
+        row 1      1 1 0 0              (2,1) below it
+        row 2      0 0 1 0              (1,0) to its left
+        row 3      0 0 0 1              (1,2) to its right
 
-Once you see the grid that way, a question like "how many separate islands are
-there?" becomes a graph question: how many separate GROUPS of connected land
-squares are there? Count them by eye above - the four 1s in the top-left corner
-touch each other, so they are one island; the single 1 in the third row is
-another; the single 1 in the fourth row is a third. Three islands.
+Nobody hands you a list of edges. The edges are IMPLIED by the coordinates, and you generate them
+by adding and subtracting 1 from a row or a column. Recognising this is the single most useful
+thing in this entry: an enormous number of "grid" problems - islands, rotting oranges, maze
+shortest path, flood fill, surrounded regions, word search - are graph traversal wearing a
+costume.
 
-The two ways to explore a graph are DFS and BFS, and the rest of this entry is
-about what each one does, when to reach for which, and how the islands code
-below implements one of them.""",
+THE WORKED PROBLEM. Count the ISLANDS in the grid above: groups of '1' cells connected up, down,
+left or right. The answer is 3 - the 2x2 block in the top-left, the lone cell at (2,2), and the
+lone cell at (3,3).
 
-    """DFS and BFS in plain words, with the pictures they make.
+    Note that (1,1) and (2,2) touch only DIAGONALLY, and diagonals do not count. Section 9 shows
+    what the answer becomes if they did, and it is not 2.
 
-DEPTH-FIRST SEARCH (DFS): go as far as you can down one path before backing up.
-Like exploring a cave by always taking the first tunnel you see, and only
-retracing your steps when you hit a dead end. It uses a STACK - a pile where you
-put things on top and take them off the top, last in first out. Usually you do
-not build the stack yourself; you use recursion, and the CALL STACK (the pile of
-paused function calls) is the stack.
+THE TWO WAYS TO WALK A GRAPH are BFS and DFS. Section 2 draws both, and section 4 is about
+choosing between them - which is what the question in the title is really asking.""",
 
-BREADTH-FIRST SEARCH (BFS): explore in rings, everything one step away first,
-then everything two steps away, and so on. Like a drop of ink spreading in
-water. It uses a QUEUE - a waiting line where you join the back and are served
-from the front, first in first out.
+    """2. THE INTUITION - DFS and BFS in the pictures they make.
 
-Starting from the top-left square of our grid, DFS might visit the four land
-squares in the order (0,0), (1,0), (1,1), (0,1) - plunging downwards first. BFS
-would visit (0,0), then both of its neighbours (0,1) and (1,0), then (1,1).
-Different order, same four squares.
+DEPTH-FIRST SEARCH (DFS). Go as far as you can down one path before backing up. Like exploring a
+cave by always taking the first passage you see and only retreating when you hit a dead end.
 
-The single rule they share, and the one that matters most: MARK A NODE AS
-VISITED THE FIRST TIME YOU REACH IT, and never process it again. Graphs contain
-loops - in a grid, square A's neighbour is B and B's neighbour is A - so without
-that mark you walk back and forth between two squares forever until the program
-runs out of memory. The visited mark is not an optimisation. It is what makes
-the walk terminate at all.""",
+    start                    order visited: A B D E C F
+      A
+     / \\                     A -> B -> D (dead end, back up)
+    B   C                         -> E (dead end, back up, back up)
+   / \\   \\                   A -> C -> F
+  D   E   F
 
-    """When to reach for which - the decision, in one page.
+    THE PICTURE IT MAKES IS A LONG THIN TENDRIL that reaches the bottom quickly.
+    THE TOOL IS A STACK - last in, first out. Recursion gives you one for free (the call stack),
+    which is why DFS code is usually shorter.
 
-Use BFS when the question involves SHORTEST or FEWEST or MINIMUM NUMBER OF STEPS
-in a graph where every edge costs the same. Because BFS finishes everything one
-step away before it looks at anything two steps away, the FIRST time it reaches
-a node is guaranteed to be by a shortest route. Examples: fewest moves for a
-knight, shortest word ladder, minutes for rot to spread through a crate of
-oranges, minimum depth of a tree.
+BREADTH-FIRST SEARCH (BFS). Visit everything one step away, then everything two steps away, and
+so on. Like a ripple spreading out from a stone dropped in water.
 
-Use DFS when the question is about EXISTENCE, CONNECTIVITY, or ALL POSSIBLE
-PATHS - anything where you do not care how long the route was. Examples: how
-many islands (this entry), does a path exist between two nodes, does the graph
-contain a cycle, topological ordering, generating every path from A to B.
+      A                      order visited: A B C D E F
+     / \\                     distance 0: A
+    B   C                    distance 1: B, C
+   / \\   \\                   distance 2: D, E, F
+  D   E   F
 
-Three more practical notes:
+    THE PICTURE IT MAKES IS AN EXPANDING RING.
+    THE TOOL IS A QUEUE - first in, first out. Nodes come out in the order they were discovered,
+    which is what keeps the ring intact.
 
-- DFS is shorter to write, because recursion gives you the stack for free. That
-  is why the islands code below is DFS - the problem does not care about
-  distances, so there is no reason to pay for a queue.
-- DFS recursion depth equals the length of the longest path. On a 1000 x 1000
-  grid that is a million nested calls, and Python gives up at about a thousand.
-  When the input can be large, rewrite DFS with your own explicit stack, or use
-  BFS - neither touches the call stack.
-- If edges have DIFFERENT costs, plain BFS no longer finds the cheapest route.
-  You need Dijkstra's algorithm, which is BFS with a priority queue instead of a
-  plain queue - it serves the cheapest-so-far node next rather than the oldest.""",
+THE ONE PROPERTY THAT DECIDES EVERYTHING. Because BFS finishes every node at distance k before
+touching any node at distance k+1, THE FIRST TIME BFS REACHES A NODE, IT HAS REACHED IT BY THE
+FEWEST POSSIBLE EDGES. That is not a happy accident; it is what "explore in ring order" means.
 
-    """The islands trace, with the reason on every line.
+DFS has no such property, and section 4 has the four-node graph where it gets the distance wrong.
+
+BOTH VISIT EVERY REACHABLE NODE. If the question is only "which nodes can I reach" or "how many
+separate groups are there", THE TWO ARE INTERCHANGEABLE, and you pick on convenience. The islands
+problem in this entry is exactly that case - which is why the code uses DFS, purely because
+recursion makes it four lines.
+
+AND BOTH NEED THE SAME SAFETY RAIL. A graph can have cycles, so you MUST mark nodes as visited or
+the walk goes round forever. In the islands code that marking is done by a trick worth learning -
+section 5.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRAPH. Nodes plus edges.
+NODE / VERTEX. One thing in the graph. In a grid, one cell.
+EDGE. One connection. In a grid, the adjacency between two touching cells.
+NEIGHBOURS. The nodes one edge away. In a grid with 4-connectivity: up, down, left, right.
+
+DIRECTED / UNDIRECTED. Whether edges have a one-way arrow. Roads are usually undirected; course
+prerequisites are directed.
+
+WEIGHTED / UNWEIGHTED. Whether edges carry a cost. BFS's shortest-path guarantee holds ONLY for
+unweighted graphs - section 4 shows why, with numbers.
+
+CONNECTED COMPONENT. A group of nodes all reachable from each other. An island is a connected
+component of land cells.
+
+BFS (BREADTH-FIRST SEARCH). Ring-by-ring exploration, using a QUEUE.
+DFS (DEPTH-FIRST SEARCH). Go deep first, using a STACK (or recursion).
+
+QUEUE. First in, first out. `collections.deque` with `popleft()`.
+STACK. Last in, first out. A Python list with `append` and `pop`, or the call stack via recursion.
+
+VISITED SET / MARKING. The record of where you have already been. Without it, cycles make the
+walk infinite.
+
+FLOOD FILL. Starting from one cell and spreading out to everything connected to it - exactly what
+the paint-bucket tool in an image editor does. `sink` is a flood fill.
+
+4-CONNECTIVITY / 8-CONNECTIVITY. Whether diagonals count as touching. This problem uses 4.
+
+grid. The input, a list of lists of '1' and '0' CHARACTERS - not integers. `grid[r][c] != '1'`
+compares against the string '1'.
+R, C. Number of rows and columns.
+count. Islands found so far.
+sink(r, c). The flood fill: turn this land cell and everything connected to it into water.
+r, c. Row and column indices.
+
+O(R x C). Work proportional to the number of cells. For a general graph the same idea is written
+O(V + E) - nodes plus edges.""",
+
+    """4. WHEN TO REACH FOR WHICH - the decision, and the case that punishes getting it wrong.
+
+USE BFS WHEN THE QUESTION SAYS SHORTEST, FEWEST, MINIMUM NUMBER OF STEPS, or NEAREST - in a graph
+where every edge costs the same.
+
+USE DFS WHEN THE QUESTION IS ABOUT CONNECTIVITY, COMPONENTS, CYCLES, or ORDERING - "how many
+groups", "is there a path at all", "does this contain a loop", "what order can I take these
+courses in".
+
+Now the case that makes it concrete. Here is the smallest graph where DFS gives the WRONG
+distance:
+
+        S --------------- T          S-T is one edge
+        |                 |
+        A ------ B -------+          S-A-B-T is three edges
+
+    THE SHORTEST PATH FROM S TO T IS 1 EDGE.
+
+    BFS from S:  ring 0 = {S}.  ring 1 = {T, A}.  T is found at distance 1. CORRECT.
+
+    DFS from S:  suppose the neighbour list gives A before T (nothing forbids it).
+                 S -> A -> B -> T.  T is reached having walked 3 edges, and T is now MARKED
+                 VISITED - so when DFS backs up and looks at S's other neighbour, it skips T.
+                 DFS reports 3. WRONG, and it never notices.
+
+THE INVERSION IS IN THE NEIGHBOUR ORDER, WHICH IS THE POINT. Reorder S's neighbours so T comes
+first and DFS answers 1 - correctly, by luck. An algorithm whose answer depends on the order you
+happened to store the edges in is not an algorithm for shortest paths. BFS's answer does not
+change with the ordering.
+
+THE SECOND HALF OF THE RULE, AND IT IS THE ONE THAT GETS FORGOTTEN: BFS'S GUARANTEE HOLDS ONLY IF
+EVERY EDGE COSTS THE SAME. Put weights on that same graph:
+
+        S --10-- T
+        |        |
+        1        1
+        |        |
+        A ---+---+          S-A costs 1, A-T costs 1
+
+    BFS says T is 1 hop away, so it reports the S-T edge: COST 10.
+    The genuinely cheapest route is S -> A -> T: COST 2 - but it is 2 hops, so BFS finds it later
+    and never reconsiders.
+
+    FEWEST EDGES IS NOT THE SAME QUESTION AS LOWEST COST. The moment edges carry different
+    weights, you need DIJKSTRA (a priority queue instead of a plain queue), and saying that
+    unprompted is worth a lot in an interview.
+
+THE SPACE TRADE, WHICH IS THE OTHER HALF OF THE DECISION:
+
+    BFS holds the current ring in a queue      ->  O(WIDEST FRONTIER).  Worst on a bushy graph.
+    DFS holds the current path on the stack    ->  O(LONGEST PATH).     Worst on a deep one.
+
+    CONCRETELY FOR THIS PROBLEM: on a 32 x 32 grid of nothing but land, the flood fill can snake
+    through all 1,024 cells, so the recursion goes 1,024 frames deep - and Python's default limit
+    is 1,000. A grid barely bigger than a chessboard raises RecursionError. On a 500 x 500 all-land
+    grid it is 250,000 frames. The BFS rewrite in section 5 has no such limit, because the pending
+    work sits in a queue on the heap instead of on the call stack.
+
+TRAP 2 - NOT MARKING VISITED AT ALL. Two adjacent land cells (0,0) and (0,1): sink(0,0) calls
+sink(0,1), which calls sink(0,0), which calls sink(0,1)... forever. In this code the marking IS
+the line `grid[r][c] = '0'`, and deleting it does not produce a wrong answer - it produces a hang.
+
+TRAP 3 - CHECKING THE BOUNDS AFTER READING THE CELL. `grid[r][c] != '1' or r < 0 ...` evaluates
+`grid[r][c]` first and raises IndexError on r = R. The order in the real code is bounds first,
+value second, and `or` short-circuits so the read never happens out of range. Python's NEGATIVE
+indexing makes this worse than usual: `grid[-1][c]` does not raise at all - it silently reads the
+LAST ROW, so a missing `r < 0` check wraps the grid around and joins the top edge to the bottom.
+
+TRAP 4 - COMPARING AGAINST 1 INSTEAD OF '1'. The grid holds CHARACTERS. `grid[r][c] != 1` is true
+for every cell including land, so `sink` returns immediately and the count comes out as the number
+of land cells rather than the number of islands.""",
+
+    """5. THE ALTERNATIVES, AND WHY "SINK THE ISLAND" IS THE NEAT TRICK HERE.
+
+VERSION A - A SEPARATE VISITED GRID. The normal way to remember where you have been is a second
+grid of true/false the same size as the input.
+
+    visited = [[False] * C for _ in range(R)]
+
+Perfectly correct, costs O(R x C) extra memory, and needs a second condition in every check.
+
+VERSION B - SINK THE ISLAND, which is what this code does. Instead of recording that a cell has
+been visited, TURN THE LAND INTO WATER:
+
+    grid[r][c] = '0'
+
+Now the ordinary "is this land?" test does double duty: it rejects water, and it rejects
+already-visited cells, because a visited cell IS water now. NO SECOND STRUCTURE, NO SECOND
+CONDITION, O(1) EXTRA MEMORY.
+
+    THE PRICE, AND IT MUST BE SAID OUT LOUD: THIS DESTROYS THE INPUT. When `num_islands` returns,
+    the caller's grid is all water. If the caller needs their grid afterwards, this is a bug, and
+    the fix is either to copy the grid first or to use version A. Volunteering this in an
+    interview is the difference between "wrote a clever trick" and "understands what the trick
+    costs" - and it is the same class of remark as saying that 3Sum's `nums.sort()` mutates the
+    caller's list.
+
+VERSION C - BFS INSTEAD OF DFS. Same algorithm, different container, no recursion:
+
+    for every cell that is land:
+        count += 1
+        put it in a queue and sink it
+        while the queue is not empty:
+            take a cell from the front
+            for each of its four neighbours:
+                if in bounds and land: sink it and add it to the queue
+
+    IDENTICAL ANSWER AND IDENTICAL O(R x C) COST. The only difference is where the pending work
+    lives - a queue on the heap instead of frames on the call stack - which is exactly why it
+    survives the 32 x 32 all-land grid that breaks the recursive version.
+
+    SINK EACH CELL AS YOU ENQUEUE IT, not as you dequeue it. Otherwise a cell with two land
+    neighbours already in the queue gets added twice, and the queue can grow far beyond the grid.
+
+VERSION D - UNION-FIND (DISJOINT SET UNION). Walk every cell once, and union each land cell with
+its right and down neighbours if they are land. The number of islands is the number of remaining
+groups. Nearly O(R x C), no recursion, no mutation of the grid - and it is the right answer when
+the follow-up is "now the islands change over time and I need the count after each change", because
+union-find handles additions incrementally while a flood fill has to start over.
+
+WHY THE OUTER SCAN IS NEEDED AT ALL. One flood fill only reaches ONE island. The grid may contain
+many disconnected ones, and nothing links them - so you must try every cell as a possible starting
+point. The `count += 1` happens exactly once per island because after the first cell of an island
+is found, the whole island is sunk before the scan continues, so no other cell of it can ever
+trigger a second count.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: SCAN EVERY SQUARE, AND EACH TIME YOU BUMP INTO A PIECE
+OF LAND YOU HAVE NOT SEEN BEFORE, ADD ONE TO THE COUNT AND THEN FLOOD-FILL THE ENTIRE ISLAND
+ATTACHED TO IT INTO WATER, SO NO OTHER PART OF IT CAN EVER BE COUNTED AGAIN.
+
+THE FLOOD FILL IS RECURSIVE, and the mechanism is worth spelling out because everything about the
+cost and the failure mode comes from it:
+
+  - The fill calls itself once for each of the four neighbours. Each call PAUSES at the call site,
+    holding its own `r` and `c` and which of the four neighbours it had got to.
+  - Those paused calls are the CALL STACK, and it gets as deep as the longest path the fill
+    follows - which on a solid block of land is the number of cells in it (section 4's 1,024).
+  - WHAT MAKES IT STOP: every call either returns immediately, or turns one land cell into water.
+    There are finitely many land cells, and none is ever turned back, so the recursion must run
+    out of work.
+  - WHAT WOULD MAKE IT NOT STOP: not marking the cell before recursing. Two adjacent land cells
+    would call each other forever.
+
+THE STEPS:
+
+  1. IF THE GRID IS EMPTY, the answer is zero.
+
+  2. NOTE HOW MANY ROWS AND COLUMNS THERE ARE, and start the count at zero.
+
+  3. DEFINE THE FLOOD FILL, which takes a row and a column:
+
+     a. STOP IMMEDIATELY IF THIS POSITION IS OFF THE GRID - above the top, left of the left edge,
+        below the bottom, or right of the right edge - OR IF THE CELL IS NOT LAND. Check the
+        bounds BEFORE looking at the cell, because looking at a cell that is not there either
+        crashes or, if the index is negative, silently reads the wrong end of the grid.
+
+        This one condition is doing three jobs: it stops the fill running off the edge, it stops
+        it spreading into water, and - because visited cells have been turned into water - it stops
+        it revisiting anywhere it has already been.
+
+     b. TURN THIS CELL INTO WATER. Do this BEFORE recursing. It is what marks the cell as visited
+        and what makes the fill terminate.
+
+     c. RUN THE SAME FILL ON THE FOUR NEIGHBOURS: below, above, right, left.
+
+  4. WALK EVERY SQUARE OF THE GRID, row by row and column by column. WHENEVER YOU FIND LAND:
+
+     a. ADD ONE TO THE COUNT - you have just discovered a new island, because every previously
+        discovered island has already been turned entirely to water.
+
+     b. FLOOD-FILL FROM THAT SQUARE, sinking the whole island.
+
+  5. RETURN THE COUNT.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine an aerial photograph of the sea printed on graph paper. Some squares are land, most are
+water, and you have been asked how many separate islands there are.
+
+You go over the photograph square by square, left to right along the top row, then the next row,
+and so on. Most squares are water and you pass straight over them.
+
+Then you hit a square of land. This is a discovery: you have never seen this square before, so it
+must belong to an island you have not counted yet. You add one to your tally.
+
+Now, before you take another step, you deal with the whole island - because if you did not, you
+would meet the rest of it further along the row and count the same island a second time.
+
+So you take a pot of blue paint. You paint over the square you are standing on, turning it into
+sea. Then you look at the four squares immediately above, below, left and right. Any of them that
+are still land, you go and do exactly the same thing to: paint it blue, then look at its four
+neighbours. This spreads outward until it runs into water on every side, or runs off the edge of
+the paper - and at that point every square of the island has been painted over.
+
+The painting is doing two things at once, and this is the neat part. It records that you have
+been here, and it does so in the very same way that the photograph already records water. So when
+the spread reaches a square you have already painted, it sees water and stops - no separate list
+of visited squares is needed, and no extra check either. It also guarantees you finish, since
+every step permanently converts one piece of land to sea and there is only so much land.
+
+Then you carry on scanning from where you left off. Every square of that island is now blue, so
+you glide over all of it, and the next piece of land you meet is genuinely a new island.
+
+When you reach the last square, your tally is the number of islands. And your photograph is now
+entirely sea - which is worth remembering if somebody else wanted to look at it.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep the 4 x 4 grid beside you, and the answer 3.
+
+    def num_islands(grid):
+
+`grid` is a list of lists of the CHARACTERS '1' and '0'. Returns the number of islands - AND
+overwrites the caller's grid with water (section 5).
+
+        if not grid:                 # empty grid -> zero islands
+            return 0
+
+An empty grid has no islands. It also protects `len(grid[0])` on the next line from raising
+IndexError.
+
+        R, C = len(grid), len(grid[0])   # number of rows and columns
+
+    R  HOLDS the number of rows, C the number of columns. Captured once rather than recomputed
+       inside the bounds check, which runs millions of times on a large grid.
+
+        count = 0                    # islands found so far
+
+    count  HOLDS the answer being built. It increases exactly once per island, for the reason in
+           section 5: the first cell of an island triggers it, and the rest of the island is water
+           before the scan resumes.
+
+        def sink(r, c):
+
+THE FLOOD FILL. Defined inside so it can see `grid`, `R` and `C` without passing them down four
+levels of recursion. Returns nothing - its entire effect is on the grid.
+
+            if r < 0 or c < 0 or r >= R or c >= C or grid[r][c] != '1':
+                return
+
+THE ONE CONDITION THE WHOLE FUNCTION RESTS ON, and it does three jobs at once:
+
+    `r < 0 or c < 0 or r >= R or c >= C`  DECIDES whether we have run off the edge of the grid.
+    `grid[r][c] != '1'`                   DECIDES whether the cell is water - which covers both
+                                          genuine sea AND cells already visited, since visiting
+                                          turns them into sea.
+
+THE ORDER IS NOT OPTIONAL. `or` short-circuits: the moment one test is true, the rest are skipped.
+So `grid[r][c]` is only ever read after all four bounds tests have passed. Reverse them and you
+get IndexError for r >= R - or, worse, silence for r < 0, because `grid[-1]` is the LAST ROW in
+Python and the grid quietly wraps around (trap 3).
+
+And note it is `'1'`, the character, not `1`, the integer - trap 4.
+
+                grid[r][c] = '0'         # mark visited by turning land into water
+
+THE MARKING, and the reason the recursion terminates. It must come BEFORE the four calls below;
+put it after and two adjacent cells call each other forever.
+
+This is also the line that destroys the input. Section 5 has the trade.
+
+                sink(r+1, c); sink(r-1, c); sink(r, c+1); sink(r, c-1)  # 4 neighbors
+
+THE FOUR NEIGHBOURS - down, up, right, left. The edges of the grid-as-graph, generated by
+arithmetic rather than looked up.
+
+No bounds checking here at all: every call checks itself on entry, which is why one guard at the
+top of the function is enough for all four directions and all four corners.
+
+Four calls, not eight - diagonals do not count as touching, and section 9 shows how much the
+answer changes if they do.
+
+        for r in range(R):           # scan every cell
+            for c in range(C):
+                if grid[r][c] == '1':    # found a new, unvisited island
+
+THE OUTER SCAN. One fill only reaches ONE island, so every cell must be tried as a starting point.
+
+By the time the scan reaches any cell, every island discovered earlier is entirely water - so a
+cell that is STILL '1' cannot belong to a counted island. That is why the next line is
+unconditional.
+
+                    count += 1           #   count it
+                    sink(r, c)           #   sink the whole island so we do not recount it
+
+Count first, then sink. The order does not matter for correctness here, but counting first reads
+as "I have found one" followed by "now erase it".
+
+        return count""",
+
+    """9. THE ISLANDS TRACE, CELL BY CELL - AND THE ANSWER INVERTING ON ONE RULE CHANGE.
 
     grid:      col 0 1 2 3
         row 0      1 1 0 0
@@ -41415,186 +41745,141 @@ Three more practical notes:
         row 2      0 0 1 0
         row 3      0 0 0 1
 
-The outer scan reads every square left to right, top to bottom. count = 0.
+    R = 4, C = 4, count = 0.
 
-(0,0) is '1'. This is land we have not seen before, so it must belong to a NEW
-      island - nothing visited so far could have reached it. count = 1.
-      Now sink the whole island so we never count it again:
-      sink(0,0): it is land -> set it to '0', then call sink on its four
-        neighbours: below (1,0), above (-1,0), right (0,1), left (0,-1).
-        sink(1,0): land -> set to '0', recurse on its neighbours...
-          sink(2,0): it is '0' (water) -> return immediately.
-          sink(0,0): it is now '0', because we just changed it -> return. THIS
-            is the visited check doing its job; without it we would bounce
-            between (0,0) and (1,0) forever.
-          sink(1,1): land -> set to '0', recurse...
-            sink(0,1): land -> set to '0', recurse; all its neighbours are now
-              water or off the grid, so it returns.
-            everything else around (1,1) is water or already sunk.
-        sink(-1,0): row -1 is off the top of the grid -> return.
-        sink(0,-1): column -1 is off the left edge -> return.
-      The whole top-left blob is now '0'. Four squares turned to water.
+    SCAN (0,0):  grid[0][0] is '1'  ->  count = 1.  sink(0,0):
 
-(0,1), (0,2), (0,3), (1,0), (1,1) ... all read '0' now - either they were water
-      to begin with, or we sank them. The scan walks past them.
+        sink(0,0)   in bounds, land  ->  grid[0][0] = '0'
+          sink(1,0) in bounds, land  ->  grid[1][0] = '0'
+            sink(2,0)  land? grid[2][0] is '0' - water. RETURN.
+            sink(0,0)  grid[0][0] is now '0' - ALREADY SUNK. RETURN.
+                       (This is the marking earning its keep. Without it, we would be back at the
+                        start of the island and would loop forever.)
+            sink(1,1) in bounds, land  ->  grid[1][1] = '0'
+              sink(2,1)  water. RETURN.
+              sink(0,1)  land  ->  grid[0][1] = '0'
+                sink(1,1)  now water. RETURN.
+                sink(-1,1) r < 0  ->  RETURN.  (Caught by the FIRST test. Had that test been
+                                     missing, grid[-1][1] would read ROW 3 and silently join the
+                                     top of the grid to the bottom - trap 3.)
+                sink(0,2)  water. RETURN.
+                sink(0,0)  now water. RETURN.
+              sink(1,2)  water. RETURN.
+              sink(1,0)  now water. RETURN.
+            sink(1,-1) c < 0  ->  RETURN.
+          sink(-1,0) r < 0  ->  RETURN.
+          sink(0,1)  now water. RETURN.
+          sink(0,-1) c < 0  ->  RETURN.
 
-(2,2) is '1'. New island -> count = 2. sink turns it to '0'; all four of its
-      neighbours are water, so the recursion stops at once.
+        THE GRID IS NOW:      0 0 0 0
+                              0 0 0 0
+                              0 0 1 0
+                              0 0 0 1
 
-(3,3) is '1'. New island -> count = 3. Same - it is alone.
+        The whole 2 x 2 block went in one fill - four cells sunk, and every other call returned
+        immediately because it was off the grid or already water.
 
-Scan finishes. Answer 3, matching the three islands we counted by eye.""",
+    SCAN (0,1) (0,2) (0,3):  all '0' now. Nothing happens.
+    SCAN row 1: all '0'. Nothing happens.
+        THIS IS THE POINT OF SINKING. Cells (0,1), (1,0) and (1,1) are all part of island 1, and
+        the scan glides over them because they are water. Without the sink, each would trigger
+        `count += 1` and the answer would come out as 6 - the number of LAND CELLS, not islands.
 
-    """Why "sink the island" is the neat trick here.
+    SCAN (2,0), (2,1):  '0'.
+    SCAN (2,2):  '1'  ->  count = 2.  sink(2,2):
+        grid[2][2] = '0'.  sink(3,2) water, sink(1,2) water, sink(2,3) water, sink(2,1) water.
+        One cell sunk; a lone island.
 
-The normal way to remember which squares you have visited is a second grid of
-true/false the same size as the input. That works and costs O(rows x cols) extra
-memory.
+    SCAN (2,3), row 3 up to (3,2):  '0'.
+    SCAN (3,3):  '1'  ->  count = 3.  sink(3,3):
+        grid[3][3] = '0'.  sink(4,3) r >= R RETURN.  sink(2,3) water.  sink(3,4) c >= C RETURN.
+        sink(3,2) water.
 
-This solution does something cheaper: it OVERWRITES the land with water. Once a
-square has been counted as part of an island, turning its '1' into a '0' means
-every later check - both the outer scan and any recursive call - sees water and
-walks away. The grid becomes its own visited-marker, so no extra memory is
-needed at all.
+    RETURN 3.
 
-Read the guard line with that in mind:
+    WORK DONE: every one of the 16 cells was looked at once by the scan, and the 6 land cells were
+    each sunk exactly once. That is the O(R x C) claim, concrete.
 
-    if r < 0 or c < 0 or r >= R or c >= C or grid[r][c] != '1': return
+THE INVERSION - CHANGE ONE RULE AND THE ANSWER DOES NOT DROP BY ONE, IT COLLAPSES.
 
-It is doing two completely different jobs in one line. The first four tests are
-BOUNDS CHECKS - "have I walked off the edge of the grid?" - and they must come
-first, because reading grid[r][c] with r = -1 would silently read the last row
-in Python instead of failing. The last test is the visited check, and it also
-covers water that was never land. Three situations, one early return.
+Suppose diagonals DID count as touching - 8-connectivity instead of 4, which is what you get by
+adding `sink(r+1,c+1); sink(r+1,c-1); sink(r-1,c+1); sink(r-1,c-1)`. Look at the same grid:
 
-The cost of the trick: it DESTROYS the caller's grid. Everything ends up as
-water. If the caller needs the grid afterwards, either copy it first or use a
-separate visited set. Always say this out loud - an interviewer who cares about
-the input being mutated is testing whether you noticed.""",
+    (1,1) and (2,2) touch diagonally.       (2,2) and (3,3) touch diagonally.
 
-    """The cost, and the BFS rewrite of the same problem.
+So the 2 x 2 block, the lone cell at (2,2) and the lone cell at (3,3) are ALL ONE ISLAND.
 
-Cost: the outer loops look at every square once, and sink turns each land square
-to water exactly once, so no square is processed more than a constant number of
-times. Time O(R x C). Extra memory is the recursion stack, which in the worst
-case - a grid that is entirely land, snaking - is O(R x C) deep.
+    4-CONNECTIVITY:  3 islands
+    8-CONNECTIVITY:  1 island
 
-That worst case is the reason to know the BFS version. Replace sink with:
+    Same grid, same code shape, four extra recursive calls, and the answer goes from 3 to 1. This
+    is why "are diagonals connected?" is a question to ASK rather than assume - it is not a detail,
+    it is most of the answer.
 
-  Put the starting square in a queue and immediately mark it water.
-  While the queue is not empty:
-    Take a square off the front.
-    For each of its four neighbours: if it is on the grid and is land, mark it
-      water and add it to the queue.
+THE TINY INPUTS:
+    []                  the `if not grid` guard returns 0.
+    [['0','0']]         no cell is '1'; the scan finds nothing; returns 0.
+    [['1']]             one cell: count = 1, sink turns it to water, all four neighbours are off
+                        the grid and return immediately. Returns 1.
+    ALL LAND, 32 x 32   returns 1 - correctly, in principle. In practice the fill recurses up to
+                        1,024 frames deep and Python's default limit is 1,000, so it raises
+                        RecursionError. Use the BFS version from section 5.""",
 
-Mark it water AS YOU ENQUEUE, not when you dequeue. If you wait, the same square
-can be added to the queue several times by different neighbours before it is
-ever served, and the queue balloons. This is the same "register before you
-explore" rule that Clone Graph turns on.
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
 
-Same O(R x C) time, same answer, but the memory is a queue rather than the call
-stack - so it survives a grid far larger than Python's recursion limit.
+TIME: O(R x C) - the number of cells.
 
-In plain words, the takeaway: a graph is things plus connections, and a grid is
-one in disguise. DFS dives deep with a stack and answers "is it connected / does
-a path exist"; BFS spreads in rings with a queue and answers "what is the fewest
-steps". Whichever you use, mark a node the moment you first reach it - that mark
-is what stops the loops from running forever.""",
+In plain words: the two outer loops look at every cell exactly once. `sink` turns each land cell
+into water exactly once, and a cell that is already water returns immediately. So no cell is
+processed more than a constant number of times, however tangled the islands are.
 
-    """What the code does, in plain language - read this before the line-by-line.
+    Written the general graph way: O(V + E). For a grid, V is R x C and E is under 2RC (each cell
+    has at most 4 neighbours, each edge shared by two cells), so O(V + E) collapses to O(R x C).
 
-The code counts islands by scanning the grid square by square and, every time it
-bumps into a piece of land it has not seen before, sinking the entire island
-that square belongs to.
+SPACE: O(1) extra for the marking - that is the whole point of sinking - PLUS the recursion depth,
+which is O(R x C) in the worst case and is the thing that actually bites. Section 4's 32 x 32
+all-land grid needs 1,024 frames against Python's 1,000-frame default.
 
-The scan itself is the boring part: read every square, left to right, top to
-bottom. Almost all of them are water, and it walks straight past those.
+    The visited-grid version is O(R x C) extra memory but leaves the input intact. The BFS version
+    is O(R x C) for the queue but has no recursion limit. THREE VERSIONS, THREE DIFFERENT COSTS,
+    and being able to say which you would pick and why is the actual interview question.
 
-The interesting part is what happens when it finds land. Reaching an unvisited
-land square during the scan means that square cannot belong to any island
-already counted - if it did, the earlier sinking would have swallowed it. So it
-must be the first square of a NEW island. Add one to the count, and then send
-out the flood-fill.
+THE DECISION, IN ONE LINE EACH - this is what the title is asking, and it is worth memorising:
 
-The flood-fill is a small procedure that says: "if I am off the edge of the grid,
-or I am not standing on land, do nothing and go back. Otherwise, turn this
-square into water, then run this same procedure on the square above me, below
-me, to my left and to my right." Because each of those neighbours does the same
-thing, the whole connected blob of land turns to water, spreading outward from
-where it started, and it stops naturally wherever it meets water or the edge.
+    SHORTEST / FEWEST STEPS, equal-cost edges        BFS, with a queue
+    SHORTEST with DIFFERENT edge costs               DIJKSTRA, with a priority queue - NOT BFS
+    HOW MANY GROUPS / IS THERE A PATH / CYCLES       either; DFS is usually shorter to write
+    ORDERING WITH PREREQUISITES                      DFS - topological sort
+    VERY DEEP GRAPH, RECURSION RISK                  BFS, or DFS with an explicit stack
+    VERY WIDE GRAPH, MEMORY RISK                     DFS - the queue is the expensive one
+    GROUPS THAT CHANGE OVER TIME                     UNION-FIND, not a re-run traversal
 
-Turning the land into water is doing double duty and this is the neat bit. It is
-not just tidying up - it IS the record of what has been visited. There is no
-separate grid of true/false anywhere, because a square that has been counted has
-literally been changed into a square the code ignores. That stops the flood-fill
-walking back and forth between two neighbouring squares forever, and it stops
-the outer scan counting the same island a second time.
+FOLLOW-UPS WORTH HAVING READY:
 
-The price is that the grid is destroyed - everything ends up as water. If the
-caller still needs it, copy it first.
+  - "Do it without modifying the input." A visited set or grid - O(R x C) memory, and say so.
+  - "Do it without recursion." The BFS rewrite in section 5, or DFS with your own stack.
+  - "Now find the LARGEST island." Have `sink` return 1 plus the sum of its four calls, and take
+    the maximum.
+  - "What if diagonals count?" Eight neighbours instead of four - and section 9 shows the answer
+    going from 3 to 1 on the sample grid, so ASK before assuming.
+  - "Rotting oranges / shortest path in a maze." Same grid-as-graph, but the question says
+    FEWEST MINUTES, so it must be BFS with the frozen level-size loop.
+  - "What if the grid is enormous and mostly water?" Union-find, or BFS from land cells only.
 
-In one sentence: walk every square; each time you meet land you have not seen,
-that is a new island, so count it and then flood the whole thing with water so
-you cannot possibly count it again.""",
+THE #1 BEGINNER MISTAKE: forgetting to mark cells visited - and note that the punishment here is
+not a wrong number, it is a HANG. Two adjacent land cells call each other forever. The related
+mistake is marking too late: `grid[r][c] = '0'` must run BEFORE the four recursive calls, not
+after.
 
-    """Now the code, line by line, against the trace we just did by hand.
+RUNNER-UP: using BFS-shaped reasoning on a weighted graph, or DFS on a shortest-path question.
+Section 4's four-node graph shows DFS returning 3 for a distance of 1, and returning 1 instead if
+you happen to store the edges in the other order - an answer that depends on your edge ordering
+is not an answer.
 
-Keep the 4 x 4 grid beside you, and the answer 3.
-
-    if not grid:
-        return 0
-An empty grid has no islands. Needed because the very next line reads
-grid[0] to find the number of columns, which would fail on an empty list.
-
-    R, C = len(grid), len(grid[0])
-Rows and columns. len(grid) is how many rows there are; len(grid[0]) is how many
-squares are in the first row. For our grid, R = 4 and C = 4.
-
-    count = 0
-Islands found so far. It ended at 3.
-
-    def sink(r, c):
-The flood-fill: given one land square, turn it and every land square connected
-to it into water. Defined inside so it can see grid, R and C directly.
-
-    if r < 0 or c < 0 or r >= R or c >= C or grid[r][c] != '1':
-        return
-The three-jobs-in-one-line guard from the previous example: off the top, off the
-left, off the bottom, off the right, or not land. In the trace this is the line
-that returned instantly for sink(-1,0), for sink(2,0) which was water, and -
-most importantly - for sink(0,0) called back from (1,0), which had just been
-turned to '0'. That last one is the cycle-breaker.
-
-Order matters here. Python evaluates or-conditions left to right and stops at
-the first true one, so grid[r][c] is only read once all four bounds tests have
-passed. Put the grid read first and a negative index would quietly read the
-wrong square.
-
-    grid[r][c] = '0'
-Mark this square visited by turning land into water. This is the whole
-visited-set, done in place with no extra memory.
-
-    sink(r+1, c); sink(r-1, c); sink(r, c+1); sink(r, c-1)
-The four neighbours: down, up, right, left. No bounds checking here - the guard
-at the top of sink handles anything off the grid, which is why the four calls
-can be written so plainly. If the problem counted diagonals as connected, you
-would add four more calls here and change nothing else.
-
-    for r in range(R):
-        for c in range(C):
-Scan every square, top to bottom, left to right - the outer walk from the trace.
-
-    if grid[r][c] == '1':
-        count += 1
-        sink(r, c)
-The heart of the counting. Reaching an unvisited land square during the scan
-means it cannot belong to any island already found - if it did, sink would have
-reached it and turned it to water. So it must start a NEW island: add one to the
-count, then sink the entire island so the rest of the scan walks straight past
-it. In the trace this fired exactly three times: at (0,0), (2,2) and (3,3).
-
-    return count
-3 for our grid.""",
+TAKEAWAY: a grid is a graph whose edges you generate by adding one to a row or a column, so
+"count the islands" is "count the connected components" - and BFS versus DFS is decided by one
+question, whether the problem says SHORTEST (queue, and only if the edges cost the same) or says
+GROUPED, REACHABLE or CYCLIC (stack or recursion, whichever is shorter to write).""",
 ]
 
 _EX_P0D["Trees — BFS vs DFS"] = [
