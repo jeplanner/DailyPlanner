@@ -5806,12 +5806,554 @@ ENTRIES = [
       frequency="Very commonly asked - often as 'where does this variable live?' or as the setup for stack overflow / memory leak questions.",
       mnemonic="STACK: automatic, LIFO with function calls, tiny (MBs) but instant and cache-hot, dies on return. HEAP: manual or GC'd, huge, slower, fragments, survives the function. 'Stack = scratch paper you throw away; heap = filing cabinet you must tidy.'",
       examples=[
-          "Where each variable actually lives (C-flavoured).\n  int x = 5;            -> the value 5 sits on the stack\n  int arr[100];         -> all 400 bytes sit on the stack\n  int *p = malloc(400); -> the POINTER p is on the stack, the 400 bytes it points to are on the heap\nThat split trips people up constantly: a pointer variable is small and lives on the stack even when its target is heap-allocated.",
-          "Stack overflow from unbounded recursion. A recursive function with no base case pushes a frame per call. With an 8 MB stack and ~100 bytes per frame you die after roughly 80,000 calls - Python raises RecursionError at its 1000-call default limit, C simply segfaults. This is why an iterative solution or an explicit stack is preferred for very deep recursion, and why tail-call optimisation matters in languages that have it.",
-          "The dangling pointer - returning the address of a stack local.\n  int* bad() { int x = 42; return &x; }\nThe frame holding x is popped the moment bad() returns, so the caller holds a pointer to memory that will be overwritten by the next function call. It often 'works' in testing and corrupts data later - one of the nastiest bugs in C. The fix is to heap-allocate, or return by value.",
-          "Memory leak - heap allocated and never freed. A loop calls malloc(1024) ten thousand times and never frees. The stack is untouched and the program looks fine, but resident memory climbs until the OOM killer intervenes. Garbage-collected languages remove most of this class, though you can still leak by keeping references alive - a cache or a list that grows forever is a leak in Java or Python just as much as in C.",
-          "Why the stack is faster, concretely. Stack allocation is one instruction: subtract N from the stack pointer. Deallocation is one instruction: add it back. Heap allocation must search free lists, may split or coalesce blocks, may take a lock for thread safety, and may call the OS for more memory. Additionally, stack data for the current call is almost certainly already in L1 cache, whereas fresh heap memory usually is not - so the real gap is bigger than the instruction count suggests.",
-          "Each thread gets its own stack, all threads share the heap. Spawn 4 threads and you get 4 independent stacks (so locals are automatically thread-safe and need no locking) but ONE shared heap. That single sentence explains most of concurrency: local variables are private and safe by construction; anything you put on the heap and share between threads is where race conditions come from.",
+          r"""1. THE GOAL - two places to put data, with completely different rules.
+
+Your program needs somewhere to store things. There are two places, and they behave nothing
+alike:
+
+    THE STACK    a scratchpad that grows and shrinks AUTOMATICALLY as functions are called
+                 and return. Fast, small, and rigidly tied to function lifetimes.
+
+    THE HEAP     a large general-purpose pool you allocate from EXPLICITLY. Slower, big, and
+                 the data lives as long as you want it to - which also means somebody has to
+                 clean it up.
+
+The rule of thumb, which is most of what you need:
+
+    small, short-lived, size known in advance   ->   STACK
+    big, long-lived, or shared                  ->   HEAP
+
+Every classic memory bug lives in the gap between those two rules. Return a pointer to a stack
+variable and it is garbage the moment the function returns. Allocate on the heap and forget to
+release it and the program grows until it dies. Recurse too deep and the stack runs out
+entirely. Sections 4 and 9 work through all three with numbers.
+
+This matters even in languages that hide it. Python and Java have no `malloc` and no `free`,
+but they still have both regions - and "why did I get a StackOverflowError but not an
+OutOfMemoryError?" is a question about exactly this distinction.
+
+WHAT THIS ENTRY OWNS: where each kind of data actually lives, why one is so much faster, and
+the failure modes of each. It is a foundational entry rather than part of a cluster.""",
+          r"""2. THE INTUITION - a stack of plates and a warehouse.
+
+THE STACK IS A STACK OF PLATES. You can only add to the top, and only remove from the top.
+
+    main() calls process(), which calls parse()
+
+        +------------------+
+        |  parse()  frame  |  <- top: parse's locals, parameters, return address
+        +------------------+
+        | process() frame  |
+        +------------------+
+        |  main()   frame  |
+        +------------------+
+                             the stack grows DOWN in memory, by convention
+
+    When parse() returns, its whole plate is removed AT ONCE - not item by item. Everything it
+    held is gone instantly, because "gone" just means the top-of-stack marker moved back up.
+
+    That is why stack allocation is essentially free. Allocating 400 bytes means SUBTRACTING
+    400 from one register. Freeing them means adding it back. One instruction each way, and
+    no bookkeeping of any kind.
+
+THE HEAP IS A WAREHOUSE with a clerk.
+
+    +--------------------------------------------------+
+    |  [used]  [free]   [used][used]  [free]     [used] |
+    +--------------------------------------------------+
+                ^                       ^
+            gaps left behind by things that were returned
+
+    Ask for space and the clerk must WALK THE SHELVES looking for a free gap big enough, split
+    it if it is too large, and write down that it is now taken. Return space and the clerk
+    marks it free and may merge it with neighbouring gaps.
+
+    That is real work - and over time the shelves become pocked with gaps too small to be
+    useful, which is FRAGMENTATION: plenty of total free space, no single piece big enough.
+
+THE TWO PICTURES EXPLAIN EVERYTHING ELSE:
+
+    the stack is FAST because "free" is moving a marker, and it is SMALL because it is one
+    contiguous region reserved per thread.
+
+    the heap is SLOW because somebody must search and record, and it is BIG because it can
+    grow into whatever the operating system will give it.
+
+    the stack has RIGID lifetimes - a plate leaves when its function returns, always.
+    the heap has ARBITRARY lifetimes - which is the whole point, and the whole danger.""",
+          r"""3. EVERY TERM, defined the first time you meet it.
+
+STACK. The region holding function call frames. Grows and shrinks automatically with calls
+and returns. Typically 1 to 8 MB PER THREAD.
+
+HEAP. The region for explicitly allocated memory. Large - limited by available RAM rather than
+by a fixed reservation.
+
+STACK FRAME / ACTIVATION RECORD. One function call's block: its parameters, its local
+variables, and the RETURN ADDRESS telling the CPU where to resume.
+
+RETURN ADDRESS. Where execution continues after this function finishes. Stored in the frame,
+which is why corrupting the stack can redirect execution - the basis of buffer-overflow
+attacks.
+
+STACK POINTER. A CPU register holding the address of the top of the stack. Allocation is
+subtracting from it; deallocation is adding back.
+
+PUSH / POP. Adding a frame on call, removing it on return.
+
+LOCAL VARIABLE. Declared inside a function. Lives in that function's frame and dies when it
+returns.
+
+ALLOCATION. Reserving memory. `malloc` in C, `new` in C++/Java, and implicit in Python where
+every object is heap-allocated.
+
+DEALLOCATION / FREE. Returning memory. Manual in C and C++, automatic via a garbage collector
+in Java, Python and Go.
+
+GARBAGE COLLECTOR (GC). A runtime component that finds heap objects nothing refers to any more
+and reclaims them. Removes the leak-by-forgetting problem and introduces pauses.
+
+FRAGMENTATION. Free space broken into pieces too small to satisfy a request, even though the
+total is ample. A heap problem; the stack cannot fragment, because it only ever frees from
+the top.
+
+STACK OVERFLOW. Running out of stack, almost always from recursion that is too deep or has no
+base case.
+
+MEMORY LEAK. Heap memory allocated and never released. The program's footprint grows until it
+is killed.
+
+DANGLING POINTER. A pointer to memory that no longer belongs to you - classically the address
+of a local variable whose frame has been popped.
+
+SEGMENTATION FAULT. The operating system killing your program for touching memory it does not
+own. The usual visible symptom of the two bugs above.
+
+CACHE LOCALITY. Whether the data you touch next is near the data you touched last. The stack
+is excellent at this and the heap frequently is not - section 5 explains why that matters as
+much as the allocation cost itself.""",
+          r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE CLASSIC C BUG: RETURNING THE ADDRESS OF A LOCAL.
+
+    int* bad() {
+        int x = 42;
+        return &x;      // returning the ADDRESS of a stack variable
+    }
+
+The frame holding x is popped the instant `bad()` returns. The address is still a valid-looking
+number, and it now points at memory that belongs to whatever function runs next.
+
+What makes this genuinely nasty is that IT USUALLY APPEARS TO WORK. Read it immediately and
+the old value is often still sitting there untouched, so it prints 42 and everyone moves on.
+Then a later, unrelated function call reuses that space, and the value changes to something
+arbitrary - producing a bug that looks like it comes from somewhere else entirely.
+
+The fix: allocate on the heap and return that pointer (and remember to free it), or have the
+caller supply the storage.
+
+TRAP 2 - THE MIRROR IMAGE: A MEMORY LEAK.
+
+    for (int i = 0; i < 10000; i++) {
+        char* buf = malloc(1024);
+        // ... use buf ...
+        // no free(buf)
+    }
+
+The stack is perfectly healthy - `buf` itself is a local pointer, four or eight bytes, popped
+each iteration. What leaks is what it POINTED AT. Ten thousand blocks of 1,024 bytes is
+10,240,000 bytes, about 9.8 MB, unreachable and unreleased.
+
+Nothing crashes. Nothing looks wrong. The program simply grows, and in a long-running service
+it grows until it is killed - hours or days later, with no clue pointing back to this loop.
+
+TRAP 3 - STACK OVERFLOW FROM UNBOUNDED RECURSION. Each call pushes a frame. With an 8 MB stack
+and a frame of about 100 bytes, you get roughly 83,000 calls before the stack is exhausted. A
+recursive function missing its base case reaches that in milliseconds.
+
+Note this is why the backpropagation and Union-Find entries deliberately use LOOPS rather than
+recursion for deep structures - the loop cannot overflow.
+
+TRAP 4 - THE ONE THAT SURPRISES PEOPLE MOST: THE SAME CODE WORKING ON ONE PLATFORM AND
+CRASHING ON ANOTHER.
+
+    int arr[1000000];    // inside a function
+
+That is 4 MB of stack. On Linux, where the main thread's stack defaults to 8 MB, it fits. On
+Windows, where the default is 1 MB, it overflows immediately. And inside a worker thread -
+where stacks are often 512 KB - it overflows on both.
+
+Identical source, identical compiler, opposite outcome, decided entirely by a default the code
+never mentions. Large arrays belong on the heap.
+
+TRAP 5: assuming garbage-collected languages cannot leak. They cannot leak by FORGETTING to
+free, but they leak perfectly well by KEEPING A REFERENCE - a cache that never evicts, a
+listener never unregistered, a growing static list. The GC cannot collect what something still
+points at, and it has no way to know you did not mean it.
+
+TRAP 6: thinking Python has stack-allocated objects. In Python every object lives on the heap;
+the stack holds only frames and references. `x = 5` puts a reference on the stack and the
+integer object on the heap.""",
+          r"""5. THE NAIVE MODEL FIRST, THEN THE REAL ONE.
+
+THE NAIVE MODEL: "memory is memory - variables go somewhere and the computer handles it."
+
+Fine until you meet the first crash you cannot explain. Every one of the four traps above is
+invisible under this model, because they are all about WHERE something lives and HOW LONG it
+lives, and the naive model has neither concept.
+
+THE REAL MODEL: two regions, distinguished by WHO decides when memory is released.
+
+    THE STACK: the COMPILER decides, at compile time, from the shape of the code. A local's
+    lifetime is exactly its function's execution - no more, no less. That rigidity is what
+    makes it free.
+
+    THE HEAP: YOU decide, at run time. Which is why it can hold something that outlives the
+    function that made it, and why somebody must remember to release it.
+
+WHY THE STACK IS SO MUCH FASTER - and it is two separate reasons, not one.
+
+    REASON ONE: ALLOCATION IS ONE INSTRUCTION.
+
+        stack:  reserve 400 bytes  ->  subtract 400 from the stack pointer.  ONE instruction.
+                release them       ->  add 400 back.                          ONE instruction.
+
+        heap:   reserve 400 bytes  ->  walk a free list looking for a suitable block;
+                                       possibly split it; update metadata; possibly take a
+                                       lock so other threads do not interfere; possibly ask
+                                       the operating system for more memory.
+                release them       ->  mark free, and try to merge with neighbouring gaps.
+
+        A stack allocation is on the order of ONE NANOSECOND. A typical heap allocation is
+        tens to a hundred nanoseconds - call it 50 to 100 TIMES slower, and far worse when it
+        must go to the operating system.
+
+    REASON TWO, AND IT IS OFTEN THE BIGGER ONE: CACHE LOCALITY.
+
+        The top of the stack was touched a moment ago, so it is almost certainly sitting in
+        the CPU's fastest cache. Reading it costs about 1 nanosecond.
+
+        Heap allocations made at different times are scattered across memory. Following a
+        pointer to one is frequently a CACHE MISS, and a trip to main memory costs about 100
+        nanoseconds - roughly 100 TIMES the cost of a cache hit.
+
+        So the stack is faster to allocate AND faster to use afterwards. A linked list on the
+        heap and an array on the stack can differ by an order of magnitude in traversal speed
+        while executing the same number of instructions - which is why "use a vector rather
+        than a linked list" is such common advice.
+
+WHY THE STACK CANNOT FRAGMENT - a small proof, because it explains the asymmetry:
+
+    The stack only ever frees the TOP block. So the free region is always one contiguous piece
+    running from the stack pointer downward. There is no mechanism by which a gap could appear
+    in the middle - freeing out of order is not expressible.
+
+    The heap frees in ANY order, so gaps appear between still-used blocks, and those gaps may
+    individually be too small to satisfy the next request even when their total is large. That
+    is fragmentation, and it is a direct consequence of arbitrary-order freeing - which is
+    exactly the freedom the heap exists to provide.
+
+THE UPGRADE PATH, in increasing sophistication:
+    prefer the stack when you can        - free, and no lifetime bugs are possible
+    heap when size or lifetime demand it - and pair every allocation with its release
+    RAII / smart pointers (C++)          - tie heap lifetime to a stack object, so the
+                                           compiler's rigid rule releases the heap for you
+    garbage collection (Java, Python, Go)- the runtime decides, at the cost of pauses
+    arena / pool allocators              - allocate many objects together and free the whole
+                                           arena at once, recovering stack-like speed""",
+          r"""6. HOW IT WORKS - the steps, in plain English.
+
+The one sentence that holds the whole idea: THE STACK IS A SINGLE MARKER THAT MOVES DOWN WHEN
+A FUNCTION IS CALLED AND BACK UP WHEN IT RETURNS, WHILE THE HEAP IS A SEARCHABLE POOL WHERE
+EVERY REQUEST MUST BE FOUND, RECORDED AND EVENTUALLY RELEASED.
+
+THE STACK'S LOOP IS THE CALL SEQUENCE ITSELF, and it is worth spelling out because it is the
+mechanism behind both recursion and stack overflow:
+
+  - Calling a function PUSHES a frame: its arguments, its locals, and the return address.
+  - The called function runs, possibly pushing more frames of its own.
+  - Returning POPS the frame - one instruction, everything in it gone at once - and execution
+    resumes at the stored return address.
+  - WHAT MAKES IT STOP GROWING: returns. Every call must eventually return, or frames
+    accumulate.
+  - WHAT MAKES IT FAIL: recursion whose base case is missing or never reached. Frames pile up
+    until the reserved region is exhausted, and the operating system kills the program. With
+    8 MB and 100-byte frames that is about 83,000 calls - fast enough to happen instantly.
+
+THE HEAP HAS NO LOOP - each allocation is an independent transaction. What it has instead is
+an OBLIGATION: every allocation must be matched by a release, either by you or by a collector.
+
+THE STEPS, when a function is called:
+
+  1. THE CALLER pushes the arguments and the return address.
+
+  2. THE STACK POINTER MOVES DOWN by the size of everything the function needs - all its
+     locals at once, computed by the compiler before the program ever ran. This is why the
+     size must be known at compile time, and why a variable-length array is awkward on the
+     stack.
+
+  3. THE FUNCTION RUNS, reading and writing within its own frame.
+
+  4. IF IT NEEDS MEMORY OF UNKNOWN SIZE OR LONGER LIFETIME, it asks the heap allocator, which
+     searches for a free block, splits it if needed, records it as used, and returns a
+     POINTER. That pointer itself is a local, living on the stack; what it points at lives on
+     the heap.
+
+  5. THE FUNCTION RETURNS. The stack pointer moves back up. Every local is gone instantly -
+     including the pointer.
+
+  6. WHATEVER THAT POINTER REFERRED TO IS STILL ON THE HEAP, whether you wanted it or not. If
+     nothing else refers to it, it is now a leak in a manual language, or collectable in a
+     managed one.
+
+  THAT ASYMMETRY IN STEPS 5 AND 6 IS THE ENTIRE SOURCE OF BOTH CLASSIC BUGS: the pointer dies
+  automatically, and the thing it pointed at does not.""",
+          r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine a workshop where you build things to order.
+
+Beside your bench is a NARROW SHELF. When you start a job, you slide your tools and parts onto
+the shelf. When you start a sub-job in the middle of it, you slide that job's things on top.
+The rule is absolute: you may only ever take things off the TOP, and when a job finishes,
+everything belonging to it is swept off in one motion. No sorting, no deciding what to keep -
+one sweep and the shelf is back where it was.
+
+That is why it is so quick. Clearing up is not an activity; it is a single push of the arm.
+And because you always work at the top of the shelf, everything you need is right in front of
+you rather than across the room.
+
+The shelf's limits follow from the same design. It is narrow - a few feet - so a job needing an
+enormous amount of space simply does not fit. And nothing can survive its own job, because the
+sweep is automatic and total.
+
+Across the workshop is a WAREHOUSE with a clerk. Ask for space and the clerk walks the aisles
+looking for a gap big enough, possibly splitting a larger one, and writes your name in a
+ledger. That takes real time, and the thing you get is far from your bench, so fetching it
+later is slow too.
+
+But the warehouse gives you two things the shelf cannot. It is enormous. And your things stay
+there until you say otherwise - so something made during one job can still be there during the
+next.
+
+Now the two ways this goes wrong, and they are mirror images.
+
+You finish a job, the shelf is swept, and you hand the customer a note saying "your part is at
+the third position on the shelf". It is not - it was swept away. Worse, the next job has
+already put something else there, so the note now points at somebody else's work. The note
+looks perfectly valid and describes a real place; it just no longer describes YOUR thing.
+
+Or: you keep asking the clerk for space and never tell him you have finished with any of it.
+Your bench looks tidy, every job completes normally, and the warehouse fills up week by week
+until there is no room for anybody. Nothing failed. You simply never cleared up, and the
+consequence arrives long after the cause.""",
+          r"""8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code field here, so what follows is each region and each mechanism - what it holds, what it
+decides, and how it fails.
+
+--- THE STACK ---
+
+    THE STACK POINTER
+        HOLDS: the address of the top.
+        DECIDES: allocation and deallocation, both by arithmetic on this one register.
+        Subtract to allocate, add to free. This is why it costs one instruction.
+
+    A STACK FRAME
+        HOLDS: this call's parameters, its local variables, and the RETURN ADDRESS.
+        DECIDES: what the function can see, and where execution resumes afterwards. The
+        return address living here is why a buffer overflow on the stack can hijack control
+        flow - overwrite it and the function returns somewhere you chose.
+
+    THE SIZE LIMIT
+        HOLDS: typically 1 to 8 MB, PER THREAD, fixed when the thread starts.
+        DECIDES: how deep recursion can go and how large a local array may be. And it varies by
+        platform - Linux main threads commonly 8 MB, Windows 1 MB, worker threads often 512
+        KB - which is trap 4.
+
+    LIFETIME RULE
+        Rigid: a local dies exactly when its function returns. The compiler knows this before
+        the program runs, which is what makes it free.
+
+    CANNOT FRAGMENT
+        Because only the top is ever freed, the free region is always one contiguous piece.
+
+--- THE HEAP ---
+
+    THE ALLOCATOR
+        HOLDS: a record of which blocks are used and which are free.
+        DECIDES: where your request goes. It must search, may split a block, must update its
+        records, and may need a lock in a multi-threaded program.
+        COSTS: tens to a hundred nanoseconds, against about one for the stack.
+
+    THE POINTER
+        HOLDS: an address in the heap.
+        LIVES: on the STACK, if it is a local. This split is the crux of both classic bugs -
+        the pointer is freed automatically, the thing it points to is not.
+
+    LIFETIME RULE
+        Arbitrary: it lives until released. That freedom is the reason the heap exists and the
+        reason it is dangerous.
+
+    RELEASE MECHANISM
+        MANUAL (C, C++): you call free or delete. Forget and it leaks; do it twice and you
+        corrupt the allocator; do it too early and you have a dangling pointer.
+        AUTOMATIC (Java, Python, Go): a garbage collector reclaims what nothing refers to.
+        Removes the forgetting problem, adds pauses, and does NOT prevent leaks caused by
+        keeping references.
+
+    FRAGMENTATION
+        Free space in pieces too small to use. A consequence of arbitrary-order freeing.
+
+--- THE MULTI-THREADED PICTURE, which is a common interview question ---
+
+    EACH THREAD GETS ITS OWN STACK. Spawn four threads and there are four independent stacks.
+    Locals are therefore automatically thread-safe - no other thread can even name them, so
+    they need no locking.
+
+    ALL THREADS SHARE ONE HEAP. So heap data reachable by two threads needs synchronisation,
+    and the allocator itself must be thread-safe, which is part of why it is slow. This is the
+    root of the general advice to prefer passing values over sharing pointers.
+
+--- WHERE EACH KIND OF DATA GOES (C-flavoured) ---
+
+    int x = 5;              the value 5, on the STACK
+    int arr[100];           all 400 bytes, on the STACK
+    int* p = malloc(400);   the POINTER p on the stack, the 400 bytes on the HEAP
+    static int s;           neither - a separate static/global region, alive for the whole
+                            program
+    string literals         a read-only region, not the heap
+
+    In PYTHON: every object is on the heap. The stack holds frames and references only.""",
+          r"""9. WORKED WITH REAL NUMBERS.
+
+HOW DEEP CAN RECURSION GO?
+
+    stack size:        8 MB = 8 x 1,024 x 1,024 = 8,388,608 bytes
+    frame size:        about 100 bytes for a simple function
+
+        8,388,608 / 100 = 83,886 calls
+
+    So roughly 83,000 frames before the stack is exhausted. A recursive function with no base
+    case reaches that in a few milliseconds.
+
+    Change one number and the answer moves sharply:
+
+        frame 100 bytes,  stack 8 MB   ->   83,886 calls
+        frame 100 bytes,  stack 1 MB   ->   10,485 calls      (Windows main thread)
+        frame 100 bytes,  stack 512 KB ->    5,242 calls      (a typical worker thread)
+        frame 500 bytes,  stack 8 MB   ->   16,777 calls      (a function with big locals)
+
+    Note Python's default recursion limit is 1,000 - a guard set far BELOW the real stack
+    limit, deliberately, so you get a clean RecursionError instead of a hard crash.
+
+THE PLATFORM INVERSION - the same declaration, opposite outcomes:
+
+    int arr[1000000];       inside a function
+
+        1,000,000 x 4 bytes = 4,000,000 bytes = about 3.8 MB of stack
+
+        Linux main thread,   8 MB stack     ->  fits. Runs fine.
+        Windows main thread, 1 MB stack     ->  STACK OVERFLOW immediately.
+        any worker thread,   512 KB stack   ->  STACK OVERFLOW on both platforms.
+
+    IDENTICAL SOURCE. IDENTICAL COMPILER. The outcome is decided entirely by a default the
+    code never mentions - and it is the reason "large arrays go on the heap" is a rule rather
+    than a preference.
+
+    On the heap the same million integers are unremarkable: 3.8 MB out of gigabytes available.
+
+THE LEAK, in bytes:
+
+    for (int i = 0; i < 10000; i++) {
+        char* buf = malloc(1024);
+        // no free
+    }
+
+        10,000 x 1,024 = 10,240,000 bytes = about 9.8 MB leaked
+
+    The stack is completely untouched - `buf` is one 8-byte pointer, created and destroyed
+    each iteration. The program does not crash, slow down, or warn. Run this loop once an hour
+    in a service and you lose 235 MB a day, and the service dies some time next week with no
+    connection to this code.
+
+THE SPEED COMPARISON, in nanoseconds:
+
+        stack allocation      about   1 ns    (one instruction: adjust a register)
+        heap allocation       about  50 ns    (search a free list, split, record)
+        reading stack data    about   1 ns    (almost certainly in L1 cache)
+        reading heap data     about 100 ns    (frequently a cache miss - main memory)
+
+    So allocating is roughly 50x slower on the heap, and USING it afterwards can be another
+    100x slower per access. The second effect is often the larger one over a program's
+    lifetime, and it is the one people forget.
+
+    A concrete consequence: summing a million integers held in a stack array touches memory
+    sequentially and stays in cache. Summing a million integers in a heap-allocated linked
+    list follows a pointer to a scattered address each time. Same instruction count, and the
+    second can take ten times as long - which is where "prefer contiguous containers" comes
+    from.
+
+THREADS:
+
+        4 threads  ->  4 stacks, 1 shared heap
+
+    Locals need no locks at all - no other thread can reference them. Heap data shared between
+    threads needs synchronisation, and the allocator itself must be thread-safe, which is part
+    of why heap allocation costs what it does.""",
+          r"""10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COMPARISON, condensed:
+
+                        STACK                       HEAP
+    allocation cost     ~1 ns, one instruction      ~50 ns, search and record
+    access cost         ~1 ns, cache-friendly       ~100 ns when it misses cache
+    size                1-8 MB per thread           gigabytes
+    lifetime            rigid: ends with the call   arbitrary: until released
+    freed by            the compiler, automatically you, or a garbage collector
+    fragmentation       impossible                  yes, over time
+    thread safety       private per thread          shared; needs synchronisation
+    failure mode        stack overflow              leak, dangling pointer, fragmentation
+
+WHEN TO USE WHICH:
+    known size, small, dies with the function       -> stack
+    size known only at run time                     -> heap
+    must outlive the function that created it       -> heap
+    very large (more than a few hundred KB)         -> heap, whatever the language
+    shared between threads                          -> heap, with synchronisation
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why is the stack faster?" Two reasons, and give both: allocation is one instruction rather
+    than a search, AND the top of the stack is almost always in cache while heap data is
+    scattered. The second is often the bigger effect.
+  - "What causes a stack overflow?" Deep or unbounded recursion, or a very large local array.
+    With 8 MB and 100-byte frames, about 83,000 calls.
+  - "Can a garbage-collected language leak?" Yes - not by forgetting to free, but by keeping a
+    reference. Caches that never evict, listeners never removed, growing static collections.
+    The collector cannot know you did not mean it.
+  - "Where do Python objects live?" All on the heap. The stack holds frames and references.
+  - "Why can't the stack fragment?" It only ever frees from the top, so the free region is
+    always one contiguous piece. Out-of-order freeing is not expressible.
+  - "What happens to the heap when a program exits?" The operating system reclaims all of it.
+    Which is why a leak in a short-lived command-line tool is harmless and the same leak in a
+    long-running server is fatal - the distinction worth drawing rather than saying leaks are
+    always bad.
+  - "How does this relate to a buffer overflow attack?" The return address lives in the stack
+    frame, right alongside local arrays. Writing past the end of a local buffer can overwrite
+    it and redirect execution - which is why stack canaries and non-executable stacks exist.
+
+THE #1 MISTAKE: returning a pointer or reference to a stack local. What makes it the worst of
+the family is that IT USUALLY APPEARS TO WORK - the popped memory often still holds the old
+value when read immediately, so the bug passes testing and surfaces later as corruption
+apparently coming from unrelated code.
+
+RUNNER-UP: putting a large array on the stack, which works on your machine and overflows on a
+platform with a smaller default - the inversion in section 9.
+
+TAKEAWAY: the stack is a marker that moves with function calls, so it is nearly free and
+rigidly scoped; the heap is a searchable pool with lifetimes you control, so it is slower and
+somebody must clean up - and almost every classic memory bug is a pointer on one outliving the
+thing it points at on the other.""",
       ]),
     Q("cs_fundamentals", "System call, kernel space vs user space",
       "In plain words: your program is not allowed to touch hardware directly. The CPU runs in two privilege levels - USER mode, where your code lives and can only touch its own memory, and KERNEL mode, where the operating system lives and can do anything (talk to disks, network cards, memory-management units). A SYSTEM CALL is the controlled doorway between them: when you call read(), write(), open() or socket(), the library puts a call number in a register and executes a special instruction (`syscall` on x86-64) that traps into the kernel at a fixed, vetted entry point. The kernel validates your arguments, does the privileged work, and returns. The point of the split is protection - a buggy program cannot scribble over another program's memory or the OS itself - and the cost is a mode switch of roughly 100 nanoseconds to 1 microsecond, plus cache and pipeline disruption. That cost is why high-performance code BATCHES syscalls: buffered I/O writes 4 KB at a time instead of a byte at a time, epoll checks thousands of sockets in one call, and io_uring exists to submit many operations with almost no syscalls at all.",
@@ -55894,75 +56436,536 @@ from data is re-learned inside each fold, or you are measuring a leak rather tha
 ]
 
 _EX_P0H["CNN vs RNN vs Transformer — when to use which"] = [
-    """Three products, three right answers.
-1. Classify a chest X-ray as pneumonia / normal. Grid of pixels, local texture
-   matters, translation invariance is desirable -> CNN (or a Vision Transformer
-   if you have a lot of data and a pretrained checkpoint).
-2. Translate customer support tickets EN -> DE. Long-range dependencies,
-   parallel training, pretrained checkpoints everywhere -> Transformer.
-3. Predict the next reading of one factory temperature sensor from the last 50
-   readings, on a Raspberry Pi. Tiny data, tiny compute, strictly sequential ->
-   a small LSTM or even a classical model like ARIMA/gradient boosting.
-The third answer surprises people: 'Transformer' is not automatically right when
-the data is small and the hardware is a microcontroller.""",
+    """1. THE GOAL - matching the architecture to the SHAPE of the data.
 
-    """Why a CNN and not a dense network for images.
-A 224x224x3 image flattened is 150,528 inputs. One fully connected layer of 1,000
-units needs 150 million weights - and it would have to learn 'an edge is an edge'
-separately for every pixel location.
-A convolution shares one 3x3x3 filter (27 weights) across the whole image, so a
-feature learned in the top-left is recognised in the bottom-right for free.
-That is the two-word summary: PARAMETER SHARING and TRANSLATION EQUIVARIANCE.
-Stacking convolutions grows the receptive field: layer 1 sees edges, layer 3
-sees corners and textures, layer 10 sees object parts.""",
+Three families of neural network. The question is never "which is best" - it is "what shape
+is my data, and which architecture has the right assumption built into it?"
 
-    """Where an RNN actually breaks - a worked long-dependency case.
-"The keys that I left on the kitchen table next to the bowl of fruit that my
-sister brought back from the market ... ARE mine."
-To pick 'are' over 'is', the model must remember that the subject was 'keys'
-(plural) across ~20 tokens. In an RNN that signal passes through 20 multiplicative
-updates; if the relevant Jacobian eigenvalues are below 1, the gradient decays
-exponentially and the model never learns the link (vanishing gradient). LSTM
-gates keep a more additive path and stretch this to maybe 100 tokens.
-Self-attention connects the two positions in ONE hop regardless of distance -
-which is exactly the property that made Transformers win on language.""",
+    CNN            data laid out in a GRID, where what matters is LOCAL and can appear
+                   anywhere. Images, spectrograms, some sensor arrays.
 
-    """The training-throughput argument, with numbers.
-Sequence length 1,000, batch 32.
-An RNN must run 1,000 sequential steps; each is a small matrix multiply that
-cannot start before the previous finishes. GPU utilisation is poor.
-A Transformer computes all 1,000 positions in one big batched matmul per layer.
-It does MORE total arithmetic (n^2 = 10^6 attention scores) but does it in
-parallel, so wall-clock training time is far lower - and that is what let models
-grow from millions to hundreds of billions of parameters.
-Inference flips the picture: generating tokens one at a time is sequential again,
-which is why KV-caching, speculative decoding and MQA/GQA exist.""",
+    RNN / LSTM     data in a SEQUENCE, processed one step at a time carrying a memory.
+                   The old answer for text and time series.
 
-    """Hybrids and the cases the clean rules miss.
-- Speech recognition: a CNN front end over the spectrogram (local time-frequency
-  patterns) feeding a Transformer (long-range language structure).
-- Video: CNN per frame plus temporal attention across frames.
-- Text classification on short strings with little data: a 1-D CNN over character
-  n-grams often beats a Transformer and trains in seconds.
-- Very long sequences (genomics, hour-long audio): plain attention's n^2 is
-  prohibitive, so state-space models (Mamba) and sparse/sliding-window attention
-  come back into play.
-The honest interview answer is not 'Transformers always' - it is 'what is the
-sequence length, the data volume, the latency budget, and is there a pretrained
-checkpoint?'""",
+    TRANSFORMER    data in a SEQUENCE or a SET, where any element may need to relate to any
+                   other. Today's answer for almost all sequence work.
 
-    """The one-table summary worth memorising.
-             CNN                RNN/LSTM           Transformer
-data         grids/images       short sequences    sequences of any kind
-parallel?    yes                no (sequential)    yes (training)
-long-range   limited by depth   weak (vanishing)   direct, O(1) path
-cost/layer   O(k x n x d)       O(n x d^2)         O(n^2 x d)
-memory       small              small              large (KV cache)
-inductive    locality,          recency            almost none - needs
-bias         translation        bias               data to learn structure
-Read the last row carefully: the Transformer's weak inductive bias is why it
-needs a LOT of data (or pretraining) and why a CNN still wins on a small image
-dataset.""",
+The word doing the work in each row is the ASSUMPTION. A CNN assumes that a pattern is worth
+detecting regardless of where it sits, and that nearby things relate more than distant ones.
+An RNN assumes order matters and that a fixed-size memory can carry what is needed forward. A
+transformer assumes any element might matter to any other, and pays for that generality in
+compute.
+
+An architecture that assumes the right thing needs far less data and far fewer parameters,
+because it does not have to LEARN what it already assumes. Section 5 shows that with numbers -
+a CNN uses about 84,000 times fewer weights than a dense layer for the same image, purely
+because of what it assumes.
+
+WHAT THIS ENTRY OWNS: the DECISION - which architecture for which data, and why. It is a
+routing entry. The mechanics of self-attention live in its siblings: "HOW DOES SELF-ATTENTION
+WORK (THE TRANSFORMER CORE)?" owns one attention head's arithmetic, and "THE TRANSFORMER &
+SELF-ATTENTION (THE BIG ONE)" owns the architecture around it. This page will point at them
+rather than repeat them.""",
+
+    """2. THE INTUITION - three ways of looking at data.
+
+A CNN SLIDES A SMALL WINDOW OVER A GRID.
+
+        image                      one filter, slid everywhere
+    +---------------+
+    | . . . . . . . |            +-----+
+    | . .[# # #]. . |            |# # #|   the SAME 3x3 filter is applied
+    | . .[# # #]. . |   <----    |# # #|   at every position
+    | . .[# # #]. . |            |# # #|
+    | . . . . . . . |            +-----+
+    +---------------+
+
+    Two assumptions are baked in. LOCALITY - a pixel relates most to its neighbours, so the
+    window only needs to be small. And TRANSLATION INVARIANCE - an edge is an edge wherever
+    it appears, so the SAME weights are reused at every position. That reuse is called
+    PARAMETER SHARING and it is where the enormous parameter saving comes from.
+
+AN RNN WALKS ALONG A SEQUENCE CARRYING A SINGLE MEMORY.
+
+    word1 -> [h] -> word2 -> [h] -> word3 -> [h] -> ... -> word20 -> [h] -> output
+              |              |              |                        |
+           the same memory vector, rewritten at every single step
+
+    The assumption: everything you need to remember fits in that fixed-size vector, and can
+    survive being rewritten once per step. For short sequences it does. Over twenty steps it
+    does not - which is the failure section 4 works through.
+
+A TRANSFORMER LETS EVERY POSITION LOOK AT EVERY OTHER, AT ONCE.
+
+    word1  word2  word3  ...  word20
+      |______|______|__________|
+      |______|______|__________|      every position connected to every position,
+      |______|______|__________|      directly, in ONE step
+
+    The assumption: any element might be relevant to any other, so do not privilege
+    neighbours or recency at all. Maximum generality, and the cost is comparing every pair -
+    which grows with the SQUARE of the length.
+
+Read the three pictures side by side and the trade is visible:
+
+                        what it assumes                     what it costs
+    CNN         nearby matters, position does not      cannot relate distant things directly
+    RNN         order matters, memory is enough        one step at a time; long range fades
+    TRANSFORMER anything may relate to anything        every pair compared - quadratic""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+CNN (CONVOLUTIONAL NEURAL NETWORK). A network built from filters slid across a grid.
+
+FILTER / KERNEL. A small block of weights - commonly 3x3 - applied at every position. One
+filter detects one kind of local pattern.
+
+CONVOLUTION. The sliding-and-multiplying operation itself.
+
+PARAMETER SHARING. Using the SAME weights at every position. The reason a CNN needs so few
+parameters, quantified in section 5.
+
+TRANSLATION INVARIANCE. Recognising a pattern regardless of where it appears. A CNN gets this
+almost for free; a dense network must learn it separately for every position.
+
+POOLING. Shrinking the grid by summarising small regions, so later layers see a wider area.
+
+RECEPTIVE FIELD. How much of the original input one late-layer unit can "see". It grows with
+depth, which is how a CNN eventually relates distant parts of an image despite each filter
+being tiny.
+
+RNN (RECURRENT NEURAL NETWORK). A network that processes a sequence one step at a time,
+carrying a hidden state.
+
+HIDDEN STATE. The fixed-size memory vector, rewritten at every step. Everything the network
+remembers must fit in it.
+
+LSTM / GRU. Improved RNNs with GATES that decide what to keep, forget and output. They reduce
+the forgetting problem substantially without removing it.
+
+VANISHING GRADIENT. The learning signal shrinking as it travels back through many steps, so
+early positions stop influencing anything. The backpropagation sibling quantifies it.
+
+SEQUENTIAL DEPENDENCY. Step 20 needs step 19's output. This is what makes an RNN impossible
+to parallelise across time, and it is the decisive practical drawback.
+
+TRANSFORMER. An architecture built on self-attention, where every position attends to every
+other. See the two siblings for the mechanism.
+
+SELF-ATTENTION. Each element looking at all the others and taking a weighted blend.
+
+PATH LENGTH. How many steps information must travel to get from one position to another. RNN:
+proportional to the distance. Transformer: always 1. This single number explains most of the
+difference in long-range behaviour.
+
+PARALLELISABLE. Whether the work can be done all at once. Transformers can across positions;
+RNNs cannot.
+
+INDUCTIVE BIAS. The assumption an architecture builds in. Strong bias means less data needed
+when the assumption fits, and worse results when it does not.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - THE ONE THAT DEFINES THE COMPARISON: WHERE AN RNN ACTUALLY BREAKS.
+
+    "The keys that I left on the kitchen table next to the bowl of fruit that my sister
+     brought back from the market yesterday ARE missing."
+
+The verb "are" must agree with "keys" - plural. Count the gap: "keys" is the second word,
+"are" is the twenty-fourth. TWENTY-TWO WORDS APART, with a completely different noun
+("sister", singular) sitting much closer.
+
+For an RNN, the information "the subject was plural" must survive being carried through
+twenty-two successive rewrites of a single fixed-size memory, while that memory is also being
+asked to hold the kitchen table, the fruit, the sister and the market. Something gets
+overwritten, and it is usually the thing from longest ago.
+
+For a transformer, "are" attends directly to "keys". PATH LENGTH 1. The distance is
+irrelevant.
+
+That is the entire reason transformers replaced RNNs for language, and it is far more
+convincing than "transformers are better at long-range dependencies" said flatly.
+
+TRAP 2: assuming transformers are always the answer now. They have a WEAK inductive bias -
+they assume almost nothing - so they need a great deal of data to learn what a CNN assumes for
+free. On a small image dataset a CNN will usually beat a vision transformer outright. Weak
+assumptions are only an advantage when you have enough data to replace them with learned
+structure.
+
+TRAP 3: reaching for a neural network on a small tabular problem. For a few thousand rows of
+tabular data, gradient-boosted trees usually beat all three of these. The honest answer to
+"which architecture?" is sometimes "none of them" - and saying so is a strong signal in an
+interview rather than a weak one.
+
+TRAP 4: forgetting the quadratic cost. A transformer compares every pair of positions, so
+doubling the sequence length quadruples that work. An RNN is linear in length. For very long
+sequences the RNN's arithmetic is genuinely cheaper - it loses on parallelism, not on
+operation count, and section 5 shows the numbers.
+
+TRAP 5: thinking a CNN cannot see globally. Each filter is tiny, but the RECEPTIVE FIELD
+grows with depth - stack enough layers and a late unit sees the whole image. It gets there
+gradually rather than in one step.
+
+TRAP 6: treating the three as mutually exclusive. Real systems mix them, and knowing the
+common hybrids is worth more than the clean rules:
+    SPEECH RECOGNITION: a CNN front end over the spectrogram, feeding a transformer.
+    VISION TRANSFORMERS: chop the image into patches, then treat patches as a sequence.
+    TIME SERIES: a small LSTM often still wins on short, low-data problems.""",
+
+    """5. THE NAIVE CHOICE FIRST, THEN THE REAL ONE - WITH THE ARITHMETIC.
+
+THE NAIVE CHOICE: a plain dense (fully connected) network for everything.
+
+It is the general-purpose answer - every input connected to every unit, no assumptions at all.
+And on images it fails immediately, for a reason worth computing rather than asserting.
+
+    A 224 x 224 colour image, flattened:  224 x 224 x 3 = 150,528 numbers.
+
+    ONE dense layer of 1,000 units needs a weight from every input to every unit:
+
+        150,528 x 1,000 = 150,528,000 weights          about 150 MILLION
+
+    for ONE layer, and it still has not learned that a cat in the top-left corner is the same
+    cat as one in the bottom-right - because every position has its own separate weights, so
+    the pattern must be learned independently at each one.
+
+    NOW THE CNN. A 3x3 filter over 3 colour channels:
+
+        3 x 3 x 3 = 27 weights, plus 1 bias = 28 per filter
+        64 such filters = 64 x 28 = 1,792 weights
+
+    THE COMPARISON:
+
+        150,528,000 / 1,792 = exactly 84,000
+
+    EIGHTY-FOUR THOUSAND TIMES FEWER PARAMETERS - and it is BETTER, not merely cheaper,
+    because the shared filter means a pattern learned anywhere is recognised everywhere.
+
+    That factor is what "inductive bias" buys. The CNN does not have to learn that position
+    should not matter; it is built in, so all its capacity goes on learning what the patterns
+    ARE.
+
+THE UPGRADE FOR SEQUENCES, and where it stops: RNN, then transformer.
+
+An RNN's assumption - process in order, carry a memory - is exactly right for a sequence, and
+it dominated language work for years. Two things ended that, and only one of them is the
+famous one.
+
+    THE FAMOUS ONE - PATH LENGTH. Information from position 1 reaches position 24 only by
+    surviving 23 rewrites of one vector. Trap 1's sentence is the concrete case.
+
+    THE DECISIVE ONE - PARALLELISM. Here is the arithmetic, with sequence length 1,000 and
+    model width 512:
+
+        TRANSFORMER attention work:  n-squared x d = 1,000,000 x 512  = 512,000,000
+        RNN work:                    n x d-squared = 1,000 x 262,144  = 262,144,000
+
+        The TRANSFORMER DOES ABOUT TWICE THE ARITHMETIC.
+
+    And it wins overwhelmingly on wall-clock time, because its work is ONE large matrix
+    multiplication spread across thousands of parallel cores, while the RNN's 1,000 steps must
+    happen strictly one after another - step 20 cannot begin until step 19 finishes.
+
+    THE INVERSION WORTH STATING: judged on operations, the RNN is the cheaper algorithm and
+    gets cheaper still as sequences grow. Judged on training time at scale, it loses badly.
+    Hardware, not mathematics, decided this - and that is the answer to "why did transformers
+    win?"
+
+WHERE THE QUADRATIC COST BITES BACK:
+
+        n =   1,000:  transformer 512,000,000     RNN   262,144,000    RNN 2x cheaper
+        n =   4,000:  transformer 8,192,000,000   RNN 1,048,576,000    RNN 8x cheaper
+        n =  16,000:  transformer 131,072,000,000 RNN 4,194,304,000    RNN 31x cheaper
+
+    The gap widens with every doubling, which is why long-context work needs FlashAttention,
+    sliding windows or sparse attention - and why state-space models like Mamba, which are
+    linear in length, are an active area. The transformer's win is not unconditional.""",
+
+    """6. HOW TO CHOOSE - the procedure, step by step.
+
+The one sentence that holds the whole idea: LOOK AT THE SHAPE OF THE DATA AND PICK THE
+ARCHITECTURE WHOSE BUILT-IN ASSUMPTION MATCHES IT - GRID AND LOCAL MEANS CNN, SEQUENCE WITH
+LONG-RANGE RELATIONSHIPS MEANS TRANSFORMER, AND A SHORT LOW-DATA SEQUENCE MAY STILL MEAN AN
+LSTM.
+
+THERE IS NO LOOP INSIDE THESE ARCHITECTURES TO EXPLAIN AT THIS LEVEL - the siblings cover
+transformer internals, and an RNN's step-by-step walk is described in section 2. The loop that
+matters here is the SELECTION loop:
+
+  - Each pass picks an architecture, trains a baseline, and measures.
+  - WHAT MAKES IT STOP: a candidate meets the target you set before starting, or two
+    successive candidates fail to improve on the simplest baseline - which usually means the
+    problem is in the data or the framing rather than the architecture.
+  - WHAT MAKES IT NOT TERMINATE: having no baseline. There is always a newer architecture to
+    try, and without something to beat you will keep trying them.
+
+THE STEPS:
+
+  1. ESTABLISH A NON-NEURAL BASELINE FIRST. Gradient-boosted trees for tabular data, TF-IDF
+     with logistic regression for text. If a neural network cannot beat it, that is the
+     finding - and on small tabular problems it frequently cannot.
+
+  2. IDENTIFY THE DATA'S SHAPE, which is the actual decision:
+        a GRID where local patterns matter and position should not     -> CNN
+        a SEQUENCE where distant elements relate                        -> transformer
+        a SHORT sequence with little data                               -> LSTM or GRU
+        a SET with no order at all                                      -> transformer without
+                                                                           positional encoding
+        rows and columns of independent features                        -> not these; use trees
+
+  3. CHECK HOW MUCH DATA YOU HAVE. This modifies step 2 more than people expect. Weak
+     assumptions need more data to replace them - so with a few thousand images a CNN will
+     usually beat a vision transformer, and with millions the ordering reverses.
+
+  4. CHECK THE SEQUENCE LENGTH. Beyond a few thousand tokens the quadratic cost becomes the
+     dominant engineering constraint, and you are choosing an attention VARIANT rather than an
+     architecture.
+
+  5. CHECK WHETHER A PRETRAINED MODEL EXISTS for your data type. Fine-tuning one almost always
+     beats training any architecture from scratch, and this consideration usually outranks
+     everything above it.
+
+  6. CONSIDER A HYBRID. CNN front end into a transformer is standard for speech; patches into
+     a transformer is standard for vision.
+
+  7. MEASURE. Train the simplest candidate, then the next, and compare on held-out data rather
+     than on reputation.""",
+
+    """7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine three people asked to find something in a large document, each with a different habit.
+
+THE FIRST works with a small magnifying glass and a fixed routine: she examines a few
+centimetres at a time, looking for a handful of specific shapes she has learned to recognise -
+a corner, an edge, a particular texture. She uses exactly the same trained eye at every spot
+on the page, which means once she has learned what a corner looks like, she recognises corners
+everywhere. She is extremely efficient because she learned one thing rather than one thing per
+location. What she cannot do easily is connect something at the top of the page with something
+at the bottom - she gets there eventually by summarising regions and then summarising the
+summaries, but not in one look.
+
+THE SECOND reads strictly left to right, start to finish, and keeps everything he needs on a
+single small notepad, rewriting it after every word. This works beautifully for short
+passages. But the notepad is small and gets rewritten constantly, so by word twenty-four the
+thing he noted at word two has usually been overwritten by more recent material. And because
+he cannot read word twenty until he has finished word nineteen, he cannot be helped by extra
+assistants - the work is stubbornly one-at-a-time.
+
+THE THIRD lays the whole page out and lets every word look directly at every other word,
+simultaneously, deciding for itself which others matter. Word twenty-four can consult word two
+directly with nothing in between. Nothing fades with distance, and because every comparison is
+independent, a thousand assistants can do them all at once.
+
+The third does far MORE total work - she compares every pair, which grows brutally as the page
+gets longer. She wins anyway, because all that work happens at the same time while the second
+reader's work cannot.
+
+The lesson underneath all three: each one is fast because of what they ASSUME. The first
+assumes nearby things relate and that position does not matter, so she reuses one trained eye
+everywhere. The second assumes order matters and recent things matter most. The third assumes
+nothing at all - which makes her the most general and the most expensive, and means she needs
+far more practice before she is any good, because she has to learn from scratch everything the
+others took for granted.""",
+
+    """8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each architecture taken apart - what it assumes, what it
+holds, what it decides, and where it fails.
+
+--- CNN ---
+
+    ASSUMES: locality (nearby elements relate) and translation invariance (a pattern means the
+    same thing wherever it appears).
+
+    HOLDS: a small set of filters, reused at every position. A 3x3x3 filter is 28 numbers.
+
+    DECIDES WELL: images, spectrograms, any grid where local texture matters.
+
+    THE PARAMETER SAVING: 1,792 weights for 64 filters against 150,528,000 for one dense
+    layer on the same image - 84,000x, computed in section 5.
+
+    RECEPTIVE FIELD: each filter is tiny, but stacking layers widens what a late unit sees.
+    Global understanding is reached gradually rather than directly.
+
+    FAILS WHEN: position genuinely matters (a CNN is deliberately blind to it), or when
+    relationships are long-range and not spatial.
+
+--- RNN / LSTM ---
+
+    ASSUMES: order matters, recent matters more, and a fixed-size memory suffices.
+
+    HOLDS: one hidden state vector, rewritten at every step. Everything remembered lives here.
+
+    DECIDES WELL: short sequences, small data, streaming input where you genuinely process one
+    item at a time and cannot see ahead.
+
+    PATH LENGTH: proportional to distance. Position 1 reaches position 24 through 23 rewrites.
+
+    THE FATAL PRACTICAL PROPERTY: SEQUENTIAL DEPENDENCY. Step 20 needs step 19, so no amount
+    of hardware makes training faster. This, more than accuracy, is what ended their dominance.
+
+    LSTM GATES: learned decisions about what to keep, forget and output. They reduce the
+    forgetting substantially and do not eliminate it.
+
+--- TRANSFORMER ---
+
+    ASSUMES: almost nothing - any element may relate to any other.
+
+    HOLDS: attention weights between every pair of positions, plus the feed-forward blocks
+    that hold most of the parameters. The siblings cover both.
+
+    DECIDES WELL: essentially all sequence work today, and increasingly vision and audio.
+
+    PATH LENGTH: 1, always, regardless of distance. This is the single property that beat the
+    RNN on quality.
+
+    COSTS: every pair compared, so quadratic in length. Doubling the sequence quadruples that
+    work.
+
+    NEEDS POSITIONAL ENCODING, because attention alone is order-blind - proved in the
+    architecture sibling.
+
+    FAILS WHEN: data is scarce. Weak assumptions must be replaced by learned structure, and
+    that takes examples.
+
+--- THE ONE-TABLE SUMMARY, worth memorising ---
+
+                        CNN                RNN / LSTM          TRANSFORMER
+    data shape          grids, images      short sequences     sequences, sets
+    key assumption      local + position-  order + recency     none
+                        independent
+    parameter sharing   across positions   across time steps   across positions
+    path length         grows with depth   grows with distance always 1
+    parallel?           yes                NO                  yes
+    cost in length n    linear             linear              quadratic
+    data hunger         low                low                 high""",
+
+    """9. THREE PRODUCTS, THREE RIGHT ANSWERS - AND ONE THAT INVERTS.
+
+CASE 1 - CLASSIFY A CHEST X-RAY AS PNEUMONIA OR NORMAL.
+
+    Data shape: a grid of pixels. Local texture is what matters - the pattern of opacity in a
+    small region. And a shadow means the same thing wherever in the lung it appears.
+
+    ANSWER: CNN.
+
+    Why not a transformer: with a few thousand labelled X-rays, a vision transformer has to
+    learn translation invariance from data, while the CNN has it built in. The CNN wins on
+    this dataset size, and would lose on ten million images.
+
+CASE 2 - TRANSLATE AN ENGLISH SENTENCE TO FRENCH.
+
+    Data shape: a sequence, and a word near the end may depend on a word near the start -
+    gender agreement, subject-verb number, discourse.
+
+    ANSWER: transformer, and it is not close.
+
+    Why not an RNN: trap 1's sentence. Twenty-two words between the subject and its verb means
+    twenty-two rewrites of a single memory for an RNN, and a path length of 1 for attention.
+
+CASE 3 - FORECAST TOMORROW'S READING FROM A SINGLE TEMPERATURE SENSOR.
+
+    Data shape: a short sequence - perhaps the last 48 hourly readings - and only a few
+    thousand training examples.
+
+    ANSWER: a small LSTM, or even classical time-series methods.
+
+    Why not a transformer: nothing here needs a path length of 1 across a long span, there is
+    not enough data to justify a weak inductive bias, and the LSTM is smaller, faster and
+    easier to deploy. This is the case where the modern answer is the wrong answer.
+
+THE PARAMETER ARITHMETIC, so case 1's reasoning is concrete:
+
+    224 x 224 x 3 image = 150,528 inputs
+
+        dense layer, 1,000 units:  150,528 x 1,000 = 150,528,000 weights
+        64 CNN filters, 3x3x3:     64 x (27 + 1)   =       1,792 weights
+
+        ratio: 150,528,000 / 1,792 = 84,000 exactly
+
+    And the CNN's 1,792 weights generalise BETTER, because a filter learned on one part of the
+    image applies to all of it. The dense layer must learn the same edge detector separately
+    in every one of 50,176 positions, from the same data.
+
+THE THROUGHPUT ARITHMETIC, so case 2's reasoning is concrete:
+
+    sequence length 1,000, batch 32, model width 512
+
+        TRANSFORMER: attention work is n-squared x d = 512,000,000 operations,
+                     executed as ONE large matrix multiply across thousands of cores.
+
+        RNN:         work is n x d-squared = 262,144,000 operations - about HALF as many -
+                     but executed as 1,000 SEQUENTIAL steps, each waiting on the last.
+
+    The transformer does twice the arithmetic and finishes far sooner. Parallelism beats
+    operation count on modern hardware, and that is the whole answer to "why did transformers
+    win?"
+
+NOW THE INVERSION - the same comparison at a different sequence length:
+
+        n =   1,000:  transformer 512,000,000       RNN   262,144,000     RNN  2x cheaper
+        n =   4,000:  transformer 8,192,000,000     RNN 1,048,576,000     RNN  8x cheaper
+        n =  16,000:  transformer 131,072,000,000   RNN 4,194,304,000     RNN 31x cheaper
+
+    Every doubling of length quadruples the transformer's work and merely doubles the RNN's,
+    so the RNN's arithmetic advantage grows without limit. At some length the parallelism
+    stops being enough to compensate - which is exactly why long-context models do not use
+    plain attention, and why linear-time architectures are being actively pursued.
+
+    SAME TWO ARCHITECTURES, AND THE COST COMPARISON REVERSES DIRECTION as one parameter
+    changes. That is the thing to say if asked whether transformers are simply better.""",
+
+    """10. THE COSTS IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+THE COSTS, side by side:
+
+  - CNN: linear in input size. Very parameter-efficient because filters are shared. Trains
+    fast, needs relatively little data, deploys cheaply. Still the default for images at
+    ordinary dataset sizes.
+  - RNN / LSTM: linear in sequence length, and CANNOT be parallelised across time. Small,
+    cheap to run, awkward to train at scale.
+  - TRANSFORMER: quadratic in sequence length in attention, linear in the feed-forward blocks.
+    Fully parallel. Data-hungry. The KV cache during generation is memory that grows with
+    context and with concurrent users.
+
+THE DECISION, condensed:
+
+    images and grids                          -> CNN
+    sequences, plenty of data                 -> transformer
+    short sequences, little data              -> LSTM or GRU
+    unordered sets                            -> transformer with no positional encoding
+    tabular rows and columns                  -> none of these; gradient-boosted trees
+    a pretrained model exists for your data   -> fine-tune it, and this beats the rest
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Why did transformers replace RNNs?" Two reasons, and give the second one: path length 1
+    versus proportional-to-distance, and full parallelism versus none. The parallelism is
+    decisive - the transformer does MORE arithmetic and still trains faster.
+  - "Would you use a transformer for images?" Yes at scale (vision transformers on large
+    datasets), no on a small dataset, where a CNN's built-in assumptions beat learned ones.
+  - "Are RNNs obsolete?" Not entirely. Short sequences, low data, streaming inference and
+    very long sequences where the quadratic cost bites all still favour them - and
+    linear-time architectures are an active research direction for exactly that reason.
+  - "How does a CNN see the whole image if the filters are tiny?" The receptive field grows
+    with depth. Global understanding is assembled gradually.
+  - "What is the inductive bias of each?" This is the question underneath all the others. CNN:
+    locality and translation invariance. RNN: order and recency. Transformer: none - which is
+    why it needs the most data and generalises furthest once it has it.
+
+THE #1 MISTAKE: choosing the architecture by what is fashionable rather than by the shape of
+the data and the amount of it. A transformer on three thousand images loses to a CNN, and both
+lose to gradient-boosted trees on a tabular problem. The right question is never "which is
+best" but "which assumption fits, and do I have enough data to do without one?"
+
+RUNNER-UP: forgetting that a pretrained model, whatever its architecture, almost always beats
+anything trained from scratch - which makes the availability of weights a bigger factor than
+the architecture comparison itself.
+
+TAKEAWAY: each architecture is a built-in assumption about how data relates - nearby for CNNs,
+in order for RNNs, anything-to-anything for transformers - so pick the one whose assumption
+matches your data, and remember that the weaker the assumption the more data you need to make
+up for it.""",
 ]
 
 _EX_P0H["How gradient descent works (batch vs SGD vs mini-batch)"] = [
