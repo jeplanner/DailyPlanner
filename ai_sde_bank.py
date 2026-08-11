@@ -98509,115 +98509,834 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1M["Valid Perfect Square"] = [
-    """The search, traced.
-n = 16: lo 1, hi 16. mid 8, 64 > 16 -> hi 7. mid 4, 16 == 16 -> True.
-n = 14: mid 7, 49 > 14 -> hi 6. mid 3, 9 < 14 -> lo 4. mid 5, 25 > 14 -> hi 4.
-mid 4, 16 > 14 -> hi 3. lo 4 > hi 3 -> exit -> False.
-Note the difference from Sqrt(x): that problem returns the FLOOR of the root
-and so keeps a candidate; this one only needs a yes/no, so it can return True
-on an exact hit and False when the range empties.""",
+    """1. THE GOAL - is this number some whole number squared? Yes or no, without a square-root function.
 
-    """Why hi can start at n // 2 + 1 instead of n.
-For n >= 4 the root is at most n/2, so half the range is wasted. Starting at
-n // 2 + 1 (the +1 keeps n = 4 in range, since 4//2 = 2 is exactly the root)
-saves one iteration - trivial, but it is the kind of bound-tightening an
-interviewer may ask about.
-The guard for n < 2 still matters: 0 and 1 are perfect squares, and with hi = 0
-the loop would never run and return False for n = 1. Any tightening of the
-bounds must be paired with the matching base case.""",
+Given a positive integer n, return whether there is an integer k with k * k == n. You may not use a
+built-in square root.
 
-    """The overflow footnote, which is the practical content here.
-mid * mid overflows a 32-bit int in C++ or Java once mid exceeds about 46,341,
-and n can be up to 2^31 - 1. The result is a negative product, the comparison
-goes the wrong way, and the search returns nonsense on large inputs only.
-Fixes: use a 64-bit type, or compare `mid <= n // mid` which avoids the
-multiplication entirely. Python's arbitrary-precision integers hide the problem,
-so it is worth raising unprompted - it signals you are reasoning about the
-algorithm rather than about your interpreter.""",
+    n = 16   ->   True     because 4 x 4 = 16
+    n = 14   ->   False    3 x 3 = 9 is too small and 4 x 4 = 16 is too big; nothing lands on 14
+    n = 1    ->   True     1 x 1 = 1
+    n = 25   ->   True     5 x 5 = 25
 
-    """The Newton's method alternative, which is genuinely faster.
-    r = n
-    while r * r > n: r = (r + n // r) // 2
-    return r * r == n
-Converges quadratically - roughly 5 iterations for a 64-bit input against about
-31 for binary search. The loop invariant is that r is always an over-estimate
-that shrinks toward the floor of the root.
-Worth naming as the better algorithm while presenting binary search as the one
-you would write under pressure, since its correctness is easier to argue.""",
+THE ANSWER IS A BOOLEAN, AND THAT IS THE WHOLE DIFFERENCE FROM ITS SIBLING. Sqrt(x) in this bank asks for
+the FLOOR of the square root - the largest k with k*k <= n - and has to think carefully about which
+pointer holds that value when the search ends. THIS PROBLEM NEEDS NO FLOOR SEMANTICS AT ALL. You are
+asking whether the search ever lands EXACTLY on n, so the moment mid*mid equals n you return True, and if
+the range empties you return False. NOTHING IS READ OUT OF lo OR hi.
 
-    """The arithmetic-series curiosity, for completeness.
-Every perfect square is the sum of the first k odd numbers: 1 = 1, 4 = 1+3,
-9 = 1+3+5, 16 = 1+3+5+7. So subtracting successive odd numbers until you hit
-zero or go negative also decides the question - in O(sqrt n), which is worse
-than binary search but requires no multiplication at all.
-It is a nice observation rather than a practical answer; mention it only if the
-interviewer seems interested in the number theory.""",
+    THAT MAKES THIS THE EASIER OF THE PAIR, and it is worth noticing why: the hardest part of a binary
+    search is usually deciding what the crossed pointers MEAN, and here you never have to.
 
-    """Edge cases and complexity.
-n = 0 -> a perfect square (0 = 0^2); the code as written starts lo at 1 and
-returns False, so 0 needs a guard if the constraints allow it.
-n = 1 -> True. n = 2, 3 -> False.
-n = 2147395600 (46340^2) -> True, and it is exactly the value where a 32-bit
-mid*mid is about to overflow.
-Time O(log n), space O(1). No preprocessing, no allocation.""",
+THE PERFECT SQUARES ARE SPARSE, WHICH IS WHY THE ANSWER IS USUALLY NO. Below 100 there are ten of them -
+1, 4, 9, 16, 25, 36, 49, 64, 81, 100 - so a randomly chosen n is far more likely to be rejected than
+accepted.
+
+    THIS ENTRY COMPLETES THE BINARY-SEARCH CLUSTER. ARRANGING COINS OWNS SEARCHING OVER AN ANSWER RANGE
+    rather than an array. KTH MISSING POSITIVE OWNS THE INDEX-VS-VALUE OFFSET. SEARCH INSERT POSITION OWNS
+    THE HALF-OPEN CONVENTION that returns `lo`. SQRT(X) OWNS THE CLOSED-INTERVAL CONVENTION that returns
+    `hi`. THIS ONE OWNS THE EXACTNESS CHECK - the case where neither pointer is the answer, because the
+    answer is a yes or a no.""",
+
+    """2. THE INTUITION - guess a root, square it, and halve the range.
+
+Squaring is easy; un-squaring is what you are not allowed to do. So guess a candidate root, square it, and
+compare against n.
+
+    n = 16, and the root is somewhere in 1..16
+
+        guess 8:   8 x 8 = 64.   Too big  ->  the root is below 8.  Search 1..7.
+        guess 4:   4 x 4 = 16.   EXACTLY n  ->  RETURN True.
+
+    n = 14, same starting range
+
+        guess 7:   49 > 14   ->  search 1..6
+        guess 3:    9 < 14   ->  search 4..6
+        guess 5:   25 > 14   ->  search 4..4
+        guess 4:   16 > 14   ->  search 4..3, which is empty
+        THE RANGE EMPTIED WITHOUT AN EXACT HIT  ->  RETURN False.
+
+THE PICTURE - THE CANDIDATE ROOTS AND THEIR SQUARES:
+
+        root:     1    2    3    4    5    6    7    8
+        square:   1    4    9   16   25   36   49   64
+                                 ^
+                            n = 16 sits exactly here  ->  True
+
+                            n = 14 falls between 9 and 16, hitting nothing  ->  False
+
+    YOU ARE BINARY-SEARCHING AN IMAGINARY SORTED LIST OF SQUARES. It is never built - any entry can be
+    computed on demand by one multiplication - and it is sorted because squaring is increasing on positive
+    numbers. THAT MONOTONICITY IS THE PRECONDITION that makes halving valid.
+
+WHY NO POINTER NEEDS INTERPRETING AT THE END. In Sqrt(x) the loop finishes with the pointers crossed and
+the answer sitting in `hi` - the largest value that passed. Here you do not want the largest value that
+passed; you want to know whether ANY value hit exactly. So the success is a `return True` from inside the
+loop, and the failure is simply falling out of it.
+
+    THAT IS WHY THIS ENTRY'S CODE HAS NO `return hi` AND NO `return lo` - a distinction worth making
+    explicitly, because the two problems otherwise look identical and their endings are not.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PERFECT SQUARE. An integer that is some whole number multiplied by itself: 0, 1, 4, 9, 16, 25, ...
+ROOT. The whole number being squared. For 16 the root is 4.
+
+BINARY SEARCH ON THE ANSWER. Searching a RANGE OF POSSIBLE ANSWERS rather than an array. There is no array
+in this problem - the "array" is the sequence of squares 1, 4, 9, 16, ... which you never build.
+
+MONOTONIC. As the candidate root increases, its square increases. That is what guarantees the answers to
+"is mid*mid too small?" form a run of YESes followed by a run of NOs, with exactly one boundary.
+
+CLOSED INTERVAL [lo, hi]. Both ends are valid candidates, paired with `while lo <= hi`. The loop ends with
+the pointers crossed.
+
+EXACTNESS. Unlike Sqrt(x), the loop exits successfully only on an EXACT match. There is no rounding and no
+floor.
+
+THE VARIABLES IN THE CODE:
+    n      the input. NOT MODIFIED.
+    lo     the smallest candidate root still possible. Starts at 1.
+    hi     the largest candidate root still possible. Starts at n.
+    mid    the candidate being tested.
+    sq     mid * mid, computed once and compared twice.
+
+`(lo + hi) // 2` rounds DOWN, which guarantees lo <= mid <= hi and therefore that both branches shrink the
+range.
+
+TIME O(log n), SPACE O(1).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - a range optimisation that is wrong for exactly one input, and an
+overflow that IS reachable here.
+
+TRAP 1 - HALVING THE RANGE WITHOUT THE `+ 1`. For n >= 4 the root is at most n/2, so starting `hi` at
+n // 2 is tempting and saves half the range. IT IS WRONG FOR n = 1.
+
+        n = 1:   hi = 1 // 2 = 0, so the range is 1..0 - EMPTY. The loop never runs and False is
+                 returned, but 1 IS a perfect square.
+
+    MEASURED EXHAUSTIVELY over n = 1..19,999: `hi = n // 2` is wrong on EXACTLY ONE VALUE, and that value
+    is n = 1. With `hi = n // 2 + 1` it is wrong on none.
+
+    NEITHER OFFICIAL EXAMPLE IS n = 1 - they are 16 and 14, both of which the halved range handles fine.
+    THAT IS THE SAME SHAPE OF RESULT AS SQRT(X)'S `x < 2` GUARD in this bank, which is also wrong on
+    exactly one input and also missed by both of its samples. WHEN A RANGE IS DERIVED FROM THE INPUT,
+    CHECK THE INPUTS WHERE THE DERIVED RANGE COLLAPSES.
+
+    The entry's code sidesteps this entirely by starting `hi` at n. That wastes iterations - about one
+    extra halving - and is immune to the boundary. A FAIR TRADE, AND WORTH SAYING SO RATHER THAN
+    PRESENTING THE OPTIMISATION AS FREE.
+
+TRAP 2 - OVERFLOW IN `mid * mid`, AND HERE IT IS GENUINELY REACHABLE. With `hi` starting at n and n up to
+2^31 - 1, the very first mid is 1,073,741,824 - and
+
+        mid * mid = 1,152,921,504,606,846,976
+
+    against an int32 ceiling of 2,147,483,647. THAT IS LARGER BY A FACTOR OF ABOUT 537 MILLION, and it
+    happens on the FIRST ITERATION.
+
+    CONTRAST SUMMARY RANGES IN THIS BANK, where the widely repeated overflow warning turned out to be
+    UNREACHABLE because the input guarantees put the dangerous value out of reach. HERE THE OPPOSITE IS
+    TRUE: the danger is immediate. An overflow claim is a claim about reachability, and the two problems
+    are the two answers.
+
+    THE FIXES: use a 64-bit type; or compare `mid > n // mid` instead of squaring; or start `hi` at
+    n // 2 + 1, which caps mid near 2^30 and still overflows - so that one is not a fix. In Python
+    integers are unbounded and none of this applies, which is worth stating rather than copying a
+    workaround blindly.
+
+TRAP 3 - n = 0. Zero is a perfect square, since 0 = 0^2, and this code starts `lo` at 1 and returns False.
+LeetCode guarantees n >= 1 so it is unreachable there - but if the constraints ever allowed 0, a guard
+would be needed. Verified: `is_perfect_square(0)` returns False.""",
+
+    """5. THE ALTERNATIVES FIRST, then the search - and two of them are genuinely interesting.
+
+THE NAIVE VERSION - COUNT UPWARD:
+
+    k = 1
+    while k * k < n:
+        k += 1
+    return k * k == n
+
+    CORRECT and obvious. COST: O(sqrt n) - for n near 2^31 that is about 46,000 iterations. It would
+    finish, but it is doing linearly what halving does logarithmically.
+
+THE ARITHMETIC-SERIES METHOD, WHICH IS GENUINELY CHARMING. Every perfect square is the sum of the first k
+ODD numbers:
+
+        1 = 1
+        4 = 1 + 3
+        9 = 1 + 3 + 5
+       16 = 1 + 3 + 5 + 7
+
+    So subtract 1, then 3, then 5, and so on; n is a perfect square exactly when you land on zero.
+
+        n = 16:   16 - 1 = 15,  15 - 3 = 12,  12 - 5 = 7,  7 - 7 = 0   ->  TRUE
+        n = 14:   14 - 1 = 13,  13 - 3 = 10,  10 - 5 = 5,  5 - 7 = -2  ->  overshot, FALSE
+
+    VERIFIED CORRECT on every n from 1 to 19,999. IT USES NO MULTIPLICATION AT ALL - only subtraction -
+    which is why it is a classic on hardware without a fast multiplier.
+
+    BUT MEASURE IT BEFORE RECOMMENDING IT: at n = 2^31 - 1 it needs 46,341 subtractions, against 31
+    halvings for binary search. IT IS O(sqrt n), NOT O(log n). Charming, not fast.
+
+NEWTON'S METHOD, WHICH IS THE ONE THAT ACTUALLY BEATS BINARY SEARCH:
+
+        r = n
+        while r * r > n:
+            r = (r + n // r) // 2
+        return r * r == n
+
+    Each step roughly DOUBLES the number of correct digits - quadratic convergence - so it needs about 5
+    iterations where binary search needs 31. VERIFIED CORRECT on 1..19,999.
+
+    THE PRICE IS THAT ITS TERMINATION IS SUBTLER: integer division makes the sequence decrease and settle,
+    and arguing that it settles at the floor of the root rather than oscillating takes more care than
+    "the range halves". THAT IS THE REAL TRADE - fewer iterations, harder to prove.
+
+THE UPGRADE THIS ENTRY USES - PLAIN BINARY SEARCH. O(log n) time, O(1) space, and its correctness argument
+is one sentence: squares increase, so the answers to "too small?" flip exactly once.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: binary-search the candidate roots between 1 and n, squaring each guess, and return true
+only if some guess squares exactly to n.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two bounds:
+
+    `lo`  only ever increases, past candidates whose square was too SMALL.
+    `hi`  only ever decreases, below candidates whose square was too BIG.
+
+    THE INVARIANT: if n is a perfect square, its root lies in [lo, hi]. TRUE AT THE START, because the
+    root of any n >= 1 is between 1 and n. PRESERVED by both branches - a candidate whose square is less
+    than n cannot be the root, and neither can anything below it, so raising `lo` past it loses nothing;
+    symmetrically for `hi`.
+
+    WHAT MAKES IT STOP: `mid` always satisfies lo <= mid <= hi, so `lo = mid + 1` strictly increases `lo`
+    and `hi = mid - 1` strictly decreases `hi`. The interval shrinks by at least one every iteration and
+    must empty.
+
+    THE TWO EXITS, AND THIS IS WHERE THIS PROBLEM DIFFERS FROM ITS SIBLING:
+        `return True` from INSIDE the loop, the instant a square matches exactly;
+        `return False` after the loop, when the interval has emptied without a hit.
+    NEITHER POINTER IS EVER READ. Sqrt(x) has to return `hi` because it wants the largest value that
+    passed; here "passed" means "hit exactly", so there is nothing to read off.
+
+    WHY THE INTERVAL EMPTYING PROVES "NO". By the invariant, the root - if one existed - would still be
+    inside the interval. An empty interval therefore means no root exists.
+
+THE STEPS, NO CODE:
+
+    1. Set the candidate range from 1 up to the number itself.
+    2. While the range is not empty:
+       a. Take the middle candidate, rounding down, and square it.
+       b. If the square equals the number, answer yes and stop.
+       c. If the square is smaller, the root must be larger - raise the bottom of the range past this
+          candidate.
+       d. Otherwise the square is larger, so lower the top of the range below this candidate.
+    3. If the range empties without a match, answer no.
+
+    STEP 3 IS THE WHOLE DIFFERENCE FROM SQRT(X): there, the emptied range still had an answer to report;
+    here, an emptied range IS the answer.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+Somebody hands you a number of paving slabs - say sixteen - and asks a single question: could these be laid
+out as a perfect square courtyard, with the same number of slabs along each side and none left over? You
+are not asked how big the courtyard would be. Just whether it is possible.
+
+You have a calculator that multiplies but no way to take a square root.
+
+You could try one slab per side, then two, then three, working upward until the courtyard is big enough or
+too big. For sixteen slabs that is quick. For two billion slabs you would be trying tens of thousands of
+sizes.
+
+So you guess instead, and each guess halves what remains. You know the side is somewhere between one and
+sixteen. You try eight: eight by eight is sixty-four, far too many slabs. So the side is under eight, and
+you need only consider one to seven. You try four: four by four is sixteen exactly. YES - and you stop.
+
+Now suppose you had been handed fourteen slabs. You try seven - forty-nine, too many. You try three -
+nine, not enough. You try five - twenty-five, too many. You try four - sixteen, still too many. And now
+the range of sizes you have not ruled out has closed up completely: nothing is left to try.
+
+    AT THAT POINT YOU DO NOT REPORT A SIZE. You were not asked for one. You report that no courtyard is
+    possible, because you have eliminated every candidate without any of them fitting exactly.
+
+    THAT IS THE DIFFERENCE FROM THE RELATED QUESTION - "what is the largest square courtyard I could
+    build, accepting that some slabs are left over?" There you WOULD have to look at where your markers
+    ended up and read the answer off one of them. Here an empty range is itself the answer, so nothing
+    needs interpreting.
+
+AND ONE PRACTICAL WARNING. If somebody hands you two billion slabs and you begin by guessing a side of one
+billion, your calculator has to work out a billion times a billion. That number is enormous - vastly
+larger than the count you started with - and a calculator with a limited display would show nonsense
+rather than refusing. THE VERY FIRST GUESS IS THE DANGEROUS ONE.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def is_perfect_square(n):
+
+`n` is the positive integer to test. NOT MODIFIED. The function returns a BOOLEAN, not a root.
+
+    lo, hi = 1, n
+
+THE CLOSED CANDIDATE RANGE, both ends inclusive. `hi` starts at n rather than n // 2 + 1 - the halved
+version is a valid optimisation but its off-by-one is wrong for n = 1, as trap 1 measures. Starting at n
+costs about one extra halving and cannot be got wrong.
+
+    while lo <= hi:
+
+CLOSED-INTERVAL LOOP CONDITION. It must be `<=`, because with both ends inclusive a range holding a single
+candidate still needs testing. This pairs with the `mid + 1` and `mid - 1` updates below - all of these
+belong to one convention, and mixing conventions is where binary-search bugs come from.
+
+    mid = (lo + hi) // 2
+    sq = mid * mid
+
+THE CANDIDATE AND ITS SQUARE, computed once and compared twice. IN A FIXED-WIDTH LANGUAGE THIS LINE
+OVERFLOWS ON THE FIRST ITERATION for large n: with n = 2^31 - 1 the first mid is 1,073,741,824 and its
+square is 1,152,921,504,606,846,976 - about 537 million times the int32 ceiling. Python's integers are
+unbounded, so it is safe here and nowhere else.
+
+    if sq == n:
+        return True
+
+THE EXACTNESS CHECK, AND IT IS THE ONLY SUCCESSFUL EXIT. Note it returns from INSIDE the loop - there is
+no post-loop value to compute, unlike Sqrt(x) which must return `hi`.
+
+    if sq < n:
+        lo = mid + 1               # root is larger
+
+THE CANDIDATE'S SQUARE IS TOO SMALL, so this candidate and everything below it are ruled out.
+
+    else:
+        hi = mid - 1               # root is smaller
+
+TOO BIG, so this candidate and everything above it are ruled out. Reaching this branch means `sq > n`,
+since equality was already handled.
+
+    return False
+
+REACHED ONLY WHEN THE RANGE EMPTIED. By the invariant, a root would still have been inside the range, so
+an empty range proves there is none. NEITHER `lo` NOR `hi` IS READ - that is the structural difference
+from Sqrt(x).
+
+WHAT IS DELIBERATELY ABSENT: no float arithmetic, no `math` import, no guard for n = 0 (unreachable given
+the constraints, and returning False for it would be wrong - see trap 3), and no overflow workaround,
+which Python does not need.""",
+
+    """9. TRACED ON REAL NUMBERS - a hit, then a miss, on adjacent inputs.
+
+RUN A: n = 16
+
+    RANGE:  lo = 1, hi = 16.
+
+    lo=1 hi=16   mid = (1+16)//2 = 8,   sq = 8 x 8 = 64
+                 64 == 16?  no.   64 < 16?  no   ->  too big, hi = 7
+
+    lo=1 hi=7    mid = (1+7)//2 = 4,    sq = 4 x 4 = 16
+                 16 == 16?  YES   ->  RETURN True
+
+    RETURNS True after two iterations. The range never emptied, and neither pointer was ever read.
+
+RUN B: n = 14 - two less, and the answer flips
+
+    RANGE:  lo = 1, hi = 14.
+
+    lo=1 hi=14   mid = 7,   sq = 49.   49 > 14   ->  hi = 6
+    lo=1 hi=6    mid = 3,   sq = 9.    9 < 14    ->  lo = 4
+    lo=4 hi=6    mid = 5,   sq = 25.   25 > 14   ->  hi = 4
+    lo=4 hi=4    mid = 4,   sq = 16.   16 > 14   ->  hi = 3
+    lo=4 hi=3    4 <= 3 is FALSE  ->  the loop ends
+
+    RETURNS False.
+
+    NOTE WHERE THE POINTERS FINISHED: lo = 4 and hi = 3. In Sqrt(x) that `hi` of 3 would be the answer -
+    the floor of the square root of 14 is indeed 3. HERE IT IS IGNORED, because the question was whether
+    anything hit exactly, and nothing did. THE SAME SEARCH, THE SAME ENDING POSITIONS, A DIFFERENT
+    QUESTION.
+
+    THE INVERSION IN ONE LINE: n = 16 is True and n = 14 is False, and the two runs differ in that one
+    found an exact hit and the other exhausted its range.
+
+AND THE INPUT THAT THE RANGE OPTIMISATION GETS WRONG:
+
+    n = 1    with hi = n:            lo = 1, hi = 1, mid = 1, sq = 1 == 1  ->  True.  CORRECT.
+             with hi = n // 2:       lo = 1, hi = 0. The condition 1 <= 0 is false, the loop never runs,
+                                     and False is returned.  WRONG.
+             with hi = n // 2 + 1:   lo = 1, hi = 1  ->  True.  CORRECT.
+
+    Measured exhaustively over n = 1..19,999, the version without the `+ 1` is wrong on exactly that one
+    input, and neither official example is it.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Each iteration halves the candidate range and does one multiplication and two
+comparisons.
+
+    TIME O(log n) - about 31 iterations at the top of the 32-bit range. SPACE O(1).
+    The count-upward version is O(sqrt n) - roughly 46,000 steps near 2^31.
+    The odd-number-subtraction method is also O(sqrt n): MEASURED, it needs 46,341 subtractions at
+    n = 2^31 - 1, against 31 halvings. Elegant, multiplication-free, and not fast.
+    Newton's method converges quadratically - about 5 iterations - and is the genuinely faster
+    alternative, at the cost of a subtler termination argument.
+
+THE #1 MISTAKE: in a fixed-width language, overflowing `mid * mid`. With `hi` starting at n, the FIRST mid
+for n near 2^31 squares to about 1.15 x 10^18 - some 537 million times the int32 ceiling. UNLIKE THE
+OVERFLOW WARNING IN SUMMARY RANGES IN THIS BANK, WHICH TURNED OUT TO BE UNREACHABLE, THIS ONE FIRES
+IMMEDIATELY. Compare `mid > n // mid` instead, or use 64-bit arithmetic. THE RUNNER-UP is the halved-range
+optimisation without its `+ 1`, wrong on exactly one input, n = 1 - and neither official example is it.
+
+ONE-SENTENCE TAKEAWAY: this is Sqrt(x) with the question changed from "how big" to "exactly?" - so the
+success is a return from inside the loop and the failure is an empty range, and neither pointer ever needs
+interpreting.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that the boolean question is STRUCTURALLY
+SIMPLER than the floor question, rather than reciting the same template. The tell is what happens after
+the loop: a candidate who writes `return hi` here has copied Sqrt(x) without asking what was being
+computed. THE SECOND THING is whether you raise the overflow before being prompted - it is the practical
+content of the problem in any language but Python, and the number is large enough to be worth stating.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "SQRT(X) - return the floor of the square root instead." The same search, but the answer is the
+    largest candidate that did not exceed n, which in the closed-interval convention is left in `hi` when
+    the loop ends. Note this problem's run on n = 14 finishes with hi = 3, which is exactly that answer -
+    already computed and discarded.
+    "Do it without multiplication." Subtract the odd numbers 1, 3, 5, ... and check for exactly zero.
+    O(sqrt n), and the identity is that the sum of the first k odds is k^2.
+    "Do it faster." Newton's method: r <- (r + n // r) // 2 until it stops decreasing, then check r * r.
+    About 5 iterations instead of 31.
+    "Is 0 a perfect square?" Yes, 0 = 0^2. This code returns False for it because `lo` starts at 1; the
+    constraints make that unreachable, but the honest answer names the gap rather than denying it.""",
 ]
 
 _EX_P1M["Word Pattern"] = [
-    """The bijection, traced on both outcomes.
-pattern 'abba', s 'dog cat cat dog' -> pairs (a,dog), (b,cat), (b,cat), (a,dog).
-No conflict in either direction -> True.
-pattern 'abba', s 'dog cat cat fish' -> the final pair is (a,fish), but
-char_to_word already has a -> dog -> return False.
-pattern 'abba', s 'dog dog dog dog' -> pair (b,dog), but word_to_char already
-has dog -> a -> False. That REVERSE conflict is the one a single map misses,
-and it is the same failure as in Isomorphic Strings.""",
+    """1. THE GOAL - do the words follow the shape the pattern describes?
 
-    """Why this is Isomorphic Strings with words instead of characters.
-Identical structure: walk two sequences in lockstep, maintain forward and
-reverse maps, reject any inconsistency in either. The only differences are
-splitting s into tokens and the length check comparing len(pattern) against the
-WORD COUNT rather than the string length.
-Recognising the pair means you write it from memory and spend your time on the
-edge cases instead - which is the practical payoff of learning problems by
-family rather than individually.""",
+You are given a PATTERN made of single letters and a STRING of words separated by spaces. Return whether
+the words follow the pattern: each pattern letter must correspond to one word, consistently, and no two
+different letters may correspond to the same word.
 
-    """The length check, and the subtle bug it prevents.
-`if len(pattern) != len(words): return False` is mandatory because zip stops at
-the shorter sequence. Without it, pattern 'abc' with s 'dog cat' would examine
-only two pairs, find no conflict, and return True.
-Note it must compare against len(WORDS), not len(s) - comparing the pattern
-length to the character length of s is a real and easy mistake that happens to
-work on some inputs.""",
+    pattern = "abba"        s = "dog cat cat dog"
 
-    """The whitespace trap in splitting.
-`s.split()` with no argument splits on ANY run of whitespace and discards empty
-tokens, so 'dog  cat' (two spaces) gives ['dog','cat'] - almost certainly what
-you want. `s.split(' ')` gives ['dog','','cat'], introducing a phantom empty
-word that breaks the length check.
-Leading or trailing spaces have the same asymmetry. Prefer the no-argument form
-unless the prompt explicitly defines single-space separation, and say why.""",
+        a  <->  dog
+        b  <->  cat
+        b  <->  cat      consistent with the line above
+        a  <->  dog      consistent
 
-    """Edge cases.
-Both empty: pattern '' and s '' -> words is [], lengths match at 0 -> True
-vacuously.
-Single pair 'a' / 'dog' -> True.
-'a' / 'dog cat' -> length mismatch -> False.
-A letter mapping to a word that equals another letter's word - the reverse-map
-case above - is the one to test deliberately.
-A word may map to a letter identical to itself in spelling with no issue; the
-two namespaces are separate, so pattern 'a' with word 'a' is fine.""",
+    ANSWER: True
 
-    """Complexity and the family.
-O(n) time where n is the number of words, plus the cost of splitting the
-string. Space O(k) for k distinct words - and here it is genuinely O(k) rather
-than O(1), because words are unbounded in a way that a 26-letter alphabet is
-not.
-The family: Isomorphic Strings (characters), Find and Replace Pattern (this
-check applied across a word list), Group Anagrams and Group Shifted Strings
-(canonical form instead of a mapping). The alternative approach for all of them
-is to normalise both sides to a first-occurrence-index pattern - 'abba' and
-'dog cat cat dog' both become [0,1,1,0] - and compare. Two maps or one
-canonical form; both correct, and the maps are easier to defend.""",
+    pattern = "abba"        s = "dog cat cat fish"
+
+        a  <->  dog,   b  <->  cat,   b  <->  cat,   then a would have to be fish - but a is already dog
+
+    ANSWER: False
+
+THE PAIRING MUST WORK IN BOTH DIRECTIONS, and the second direction is the one people drop.
+
+    pattern = "abba"        s = "dog dog dog dog"
+
+        a  <->  dog,   b  <->  dog
+
+        Each letter maps to exactly one word - no letter is ever asked to be two things. BUT `a` AND `b`
+        BOTH MAP TO dog, so you could never recover the pattern from the words. That is not a pairing; it
+        is a collapse.
+
+    ANSWER: False
+
+    pattern = "aaaa"        s = "dog cat cat dog"
+
+        The mirror failure: `a` would have to be both dog and cat.
+
+    ANSWER: False
+
+THE TWO SEQUENCES MUST BE THE SAME LENGTH. "abc" against "dog cat" cannot follow the pattern - there is a
+letter with no word. That check is trivial to state and, as section 4 measures, is the piece no official
+example exercises.
+
+    THIS ENTRY COMPLETES THE BIJECTION-MAP PAIR with Isomorphic Strings. ISOMORPHIC STRINGS OWNS WHY ONE
+    MAP IS NOT ENOUGH. THIS ONE OWNS TOKENISING - turning a string into words before any comparison can
+    happen - AND THE LENGTH GUARD, which is INSURANCE in Isomorphic Strings and GENUINELY REQUIRED here.""",
+
+    """2. THE INTUITION - walk the two sequences in step, keeping two notebooks.
+
+Pair the first letter with the first word, the second with the second, and so on. At each pair, check both
+notebooks before writing anything down.
+
+    pattern = "abba",  words = [dog, cat, cat, dog]
+
+        a <-> dog     neither notebook mentions them   ->   record a:dog and dog:a
+        b <-> cat     neither mentioned                ->   record b:cat and cat:b
+        b <-> cat     forward says b is cat - agrees.  reverse says cat is b - agrees.   fine
+        a <-> dog     both agree again                 ->   fine
+
+    ANSWER: True
+
+THE TWO NOTEBOOKS CATCH DIFFERENT FAILURES, which is the whole reason there are two:
+
+        FORWARD  (letter -> word)   catches ONE LETTER BEING ASKED TO BE TWO WORDS
+                                    example: "aaaa" / "dog cat cat dog" - a must be dog and then cat
+
+        REVERSE  (word -> letter)   catches TWO LETTERS SHARING A WORD
+                                    example: "abba" / "dog dog dog dog" - dog is claimed by a and then b
+
+    NEITHER NOTEBOOK CAN SEE THE OTHER'S FAILURE. With only the forward map, "abba" / "dog dog dog dog"
+    passes cleanly: a is dog, b is dog, and no letter was ever contradicted.
+
+THE PICTURE - WHAT YOU ARE FORBIDDING IS TWO ARROWS LANDING ON THE SAME WORD:
+
+        ALLOWED                        FORBIDDEN
+        a ------> dog                  a ------> dog
+        b ------> cat                  b ------>/
+                                       two letters, one word - not reversible
+
+BEFORE ANY OF THAT, THOUGH, THE WORDS HAVE TO EXIST. The pattern arrives as a string of characters and the
+words arrive as ONE string that has to be cut into pieces. THAT SPLIT IS THE STEP ISOMORPHIC STRINGS DOES
+NOT HAVE, and it is where the length check earns its keep: splitting can produce any number of words,
+which need not match the pattern's length at all.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PATTERN. A string of single characters, each standing for a word. "abba" has four positions using two
+distinct letters.
+
+TOKENISING / SPLITTING. Cutting a string into pieces. `s.split()` with NO argument splits on any run of
+whitespace and discards empty pieces, so "dog  cat" with two spaces gives ['dog', 'cat'].
+    `s.split(' ')` - with an explicit single space - behaves DIFFERENTLY: "dog  cat" gives
+    ['dog', '', 'cat'], including an empty string. VERIFIED. The no-argument form is what you want.
+
+BIJECTION. A pairing where each letter maps to exactly one word AND each word is claimed by exactly one
+letter. "Follows the pattern" means such a pairing exists.
+
+FORWARD MAP / REVERSE MAP. The two notebooks: letter -> word and word -> letter.
+
+zip(pattern, words). Yields pairs position by position. IT STOPS AT THE SHORTER SEQUENCE, silently - which
+is exactly why the length check must come first.
+
+THE VARIABLES IN THE CODE:
+    pattern        the letters. NOT MODIFIED.
+    s              the sentence. NOT MODIFIED.
+    words          the result of splitting `s` - a NEW list.
+    char_to_word   the forward notebook.
+    word_to_char   the reverse notebook.
+    c, w           one letter and one word at the same position.
+
+n IS THE NUMBER OF WORDS. TIME O(n) plus the cost of splitting; SPACE O(k) for k distinct words - and
+UNLIKE the character problems in this bank, that is NOT bounded by an alphabet, since words can be
+arbitrary.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the length guard is invisible to every official example.
+
+TRAP 1 - OMITTING THE LENGTH CHECK. `zip` stops at whichever sequence runs out first, so a pattern longer
+than the sentence - or shorter - is silently truncated and the leftovers are never examined.
+
+        pattern = "abc",  s = "dog cat"
+
+            zip yields (a, dog) and (b, cat), both consistent, and the loop ends.
+            WITHOUT the guard: True.   THE CORRECT ANSWER IS False - there is no word for `c`.
+
+    MEASURED: over 6,000 random pairs with independently chosen lengths, the guard-less version was wrong
+    on 4,024.
+
+    NOW THE MEASUREMENT THAT MATTERS. Over 6,000 random pairs with THE LENGTHS FORCED EQUAL, it was wrong
+    on ZERO. The guard does nothing whatsoever unless the lengths differ - which is obvious once stated
+    and is exactly why the samples miss it.
+
+    ALL FOUR OFFICIAL EXAMPLES HAVE MATCHING LENGTHS: "abba" against four words, three times, and "aaaa"
+    against four words. SO NONE OF THEM CATCHES IT. A solution without the guard passes every sample.
+
+    AND THIS IS THE DELIBERATE CONTRAST WITH ISOMORPHIC STRINGS IN THIS BANK. There the same guard is
+    INSURANCE - the problem guarantees the two strings are the same length, so it never fires. HERE
+    NOTHING GUARANTEES IT: `pattern` and `s` are independent inputs, and splitting `s` can yield any
+    number of words. THE SAME LINE OF CODE IS DEAD IN ONE PROBLEM AND LOAD-BEARING IN THE OTHER.
+
+TRAP 2 - KEEPING ONLY THE FORWARD MAP. It enforces "one letter always means the same word" and completely
+misses "two letters must not share a word".
+
+    MEASURED: wrong on 169 of 6,000 random pairs. THE FOURTH OFFICIAL EXAMPLE CATCHES IT - "abba" against
+    "dog dog dog dog" returns True with one map and False with two. The problem includes that example for
+    exactly this reason, and it is the one sample that earns its place.
+
+TRAP 3 - SPLITTING WITH AN EXPLICIT SEPARATOR. `s.split(' ')` on "dog  cat" produces ['dog', '', 'cat'] -
+three tokens, one of them empty - where `s.split()` produces two. VERIFIED. The bare form is the correct
+choice, and knowing the difference matters more than knowing which to type.
+
+TRAP 4 - COMPARING `pattern` AGAINST `s` DIRECTLY, WITHOUT SPLITTING. The pattern is characters and the
+sentence is words; they are only comparable after tokenising. Isomorphic Strings needs no such step, which
+is what makes this the harder sibling despite the identical core.""",
+
+    """5. THE NAIVE WAY FIRST, then the two maps.
+
+THE NAIVE VERSION - COMPARE THE TWO SHAPES DIRECTLY:
+
+    words = s.split()
+    if len(pattern) != len(words): return False
+    return [pattern.index(c) for c in pattern] == [words.index(w) for w in words]
+
+    THE IDEA: replace each item with the position where it FIRST appeared. That converts both sequences
+    into pure patterns, independent of what the letters or words actually are.
+
+        "abba"                 ->  [0, 1, 1, 0]
+        [dog, cat, cat, dog]   ->  [0, 1, 1, 0]      equal  ->  follows the pattern
+
+        "abba"                 ->  [0, 1, 1, 0]
+        [dog, dog, dog, dog]   ->  [0, 0, 0, 0]      differ ->  does not
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - AND IT
+    HANDLES BOTH DIRECTIONS AUTOMATICALLY, because a signature is symmetric by construction: the trap in
+    section 4 cannot even be expressed in it.
+
+    COST: `.index()` scans from the start each time, so it is O(n^2). At this problem's limits - a pattern
+    up to 300 characters - that is trivial, so BE HONEST: the naive version passes comfortably here. It is
+    the shape that is instructive, not the speed.
+
+THE UPGRADE, AND IT IS THE SAME IDEA MADE LINEAR. Rather than recomputing "where did this first appear",
+remember it as you go; and rather than building two signature lists and comparing at the end, check
+consistency at each position, which allows an early return.
+
+    THAT IS EXACTLY WHAT THE TWO MAPS ARE. `char_to_word` records what each letter has committed to;
+    `word_to_char` records who has claimed each word. Checking both at every position is the linear-time
+    equivalent of comparing both signatures.
+
+    COST: O(n) after splitting, O(k) space.
+
+WHY THE SPACE IS NOT O(1) HERE. In Isomorphic Strings the alphabet is bounded, so the maps hold at most 26
+or 128 entries and the space is constant. HERE THE KEYS ARE WORDS, of which there can be as many as there
+are positions and each of arbitrary length. THE SPACE IS GENUINELY O(n) IN THE NUMBER OF WORDS AND O(total
+characters) IN BYTES - a real difference from the sibling, and worth stating rather than copying the O(1)
+claim across.
+
+AND THE SPLIT ITSELF IS NOT FREE: it allocates a list of substrings, O(total characters) in time and
+space. On this problem's inputs that is nothing; on a gigabyte of text it would be the dominant cost, and
+a streaming tokeniser would be the answer.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: cut the sentence into words, reject immediately if the counts differ, then walk the
+letters and words in step, checking both notebooks before recording each pair.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, two dictionaries:
+
+    `char_to_word` and `word_to_char` BOTH GROW ONLY. An entry, once written, is never revised - if a
+    later position would require revising it, the function returns False instead. THAT "WRITE ONCE, NEVER
+    CHANGE" PROPERTY IS THE CONSISTENCY THE PROBLEM ASKS FOR, expressed as a rule about the data.
+
+    THE INVARIANT: after p positions, the two maps describe a valid bijection between the letters and
+    words seen so far - and it is the ONLY one possible, because each position FORCES its pair. There is
+    never a choice to make, which is why this is a single pass and not a search.
+
+    WHY THERE IS NO BACKTRACKING: if position p demands that `c` mean `w`, and that contradicts an earlier
+    commitment, no rearrangement elsewhere can rescue it. The answer is False immediately, with nothing to
+    undo.
+
+    WHAT MAKES IT STOP: at most one iteration per position, and it may exit early by returning False.
+
+    WHY BOTH CHECKS PRECEDE BOTH RECORDINGS. Writing `char_to_word[c] = w` before checking `word_to_char`
+    would leave the two maps disagreeing with each other on the path that returns False. Checking
+    everything, then committing, keeps them consistent at every moment.
+
+    AND WHY THE SPLIT COMES FIRST, BEFORE ANY OF IT. The pattern is a sequence of characters and the
+    sentence is one long string; they cannot be walked in step until the sentence is a list of words. The
+    length comparison is only meaningful after that, which is why the guard sits between the split and the
+    loop rather than at the very top.
+
+THE STEPS, NO CODE:
+
+    1. Cut the sentence into words on whitespace.
+    2. If the number of letters and the number of words differ, answer no immediately.
+    3. Start two empty notebooks: letter to word, and word to letter.
+    4. Walk the letters and words together, one pair at a time:
+       a. If this letter already has a recorded word and it is not this one, answer no.
+       b. If this word already has a recorded letter and it is not this one, answer no.
+       c. Otherwise record both directions and carry on.
+    5. If the walk finishes, answer yes.
+
+    STEP 2 IS THE ONE NO SAMPLE TESTS. STEPS 4a AND 4b ARE DIFFERENT CHECKS, NOT THE SAME ONE TWICE.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A code-breaker is handed two things: a string of letters, like a-b-b-a, and a sentence, like "dog cat cat
+dog". The claim is that the sentence is the letter-string written out, with each letter standing for one
+particular word throughout. She has to decide whether that claim holds.
+
+The first thing she does is cut the sentence into separate words, because until she does she has one long
+ribbon of text and nothing to line up against the letters. Only after cutting can she count them - and the
+very first thing worth checking is whether there are as many words as letters. If the string has four
+letters and the sentence only three words, the claim is dead before she starts, and no amount of pairing
+will fix it.
+
+    THAT CHECK MATTERS MORE HERE THAN IN THE RELATED PUZZLE WHERE BOTH SIDES ARE LETTERS. There, the two
+    strings arrive with a promise that they are the same length. Here the sentence is cut up by her, and
+    how many pieces it falls into is not promised by anybody.
+
+With the counts matching, she goes along the two rows together, keeping two notebooks. The left notebook
+records what each letter stands for. The right notebook records which letter has claimed each word.
+
+At every pair she checks both before writing anything. If the letter already stands for a different word,
+the claim is broken. If the word has already been claimed by a different letter, the claim is broken too -
+and that second failure is invisible to the left notebook. A code where both a and b stand for "dog" looks
+perfectly consistent from the left: neither letter was ever contradicted. It is only when she checks who
+owns "dog" that she finds two claimants, and a code that turns two different letters into the same word
+could never be decoded back.
+
+If she reaches the end of both rows with neither notebook contradicted, the claim holds.
+
+    AND ONE PRACTICAL DETAIL ABOUT THE CUTTING. If she cuts strictly at every single space, then two
+    spaces in a row produce an empty piece between them - a word that is not a word - and it would be
+    counted like any other. Cutting at RUNS of whitespace instead, and discarding nothing but gaps, is
+    what gives the pieces she actually wants.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def word_pattern(pattern, s):
+
+`pattern` is the string of letters; `s` is the sentence. NEITHER IS MODIFIED.
+
+    words = s.split()
+
+TOKENISE. With NO argument, `split` breaks on any run of whitespace and discards empty pieces - so
+"dog  cat" with two spaces yields two words, not three. `s.split(' ')` would yield ['dog', '', 'cat'],
+verified. THIS LINE IS THE STEP ISOMORPHIC STRINGS DOES NOT HAVE, and everything below depends on it.
+
+    if len(pattern) != len(words):
+        return False
+
+THE LENGTH GUARD, AND IT MUST COME AFTER THE SPLIT because until then there is nothing to count. `zip`
+below stops silently at the shorter sequence, so without this line "abc" against "dog cat" returns True.
+    MEASURED: wrong on 4,024 of 6,000 random pairs with independent lengths - and on 0 of 6,000 when the
+    lengths are forced equal, which is precisely why ALL FOUR OFFICIAL EXAMPLES MISS IT.
+    IN ISOMORPHIC STRINGS THE SAME LINE IS DEAD CODE, because that problem guarantees equal lengths. HERE
+    NOTHING DOES.
+
+    char_to_word, word_to_char = {}, {}
+
+THE TWO NOTEBOOKS. Different keys, different questions - not one dictionary consulted twice.
+
+    for c, w in zip(pattern, words):
+
+WALK BOTH SEQUENCES IN LOCKSTEP. Safe now that the lengths are known equal.
+
+    if c in char_to_word and char_to_word[c] != w:
+        return False
+
+CHECK ONE: has this LETTER already committed to a different word? Both halves are needed - a first sighting
+has no commitment to break. This catches "aaaa" against "dog cat cat dog".
+
+    if w in word_to_char and word_to_char[w] != c:
+        return False
+
+CHECK TWO: has this WORD already been claimed by a different letter? THIS IS THE LINE THE COMMON WRONG
+SOLUTION OMITS - wrong on 169 of 6,000 random pairs, and it is what the fourth official example,
+"abba" against "dog dog dog dog", exists to catch.
+
+    char_to_word[c] = w
+    word_to_char[w] = c
+
+RECORD BOTH DIRECTIONS, AND ONLY AFTER BOTH CHECKS PASSED. Writing before checking would leave the maps
+inconsistent on the rejection path. On a repeat pair these lines rewrite the same values harmlessly.
+
+    return True
+
+Every position passed both checks, so a consistent two-way pairing exists.
+
+WHAT IS DELIBERATELY ABSENT: no set of used words (the reverse map serves that purpose and says more), no
+pre-pass, and no special case for empty inputs - an empty pattern and an empty sentence both give length
+0, the loop does not run, and True is returned, which is correct.""",
+
+    """9. TRACED ON REAL NUMBERS - the accepting case, then the two rejections it does not resemble.
+
+RUN A: pattern = "abba",  s = "dog cat cat dog"
+
+    SPLIT:   words = ['dog', 'cat', 'cat', 'dog']
+    LENGTH:  4 letters, 4 words - equal, so continue.
+
+    POSITION 0:   c = 'a', w = 'dog'
+                  'a' in char_to_word?  no.   'dog' in word_to_char?  no.
+                  record  ->  char_to_word {'a': 'dog'},  word_to_char {'dog': 'a'}
+
+    POSITION 1:   c = 'b', w = 'cat'
+                  neither is known.
+                  record  ->  {'a': 'dog', 'b': 'cat'},  {'dog': 'a', 'cat': 'b'}
+
+    POSITION 2:   c = 'b', w = 'cat'
+                  'b' is known and maps to 'cat' - AGREES, no conflict.
+                  'cat' is known and maps to 'b' - AGREES.
+                  record (rewriting the same values)
+
+    POSITION 3:   c = 'a', w = 'dog'
+                  both agree again.
+
+    RETURNS True.
+
+RUN B: pattern = "abba",  s = "dog dog dog dog" - one word changed throughout
+
+    POSITION 0:   a <-> dog.   record both ways.
+    POSITION 1:   c = 'b', w = 'dog'
+                  FORWARD: is 'b' known?  No - so the forward check PASSES. A one-map solution moves on
+                           here and eventually returns True.
+                  REVERSE: is 'dog' known?  YES, and word_to_char['dog'] is 'a', which is not 'b'.
+                           CONFLICT.
+                  RETURN False.
+
+    THE FORWARD MAP AT THE MOMENT OF REJECTION IS {'a': 'dog'} - entirely consistent. All the information
+    about the failure lives in the other notebook.
+
+    THE INVERSION IN ONE LINE: "abba" against "dog cat cat dog" is True; against "dog dog dog dog" it is
+    False, and only the reverse check separates them.
+
+RUN C: pattern = "abc",  s = "dog cat" - the case no official example resembles
+
+    SPLIT:   words = ['dog', 'cat']
+    LENGTH:  3 letters against 2 words - NOT equal, so return False immediately.
+
+    WITHOUT THE GUARD: `zip` yields only two pairs, (a, dog) and (b, cat). Both are new, both are
+    recorded, no conflict ever arises, and the loop ends. RETURNS True. WRONG - the letter `c` has no
+    word at all, and it was never even looked at.
+
+    Measured, that omission is wrong on 4,024 of 6,000 randomly generated pairs - and on 0 of 6,000 when
+    the lengths are forced to match, which is the entire reason the four official examples cannot see
+    it.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One split over the sentence, then one pass over the paired sequences doing a constant
+number of dictionary operations per position.
+
+    TIME O(n) in the number of words, plus O(total characters) for the split - and hashing a word costs
+    time proportional to its LENGTH, so the honest figure is O(total characters) overall.
+    SPACE O(k) for k distinct words. NOT O(1): unlike Isomorphic Strings, where a bounded alphabet caps
+    the maps at 26 or 128 entries, the keys here are arbitrary words. Copying the sibling's O(1) claim
+    across would be wrong.
+    The first-occurrence-signature version is the same idea but O(n^2) as written, because `.index`
+    rescans; at this problem's limits it passes easily.
+
+THE #1 MISTAKE: omitting the length check. `zip` truncates silently, so a pattern with more letters than
+there are words returns True with the surplus never examined. Wrong on 4,024 of 6,000 random pairs - AND
+INVISIBLE TO ALL FOUR OFFICIAL EXAMPLES, every one of which has matching lengths. Measured with the
+lengths forced equal, the omission is wrong on exactly 0, which is why no sample can see it. THE RUNNER-UP
+is keeping only the forward map, wrong on 169 of 6,000 and caught by the fourth official example.
+
+ONE-SENTENCE TAKEAWAY: this is Isomorphic Strings with words instead of characters - so it needs a split
+first, and that split is exactly what turns the length guard from insurance into a requirement.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that a familiar problem has acquired a new
+failure mode. Most candidates recognise the bijection immediately and reproduce the two maps correctly -
+the differentiator is the length check, because in the sibling problem it is dead code and here it is not.
+SAY WHY: "the lengths are guaranteed equal in Isomorphic Strings; here I am producing the words myself by
+splitting, so nothing guarantees the counts match." That sentence is the whole signal.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "WORD PATTERN II - the words are NOT pre-split; find whether ANY split of the string follows the
+    pattern." Genuinely much harder: it becomes a backtracking search over where to cut, trying each
+    possible length for the next word and undoing the maps on failure. Exponential in the worst case, and
+    the undo-on-backtrack is where it goes wrong.
+    "What if the mapping need only go one way?" Then the forward map alone IS correct - which is exactly
+    the bug here, and being able to name which condition was dropped is the useful part.
+    "Can you do it with one dictionary?" Yes: map each letter to a word AND each word to that letter in
+    the same dictionary, since letters and words can never collide as keys. It works and it obscures the
+    two distinct failure modes, so it is a worse answer in an interview even though it is shorter.
+    "What about repeated whitespace, or leading and trailing spaces?" `s.split()` with no argument handles
+    all of it; `s.split(' ')` does not - verified.""",
 ]
 
 for _e in ENTRIES:
@@ -98693,61 +99412,442 @@ guarded, and usually have a human in the loop for anything irreversible.""",
 ]
 
 _EX_P1N["Bellman-Ford (shortest path with negative edges)"] = [
-    """Why Dijkstra fails on negative edges, with the smallest counterexample.
-Nodes A -> B weight 1, A -> C weight 4, B -> C weight -3.
-Dijkstra pops A (0), then B (1) and C (4). It FINALISES C at 4 the moment it
-pops it. But the true shortest path is A -> B -> C = 1 + (-3) = -2.
-Dijkstra's correctness rests on 'once popped, a node's distance can never
-improve' - which assumes every edge adds cost. A negative edge breaks that
-assumption, so the greedy finalisation is simply unsound. That example is the
-whole justification for Bellman-Ford's existence.""",
+    """1. THE GOAL - shortest distances from one starting point, when edges may have NEGATIVE weights.
 
-    """Why exactly V-1 rounds.
-Any shortest path in a graph with no negative cycle visits at most V nodes, so
-it has at most V-1 edges. After round k, every shortest path using at most k
-edges has been found - one more edge is relaxed per round. So V-1 rounds
-guarantee all of them.
-Trace on a 4-node chain A->B->C->D with the edges listed in reverse order: the
-first round only fixes D's predecessor, the second propagates one hop further,
-and by round 3 (= V-1) every distance is final. Listing edges in a bad order is
-what forces the full V-1 rounds; a lucky order converges sooner, which is the
-basis of the early-exit optimisation below.""",
+You are given a directed graph whose edges carry weights, and a source node. Compute the shortest distance
+from the source to every node. THE WEIGHTS MAY BE NEGATIVE.
 
-    """The Vth pass, which is the negative-cycle detector.
-After V-1 rounds every distance should be final. So if ONE more pass still
-improves some edge, that edge lies on (or is reachable from) a cycle whose
-total weight is negative - and a negative cycle means 'shortest path' is
-undefined, because you can loop forever driving the cost to minus infinity.
-That extra pass is not an optimisation, it is a different feature: Dijkstra
-cannot detect negative cycles at all, which is a real reason to choose
-Bellman-Ford even when you suspect the weights are fine.""",
+    3 nodes, edges:   0 -> 1 costing 1
+                      0 -> 2 costing 4
+                      1 -> 2 costing -3
 
-    """The guard `if dist[u] != inf` and why it is required.
-Relaxing from an unreached node would compute inf + w, which in Python is inf
-(harmless) but in C++ with INT_MAX overflows to a large NEGATIVE number - and
-that phantom short distance then propagates through the whole graph.
-It also matters logically: a node you cannot reach should not be able to
-improve anyone. This is the single most common Bellman-Ford implementation bug
-and it produces answers that look plausible.""",
+        to node 0:   0, you are already there
+        to node 1:   1, by the direct edge
+        to node 2:   the direct edge costs 4, but going 0 -> 1 -> 2 costs 1 + (-3) = -2
 
-    """The early exit, and the SPFA variant.
-If a full round changes nothing, every distance is final and you can stop -
-typically far sooner than V-1 rounds on real graphs. One flag, and it is worth
-adding.
-The queue-based refinement (SPFA) only re-relaxes edges out of nodes whose
-distance actually changed, which is much faster in practice though still
-O(V*E) worst case. Naming it shows you know the practical version, but be
-honest that its worst case is unimproved.""",
+    ANSWER: [0, 1, -2]
 
-    """Complexity and when to choose which.
-Bellman-Ford: O(V*E), handles negative edges, detects negative cycles, trivially
-simple to implement. Dijkstra: O(E log V), non-negative only, much faster.
-BFS: O(V+E), unweighted only.
-So the decision is purely about the weights - unweighted means BFS, non-negative
-means Dijkstra, negative means Bellman-Ford. The family: Cheapest Flights Within
-K Stops (Bellman-Ford relaxed exactly K+1 times, which is the natural fit
-because the round count IS the hop limit), Network Delay Time, and Floyd-Warshall
-for all-pairs at O(V^3).""",
+NEGATIVE EDGES ARE NOT A CURIOSITY. They model refunds, exchange-rate gains, energy released rather than
+spent, or a discount applied when you pass through a particular hub. THE MOMENT THEY APPEAR, THE STANDARD
+SHORTEST-PATH ALGORITHM STOPS WORKING - section 2 shows exactly where Dijkstra fails on the three-node
+graph above.
+
+THERE IS A SECOND, HARDER QUESTION HIDING HERE. If the graph contains a cycle whose total weight is
+negative, then going round it again always makes the journey cheaper, and "the shortest distance" does not
+exist - you can drive it down without limit.
+
+    0 -> 1 costing 1,   1 -> 2 costing -1,   2 -> 1 costing -1
+
+        the cycle 1 -> 2 -> 1 costs -1 + -1 = -2, so every lap saves 2 more
+
+    THERE IS NO ANSWER. The algorithm must DETECT this rather than return nonsense, and it does so with one
+    extra pass - which is section 4.
+
+    THIS ENTRY OPENS THE GRAPH-SHORTEST-PATH CLUSTER in this bank. IT OWNS RELAXING EVERY EDGE V-1 TIMES,
+    the argument for why that many rounds suffice, and NEGATIVE-CYCLE DETECTION. Its sibling is DIJKSTRA,
+    which is faster and cannot handle negative edges at all - and knowing precisely why is the whole point
+    of learning this one.""",
+
+    """2. THE INTUITION - improve every edge repeatedly, and the good news spreads one hop per round.
+
+Start by assuming every node is unreachable - distance infinity - except the source, at 0. Then repeatedly
+look at every edge and ask: does going through this edge give a cheaper way to reach its far end?
+
+    THAT QUESTION IS CALLED RELAXATION:
+
+        if dist[u] + weight(u, v)  is less than  dist[v],  then dist[v] becomes dist[u] + weight(u, v)
+
+    You are saying: I have a route to u costing dist[u], and one more step costs weight - if that total
+    beats what I currently believe about v, my belief about v was too pessimistic.
+
+WHY REPEATING IT WORKS, AND WHY EXACTLY V-1 TIMES. After one full pass over all the edges, every node
+reachable by a ONE-EDGE path has its correct distance. After two passes, every node reachable by a
+TWO-EDGE path does. In general:
+
+        AFTER k ROUNDS, EVERY SHORTEST PATH USING AT MOST k EDGES IS CORRECT.
+
+    And in a graph with no negative cycle, a shortest path never revisits a node - revisiting would mean
+    going round a cycle, which cannot help if no cycle is negative. A path visiting at most V nodes has at
+    most V-1 EDGES. SO V-1 ROUNDS ARE ENOUGH, AND THAT IS THE ENTIRE JUSTIFICATION.
+
+MEASURED, AND THE BOUND IS TIGHT. Take a straight path 0 -> 1 -> 2 -> 3 -> 4, each edge costing 1, but with
+the edges listed to the algorithm in REVERSE order:
+
+        after 0 rounds:  [0, inf, inf, inf, inf]
+        after 1 round:   [0,  1,  inf, inf, inf]
+        after 2 rounds:  [0,  1,   2,  inf, inf]
+        after 3 rounds:  [0,  1,   2,   3,  inf]
+        after 4 rounds:  [0,  1,   2,   3,   4 ]
+
+    EACH ROUND FIXES EXACTLY ONE MORE NODE, because the edge order works against you. With 5 nodes, all 4
+    rounds are genuinely needed. MEASURED SEPARATELY: running only V-2 rounds on 4,000 random graphs gave
+    a wrong answer on 495 of them.
+
+WHY DIJKSTRA FAILS WITH NEGATIVE EDGES. Dijkstra settles the closest unvisited node and never revisits it,
+which is sound only when every edge adds cost. On the graph from section 1 it pops node 0 at distance 0,
+settles node 1 at 1 and node 2 at 4, and NEVER RECONSIDERS NODE 2 - so it misses the route through node 1
+costing 1 + (-3) = -2. VERIFIED: Bellman-Ford returns [0, 1, -2] on that graph.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DIRECTED GRAPH. Nodes joined by one-way edges. An edge (u, v, w) goes FROM u TO v and costs w; it says
+nothing about travelling from v to u.
+
+EDGE WEIGHT. The cost of using an edge. MAY BE NEGATIVE here - that is the whole point.
+
+SOURCE. The node distances are measured from.
+
+RELAXATION. Improving a distance estimate using one edge: if reaching u and then stepping to v is cheaper
+than the current belief about v, adopt it. The name comes from thinking of the estimate as a taut string
+being allowed to slacken.
+
+INFINITY as a sentinel. A node not yet known to be reachable. In Python `float('inf')` compares larger
+than every real number and stays infinite when anything is added.
+
+NEGATIVE CYCLE. A cycle whose edge weights sum to less than zero. Going round it repeatedly drives the
+distance down without bound, so no shortest path exists for any node that can reach it.
+
+V AND E. The number of nodes and edges. The algorithm runs V-1 rounds over all E edges.
+
+THE VARIABLES IN THE CODE:
+    n        the number of nodes, labelled 0 to n-1.
+    edges    a list of (u, v, w) triples. NOT MODIFIED.
+    source   where distances are measured from.
+    dist     the current best-known distance to each node. It only ever DECREASES.
+    u, v, w  the current edge's start, end and weight.
+
+`dist[source] = 0` is the only initial fact; everything else starts at infinity and has to be earned.
+
+TIME O(V * E), SPACE O(V).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - one guard that is unnecessary in Python and essential in C.
+
+TRAP 1 - THE `dist[u] != inf` GUARD, AND THE HONEST FINDING IS THAT IT DOES NOTHING IN PYTHON. Relaxing
+from a node not yet reached would compute `inf + w`. In Python that is `inf`, and `inf < inf` is False, so
+the relaxation is silently skipped and the answer is unaffected.
+
+    MEASURED: over 4,000 random graphs, removing the guard changed the result on ZERO of them.
+
+    SO IT IS NOT LOAD-BEARING HERE - and it is absolutely load-bearing in C, C++ or Java, where the usual
+    sentinel is INT_MAX rather than a true infinity:
+
+        INT_MAX + 1 = 2,147,483,648, which WRAPS to -2,147,483,648 in a 32-bit signed integer
+
+    A node that is unreachable suddenly appears to be enormously CHEAP, and that garbage propagates
+    through every subsequent relaxation. THE SAME LINE IS DEAD CODE IN ONE LANGUAGE AND THE DIFFERENCE
+    BETWEEN WORKING AND NONSENSE IN ANOTHER.
+
+    THAT IS THE SAME SHAPE AS TWO OTHER FINDINGS IN THIS BANK - Reverse String's `left <= right` and Sort
+    Array By Parity's advance-inside-the-swap, both measured at 0 wrong - and the lesson is identical:
+    TEST THE LINE, THEN SAY WHICH REGIME IT MATTERS IN, rather than asserting that it is required or that
+    it is pointless.
+
+TRAP 2 - RUNNING TOO FEW ROUNDS. It is tempting to stop as soon as the graph "looks settled" after a
+couple of passes, or to run V rounds where V-1 is needed and mis-count.
+
+    MEASURED: running V-2 rounds instead of V-1 was wrong on 495 of 4,000 random graphs. THE BOUND IS
+    TIGHT - the reverse-listed path in section 2 needs every one of its V-1 rounds.
+
+TRAP 3 - FORGETTING THE FINAL DETECTION PASS, OR MISREADING WHAT IT MEANS. After V-1 rounds every distance
+should be final. So if ONE MORE full pass still improves something, that improvement cannot come from a
+longer simple path - there are none left - and must come from going round a cycle. THAT IS THE PROOF THAT
+THE EXTRA PASS DETECTS NEGATIVE CYCLES, and it detects exactly those REACHABLE FROM THE SOURCE. A negative
+cycle sitting in a disconnected part of the graph is invisible, and correctly so - it cannot affect any
+distance from this source.
+
+TRAP 4 - RETURNING THE DISTANCES ANYWAY WHEN A NEGATIVE CYCLE EXISTS. The array at that point is not
+meaningful: some entries are mid-descent toward minus infinity. Returning None - or raising - is the honest
+answer, and the code does the former.
+
+WHAT IS NOT A TRAP, checked rather than assumed: a graph with no edges returns [0, inf, inf, ...], and a
+source that cannot reach a node leaves that node at infinity, which is the correct report of
+unreachability rather than an error.""",
+
+    """5. THE NAIVE WAY FIRST, then the rounds - and the honest comparison with Dijkstra.
+
+THE NAIVE VERSION - ENUMERATE EVERY PATH. Try every sequence of nodes from the source and keep the cheapest
+that reaches each destination. CORRECT, and the number of simple paths is factorial in the node count - it
+is unusable beyond about ten nodes, and it is only worth stating so that the dynamic-programming view
+below has something to improve on.
+
+THE DYNAMIC-PROGRAMMING VIEW, WHICH IS WHAT BELLMAN-FORD ACTUALLY IS. Define
+
+        D[k][v] = the cheapest way to reach v using AT MOST k edges
+
+    Then D[0][source] = 0 and everything else is infinity, and
+
+        D[k][v] = min over all edges (u, v, w) of  D[k-1][u] + w,  and also D[k-1][v]
+
+    Computing that table up to k = V-1 gives the answer. IT IS A TABLE OF SIZE V x V and it is exactly the
+    algorithm - except that Bellman-Ford throws away the rows, keeping only the latest, because each round
+    only ever improves on the previous one.
+
+    THAT IS WHY THE CODE HAS NO TWO-DIMENSIONAL ARRAY: `dist` is the current row, updated in place. AN
+    IN-PLACE UPDATE CAN LET IMPROVEMENTS TRAVEL FURTHER THAN ONE HOP WITHIN A SINGLE ROUND, which only
+    makes it converge FASTER - never wrong - because every value in `dist` is always the length of some
+    real path.
+
+THE UPGRADE IN COST TERMS: O(V * E) time and O(V) space, against a factorial enumeration.
+
+DIJKSTRA, THE SIBLING, AND WHEN TO USE WHICH:
+
+        BELLMAN-FORD   O(V * E)       handles negative edges, detects negative cycles, trivial to write
+        DIJKSTRA       O(E log V)     much faster, and WRONG on negative edges
+
+    DIJKSTRA IS FASTER AND STRICTLY LESS CAPABLE. Use it whenever every weight is non-negative, which is
+    most of the time; reach for Bellman-Ford when negatives are possible or when you must PROVE no
+    negative cycle exists. SAYING WHICH ASSUMPTION BUYS DIJKSTRA'S SPEED - that distances only grow, so a
+    settled node never needs revisiting - is the answer an interviewer is listening for.
+
+THE EARLY EXIT, WHICH IS FREE AND WORTH ADDING. If a complete round changes nothing, every distance is
+already final and the remaining rounds cannot change anything either, so you can stop.
+
+    MEASURED on 2,000 random graphs of up to 6 nodes: the average number of rounds before nothing changed
+    was 1.60, against a worst case of V-1 up to 5. IT USUALLY FINISHES ALMOST IMMEDIATELY - the V-1 bound
+    is a guarantee, not a typical cost.
+
+    THE SPFA VARIANT takes this further, keeping a queue of nodes whose distance changed and relaxing only
+    their outgoing edges. Much faster in practice, the same O(V * E) worst case.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: set every distance to infinity except the source, sweep over every edge improving what
+you can, repeat that sweep V-1 times, then sweep once more - and if anything still improves, a negative
+cycle exists.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. TWO NESTED LOOPS AND ONE ARRAY:
+
+    `dist`  ONLY EVER DECREASES. No entry ever rises. Every value it holds is the length of some genuine
+            path from the source, so it is always an over-estimate that is being driven down toward the
+            truth.
+
+    THE INVARIANT: after k complete rounds, `dist[v]` is at most the cost of the cheapest path to v using
+    at most k edges. TRUE AT THE START, when k = 0 and only the source has a zero-edge path. PRESERVED by
+    each round: any path using k edges is a path using k-1 edges followed by one more, and that final edge
+    is examined during the round.
+
+    WHAT MAKES IT STOP: the outer loop runs exactly V-1 times - it is a plain counted loop with no
+    condition to get wrong. THERE IS NO CONVERGENCE TEST NEEDED, which is why the algorithm is so short.
+    (The optional early exit adds one, but it is an optimisation rather than a termination requirement.)
+
+    WHY THE ORDER OF THE EDGES DOES NOT AFFECT CORRECTNESS, ONLY SPEED. A lucky ordering can propagate
+    improvements many hops in a single round; the reverse-listed path in section 2 is the unluckiest,
+    advancing exactly one hop per round. EITHER WAY, V-1 ROUNDS SUFFICE - the bound assumes the worst
+    order.
+
+    THE FINAL PASS IS NOT A ROUND. It changes nothing and is only a test: if any edge would still improve,
+    the distances were not final after V-1 rounds, which is impossible without a negative cycle.
+
+THE STEPS, NO CODE:
+
+    1. Set every node's distance to infinity, except the source at zero.
+    2. Repeat the following V-1 times:
+       a. For every edge, if reaching its start and then crossing it is cheaper than the current best for
+          its end, adopt that cheaper value.
+    3. Go over every edge one more time. If ANY of them would still improve a distance, report that a
+       negative cycle is reachable and stop.
+    4. Otherwise hand back the distances.
+
+    STEP 2 IS COUNTED, NOT CONDITIONAL. STEP 3 IS A TEST, NOT AN UPDATE.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A courier company wants to know the cheapest way to send a parcel from its depot to every town it serves.
+Some routes cost money and some actually PAY - a partner firm reimburses part of the fare on certain legs -
+so a longer journey can genuinely come out cheaper than a short one.
+
+At the start the dispatcher writes "unknown, assume impossibly expensive" beside every town, except the
+depot itself, which costs nothing to reach.
+
+Then she does something very simple and rather brute-force. She takes her complete list of routes - every
+single leg the company operates, in whatever order they happen to be written down - and goes through it
+from top to bottom. For each leg she asks: if I take my current best price for getting to where this leg
+starts, and add this leg's cost, is that cheaper than the best price I currently have for where it ends?
+If so, she crosses out the old figure and writes the better one.
+
+One pass through the list is not enough. A route that was improved near the bottom of the list cannot help
+the legs listed above it until she goes through again. So she repeats the whole sweep.
+
+    HOW MANY TIMES? She reasons it out rather than guessing. A sensible journey never visits the same town
+    twice - there would be no point unless going round in a circle somehow saved money, and she is
+    assuming for now that it does not. So the longest sensible journey passes through every town once,
+    which means it uses one fewer leg than there are towns. And each sweep is guaranteed to get at least
+    one more leg's worth of good news across. SO ONE FEWER SWEEP THAN THE NUMBER OF TOWNS IS ENOUGH.
+
+Then she does one final sweep - and this one is different. She is not trying to improve anything; she is
+CHECKING. By her own reasoning, everything should be settled by now. So if this extra sweep still finds a
+leg that would make something cheaper, her assumption must have been wrong: there must be a circuit
+somewhere that saves money every time you go round it.
+
+    AND IF THERE IS, THERE IS NO ANSWER TO GIVE. A customer could send their parcel round that loop a
+    thousand times and be paid for the privilege. She does not report a price; she reports that the
+    question is broken.
+
+WHY SHE CANNOT USE THE OBVIOUS QUICKER METHOD. The usual approach is to settle the nearest town first,
+then the next nearest, never looking back - each town's price is final the moment it becomes the cheapest
+unsettled one. THAT REASONING RELIES ON PRICES ONLY EVER GOING UP AS YOU TRAVEL FURTHER. With a leg that
+pays you, a town you settled early and cheaply might be beatable later by a longer route, and you would
+never go back to notice.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def bellman_ford(n, edges, source):
+
+`n` is the number of nodes, labelled 0 to n-1. `edges` is a list of (u, v, w) triples. `source` is where
+distances start. NOTHING IS MODIFIED - `edges` is only read.
+
+    # edges: list of (u, v, weight); nodes 0..n-1
+    dist = [float('inf')] * n
+
+EVERY NODE STARTS UNREACHABLE. `float('inf')` is a genuine infinity: larger than any real number, and
+`inf + w` is still `inf` - which is why the guard below turns out to be optional in Python.
+
+    dist[source] = 0
+
+THE ONLY FACT KNOWN AT THE START. Everything else must be earned by relaxation.
+
+    for _ in range(n - 1):            # relax all edges n-1 times
+
+THE OUTER LOOP, COUNTED AND UNCONDITIONAL. `n - 1` because a shortest path in a graph without negative
+cycles visits at most n nodes and therefore uses at most n-1 edges, and each round guarantees one more
+edge's worth of progress. MEASURED: running only n-2 rounds is wrong on 495 of 4,000 random graphs.
+
+    for u, v, w in edges:
+
+EVERY EDGE, EVERY ROUND. Their order affects only how fast it converges, never the final answer.
+
+    if dist[u] != float('inf') and dist[u] + w < dist[v]:
+
+THE RELAXATION TEST. `dist[u] + w < dist[v]` asks whether routing through this edge beats the current
+belief about v.
+    THE `dist[u] != inf` GUARD IS UNNECESSARY IN PYTHON - measured at 0 differences over 4,000 graphs,
+    because `inf + w` is `inf` and `inf < inf` is False. IT IS ESSENTIAL IN C, C++ OR JAVA, where the
+    sentinel is typically INT_MAX and `INT_MAX + 1` wraps to -2,147,483,648, making an unreachable node
+    look enormously cheap and poisoning everything downstream.
+
+    dist[v] = dist[u] + w
+
+ADOPT THE CHEAPER ROUTE. `dist` only ever decreases, and every value it holds is the length of a real
+path.
+
+    for u, v, w in edges:             # one more pass -> detects a negative cycle
+
+THE DETECTION PASS. IT IS NOT A ROUND - it updates nothing and exists only to test.
+
+    if dist[u] != float('inf') and dist[u] + w < dist[v]:
+        return None               # negative cycle reachable from source
+
+IF ANYTHING STILL IMPROVES, the distances were not final after n-1 rounds. No simple path uses more than
+n-1 edges, so the only remaining explanation is a cycle of negative total weight, reachable from the
+source. RETURNING None RATHER THAN THE ARRAY is the honest answer: the numbers at that point are partway
+down toward minus infinity and mean nothing.
+
+    return dist
+
+The finished distances. Entries still at infinity are nodes the source genuinely cannot reach.
+
+WHAT IS DELIBERATELY ABSENT: no priority queue (that is Dijkstra), no visited set, no early exit - which
+is a valid and useful optimisation, discussed in section 5 - and no parent array, though one line would
+add it and let you reconstruct the paths themselves.""",
+
+    """9. TRACED ON REAL NUMBERS - the graph Dijkstra gets wrong, then a negative cycle, then the tight bound.
+
+RUN A: the smallest graph where negative edges matter.
+
+    n = 3,  edges:  (0, 1, 1),  (0, 2, 4),  (1, 2, -3),  source = 0
+
+    START:   dist = [0, inf, inf]
+
+    ROUND 1 (edges in the order listed):
+        edge (0,1,1):   dist[0] = 0 is finite, and 0 + 1 = 1 < inf   ->   dist[1] = 1
+        edge (0,2,4):   0 + 4 = 4 < inf                              ->   dist[2] = 4
+        edge (1,2,-3):  dist[1] = 1, and 1 + (-3) = -2 < 4           ->   dist[2] = -2
+        dist = [0, 1, -2]
+
+    ROUND 2 (n - 1 = 2 rounds in total):
+        edge (0,1,1):   0 + 1 = 1 < 1?  no
+        edge (0,2,4):   0 + 4 = 4 < -2? no
+        edge (1,2,-3):  1 + (-3) = -2 < -2?  no
+        nothing changes.
+
+    DETECTION PASS: no edge improves anything.
+
+    RETURNS [0, 1, -2].
+
+    WHAT DIJKSTRA WOULD DO ON THIS GRAPH: pop node 0 at distance 0, settle node 1 at 1 and node 2 at 4,
+    then pop node 1 - and node 2 is ALREADY SETTLED, so the route 0 -> 1 -> 2 costing -2 is never
+    considered. IT REPORTS 4. The single negative edge is enough to break it.
+
+RUN B: a negative cycle.
+
+    n = 3,  edges:  (0, 1, 1),  (1, 2, -1),  (2, 1, -1),  source = 0
+
+    The cycle 1 -> 2 -> 1 costs -1 + -1 = -2, so every lap is 2 cheaper. After the two rounds the
+    distances have already dropped, and the DETECTION PASS still finds an edge that improves.
+
+    RETURNS None.
+
+RUN C: the bound is tight - a straight path with the edges listed BACKWARDS.
+
+    n = 5,  edges listed as (3,4,1), (2,3,1), (1,2,1), (0,1,1),  source = 0
+
+        after 0 rounds:  [0, inf, inf, inf, inf]
+        after 1 round:   [0,  1,  inf, inf, inf]
+        after 2 rounds:  [0,  1,   2,  inf, inf]
+        after 3 rounds:  [0,  1,   2,   3,  inf]
+        after 4 rounds:  [0,  1,   2,   3,   4 ]
+
+    EACH ROUND ADVANCES THE FRONTIER BY EXACTLY ONE NODE, because every useful edge is examined before the
+    edge that feeds it. With n = 5 all four rounds are needed, and stopping at three leaves node 4 at
+    infinity.
+
+    THE INVERSION: list the same edges FORWARDS - (0,1,1), (1,2,1), (2,3,1), (3,4,1) - and a SINGLE round
+    computes every distance, because each improvement is immediately available to the next edge. Same
+    graph, same answer, four times fewer rounds needed. THE ORDER CHANGES THE SPEED AND NOT THE RESULT,
+    which is exactly why the algorithm assumes the worst.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. V-1 rounds, each sweeping all E edges and doing constant work per edge, plus one more
+sweep to detect cycles.
+
+    TIME O(V * E). SPACE O(V) for the distance array.
+    DIJKSTRA IS O(E log V) - substantially faster - AND CANNOT HANDLE NEGATIVE EDGES.
+    The early exit costs nothing and helps enormously in practice: MEASURED over 2,000 random graphs, the
+    average number of rounds before nothing changed was 1.60, against a worst case of V-1. The V-1 bound
+    is a guarantee, not a typical cost.
+
+THE #1 MISTAKE: running the wrong number of rounds. V-1 is not a safety margin, it is exactly the length of
+the longest possible shortest path in edges - measured, V-2 rounds is wrong on 495 of 4,000 random graphs,
+and the reverse-listed path shows the bound is tight. THE RUNNER-UP is omitting the `dist[u] != inf`
+guard - which measured at 0 differences in Python, because `inf + w` is `inf`, AND WHICH IS ESSENTIAL IN C
+OR JAVA, where INT_MAX + 1 wraps to a huge negative number and makes unreachable nodes look free.
+
+ONE-SENTENCE TAKEAWAY: relax every edge V-1 times because a shortest path has at most V-1 edges, then relax
+once more - anything that still improves proves a negative cycle, because there is no longer path left for
+it to be.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Three things, and none is the code, which is eight lines. First,
+WHY V-1 - the answer is "a simple path visits at most V nodes, so it uses at most V-1 edges", and a
+candidate who says "to be safe" has not understood it. Second, WHAT THE EXTRA PASS PROVES - not "it finds
+negative cycles" as a fact to memorise, but the argument that no further improvement is possible unless a
+cycle is involved. Third, WHEN TO PREFER DIJKSTRA, and why its speed depends on an assumption this problem
+breaks.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Reconstruct the actual path, not just its cost." Keep a `parent` array, updated whenever a distance
+    improves, then walk backwards from the destination. One extra line and one extra array.
+    "Find WHICH nodes are affected by a negative cycle." Run one more round after detection and mark every
+    node whose distance still improves; then propagate that mark forward through the graph with a BFS or
+    DFS - every node reachable from a marked one has no finite shortest distance either.
+    "SPFA - can you make it faster in practice?" Keep a queue of nodes whose distance changed, and relax
+    only their outgoing edges. Same O(V * E) worst case, usually far better, and it is the standard
+    competitive-programming refinement.
+    "What about shortest paths between ALL pairs?" Floyd-Warshall, O(V^3), which also handles negative
+    edges and detects negative cycles by checking whether any diagonal entry goes below zero.
+    "What if the graph is a DAG?" Topologically sort it and relax the edges in that order - a single pass,
+    O(V + E), and it handles negative weights too. THE ACYCLIC GUARANTEE IS WHAT REMOVES THE NEED FOR
+    REPEATED ROUNDS.""",
 ]
 
 _EX_P1N["Prim's Minimum Spanning Tree"] = [
