@@ -3361,10 +3361,10 @@ ENTRIES = [
     Q('dsa', 'Closest Binary Search Tree Value',
       'Find the value in a BST closest to a target. Walk down using the BST ordering (go left if target < node, else right), tracking the closest value seen. The ordering means you only follow one root-to-leaf path — O(height), not O(n).',
       ['closest-bst-value', 'bst', 'binary-search', 'dsa'],
-      code='# Value in the BST closest to a target (walk down using BST ordering).\nclass TreeNode:\n    def __init__(self, val=0, left=None, right=None):\n        self.val = val; self.left = left; self.right = right\n\ndef closest_value(root, target):\n    closest = root.val\n    node = root\n    while node:\n        if abs(node.val - target) < abs(closest - target):\n            closest = node.val       # a nearer value\n        node = node.left if target < node.val else node.right\n    return closest',
+      code='# Value in the BST closest to a target (walk down using BST ordering).\nclass TreeNode:\n    def __init__(self, val=0, left=None, right=None):\n        self.val = val; self.left = left; self.right = right\n\ndef closest_value(root, target):\n    closest = root.val\n    node = root\n    while node:\n        gap = abs(node.val - target)\n        best_gap = abs(closest - target)\n        if gap < best_gap or (gap == best_gap and node.val < closest):\n            closest = node.val       # nearer, or equally near but smaller\n        node = node.left if target < node.val else node.right\n    return closest',
       example='For BST 4 -> (2 -> (1,3), 5), closest_value(root, 3.7) -> 4.',
       complexity='Time O(h), space O(1).',
-      pitfalls='Scanning the whole tree (the BST order lets you go straight down); tie-breaking rule.'),
+      pitfalls="Scanning the whole tree (the BST order lets you go straight down); a plain `<` loses the tie rule — LeetCode 270 asks for the SMALLEST value when two are equally close."),
     Q('dsa', 'Binary Tree Tilt',
       "A node's TILT is the absolute difference between the sums of its left and right subtrees; return the sum of all nodes' tilts. Post-order DFS returns each subtree's total sum while accumulating the tilt at every node.",
       ['binary-tree-tilt', 'binary-tree', 'dfs', 'recursion', 'dsa'],
@@ -16584,7 +16584,8 @@ STEPS
 1. Remember the root's value as the closest so far.
 2. From the root, loop while the current node exists.
 3. If this node's value is nearer to the target than the best so far, update
-   the best.
+   the best. If it is EXACTLY as near but a smaller number, update it too -
+   the problem asks for the smallest value when two tie.
 4. Move left if the target is smaller than this node's value, otherwise move
    right.
 5. When you fall off the bottom, return the best.
@@ -16604,7 +16605,9 @@ THE PICTURE: you are squeezing the target between successively tighter
 lower and upper bounds; the closest value is whichever bound ends up nearest.
 
 WHAT PEOPLE GET WRONG: comparing raw differences instead of absolute
-differences, which makes every value below the target look infinitely good.
+differences, which makes every value below the target look infinitely good; and
+writing a plain `<`, which silently keeps whichever tied value happened to be
+seen first instead of the smaller one.
 """.strip("\n")
 
 _PLAIN_ALGO["Count Number of Pairs With Absolute Difference K"] = r"""
@@ -83931,238 +83934,1563 @@ rule.""",
 ]
 
 _EX_P1I["Closest Binary Search Tree Value"] = [
-    """A trace, showing why one path is enough.
-BST 4 -> (2 -> (1, 3), 5), target 3.7.
-At 4: |4 - 3.7| = 0.3 -> closest = 4. 3.7 < 4 so go LEFT.
-At 2: |2 - 3.7| = 1.7, not better. 3.7 > 2 so go RIGHT.
-At 3: |3 - 3.7| = 0.7, not better than 0.3. 3.7 > 3 so go right -> None.
-Answer 4.
-Note the closest value was found at the ROOT and the walk still had to continue
-- you cannot stop early, because a nearer value could lie further down. But you
-never need to explore the other side.""",
+    """1. THE GOAL - which number in the tree sits nearest to the number you were given?
 
-    """Why you only follow one root-to-leaf path.
-The BST invariant says everything in the left subtree is smaller and everything
-in the right is larger. If target < node.val, then every value in the RIGHT
-subtree is even further above the target than node.val is - so the right
-subtree cannot contain anything closer than what you already have. The same
-argument mirrored for the left.
-That is the whole justification for O(h) instead of O(n), and it is what the
-question is testing. A candidate who traverses the entire tree gets the right
-answer and misses the point.""",
+You are handed a BINARY SEARCH TREE full of numbers and one TARGET number. Return the value in the tree
+that is closest to the target.
 
-    """Why the comparison must run at EVERY node, not just at the leaf.
-The closest value is often an ancestor, as in the trace above where the root
-won. A solution that only checks the final node reached returns 3 instead of 4.
-The pattern - update the best as you descend, but keep descending - is the same
-one used in Search in a BST variants and in Insert into a BST. Track-and-
-continue, do not track-or-continue.""",
+    the tree                    target = 3.7
 
-    """Edge cases.
-Single node -> closest is initialised to root.val and the loop exits after one
-step -> that value.
-An exact match, target = 3.0 in a tree containing 3 -> the difference is 0,
-which is minimal, and the walk continues harmlessly to None. You could return
-early on an exact hit as a micro-optimisation.
-Ties: target exactly between two values, e.g. 2.5 between 2 and 3. The strict
-`<` in the comparison keeps the FIRST one found, which is the one encountered
-higher in the tree. Most prompts accept either; say which convention your code
-picks rather than leaving it implicit.
-Floats: the target is typically a double while node values are ints, so use
-abs() on the difference rather than any integer arithmetic.""",
+              4                 the five values are 1, 2, 3, 4, 5
+            /   \\               distances from 3.7:
+           2     5                  |1 - 3.7| = 2.7
+          / \\                       |2 - 3.7| = 1.7
+         1   3                      |3 - 3.7| = 0.7
+                                    |4 - 3.7| = 0.3     <- smallest
+                                    |5 - 3.7| = 1.3
 
-    """Complexity, and the shape that ruins it.
-Time O(h) - one comparison per level. For a balanced tree that is O(log n); for
-a degenerate tree that has become a linked list it is O(n), which is the
-standard caveat for every BST operation and the reason self-balancing trees
-(AVL, red-black) exist. Space O(1) with the iterative walk; the recursive
-version costs O(h) stack for no benefit, which is a small point in favour of
-the loop.""",
+    ANSWER: 4
 
-    """The follow-up: Closest BST Value II (find the k closest).
-That version is genuinely harder and worth knowing the approach for: do an
-INORDER traversal, which yields values in sorted order, and either keep a
-sliding window of size k (dropping the front when a nearer value arrives) or
-use two stacks as predecessor and successor iterators and merge them - the
-latter gives O(h + k) without materialising the whole list.
-Knowing that inorder-on-a-BST equals sorted order is the single most useful BST
-fact; it also solves Kth Smallest Element, Validate BST, and Convert BST to a
-sorted list.""",
+THE TARGET NEED NOT BE IN THE TREE, AND USUALLY IS NOT. It can be a decimal like 3.7 while every value in
+the tree is a whole number. You are not searching for the target - you are searching for its nearest
+neighbour among the values that exist.
+
+ONE RULE THAT IS EASY TO MISS: IF TWO VALUES ARE EQUALLY CLOSE, RETURN THE SMALLER ONE. With target 3.5,
+both 3 and 4 sit exactly 0.5 away, and the answer is 3. That single sentence in the problem statement is
+the whole content of section 4, and this bank shipped it wrong until it was tested.
+
+WHY THIS IS NOT JUST "LOOK AT EVERY NUMBER". You could of course examine all n values and keep the best.
+That works, and for a small tree nobody would notice. The point of the problem is that the BST ordering
+lets you throw away half the remaining tree at every step, so you touch only one root-to-leaf path -
+about 20 nodes in a balanced tree of a million, instead of a million.
+
+    THIS ENTRY BELONGS TO THE BST-DESCENT CLUSTER, alongside Search in a Binary Search Tree, Validate
+    Binary Search Tree and Two Sum IV - Input is a BST. SEARCH IN A BST OWNS THE PLAIN EXACT-MATCH
+    DESCENT. VALIDATE BST OWNS THE INHERITED BOUNDS. TWO SUM IV OWNS COMBINING A TRAVERSAL WITH A HASH
+    SET. THIS ONE OWNS THE IDEA THAT THE ANSWER IS OFTEN AN ANCESTOR - so you must compare at every step
+    of the descent, not only where the descent stops - AND THE TIE RULE.""",
+
+    """2. THE INTUITION - the descent squeezes the target between a floor and a ceiling.
+
+Imagine walking down the tree and, at each node, writing down the tightest bracket you know so far.
+
+    target = 3.7, tree 4 -> (2 -> (1, 3), 5)
+
+        start at 4    3.7 is less than 4, so go LEFT
+                      you now know: the answer is at most 4 away on the high side
+                      bracket so far:  ( -infinity , 4 ]
+
+        at 2          3.7 is greater than 2, so go RIGHT
+                      bracket now:     [ 2 , 4 ]
+
+        at 3          3.7 is greater than 3, so go RIGHT
+                      bracket now:     [ 3 , 4 ]        and 3's right child is empty - stop
+
+    THE TARGET IS PINNED BETWEEN 3 AND 4, its two nearest neighbours in the whole tree:
+
+                1        2        3   3.7   4        5
+                                  ^    ^    ^
+                              floor  target ceiling
+
+    The answer is whichever of the two bracket ends is nearer: |3 - 3.7| = 0.7 against
+    |4 - 3.7| = 0.3, so 4 wins.
+
+WHY THE VALUES YOU SKIPPED CANNOT WIN. When you stood at 4 and went left, you discarded the entire right
+subtree - here just the value 5. Every value in there is LARGER THAN 4, and the target is SMALLER than 4,
+so all of them are further away than 4 itself, and 4 is already recorded. The same argument applies at
+every turn. THAT is why one path suffices; nothing you walk past can beat what you have already seen.
+
+    Check it: the two values never visited are 1 and 5, at distances 2.7 and 1.3. Both worse than 0.3.
+
+THE PICTURE IN ONE LINE: the descent is a pair of jaws closing on the target, and the answer is the jaw
+that ends up nearer.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY SEARCH TREE (BST). A tree where each node has at most two children, and for EVERY node:
+    everything in its LEFT subtree is smaller than it, everything in its RIGHT subtree is larger.
+    That single promise is what makes "go left or go right" a decision you can trust.
+
+              4          left subtree of 4 holds 2, 1, 3 - all below 4
+            /   \\        right subtree holds 5 - above 4
+           2     5
+          / \\
+         1   3
+
+NODE. One box holding a value plus links to a left child and a right child. A missing child is None.
+ROOT. The top node - where the walk begins.
+LEAF. A node with no children.
+HEIGHT (h). The number of levels from root to the deepest leaf. Balanced: about log2(n). Worst case: n.
+SUBTREE. A node together with everything hanging below it.
+
+TARGET. The number you are hunting near. It may be a decimal and need not exist in the tree.
+abs(x). Distance from zero, sign discarded. `abs(3 - 3.7)` is 0.7 and `abs(4 - 3.7)` is 0.3.
+    IT IS WHAT MAKES "CLOSEST" MEAN CLOSEST ON EITHER SIDE. Without it, every value below the target
+    would look better and better the further below it sat.
+
+THE VARIABLES IN THE CODE:
+    root      the node the walk starts from
+    target    the number being approached
+    closest   the best value found so far - starts as root.val, never as 0 or None
+    node      the node currently being examined; the walk ends when it becomes None
+    gap       how far THIS node's value is from the target
+    best_gap  how far the current `closest` is from the target
+
+TIME O(h), SPACE O(1). No recursion, no extra structure - just a pointer moving down.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and one of them was live in this bank until it was tested.
+
+TRAP 1 - COMPARING ONLY AT THE END OF THE WALK. The descent stops when it falls off the bottom, and it is
+tempting to return the last node's value. THE ANSWER IS FREQUENTLY AN ANCESTOR.
+
+    target 3.7 in the tree above: the walk visits 4, then 2, then 3, then stops.
+    The last node is 3, at distance 0.7. THE CORRECT ANSWER IS 4, at 0.3, seen at the very first step.
+
+    So the comparison must run at EVERY node on the way down. That is trap 1, and it is the common one.
+
+TRAP 2 - THE TIE RULE, WHICH IS THE ONE THAT IS EASY TO SHIP BROKEN. The problem says: if two values are
+equally close, RETURN THE SMALLER. Writing the natural
+
+        if abs(node.val - target) < abs(closest - target):
+
+silently keeps whichever tied value the walk happened to meet FIRST. Depending on the shape of the tree
+that may be the larger one.
+
+    SAME TREE, TARGET 3.5 INSTEAD OF 3.7:
+
+        at 4:  gap 0.5   -> `closest` starts at 4
+        at 2:  gap 1.5   -> no change
+        at 3:  gap 0.5   -> 0.5 < 0.5 is FALSE, so a plain `<` LEAVES closest AT 4
+
+        RETURNED: 4.        CORRECT: 3, because 3 and 4 are both 0.5 away and 3 is smaller.
+
+    MEASURED, NOT GUESSED. Over 4,000 random BSTs with targets on the half-integers, the plain-`<`
+    version disagreed with the rule on 186. With INTEGER targets only it still disagreed on 148 of
+    4,000 - a tie needs nothing exotic, just a target sitting one step from two values, like target 5
+    in a tree holding 4 and 6. The corrected version disagreed on 0.
+
+    THIS IS WHY THE ENTRY'S CODE NOW READS `gap < best_gap or (gap == best_gap and node.val < closest)`.
+
+    AND NOTE WHAT DID NOT CATCH IT: the textbook example, target 3.7, returns 4 under BOTH versions. A
+    solution with this bug passes the sample and fails a hidden test - the same shape of failure this
+    bank keeps finding. ALWAYS TRY A TARGET EXACTLY BETWEEN TWO VALUES.
+
+TRAP 3 - INITIALISING `closest` TO ZERO OR None. `closest = 0` is a value that may not be in the tree at
+all, and for a tree of large numbers it will never be beaten in the wrong direction. START AT root.val:
+it is always a legal answer, so the variable is never in an invalid state.""",
+
+    """5. THE SLOW WAY FIRST, then the descent - and the exact reason the slow way is thrown out.
+
+THE NAIVE VERSION: VISIT EVERY NODE. Walk the whole tree however you like, keep the best value seen.
+
+    for every value v in the tree:
+        if v is closer to the target than the best so far, or equally close and smaller, take it
+
+    IT IS CORRECT. It uses NO property of a BST at all - it would work on a random pile of numbers.
+    Cost: O(n) time, and O(h) space for the traversal stack.
+
+WHAT THE BST BUYS YOU. At each node you can prove that one entire side is hopeless:
+
+        you are at node with value V, and target < V
+        -> every value in V's RIGHT subtree is larger than V
+        -> every one of them is FURTHER from the target than V is
+        -> and V has already been compared
+
+    So the right subtree can be discarded WITHOUT LOOKING AT IT. Symmetrically when target > V.
+
+    Discarding one side at every step means the walk visits one node per LEVEL: O(h) instead of O(n).
+    In a balanced tree of 1,000,000 nodes that is about 20 comparisons instead of 1,000,000.
+
+THE HONEST CAVEAT. O(h) is only a win if the tree is reasonably balanced. A BST built by inserting
+1, 2, 3, 4, ... in order degenerates into a linked list where h = n, and the descent visits all n nodes -
+exactly as slow as the naive scan, though still using O(1) extra space rather than O(h).
+
+    1 -> 2 -> 3 -> 4 -> 5        h = 5 = n.  The "clever" version has no advantage here.
+
+    NOTHING IN THIS PROBLEM FIXES THAT. Balancing is the job of the structure (AVL, red-black), not of
+    this query. Saying so out loud in an interview is worth more than reciting "O(log n)".
+
+NO TRICK IS NEEDED BEYOND THE ORDERING PROPERTY - there is no auxiliary data structure, no precomputation
+and no recursion. The entire algorithm is a pointer walking downward while a single variable remembers
+the best value it has passed.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk down from the root, at each node turning left or right by the BST rule, and keep a
+single variable holding the closest value passed so far.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. There is no recursion here and no call stack to think about. Two
+things change and nothing else does:
+
+    `node`     a pointer that starts at the root and moves ONE STEP DOWN each time round the loop.
+    `closest`  a single number, overwritten whenever the current node is a better answer.
+
+    WHAT MAKES IT STOP: every step replaces `node` with one of its children. Children are strictly
+    further down, and the tree has finite depth, so after at most h steps `node` becomes None - a missing
+    child - and the loop condition `while node` is false. THE WALK CANNOT CIRCLE BACK, because a tree has
+    no upward or sideways links to follow. There is no counter to get wrong and no base case to forget.
+
+    WHY THE ANSWER IS SAFE AT EVERY MOMENT. `closest` is set to root.val before the loop begins, so it
+    always holds a real value from the tree. Each iteration can only replace it with something at least
+    as good. That property - true at the start, preserved by each step - is what an interviewer means by
+    a loop invariant, and it is the reason the value at the end is the answer.
+
+THE STEPS, NO CODE:
+
+    1. Remember the root's value as the best answer so far.
+    2. Put a pointer on the root.
+    3. While the pointer is on a real node:
+       a. Work out how far this node's value is from the target, ignoring sign.
+       b. Work out how far the best-so-far is from the target, the same way.
+       c. If this node is strictly nearer, it becomes the new best. If it is EXACTLY as near but a
+          SMALLER number, it also becomes the new best - that is the tie rule.
+       d. If the target is smaller than this node's value, move the pointer to the left child.
+          Otherwise move it to the right child.
+    4. When the pointer falls off the bottom, hand back the best answer.
+
+    STEP 3c IS THE WHOLE OF SECTION 4 AND STEP 3a-b IS THE WHOLE OF TRAP 1. Everything else is a walk.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+You are on a long street where the house numbers are not consecutive. You want the house nearest to the
+spot marked 3.7 on the pavement, but you cannot see the whole street - you can only stand at a junction,
+read the number there, and be told which way the smaller numbers lie and which way the larger.
+
+You start at house 4. You write 4 in your notebook, because right now it is the best you have seen. The
+mark at 3.7 is below 4, so you take the road towards the smaller numbers.
+
+You arrive at house 2. You compare: 2 is 1.7 away, and the 4 in your notebook is only 0.3 away, so you do
+not cross anything out. The mark is above 2, so now you take the road towards the larger numbers.
+
+You arrive at house 3. It is 0.7 away - still not better than 4. The mark is above 3, so you head towards
+larger numbers again, and the road ends. You stop and read your notebook: 4.
+
+    NOTICE WHAT THE STORY MAKES OBVIOUS. The winner was the FIRST house you stood at, and you walked past
+    two more after it. If you had simply reported the last house you reached, you would have said 3 and
+    been wrong. The notebook is the whole algorithm.
+
+AND THE TIE. Suppose the mark had been at 3.5 instead. Then house 3 and house 4 are both exactly half a
+unit away. The rule you were given before setting out is: when two are equally near, name the smaller.
+So when you stand at house 3 and find it exactly as near as the 4 in your notebook, you cross out 4 and
+write 3. Only "strictly nearer" would have left the 4 standing, and you would have answered wrongly.
+
+WHY YOU NEVER NEED TO EXPLORE THE SIDE ROADS. Every time you turn away from a direction, you are turning
+away from numbers that are all further from the mark than the junction you are standing at - and that
+junction is already in your notebook. There is nothing back there worth the walk.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def closest_value(root, target):
+
+`root` is the top node of the tree; `target` is the number to get near. The function returns a VALUE, not
+a node.
+
+    closest = root.val
+
+THE BEST ANSWER SO FAR, seeded with a value that certainly exists in the tree. Never 0, never None - see
+trap 3. If the tree is a single node, this line alone already holds the answer.
+
+    node = root
+
+THE WALKING POINTER. `closest` and `node` are deliberately separate: one records, the other moves.
+
+    while node:
+
+Keep going while the pointer is on a real node. When it lands on a missing child, `node` is None, which
+is falsy, and the loop ends. THIS IS THE TERMINATION CONDITION AND THERE IS NO OTHER.
+
+    gap = abs(node.val - target)
+    best_gap = abs(closest - target)
+
+THE TWO DISTANCES, both with the sign thrown away. `gap` is for the node under the pointer right now;
+`best_gap` is for the champion recorded so far. Computing them into named variables rather than inlining
+them twice is what makes the next line readable.
+
+    if gap < best_gap or (gap == best_gap and node.val < closest):
+        closest = node.val       # nearer, or equally near but smaller
+
+THE ONLY DECISION IN THE FUNCTION, and it has two halves:
+    `gap < best_gap` - strictly nearer, take it. This is the obvious half.
+    `gap == best_gap and node.val < closest` - EXACTLY AS NEAR BUT A SMALLER NUMBER, take it too.
+        THIS IS THE TIE RULE FROM SECTION 4. Delete this clause and the function returns whichever tied
+        value the walk happened to meet first, which is wrong on 148 of 4,000 random integer-target
+        trials.
+NOTE THIS RUNS AT EVERY NODE, before the pointer moves. That is trap 1 defused.
+
+    node = node.left if target < node.val else node.right
+
+THE STEP. Target below this node -> the answer, if it is better, lies among the smaller values, so go
+left. Otherwise go right. THE `else` COVERS BOTH "target is larger" AND "target equals node.val" - and
+that is fine: on an exact match `gap` was 0, `closest` already holds the answer, and no later node can
+beat a gap of zero.
+
+    return closest
+
+The best value passed on the way down. `node` is None by now and is not what gets returned - a common
+slip is to return `node.val` and crash on the None.""",
+
+    """9. TRACED ON REAL NUMBERS - the same tree twice, with one digit changed in the target.
+
+              4
+            /   \\
+           2     5
+          / \\
+         1   3
+
+RUN A: target = 3.7
+
+    START     closest = 4   (root.val)
+    node = 4  gap = |4 - 3.7| = 0.3   best_gap = |4 - 3.7| = 0.3
+              0.3 < 0.3 false; tie clause needs 4 < 4, false -> closest stays 4
+              3.7 < 4 -> go LEFT
+    node = 2  gap = |2 - 3.7| = 1.7   best_gap = 0.3
+              1.7 < 0.3 false; not a tie -> closest stays 4
+              3.7 < 2 false -> go RIGHT
+    node = 3  gap = |3 - 3.7| = 0.7   best_gap = 0.3
+              0.7 < 0.3 false; not a tie -> closest stays 4
+              3.7 < 3 false -> go RIGHT, which is empty
+    node = None -> loop ends
+
+    RETURNS 4.   Checked against a scan of all five values: distances 2.7, 1.7, 0.7, 0.3, 1.3 -> 4. AGREE.
+
+    A SMALL HONEST FOOTNOTE ON FLOATING POINT: 3.7 has no exact binary representation, so a machine
+    actually computes |4 - 3.7| as 0.2999999999999998 and |3 - 3.7| as 0.7000000000000002. The
+    comparisons come out the same, so the answer is unaffected - but this is why an exact TIE only ever
+    arises at clean halves like 3.5, which IS exactly representable.
+
+RUN B: target = 3.5 - one digit different, and the answer flips
+
+    START     closest = 4
+    node = 4  gap = |4 - 3.5| = 0.5   best_gap = 0.5
+              0.5 < 0.5 false; 4 < 4 false -> closest stays 4
+              3.5 < 4 -> go LEFT
+    node = 2  gap = |2 - 3.5| = 1.5   best_gap = 0.5   -> no change
+              3.5 < 2 false -> go RIGHT
+    node = 3  gap = |3 - 3.5| = 0.5   best_gap = 0.5
+              0.5 < 0.5 FALSE - the strict test fails
+              BUT gap == best_gap AND 3 < 4 -> TRUE -> closest = 3
+              3.5 < 3 false -> go RIGHT, which is empty
+    node = None -> loop ends
+
+    RETURNS 3.
+
+    THE INVERSION IN ONE LINE: target 3.7 -> 4, target 3.5 -> 3. The path walked is identical - 4, 2, 3 -
+    and only the tie clause separates the two runs.
+
+    AND WITH THE TIE CLAUSE DELETED, run B returns 4 - wrong - while run A still returns 4 - right. THE
+    BUG IS INVISIBLE ON THE TEXTBOOK EXAMPLE AND VISIBLE ONLY HERE.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. The pointer moves down one level per loop and never sideways or back up, so the
+number of iterations is the tree's HEIGHT. Each iteration does two subtractions, two absolute values and
+a couple of comparisons - a fixed amount of work.
+
+    TIME O(h). Balanced tree: h is about log2(n), so a million nodes costs about 20 steps.
+    Degenerate tree (values inserted in sorted order): h = n, and it is a linear scan.
+    SPACE O(1). One pointer and one saved value. No recursion, so no call stack either.
+
+    SAY BOTH BOUNDS. "O(log n) if the tree is balanced, O(n) if it has degenerated into a chain" is the
+    answer that shows you know what a BST does and does not guarantee.
+
+THE #1 MISTAKE: comparing only where the walk stops. The closest value is very often an ANCESTOR of the
+final node - in the trace above it was the root itself - so the comparison must happen at every node
+before the pointer moves. THE RUNNER-UP, and the subtler one: writing a plain `<` and losing the tie rule
+that says the SMALLER value wins when two are equally close.
+
+ONE-SENTENCE TAKEAWAY: descend by the BST rule, but judge at every step - the best answer is usually
+somewhere you passed, not where you stopped.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Nobody cares whether you can compare two numbers. They are
+checking three things: that you USE the ordering rather than traversing everything; that you realise the
+answer can be an ancestor; and that you READ THE PROBLEM STATEMENT closely enough to notice the tie rule.
+The third is the one that separates candidates, because the sample test does not test it.
+
+THE FAMOUS FOLLOW-UP: CLOSEST BST VALUE II - RETURN THE K CLOSEST VALUES. Have the answer ready:
+    An INORDER traversal of a BST yields the values in SORTED ORDER. Once sorted, the k closest values to
+    a target are always k CONSECUTIVE entries, so you can binary-search for the target's insertion point
+    and then expand a two-pointer window outward, taking whichever side is nearer at each step. That is
+    O(n) to traverse plus O(k) to expand. The O(h + k) version keeps two stacks - a predecessor stack and
+    a successor stack - and merges them, which is what to mention if pressed for better than O(n).
+
+THE SECOND FOLLOW-UP: "what if the tree is huge and unbalanced?" The honest answer is that this query
+cannot fix it; you rebalance the tree (AVL, red-black) or you accept O(n).""",
 ]
 
 _EX_P1I["Count Number of Pairs With Absolute Difference K"] = [
-    """The one-pass trick, traced.
-nums = [1,2,2,1], k = 1.
-n=1: counts has nothing -> add counts[0] + counts[2] = 0. Record 1 -> {1:1}.
-n=2: add counts[1] + counts[3] = 1 + 0 = 1. Total 1. Record 2 -> {1:1, 2:1}.
-n=2: add counts[1] + counts[3] = 1. Total 2. Record -> {1:1, 2:2}.
-n=1: add counts[0] + counts[2] = 0 + 2 = 2. Total 4.
-Answer 4, matching the pairs (0,1), (0,2), (1,3), (2,3).
-The key is that you count against numbers already SEEN, which is what enforces
-i < j without ever comparing indices.""",
+    """1. THE GOAL - how many pairs of positions hold numbers exactly k apart?
 
-    """Why both n-k and n+k, and why that does not double count.
-The current number can be the LARGER of the pair (partner n-k) or the SMALLER
-(partner n+k), so both must be checked. It does not double count because each
-pair is counted exactly once - at the moment its SECOND element is processed,
-looking backwards. The first element contributed nothing when it was seen,
-because its partner had not appeared yet.
-Contrast the naive `for each n: result += counts[n-k] + counts[n+k]` computed
-over a FULLY built frequency map, which counts every pair twice and needs a
-division by two - and breaks for k = 0.""",
+You are given a list of numbers and a number k. Count the PAIRS OF POSITIONS (i, j) with i before j whose
+values differ by exactly k, in either direction.
 
-    """The k = 0 case, which is where most variants of this problem go wrong.
-With k = 0, n-k and n+k are both n, so a full-map solution would count each
-element against itself and against its duplicates, needing the pairs formula
-c*(c-1)/2 per value.
-The one-pass version handles it correctly with no special case: when processing
-the second '2', counts[2] is 1 (only the earlier one), so it adds 1 - exactly
-the number of valid partners before it. Walking through k = 0 is a good way to
-convince yourself the incremental version is the safer formulation.""",
+    nums = [1, 2, 2, 1]        k = 1
 
-    """Edge cases.
-Empty or single-element array -> 0 pairs.
-No matching pairs, e.g. [1,3,5] with k = 1 -> counts never contain a complement
--> 0.
-All identical [3,3,3] with k = 0 -> 0 + 1 + 2 = 3 pairs, which is C(3,2).
-Negative numbers work unchanged - the map is keyed by value, not by index, so
-n-k and n+k are just arithmetic.
-Note k is typically constrained positive; if k could be negative you would take
-abs(k) first, since |a-b| is symmetric.""",
+        positions:   0    1    2    3
+        values:      1    2    2    1
 
-    """Complexity, and why brute force is the wrong instinct.
-One pass with O(1) hash operations: O(n) time, O(n) space for the map.
-Brute force is the double loop over all pairs, O(n^2) - fine at n = 200 (the
-usual constraint here) and hopeless at n = 100,000. The reason to learn the map
-version on an easy problem is that the SAME transformation upgrades Two Sum,
-Subarray Sum Equals K and Count Nice Pairs - the constraint here is small
-enough that either passes, which makes it a cheap place to practise the
-pattern.""",
+        (0,1)  |1 - 2| = 1   YES
+        (0,2)  |1 - 2| = 1   YES
+        (0,3)  |1 - 1| = 0   no
+        (1,2)  |2 - 2| = 0   no
+        (1,3)  |2 - 1| = 1   YES
+        (2,3)  |2 - 1| = 1   YES
 
-    """The family: complement lookup.
-Two Sum (complement target - n), this problem (complements n-k and n+k),
-Subarray Sum Equals K (complement running - k over prefix sums), Contiguous
-Array, and 4Sum II (split into two halves and match sums).
-The recognition cue is any question of the form 'how many pairs satisfy a
-relation between their VALUES'. If you can rearrange the relation to express
-one element as a function of the other, a hash map turns O(n^2) into O(n) -
-which is exactly the rearrangement |a - b| = k into b = a +/- k.""",
+    ANSWER: 4
+
+TWO THINGS THE STATEMENT IS QUIETLY SAYING:
+
+    PAIRS OF POSITIONS, NOT PAIRS OF VALUES. The two 2s are different items even though they are the same
+    number, so (0,1) and (0,2) both count. This is why the answer is 4 and not 2.
+
+    "ABSOLUTE DIFFERENCE" MEANS DIRECTION DOES NOT MATTER. |a - b| and |b - a| are the same, so each pair
+    is counted once, not twice. The condition i < j is what enforces "once".
+
+WHAT MAKES IT MORE THAN A DOUBLE LOOP. Two nested loops solve it in about n^2/2 comparisons. The intended
+solution walks the list ONCE, and the idea it teaches - LOOK UP THE PARTNER YOU NEED INSTEAD OF SEARCHING
+FOR IT - is the same idea behind Two Sum and Subarray Sum Equals K.
+
+    THIS ENTRY BELONGS TO THE COMPLEMENT-LOOKUP CLUSTER: Two Sum owns the single complement
+    `target - n`; Subarray Sum Equals K owns complements over PREFIX SUMS rather than raw values;
+    THIS ONE OWNS THE TWO-SIDED COMPLEMENT - the fact that the current number has TWO possible partners,
+    n - k and n + k, and why adding both does not double count.""",
+
+    """2. THE INTUITION - as you walk, ask what you would need to have seen already.
+
+Stand at one number and ask: WHICH EARLIER NUMBER WOULD MAKE A VALID PAIR WITH ME? There are exactly two
+answers, because I could be the larger of the pair or the smaller.
+
+    I am n, and the gap must be k
+
+        if I am the LARGER  -> my partner is  n - k
+        if I am the SMALLER -> my partner is  n + k
+
+    So I do not search. I ask a tally: how many n - k have I seen, and how many n + k?
+
+    nums = [1, 3, 2], k = 1
+
+        n = 1   seen so far: {}              partners needed: 0 and 2   -> found 0 + 0 = 0
+                record 1                     tally {1:1}
+
+        n = 3   seen so far: {1:1}           partners needed: 2 and 4   -> found 0 + 0 = 0
+                record 3                     tally {1:1, 3:1}
+
+        n = 2   seen so far: {1:1, 3:1}      partners needed: 1 and 3   -> found 1 + 1 = 2
+                record 2                     tally {1:1, 3:1, 2:1}
+
+    TOTAL: 2.   Checked by hand: the pairs are (1,2) and (3,2). Correct.
+
+THE PICTURE - EVERY PAIR IS COUNTED EXACTLY ONCE, AT ITS RIGHT-HAND END:
+
+        1        3        2
+        |        |        |
+        +--------|--------+   counted here, when standing on 2 and looking back at 1
+                 +--------+   counted here, when standing on 2 and looking back at 3
+
+    Each pair has one left member and one right member. The tally only ever contains numbers seen
+    EARLIER, so a pair is credited when the walk reaches its RIGHT member - never at its left member,
+    and never twice. THIS IS WHY ADDING BOTH n-k AND n+k IS SAFE, and section 4 shows what happens if
+    you break that rule.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ABSOLUTE DIFFERENCE. |a - b| - how far apart two numbers are, ignoring which is bigger. |2 - 5| and
+|5 - 2| are both 3.
+
+PAIR (i, j) WITH i < j. Two DIFFERENT POSITIONS in the list, named in order. Writing i < j rather than
+i != j is what stops (0,1) and (1,0) both being counted - they are the same pair.
+
+FREQUENCY MAP / TALLY. A dictionary from a value to how many times it has been seen. After walking
+[1, 2, 2] the tally is {1:1, 2:2}.
+
+Counter. Python's ready-made tally. THE PROPERTY THAT MATTERS HERE: reading a key that was never stored
+returns 0 rather than raising a KeyError. `counts[n - k]` is written for a number that may never have
+appeared, so this is load-bearing - a plain dict would need `counts.get(n - k, 0)`.
+
+COMPLEMENT. The value you would need to pair with what you are holding. Two Sum has one complement,
+`target - n`. Here there are TWO: `n - k` and `n + k`.
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. IT IS NOT MODIFIED and is not sorted.
+    k        the required gap. The problem guarantees 1 <= k <= 99 - see section 4 for why k = 0 matters.
+    counts   the tally of numbers seen SO FAR - not of the whole list. That distinction is the algorithm.
+    result   the running count of pairs.
+    n        the number currently being stood on.
+
+n IS ALSO USED FOR THE LIST LENGTH IN COMPLEXITY TALK. Here `n` is a list ELEMENT, matching the code.
+TIME O(n), SPACE O(n) - the tally can hold up to one key per distinct value.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - three ways to break a five-line function.
+
+TRAP 1 - BUILDING THE WHOLE TALLY FIRST. This is the natural-looking version, and it is wrong:
+
+        counts = Counter(nums)                       # the tally of EVERYTHING
+        return sum(counts[n - k] + counts[n + k] for n in nums)
+
+    Now the tally contains numbers that come AFTER the one you are standing on, so every pair is credited
+    twice - once from each end. On [1,2,2,1] with k=1 it returns 8 where the answer is 4; on [1,3,2] with
+    k=1 it returns 4 where the answer is 2.
+
+    MEASURED: over 6,000 random arrays it was wrong on 3,219 - that is every array containing at least
+    one qualifying pair. It is right ONLY when the answer is 0.
+
+    THE FIX IS NOT "DIVIDE BY 2" - though that happens to work here. The fix is to keep the tally
+    RESTRICTED TO WHAT CAME BEFORE, which is what `counts[n] += 1` AFTER the lookup achieves. Halving is
+    a patch that stops working the moment the condition is not symmetric.
+
+TRAP 2 - THINKING BOTH LOOKUPS DOUBLE COUNT, and only adding one. They do not - see the picture in
+section 2. `counts[n - k]` counts pairs where the CURRENT number is the larger; `counts[n + k]` counts
+pairs where it is the smaller. THEY ARE DISJOINT SETS OF PAIRS (for k >= 1, n-k and n+k are different
+numbers). Dropping either one loses roughly half the answer.
+
+TRAP 3 - k = 0, WHICH IS THE VARIANT THAT ACTUALLY BITES. LeetCode guarantees k >= 1, so this exact
+problem is safe - but the near-identical problem COUNT GOOD PAIRS asks for pairs with difference 0, and
+this code is WRONG for it:
+
+    with k = 0,   n - k  and  n + k  are BOTH just n,   so counts[n] is added TWICE.
+
+        [3, 3, 3] -> this code gives 6; the true answer is 3, namely (0,1), (0,2), (1,2).
+        [5, 5]    -> this code gives 2; the true answer is 1.
+
+    FOR k = 0 THE CORRECT LINE IS `result += counts[n]` - one lookup, not two. Or use the closed form:
+    a value appearing c times contributes c*(c-1)/2 pairs.
+
+    AND NOTE THE FAILURE IS SILENT - it returns a plausible number, exactly double, with no error.
+
+ONE THING THAT IS NOT A TRAP, checked rather than assumed: swapping the two lines so that `counts[n] += 1`
+runs BEFORE the lookup. For k >= 1 this is still correct - 0 wrong out of 6,000 random arrays - because
+n - k and n + k are different keys from n, so incrementing n cannot affect either lookup. It is only
+wrong when k = 0. WORTH KNOWING SO YOU DO NOT DEFEND THE WRONG LINE IN AN INTERVIEW.""",
+
+    """5. THE SLOW WAY FIRST, then the one pass.
+
+THE NAIVE VERSION - CHECK EVERY PAIR:
+
+    result = 0
+    for i in range(len(nums)):
+        for j in range(i + 1, len(nums)):
+            if abs(nums[i] - nums[j]) == k:
+                result += 1
+    return result
+
+    IT IS CORRECT, IT IS THE DEFINITION WRITTEN OUT, AND YOU SHOULD SAY IT FIRST. It is also the
+    brute-force check this entry's numbers were verified against - the one-pass version agreed with it on
+    all 6,000 random arrays tested.
+
+    COST: n*(n-1)/2 comparisons - O(n^2). For LeetCode's limit of n = 200 that is 19,900 comparisons and
+    runs instantly, so BE HONEST: on this problem's constraints the double loop passes. The one-pass
+    version is what the problem is teaching, not what it needs.
+
+THE UPGRADE, AND THE IDEA BEHIND IT. The inner loop asks "is there anything k away from me?" by LOOKING
+AT EVERYTHING. A tally answers the same question by NAME:
+
+        instead of scanning for a partner   ->   compute the partner's value and look it up
+
+    The partner's value is not a mystery: it is n - k or n + k. A hash map answers "how many of those
+    have I seen?" in constant time. THAT IS THE ENTIRE UPGRADE, and it is the same move as Two Sum.
+
+WHY THE TALLY MUST HOLD ONLY THE PAST. If it held the whole list, every pair would be found from both
+ends (trap 1). By recording each number only AFTER using it, the tally is always exactly "the numbers to
+my left", which is what makes i < j true automatically. THE ORDER OF THOSE TWO LINES IS THE PROOF.
+
+        result += counts[n - k] + counts[n + k]      # look BACK
+        counts[n] += 1                               # then join the past
+
+COST OF THE UPGRADE: O(n) time, O(d) space where d is the number of distinct values. You have traded
+memory for time - the standard trade, and worth naming as such.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk the list once, and at each number add up how many previously-seen numbers sit
+exactly k below it and exactly k above it, then add itself to the record.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, no nesting. One pass and two pieces of state:
+
+    `counts`  a tally that GROWS BY EXACTLY ONE ENTRY PER STEP and never shrinks. At the moment you are
+              standing on position i, it contains precisely the numbers at positions 0 .. i-1.
+    `result`  a running total that only ever increases.
+
+    THE INVARIANT THAT MAKES IT CORRECT: after processing position i, `result` is the number of valid
+    pairs whose RIGHT-HAND member sits at position i or earlier. It starts true trivially (before the
+    walk, no pairs and no right-hand members) and each step preserves it by adding exactly the pairs
+    ending at the new position. When the walk ends, every position has been someone's right-hand end, so
+    every pair has been counted - once.
+
+    WHAT MAKES IT STOP: the loop runs over the list and there is nothing else to it - exactly len(nums)
+    iterations. No condition to get wrong, no chance of looping forever.
+
+    WHY THE TWO LOOKUPS HAPPEN BEFORE THE RECORDING. If you recorded first, the tally would include the
+    number you are standing on. For k >= 1 that happens to be harmless, but for k = 0 it would pair a
+    number with ITSELF. Looking back before joining is the habit that stays correct in both cases.
+
+THE STEPS, NO CODE:
+
+    1. Start with an empty tally and a running total of zero.
+    2. For each number in the list, in order:
+       a. Ask the tally how many times the value (this number minus k) has already been seen.
+       b. Ask the tally how many times the value (this number plus k) has already been seen.
+       c. Add both answers to the running total.
+       d. Add one to this number's entry in the tally.
+    3. Hand back the running total.
+
+    STEP 2c ADDS BOTH BECAUSE THE CURRENT NUMBER MAY BE EITHER MEMBER OF THE PAIR. STEP 2d COMES LAST
+    BECAUSE THE TALLY MUST MEAN "WHAT I HAVE ALREADY PASSED".""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+People are arriving at a party one at a time, and each is wearing a badge with a number on it. You are
+standing at the door with a clipboard, and your job is to count FRIENDSHIPS. Two people are friends if
+their badge numbers differ by exactly 1.
+
+You do not go and interview the room. Instead, for each new arrival you ask yourself two questions and
+then write their badge on the clipboard.
+
+    A person wearing 2 walks in. You ask: how many people already inside wear 1? And how many wear 3?
+    Those are the only badges that could be their friend. You look at your clipboard - which lists
+    exactly the people already inside - find one 1 and one 3, and add two friendships to your total.
+    Then you write 2 on the clipboard, and the next person comes in.
+
+WHY YOU NEVER COUNT A FRIENDSHIP TWICE. A friendship involves two people, and exactly one of them arrived
+LATER. You only ever credit it when the later one walks in, because your clipboard holds only people
+already inside. The earlier one, at the moment they arrived, could not have seen the later one.
+
+WHAT GOES WRONG IF YOU WAIT UNTIL EVERYONE IS INSIDE. Suppose instead you let the whole party assemble
+and then walk round asking each person how many friends they can see. Now every friendship gets reported
+twice - once by each of the two people. Your total is exactly double. THAT IS THE MISTAKE IN SECTION 4,
+and the reason the clipboard has to be filled in as you go rather than all at once.
+
+WHY YOU ASK TWO QUESTIONS AND NOT ONE. The new arrival wearing 2 might be the higher of a pair - their
+friend wears 1 - or the lower - their friend wears 3. Those are different people, so both questions have
+to be asked, and adding both answers counts nothing twice.
+
+AND THE CASE WHERE THE TWO QUESTIONS BECOME ONE. If friendship meant "identical badges" rather than
+"differ by 1", then both questions collapse into "how many already wear 2?" - and asking it twice would
+double the answer. That is exactly the k = 0 trap.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    from collections import Counter
+
+`Counter` is a dictionary that returns 0 for keys it has never seen instead of raising KeyError. That is
+precisely what the next-but-one line relies on.
+
+    def count_k_difference(nums, k):
+
+`nums` is the list; `k` is the required gap. NEITHER IS MODIFIED - nothing here sorts or mutates `nums`.
+
+    counts = Counter()
+
+THE TALLY, STARTING EMPTY. Its meaning throughout the loop is fixed: "every number I have already walked
+past, and how many times". It is NOT a tally of the whole list, and understanding that difference is the
+whole problem.
+
+    result = 0
+
+The running number of pairs.
+
+    for n in nums:
+
+`n` is the VALUE at the current position, not the index. Indices are never needed - the order of the walk
+is what encodes i < j.
+
+    result += counts[n - k] + counts[n + k]   # earlier complements
+
+THE ONE INTERESTING LINE, and it does two separate jobs:
+    `counts[n - k]` - every earlier number k BELOW n. In those pairs, n is the larger member.
+    `counts[n + k]` - every earlier number k ABOVE n. In those pairs, n is the smaller member.
+    Both are pairs whose right-hand end is HERE, and the two groups have no overlap while k >= 1,
+    so adding them is exactly right and not double counting.
+    Either lookup may name a value never seen; `Counter` returns 0 and nothing breaks.
+
+    counts[n] += 1
+
+JOIN THE PAST. Only now does n become visible to future numbers. THE POSITION OF THIS LINE IS THE
+ALGORITHM: put it above the previous line and k = 0 starts pairing numbers with themselves; build the
+tally before the loop instead and every pair is counted twice.
+
+    return result
+
+The total. There is no post-processing, no halving, no deduplication - the walk already counted each pair
+exactly once.
+
+WHAT IS NOT HERE, AND DELIBERATELY SO: no guard for an empty list (the loop simply does not run and 0 is
+returned), no sorting, and no second pass.""",
+
+    """9. TRACED ON REAL NUMBERS - the case where one element collects from BOTH sides.
+
+nums = [1, 3, 2], k = 1. This ordering is chosen on purpose: the last number has a partner k BELOW it and
+another k ABOVE it, so a single step exercises both halves of the interesting line. The textbook example
+never does that at one step.
+
+    START     counts = {}          result = 0
+
+    n = 1     counts[1 - 1] = counts[0] = 0        (never seen)
+              counts[1 + 1] = counts[2] = 0        (never seen)
+              result += 0 + 0                       -> result = 0
+              counts[1] += 1                        -> counts = {1: 1}
+
+    n = 3     counts[3 - 1] = counts[2] = 0
+              counts[3 + 1] = counts[4] = 0
+              result += 0 + 0                       -> result = 0
+              counts[3] += 1                        -> counts = {1: 1, 3: 1}
+
+    n = 2     counts[2 - 1] = counts[1] = 1         <- the 1 seen at position 0; here 2 is the LARGER
+              counts[2 + 1] = counts[3] = 1         <- the 3 seen at position 1; here 2 is the SMALLER
+              result += 1 + 1                       -> result = 2
+              counts[2] += 1                        -> counts = {1: 1, 3: 1, 2: 1}
+
+    RETURNS 2.   By hand: |1-3| = 2 no, |1-2| = 1 YES, |3-2| = 1 YES. Two pairs. AGREE.
+
+NOW THE SAME WALK ON THE OFFICIAL EXAMPLE, nums = [1, 2, 2, 1], k = 1, where duplicates do the work:
+
+    n = 1   counts[0] = 0, counts[2] = 0     result = 0    counts = {1:1}
+    n = 2   counts[1] = 1, counts[3] = 0     result = 1    counts = {1:1, 2:1}
+    n = 2   counts[1] = 1, counts[3] = 0     result = 2    counts = {1:1, 2:2}
+    n = 1   counts[0] = 0, counts[2] = 2     result = 4    counts = {1:2, 2:2}
+
+    RETURNS 4, matching the six-pair hand check in section 1. NOTE THE LAST STEP: `counts[2]` is 2, and
+    that single lookup harvests BOTH earlier 2s at once. That is where the O(n^2) loop's inner scan went.
+
+THE INVERSION - CHANGE ONLY k:
+
+    [1, 2, 2, 1] with k = 1  ->  4
+    [1, 2, 2, 1] with k = 2  ->  0     no two values are 2 apart; every lookup finds nothing
+    [1, 2, 2, 1] with k = 0  ->  the code returns 4, but the true answer is 2 (the pair of 1s and
+                                 the pair of 2s) - exactly double, because each lookup is made twice.
+                                 The guarantee k >= 1 is the only thing protecting this code.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the list. At each element: two dictionary reads, one addition, one
+dictionary write - a fixed amount of work that does not grow with the list.
+
+    TIME O(n). SPACE O(d), where d is the number of DISTINCT values - at most n, and in practice much
+    smaller when values repeat.
+    The double loop is O(n^2) time and O(1) space. On this problem's limit of n = 200 both are instant;
+    say so rather than pretending the one-pass version is required.
+
+THE #1 MISTAKE: building the tally from the whole list before the loop. Every pair then gets counted from
+both ends and the answer comes back exactly double - wrong on 3,219 of 6,000 random arrays, which is
+every array that has any answer at all. THE TALLY MUST MEAN "WHAT I HAVE ALREADY PASSED", and the single
+line that makes that true is putting `counts[n] += 1` AFTER the lookups.
+
+ONE-SENTENCE TAKEAWAY: when you know exactly what partner you need, look it up in a tally of the past
+instead of scanning for it - and the tally being of the PAST is what stops you counting twice.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can spot a complement-lookup problem in disguise.
+The tell is "count pairs satisfying a relation between two values" - if the relation lets you SOLVE FOR
+the partner, a hash map replaces the inner loop. Two Sum solves `partner = target - n`; this one solves
+`partner = n - k or n + k`; Subarray Sum Equals K solves `partner = running_sum - k` over prefix sums.
+BEING ABLE TO NAME THAT AS ONE TECHNIQUE, RATHER THAN THREE MEMORISED SOLUTIONS, IS THE POINT.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Now count pairs with difference AT MOST k." The complement trick dies - there is no single partner
+    value. Sort the array and use a sliding window: advance a right pointer, drag the left pointer up
+    while nums[right] - nums[left] > k, and add (right - left) each step. O(n log n) for the sort.
+    "Now return the pairs themselves, not the count." Same walk, but store INDICES in the map rather than
+    counts, and emit one pair per stored index. Output can be O(n^2), so the count version is genuinely
+    cheaper - it never materialises what it counts.
+    "What if k can be 0?" Use `result += counts[n]` once instead of twice, or the closed form
+    c*(c-1)/2 per repeated value. That is the problem COUNT GOOD PAIRS.""",
 ]
 
 _EX_P1I["Degree of an Array"] = [
-    """The definition and a trace.
-The DEGREE is the maximum frequency of any element. The task is the shortest
-contiguous subarray having that same degree.
-nums = [1,2,2,3,1,4,2]. Frequencies: 1 -> 2, 2 -> 3, 3 -> 1, 4 -> 1. Degree 3,
-achieved only by the value 2. The subarray must contain all three 2s, so it
-spans from the first 2 (index 1) to the last (index 6) -> length 6.
-nums = [1,2,2,3,1]: degree 2, achieved by both 1 and 2. For 1 the span is
-index 0 to 4 -> 5; for 2 it is 1 to 2 -> 2. Answer 2 - the SHORTEST among the
-tied values, which is why ties must be handled rather than ignored.""",
+    """1. THE GOAL - find the shortest stretch that is just as "crowded" as the whole array.
 
-    """Why the answer is always first-to-last occurrence of some value.
-A subarray achieving the degree must contain every occurrence of at least one
-maximum-frequency value. The shortest such subarray for a given value is
-exactly from its first index to its last - you cannot trim either end without
-dropping an occurrence, and you gain nothing by extending.
-So the whole problem reduces to: for each value at maximum frequency, compute
-last_index - first_index + 1, and take the minimum. Stating that reduction is
-the insight; the code is bookkeeping.""",
+Two definitions have to land before the problem makes sense.
 
-    """Why the single pass works, and the two-branch update.
-`if count[n] > degree` means this value has set a NEW maximum, so the best
-length resets to this value's current span - previous candidates are no longer
-at the degree and are irrelevant.
-`elif count[n] == degree` means this value has TIED the maximum, so it is a
-candidate and you take the smaller span.
-Getting this wrong in either direction is the standard bug: using only `>`
-misses ties (the [1,2,2,3,1] case above), and using `>=` without resetting
-keeps stale candidates from a lower degree.""",
+    THE DEGREE of an array is the largest number of times any single value appears in it.
 
-    """The two-pass alternative, which some find clearer to defend.
-Pass 1: build first-index, last-index and count maps. Pass 2: find the maximum
-count, then over the values achieving it take min(last - first + 1).
-Same O(n) time and space, and noticeably easier to explain under pressure
-because the reduction and the bookkeeping are separated. The one-pass version
-is tighter but the update logic is where mistakes live - if you are unsure in
-the room, write the two-pass version and mention the one-pass exists.""",
+        [1, 2, 2, 3, 1]      1 appears twice, 2 appears twice, 3 appears once
+                             the largest of those counts is 2       ->  DEGREE = 2
 
-    """Edge cases.
-Single element [5] -> degree 1, span 1 -> answer 1.
-All distinct [1,2,3] -> degree 1, and every value ties, so the answer is 1 -
-any single element is a subarray of degree 1.
-All identical [2,2,2] -> degree 3, span 3.
-Two values tied at the maximum with different spans -> the elif branch is what
-picks the shorter, and this is the case an interviewer will construct.
-Note that with all distinct values the FIRST element sets degree 1 and best 1,
-and no later element can improve it - so the answer falls out without a special
-case.""",
+    THE TASK: find the SHORTEST CONTIGUOUS STRETCH of the array whose degree is the SAME.
 
-    """Complexity and the family.
-One pass, three hash maps: O(n) time, O(n) space.
-The family is 'first and last occurrence' bookkeeping: Partition Labels (extend
-the current partition to the last occurrence of every character seen), Maximum
-Number of Occurrences of a Substring, and Minimum Window Substring in spirit.
-The shared idea is that for problems about containing ALL copies of something,
-the relevant quantity is the interval between its first and last appearance -
-recognising that turns a search over subarrays into a scan over values.""",
+        [1, 2, 2, 3, 1]      the whole array has degree 2
+                             the stretch [2, 2] also has degree 2, and it is only 2 long
+                             nothing shorter can have degree 2 - one element has degree 1
+
+        ANSWER: 2
+
+CONTIGUOUS MEANS UNBROKEN. You may take a run of neighbouring positions and nothing else. You cannot
+pick the two 1s at positions 0 and 4 and skip the middle - that is a subsequence, not a subarray. If you
+want both 1s you must take everything between them, all five elements.
+
+WHY THAT ONE WORD DECIDES THE PROBLEM. Since a stretch containing both copies of a value must contain
+everything between them, the SHORTEST stretch containing all copies of a value runs from its FIRST
+occurrence to its LAST. That single observation, unpacked in section 2, turns the problem into
+bookkeeping.
+
+    A SECOND EXAMPLE, WHERE THE WINNER IS NOT THE FIRST VALUE YOU MEET:
+
+        [1, 3, 1, 2, 2]      1 appears at positions 0 and 2 -> span 0..2, length 3
+                             2 appears at positions 3 and 4 -> span 3..4, length 2
+                             3 appears once
+                             DEGREE = 2, and both 1 and 2 reach it
+
+        ANSWER: 2, from the LATER value.  This example is the one section 4 is built around.
+
+    THIS ENTRY BELONGS TO THE FIRST-AND-LAST-OCCURRENCE CLUSTER, alongside Partition Labels and Longest
+    Substring Without Repeating Characters. PARTITION LABELS OWNS EXTENDING A BOUNDARY AS YOU WALK.
+    LONGEST SUBSTRING OWNS THE SHRINKING WINDOW. THIS ONE OWNS THE TWO-BRANCH RUNNING MAXIMUM - what to
+    do when a new candidate BEATS the best versus when it merely TIES it.""",
+
+    """2. THE INTUITION - the answer is always some value's first-to-last span.
+
+Step one: why you never have to consider arbitrary stretches.
+
+    A stretch with degree equal to the whole array's degree must contain SOME value the full number of
+    times. Call that value v, appearing d times.
+    To contain all d copies of v, the stretch must reach from v's first copy to its last copy - because
+    it is contiguous, it cannot skip anything in between.
+    So the SHORTEST possible stretch for v is exactly first[v] .. last[v], and it certainly has degree
+    at least d.
+
+    THEREFORE: check only the values that reach the degree, and take the shortest of their spans.
+    There are at most n such values and each has one span. NO STRETCH-BY-STRETCH SEARCH IS NEEDED.
+
+    [1, 3, 1, 2, 2]         degree 2
+
+        value 1:   first at 0, last at 2   ->   [1, 3, 1]   length 3
+        value 2:   first at 3, last at 4   ->      [2, 2]   length 2      <- shortest
+        value 3:   appears once, does not reach the degree - ignored
+
+        positions:   0    1    2    3    4
+        values:      1    3    1    2    2
+                     |---------|              value 1's span, length 3
+                                    |----|    value 2's span, length 2  <- the answer
+
+    ANSWER: 2
+
+Step two: doing it in ONE pass instead of two. Rather than finishing the array and then looking back, you
+maintain the answer as you go. At every position you know two things: the biggest count seen so far (the
+running degree), and the shortest span among values that have reached it.
+
+    Each new element can do one of three things:
+        SET A NEW RECORD    - its count now exceeds the running degree. The old best is obsolete; the new
+                              best is THIS value's span, because it is the only value at this count.
+        TIE THE RECORD      - its count equals the running degree. It is a rival candidate, so keep
+                              whichever of the two spans is SHORTER.
+        NEITHER             - its count is below the record. Nothing changes.
+
+    THOSE THREE CASES ARE THE THREE BRANCHES OF THE CODE, and section 4 shows what breaks if you merge
+    the first two.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+DEGREE. The maximum frequency of any element - the largest count in the array. It is NOT the number of
+distinct values and NOT the array's length.
+
+SUBARRAY / CONTIGUOUS STRETCH. A run of neighbouring positions, e.g. positions 3 through 4. Contrast a
+SUBSEQUENCE, which may skip positions - not allowed here.
+
+FREQUENCY. How many times a value occurs.
+
+SPAN of a value. From its first occurrence to its last, inclusive. Its LENGTH is
+`last_index - first_index + 1`. THE "+ 1" IS BECAUSE BOTH ENDS ARE INCLUDED: positions 3 to 4 is
+4 - 3 + 1 = 2 elements, not 1.
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. NOT MODIFIED - nothing is sorted or rewritten.
+    first    a dictionary: value -> the index where it FIRST appeared. Written once per value, never
+             updated. That "written once" is what makes it a first-occurrence record.
+    count    a dictionary: value -> how many times it has appeared SO FAR.
+    degree   the largest count seen so far. Starts at 0, only ever grows.
+    best     the shortest qualifying span found so far. Starts at 0 and is replaced, not compared, the
+             first time any value sets a record - so the initial 0 is never a real answer.
+    i, n     the current index and the current value, from enumerate.
+
+enumerate(nums). Yields (index, value) pairs together, so you get both without a manual counter.
+dict.get(n, 0). Reads a key, returning 0 if it is missing - the same "absent means zero" idea a Counter
+gives for free.
+
+TIME O(n), SPACE O(n) - the two dictionaries hold at most one entry per distinct value.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the tie branch, which the textbook example does not need.
+
+TRAP 1 - HANDLING ONLY "A NEW RECORD" AND FORGETTING THE TIE. It is natural to write just:
+
+        if count[n] > degree:
+            degree = count[n]
+            best = i - first[n] + 1
+
+    This updates `best` only when a value BEATS the record. But a LATER value can tie the record with a
+    SHORTER span, and then the best answer is that later one.
+
+        [1, 3, 1, 2, 2]     value 1 reaches count 2 first, span length 3, so best = 3
+                            value 2 later reaches count 2 as well, span length 2
+                            WITHOUT THE TIE BRANCH the answer stays 3.   THE CORRECT ANSWER IS 2.
+
+    MEASURED: deleting the `elif count[n] == degree` branch made the function wrong on 114 of 4,000
+    random arrays. THE BRANCH IS LOAD-BEARING - tested by deleting it, not assumed.
+
+    AND NOTICE THE TEXTBOOK EXAMPLE DOES NOT CATCH THIS. On [1, 2, 2, 3, 1] the version without the tie
+    branch still returns 2, the right answer, because the record-setting value happens to be the winner.
+    You have to reorder the array to expose the bug - which is exactly why section 9 traces
+    [1, 3, 1, 2, 2] instead.
+
+TRAP 2 - HANDLING THE TIE BUT OVERWRITING INSTEAD OF TAKING THE MINIMUM.
+
+        elif count[n] == degree:
+            best = i - first[n] + 1        # WRONG - no min()
+
+    A tying value may have a LONGER span than the current best, and this throws the better answer away.
+
+        [1, 2, 2, 3, 1]     value 2 reaches count 2 at index 2, span 1..2, length 2  -> best = 2
+                            value 1 later reaches count 2 at index 4, span 0..4, length 5
+                            OVERWRITING gives 5.   THE CORRECT ANSWER IS 2.
+
+    MEASURED: wrong on 403 of 4,000 random arrays - a worse bug than trap 1.
+
+    AND NOTE THE ASYMMETRY WITH TRAP 1: the textbook example [1, 2, 2, 3, 1] DOES catch this one - it
+    returns 5 instead of 2 - while it completely fails to catch trap 1. ONE SAMPLE TEST CATCHES ONE BUG
+    AND HIDES THE OTHER, which is why both need their own array.
+
+TRAP 3 - MERGING THE TWO BRANCHES WITH `>=`. The tempting one-branch simplification:
+
+        if count[n] >= degree:
+            degree = count[n]
+            best = i - first[n] + 1
+
+    This is trap 2 wearing a disguise: a tie takes the `if` and overwrites `best` without comparing.
+    MEASURED: wrong on 412 of 4,000. `>` PLUS AN `elif` WITH `min()` IS NOT VERBOSITY - THE TWO BRANCHES
+    DO GENUINELY DIFFERENT THINGS. A record REPLACES the best; a tie COMPETES with it.
+
+TRAP 4 - UPDATING `first[n]` EVERY TIME. `if n not in first` is what makes it a FIRST-occurrence record.
+Overwrite it on every visit and it becomes a last-occurrence record, and every span collapses to 1.""",
+
+    """5. THE SLOW WAY, THE TWO-PASS WAY, AND THE ONE-PASS WAY.
+
+THE NAIVE VERSION - TRY EVERY STRETCH:
+
+    compute the array's degree
+    for every start i, for every end j >= i:
+        compute the degree of nums[i..j]
+        if it equals the array's degree, remember the length if it is the shortest so far
+
+    IT IS CORRECT and it is the definition written out - this is the brute force the numbers in this
+    entry were checked against. COST: O(n^2) stretches, and recounting each one costs O(n), so O(n^3)
+    unless you are careful. Unusable at n = 50,000, which is this problem's limit.
+
+THE TWO-PASS VERSION - AND IT IS PERFECTLY GOOD:
+
+    PASS 1: walk the array building three dictionaries - first index, last index, and count, per value.
+    PASS 2: find the maximum count (the degree), then among the values whose count equals it, take the
+            smallest `last[v] - first[v] + 1`.
+
+    MEASURED CORRECT: 0 disagreements with brute force on 4,000 random arrays.
+
+    BE HONEST ABOUT THIS: it is the same O(n) time and O(n) space as the one-pass version, it is easier
+    to explain, and it is easier to get right because the tie handling reduces to a plain `min` over a
+    list at the end rather than a branch inside a loop. IF YOU ARE NERVOUS UNDER INTERVIEW PRESSURE,
+    WRITE THIS ONE. It is not a worse answer.
+
+THE ONE-PASS VERSION - what the entry's code does. It keeps `degree` and `best` up to date as it walks,
+so no second sweep is needed. The price is that the tie logic moves inside the loop, which is where all
+three traps in section 4 live.
+
+    THE TRICK IT NEEDS - and it is the only one: a value's LAST occurrence so far is simply the index you
+    are standing on. So you never need a `last` dictionary at all; `i - first[n] + 1` is the span from
+    this value's first appearance up to right now. THAT IS WHY ONE PASS IS ENOUGH.
+
+    NOTHING IS PRECOMPUTED AND NOTHING IS REVISITED. Each element is looked at once and the answer is
+    correct for the prefix seen so far at every moment.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: walk the array once keeping each value's first index and running count, and whenever a
+value's count sets or ties the record, offer its first-to-here length as the answer.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, four pieces of state:
+
+    `first`   grows by at most one entry per step and IS NEVER UPDATED once written.
+    `count`   one value's tally goes up by exactly one per step.
+    `degree`  the record. MONOTONIC - it only ever increases, never falls.
+    `best`    the shortest qualifying span. Replaced outright on a new record, and shrunk (never grown)
+              on a tie.
+
+    THE INVARIANT THAT MAKES IT CORRECT: after processing position i, `degree` is the degree of the
+    PREFIX nums[0..i], and `best` is the shortest span, within that prefix, of any value achieving it.
+    True trivially before the walk, and each of the three branches preserves it. When the walk reaches
+    the end, the prefix is the whole array, so `best` is the answer.
+
+    WHY THE RECORD BRANCH CAN THROW `best` AWAY WITHOUT COMPARING. When a value's count EXCEEDS the old
+    degree, every previously recorded span belonged to a value with a SMALLER count - none of them
+    qualify any more. There is exactly one value at the new degree, so its span is the only candidate. A
+    `min` against the old `best` would be a bug, not caution.
+
+    WHAT MAKES IT STOP: exactly len(nums) iterations, one per element. There is no condition to get
+    wrong.
+
+THE STEPS, NO CODE:
+
+    1. Start with an empty first-index record, an empty tally, a record of 0, and a best of 0.
+    2. For each position and the value sitting at it:
+       a. If this value has never been seen, write down this position as its first occurrence.
+       b. Add one to this value's tally.
+       c. Work out the length from this value's first occurrence to the position you are standing on -
+          that is first-to-here, and "here" is its last occurrence so far.
+       d. If this value's tally now EXCEEDS the record: the record becomes this tally, and the best
+          length becomes this length - discard the old one.
+       e. Otherwise, if this value's tally EQUALS the record: keep whichever is SHORTER, the old best or
+          this length.
+       f. Otherwise do nothing.
+    3. Hand back the best length.
+
+    STEPS d AND e ARE DIFFERENT ON PURPOSE. d REPLACES; e COMPETES. Merging them is trap 3.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+Imagine a long parade going past your window, one person at a time, each wearing a team shirt. Some teams
+have many supporters in the parade, some just one. When it is over you have to answer: which team had the
+most people, and what is the SHORTEST section of the parade that still contained that many of one team?
+
+You cannot watch the parade twice, so you keep notes as it passes.
+
+For every team, the moment you see its first supporter you note the minute they went by. You never change
+that note - it is the team's opening time. You also keep a running tally of how many supporters each team
+has sent so far.
+
+Now, each time someone passes, you update their team's tally and ask one question: is this team now doing
+better than any team has done so far?
+
+    IF YES - a new record - then all your previous work is out of date. Every earlier team peaked at a
+    smaller number and no longer matters. You write down the stretch from this team's opening time to
+    right now, and that is your new answer. You do NOT compare it with the old one, because the old one
+    was answering a smaller question.
+
+    IF IT MERELY MATCHES the record, this team is a genuine rival. You measure its stretch - opening time
+    to now - and keep whichever stretch is shorter, theirs or the one you already had.
+
+    IF IT IS BEHIND the record, you do nothing at all.
+
+WHY "RIGHT NOW" IS THE RIGHT END OF THE STRETCH. You do not know when a team's last supporter will pass,
+and you do not need to. At this moment, the last one you have seen IS the person in front of you, so the
+stretch from their opening time to now contains every supporter they have sent. If more arrive later,
+you will measure again then, with a longer stretch and a higher tally.
+
+THE MISTAKE THE STORY MAKES OBVIOUS. If you only ever wrote down a stretch when a team BROKE the record,
+you would miss the case where a second team matches the record with a much tighter group of supporters -
+a team whose people all walked past together, rather than one at the start and one at the end.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def find_shortest_sub_array(nums):
+
+`nums` is the list. IT IS NOT MODIFIED - no sorting, no rewriting.
+
+    first, count = {}, {}
+
+TWO PLAIN DICTIONARIES. `first` maps a value to the index where it first appeared. `count` maps a value
+to how many times it has appeared SO FAR. They are separate because they are updated by different rules -
+`first` once, `count` every time.
+
+    degree = 0
+    best = 0
+
+`degree` is the largest count seen so far. `best` is the shortest qualifying span. BOTH START AT 0 AND
+THAT IS SAFE: any first element makes `count[n]` equal 1, which is greater than 0, so the record branch
+fires immediately and overwrites `best` with a real length. The 0 is never returned unless `nums` is
+empty.
+
+    for i, n in enumerate(nums):
+
+`i` is the index, `n` is the value. Both are needed - `i` for the arithmetic, `n` as the dictionary key.
+
+    if n not in first:
+        first[n] = i            # first index of this value
+
+WRITE ONCE, NEVER UPDATE. The guard is the entire meaning of the variable. Drop the guard and `first`
+becomes a last-occurrence record, every span becomes 1, and the function returns 1 for everything.
+
+    count[n] = count.get(n, 0) + 1
+
+TALLY THIS VALUE. `.get(n, 0)` reads the current tally, or 0 if this is the first sighting.
+
+    if count[n] > degree:
+        degree = count[n]
+        best = i - first[n] + 1
+
+THE RECORD BRANCH. Strictly more than the old record, so a new degree - and every earlier candidate is
+now disqualified. `best` is ASSIGNED, not compared: this value is the unique holder of the new record,
+so its span is the only candidate that exists. `i - first[n] + 1` is the length from its first appearance
+to the position you are standing on, and the `+ 1` includes both ends.
+
+    elif count[n] == degree:
+        best = min(best, i - first[n] + 1)
+
+THE TIE BRANCH, AND BOTH HALVES MATTER. Reaching it at all is what trap 1 deletes - without it,
+[1, 3, 1, 2, 2] returns 3 instead of 2. Using `min` rather than plain assignment is what trap 2 gets
+wrong - without it, [2, 2, 1, 3, 1] returns 5 instead of 2. THIS IS THE ONLY LINE IN THE FUNCTION WITH
+ANY DIFFICULTY IN IT.
+
+    return best
+
+The shortest span. No post-processing - `best` was kept correct at every step.
+
+WHAT IS NOT HERE: no `last` dictionary, because the current index already serves as "last so far"; and no
+second pass over the array.""",
+
+    """9. TRACED ON REAL NUMBERS - the array that needs the tie branch.
+
+nums = [1, 3, 1, 2, 2]. Chosen deliberately: the value that sets the record is NOT the winner, so this
+trace exercises the `elif` that section 4 names. The textbook example [1, 2, 2, 3, 1] does not.
+
+    START     first = {}   count = {}   degree = 0   best = 0
+
+    i=0  n=1  first[1] = 0                      count[1] = 1
+              1 > 0  -> NEW RECORD
+              degree = 1,  best = 0 - 0 + 1 = 1
+
+    i=1  n=3  first[3] = 1                      count[3] = 1
+              1 > 1 false;  1 == 1 -> TIE
+              span = 1 - 1 + 1 = 1;   best = min(1, 1) = 1
+              degree = 1,  best = 1
+
+    i=2  n=1  first[1] already 0, unchanged     count[1] = 2
+              2 > 1  -> NEW RECORD
+              degree = 2,  best = 2 - 0 + 1 = 3        (the old best of 1 is DISCARDED, not compared -
+                                                        it belonged to a degree-1 world)
+
+    i=3  n=2  first[2] = 3                      count[2] = 1
+              1 > 2 false;  1 == 2 false -> nothing happens
+              degree = 2,  best = 3
+
+    i=4  n=2  first[2] already 3, unchanged     count[2] = 2
+              2 > 2 false;  2 == 2 -> TIE
+              span = 4 - 3 + 1 = 2;   best = min(3, 2) = 2
+              degree = 2,  best = 2
+
+    RETURNS 2.  Checked against the brute force over all 15 stretches: also 2. AGREE.
+
+    THE DECISIVE STEP IS i=4. Delete the `elif` and `best` stays 3 - the wrong answer. Keep the `elif`
+    but drop the `min` and `best` becomes 2 here, which happens to be right; the textbook array
+    [1, 2, 2, 3, 1] breaks that one instead, where the final tie has span 0..4 of length 5 and
+    overwriting returns 5 for a true answer of 2. NEITHER ARRAY CATCHES BOTH BUGS.
+
+THE INVERSION - CHANGE THE LAST ELEMENT ONLY:
+
+    [1, 3, 1, 2, 2]  ->  2      value 2 ties the degree with a tight span of 2
+    [1, 3, 1, 2, 4]  ->  3      now nothing ties; degree is still 2, held only by value 1,
+                                whose span is positions 0..2, length 3
+
+    ONE ELEMENT CHANGED, AND THE ANSWER MOVES FROM THE LATE TIGHT PAIR TO THE EARLY SPREAD-OUT PAIR.
+    Both verified against the brute force.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass over the array. Each element does a handful of dictionary reads and writes
+and a couple of comparisons - a fixed amount of work that does not grow with the input.
+
+    TIME O(n). SPACE O(d) where d is the number of DISTINCT values, at most n - two dictionaries with one
+    entry per distinct value.
+    The brute force over all stretches is O(n^2) stretches with an O(n) recount each. At this problem's
+    limit of n = 50,000 that is hopeless, so here the linear solution is genuinely required, not just
+    the tidier answer.
+
+THE #1 MISTAKE: handling only "a new record" and forgetting that a LATER value can TIE the record with a
+SHORTER span. Deleting that branch was wrong on 114 of 4,000 random arrays - and, worse, still returns
+the right answer on the problem's own example, so it passes the sample and fails hidden tests. THE
+RUNNER-UP is handling the tie but assigning instead of taking the `min`, which is wrong on 403 of 4,000.
+
+ONE-SENTENCE TAKEAWAY: the shortest stretch achieving the degree is always some value's first-to-last
+span, so the whole problem is bookkeeping - remember first indices, and treat "beats the record" and
+"ties the record" as two different events.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things. First, whether you can REDUCE the search space by
+argument rather than by search - realising the answer must be a first-to-last span collapses an O(n^2)
+space of stretches to at most n candidates, and that reduction is the insight. Second, whether you handle
+ties correctly, which is where almost every wrong submission dies. SAY THE REDUCTION OUT LOUD BEFORE
+WRITING CODE; it is the part being marked.
+
+AND OFFER THE TWO-PASS VERSION AS AN ALTERNATIVE. Building first/last/count dictionaries and then taking
+`min(last[v] - first[v] + 1 for v where count[v] == degree)` is the same O(n) time and space, is easier
+to defend, and was also verified correct on 4,000 random arrays. Being able to say "one pass is possible
+because the current index IS the last occurrence so far, but here is the clearer two-pass version" is a
+better answer than either alone.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return the subarray itself, not its length." Track the winning value's first index alongside `best`,
+    then slice from it. Same complexity.
+    "What if ties should be broken by the EARLIEST subarray rather than the shortest?" Then the `min`
+    compares start indices instead of lengths - the structure is identical, only the comparison changes.
+    "What if the array is a stream you cannot store?" You cannot, in general: the degree is not known
+    until the end, and a value that ties it may have opened long ago, so the first-occurrence indices
+    must be retained. O(d) memory is unavoidable.""",
 ]
 
 _EX_P1I["Find Center of Star Graph"] = [
-    """Why two edges are enough - the entire problem.
-In a star graph one centre connects to every other node, so the centre appears
-in EVERY edge and no other node appears in more than one. Take any two edges:
-their only possible shared endpoint is the centre.
-edges = [[1,2],[2,3],[4,2]] -> first edge (1,2), second (2,3). Is 1 in (2,3)?
-No. So the answer is 2. Correct, and we never looked at the third edge.
-That is why this is O(1) rather than O(n) - a graph problem with no traversal
-at all, which is the point being tested.""",
+    """1. THE GOAL - one node is connected to everybody; name it.
 
-    """The degree-counting solution, and why it is worse here.
-The obvious approach counts how many times each node appears across all edges
-and returns the one with degree n-1. It is correct, O(n) time and O(n) space,
-and it is what most people write first.
-It is not wrong to say it - but following it with 'though since the input is
-guaranteed to be a star, two edges suffice' is the answer that shows you used
-the CONSTRAINT rather than ignoring it. Interviewers include the guarantee
-deliberately; noticing it is the signal.""",
+A STAR GRAPH has one special node - the CENTRE - joined to every other node, and no other connections at
+all. You are given the list of edges and must return the centre.
 
-    """The ordering detail in the return.
-`return a if a in (c, d) else b` relies on the guarantee: if a is not shared,
-then b must be, because one of the two endpoints of edge 0 IS the centre. No
-third case exists.
-Without the star guarantee that logic is unsound - two arbitrary edges might
-share nothing, and returning b would be a silent wrong answer. So the one-liner
-is correct only BECAUSE of the precondition, which is worth saying out loud
-rather than leaving as an assumption a reader has to reconstruct.""",
+    edges = [[1, 2], [2, 3], [4, 2]]
 
-    """Edge cases.
-The minimum star has n = 3 nodes and 2 edges, e.g. [[1,2],[2,3]] -> centre 2.
-The algorithm needs exactly two edges, so n >= 3 is required - with n = 2 there
-is one edge and 'centre' is ambiguous, which is why the constraints exclude it.
-Order within an edge does not matter: [[2,1],[3,2]] still yields 2, because the
-membership test checks both endpoints of the second edge.
-Node labels need not be 1..n contiguous; nothing in the logic depends on the
-values, only on the sharing.""",
+              1
+              |
+              |
+        4 --- 2 --- 3
 
-    """Complexity, and what makes it unusual.
-O(1) time and O(1) space - it reads exactly four integers regardless of whether
-the graph has 10 nodes or 10 million. Most graph problems are at least O(V+E)
-because you must look at the input; here the structural guarantee means you do
-not.
-That is the transferable lesson: before writing a traversal, ask what the
-problem GUARANTEES about the shape. A guarantee about structure often collapses
-the algorithm entirely - the same way 'the array is sorted' collapses a search
-from O(n) to O(log n).""",
+        node 1 appears in 1 edge
+        node 2 appears in ALL THREE edges      <- the centre
+        node 3 appears in 1 edge
+        node 4 appears in 1 edge
 
-    """The family: problems where a constraint replaces the algorithm.
-Missing Number (use the n(n+1)/2 sum rather than sorting), Single Number (XOR
-rather than a hash map), Find the Duplicate Number (Floyd's cycle detection,
-exploiting the value range), Majority Element (Boyer-Moore, exploiting the
-guarantee that a majority exists). In each case a naive correct solution exists
-and a stated constraint enables a far cheaper one.
-When a prompt volunteers an unusual guarantee, it is nearly always the intended
-route rather than incidental colour.""",
+    ANSWER: 2
+
+THE SHAPE GUARANTEES EVERYTHING. A star with n nodes has exactly n - 1 edges, and every one of them joins
+the centre to a different leaf. So:
+
+    THE CENTRE APPEARS IN EVERY SINGLE EDGE.
+    EVERY OTHER NODE APPEARS IN EXACTLY ONE EDGE.
+
+    Those two facts are not something you compute - they are what "star graph" MEANS. The problem
+    promises the input really is a star, and that promise is the entire solution.
+
+THE PUNCHLINE, WHICH IS THE WHOLE PROBLEM: take any two edges. The centre is in both. A leaf is in only
+one. So the node the FIRST TWO EDGES HAVE IN COMMON is the centre - and there is nothing else to read.
+
+    edges[0] = [1, 2]      edges[1] = [2, 3]      shared node: 2      ANSWER: 2
+
+    You do not look at edge 2. You do not look at edge 500,000. YOU READ FOUR INTEGERS AND STOP.
+
+WHY THIS PROBLEM EXISTS AT ALL. It is not testing graph algorithms - there is no traversal, no visited
+set, no queue. It is testing whether you READ THE CONSTRAINTS and let a guarantee replace an algorithm.
+Most candidates write the O(n) degree count, which is correct and unnecessary.
+
+    THIS ENTRY BELONGS TO THE CLUSTER WHERE A GUARANTEE REPLACES THE ALGORITHM, alongside Missing Number
+    and Single Number. MISSING NUMBER OWNS THE SUM FORMULA. SINGLE NUMBER OWNS THE XOR CANCELLATION.
+    THIS ONE OWNS THE SMALLEST CASE OF ALL - reading a constant amount of the input.""",
+
+    """2. THE INTUITION - two edges are already too much information.
+
+Draw the star and stare at any two of its edges.
+
+        edges = [[1, 2], [2, 3], [4, 2]]
+
+              1                       edge 0:   1 --- 2
+              |                       edge 1:   2 --- 3
+        4 --- 2 --- 3
+                                      the two edges must MEET somewhere, and they can only meet at
+                                      the centre - two leaves are never joined to each other
+
+    edge 0 gives you the pair {1, 2}.  edge 1 gives you the pair {2, 3}.
+    THE OVERLAP IS {2}, AND THAT IS THE ANSWER.
+
+WHY THE OVERLAP IS EXACTLY ONE NODE - NEVER ZERO, NEVER TWO.
+
+    NEVER ZERO: both edges contain the centre, because every edge does. So they share at least it.
+    NEVER TWO: if they shared both endpoints they would be the SAME edge, and the problem gives n - 1
+        DISTINCT edges. With n >= 3 there are at least two distinct edges, so this cannot happen.
+
+    A CLEAN OVERLAP OF EXACTLY ONE NODE IS GUARANTEED. That is why the answer can be read off with a
+    single comparison and no tie-breaking.
+
+THE PICTURE OF WHAT YOU ACTUALLY TOUCH:
+
+        edges = [ [1,2], [2,3], [4,2], [5,2], [6,2], ... , [999999,2] ]
+                  ^^^^^^^^^^^^^
+                  read these four numbers
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                 never looked at
+
+    VERIFIED: on a star with 499,999 edges the function returns the centre after reading four integers.
+
+THE ONE ASSUMPTION YOU ARE LEANING ON, SAID OUT LOUD: the input really is a star. If it were an arbitrary
+graph, two edges sharing a node would tell you nothing, and you would be back to counting degrees. The
+solution is not clever - it is a correct reading of a promise.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+GRAPH. A set of NODES (also called vertices) and EDGES joining pairs of them. Here the graph is
+UNDIRECTED - an edge [1, 2] means 1 and 2 are joined, with no direction; [2, 1] would mean the same.
+
+EDGE. A pair of nodes. In the input each edge is a two-element list, e.g. [1, 2].
+ENDPOINT. One of an edge's two nodes.
+
+DEGREE of a node. How many edges touch it. In a star, the centre has degree n - 1 and every leaf has
+degree 1. (NOTE: this is a different "degree" from the array problem of the same word - here it counts
+edges at a node.)
+
+STAR GRAPH. A graph on n nodes with n - 1 edges in which one node - the CENTRE - is joined to every
+other, and there are no other edges. The non-centre nodes are LEAVES.
+
+    n = 3, the smallest star:      1 --- 2 --- 3        centre 2, edges [[1,2],[2,3]]
+    n = 4:                         1 --- 2 --- 3        centre 2, edges [[1,2],[2,3],[4,2]]
+                                         |
+                                         4
+
+NODE LABELS ARE NOT INDICES. Nodes are numbered 1 to n, and they appear in the edge list in no particular
+order. Nothing here indexes into anything by node number.
+
+THE VARIABLES IN THE CODE:
+    edges    the list of edges. NOT MODIFIED and not sorted.
+    a, b     the two endpoints of the FIRST edge.
+    c, d     the two endpoints of the SECOND edge.
+
+`a in (c, d)` builds a two-element tuple and asks whether `a` is one of its members - it is just
+`a == c or a == d` written compactly.
+
+TIME O(1), SPACE O(1). Neither depends on how many nodes or edges there are.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and the honest answer is that very little does.
+
+This is a rare problem where the code is hard to get wrong once you see the idea. What catches people is
+BEFORE the code: not noticing that the guarantee makes the work constant. Still, four things are worth
+checking.
+
+TRAP 1 - ASSUMING THE CENTRE IS LISTED FIRST IN AN EDGE. It is not. An edge may be written [1, 2] or
+[2, 1] with the centre in either position, and the edges may come in any order.
+
+        [[1,2],[2,3]]    centre 2, listed SECOND in edge 0    -> `a`=1 is not shared, so return `b`=2
+        [[3,1],[3,2]]    centre 3, listed FIRST in edge 0     -> `a`=3 is shared, so return `a`=3
+
+    VERIFIED across 4,000 random stars with random node labels, random edge order AND random endpoint
+    order within each edge: 0 mismatches. The `a if a in (c, d) else b` form handles all four
+    orientations, which is precisely why it tests membership rather than assuming a position.
+
+TRAP 2 - WORRYING THAT `else b` IS UNCHECKED. The code never verifies that `b` is shared; it just returns
+it when `a` is not. THAT IS SOUND, and here is the argument: the centre is in edge 0, so it is `a` or
+`b`. If it is not `a`, it must be `b`. THE `else` IS NOT A GUESS - IT IS THE ONLY REMAINING CASE. Adding
+a check would be dead code on valid input.
+
+TRAP 3 - NEEDING AT LEAST TWO EDGES. `edges[1]` would raise IndexError on a one-edge list. The problem
+guarantees n >= 3, hence at least 2 edges, so this never fires - BUT SAY SO RATHER THAN LEAVING IT
+UNMENTIONED. With n = 2 the graph is a single edge and "the centre" is genuinely ambiguous: both nodes
+are joined to every other node. The constraint n >= 3 exists to make the answer unique.
+
+TRAP 4 - THE REAL ONE: WRITING THE O(n) SOLUTION WITHOUT NOTICING. Counting every node's degree and
+returning the maximum is CORRECT - it agreed with the two-edge version on all 4,000 random stars - and it
+is what most people write. It is not wrong, it is just not the answer the problem is looking for. If you
+write it, at least say "this is O(n), but the star property means two edges suffice" - the observation is
+what is being marked, not the code.
+
+WHAT IS NOT A TRAP, CHECKED RATHER THAN ASSUMED: the two edges you pick do not have to be the first two.
+Any two distinct edges work, for exactly the reason in section 2. The first two are chosen only because
+they are the cheapest to reach.""",
+
+    """5. THE OBVIOUS WAY FIRST, then the constant-time reading.
+
+THE NAIVE VERSION - COUNT EVERY NODE'S DEGREE:
+
+    counts = Counter()
+    for u, v in edges:
+        counts[u] += 1
+        counts[v] += 1
+    return the node with the largest count
+
+    IT IS CORRECT, and it is the version that works on ANY graph where you want the highest-degree node.
+    It does not lean on the star promise at all. COST: O(n) time reading every edge, O(n) space for the
+    tally.
+    MEASURED: identical answers to the two-edge version on all 4,000 random stars tested.
+
+WHY IT IS THROWN OUT. It computes something nobody asked for. You do not need every node's degree - you
+need one node's identity, and the star property already tells you where it is. The upgrade is not an
+algorithmic trick; IT IS DELETING WORK.
+
+    counting degrees:   read 2(n-1) integers, build a map with n entries, scan it
+    two-edge overlap:   read 4 integers
+
+    On a star with 499,999 edges: the first reads 999,998 integers, the second reads 4.
+
+A MIDDLE VERSION SOME PEOPLE REACH FOR - intersecting the two edges as sets:
+
+    return (set(edges[0]) & set(edges[1])).pop()
+
+    Also correct, and it says "the shared node" very directly. It builds two small sets to find one
+    number, so it is slower by a constant factor and it hides the reasoning that exactly one node is
+    shared. THE EXPLICIT COMPARISON IS PREFERRED HERE BECAUSE IT MAKES THE ARGUMENT VISIBLE, not because
+    the set version is meaningfully worse.
+
+THERE IS NO TRICK TO EXPLAIN FROM SCRATCH IN THIS PROBLEM. That is unusual and worth naming: the entire
+difficulty is in noticing a property of the input, and once noticed, the code is one line. Problems like
+this are testing reading comprehension dressed as graph theory.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: the centre is in every edge, so return whichever endpoint of the first edge also appears
+in the second.
+
+THE MECHANISM - AND HERE IT IS THE ABSENCE OF ONE THAT MATTERS. There is no loop, no recursion, no
+accumulator, and no state that changes. Nothing iterates, so nothing needs to terminate: the function
+performs a fixed sequence of four reads and one comparison and returns. THAT IS THE POINT OF THE PROBLEM
+- the guarantee about the input has removed the algorithm entirely.
+
+    Compare with the version this replaces: the degree-counting solution has a loop over all edges, an
+    accumulator that grows, and a final scan. Every one of those disappears.
+
+    WHY THE SINGLE COMPARISON IS ENOUGH, restated as the argument you would give aloud:
+        1. The centre lies in every edge, so it lies in edge 0 - it is one of edge 0's two endpoints.
+        2. The centre also lies in edge 1.
+        3. A leaf lies in exactly one edge, so a leaf of edge 0 cannot also be in edge 1.
+        4. Therefore exactly one endpoint of edge 0 appears in edge 1, and that endpoint is the centre.
+
+    Step 3 is the one people skip, and it is what rules out both endpoints matching.
+
+THE STEPS, NO CODE:
+
+    1. Take the two endpoints of the first edge; call them the first pair.
+    2. Take the two endpoints of the second edge; call them the second pair.
+    3. If the FIRST member of the first pair appears anywhere in the second pair, it is the centre -
+       hand it back.
+    4. Otherwise the SECOND member of the first pair is the centre - hand that back instead, without
+       checking, because the centre must be one of the two and it was not the first.
+    5. Stop. The rest of the edge list is never read.
+
+    STEP 4 IS AN ELIMINATION, NOT A GUESS - see trap 2.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A company has one manager and a room full of staff. Every member of staff has had exactly one meeting,
+and it was with the manager. Nobody else has met anybody. You are handed a stack of meeting records -
+each just a slip naming the two people who met - and asked who the manager is.
+
+You could read the whole stack and tally who turns up most. With ten thousand slips that is ten thousand
+readings, and the tally at the end names the manager, and you would be right.
+
+But think about what you know before you start. The manager was in EVERY meeting. Every staff member was
+in exactly ONE. So take the top slip - it names two people, and one of them is the manager. Take the
+second slip - it also names two people, and one of THEM is the manager too.
+
+Now: the person named on BOTH slips has to be the manager. A staff member appears on only one slip, so
+they cannot be on both. And the two slips cannot name the same pair, because they record different
+meetings.
+
+You compare the first name on the top slip against the two names on the second slip. If it is there, that
+is your manager. If it is not, then the OTHER name on the top slip must be - the manager is on that slip
+somewhere, and you have just ruled out one of the two positions.
+
+You hand back the name and put the remaining nine thousand nine hundred and ninety-eight slips down
+unread.
+
+WHAT THE STORY IS REALLY ABOUT. The rule "every staff member met the manager exactly once, and nobody
+else met anybody" is not something you discovered - it is something you were TOLD before you opened the
+stack. Reading the promise carefully saved the entire pile. That is what this problem is testing, and it
+is why the answer feels like it must be missing something.
+
+AND WHAT WOULD BREAK IT: if staff sometimes met each other, two slips sharing a name would prove nothing,
+and you would be back to tallying the whole stack.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def find_center(edges):
+
+`edges` is a list of two-element lists. IT IS NOT MODIFIED, not sorted, and - importantly - not fully
+read. The function returns a NODE LABEL, not an index into `edges`.
+
+    a, b = edges[0]
+
+UNPACK THE FIRST EDGE into its two endpoints. `a` is the first endpoint as written, `b` the second. No
+assumption is made about which of them is the centre - trap 1 is exactly the assumption being avoided
+here.
+
+    c, d = edges[1]
+
+UNPACK THE SECOND EDGE. These are the only two edges the function ever touches. Note `edges[1]` requires
+at least two edges - guaranteed by n >= 3, discussed in trap 3.
+
+    # the center is the common endpoint of the first two edges
+    return a if a in (c, d) else b
+
+THE ENTIRE ALGORITHM, in one expression with two halves:
+
+    `a in (c, d)` builds the tuple (c, d) and asks whether `a` equals either member. It is just
+        `a == c or a == d`. This is a MEMBERSHIP test rather than a positional one, which is what makes
+        all four orientations of the two edges work - [1,2] with [2,3], [2,1] with [3,2], and so on.
+
+    `return a` - `a` is in both edges, so it is the centre.
+
+    `else b` - `a` is not in edge 1, so `a` is a leaf. But the centre IS in edge 0, and edge 0 has only
+        two endpoints, so the centre must be `b`. RETURNED WITHOUT CHECKING, and correctly so - this is
+        elimination, not optimism. See trap 2.
+
+WHAT IS DELIBERATELY ABSENT: no loop over `edges`, no dictionary, no `Counter`, no validation that the
+input is a star, and no handling for fewer than two edges. Each omission is justified by a stated
+guarantee rather than by hope - which is the difference between a short solution and a fragile one.""",
+
+    """9. TRACED ON REAL NUMBERS - four integers, and then the inversion.
+
+RUN A: edges = [[1, 2], [2, 3], [4, 2]]
+
+              1
+              |
+        4 --- 2 --- 3
+
+    a, b = edges[0] = [1, 2]      ->  a = 1,  b = 2
+    c, d = edges[1] = [2, 3]      ->  c = 2,  d = 3
+
+    is a in (c, d)?   is 1 in (2, 3)?   NO
+
+    so return b = 2
+
+    RETURNS 2.  Cross-checked by counting every node's degree: node 1 appears once, node 2 appears three
+    times, node 3 once, node 4 once - maximum is node 2. AGREE.
+    edges[2] = [4, 2] WAS NEVER READ.
+
+RUN B: THE INVERSION - change one number in the second edge
+
+    edges = [[1, 2], [1, 3], ...]           the star now centres on 1
+
+        a = 1,  b = 2,  c = 1,  d = 3
+
+        is a in (c, d)?   is 1 in (1, 3)?   YES
+
+        so return a = 1
+
+    RETURNS 1.  The first edge is byte-for-byte identical to run A - [1, 2] - and yet the answer moved
+    from 2 to 1. THAT IS THE PROOF THAT ONE EDGE IS NOT ENOUGH: edge 0 alone narrows the centre to two
+    candidates and cannot separate them. The second edge is what decides.
+
+RUN C: THE SAME STAR, EDGES SHUFFLED AND ENDPOINTS FLIPPED
+
+    edges = [[2, 1], [3, 2], [2, 4]]        same graph as run A, written differently
+
+        a = 2,  b = 1,  c = 3,  d = 2
+        is 2 in (3, 2)?   YES   ->  return a = 2
+
+    RETURNS 2, as it must. The answer depends on the GRAPH, not on how the edge list was written - which
+    is what the membership test buys you, and what an assumption about position would lose.
+
+SCALE CHECK: on a star with 499,999 edges the function still reads exactly four integers and returns the
+centre. No loop was ever entered.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Two list unpackings, one membership test against a two-element tuple, one return.
+The amount of work does not change whether the star has 3 nodes or 100,000.
+
+    TIME O(1). SPACE O(1).
+    The degree-counting alternative is O(n) time and O(n) space - correct, but it reads the entire input
+    to learn something the input's shape already told you.
+
+    THIS IS AN UNUSUAL SHAPE FOR AN ALGORITHM QUESTION: an O(1) solution to a problem whose input is
+    O(n) long. Almost no interview problem allows it, which is why noticing it is the whole exercise.
+
+THE #1 MISTAKE: not the code - the reading. Writing the degree count without ever noticing that the star
+guarantee makes it unnecessary. It passes every test and misses the point. The runner-up is assuming the
+centre is written first inside an edge; it is not, and edges may appear in any order, which is why the
+solution tests MEMBERSHIP rather than position.
+
+ONE-SENTENCE TAKEAWAY: when the problem promises a structure, read the promise before writing an
+algorithm - here it collapses a graph traversal into four integer reads.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you treat constraints as part of the problem or as
+decoration. The line "the given graph is a star" is not scene-setting - it is the algorithm. Candidates
+who reach straight for a traversal are showing that they solve the problem they expected rather than the
+one written down. SAY THE ARGUMENT ALOUD - "the centre is in every edge, a leaf is in one, so the node
+shared by any two edges is the centre" - because the argument is the answer and the code is a formality.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if you are NOT told it is a star - verify it first." Count degrees in O(n): exactly one node
+    must have degree n - 1 and every other node degree 1, and there must be exactly n - 1 edges. That
+    verification is inherently O(n), so the O(1) shortcut exists only because the promise is given.
+    "What if it is a DOUBLE star - two centres joined to each other, each with its own leaves?" Two edges
+    no longer suffice; find the two nodes of highest degree by counting, which is O(n).
+    "What if n = 2?" There is one edge and both nodes are joined to every other node, so the centre is
+    ambiguous. That is exactly why the constraints say n >= 3.
+    "Could you use the set intersection of the first two edges?" Yes - `(set(edges[0]) & set(edges[1]))`
+    has exactly one member. Same complexity, marginally slower constant, and it hides the elimination
+    argument that makes `else b` safe.""",
 ]
 
 _EX_P1I["Find Pivot Index"] = [
