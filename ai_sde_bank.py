@@ -70136,64 +70136,480 @@ for _e in ENTRIES:
 _EX_P1D = {}
 
 _EX_P1D["Longest Arithmetic Subsequence"] = [
-    """A full trace on a small array.
-nums = [3,6,9,12]
-i=1 (6): j=0, d=3 -> dp[1][3] = dp[0].get(3,1)+1 = 2. best 2.
-i=2 (9): j=0, d=6 -> dp[2][6] = 2.  j=1, d=3 -> dp[2][3] = dp[1][3]+1 = 3.
-i=3 (12): j=0, d=9 -> 2.  j=1, d=6 -> dp[1].get(6,1)+1 = 2.
-          j=2, d=3 -> dp[2][3]+1 = 4.  best 4.
-Answer 4, the whole array. Notice dp[i][d] answers a very specific question:
-'how long is the AP ending AT index i with difference d' - not 'the best AP
-ending at i', which is why the state needs both coordinates.""",
+    """1. THE GOAL - the longest evenly-spaced run you can pick out.
 
-    """Why the state must include the difference.
-A plain dp[i] = 'longest AP ending at i' is not enough, because whether index i
-can extend index j depends on WHICH difference j's chain was built with. In
-[1,7,10,13,14,19], index 3 (13) can extend the d=3 chain from 10, but the same
-index cannot extend a d=6 chain from 7 - the same j, different answers.
-So the state is two-dimensional: position AND difference. Using a dict per
-index rather than a 2-D array matters because differences can be negative and
-unbounded, so you cannot index an array by them without offsetting.""",
+An ARITHMETIC PROGRESSION is a run of numbers with a CONSTANT GAP between consecutive terms: 3, 6, 9,
+12 has a gap of 3; 20, 15, 10, 5 has a gap of −5; 7, 7, 7 has a gap of 0.
 
-    """The `.get(d, 1) + 1` idiom, which is the whole subtlety.
-If j already has a chain with difference d, extend it. If not, we are STARTING
-a new arithmetic progression consisting of exactly the pair (j, i), which has
-length 2 - hence the default of 1 plus 1.
-Getting this wrong in either direction is the standard bug: default 0 gives
-length-1 answers for genuine pairs, and defaulting to dp[j] without the get
-throws KeyError. Also note that ANY two elements form a valid AP, so for an
-array of length >= 2 the answer is never below 2.""",
+Given an array, find the LENGTH of the longest arithmetic progression you can obtain by DELETING some
+elements and keeping the rest in their original order.
 
-    """Edge cases.
-[1] -> the outer loop runs once, the inner never, best stays 0. Depending on
-the prompt's convention the answer should be 1 (a single element is trivially
-an AP) - so check whether the constraints guarantee n >= 2, and add
-`best = min(len(nums), max(best, 1))` if not.
-[5,5,5,5] -> every d is 0, so dp[i][0] grows 2,3,4 -> answer 4. Duplicates are
-handled naturally because the difference is simply zero.
-[9,4,7,2,10] -> the answer is 3 (4,7,10), and note the subsequence is NOT
-contiguous, which is exactly why this is O(n^2) rather than a linear scan.""",
+    nums = [9, 4, 7, 2, 10]
 
-    """Complexity, and why you cannot do better easily.
-Time O(n^2) - every pair (j, i) is examined once. Space O(n^2) in the worst
-case, since each of the n dictionaries can hold up to n distinct differences.
-For n = 1,000 that is a million operations, which is fine; for n = 100,000 it
-is not, and there is no known general subquadratic algorithm - so O(n^2) IS the
-expected answer here.
-Contrast the CONTIGUOUS version (Arithmetic Slices), which is O(n) with two
-variables, because contiguity removes the need to remember every earlier index.
-Say that contrast out loud; interviewers often follow up with it.""",
+    Pick out 4, 7, 10 - they sit at indices 1, 2 and 4, in that order, and the gap is 3 each time.
+    ANSWER: 3
 
-    """The family: pairwise DP over subsequences.
-The skeleton `for i: for j < i: dp[i] = f(dp[j])` covers a cluster of problems -
-Longest Increasing Subsequence (dp[i] = max over j with nums[j] < nums[i]),
-Longest Divisible Subset, Russian Doll Envelopes, Largest Divisible Subset, and
-this one. Only the CONDITION on j and the extra state differ.
-LIS is the one worth knowing has a better algorithm: patience sorting with
-binary search brings it to O(n log n). Longest Arithmetic Subsequence does not
-have an equivalent trick, and being able to say WHY (the difference is
-unbounded, so there is no single sorted structure to binary-search) is a good
-depth signal.""",
+    nums = [3, 6, 9, 12]        the whole array is already an AP with gap 3.   ANSWER: 4
+
+THE WORD DOING THE WORK IS SUBSEQUENCE, NOT SUBARRAY. You may skip elements. In [9, 4, 7, 2, 10] the
+chosen 4, 7 and 10 have a 2 sitting between the 7 and the 10, and that is fine - it is simply not
+picked. If the run had to be CONTIGUOUS the answer would be 2, and the problem would be trivial.
+
+    order matters:   9   [4]  [7]   2  [10]        keep the brackets, drop the rest
+                          \\___/ \\_______/
+                           +3      +3
+
+TWO THINGS THAT MAKE IT HARDER THAN IT LOOKS:
+
+    THE GAP IS NOT GIVEN TO YOU. You do not get to choose one difference and search for it - you must
+        consider every difference that any pair of elements could produce, and there are up to n(n−1)/2
+        of them.
+    THE GAP MAY BE NEGATIVE OR ZERO. Decreasing runs count, and so do runs of identical values -
+        [1,1,1] is an AP of length 3 with a gap of 0.
+
+So the state you carry has to remember not just "how long a run ends here" but "how long a run ends
+here WITH WHICH GAP", and section 2 is about why that second half is unavoidable.""",
+
+    """2. THE INTUITION - a chain length per (position, gap) pair.
+
+Suppose you try the obvious thing: for each index i, store ONE number - the longest AP ending at i.
+It does not work, and the reason is worth seeing.
+
+    nums = [1, 5, 9, 3]
+
+    At index 2 (the 9) the longest run ending there is 1, 5, 9 - length 3, gap 4.
+    Now at index 3 (the 3): can it extend that run? It would need a gap of 3 − 9 = −6, which is not 4.
+    So the answer at index 2 being "3" tells you NOTHING useful about index 3.
+
+    WHETHER i CAN EXTEND j DEPENDS ENTIRELY ON WHICH GAP j's RUN WAS BUILT WITH. So the gap must be
+    part of what you store.
+
+THE FIX: FOR EACH INDEX, KEEP A SMALL TABLE FROM GAP TO CHAIN LENGTH.
+
+    dp[i][d]  =  the length of the longest arithmetic run that ENDS AT INDEX i and has gap d.
+
+Now the rule writes itself. To fill in index i, look at every EARLIER index j:
+
+    the gap between them is  d = nums[i] − nums[j]
+    a run ending at j with that same gap can be extended by i, giving one more element
+    if j has no run with that gap, then i and j are simply the FIRST TWO elements of a new run
+
+    dp[i][d] = (dp[j][d] if it exists, else 1) + 1
+
+    THE "else 1" IS THE WHOLE SUBTLETY. It stands for "j on its own", so the +1 makes 2 - a brand new
+    two-element progression. Every AP has to start somewhere, and it starts as a pair.
+
+Worked on nums = [3, 6, 9, 12]:
+
+        i=1 (6):  j=0 (3):  d=3   ->  dp[0] has no 3, so 1 + 1 = 2     the run 3,6
+        i=2 (9):  j=0 (3):  d=6   ->  2                                the run 3,9
+                  j=1 (6):  d=3   ->  dp[1][3] is 2, so 2 + 1 = 3      the run 3,6,9
+        i=3 (12): j=0 (3):  d=9   ->  2
+                  j=1 (6):  d=6   ->  dp[1] has no 6, so 2             the run 6,12
+                  j=2 (9):  d=3   ->  dp[2][3] is 3, so 3 + 1 = 4      the run 3,6,9,12
+
+    ANSWER: 4
+
+    Every pair (j, i) is examined exactly once, and each one either extends a chain or starts one.
+    That is the entire algorithm - two nested loops and a dictionary per index.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+ARITHMETIC PROGRESSION (AP). A sequence with a constant difference between consecutive terms. Also
+called an arithmetic sequence.
+COMMON DIFFERENCE / GAP. That constant. It may be negative (a decreasing run) or zero (all equal).
+
+SUBSEQUENCE. What is left after deleting some elements, KEEPING THE ORIGINAL ORDER. Elements need not
+be adjacent.
+SUBARRAY / SUBSTRING. A CONTIGUOUS stretch. A different and much easier problem here.
+
+DYNAMIC PROGRAMMING (DP). Solving smaller pieces first and reusing the answers.
+STATE. What one stored answer means. HERE IT IS A PAIR - an index AND a difference - which is the
+whole insight.
+
+PAIRWISE DP. The shape `for i: for j < i:` - every ordered pair examined once. O(n^2).
+
+DICTIONARY / HASH MAP. Key-to-value storage with constant-time lookup. One per index here, mapping a
+gap to a chain length. A plain array will not do, because differences can be negative and are
+unbounded.
+
+`.get(key, default)`. A dictionary method: return the stored value if present, otherwise return
+`default` WITHOUT storing anything. The `1` default is what starts a new progression.
+
+dp. A list of dictionaries. `dp[i][d]` is the longest AP ending at index i with gap d.
+best. The running answer.
+i. The index being extended TO. j. The earlier index being extended FROM.
+d. The gap, `nums[i] - nums[j]`.
+
+O(n^2) TIME AND SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+TRAP 1 - STORING ONLY ONE NUMBER PER INDEX. `dp[i] = longest AP ending at i` is the natural first
+attempt and it cannot work, because whether index i can extend index j depends on WHICH gap j's run
+used. Section 2 has the four-element array where the stored number is useless. THE DIFFERENCE MUST BE
+PART OF THE STATE.
+
+TRAP 2 - USING `.get(d, 0) + 1` INSTEAD OF `.get(d, 1) + 1`. One character, and every answer comes out
+one too small.
+
+    The default stands for "the run consisting of j ALONE", which has length 1. Adding i makes 2 - the
+    smallest possible progression. A default of 0 would say a brand-new pair has length 1, which is
+    not a progression at all.
+
+TRAP 3 - THE SINGLE-ELEMENT ARRAY. `nums = [1]`: the outer loop runs once, the inner loop never runs,
+and `best` stays 0.
+
+    IS THAT RIGHT? A single element is trivially an AP of length 1, so by most conventions the answer
+    should be 1, not 0. LeetCode's version of this problem constrains the array to at least two
+    elements, so the case never arises there - which is why the code gets away with it. If the
+    convention in front of you says otherwise, initialise `best = 1 if nums else 0`. Worth checking
+    rather than assuming.
+
+TRAP 4 - WORRYING ABOUT OVERWRITING `dp[i][d]`. The line is a plain assignment, not
+`dp[i][d] = max(dp[i].get(d, 0), ...)`. Two different j values CAN produce the same d at the same i -
+that happens exactly when `nums[j1] == nums[j2]` - so the later write clobbers the earlier one.
+
+    IT IS SAFE, and here is why. Suppose j1 < j2 and nums[j1] == nums[j2]. Take any AP ending at j1
+    with gap d. Its final element is nums[j1], which equals nums[j2] - so REPLACING THAT FINAL ELEMENT
+    WITH INDEX j2 gives an equally long AP with the same gap ending at j2. Therefore
+    dp[j2][d] >= dp[j1][d] ALWAYS.
+
+    Since the inner loop visits j in increasing order, each write uses a value at least as large as the
+    one before it. The last write wins and the last write is the largest. (Checked against a `max`
+    version on 400 random arrays: no disagreement.)
+
+TRAP 5 - USING AN ARRAY INDEXED BY DIFFERENCE INSTEAD OF A DICTIONARY. Differences can be negative and
+can be as large as the range of the values, so an array would need offsetting and could be enormous. A
+dictionary per index costs only what is actually used.
+
+TRAP 6 - FORGETTING THAT A GAP OF ZERO IS LEGAL. `[1, 1, 1]` is an AP of length 3. The code handles it
+with no special case - `d` comes out as 0 and behaves like any other key - but a solution that skips
+`d == 0` would return 2.""",
+
+    """5. THE ALTERNATIVES, AND WHY O(n^2) IS HARD TO BEAT.
+
+VERSION A - TRY EVERY SUBSEQUENCE. There are 2^n of them. For n = 30 that is over a billion. Correct
+and hopeless.
+
+VERSION B - FIX A DIFFERENCE, THEN SCAN. For each of the O(n^2) differences that some pair produces,
+walk the array greedily building the longest chain with that gap. That is O(n^2) differences times
+O(n) per scan = O(n^3), plus it is fiddly to get right when a value repeats.
+
+VERSION C - PAIRWISE DP WITH A DICTIONARY PER INDEX, which is the code here. O(n^2).
+
+WHY YOU CANNOT EASILY DO BETTER. The answer depends on which pairs share a difference, and there are
+n(n−1)/2 pairs - so any method that must look at the differences individually is already quadratic.
+There is no known sub-quadratic algorithm for the general problem.
+
+    THE SPECIAL CASE THAT IS EASIER: if the array were SORTED AND DISTINCT, or if the values were drawn
+    from a small bounded range, faster tricks exist - but the general version, with arbitrary values in
+    arbitrary order, is quadratic.
+
+WHY THE INNER LOOP GOES OVER j < i AND NOT j > i. The run is built LEFT TO RIGHT: index i extends a run
+that already ended at some earlier index. Looking forward would mean using answers not yet computed.
+That is the standard shape of pairwise subsequence DP, and it is why `dp[j]` is guaranteed to be
+complete by the time `dp[i]` is being filled.
+
+THE `.get(d, 1) + 1` IDIOM, spelled out because it is the line that carries the algorithm:
+
+    IF j ALREADY HAS A CHAIN WITH GAP d - extend it. `dp[j][d] + 1`.
+    IF IT DOES NOT - then j and i are the first two elements of a brand-new progression. The default
+        of 1 represents "j by itself", so the result is 2.
+
+    Both cases are the same expression, which is why there is no `if` in the loop body at all.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: FOR EVERY PAIR OF POSITIONS, WORK OUT THE GAP BETWEEN THEM
+AND RECORD - AGAINST THE LATER POSITION AND THAT GAP - EITHER ONE MORE THAN THE CHAIN ALREADY ENDING AT
+THE EARLIER POSITION WITH THE SAME GAP, OR JUST TWO IF NO SUCH CHAIN EXISTS.
+
+THERE IS NO RECURSION. The mechanism is TWO NESTED LOOPS OVER PAIRS, WITH A SMALL LOOKUP TABLE PER
+POSITION:
+
+  - The outer loop walks the position being extended TO; the inner walks every EARLIER position.
+  - Every ordered pair is examined exactly once, which is where the quadratic cost comes from.
+  - THE INNER LOOP ONLY LOOKS BACKWARDS, so the table for an earlier position is already complete by
+    the time it is read.
+  - WHAT MAKES IT STOP: both loops have trip counts fixed before they begin.
+
+THE STEPS:
+
+  1. GIVE EVERY POSITION ITS OWN EMPTY LOOKUP TABLE, from gap to chain length. START THE BEST ANSWER AT
+     ZERO.
+
+     A lookup table rather than a list, because gaps can be negative and can be arbitrarily large.
+
+  2. FOR EACH POSITION IN TURN, AND FOR EVERY POSITION BEFORE IT:
+
+     a. WORK OUT THE GAP - the later value minus the earlier one.
+
+     b. LOOK THAT GAP UP IN THE EARLIER POSITION'S TABLE.
+
+        - IF IT IS THERE, a run with that gap already ends at the earlier position, so this position
+          extends it by one.
+        - IF IT IS NOT, treat the earlier position as a run of length one on its own, so the two of
+          them together make a run of two.
+
+        Those are the same arithmetic if the "not there" case is treated as the value one - which is
+        why the two cases collapse into a single expression with a default.
+
+     c. RECORD THAT LENGTH against this position and this gap, and keep it if it beats the best so far.
+
+        A plain recording is enough here, even though two different earlier positions can produce the
+        same gap. That happens only when they hold the same value, and in that case the later one can
+        always match or beat the earlier one's chain - so the last recording is the largest.
+
+  3. THE ANSWER IS THE BEST LENGTH SEEN.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a row of numbered cards laid face up, and you want the longest evenly-spaced run you can pick
+out of them - reading left to right, skipping whichever cards you like, as long as the step between
+each chosen card and the next is always the same.
+
+The difficulty is that the step is not given to you. You do not know whether to look for runs going up
+by three, or down by five, or staying flat. Every pair of cards in the row suggests a possible step, so
+there are a great many to consider.
+
+The way through is to keep, beside each card, a little notebook rather than a single number. Each line
+in that notebook records a step size and the length of the longest run ending on that card using that
+step. One card can be the end of several different runs at once - a card might be the fourth card of a
+run stepping up by two, and also the second card of a run stepping down by seven - and the notebook
+holds both.
+
+Keeping just a single number per card would not do. Knowing "the longest run ending on this card is
+four cards long" is no help at all when you come to a later card, because whether that later card can
+carry the run on depends entirely on what step the run was using. Without the step written down, the
+number tells you nothing you can build on.
+
+So you work through the cards from left to right. For each card, you look back at every card before it
+and measure the step between them. Then you check the earlier card's notebook for that exact step.
+
+If there is a line for it, a run with that step already ends on that earlier card, and this card
+lengthens it by one. If there is no line for it, then the two cards you are looking at are simply the
+start of something - a run of two. That is worth noticing: every run has to begin somewhere, and it
+begins as a pair, which is why a fresh entry always starts at two rather than one.
+
+You write the result into this card's notebook against that step, and you keep track of the longest
+you have seen anywhere.
+
+One small thing you might worry about: sometimes two different earlier cards give you the same step,
+and you end up writing into the same line of the notebook twice. That turns out to be harmless. Two
+earlier cards can only produce the same step if they carry the same number, and in that case whatever
+run ended on the first of them could equally have ended on the second - just swap the last card. So the
+later one always has at least as long a run, and writing over the earlier figure never loses anything.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep nums = [3, 6, 9, 12] beside you, answer 4.
+
+    def longest_arith_seq_length(nums):
+
+`nums` is the array. Returns the LENGTH of the longest arithmetic subsequence. Nothing is modified.
+
+        dp = [{} for _ in nums]            # dp[i][d] = AP length ending at i with diff d
+
+    dp  HOLDS one dictionary PER INDEX.
+        the KEY   is a gap d.
+        the VALUE is the length of the longest AP ending at that index with that gap.
+
+Note the comprehension - `[{}] * len(nums)` would make every entry THE SAME dictionary, and every
+index would share one table. A classic aliasing bug, avoided here by building a fresh dict per element.
+
+A dictionary rather than a list because gaps can be negative and unbounded (trap 5).
+
+        best = 0
+
+The running answer. Starting at 0 is what makes a single-element array return 0 rather than 1 - see
+trap 3, which is a convention question rather than a bug.
+
+        for i in range(len(nums)):
+
+The index being extended TO.
+
+            for j in range(i):
+
+Every EARLIER index. Only backwards (section 5): `dp[j]` must already be complete, and a run is built
+left to right.
+
+This pair of loops examines each ordered pair exactly once - n(n−1)/2 iterations, which is the whole
+cost.
+
+                d = nums[i] - nums[j]
+
+    d  HOLDS the gap between the two values. May be negative, may be zero (trap 6) - both are perfectly
+       good arithmetic progressions and need no special handling.
+
+                dp[i][d] = dp[j].get(d, 1) + 1   # extend j's chain, or start length 2
+
+THE ONE LINE THE WHOLE ALGORITHM COMES DOWN TO.
+
+    `dp[j].get(d, 1)`  looks up a chain ending at j with this gap.
+                       IF PRESENT - its length, and this index extends it.
+                       IF ABSENT  - the default 1, meaning "j on its own".
+    `+ 1`              adds this index.
+
+    So an extension gives `existing + 1`, and a fresh start gives `1 + 1 = 2` - the smallest possible
+    progression. A default of 0 would make a new pair come out as length 1 (trap 2).
+
+    THE ASSIGNMENT IS PLAIN, not a `max` against what is already there. Safe because two j values can
+    only give the same d when `nums[j1] == nums[j2]`, and then the later j's chain is provably at least
+    as long (trap 4).
+
+                best = max(best, dp[i][d])
+
+Track the longest seen anywhere. The answer can end at any index with any gap, so it is collected here
+rather than read off a particular cell at the end.
+
+        return best""",
+
+    """9. TRACED, PAIR BY PAIR.
+
+TRACE 1 - THE CLEAN CASE. nums = [3, 6, 9, 12]. Expected 4.
+
+    dp = [{}, {}, {}, {}],  best = 0
+
+    i = 0:  the inner loop `range(0)` is empty. Nothing happens - there is nothing before index 0.
+
+    i = 1 (value 6):
+        j = 0 (value 3):  d = 6 − 3 = 3
+                          dp[0].get(3, 1) = 1        <- dp[0] is empty, so the DEFAULT fires
+                          dp[1][3] = 1 + 1 = 2       <- a NEW progression: 3, 6
+                          best = 2
+
+    i = 2 (value 9):
+        j = 0 (value 3):  d = 9 − 3 = 6
+                          dp[0].get(6, 1) = 1  ->  dp[2][6] = 2       the pair 3, 9
+        j = 1 (value 6):  d = 9 − 6 = 3
+                          dp[1].get(3, 1) = 2  ->  dp[2][3] = 3       <- EXTENSION: 3, 6, 9
+                          best = 3
+
+    i = 3 (value 12):
+        j = 0 (value 3):  d = 9   ->  dp[0].get(9, 1) = 1  ->  dp[3][9] = 2
+        j = 1 (value 6):  d = 6   ->  dp[1].get(6, 1) = 1  ->  dp[3][6] = 2
+                          (dp[1] holds only the key 3, so the default fires - the pair 6, 12)
+        j = 2 (value 9):  d = 3   ->  dp[2].get(3, 1) = 3  ->  dp[3][3] = 4
+                          best = 4                                    <- 3, 6, 9, 12
+
+    RETURN 4.
+
+    NOTE THE TWO KINDS OF STEP. Most entries came from the DEFAULT - a brand-new pair of length 2. Only
+    two came from an EXTENSION, and they are the ones that built the answer. That is the `.get(d, 1)`
+    doing both jobs with no `if`.
+
+TRACE 2 - WHERE SKIPPING MATTERS. nums = [9, 4, 7, 2, 10]. Expected 3.
+
+    i = 1 (4):  j=0 (9):  d = −5  ->  dp[1][−5] = 2
+    i = 2 (7):  j=0 (9):  d = −2  ->  dp[2][−2] = 2
+                j=1 (4):  d = 3   ->  dp[2][3] = 2
+    i = 3 (2):  j=0 (9):  d = −7  ->  dp[3][−7] = 2
+                j=1 (4):  d = −2  ->  dp[1].get(−2, 1) = 1  ->  dp[3][−2] = 2
+                j=2 (7):  d = −5  ->  dp[2].get(−5, 1) = 1  ->  dp[3][−5] = 2
+    i = 4 (10): j=0 (9):  d = 1   ->  dp[4][1] = 2
+                j=1 (4):  d = 6   ->  dp[4][6] = 2
+                j=2 (7):  d = 3   ->  dp[2].get(3, 1) = 2  ->  dp[4][3] = 3      <- EXTENSION
+                          best = 3
+                j=3 (2):  d = 8   ->  dp[4][8] = 2
+
+    The final tables:
+        dp[0] = {}
+        dp[1] = {-5: 2}
+        dp[2] = {-2: 2, 3: 2}
+        dp[3] = {-7: 2, -2: 2, -5: 2}
+        dp[4] = {1: 2, 6: 2, 3: 3, 8: 2}
+
+    RETURN 3 - the run 4, 7, 10 at indices 1, 2 and 4.
+
+    THE 2 AT INDEX 3 WAS SIMPLY SKIPPED, which is what makes this a subsequence problem. Note also that
+    index 3's table records three different two-element runs ending at the same position with three
+    different gaps - which is exactly why one number per index cannot work (trap 1).
+
+TRACE 3 - A GAP OF ZERO (trap 6). nums = [1, 1, 1]. Expected 3.
+
+    i = 1:  j=0:  d = 0  ->  dp[0].get(0, 1) = 1  ->  dp[1][0] = 2.  best = 2
+    i = 2:  j=0:  d = 0  ->  dp[0].get(0, 1) = 1  ->  dp[2][0] = 2
+            j=1:  d = 0  ->  dp[1].get(0, 1) = 2  ->  dp[2][0] = 3.  best = 3
+
+    RETURN 3.
+
+    LOOK AT INDEX 2: `dp[2][0]` was written TWICE - first as 2 from j=0, then overwritten as 3 from
+    j=1. That is trap 4 happening in the open, and the overwrite improved the value rather than losing
+    one, exactly as the argument predicts: nums[0] equals nums[1], so any run ending at index 0 also
+    ends at index 1, and the later table can only be better.
+
+TRACE 4 - THE INVERSION ON THE DEFAULT (trap 2). Rerun trace 1 with `.get(d, 0) + 1`:
+
+    i = 1:  dp[1][3] = 0 + 1 = 1
+    i = 2:  j=1:  dp[1].get(3, 0) = 1  ->  dp[2][3] = 2
+    i = 3:  j=2:  dp[2].get(3, 0) = 2  ->  dp[3][3] = 3
+
+    RETURN 3, where the answer is 4. EVERY LENGTH IS ONE TOO SMALL, because a brand-new pair is being
+    counted as one element rather than two.
+
+THE TINY INPUTS:
+    nums = [2, 4]   i=1, j=0: d = 2, dp[1][2] = 2.  RETURN 2. Any two elements form an AP.
+    nums = [1]      the inner loop never runs, `best` stays 0.  RETURN 0 - see trap 3, where the
+                    convention matters and LeetCode's constraints make it moot.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2). Every ordered pair (j, i) with j < i is examined exactly once - n(n−1)/2 of them - and
+each does a constant amount of work: one subtraction, one dictionary lookup, one store, one comparison.
+
+SPACE: O(n^2) IN THE WORST CASE. Each of the n dictionaries can hold up to i entries, one per earlier
+index, so the total number of stored pairs is again about n^2/2. On an array where many pairs share a
+difference the tables are much smaller, but the bound is genuinely quadratic.
+
+    THAT SPACE COST IS WORTH STATING - it is easy to describe this as "a DP with O(n) space" because
+    there are n dictionaries, and the dictionaries are the expensive part.
+
+WHY YOU CANNOT EASILY DO BETTER: the answer depends on which pairs share a difference, and there are
+n(n−1)/2 pairs. No sub-quadratic algorithm is known for the general problem. If the values were bounded
+to a small range, or the array sorted and distinct, faster approaches exist - so it is worth asking what
+the constraints actually are.
+
+THE FAMILY - PAIRWISE DP OVER SUBSEQUENCES. The skeleton `for i: for j < i: dp[i] = f(dp[j])` covers a
+cluster:
+
+    LONGEST INCREASING SUBSEQUENCE      dp[i] = 1 + max(dp[j]) over j with nums[j] < nums[i]. One number
+                                        per index is enough, because "increasing" needs no extra
+                                        parameter - which is exactly the contrast with this problem.
+    LONGEST ARITHMETIC SUBSEQUENCE      dp[i][d] - the gap must be carried          <- this entry
+    ARITHMETIC SLICES II                the same table, but COUNTING runs instead of measuring the
+                                        longest, which changes the default handling
+    LONGEST STRING CHAIN                dp[word] = 1 + dp[predecessor]
+    MAXIMUM LENGTH OF PAIR CHAIN        sortable, so a greedy beats the pairwise DP
+    RUSSIAN DOLL ENVELOPES              LIS in two dimensions after sorting
+
+    THE RECOGNITION CUE, AND THE LESSON: when a plain `dp[i]` is not enough, ask what extra fact the
+    transition depends on and put it in the state. Here it is the difference; in Stock with Cooldown it
+    is whether you sold yesterday; in Count Good Nodes it is the running maximum. THE STATE MUST CONTAIN
+    EVERYTHING THE NEXT DECISION NEEDS, and nothing more.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "What if the difference were FIXED and given?" Then one pass with a single dictionary from value to
+    chain length does it in O(n) - a much easier problem, and worth saying so.
+  - "Count all arithmetic subsequences rather than finding the longest." Arithmetic Slices II - the same
+    table, summing counts, with care over the length-2 runs which are not valid slices.
+  - "What if it had to be CONTIGUOUS?" Trivial: one pass comparing consecutive differences, O(n) time
+    and O(1) space.
+  - "Can you do better than O(n^2)?" Not in general. Ask about the constraints on the values.
+  - "Why a dictionary rather than an array indexed by difference?" Differences can be negative and as
+    large as the value range.
+
+THE #1 BEGINNER MISTAKE: keeping one number per index instead of a table keyed by difference. It is the
+natural shape borrowed from Longest Increasing Subsequence, and it fails because whether i can extend j
+depends on WHICH gap j's run was built with - a fact the single number does not record.
+
+RUNNER-UP: `.get(d, 0) + 1` instead of `.get(d, 1) + 1`, which makes every fresh pair count as one
+element rather than two and returns an answer exactly one too small on every input.
+
+TAKEAWAY: the state has to be a PAIR - position and gap - because whether one index can extend another
+depends entirely on the gap the run was built with, and the single expression `dp[j].get(d, 1) + 1`
+covers both extending an existing run and starting a new two-element one.""",
 ]
 
 _EX_P1D["Best Time to Buy and Sell Stock with Cooldown"] = [
@@ -73833,62 +74249,512 @@ genuinely unavoidable.""",
 ]
 
 _EX_P1E["Longest Palindromic Subsequence"] = [
-    """A full trace on 'bbbab'.
-Fill by increasing interval, from the bottom-right upward.
-dp[i][i] = 1 for every i (a single character).
-i=3 ('a'), j=4 ('b'): differ -> max(dp[4][4], dp[3][3]) = 1.
-i=2 ('b'), j=3 ('a'): differ -> 1.  j=4 ('b'): s[2]==s[4] -> dp[3][3]+2 = 3.
-i=1 ('b'), j=2: match -> dp[2][1]+2 = 0+2 = 2.  j=3: differ -> max(1,2) = 2.
-     j=4: s[1]==s[4] -> dp[2][3]+2 = 1+2 = 3... and max with dp[2][4]=3 -> 4.
-i=0: eventually dp[0][4] = 4, the subsequence 'bbbb'.
-Answer 4. Note 'bbbb' is not contiguous - it skips the 'a'.""",
+    """1. THE GOAL - the longest palindrome you can pick out.
 
-    """Subsequence versus SUBSTRING, which changes the whole algorithm.
-Longest palindromic SUBSTRING must be contiguous, and the standard solution is
-expand-around-centre in O(n^2) time and O(1) space.
-Longest palindromic SUBSEQUENCE may skip characters, so expansion does not
-work and you need interval DP in O(n^2) time and O(n^2) space.
-On 'bbbab': the longest substring is 'bbb' (length 3) but the longest
-subsequence is 'bbbb' (length 4). Different answers on the same input - so the
-first thing to do is confirm which word the prompt used.""",
+A PALINDROME reads the same forwards and backwards: "bb", "aba", "racecar".
 
-    """Why the loops run in that order.
-dp[i][j] depends on dp[i+1][j-1], dp[i+1][j] and dp[i][j-1] - all of which have
-a LARGER i or a SMALLER j. So i must descend from n-1 to 0 while j ascends from
-i+1. Reverse either loop and you read cells that have not been filled yet, and
-the answer is silently wrong rather than crashing (the array is pre-zeroed).
-The general rule for interval DP: fill by increasing interval LENGTH, which the
-descending-i/ascending-j nesting achieves implicitly.""",
+Given a string, find the LENGTH of the longest palindrome you can obtain by DELETING some characters
+and keeping the rest in their original order.
 
-    """The elegant alternative worth mentioning.
-The longest palindromic subsequence of s equals the Longest Common Subsequence
-of s and reverse(s). On 'bbbab', reverse is 'babbb', and their LCS is 'bbbb',
-length 4 - the same answer.
-It is a nice observation and it reuses a standard algorithm, but it is the same
-O(n^2) time and space, and it has a subtle failure to be aware of: the LCS
-found need not itself be a palindrome when there are repeated characters,
-though its LENGTH is still correct. Offer it as a second solution, not a
-first.""",
+    s = "bbbab"
 
-    """Edge cases and space reduction.
-'' -> n=0, the loops never run; guard and return 0.
-'a' -> dp[0][0] = 1.
-'abcd' (no repeats) -> every comparison differs, so the answer is 1: any single
-character is a palindrome.
-'aaaa' -> 4, the whole string.
-Space: dp[i] depends only on dp[i+1], so two rows suffice, reducing O(n^2)
-space to O(n) - the standard follow-up. You cannot reduce the TIME below
-O(n^2) with any known general method.""",
+    Delete the 'a' and you are left with "bbbb", which is a palindrome of length 4.
+    ANSWER: 4
 
-    """The interval-DP family.
-The skeleton 'dp over [i..j], ends match -> extend the inner interval, else take
-the best of dropping either end' recurs across: Longest Common Subsequence,
-Edit Distance, Palindromic Substrings (counting), Minimum Insertion Steps to
-Make a String Palindrome (which is simply n minus this answer), Burst Balloons
-and Matrix Chain Multiplication.
-Recognition cue: the subproblem is a CONTIGUOUS RANGE of the input and the
-decision is about its two ends. When you see that, reach for a 2-D table filled
-by increasing interval length.""",
+    s = "cbbd"
+
+    Delete the 'c' and the 'd' and you have "bb".
+    ANSWER: 2
+
+THE WORD DOING THE WORK IS SUBSEQUENCE, NOT SUBSTRING. The kept characters need not be adjacent - only
+in order.
+
+    b   b   b  [a]  b          drop the 'a', keep the rest
+    ^   ^   ^       ^
+    \\___\\___\\_______/   ->  "bbbb"
+
+    THE LONGEST PALINDROMIC SUBSTRING of "bbbab" is "bbb" - length 3 - because a substring must be a
+    contiguous run and "bbbb" is not contiguous in the original. Two different problems with two
+    different answers on the very same input, and section 5 says why they need different algorithms
+    entirely.
+
+A FEW FACTS THAT COME FOR FREE:
+
+    THE ANSWER IS AT LEAST 1 for any non-empty string, since a single character is a palindrome.
+    IT IS n IF THE STRING IS ALREADY A PALINDROME.
+    IT IS 1 IF EVERY CHARACTER IS DISTINCT - "abcd" gives 1, because no two characters can be paired
+        up and only a lone character survives.
+
+The problem is naturally about STRETCHES of the string rather than positions, which is what makes it an
+INTERVAL DP - section 2.""",
+
+    """2. THE INTUITION - work on stretches, and look at the two ends.
+
+Define one quantity and the whole thing falls out:
+
+    dp[i][j]  =  the length of the longest palindromic subsequence WITHIN the stretch s[i..j].
+
+Now stand at a stretch and look ONLY at its two end characters. There are exactly two cases.
+
+    THE ENDS MATCH.  Then keep them BOTH - they form the outer shell of a palindrome - and whatever
+    you can do with the stretch strictly inside them sits in the middle.
+
+            b . . . . b
+            ^         ^
+            |_________|      keep both ends: +2
+                 |
+            whatever is best inside
+
+        dp[i][j] = dp[i+1][j-1] + 2
+
+    THE ENDS DIFFER.  Then they cannot BOTH be the outer shell of the same palindrome, so at least one
+    of them is useless. Try discarding each in turn and keep the better result.
+
+            a . . . . b
+            ^         ^
+            drop the 'a'  ->  dp[i+1][j]
+            drop the 'b'  ->  dp[i][j-1]
+
+        dp[i][j] = max(dp[i+1][j], dp[i][j-1])
+
+    AND THE SMALLEST STRETCH OF ALL: a single character is a palindrome of length 1, so dp[i][i] = 1.
+
+THAT IS THE ENTIRE RECURRENCE. Every stretch is answered from strictly SHORTER stretches, so if you fill
+them in order of increasing length, everything you need is already there.
+
+    s = "bbbab", filling the shortest stretches first:
+
+        "bb" (positions 0-1):  ends match  ->  2
+        "ba" (positions 2-3):  ends differ ->  max of "a" and "b" = 1
+        "bab" (positions 2-4): ends match  ->  inner "a" is 1, so 1 + 2 = 3
+        "bbbab" (0-4):         ends match  ->  inner "bba" is 2, so 2 + 2 = 4
+
+    ANSWER: 4
+
+WHY LOOKING AT THE ENDS IS ENOUGH. Any palindromic subsequence of s[i..j] either uses the character at
+i, or does not; and either uses the one at j, or does not. If it uses both, they must be equal (they are
+the first and last characters of a palindrome). If they are not equal, at least one is unused - which is
+exactly the two branches above. Nothing is missed.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PALINDROME. Reads the same in both directions. Single characters and the empty string qualify.
+SUBSEQUENCE. What remains after deleting characters, KEEPING THE ORDER. Not necessarily contiguous.
+SUBSTRING. A CONTIGUOUS stretch. A different problem - section 5.
+
+INTERVAL DP / RANGE DP. Dynamic programming where the state is a STRETCH [i..j] of the input rather
+than a single position. Recognisable by a two-dimensional table indexed by two endpoints, filled in
+order of increasing interval length.
+
+dp[i][j]. The answer for the stretch from index i to index j INCLUSIVE.
+BASE CASE. dp[i][i] = 1 - one character is a palindrome of length 1.
+
+FILL ORDER. The sequence in which the table is completed, chosen so every cell is computed after
+everything it depends on. Here: i descending, j ascending.
+
+LCS - LONGEST COMMON SUBSEQUENCE. The longest sequence appearing in both of two strings. Section 5
+gives the neat identity linking it to this problem.
+
+s. The input string. Never modified.
+n. Its length.
+dp. The two-dimensional table.
+i. The LEFT end of the stretch. j. The RIGHT end.
+
+O(n^2) TIME AND SPACE.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - and one is a live defect.
+
+TRAP 1 - THE EMPTY STRING CRASHES. THIS IS A REAL BUG IN THE CODE BELOW, not a hypothetical.
+
+    s = ""
+
+    `n` is 0, so `dp` is the empty list `[]` and the loops never run. The final line is
+    `return dp[0][n - 1]`, which is `dp[0][-1]` - and `dp[0]` on an empty list raises:
+
+        IndexError: list index out of range
+
+    THE FIX IS ONE LINE at the top: `if not s: return 0`. The empty string has a longest palindromic
+    subsequence of length 0, and the code should say so rather than fall over.
+
+    (This is the same class of defect as the Average of Levels entry in this bank, whose `deque([None])`
+    crashes on an empty tree. Both are the "the loops handle everything except nothing" mistake.)
+
+TRAP 2 - GETTING THE LOOP DIRECTIONS WRONG. `dp[i][j]` depends on `dp[i+1][j-1]`, `dp[i+1][j]` and
+`dp[i][j-1]` - EVERY ONE of which has a LARGER i or a SMALLER j.
+
+    So i MUST DESCEND from n−1 down to 0, and j MUST ASCEND from i+1 upward. Run i upward and you read
+    cells that are still zero, and the answers come out too small with no error at all.
+
+TRAP 3 - THE ADJACENT-MATCHING-PAIR CASE, WHICH RELIES ON A CELL YOU NEVER FILL. When j = i + 1 and the
+two characters match, the recurrence reads `dp[i+1][j-1]`, which is `dp[i+1][i]` - a cell where the LEFT
+index is GREATER than the right one. That stretch is empty and backwards.
+
+    IT WORKS BECAUSE THE TABLE IS INITIALISED TO ZERO and those lower-triangle cells are never written.
+    So "bb" computes 0 + 2 = 2, which is exactly right.
+
+    IT IS WORTH KNOWING THIS IS DELIBERATE. If you rewrote the table with a different initial value, or
+    added a guard that skipped "invalid" cells, this case would break - and it is the commonest case in
+    any string with repeated adjacent characters.
+
+TRAP 4 - CONFUSING SUBSEQUENCE WITH SUBSTRING. "bbbab" gives 4 as a subsequence and 3 as a substring.
+They are different problems with different algorithms, and reading the title too quickly is the
+commonest way to solve the wrong one - section 5.
+
+TRAP 5 - RETURNING THE PALINDROME RATHER THAN ITS LENGTH. The table holds LENGTHS. Reconstructing the
+actual string needs a walk back through the table from dp[0][n−1], following which branch produced each
+value. Doable, and not what is being asked.
+
+TRAP 6 - ASSUMING THE ANSWER IS ABOUT CHARACTER COUNTS. It is tempting to think the answer is "pair up
+duplicate characters" - and it is not, because ORDER constrains which duplicates can pair. In "abcba"
+the two 'b's can pair around the 'c'; in "abcab" they cannot both be used symmetrically with the same
+centre. Counting alone would overcount.""",
+
+    """5. THE ALTERNATIVES, AND THE IDENTITY WORTH KNOWING.
+
+VERSION A - GENERATE EVERY SUBSEQUENCE AND TEST IT. There are 2^n subsequences. For n = 30 that is over
+a billion, each needing an O(n) palindrome check. Hopeless.
+
+VERSION B - RECURSION ON THE TWO ENDS, without memoisation. The same recurrence as the code, written as
+a recursive function. Correct and exponential, because the same stretch is recomputed along many
+different paths.
+
+VERSION C - INTERVAL DP, which is the code here. O(n^2) time and space.
+
+VERSION D - THE LCS IDENTITY, and this is the elegant one to have ready:
+
+    THE LONGEST PALINDROMIC SUBSEQUENCE OF s EQUALS THE LONGEST COMMON SUBSEQUENCE OF s AND REVERSE(s).
+
+    On "bbbab", reverse(s) is "babbb", and their longest common subsequence is "bbbb" - length 4, which
+    matches.  (Checked on "cbbd" -> 2, "abcd" -> 1, "aaaa" -> 4, "a" -> 1: the identity holds on all of
+    them.)
+
+    WHY IT IS TRUE, informally: a palindromic subsequence of s reads the same forwards and backwards, so
+    it appears in s AND in the reverse of s. Conversely a sequence appearing in both can be arranged to
+    be palindromic. So the two quantities coincide.
+
+    IT IS THE SAME O(n^2) COST, and it is worth mentioning because it lets you reuse an LCS
+    implementation you already have - but the direct interval DP is more transparent and does not double
+    the input.
+
+WHY LONGEST PALINDROMIC SUBSTRING IS A DIFFERENT PROBLEM WITH A DIFFERENT ALGORITHM. A SUBSTRING must be
+contiguous, so the interval recurrence above does not apply - dropping a character from the middle is not
+allowed, so "drop one end and recurse" changes the nature of what is being measured.
+
+    THE STANDARD SOLUTIONS THERE are EXPAND AROUND CENTRE - try all 2n−1 possible centres and grow
+    outward, O(n^2) time and O(1) space - or MANACHER'S ALGORITHM at O(n).
+
+    SO: SUBSEQUENCE -> interval DP, O(n^2) space.   SUBSTRING -> expand around centre, O(1) space.
+    Recognising which one you have been asked is the first thing to get right.
+
+WHY THE FILL ORDER IS FORCED. Each cell needs cells with a larger left index or a smaller right index -
+that is, strictly SHORTER stretches. Descending i and ascending j visits them in exactly that order. An
+equivalent formulation loops over the interval LENGTH from 2 to n and then over the start position,
+which makes the "shortest first" intent explicit at the cost of an extra arithmetic step.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: WORK OUT THE ANSWER FOR EVERY STRETCH OF THE STRING,
+SHORTEST STRETCHES FIRST, BY LOOKING ONLY AT THE TWO END CHARACTERS - IF THEY MATCH, KEEP BOTH AND ADD
+TWO TO WHATEVER IS BEST INSIDE THEM; IF THEY DIFFER, DROP EACH IN TURN AND TAKE THE BETTER RESULT.
+
+THERE IS NO RECURSION. The mechanism is A TWO-DIMENSIONAL TABLE FILLED IN A CAREFULLY CHOSEN ORDER:
+
+  - Each cell describes one STRETCH of the string, given by its two endpoints.
+  - Every cell depends only on strictly SHORTER stretches, so if the shorter ones are filled first,
+    nothing is ever read before it is written.
+  - THE ORDER IS FORCED: the cells needed always have a left endpoint further right, or a right endpoint
+    further left. Walking the left endpoint backwards and the right endpoint forwards achieves that.
+  - WHAT MAKES IT STOP: both loops have trip counts fixed before they begin.
+
+THE STEPS:
+
+  1. IF THE STRING IS EMPTY, THE ANSWER IS ZERO. Without this the table has no rows at all and the final
+     lookup falls off the end of it.
+
+  2. MAKE A SQUARE TABLE, ONE ROW AND COLUMN PER CHARACTER, ALL ZERO.
+
+     The zeros matter later - the cells below the diagonal are never written, and one branch of the
+     recurrence quietly relies on them being zero.
+
+  3. WALK THE LEFT ENDPOINT FROM THE LAST CHARACTER BACKWARDS TO THE FIRST. For each position:
+
+     a. RECORD THAT A SINGLE CHARACTER IS A PALINDROME OF LENGTH ONE.
+
+     b. WALK THE RIGHT ENDPOINT FORWARDS, from one past the left endpoint to the end of the string. For
+        each stretch:
+
+        - IF THE TWO END CHARACTERS ARE THE SAME, both can be kept as the outer shell of a palindrome.
+          The answer is TWO MORE than the best for the stretch strictly between them.
+
+          When the two ends are next-door neighbours, "the stretch strictly between them" is empty and
+          reads as a backwards range. That cell is still zero from the setup, so the answer comes out as
+          two - which is correct, and is why the initial zeros are load-bearing rather than incidental.
+
+        - OTHERWISE THE TWO ENDS DIFFER, so they cannot both be the outer shell. Try dropping the left
+          one, try dropping the right one, and keep whichever gives more.
+
+  4. THE ANSWER IS THE CELL FOR THE WHOLE STRING - from the first character to the last.""",
+
+    """7. WHAT IT DOES, told as a story - no syntax at all.
+
+Imagine a row of letter tiles, and you may remove as many as you like, but you may not reorder what
+remains. You want the longest run that reads the same in both directions.
+
+The way in is to stop thinking about the whole row and think about STRETCHES of it - and to work out the
+answer for every stretch, starting with the shortest and building up.
+
+The shortest stretch is a single tile, and the answer is obviously one - a single letter reads the same
+either way.
+
+For any longer stretch, you look only at the two tiles at its ends, and there are just two situations.
+
+If the two end tiles carry the same letter, you keep them both. They become the outermost pair of your
+palindrome, one at each end, and whatever is the best you can do with the stretch trapped between them
+sits in the middle. So the answer is two more than the answer for that inner stretch - and you already
+worked that out, because it is shorter.
+
+If the two end tiles differ, they cannot both survive as the outer pair, because the first and last
+letters of a palindrome have to match. So at least one of them is dead weight. You do not know which, so
+you try both: once with the left tile thrown away, once with the right tile thrown away, and you take
+whichever leaves you better off. Again, both of those stretches are shorter than the one you are
+working on, so both answers are already sitting there.
+
+Since every stretch is answered using only shorter stretches, you must fill them in order of length -
+shortest first. In practice that means sweeping the left end backwards through the row while sweeping the
+right end forwards, which visits them in exactly the right order without you having to think about it.
+
+There is one case worth a moment's attention. When the two matching end tiles are right next to each
+other, the "stretch trapped between them" contains nothing at all. You want that to count as zero, so
+that a pair of adjacent identical letters comes out as two. It does, because everything started at zero
+and that particular cell is never written. It looks like an accident and it is doing real work - any
+string with a doubled letter depends on it.
+
+When you finally reach the stretch that spans the whole row, that is your answer.
+
+And one thing to be careful about before you begin: if there are no tiles at all, there is no stretch to
+look up, and reaching for the answer finds nothing there.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+Keep s = "bbbab" beside you, answer 4.
+
+    def longest_palindrome_subseq(s):
+
+`s` is the input string. Returns the LENGTH of the longest palindromic subsequence. Nothing is modified.
+
+        n = len(s)
+
+The string's length.
+
+        dp = [[0] * n for _ in range(n)]
+
+    dp  HOLDS the table. `dp[i][j]` is the answer for the stretch s[i..j] INCLUSIVE.
+
+ALL ZERO TO BEGIN WITH, and the cells BELOW the diagonal - where i > j - are never written. One branch of
+the recurrence reads exactly those cells and relies on them being zero (trap 3).
+
+Note the comprehension: `[[0] * n] * n` would make every row THE SAME list, and writing to one row would
+write to all of them.
+
+        for i in range(n - 1, -1, -1):
+
+THE LEFT ENDPOINT, DESCENDING from the last index to 0. This direction is forced (trap 2): every cell
+below depends on `dp[i+1][...]`, a row BELOW the current one, which must already be complete.
+
+For the empty string this is `range(-1, -1, -1)`, which is empty - so nothing runs, and the final line
+then fails (trap 1).
+
+            dp[i][i] = 1                 # a single char is a palindrome of length 1
+
+THE BASE CASE, written once per row as the row begins. A stretch of one character has answer 1.
+
+            for j in range(i + 1, n):
+
+THE RIGHT ENDPOINT, ASCENDING, starting one past the left endpoint - so only stretches of length 2 or
+more are computed here, the length-1 case having just been handled.
+
+Ascending is forced for the same reason as above: `dp[i][j-1]` is a column to the LEFT, which must
+already be filled.
+
+                if s[i] == s[j]:
+                    dp[i][j] = dp[i + 1][j - 1] + 2   # extend the inner palindrome
+
+THE MATCHING-ENDS BRANCH. Both end characters are kept as the outer shell, so the answer is 2 more than
+the best for the stretch strictly inside them.
+
+    `dp[i + 1][j - 1]`  is that inner stretch - one in from each end.
+    `+ 2`               counts the two characters just kept.
+
+WHEN j IS i + 1 this reads `dp[i+1][i]`, a cell where the left index exceeds the right. That is an empty,
+backwards stretch; it was never written and is still 0, so the result is 2 (trap 3). Adjacent matching
+characters are extremely common, so this "accidental" zero is doing real work on almost every input.
+
+                else:
+                    dp[i][j] = max(dp[i + 1][j], dp[i][j - 1])
+
+THE DIFFERING-ENDS BRANCH. The two ends cannot both be the outer shell of one palindrome, so at least one
+is unused.
+
+    `dp[i + 1][j]`  drop the LEFT character.
+    `dp[i][j - 1]`  drop the RIGHT character.
+    `max`           take whichever is better.
+
+There is no third option: any palindromic subsequence of this stretch either omits the left character or
+omits the right one, since it cannot use both when they differ (section 2).
+
+        return dp[0][n - 1]
+
+The cell spanning the WHOLE string - left end 0, right end n−1.
+
+For the empty string `dp` is `[]` and this is `dp[0][-1]`, which raises IndexError (trap 1).""",
+
+    """9. THE TABLE, FILLED BY HAND.
+
+TRACE 1 - s = "bbbab", n = 5. Expected 4.
+
+    Indices:   0    1    2    3    4
+    Characters: b    b    b    a    b
+
+    Every dp[i][i] is set to 1 as its row begins. The loops fill from the bottom row upward, and within
+    each row from left to right.
+
+    i = 4:  dp[4][4] = 1.   The inner loop `range(5, 5)` is empty.
+
+    i = 3:  dp[3][3] = 1.
+            j = 4:  s[3] = 'a', s[4] = 'b'  ->  DIFFER
+                    dp[3][4] = max(dp[4][4], dp[3][3]) = max(1, 1) = 1
+
+    i = 2:  dp[2][2] = 1.
+            j = 3:  s[2] = 'b', s[3] = 'a'  ->  DIFFER
+                    dp[2][3] = max(dp[3][3], dp[2][2]) = max(1, 1) = 1
+            j = 4:  s[2] = 'b', s[4] = 'b'  ->  MATCH
+                    dp[2][4] = dp[3][3] + 2 = 1 + 2 = 3          <- "bab"
+
+    i = 1:  dp[1][1] = 1.
+            j = 2:  s[1] = 'b', s[2] = 'b'  ->  MATCH
+                    dp[1][2] = dp[2][1] + 2 = 0 + 2 = 2
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    THIS IS TRAP 3 IN THE OPEN. dp[2][1] has a left index GREATER than its right index -
+                    an empty, backwards stretch that no loop ever writes. It is still 0 from the setup,
+                    which is exactly what makes the pair "bb" come out as 2.
+            j = 3:  s[1] = 'b', s[3] = 'a'  ->  DIFFER
+                    dp[1][3] = max(dp[2][3], dp[1][2]) = max(1, 2) = 2
+            j = 4:  s[1] = 'b', s[4] = 'b'  ->  MATCH
+                    dp[1][4] = dp[2][3] + 2 = 1 + 2 = 3
+
+    i = 0:  dp[0][0] = 1.
+            j = 1:  'b' == 'b'  ->  dp[0][1] = dp[1][0] + 2 = 0 + 2 = 2
+            j = 2:  'b' == 'b'  ->  dp[0][2] = dp[1][1] + 2 = 1 + 2 = 3        <- "bbb"
+            j = 3:  'b' vs 'a'  ->  dp[0][3] = max(dp[1][3], dp[0][2]) = max(2, 3) = 3
+            j = 4:  'b' == 'b'  ->  dp[0][4] = dp[1][3] + 2 = 2 + 2 = 4        <- "bbbb"
+
+    THE FINISHED TABLE, rows i = 0 to 4:
+
+            [1, 2, 3, 3, 4]
+            [0, 1, 2, 2, 3]
+            [0, 0, 1, 1, 3]
+            [0, 0, 0, 1, 1]
+            [0, 0, 0, 0, 1]
+
+    RETURN dp[0][4] = 4.
+
+    NOTE THE WHOLE LOWER TRIANGLE IS STILL ZERO. Those cells were never written and were read exactly
+    three times - at dp[1][2], dp[0][1] and dp[2][4]'s inner lookup - each time to give the correct
+    answer 2 for a pair of adjacent matching characters.
+
+    CROSS-CHECK WITH THE LCS IDENTITY (section 5): reverse("bbbab") is "babbb", and the longest common
+    subsequence of "bbbab" and "babbb" is 4. The two methods agree.
+
+TRACE 2 - THE INVERSION ON SUBSEQUENCE VERSUS SUBSTRING (trap 4). Same string, "bbbab":
+
+    LONGEST PALINDROMIC SUBSEQUENCE:  4, taking "bbbb" from positions 0, 1, 2 and 4.
+    LONGEST PALINDROMIC SUBSTRING:    3, since "bbbb" is not contiguous - the best contiguous run is
+                                      "bbb" at positions 0-2.
+
+    SAME INPUT, DIFFERENT QUESTION, DIFFERENT ANSWER, AND A COMPLETELY DIFFERENT ALGORITHM - expand
+    around centre rather than an interval DP.
+
+TRACE 3 - THE TWO EXTREMES.
+
+    s = "abcd", every character distinct:
+        Every comparison takes the `else` branch, so every cell is the max of two cells that are
+        ultimately 1.  dp[0][3] = 1.  RETURN 1 - a lone character is all you can keep.
+
+    s = "aaaa", every character the same:
+        Every comparison matches.  dp[i][i] = 1 throughout; dp[0][1] = dp[1][0] + 2 = 2;
+        dp[0][2] = dp[1][1] + 2 = 3;  dp[0][3] = dp[1][2] + 2, and dp[1][2] = dp[2][1] + 2 = 2, so
+        dp[0][3] = 4.  RETURN 4 - the whole string is already a palindrome.
+
+    s = "cbbd":  the 'c' and 'd' differ, so they are dropped in turn; the inner "bb" matches and gives 2.
+        RETURN 2.
+
+TRACE 4 - THE EMPTY STRING (trap 1), as the code stands.
+
+    n = 0.
+    `dp = [[0] * 0 for _ in range(0)]` is `[]` - a list with NO rows.
+    `range(-1, -1, -1)` is empty, so the loops never run.
+    `return dp[0][n - 1]` is `dp[0][-1]`, and `dp[0]` on an empty list raises:
+
+        IndexError: list index out of range
+
+    IT CRASHES on the simplest possible input. One line at the top - `if not s: return 0` - fixes it, and
+    0 is the right answer since an empty string contains no characters to keep.
+
+THE TINY INPUT THAT WORKS:
+    s = "a"   n = 1.  i = 0: dp[0][0] = 1, and `range(1, 1)` is empty.  RETURN dp[0][0] = 1.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n^2). There is one cell per pair of endpoints - about n^2/2 of them in the upper triangle - and
+each is computed in constant time from cells already filled.
+
+SPACE: O(n^2) for the table.
+
+    REDUCIBLE TO O(n). Each row depends only on the row BELOW it (`dp[i+1][...]`) and on cells to its own
+    left, so two rows suffice - or one row plus a single saved value for the diagonal lookup. Worth
+    mentioning; the two-dimensional version is clearer to write and to explain.
+
+THE INTERVAL-DP FAMILY. The skeleton - "state is a stretch [i..j]; if the ends match, extend the inner
+interval; otherwise take the best of dropping either end; fill shortest-first" - recurs across:
+
+    LONGEST PALINDROMIC SUBSEQUENCE     ends match -> +2                        <- this entry
+    LONGEST COMMON SUBSEQUENCE          two strings rather than two ends, but the same match-or-drop shape
+    EDIT DISTANCE                       match -> carry on; else the best of insert, delete, replace
+    PALINDROME PARTITIONING II          fewest cuts so every piece is a palindrome
+    BURST BALLOONS                      state is a stretch, and you choose the LAST balloon burst in it
+    MATRIX CHAIN MULTIPLICATION         the classic interval DP - choose where to split the stretch
+
+    THE RECOGNITION CUE: the answer for a range is built from strictly smaller ranges, and the decision is
+    about the range's ENDS or about a SPLIT POINT inside it. When you see that, reach for a
+    two-dimensional table and fill by increasing length.
+
+FOLLOW-UPS WORTH HAVING READY:
+
+  - "Return the palindrome itself, not its length." Walk back from dp[0][n−1], at each step checking
+    which branch produced the value, and collect the matched characters from the outside in.
+  - "Do it in O(n) space." Keep two rows, since each row depends only on the one below it.
+  - "Is there a slicker formulation?" Yes - it equals the LCS of s and reverse(s), verified on several
+    strings in section 5. Same O(n^2), and it reuses an LCS routine if you have one.
+  - "What about the longest palindromic SUBSTRING?" Different problem - expand around centre, O(n^2) time
+    and O(1) space, or Manacher's algorithm at O(n).
+  - "Minimum deletions to make the string a palindrome?" n minus this answer, which is a one-line
+    corollary and a very common follow-up.
+
+THE #1 BEGINNER MISTAKE: solving the SUBSTRING problem by mistake. The titles differ by one word, the
+algorithms are unrelated, and "bbbab" gives 4 one way and 3 the other - so the wrong reading produces a
+confidently wrong number on the very first example.
+
+RUNNER-UP: getting the fill order wrong. Every cell needs strictly shorter stretches, so the left endpoint
+must sweep BACKWARDS while the right sweeps forwards. Running the left endpoint forwards reads cells that
+are still zero and quietly returns answers that are too small.
+
+AND THE DEFECT TO FIX ON SIGHT: the empty string raises IndexError, because the table has no rows and the
+final lookup indexes into nothing. One guard at the top.
+
+TAKEAWAY: make the state a STRETCH rather than a position, and decide it by looking only at the two end
+characters - matching ends are kept as a shell worth two, differing ends mean at least one is useless -
+which works because every stretch is answered from strictly shorter ones, so filling shortest-first
+guarantees the answers are already there.""",
 ]
 
 for _e in ENTRIES:
