@@ -29,12 +29,486 @@ def build(Q):
           mnemonic="Google scores four things: cognitive ability (how you structure a problem), role knowledge, EMERGENT leadership (step up AND step back), and Googleyness (ambiguity, curiosity, humility, collaboration, doing the right thing). Amazon wants 'I' and a number; Google wants your reasoning and your effect on others.",
           example="Same project, two framings. AMAZON: 'Our model's inference was too slow for the demo, so I profiled it, found the bottleneck was per-request feature computation, added a cache, and cut p95 latency from 900ms to 120ms - which let us demo live.' GOOGLE: 'The obvious fix was a smaller model, but I wanted to know WHERE the time was going before trading accuracy away. Profiling showed it was feature computation, not inference - so caching fixed it without touching the model. I shared the profile with the two teammates who had been optimising the model, and we redirected that work.' Identical facts; the first spotlights ownership and a number, the second spotlights reasoning and the team.",
           examples=[
-              "The four scored axes, named, because most candidates only know about two. GENERAL COGNITIVE ABILITY - how you STRUCTURE an unfamiliar problem, scored inside your coding and design rounds, which is why narrating your approach matters as much as the code. ROLE-RELATED KNOWLEDGE - can you actually do the job. LEADERSHIP - specifically EMERGENT leadership: you step up when your skill is needed and step BACK when someone else's is. GOOGLEYNESS - ambiguity, curiosity, humility, collaboration, doing the right thing. Knowing there are four and that leadership means the emergent kind is itself a signal.",
-              "Showing rather than claiming, with the sentence pattern that does it. Claiming: 'I'm very collaborative and I love learning.' Showing: 'I didn't know how HNSW indexes worked, so I spent an evening reading the paper and then wrote a one-page summary for the two teammates who'd be using it.' The second contains an admission of not knowing, an unprompted action, and another human who benefited - three Googleyness signals in one sentence, none of them asserted.",
-              "The same story, two spotlights. AMAZON: 'Our model's inference was too slow for the demo, so I profiled it, found the bottleneck was per-request feature computation, added a cache, and cut p95 from 900ms to 120ms - which let us demo live.' GOOGLE: 'The obvious fix was a smaller model, but I wanted to know WHERE the time was going before trading accuracy away. Profiling showed it was feature computation, not inference, so caching fixed it without touching the model - and I shared the profile with the two teammates who'd been optimising the model, so we redirected that work.' Identical facts; ownership-and-a-number versus reasoning-and-effect-on-others.",
-              "The 'I' versus 'we' calibration, which cuts both ways. At Amazon, 'we decided, we built, we shipped' reads as someone hiding inside a team - they cannot score what YOU did, so say 'I'. At Google, a story with no other humans in it reads as someone who does not work well with people. The fix is not a ratio, it is structure: use 'I' for your decisions and actions, and name others for their contributions. 'I proposed X; Priya pointed out it would break Y, so we did Z' scores at both companies.",
-              "Intellectual humility as a scored trait, not a soft skill. Google explicitly looks for people who change their mind when the evidence says to - so 'tell me about a time you were wrong' is a Googleyness probe, not a trap, and the answer 'I can't think of one' is a failing answer. Prepare a real one where you argued for something, went and got the evidence yourself, and reversed - ideally against your own proposal. That combination of backbone and humility is rare enough to be memorable.",
-              "What 'doing the right thing' looks like at student scale, since nobody expects a corporate ethics story. Telling your group the benchmark you ran was flawed after they'd already put it in the slides. Flagging that your model's training data had leaked labels rather than reporting the 0.97 AUC. Correcting a teammate's over-claim to a supervisor. These are small, real, and they demonstrate the trait far better than anything grand - and the marker is that doing it cost you something.",
+              r"""1. THE GOAL - what the word actually refers to.
+
+Google does not publish a list of leadership principles the way Amazon does, so
+candidates guess at what "Googleyness" means and usually guess wrong - assuming it is
+about personality, enthusiasm, or cultural fit in a vague sense.
+
+It is none of those. It is one of FOUR NAMED AXES on the actual hiring rubric, and
+knowing all four is the first half of the answer:
+
+    1. GENERAL COGNITIVE ABILITY (GCA)
+       How you STRUCTURE an unfamiliar problem. Scored inside your coding and design
+       rounds, not in a separate interview. This is why thinking out loud matters more
+       than arriving at the answer.
+
+    2. ROLE-RELATED KNOWLEDGE (RRK)
+       Can you actually do the job. Data structures, systems, the domain.
+
+    3. LEADERSHIP - and specifically EMERGENT leadership
+       Not "did you have a title". Do you step up when your skill is what the situation
+       needs, AND step BACK when it is someone else's. The stepping back is scored, and
+       candidates almost never demonstrate it.
+
+    4. GOOGLEYNESS
+       Which decomposes into things you can actually show, listed in section 3.
+
+Most candidates know about two of these. Knowing there are four, and that leadership
+means emergent leadership rather than authority, is already unusual.
+
+The practical goal of this page: turn a vague word into specific behaviours, and then
+into specific SENTENCES you can say - because the whole difficulty of Googleyness is
+that it must be SHOWN rather than CLAIMED, and most people claim it.""",
+              r"""2. THE INTUITION - claiming versus showing.
+
+Every trait on this rubric can be either asserted or evidenced, and the two land
+completely differently:
+
+    CLAIMING                          SHOWING
+    ----------------------------      ------------------------------------------------
+    "I'm a fast learner."             "I didn't know how HNSW indexes worked, so I
+                                       spent a weekend reading the paper and built a
+                                       toy version before touching our code."
+
+    "I'm very collaborative."         "My teammate had done more graphics work than me,
+                                       so I handed him the rendering piece and took the
+                                       indexing instead."
+
+    "I'm comfortable with             "The brief didn't say how fresh the results had
+     ambiguity."                       to be, so I assumed one hour, wrote that
+                                       assumption in the doc, and set a checkpoint to
+                                       revisit it."
+
+    "I have good judgement."          "I was wrong about the bottleneck for two days.
+                                       What changed my mind was profiling it properly
+                                       instead of guessing."
+
+The left column costs three seconds and scores nothing - anyone can say it, so it
+carries no information. The right column costs fifteen seconds and is evidence.
+
+Now the second idea, which is what makes this topic genuinely worth studying: THE SAME
+STORY SCORES DIFFERENTLY DEPENDING ON WHICH DETAILS YOU INCLUDE.
+
+    the raw events            what you emphasise           what it scores
+    ------------------        ------------------------     -------------------------
+    you rescoped a            the deadline, the trade,     Amazon: Deliver Results,
+    project to hit a          the number, "I decided"      Ownership
+    demo date
+                              what you got wrong, the      Google: Googleyness,
+                              teammate who disagreed,      emergent leadership
+                              what changed your mind
+
+Not different stories. Different spotlights on one story. Section 9 does this in full,
+and shows what happens when you point the wrong spotlight.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+GOOGLEYNESS. One of four scored rubric axes. Decomposes into: comfort with ambiguity,
+bias to action balanced with humility, intellectual curiosity, collaboration, and doing
+the right thing when nobody is checking.
+
+GENERAL COGNITIVE ABILITY (GCA). How you structure an unfamiliar problem - clarifying,
+decomposing, choosing an approach and explaining why. Scored during your technical
+rounds from how you THINK, not from whether you finish.
+
+ROLE-RELATED KNOWLEDGE (RRK). Technical competence for the specific role.
+
+EMERGENT LEADERSHIP. Leadership without authority: stepping up when your skill fits the
+problem, and stepping back when someone else's does. Both halves are scored. The
+stepping-back half is what distinguishes this from ordinary "I led the team" answers.
+
+INTELLECTUAL HUMILITY. Changing your mind when the evidence says to, and being able to
+say what you were wrong about. Google treats this as a scored trait, not a soft skill -
+which is why "tell me about a time you were wrong" is a real question with a real
+rubric, not a trick.
+
+COMFORT WITH AMBIGUITY. Moving forward without complete requirements - by making
+assumptions EXPLICIT rather than by guessing silently. A stated assumption is
+reversible; a silent one is a landmine.
+
+BIAS TO ACTION. Starting before certainty. Only scores when paired with humility -
+acting decisively AND changing course when the evidence turns.
+
+HIRING COMMITTEE. At Google, the people who interviewed you write up feedback, and a
+separate committee decides. This matters practically: your interviewer is WRITING
+EVIDENCE FOR SOMEONE WHO WAS NOT IN THE ROOM. Vague impressions do not survive that
+process; specific quotable moments do. Give them something quotable.
+
+THE CONTRAST WITH AMAZON'S LEADERSHIP PRINCIPLES. Amazon publishes fourteen named
+principles and asks explicitly against them. Google does not, and scores the four axes
+above. Same stories work for both; the weighting differs.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the fundamental one: CLAIMING TRAITS INSTEAD OF EVIDENCING THEM. "I'm
+collaborative, I'm curious, I love learning new things." Every candidate says this, so
+it distinguishes nobody, and it consumes the seconds you needed for the specific moment
+that would have proved it.
+
+TRAP 2 - the one that cuts both ways: THE "I" VERSUS "WE" CALIBRATION.
+
+    At AMAZON, "we decided, we built, we shipped" reads as someone hiding inside a team.
+    The interviewer cannot score an individual on a group narrative, so it scores low.
+
+    At GOOGLE, relentless "I did, I decided, I fixed" with no mention of anyone else
+    reads as someone who does not work well with others - and collaboration is scored
+    explicitly.
+
+The resolution is not to pick a pronoun. It is: BE SPECIFIC ABOUT YOUR OWN ACTIONS AND
+EXPLICIT ABOUT OTHER PEOPLE'S CONTRIBUTIONS. "I owned the indexing pipeline; Arun had
+done more graphics work so he took the rendering, and his suggestion about caching
+thumbnails was what actually got us under the latency target." That sentence scores at
+both companies - the "I" is unambiguous and the credit is real.
+
+TRAP 3: TREATING "TELL ME ABOUT A TIME YOU WERE WRONG" AS A TRAP. It is not. Intellectual
+humility is a scored trait, so this question is an OPPORTUNITY, and "I can't think of
+one" or a fake humility answer ("I care too much about quality") scores zero on an axis
+you could have scored well on. Have a real one, with what changed your mind.
+
+TRAP 4: THINKING GOOGLEYNESS MEANS BEING FRIENDLY OR ENTHUSIASTIC. It is not a
+personality assessment. Being warm is pleasant and unscored. Describing a decision you
+reversed when the evidence turned IS scored.
+
+TRAP 5: MISSING THE "STEP BACK" HALF OF EMERGENT LEADERSHIP. Everyone brings a story
+about taking charge. Almost nobody brings the moment they recognised someone else was
+better placed and handed it over. That second half is rarer and therefore more
+distinguishing.
+
+TRAP 6: THINKING YOU NEED A CORPORATE ETHICS STORY for "doing the right thing when
+nobody is checking". At student scale it looks like: telling your group the benchmark you
+ran was flawed after they had already celebrated the result; flagging that your test set
+had leaked into training when nobody would have noticed; correcting a number in a report
+that was in your favour. Small and real beats large and invented.
+
+TRAP 7: FORGETTING THE FEEDBACK IS WRITTEN DOWN FOR STRANGERS. The hiring committee was
+not in the room. Your interviewer must convert you into text. Specific moments survive
+that conversion; general impressions do not. Say things that are quotable.""",
+              r"""5. THE NAIVE MODEL FIRST, THEN THE REAL ONE.
+
+THE NAIVE MODEL: "Googleyness is culture fit - they want to know if I'd be pleasant to
+work with, so I should seem friendly, enthusiastic and easy-going."
+
+Why it fails: it produces an interview performance rather than evidence. You arrive
+warm, agreeable and complimentary, and the interviewer has nothing specific to write
+down. Worse, "culture fit" invites you to try to seem like a certain kind of person,
+which reads as performance, and reads worst of all to people who conduct interviews all
+week.
+
+THE REAL MODEL: it is a rubric with named components, each of which is a BEHAVIOUR YOU
+EITHER DEMONSTRATED OR DID NOT.
+
+Once you see it as a rubric, the preparation becomes concrete. For each component, you
+need one specific moment:
+
+    comfort with ambiguity      -> a time the requirements were incomplete and you
+                                   named your assumption out loud
+    bias to action + humility   -> a time you started before certainty AND a time you
+                                   changed course when evidence arrived
+    intellectual curiosity      -> a time you dug into WHY rather than just fixing it
+    collaboration               -> a time you made someone else more effective
+    doing the right thing       -> a time being honest cost you something
+    emergent leadership         -> a time you stepped up, and a time you stepped back
+
+Six components, six moments. And they come out of the same six stories from the story
+bank - this is not additional material, it is a different index over the same
+experiences.
+
+WHY "SHOWING" ACTUALLY OUTSCORES "CLAIMING" - the argument, since this is the crux:
+
+An interviewer must produce written evidence for a hiring committee that was not
+present. A claim ("she said she's collaborative") is not evidence, because every
+candidate makes it and it cannot be assessed. A specific incident ("she handed the
+rendering work to a teammate with more graphics experience and took the harder indexing
+piece instead") IS evidence, because it is a fact about something that happened, it is
+quotable, and it can be weighed.
+
+So "show, don't claim" is not a stylistic preference or an interview cliché. It is a
+direct consequence of how the decision actually gets made - by people reading text
+written by someone else. Anything not specific enough to survive being written down and
+read by a stranger effectively did not happen.
+
+THE UPGRADE ON TOP: prepare the SAME stories with two weightings, Amazon and Google, and
+choose on the day. Section 9 shows both, and shows the cost of choosing wrong.""",
+              r"""6. HOW TO PREPARE FOR IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: FOR EACH COMPONENT OF THE RUBRIC, HAVE ONE
+SPECIFIC MOMENT YOU CAN DESCRIBE IN TWO SENTENCES - AND BUILD THE HABIT OF NAMING WHAT
+YOU DID NOT KNOW, WHO CONTRIBUTED WHAT, AND WHAT CHANGED YOUR MIND.
+
+THIS IS AN INDEXING LOOP over material you already have, and it has a clear stopping
+rule:
+
+  - Each pass takes one rubric component and finds a real moment from your existing
+    stories that evidences it.
+  - Failures look like: no moment exists, or the moment is a claim rather than an
+    incident, or it cannot be told in two sentences.
+  - WHAT MAKES IT STOP: every component has at least one specific incident attached, and
+    you can state each one in two sentences without preamble.
+  - You are NOT writing new stories. If you find yourself inventing experiences to fill
+    a component, stop - a fabricated example collapses on the first follow-up, and the
+    follow-up always comes.
+
+THE STEPS:
+
+  1. TAKE YOUR SIX EXISTING STORIES. This works from the story bank, not instead of it.
+
+  2. GO THROUGH THE RUBRIC COMPONENT BY COMPONENT, and for each, find the MOMENT inside
+     an existing story that evidences it. One story typically supplies three or four -
+     the moment you did not know something, the moment you deferred to someone, the
+     moment you changed your mind.
+
+  3. WRITE EACH MOMENT AS TWO SENTENCES, in the "showing" form: what the situation was,
+     and what you specifically did. No adjectives about yourself.
+
+  4. FILL THE GAPS. Any component with no moment attached means either you have not
+     looked hard enough at your material, or you genuinely lack an example - and knowing
+     which, before the interview, is worth a great deal.
+
+  5. BUILD THE THREE HABITS that make any story score on Googleyness:
+       (a) INCLUDE THE MOMENT YOU DID NOT KNOW SOMETHING, and say what you did about it.
+       (b) NAME THE PEOPLE and what THEY contributed. By name, with their actual
+           contribution.
+       (c) DESCRIBE A DECISION YOU REVERSED and what changed your mind.
+     Any story containing all three scores on Googleyness regardless of its subject.
+
+  6. PREPARE THE STEP-BACK MOMENT SPECIFICALLY. Everyone has a step-up story. Find the
+     time you handed something to someone better placed. It is rarer and it distinguishes.
+
+  7. PREPARE THE HONEST "I WAS WRONG" STORY. Real, with the specific evidence that
+     changed your mind. Not a disguised strength.
+
+  8. PRACTISE THE AMAZON AND GOOGLE WEIGHTINGS of your two strongest stories out loud.
+     Same facts, different emphasis, as in section 9.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine you are choosing between several people to join a small group that will work
+together every day for years. You cannot watch them work first. You get forty-five
+minutes each, and then you have to write down what you thought, for a committee that
+never met them.
+
+What is actually useful to write down?
+
+Not "she seemed nice" or "he said he was collaborative" - everyone seems nice, everyone
+says that, and none of it helps the committee choose. What is useful is a specific
+thing that happened: "when I asked about the part she got wrong, she named it
+immediately and told me exactly what evidence changed her mind." That is a fact. It can
+be weighed against another candidate's facts.
+
+So the question you are really being asked is not "are you a good person to work with".
+It is "can you give me something specific enough that I can write it down and someone
+who was not here can evaluate it".
+
+Which means the preparation is not about being likeable. It is about having, ready to
+hand, the small concrete moments: the time you did not know something and went and
+learned it, the time you stepped aside because a teammate was better at the thing, the
+time you were wrong for two days and what stopped you being wrong, the time being honest
+cost you a bit of credit.
+
+Those moments do not require an impressive career. They require having noticed them at
+the time, and having them ready now.
+
+And one more thing, which is where people trip. The same moment can be told to sound
+like "I took charge and delivered" or like "here is how the group got there and what I
+got wrong". Both are true. One of them is what this particular group is listening for -
+and telling it the other way does not just miss the mark, it actively suggests the
+opposite trait.""",
+              r"""8. THE RUBRIC, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is each rubric component named, with what it holds, what
+it decides, and the sentence pattern that evidences it.
+
+--- THE FOUR AXES ---
+
+    GENERAL COGNITIVE ABILITY
+        HOLDS: how you structure an unfamiliar problem.
+        DECIDES: most of your technical rounds, from how you think rather than whether
+        you finish. Clarify the problem, state your approach and why, name the
+        trade-off, then code.
+        WHERE IT IS SCORED: inside coding and design rounds. There is no separate GCA
+        interview, which is why silent problem-solving costs you even when you get the
+        right answer.
+
+    ROLE-RELATED KNOWLEDGE
+        HOLDS: can you do the job.
+        DECIDES: the technical bar. This is what all your DSA preparation is for.
+
+    LEADERSHIP (EMERGENT)
+        HOLDS: stepping up when your skill fits, AND stepping back when someone else's
+        does.
+        DECIDES: whether you can operate in a team without authority - which is every
+        new-grad's actual situation.
+        SENTENCE PATTERN: "I took X because I'd done the most work on it; I handed Y to
+        [name] because she'd built something similar before."
+
+    GOOGLEYNESS
+        HOLDS: the five components below.
+        DECIDES: whether you are someone this group can work with, evidenced rather than
+        asserted.
+
+--- GOOGLEYNESS, COMPONENT BY COMPONENT ---
+
+    COMFORT WITH AMBIGUITY
+        HOLDS: moving forward without complete requirements.
+        DECIDES: whether you freeze without instructions.
+        THE MOVE THAT SCORES: making the assumption EXPLICIT. Not guessing well -
+        stating what you assumed, in writing, so it can be corrected.
+        SENTENCE PATTERN: "The brief didn't specify X, so I assumed Y, wrote it in the
+        doc, and set a checkpoint to revisit once we had data."
+
+    BIAS TO ACTION, BALANCED WITH HUMILITY
+        HOLDS: starting before certainty, and changing course when evidence arrives.
+        DECIDES: whether you are decisive or merely stubborn. BOTH halves are needed -
+        action alone reads as recklessness.
+        SENTENCE PATTERN: "I started with X because waiting for Y would have cost a
+        week; when Y came back different from what I expected, I switched to Z."
+
+    INTELLECTUAL CURIOSITY
+        HOLDS: digging into WHY, not just what.
+        DECIDES: whether you understand your own work or merely operated it.
+        SENTENCE PATTERN: "It worked and I didn't know why, which bothered me, so I..."
+
+    COLLABORATION
+        HOLDS: making other people more effective.
+        DECIDES: whether the team is better with you in it.
+        SENTENCE PATTERN: "[Name] was blocked on X, so I..." - and note the effect on
+        them, not on you.
+
+    DOING THE RIGHT THING WHEN NOBODY IS CHECKING
+        HOLDS: honesty that costs you something.
+        DECIDES: trust.
+        AT STUDENT SCALE: telling the group your benchmark was flawed after they had
+        already celebrated it; flagging leaked test data nobody would have found;
+        correcting a number that favoured you.
+
+--- THE THREE HABITS THAT MAKE ANY STORY SCORE ---
+
+    1. Include the moment you did not know something, and what you did about it.
+    2. Name the people and what they contributed - by name, with their real contribution.
+    3. Describe a decision you reversed, and what changed your mind.
+
+    A story containing all three evidences curiosity, collaboration and humility at once,
+    whatever its subject. This is the cheapest way to make existing material score.""",
+              r"""9. ONE STORY, TWO SPOTLIGHTS - AND WHAT HAPPENS WHEN YOU AIM THE WRONG ONE.
+
+THE RAW EVENTS (the same capstone as the story-bank entry, deliberately - this is an
+index over existing material, not new material):
+
+    Four-person final-year project, six weeks, fixed demo date. Campus lost-and-found
+    image search. She owned the indexing pipeline. At week four a full re-index took
+    nine hours, allowing one experiment a day. She proposed cutting from twelve item
+    categories to four, taking re-index to forty minutes and eight experiments a day.
+    One teammate objected - twelve was what they had promised. She argued it on
+    iteration speed rather than scope; he agreed and wrote the plan for adding the rest.
+    Shipped on the demo date at 87% retrieval accuracy.
+
+--- SPOTLIGHT A: WEIGHTED FOR AMAZON ---
+
+    "Our model's indexing was too slow to iterate on, so I profiled it and found the
+    full re-index took nine hours - which meant one experiment a day with two weeks
+    left. I decided to cut scope from twelve categories to four. That took re-index to
+    forty minutes and our experiment rate to eight a day. We shipped on the demo date at
+    87% accuracy, where the alternative was twelve categories at an accuracy nobody
+    would have had time to measure."
+
+    WHAT IT SCORES: Ownership, Deliver Results, Bias for Action. First person singular
+    throughout. The number is early and load-bearing. The decision is unambiguously
+    hers.
+
+--- SPOTLIGHT B: WEIGHTED FOR GOOGLE ---
+
+    "The thing I got wrong was not measuring our iteration speed until week four - by
+    then a full re-index took nine hours and we could only test once a day. Once I had
+    the numbers the trade-off looked obvious to me, but Arun disagreed strongly, and he
+    was right that we'd committed to twelve categories in the proposal. What changed the
+    conversation was reframing it from what we'd promised to how fast we could learn -
+    eighty experiments instead of ten. He ended up writing the plan for adding the other
+    eight categories, and presenting it as a deliberate staging rather than a shortfall.
+    We shipped at 87% on four categories.
+
+    What I'd do differently is measure iteration speed in week one. The cut was right;
+    needing it at week four was my planning failure."
+
+    WHAT IT SCORES: Googleyness across four components at once - intellectual humility
+    ("the thing I got wrong", "he was right"), collaboration (Arun named, with his real
+    contribution), curiosity and reasoning (the reframing, explained), and emergent
+    leadership (she drove it, then handed the extension plan to him).
+
+--- NOW THE INVERSION: EACH VERSION AT THE WRONG COMPANY ---
+
+    SPOTLIGHT A TOLD AT GOOGLE. Every sentence begins with "I". No other person appears
+    at all - the interviewer does not learn that there were three other people on the
+    project. Nothing went wrong; nothing was reconsidered. The written feedback reads:
+    "strong ownership, no evidence of collaboration, no evidence of humility." Two of
+    the four Googleyness components that this story could have evidenced score NOTHING,
+    and the absence of any teammate reads as a mild negative rather than a neutral.
+
+    SPOTLIGHT B TOLD AT AMAZON. The decision is buried under the reasoning and the
+    credit-sharing. An Amazon interviewer, scoring an individual against Ownership and
+    Deliver Results, has to hunt for what she actually did, and the write-up reads
+    "seems collaborative, unclear what she personally drove." The number arrives last.
+
+Same events. Same honesty. Opposite verdicts, purely from what was foregrounded.
+
+THE POINT THIS MAKES: the weighting is not presentation polish sitting on top of the
+answer. It IS the answer, because the interviewer can only score what you actually said,
+and they are writing it down for someone who was not there.
+
+AND THE VERSION THAT WORKS ANYWHERE, for when you are unsure which room you are in:
+keep the "I" unambiguous on your own actions AND name other people's real contributions.
+"I owned the indexing pipeline and made the call to cut scope; Arun pushed back hard and
+was right about the commitment we'd made, and his framing of it as staged delivery is
+what got the group behind it." One sentence, both signals, no cost to either.""",
+              r"""10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: two to three hours, and only if you have already built the
+six stories. This is an INDEX over existing material, not new material - you are walking
+the rubric and attaching a moment to each component. If you find yourself writing new
+stories, you are doing the story-bank work, not this.
+
+WHERE EACH AXIS IS ACTUALLY SCORED, which surprises people:
+
+  - GCA is scored in your CODING rounds, from how you structure the problem. So thinking
+    out loud, stating your approach before writing, and naming the trade-off are not
+    politeness - they are the only way this axis gets any evidence at all.
+  - Googleyness and leadership are scored in EVERY round, including technical ones. How
+    you take a hint, whether you say "I don't know" cleanly, whether you push back when
+    you think the interviewer is wrong - all of it lands on these axes.
+  - There is often no separate "behavioural round" at Google in the way there is at
+    Amazon. The axes are assessed throughout.
+
+THE FOLLOW-UPS TO BE READY FOR:
+
+  - "Tell me about a time you were wrong." Not a trap - a scored opportunity. Real
+    example, specific evidence that changed your mind, no disguised strengths.
+  - "Tell me about a time you disagreed with someone." They want the other person's
+    position stated fairly, and how it resolved - not a story where you were simply
+    right.
+  - "What would you do differently?" Have one per story.
+  - "Tell me about a time you had to work with someone difficult." The trap is
+    complaining. The signal is what you changed about your own approach.
+
+THE AMAZON CONTRAST, condensed, since you are preparing for both:
+
+    AMAZON wants: ownership, data, a quantified result, first person singular.
+                  "I saw, I decided, I delivered, here is the number."
+    GOOGLE wants: reasoning process, what you got wrong, effect on the people around
+                  you. "Here is how I framed it, here is what I got wrong, here is how
+                  the team got there."
+
+    Same stories. Different foregrounding. Prepare both weightings for your two
+    strongest stories and choose on the day.
+
+THE #1 MISTAKE: claiming the traits instead of evidencing them. "I'm collaborative and I
+love learning" is said by every candidate, distinguishes nobody, and burns the seconds
+you needed for the specific incident that would have proved it. The interviewer must
+write something a stranger can evaluate - and a claim is not evaluable.
+
+RUNNER-UP: bringing only step-UP leadership stories and never a step-BACK one, which
+leaves the rarer half of emergent leadership completely unevidenced.
+
+TAKEAWAY: Googleyness is a rubric, not a personality - so attach one specific incident
+to each component, build the habit of naming what you did not know, who contributed what,
+and what changed your mind, and remember your interviewer has to write it down for
+someone who was never in the room.""",
           ],
           pitfalls="Claiming traits instead of demonstrating them ('I'm very collaborative'); telling a story with no other humans in it; presenting yourself as never wrong, which reads as low self-awareness; assuming Googleyness means being nice - it means being effective WITH people.",
           followups="'Tell me about a time you were wrong' - have this ready, because at Google it is a Googleyness probe, not a trap. 'What would you do if you disagreed with your team's technical direction?' - argue with evidence, commit once decided, and say what would make you revisit."),
@@ -47,12 +521,423 @@ def build(Q):
           mnemonic="Present -> Past -> Why here, in 90-120 seconds. Choose the two projects you WANT to be asked about; you are steering the next twenty minutes. End on a hook, not on a full stop.",
           example="'I'm a final-year Computer Science student specialising in AI and data science. Two things shaped what I want to do next. The first was a course project where I built a document question-answering system with retrieval-augmented generation - the model part was straightforward, but making the retrieval reliable took most of the work, and that is where I learned the engineering matters more than the model. The second was a summer internship where I owned a data pipeline that had been failing weekly; I added validation and idempotent retries and it ran unattended for the rest of the summer. Both taught me I like the systems side of ML rather than pure modelling, which is why I'm interested in this team specifically - you're building the serving infrastructure, not just the models.'",
           examples=[
-              "The 90-second script, timed. PRESENT (20s): 'I'm a final-year Computer Science student specialising in AI and data science.' PAST (60s): two projects, each with an outcome - the RAG system where the retrieval, not the model, was the hard part; the internship pipeline that had been failing weekly and ran unattended after you added validation and idempotent retries. WHY HERE (20s): one specific, researched reason. Practise it aloud until it lands at 90-120 seconds, then STOP practising - over-rehearsed sounds worse than slightly rough, and interviewers can hear a recitation.",
-              "Why you are steering, not just answering. Whatever you name here is what gets probed for the next twenty minutes. So choose the two projects you WANT to defend two levels down, not the two with the most impressive titles. If you mention a Kaggle competition you barely remember, you have just booked yourself twenty minutes of questions about it. Naming the project where you personally made the hard calls is the single highest-leverage decision in the whole interview, and it costs nothing.",
-              "The hook, and why it works. End on something slightly unfinished: 'the part I found most interesting was that the model barely mattered'. That is an invitation, and interviewers take it - which means the next question is one you chose and are prepared for. Compare ending on a flat full stop ('...and that's my background'), which forces them to pick the next question from your CV at random.",
-              "What a weak version sounds like, so you can hear the difference. 'I was born in Chennai and I've been passionate about computers since I was young. In school I liked maths. I did my BE in CSE with a specialisation in AI and data science, where I studied DBMS, operating systems, machine learning...' - two minutes in, nothing specific has been said, no project has been named, and the interviewer has learned only that you can read your own transcript aloud. Chronology is the trap: start where you are NOW and work backwards only as far as it earns its place.",
-              "Tailoring the 'why here' without being obsequious. Weak: 'Google is a great company with brilliant people.' Strong: 'You're building the serving infrastructure rather than the models, which is the part I found hardest in my own projects.' The test is whether the sentence would still be true if you swapped in a different company - if yes, it says nothing. One specific detail about the team, the product or a paper is enough; you do not need to have read their entire engineering blog.",
-              "The same answer, adjusted per company. At AMAZON, weight the PAST section toward ownership and a number ('it ran unattended for the rest of the summer' / 'cut p95 from 900ms to 120ms'), because everything there is graded against the Leadership Principles. At GOOGLE, weight it toward how you reasoned and who you worked with ('profiling showed it was the features, not the model, so we redirected two people's work'). Same two projects, same 90 seconds, different emphasis - and preparing both versions takes ten minutes.",
+              r"""1. THE GOAL - what this question is really doing.
+
+It opens almost every interview, and almost every candidate wastes it by narrating their
+CV from school forwards.
+
+Here is the thing to understand first: THE INTERVIEWER IS HOLDING YOUR RESUME. They can
+read. Reciting it aloud tells them nothing they did not already have, and it burns the
+two most valuable minutes of the whole conversation.
+
+What they are actually testing, and all three matter:
+
+  1. CAN YOU BE CONCISE UNDER NO PRESSURE AT ALL? This is the easiest question you will
+     be asked. If you ramble here, they now expect the system-design round to be
+     painful, and they are usually right.
+
+  2. WHAT DO YOU CHOOSE TO EMPHASISE? Out of everything you have done, you picked three
+     things. That choice tells them what you value and how you see yourself.
+
+  3. IS THERE A COHERENT STORY THAT LEADS TO THIS ROLE? Not a straight line - nobody has
+     one - but a reason you are sitting in this particular chair.
+
+And there is a fourth thing, which is yours rather than theirs, and it is the reason
+this question is worth real preparation:
+
+    WHATEVER YOU NAME HERE IS WHAT GETS ASKED ABOUT NEXT.
+
+You are not answering a question. You are choosing the topic of the next twenty
+minutes. Name the project you can defend three levels deep, and the follow-ups land on
+your strongest ground. Name whatever comes to mind first, and you have handed the
+steering wheel away.
+
+Target length: 90 to 120 seconds. Not five minutes, and not twenty seconds either.""",
+              r"""2. THE INTUITION - three blocks, not a timeline.
+
+The instinct is chronological: born, school, first year, second year, third year, now.
+That structure buries the important part at the end and spends your best minute on your
+weakest material.
+
+Use three blocks instead, and notice how much of the time goes to the middle one:
+
+    PRESENT       [==]                      ~20 seconds   one sentence: who you are now
+    PAST          [==================]      ~60 seconds   two or three things that built
+                                                          toward this role, each with an
+                                                          outcome
+    WHY HERE      [==]                      ~20 seconds   a specific, researched reason
+
+    then a HOOK   [=]                       ~5 seconds    one unfinished thread they will
+                                                          want to pull
+
+Compare the two shapes on the same person:
+
+    CHRONOLOGICAL                        PRESENT-PAST-WHY HERE
+    "I was born in Chennai..."           "I'm a final-year CS student specialising
+    "In school I liked maths..."          in AI and data science."
+    "In first year we did C..."          "Two things got me here. First, a capstone
+    "In second year, data structures"     where I owned the indexing pipeline and
+    "Third year I did a project..."       cut re-index time from nine hours to
+    "...and now I'm here."                forty minutes..."
+
+The left version reaches the interesting material at second 100, by which point the
+interviewer has stopped listening. The right version opens with it.
+
+The structure is not a stylistic preference. It exists because attention is highest in
+the first fifteen seconds, and because the PAST block is the only part that contains
+evidence.""",
+              r"""3. EVERY TERM, defined the first time you meet it.
+
+TELL ME ABOUT YOURSELF. The opening question. Also arrives as "walk me through your
+resume", "give me your background", or "so, tell me a bit about you". Same answer.
+
+PRESENT - PAST - WHY HERE. The three-block structure. Where you are now, what built you
+toward this, why this specific role.
+
+THE HOOK. A deliberately slightly-unfinished final clause that invites the follow-up you
+want. "The part I found most interesting was that the model barely mattered" is a hook;
+"and that's my background" is not.
+
+STEERING. Choosing what gets asked next by choosing what you name. The main strategic
+purpose of this answer.
+
+OUTCOME. What happened as a result, ideally with a number. "I built an image search
+system" is a description; "I cut re-index time from nine hours to forty minutes, which
+took us from one experiment a day to eight" is an outcome.
+
+TAILORING. Adjusting the emphasis - not the facts - for the company. Section 9 shows the
+same script weighted two ways.
+
+OVER-REHEARSED. The failure mode at the other end from unprepared. A word-perfect
+recitation sounds recited, and it goes flat. Practise until the SHAPE is automatic, then
+stop.
+
+RESUME-WALKING. Reading your CV aloud in order. The single most common wrong answer.
+
+THE SIGNAL VERSUS THE CONTENT. The content is what you did; the signal is what your
+choice of what to mention says about you. Both are being scored, and most candidates
+only think about the first.""",
+              r"""4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1 - the default failure: STARTING FROM CHILDHOOD. "I was born in Chennai and I've
+been passionate about computers since I was young. In school I enjoyed maths, and then
+in first year we learned C..." By the time anything relevant arrives, you have spent
+sixty seconds on material that could describe several hundred thousand people.
+
+TRAP 2: RECITING THE RESUME THEY ARE HOLDING. Listing every course, every project, every
+technology. It signals that you cannot distinguish important from unimportant, which is
+precisely the judgement the role requires.
+
+TRAP 3: NAMING A PROJECT YOU CANNOT DEFEND. You mention four projects because they are
+all on the CV, and the interviewer picks the one you did least of. Now you are twenty
+minutes into your weakest material and you chose it yourself. Name two you know cold.
+
+TRAP 4: A GENERIC "WHY HERE". "Google is a great company with brilliant people" is worse
+than saying nothing, because it proves you did not look. Specific is not hard: a team,
+a product, a paper, a technology, something you actually read.
+
+TRAP 5 - the subtle one: NO NUMBERS IN THE PAST BLOCK. "I built a machine learning model
+for image search" invites "okay, and?" A number does two things at once - it makes the
+work concrete, and it demonstrates you measured something, which is itself a signal.
+
+TRAP 6: OVER-REHEARSING INTO FLATNESS. There is a real point where more practice makes
+it worse. A word-perfect delivery sounds like a recording, and the interviewer stops
+hearing a person. Practise until you can hit the three blocks in 90 seconds without
+notes, then stop and let the words vary.
+
+TRAP 7: RUNNING LONG. Four minutes is common and it is a genuine negative mark. Time
+yourself out loud - written text always takes longer to say than it looks. If you cannot
+get under two minutes, the PAST block has three projects in it and should have two.
+
+TRAP 8: ENDING ON A FULL STOP. "...and that's why I applied. So, yes." leaves the
+interviewer to invent the next question, and they may not pick the one you wanted. End
+on a hook.""",
+              r"""5. THE NAIVE VERSION FIRST, THEN THE REAL ONE.
+
+THE NAIVE VERSION: answer the question literally.
+
+"Tell me about yourself" is, taken at face value, an invitation to describe yourself. So
+people describe themselves - background, interests, personality, a chronological account
+of how they got here.
+
+It is not a wrong reading of the words. It is a wrong reading of the SITUATION. This is
+a professional conversation with a fixed budget of about forty-five minutes, in which
+the interviewer must gather enough evidence to write a recommendation. They are not
+curious about you as a person yet. They are opening a technical conversation and giving
+you the choice of where it starts.
+
+THE REAL VERSION: it is a PITCH with a STEERING function.
+
+Once you see that, every rule follows without needing to be memorised:
+
+  - WHY 90 SECONDS? Because it is an opening, not the substance. The substance is the
+    twenty minutes it sets up.
+  - WHY NOT CHRONOLOGICAL? Because relevance decreases as you go back, and attention
+    decreases as you go forward. The two curves point in opposite directions.
+  - WHY ONLY TWO OR THREE THINGS? Because you are selecting the follow-up ground. More
+    items means less control and a higher chance they pick your weakest.
+  - WHY A NUMBER IN EACH? Because "I built X" invites "and?", while "I cut X from nine
+    hours to forty minutes" invites "how?" - and "how?" is the question you want.
+  - WHY A SPECIFIC "WHY HERE"? Because the generic version is evidence of not having
+    looked, and evidence outranks assertion in every part of this process.
+  - WHY A HOOK? Because the alternative is letting them choose the next question.
+
+THE PROOF THAT STEERING IS REAL, and it is worth saying out loud because it converts
+this from advice into mechanics: interviewers have limited time and no strong prior about
+which of your projects is worth probing. Absent a reason to choose, they pick from what
+you just said - it is fresh, it is what the conversation is about, and following it is
+the path of least resistance. So the set of things you name IS, in practice, the set of
+things you will be asked about. That makes the selection decision the highest-leverage
+part of the whole answer, and it is the part almost nobody makes deliberately.""",
+              r"""6. HOW TO BUILD IT - the procedure, step by step.
+
+The one sentence that holds the whole idea: WRITE NINETY SECONDS IN THREE BLOCKS -
+WHO YOU ARE NOW, TWO THINGS THAT BUILT YOU TOWARD THIS ROLE WITH A NUMBER IN EACH, AND
+ONE RESEARCHED REASON FOR THIS COMPANY - THEN END ON SOMETHING THEY WILL WANT TO ASK
+ABOUT.
+
+THIS IS A REHEARSAL LOOP, and unusually, it has a stopping rule you must actually obey
+- because over-practising makes this particular answer WORSE, which is not true of most
+interview preparation:
+
+  - Each pass: say it out loud, timed, without notes.
+  - Failures look like: over 120 seconds, no number, a project you would not want probed,
+    a generic "why here", or a flat ending.
+  - WHAT MAKES IT STOP: you can hit all three blocks in 90 to 120 seconds without notes,
+    twice in a row, and the wording comes out slightly different each time.
+  - That last clause is the real stopping condition. If the wording is IDENTICAL each
+    time, you have gone past prepared into memorised, and it will sound like it. Stop
+    earlier than feels comfortable.
+
+THE STEPS:
+
+  1. WRITE THE PRESENT LINE. One sentence, who you are right now. "I'm a final-year
+     Computer Science student specialising in AI and data science." That is the whole
+     block. Resist adding to it.
+
+  2. LIST EVERY CANDIDATE FOR THE PAST BLOCK. Projects, internships, competitions,
+     significant coursework. Ten lines, unfiltered.
+
+  3. SCORE EACH ON TWO AXES: how well can I defend this three questions deep, and how
+     relevant is it to THIS role. Pick the two that score highest on both. Not the most
+     impressive - the most defensible.
+
+  4. WRITE EACH IN TWO SENTENCES: what it was, and what came out of it WITH A NUMBER.
+     Two sentences each, not a paragraph. This whole block is sixty seconds.
+
+  5. RESEARCH THE "WHY HERE" PROPERLY. Find one specific thing - a team, a product, a
+     technical problem, a paper, a system you have actually used. Twenty seconds. If you
+     cannot fill it specifically, you have not done the research, and that is the finding.
+
+  6. WRITE THE HOOK. One clause at the end that leaves a thread showing. Ideally it
+     points at whichever of your two projects you most want to discuss.
+
+  7. TIME IT OUT LOUD. Not in your head - out loud takes far longer. Over 120 seconds
+     means the PAST block has too much in it.
+
+  8. CUT THE PRESENT BLOCK FIRST when trimming. It is always the one that has grown.
+
+  9. PREPARE TWO WEIGHTINGS - one leaning toward ownership and numbers, one toward
+     reasoning and collaboration. Section 9 shows both. Same facts, different emphasis.
+
+ 10. STOP PRACTISING once step-by-step rule above is met.""",
+              r"""7. WHAT IS HAPPENING, told as a story - no jargon at all.
+
+Imagine you have two minutes at the start of a meeting with someone who will spend the
+next forty deciding what to think of you. They have a one-page summary of your history in
+front of them, which they have skimmed.
+
+The instinct is to read the page aloud. They have the page.
+
+What actually helps them - and helps you - is to say: here is who I am, here are the two
+things I have done that are worth your time, and here is why I am specifically in this
+room rather than any other.
+
+And here is the part that changes how you prepare. Whatever you mention, they will ask
+about. Not because they are strategic, but because they have limited time and no
+particular reason to pick anything else. The thing you just said is the obvious thing to
+follow up on.
+
+So you are not really answering. You are choosing the subject of the conversation that
+follows - which means the choice should be made carefully, at home, in advance, and
+should land on the two things you could talk about for an hour without running out.
+
+Then you leave one thread hanging deliberately. Not a cliffhanger - just a clause that
+sounds slightly unfinished. "The surprising part was that the model barely mattered."
+Almost nobody can leave that alone, and now the conversation goes exactly where you
+prepared for it to go, and it was their idea.""",
+              r"""8. THE ARTEFACT, WALKED THROUGH PIECE BY PIECE.
+
+No code here, so what follows is the answer taken apart block by block - what each holds,
+what it decides, and how long it runs.
+
+    PRESENT                                                        about 20 seconds
+        HOLDS: one sentence stating who you are right now.
+        DECIDES: whether the interviewer can place you immediately. That is all it does.
+        RULE: one sentence. This block grows every time you rewrite and should be cut
+        back every time you trim.
+        EXAMPLE: "I'm a final-year Computer Science student specialising in AI and data
+        science."
+
+    PAST                                                           about 60 seconds
+        HOLDS: two things - occasionally three - that built toward this role. Each in
+        two sentences: what it was, and the outcome WITH A NUMBER.
+        DECIDES: everything. This is the only block containing evidence, and it is the
+        block that selects your follow-up ground.
+        RULE: choose for DEFENSIBILITY, not impressiveness. The interviewer will probe
+        whichever you name, so name what you know three levels deep.
+        NOTE: this is 60% of the answer, exactly as ACTION is the bulk of a STAR story.
+        The parallel is not a coincidence - both are the part carrying evidence.
+
+    WHY HERE                                                       about 20 seconds
+        HOLDS: one specific, researched reason for THIS company or team.
+        DECIDES: whether you look like someone who applied here, or someone who applied
+        everywhere. Specificity is the entire signal; enthusiasm is not.
+        RULE: name something concrete - a team, a product, a technical problem, a paper.
+        If you cannot, you have not researched enough, and that is worth knowing before
+        the interview rather than during it.
+
+    THE HOOK                                                       about 5 seconds
+        HOLDS: one clause that leaves a thread showing.
+        DECIDES: what gets asked next. This is your last chance to steer before control
+        passes to them.
+        RULE: point it at whichever project you most want to discuss. Make it sound
+        slightly unfinished - a surprise, a thing that did not work as expected, a
+        counterintuitive finding.
+        EXAMPLE: "...though honestly the part I found most interesting was that the model
+        barely mattered - the retrieval quality did."
+
+    WHAT IS NOT IN IT
+        No childhood. No school. No chronological march. No list of coursework. No
+        technologies recited as a list. No personality claims ("I'm a fast learner",
+        "I'm very collaborative") - those are asserted rather than shown, and asserting
+        them costs you seconds you need for evidence.""",
+              r"""9. THE WHOLE THING, WRITTEN OUT AND TIMED - THEN WEIGHTED TWO WAYS.
+
+THE SCRIPT (about 105 seconds spoken, roughly 230 words):
+
+    PRESENT (18s)
+    "I'm a final-year Computer Science student specialising in AI and data science."
+
+    PAST (62s)
+    "Two things really shaped what I want to do next. The first was my capstone - four
+    of us built a campus lost-and-found image search, and I owned the indexing pipeline.
+    Four weeks in I realised a full re-index took nine hours, so we could only test one
+    change a day. I cut our scope from twelve item categories to four, which brought
+    that to forty minutes and let us run eight experiments a day instead of one. We
+    shipped on the demo date at 87% retrieval accuracy.
+
+    The second was a summer internship, where I automated a weekly report the team was
+    assembling by hand. It took someone about three hours every Monday; I turned it into
+    a scheduled job that has been running unattended since."
+
+    WHY HERE (20s)
+    "What draws me to this team specifically is the serving infrastructure side - the
+    capstone taught me that the interesting problems were in retrieval and latency, not
+    in the model, and that's exactly what this team works on."
+
+    HOOK (5s)
+    "Though honestly the part I found most interesting was that the model barely
+    mattered - the retrieval quality decided everything."
+
+CHECK IT AGAINST THE RULES:
+    Present is one sentence.                                              yes
+    Two past items, each with a number (9h -> 40min, 1 -> 8, 87%; 3 hours) yes
+    Why here names a specific technical area, not the company's reputation yes
+    Ends on an unfinished thread pointing at the capstone                  yes
+    Under 120 seconds                                                      yes at ~105
+
+NOW THE SAME FACTS, WEIGHTED TWO WAYS - and this is the part that demonstrates judgement.
+
+    WEIGHTED FOR AMAZON (ownership, first person singular, the number up front):
+
+    "...I owned the indexing pipeline. I measured our iteration speed, found the full
+    re-index took nine hours, and decided to cut scope from twelve categories to four.
+    That took re-index to forty minutes and our experiment rate from one a day to eight.
+    We shipped on the demo date at 87%."
+
+    Emphasis: I saw, I decided, I delivered, here is the number.
+
+    WEIGHTED FOR GOOGLE (reasoning, what you got wrong, effect on others):
+
+    "...I owned the indexing pipeline. What I got wrong was not measuring our iteration
+    speed until week four - by then we could only test once a day. Once I saw the
+    numbers, the trade-off was clear, but one teammate disagreed strongly and he was
+    right that we'd committed to twelve categories. What changed his mind was reframing
+    it around how fast we could learn rather than what we'd promised - and he ended up
+    writing the plan for adding the rest."
+
+    Emphasis: here is how I framed it, here is what I got wrong, here is how the team
+    got there.
+
+THE INVERSION WORTH NOTICING: these are not just two styles. Used at the wrong company,
+each one actively hurts.
+
+    The Amazon version at Google reads as someone who decided alone and does not mention
+    anyone else - and Google scores collaboration and intellectual humility explicitly.
+
+    The Google version at Amazon reads as someone hiding inside a team, with the
+    decision and the number buried - and Amazon cannot score an individual on that.
+
+Same events, same honesty, opposite outcome depending on the weighting. That is why you
+prepare two and choose on the day, rather than preparing one and hoping.
+
+AND FOR CONTRAST, THE WEAK VERSION, so the difference is audible:
+
+    "I was born in Chennai and I've been passionate about computers since I was young.
+    In school I enjoyed maths and physics. In first year we studied C and data
+    structures, second year I did database systems and computer networks, and in third
+    year I did a machine learning project. I'm proficient in Python, Java, SQL, and I've
+    used TensorFlow and PyTorch. I'm a fast learner and I work well in teams. I'm looking
+    for a role where I can grow."
+
+    Ninety seconds. No number. No project the interviewer can follow up on. Two
+    personality claims asserted rather than shown. Nothing specific to this company.
+    Nothing to ask about next - so the interviewer now has to invent a question, and it
+    will not be one you chose.""",
+              r"""10. WHAT IT COSTS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+WHAT THE PREPARATION COSTS: about two hours total. One hour to select and write, one
+hour spread across a few days saying it out loud and timing it. It is the highest
+return-per-minute preparation available anywhere in the process, because this question
+is guaranteed to be asked, is asked FIRST, and sets the agenda for everything after it.
+
+WHEN TO STOP PRACTISING: once you can hit the three blocks in 90 to 120 seconds without
+notes and the wording comes out slightly different each time. Past that point, more
+practice makes it worse - a word-perfect delivery sounds recited and goes flat. This is
+the one piece of interview prep with a genuine upper bound on useful rehearsal.
+
+THE FOLLOW-UPS THIS ANSWER GENERATES, which is the whole point of the design:
+
+  - "Tell me more about that capstone." Exactly what you wanted. This is the hook
+    working.
+  - "Why did you cut the scope rather than optimise the pipeline?" Prepare this - it is
+    the obvious challenge to the decision you just described, and having a real answer
+    is worth more than the story itself.
+  - "What would you do differently?" Always asked. Have it ready.
+  - "Why this team and not [adjacent team]?" Follows from a specific "why here", which
+    is a good problem to have.
+
+OTHER QUESTIONS THIS SETS UP, worth knowing:
+
+  - "Why not further study?" if you are a final-year student. Have a straight answer;
+    hedging reads as indecision.
+  - "Walk me through your resume" is the same question with a slightly stronger pull
+    toward chronology. Resist it - use the same three blocks, and mention dates only as
+    scaffolding.
+
+THE #1 MISTAKE: treating it as a request for autobiography rather than as the moment you
+choose what the interview is about. Everything else - the childhood opening, the
+technology list, the missing numbers - follows from that single misreading, and fixing
+the misreading fixes all of them at once.
+
+RUNNER-UP: naming four projects instead of two, which hands the interviewer the choice
+of which one to probe, and they will not choose your best.
+
+TAKEAWAY: the interviewer already has your resume, so do not read it to them - spend
+ninety seconds on who you are now, two things you can defend three questions deep with a
+number in each, and one researched reason for this room, then leave a thread hanging so
+the next twenty minutes go where you prepared for them to go.""",
           ],
           pitfalls="Going four minutes; starting at 'I was born in...'; reading the resume aloud; being generic about why this company; mentioning a project you cannot defend in depth (they will ask); no structure, so it wanders.",
           followups="'Tell me more about that RAG project' - which is exactly what you wanted, so have the technical depth ready two levels down. 'Why this team rather than another?' - name something only true of them."),
