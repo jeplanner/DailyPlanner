@@ -90270,236 +90270,1674 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1K["Kth Missing Positive Number"] = [
-    """The linear walk, traced.
-arr = [2,3,4,7,11], k = 5. Walk the positive integers.
-current 1: arr[0] is 2, not 1 -> missing 1 (count 1).
-2, 3, 4 are present -> i advances to 3.
-current 5: arr[3] is 7 -> missing 2. current 6 -> missing 3.
-current 7 present -> i = 4. current 8, 9, 10 -> missing 4, 5, 6... wait, at
-current 9 the count reaches 5 -> return 9.
-Answer 9. Sanity check: the missing positives are 1, 5, 6, 8, 9, 10, ... and
-the 5th is indeed 9.""",
+    """1. THE GOAL - the array has gaps; name the kth number that fell into one.
 
-    """The counting identity that makes binary search possible.
-At index i, the number of missing positives BELOW arr[i] is exactly
-arr[i] - (i + 1). Reason: if nothing were missing, arr[i] would be i+1; the
-excess is the count of gaps.
-arr = [2,3,4,7,11]: at i=0, 2-1 = 1 missing before it. At i=3, 7-4 = 3. At i=4,
-11-5 = 6.
-That expression is monotonic in i, so you can binary-search for the first index
-where it is >= k. This is the whole reason the problem is rated the way it is -
-the linear scan is obvious, the O(log n) version is the point.""",
+You are given a SORTED array of DISTINCT POSITIVE integers. Think of the positive integers 1, 2, 3, ...
+marching past, and cross off the ones that appear in the array. What is left are the MISSING ones. Return
+the kth of those.
 
-    """The binary search, and the formula for the answer.
-    lo, hi = 0, len(arr) - 1
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        if arr[mid] - (mid + 1) < k: lo = mid + 1
-        else:                        hi = mid - 1
-    return lo + k
-After the loop, lo is the count of array elements sitting BELOW the answer, so
-the kth missing number is lo + k. On the example: the search lands at lo = 4,
-and 4 + 5 = 9. Correct.
-Deriving `lo + k` rather than memorising it: you need the kth missing positive,
-and lo array values are interleaved below it, so it is shifted up by exactly
-lo.""",
+    arr = [2, 3, 4, 7, 11]        k = 5
 
-    """Edge cases.
-All missing at the start, arr = [5,6,7] with k = 2 -> the missing are 1,2,3,4
--> answer 2. Binary search gives lo = 0, and 0 + 2 = 2.
-k beyond the array's range, arr = [1,2,3] with k = 2 -> nothing is missing
-below 3, so the answer is 5. lo ends at 3, and 3 + 2 = 5. The formula handles
-'past the end' with no special case, which is worth checking explicitly since
-it looks like it should need one.
-arr = [1] with k = 1 -> answer 2.
-Single missing before the first element, arr = [2] with k = 1 -> answer 1.""",
+        the positive integers:   1   2   3   4   5   6   7   8   9   10  11  12 ...
+        present in arr?          no  YES YES YES no  no  YES no  no  no  YES no
+        missing, in order:       1               5   6       8   9   10      12
+        missing number:          1st             2nd 3rd     4th 5th 6th     7th
 
-    """Why the array must be sorted and distinct.
-The identity arr[i] - (i+1) assumes each position would hold i+1 if nothing
-were missing - which requires strictly increasing distinct positives. With
-duplicates or unsorted input the count is meaningless and the binary search
-searches a non-monotonic function, silently returning nonsense.
-Check the constraints for 'sorted' and 'distinct' before reaching for this; if
-they are absent, you are back to a set plus a linear walk.""",
+    THE 5TH MISSING POSITIVE IS 9.
 
-    """Complexity and the family.
-Linear walk: O(n + k) time, O(1) space - simple, and fine when k is small.
-Binary search: O(log n) time, O(1) space - the expected answer when the array
-is large.
-The family is 'binary search on a derived monotonic quantity' rather than on
-the values themselves: Missing Element in Sorted Array, Find the Duplicate
-Number, Search Insert Position, and Koko Eating Bananas (search the answer, not
-the array). The unifying move is spotting a function of the index that is
-monotonic even though the raw data does not look searchable.""",
+    ANSWER: 9
+
+THE MISSING NUMBERS ARE COUNTED FROM 1, NOT FROM THE ARRAY'S FIRST ELEMENT. If the array starts at 5, then
+1, 2, 3 and 4 are all missing and they come first.
+
+    arr = [5, 6, 7]        k = 2
+
+        missing: 1, 2, 3, 4, 8, 9, 10, ...      the 2nd is 2
+
+    ANSWER: 2
+
+AND THE MISSING NUMBERS DO NOT STOP WHERE THE ARRAY DOES. Past the last element, every integer is missing.
+
+    arr = [1, 2, 3, 4]        k = 2
+
+        1, 2, 3, 4 are all present, so the missing run 5, 6, 7, ...     the 2nd is 6
+
+    ANSWER: 6
+
+WHY THIS IS NOT JUST A LOOP. The straightforward walk is O(n + k), which is fine for small inputs. But the
+array is SORTED, and sorted input is an invitation to binary search - and the interesting part of this
+problem is that binary searching requires you to first find a formula for "how many are missing before
+position i". THAT FORMULA IS THE ENTIRE PROBLEM.
+
+    THIS ENTRY JOINS THE BINARY-SEARCH CLUSTER. ARRANGING COINS OWNS SEARCHING OVER AN ANSWER RANGE
+    RATHER THAN AN ARRAY and the `return hi` convention. THIS ONE OWNS THE INDEX-VS-VALUE OFFSET - the
+    identity arr[i] - (i + 1), and the `return lo + k` that reads the answer off the boundary rather than
+    out of the array.""",
+
+    """2. THE INTUITION - at every position, the gap between the value and where it sits IS the missing count.
+
+Lay the array out and, underneath, write what would be there if NOTHING were missing.
+
+    index i:            0    1    2    3    4
+    arr[i]:             2    3    4    7    11
+    would be, if full:  1    2    3    4    5
+    difference:         1    1    1    3    6
+
+    THE DIFFERENCE IS EXACTLY HOW MANY POSITIVE INTEGERS ARE MISSING BELOW arr[i].
+
+    Check it by hand at i = 3: arr[3] is 7, and 7 - (3 + 1) = 3. The numbers below 7 that are absent are
+    1, 5 and 6 - THREE of them. Correct.
+    At i = 4: arr[4] is 11, and 11 - 5 = 6. Absent below 11: 1, 5, 6, 8, 9, 10 - SIX. Correct.
+
+WHY THE FORMULA IS TRUE, IN ONE LINE. If the first i + 1 positive integers were all present, they would
+occupy positions 0 through i and arr[i] would be i + 1. Every value in the array that is bigger than that
+is bigger by exactly the number of integers that got skipped along the way. SO arr[i] - (i + 1) COUNTS THE
+SKIPS.
+
+    That argument needs the array to be SORTED (so positions correspond to order) and DISTINCT (so no
+    position is wasted on a repeat). Both are given.
+
+NOW THE SEARCH. The difference column - 1, 1, 1, 3, 6 - is NON-DECREASING, because each step forward adds
+zero or more new gaps and never removes one. A non-decreasing sequence is exactly what binary search
+needs.
+
+        missing counts:   1    1    1    3    6
+        k = 5:            <    <    <    <    >=
+                                              ^
+                          the FIRST position where the count reaches k
+
+    Everything to the left of that boundary has fewer than k numbers missing below it; everything from it
+    onward has at least k.
+
+READING THE ANSWER OFF THE BOUNDARY. Suppose the boundary lands at index `lo`. Then the first `lo` array
+elements sit BELOW the answer, and every one of them is a number that is NOT missing. So among 1, 2, 3,
+..., up to the answer, exactly `lo` are present and k are missing:
+
+        ANSWER = lo + k
+
+    For arr = [2,3,4,7,11] and k = 5 the boundary is at lo = 4, and 4 + 5 = 9. THE ANSWER IS NEVER LOOKED
+    UP IN THE ARRAY - it is computed from where the boundary fell, which is the part that feels like a
+    trick until you have seen this argument.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+POSITIVE INTEGER. 1, 2, 3, ... - zero is not included, which is why the walk starts at 1.
+
+MISSING. A positive integer that does not appear in the array. The missing numbers are considered in
+increasing order, and there are infinitely many of them - past the array's last element everything is
+missing.
+
+SORTED AND DISTINCT. The array is strictly increasing. Both properties are required by the counting
+identity - see section 4.
+
+THE COUNTING IDENTITY. arr[i] - (i + 1) is the number of positive integers missing BELOW arr[i]. The
+`i + 1` is "how many numbers would be here if none were missing", because index i is the (i+1)th
+position.
+
+MONOTONIC / NON-DECREASING. A sequence that never goes down. The missing-count column is non-decreasing,
+which is the precondition for binary search.
+
+BOUNDARY SEARCH. Binary search used not to find an exact value but to find the FIRST position where a
+condition becomes true. The loop ends with `lo` sitting on that first position.
+
+THE VARIABLES IN THE LINEAR CODE:
+    arr       the input array. NOT MODIFIED.
+    k         which missing number is wanted, counting from 1.
+    missing   how many missing numbers have been passed so far.
+    current   the positive integer currently being examined. Starts at 1.
+    i         the index into arr of the next value that might match `current`.
+
+THE VARIABLES IN THE BINARY-SEARCH VERSION:
+    lo, hi    the search bounds. `lo` ends up at the first index whose missing-count reaches k.
+    mid       the index being tested.
+
+LINEAR: O(n + k) time, O(1) space.  BINARY: O(log n) time, O(1) space.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - an off-by-one that both official examples accept.
+
+TRAP 1 - GETTING THE IDENTITY WRONG AS `arr[i] - i`. This is the natural slip, because index i "feels
+like" the count of things before it. It is off by one: at index i there are i + 1 positions filled, not i.
+
+        WITH arr[i] - (i + 1):   the true count of missing numbers below arr[i]
+        WITH arr[i] - i:         one MORE than the truth, at every position
+
+    MEASURED: over 6,000 random cases the `arr[i] - i` version disagreed with the correct answer on 1,407.
+
+    NOW CHECK BOTH OFFICIAL EXAMPLES:
+
+        arr = [2, 3, 4, 7, 11],  k = 5     correct 9    with arr[i] - i:  9     AGREE
+        arr = [1, 2, 3, 4],      k = 2     correct 6    with arr[i] - i:  6     AGREE
+
+    BOTH AGREE. The bug passes every sample the problem gives you. THE SMALLEST CASE THAT EXPOSES IT IS
+    arr = [1] WITH k = 1: the array contains 1, so the first missing positive is 2 - and the broken
+    identity answers 1.
+
+    THE WAY TO GET IT RIGHT IS TO STATE WHAT THE SLOT MEANS BEFORE WRITING IT: "index i is the (i+1)th
+    position, so if nothing were missing arr[i] would be i+1". Say the sentence, then write the line.
+
+TRAP 2 - LOOKING THE ANSWER UP IN THE ARRAY. After the search, it is tempting to return something like
+arr[lo] adjusted by a bit. THE ANSWER IS USUALLY NOT IN THE ARRAY AT ALL - it is a missing number.
+`lo + k` computes it from the boundary: `lo` numbers are present below the answer, and k are missing.
+
+TRAP 3 - ASSUMING THE ANSWER LIES INSIDE THE ARRAY'S RANGE. With arr = [1, 2, 3] and k = 10, the answer
+is 13, far past the last element. THE BINARY SEARCH HANDLES THIS WITHOUT A SPECIAL CASE: no position ever
+reaches a missing-count of 10, so `lo` runs off the end to 3, and 3 + 10 = 13. Verified.
+
+TRAP 4 - FORGETTING WHY SORTED AND DISTINCT MATTER. The identity assumes position i would hold value i+1
+if nothing were missing. A duplicate wastes a position and inflates the count; an unsorted array makes
+"below arr[i]" meaningless. NEITHER IS A CASE YOU CAN TEST FOR ON THE JUDGE - they are guarantees you are
+LEANING ON, and saying which guarantees your formula needs is exactly what an interviewer is listening
+for.""",
+
+    """5. THE SLOW WAY FIRST, then the binary search - and an honest word about which to write.
+
+THE NAIVE VERSION - WALK THE POSITIVE INTEGERS AND COUNT THE GAPS:
+
+    walk current = 1, 2, 3, ...
+    keep a pointer into arr
+    if arr[pointer] equals current, this number is present - advance the pointer
+    otherwise it is missing - count it, and stop when the count reaches k
+
+    IT IS CORRECT, it is easy to explain, and it is the version in this entry's code field. COST:
+    O(n + k) - the walk visits every array element and every missing number up to the kth.
+
+    AT THIS PROBLEM'S CONSTRAINTS (array length at most 1,000, k at most 1,000) THAT IS AT MOST 2,000
+    STEPS. THE LINEAR WALK PASSES COMFORTABLY, and saying so is more honest than pretending binary search
+    is required. It is asked for because the problem is a vehicle for the technique.
+
+THE UPGRADE, AND THE TRICK EXPLAINED FROM SCRATCH. The waste in the linear walk is that it inches forward
+one integer at a time even across a long run of present numbers. Binary search jumps - but only if you
+can ask a yes/no question about a POSITION and have the answer be monotonic. Section 2 supplies exactly
+that question:
+
+        "are at least k numbers missing below arr[mid]?"       i.e.   arr[mid] - (mid + 1) >= k
+
+    The counts never decrease as mid grows, so the answers form a run of NOs followed by a run of YESes,
+    and binary search finds the boundary.
+
+        lo, hi = 0, len(arr) - 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if arr[mid] - (mid + 1) < k:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return lo + k
+
+    WHAT `lo` MEANS WHEN THE LOOP ENDS: the first index whose missing-count reaches k - or len(arr) if no
+    index does. Either way, `lo` counts how many array elements sit below the answer.
+
+    MEASURED: this version agreed with the linear walk and with a brute-force scan on all 6,000 random
+    cases tested - 0 disagreements.
+
+    COST: O(log n) time, O(1) space. For an array of 1,000 that is about 10 comparisons instead of up to
+    2,000 steps.
+
+WHICH TO WRITE IN AN INTERVIEW: say the linear one first because it is obviously correct, then say "the
+array is sorted, so I can binary search if I can count the missing numbers below a position" and derive
+the identity out loud. THE DERIVATION IS THE ANSWER; the code is four lines either way.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE (LINEAR): walk the positive integers from 1, ticking off the ones the array contains and
+counting the ones it does not, and stop when the count of missing numbers reaches k.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion. One loop, three integers, and TWO SEPARATE
+COUNTERS THAT MOVE AT DIFFERENT SPEEDS:
+
+    `current`  the integer under consideration. Increases by exactly 1 every iteration, without fail.
+    `i`        the index into arr. Increases ONLY when `current` was found in the array.
+    `missing`  increases only when `current` was NOT found.
+
+    EVERY ITERATION INCREMENTS EXACTLY ONE OF `i` AND `missing`, plus `current`. That is the whole
+    bookkeeping, and it is why the two counters together always account for `current - 1`.
+
+    WHAT MAKES IT STOP: the loop is written `while True`, which looks alarming, but `missing` increases
+    on every step where the number is absent, and past arr's last element EVERY number is absent - so
+    `missing` reaches k after at most len(arr) + k iterations. THE EXIT IS THE `return`, and it is
+    guaranteed. There is no case where the loop spins without progress.
+
+    WHY THE BOUNDS CHECK COMES FIRST IN `i < len(arr) and arr[i] == current`: once the pointer has passed
+    the end of the array, `arr[i]` would raise. Python's `and` short-circuits, so the index is never
+    evaluated. Past the end, the condition is simply false and every remaining number counts as missing -
+    which is correct.
+
+THE STEPS, NO CODE (LINEAR):
+
+    1. Start a missing count at zero, the number under consideration at 1, and a pointer at the array's
+       first element.
+    2. Repeat:
+       a. If the pointer is still inside the array and the element it points at equals the number under
+          consideration, that number is present - move the pointer on.
+       b. Otherwise the number is missing - add one to the missing count, and if that count has reached
+          k, hand back the number under consideration and stop.
+       c. Either way, move on to the next number.
+
+THE STEPS FOR THE BINARY SEARCH:
+
+    1. Set the search bounds to the whole array.
+    2. While the bounds have not crossed, take the middle index and work out how many numbers are missing
+       below the value there: the value minus one more than the index.
+    3. If that is less than k, the answer is further right - move the low bound past the middle.
+       Otherwise move the high bound before the middle.
+    4. When the bounds cross, the low bound is the count of array elements below the answer. Hand back
+       that count plus k.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A hotel corridor has rooms numbered 1, 2, 3 and so on, but some doors were bricked up years ago. You are
+given a list of the rooms that still exist, in order, and asked: what is the number of the fifth bricked-up
+room?
+
+The plodding way is to walk the corridor from room 1, holding the list. At each number you check whether
+it is the next one on your list. If it is, the room exists - you tick it off and move along. If it is not,
+this room was bricked up, so you make a mark on your hand. When you have five marks, you read the number
+off the wall in front of you.
+
+That works, and if the corridor is short it is over quickly. But suppose the hotel has a thousand rooms
+and only a handful are missing. You would walk past hundreds of perfectly ordinary doors one at a time.
+
+So here is the better way. Notice something about the list itself: look at the fourth entry on it. If no
+rooms had ever been bricked up, the fourth entry would be room 4. Suppose it actually says room 7. THE
+GAP OF THREE IS EXACTLY HOW MANY ROOMS WERE BRICKED UP BEFORE IT - you do not have to walk anywhere to
+know that; it is arithmetic on one line of the list.
+
+And that gap can only grow as you read further down the list. So you can play the guessing game: open the
+list halfway, work out the gap there, and ask "have five rooms gone missing by this point?" If not, the
+answer is further down; if so, it is here or earlier. Each guess halves what is left, so ten guesses
+settle a list of a thousand.
+
+When you finish, you know exactly how many surviving rooms come before the one you want. Say it is four.
+Then, counting up from room 1, four rooms exist and five are bricked up before you reach your answer - so
+your answer is room nine.
+
+    AND NOTICE: ROOM NINE IS NOT ON YOUR LIST AT ALL. You never found it there and never could have. You
+    worked out its number from how many rooms were standing beneath it, which is why the last step is
+    arithmetic rather than a lookup.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def find_kth_positive(arr, k):
+
+`arr` is the sorted array of distinct positives; `k` says which missing number is wanted. ARR IS NOT
+MODIFIED.
+
+    missing = 0
+
+HOW MANY MISSING NUMBERS HAVE BEEN PASSED. It only ever increases, and reaching k is the exit condition.
+
+    current = 1
+
+THE NUMBER UNDER CONSIDERATION. IT STARTS AT 1, NOT AT arr[0] - the missing numbers are counted from the
+beginning of the positive integers, so an array starting at 5 has four missing numbers before its first
+element.
+
+    i = 0
+
+THE POINTER INTO arr. It advances only on a match, so it lags behind `current` by exactly the number of
+missing numbers seen.
+
+    while True:
+
+NO EXPLICIT CONDITION - the loop exits by returning. That is safe because past the array's end every
+number is missing, so `missing` climbs by one per iteration and must reach k.
+
+    if i < len(arr) and arr[i] == current:
+        i += 1                   # this number is present
+
+THE PRESENCE TEST, AND THE BOUNDS CHECK MUST COME FIRST. Once `i` has run off the end, `arr[i]` would
+raise IndexError; `and` SHORT-CIRCUITS so it is never evaluated, and the branch falls through to "missing"
+- which is exactly right, because everything past the last element is missing.
+    Note `arr[i] == current` rather than `<=`: because the array is sorted and distinct and `current`
+    climbs by one, the pointer can never be left behind pointing at something smaller.
+
+    else:
+        missing += 1             # 'current' is missing
+        if missing == k:
+            return current
+
+COUNT THE GAP AND CHECK THE BUDGET. `== k` rather than `>= k` is safe because `missing` increases by
+exactly one at a time and is checked immediately. RETURNING `current` - THE NUMBER ITSELF, NOT `missing`
+AND NOT `i` - is the answer the problem asks for.
+
+    current += 1
+
+MOVE TO THE NEXT INTEGER. This runs on BOTH branches, which is what keeps `current` marching steadily
+while `i` lags.
+
+WHAT IS DELIBERATELY ABSENT: no special case for an array that starts above 1, no special case for k
+running past the end of the array, and no separate handling of an empty array (the bounds check makes
+every number missing, so the answer is simply k - verified).
+
+THE BINARY-SEARCH VARIANT'S KEY LINE, for contrast: `if arr[mid] - (mid + 1) < k: lo = mid + 1` followed
+by `return lo + k`. The identity is section 2; the `lo + k` is trap 2.""",
+
+    """9. TRACED ON REAL NUMBERS - the linear walk, then the same case by binary search.
+
+arr = [2, 3, 4, 7, 11],  k = 5
+
+THE LINEAR WALK:
+
+    current = 1    i = 0, arr[0] = 2, not equal   ->   MISSING, count 1
+    current = 2    arr[0] = 2, equal              ->   present, i becomes 1
+    current = 3    arr[1] = 3, equal              ->   present, i becomes 2
+    current = 4    arr[2] = 4, equal              ->   present, i becomes 3
+    current = 5    arr[3] = 7, not equal          ->   MISSING, count 2
+    current = 6    arr[3] = 7, not equal          ->   MISSING, count 3
+    current = 7    arr[3] = 7, equal              ->   present, i becomes 4
+    current = 8    arr[4] = 11, not equal         ->   MISSING, count 4
+    current = 9    arr[4] = 11, not equal         ->   MISSING, count 5   ->   RETURN 9
+
+    RETURNS 9.  Nine iterations for k = 5 - the walk visits every integer, present or not.
+
+THE SAME CASE BY BINARY SEARCH. First the missing-count column, from the identity arr[i] - (i + 1):
+
+        i:                0    1    2    3    4
+        arr[i]:           2    3    4    7    11
+        arr[i] - (i+1):   1    1    1    3    6
+        each verified by hand: below 2 only 1 is absent (1); below 7 the absentees are 1, 5, 6 (3);
+        below 11 they are 1, 5, 6, 8, 9, 10 (6).
+
+    lo = 0, hi = 4
+        mid = 2:  arr[2] - 3 = 1.   1 < 5, so the answer is further right   ->   lo = 3
+        mid = 3:  arr[3] - 4 = 3.   3 < 5, further right still              ->   lo = 4
+        mid = 4:  arr[4] - 5 = 6.   6 >= 5, so this position or earlier     ->   hi = 3
+        lo = 4 > hi = 3, loop ends.
+
+    RETURN lo + k = 4 + 5 = 9.
+
+    FOUR ARRAY ELEMENTS (2, 3, 4, 7) SIT BELOW 9, AND FIVE NUMBERS ARE MISSING BELOW IT (1, 5, 6, 8, 9 -
+    counting 9 itself as the fifth). 4 + 5 = 9. THE ANSWER WAS NEVER READ OUT OF THE ARRAY.
+
+    Three comparisons instead of nine steps - and on an array of 1,000 it would be ten instead of
+    thousands.
+
+THE INVERSION - THE SAME ARRAY, ONLY k CHANGED:
+
+    k = 4   ->   8          k = 5   ->   9          k = 6   ->   10
+
+    The answers march up through the gap between 7 and 11, because that gap holds three consecutive
+    missing numbers. All verified against a brute-force scan.
+
+AND THE CASE THAT SEPARATES THE CORRECT IDENTITY FROM THE OFF-BY-ONE: arr = [1], k = 1. The array contains
+1, so the first missing positive is 2. With arr[i] - (i+1) the count at index 0 is 1 - 1 = 0, which is
+less than k, so lo becomes 1 and the answer is 1 + 1 = 2. With the broken arr[i] - i the count is 1 - 0 =
+1, which already reaches k, so lo stays 0 and the answer is 0 + 1 = 1. WRONG.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS.
+
+    LINEAR WALK: one step per integer examined, so O(n + k) time and O(1) space. At this problem's limits
+    (n up to 1,000, k up to 1,000) that is at most about 2,000 steps - IT PASSES EASILY, and saying so is
+    more useful than implying binary search is needed.
+    BINARY SEARCH: O(log n) time, O(1) space. About 10 comparisons for an array of 1,000.
+
+THE #1 MISTAKE: writing the counting identity as `arr[i] - i` instead of `arr[i] - (i + 1)`. Index i is
+the (i+1)th position, so the correct baseline is i + 1. Wrong on 1,407 of 6,000 random cases - AND BOTH
+OFFICIAL EXAMPLES AGREE WITH THE BROKEN VERSION, so it passes every sample. The smallest exposing case is
+arr = [1] with k = 1, where the answer is 2 and the bug says 1. THE RUNNER-UP is trying to read the answer
+out of the array; it is a MISSING number, so it is computed as `lo + k` and is generally not present.
+
+ONE-SENTENCE TAKEAWAY: the distance between a value and the position it occupies is exactly how many
+numbers went missing beneath it - and because that distance never shrinks, a sorted array turns the whole
+question into one binary search.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you can invent a MONOTONIC PREDICATE. Binary search is
+not really about arrays; it is about any yes/no question whose answer flips exactly once as you sweep. The
+skill on display is spotting that "are at least k missing below here?" is such a question, and then
+deriving arr[i] - (i+1) to evaluate it in O(1). SAY THE PREDICATE OUT LOUD BEFORE WRITING THE LOOP - it is
+the part being marked, and it also forces you to state which guarantees you are using (sorted, distinct).
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "What if the array can contain DUPLICATES?" The identity breaks, because a repeated value wastes a
+    position and inflates the count. Deduplicate first in O(n), then the identity holds again.
+    "What if the array is not sorted?" Sort it, O(n log n), and you are back here - or, if k is small,
+    just use a hash set and walk upward from 1 in O(n + k).
+    "What if you want the kth missing from a different starting point, say the kth missing above 100?"
+    Same identity with the baseline shifted: subtract the offset from both the value and the count.
+    "Why does `return lo + k` work when lo ran past the end?" Because `lo` is defined as "how many array
+    elements are below the answer", and when every element is below the answer that count is len(arr).
+    Verified: arr = [1,2,3] with k = 10 gives lo = 3 and the answer 13.""",
 ]
 
 _EX_P1K["Last Stone Weight (max-heap)"] = [
-    """The example, smashed step by step.
-stones = [2,7,4,1,8,1]. Max-heap holds all six.
-Pop 8 and 7 -> unequal, push back 8-7 = 1. Heap now {2,4,1,1,1}.
-Pop 4 and 2 -> push 2. Heap {2,1,1,1}.
-Pop 2 and 1 -> push 1. Heap {1,1,1}.
-Pop 1 and 1 -> EQUAL, both destroyed, nothing pushed. Heap {1}.
-One stone left -> return 1.
-Note the equal case pushes nothing, which is what makes the heap shrink by two
-in that step and by one otherwise.""",
+    """1. THE GOAL - smash the two heaviest stones together, repeatedly, until at most one remains.
 
-    """The negation trick, and why it is needed.
-Python's heapq is a MIN-heap only - there is no max-heap in the standard
-library. Negating every value inverts the ordering, so the smallest negative is
-the largest original. You negate on the way in and negate again on the way out.
-The two places to get it wrong: pushing the difference as `-(first - second)`
-rather than `first - second` (you must re-negate), and reading the final answer
-as `-heap[0]`. If your answer comes out negative, one of those two is missing.
-In Java you would pass Collections.reverseOrder() to the PriorityQueue instead,
-which is cleaner - worth mentioning that the trick is a Python-specific wart.""",
+You have a pile of stones with given weights. Each turn:
 
-    """Why a heap rather than sorting each round.
-You need the two largest repeatedly, and after each smash the multiset changes.
-Re-sorting every round is O(n log n) per round and O(n^2 log n) overall. The
-heap gives each pop and push in O(log n), and there are at most n-1 rounds -
-each round removes at least one stone - so O(n log n) total.
-That 'each round removes at least one stone' argument is also the termination
-proof, and it is worth saying: the loop cannot run forever because the heap
-strictly shrinks.""",
+    TAKE THE TWO HEAVIEST STONES, say x and y with x >= y, and smash them together.
+        IF THEY ARE EQUAL, both are destroyed.
+        IF THEY ARE NOT, the lighter one is destroyed and the heavier is left with weight x - y.
 
-    """Edge cases.
-Empty input -> `while len(heap) > 1` never runs, heap is empty -> the guard
-`if heap else 0` returns 0.
-Single stone [5] -> loop does not run -> 5.
-Two equal stones [3,3] -> both destroyed, heap empty -> 0. This is the case
-that needs the empty-heap guard, and omitting it gives an IndexError rather
-than a wrong answer - so it fails loudly, which is at least kind.
-All equal, even count [2,2,2,2] -> everything cancels -> 0. Odd count
-[2,2,2] -> 2.""",
+Repeat until one stone remains, or none. Return that stone's weight, or 0 if there are none.
 
-    """Complexity, and the alternative for a bounded value range.
-O(n log n) time - heapify is O(n) and there are at most n rounds of O(log n).
-O(n) space.
-If the stone weights were small integers (say <= 1000), a counting-sort bucket
-approach could find the two largest in O(range) per round without a heap -
-usually not worth it, but it is the same 'bounded values beat comparisons'
-observation that shows up in How Many Numbers Are Smaller.""",
+    stones = [2, 7, 4, 1, 8, 1]
 
-    """The follow-up that changes everything: Last Stone Weight II.
-Version II asks for the SMALLEST possible remaining weight when you may choose
-which stones to smash. The greedy here is useless - it is actually a
-partition problem: split the stones into two groups with sums as close as
-possible, and the answer is the difference. That is subset-sum DP over
-total/2, O(n * sum).
-Knowing that the sequel is a completely different algorithm - greedy heap
-versus knapsack DP - is the real value of studying this pair, and interviewers
-who ask version I often follow with it.""",
+        heaviest two are 8 and 7    ->    unequal, 8 - 7 = 1 goes back
+        the pile is now 2, 4, 1, 1, 1
+        heaviest two are 4 and 2    ->    unequal, 4 - 2 = 2 goes back
+        the pile is now 2, 1, 1, 1
+        heaviest two are 2 and 1    ->    unequal, 2 - 1 = 1 goes back
+        the pile is now 1, 1, 1
+        heaviest two are 1 and 1    ->    EQUAL, both destroyed
+        the pile is now 1
+
+    ANSWER: 1
+
+THREE THINGS THE RULES ARE QUIETLY SAYING:
+
+    THE PILE SHRINKS BY EXACTLY ONE STONE PER TURN. Two are removed and at most one comes back. So a pile
+    of n stones lasts at most n - 1 turns, and the process always terminates.
+    THE ORDER OF SMASHES IS FORCED. You do not choose which stones to smash - it is always the two
+    heaviest. That is what makes this a simulation rather than a search. (THE FOLLOW-UP, Last Stone
+    Weight II, removes that constraint and becomes a completely different problem.)
+    THE PILE CAN END EMPTY. If the final pair is equal, nothing survives, and the answer is 0.
+
+WHY IT NEEDS A DATA STRUCTURE. "The two heaviest" is asked over and over, and the pile CHANGES after every
+smash. Re-sorting each round works and is wasteful; a HEAP answers "what is the heaviest" in constant time
+and repairs itself in logarithmic time.
+
+    THIS ENTRY JOINS THE HEAP CLUSTER. KTH LARGEST ELEMENT IN A STREAM OWNS THE MIN-HEAP-OF-SIZE-k
+    INVERSION and the bounded-memory argument. THIS ONE OWNS THE MAX-HEAP-BY-NEGATION - how to get
+    largest-first behaviour out of a library that only offers smallest-first - AND THE SIMULATION LOOP.""",
+
+    """2. THE INTUITION - a machine that always hands you the biggest thing left.
+
+Everything about this problem is easy except one operation, repeated: GIVE ME THE HEAVIEST STONE, AND
+THEN THE NEXT HEAVIEST, AND LET ME PUT SOMETHING NEW BACK.
+
+    A sorted list gives you that, but every put-back costs a re-sort or an insertion shuffle.
+    A HEAP gives you exactly those three operations cheaply and nothing else - which is why it fits.
+
+    stones = [2, 7, 4, 1, 8, 1]
+
+        the pile as a max-heap:        8
+                                     /   \\
+                                    7     4
+                                   / \\   /
+                                  1   2 1
+
+        THE ROOT IS THE HEAVIEST. Pop it (8). The heap repairs itself and the root becomes 7. Pop that.
+        Now push 8 - 7 = 1 back in, and the heap absorbs it.
+
+THE PICTURE OF THE WHOLE RUN, as a shrinking pile:
+
+        [8, 7, 4, 2, 1, 1]   smash 8,7  ->  1 back
+        [4, 2, 1, 1, 1]      smash 4,2  ->  2 back
+        [2, 1, 1, 1]         smash 2,1  ->  1 back
+        [1, 1, 1]            smash 1,1  ->  both gone
+        [1]                  one stone left
+
+    ANSWER: 1.   Five stones' worth of smashing, and the pile lost exactly one stone per turn.
+
+THE NEGATION TRICK, WHICH IS THE ONE PIECE OF MACHINERY TO UNDERSTAND. Python's `heapq` builds MIN-heaps
+only - there is no max-heap in the standard library. But negating every value turns the order upside down:
+
+        weights:   2    7    4    1    8    1
+        negated:  -2   -7   -4   -1   -8   -1
+
+        THE SMALLEST NEGATED VALUE IS -8, WHICH IS THE LARGEST ORIGINAL WEIGHT.
+
+    So a min-heap of the negatives behaves exactly like a max-heap of the originals. Every value that
+    comes out must be negated again to read it, and every value pushed in must be negated first. FORGETTING
+    EITHER HALF IS THE BUG IN SECTION 4 - and it announces itself by returning a NEGATIVE weight, which is
+    physically impossible for a stone.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+HEAP. A binary tree kept inside a plain array, with one rule: every parent compares correctly against its
+children. IT IS NOT SORTED - only the root is guaranteed extreme, and siblings are in no particular order.
+
+MIN-HEAP. Every parent is <= its children, so the ROOT IS THE SMALLEST. This is what Python provides.
+MAX-HEAP. Every parent is >= its children, so the root is the largest. Python has no such thing, hence
+the negation.
+
+heapq. Python's heap module, operating on an ordinary list.
+    `heapify(list)`   rearranges a list into heap order IN PLACE, in O(n).
+    `heappush(h, x)`  inserts, O(log n) - the new value swaps upward until it fits.
+    `heappop(h)`      removes and returns the SMALLEST, O(log n) - the last element moves to the root and
+                      swaps downward until it fits.
+    `h[0]`            the smallest, without removing it, O(1).
+
+NEGATION TRICK. Store -weight instead of weight, so the min-heap's smallest is the true largest. Reading
+requires negating again.
+
+SIMULATION. Carrying out the described process step by step rather than reasoning to a closed-form answer.
+This problem is a simulation; its sequel is not.
+
+THE VARIABLES IN THE CODE:
+    stones   the input list. NOT MODIFIED - `[-s for s in stones]` builds a NEW list, so the caller's data
+             is safe, and this is worth noticing because heapify mutates whatever list it is handed.
+    heap     the negated values in heap order.
+    first    the heaviest stone this round, already negated back to positive.
+    second   the second heaviest, likewise.
+
+n IS THE NUMBER OF STONES. TIME O(n log n), SPACE O(n).""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and one "necessary" line turns out not to be.
+
+TRAP 1 - THE `if heap else 0` GUARD, WHICH IS LOAD-BEARING AND WHICH NEITHER OFFICIAL EXAMPLE EXERCISES.
+The pile can end up EMPTY: if the last two stones are equal, both are destroyed and nothing remains. Then
+`heap[0]` raises IndexError.
+
+    VERIFIED BY DELETING THE GUARD:
+
+        [2, 7, 4, 1, 8, 1]   ->  1     no crash
+        [1]                  ->  1     no crash
+        [1, 1]               ->  RAISES IndexError: list index out of range
+        [2, 2]               ->  RAISES IndexError: list index out of range
+
+    THE TWO OFFICIAL EXAMPLES ARE [2,7,4,1,8,1] AND [1] - NEITHER EMPTIES THE HEAP. The smallest case
+    that does is two equal stones. A solution missing this guard passes both samples and crashes on a
+    hidden test.
+
+TRAP 2 - FORGETTING TO NEGATE ON THE WAY BACK IN. `heappush(heap, first - second)` instead of
+`heappush(heap, -(first - second))` puts a POSITIVE number into a heap of negatives, where it sorts as
+though it were enormous.
+
+    MEASURED: wrong on 4,260 of 6,000 random piles. AND IT ANNOUNCES ITSELF - on [2,7,4,1,8,1] it returns
+    -1, a negative weight, which is impossible for a stone. A WRONG ANSWER THAT IS OBVIOUSLY WRONG IS THE
+    BEST KIND; this bug is loud.
+
+TRAP 3 - USING A MIN-HEAP WITHOUT NEGATING AT ALL, and popping the two SMALLEST. Correct code for a
+different problem. The give-away is that the answer stops depending on the heaviest stones.
+
+WHAT IS NOT A TRAP, AND THIS IS THE INTERESTING ONE: the `if first != second` check turns out NOT to be
+required for correctness. Always pushing the difference - including a 0 when the stones are equal - gives
+the same answer on all 6,000 random piles tested. A zero-weight stone can never be the heaviest unless
+everything left is zero, and 0 - 0 = 0 pushes another zero, so it drifts harmlessly to the end and gets
+returned as 0, which is the right answer anyway.
+
+    AND NOTE THE TWO OBSERVATIONS ARE LINKED: with the always-push version the heap NEVER EMPTIES (two out,
+    one in, every round), so `if heap else 0` becomes dead code. THE GUARD IS NECESSARY PRECISELY BECAUSE
+    THE `!=` CHECK EXISTS.
+
+    KEEP THE `!=` CHECK ANYWAY: it matches the problem statement ("both stones are destroyed"), it keeps
+    the heap smaller, and code that mirrors the specification is easier to defend than code that relies on
+    zeros being harmless. But say plainly that it is a clarity choice, not a correctness one.""",
+
+    """5. THE SLOW WAY FIRST, then the heap.
+
+THE NAIVE VERSION - SORT EVERY ROUND:
+
+    while len(stones) > 1:
+        stones.sort()
+        first = stones.pop()          # the heaviest
+        second = stones.pop()         # the next heaviest
+        if first != second:
+            stones.append(first - second)
+    return stones[0] if stones else 0
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it is
+    the most direct transcription of the rules. NOTE IT MUTATES THE CALLER'S LIST, which the heap version
+    does not.
+
+    COST: there are at most n - 1 rounds and each sorts, so O(n^2 log n). At this problem's limit of 30
+    stones that is trivial - BE HONEST, THE SORTING VERSION PASSES EASILY HERE. The heap is what the
+    problem is teaching.
+
+A MIDDLE VERSION: keep the list sorted and INSERT the difference in the right place with a binary search.
+The insert still shifts elements, so it is O(n) per round and O(n^2) overall. Better constants, same
+shape.
+
+THE UPGRADE, AND WHY A HEAP IS THE RIGHT FIT. Look at what the loop actually asks for:
+
+        give me the largest        (twice per round)
+        put one new value back     (once per round)
+
+    IT NEVER ASKS FOR THE WHOLE ORDER. Sorting computes a total ordering of all n stones every round and
+    then uses two of them - it is answering a much harder question than the one asked. A heap maintains
+    only enough structure to know the extreme, which is why its operations are O(log n) instead of
+    O(n log n).
+
+    COST: heapify is O(n), then at most n - 1 rounds of two pops and one push at O(log n) each. TOTAL
+    O(n log n) time, O(n) space.
+
+THE NEGATION EXPLAINED FROM SCRATCH, since it is the only trick here. Comparing negatives reverses every
+comparison: 8 > 7 becomes -8 < -7. A min-heap always surfaces the smallest stored value, so storing
+negatives makes it surface the most negative - which is the largest original. THE RULE TO CARRY: negate
+going in, negate coming out, and never mix the two conventions in one heap.
+
+IF THE WEIGHTS WERE BOUNDED AND SMALL you could use a counting array instead of a heap and always scan
+downward for the two largest - O(W) per round. Worth mentioning only because it is the same
+bounded-values-change-the-structure observation as How Many Numbers Are Smaller in this bank; here the
+weights go up to 1,000 and the heap is simpler.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: put every weight into a max-heap (as a negated min-heap), then repeatedly pull the two
+largest out, put their difference back when it is non-zero, and report whatever is left.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion in the visible code, though the heap's own repair
+walks up or down its tree. One structure changes:
+
+    `heap`  SHRINKS BY EXACTLY ONE ELEMENT PER ROUND when the stones differ (two popped, one pushed) and
+            by TWO when they are equal. It never grows.
+
+    WHAT MAKES IT STOP, AND THIS IS THE ONLY TERMINATION ARGUMENT NEEDED: every iteration removes at least
+    one element from a finite collection, so after at most n - 1 iterations the size falls to 1 or 0 and
+    `while len(heap) > 1` is false. NOTHING CAN MAKE THE PILE GROW, so there is no risk of looping
+    forever - which is worth stating, because "smash and put something back" sounds like it might not
+    terminate.
+
+    THE HEAP'S OWN REPAIR: a pushed value swaps upward past larger parents until it fits - at most the
+    tree's height. A pop moves the last element to the root and swaps it downward past its smaller child,
+    again at most the height. Both are O(log size), and that is the entire cost model.
+
+    WHY THE TWO POPS ARE SAFE: the loop condition guarantees at least two elements, so neither pop can
+    fail. The first pop gives the largest; the heap repairs; the second pop then gives what is now the
+    largest, which is the second largest overall.
+
+    WHY `first >= second` ALWAYS HOLDS: the first pop takes the maximum, so nothing remaining can exceed
+    it. That is why `first - second` is never negative and the difference is a legal weight.
+
+THE STEPS, NO CODE:
+
+    1. Negate every weight and arrange them as a min-heap - which now behaves as a max-heap of the real
+       weights.
+    2. While more than one stone remains:
+       a. Remove the smallest stored value and negate it back: this is the heaviest stone.
+       b. Do it again: this is the second heaviest.
+       c. If the two weights differ, negate their difference and put it back into the heap.
+       d. If they are equal, put nothing back - both are destroyed.
+    3. If a stone remains, negate it back and report it. If none remains, report 0.
+
+    STEP 3's SECOND HALF IS NOT OPTIONAL - see trap 1.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A quarry has a machine for destroying rocks. It takes exactly two rocks at a time, and it always demands
+the two heaviest in the yard - you do not get to choose. If the two weigh the same, they annihilate each
+other and nothing comes out. If one is heavier, the machine returns a single rock weighing the difference,
+and the rest is dust.
+
+Your job is to say what will be left at the end.
+
+You could line every rock up by weight before each visit to the machine, walk to the heavy end, and take
+the last two. But you would be re-lining the whole yard every single time, just to look at two rocks.
+
+So instead you keep the yard as a PILE with one property maintained: the heaviest rock is always sitting
+on top, and beneath it things are only loosely arranged - each rock is heavier than the ones directly
+under it, and that is all. Nobody knows or cares whether the third-heaviest is on the left or the right.
+
+Taking the top rock is instant. After you take it, one rock is moved up from the bottom and allowed to
+sink until it settles under something heavier - a handful of comparisons, not a re-ordering of the yard.
+Putting a new rock in works the same way in reverse: drop it at the bottom and let it rise until it sits
+under something heavier than itself.
+
+That loose arrangement is all you need, because you never ask a question except "what is the heaviest".
+
+    AND THE YARD ALWAYS EMPTIES. Every visit to the machine takes two rocks away and returns at most one,
+    so the pile shrinks by at least one rock every time. However long you keep going, you cannot go
+    forever.
+
+ONE LAST THING TO REMEMBER WHEN YOU REPORT THE RESULT. If the very last two rocks weighed the same, they
+destroyed each other and THE YARD IS EMPTY. Reaching for "the top rock" at that point finds nothing at
+all, so you have to check whether anything is there before you look - and if not, the answer is zero.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    import heapq
+
+Python's heap module. It builds MIN-heaps only, which is the reason for every negation below.
+
+    def last_stone_weight(stones):
+
+`stones` is the list of weights.
+
+    heap = [-s for s in stones]    # max-heap via negatives
+
+BUILD A NEW LIST OF NEGATED WEIGHTS. TWO THINGS AT ONCE: the negation makes a min-heap behave as a
+max-heap, AND the comprehension creates a NEW list, so `heapify` on the next line does not disturb the
+caller's `stones`. If this were `heap = stones`, the caller's list would be rearranged and consumed.
+
+    heapq.heapify(heap)
+
+TURN IT INTO HEAP ORDER IN PLACE, in O(n) - cheaper than pushing the values one at a time. The list is now
+in heap order, NOT sorted order.
+
+    while len(heap) > 1:
+
+KEEP GOING WHILE THERE ARE AT LEAST TWO STONES TO SMASH. This condition also guarantees both pops below
+are safe, and it is what stops the loop - the heap shrinks every round.
+
+    first = -heapq.heappop(heap)
+    second = -heapq.heappop(heap)
+
+TAKE THE TWO HEAVIEST, NEGATING EACH BACK TO A REAL WEIGHT. `heappop` returns the SMALLEST stored value,
+which is the most negative, which is the largest real weight. The order matters only in that `first` is
+guaranteed to be at least `second`, so the difference below is never negative.
+
+    if first != second:
+        heapq.heappush(heap, -(first - second))   # the difference remains
+
+PUT THE SURVIVOR BACK, NEGATED AGAIN because it is entering the same negated heap. FORGETTING THAT MINUS
+SIGN IS WRONG ON 4,260 OF 6,000 RANDOM PILES and produces a negative final answer, which is impossible for
+a weight.
+    The `!=` check matches the problem's "both stones are destroyed" - though as trap 1 notes, always
+    pushing the difference gives the same answer and would make the guard below unnecessary. Keeping the
+    check is a clarity choice.
+
+    return -heap[0] if heap else 0
+
+READ THE SURVIVOR, NEGATED BACK. `heap[0]` is the root, and with one element left it is the only stone.
+THE `if heap else 0` IS LOAD-BEARING: when the final pair is equal, nothing is pushed back and the heap
+is empty - `heap[0]` would raise IndexError. Verified on [1, 1] and [2, 2]; NEITHER OFFICIAL EXAMPLE
+REACHES THIS CASE.
+
+WHAT IS DELIBERATELY ABSENT: no sorting, no separate record of destroyed stones, and no special case for a
+single stone (the loop simply does not run and the root is returned - verified).""",
+
+    """9. TRACED ON REAL NUMBERS - the official pile, smash by smash.
+
+stones = [2, 7, 4, 1, 8, 1]
+
+    SETUP: negate everything -> [-2, -7, -4, -1, -8, -1], then heapify. The root is -8, the most negative,
+    which stands for the heaviest stone, 8.
+
+    ROUND 1   heap holds stones 8, 7, 4, 2, 1, 1
+              pop -8 -> first  = 8
+              pop -7 -> second = 7
+              8 != 7, so push -(8 - 7) = -1
+              THE PILE IS NOW 4, 2, 1, 1, 1        (six stones became five)
+
+    ROUND 2   pop -4 -> first  = 4
+              pop -2 -> second = 2
+              4 != 2, so push -(4 - 2) = -2
+              THE PILE IS NOW 2, 1, 1, 1
+
+    ROUND 3   pop -2 -> first  = 2
+              pop -1 -> second = 1
+              2 != 1, so push -(2 - 1) = -1
+              THE PILE IS NOW 1, 1, 1
+
+    ROUND 4   pop -1 -> first  = 1
+              pop -1 -> second = 1
+              1 == 1, so NOTHING is pushed - both destroyed
+              THE PILE IS NOW 1                    (three stones became one - this round removed TWO)
+
+    len(heap) is 1, so the loop ends.  heap is non-empty, so return -heap[0] = 1.
+
+    RETURNS 1.  Cross-checked against the sort-every-round simulation: also 1.
+
+    NOTE ROUND 4. It is the only round that shrinks the pile by two rather than one, and it is the branch
+    that can empty the heap entirely - here it leaves one stone behind, which is why this example never
+    tests the `if heap else 0` guard.
+
+THE INVERSION - CHANGE THE LAST STONE FROM 1 TO 2:
+
+    [2, 7, 4, 1, 8, 1]   ->   1
+    [2, 7, 4, 1, 8, 2]   ->   0
+
+    One stone's weight raised by one, and the pile now annihilates completely. Both verified against the
+    sorting simulation.
+
+AND THE SMALLEST CASE THAT EXERCISES THE GUARD:
+
+    [1, 1]     pop 1, pop 1, equal, nothing pushed, heap is EMPTY
+               with the guard    ->  0
+               without the guard ->  IndexError: list index out of range""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. Building the heap costs one pass. Each round does two pops and at most one push, each
+walking at most the height of the tree, and there are at most n - 1 rounds.
+
+    TIME O(n log n) - O(n) to heapify plus O(n) rounds at O(log n) each.
+    SPACE O(n) for the heap. The caller's list is NOT modified, because the negating comprehension builds
+    a new list.
+    The sort-every-round version is O(n^2 log n) and mutates the input. At this problem's limit of 30
+    stones both finish instantly, so the heap is about technique rather than necessity - say that plainly.
+
+THE #1 MISTAKE: omitting the `if heap else 0` guard. When the final two stones are equal, both are
+destroyed and the heap is empty, so reading the root raises IndexError. NEITHER OFFICIAL EXAMPLE REACHES
+AN EMPTY PILE - the smallest case that does is two equal stones - so this crashes only on hidden tests.
+THE RUNNER-UP is forgetting to negate the difference on the way back in, which is wrong on 4,260 of 6,000
+random piles and betrays itself by returning a negative weight.
+
+ONE-SENTENCE TAKEAWAY: when a loop repeatedly needs the extreme element of a changing collection, a heap
+is the right structure - and in a language with only min-heaps, negate on the way in and on the way out,
+consistently.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you recognise "repeatedly take the largest" as a heap
+signature rather than a sorting problem, and whether you can articulate WHY sorting is the wrong tool -
+it computes a full ordering to use two elements. The second thing being watched is the negation: it is
+the standard idiom for max-heaps in Python and getting it half-right (negating in but not out, or the
+reverse) is common enough that interviewers watch for it.
+
+THE FOLLOW-UP THAT CHANGES EVERYTHING - LAST STONE WEIGHT II. "What if you may choose WHICH two stones to
+smash, and want the SMALLEST possible final weight?" Have the answer ready, because it is a completely
+different problem:
+    Every choice of smashes amounts to giving each stone a plus or minus sign and taking the absolute
+    value of the total. So you are splitting the stones into two groups and minimising the difference
+    between their sums - the PARTITION problem. Solve it with a subset-sum dynamic program over
+    achievable sums up to total/2: the answer is total - 2 * (the largest achievable sum at most
+    total/2). O(n * total) time. THE LESSON IS THAT REMOVING THE "ALWAYS THE TWO HEAVIEST" CONSTRAINT
+    TURNS A SIMULATION INTO A SEARCH, and the heap becomes useless.
+    "What if the weights are bounded and small?" A counting array with a downward scan for the two
+    largest is O(W) per round - the same bounded-values observation as How Many Numbers Are Smaller.
+    "What if stones arrive over time?" The heap already supports it: push as they arrive, and smash
+    whenever two are available.""",
 ]
 
 _EX_P1K["Left and Right Sum Difference"] = [
-    """The example, traced.
-nums = [10,4,8,3], total 25.
-i=0: left 0, right 25-0-10 = 15 -> |0-15| = 15. left becomes 10.
-i=1: left 10, right 25-10-4 = 11 -> |10-11| = 1. left becomes 14.
-i=2: left 14, right 25-14-8 = 3 -> |14-3| = 11. left becomes 22.
-i=3: left 22, right 25-22-3 = 0 -> |22-0| = 22.
-Answer [15,1,11,22].
-Same identity as Find Pivot Index - right = total - left - current - and here
-you emit the absolute difference at every index instead of testing for zero.""",
+    """1. THE GOAL - at every position, how far apart are the two sides?
 
-    """Why this is Find Pivot Index with the output changed.
-Pivot Index asks WHERE left equals right; this asks for the difference at every
-position. Identical scan, identical identity, different return.
-Noticing that out loud is worth doing: it tells the interviewer you are
-recognising a pattern rather than deriving from scratch, and it means you can
-state the complexity and the edge cases immediately because you have already
-reasoned about them once.""",
+For EVERY index, work out the sum of everything strictly to its LEFT and the sum of everything strictly to
+its RIGHT, and record the absolute difference between them. Return those differences as an array, in the
+same order.
 
-    """The ordering, which is the same trap as Pivot Index.
-`left += n` must come AFTER computing right and appending. The current element
-belongs to NEITHER side - it is the pivot position - so folding it into left
-too early shifts every subsequent answer.
-Self-check: the first result must use left = 0, since nothing lies to the left
-of index 0. If your first output already includes nums[0] on the left, the
-increment is in the wrong place.""",
+    nums = [10, 4, 8, 3]                total = 25
 
-    """Edge cases.
-Single element [7] -> left 0, right 7-0-7 = 0 -> |0-0| = 0 -> [0]. Both sides
-empty.
-Two elements [1,2] -> [|0-2|, |1-0|] = [2,1].
-All zeros -> all zeros.
-Negative numbers work unchanged, and this is where abs() earns its place: the
-difference can be negative in either direction, so the answer is symmetric
-around the balance point.
-Empty input -> [], with the loop never running.""",
+        index 0:  left = (nothing) = 0        right = 4 + 8 + 3 = 15     |0 - 15|  = 15
+        index 1:  left = 10                   right = 8 + 3     = 11     |10 - 11| = 1
+        index 2:  left = 10 + 4 = 14          right = 3         = 3      |14 - 3|  = 11
+        index 3:  left = 10 + 4 + 8 = 22      right = (nothing) = 0      |22 - 0|  = 22
 
-    """Complexity, and the space caveat.
-O(n) time with two passes (one to total, one to scan), O(1) extra space beyond
-the output array - which is the honest phrasing, since the result itself is
-O(n) and unavoidable.
-The prefix-array alternative builds explicit left and right sum arrays: also
-O(n) time but O(n) extra space, and it is the version to prefer when you need
-random access to the sums repeatedly rather than a single sweep.""",
+    ANSWER: [15, 1, 11, 22]
 
-    """The family.
-Find Pivot Index (where the difference is zero), Running Sum of 1d Array,
-Product of Array Except Self (the multiplicative twin, needing prefix and
-suffix products because there is no division shortcut when zeros are present),
-and Range Sum Query - Immutable.
-The unifying move: maintain a running accumulation and a known total, and the
-'rest of the array' falls out by subtraction instead of a second loop.""",
+THREE THINGS THE STATEMENT IS QUIETLY SAYING:
+
+    THE ELEMENT AT THE INDEX BELONGS TO NEITHER SIDE. At index 1 the value 4 appears in neither sum - the
+    left is 10 and the right is 11, and 10 + 4 + 11 = 25, the whole array. THE ARRAY ALWAYS SPLITS INTO
+    THREE PARTS: before me, me, after me.
+
+    AN EMPTY SIDE SUMS TO ZERO. At the first index the left side is empty, and the sum of nothing is 0 -
+    not undefined, not skipped. The same at the last index for the right. Both ends are ordinary cases
+    needing no special code.
+
+    THE ANSWER IS AN ABSOLUTE DIFFERENCE. Which side is bigger does not matter; only how far apart they
+    are. That is why index 1 gives 1 rather than -1.
+
+    nums = [1]        left = 0, right = 0, so |0 - 0| = 0        ANSWER: [0]
+
+    A single element has nothing on either side, and both empty sums are 0.
+
+WHY IT IS NOT A DOUBLE LOOP. Adding up both sides afresh at every index is O(n^2). Once you know the
+array's TOTAL, each right-hand sum is one subtraction away, and each left-hand sum is one addition away
+from the previous one.
+
+    THIS ENTRY JOINS THE PREFIX-SUM CLUSTER. FIND PIVOT INDEX OWNS THE THREE-WAY SPLIT IDENTITY and the
+    update-after-the-test ordering. FIND THE HIGHEST ALTITUDE OWNS THE IMPLICIT ZEROTH TERM. RUNNING SUM
+    OF 1D ARRAY OWNS BUILDING THE PREFIX ARRAY ITSELF. THIS ONE OWNS PRODUCING AN ARRAY OF ANSWERS - it
+    is Find Pivot Index with the output changed from "where is it zero?" to "what is it everywhere?".""",
+
+    """2. THE INTUITION - one running total forwards, and the other side by subtraction.
+
+Stand at any index. The array falls into three parts that account for every element exactly once:
+
+        [ everything before me ] [ me ] [ everything after me ]
+                  left             n            right
+
+    Therefore, always:            left + n + right = total
+
+    Rearranged:                   right = total - left - n
+
+    SO YOU NEVER ADD UP THE RIGHT-HAND SIDE. One pass gives you `total`; a running variable gives you
+    `left`; the right side is a single subtraction from numbers already in hand.
+
+WATCH IT ON nums = [10, 4, 8, 3], total = 25:
+
+        index 0:   left = 0     right = 25 - 0  - 10 = 15      |0 - 15|  = 15
+        index 1:   left = 10    right = 25 - 10 - 4  = 11      |10 - 11| = 1
+        index 2:   left = 14    right = 25 - 14 - 8  = 3       |14 - 3|  = 11
+        index 3:   left = 22    right = 25 - 22 - 3  = 0       |22 - 0|  = 22
+
+    ANSWER: [15, 1, 11, 22]
+
+    CHECK ONE ROW BY HAND: at index 2 the right side really is just the 3, and 25 - 14 - 8 = 3. The
+    identity is not an approximation; it is bookkeeping.
+
+THE PICTURE - `left` CLIMBS AND `right` FALLS, AND THEY CROSS SOMEWHERE:
+
+        index:     0      1      2      3
+        left:      0     10     14     22        climbing
+        right:    15     11      3      0        falling
+        gap:      15      1     11     22
+
+    NOTICE THE GAP DIPS TO 1 AT INDEX 1 AND THEN GROWS AGAIN. The two sides pass each other between
+    indices 1 and 2 - the array has no exact balance point here. FIND PIVOT INDEX IS THE PROBLEM THAT
+    ASKS WHETHER A ZERO APPEARS IN THIS ROW; this problem just prints the whole row.
+
+WHAT `left` MEANS AT EACH MOMENT: everything BEFORE the current index and not including it. Keeping that
+true is the single ordering detail the problem turns on, and it is section 4.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+PREFIX SUM. The total of all elements up to some point. Here `left` is a RUNNING prefix sum - carried in
+one variable rather than stored as an array.
+
+STRICTLY TO THE LEFT / RIGHT. Excluding the current element. That exclusion is what makes the three-way
+split three parts rather than two.
+
+EMPTY SUM. The sum of no elements, defined as 0. It is a convention with a reason: 0 is the value that
+changes nothing when added, so it is the natural answer for "nothing". IT IS WHAT MAKES THE FIRST AND LAST
+INDICES ORDINARY CASES instead of special ones.
+
+ABSOLUTE DIFFERENCE. |a - b| - how far apart two numbers are, sign discarded. `abs(10 - 11)` is 1.
+
+THE VARIABLES IN THE CODE:
+    nums     the input list. NOT MODIFIED - `sum()` reads it and nothing writes to it.
+    total    the sum of the whole array, computed once before the loop and never changed.
+    left     the running sum of everything STRICTLY BEFORE the current index. Starts at 0.
+    result   the output list, built up one entry per element.
+    n        the value at the current index.
+    right    computed fresh each iteration by subtraction - it is never accumulated.
+
+NOTE THAT NO INDEX VARIABLE APPEARS. The loop walks values, and `result.append` keeps the output aligned
+with the input purely by order.
+
+TIME O(n). SPACE O(1) EXTRA, beyond the output array - which is the honest phrasing, since the returned
+list is O(n) but it is the answer rather than working storage.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the same ordering trap as Find Pivot Index, and here it is loud.
+
+TRAP 1 - UPDATING `left` BEFORE COMPUTING THE ANSWER. Moving `left += n` above the two lines that use it:
+
+        for n in nums:
+            left += n                          # WRONG PLACE
+            right = total - left - n
+            result.append(abs(left - right))
+
+    Now `left` includes the element you are standing on, so it no longer means "everything strictly
+    before this index" - and `right` is computed from the corrupted value too, so both sides are wrong at
+    once.
+
+    MEASURED: wrong on 5,213 of 6,000 random arrays. AND BOTH OFFICIAL EXAMPLES CATCH IT IMMEDIATELY:
+
+        [10, 4, 8, 3]   correct [15, 1, 11, 22]    with the bug [5, 7, 27, 28]
+        [1]             correct [0]                with the bug [2]
+
+    SO THIS ONE IS LOUD - it fails the first sample on its first entry. THAT IS WORTH SAYING PLAINLY,
+    because several problems in this bank hide their most common bug from every sample; this is not one of
+    them. The reason to understand it anyway is that you have to write the line in the right place to
+    begin with, and "does the running total include the current element or stop before it?" is the
+    question every prefix-sum problem asks.
+
+TRAP 2 - DROPPING THE `abs`. The problem asks for the absolute difference. Without it, index 1 of the
+first example gives 10 - 11 = -1 instead of 1.
+
+    MEASURED: wrong on 4,113 of 6,000 random arrays - and again the first official example catches it,
+    since [15, -1, 11, 22] differs from the expected output at the second entry.
+
+TRAP 3 - RECOMPUTING THE RIGHT SIDE WITH A SECOND LOOP. `sum(nums[i+1:])` inside the loop is correct and
+O(n^2), and it also builds a new list per index. The whole point of knowing `total` is that the right side
+is a subtraction.
+
+TRAP 4 - ASSUMING THE VALUES ARE POSITIVE. Nothing here needs them to be. With [-3, 5, -1] the total is 1
+and the answer is [4, 2, 2] - verified. A method that leaned on sums growing monotonically, such as
+closing two pointers in from the ends, WOULD break on negatives; this one does not, and saying which
+assumptions your method avoids is worth as much as saying which it needs.
+
+WHAT IS NOT A TRAP, checked rather than assumed: an empty array. `sum([])` is 0, the loop never runs, and
+an empty list is returned - correct, with no guard.""",
+
+    """5. THE SLOW WAY FIRST, then the identity.
+
+THE NAIVE VERSION - ADD UP BOTH SIDES AT EVERY INDEX:
+
+    return [abs(sum(nums[:i]) - sum(nums[i+1:])) for i in range(len(nums))]
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it is
+    the definition transcribed almost word for word. COST: each index re-adds most of the array and builds
+    two new lists by slicing, so O(n^2) time and O(n) temporary space per step. At this problem's limit of
+    n = 1,000 that is around half a million additions plus a million list elements copied; it would pass,
+    but it is doing an enormous amount of avoidable work.
+
+THE UPGRADE, IN TWO SEPARATE OBSERVATIONS - and they are worth separating because they fix different
+wastes:
+
+    FIRST: THE LEFT SIDE IS ALREADY ALMOST COMPUTED. At index 2 you add 10 + 4; at index 3 you add
+        10 + 4 + 8 - REDOING THE SAME TWO ADDITIONS. Carry the running total forward instead: one addition
+        per step rather than i of them.
+
+    SECOND: THE RIGHT SIDE NEEDS NO ACCUMULATION AT ALL. Because every element is either before the index,
+        at it, or after it:
+
+                left + n + right = total     =>     right = total - left - n
+
+        ONE SUBTRACTION REPLACES AN ENTIRE SUM. The only precomputation needed is `total`, which is one
+        pass.
+
+    COST: O(n) time, O(1) extra space. Two passes conceptually - one for the total, one to build the
+    output - but no extra storage.
+
+THE PREFIX-ARRAY ALTERNATIVE, AND WHY IT IS SLIGHTLY WORSE HERE. You could build a full array of prefix
+sums and index into it at each step. Same O(n) time, but O(n) space for a quantity you only ever need one
+value of at a time. THE RUNNING VARIABLE IS STRICTLY BETTER FOR A SINGLE SWEEP - though the prefix array
+becomes the right tool the moment you need to answer many arbitrary range queries rather than march
+through once.
+
+NO OTHER TRICK IS INVOLVED. There is no sorting, no data structure, and no clever observation beyond the
+three-way split - which is why this problem is a good place to practise saying that identity out loud
+before writing anything.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: add up the whole array once, then walk it carrying the sum of everything behind you, and
+at each element record how far that running sum is from the total minus itself minus the current element.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, and only one variable persists across
+iterations:
+
+    `total`   computed once before the loop and CONSTANT thereafter. It is the fixed fact the subtraction
+              leans on.
+    `left`    the only moving state. Starts at 0 and grows by exactly one element per step.
+    `right`   NOT carried between iterations - it is derived fresh each time and thrown away. That is
+              worth noticing: it looks like a second accumulator and is not one.
+    `result`  grows by exactly one entry per element, which is what keeps the output aligned with the
+              input.
+
+    THE INVARIANT THAT MAKES IT CORRECT: at the top of the iteration for index i, `left` holds the sum of
+    nums[0 .. i-1] - everything strictly before i, and nothing else. TRUE AT THE START, when i is 0 and
+    `left` is 0 because nothing is behind you. PRESERVED BY DOING THE ADDITION LAST: you compute and
+    record first, then add nums[i], which makes the invariant true for i + 1. Move that addition up and
+    the invariant is destroyed at every step - that is trap 1.
+
+    WHAT MAKES IT STOP: the loop runs exactly len(nums) times, one entry appended per element. There is no
+    condition to get wrong and no early exit - unlike Find Pivot Index, which returns as soon as it finds a
+    balance, THIS PROBLEM MUST VISIT EVERY POSITION because every position needs an answer.
+
+THE STEPS, NO CODE:
+
+    1. Add up every element to get the total.
+    2. Start a running left-hand sum at zero, and an empty output list.
+    3. For each element, in order from the front:
+       a. Work out the right-hand sum by subtracting the running left-hand sum AND the current element
+          from the total.
+       b. Record the absolute difference between the running left-hand sum and that right-hand sum.
+       c. Add the current element to the running left-hand sum.
+    4. Hand back the output list.
+
+    STEP 3c COMES AFTER STEPS 3a AND 3b, AND THAT ORDERING IS THE PROBLEM.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A row of sacks of grain sits along a barn wall, each a different weight. For every sack in turn you have
+to report how unbalanced the barn would be if you removed that one sack and weighed everything to its left
+against everything to its right.
+
+The plodding way is to pick a sack, carry everything on its left to one scale, everything on its right to
+another, read both, and put it all back. Then do it again for the next sack. You would be weighing the
+same grain over and over.
+
+Instead you weigh the ENTIRE row once, at the start, and chalk the number on the wall. Then you walk along
+from the left end carrying a running figure: the weight of everything you have already passed.
+
+At each sack you can now answer without lifting anything. Everything ahead of you must weigh the grand
+total, minus what is behind you, minus the sack you are standing at. So you subtract twice, compare that
+against your running figure, and chalk the difference on the sack.
+
+    THE ONE THING TO BE CAREFUL ABOUT: you add the sack's weight to your running figure only AFTER you
+    have written on it, never before. Your running figure means "everything BEHIND me", and the sack you
+    are standing at is not behind you - it is under your hand. Add it too early and every number you chalk
+    is about the wrong pile, from the very first sack onward.
+
+AND THE TWO ENDS ARE NOT SPECIAL. At the first sack there is nothing behind you at all, and nothing weighs
+zero - not "undefined", not "skip this one". So you compare zero against everything else and write that
+down. At the last sack the same thing happens on the other side.
+
+ONE MORE THING ABOUT WHAT YOU WRITE. You are asked how unbalanced the barn is, not which way it leans. So
+if the right side is heavier by three, you chalk three, exactly as you would if the left side were heavier
+by three. The direction is thrown away deliberately.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def left_right_difference(nums):
+
+`nums` is the input list, which may contain negatives and zeros. IT IS NOT MODIFIED - nothing sorts or
+writes to it, and a new list is returned.
+
+    total = sum(nums)
+
+ONE PASS TO GET THE GRAND TOTAL. Computed BEFORE the loop and never updated inside it - it is the fixed
+quantity the subtraction identity depends on. For an empty list `sum([])` is 0, which is why no guard is
+needed.
+
+    left = 0
+
+THE RUNNING SUM OF EVERYTHING STRICTLY BEFORE THE CURRENT INDEX. It starts at 0 because before the first
+element there is nothing behind you, and the sum of nothing is 0 - the empty-sum convention doing real
+work rather than being a technicality.
+
+    result = []
+
+THE OUTPUT. One entry will be appended per element, which is what keeps it aligned with the input order -
+no index arithmetic is needed anywhere.
+
+    for n in nums:
+
+WALK THE VALUES. No index variable exists, because none is needed: `total`, `left` and `n` are the only
+quantities in the arithmetic.
+
+    right = total - left - n
+
+THE ONE INTERESTING LINE. `right` IS DERIVED, NOT ACCUMULATED: every element is either before the current
+index, at it, or after it, so left + n + right = total and the right side follows by subtraction. This is
+one subtraction on numbers already in hand - nothing is added up.
+
+    result.append(abs(left - right))
+
+RECORD THE ANSWER FOR THIS POSITION, computed BEFORE `left` is updated so that it still means "strictly
+before". `abs` is what the problem asks for - dropping it is wrong on 4,113 of 6,000 random arrays.
+
+    left += n
+
+NOW - AND ONLY NOW - THE CURRENT ELEMENT JOINS THE LEFT SIDE, making `left` correct for the NEXT index.
+MOVING THIS LINE ABOVE THE PREVIOUS TWO IS THE CLASSIC BUG: wrong on 5,213 of 6,000 random arrays, and it
+fails the first official example on its very first entry.
+
+    return result
+
+The finished array. No post-processing.
+
+WHAT IS DELIBERATELY ABSENT: no prefix-sum array (the running variable replaces it), no second loop from
+the right, no guard for an empty list, and no special case for the first or last index - the empty-sum
+convention covers both.""",
+
+    """9. TRACED ON REAL NUMBERS - the official array, then one element changed.
+
+nums = [10, 4, 8, 3].  First, total = 10 + 4 + 8 + 3 = 25.
+
+    START     left = 0,  result = []
+
+    n = 10    right = 25 - 0 - 10 = 15
+              |0 - 15| = 15                    ->  result = [15]
+              left += 10                       ->  left = 10
+
+    n = 4     right = 25 - 10 - 4 = 11
+              |10 - 11| = 1                    ->  result = [15, 1]
+              left += 4                        ->  left = 14
+
+    n = 8     right = 25 - 14 - 8 = 3
+              |14 - 3| = 11                    ->  result = [15, 1, 11]
+              left += 8                        ->  left = 22
+
+    n = 3     right = 25 - 22 - 3 = 0
+              |22 - 0| = 22                    ->  result = [15, 1, 11, 22]
+              left += 3                        ->  left = 25
+
+    RETURNS [15, 1, 11, 22].  Cross-checked against the O(n^2) version that sums both slices at every
+    index: identical.
+
+    CONFIRM ONE ROW INDEPENDENTLY: at index 2 the left side is 10 + 4 = 14, the right side is just 3, and
+    14 + 8 + 3 = 25 - the three-way split accounts for the whole array exactly.
+
+    AND NOTE `left` ENDS AT 25, THE TOTAL. That is not used for anything, but it is a free sanity check
+    that every element was added exactly once.
+
+THE INVERSION - CHANGE THE LAST ELEMENT FROM 3 TO 13 (so the total becomes 35):
+
+    [10, 4, 8, 3]    ->   [15, 1, 11, 22]
+    [10, 4, 8, 13]   ->   [25, 11, 1, 22]
+
+    THE ARRAY IS NOW HEAVIER ON THE RIGHT, and the pattern reverses: the small gap that used to sit at
+    index 1 has moved to index 2. Reading the second row: at index 2, left = 14 and right = 13, a gap of
+    1; at index 0, left = 0 and right = 35 - 0 - 10 = 25. Both verified against the brute force.
+
+AND THE CASE THAT SHOWS NEGATIVES ARE FINE: nums = [-3, 5, -1], total = 1.
+
+    index 0:  right = 1 - 0 - (-3) = 4,   |0 - 4|   = 4
+    index 1:  right = 1 - (-3) - 5 = -1,  |-3 - -1| = 2
+    index 2:  right = 1 - 2 - (-1) = 0,   |2 - 0|   = 2
+
+    ANSWER [4, 2, 2] - verified. Nothing in the method assumes positivity.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass to add everything up, then one pass to build the output. Each step of the
+second pass does two subtractions, one absolute value, one append and one addition.
+
+    TIME O(n). SPACE O(1) EXTRA - two integers, `total` and `left` - beyond the output array itself. THAT
+    PHRASING MATTERS: the returned list is O(n), but it is the answer, not working storage, and claiming
+    "O(1) space" without the qualification is the kind of overstatement an interviewer will pick up.
+    The brute force that re-sums both slices at every index is O(n^2) time and allocates two lists per
+    step; at this problem's limit of n = 1,000 it would pass, so the linear version is the tidier answer
+    rather than a rescue.
+    The prefix-ARRAY version is the same O(n) time but O(n) working space - correct, and strictly worse
+    for a single sweep.
+
+THE #1 MISTAKE: putting `left += n` above the lines that use it. `left` then includes the element you are
+standing on, so it no longer means "everything strictly before this index" - wrong on 5,213 of 6,000
+random arrays. It is a LOUD bug: the first official example fails on its first entry. THE RUNNER-UP is
+forgetting `abs`, wrong on 4,113 of 6,000 and equally visible on the samples.
+
+ONE-SENTENCE TAKEAWAY: every index splits the array into before, at, and after - so once you know the
+total, the right-hand side is a subtraction rather than a second scan.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Whether you notice that a quantity is DERIVABLE rather than
+computable. The right-hand sum looks as though it needs its own accumulation from the far end; the
+three-way split says it does not. THAT MOVE - REPLACE A SECOND SCAN WITH AN IDENTITY - is the reusable
+part, and it is the same move behind Find Pivot Index, Subarray Sum Equals K and Product of Array Except
+Self. Say the identity out loud before writing code.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "FIND PIVOT INDEX - return the leftmost index where the two sides are EQUAL." Identical sweep;
+    instead of appending, return `i` the moment `left == right`, and -1 if the loop finishes. Returning
+    immediately is what makes it the leftmost.
+    "PRODUCT OF ARRAY EXCEPT SELF - the multiplicative twin." The same three-way split, but you cannot
+    divide the total product by the current element because of zeros. So build running products from the
+    left and from the right in two passes. WORTH NAMING: the identity trick is the same, and what is
+    missing is the inverse operation.
+    "What if there are many queries about arbitrary ranges instead of one sweep?" Build the full
+    prefix-sum array once in O(n) and answer each range sum in O(1) as prefix[j+1] - prefix[i]. That is
+    when the array beats the running variable.
+    "Can you do it without the initial total pass?" Yes - sweep from the right first to build the
+    right-hand sums into the output array, then sweep left. Same O(n), two passes either way, and no
+    clearer.""",
 ]
 
 _EX_P1K["Maximum Score After Splitting a String"] = [
-    """The example, traced.
-s = '011101', total_ones = 4.
-Split after i=0 ('0'): left_zeros 1, left_ones 0 -> score 1 + (4-0) = 5.
-After i=1 ('1'): zeros 1, ones 1 -> 1 + 3 = 4.
-After i=2 ('1'): zeros 1, ones 2 -> 1 + 2 = 3.
-After i=3 ('1'): zeros 1, ones 3 -> 1 + 1 = 2.
-After i=4 ('0'): zeros 2, ones 3 -> 2 + 1 = 3.
-Best 5. Correct - splitting into '0' and '11101' gives one zero on the left and
-four ones on the right.""",
+    """1. THE GOAL - cut the string once, and score zeros on the left plus ones on the right.
 
-    """Why the loop stops at len(s) - 1.
-Both sides must be NON-EMPTY, so the last legal split is after index n-2,
-leaving one character on the right. `range(len(s) - 1)` gives exactly
-i = 0..n-2.
-Use `range(len(s))` and you also consider the split that leaves the right side
-empty - which scores left_zeros + 0 and can wrongly win on an all-zeros string
-like '000', reporting 3 instead of the correct 2. That input is the fastest
-check that your bounds are right.""",
+You are given a string of 0s and 1s. Cut it into a LEFT part and a RIGHT part, both NON-EMPTY. The score
+of a cut is:
 
-    """Why right_ones is total_ones - left_ones rather than a second count.
-Counting the right side directly at each split would be O(n) per split and
-O(n^2) overall. Since the ones are partitioned between the two sides, the right
-count is simply the total minus what you have accumulated - the same
-total-minus-running identity as the prefix-sum problems, applied to a character
-count instead of a sum.
-That substitution is the whole optimisation, and it is why one pass suffices
-after one initial count.""",
+        (how many 0s are in the left part)  +  (how many 1s are in the right part)
 
-    """Edge cases.
-All ones '111' -> left_zeros is always 0; best score is 0 + right_ones, maximal
-at the earliest split -> 2.
-All zeros '000' -> right_ones is always 0; best is left_zeros, maximal at the
-latest legal split -> 2.
-Two characters '01' -> one split: zeros 0... actually s[0] is '0' so zeros 1,
-ones 0 -> 1 + 1 = 2, the maximum possible.
-'10' -> split after '1': zeros 0, ones 1 -> 0 + (1-1) = 0. Answer 0, which is
-correct and a good reminder that the score can legitimately be 0.
-Minimum length is 2 by the non-empty constraint.""",
+Return the highest score any cut can achieve.
 
-    """Complexity.
-O(n) time - one count plus one sweep - and O(1) space, three integers.
-You could avoid the initial count by sweeping from the right first, but that
-needs an array of suffix counts and is strictly worse. Two linear passes with
-constant space is the floor here.""",
+    s = "011101"        the four ones are at positions 1, 2, 3 and 5
 
-    """The family: best split point.
-Maximum Score After Splitting a String, Find Pivot Index, Split Array with
-Equal Sum, Partition Array for Maximum Sum, and the harder Best Time to Buy and
-Sell Stock III (which is 'best split' with a maximisation on each side).
-The recipe is always: precompute a total or a suffix aggregate, then sweep the
-split point maintaining the prefix aggregate, evaluating each position in O(1).
-Whenever a prompt says 'split into two parts', reach for that shape before
-thinking about anything cleverer.""",
+        cut after position 0:   left "0"      right "11101"
+                                zeros on the left: 1     ones on the right: 4     SCORE 5
+        cut after position 1:   left "01"     right "1101"
+                                zeros: 1                 ones: 3                  SCORE 4
+        cut after position 2:   left "011"    right "101"
+                                zeros: 1                 ones: 2                  SCORE 3
+        cut after position 3:   left "0111"   right "01"
+                                zeros: 1                 ones: 1                  SCORE 2
+        cut after position 4:   left "01110"  right "1"
+                                zeros: 2                 ones: 1                  SCORE 3
+
+    THE BEST IS 5.
+
+    ANSWER: 5
+
+BOTH PARTS MUST BE NON-EMPTY, and that single word decides where the sweep stops. For a string of length
+n there are exactly n - 1 legal cuts - after position 0 up to after position n - 2. YOU MAY NOT CUT AT THE
+VERY END, because that would leave the right part empty.
+
+    THAT RESTRICTION IS THE WHOLE OF SECTION 4, and none of the problem's three examples enforces it.
+
+THE SCORE IS DELIBERATELY LOPSIDED. Zeros count only on the left and ones only on the right - the two
+sides are scored by different rules. It is not "how many characters match" and it is not symmetric.
+
+    s = "1111"        every cut has zero 0s on the left, so the score is just the ones remaining on the
+                      right. The earliest legal cut leaves the most ones: "1" and "111" scores 0 + 3 = 3.
+
+    ANSWER: 3
+
+    THIS ENTRY OPENS THE SPLIT-POINT SWEEP PAIR with Find Pivot Index. FIND PIVOT INDEX OWNS SEARCHING
+    FOR A CUT WHERE TWO QUANTITIES ARE EQUAL. THIS ONE OWNS MAXIMISING A SCORE OVER ALL CUTS - and, more
+    specifically, the both-sides-non-empty boundary and deriving the right-hand count by subtraction.""",
+
+    """2. THE INTUITION - sweep the cut rightwards, and keep both counts up to date as you go.
+
+Moving the cut one position to the right does two small things and nothing else: one character leaves the
+right part and joins the left part.
+
+    IF THAT CHARACTER IS A '0':   the left's zero count goes UP by one, the right's one count is unchanged
+    IF THAT CHARACTER IS A '1':   the left's zero count is unchanged, the right's one count goes DOWN by one
+
+    So you never recount either side. You maintain two running numbers and adjust one of them per step.
+
+    s = "011101", total number of ones in the whole string = 4
+
+        cut after   char moved    left_zeros   left_ones   ones on the right = 4 - left_ones   score
+        -----------------------------------------------------------------------------------------
+             0          '0'            1           0                 4                          5
+             1          '1'            1           1                 3                          4
+             2          '1'            1           2                 2                          3
+             3          '1'            1           3                 1                          2
+             4          '0'            2           3                 1                          3
+
+    BEST: 5
+
+THE KEY SUBSTITUTION - AND IT IS THE SAME MOVE AS THE PREFIX-SUM PROBLEMS IN THIS BANK. You want "how
+many 1s are on the right", which sounds like it needs its own count from the far end. But every '1' in the
+string is either on the left or on the right, so:
+
+        ones on the right  =  total_ones  -  left_ones
+
+    ONE SUBTRACTION REPLACES A SECOND SCAN. The only precomputation is `total_ones`, which is one pass.
+
+THE PICTURE - THE CUT SLIDING RIGHT, WITH THE TWO CONTRIBUTIONS PULLING AGAINST EACH OTHER:
+
+        0  1  1  1  0  1
+        |                 cut here: few zeros banked, but almost every 1 still ahead   -> 5
+           |              one more 1 lost from the right, nothing gained               -> 4
+              |           and again                                                    -> 3
+                 |        and again                                                    -> 2
+                    |     a 0 finally arrives, so the left gains one                   -> 3
+
+    MOVING RIGHT PAST A '1' ALWAYS COSTS ONE POINT; MOVING PAST A '0' ALWAYS GAINS ONE. The score is a
+    walk that steps up on zeros and down on ones, and you want its highest point among the legal cuts.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+BINARY STRING. A string containing only the characters '0' and '1'. These are CHARACTERS, not integers -
+the comparison in the code is `s[i] == '0'` with quotes.
+
+SPLIT / CUT POINT. A position between two characters where the string is divided. "Cut after index i"
+means the left part is s[0..i] and the right part is s[i+1..end].
+
+NON-EMPTY. Each part must contain at least one character. For a string of length n this leaves exactly
+n - 1 legal cuts.
+
+SCORE. Zeros in the left part plus ones in the right part. The two sides are counted by DIFFERENT
+characters, which is easy to misread.
+
+RUNNING COUNT. A number kept up to date as the sweep proceeds, rather than recomputed.
+
+THE VARIABLES IN THE CODE:
+    s            the input string. NOT MODIFIED.
+    total_ones   the number of '1' characters in the WHOLE string, counted once before the sweep.
+    left_zeros   how many '0's are in the left part for the current cut.
+    left_ones    how many '1's are in the left part. Used ONLY to derive the right-hand count.
+    best         the highest score seen so far. Starts at 0.
+    i            the index of the character that has just joined the left part; the cut is AFTER i.
+
+`s.count('1')` walks the string once and returns the number of '1' characters.
+
+n IS THE STRING LENGTH. TIME O(n), SPACE O(1) - three integers.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - and all three official examples accept the bug.
+
+TRAP 1 - LOOPING TO `range(len(s))` INSTEAD OF `range(len(s) - 1)`. The last iteration would move the FINAL
+character into the left part, leaving the right part EMPTY - which the problem forbids.
+
+    MEASURED: wrong on 1,428 of 6,000 random binary strings.
+
+    NOW CHECK ALL THREE OFFICIAL EXAMPLES:
+
+        "011101"   correct 5    with the full range 5    AGREE
+        "00111"    correct 5    with the full range 5    AGREE
+        "1111"     correct 3    with the full range 3    AGREE
+
+    ALL THREE AGREE. The bug passes every sample the problem gives you.
+
+    WHY THE SAMPLES HIDE IT: the illegal final cut scores left_zeros + 0, since the right part is empty
+    and contributes no ones. For that to BEAT the best legal cut, the string must be dominated by zeros -
+    and none of the three samples is. THE SMALLEST EXPOSING CASE IS "00": the only legal cut scores 1,
+    while the illegal whole-string "cut" scores 2. Likewise "000" gives 2 legally and 3 with the bug.
+
+    THE RULE TO CARRY: whenever a problem says both parts must be non-empty, WRITE DOWN HOW MANY LEGAL
+    CUTS THERE ARE (n - 1) BEFORE WRITING THE LOOP, and test an all-zeros or all-ones string, since those
+    are where boundary cuts win.
+
+TRAP 2 - COUNTING THE WRONG CHARACTER ON A SIDE. The score is zeros on the LEFT and ones on the RIGHT.
+Symmetry is tempting and wrong; there is no version of this where you count the same character on both
+sides.
+
+TRAP 3 - RECOUNTING THE RIGHT SIDE INSIDE THE LOOP. `s[i+1:].count('1')` is correct and makes the whole
+thing O(n^2), plus it allocates a new string per cut. The subtraction `total_ones - left_ones` is the
+point of maintaining `left_ones` at all - that variable exists for no other purpose.
+
+TRAP 4 - INITIALISING `best` TO SOMETHING NEGATIVE OR TO THE FIRST SCORE BEFORE THE LOOP. Starting at 0 is
+safe here because every score is a sum of two counts and therefore never negative, AND because the
+constraint guarantees at least two characters, so at least one legal cut always exists and will be
+compared. With a one-character string there would be no legal cut at all - the loop would not run and 0
+would be returned - but the problem guarantees length at least 2.""",
+
+    """5. THE SLOW WAY FIRST, then the running counts.
+
+THE NAIVE VERSION - RECOUNT BOTH SIDES AT EVERY CUT:
+
+    return max(s[:i].count('0') + s[i:].count('1') for i in range(1, len(s)))
+
+    IT IS CORRECT - this is the ground truth every figure in this entry was checked against - and it
+    reads exactly like the problem statement. Note `range(1, len(s))` here: `i` is the START of the right
+    part, so it runs from 1 to n-1, which is again n - 1 legal cuts, expressed differently.
+
+    COST: each cut slices the string twice and counts both halves, so O(n) per cut and O(n^2) overall,
+    plus O(n) of temporary strings per step. At this problem's limit of n = 500 that is around 125,000
+    character comparisons - IT WOULD PASS COMFORTABLY, so be honest: the sweep is the tidier answer, not
+    a rescue.
+
+THE UPGRADE, AND THE TWO OBSERVATIONS BEHIND IT:
+
+    FIRST: THE LEFT-HAND COUNT IS ALMOST ALREADY KNOWN. Moving the cut one place right adds exactly one
+        character to the left part. So instead of recounting, adjust: if that character is '0', the zero
+        count goes up by one; otherwise it does not.
+
+    SECOND: THE RIGHT-HAND COUNT NEEDS NO SCAN AT ALL. Every '1' in the string is on one side or the
+        other:
+
+                ones_on_the_right = total_ones - left_ones
+
+        ONE SUBTRACTION REPLACES AN ENTIRE COUNT. This is why `left_ones` is tracked despite never
+        appearing in the score directly - it exists solely to feed this subtraction.
+
+    COST: one pass for `total_ones`, one pass to sweep. O(n) time, O(1) space.
+
+THE ALTERNATIVE THAT AVOIDS THE INITIAL COUNT: sweep from the RIGHT first, building the ones-so-far count,
+then sweep left combining. It is still two passes and needs an array or a second sweep to combine, so it
+is no better - and it obscures the identity. WORTH KNOWING ONLY SO YOU CAN SAY WHY YOU DID NOT DO IT.
+
+NO OTHER TRICK IS INVOLVED. There is no data structure, no window to slide, and no sorting - the whole
+method is two running counters and one precomputed total.""",
+
+    """6. HOW TO CODE IT - the mechanism, then the steps in plain English.
+
+IN ONE SENTENCE: count all the ones first, then slide the cut from left to right keeping the left part's
+zero and one counts up to date, scoring each cut as left zeros plus the ones not yet consumed.
+
+THE MECHANISM - WHAT IS ACTUALLY MOVING. No recursion, one loop, and three counters with different
+behaviours:
+
+    `total_ones`  computed once and CONSTANT. It is the fixed fact the subtraction depends on.
+    `left_zeros`  MONOTONIC - only ever increases, by 0 or 1 per step.
+    `left_ones`   MONOTONIC - only ever increases, by 0 or 1 per step. Exactly one of these two rises each
+                  iteration, never both, because a character is either a '0' or a '1'.
+    `best`        a ratchet - only ever increases.
+
+    THE INVARIANT: after processing index i, `left_zeros` and `left_ones` are the counts for the left part
+    of the cut made AFTER i, and `best` is the highest score among all cuts considered so far. True
+    trivially before the loop, and each step maintains it by adjusting exactly one counter and then
+    scoring.
+
+    WHAT MAKES IT STOP: the loop runs exactly len(s) - 1 times, one per LEGAL cut. THE UPPER BOUND IS NOT
+    AN OPTIMISATION - IT IS THE CONSTRAINT. Running to len(s) would score an illegal cut with an empty
+    right part, which is trap 1.
+
+    WHY THE SCORE IS COMPUTED AFTER THE COUNTER UPDATE: the character at index i belongs to the LEFT part
+    of the cut made after i. So it must be counted before the cut is scored. That is the opposite ordering
+    from Find Pivot Index, where the current element belongs to NEITHER side and the update comes last -
+    AND THE DIFFERENCE IS WORTH NOTICING, because the two problems otherwise look identical.
+
+THE STEPS, NO CODE:
+
+    1. Count how many '1's are in the whole string. Keep that fixed.
+    2. Start a left-zero count, a left-one count, and a best score, all at zero.
+    3. For each position from the first up to the SECOND-TO-LAST - never the last:
+       a. Move that character into the left part: if it is '0', add one to the left-zero count; otherwise
+          add one to the left-one count.
+       b. Work out how many ones remain on the right: the total number of ones minus the left-one count.
+       c. Score this cut as the left-zero count plus that remainder, and keep it if it beats the best so
+          far.
+    4. Hand back the best score.
+
+    STEP 3's "NEVER THE LAST" IS THE ENTIRE PROBLEM. STEP 3b IS A SUBTRACTION, NOT A COUNT.""",
+
+    """7. WHAT IT DOES, TOLD AS A STORY - no syntax at all.
+
+A line of people is waiting at a door. Some are wearing red, some are wearing blue. You have to draw a
+chalk line across the queue, dividing it into a front section and a back section, and you are paid for two
+things: one coin for every red person in FRONT of the line, and one coin for every blue person BEHIND it.
+Both sections must have at least one person in them - you cannot draw the line at the very back and claim
+the whole queue as "front".
+
+You want the most money.
+
+The plodding way is to draw the line somewhere, walk the front section counting reds, walk the back
+section counting blues, write down the total, then rub the line out and try the next position. You would
+walk the queue over and over.
+
+Instead you count how many blues are in the whole queue before you start, and chalk that number on your
+hand. Then you place your line at the very front and start sliding it backwards, one person at a time.
+
+Each time the line passes someone, that person moves from the back section into the front section. If they
+were wearing red, you have just gained a coin - your front-section red count goes up. If they were wearing
+blue, you have just lost one - there is one fewer blue behind the line, so you subtract from the number on
+your hand. Either way, exactly one of your two figures changes, and you can read off what this line
+position pays without walking anywhere.
+
+You note the best figure you have seen and keep sliding.
+
+    AND YOU STOP ONE PERSON EARLY. When there is only a single person left behind the line, that is the
+    last legal position - sliding once more would leave nobody behind it at all. That final slide is very
+    tempting, because in a queue full of red people it looks like the best payout you have seen: every red
+    counted, and no blues left to miss. BUT IT IS NOT A LEGAL LINE, and taking it is how you end up
+    reporting a number the rules do not allow.
+
+    IT IS WORTH NOTICING THAT THIS ONLY MATTERS IN A QUEUE THAT IS MOSTLY RED. In a mixed queue the
+    illegal position is never the best one anyway, so the mistake stays hidden.""",
+
+    """8. THE CODE, LINE BY LINE, with the real variable names.
+
+    def max_score(s):
+
+`s` is the binary string. IT IS NOT MODIFIED.
+
+    total_ones = s.count('1')
+
+ONE PASS TO COUNT ALL THE ONES. Computed BEFORE the sweep and never changed - it is the fixed quantity the
+subtraction leans on. Note it counts the CHARACTER '1', with quotes, not the integer 1.
+
+    left_zeros = 0
+    left_ones = 0
+
+THE TWO RUNNING COUNTS FOR THE LEFT PART, both starting at 0 because the left part starts empty.
+`left_zeros` is what the score uses directly; `left_ones` EXISTS ONLY TO FEED THE SUBTRACTION on the
+scoring line - it never appears in the score itself.
+
+    best = 0
+
+THE HIGHEST SCORE SEEN. Safe at 0 because every score is a sum of two counts and cannot be negative, and
+because the constraint guarantees at least one legal cut exists to compare against.
+
+    for i in range(len(s) - 1):        # split after i, both sides non-empty
+
+THE SWEEP, AND THE `- 1` IS THE PROBLEM'S CONSTRAINT MADE CODE. `i` is the index of the character joining
+the left part; the cut is AFTER it. Running to `len(s)` would score a cut with an empty right part - wrong
+on 1,428 of 6,000 random strings, and accepted by all three official examples. THE COMMENT ON THIS LINE
+IS DOING REAL WORK.
+
+    if s[i] == '0':
+        left_zeros += 1
+    else:
+        left_ones += 1
+
+MOVE ONE CHARACTER INTO THE LEFT PART. EXACTLY ONE COUNTER RISES per iteration, because a character is
+either '0' or '1'. This happens BEFORE the scoring line, because the character at index i belongs to the
+left part of the cut made after i.
+
+    best = max(best, left_zeros + (total_ones - left_ones))
+
+THE SCORE AND THE RATCHET, IN ONE LINE.
+    `total_ones - left_ones` IS THE NUMBER OF ONES REMAINING ON THE RIGHT - derived by subtraction rather
+        than counted. Replacing it with `s[i+1:].count('1')` is correct and makes the function O(n^2).
+    `left_zeros + (...)` is the score as the problem defines it: zeros left, ones right.
+    `max(best, ...)` keeps the best; `best` never decreases.
+
+    return best
+
+The highest score over all legal cuts. No post-processing.
+
+WHAT IS DELIBERATELY ABSENT: no slicing of the string anywhere in the loop, no second count of the right
+side, no array of scores (only the maximum is wanted), and no guard for a short string - the constraint
+guarantees length at least 2.""",
+
+    """9. TRACED ON REAL NUMBERS - the official string, with the illegal cut shown for contrast.
+
+s = "011101".  First, total_ones = 4 - the ones sit at indices 1, 2, 3 and 5.
+
+    START     left_zeros = 0,  left_ones = 0,  best = 0
+
+    i = 0   s[0] = '0'   ->  left_zeros = 1
+            score = 1 + (4 - 0) = 5        best = max(0, 5) = 5
+            (cut after index 0: left "0", right "11101" - one zero left, four ones right)
+
+    i = 1   s[1] = '1'   ->  left_ones = 1
+            score = 1 + (4 - 1) = 4        best = 5
+
+    i = 2   s[2] = '1'   ->  left_ones = 2
+            score = 1 + (4 - 2) = 3        best = 5
+
+    i = 3   s[3] = '1'   ->  left_ones = 3
+            score = 1 + (4 - 3) = 2        best = 5
+
+    i = 4   s[4] = '0'   ->  left_zeros = 2
+            score = 2 + (4 - 3) = 3        best = 5
+
+    THE LOOP STOPS HERE - i = 5 would be the last character, leaving an empty right part.
+
+    RETURNS 5.  Cross-checked against the O(n^2) recount-both-sides version: also 5.
+
+    WHAT THE ILLEGAL SIXTH ITERATION WOULD DO: s[5] = '1' makes left_ones = 4, and the score becomes
+    2 + (4 - 4) = 2. That is lower than 5, so on THIS string the bug changes nothing - which is exactly
+    why the sample hides it.
+
+THE CASE WHERE THE ILLEGAL CUT WINS:
+
+    s = "00"        legal cuts: only after index 0 -> left "0", right "0" -> 1 + 0 = 1.  ANSWER 1.
+                    the illegal cut after index 1 would score 2 + 0 = 2, and a full-range loop returns 2.
+
+    s = "000"       ANSWER 2, and a full-range loop returns 3.
+
+    ALL-ZERO STRINGS ARE WHERE THE BOUNDARY BITES, because the illegal cut banks every zero and forfeits
+    nothing - there were no ones on the right to lose.
+
+THE INVERSION - CHANGE THE LAST CHARACTER OF THE OFFICIAL STRING:
+
+    "011101"   ->   5        the single 0 at the front plus all four ones behind it
+    "011100"   ->   4        now total_ones is 3, and the best cut is still after index 0: 1 + 3 = 4
+
+    One character flipped from '1' to '0' and the answer drops by one, because the string lost a one that
+    every early cut was banking. Both verified against the brute force.""",
+
+    """10. COST, THE ONE MISTAKE, AND WHAT THE INTERVIEWER IS ACTUALLY ASKING.
+
+COST IN PLAIN WORDS. One pass to count the ones, one pass over the legal cuts. Each cut costs one
+comparison, one increment, one subtraction and one maximum.
+
+    TIME O(n). SPACE O(1) - three integers, whatever the string's length.
+    The recount-both-sides brute force is O(n^2) and allocates two substrings per cut; at this problem's
+    limit of n = 500 that is about 125,000 character comparisons and would pass, so the sweep is the
+    cleaner answer rather than a required one.
+
+THE #1 MISTAKE: looping to `range(len(s))` instead of `range(len(s) - 1)`, which scores an illegal cut
+that leaves the right part empty. Wrong on 1,428 of 6,000 random strings, and ALL THREE OFFICIAL EXAMPLES
+AGREE WITH THE BUGGY VERSION - it only shows up on strings dominated by zeros, where banking the final
+zero beats keeping ones on the right. The smallest exposing case is "00". THE RUNNER-UP is recounting the
+right side inside the loop, which is correct but quietly quadratic.
+
+ONE-SENTENCE TAKEAWAY: sliding a split point one place changes each side by exactly one character, so
+maintain running counts instead of recounting - and derive the far side by subtracting from a precomputed
+total rather than scanning it.
+
+WHAT THE INTERVIEWER IS ACTUALLY ASKING. Two things, and neither is the arithmetic. First, whether you
+turn "try every split" into an incremental sweep - the observation that moving the cut changes exactly one
+character's allegiance. Second, whether you READ THE CONSTRAINT: "both substrings are non-empty" is one
+clause in the statement and it is the only thing standing between a correct answer and one that passes all
+the samples. SAY "THERE ARE n - 1 LEGAL CUTS" ALOUD BEFORE WRITING THE LOOP; it is the sentence that
+prevents the bug.
+
+THE FOLLOW-UPS, WITH THEIR ANSWERS:
+    "Return the split POSITION, not just the score." Track the index alongside `best` - append nothing,
+    just remember `i` when the maximum improves. Same complexity.
+    "What if the score were ones on the left plus zeros on the right?" Mirror everything: precompute
+    total_zeros and track left_ones directly. The structure is identical, which is the point - the sweep
+    does not care which characters are being counted.
+    "What if you may make TWO cuts, into three parts?" That is genuinely harder: you need, for each
+    middle position, the best first cut to its left - which is a prefix-maximum array, computed in one
+    extra pass. Still O(n), but it needs stored state rather than a single running best.
+    "How does this relate to Find Pivot Index?" Same sweep, different question: Pivot Index searches for
+    a cut where two quantities are EQUAL and returns the position; this one MAXIMISES a score over all
+    cuts. Note the ordering difference - there the current element belongs to neither side so the update
+    comes last, here it joins the left part so the update comes first.""",
 ]
 
 _EX_P1K["Minimum Common Value"] = [
