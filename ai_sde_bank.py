@@ -111365,113 +111365,820 @@ cheapest of delete, insert and replace.""",
 ]
 
 _EX_P1T["House Robber"] = [
-    """The recurrence, and why two variables suffice.
-At each house you choose: SKIP it and keep the best total up to the previous
-house, or ROB it and add its value to the best total up to TWO houses back
-(since adjacency is forbidden).
-dp[i] = max(dp[i-1], dp[i-2] + nums[i]). Because it reaches back exactly two
-steps, you never need an array - two rolling scalars hold everything.
-nums = [2,7,9,3,1]: dp goes 2, 7, 11, 11, 12. Answer 12 = houses 0, 2 and 4.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The tuple assignment, and the bug that splitting it causes.
-`prev, curr = curr, max(curr, prev + x)` evaluates the entire right-hand side
-FIRST, so `prev` in the expression is still the OLD prev - which is exactly what
-the recurrence requires.
-Writing it as two statements - `prev = curr` then `curr = max(curr, prev + x)` -
-uses the ALREADY-UPDATED prev, which is really dp[i-1], and silently computes
-'rob every house' instead. On [2,7,9] that gives 18 rather than 11: a wrong
-answer that is still plausible. Same hazard as the Fibonacci-style updates.""",
+A row of houses along one street, each with a known amount of money inside. You may take
+from as many as you like with one restriction: NEVER TWO HOUSES NEXT DOOR TO EACH OTHER,
+because adjacent alarms are linked and would go off. Take as much as possible.
 
-    """Why greedy fails, with the counterexample.
-'Rob every other house' seems reasonable: on [2,7,9,3,1] that gives 2+9+1 = 12,
-which happens to be right. But on [2,1,1,2] it gives 2+1 = 3, while the optimum
-is 2+2 = 4 (rob the ends and skip BOTH middles).
-Skipping two in a row is sometimes optimal, and no fixed pattern captures that -
-which is precisely why this needs DP rather than a rule. Have [2,1,1,2] ready;
-it is the shortest input that kills the greedy.""",
+    houses:    2    7    9    3    1
+    position:  0    1    2    3    4
 
-    """Why initialising both to 0 is correct.
-prev = curr = 0 represents 'no houses considered yet, zero loot'. Since all
-values are non-negative, robbing nothing is the correct floor.
-If values could be NEGATIVE the initialisation would be wrong - you would need
-to allow an empty selection explicitly or the max would be forced to include a
-loss. The constraint says nums[i] >= 0, which is what licenses the simple
-start; worth stating rather than assuming.""",
+Try a few plans by hand:
 
-    """Edge cases.
-Empty -> the loop never runs -> 0.
-Single house -> max(0, 0 + x) = x.
-Two houses [2,7] -> after the first, prev=0 curr=2; after the second, curr =
-max(2, 0+7) = 7. Correct: take the larger, never both.
-All zeros -> 0. Adjacent equal values [5,5] -> 5.
-No guards are needed for any of these, which is worth pointing out - the
-scalars handle the short inputs naturally.""",
+    take 7 and 3            -> 10      (positions 1 and 3, not adjacent - legal)
+    take 2, 9 and 1         -> 12      (positions 0, 2 and 4 - legal)      <- best
+    take 7 and 9            -> illegal, positions 1 and 2 are neighbours
+    take 2, 7, 9, 3 and 1   -> illegal, obviously
 
-    """Complexity and the family.
-O(n) time, O(1) space - and the O(n)-space table version is worth mentioning
-first, then reducing, since the reduction is the follow-up.
-The family: House Robber II (circular street - run this twice, excluding the
-first house then the last), House Robber III (on a TREE, so postorder returning
-a (rob, skip) pair per node), Delete and Earn (which is House Robber in
-disguise after bucketing by value), Maximum Alternating Subsequence Sum, and
-Best Time to Buy and Sell Stock with Cooldown - all 'take it or skip it with a
-constraint on what you took last'.""",
+So the answer is 12. Notice it is NOT the biggest house (9), NOT the biggest pair, and
+NOT simply every other house starting from the largest. The winner here happens to be
+every other house starting from position 0 - but section 4 shows that rule fails on other
+streets, so do not learn it.
+
+WHAT MAKES THIS HARD is that a good choice early can spoil a better one later. Taking the
+9 forbids the 7 AND the 3. You cannot decide house by house in isolation, which is what
+makes this a planning problem rather than a picking problem.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+WALK THE STREET AND ASK ONE QUESTION AT EVERY DOOR: "what is the most I could have taken
+by the time I leave this house behind?"
+
+Standing at a house, there are exactly two possibilities, and there is no third:
+
+    SKIP IT.  Then the most I can have is whatever I had after the PREVIOUS house.
+    TAKE IT.  Then I could not have taken the previous house, so the most I can have is
+              this house's money plus whatever I had after the house TWO BACK.
+
+Take the better of the two. That is the whole algorithm.
+
+    houses:        2      7      9      3      1
+    best so far:   2      7     11     11     12
+                   |      |      |      |      |
+                   |      |      |      |      take 1 -> 11 + 1 = 12 beats skipping (11)
+                   |      |      |      skip 3 -> 11  beats take 3 -> 7 + 3 = 10
+                   |      |      take 9 -> 2 + 9 = 11  beats skip -> 7
+                   |      take 7 -> 0 + 7 = 7  beats skip -> 2
+                   take 2 -> 2  beats skip -> 0
+
+Read the bottom-up notes and watch what happens at the fourth house. Taking the 3 looks
+attractive - it is free money - but the plan that skips it is already worth 11, and
+taking it would have forced giving up the 9. THE ALGORITHM DOES NOT NEED TO KNOW THAT. It
+only compares two numbers, and the comparison carries the consequence automatically,
+because "the best up to two houses back" already excludes anything adjacent.
+
+THE KEY REALISATION - YOU ONLY NEED TWO NUMBERS. The decision at each house looks at the
+best total one house back and two houses back, and nothing else. Not which houses were
+taken, not how many, not where. So you do not need a table of the whole street; you need
+two running values that shuffle along as you walk.
+
+    before this house:   prev = best up to two back      curr = best up to one back
+    after this house:    prev becomes the old curr
+                         curr becomes max(old curr, old prev + this house)
+
+Both updates read the OLD values. That is why they must happen simultaneously, and
+section 4 measures what happens when they do not.""",
+
+    """3. EVERY TERM, DEFINED
+
+ADJACENT. Next door - positions differing by exactly 1. Position 0 and position 2 are not
+adjacent, so both may be taken. The street is a line, not a circle; the first and last
+houses are NOT neighbours. (There is a sequel problem where the street IS a circle, and
+that changes everything - see section 10.)
+
+DYNAMIC PROGRAMMING (DP). Building the answer to a big problem out of answers to smaller
+versions of the same problem, each computed once and written down. Here the small problem
+is "the best possible loot from the first i houses", and the big answer is the last one.
+
+SUBPROBLEM. "What is the best I can do considering only the first i houses?" Every house
+you walk past answers one of these.
+
+OPTIMAL SUBSTRUCTURE. The property that makes DP valid: the best plan for the first i
+houses contains, inside it, the best plan for a shorter prefix. True here - if the best
+plan for the first 5 houses skips house 5, the rest of it must be the best plan for the
+first 4, or you could improve it and contradict yourself.
+
+STATE. The information you must carry forward. The insight of this problem is that the
+state is TINY: just the best totals ending one and two houses back. Not the list of chosen
+houses.
+
+ROLLING VARIABLES. Keeping only the last few values of a table instead of the whole table.
+`prev` and `curr` are the rolling version of an array `dp[0..n]`. This is a space
+optimisation you get for free here because each answer looks back at most two steps.
+
+SIMULTANEOUS ASSIGNMENT. Python's `a, b = x, y` evaluates BOTH right-hand sides first,
+using the old values, and only then assigns. It is not shorthand for two separate lines -
+section 4 measures a 5,030-in-6,000 failure rate for the version that writes them
+separately.
+
+GREEDY. Taking the locally best-looking option at each step. It is the natural instinct
+here - "grab the biggest house" - and it is wrong. Section 4 has a three-house
+counterexample.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - SPLITTING THE SIMULTANEOUS ASSIGNMENT INTO TWO LINES. This is the biggest failure
+in the entry and it is invisible unless you know what to look for.
+
+    prev, curr = curr, max(curr, prev + x)        CORRECT
+
+    prev = curr                                   WRONG
+    curr = max(curr, prev + x)                    prev has ALREADY become curr
+
+In the wrong version, by the time the second line runs, `prev` and `curr` are the same
+number - so `max(curr, prev + x)` is `max(curr, curr + x)`, which is always `curr + x` for
+non-negative money. IT SIMPLY ADDS EVERY HOUSE.
+
+    [1, 2, 3, 1]     correct 4      two-line version: 7   = 1 + 2 + 3 + 1
+    [2, 7, 9, 3, 1]  correct 12     two-line version: 22  = the whole street
+
+    MEASURED: wrong on 5,030 of 6,000 random streets, and VERIFIED that the two-line
+    version always returns exactly `sum(nums)`. It is not slightly wrong - it has quietly
+    deleted the no-adjacent rule, which was the only rule in the problem.
+
+TRAP 2 - "JUST TAKE EVERY OTHER HOUSE" - i.e. the better of all the even positions or all
+the odd positions. It is right often enough to feel true, and it is wrong whenever the best
+plan has to skip TWO in a row.
+
+    [2, 1, 1, 2]     correct 4  (positions 0 and 3)     every-other: 3
+    [5, 1, 1, 5]     correct 10 (positions 0 and 3)     every-other: 6
+
+    MEASURED: wrong on 1,801 of 6,000. Note what both counterexamples have in common: the
+    winning plan takes positions 0 and 3, which are three apart. Any rule with a fixed
+    stride cannot express that.
+
+    THE SAME MISTAKE IN DISGUISE: writing the update as `prev, curr = curr, prev + x` -
+    dropping the `max`, so you always take the house. That computes exactly the two
+    alternating sums and returns the better one. MEASURED at 1,801 of 6,000 as well -
+    the identical number, because it is the identical algorithm.
+
+TRAP 3 - THE GREEDY: REPEATEDLY GRAB THE LARGEST REMAINING HOUSE AND CROSS OFF ITS
+NEIGHBOURS. It is the most natural first idea and it fails on three houses.
+
+    [4, 5, 4]        greedy takes the 5, which blocks both 4s        total 5
+                     correct: take both 4s                           total 8
+
+    MEASURED: wrong on 1,184 of 6,000. THE LESSON GENERALISES: greedy fails when taking
+    one thing removes several others. Say that sentence in the interview when you reject
+    greedy, rather than just asserting that DP is needed.
+
+WHAT IS NOT A TRAP: the empty street and the single house. `prev = curr = 0` and a loop
+that never runs returns 0; a single house returns `max(0, 0 + x) = x`. Both correct with
+no special case, because starting both variables at 0 encodes "the best loot from no
+houses is nothing".""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY BOTH CHOICES AT EVERY HOUSE:
+
+    def rob(nums, i=0):
+        if i >= len(nums):
+            return 0
+        skip = rob(nums, i + 1)                    # leave this house alone
+        take = nums[i] + rob(nums, i + 2)          # take it, then jump the neighbour
+        return max(skip, take)
+
+IT IS CORRECT and it is the honest way to start: at each house you either take it or you
+do not, and taking it forces a jump of two. The `i + 2` IS the no-adjacent rule, expressed
+directly. COST: two branches per house, so roughly 2^n calls - unusable past about 30
+houses, against a problem allowing 100.
+
+THE OBSERVATION THAT FIXES IT: THE SAME QUESTION IS ASKED REPEATEDLY. `rob(nums, 4)` is
+reached by skipping house 3, and by taking house 2, and by many longer routes - and every
+time, the answer is the same, because IT DEPENDS ONLY ON i. There are just n distinct
+questions and the recursion is asking them thousands of times.
+
+Write each answer down the first time (memoisation) and the cost collapses to O(n)
+immediately. Or turn it around and compute them in order, smallest first:
+
+    dp[i] = the best loot from the first i houses
+    dp[0] = 0                                     no houses, no money
+    dp[1] = nums[0]                               one house, take it
+    dp[i] = max(dp[i-1], dp[i-2] + nums[i-1])     skip it, or take it
+
+THE FINAL UPGRADE - THROW THE TABLE AWAY. Look at that last line: `dp[i]` uses `dp[i-1]`
+and `dp[i-2]` and nothing else. So of the whole table, only the last two entries are ever
+needed again. Keep two variables instead of an array and the space drops from O(n) to
+O(1).
+
+    prev  =  dp[i-2]        the best up to two houses back
+    curr  =  dp[i-1]        the best up to one house back
+
+WHY THE SIMULTANEOUS UPDATE IS THE WHOLE TRICK, FROM SCRATCH. Both new values are defined
+in terms of the OLD pair:
+
+    new prev = old curr                                  (the window slides by one)
+    new curr = max(old curr, old prev + this house)      (skip, or take)
+
+The second formula needs the OLD `prev`. If you overwrite `prev` first, the formula reads
+the new one - which is the old `curr` - and `max(curr, curr + x)` is just `curr + x`. The
+no-adjacent constraint lives entirely in the fact that `prev` is two houses back, so
+corrupting `prev` deletes the constraint. That is trap 1, and it is why the tuple form is
+not a stylistic flourish.
+
+HOW THE VALUE TRAVELS: money enters `curr` when a house is taken and is carried forward
+unchanged through every later house that does not beat it. Nothing records WHICH houses
+were chosen, because nothing needs to - if you were asked to output the actual houses you
+would keep the full `dp` array and walk it backwards, comparing `dp[i]` with `dp[i-1]` to
+see whether house i was taken.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Keep two running numbers. Call the first one "the best total up to two houses back"
+       and the second "the best total up to the previous house". Start BOTH at zero - with
+       no houses visited, the best you can have is nothing.
+
+    2. Walk the street from the first house to the last. At each house:
+
+       a. Work out the value of SKIPPING it: that is simply the best total up to the
+          previous house, unchanged.
+
+       b. Work out the value of TAKING it: this house's money plus the best total up to two
+          houses back. Two back, because the house next door is now off limits.
+
+       c. The new "best up to the previous house" is the larger of those two.
+
+       d. The new "best up to two houses back" is the OLD "best up to the previous house".
+
+    3. Steps 2c and 2d must happen at the same instant, both reading the values from before
+       this house. Do 2d first and 2b's number is corrupted.
+
+    4. When the street runs out, the second number is the answer.
+
+NO RECURSION in this version - one walk, two numbers. There is nothing to undo and nothing
+to look up, because every decision is made from two numbers that are always up to date.
+
+THE STEP PEOPLE GET WRONG is 3. In Python the simultaneous update is one line with a comma;
+in a language without tuple assignment you must save the old value in a temporary variable
+first. Either way, the rule is: BOTH NEW VALUES ARE COMPUTED FROM THE OLD PAIR.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture someone walking down a street of houses with a notebook, deciding nothing until
+the very end.
+
+At each front gate they write down a single number: the most that could possibly have been
+collected from this house and everything before it. They do not write down which houses -
+just the total.
+
+Working out that number takes one comparison. Either this house is left alone, in which
+case the total is the same as the number at the previous gate; or this house is emptied, in
+which case the neighbour must have been left alone, so the total is this house's money
+added to the number from two gates back. Whichever is bigger goes in the notebook.
+
+The crucial thing is that the walker never has to remember the plan. The number two gates
+back already accounts for every legal combination that stopped before the neighbour - all
+of them, best one first. So the constraint enforces itself: by reaching two back, you have
+automatically excluded anything that touched the house next door.
+
+By the last gate, the notebook holds the answer, and the walker never once decided which
+houses to rob - only what the best total would be. If someone insisted on knowing the
+actual houses, they could walk back up the street comparing consecutive numbers: wherever
+the total jumped, that house was taken.
+
+And the walker only ever needs the last two entries, so the notebook can be a scrap of
+paper with two numbers on it, rubbed out and rewritten at every gate.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def rob(nums):
+        prev = curr = 0
+
+  Two rolling totals. `curr` is "the best loot considering every house so far"; `prev` is
+  the same thing one house earlier. Both start at 0 because with no houses visited the best
+  you can do is take nothing. THIS ALSO HANDLES THE EMPTY LIST - the loop never runs and 0
+  is returned, with no special case.
+
+        for x in nums:
+
+  Walk the street in order. `x` is the money in the current house. Note the loop does not
+  need an index at all: the position never appears in the formula, only the two rolling
+  totals, which is a sign the state really is that small.
+
+            prev, curr = curr, max(curr, prev + x)
+
+  THE ENTIRE ALGORITHM, AND IT MUST BE ONE STATEMENT. Read the right-hand side first,
+  because Python evaluates all of it BEFORE assigning anything:
+
+        curr                 what `prev` is about to become - the window slides forward
+        max(curr, prev + x)  the choice at this house:
+                                 curr      = SKIP it, keep the best up to the last house
+                                 prev + x  = TAKE it, plus the best from two houses back
+
+  `prev + x` is where the no-adjacent rule lives. `prev` is two houses back, so anything it
+  contains stopped before the neighbour - taking this house cannot conflict with it.
+
+  Split this into two lines and `prev` is overwritten before it is read, `max(curr, curr+x)`
+  collapses to `curr + x`, and the function returns the sum of the whole street. That is
+  trap 1, measured at 5,030 failures in 6,000.
+
+        return curr
+
+  After the last house, `curr` is the best achievable over the entire street.
+
+WHAT IS NOT IN THIS FUNCTION: no array, no index arithmetic, no list of chosen houses, no
+special cases for length 0, 1 or 2. Six lines, two variables. If your version has an `if
+len(nums) == 1` in it, the initialisation is doing less work than it could.""",
+
+    """9. TRACED ON REAL NUMBERS - nums = [2, 7, 9, 3, 1]
+
+Start: prev = 0, curr = 0.
+
+    house 0, x = 2
+        skip -> curr = 0        take -> prev + x = 0 + 2 = 2       take wins
+        prev, curr = 0, 2
+
+    house 1, x = 7
+        skip -> curr = 2        take -> prev + x = 0 + 7 = 7       take wins
+        prev, curr = 2, 7
+        (taking 7 meant NOT taking 2 - and indeed `prev` was 0, the total before house 0)
+
+    house 2, x = 9
+        skip -> curr = 7        take -> prev + x = 2 + 9 = 11      take wins
+        prev, curr = 7, 11
+        (the plan is now: house 0 and house 2, total 11)
+
+    house 3, x = 3
+        skip -> curr = 11       take -> prev + x = 7 + 3 = 10      SKIP wins
+        prev, curr = 11, 11
+        (this is the interesting step - the 3 is free money and is still not worth taking,
+         because taking it would have meant giving up the 9)
+
+    house 4, x = 1
+        skip -> curr = 11       take -> prev + x = 11 + 1 = 12     take wins
+        prev, curr = 11, 12
+
+    return 12
+
+THE VARIABLES AT A GLANCE:
+
+    house | x | prev before | curr before | skip | take | curr after | prev after
+    ------+---+-------------+-------------+------+------+------------+-----------
+      0   | 2 |      0      |      0      |   0  |   2  |      2     |     0
+      1   | 7 |      0      |      2      |   2  |   7  |      7     |     2
+      2   | 9 |      2      |      7      |   7  |  11  |     11     |     7
+      3   | 3 |      7      |     11      |  11  |  10  |     11     |    11
+      4   | 1 |     11      |     11      |  11  |  12  |     12     |    11
+
+The winning plan is houses 0, 2 and 4 - 2 + 9 + 1 = 12 - which the code never wrote down
+anywhere. Only the totals were tracked.
+
+A SECOND TRACE - THE CASE THAT KILLS "EVERY OTHER HOUSE", nums = [2, 1, 1, 2].
+
+    x=2:  skip 0, take 0+2=2   -> prev,curr = 0, 2
+    x=1:  skip 2, take 0+1=1   -> prev,curr = 2, 2
+    x=1:  skip 2, take 2+1=3   -> prev,curr = 2, 3
+    x=2:  skip 3, take 2+2=4   -> prev,curr = 3, 4      answer 4
+
+The winning plan takes positions 0 and 3 - THREE APART, with two houses skipped in the
+middle. Every-other-house gives only 3. The DP found it without any rule about spacing,
+because "the best up to two back" silently includes plans that stopped even earlier.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the houses, one addition and one comparison each. O(n)
+time - the best possible, since an unread house could hold all the money. Two integers of
+working memory regardless of street length: O(1) space. The input is not modified or
+copied.
+
+If you keep the full `dp` array instead - which is a perfectly good answer and easier to
+explain - it is O(n) space. Write that version first if it is clearer to you, then say "and
+since each entry only looks back two steps, I can replace the array with two variables".
+That sentence is worth more than arriving at the two-variable version silently.
+
+THE #1 MISTAKE: writing the update as two statements. Wrong on 5,030 of 6,000, and always
+returns the sum of the entire street - which means it robs every house, violating the only
+constraint the problem has. If your answer equals `sum(nums)`, this is why.
+
+THE #2: assuming the answer is "every other house". Wrong on 1,801 of 6,000, with
+[2,1,1,2] as a four-element counterexample. The same failure hides inside the version that
+drops the `max` from the update - identical algorithm, identical 1,801.
+
+THE #3: the greedy - take the biggest, block its neighbours. Wrong on 1,184 of 6,000, and
+[4, 5, 4] kills it in three houses. Worth having that example ready, because "greedy does
+not work here" is much weaker than "greedy takes the 5 and loses both 4s".
+
+WHAT TO SAY OUT LOUD, in this order: (1) at each house the choice is binary - skip it and
+keep what I had, or take it and add the best from two houses back; (2) that is optimal
+substructure, so DP applies; (3) greedy fails because taking one house removes two others,
+and here is a three-element counterexample; (4) each answer looks back only two steps, so I
+can drop the array and keep two variables; (5) O(n) time, O(1) space.
+
+THE FAMILY, and the sequel is the one that gets asked. HOUSE ROBBER II puts the houses in a
+CIRCLE, so the first and last are now neighbours - the standard answer is to run this
+algorithm twice, once on houses 0..n-2 and once on 1..n-1, and take the better. HOUSE
+ROBBER III moves the houses onto a binary tree. Also in the same family: Delete and Earn
+(which becomes exactly this problem after counting values), Climbing Stairs and Min Cost
+Climbing Stairs (the same two-variable rolling shape with a different formula), and Maximum
+Subarray. If you can see that Climbing Stairs and House Robber are the same skeleton with a
+different line in the middle, you have learned the pattern rather than the problem.
+
+ONE-SENTENCE TAKEAWAY: at every house take the better of skipping it or taking it plus the
+best from two houses back - and update both running totals in one simultaneous step, because
+the second formula needs the value the first one is about to overwrite.""",
 ]
 
 _EX_P1T["Jump Game"] = [
-    """The single-variable greedy, traced.
-nums = [2,3,1,1,4]. reach = 0.
-i=0: 0 <= 0 ok; reach = max(0, 0+2) = 2.
-i=1: 1 <= 2 ok; reach = max(2, 1+3) = 4.
-i=2: 2 <= 4 ok; reach = 4. i=3: reach 4. i=4: 4 <= 4 ok.
-Loop finishes -> True.
-Failing case [3,2,1,0,4]: reach becomes 3 after i=0 and never exceeds 3, so at
-i=4, 4 > 3 -> return False. The zero at index 3 is the wall, and reach stalls
-before it.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why `if i > reach` is the whole check.
-`reach` is the furthest index reachable from everything seen so far. If the
-scan arrives at an index BEYOND that, no earlier position could jump here - so
-the array is severed and the end is unreachable.
-That single comparison replaces any explicit search for gaps. Note it must be
-checked BEFORE extending reach from i, since standing on i is a precondition
-for jumping from it.""",
+You are standing on the first square of a row of squares. Each square has a number on it
+saying HOW FAR YOU MAY JUMP FROM THERE - anything from 0 up to that number, forwards only.
+Can you get to the last square?
 
-    """Why greedy is safe here, as an argument.
-Reachability is monotone: if index i is reachable then so is every index below
-i + nums[i], and reachable positions form a contiguous PREFIX. So there is
-never a decision to make - you do not choose which jump to take, you only track
-how far the prefix extends.
-That is why no DP or BFS is needed. The moment the problem asks for the FEWEST
-jumps (Jump Game II) rather than mere reachability, you need the level-scan
-version - and it is worth naming that as the sibling.""",
+    squares:   2   3   1   1   4
+    position:  0   1   2   3   4
 
-    """The DP everyone writes first, and its cost.
-`dp[i] = can I reach i` computed by scanning all j < i with j + nums[j] >= i is
-O(n^2) and correct. On n = 10,000 that is 100 million operations versus 10,000
-for the greedy.
-Backwards greedy is another correct O(n) variant: track the leftmost index from
-which the end is reachable, and walk right to left updating it. Some find that
-easier to justify. Either is fine; the O(n^2) DP is the one to improve on.""",
+    From square 0 the number is 2, so you may move to square 1 or square 2.
+    One route: 0 -> 1 (the 3 lets you go up to three squares) -> 4. YES, reachable.
 
-    """Edge cases.
-Single element [0] -> True. You are already at the last index, and the loop's
-only check (0 > 0) is false.
-A zero at the END, [2,0] -> reach 2 from index 0, so index 1 is fine -> True. A
-trailing zero never blocks you, which surprises people.
-A zero in the MIDDLE only blocks if nothing can jump OVER it: [1,0,1] -> False,
-but [2,0,1] -> True.
-All zeros of length > 1 -> False. Empty array is usually excluded.""",
+    squares:   3   2   1   0   4
+    position:  0   1   2   3   4
 
-    """Complexity and the family.
-O(n) time, O(1) space, one pass.
-The family: Jump Game II (fewest jumps - the level-by-level greedy that is BFS
-with two integers), Jump Game III (arbitrary +/- jumps, which needs a real BFS
-because reachability is no longer a contiguous prefix), Minimum Number of Taps
-to Water a Garden and Video Stitching (interval covering, same extend-the-reach
-shape).
-Cue: 'can I reach' with a contiguous reachable range means one greedy scan;
-'fewest steps' means the level scan; scattered reachability means BFS.""",
+    Whatever you do, you land on square 3, which says 0 - you may jump zero squares. You
+    are stuck, and square 4 is unreachable. NO.
+
+Two details that matter and are easy to skim past:
+
+    THE NUMBER IS A MAXIMUM, NOT A REQUIREMENT. A 3 means "up to 3", so 1, 2 or 3 - or 0,
+    staying put, which is never useful but is legal.
+
+    YOU ARE ONLY ASKED YES OR NO. Not the fewest jumps, not the route. That is a different
+    problem (Jump Game II) and it is harder. Answer the question that was asked.
+
+A single square, [0], is already the last square, so the answer is YES - you have arrived
+before making any jump.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE OBVIOUS APPROACH IS TO EXPLORE THE ROUTES. From square 0 you could go to 1 or 2, from
+each of those several more... that is a tree of possibilities and it explodes.
+
+THE SHIFT THAT MAKES IT EASY: STOP THINKING ABOUT ROUTES AND THINK ABOUT REACH. Do not ask
+"where can I go from here"; ask "WHAT IS THE FURTHEST SQUARE ANYTHING SO FAR CAN REACH?"
+
+Here is why that one number is enough. Suppose you can reach square 5. Then you can also
+reach 4, 3, 2 and 1 - every square in between - because the jump that got you to 5 could
+have been shortened. So the reachable squares are never a scattered set with gaps; THEY
+ARE ALWAYS AN UNBROKEN STRETCH FROM THE START. And an unbroken stretch starting at 0 is
+completely described by where it ENDS.
+
+    squares:    2    3    1    1    4
+    position:   0    1    2    3    4
+
+    stand on 0: reach = 0 + 2 = 2      [====]                 covers 0,1,2
+    stand on 1: reach = 1 + 3 = 4      [==============]       covers 0..4  - the whole row
+    stand on 2: 2 + 1 = 3, worse than 4, so reach stays 4
+    stand on 3: 3 + 1 = 4, still 4
+    stand on 4: we are here. YES
+
+Now the failing example, which shows what "stuck" looks like:
+
+    squares:    3    2    1    0    4
+    position:   0    1    2    3    4
+
+    stand on 0: reach = 0 + 3 = 3      [=========]            covers 0..3
+    stand on 1: 1 + 2 = 3, no change
+    stand on 2: 2 + 1 = 3, no change
+    stand on 3: 3 + 0 = 3, no change   the frontier has stopped moving
+    step to 4:  is 4 <= reach 3?  NO - I cannot even stand here.  STOP, answer NO
+
+THE TEST THAT MATTERS. As you walk left to right, before doing anything on a square, check
+whether you could actually have got there: is this position within the reach accumulated so
+far? If not, there is a gap, nothing beyond it is reachable, and you can stop immediately.
+
+THE PICTURE - A TORCH IN A DARK CORRIDOR. Walking forward, the torch lights the floor up to
+some distance ahead. Standing on a lit square may reveal MORE floor, so the lit region only
+ever grows. Step onto an unlit square and you have fallen down a hole. The question is
+simply whether the lit region ever reaches the end of the corridor.""",
+
+    """3. EVERY TERM, DEFINED
+
+INDEX / POSITION. Which square you are on, counting from 0. The last square is at position
+`len(nums) - 1`, and that off-by-one is worth writing down: five squares means the last one
+is number 4.
+
+REACH. The furthest position that anything considered so far can get to. It is a single
+number, and it is the entire state of the algorithm. It starts at 0, because before doing
+anything you can at least stand on square 0.
+
+`i + nums[i]`. Where you would land jumping the maximum from square i. If square 3 holds a
+2, then `3 + 2 = 5`, so 5 is reachable from there.
+
+MONOTONIC / NEVER DECREASING. `reach` only ever goes up, because it is updated with a
+`max`. Losing that `max` is trap 2 - and it is not a tidiness issue, it lets the frontier
+move BACKWARDS, which is meaningless.
+
+GREEDY ALGORITHM. One that keeps a single best-so-far value and never revisits a decision.
+Greedy is often wrong; it is right here for a statable reason - once a square is reachable
+it stays reachable forever, so nothing learned later can invalidate anything decided
+earlier.
+
+UNBROKEN / CONTIGUOUS REACHABILITY. The property doing all the work: if position p is
+reachable, so is every position between 0 and p. That is what lets one number stand in for
+the whole set of reachable squares. It is true because a jump of length k can be replaced by
+a jump of any length less than k.
+
+EARLY EXIT. Returning as soon as the answer is known. Here, the moment you find a position
+beyond the reach, the answer is definitely NO and there is no point continuing.
+
+SHORT-CIRCUIT LOGIC is not needed here, but the related habit is: check whether you can
+STAND on a square before you use its value. Using the value first is meaningless - you
+cannot jump from a square you never got to.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - `if i >= reach` INSTEAD OF `if i > reach`. It looks like a harmless tightening.
+It is catastrophic, and in a way that is almost funny: on the very first iteration `i` is 0
+and `reach` is 0, so `0 >= 0` is true and the function returns False immediately - FOR
+EVERY POSSIBLE INPUT.
+
+    [0]              correct True       `>=` version: False
+    [2, 3, 1, 1, 4]  correct True       `>=` version: False
+
+    MEASURED: wrong on 4,327 of 6,000 random arrays - and 4,327 is EXACTLY the number of
+    reachable cases in that sample. It answers False every single time; it happens to be
+    right whenever the true answer is also False. A test suite of only unreachable cases
+    would pass it completely.
+
+    THE REASON: being AT the reach is fine - the reach is the furthest square you can stand
+    on, inclusive. Only being BEYOND it is a failure.
+
+TRAP 2 - `reach = i + nums[i]` WITHOUT THE `max`. This lets the frontier move backwards
+when a later square has a small number on it.
+
+    [2, 0, 0]     correct True      without max: False
+                  from square 0 the reach is 2, which is the last square. But then square 1
+                  overwrites reach with 1 + 0 = 1, and square 2 is now "unreachable".
+
+    MEASURED: wrong on 1,655 of 6,000. `reach` means "the best anyone has managed", so it
+    can only ever be raised, never replaced.
+
+TRAP 3 - THE GREEDY THAT ALWAYS JUMPS THE FULL DISTANCE. It sounds obviously right - why
+would you ever jump less than you can? - and it is wrong, because the far square may be a
+dead end while a nearer one is a springboard.
+
+    [3, 0, 4, 0, 1, 4]     correct True      always-jump-max: False
+        From square 0 the maximum jump of 3 lands on square 3, which holds 0. Stuck.
+        Jumping only 2 lands on square 2, which holds 4 and clears the rest of the row.
+
+    MEASURED: wrong on 481 of 6,000 - low enough to survive casual testing, which is what
+    makes it worth knowing. THE POINT: the value of a square is not how far it is, but what
+    it lets you do next.
+
+WHAT IS NOT A TRAP, checked rather than assumed: THE OTHER GREEDY - from square i, hop to
+whichever square in range maximises `j + nums[j]` - was wrong on 0 of 6,000. It is a valid
+algorithm (it is essentially the Jump Game II strategy), just more code and more thinking
+for the same answer. Do not let anyone tell you it is wrong; it is simply not the simplest
+thing that works.
+
+ALSO NOT A TRAP: a single-element array. `[0]` is True - you start on the last square, so
+there is nothing to do. The loop's first check, `0 > 0`, is false, and the function falls
+through to True. No special case needed, which is a small piece of evidence that the
+`>` is the right comparison.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - EXPLORE EVERY ROUTE:
+
+    def can_jump(nums, i=0):
+        if i >= len(nums) - 1:
+            return True                        # reached (or passed) the last square
+        for step in range(1, nums[i] + 1):     # every jump length allowed here
+            if can_jump(nums, i + step):
+                return True
+        return False
+
+IT IS CORRECT - it is the definition acted out, and a memoised version of this is how the
+ground truth for every figure here was computed. COST: branching by up to `nums[i]` at
+every square gives exponential time; with all squares holding large numbers it is
+hopeless. Memoising it (remember which squares have already been tried) brings it down to
+O(n * max jump), which is fine but still more work and more memory than needed.
+
+THE OBSERVATION THAT COLLAPSES IT ALL. Ask what the recursion is really computing: the set
+of reachable squares. And that set has a special shape.
+
+    IF POSITION p IS REACHABLE, THEN SO IS EVERY POSITION FROM 0 TO p.
+
+Why: whatever jump landed on p could have been made shorter, landing anywhere before it.
+So the reachable set is never scattered - it is always one unbroken stretch starting at 0,
+and a stretch starting at 0 is fully described by A SINGLE NUMBER: where it ends.
+
+That is the whole upgrade. No recursion, no memo table, no queue - one integer.
+
+THE ALGORITHM THAT FALLS OUT. Walk left to right holding that number, `reach`:
+
+    before using square i, check you can get there:   if i > reach, there is a gap - stop
+    then extend the frontier from here:               reach = max(reach, i + nums[i])
+
+and if the walk completes without ever finding a gap, the last square was reachable.
+
+WHY THE GREEDY IS SAFE, FROM SCRATCH. Greedy algorithms are usually suspect because an
+early choice can spoil a later one. Nothing can be spoiled here: REACHABILITY IS ONLY EVER
+GAINED, NEVER LOST. Learning that square 7 is reachable never makes square 3 unreachable.
+So taking the maximum at every step cannot cost you anything later, and there is nothing to
+backtrack.
+
+HOW THE VALUE TRAVELS: `reach` starts at 0, meaning "I can stand on square 0". Each square
+you legitimately stand on offers `i + nums[i]`, and `reach` keeps the best offer ever made.
+It never falls (trap 2) and it is checked before it is extended (trap 1) - use the value of
+a square you could not reach and the whole argument collapses.
+
+AN ALTERNATIVE WORTH KNOWING - WALK BACKWARDS. Keep a target, starting at the last square.
+Scan right to left; whenever `i + nums[i] >= target`, square i can reach the target, so make
+i the new target. At the end, the answer is whether the target has come all the way back to
+0. Same O(n), and some people find the argument more obvious. Either is a fine answer.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Keep one number, the FURTHEST SQUARE REACHABLE SO FAR. Start it at 0, since you are
+       standing on square 0 to begin with.
+
+    2. Walk the squares from left to right. For each square, in this order:
+
+       a. FIRST check whether you could have got here at all: is this position beyond the
+          furthest reachable square? If it is, there is a gap you can never cross - answer
+          NO immediately and stop.
+
+       b. Only then use this square's number: work out where you would land jumping the
+          maximum from here, which is this position plus this square's number.
+
+       c. If that is further than the furthest reachable square so far, update it. If it is
+          not, leave it alone - the frontier must never move backwards.
+
+    3. If the walk finishes without ever finding a gap, then every square including the last
+       one was reachable - answer YES.
+
+THE ORDER OF 2a AND 2b IS THE WHOLE ALGORITHM. Extending the reach from a square you could
+never stand on would be inventing a jump from a square you never visited. Check first, then
+extend.
+
+NO RECURSION, no queue, no visited-set - one number and one pass. There is nothing to undo,
+because reachability is only ever gained.
+
+THE COMPARISON PEOPLE GET WRONG in step 2a is using "at or beyond" instead of "beyond".
+Being AT the furthest reachable square is perfectly fine - that is where you are standing.
+Using "at or beyond" makes the function return NO on its very first step, for every input
+there is.
+
+AN OPTIONAL SPEED-UP worth mentioning but not needed: as soon as the reach covers the last
+square you may stop early and answer YES.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a long footbridge made of planks, being built ahead of you as you walk. Every plank
+you stand on has a number painted on it saying how many planks further along the builders
+will lay from there.
+
+You walk forward one plank at a time, and you keep just one fact in your head: HOW FAR
+AHEAD THE PLANKING CURRENTLY EXTENDS. Not which planks, not how you got here - just where
+the built section ends.
+
+Each time you step onto a plank, you first check the obvious thing: is there actually a
+plank here? If the built section stopped short of where you are standing, there is a gap
+in the bridge, and no amount of walking will help - everything beyond the gap is
+unreachable. You turn round and report that the far bank cannot be reached.
+
+If there IS a plank here, you read its number, work out how far the builders would extend
+from this point, and if that is further than the current end of the planking, you note the
+new figure. If it is nearer, you ignore it - the bridge does not get shorter because one
+plank has a small number on it. That single "ignore it" is what a surprising number of
+people leave out, and without it a run of low numbers can make you declare a bridge broken
+when it is perfectly walkable.
+
+The other thing people get wrong is more tempting: always jumping as far as each plank
+allows, on the grounds that further is better. It is not. A distant plank may be a dead end
+while a nearer one is the springboard that clears the rest of the bridge. The reason this
+algorithm never has to make that choice is that it is not choosing a route at all - it only
+tracks how far the planking goes, which is the union of everything every route could do.
+
+Reach the far bank with no gap behind you and the answer is yes.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def can_jump(nums):
+        reach = 0
+
+  The furthest index reachable so far. It starts at 0 because you are standing on index 0 -
+  this is not "no reach", it is "I can reach square 0".
+
+        for i, jump in enumerate(nums):
+
+  `enumerate` hands over both the position and the number written on it, which is exactly
+  the pair every step needs. `i` is where you are; `jump` is `nums[i]`, the maximum you may
+  move from here.
+
+            if i > reach:
+                return False
+
+  THE GAP CHECK, AND IT MUST COME FIRST. If this position is strictly beyond everything
+  reachable so far, no route arrives here - nor at anything after it, since squares are only
+  ever reached from earlier ones. The answer is settled; return immediately.
+
+  `>` and not `>=`: standing exactly ON the furthest reachable square is fine. Writing `>=`
+  makes the very first test `0 >= 0`, so the function returns False for every input in
+  existence - measured at 4,327 wrong out of 6,000.
+
+            reach = max(reach, i + jump)
+
+  Extend the frontier. `i + jump` is where you would land jumping the maximum from here.
+  `max` because the frontier records THE BEST anyone has offered - a square with a small
+  number must not shrink it. Dropping the `max` is wrong on 1,655 of 6,000, with [2, 0, 0]
+  as a three-element counterexample.
+
+  This line runs only after the gap check has confirmed you can actually stand here, which
+  is what makes the value meaningful.
+
+        return True
+
+  The loop got all the way through without finding a gap, so every square - including the
+  last - was within reach.
+
+WHAT IS NOT IN THIS FUNCTION: no visited set, no queue, no recursion, no route. It never
+decides where to jump, because it never needs to - it tracks what is reachable, not how.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - REACHABLE. nums = [2, 3, 1, 1, 4], last index is 4.
+
+    reach = 0
+
+    i=0, jump=2     0 > 0?  no       reach = max(0, 0+2) = 2
+    i=1, jump=3     1 > 2?  no       reach = max(2, 1+3) = 4
+    i=2, jump=1     2 > 4?  no       reach = max(4, 2+1) = 4    (no change - the max earns
+                                                                 its keep here)
+    i=3, jump=1     3 > 4?  no       reach = max(4, 3+1) = 4
+    i=4, jump=4     4 > 4?  no       reach = max(4, 4+4) = 8
+
+    loop ends -> return True
+
+    i | jump | i > reach? | i + jump | reach after
+    --+------+------------+----------+------------
+    0 |  2   |     no     |    2     |     2
+    1 |  3   |     no     |    4     |     4
+    2 |  1   |     no     |    3     |     4
+    3 |  1   |     no     |    4     |     4
+    4 |  4   |     no     |    8     |     8
+
+Note i=4: the check `4 > 4` is FALSE, so we are allowed to stand on the last square - which
+is the whole answer. Had the comparison been `>=`, this step would have returned False even
+though we had arrived.
+
+CASE TWO - BLOCKED. nums = [3, 2, 1, 0, 4], last index is 4.
+
+    reach = 0
+
+    i=0, jump=3     0 > 0?  no       reach = max(0, 0+3) = 3
+    i=1, jump=2     1 > 3?  no       reach = max(3, 1+2) = 3
+    i=2, jump=1     2 > 3?  no       reach = max(3, 2+1) = 3
+    i=3, jump=0     3 > 3?  no       reach = max(3, 3+0) = 3     the frontier is stuck
+    i=4, jump=4     4 > 3?  YES      -> return False
+
+    The 0 at position 3 is a wall, and positions 1 and 2 could not jump over it: from 1 the
+    best is 1+2 = 3, from 2 the best is 2+1 = 3. Everything lands exactly on the wall.
+
+CASE THREE - THE ONE THAT KILLS THE MISSING `max`. nums = [2, 0, 0].
+
+    i=0, jump=2     0 > 0? no       reach = max(0, 2) = 2      <- already covers the end
+    i=1, jump=0     1 > 2? no       reach = max(2, 1) = 2      <- WITHOUT max this becomes 1
+    i=2, jump=0     2 > 2? no       reach = max(2, 2) = 2
+    return True
+
+    Without the `max`, step i=1 sets reach to 1, and then i=2 finds 2 > 1 and returns False -
+    declaring a perfectly walkable row impassable.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass, one comparison and one `max` per square: O(n) time. One
+integer of working memory: O(1) space. No copying, no modification of the input. You cannot
+beat O(n) - a single unexamined square could be a 0 that blocks everything.
+
+Compare that with what people reach for first: breadth-first search over squares is
+O(n * max jump) time and O(n) space for the visited set, and memoised recursion is the same
+with a recursion stack on top. Both are correct; both are more machinery than the problem
+needs. The saving comes entirely from noticing that the reachable set is one unbroken
+stretch, so it fits in a single number.
+
+THE #1 MISTAKE: `i >= reach` instead of `i > reach`. Wrong on 4,327 of 6,000 - which is
+every reachable case in the sample, because it returns False unconditionally. If your
+solution answers False on `[0]`, this is why. The reach is INCLUSIVE: it is the furthest
+square you can stand on.
+
+THE #2: dropping the `max`. 1,655 of 6,000, killed by the three-element case [2, 0, 0]. A
+frontier that can retreat is not a frontier.
+
+THE #3, and the most interesting one: always jumping the maximum. Only 481 of 6,000, so it
+passes casual testing, and it is wrong for a reason worth carrying to other problems - the
+best square to be on is not the furthest one, it is the one that lets you go furthest NEXT.
+[3, 0, 4, 0, 1, 4] is the counterexample to remember.
+
+WHAT TO SAY OUT LOUD, in this order: (1) if a square is reachable then so is every square
+before it, so the reachable set is one unbroken stretch and I only need to track where it
+ends; (2) walking left to right, I check I can stand here before I use this square's value;
+(3) greedy is safe because reachability is only ever gained, never lost; (4) O(n) time, O(1)
+space. Point 1 is the insight - it is what turns a search problem into a single variable,
+and stating it is the difference between having solved the problem and having remembered it.
+
+THE FAMILY. JUMP GAME II asks for the FEWEST jumps and is the natural follow-up - it needs
+the same reach idea plus a second variable marking the end of the current jump's range, and
+it is genuinely harder. Jump Game III (jump left or right, so reachability is no longer an
+unbroken stretch and you really do need BFS), Jump Game IV, Gas Station, Best Time to Buy
+and Sell Stock II, Partition Labels. The shared shape is a single running frontier that
+only moves forward, and an argument in one sentence for why nothing is lost by being
+greedy.
+
+ONE-SENTENCE TAKEAWAY: track only the furthest index reachable so far - if you ever stand
+beyond it there is an uncrossable gap, and if you finish the walk you have arrived.""",
 ]
 
 for _e in ENTRIES:
@@ -111482,118 +112189,886 @@ for _e in ENTRIES:
 _EX_P1U = {}
 
 _EX_P1U["Kth Smallest Element in a BST"] = [
-    """The one fact this problem exists to test.
-IN-ORDER traversal of a BST visits values in SORTED order. So 'kth smallest'
-becomes 'stop the in-order walk after k visits' - no sorting, no collecting.
-BST 5 -> (3 -> (2,4), 6), k = 3. In-order emits 2, 3, 4, 5, 6. The third is 4.
-That single fact also solves Validate BST (the in-order sequence must be
-strictly increasing), Convert BST to Sorted List, and Two Sum IV. If you
-remember one thing about BSTs, it is this.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the ITERATIVE walk, not the recursive one.
-Recursion visits every node before you can stop, or needs a mutable counter and
-an early-exit flag threaded through - awkward and easy to get wrong.
-The explicit stack lets you stop exactly when the counter hits k, so the cost
-is O(h + k) rather than O(n). On a tree of a million nodes with k = 3, that is
-a handful of operations instead of a million.
-The pattern: push left as far as possible, pop and visit, then move to the
-right child and repeat. Three lines, and it is worth being able to write from
-memory.""",
+You are given a BINARY SEARCH TREE and a number k. Return the k-th smallest value in it.
+k is counted from 1, so k = 1 means the smallest value of all.
 
-    """The trace, showing the stack.
-Tree 5 -> (3 -> (2,4), 6), k = 3.
-Push 5, push 3, push 2 (no more left). Pop 2 -> visit (count 1). No right
-child.
-Pop 3 -> visit (count 2). Move to its right child 4: push 4. Pop 4 -> visit
-(count 3) -> RETURN 4.
-Nodes 5 and 6 are never visited. The stack held at most 3 entries - the height,
-not the size.""",
+A BINARY SEARCH TREE (BST) is a tree where every node obeys one rule:
 
-    """The follow-up that changes the data structure.
-'What if the BST is modified often and you need the kth smallest frequently?'
-An O(h + k) walk per query is fine occasionally and wasteful at high frequency.
-The answer is to AUGMENT each node with the size of its left subtree. Then
-finding the kth smallest is a descent: if left_size == k-1 this node is the
-answer; if k <= left_size go left; otherwise go right with k reduced by
-left_size + 1. That is O(h) per query, and insert/delete maintain the counts in
-O(h).
-This is the intended answer for the follow-up, and it is worth naming even
-without coding it.""",
+    EVERYTHING IN MY LEFT BRANCH IS SMALLER THAN ME.
+    EVERYTHING IN MY RIGHT BRANCH IS BIGGER THAN ME.
 
-    """Edge cases.
-k = 1 -> the leftmost node, the minimum.
-k = n -> the rightmost, the maximum, and the walk degenerates to a full
-traversal.
-A single node with k = 1 -> that node.
-The problem guarantees 1 <= k <= n; without it you would fall off the end of
-the traversal and need to decide what to return.
-A left-skewed tree makes the initial descent push all n nodes, so the space is
-O(h) = O(n) there - which is the honest bound rather than O(log n).""",
+              3
+             / \\
+            1   4
+             \\
+              2
 
-    """Complexity and the family.
-Time O(h + k) - descend to the leftmost node, then k visits. Space O(h) for the
-stack.
-The family: Validate Binary Search Tree (in-order must be strictly increasing,
-or carry (min,max) bounds down), Binary Search Tree Iterator (this exact stack,
-exposed as next()/hasNext()), Two Sum IV (two such iterators from both ends),
-Convert Sorted Array to BST (the inverse), and Recover Binary Search Tree
-(find the two nodes that break the in-order ordering).""",
+Check the rule at the root: the left branch holds 1 and 2, both below 3; the right branch
+holds 4, above 3. Check it at node 1: its right branch holds 2, which is above 1 and - this
+is the part people forget - must ALSO be below 3, because the whole branch sits on 3's left.
+
+Sorted, the values are 1, 2, 3, 4. So:
+
+    k = 1 -> 1        k = 2 -> 2        k = 3 -> 3        k = 4 -> 4
+
+THE OBVIOUS SOLUTION IS TO FLATTEN THE TREE INTO A SORTED LIST AND INDEX IT, and that is a
+perfectly good answer worth stating. The reason the problem is interesting is that you can
+stop the moment you have counted k values, without ever visiting the rest of the tree - and
+for k = 1 on a big tree that is a handful of steps instead of thousands.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE ONE FACT THAT SOLVES THIS PROBLEM:
+
+    READING A BINARY SEARCH TREE IN "LEFT, ME, RIGHT" ORDER PRODUCES THE VALUES IN SORTED
+    ORDER.
+
+That reading order has a name - INORDER - and once you believe it, the problem becomes
+"walk in sorted order and stop at the k-th value".
+
+WHY IT IS TRUE, built up rather than asserted. Take any node. The BST rule says everything
+in its left branch is smaller than it, and everything in its right branch is bigger. So if
+you first list the whole left branch, then the node, then the whole right branch, the node
+lands in exactly the right place - after all the values below it and before all the values
+above it. Apply the same argument inside each branch and every value ends up in its correct
+position.
+
+TRACE IT ON THE PICTURE:
+
+              3
+             / \\
+            1   4
+             \\
+              2
+
+    at 3:  first the entire left branch (1 and 2), then 3, then the right branch (4)
+    at 1:  first its left branch (nothing), then 1, then its right branch (2)
+
+    result:  1, 2, 3, 4        sorted, with no sorting done
+
+ANOTHER WAY TO SEE IT, WHICH IS FASTER FOR MOST PEOPLE: draw the tree neatly, then drop
+every node straight down onto the floor. The order they land in, left to right, is the
+inorder sequence - and for a BST that horizontal order IS numerical order.
+
+              3
+             / \\
+            1   4
+             \\
+              2
+    floor:  1  2  3  4
+
+NOW THE COUNTING. Walk in that order with a counter starting at k. Each time you VISIT a
+node - the "me" step, not the stepping-past - subtract 1. When the counter hits 0, the node
+you are standing on is the answer, and you return at once. Everything to its right is
+never touched.
+
+THE ONE MECHANICAL DIFFICULTY. "Left, me, right" is natural to write with recursion, but
+recursion cannot easily stop early and hand a value back through the whole stack. So the
+standard solution simulates the recursion with an explicit STACK - a pile of nodes you have
+walked past but not yet visited. That pile is exactly what the computer would have kept for
+you, made visible so you can walk away from it whenever you like.""",
+
+    """3. EVERY TERM, DEFINED
+
+BINARY SEARCH TREE (BST). A binary tree in which, for every node, all values in the left
+branch are smaller and all values in the right branch are larger. Note it is not enough for
+a node to be bigger than its immediate left CHILD - the rule covers the entire branch.
+
+INORDER TRAVERSAL. Visiting left branch, then the node, then the right branch. For a BST it
+yields sorted order, which is the entire basis of this solution. Compare:
+
+    preorder    node, left, right       roots first - no sorted property
+    inorder     left, node, right       sorted, for a BST
+    postorder   left, right, node       children before parents
+
+k-TH SMALLEST, 1-INDEXED. k = 1 is the smallest. This matters: the code decrements FIRST and
+then tests for zero, and swapping those two lines is a guaranteed off-by-one - measured in
+section 4 at 100% failure.
+
+STACK. A pile where you add and remove only at the top - "last in, first out". Here it holds
+the nodes you have walked past on your way down and still owe a visit to. Python's plain
+list is a stack: `.append()` puts one on top, `.pop()` takes the top one off.
+
+ITERATIVE vs RECURSIVE. The recursive version calls itself; the iterative version keeps the
+same information in a stack you control. They do the same work. The iterative one is
+preferred here for two reasons: it can return the instant it finds the answer, and it cannot
+blow the call stack on a very deep tree.
+
+THE INVARIANT, which is what makes the loop readable: THE STACK ALWAYS HOLDS EXACTLY THE
+ANCESTORS OF THE CURRENT NODE WHOSE VALUES HAVE NOT YET BEEN VISITED. Popping one always
+gives the smallest unvisited value in the whole tree.
+
+VISIT. Actually processing a node's value - the "me" step. Walking past a node on the way
+down to its left branch is not a visit; the node goes on the stack and is visited later.
+Confusing the two is trap 2.
+
+LEAF. A node with no children. NONE. The absence of a child, which is what stops the descent
+in the inner loop.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - CHECKING `k == 0` BEFORE DECREMENTING INSTEAD OF AFTER. One line out of order, and
+the result is a 100% failure rate.
+
+    k -= 1                       CORRECT
+    if k == 0: return node.val
+
+    if k == 0: return node.val   WRONG
+    k -= 1
+
+    On the tree above with k = 1 the wrong version returns 2; with k = 2 it returns 3; with
+    k = 4 it returns -1, having fallen off the end of the tree.
+
+    MEASURED: wrong on 4,000 of 4,000 random trees - EVERY SINGLE CASE. It always returns
+    the (k+1)-th smallest, or fails entirely when k is the largest. It is the purest
+    off-by-one in this batch, and it is caught by the simplest possible test, so run k = 1
+    on a small tree before anything else.
+
+    WHY THE ORDER IS FORCED: k is 1-indexed. Arriving at the first node, k is still 1, not
+    0, so the test cannot fire before the decrement. Decrement first and "k has reached 0"
+    means "I have now counted k nodes", which is exactly the stopping condition.
+
+TRAP 2 - WALKING THE TREE IN PREORDER (VISIT THE NODE, THEN DESCEND). It is the easier
+traversal to write with a stack - push the root, pop, push both children - and it produces
+values in a completely unsorted order, so counting to k is meaningless.
+
+    on the tree above, preorder gives 3, 1, 2, 4 rather than 1, 2, 3, 4
+    so k = 1 returns 3 instead of 1
+
+    MEASURED: wrong on 2,677 of 4,000. It is right only by coincidence, when the k-th node
+    happens to fall in the same place in both orders. THE SORTED PROPERTY BELONGS TO INORDER
+    ALONE - it is not a general property of walking a BST.
+
+TRAP 3 - DESCENDING LEFT AGAIN AFTER VISITING A NODE. After popping and visiting, the next
+thing to explore is the node's RIGHT branch - its left branch was already dealt with on the
+way down. Writing `node = node.left` re-walks ground already covered.
+
+    MEASURED: wrong on 2,594 of 4,000. On the example tree with k = 3 it returns 1: having
+    visited 1, it goes back down 1's left branch (empty), pops 3, and mis-counts.
+
+    THE RULE IN ONE LINE: THE LEFT BRANCH IS DONE BEFORE THE VISIT, THE RIGHT BRANCH AFTER.
+    That is just "left, me, right" read as instructions.
+
+TRAP 4 - THE LOOP CONDITION `while node:` INSTEAD OF `while stack or node:`. The walk has
+two distinct situations: there is somewhere further to descend (`node` is not None), OR
+there is nothing below but unfinished business on the stack. Testing only the first stops as
+soon as you hit the bottom of the leftmost path, before visiting anything at all.
+
+WHAT IS NOT A TRAP: k larger than the number of nodes. The loop simply ends and `-1` is
+returned. The problem guarantees k is valid, so this never fires - but returning something
+defined rather than crashing is worth a sentence in an interview.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - FLATTEN THE TREE, THEN INDEX:
+
+    def kth_smallest(root, k):
+        values = []
+        def walk(node):
+            if not node: return
+            walk(node.left)                 # everything smaller
+            values.append(node.val)         # then me
+            walk(node.right)                # then everything bigger
+        walk(root)
+        return values[k - 1]                # 1-indexed, so subtract 1
+
+IT IS CORRECT, it is four lines of real logic, and it is how the ground truth for this entry
+was computed. SAY THIS ONE FIRST IN AN INTERVIEW - it demonstrates the only insight that
+matters, which is that inorder gives sorted order. COST: O(n) time and O(n) extra memory for
+the list, EVEN WHEN k IS 1. That is the weakness: it visits all million nodes to answer a
+question about the smallest one.
+
+THE UPGRADE, IN TWO PARTS.
+
+    FIRST, STOP EARLY. You do not need the whole sorted list, only its k-th entry. If you
+        can count as you go and return the moment the count reaches k, the work becomes
+        proportional to k, not to n.
+
+    SECOND, MAKE THE RECURSION EXPLICIT SO YOU CAN WALK AWAY FROM IT. Returning early out of
+        a recursive traversal is awkward - every level has to notice and pass the answer up.
+        Rewriting it with your own stack makes "return now" a plain `return`.
+
+HOW THE STACK REPLACES THE RECURSION, from scratch. When the recursive version calls
+`walk(node.left)`, the computer quietly remembers the current node so it can come back and
+run the `values.append` line afterwards. That remembering is a stack, hidden inside the
+language. The iterative version keeps the same thing in a list you can see:
+
+    GOING DOWN LEFT:   push each node you pass and keep going left. You are deferring
+                       these nodes - you have not visited them, you have only walked past.
+    HITTING None:      the leftmost point is reached; nothing smaller remains anywhere.
+    POPPING:           the top of the stack is now the smallest unvisited value in the
+                       whole tree. Visit it, and count it.
+    THEN GO RIGHT:     that node's left branch was handled on the way down, so the only
+                       part left is its right branch. Descend into it and repeat.
+
+WHY THE POPPED NODE IS ALWAYS THE NEXT-SMALLEST, which is the claim the whole method rests
+on: everything to the left of it has been visited already, and everything still unvisited is
+either the node itself or lies to its right - which by the BST rule means larger. So popping
+in this pattern hands you the values in ascending order, one at a time, on demand.
+
+HOW THE VALUE TRAVELS: `k` is a countdown, not an index. It starts at the requested rank and
+loses 1 at each visit. When it reaches 0 you have just visited the k-th smallest value, and
+the answer is the node in your hand.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Prepare an empty stack - a pile of nodes you have walked past but not yet visited -
+       and start a marker on the root of the tree.
+
+    2. Keep going while EITHER the marker is on a real node OR the pile is not empty. Two
+       separate reasons to continue: there is somewhere further down to go, or there is
+       unfinished business waiting.
+
+    3. First, go as far LEFT as possible. While the marker is on a real node, put that node
+       on the pile and move the marker to its left child. Stop when the marker falls off the
+       bottom into nothing. You are now past the smallest unvisited value in the tree.
+
+    4. Take the top node off the pile. Because of step 3, it is the smallest value not yet
+       visited anywhere in the tree.
+
+    5. Count it: subtract one from k. If k has now reached zero, this node holds the answer -
+       return its value immediately and stop. Everything larger stays unvisited, which is the
+       point of doing it this way.
+
+    6. Otherwise move the marker to this node's RIGHT child - its left branch was finished
+       back in step 3 - and go round again from step 2.
+
+    7. If the loop ever ends without returning, k was larger than the number of nodes.
+
+THE ORDER OF STEPS 3, 5 AND 6 IS THE PHRASE "LEFT, ME, RIGHT" TURNED INTO INSTRUCTIONS.
+Left branch first, then the visit, then the right branch. Every trap in section 4 is one of
+those three put in the wrong place.
+
+NO RECURSION APPEARS, but the stack is doing exactly what recursion would have done - holding
+the nodes whose "me" step is still pending. What stops the loop is that every node is pushed
+once and popped once, and each pop moves the marker strictly rightwards or empties the pile.
+
+THE STEP PEOPLE GET WRONG is 5: subtracting first and then testing. Test first and you return
+the (k+1)-th value, every single time.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of a filing system where every drawer has two drawers beneath it, and there is one
+rule: everything filed to the left of a drawer comes earlier in the alphabet, everything to
+the right comes later.
+
+Somebody asks for the third file in alphabetical order. You could pull out every file, sort
+them into a pile and count to three - and that works, but you would have handled the whole
+cabinet to answer a question about the front of it.
+
+Instead you do what an archivist does. From the top drawer you head left, and keep heading
+left, and every drawer you pass you put a bookmark in - you are not finished with it, you
+just know its left-hand side comes first. When you can go no further left, the drawer you
+are standing at holds the alphabetically first file in the entire cabinet.
+
+You take it and count one. Then you remove your most recent bookmark, which by construction
+is the next file in order, and count two. Before moving on from a drawer, you dip into
+whatever hangs to its right, again heading as far left as that side goes, because those files
+come after this drawer but before the drawer whose bookmark is waiting above.
+
+The count reaches three and you stop where you stand. The rest of the cabinet was never
+opened - and if the file you wanted was the very first one, you opened almost nothing.
+
+The bookmarks are the whole trick. They are what a recursive search would have kept for you
+invisibly; holding them yourself means you can put the cabinet down and walk away the moment
+you have what you came for.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+    def kth_smallest(root, k):
+        stack = []
+        node = root
+
+  `stack` is the pile of nodes walked past but not yet visited. `node` is the marker for
+  where the descent has got to. Two separate ideas, and the loop below needs both.
+
+        while stack or node:
+
+  Carry on while there is somewhere to descend (`node` is a real node) OR something owed
+  (`stack` is not empty). Writing only `while node:` stops at the bottom of the first
+  leftward run, before a single value has been visited.
+
+            while node:
+                stack.append(node)
+                node = node.left
+
+  GO AS FAR LEFT AS POSSIBLE, deferring every node passed. Pushing before descending is what
+  makes them retrievable in reverse order later. When this inner loop ends, `node` is None and
+  the top of the stack is the smallest unvisited value ANYWHERE IN THE TREE - not just in this
+  branch, because everything smaller has already been visited and popped.
+
+            node = stack.pop()
+
+  Take that node. This is the visit - the "me" of "left, me, right".
+
+            k -= 1
+
+  Count it. DECREMENT FIRST. k is 1-indexed, so on arriving at the very first node k is still
+  1; testing before decrementing can never fire at the right moment and returns the (k+1)-th
+  value on every input.
+
+            if k == 0:
+                return node.val
+
+  k values have now been visited, and this is the k-th. Return immediately - nothing larger is
+  ever examined, and that early exit is the entire reason for writing the traversal by hand.
+
+            node = node.right
+
+  Move on to this node's right branch. Its LEFT branch was consumed on the way down, so the
+  right is all that remains. Writing `node.left` here re-walks finished ground and mis-counts -
+  wrong on 2,594 of 4,000 trees.
+
+  Note this does not descend immediately; it just sets the marker, and the outer loop's inner
+  `while` will walk that branch as far left as it goes on the next pass. That is what keeps the
+  ordering correct across branches.
+
+        return -1
+
+  Only reachable if k exceeded the number of nodes. The problem guarantees it does not, but a
+  defined return beats an implicit None.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+The tree, and k = 3:
+
+              3
+             / \\
+            1   4
+             \\
+              2
+
+    sorted order is 1, 2, 3, 4 - so the expected answer is 3
+
+    START     stack = [],  node = 3,  k = 3
+
+    PASS 1
+        descend left: push 3, node = 1
+                      push 1, node = None      (1 has no left child)
+        stack = [3, 1]
+        pop -> node = 1.        k = 3 - 1 = 2.   not zero, carry on
+        node = 1.right = 2
+
+    PASS 2
+        descend left: push 2, node = None       (2 has no left child)
+        stack = [3, 2]
+        pop -> node = 2.        k = 2 - 1 = 1.   not zero, carry on
+        node = 2.right = None
+
+    PASS 3
+        the inner loop does nothing - node is already None
+        stack = [3]
+        pop -> node = 3.        k = 1 - 1 = 0.   ZERO -> return 3
+
+    ANSWER: 3.  Node 4 was never visited, and never even pushed.
+
+THE VARIABLES AT A GLANCE:
+
+    pass | stack before | popped | k after | next node
+    -----+--------------+--------+---------+----------
+      1  |    [3, 1]    |   1    |    2    |  2 (1's right)
+      2  |    [3, 2]    |   2    |    1    |  None
+      3  |      [3]     |   3    |    0    |  return
+
+The values came off the stack as 1, 2, 3 - ascending, with no sorting performed anywhere. That
+is the inorder property doing all the work.
+
+WHAT k = 1 WOULD HAVE COST: pass 1 alone. Push 3, push 1, pop 1, k reaches 0, return. Three
+operations on a tree of any size, versus flattening every node into a list. On a balanced tree
+of a million nodes that is about 20 steps instead of a million.
+
+WHAT THE WRONG VERSIONS RETURN ON THIS SAME TREE:
+
+    checking k == 0 before decrementing:   k=1 gives 2, k=2 gives 3, k=3 gives 4  - always
+                                           one place too far along
+    preorder instead of inorder:           the visit order is 3, 1, 2, 4, so k=1 gives 3
+    descending left after the visit:       k=3 gives 1""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The walk visits nodes in ascending order and stops at the k-th, so it
+touches about k nodes plus the descent needed to reach the smallest one. That descent is the
+height of the tree, h. So O(h + k) time. For k = 1 on a balanced tree of a million nodes that
+is roughly 20 steps; the flatten-everything version is a million. Worst case, k = n, it is
+O(n) - no worse than flattening.
+
+SPACE: the stack holds at most one node per level of the current path, so O(h). For a balanced
+tree that is about log n; for a degenerate one-sided tree it is n. Say both - claiming O(log n)
+without the caveat is the kind of thing an interviewer will push on.
+
+THE #1 MISTAKE: testing `k == 0` before the decrement. Wrong on 4,000 of 4,000 - a complete
+failure, always returning the (k+1)-th smallest. Test it with k = 1 on a three-node tree before
+you test anything else.
+
+THE #2: using preorder because it is the easier stack traversal to write. 2,677 of 4,000. The
+sorted property belongs to inorder specifically; no other traversal of a BST is sorted.
+
+THE #3: going left again after the visit instead of right. 2,594 of 4,000. "Left, me, right" -
+the left is finished before the visit, the right comes after it.
+
+WHAT TO SAY OUT LOUD, in this order: (1) inorder traversal of a BST gives sorted order, so this
+is "walk in sorted order and stop at the k-th"; (2) the simple version flattens to a list, which
+is O(n) time and space; (3) doing the traversal with an explicit stack lets me return the moment
+the count hits k, giving O(h + k) time and O(h) space; (4) k is 1-indexed, so I decrement before
+testing.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if the tree is modified often and this is queried often?"
+The expected answer is to AUGMENT each node with the size of its subtree. Then finding the k-th
+smallest is a single descent: at each node, if the left subtree holds L nodes, then k <= L means
+go left; k == L + 1 means this node is the answer; otherwise go right and reduce k by L + 1.
+That is O(h) per query with no traversal at all, at the cost of maintaining the counts on every
+insert and delete. Having that answer ready is worth more than the main solution, because it is
+where the interview is heading.
+
+THE FAMILY. Validate Binary Search Tree, Inorder Successor in a BST, Convert BST to Sorted
+Doubly Linked List, Binary Tree Inorder Traversal (this walk without the counter), and Range Sum
+of BST. Every one of them is the same observation applied differently: FOR A BST, INORDER IS
+SORTED ORDER.
+
+ONE-SENTENCE TAKEAWAY: inorder traversal of a BST emits values in sorted order, so keep an
+explicit stack, count down from k at each visit, and return the instant the count reaches zero.""",
 ]
 
 _EX_P1U["Longest Common Subsequence"] = [
-    """The two cases, and why they are exhaustive.
-Comparing a[i-1] with b[j-1]:
-MATCH -> this pair can be part of the LCS, and nothing is lost by taking it, so
-dp[i][j] = 1 + dp[i-1][j-1].
-NO MATCH -> at least one of the two characters cannot be in the LCS, so try
-dropping each and keep the better: max(dp[i-1][j], dp[i][j-1]).
-That is genuinely all the cases. The subtle claim is the first one - that
-taking a matching pair is never worse than skipping it - which holds because
-any LCS not using this pair can be rewritten to use it without getting
-shorter.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """A trace on 'abcde' and 'ace' (answer 3).
-Filling row by row, the interesting cells: dp[1][1] ('a' vs 'a') -> match ->
-1 + dp[0][0] = 1. dp[3][2] ('c' vs 'c') -> match -> 1 + dp[2][1] = 1 + 1 = 2.
-dp[5][3] ('e' vs 'e') -> match -> 1 + dp[4][2] = 1 + 2 = 3.
-Answer 3, the subsequence 'ace'. Note it is not contiguous in 'abcde' - the 'b'
-and 'd' are skipped, which is exactly what distinguishes a subsequence from a
-substring.""",
+Given two strings, find the length of the longest sequence of characters that appears in
+BOTH, in the same order - but not necessarily next to each other.
 
-    """Subsequence versus SUBSTRING, since the algorithms differ completely.
-LCS allows gaps and is O(m*n) DP. Longest Common SUBSTRING requires contiguity
-and uses a different recurrence - dp[i][j] = 1 + dp[i-1][j-1] on a match and 0
-otherwise, with the answer being the maximum cell rather than the last one.
-On 'abcde' and 'ace': LCS is 3, longest common substring is 1. Same inputs,
-very different answers - so read the prompt's word carefully before choosing a
-recurrence.""",
+    a = "abcde"
+    b = "ace"
 
-    """Reconstructing the actual subsequence, which is the usual follow-up.
-Walk BACKWARDS from dp[m][n]. If a[i-1] == b[j-1], that character is in the
-LCS - prepend it and move diagonally. Otherwise move toward the larger of
-dp[i-1][j] and dp[i][j-1].
-O(m + n) after the table is built. The catch: this needs the FULL table, so it
-is incompatible with the O(n) space reduction - a real trade to state. If you
-only need the length, reduce the space; if you need the string, keep the
-table.""",
+    The letters a, c and e appear in "abcde" in that order (positions 0, 2 and 4) and in
+    "ace" in that order too. So the answer is 3.
 
-    """Edge cases and space.
-Either string empty -> 0, handled by the zero-initialised first row and column
-with no explicit base case needed.
-Identical strings -> the full length. No common characters -> 0.
-One string a subsequence of the other -> the shorter one's length.
-Space: dp[i] depends only on dp[i-1], so two rows give O(min(m,n)) - and swap
-the arguments so the shorter string drives the row width.""",
+THE WORD THAT DOES ALL THE WORK IS "SUBSEQUENCE", AND IT IS NOT "SUBSTRING":
 
-    """Complexity and the family.
-O(m*n) time and space, reducible to O(min(m,n)) space for the length alone.
-The family: Edit Distance (same table, minimising operations instead of
-maximising matches), Longest Palindromic Subsequence (which IS the LCS of s
-with reverse(s)), Delete Operation for Two Strings (m + n - 2*LCS), Shortest
-Common Supersequence (m + n - LCS), Distinct Subsequences, and Uncrossed Lines -
-which is LCS with the story changed and nothing else.
-Recognising a problem as 'LCS in disguise' turns several Mediums into a
-five-minute answer.""",
+    SUBSEQUENCE - you may SKIP characters, but you may not REORDER them.
+        "ace" is a subsequence of "abcde".        "aec" is not - wrong order.
+
+    SUBSTRING - an unbroken run, no skipping.
+        "bcd" is a substring of "abcde".          "ace" is not - it has gaps.
+
+That distinction is the single most common misunderstanding here, and section 4 measures
+what solving the wrong one costs. On this very example, the longest common SUBSTRING is
+just "a" - length 1 - against a subsequence answer of 3.
+
+    a = "abc",  b = "def"     ->  0, nothing in common
+    a = "abc",  b = "abc"     ->  3, the whole thing
+
+You are asked for the LENGTH, not the string itself. Recovering the actual subsequence is a
+standard follow-up and section 10 says how.
+
+WHERE THIS SHOWS UP FOR REAL: `git diff` and every other file-comparison tool is built on
+it - the lines that stay put are a longest common subsequence of the two files, and
+everything else is displayed as added or removed.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+WHY YOU CANNOT JUST WALK BOTH STRINGS. With two pointers, what do you do at a mismatch -
+advance the first string or the second? Either could be right, and the wrong guess loses
+letters later. There is no local rule that works, so you must consider both, which means
+you need something that remembers.
+
+THE MOVE: LOOK ONLY AT THE LAST CHARACTER OF EACH. Ask a smaller question - what is the LCS
+of the first i characters of a and the first j characters of b? Compare just those two final
+characters, and there are exactly two situations:
+
+    THEY MATCH.  Then that character can end the common subsequence, and the best you can do
+        is 1 plus the best for both strings one character shorter. There is no reason ever to
+        refuse a matching pair at the end - taking it can only help.
+
+            "abc" and "aec" both end in c  ->  1 + LCS("ab", "ae")
+
+    THEY DIFFER.  Then at least one of those two characters is not in the answer, so try
+        dropping each in turn and keep whichever is better.
+
+            "abc" and "abd"  ->  the better of LCS("ab", "abd") and LCS("abc", "ab")
+
+THE PICTURE - A GRID. Write one string down the side, the other across the top. The square at
+row i, column j holds the LCS length for the first i characters of the left string against
+the first j of the top one.
+
+              ""   a    c    e
+        ""     0    0    0    0
+        a      0    1    1    1
+        b      0    1    1    1
+        c      0    1    2    2
+        d      0    1    2    2
+        e      0    1    2    3
+
+The whole first row and column are 0 - nothing has anything in common with an empty string.
+Every other square looks at just three neighbours:
+
+    +--------+--------+
+    | diag   | above  |      match     ->  take the DIAGONAL and add 1
+    +--------+--------+      no match  ->  take the BIGGER of above and left, add nothing
+    | left   |  HERE  |
+    +--------+--------+
+
+READ THE GRID AND YOU CAN SEE THE ANSWER GROWING. It steps up at exactly three squares - row
+a / column a, row c / column c, and row e / column e - which are precisely the three matched
+letters. Everywhere else the value is simply carried across from a neighbour, unchanged.
+
+Fill row by row and the bottom-right corner is the answer for the full strings.""",
+
+    """3. EVERY TERM, DEFINED
+
+SUBSEQUENCE. Characters taken from a string in their original order, with any number
+skipped. "ace" and "ae" and "" are all subsequences of "abcde"; "ea" is not. A string of
+length n has 2^n subsequences, which is why checking them all is hopeless.
+
+SUBSTRING. A contiguous run - no skipping. Every substring is a subsequence, but not the
+reverse. Keep these apart; they are different problems with different algorithms.
+
+COMMON SUBSEQUENCE. One that is a subsequence of both strings. LONGEST COMMON SUBSEQUENCE:
+the longest such. It need not be unique - "abc" and "acb" have both "ab" and "ac", each of
+length 2 - but the LENGTH is unique, which is why the problem asks for the length.
+
+PREFIX. The first i characters. `dp[i][j]` is a question about the prefix of length i of one
+string and the prefix of length j of the other.
+
+DYNAMIC PROGRAMMING. Solve every small version once, record the answers, build the big one
+from them. It applies when the best answer for the whole is assembled from best answers to
+the parts, and when the same parts keep coming up - both true here.
+
+dp TABLE. The grid. `dp[i][j]` = the LCS length of `a[:i]` and `b[:j]`. A table of ANSWERS,
+not of characters.
+
+THE OFF-BY-ONE EVERY STRING DP HAS. The table has m+1 rows for a string of m characters,
+because row 0 stands for the EMPTY prefix. So row i is about the character at index i-1.
+Write `a[i-1] == b[j-1]` and stop re-deriving it.
+
+BASE CASE. Row 0 and column 0 are all zeros: an empty string shares nothing with anything.
+In Python a fresh table is already full of zeros, so unlike Edit Distance you get these for
+free - which is exactly why forgetting they exist is harmless here and fatal there.
+
+FILL ORDER. Each square needs the ones above, to the left, and diagonally up-left. Going top
+to bottom and left to right guarantees all three are ready.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - SOLVING LONGEST COMMON SUBSTRING INSTEAD. Same grid, one different rule: on a
+mismatch you write 0 rather than carrying the best across, and the answer is the largest
+value anywhere in the table rather than the bottom-right corner. It is a real, useful
+algorithm - for a different question.
+
+    "abcde" vs "ace"      LCS = 3      longest common substring = 1
+    "abc"   vs "abc"      both give 3, so an identical-strings test will not catch it
+
+    MEASURED: differs on 872 of 4,000 random pairs. Lower than you might expect, because on
+    short random strings the two often coincide - which is what makes it dangerous. Read the
+    word "subsequence" in the statement and say back what it means before you start.
+
+TRAP 2 - ON A MATCH, WRITING `1 + max(dp[i-1][j], dp[i][j-1])` INSTEAD OF `1 + dp[i-1][j-1]`.
+This looks like harmless symmetry with the mismatch case. It is not: it lets the SAME
+character be counted more than once.
+
+    a = "aaa",  b = "a"       correct 1        this version: 3
+
+    Each of the three a's in the first string matches the single a in the second, and because
+    the recurrence steps back only one row instead of stepping back diagonally, the single a
+    in b is never consumed - so it is reused three times over.
+
+    MEASURED: wrong on 1,994 of 4,000 - and it is right on the official example ("abcde" /
+    "ace" gives 3 either way), so the sample input will not save you. THE DIAGONAL IS WHAT
+    CONSUMES BOTH CHARACTERS. Stepping only one way consumes only one of them.
+
+TRAP 3 - FORGETTING TO CARRY THE BEST FORWARD ON A MISMATCH - leaving the square at 0
+instead of taking `max(above, left)`. Then any mismatch wipes out everything found so far.
+
+    "bl" vs "yby"          correct 1        this version: 0
+    "abcde" vs "ace"       correct 3        this version: 1
+
+    MEASURED: wrong on 2,289 of 4,000. The mismatch line is not an "else, do nothing" - it is
+    "keep the best result from dropping one character or the other", and that is what
+    propagates an answer across the gaps between matches.
+
+TRAP 4 - THE OFF-BY-ONE IN THE CHARACTER LOOKUP. Comparing `a[i]` with `b[j]` rather than
+`a[i-1]` with `b[j-1]` throws IndexError on the last row, or silently compares the wrong
+letters if the loop bounds are shifted too. Row i is about the first i characters, so the
+i-th character is at index i-1.
+
+WHAT IS NOT A TRAP, checked rather than assumed: including the diagonal in the mismatch case,
+`max(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])`, was wrong on 0 of 4,000. It is redundant - the
+diagonal can never exceed either of its two neighbours, since dropping a character can never
+increase the answer - but it is harmless. Do not let anyone tell you it is a bug; it is just
+noise.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - PLAIN RECURSION FROM THE DEFINITION:
+
+    def lcs(a, b, i=None, j=None):
+        i = len(a) if i is None else i
+        j = len(b) if j is None else j
+        if i == 0 or j == 0:
+            return 0                                  # nothing left of one string
+        if a[i-1] == b[j-1]:
+            return 1 + lcs(a, b, i-1, j-1)            # matched pair: take both
+        return max(lcs(a, b, i-1, j), lcs(a, b, i, j-1))   # drop one or the other
+
+IT IS CORRECT - it is section 2 written out, and a memoised copy of it produced the ground
+truth for every figure in this entry. Write it first in an interview: the recurrence is the
+part that shows understanding, and the table is just an efficient way of evaluating it.
+
+COST: two branches per mismatch, so roughly 2^(m+n) calls. Two ten-character strings are
+already painful; the problem allows a thousand each.
+
+WHY IT IS SO SLOW, AND THE FIX. The recursion keeps asking the same questions. `lcs(a,b,3,2)`
+is reached by dropping from the first string then the second, and by dropping in the other
+order - different routes, identical question, because THE ANSWER DEPENDS ONLY ON (i, j). There
+are just (m+1) x (n+1) distinct questions - 24 of them for "abcde" and "ace" - and the naive
+version asks them thousands of times.
+
+Record each answer the first time and the cost drops to m x n immediately. That is
+memoisation, and it is a legitimate final answer.
+
+THE TABLE VERSION. Once you know there are only m x n distinct questions, drop the recursion
+and fill a grid directly. It needs one thing: when you compute a square, its three inputs must
+already be filled. `dp[i][j]` reads `dp[i-1][j-1]`, `dp[i-1][j]` and `dp[i][j-1]` - all above
+or to the left - so filling row by row, left to right, always has them ready.
+
+WHY THE MATCH BRANCH DOES NOT NEED A `max`, FROM SCRATCH. It looks like a shortcut: when the
+last characters agree, why not also consider dropping one of them? Because taking a matching
+pair at the end is never worse. Any common subsequence of the two prefixes can be extended by
+that matched pair, and any that does not use it is no longer than one that does. So the
+diagonal alone is safe - and crucially it steps back on BOTH strings, consuming both matched
+characters. Stepping back on only one leaves the other available to be matched again, which is
+trap 2 and its "aaa" versus "a" giving 3.
+
+HOW THE VALUE TRAVELS: a count enters the table at a match, stepping in diagonally and adding
+1. Between matches it is carried sideways and downwards unchanged by the `max`. So reading a
+row you see the answer holding steady and then stepping up - and every step up is one matched
+character.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Let m and n be the two lengths. Make a grid with m+1 rows and n+1 columns, all zeros.
+       The extra row and column stand for the empty prefix of each string, and zero is already
+       the right answer for them - nothing is common with nothing.
+
+    2. Walk the grid row by row, and within each row left to right, skipping row 0 and
+       column 0 since they are already correct.
+
+    3. At each square, compare the character this row is about with the character this column
+       is about - remembering the shift: row i is about the character at index i-1.
+
+    4. If the two characters are THE SAME: take the value from the square diagonally up-left
+       and add one. Diagonally, because a matched pair uses up one character from EACH string.
+
+    5. If they DIFFER: take the LARGER of the square above and the square to the left, and add
+       nothing. Those two stand for "drop this character of the first string" and "drop this
+       character of the second".
+
+    6. When the grid is full, the bottom-right square is the answer.
+
+NO RECURSION in this version - two nested loops. The fill order is what replaces it: going top
+to bottom and left to right guarantees that every square's three inputs were computed earlier.
+
+THE STEPS PEOPLE GET WRONG are 4 (taking the bigger neighbour and adding one, instead of the
+diagonal - which double-counts characters) and 5 (writing zero instead of carrying the best
+across - which throws away everything found before the mismatch).
+
+ONE THING THIS PROBLEM GIVES YOU FREE that its sibling Edit Distance does not: the base row and
+column really are all zeros, so a freshly created grid is already correct and there is no
+initialisation loop to forget.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Two people are comparing the running orders of two concerts they went to. They want to know
+the longest list of songs that both concerts played IN THE SAME ORDER - not necessarily
+back to back, and neither of them is allowed to shuffle their memory.
+
+Rather than trying to line the two lists up by eye, they build a chart. Down the side goes
+the first concert's running order, across the top the second's. Each cell answers one narrow
+question: considering only the first few songs of my concert and the first few of yours, how
+long is the best matching run so far?
+
+Filling any cell takes one glance at three cells already filled. If the two songs at this
+point are the same song, then that song can join the run - so they look diagonally back, to
+the answer for both concerts one song shorter, and add one. Diagonally, because using that
+song uses it up in BOTH lists; stepping back in only one direction would let a single
+performance be counted again and again.
+
+If the two songs are different, then at least one of them is not part of the best run, so
+they take whichever is better: the answer with one song dropped from the top list, or with
+one dropped from the side list. Nothing is added, and - this is the part people skip -
+nothing is lost either. The best figure so far is carried forward, so a stretch of
+mismatches does not wipe out a run found earlier.
+
+By the bottom-right corner the chart holds the length of the longest shared run, and neither
+of them ever tried out a single candidate list. If they then want to know WHICH songs, they
+walk back up the chart from the corner: every diagonal step they took was a match.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def lcs(a, b):
+        m, n = len(a), len(b)
+
+  The two lengths. Either may be zero.
+
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+  The grid: m+1 rows, n+1 columns, all zeros. The extra row and column represent the EMPTY
+  prefixes, and zero is already their correct answer - which is why, unlike Edit Distance,
+  there is no initialisation loop here at all.
+
+  Note the list comprehension. Writing `[[0] * (n+1)] * (m+1)` instead would create m+1
+  references to ONE row, and writing to any of them would write to all of them.
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+
+  Every square except the free row and column, top to bottom and left to right - the order
+  that guarantees each square's three inputs are already filled in.
+
+                if a[i-1] == b[j-1]:
+                    dp[i][j] = 1 + dp[i-1][j-1]
+
+  The characters match, so this pair can extend the common subsequence. `i-1` and `j-1` for
+  the characters because row i is about the first i characters, so the i-th one sits at index
+  i-1.
+
+  THE DIAGONAL IS THE IMPORTANT PART. It steps back one character in BOTH strings, which is
+  what consumes the matched pair. Using `1 + max(dp[i-1][j], dp[i][j-1])` here steps back in
+  only one string, leaving the other character free to be matched again - which returns 3 for
+  "aaa" against "a".
+
+  There is no `max` on this branch and none is needed: taking a matching pair at the end is
+  never worse than refusing it.
+
+                else:
+                    dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+
+  They differ, so at least one of these two characters is not in the answer. Try dropping each
+  and keep the better:
+
+        dp[i-1][j]     drop the current character of `a`
+        dp[i][j-1]     drop the current character of `b`
+
+  Nothing is added - no match happened. But nothing is lost either: this line is what CARRIES
+  the best-so-far across a run of mismatches. Writing 0 here instead is wrong on 2,289 of
+  4,000 pairs.
+
+        return dp[m][n]
+
+  The bottom-right corner: the whole of `a` against the whole of `b`.""",
+
+    """9. TRACED ON REAL NUMBERS - a = "abcde", b = "ace"
+
+The finished grid. Rows are prefixes of "abcde", columns are prefixes of "ace".
+
+              ""    a    c    e
+        ""     0    0    0    0
+        a      0    1    1    1
+        b      0    1    1    1
+        c      0    1    2    2
+        d      0    1    2    2
+        e      0    1    2    3
+
+HOW SEVERAL OF THOSE SQUARES WERE FILLED:
+
+    dp[1][1]   'a' vs 'a' - MATCH.  1 + diagonal dp[0][0] = 1 + 0 = 1.
+               The first shared character.
+
+    dp[1][2]   'a' vs 'c' - differ.  max(above dp[0][2] = 0, left dp[1][1] = 1) = 1.
+               Nothing new, but the 1 is CARRIED ACROSS. This is the line trap 3 leaves out.
+
+    dp[2][2]   'b' vs 'c' - differ.  max(above dp[1][2] = 1, left dp[2][1] = 1) = 1.
+               The b matches nothing anywhere; the row just carries the 1 along.
+
+    dp[3][2]   'c' vs 'c' - MATCH.  1 + diagonal dp[2][1] = 1 + 1 = 2.
+               Note the diagonal is dp[2][1] - "ab" against "a" - so both c's are consumed.
+
+    dp[5][3]   'e' vs 'e' - MATCH.  1 + diagonal dp[4][2] = 1 + 2 = 3.    THE ANSWER.
+
+WATCH THE VALUE CLIMB. Reading the last column down: 0, 1, 1, 2, 2, 3. It steps up exactly
+three times, at rows a, c and e - the three matched characters. Everywhere else it is flat,
+carried forward by the `max`. THE STEPS ARE THE MATCHES; THE FLATS ARE THE CARRY.
+
+RECOVERING THE ACTUAL SUBSEQUENCE, by walking back from the corner: at each square, if the two
+characters match, record it and step diagonally; otherwise step to whichever of above/left is
+larger.
+
+    dp[5][3]  'e' == 'e'  ->  record e,  step to dp[4][2]
+    dp[4][2]  'd' vs 'c'  ->  above 2, left 1  -> step up to dp[3][2]
+    dp[3][2]  'c' == 'c'  ->  record c,  step to dp[2][1]
+    dp[2][1]  'b' vs 'a'  ->  above 1, left 0  -> step up to dp[1][1]
+    dp[1][1]  'a' == 'a'  ->  record a,  step to dp[0][0].  Done.
+
+    recorded backwards: e, c, a  ->  reversed: "ace"
+
+A SECOND TRACE - THE CASE THAT KILLS TRAP 2. a = "aaa", b = "a".
+
+              ""    a
+        ""     0    0
+        a      0    1
+        a      0    1
+        a      0    1
+
+    dp[1][1]  'a' == 'a'  ->  1 + dp[0][0] = 1
+    dp[2][1]  'a' == 'a'  ->  1 + dp[1][0] = 1 + 0 = 1     <- the diagonal is column 0
+    dp[3][1]  'a' == 'a'  ->  1 + dp[2][0] = 1 + 0 = 1
+
+    answer 1 - correct, because b has only one a to give.
+
+The diagonal steps into COLUMN 0, which is 0 - the single a in b has been used up. The wrong
+version takes `1 + max(above, left)` = `1 + dp[1][1]` = 2 at the second row and 3 at the third,
+counting one character three times.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One square per pair of prefixes, and a fixed comparison per square:
+O(m x n) time. At this problem's limit of 1,000 characters each, that is a million squares -
+fine. The naive recursion is about 2^(m+n), which is why the table is not optional.
+
+SPACE: the full grid is O(m x n). BUT each row depends only on the row above, so two rows are
+enough - O(min(m, n)) if you put the shorter string across the top. Say this; it is the standard
+follow-up. State the cost honestly too: with only two rows you can no longer walk backwards to
+recover the actual subsequence, only its length.
+
+THE #1 MISTAKE: on a match, `1 + max(above, left)` instead of `1 + diagonal`. Wrong on 1,994 of
+4,000, and it PASSES the official example, so the sample will not catch it. "aaa" against "a"
+returning 3 is the test to keep in your pocket. The diagonal is what consumes a character from
+each string.
+
+THE #2: writing 0 on a mismatch instead of carrying the larger neighbour. 2,289 of 4,000. The
+mismatch line is what propagates progress across gaps.
+
+THE #3: solving longest common SUBSTRING. Differs on 872 of 4,000 - fewer, because on short
+random strings the answers often agree, which is precisely what makes it survive testing. On
+"abcde" versus "ace" it gives 1 against the true 3.
+
+WHAT TO SAY OUT LOUD, in this order: (1) subsequence, so skipping is allowed but reordering is
+not; (2) compare the last characters - if they match the pair is always worth taking, otherwise
+drop one or the other and take the better; (3) that recursion repeats subproblems, so I will
+fill a table of prefix-versus-prefix answers; (4) O(m x n) time and space, reducible to two rows
+if only the length is needed; (5) and I can recover the actual subsequence by walking back from
+the corner. Point 2 is the recurrence, and stating it before writing any loop is what shows you
+could derive this rather than recall it.
+
+THE FAMILY. Edit Distance is the same grid with a different rule per square, and they are
+connected by an identity worth knowing - VERIFIED here on 4,000 random string pairs:
+
+    the insert-and-delete-only edit distance  =  m + n - 2 * LCS
+
+which makes sense once you see it: keep the common subsequence, delete everything else from the
+first string, insert everything else of the second. Also: Delete Operation for Two Strings (that
+identity, asked directly), Shortest Common Supersequence (m + n - LCS), Longest Increasing
+Subsequence (LCS of the array with its sorted self, though there are faster ways), Longest
+Palindromic Subsequence (LCS of the string with its reverse - a lovely one-liner once you see
+it), Distinct Subsequences, and Interleaving String.
+
+ONE-SENTENCE TAKEAWAY: fill a grid of "longest common subsequence of these two prefixes" - on a
+match step DIAGONALLY and add one, because a match consumes a character from each string, and on
+a mismatch carry across the better of the two neighbours.""",
 ]
 
 _EX_P1U["Merge Sort"] = [
