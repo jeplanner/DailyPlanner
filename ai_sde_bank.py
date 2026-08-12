@@ -118351,63 +118351,398 @@ zero.""",
 ]
 
 _EX_P1W["Single Number (XOR)"] = [
-    """The three XOR properties that make it work.
-x ^ x = 0 (a value cancels itself), x ^ 0 = x (zero is the identity), and XOR is
-COMMUTATIVE and ASSOCIATIVE (order does not matter).
-So XOR-ing the whole array pairs up every duplicate regardless of where the
-copies sit, and everything cancels except the lone value.
-nums = [4,1,2,1,2]: 4^1^2^1^2 = 4 ^ (1^1) ^ (2^2) = 4 ^ 0 ^ 0 = 4. The
-rearrangement in the middle is licensed by commutativity, and it is the whole
-proof.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the alternatives are worse HERE.
-A hash set of seen values is O(n) space. Sorting and scanning pairs is
-O(n log n). Summing 2*sum(set(nums)) - sum(nums) is clever but risks overflow
-and allocates a set.
-XOR is O(n) time, O(1) space, no overflow, one line. The prompt's explicit
-'O(1) extra space' constraint is what rules out the others - which is worth
-noticing, because it tells you a bit trick is intended before you have thought
-of one.""",
+Every number in the list appears exactly TWICE, except for one that appears exactly ONCE.
+Find that one.
 
-    """The constraint that XOR depends on, and what breaks it.
-It requires every other element to appear EXACTLY TWICE. Change that and it
-fails: with elements appearing three times, XOR does not cancel (x^x^x = x).
-Single Number II (all others appear THRICE) needs a different technique -
-either count bits at each of the 32 positions and take each count mod 3, or the
-two-variable ones/twos state machine.
-Single Number III (TWO unique values) XORs everything to get a^b, isolates any
-set bit of that with `d & -d`, and partitions the array by that bit so each
-group contains one unique value.
-Knowing that the three problems need three different ideas is the point of
-studying them together.""",
+    [2, 2, 1]              the 2 appears twice, the 1 once.   Answer: 1.
+    [4, 1, 2, 1, 2]        1 and 2 appear twice each.         Answer: 4.
+    [1]                    a single number, alone.            Answer: 1.
 
-    """A worked variant, since the follow-up is common.
-Single Number III on [1,2,1,3,2,5]: XOR everything -> 3^5 = 6 (binary 110).
-Isolate the lowest set bit: 6 & -6 = 2 (binary 010). Partition by whether the
-element has that bit: group A = {2,3,2} -> XOR = 3; group B = {1,1,5} -> XOR =
-5. Answer [3,5].
-The insight is that a^b must have at least one set bit (since a != b), and that
-bit differs between a and b - so it cleanly separates them while keeping each
-duplicate pair together.""",
+The numbers are in no particular order, and the lone value can be anywhere.
 
-    """Edge cases.
-Single element [7] -> 7 ^ nothing = 7.
-The unique element first or last -> position is irrelevant by commutativity.
-Zero as the unique value, [0,1,1] -> 0^1^1 = 0. Correct, and it is the case
-that breaks any solution using 0 as a sentinel for 'not found'.
-Negative numbers work: XOR operates on the two's-complement bit patterns and
-the cancellation is unaffected.
-The problem guarantees exactly one unique value; with none or two, the result is
-meaningless rather than an error - which is worth stating.""",
+THE OBVIOUS SOLUTIONS ALL WORK. Count everything with a dictionary and find the one with a
+count of 1. Or sort the list and scan in pairs, looking for the place where the pattern breaks.
+Both are correct, and both were measured wrong on 0 of 6,000 cases.
 
-    """Complexity and where XOR shows up beyond puzzles.
-O(n) time, O(1) space, one pass.
-Real uses: RAID parity (the parity disk is the XOR of the others, so any one
-lost disk is reconstructible by XOR-ing the rest - exactly this problem),
-checksums, simple stream ciphers, and hashing.
-The family: Missing Number (XOR indices with values), Single Number II and III,
-Find the Duplicate Number, and Maximum XOR of Two Numbers in an Array (which
-uses a bitwise trie).""",
+THE REASON THIS PROBLEM IS ASKED is that it can be solved in ONE PASS, WITH ONE VARIABLE AND NO
+EXTRA MEMORY, using a single operation you may not have met: exclusive-or. The whole solution
+is three lines, and the pleasure of it is that it never searches for anything - the answer just
+falls out.
+
+THE CONSTRAINT THAT MAKES IT POSSIBLE is "exactly twice, except exactly one". Not "at most
+twice", not "some appear three times". Every other value comes in a perfect pair, and section 2
+shows why perfect pairs are exactly what this method destroys.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+MEET XOR - EXCLUSIVE OR, WRITTEN `^`. It compares two numbers bit by bit, and puts a 1 where the
+two bits DIFFER, a 0 where they match.
+
+        1 ^ 1 = 0        the bits match          1 ^ 0 = 1        they differ
+        0 ^ 0 = 0        the bits match          0 ^ 1 = 1        they differ
+
+    on whole numbers, bit by bit:
+
+        6 = 110
+        3 = 011
+        --------
+        5 = 101          because 1 vs 0 differs, 1 vs 1 matches, 0 vs 1 differs
+
+THREE PROPERTIES ARE ALL YOU NEED, and everything in this entry follows from them:
+
+    1.  x ^ x = 0        ANYTHING XORed WITH ITSELF IS ZERO.
+                         Every bit matches itself, so every bit becomes 0.
+
+    2.  x ^ 0 = x        XORing WITH ZERO CHANGES NOTHING.
+                         A bit differs from 0 exactly when it is 1, so the bits survive.
+
+    3.  ORDER DOES NOT MATTER. You may combine the numbers in any sequence and regroup them
+        however you like. VERIFIED on 2,000 random shuffles: the result never changed.
+
+NOW WATCH THE PROBLEM DISSOLVE. XOR the whole list together. Because order does not matter, you
+are free to imagine the pairs standing next to each other:
+
+    [4, 1, 2, 1, 2]
+
+    4 ^ 1 ^ 2 ^ 1 ^ 2                                   as given
+  = 4 ^ (1 ^ 1) ^ (2 ^ 2)                               regrouped - property 3
+  = 4 ^ 0 ^ 0                                           each pair cancels - property 1
+  = 4                                                   zero changes nothing - property 2
+
+EVERY PAIR ANNIHILATES ITSELF AND THE LONE VALUE IS LEFT STANDING. Nothing was counted, nothing
+was searched for, and nothing was stored.
+
+THE PICTURE, IF YOU PREFER ONE PHYSICAL: think of each number as a light switch panel, and XOR
+as "flip every switch that this number has on". Flip the same panel twice and you are exactly
+back where you started - which is property 1. So every value that appears twice flips its
+switches on and then off again, leaving no trace. The value that appears once flips its switches
+and nothing flips them back.
+
+THE STARTING POINT MUST BE 0, and property 2 is why: 0 is the value that changes nothing, so
+starting there means the running result is always exactly the XOR of what you have seen so far,
+with nothing extra mixed in. Section 4 measures what starting anywhere else costs.""",
+
+    """3. EVERY TERM, DEFINED
+
+BIT. One binary digit, 0 or 1. Computers hold every whole number as a row of them - 6 is 110,
+meaning one 4, one 2 and no 1s.
+
+XOR / EXCLUSIVE OR, written `^`. A bitwise operation giving 1 where the two bits DIFFER. Read
+the name literally: "one or the other, but not both".
+
+BITWISE. Applied to each bit position independently. `6 ^ 3` does three separate one-bit
+comparisons and assembles the answer.
+
+IDENTITY ELEMENT. The value that leaves things unchanged under an operation. For addition it is
+0 (x + 0 = x); for multiplication it is 1. For XOR it is also 0, which is why the running total
+starts there.
+
+SELF-INVERSE. An operation where applying something twice undoes it. XOR is self-inverse
+(x ^ x = 0), and that is the entire basis of this solution. Addition is not - which is why the
+sum-everything version fails.
+
+COMMUTATIVE and ASSOCIATIVE. Formal names for "order does not matter" and "grouping does not
+matter". XOR is both, so `a ^ b ^ c` may be rearranged and re-bracketed freely. VERIFIED on
+2,000 random shuffles.
+
+`result ^= x`. Shorthand for `result = result ^ x` - fold the next value into the running total.
+
+RUNNING TOTAL / ACCUMULATOR. One variable carrying the combination of everything seen so far.
+Here it holds the XOR of the whole prefix, and at the end it holds the answer.
+
+O(1) SPACE. A fixed number of variables regardless of input size. This is the whole point of
+the XOR solution - the dictionary version is O(n) memory and otherwise just as good.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - STARTING THE ACCUMULATOR AT SOMETHING OTHER THAN 0. Zero is XOR's identity - the value
+that changes nothing. Start anywhere else and that value is permanently mixed into the answer.
+
+    starting at 1:      [2,2,1]  gives 0 instead of 1;  [4,1,2,1,2] gives 5 instead of 4
+    MEASURED: wrong on 6,000 of 6,000 - every single case, off by an XOR with 1.
+
+    STARTING AT nums[0] AND THEN LOOPING OVER ALL OF nums is the same mistake in disguise: the
+    first element gets folded in twice, so it cancels itself and vanishes. MEASURED: wrong on
+    6,000 of 6,000. (Starting at `nums[0]` and looping over `nums[1:]` IS correct - but there is
+    no reason to, and it needs a guard for the empty list that starting at 0 does not.)
+
+TRAP 2 - ADDING INSTEAD OF XORing. Summing feels analogous and is not: addition has no
+self-cancelling property, so pairs reinforce rather than annihilate.
+
+    [2,2,1]  correct 1, sum gives 5.        [4,1,2,1,2]  correct 4, sum gives 10.
+
+    MEASURED: wrong on 5,123 of 6,000. (It is right in the rare case where the pairs happen to
+    sum to zero, which random data occasionally supplies.) THE POINT: x + x is 2x, not 0. Only
+    XOR has x ^ x = 0.
+
+TRAP 3 - USING OR (`|`) INSTEAD OF XOR (`^`). They sit next to each other on the keyboard and in
+the mind. OR never turns a bit off, so the result accumulates every bit anyone ever set.
+
+    [2,2,1]  correct 1, OR gives 3.         [4,1,2,1,2]  correct 4, OR gives 7.
+
+    MEASURED: wrong on 4,971 of 6,000. If your answer is always bigger than expected and looks
+    like all the bits smashed together, this is why.
+
+TRAP 4 - ASSUMING IT SURVIVES A DIFFERENT PATTERN. This works because every other value appears
+EXACTLY TWICE. If values could appear three times, the pairs no longer cancel - a value XORed in
+three times is itself, not zero - and this method returns nonsense. That is a real, separate
+LeetCode problem (Single Number II) with a genuinely different solution. Say the constraint out
+loud as you rely on it.
+
+WHAT IS NOT A TRAP, checked rather than assumed - two alternatives that are simply correct:
+
+    A SET, adding a value the first time and removing it the second, leaving one behind. Wrong on
+    0 of 6,000. O(n) time, O(n) space - fine, just not the memory-free answer.
+
+    SORT AND SCAN IN PAIRS, looking for the first position where two neighbours disagree. Wrong
+    on 0 of 6,000, remembering to return the LAST element when every pair matched. O(n log n).""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - COUNT EVERYTHING:
+
+    from collections import Counter
+    def single_number(nums):
+        for value, times in Counter(nums).items():
+            if times == 1:
+                return value
+
+IT IS CORRECT - it is how the ground truth for this entry was computed - and it is the right
+thing to say first. COST: O(n) time and O(n) SPACE, and the space is the only thing wrong with
+it. LeetCode explicitly asks for constant space, which is a strong hint that a trick exists.
+
+A SECOND REASONABLE ANSWER - SORT AND SCAN IN PAIRS. After sorting, the pairs sit together, so
+walk two at a time and return the first element whose neighbour does not match. If every pair
+matched, the lone value is the last element. Wrong on 0 of 6,000. O(n log n) time, O(1) extra
+space if sorted in place.
+
+THE UPGRADE - ONE VARIABLE, NO MEMORY. XOR the entire list into a single running value.
+
+WHY IT WORKS, FROM SCRATCH - three facts and one regrouping:
+
+    x ^ x = 0        every bit of x matches itself, so every bit of the result is 0
+    x ^ 0 = x        every bit of x differs from 0 exactly when it is 1, so x survives intact
+    order is free    XOR is commutative and associative, so you may rearrange at will
+
+Because the order is free, the actual arrangement in the list is irrelevant - you may pretend
+each duplicate pair is adjacent:
+
+    4 ^ 1 ^ 2 ^ 1 ^ 2  =  4 ^ (1 ^ 1) ^ (2 ^ 2)  =  4 ^ 0 ^ 0  =  4
+
+That regrouping step is the whole proof, and it is worth writing on the board in an interview
+rather than saying "XOR cancels duplicates" and hoping.
+
+WHY THE ACCUMULATOR MUST START AT 0. It is XOR's IDENTITY - the value that changes nothing.
+Starting there guarantees the running value is exactly the XOR of what has been seen, with
+nothing foreign folded in. Starting at 1 leaves a stray 1 in the answer forever (wrong on 6,000
+of 6,000); starting at `nums[0]` and then looping over the whole list folds that element in
+twice, so it cancels itself and disappears (also 6,000 of 6,000).
+
+HOW THE VALUE TRAVELS: each number is folded in exactly once. A number that appears twice is
+folded in twice, and the second fold undoes the first completely - not approximately, but bit for
+bit. Nothing accumulates except the unmatched value's bits. That is why no memory is needed:
+the pairs do not have to be REMEMBERED in order to be cancelled, they cancel themselves on
+arrival.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Start a running value at ZERO. Zero is the value that changes nothing when combined with
+       exclusive-or, so it is the correct empty starting point - exactly as 0 is for addition.
+
+    2. Walk the list once. For each number, combine it into the running value using exclusive-or.
+
+    3. When the walk finishes, the running value is the answer.
+
+THAT IS GENUINELY THE WHOLE THING - three lines, one variable, one pass.
+
+WHY IT WORKS, in one sentence you should be able to say: combining a value with itself using
+exclusive-or gives zero, and zero changes nothing - so every value that appears twice wipes
+itself out, and the only one left is the value that appeared once.
+
+WHY YOU DO NOT NEED TO CARE ABOUT THE ORDER: exclusive-or gives the same result however the
+values are arranged or grouped, so the duplicates cancel wherever they happen to sit in the list.
+They do not need to be adjacent, and you never need to find them.
+
+THE STEP PEOPLE GET WRONG is 1 - starting at something other than zero. Starting at one leaves a
+stray one in every answer. Starting at the first element and then walking the WHOLE list folds
+that element in a second time, so it cancels itself and drops out of the answer entirely.
+
+THE OPERATOR PEOPLE GET WRONG is the exclusive-or itself. Adding does not work, because a number
+added to itself is double, not nothing. Plain OR does not work either, because it can only ever
+turn bits on - nothing ever cancels.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a room where every guest has a partner, except one person who came alone. You want to
+find the person on their own, but you are not allowed to keep a list, take names, or count
+anything - you have room in your head for one thing only.
+
+Here is the trick. Each guest is wearing a jacket with a particular pattern of buttons done up.
+As each person walks past, you toggle the corresponding buttons on a single coat you are holding:
+if their jacket has a button done up, you flip that button on your coat - undone becomes done,
+done becomes undone.
+
+Now think about a pair of partners. They are wearing IDENTICAL jackets. The first one comes past
+and you flip a set of buttons. The second one comes past and you flip exactly the same buttons
+again - which puts every one of them back precisely where it was. The pair has left no trace on
+your coat at all, and crucially you did not have to recognise them as a pair or remember the
+first one to make that happen. It happened automatically, just from the flipping.
+
+So when everyone has filed past, your coat carries only the flips of the one person who had no
+partner. Your coat IS their jacket.
+
+Two details make it work. You must start with the coat completely undone - all buttons open. Start
+with one button already fastened and it stays fastened through the whole evening, so the pattern
+you end up with is not quite anyone's jacket.
+
+And it has to be toggling, not accumulating. If you merely fastened a button whenever you saw one
+fastened and never undid anything, the coat would end up with everything done up and tell you
+nothing. Toggling is what lets the pairs erase themselves.
+
+The whole method also depends on the promise that everyone except one person has exactly one
+partner. Let three people wear the same jacket and the flips no longer cancel - two of them undo
+each other and the third leaves its mark, so the answer becomes a muddle.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def single_number(nums):
+        result = 0
+
+  The running value, starting at ZERO because 0 is XOR's identity - combining anything with 0
+  leaves it unchanged, so the running value is always exactly the XOR of everything seen so far.
+
+  Starting at 1 instead is wrong on 6,000 of 6,000 - the stray 1 never leaves. Starting at
+  `nums[0]` and then looping over all of `nums` is also wrong on 6,000 of 6,000, because that
+  element gets folded in twice and cancels itself.
+
+  Starting at 0 also handles the empty list gracefully, returning 0, without a guard.
+
+        for x in nums:
+
+  A single pass. No index, no lookahead, no second traversal - the position of a value never
+  matters, because XOR does not care about order.
+
+            result ^= x
+
+  Fold this value in. `^=` is `result = result ^ x`.
+
+  THIS IS THE ENTIRE ALGORITHM, and it works because of three facts:
+        x ^ x = 0          a value folded in twice cancels itself completely
+        x ^ 0 = x          zero changes nothing
+        order is free      so the duplicates cancel wherever they happen to sit
+
+  Using `+=` here computes a sum - wrong on 5,123 of 6,000, because x + x is 2x, not 0. Using
+  `|=` computes a bitwise OR - wrong on 4,971 of 6,000, because OR can only ever turn bits on, so
+  nothing ever cancels.
+
+        return result
+
+  Every paired value has annihilated itself; what remains is the value that appeared once.
+
+THREE LINES, ONE VARIABLE, O(n) TIME, O(1) SPACE. And note what the function never does: it never
+compares two numbers, never counts, and never searches.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [4, 1, 2, 1, 2].
+
+Working in binary makes the cancelling visible. 4 is 100, 1 is 001, 2 is 010.
+
+    START     result = 0    = 000
+
+    x = 4     000 ^ 100 = 100     result = 4
+    x = 1     100 ^ 001 = 101     result = 5
+    x = 2     101 ^ 010 = 111     result = 7
+    x = 1     111 ^ 001 = 110     result = 6     <- the 1 has been undone
+    x = 2     110 ^ 010 = 100     result = 4     <- the 2 has been undone
+
+    return 4
+
+     x | result before | binary  | result after | binary
+    ---+---------------+---------+--------------+--------
+     4 |       0       |   000   |      4       |  100
+     1 |       4       |   100   |      5       |  101
+     2 |       5       |   101   |      7       |  111
+     1 |       7       |   111   |      6       |  110
+     2 |       6       |   110   |      4       |  100
+
+WATCH THE 4's BIT. The 100 bit is switched on by the very first value and NOTHING EVER TOUCHES IT
+AGAIN - no other number in the list has that bit. Meanwhile the 001 bit goes on at step 2 and off
+at step 4; the 010 bit goes on at step 3 and off at step 5. Every bit belonging to a paired value
+is flipped exactly twice and ends where it started.
+
+THE REGROUPING, WHICH IS THE PROOF RATHER THAN THE TRACE:
+
+    4 ^ 1 ^ 2 ^ 1 ^ 2  =  4 ^ (1 ^ 1) ^ (2 ^ 2)  =  4 ^ 0 ^ 0  =  4
+
+    The regrouping is legitimate because XOR does not care about order - VERIFIED on 2,000 random
+    shuffles of the same lists, which always gave the same answer.
+
+CASE TWO - THE SMALLEST. nums = [1]. result starts at 0, becomes 0 ^ 1 = 1, and is returned.
+Correct, with no special case - which is one more reason to start at 0 rather than at `nums[0]`.
+
+CASE THREE - WITH A ZERO IN THE LIST. nums = [0, 1, 0].
+
+    result = 0 ^ 0 = 0,  then 0 ^ 1 = 1,  then 1 ^ 0 = 1.   return 1.
+
+    The two 0s cancelled just like any other pair, and folding in a 0 changed nothing - property 2
+    doing its job.
+
+WHAT THE WRONG VERSIONS RETURN on case one: starting at 1 gives 5 (the answer XORed with 1);
+summing gives 10 (4+1+2+1+2); ORing gives 7 (every bit anyone set, smashed together).""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass, one XOR per element: O(n) time. One variable, whatever the length:
+O(1) space. The list is not sorted, copied or modified. You cannot beat O(n) - an unread element
+could be the lone value.
+
+The three solutions, side by side, because the ladder is what the interviewer wants:
+
+    dictionary of counts     O(n) time,        O(n) space
+    sort and scan in pairs   O(n log n) time,  O(1) extra
+    XOR everything           O(n) time,        O(1) space,  three lines
+
+THE #1 MISTAKE: starting the accumulator at anything other than 0. Wrong on 6,000 of 6,000 in
+both flavours - starting at 1, and starting at `nums[0]` while still looping over the whole list.
+Zero is XOR's identity, and that is the reason, not a convention.
+
+THE #2: `+=` instead of `^=`. 5,123 of 6,000. Addition has no self-cancelling property; x + x is
+2x, not 0.
+
+THE #3: `|=` instead of `^=`. 4,971 of 6,000, and recognisable because the answer looks like every
+bit in the input smashed together - OR can only ever turn bits on.
+
+TWO HONEST NEGATIVES: the set-based solution and sort-and-scan-in-pairs were both wrong on 0 of
+6,000. They are correct alternatives with different trade-offs, not mistakes.
+
+WHAT TO SAY OUT LOUD, in this order: (1) counting works but costs O(n) memory, and the problem
+asks for constant space; (2) XOR has three properties - a value cancels itself, zero changes
+nothing, and order does not matter; (3) so XORing the whole list makes every pair annihilate and
+leaves the lone value; (4) the accumulator starts at 0 because 0 is XOR's identity; (5) O(n) time,
+O(1) space; (6) and this depends on every other value appearing EXACTLY twice. Point 2 - stating
+the three properties before using them - is what turns a memorised trick into a derivation.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if every other number appears THREE times?" That is Single
+Number II, and plain XOR fails immediately - a value folded in three times is itself, not zero.
+The standard answer counts, for each of the 32 bit positions, how many numbers have that bit set,
+and takes the count modulo 3; whatever is left over belongs to the lone value. There is also a
+two-variable bit-juggling solution. Knowing the shape of the answer matters more than reciting it.
+
+AND THE OTHER ONE: "what if TWO numbers appear once?" That is Single Number III. XOR everything
+and you get the XOR OF THE TWO ANSWERS. Any bit that is 1 in that result is a bit where the two
+differ - so pick the lowest such bit, split the whole list into "has that bit" and "does not", and
+XOR each half separately. Genuinely elegant, and a good thing to have seen once.
+
+THE FAMILY. Single Number II and III, Missing Number (XOR the indices against the values), Find
+the Duplicate Number, Hamming Distance (the popcount of `a ^ b`), and Number of 1 Bits. The
+transferable idea: A SELF-CANCELLING OPERATION LETS YOU MATCH THINGS UP WITHOUT STORING THEM.
+
+ONE-SENTENCE TAKEAWAY: XOR the whole list into a running value starting at 0 - every pair
+annihilates itself because x ^ x is 0, and the value left standing is the one that appeared
+once.""",
 ]
 
 for _e in ENTRIES:
@@ -118418,60 +118753,441 @@ for _e in ENTRIES:
 _EX_P1X = {}
 
 _EX_P1X["Valid Parentheses"] = [
-    """Why a stack, in one sentence.
-Brackets close in LAST-OPENED-FIRST order - '([{}])' closes the brace before
-the square before the round - which is precisely last-in-first-out. The data
-structure is not a choice, it is the shape of the problem.
-Trace '([)]': push '(', push '['. Then ')' arrives and the top is '[', which
-does not match -> invalid. A counter-based solution that merely balances counts
-would call this valid, which is exactly why counting fails.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why a counter cannot work, with the two inputs that prove it.
-'(((' -> a counter ends non-zero, correctly invalid.
-'([)]' -> equal numbers of each opener and closer, so any counting scheme says
-valid. It is not: the types interleave incorrectly.
-So you need ORDER, not just balance - and only for a SINGLE bracket type does a
-counter suffice. If a prompt has one bracket type, mention that a counter gives
-O(1) space; with several, the stack is required.""",
+You are given a string containing only the six bracket characters `( ) [ ] { }`. Decide whether
+they are correctly matched.
 
-    """The three failure modes the code must catch.
-1. Wrong type on close: `stack.pop() != pairs[ch]` - the ([)] case.
-2. Closing with nothing open: `not stack` when a closer arrives - the ')(' and
-   ']' cases. Without this guard, pop() raises IndexError on an empty stack.
-3. Unclosed openers at the end: `return not stack` - the '(((' case.
-All three are genuinely distinct, and a solution missing any one passes a
-casual test. Enumerate them out loud before coding; it is the fastest way to
-get it right first time.""",
+Correctly matched means two things at once, and both matter:
 
-    """The dictionary direction, and why closer -> opener.
-Mapping `{')': '(', ']': '[', '}': '{'}` lets a single membership test classify
-a character - `ch in pairs` means it is a CLOSER, and `pairs[ch]` gives what
-must be on top of the stack.
-Mapping the other way (opener -> closer) works too but needs the reverse lookup
-at the point of comparison, which is clumsier. Small choice, but it is the
-difference between four clean lines and six awkward ones.""",
+    EVERY BRACKET IS CLOSED BY THE RIGHT KIND. A `(` must be closed by a `)`, never by a `]`.
+    THEY ARE PROPERLY NESTED - closed in the reverse order they were opened, never crossing.
 
-    """Edge cases.
-Empty string -> the stack is empty at the end -> True. An empty expression is
-vacuously balanced, which is the usual convention but worth confirming.
-Single character '(' -> stack non-empty -> False. ')' -> the not-stack guard ->
-False.
-Correctly nested but not alternating, '{[]}' -> valid. Adjacent groups '()[]{}'
--> valid.
-If the string can contain OTHER characters (letters, spaces), the current code
-ignores them, since they match neither branch - which is right for the 'valid
-expression' variant and wrong if the prompt says the string is brackets only.
-Ask.""",
+    "()"            valid
+    "()[]{}"        valid - three independent pairs, one after another
+    "{[]}"          valid - properly nested, innermost closed first
+    "(]"            INVALID - a round bracket closed by a square one
+    "([)]"          INVALID - they CROSS. The `(` was opened first, so it must be closed last.
+    "("             INVALID - opened and never closed
+    ")"             INVALID - closed with nothing open
 
-    """Complexity and the family.
-O(n) time, O(n) space in the worst case (all openers).
-The family: Min Stack (a stack augmented with a running minimum), Generate
-Parentheses (backtracking with open/close counters), Longest Valid Parentheses
-(a stack of INDICES, so you can measure lengths), Remove Invalid Parentheses,
-Basic Calculator (a stack for nested expressions), Decode String, Asteroid
-Collision, and Simplify Path.
-The general cue for a stack: any rule of the form 'this element interacts with
-the most recent unresolved one'.""",
+The empty string is valid: nothing is unmatched.
+
+WHY "([)]"  IS THE INTERESTING CASE. Count the brackets and everything looks fine - one `(`, one
+`)`, one `[`, one `]`. The counts balance perfectly. It is still wrong, because the `[` was
+opened after the `(` and so must be closed BEFORE it. Correct nesting is about ORDER, not
+quantity, and section 4 measures how many strings fool a counting-based check.
+
+THE SAME PROBLEM IN REAL LIFE is what every compiler, JSON parser and code editor does when it
+highlights an unmatched brace. Getting this right is the entry point to parsing.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE RULE THAT SOLVES IT: WHEN A CLOSING BRACKET ARRIVES, IT MUST MATCH THE MOST RECENTLY OPENED
+BRACKET THAT IS STILL OPEN.
+
+Read that again, because "most recent" is the whole thing. Not any open bracket, not the first
+one - the LAST one still waiting. And when it is matched, it is gone, and the one before it
+becomes the most recent.
+
+That is exactly a STACK: a pile where you add to the top and take from the top. Last in, first
+out - like a stack of plates.
+
+    "{[]}"
+
+    read {   an opener - put it on the pile          pile:  {
+    read [   an opener - put it on the pile          pile:  { [
+    read ]   a closer. Take the top: it is [.
+             Does [ match ]?  Yes.                   pile:  {
+    read }   a closer. Take the top: it is {.
+             Does { match }?  Yes.                   pile:  (empty)
+
+    the string ended and the pile is empty  ->  VALID
+
+NOW WATCH IT REJECT THE CROSSED CASE:
+
+    "([)]"
+
+    read (   opener                                  pile:  (
+    read [   opener                                  pile:  ( [
+    read )   a closer. Take the top: it is [.
+             Does [ match )?  NO.  ->  INVALID, stop immediately
+
+The `)` arrived while `[` was the most recent open bracket, and they do not match. The stack
+catches the crossing automatically - you never have to write a rule about crossing at all.
+
+THREE WAYS TO FAIL, AND YOU MUST CHECK ALL THREE. This is where most wrong solutions lose
+marks:
+
+    WRONG TYPE     the top of the pile is not the partner of this closer         "(]"
+    NOTHING OPEN   a closer arrives when the pile is empty                       ")"
+    LEFT OVER      the string ends with the pile not empty                       "((" or "(()"
+
+The first two are caught during the walk; the third can only be caught AFTER it, which is why
+the last line of the function is a check rather than a plain `return True`.
+
+THE PICTURE, IF YOU LIKE ONE PHYSICAL: think of hanging coats on a rail from the left. Each new
+coat goes on the right-hand end, and you can only ever take the rightmost one off. A closer says
+"remove one coat, and it had better be this kind".""",
+
+    """3. EVERY TERM, DEFINED
+
+BRACKET / PARENTHESIS. `(` and `)` are parentheses or round brackets; `[` `]` are square
+brackets; `{` `}` are braces or curly brackets. The problem uses all three kinds, which is what
+makes the type check necessary.
+
+OPENER / CLOSER. `(`, `[`, `{` open; `)`, `]`, `}` close.
+
+BALANCED. Every opener has a matching closer of the same type.
+
+PROPERLY NESTED. Brackets are closed in the reverse order they were opened, so pairs may sit
+inside one another but must never cross. `([)]` is balanced by count and NOT properly nested.
+
+STACK. A collection where you add and remove only at one end, the TOP. Also called LIFO - LAST
+IN, FIRST OUT. A Python list is a stack: `.append(x)` puts one on top and `.pop()` takes the top
+one off.
+
+`.pop()`. Removes AND RETURNS the top item. That it does both at once is convenient here - one
+call gets you the value to compare and clears it from the pile - but it also means the item is
+gone whether or not it matched.
+
+STACK UNDERFLOW. Trying to pop from an empty stack. In Python this raises IndexError, which is
+what a closer arriving with nothing open would do if you did not check first.
+
+THE PAIRS MAP. A dictionary from each closer to its opener: `{')': '(', ']': '[', '}': '{'}`.
+Mapping closer-to-opener rather than the other way round is deliberate - when you meet a closer
+you want to look up what should be underneath it, and that is one lookup instead of a search.
+
+`dict.values()`. The openers. `ch in pairs.values()` asks "is this an opening bracket?".
+
+SHORT-CIRCUIT `or`. In `if not stack or stack.pop() != pairs[ch]`, the emptiness test comes
+FIRST, so if the stack is empty Python never evaluates the `.pop()`. That ordering is what stops
+the crash - reverse it and the check itself throws.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - FORGETTING THE FINAL "IS THE STACK EMPTY?" CHECK. Ending with `return True` catches
+every mismatch but never notices brackets that were opened and never closed.
+
+    "("      correct False,  this version: True
+    "(("     correct False,  this version: True
+    "(()"    correct False,  this version: True
+
+    MEASURED: wrong on 621 of 6,000 random strings overall - but that undersells it, because most
+    random strings fail earlier for some other reason. Measured on the population where it
+    matters: OF 4,000 STRINGS THAT NEVER HIT A MISMATCH DURING THE WALK, 2,150 - 54% - STILL END
+    WITH BRACKETS LEFT OPEN. The final check is doing the work in more than half the cases that
+    reach it.
+
+    The last line must be `return not stack`, not `return True`.
+
+TRAP 2 - POPPING WITHOUT CHECKING THE STACK IS NON-EMPTY. A closing bracket with nothing open
+means `.pop()` on an empty list, which raises IndexError.
+
+    MEASURED: 1,821 of 6,000 crashed. ")" alone triggers it.
+
+    The order inside the condition matters too: `not stack or stack.pop() != pairs[ch]`
+    short-circuits safely, because Python stops at the first true part. Write it the other way
+    round and the check itself is what crashes.
+
+TRAP 3 - COUNTING BRACKETS INSTEAD OF STACKING THEM. Checking that the number of `(` equals the
+number of `)`, and likewise for the other two types, feels sufficient and is not - it cannot see
+ORDER.
+
+    "([)]"   counts balance perfectly.  Correct answer: False.  Counting says: True.
+    ")("     counts balance perfectly.  Correct answer: False.  Counting says: True.
+
+    MEASURED: wrong on only 69 of 6,000 random strings - which is a misleadingly small number,
+    because most random strings do not even have balanced counts. On the population where the
+    check actually returns True: OF 4,000 STRINGS WHOSE BRACKET COUNTS ALL MATCH, 636 - 16% -
+    ARE NOT VALID. Counting is a NECESSARY condition, never a sufficient one.
+
+TRAP 4 - USING A STACK BUT IGNORING WHICH KIND OF BRACKET. Push on any opener, pop on any closer,
+never compare the types. It catches nesting errors and misses every type error.
+
+    "(]"     correct False,  type-blind stack: True
+    "{(})"   correct False,  type-blind stack: True
+
+    MEASURED on the population where it matters: OF 4,000 STRINGS THAT PASS THE TYPE-BLIND CHECK,
+    1,093 - 27% - ARE NOT VALID. So a stack alone is not enough; the stack plus the type
+    comparison is the algorithm.
+
+WHAT IS NOT A TRAP: the empty string. The loop never runs, the stack is empty, and `not stack` is
+True - which is correct, and needs no special case.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - REPEATEDLY DELETE ADJACENT PAIRS:
+
+    def is_valid(s):
+        prev = None
+        while prev != s:                    # keep going until nothing changes
+            prev = s
+            for pair in ("()", "[]", "{}"):
+                s = s.replace(pair, "")
+        return s == ""
+
+IT IS CORRECT - it is how the ground truth for every figure in this entry was computed - and it
+is a genuinely nice way to see the problem: an innermost pair is always two adjacent characters,
+so deleting all of those exposes the next layer, and a valid string collapses to nothing.
+
+    "{[]}"  ->  "{}"  ->  ""          valid
+    "([)]"  ->  "([)]"                nothing to delete, and it is not empty  ->  invalid
+
+COST: each sweep may remove only a couple of characters, and each `replace` rebuilds the whole
+string. That is O(n^2) at best and worse in practice - fine as an explanation, not as a solution.
+
+THE UPGRADE - DO IT IN ONE PASS WITH A STACK. The insight is that you never needed to rewrite the
+string. When a closer arrives, the only thing it can legally match is THE MOST RECENTLY OPENED
+BRACKET STILL WAITING - which is precisely what a stack keeps at its top.
+
+    push every opener; on a closer, the top must be its partner, and it is then removed
+
+WHY THE STACK CAPTURES NESTING FOR FREE, and this is worth saying rather than assuming. Correct
+nesting means "closed in reverse order of opening", and LAST IN FIRST OUT means "removed in
+reverse order of arrival". They are the same sentence. So you never write a rule about crossing -
+`([)]` is rejected simply because when `)` arrives, the top of the stack is `[`.
+
+THE THREE CHECKS, AND WHY ALL THREE ARE NEEDED. Each catches a different failure, and dropping
+any one of them has been measured above:
+
+    the top matches this closer's partner   -> catches WRONG TYPE       "(]"
+    the stack is non-empty before popping   -> catches TOO MANY CLOSERS ")"
+    the stack is empty at the very end      -> catches TOO MANY OPENERS "(("
+
+THE TRICK IN THE DICTIONARY, FROM SCRATCH. `pairs` maps CLOSER -> OPENER, not the other way
+round. That direction is chosen because of how the loop uses it: you meet a closer and want to
+know what should be underneath, which is a single lookup, `pairs[ch]`. Mapped the other way you
+would have to search the dictionary's values. The same dictionary also serves as the test for
+whether a character is a closer at all (`ch in pairs`), and its values serve as the test for an
+opener (`ch in pairs.values()`).
+
+HOW THE VALUE TRAVELS: an opener goes onto the stack and sits there until its partner arrives.
+`.pop()` both retrieves it for comparison and removes it - so a matched pair leaves no trace,
+exactly like the naive version's deletion, but without touching the string.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make a lookup table from each CLOSING bracket to the opening bracket that matches it.
+       That direction is deliberate: when you meet a closer, you want to look up what should be
+       underneath it, which is one instant lookup.
+
+    2. Make an empty pile - a stack - to hold the openers that are still waiting to be closed.
+
+    3. Walk the string one character at a time:
+
+       a. If it is an OPENING bracket, put it on top of the pile and move on. There is nothing to
+          check yet.
+
+       b. If it is a CLOSING bracket, two things must be true:
+          - the pile must not be empty. If it is, this closer has nothing to close, so the string
+            is invalid - answer no and stop.
+          - the item on top of the pile must be this closer's matching opener. Take the top item
+            off and compare it. If it does not match, answer no and stop.
+
+       Check the emptiness FIRST. Taking from an empty pile raises an error, so the order of the
+       two tests is what keeps the code safe.
+
+    4. When the string runs out, the answer is yes ONLY IF the pile is empty. Anything still on it
+       was opened and never closed.
+
+STEP 4 IS THE ONE PEOPLE DROP. Finishing with a plain "yes" catches every mismatch but misses
+every unclosed opener - and measured on strings that get that far, more than half still have
+brackets left open.
+
+NO RECURSION - one walk and one pile. The pile grows on openers and shrinks on closers, and the
+string is finite, so it terminates.
+
+WHY YOU NEVER NEED A RULE ABOUT CROSSING: correct nesting means closing in the reverse order of
+opening, and a pile hands things back in the reverse order they went on. They are the same idea,
+so the pile enforces nesting without being told to.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture someone assembling a set of Russian dolls, working from a conveyor belt that hands them
+pieces one at a time. Some pieces are outer shells waiting to be closed; others are lids.
+
+Every time an outer shell arrives, they set it down on a stack in front of them - each new one on
+top of the last. Nothing is decided at that moment; the shell simply joins the queue of things
+still open.
+
+When a lid arrives, only one shell can possibly take it: the one on TOP of the stack, the most
+recently opened. Not any of the ones underneath - those were opened earlier, so they must be
+closed later. They check two things. Is there a shell there at all? A lid arriving with an empty
+table is a lid for nothing, and the set is wrong. And is it the RIGHT SIZE? A square lid on a
+round shell is just as wrong as no shell at all.
+
+If it matches, the shell and lid are put away together and the next shell down becomes the top.
+
+The subtle failure - the one that looks fine and is not - is a set where every shell has a lid of
+the right kind somewhere, but they were assembled in a crossing order: a round shell opened, then
+a square one, then the ROUND lid arrives. There is nothing wrong with the counts. It is still
+impossible, because the square shell is sitting on top and has not been closed. The stack catches
+this without anyone having to formulate a rule about crossing - the wrong thing is simply on top.
+
+And at the very end, the table must be clear. Shells still standing there were opened and never
+closed, and that is a failure just as real as a mismatched lid - it is only quieter, because
+nothing ever went wrong DURING the assembly. It is the check that is easiest to forget, and on
+sets that get all the way to the end without an obvious error, more than half of them still have
+something left standing.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def is_valid(s):
+        pairs = {')': '(', ']': '[', '}': '{'}
+
+  The lookup table, mapping each CLOSER to its OPENER. This direction is chosen for how it is
+  used: when a closer arrives you ask "what should be underneath?", which is one lookup. It also
+  doubles as two membership tests - `ch in pairs` means "is this a closer?" and
+  `ch in pairs.values()` means "is this an opener?".
+
+        stack = []
+
+  The pile of openers still waiting to be closed. A Python list is a stack: `.append` puts one on
+  top, `.pop` takes the top one off.
+
+        for ch in s:
+
+  One pass, left to right.
+
+            if ch in pairs.values():
+                stack.append(ch)
+
+  An opening bracket. Nothing can be decided yet - whether it is correct depends on what arrives
+  later - so it simply goes on the pile.
+
+            elif ch in pairs:
+
+  A closing bracket. (The `elif` also means any other character is silently ignored, which is
+  harmless here since the input is only brackets - though it is worth saying out loud, because
+  the real-world version of this problem has to skip letters and spaces.)
+
+                if not stack or stack.pop() != pairs[ch]:
+                    return False
+
+  THE TWO CHECKS THAT MATTER, IN AN ORDER THAT IS NOT OPTIONAL.
+
+        not stack            THE PILE IS EMPTY, so this closer has nothing to close - invalid.
+                             This must be tested FIRST, because Python's `or` short-circuits:
+                             if the pile is empty the `.pop()` is never evaluated. Reverse the
+                             two and the check itself raises IndexError - measured on 1,821 of
+                             6,000 strings.
+
+        stack.pop() != pairs[ch]
+                             Take the most recently opened bracket off the pile and compare it
+                             with what this closer requires. Wrong type - invalid.
+
+                             `.pop()` both returns the item and removes it, which is exactly what
+                             is wanted: a matched pair should leave no trace.
+
+  Dropping the type comparison entirely - popping without checking WHAT you popped - accepts 27%
+  of the strings that reach the end of the walk but are not actually valid.
+
+        return not stack
+
+  THE LINE PEOPLE FORGET. Reaching here means no mismatch ever occurred - but openers may still be
+  waiting. `not stack` is True only if the pile is empty. Writing `return True` here accepts "(",
+  "((" and "(()", and measured on the strings that get this far, 54% still have brackets open.
+
+O(n) TIME, O(n) SPACE for the stack in the worst case - a string of nothing but openers.""",
+
+    """9. TRACED ON REAL STRINGS
+
+CASE ONE - VALID AND NESTED. s = "{[]}"
+
+    ch = {    an opener  ->  push                       stack: ['{']
+    ch = [    an opener  ->  push                       stack: ['{', '[']
+    ch = ]    a closer.  stack is not empty.
+              pop gives '[';  pairs[']'] is '[';  they match  ->  continue
+                                                        stack: ['{']
+    ch = }    a closer.  stack is not empty.
+              pop gives '{';  pairs['}'] is '{';  they match  ->  continue
+                                                        stack: []
+
+    string finished.  `not stack` is True  ->  return True
+
+    ch | kind   | stack before | action                | stack after
+    ---+--------+--------------+-----------------------+------------
+     { | opener |      []      | push                  |  ['{']
+     [ | opener |    ['{']     | push                  |  ['{','[']
+     ] | closer |  ['{','[']   | pop '[' - matches ']' |  ['{']
+     } | closer |    ['{']     | pop '{' - matches '}' |  []
+
+CASE TWO - THE CROSSED ONE. s = "([)]"
+
+    ch = (    opener  ->  push                          stack: ['(']
+    ch = [    opener  ->  push                          stack: ['(', '[']
+    ch = )    a closer.  stack is not empty.
+              pop gives '[';  pairs[')'] is '(';  '[' != '('  ->  return False
+
+    Rejected at the third character. Note that nothing about "crossing" was ever tested - the
+    `[` was simply the most recent opener, and it is not what `)` needs. THE STACK ENFORCES
+    NESTING BY CONSTRUCTION.
+
+    Counting brackets would have said valid here: one of each, perfectly balanced.
+
+CASE THREE - THE ONE THE FINAL CHECK CATCHES. s = "(()"
+
+    ch = (    push                                      stack: ['(']
+    ch = (    push                                      stack: ['(', '(']
+    ch = )    closer. pop gives '('; pairs[')'] is '('; match  ->  continue
+                                                        stack: ['(']
+    string finished.  `not stack` is FALSE - one opener is still waiting  ->  return False
+
+    Nothing went wrong during the walk. Every closer matched. The failure is only visible at the
+    end, which is exactly why `return True` is not good enough there.
+
+CASE FOUR - THE UNDERFLOW. s = ")"
+
+    ch = )    a closer.  `not stack` is True - the pile is empty  ->  return False immediately
+
+    The emptiness test fired before `.pop()` was ever reached. Had the two been written the other
+    way round, this string would have raised IndexError rather than answering.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Each character is examined once and does at most one push or one pop, both
+constant-time: O(n) TIME. The stack can hold at most every character - a string of nothing but
+openers - so O(n) SPACE in the worst case. You cannot beat O(n) time, since an unread character
+could invalidate everything.
+
+THE #1 MISTAKE: finishing with `return True` instead of `return not stack`. Wrong on 621 of 6,000
+random strings, but the honest figure is the conditional one: OF 4,000 STRINGS THAT REACH THE END
+WITHOUT ANY MISMATCH, 2,150 - 54% - STILL HAVE BRACKETS OPEN. The final check is not a tidy-up; it
+is one of the three failure modes.
+
+THE #2: popping before checking the stack is non-empty. IndexError on 1,821 of 6,000. Order the
+condition so the emptiness test short-circuits first.
+
+THE #3: counting brackets instead of stacking them. Only 69 of 6,000 random strings - a
+misleadingly low number, because most random strings do not even have balanced counts. Measured on
+strings whose counts DO all match, 16% are still invalid. Counting is necessary, never sufficient,
+and "([)]" is the one-line counterexample to have ready.
+
+THE #4: a stack that ignores bracket TYPE. Of the strings that pass that weaker check, 27% are not
+valid. The stack handles nesting; the type comparison handles matching; you need both.
+
+WHAT TO SAY OUT LOUD, in this order: (1) a closer can only match the most recently opened bracket,
+which is exactly a stack; (2) so nesting is enforced automatically and I never need a rule about
+crossing; (3) there are three ways to fail - wrong type, a closer with nothing open, and openers
+left at the end - and I check all three; (4) O(n) time, O(n) space. Point 3 is what interviewers
+listen for, because dropping the third check is the single most common bug in this problem.
+
+FOLLOW-UPS TO BE READY FOR. "What if the string also contains letters and numbers?" - ignore
+anything that is not a bracket, which the `elif` structure already does. "Return the POSITION of
+the first error" - push the index alongside the bracket. "What is the minimum number of insertions
+to make it valid?" - a real follow-up (Minimum Add to Make Parentheses Valid), solved by counting
+unmatched openers and closers as you go.
+
+THE FAMILY. Minimum Remove to Make Valid Parentheses, Longest Valid Parentheses (much harder - the
+same stack, but storing indices to measure lengths), Generate Parentheses (backtracking rather
+than a stack), Remove Invalid Parentheses, Basic Calculator (a stack of pending sums, brackets
+again), Evaluate Reverse Polish Notation, and Decode String. This entry is the front door to every
+stack problem: WHEN THE MOST RECENT UNFINISHED THING IS WHAT MATTERS, USE A STACK.
+
+ONE-SENTENCE TAKEAWAY: push every opener, and on a closer check the stack is non-empty AND its top
+is the right partner - then at the very end check the stack is EMPTY, because unclosed brackets
+fail silently.""",
 ]
 
 _EX_P1X["Tell me about a time you dealt with ambiguity or unclear requirements"] = [
@@ -119063,119 +119779,930 @@ for _e in ENTRIES:
 _EX_P1AA = {}
 
 _EX_P1AA["Asteroid Collision (stack)"] = [
-    """When a collision can happen at all - the condition that IS the algorithm.
-Only a RIGHT-mover already on the stack meeting a LEFT-mover arriving can
-collide: `a < 0 and stack and stack[-1] > 0`. Two right-movers never meet (both
-travelling the same way), two left-movers never meet, and a left-mover followed
-by a right-mover diverge.
-So the entire simulation reduces to that one guard. [5,10,-5]: 5 and 10 are both
-positive, no collisions. Then -5 arrives, top is 10 > 0 -> collide, 10 survives
-because 10 > 5. Result [5,10].""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The three collision outcomes, each with different bookkeeping.
-stack[-1] < -a (the incoming left-mover is bigger): pop the top and KEEP
-LOOPING - the incoming asteroid may destroy several in a row.
-stack[-1] == -a (equal): pop the top AND mark the incoming one dead. Both
-explode.
-stack[-1] > -a: the incoming one dies, the top survives, stop.
-The middle case is the one people miss - it destroys two asteroids, not one -
-and the first case's `while` rather than `if` is what lets one large asteroid
-clear a run of smaller ones.""",
+A row of asteroids is drifting along a single line. Each is described by one number:
 
-    """A trace where one asteroid clears several.
-[10, 2, -5]: push 10, push 2. Then -5 arrives. Top is 2 > 0, and 2 < 5 -> pop
-2, keep looping. Top is now 10 > 0, and 10 > 5 -> the incoming -5 dies, stop.
-Result [10].
-[8, -8]: push 8, then -8. Top 8 > 0 and 8 == 8 -> pop 8 and kill the incoming.
-Result []. That empty result is worth testing; a solution that only pops the
-stack leaves -8 alive.""",
+    THE SIZE is how big it is - the absolute value.
+    THE SIGN is which way it is going.  POSITIVE means moving RIGHT.  NEGATIVE means LEFT.
 
-    """Why a stack rather than repeated passes.
-The naive simulation scans the array repeatedly resolving collisions until
-nothing changes - O(n^2) worst case. The stack works because after an asteroid
-survives all collisions with things to its left, it can never collide with them
-again: everything on the stack is either moving left (and away) or moving right
-(and the survivor is also moving right). So one pass suffices.
-That 'once resolved, never revisited' invariant is what makes the amortised
-cost O(n) even though the inner while loop looks nested.""",
+They all move at the same speed, so two asteroids only ever meet if one is moving right and the
+one to its RIGHT is moving left - they close on each other. When they meet:
 
-    """Edge cases.
-All positive [1,2,3] -> no collisions, everything survives.
-All negative [-1,-2,-3] -> the guard `stack[-1] > 0` never fires, everything
-survives.
-Negatives first then positives [-2,-1,1,2] -> they diverge, all four survive.
-Equal sizes [1,-1] -> both destroyed, result [].
-Empty input -> [].
-The subtle one: [-2,-2,1,-2] -> the 1 is destroyed by the final -2, leaving
-[-2,-2,-2]. Left-movers already on the stack are never touched.""",
+    THE SMALLER ONE EXPLODES and disappears.
+    IF THEY ARE THE SAME SIZE, BOTH EXPLODE.
+    The survivor carries on at the same speed and may collide again.
 
-    """Complexity and the family.
-O(n) time amortised - each asteroid is pushed once and popped at most once -
-and O(n) space.
-The family is stack simulation where an arriving element resolves against
-recent ones: Remove All Adjacent Duplicates, Backspace String Compare,
-Simplify Path, Valid Parentheses, Baseball Game, and Removing Stars From a
-String.
-Cue: 'elements interact with the most recent unresolved one and may cancel' -
-that is a stack, and the only design decisions are what you push and what the
-collision rule is.""",
+Report what is left once everything has settled.
+
+    [5, 10, -5]     The 10 (going right) meets the -5 (going left). 10 beats 5, so the -5 is
+                    destroyed. The 5 and 10 both go right and never meet.
+                    ANSWER: [5, 10]
+
+    [8, -8]         Same size, so both explode.        ANSWER: []
+
+    [10, 2, -5]     The 2 meets the -5 and loses. The -5 survives and carries on left, where it
+                    now meets the 10 - and loses to that.
+                    ANSWER: [10]
+
+    [-2, -1, 1, 2]  The negatives are all to the LEFT of the positives, so everything is moving
+                    AWAY from everything else. Nothing ever meets.
+                    ANSWER: [-2, -1, 1, 2]
+
+THAT LAST CASE IS THE ONE TO KEEP IN MIND. A collision needs a right-mover with a left-mover TO
+ITS RIGHT. `-5, 5` never collide - they fly apart. Only `5, -5` collide. Getting that direction
+backwards is measurable, and section 4 has the figure.
+
+THE THIRD EXAMPLE IS THE OTHER ONE. A surviving asteroid keeps going and may destroy several
+things in a row - so one arrival can trigger a CHAIN of collisions, not just one.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+PROCESS THE ASTEROIDS LEFT TO RIGHT, KEEPING THE SURVIVORS SO FAR IN A PILE.
+
+Why a pile - a stack - rather than a list you scan? Because when a new LEFT-moving asteroid
+arrives, the only thing it can possibly hit is the NEAREST right-moving survivor to its left,
+which is the one on top of the pile. Everything further left is shielded behind it.
+
+    [10, 2, -5]
+
+    read 10   moving right. Nothing can hit it yet.       pile:  10
+    read 2    moving right. Two right-movers never meet.  pile:  10  2
+    read -5   moving LEFT. The top of the pile is 2, moving RIGHT - they close on each other.
+              5 beats 2, so the 2 explodes.               pile:  10
+              THE -5 SURVIVES AND KEEPS GOING. Now the top is 10, still a right-mover.
+              10 beats 5, so the -5 explodes.             pile:  10
+              Nothing is added.
+
+    ANSWER: [10]
+
+THE THREE OUTCOMES OF ONE COLLISION, and you need all three:
+
+    the top is SMALLER   ->  the top explodes; the incoming one survives and MAY HIT AGAIN
+    the top is EQUAL     ->  both explode; the incoming one is gone too
+    the top is BIGGER    ->  the incoming one explodes; the top survives untouched
+
+Only the first outcome continues - which is why the collision test is a LOOP, not a single
+check. Section 4 measures what happens when it is written as an `if`.
+
+WHEN DOES A COLLISION HAPPEN AT ALL? Exactly one situation:
+
+    the incoming asteroid is moving LEFT  (a < 0)
+    AND the pile is not empty
+    AND the top of the pile is moving RIGHT  (top > 0)
+
+Every other combination flies apart or travels together:
+
+    top > 0, incoming > 0     both going right, same speed - never meet
+    top < 0, incoming < 0     both going left - never meet
+    top < 0, incoming > 0     top going LEFT, incoming going RIGHT, and the incoming one is
+                              to its RIGHT - they move APART. Never meet.
+
+That last line is the one people get backwards. Draw it: `<- 2   3 ->` with the 2 on the left.
+They are heading in opposite directions, away from each other.
+
+COMPARING SIZES. The incoming asteroid is negative, so its SIZE is `-a`. Compare `stack[-1]`
+against `-a`, never against `a` - `10 < -5` is false in a way that quietly gives wrong answers,
+and section 4 measures it at 2,529 of 6,000.""",
+
+    """3. EVERY TERM, DEFINED
+
+ASTEROID. One number. Its ABSOLUTE VALUE is the size; its SIGN is the direction.
+
+POSITIVE = MOVING RIGHT. NEGATIVE = MOVING LEFT. The value 0 does not occur.
+
+ABSOLUTE VALUE. The size, ignoring sign. For a negative `a`, the size is `-a` - so a -5 has size
+5. Python also has `abs(a)`; the code uses `-a` because at that point `a` is known to be
+negative.
+
+COLLISION. Two asteroids meeting. Only possible when a right-mover has a left-mover to its RIGHT,
+because only then are they closing.
+
+STACK. A pile where you add and remove only at the top - last in, first out. A Python list is
+one: `.append(x)` adds on top, `.pop()` removes and returns the top, `stack[-1]` PEEKS at the top
+without removing it.
+
+PEEK vs POP. `stack[-1]` looks; `.pop()` looks AND removes. This problem needs both, and using
+pop where you meant peek destroys an asteroid that was supposed to survive.
+
+`stack[-1]`. Python's way of saying "the last element", which for a stack is the top.
+
+THE SURVIVORS SO FAR. What the stack holds: every asteroid processed so far that has not been
+destroyed, still in left-to-right order. That is why the stack IS the answer at the end - no
+conversion is needed.
+
+CHAIN COLLISION. One incoming asteroid destroying several in succession. It is why the collision
+logic is a `while` and not an `if` - after winning, the survivor immediately faces whatever is
+now on top.
+
+`alive`. A flag saying whether the incoming asteroid has survived everything it met. It starts
+True, is set False if the asteroid is destroyed, and decides whether it joins the pile at the
+end.
+
+`continue`. Jumps back to the top of the `while` loop, skipping the `alive = False` below it -
+which is exactly what "the incoming one won, so let it face the next one" means.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - USING `if` INSTEAD OF `while` FOR THE COLLISION. A surviving left-mover carries on and
+may destroy several asteroids in a row. With an `if`, it resolves one collision and is then
+pushed onto the pile regardless, as though it had stopped moving.
+
+    [10, 2, -5]    correct [10]      with `if`:  [10, -5]
+
+                   The -5 destroys the 2, and then - instead of going on to meet the 10 - it is
+                   simply parked on the pile next to it. The result is a right-mover with a
+                   left-mover to its right, which is a state that could not physically persist.
+
+    MEASURED: wrong on 989 of 6,000 random arrays. The tell is a result containing an adjacent
+    positive-then-negative pair, which is by definition unfinished.
+
+TRAP 2 - FORGETTING THE EQUAL-SIZE CASE. When the sizes match, BOTH asteroids are destroyed. Miss
+that branch and the one already on the pile survives.
+
+    [8, -8]        correct []        without the equal branch:  [8]
+    [5, -5]        correct []        without the equal branch:  [5]
+
+    MEASURED: wrong on 985 of 6,000, and it fails the second official example immediately. It is
+    the one branch of three that produces no survivor at all, which is probably why it gets
+    skipped.
+
+TRAP 3 - COMPARING AGAINST `a` INSTEAD OF `-a`. The incoming asteroid is NEGATIVE at this point,
+so its size is `-a`. Writing `stack[-1] < a` compares a positive number against a negative one,
+which is never true, so no collision is ever resolved in favour of the incoming asteroid.
+
+    MEASURED: wrong on 2,529 of 6,000 - the second-highest here. Any time you have a mix of signs
+    in one comparison, convert to sizes explicitly and say so out loud.
+
+TRAP 4 - GETTING THE DIRECTION OF COLLISION BACKWARDS - checking for a POSITIVE incoming asteroid
+meeting a NEGATIVE top. That is precisely the case where they fly APART.
+
+    MEASURED: wrong on 3,746 of 6,000 - the largest failure in this entry, because it both
+    invents collisions that cannot happen and misses every one that can. Draw the arrows before
+    writing the condition: a collision needs `-> <-`, which in the list means a positive followed
+    by a negative.
+
+WHAT IS NOT A TRAP: an empty list, or a list where nothing collides. `[-2, -1, 1, 2]` comes back
+unchanged, because every negative is to the LEFT of every positive. The stack simply accumulates
+everything, which is correct with no special case.
+
+ALSO NOT A TRAP: the fact that the stack is returned directly as the answer. Because asteroids
+were pushed left to right and only ever removed from the top, the stack is already in the right
+order - no reversing needed.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - REPEATEDLY FIND A COLLIDING PAIR AND RESOLVE IT:
+
+    def asteroid_collision(a):
+        a = list(a)
+        changed = True
+        while changed:
+            changed = False
+            for i in range(len(a) - 1):
+                if a[i] > 0 and a[i+1] < 0:            # a right-mover then a left-mover
+                    if a[i] < -a[i+1]:   a.pop(i)      # the left one is smaller
+                    elif a[i] > -a[i+1]: a.pop(i+1)    # the right one is smaller
+                    else:                a.pop(i+1); a.pop(i)   # equal - both go
+                    changed = True
+                    break
+        return a
+
+IT IS CORRECT - it is the physics acted out, and it is how the ground truth for every figure in
+this entry was computed. It is also a good thing to describe first, because it makes the rules
+explicit: find any adjacent right-then-left pair, resolve it, and repeat until none remain.
+
+COST: each resolution scans from the start and each `pop` shifts the rest of the list, so it is
+O(n^2) or worse. Fine as an explanation, too slow as a solution.
+
+THE UPGRADE - ONE PASS WITH A STACK. The observation that removes the repeated scanning:
+
+    WHEN A LEFT-MOVING ASTEROID ARRIVES, THE ONLY THING IT CAN HIT IS THE NEAREST SURVIVING
+    RIGHT-MOVER TO ITS LEFT - AND THAT IS EXACTLY THE TOP OF THE PILE.
+
+Everything further left is shielded behind it. So there is never any searching to do: the
+candidate for collision is always at your fingertips, and if it is destroyed, the NEXT candidate
+is immediately underneath.
+
+WHY THE COLLISION MUST BE A LOOP, FROM SCRATCH. Resolve one collision and one of three things is
+true. If the incoming asteroid lost, it is gone and there is nothing more to do. If both were
+destroyed, likewise. But if the incoming one WON, it is still travelling left at the same speed,
+and whatever is now on top of the pile is its next opponent. It may clear several in a row - and
+in the extreme case, the whole pile.
+
+    [10, 2, -5]  the -5 beats the 2, then immediately faces the 10 and loses
+
+That is why the code is `while alive and a < 0 and stack and stack[-1] > 0`, and why the
+smaller-top branch ends in `continue` - "you won, go round again" - rather than falling through.
+Writing it as an `if` is wrong on 989 of 6,000.
+
+THE `alive` FLAG AND HOW IT TRAVELS. It starts True and is only ever set False, in the two
+branches where the incoming asteroid does not survive - equal sizes, and a bigger top. After the
+loop, `if alive: stack.append(a)` is the single place an asteroid joins the survivors. So the
+flag is carrying one piece of information out of the loop: did this one make it? Note the
+loop can also end without any branch firing, when the condition simply stops holding - because
+the pile emptied, or because the top is itself a left-mover - and in that case the asteroid is
+still alive and correctly gets pushed.
+
+WHY THE STACK IS THE ANSWER, unmodified. Asteroids go on in left-to-right order and are only ever
+removed from the top, so what remains is the survivors in their original order. No reversal, no
+post-processing.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make an empty pile. It will hold the asteroids that have survived so far, in order.
+
+    2. Take each asteroid from the list, left to right. Assume it is alive to begin with.
+
+    3. While ALL FOUR of these are true, resolve a collision:
+         - the incoming asteroid is still alive,
+         - it is moving LEFT (negative),
+         - the pile is not empty,
+         - and the asteroid on top of the pile is moving RIGHT (positive).
+
+       Those four together are the only situation in which two asteroids close on each other.
+
+       a. If the one on top is SMALLER than the incoming one, the top explodes - remove it, and
+          go round again, because the incoming asteroid is still travelling and may meet another.
+       b. If they are THE SAME SIZE, both explode - remove the top, and mark the incoming one as
+          not alive.
+       c. Otherwise the top is BIGGER, so the incoming asteroid explodes - mark it not alive and
+          leave the top alone.
+
+    4. After that loop, if the incoming asteroid is still alive, put it on top of the pile.
+
+    5. When the list runs out, the pile IS the answer - already in the right order, since things
+       were added left to right and only ever removed from the top.
+
+STEP 3 MUST BE A LOOP, NOT A SINGLE CHECK. Case (a) leaves the incoming asteroid travelling, so
+it must immediately face whatever is now on top. One arrival can clear several asteroids.
+
+COMPARE SIZES, NOT VALUES. At this point the incoming asteroid is negative, so its size is minus
+its value. Comparing the top directly against the negative number never triggers.
+
+THE DIRECTION IS NOT SYMMETRIC. A collision needs a RIGHT-mover with a LEFT-mover to its right.
+The reverse - a left-mover with a right-mover to its right - is two asteroids flying apart, and
+treating it as a collision is the single biggest failure measured for this problem.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a single-track railway with trolleys released one at a time from a siding, each either
+heading east or west, all at exactly the same speed. Bigger trolleys destroy smaller ones on
+impact; equal ones destroy each other.
+
+A signaller works through the trolleys in the order they appear along the track, keeping a record
+of everything still running. The insight that makes the job easy is that when a WESTBOUND trolley
+appears, there is only one thing it can possibly hit: the nearest EASTBOUND survivor behind it.
+Everything further back is shielded - it would have to get past the nearer one first, and it
+never will.
+
+So the signaller keeps the survivors in a pile with the most recent on top, and when a westbound
+trolley turns up, checks only the top of that pile. If the top is heading east, they are closing
+on each other, and one of three things happens. The top is smaller and is scrubbed out - but the
+westbound trolley is still rolling, so the signaller immediately checks what is now on top, and
+may scrub out several in a row. Or they are the same size, and both are scrubbed. Or the top is
+bigger, and the westbound trolley is scrubbed instead.
+
+If the top of the pile is itself heading west, or the pile is empty, nothing happens at all: two
+westbound trolleys never catch each other, and a westbound trolley with nothing behind it just
+carries on.
+
+And an eastbound trolley never triggers anything on arrival. It is heading away from everything
+already recorded, so it simply joins the pile and waits to see what turns up next.
+
+The two things a careless signaller gets wrong are treating one arrival as one collision - which
+leaves a westbound trolley sitting peacefully next to an eastbound one it should have run into -
+and forgetting that equal sizes destroy BOTH, which leaves a phantom trolley on the record that
+should have gone.
+
+At the end, the pile is the answer as it stands: things went on in track order and only ever came
+off the top, so what is left is in the right order already.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def asteroid_collision(asteroids):
+        stack = []
+
+  The survivors so far, in left-to-right order. Because asteroids are pushed in order and only
+  removed from the top, this is the final answer with no reversing needed.
+
+        for a in asteroids:
+            alive = True
+
+  Process left to right. `alive` records whether this asteroid survives everything it meets - it
+  starts True and is only ever turned off.
+
+            while alive and a < 0 and stack and stack[-1] > 0:
+
+  THE COLLISION CONDITION, and all four parts are load-bearing:
+
+        alive           stop as soon as this asteroid has been destroyed
+        a < 0           the incoming one is moving LEFT
+        stack           there is something to hit
+        stack[-1] > 0   and it is moving RIGHT - so they are CLOSING
+
+  Any other combination flies apart or travels together. Checking the mirror image instead -
+  a positive incoming asteroid against a negative top - is wrong on 3,746 of 6,000, because that
+  is exactly the case where they move away from each other.
+
+  `while` AND NOT `if`: an asteroid that wins a collision is still travelling and must face the
+  next one. Using `if` is wrong on 989 of 6,000.
+
+                if stack[-1] < -a:
+                    stack.pop()
+                    continue
+
+  The top is SMALLER, so it explodes. `-a` is the incoming asteroid's SIZE - it is negative here,
+  so minus it is positive. Comparing against `a` directly is wrong on 2,529 of 6,000, since a
+  positive number is never less than a negative one.
+
+  `continue` goes straight back to the top of the loop, skipping the `alive = False` below - which
+  is precisely "you survived, now face the next one".
+
+                elif stack[-1] == -a:
+                    stack.pop()
+
+  EQUAL SIZES, so BOTH are destroyed. The top is removed here, and the incoming one is killed by
+  the line below, which this branch deliberately falls through to. Omitting this branch entirely
+  is wrong on 985 of 6,000 and fails the official `[8, -8]` example.
+
+                alive = False
+
+  Reached from the equal branch AND from the case where the top is bigger - in both, the incoming
+  asteroid does not survive. The loop then exits because `alive` is False.
+
+            if alive:
+                stack.append(a)
+
+  It survived everything, so it joins the pile. Note this also covers the asteroids that never
+  entered the loop at all - every right-mover, and any left-mover meeting an empty pile or a
+  left-moving top.
+
+        return stack
+
+  The survivors, already in order.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - A CHAIN COLLISION. asteroids = [10, 2, -5].
+
+    a = 10    alive = True.  The loop needs a < 0, and 10 is positive - skipped entirely.
+              alive, so push.                                  stack: [10]
+
+    a = 2     Same again - positive, no collision possible.
+              push.                                            stack: [10, 2]
+
+    a = -5    alive, a < 0, stack not empty, top is 2 > 0  ->  COLLISION
+              stack[-1] = 2,  -a = 5.   Is 2 < 5?  YES.
+                  pop the 2.                                   stack: [10]
+                  `continue` - the -5 is still travelling
+              Check again: alive, a < 0, stack not empty, top is 10 > 0  ->  COLLISION
+              stack[-1] = 10,  -a = 5.   Is 10 < 5?  no.   Is 10 == 5?  no.
+                  alive = False
+              Loop exits because alive is False.
+              alive is False, so nothing is pushed.            stack: [10]
+
+    return [10]
+
+    THE WHOLE POINT IS IN THAT THIRD STEP: one arriving asteroid resolved TWO collisions. Written
+    with an `if` instead of a `while`, it would have destroyed the 2 and then been pushed - giving
+    [10, -5], a right-mover sitting next to a left-mover, which cannot be a final state.
+
+CASE TWO - EQUAL SIZES. asteroids = [8, -8].
+
+    a = 8     positive, no collision.  push.                   stack: [8]
+    a = -8    alive, a < 0, top is 8 > 0  ->  COLLISION
+              stack[-1] = 8,  -a = 8.   Is 8 < 8?  no.   Is 8 == 8?  YES.
+                  pop the 8.                                   stack: []
+              fall through to alive = False
+              nothing is pushed.                               stack: []
+
+    return []
+
+    Both destroyed. Without the equal branch, the `8 < 8` test fails, `alive` is set False, and
+    the 8 survives - giving [8].
+
+CASE THREE - THE 10 SHIELDS EVERYTHING. asteroids = [5, 10, -5].
+
+    a = 5     push.                                            stack: [5]
+    a = 10    push.                                            stack: [5, 10]
+    a = -5    top is 10 > 0  ->  COLLISION.  10 < 5?  no.  10 == 5?  no.  alive = False.
+              nothing pushed.                                  stack: [5, 10]
+
+    return [5, 10].  The 5 was never in danger - the 10 stood between it and the -5.
+
+CASE FOUR - NOTHING COLLIDES AT ALL. asteroids = [-2, -1, 1, 2].
+
+    a = -2    a < 0, but the stack is EMPTY  ->  no collision.  push.      stack: [-2]
+    a = -1    a < 0, top is -2, which is NOT > 0  ->  no collision.  push. stack: [-2, -1]
+    a = 1     positive  ->  no collision.  push.                           stack: [-2,-1,1]
+    a = 2     positive  ->  no collision.  push.                           stack: [-2,-1,1,2]
+
+    return [-2, -1, 1, 2] - unchanged. Every negative is to the LEFT of every positive, so
+    everything is moving apart. The condition handled it with no special case.
+
+    a  | direction | top before | collision? | outcome          | stack after
+    ---+-----------+------------+------------+------------------+-------------
+    10 |  right    |     -      |    no      | push             | [10]
+     2 |  right    |    10      |    no      | push             | [10, 2]
+    -5 |  left     |     2      |   YES      | 2 explodes       | [10]
+    -5 |  left     |    10      |   YES      | the -5 explodes  | [10]""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Every asteroid is pushed at most once and popped at most once, so across the
+whole run there are at most n pushes and n pops - O(n) TIME. The inner `while` looks like it
+could multiply the cost, and the argument against that is the same amortised one as in every
+stack problem: THE LOOP'S ONLY ACTION IS TO POP, AND NOTHING CAN BE POPPED THAT WAS NOT PUSHED.
+So the total number of inner iterations across the entire function is at most n.
+
+SPACE: the stack holds at most every asteroid - O(n) - and it is the output, so there is no extra
+allocation beyond the answer.
+
+THE #1 MISTAKE: writing the collision as an `if` instead of a `while`. Wrong on 989 of 6,000, and
+it fails the third official example. The tell is unmistakable once you know it: THE RESULT
+CONTAINS AN ADJACENT POSITIVE-THEN-NEGATIVE PAIR, which is a state that could not survive.
+
+THE #2: getting the collision direction backwards. Wrong on 3,746 of 6,000 - the largest figure
+here - because it both invents impossible collisions and misses every real one. `->  <-` collide;
+`<-  ->` fly apart. In list terms: a positive followed by a negative.
+
+THE #3: comparing `stack[-1] < a` instead of `stack[-1] < -a`. 2,529 of 6,000. The incoming
+asteroid is negative, so its SIZE is `-a`; comparing a positive against a negative is never true.
+
+THE #4: omitting the equal-size branch. 985 of 6,000, and it fails `[8, -8]` - one of the sample
+inputs - so at least it announces itself.
+
+WHAT TO SAY OUT LOUD, in this order: (1) a collision happens only when a right-mover has a
+left-mover to its right, so I process left to right and keep survivors on a stack; (2) an arriving
+left-mover can only hit the top of the stack, because everything else is shielded; (3) it may win
+and keep going, so the collision handling is a loop, not a single check; (4) three outcomes -
+smaller top, equal, bigger top - and equal destroys both; (5) O(n) time amortised, since nothing
+can be popped that was not pushed. Point 3 is what separates a working solution from one that
+fails the sample.
+
+FOLLOW-UPS TO BE READY FOR. "What if they move at different speeds?" - the whole approach
+collapses; you would need to compute meeting times and process events in time order, which is a
+genuinely different problem. "What if a collision produces debris that keeps travelling?" - the
+stack still works, you just push the debris instead of nothing.
+
+THE FAMILY. This is a MONOTONIC-STACK-shaped problem, and the family is large: Daily Temperatures,
+Next Greater Element, Largest Rectangle in Histogram, Trapping Rain Water, Remove K Digits, and
+Simplify Path. The shared shape is: process left to right, and use the stack to hold the items
+whose fate is not yet decided, resolving them when something arrives that settles it. Valid
+Parentheses is the same idea in its simplest form.
+
+ONE-SENTENCE TAKEAWAY: keep the survivors on a stack and, when a LEFT-moving asteroid arrives,
+repeatedly fight the top of the stack while that top is moving RIGHT - because winning a collision
+does not stop it travelling.""",
 ]
 
 _EX_P1AA["Count Primes (Sieve of Eratosthenes)"] = [
-    """The sieve, traced for n = 30.
-Start with everything marked prime except 0 and 1.
-p = 2: cross off 4, 6, 8, ... 28.
-p = 3: cross off 9, 15, 21, 27 (6, 12, 18, 24 were already crossed by 2).
-p = 4: already crossed, skip.
-p = 5: cross off 25 (10, 15, 20 already gone).
-p*p = 36 > 30, stop. What remains: 2,3,5,7,11,13,17,19,23,29 -> 10 primes.
-The pattern to notice: each pass crosses off fewer numbers than the last,
-because the earlier primes already removed most composites.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why start crossing at p*p, not at 2p.
-Every multiple of p below p*p has a factor SMALLER than p, so it was already
-crossed off by that smaller prime. For p = 5: 10 was crossed by 2, 15 by 3, 20
-by 2 - the first multiple of 5 with no smaller prime factor is 25 = 5*5.
-Starting at 2p is correct but does redundant work. This single optimisation is
-what takes the sieve from O(n log n) to O(n log log n), and being able to
-explain WHY rather than just doing it is the point.""",
+Count how many PRIME numbers are strictly less than a given number n.
 
-    """Why the outer loop stops at sqrt(n).
-If a number below n is composite, it must have a factor at or below sqrt(n) -
-because if both factors exceeded sqrt(n), their product would exceed n. So once
-p*p >= n, every composite has already been crossed off by some smaller prime
-and there is nothing left to do.
-The condition `while p * p < n` is that argument in code. Looping to n instead
-still works and wastes the entire second half of the range.""",
+A PRIME is a whole number greater than 1 whose only divisors are 1 and itself. 7 is prime -
+nothing between 2 and 6 divides it. 9 is not, because 3 divides it. 1 is NOT prime, by
+definition, and it is worth knowing that this is a definition rather than an accident: it is
+excluded so that every number factorises into primes in exactly one way.
 
-    """Where O(n log log n) comes from, roughly.
-The work is n/2 + n/3 + n/5 + n/7 + ... summed over primes up to sqrt(n). The
-sum of reciprocals of primes up to n grows like log log n (Mertens), so the
-total is about n log log n.
-For n = 1,000,000 that is roughly 3 million operations - effectively linear.
-Compare trial division on each number, which is O(n sqrt(n)) = a billion
-operations for the same n. That gap is why the sieve exists.""",
+    n = 10        the numbers below 10 are 0..9
+                  the primes among them: 2, 3, 5, 7
+                  ANSWER: 4
 
-    """Edge cases.
-n < 3 -> 0. There are no primes strictly below 2, and 2 itself is excluded when
-n = 2 because the count is of primes LESS THAN n.
-n = 3 -> 1 (just 2). n = 10 -> 4 (2,3,5,7).
-Setting is_prime[0] and is_prime[1] to False explicitly matters - 1 is not
-prime, and forgetting it inflates every count by one.
-Memory: for n = 10^8 a boolean list is ~100MB in Python (each bool is an object
-pointer in a list) - use a bytearray or bitarray, which is the standard answer
-to 'what if n is huge?'.""",
+    n = 100       ANSWER: 25
+    n = 0, 1 or 2 ANSWER: 0     - there are no primes below 2
 
-    """The variants worth knowing.
-SEGMENTED sieve: to find primes in [L, R] with R up to 10^12, sieve up to
-sqrt(R) first, then use those primes to sieve the segment - the only way when
-the full range does not fit in memory.
-LINEAR sieve (Euler's): each composite is crossed exactly once, giving true
-O(n), and it also yields the smallest prime factor of every number, which
-enables O(log n) factorisation afterwards.
-The family: Ugly Number II, Perfect Squares, and any problem needing many
-primality tests - where the answer is nearly always 'sieve once, then look
-up'.""",
+STRICTLY LESS THAN n. If n is 7, then 7 itself does NOT count. This boundary is worth fixing now,
+because it is a measurable source of wrong answers - section 4 has the figure.
+
+THE OBVIOUS APPROACH is to test each number for primality by trying every possible divisor. It
+works and it is far too slow when n is large - this problem allows n up to five million.
+
+THE FAST APPROACH IS OVER TWO THOUSAND YEARS OLD and is one of the loveliest algorithms there is.
+Instead of asking "is this number prime?" one at a time, it CROSSES OUT all the numbers that
+cannot be prime, and whatever is left standing is the answer. It is called the SIEVE OF
+ERATOSTHENES, after the Greek mathematician who described it around 200 BC.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+TURN THE QUESTION INSIDE OUT. Do not ask "is 91 prime?" - that means hunting for a divisor. Ask
+instead: WHICH NUMBERS ARE MULTIPLES OF SOMETHING? Those are the composites, and everything else
+is prime.
+
+And multiples are trivial to generate. You do not search for them, you count them out: 3, 6, 9,
+12, 15... Each one costs a single addition.
+
+THE PROCEDURE. Write out every number from 0 to n - 1 and assume they are all prime. Then:
+
+    0 and 1 are not prime - cross them out immediately, by definition.
+    Take the smallest number not yet crossed out. It IS prime - nothing smaller divides it, or it
+    would already have been crossed out. Now cross out all of ITS multiples.
+    Repeat.
+
+    n = 20.  Start with 2..19 all standing.
+
+    2 is standing, so it is prime.  Cross out 4, 6, 8, 10, 12, 14, 16, 18
+        remaining:  2  3  5  7  9  11  13  15  17  19
+    3 is standing, so it is prime.  Cross out 9, 15   (6, 12, 18 already gone)
+        remaining:  2  3  5  7  11  13  17  19
+    4 is crossed out - skip it entirely. Its multiples were all crossed out by 2.
+    5 is standing, so it is prime.  Its first uncrossed multiple is 25, which is past 20.
+
+    ANSWER: 2, 3, 5, 7, 11, 13, 17, 19 - eight primes below 20.
+
+TWO OBSERVATIONS TURN THAT INTO THE CODE.
+
+FIRST - WHERE TO START CROSSING OUT. When you reach a prime p, every multiple of p smaller than
+p x p has ALREADY been crossed out, because it has a smaller prime factor. 3 x 2 was crossed out
+by 2; 5 x 2 and 5 x 3 by 2 and 3. So you may start at p x p. (Section 4 measures how much that
+actually saves, and the honest answer is surprising.)
+
+SECOND - WHEN TO STOP. Once p x p is bigger than n, there is nothing left to cross out - the
+first multiple you would write down is already off the end. So the outer loop runs only while
+p x p < n, which for n = 1,000,000 means p goes up to 1,000, not 1,000,000.
+
+THE PICTURE, IF YOU LIKE ONE PHYSICAL: imagine the numbers as a row of standing dominoes. You walk
+to the first one still upright, declare it prime, and then knock over every domino at multiples of
+its position. You walk on to the next upright one and repeat. You never have to test anything -
+being upright at the moment you reach it IS the test.""",
+
+    """3. EVERY TERM, DEFINED
+
+PRIME. A whole number greater than 1 divisible only by 1 and itself. 2 is prime - and it is the
+only even prime, which is the basis of a common optimisation.
+
+COMPOSITE. A whole number greater than 1 that is not prime - it has a factor other than 1 and
+itself. Every composite is a multiple of some prime, which is exactly what the sieve exploits.
+
+1 IS NOT PRIME. A definition, not an oversight. Forgetting to exclude it is the biggest single
+failure in section 4.
+
+MULTIPLE. p, 2p, 3p, 4p and so on. Generated by repeated addition, which is why they are cheap.
+
+DIVISOR / FACTOR. A number that divides another exactly. 3 is a divisor of 12.
+
+SIEVE OF ERATOSTHENES. This algorithm. "Sieve" because it lets the primes fall through while
+catching the composites.
+
+BOOLEAN ARRAY. `is_prime` - one true/false slot per number from 0 to n - 1. `is_prime[7]` says
+whether 7 is still standing. Using the INDEX as the number is what makes the whole thing work:
+crossing out a multiple is a single array write.
+
+`range(p * p, n, p)`. Python's way of counting p*p, p*p + p, p*p + 2p, ... while staying below n.
+The third argument is the STEP.
+
+STRICTLY LESS THAN n. The count covers 0 through n - 1. The array has n slots, indices 0 to
+n - 1, which lines up exactly - and that alignment is why an off-by-one here is easy to make and
+easy to miss.
+
+`sum(is_prime)`. Python counts True as 1 and False as 0, so summing a list of booleans counts the
+Trues. A neat idiom, and worth knowing.
+
+O(n log log n). The sieve's cost. The log log factor grows so slowly - it is under 3 for any n
+you will ever run - that the sieve is effectively linear in practice.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - FORGETTING THAT 1 IS NOT PRIME. The array starts all-True, and nothing in the crossing-out
+loop ever touches index 1, because 1 has no multiples other than itself. So unless you set it
+False explicitly, it is counted.
+
+    n = 10   correct 4,  without the line: 5
+    n = 3    correct 1,  without the line: 2
+
+    MEASURED: wrong on 2,972 of 3,000 values of n - essentially every n above 2, always by exactly
+    one. If your answer is consistently one too high, this is why. (Index 0 must be cleared too,
+    for the same reason.)
+
+TRAP 2 - SIEVING 0 THROUGH n INCLUSIVE INSTEAD OF 0 THROUGH n - 1. The question says STRICTLY less
+than n, so an array of n slots is exactly right. Build one of n + 1 slots and you count n itself
+whenever n happens to be prime.
+
+    n = 3    correct 1 (just the 2),  inclusive version: 2 - it counts the 3
+
+    MEASURED: wrong on 615 of 3,000 - and those are precisely the cases where n itself is prime.
+    Read the word "strictly" and size the array to n.
+
+TRAP 3 - THE GUARD FOR SMALL n. `is_prime[0] = is_prime[1] = False` raises IndexError when n is 0
+or 1, because the array has no slot 1. The `if n < 3: return 0` at the top handles n = 0, 1 and 2
+in one line - all three genuinely have no primes below them.
+
+WHAT IS NOT A TRAP, checked rather than assumed - and both of these are usually taught as though
+they were correctness requirements, which they are not:
+
+    STARTING THE CROSS-OUT AT 2p INSTEAD OF p*p. MEASURED wrong on 0 of 3,000 - it is completely
+    correct, just doing redundant work. AND THE REDUNDANCY IS SMALLER THAN EVERYONE ASSUMES:
+
+        n = 100          102 cross-offs starting at p*p,        111 starting at 2p   (1.09x)
+        n = 10,000    16,979 cross-offs starting at p*p,     17,989 starting at 2p   (1.06x)
+        n = 1,000,000  2,122,046 starting at p*p,          2,197,837 starting at 2p  (1.04x)
+
+    FOUR PER CENT at a million. The p*p start is worth doing and worth explaining, but do not
+    claim it is what makes the sieve fast - the sieve is fast because it crosses out rather than
+    tests, and that was already true before this refinement.
+
+    LOOPING WHILE `p < n` INSTEAD OF `p * p < n`. MEASURED wrong on 0 of 3,000. Also correct: once
+    p exceeds the square root of n, `range(p*p, n, p)` is empty and the inner loop does nothing at
+    all. So the extra outer iterations are pure overhead - about 1,000,000 wasted checks instead
+    of 1,000 useful ones at n = a million - but they change no answer. Call it slower, not wrong.
+
+    Being able to say "this is an optimisation, not a correctness requirement, and here is roughly
+    what it buys" is a stronger answer than reciting either rule as gospel.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TEST EACH NUMBER FOR PRIMALITY:
+
+    def count_primes(n):
+        def is_prime(k):
+            if k < 2: return False
+            d = 2
+            while d * d <= k:              # only need divisors up to the square root
+                if k % d == 0: return False
+                d += 1
+            return True
+        return sum(1 for k in range(n) if is_prime(k))
+
+IT IS CORRECT - it is how the ground truth for every figure in this entry was computed - and the
+`d * d <= k` is already a real optimisation worth explaining: if k has a divisor bigger than its
+square root, it must also have a matching one SMALLER than the square root, so checking up to the
+square root is enough.
+
+COST: about the square root of k work per number, so roughly n times the square root of n overall.
+At n = 5,000,000 that is billions of operations. Far too slow.
+
+THE UPGRADE - STOP TESTING, START CROSSING OUT. The insight is a reversal:
+
+    TESTING asks "does anything divide k?" - a search, once per number.
+    SIEVING says "here is a prime, so none of ITS MULTIPLES can be prime" - and multiples are
+    generated by addition, not found by searching.
+
+Each composite gets crossed out once per distinct prime factor - a handful of times at most - so
+the total work is far below one pass per number of primality tests.
+
+THE FIRST REFINEMENT - START AT p x p. When you reach a prime p, consider a multiple like 5 x 3.
+It has a factor SMALLER than 5, so it was already crossed out when that smaller prime was
+processed. In general every multiple of p below p x p has a smaller prime factor and is already
+gone. So the first one that could still be standing is p x p.
+
+    MEASURED, and this is worth knowing precisely because the folklore overstates it: it saves 4%
+    of the cross-offs at n = 1,000,000, and starting at 2p is wrong on 0 of 3,000. It is a real
+    but modest optimisation, not the thing that makes the sieve fast.
+
+THE SECOND REFINEMENT - STOP WHEN p x p REACHES n. If p x p is already past the end, then `range(p*p,
+n, p)` is empty and there is nothing to do - and that stays true for every larger p. So the outer
+loop can stop. At n = 1,000,000, p runs to 1,000 instead of 1,000,000.
+
+    ALSO MEASURED as an optimisation rather than a requirement: looping to n is wrong on 0 of 3,000,
+    it just wastes 999,000 iterations doing nothing.
+
+WHY EVERY REMAINING NUMBER IS PRIME, which is the claim the whole thing rests on. Suppose k is
+composite. Then it has a prime factor p, and p is at most the square root of k. When the sieve
+processed p, it crossed out every multiple of p from p x p upwards - and k is a multiple of p that
+is at least p x p, since its other factor is at least p. So k was crossed out. Therefore anything
+NOT crossed out has no prime factor at all below its square root, which means it is prime.
+
+HOW THE VALUE TRAVELS: nothing accumulates. The array starts optimistic and only ever loses
+entries, and the answer is read off at the end by counting what survives.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. If n is less than 3, answer 0 immediately. There are no primes below 0, 1 or 2, and this
+       also stops the next step from indexing an array that is too small.
+
+    2. Make a list of n true/false slots, one for each number from 0 to n - 1, all set to TRUE
+       meaning "still believed prime". The list has exactly n slots because the question asks for
+       primes STRICTLY BELOW n.
+
+    3. Mark slots 0 and 1 as false. Neither is prime by definition, and nothing later in the
+       algorithm will touch them - 1 has no multiples to cross out.
+
+    4. Take each candidate p starting from 2, and keep going only while p times p is still below
+       n. Beyond that point there is nothing left to cross out.
+
+       a. If p's slot is FALSE, skip it - it is composite, and all of its multiples were already
+          crossed out by one of its own prime factors.
+       b. If p's slot is TRUE, then p is prime. Cross out every multiple of p, starting at p times
+          p and stepping up by p each time, stopping before n.
+
+    5. Count the slots still marked true. That is the answer.
+
+WHY STEP 4b STARTS AT p TIMES p rather than at twice p: every multiple of p below p times p has a
+factor smaller than p, so it was crossed out earlier. Starting later is an optimisation and not a
+correctness requirement - starting at twice p gives the same answer, only about 4% more work at a
+million.
+
+WHY STEP 4 STOPS WHEN p TIMES p REACHES n: at that point the first multiple you would write down is
+already past the end of the list, so there is nothing to do - and the same is true for every larger
+p. Again an optimisation rather than a requirement, but a much bigger one: at n = a million it means
+looking at 1,000 candidates instead of a million.
+
+THE STEP PEOPLE FORGET IS 3, and specifically the 1. Nothing else in the algorithm ever touches it,
+so unless it is cleared explicitly it is counted as prime and every answer is one too high.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a long corridor of numbered lockers, one for every number, all standing open. You want to
+know which numbers are prime, and the slow way is to walk to each locker in turn and try every
+possible key on it. That is a great many keys for a great many lockers.
+
+Eratosthenes had a better idea, and it is a reversal. Rather than testing each locker, go round
+SLAMMING SHUT the ones that cannot possibly be prime.
+
+Walk to the first open locker after 1. It is number 2, and it must be prime - if anything smaller
+divided it, someone would already have slammed it shut. So 2 is prime, and now every second locker
+after it - 4, 6, 8, 10 - holds a multiple of 2 and cannot be prime. Slam them all.
+
+Walk on to the next locker still open: 3. Same argument, so 3 is prime, and every third locker is
+slammed. Some of them are shut already - 6 and 12 were done by 2 - and that costs nothing, you just
+push a door that is already closed.
+
+Walk on. Locker 4 is shut, so you skip it entirely without a moment's thought - anything it would
+have closed was closed by 2 already.
+
+Two shortcuts make the walk shorter. When you reach a prime, the first locker worth slamming is its
+SQUARE, because everything below that has a smaller factor and was slammed by somebody earlier - so
+starting at 5's locker you begin at 25, not 10. And you can stop walking entirely once the square of
+where you are standing is past the end of the corridor, since there is nothing left to slam. For a
+corridor of a million lockers that means you stop at locker 1,000.
+
+The honest footnote is that the first shortcut saves less than people claim - about four per cent of
+the slamming at a million lockers. The real saving was never in the shortcuts; it was in slamming
+doors instead of trying keys.
+
+At the end you walk the corridor once more and count the doors still open. And you must remember
+that lockers 0 and 1 were never in the running - nothing in the procedure ever touches locker 1,
+because 1 has no multiples, so it stays open and gets counted unless you shut it yourself.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def count_primes(n):
+        if n < 3:
+            return 0
+
+  There are no primes below 0, 1 or 2, so the answer is 0 for all three. This also guards the next
+  lines: with n = 0 or 1 the array would be too small to hold index 1, and `is_prime[1] = False`
+  would raise IndexError.
+
+        is_prime = [True] * n
+
+  One slot per number from 0 to n - 1 - EXACTLY n slots, because the question asks for primes
+  STRICTLY below n. Building `[True] * (n + 1)` instead counts n itself when n is prime: wrong on
+  615 of 3,000.
+
+  Everything starts True, meaning "not yet ruled out". The algorithm only ever removes.
+
+        is_prime[0] = is_prime[1] = False
+
+  Neither is prime by definition. THIS LINE IS ESSENTIAL AND EASY TO SKIP, because nothing else in
+  the function ever touches index 1 - 1 has no multiples to cross out. Omit it and every answer is
+  exactly one too high: wrong on 2,972 of 3,000.
+
+        p = 2
+        while p * p < n:
+
+  Try each candidate from 2 upwards. STOP WHEN p * p REACHES n, because at that point the first
+  multiple to cross off is already past the end - and that stays true for every larger p. At
+  n = 1,000,000 this means p runs to 1,000 rather than 1,000,000.
+
+  (Measured as an optimisation rather than a requirement: `while p < n` gives the same answers -
+  wrong on 0 of 3,000 - because the inner loop is simply empty for the extra candidates.)
+
+            if is_prime[p]:
+
+  If p has already been crossed out, it is composite, and every one of its multiples is also a
+  multiple of one of ITS prime factors - so they were all crossed out earlier. Skip it entirely.
+
+                for multiple in range(p * p, n, p):
+                    is_prime[multiple] = False
+
+  Cross off p*p, p*p + p, p*p + 2p, ... while below n.
+
+  STARTING AT p * p rather than 2 * p: every multiple of p below p*p has a factor smaller than p and
+  was crossed out when that smaller prime was processed. Measured honestly, this saves about 4% of
+  the cross-offs at n = 1,000,000, and starting at 2*p is wrong on 0 of 3,000 - it is a real
+  optimisation, not a correctness requirement.
+
+  Note there is no check for whether a slot is already False - writing False over False is cheaper
+  than testing first.
+
+            p += 1
+
+        return sum(is_prime)
+
+  Python counts True as 1 and False as 0, so summing the array counts the survivors. Every number
+  still standing has no prime factor at or below its square root, which means it is prime.""",
+
+    """9. TRACED ON REAL NUMBERS - n = 10, expected answer 4
+
+    n is not less than 3, so carry on.
+
+    is_prime = [True] * 10        indices 0 1 2 3 4 5 6 7 8 9
+
+    is_prime[0] = is_prime[1] = False
+
+        index:    0      1      2     3     4     5     6     7     8     9
+        state:  False  False  True  True  True  True  True  True  True  True
+
+    OUTER LOOP, p = 2:   2 * 2 = 4, and 4 < 10, so continue.
+        is_prime[2] is True, so 2 is prime.
+        cross off range(4, 10, 2)  ->  4, 6, 8
+
+        index:    0      1      2     3      4     5      6     7      8     9
+        state:  False  False  True  True  False  True  False  True  False  True
+
+    OUTER LOOP, p = 3:   3 * 3 = 9, and 9 < 10, so continue.
+        is_prime[3] is True, so 3 is prime.
+        cross off range(9, 10, 3)  ->  just 9
+
+        index:    0      1      2     3      4     5      6     7      8      9
+        state:  False  False  True  True  False  True  False  True  False  False
+
+    OUTER LOOP, p = 4:   4 * 4 = 16, which is NOT less than 10.  STOP.
+
+    sum(is_prime) counts the Trues: indices 2, 3, 5, 7  ->  4
+
+    return 4.  And indeed the primes below 10 are 2, 3, 5, 7.
+
+TWO THINGS TO NOTICE IN THAT TRACE.
+
+FIRST: p = 3 crossed off only the 9. Its other multiples below 10 - namely 6 - were already gone,
+crossed off by 2. That is the p*p start doing its job, and also why the saving is modest: there
+was only one number to skip.
+
+SECOND: THE LOOP NEVER REACHED 5 OR 7, and it did not need to. Both were left standing because
+nothing crossed them out, and being left standing IS the proof of primality - if either had a
+factor, that factor would have been at most the square root, and the sieve had already processed
+every candidate up to there.
+
+    p | p*p | p*p < 10? | is_prime[p]? | crossed off
+    --+-----+-----------+--------------+-------------
+    2 |  4  |    yes    |     True     | 4, 6, 8
+    3 |  9  |    yes    |     True     | 9
+    4 | 16  |    NO     |      -       | loop ends
+
+WHAT THE WRONG VERSIONS GIVE ON n = 10: forgetting `is_prime[1] = False` gives 5, counting 1 as
+prime. Sieving 0 through n inclusive gives 4 here as it happens - because 10 is not prime - but on
+n = 3 it gives 2 instead of 1, counting the 3 itself.
+
+A SECOND CHECK - n = 100 gives 25, which is a figure worth memorising as a sanity check on any
+prime-counting code you write.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The inner loop crosses off n/2 numbers for the prime 2, n/3 for 3, n/5 for 5
+and so on. Summing those fractions over the primes gives O(n log log n) - and the log log factor is
+under 3 for any n you will ever run, so in practice the sieve is very close to linear.
+
+MEASURED, to make that concrete: at n = 1,000,000 the sieve performs about 2.1 million cross-offs
+in total. The naive test-every-number approach would do billions.
+
+SPACE: O(n) for the boolean array. That is the sieve's one real cost, and it is the honest answer
+to "can you do better?" - for very large n you would sieve in SEGMENTS, one block at a time, to
+keep memory bounded.
+
+THE #1 MISTAKE: forgetting `is_prime[1] = False`. Wrong on 2,972 of 3,000 values of n, always by
+exactly one, because nothing else in the algorithm ever touches index 1 - it has no multiples. If
+your answer is consistently one too high, look there first.
+
+THE #2: an array of n + 1 slots instead of n, counting n itself. Wrong on 615 of 3,000 - precisely
+the values of n that are themselves prime. The question says STRICTLY less than n.
+
+THE #3: no guard for n < 3, which raises IndexError on n = 0 and n = 1.
+
+TWO HONEST NEGATIVES WORTH STATING PRECISELY, because both are usually taught as rules:
+
+    Starting the inner loop at 2p rather than p*p is wrong on 0 of 3,000. It costs about 9% more
+    cross-offs at n = 100 and only 4% more at n = 1,000,000.
+
+    Looping while p < n rather than p*p < n is wrong on 0 of 3,000. It wastes iterations - a
+    million instead of a thousand at n = a million - but the inner loop is simply empty for them.
+
+Both are worth doing. Neither is what makes the sieve fast, and saying so accurately is a better
+answer than repeating the folklore.
+
+WHAT TO SAY OUT LOUD, in this order: (1) testing each number costs about the square root of n each,
+which is too slow, so instead I cross out multiples; (2) whatever survives is prime, because any
+composite has a prime factor at or below its square root and would have been crossed out; (3) I
+start crossing at p*p since everything below it has a smaller factor, and I stop the outer loop when
+p*p reaches n; (4) O(n log log n) time and O(n) space; (5) if memory were the constraint I would
+sieve in segments. Point 2 is the one that matters - it is the argument that the algorithm is
+correct, not just fast.
+
+FOLLOW-UPS TO BE READY FOR. "Halve the memory" - only odd numbers need slots, since 2 is the only
+even prime. "n is too big for memory" - segmented sieve. "Just test whether ONE number is prime" -
+then the sieve is the wrong tool entirely; trial division up to the square root, or Miller-Rabin for
+very large numbers.
+
+THE FAMILY. Ugly Number II and Super Ugly Number (generate rather than test), Perfect Squares,
+Happy Number, and Distinct Prime Factors. The transferable idea is bigger than primes: WHEN TESTING
+EACH CANDIDATE IS EXPENSIVE BUT GENERATING THE THINGS TO EXCLUDE IS CHEAP, EXCLUDE RATHER THAN TEST.
+
+ONE-SENTENCE TAKEAWAY: assume everything is prime, then for each surviving number cross off its
+multiples starting at its square - and remember to cross off 1 by hand, because nothing else ever
+will.""",
 ]
 
 _EX_P1AA["TCP three-way handshake"] = [
