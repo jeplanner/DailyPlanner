@@ -114740,123 +114740,893 @@ for _e in ENTRIES:
 _EX_P1V = {}
 
 _EX_P1V["Unique Paths (grid DP)"] = [
-    """The recurrence, and why the first row and column are all 1.
-Every cell is reachable only from ABOVE or from the LEFT, so
-dp[r][c] = dp[r-1][c] + dp[r][c-1].
-The top row can only be reached by moving right the whole way - exactly one
-path - and likewise the left column. Initialising them to 1 is not a
-convention, it is the base case.
-3x3 grid: row 0 is [1,1,1], column 0 is [1,1,1], then dp[1][1] = 1+1 = 2,
-dp[1][2] = 2+1 = 3, dp[2][1] = 1+2 = 3, dp[2][2] = 3+3 = 6. Answer 6.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The closed form, which is the answer that impresses.
-Every path is a sequence of exactly (m-1) downs and (n-1) rights in some order -
-so the count is the number of ways to choose which of the (m+n-2) moves are
-downs: C(m+n-2, m-1).
-For 3x3: C(4,2) = 6, matching the table.
-That is O(min(m,n)) time and O(1) space with a multiplicative loop, versus
-O(m*n) for the DP. Offer the DP first (it generalises to obstacles and costs),
-then the combinatorial formula - and note the formula BREAKS the moment
-obstacles or weights appear, which is why the DP is the more useful tool.""",
+A robot starts in the top-left square of a grid and must reach the bottom-right square. It
+can only ever move RIGHT or DOWN - never left, never up, never diagonally. How many
+different routes are there?
 
-    """The space reduction to one row.
-dp depends only on the previous row and the cell to the left, so a single array
-suffices: `dp[c] += dp[c-1]` scanning left to right, where dp[c] still holds
-the row above and dp[c-1] already holds this row.
-Start with a row of all 1s and repeat m-1 times. O(n) space instead of O(m*n) -
-and the same rolling-row argument as Minimum Path Sum and Unique Paths II. The
-one-liner `dp[c] += dp[c-1]` is worth memorising; it is the whole inner loop.""",
+    a 3-row, 2-column grid.  S is the start, F is the finish.
 
-    """Edge cases.
-1 x n or m x 1 -> exactly 1 path (only one direction is available), which the
-all-1s initialisation gives without a special case.
-1 x 1 -> 1 path: standing still is the path.
-Large grids: the counts grow combinatorially - a 20x20 grid has about 35
-billion paths, which overflows 32-bit. Python is fine; in Java or C++ this
-needs long, and it is a legitimate detail to raise.
-There is no zero-path case here since the grid is always traversable - that
-only appears in Unique Paths II with obstacles.""",
+        S  .
+        .  .
+        .  F
 
-    """Complexity and the family.
-DP: O(m*n) time, O(n) space reduced. Formula: O(min(m,n)) time, O(1) space.
-The family: Unique Paths II (obstacles - the formula dies, the DP survives with
-one extra line), Minimum Path Sum (min instead of sum), Triangle, Dungeon Game
-(solved BACKWARDS because the constraint is on a running minimum), Cherry
-Pickup (two simultaneous paths, so the state gains a dimension), and Count
-Square Submatrices.
-This is the simplest member and therefore the one to derive the others from.""",
+    The three routes, writing D for down and R for right:
+
+        D D R      down, down, then right
+        D R D      down, right, then down
+        R D D      right, then down, down
+
+    So the answer is 3.
+
+Notice what a route actually is: a sequence of moves. In this grid every route consists of
+exactly 2 downs and 1 right - it must, because you have to descend 2 rows and cross 1
+column, and you can never go back. THE ONLY THING THAT VARIES IS THE ORDER. That
+observation turns out to be the whole problem, and section 5 uses it to write the answer as
+a single formula.
+
+The official examples: a 3 x 7 grid has 28 routes; a 3 x 2 grid has 3.
+
+A 1 x 1 grid has exactly 1 route - the empty one. You are already at the finish, and doing
+nothing counts as a route. That case is worth checking against any solution you write.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+ASK A SMALLER QUESTION AT EVERY SQUARE: HOW MANY WAYS ARE THERE TO REACH THIS PARTICULAR
+SQUARE?
+
+The robot can only arrive at a square from one of two places - FROM ABOVE (by moving down)
+or FROM THE LEFT (by moving right). There is no third way in. So:
+
+    ways to reach this square  =  ways to reach the one above
+                                + ways to reach the one to the left
+
+Every route into this square passed through exactly one of those two, so adding them counts
+every route once and none twice.
+
+THE EDGES ARE FREE. Any square in the TOP ROW can only be reached by going right, right,
+right - one single route. Same for the LEFT COLUMN: only by going down repeatedly. So every
+square on those two edges has exactly 1 way to reach it, and that is where the counting
+starts.
+
+FILL IN A 3 x 3 GRID and watch it grow:
+
+           col0  col1  col2
+    row0     1     1     1        top row: only one way along
+    row1     1     ?     ?
+    row2     1     ?     ?
+
+    row1 col1 = above (1) + left (1) = 2
+    row1 col2 = above (1) + left (2) = 3
+    row2 col1 = above (2) + left (1) = 3
+    row2 col2 = above (3) + left (3) = 6
+
+           col0  col1  col2
+    row0     1     1     1
+    row1     1     2     3
+    row2     1     3     6        <- the answer for a 3 x 3 grid is 6
+
+If Pascal's triangle looks familiar there, that is not a coincidence - section 5 explains
+why, and it gives a one-line closed form.
+
+THE ORDER OF FILLING MATTERS AND IS EASY TO GET RIGHT. Each square needs the one above and
+the one to its left, so going top to bottom and left to right always has both ready. No
+square is ever computed before its inputs.
+
+THE PICTURE, IF YOU PREFER IT PHYSICAL: imagine water poured onto the top-left square,
+flowing only right and down, splitting equally at every junction. The number in each square
+is how many distinct streams have arrived there. The finish collects them all.""",
+
+    """3. EVERY TERM, DEFINED
+
+GRID / CELL. `m` is the number of ROWS and `n` the number of COLUMNS. `dp[r][c]` is the
+cell in row r, column c, counting from 0. The start is `dp[0][0]` and the finish is
+`dp[m-1][n-1]`.
+
+PATH / ROUTE. A sequence of right and down moves from start to finish. Two routes are
+different if the sequence differs, even if they pass through some of the same squares.
+
+DYNAMIC PROGRAMMING (DP). Solving a big problem by answering many small versions of it,
+each once, and writing the answers down. The small version here is "how many ways to reach
+this particular square?".
+
+SUBPROBLEM. One of those small questions - one cell of the grid.
+
+OPTIMAL SUBSTRUCTURE - or here, more precisely, COUNTING SUBSTRUCTURE. The count for a cell
+is built entirely from the counts of two other cells. Nothing else about how the robot got
+there matters, which is what makes a table enough.
+
+BASE CASE. The cells that need no calculation: the whole top row and the whole left column,
+each holding 1. Getting these wrong is the biggest single failure in section 4.
+
+RECURRENCE. The rule connecting a cell to its neighbours:
+`dp[r][c] = dp[r-1][c] + dp[r][c-1]`. Say this out loud before writing any loop.
+
+FILL ORDER. Top to bottom, left to right - the order that guarantees a cell's two inputs are
+already computed.
+
+COMBINATION / "n choose k". The number of ways to choose k things from n, written C(n, k)
+and computed in Python as `math.comb(n, k)`. Section 5 shows this problem is a combination
+in disguise.
+
+BINOMIAL COEFFICIENT. Another name for the same thing, and the numbers that make up Pascal's
+triangle - which is exactly the grid you just filled in, rotated.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - CREATING THE GRID FULL OF ZEROS INSTEAD OF ONES. Writing `[[0] * n for _ in
+range(m)]` and then only filling the inner cells leaves the top row and left column at 0 -
+so every sum is 0 + 0, and the answer is 0 for every input.
+
+    MEASURED: wrong on 4,000 of 4,000 grids. It returns 0 every single time, which at least
+    makes it obvious. THE BASE CASES ARE NOT INITIALISATION CEREMONY - they carry the fact
+    that there is exactly one way along an edge, and everything else is built from them.
+
+    Two ways to fix it: create the grid full of ONES (as this solution does), or create it
+    full of zeros and set `dp[0][0] = 1` before the loops, letting the recurrence fill the
+    edges itself. Both work; do not do half of each.
+
+TRAP 2 - STARTING THE LOOPS AT 0 INSTEAD OF 1. In most languages `dp[-1][c]` crashes. IN
+PYTHON, -1 MEANS THE LAST ROW, so the code silently adds numbers from the far side of the
+grid and reports a wrong answer with no warning at all.
+
+    m=3, n=7    correct 28      loops from 0: 120
+    m=1, n=1    correct  1      loops from 0:   2
+
+    MEASURED: wrong on 4,000 of 4,000, with no crash on any of them. This is the same
+    Python-specific hazard that appears in Maximum Subarray and Best Time to Buy and Sell
+    Stock II: ANY TIME A CELL LOOKS BACK AT ITS PREDECESSOR, THE LOOP MUST START AT 1.
+
+TRAP 3 - MULTIPLYING INSTEAD OF ADDING. The two ways in are ALTERNATIVES, not stages of one
+route - you arrive from above OR from the left, so the counts add.
+
+    MEASURED: wrong on 3,176 of 4,000; it returns 1 for every grid, because the edges are
+    all 1 and one times one is one. The general rule worth carrying: ADD FOR "OR", MULTIPLY
+    FOR "AND".
+
+WHAT IS NOT A TRAP, checked rather than assumed - two things that look like bugs and are
+not:
+
+    SWAPPING m AND n. Wrong on 0 of 4,000, and VERIFIED symmetric on 400 random pairs. A
+    3 x 7 grid and a 7 x 3 grid both have 28 routes, because transposing the grid just
+    swaps the words "right" and "down". So if you cannot remember which argument is rows
+    and which is columns, it genuinely does not matter here - though it will matter the
+    moment obstacles are added.
+
+    THE CLOSED-FORM FORMULA, `math.comb(m + n - 2, m - 1)`. Wrong on 0 of 4,000 - it is
+    exactly right, and section 5 explains why. It is O(1) space and arguably the better
+    answer; the DP is what generalises.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - PLAIN RECURSION FROM THE DEFINITION:
+
+    def unique_paths(m, n, r=0, c=0):
+        if r == m - 1 and c == n - 1:
+            return 1                       # arrived - that is one complete route
+        total = 0
+        if r + 1 < m: total += unique_paths(m, n, r + 1, c)     # go down
+        if c + 1 < n: total += unique_paths(m, n, r, c + 1)     # go right
+        return total
+
+IT IS CORRECT - it is the definition acted out, and a memoised copy of it produced the
+ground truth for every figure in this entry. COST: two branches at nearly every step, so
+roughly 2^(m+n) calls. A 10 x 10 grid is already slow; the problem allows 100 x 100.
+
+WHY IT IS SLOW, AND THE FIX. The recursion asks the same question over and over: the cell at
+(3, 4) is reached by down-then-right and by right-then-down, and by many longer routes -
+different histories, IDENTICAL QUESTION, because the number of ways OUT of a cell depends
+only on where it is. There are only m x n distinct questions and the recursion asks them
+exponentially many times. Write each answer down once - that is the table.
+
+THE TABLE VERSION works because each cell needs only the cell above and the cell to the
+left, both of which lie earlier in a top-to-bottom, left-to-right sweep.
+
+THE SPACE UPGRADE, worth mentioning: a row only ever needs the row above it, so you can keep
+ONE row of length n and update it in place. `row[c] += row[c-1]` does exactly the right
+thing - the value already in `row[c]` is the cell above (not yet overwritten) and `row[c-1]`
+is the cell to the left (already updated this pass). That drops the space from O(m x n) to
+O(n).
+
+THE REAL PUNCHLINE - THIS IS A COMBINATION, NOT A SEARCH. Every route from corner to corner
+makes exactly (m - 1) down moves and (n - 1) right moves, in some order. Always. So a route
+is nothing more than an ARRANGEMENT of those moves, and counting arrangements is what
+combinations do:
+
+    total moves        = (m - 1) + (n - 1) = m + n - 2
+    choose which ones are the downs:  C(m + n - 2, m - 1)
+
+    a 3 x 7 grid:  C(3 + 7 - 2, 3 - 1) = C(8, 2) = 28.  Correct.
+
+VERIFIED: wrong on 0 of 4,000 grids. It is O(1) space and about as fast as arithmetic gets,
+and it also explains why the filled grid looked like Pascal's triangle - because it IS
+Pascal's triangle, laid out diagonally.
+
+SO WHY LEARN THE DP AT ALL? Because the formula is brittle and the table is not. Add a
+single obstacle to the grid - Unique Paths II - and the combination argument collapses
+completely, while the table needs one extra line: a blocked cell gets 0 instead of a sum.
+Say both in an interview: the formula shows you saw the structure, the table shows you can
+extend it.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make a grid of counts with m rows and n columns, and put 1 in EVERY cell of the top
+       row and every cell of the left column. There is exactly one way to reach any of them:
+       straight along the edge. (Filling the whole grid with 1s is the shortest way to do
+       this, since every other cell is about to be overwritten anyway.)
+
+    2. Walk the remaining cells - from the SECOND row down, and within each row from the
+       SECOND column across. Skipping the first row and column is essential: they have no
+       neighbour above or to the left, and in Python asking for one silently wraps round to
+       the far edge instead of failing.
+
+    3. For each cell, add together the count in the cell directly ABOVE it and the count in
+       the cell directly to its LEFT. Those are the only two squares the robot could have
+       come from, and every route in passed through exactly one of them - so adding counts
+       each route once.
+
+    4. Add, do not multiply. The two arrivals are alternatives, not steps in sequence.
+
+    5. When the grid is full, the bottom-right cell holds the answer.
+
+NO RECURSION - two nested loops. The fill order is what replaces it: going top to bottom and
+left to right guarantees that a cell's two inputs were computed before it is reached.
+
+THE STEPS PEOPLE GET WRONG are 1 (leaving the edges at zero, which makes every answer 0) and
+2 (starting the loops at the first row and column, which reads round the back of the grid
+and is wrong on every single input without ever raising an error).
+
+IF ASKED TO SAVE SPACE: keep one row of n counts, all starting at 1, and for each subsequent
+row sweep left to right doing `row[c] = row[c] + row[c-1]`. The value already sitting in
+`row[c]` is the cell above; `row[c-1]` was updated a moment ago and is the cell to the left.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a city laid out as a perfect rectangular street plan, and a courier who must get
+from the north-west corner to the south-east corner. The one-way system means they can only
+ever travel east or south - never back north, never back west. How many different routes
+are there?
+
+Rather than trying to list routes, the courier's dispatcher writes a number on every
+junction: how many distinct ways there are of reaching THAT junction from the start.
+
+The junctions along the northern edge are easy - there is only one way to reach any of them,
+by driving straight east the whole time. Same along the western edge, driving straight
+south. Every one of those gets a 1.
+
+For any other junction, the courier could only have arrived from the junction directly to
+the north or the one directly to the west - the one-way system allows nothing else. So the
+dispatcher simply adds those two numbers together. Every route into this junction came
+through exactly one of the two, so nothing is counted twice and nothing is missed.
+
+Working across the map row by row, the numbers grow, and the bottom-right junction ends up
+holding the total. The dispatcher never traced a single route.
+
+Two things are worth noticing about this. The numbers add rather than multiply, because
+arriving from the north and arriving from the west are ALTERNATIVES - if the courier had to
+do both things, that would be multiplication, but they do one or the other. And the edges
+have to be filled in with 1s first: they are the foundation, and if they are left blank the
+whole map fills with nothing.
+
+There is also a shortcut the dispatcher could have spotted. Every route consists of exactly
+the same number of eastward moves and the same number of southward moves - it must, since
+the corners are fixed. So a route is just an ORDER in which to make those moves, and
+counting orders is arithmetic, not searching.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def unique_paths(m, n):
+        dp = [[1] * n for _ in range(m)]
+
+  The grid of counts, with EVERY cell pre-filled with 1. That is a shortcut that does two
+  jobs at once: it sets the top row and left column to their correct value of 1 - one route
+  along each edge - and it puts a harmless placeholder in every other cell, all of which are
+  overwritten below. Creating this full of ZEROS instead and only filling the interior gives
+  0 for every grid, measured at 4,000 of 4,000.
+
+  Note the list comprehension: `[[1] * n] * m` would make m references to ONE row, and
+  writing to any of them would write to all.
+
+        for r in range(1, m):
+            for c in range(1, n):
+
+  Start at 1, NOT 0, on both loops. Row 0 and column 0 are already correct and have no
+  neighbour above or to the left. In Python, asking for `dp[-1][c]` does not raise - it
+  returns the LAST row - so starting at 0 silently produces a wrong answer on every input
+  rather than failing. Measured wrong on 4,000 of 4,000, with no crashes.
+
+  These ranges are also empty when m or n is 1, so a single-row or single-column grid falls
+  straight through to the answer 1 with no special case needed.
+
+                dp[r][c] = dp[r-1][c] + dp[r][c-1]
+
+  THE RECURRENCE, AND THE WHOLE ALGORITHM. `dp[r-1][c]` is the cell directly above - routes
+  that arrived by moving DOWN. `dp[r][c-1]` is the cell to the left - routes that arrived by
+  moving RIGHT. Those are the only two ways in, and every route used exactly one of them, so
+  adding counts each route once and none twice.
+
+  ADD, do not multiply: the two arrivals are alternatives. Multiplying returns 1 for every
+  grid, since one times one is one all the way across.
+
+        return dp[m-1][n-1]
+
+  The bottom-right cell - the finish.
+
+COST OF THIS SHAPE: O(m x n) time and O(m x n) space. Section 10 gives both the one-row
+version and the one-line formula, either of which is a stronger final answer if the
+interviewer asks you to improve it.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - A 3 x 3 GRID, filled cell by cell.
+
+    after initialisation (every cell 1):
+
+           c0   c1   c2
+    r0      1    1    1
+    r1      1    1    1
+    r2      1    1    1
+
+    r=1, c=1:  dp[0][1] + dp[1][0]  =  1 + 1  =  2
+    r=1, c=2:  dp[0][2] + dp[1][1]  =  1 + 2  =  3
+    r=2, c=1:  dp[1][1] + dp[2][0]  =  2 + 1  =  3
+    r=2, c=2:  dp[1][2] + dp[2][1]  =  3 + 3  =  6
+
+           c0   c1   c2
+    r0      1    1    1
+    r1      1    2    3
+    r2      1    3    6      <- return 6
+
+CROSS-CHECK WITH THE FORMULA: C(3 + 3 - 2, 3 - 1) = C(4, 2) = 6. Agreed.
+
+CROSS-CHECK BY HAND: a route through a 3 x 3 grid is 2 downs and 2 rights in some order.
+The orders are DDRR, DRDR, DRRD, RDDR, RDRD, RRDD - six of them. Agreed again.
+
+CASE TWO - THE OFFICIAL 3 x 2 GRID, which is small enough to list completely.
+
+           c0   c1
+    r0      1    1
+    r1      1    ?          dp[1][1] = dp[0][1] + dp[1][0] = 1 + 1 = 2
+    r2      1    ?          dp[2][1] = dp[1][1] + dp[2][0] = 2 + 1 = 3
+
+    return 3 - and the three routes are DDR, DRD, RDD, exactly as section 1 listed them.
+
+THE VARIABLES AT A GLANCE for that second case:
+
+    r | c | above dp[r-1][c] | left dp[r][c-1] | sum
+    --+---+------------------+-----------------+-----
+    1 | 1 |        1         |        1        |  2
+    2 | 1 |        2         |        1        |  3
+
+CASE THREE - THE 1 x 1 GRID. Both loops are empty ranges, so nothing runs, and `dp[0][0]`
+is returned - which is 1, from the initialisation. Correct: you are already at the finish,
+and the empty route counts. The loops-from-zero version returns 2 here, which is the
+quickest test to expose it.
+
+WHAT THE ZEROS VERSION DOES ON CASE ONE: every cell stays 0 because 0 + 0 is 0 all the way
+across, and it returns 0. What the MULTIPLYING version does: every cell is 1 x 1 = 1, and it
+returns 1.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One addition per cell, and there are m x n cells: O(m x n) time. The
+grid itself is O(m x n) space - but that can be cut to O(n) by keeping a single row and
+updating it in place, since each row depends only on the one above. And the closed-form
+formula is O(1) space and effectively O(m + n) time to compute the combination.
+
+State the ladder in the interview: O(m x n) space for the table, O(n) for the rolling row,
+O(1) for the formula. Knowing all three, and knowing WHY you might still prefer the table,
+is the answer that lands.
+
+THE #1 MISTAKE: leaving the base row and column at 0. Wrong on 4,000 of 4,000 - it returns
+0 every time, so it fails loudly, which is the best kind of failure. The base cells encode
+"there is exactly one way along an edge", and everything else is built on them.
+
+THE #2, AND THE DANGEROUS ONE: starting the loops at 0. Also wrong on 4,000 of 4,000 but
+WITHOUT ANY CRASH, because `dp[-1]` is the last row in Python rather than an error. A 3 x 7
+grid quietly answers 120 instead of 28. Any time a cell reads its predecessor, start the
+loop at 1 - the same lesson as Maximum Subarray and Stock II.
+
+THE #3: multiplying instead of adding. 3,176 of 4,000, returning 1 every time. ADD FOR "OR",
+MULTIPLY FOR "AND".
+
+TWO HONEST NEGATIVES, measured rather than assumed: swapping m and n is wrong on 0 of 4,000,
+because the grid is symmetric under transposition - verified on 400 random pairs. And the
+formula `math.comb(m + n - 2, m - 1)` is wrong on 0 of 4,000. Neither is a bug.
+
+WHAT TO SAY OUT LOUD, in this order: (1) a cell can only be entered from above or from the
+left, so its count is the sum of those two; (2) the top row and left column are all 1s,
+which is where the counting starts; (3) O(m x n) time, reducible to O(n) space with a
+rolling row; (4) and in fact every path is (m-1) downs and (n-1) rights in some order, so
+the answer is C(m+n-2, m-1) outright; (5) but I would keep the table if obstacles might be
+added, because the formula does not survive them. Point 4 is what makes the interviewer sit
+up; point 5 is what makes the answer look considered rather than lucky.
+
+THE FAMILY. UNIQUE PATHS II is the standard follow-up: the same table with obstacles, where
+a blocked cell is set to 0 instead of summed - and note the start being blocked is the case
+people miss. Then Minimum Path Sum (same grid, take the min and add the cell's cost instead
+of summing counts), Dungeon Game, Triangle, Longest Increasing Path in a Matrix, and Climbing
+Stairs (this problem in one dimension - the same "arrive from one of two places" idea, with
+the same base cases to get right).
+
+ONE-SENTENCE TAKEAWAY: a cell's route count is the cell above plus the cell to the left, with
+the top row and left column all 1s - and since every route is (m-1) downs and (n-1) rights in
+some order, the whole thing is really the combination C(m+n-2, m-1).""",
 ]
 
 _EX_P1V["Validate Binary Search Tree"] = [
-    """The trap this problem exists to catch.
-Checking only `node.left.val < node.val < node.right.val` at each node is
-WRONG. Counterexample:
-        5
-       / \\
-      1   6
-         / \\
-        3   7
-Every parent-child pair is locally valid, but 3 sits in 5's RIGHT subtree while
-being less than 5 - so it is not a BST.
-The BST property is global: every node in the left subtree must be less than an
-ancestor, not merely less than its parent. That is why bounds must be carried
-DOWN the recursion.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """How the bounds narrow, traced.
-valid(root=5, -inf, +inf) -> 5 is in range.
-  Left: valid(1, -inf, 5) - everything left of 5 must stay below 5.
-  Right: valid(6, 5, +inf) - everything right of 5 must stay above 5.
-    valid(3, 5, +inf) -> 3 is NOT > 5 -> False. Caught.
-Each step narrows one side: going left tightens the HIGH bound to the current
-value, going right tightens the LOW bound. The other bound is inherited
-unchanged, which is what propagates the ancestor constraint arbitrarily far
-down.""",
+Given a binary tree, decide whether it is a valid BINARY SEARCH TREE. The rule, stated
+carefully, because the careless version of it is the entire problem:
 
-    """The in-order alternative, and why some prefer it.
-In-order traversal of a valid BST produces a STRICTLY INCREASING sequence. So
-walk in-order tracking only the previous value, and fail the moment
-prev >= current.
-    def is_valid(root):
-        prev = [None]
-        def walk(n):
-            if not n: return True
-            if not walk(n.left): return False
-            if prev[0] is not None and prev[0] >= n.val: return False
-            prev[0] = n.val
-            return walk(n.right)
-        return walk(root)
-Same O(n) time, and it reuses the single most useful BST fact. The bounds
-version is easier to reason about; the in-order version is easier to remember.""",
+    FOR EVERY NODE:
+        EVERY value in its LEFT subtree is strictly SMALLER than it
+        EVERY value in its RIGHT subtree is strictly LARGER than it
 
-    """Duplicates, and the convention question to ask.
-The code uses STRICT inequalities, so equal values are rejected. Most
-definitions of a BST disallow duplicates entirely, but some allow them on one
-side by convention.
-[2,2] as root and left child: strict rejects it. If the prompt's definition
-permits duplicates on the left, you would use `low < val <= high` on that side.
-Ask - it changes the answer on a two-node tree, and the interviewer usually has
-a specific definition in mind.""",
+The word doing the work is EVERY. Not "its left child is smaller" - every single node
+anywhere beneath it on the left.
 
-    """Edge cases, including the overflow one.
-Empty tree -> valid.
-Single node -> valid, whatever its value.
-A node holding INT_MIN or INT_MAX: using those as the initial sentinels breaks,
-because the comparison against the root becomes non-strict. That is why
-float('-inf') and float('inf') are the right sentinels in Python, and why the
-Java version uses Long or nullable Integer bounds.
-A left-skewed tree of 10,000 nodes -> exceeds Python's recursion limit, so the
-iterative in-order version (with a stack) is the answer to 'what if it is very
-deep?'.""",
+    valid:                          NOT valid:
+              5                              10
+             / \\                            /
+            1   7                          5
+               / \\                          \\
+              6   9                          12
 
-    """Complexity and the family.
-O(n) time - every node visited once - and O(h) space for the recursion stack:
-O(log n) balanced, O(n) skewed.
-The family: Kth Smallest Element in a BST (in-order, stop at k), Recover Binary
-Search Tree (find the two nodes that break the in-order ordering and swap them),
-Binary Search Tree Iterator, Convert Sorted Array to BST, and Range Sum of BST
-(which uses the bounds to PRUNE whole subtrees).
-The two techniques - carry bounds down, or walk in-order - between them cover
-essentially every BST validation or traversal question.""",
+    On the left, check node 7: its left subtree holds 6 (smaller) and its right holds 9
+    (larger). Check node 5: everything on its left (1) is smaller, everything on its right
+    (7, 6, 9) is larger. Valid.
+
+    On the right, look only at parents and children and everything seems fine: 5 is less
+    than 10, and 12 is greater than 5. BUT 12 SITS IN 10's LEFT SUBTREE, so it must be
+    less than 10 - and it is not. Invalid.
+
+That second tree is the whole lesson. It is why checking each node against its immediate
+children is not enough, and section 4 measures exactly how not-enough it is.
+
+STRICTLY means duplicates are not allowed. A tree of three 2s is not a valid BST under this
+problem's definition. Real implementations vary on this; LeetCode's does not.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE TEMPTING WRONG IDEA is to check each node against its two children and recurse. It is
+wrong because a constraint from an ancestor does not stop applying just because you have
+descended a couple of levels.
+
+    Every node inherits a RANGE it must lie inside, and the range gets narrower as you go
+    down.
+
+              10                  10 may be anything:        (-infinity, +infinity)
+             /  \\
+            5    15               5 is in 10's LEFT subtree:  (-infinity, 10)
+           / \\                    15 is in 10's RIGHT subtree: (10, +infinity)
+          3   7
+                                  3 is left of 5, which is left of 10:  (-infinity, 5)
+                                  7 is RIGHT of 5 but still LEFT of 10:     (5, 10)
+
+Look at that last line, because it is where the whole problem lives. The node 7 has TWO
+constraints at once: bigger than 5, because it is 5's right child, AND smaller than 10,
+because the entire subtree it lives in hangs off 10's left. The second constraint came from
+two levels up and is invisible if you only compare parents with children.
+
+HOW THE RANGE NARROWS, as a rule:
+
+    going LEFT  from a node of value v:  the upper limit becomes v
+    going RIGHT from a node of value v:  the lower limit becomes v
+    the other limit is inherited unchanged from above
+
+So each node is handed a window, checks that it fits inside it, and hands two narrower
+windows to its children. If every node fits its window, the tree is a valid BST. If any one
+does not, it is not.
+
+TRACE THE BROKEN TREE FROM SECTION 1:
+
+              10          10 gets (-inf, +inf).  fits.
+             /
+            5             5 is a LEFT child, so it gets (-inf, 10).  5 < 10.  fits.
+             \\
+              12          12 is 5's RIGHT child, so the lower limit becomes 5 -
+                          but the UPPER limit of 10 is INHERITED.  window is (5, 10).
+                          12 is not below 10.  FAILS.
+
+The parent-child check never sees the 10. The range check carries it down automatically, and
+that is the difference between the two.
+
+THE PICTURE: think of each node as standing in a corridor whose walls close in as you
+descend. Turning left moves the far wall to where you were standing; turning right moves the
+near wall. A node is legal exactly when it stands between its walls.""",
+
+    """3. EVERY TERM, DEFINED
+
+BINARY SEARCH TREE (BST). A binary tree where every node's entire left subtree holds smaller
+values and its entire right subtree holds larger ones. The payoff is that searching takes
+time proportional to the tree's HEIGHT rather than its size - you compare once and discard
+half the tree.
+
+SUBTREE. A node together with everything hanging below it. The phrase "left subtree" means
+the left child AND all of its descendants - which is exactly the part people forget.
+
+STRICTLY SMALLER / LARGER. No equality allowed. Under this problem's rules a duplicate value
+anywhere makes the tree invalid.
+
+RANGE / BOUNDS (low, high). The open interval a node's value must lie inside. The root
+starts with (-infinity, +infinity) - no constraint at all - and every step down narrows one
+side.
+
+float('-inf') and float('inf'). Python's negative and positive infinity. They are real
+floats that compare less than and greater than every ordinary number, so they let the root's
+"no constraint" be written in the same form as every other constraint - no special case for
+the root. (If the values could themselves be infinite, you would pass `None` and test for it
+instead.)
+
+RECURSION, AND WHAT IT IS DOING HERE. `valid(node, low, high)` asks: "is the subtree rooted
+here a valid BST, AND does everything in it fit between low and high?" It answers by
+checking this node and then asking the same question of both children with tightened bounds.
+Each call handles a strictly smaller subtree, which is why it terminates.
+
+BASE CASE. `if not node: return True` - an empty subtree is vacuously valid. There is nothing
+in it to violate anything.
+
+SHORT-CIRCUIT `and`. `A and B` does not evaluate B if A is already False. So the moment the
+left subtree fails, the right subtree is never examined - a free early exit.
+
+INORDER TRAVERSAL. Visiting left, node, right. For a valid BST this yields the values in
+ascending order, which gives an alternative solution - see section 5, where it is measured
+against this one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - CHECKING EACH NODE ONLY AGAINST ITS IMMEDIATE CHILDREN. This is THE mistake this
+problem exists to catch, and the measurement is worth stating carefully, because the honest
+question is not "how often is it wrong on random trees" - most random trees are obviously
+broken and it catches them. The honest question is: OF THE TREES THAT PASS THIS CHECK, HOW
+MANY ARE ACTUALLY BSTs?
+
+    MEASURED: of 4,000 trees in which every parent-child pair is individually consistent,
+    2,544 - SIXTY-FOUR PER CENT - are NOT valid binary search trees.
+
+    So the check is not slightly optimistic; it accepts roughly two thirds of the trees that
+    reach it wrongly. The minimal counterexample is three nodes:
+
+              10          10's left child is 5.   5 < 10, fine.
+             /            5's right child is 12.  12 > 5, fine.
+            5             Every parent-child pair passes.
+             \\            But 12 is inside 10's LEFT subtree and 12 > 10.
+              12          NOT A BST.
+
+    Note that LeetCode's own second example, [5,1,4,null,null,3,6], IS caught by the naive
+    check - 4 is 5's right child and 4 < 5 - so the sample input does NOT expose this bug.
+    You have to know the three-node case yourself.
+
+TRAP 2 - ALLOWING EQUALITY, `low <= node.val <= high`. The problem says strictly, so a
+duplicate anywhere is a violation.
+
+    a tree of three 2s: correct answer False, the `<=` version says True
+
+    MEASURED: wrong on 1,505 of 2,000 trees built with repeated values. If duplicates cannot
+    occur in your input it makes no difference - which is why it survives - but the problem
+    explicitly allows them in the input and forbids them in a valid answer.
+
+TRAP 3 - FAILING TO TIGHTEN ONE OF THE TWO BOUNDS. Writing `valid(node.left, low, high)` -
+passing the parent's bounds through unchanged instead of capping the upper bound at
+`node.val` - is a single omission that removes half the constraint.
+
+    MEASURED: wrong on 401 of 4,000 locally-consistent trees. Lower than trap 1, but it fails
+    on that same three-node counterexample, so it is caught by the same test.
+
+    THE RULE, worth memorising as a pair: GOING LEFT LOWERS THE CEILING, GOING RIGHT RAISES
+    THE FLOOR. Each direction changes exactly one bound and inherits the other.
+
+WHAT IS NOT A TRAP, checked rather than assumed: THE INORDER APPROACH - walk the tree in
+left-node-right order and check the values come out strictly increasing. MEASURED wrong on 0
+of 4,000. It is a completely valid alternative solution, and for some people a more obvious
+one. Section 5 compares the two honestly.
+
+ALSO NOT A TRAP: an empty tree, or a single node. Both are valid BSTs, and the base case
+returns True for the first while the infinite bounds accept the second.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - CHECK THE DEFINITION LITERALLY:
+
+    def is_valid_bst(root):
+        def values(node):
+            if not node: return []
+            return [node.val] + values(node.left) + values(node.right)
+        def check(node):
+            if not node: return True
+            if any(v >= node.val for v in values(node.left)):  return False
+            if any(v <= node.val for v in values(node.right)): return False
+            return check(node.left) and check(node.right)
+        return check(root)
+
+IT IS CORRECT - it is the definition typed out, comparing every node against every one of its
+descendants, and it is how the ground truth for this entry was computed. COST: collecting the
+values of a subtree is O(size of subtree), and it is done at every node, so O(n^2) in the
+worst case - and it allocates a list per node. Fine for a check, hopeless for a solution.
+
+THE UPGRADE - CARRY THE CONSTRAINT DOWN INSTEAD OF GATHERING THE VALUES UP. Every one of
+those comparisons is really saying the same thing: this node must lie between two limits set
+by its ancestors. Rather than each node looking DOWN at all its descendants, let each node
+pass its constraint DOWN to its children. Then every node is checked exactly once against two
+numbers.
+
+    the constraint on a node = (the tightest lower bound from any ancestor,
+                                the tightest upper bound from any ancestor)
+
+and it is maintained in one line per direction:
+
+    going LEFT from a node of value v:   the upper bound becomes v   (low unchanged)
+    going RIGHT from a node of value v:  the lower bound becomes v   (high unchanged)
+
+WHY INHERITING THE OTHER BOUND IS THE WHOLE TRICK, FROM SCRATCH. When you move down-left from
+10 to 5, the new ceiling is 10. When you then move down-RIGHT from 5, the floor becomes 5 -
+but the ceiling of 10 MUST TRAVEL WITH YOU, because you are still somewhere inside 10's left
+subtree and always will be. That inherited bound is precisely what the parent-child check
+throws away, and it is why 64% of the trees that check accepts are not BSTs.
+
+WHY INFINITY RATHER THAN A SPECIAL CASE FOR THE ROOT: the root has no constraint, and
+`float('-inf') < x < float('inf')` is true for every ordinary number. So "no constraint" is
+written in the same shape as every other constraint and the recursion needs no exception.
+
+THE OTHER GOOD SOLUTION - INORDER. A BST's inorder traversal is strictly increasing, so walk
+the tree left-node-right and check each value is bigger than the last. VERIFIED wrong on 0 of
+4,000, so it is a genuine alternative, not a poor relation.
+
+    RANGE version:    O(n) time, O(h) stack, fails FAST - the moment a node is out of range
+    INORDER version:  O(n) time, O(h) stack if you keep only the previous value, and it is
+                      arguably easier to justify ("BST inorder is sorted, so check sortedness")
+
+The one thing to watch in the inorder version is that you must compare against the PREVIOUS
+VALUE VISITED, not against a parent - and if you collect the whole traversal into a list
+first, you have spent O(n) extra memory for no reason.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Define a helper that takes a node plus two limits - a lower and an upper - and answers
+       "is the subtree rooted here a valid BST whose every value lies strictly between these
+       limits?"
+
+    2. If the node is empty, answer YES. There is nothing in it to break any rule, so an empty
+       subtree is always fine. This is what stops the recursion.
+
+    3. Otherwise check this node's value lies STRICTLY between the two limits. Not at or
+       below, not at or above - strictly inside. If it does not, answer NO immediately.
+
+    4. Then ask the same question of both children, with the limits tightened:
+
+       a. For the LEFT child, the upper limit becomes THIS NODE'S VALUE, and the lower limit
+          is passed through unchanged. Everything on the left must be smaller than this node,
+          and must also still respect whatever limit came from above.
+
+       b. For the RIGHT child, the lower limit becomes THIS NODE'S VALUE, and the upper limit
+          is passed through unchanged.
+
+       Exactly one limit changes on each side. Passing both through unchanged, or replacing
+       both, is the bug in trap 3.
+
+    5. The subtree is valid only if the node fits AND both children's answers are yes.
+
+    6. Start the whole thing at the root with limits of negative and positive infinity -
+       meaning "no constraint at all". Using infinity rather than writing a special case for
+       the root is what keeps the helper uniform.
+
+THE RECURSION, SPELLED OUT. Each call checks one node and then hands a NARROWER window to each
+child; the windows only ever tighten as you descend. Every call handles a strictly smaller
+subtree than its parent, so the descent must end - at an empty child, where step 2 answers yes.
+The paused calls sit on the call stack, at most as deep as the tree is tall.
+
+THE STEP PEOPLE GET WRONG is 4 - and specifically the word INHERITED. A constraint set three
+levels up is still in force; it does not expire because you have changed direction.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a filing system laid out as a branching diagram, where the rule is meant to be: every
+folder to the left of a divider contains only earlier entries, and everything to the right
+only later ones. Somebody has been filing carelessly and you need to check the whole thing.
+
+The careless way to check is to look at each divider and its two immediate folders and confirm
+they are the right way round. It feels thorough. It is not, because a folder can be correctly
+placed relative to the divider immediately above it and still be in completely the wrong part
+of the cabinet.
+
+Concretely: something filed under "before M", then filed to the RIGHT within that section -
+which means "later, but still before M". If it turns out to be a Z, it is in the right place
+relative to its immediate neighbour and hopelessly wrong relative to the section it lives in.
+Checking neighbours cannot see that, because the fact that matters - "we are inside the before-M
+section" - was established two dividers ago.
+
+So the proper check carries the context down. You walk the diagram from the top holding a pair
+of limits: the earliest and latest thing that could legitimately appear where you are standing.
+At the top the limits are "anything at all". Every time you take a left turn past a divider, the
+LATE limit tightens to that divider's value - you are now in the region that must come before it.
+Every time you take a right turn, the EARLY limit tightens the same way. The limit you did not
+change carries on unchanged, because it is still in force.
+
+At each folder you check just one thing: does this fall between my two current limits? If every
+folder passes, the cabinet is correctly ordered. If any one fails, you can stop straight away -
+the whole thing is wrong.
+
+The elegance is that no folder is ever compared with more than two numbers, even though it is
+implicitly being checked against every divider above it. The limits are a summary of all of
+them.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def is_valid_bst(root):
+        def valid(node, low, high):
+
+  "Is the subtree rooted at `node` a valid BST whose every value lies strictly between `low`
+  and `high`?" Both the structure AND the range are being checked at once, which is what lets
+  a single pass do the job.
+
+            if not node:
+                return True
+
+  THE BASE CASE. An empty subtree contains nothing, so it cannot violate anything. This is
+  what stops the recursion, and it is also why a leaf's two missing children cost nothing.
+
+            if not (low < node.val < high):
+                return False
+
+  The node must fit strictly inside its inherited window. Python's chained comparison reads
+  exactly like the mathematics: `low < node.val < high`.
+
+  STRICTLY - `<`, not `<=`. Equality would admit duplicates, which this problem forbids;
+  measured wrong on 1,505 of 2,000 trees containing repeated values.
+
+  Returning False here is an immediate exit - nothing below this node needs examining.
+
+            return valid(node.left, low, node.val) and valid(node.right, node.val, high)
+
+  THE LINE THAT IS THE ALGORITHM. Read the four arguments carefully, because every one of them
+  matters:
+
+        LEFT child gets  (low, node.val)
+             the upper bound TIGHTENS to this node - everything left must be smaller
+             the lower bound is INHERITED unchanged - an ancestor's floor still applies
+
+        RIGHT child gets (node.val, high)
+             the lower bound TIGHTENS to this node
+             the upper bound is INHERITED unchanged - and THIS is the one that catches the
+             three-node counterexample, where a right-descendant of a left child must still
+             respect its grandparent's ceiling
+
+  Passing `low, high` through unchanged on either side removes half the constraint - wrong on
+  401 of 4,000 locally-consistent trees. Checking only against the immediate children - which
+  is what you get if you throw the bounds away entirely - accepts 64% of the trees it sees
+  wrongly.
+
+  The `and` SHORT-CIRCUITS: if the left subtree is already invalid, the right one is never
+  visited. A free early exit at no cost in clarity.
+
+        return valid(root, float('-inf'), float('inf'))
+
+  Start with no constraint at all. Using infinities rather than a special case for the root
+  keeps the helper uniform - every node, root included, is checked the same way.""",
+
+    """9. TRACED ON REAL TREES
+
+CASE ONE - A VALID TREE.
+
+              10
+             /  \\
+            5    15
+           / \\
+          3   7
+
+    valid(10, -inf, +inf)
+        -inf < 10 < +inf ?  yes
+        valid(5, -inf, 10)                 going LEFT: ceiling drops to 10
+            -inf < 5 < 10 ?  yes
+            valid(3, -inf, 5)              going LEFT again: ceiling drops to 5
+                -inf < 3 < 5 ?  yes
+                valid(None, ...) -> True   both children
+                returns True
+            valid(7, 5, 10)                going RIGHT from 5: floor rises to 5,
+                                           CEILING OF 10 IS INHERITED
+                5 < 7 < 10 ?  yes          <- 7 is squeezed from both directions
+                returns True
+            returns True
+        valid(15, 10, +inf)                going RIGHT from 10: floor rises to 10
+            10 < 15 < +inf ?  yes
+            returns True
+        returns True
+
+    ANSWER: True.  Note node 7: its window (5, 10) came from two different ancestors - the
+    floor from its parent, the ceiling from its grandparent. That is the range check doing
+    the thing a parent-child check cannot.
+
+CASE TWO - THE THREE-NODE COUNTEREXAMPLE.
+
+              10
+             /
+            5
+             \\
+              12
+
+    valid(10, -inf, +inf)
+        -inf < 10 < +inf ?  yes
+        valid(5, -inf, 10)                 LEFT: ceiling 10
+            -inf < 5 < 10 ?  yes
+            valid(None, -inf, 5) -> True
+            valid(12, 5, 10)               RIGHT from 5: floor 5, CEILING 10 INHERITED
+                5 < 12 < 10 ?  12 < 10 is FALSE
+                returns False              <- caught, right here
+            returns False
+        the `and` short-circuits - 10's right subtree is never looked at at all
+        returns False
+
+    ANSWER: False.  And the parent-child check on this same tree: 5 < 10 fine, 12 > 5 fine -
+    it answers True. One node, one inherited bound, entirely different verdict.
+
+THE NODES AND THEIR WINDOWS, side by side:
+
+    tree            node | window        | fits?
+    ----------------+----+---------------+------
+    valid case      10   | (-inf, +inf)  | yes
+                     5   | (-inf, 10)    | yes
+                     3   | (-inf, 5)     | yes
+                     7   | (5, 10)       | yes     <- two ancestors, two bounds
+                    15   | (10, +inf)    | yes
+    ----------------+----+---------------+------
+    broken case     10   | (-inf, +inf)  | yes
+                     5   | (-inf, 10)    | yes
+                    12   | (5, 10)       | NO      <- fails on the INHERITED ceiling""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Every node is visited at most once and does a fixed amount of work - two
+comparisons - so O(n) time, and it often stops far earlier thanks to the short-circuiting
+`and`. That is the best possible: an unexamined node could be the one that breaks the rule.
+
+SPACE: no data structure is allocated, but the recursion uses the call stack, which goes as
+deep as the tree is TALL. So O(h) - about log n for a balanced tree, but n for a degenerate
+one-sided tree. Say both. Claiming O(1) space here is wrong, and the naive
+gather-all-descendants version is O(n^2) time on top.
+
+THE #1 MISTAKE: checking each node only against its immediate children. The measurement to
+quote is not a rate over random trees - it is that OF 4,000 TREES IN WHICH EVERY PARENT-CHILD
+PAIR IS CONSISTENT, 2,544 (64%) ARE NOT VALID BSTs. And LeetCode's own sample does NOT catch
+it, so bring your own three-node counterexample: 10, with left child 5, with right child 12.
+
+THE #2: forgetting to inherit a bound - passing `low, high` straight through on one side.
+401 of 4,000, and caught by that same counterexample. Learn the pair: LEFT LOWERS THE CEILING,
+RIGHT RAISES THE FLOOR, and the other bound comes along for the ride.
+
+THE #3: `<=` instead of `<`. 1,505 of 2,000 trees containing duplicates. Read the word
+"strictly" in the statement.
+
+ONE HONEST NEGATIVE: the inorder-traversal solution is wrong on 0 of 4,000. It is a genuine
+alternative - "a BST's inorder is strictly increasing, so check that" - and if it is the
+version you find easier to justify, use it. Just keep only the previous value rather than
+building the whole list, or you have spent O(n) memory needlessly.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the rule is about entire subtrees, not immediate
+children - here is a three-node tree that passes the naive check and is not a BST; (2) so I
+will carry a valid range down: going left caps the upper bound, going right lifts the lower
+bound, and the other one is inherited; (3) the root starts with infinite bounds so there is no
+special case; (4) O(n) time, O(h) stack; (5) the inorder version is equally valid if you
+prefer it. Leading with the counterexample rather than the solution is what shows you
+understood the problem rather than recognised it.
+
+A FOLLOW-UP TO BE READY FOR: "what if duplicates should be allowed on the right?" Then one
+side's comparison becomes `<=` - and you should ask which convention they want rather than
+guessing, because both exist in real code.
+
+THE FAMILY. Kth Smallest Element in a BST and Inorder Successor in a BST (both lean on the
+same inorder-is-sorted fact), Range Sum of BST and Trim a Binary Search Tree (both pass bounds
+down in exactly this shape), Recover Binary Search Tree (find the two swapped nodes - inorder
+again), Convert Sorted Array to BST, and Lowest Common Ancestor of a BST. The transferable
+idea is bigger than trees: WHEN A CONSTRAINT COMES FROM AN ANCESTOR, PASS IT DOWN RATHER THAN
+LOOKING BACK UP.
+
+ONE-SENTENCE TAKEAWAY: hand every node a range it must lie strictly inside, tightening the
+ceiling when you go left and the floor when you go right while INHERITING the other bound -
+because checking a node against its immediate children misses two thirds of the broken
+trees.""",
 ]
 
 _EX_P1V["Big-O notation"] = [
@@ -114919,65 +115689,498 @@ space without that clause is the kind of thing an interviewer will probe.""",
 ]
 
 _EX_P1V["Kruskal's Minimum Spanning Tree"] = [
-    """The algorithm, traced.
-Edges sorted by weight: (1, 0-2), (2, 1-2), (4, 0-1), (5, 1-3), (8, 2-3).
-Take (1, 0-2): 0 and 2 are in different components -> union, total 1, used 1.
-Take (2, 1-2): different -> union, total 3, used 2.
-Take (4, 0-1): find(0) and find(1) are now the SAME root -> skip, it would
-create a cycle.
-Take (5, 1-3): different -> union, total 8, used 3 = n-1 -> stop.
-MST weight 8, using edges 0-2, 1-2, 1-3.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why 'add if it joins two different components' is the whole algorithm.
-An edge whose endpoints already share a root would close a cycle, and a
-spanning TREE has none. Union-find answers 'same component?' in near-constant
-time, which is what makes the greedy cheap.
-The correctness rests on the CUT PROPERTY: for any partition of the nodes, the
-cheapest edge crossing it belongs to some MST. Kruskal exploits it by
-considering edges cheapest-first, so whenever it takes an edge, that edge is
-the cheapest crossing the cut between the two components it joins.""",
+You have a set of places and a list of possible connections between them, each with a cost.
+Choose a set of connections so that EVERY place can reach every other place, and the total
+cost is as small as possible.
 
-    """Kruskal versus Prim, as a decision.
-KRUSKAL sorts ALL edges globally and grows a FOREST that gradually merges -
-O(E log E), and it needs union-find. Better on SPARSE graphs, and much easier
-to write if you already have DSU. It also works naturally on a disconnected
-graph, producing a minimum spanning FOREST.
-PRIM grows ONE tree from a start node using a heap of frontier edges -
-O(E log V). Better on DENSE graphs, especially with the O(V^2) adjacency-matrix
-variant that needs no heap at all.
-Both are greedy, both optimal, both justified by the cut property.""",
+    four towns 0, 1, 2, 3.  The possible roads and their costs:
 
-    """The early exit, and the disconnected case.
-Once `used == n - 1` the tree is complete and the remaining (more expensive)
-edges cannot help - stop. On a dense graph that can skip most of the edge list.
-If the loop finishes with used < n - 1, the graph is DISCONNECTED and no
-spanning tree exists. Kruskal's output is then a spanning forest, and returning
-the total silently would be wrong if the caller expected a tree. Check
-`used == n - 1` after the loop and say what you do otherwise - the prompt
-usually guarantees connectivity, and noticing that it does is worth a
-sentence.""",
+        0 - 1   costs 1
+        0 - 2   costs 2
+        1 - 2   costs 3
+        2 - 3   costs 10
 
-    """Edge cases.
-A single node -> zero edges needed, total 0, and the used counter is already at
-n-1 = 0.
-Duplicate weights -> several distinct MSTs may exist with the same total;
-any is correct, which is worth confirming since the expected output is usually
-just the weight.
-Self-loops -> always skipped, since both endpoints share a root.
-Parallel edges -> the cheaper is taken first and the other skipped naturally.
-Negative weights are FINE for an MST (unlike shortest paths), because there are
-no cycles to exploit - a nice point of contrast with Dijkstra.""",
+    You must connect all four towns. Some choices:
 
-    """Complexity and where MSTs actually appear.
-O(E log E) dominated by the sort, plus O(E * alpha) for the union-find - so
-effectively O(E log E). Space O(V).
-Real uses: minimum-cost network or road layout, clustering (removing the k-1
-most expensive MST edges yields k clusters - this IS single-linkage
-clustering), image segmentation, and TSP approximation.
-The family: Prim's MST, Number of Provinces, Redundant Connection, Connecting
-Cities With Minimum Cost, Min Cost to Connect All Points, and Optimize Water
-Distribution in a Village - the last three being MST problems in product
-language, which is how they usually arrive.""",
+        take 0-1, 0-2, 1-2  -> costs 6, but town 3 is stranded.  NOT ALLOWED.
+        take 0-1, 0-2, 2-3  -> costs 13, and all four are connected.  <- the best
+        take 0-1, 1-2, 2-3  -> costs 14, also connects everything, but costs more
+
+    So the answer is 13.
+
+THE RESULT IS ALWAYS A TREE, and it is worth seeing why rather than being told. If your
+chosen roads ever contain a loop, you could delete any one road of that loop and everything
+would still be connected - and it would cost less. So a cheapest solution never has a loop.
+A connected, loop-free set of connections covering all n places always has exactly n - 1
+connections. That is what SPANNING TREE means: spanning because it reaches every place, tree
+because it has no loops.
+
+    MINIMUM SPANNING TREE (MST): the spanning tree with the smallest total cost.
+
+Real uses are exactly what they sound like: laying cable or pipe to connect buildings for the
+least money, and clustering - cut the most expensive edges of an MST and the pieces that fall
+apart are natural groups.
+
+Note this is NOT the same as finding shortest routes. An MST minimises the TOTAL of all the
+chosen connections; it does not promise the cheapest journey between any particular pair.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE GREEDY IDEA, AND IT IS AS SIMPLE AS IT SOUNDS: go through the connections from cheapest
+to most expensive, and take each one UNLESS IT WOULD CREATE A LOOP. Stop when everything is
+connected.
+
+    edges sorted by cost:   0-1 (1),  0-2 (2),  1-2 (3),  2-3 (10)
+
+    take 0-1 (1)     nothing is connected yet, so no loop.        groups: {0,1} {2} {3}
+    take 0-2 (2)     0 and 2 are in different groups, no loop.    groups: {0,1,2} {3}
+    SKIP 1-2 (3)     1 and 2 are ALREADY in the same group -
+                     adding this road would just make a loop.     groups: {0,1,2} {3}
+    take 2-3 (10)    different groups.                            groups: {0,1,2,3}
+
+    three roads chosen for four towns, total 1 + 2 + 10 = 13.
+
+THE PICTURE - ISLANDS MERGING. Start with every place as its own island. Each connection you
+accept merges two islands into one. A connection whose two ends are ALREADY on the same
+island is useless - it adds cost and connects nothing new. When one island remains, you are
+done, and you will have accepted exactly n - 1 connections.
+
+    {0} {1} {2} {3}
+      \\  /                take 0-1
+    {0,1} {2} {3}
+        \\  /              take 0-2
+      {0,1,2} {3}
+                          1-2 - both ends already inside {0,1,2}, so SKIP
+          \\  /            take 2-3
+        {0,1,2,3}         one island - finished
+
+WHY TAKING THE CHEAPEST FIRST IS SAFE, and this deserves a sentence rather than a shrug.
+Consider the cheapest connection that joins two different islands. There must be SOME
+connection between those islands in the final answer, otherwise they would never be joined -
+and if the final answer used a different, more expensive one, you could swap it for this
+cheaper one and still have everything connected, for less money. So taking the cheapest is
+never a mistake. That argument is called an EXCHANGE ARGUMENT, and it is what separates a
+greedy algorithm that works from one that merely looks plausible.
+
+THE ONE THING THAT NEEDS MACHINERY: "are these two places already on the same island?" asked
+over and over, with islands merging as you go. That is exactly what a UNION-FIND structure
+does, and it is the only non-obvious part of the code.""",
+
+    """3. EVERY TERM, DEFINED
+
+GRAPH. Places (NODES or vertices) joined by connections (EDGES). Here the edges are
+UNDIRECTED - a road works both ways - and WEIGHTED - each carries a cost.
+
+EDGE, written (w, u, v). Cost w, joining node u to node v. Storing the weight FIRST is a
+deliberate trick: sorting a list of tuples sorts by the first element, so `sorted(edges)`
+sorts by cost with no key function.
+
+CONNECTED. Every node can reach every other by following edges. An MST only exists if the
+graph is connected to begin with.
+
+CYCLE / LOOP. A route that returns to where it started without repeating an edge. A cheapest
+solution never contains one, because any edge of a cycle can be dropped while keeping
+everything connected.
+
+SPANNING TREE. A set of edges that reaches every node and contains no cycle. For n nodes it
+always has exactly n - 1 edges - one fewer than the number of nodes, because the first edge
+merges two groups and every edge after it reduces the group count by one.
+
+MINIMUM SPANNING TREE (MST). The spanning tree of least total weight. It need not be unique -
+with tied weights there can be several, but the total is always the same.
+
+GREEDY ALGORITHM. Take the locally best option and never reconsider. Usually suspect; correct
+here, by the exchange argument in section 2.
+
+UNION-FIND / DISJOINT SET UNION (DSU). A structure that tracks which group each node is in and
+supports two operations: FIND (which group is this node in?) and UNION (merge two groups).
+
+PARENT ARRAY. How the groups are stored: `parent[x]` is another node in the same group.
+Following parents repeatedly leads to the group's ROOT, which is the node whose parent is
+itself. TWO NODES ARE IN THE SAME GROUP EXACTLY WHEN THEY HAVE THE SAME ROOT.
+
+PATH COMPRESSION. While walking up to the root, pointing nodes closer to it so future lookups
+are faster - the line `parent[x] = parent[parent[x]]` in the code. Without it, find can
+degrade to a long walk; with it, the whole structure is effectively constant-time in practice.
+
+FOREST. Several disconnected trees. If the input graph is disconnected, this algorithm
+silently produces a forest - see trap 4.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - FORGETTING TO SORT THE EDGES. The entire algorithm is "cheapest first"; without the
+sort it is just "take whatever is not a cycle", which produces SOME spanning tree, not the
+minimum one.
+
+    n = 3,  edges given as (10, 0, 1), (1, 0, 2), (1, 1, 2)
+
+        unsorted: takes 0-1 for 10, then 0-2 for 1, and stops with 2 edges.  Total 11.
+        sorted:   takes 0-2 for 1, then 1-2 for 1.                           Total 2.
+
+    MEASURED: wrong on 2,315 of 4,000 random connected graphs. Note it always returns a valid
+    spanning tree - just not a minimum one - so any test that only checks connectivity passes
+    it. `sorted(edges)` with the weight stored first is the whole fix.
+
+TRAP 2 - ADDING THE n-1 CHEAPEST EDGES WITH NO CYCLE CHECK. It feels like the greedy idea and
+it is not: the cheap edges may all cluster in one corner of the graph.
+
+    n = 4,  edges 0-1 (1), 0-2 (2), 1-2 (3), 2-3 (10)
+
+        the three cheapest are 1, 2 and 3, totalling 6 - but they form a triangle among
+        {0,1,2} and never reach node 3.  The correct MST is 1 + 2 + 10 = 13.
+
+    MEASURED: wrong on 1,454 of 4,000, and always TOO CHEAP, because it is quietly returning
+    the cost of something that is not a spanning tree at all. If your answer is below the
+    expected one, this is why.
+
+TRAP 3 - UNIONING THE NODES INSTEAD OF THEIR ROOTS. Writing `parent[u] = v` instead of
+`parent[ru] = rv` looks harmless - you did just call `find` on both - but it overwrites a
+link that was carrying real information, so a previously recorded merge is LOST.
+
+    n = 4,  edges 0-1 (1), 0-2 (1), 1-2 (1), 0-3 (2)
+
+        correct: take 0-1, take 0-2, SKIP 1-2 (same group), take 0-3.  Total 4.
+        wrong:   take 0-1 (parent[0] = 1), take 0-2 (parent[0] = 2 - THE 0-1 LINK IS GONE),
+                 then 1-2 look like different groups so it takes that too, reaches n-1 = 3
+                 edges and stops.  Total 3, and node 3 is never connected.
+
+    MEASURED: wrong on 434 of 4,000. Low, because it needs a specific merge order to bite -
+    which makes it the kind of bug that passes a handful of hand-written tests. ALWAYS UNION
+    ROOTS. `find` is not decoration before the union; its result IS what you assign to.
+
+TRAP 4 - ASSUMING THE GRAPH IS CONNECTED. If it is not, no spanning tree exists, and this code
+does not notice - it runs out of edges and returns the total of a FOREST.
+
+    n = 4,  edges 0-1 (1), 2-3 (2)   ->  returns 3, silently
+
+    THE FIX IS ONE LINE: after the loop, check `used == n - 1`, and report failure (commonly
+    -1) if not. If an interviewer gives you a graph that might be disconnected and you do not
+    mention this, it will be the first thing they ask about.
+
+WHAT IS NOT A TRAP: parallel edges between the same pair, or edges of equal weight. Duplicates
+are simply skipped by the cycle check, and ties can be broken any way - different MSTs may
+result, but the total is always the same.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY SPANNING TREE:
+
+    from itertools import combinations
+    best = infinity
+    for chosen in combinations(edges, n - 1):        # every set of n-1 edges
+        if connects_everything(chosen) and has_no_cycle(chosen):
+            best = min(best, sum(w for w, u, v in chosen))
+
+IT IS CORRECT and it is worth stating as the definition. COST: choosing n-1 edges from m is
+astronomically many combinations - for 20 nodes and 50 edges it is already beyond reach. This
+is the "search every answer" baseline that the greedy replaces.
+
+THE UPGRADE - GREEDY, WITH A PROOF SKETCH RATHER THAN A HOPE. Sort the edges by weight and
+take each one unless it closes a cycle. Why that is safe, in one paragraph you should be able
+to deliver:
+
+    At any moment the accepted edges split the nodes into groups. Take the cheapest edge that
+    joins two DIFFERENT groups. Some edge must eventually join those two groups, or the result
+    is not connected. If the true optimum used a different edge there, swap it for this one -
+    still connected, still no cycle, and no more expensive. So taking the cheapest cross-group
+    edge is never wrong.
+
+That is the EXCHANGE ARGUMENT, and it is what makes this greedy provably optimal rather than
+merely reasonable.
+
+THE MACHINERY THAT MAKES IT FAST - UNION-FIND, FROM SCRATCH. The algorithm needs to ask, for
+every edge, "are these two nodes already connected by what I have accepted so far?" Rebuilding
+that answer with a traversal each time would be O(n) per edge. Instead keep one array:
+
+    parent[x] = some other node in the same group, or x itself if x is the group's ROOT
+
+    FIND(x)  - follow parents until you reach a node that is its own parent. That root is the
+               group's identity. TWO NODES ARE IN THE SAME GROUP IFF THEY HAVE THE SAME ROOT.
+    UNION    - point ONE ROOT at the other. The two groups become one.
+
+    parent = [0, 1, 2, 3]      four separate groups
+    union(0, 1): find(0)=0, find(1)=1, so parent[0] = 1
+    parent = [1, 1, 2, 3]      now 0 and 1 share root 1
+    union(0, 2): find(0) walks 0 -> 1, root 1;  find(2) = 2;  parent[1] = 2
+    parent = [1, 2, 2, 3]      0, 1 and 2 all reach root 2
+
+WHY IT MUST BE THE ROOTS THAT ARE JOINED. `parent[u] = v` would overwrite whatever `u` was
+already pointing at - and that pointer was the only record of an earlier merge. The root, by
+definition, points at itself and so carries no information to destroy. That is trap 3, and the
+worked example there shows a merge silently vanishing.
+
+PATH COMPRESSION, the line `parent[x] = parent[parent[x]]` inside the walk: as you climb, hook
+each node to its grandparent, halving the distance to the root. Trees stay flat and find
+becomes effectively constant time. It is one line and it is the difference between a textbook
+DSU and a slow one.
+
+HOW THE VALUE TRAVELS: `used` counts accepted edges. Since each accepted edge merges two groups
+and there are n groups at the start, reaching n - 1 accepted edges means exactly one group
+remains - so the early `break` is not an optimisation guess, it is the precise moment the
+spanning tree is complete.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Give every node its own group, by making each node its own parent.
+
+    2. Define FIND: to identify a node's group, keep following parent links until you reach a
+       node that is its own parent. That node is the group's root and is the group's name.
+       While walking, hook each node to its grandparent - this flattens the structure and costs
+       one line.
+
+    3. Sort all the edges by cost, cheapest first. If each edge is stored with its cost first,
+       an ordinary sort does this with no extra effort.
+
+    4. Start a running total at zero and a count of accepted edges at zero.
+
+    5. Take each edge in that sorted order and:
+
+       a. Find the roots of its two endpoints.
+       b. If the roots are THE SAME, both ends are already in one group - this edge would only
+          close a loop, so skip it entirely.
+       c. If the roots DIFFER, accept the edge: point ONE ROOT at the other (the roots, not the
+          endpoints), add the cost to the total, and add one to the count.
+       d. If the count has reached one fewer than the number of nodes, every node is in a single
+          group and you can stop - nothing left to connect.
+
+    6. The running total is the minimum spanning tree's weight.
+
+    7. If the loop ended without the count reaching n - 1, the graph was DISCONNECTED and no
+       spanning tree exists. Report that rather than returning a total for a forest.
+
+NO RECURSION here - the find loop walks up, and everything else is a single pass over sorted
+edges. Termination is obvious: each edge is considered once.
+
+THE STEPS PEOPLE GET WRONG are 3 (skipping the sort, which returns a spanning tree that is not
+minimal), 5c (pointing one ENDPOINT at another rather than one ROOT at another, which destroys
+an earlier merge), and 7 (not checking at all, which silently reports the weight of a forest).""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A group of villages needs to be joined up by cable. Surveyors have costed every possible
+stretch of cable between pairs of villages, and the council wants everyone connected for as
+little money as possible.
+
+The clerk does something almost insultingly simple. They sort every proposed stretch by price,
+cheapest first, and work down the list. For each one they ask a single question: are these two
+villages ALREADY connected, by cables approved earlier? If they are, this stretch is refused -
+it would create a redundant loop, paying money to join two places that can already reach each
+other. If they are not, it is approved.
+
+That is the whole procedure. There is no planning, no looking ahead, no comparing whole
+schemes against each other. And it gives the cheapest possible network, for a reason the clerk
+can state: consider the cheapest cable joining two currently-separate parts of the map. Those
+two parts have to be joined somehow, and any other cable joining them costs at least as much -
+so approving this one can never be a mistake.
+
+The only real bookkeeping is that recurring question, "are these already connected?", asked
+hundreds of times while the network grows underneath it. The clerk keeps it cheap with a trick:
+every village writes down the name of one neighbour it has been joined to, and to find out
+which cluster a village belongs to you follow that chain of names until you reach someone who
+writes down their own name. That person is the cluster's representative. Two villages are in
+the same cluster exactly when they end up at the same representative.
+
+When two clusters merge, it is the two REPRESENTATIVES who are linked - never two ordinary
+villages. Link two ordinary villages and you overwrite a note that was the only record of an
+earlier merge, and a whole cluster quietly falls off the map.
+
+The clerk stops the moment the number of approved cables reaches one fewer than the number of
+villages, because at that point everyone is in one cluster. And if the list of proposals runs
+out before then, that is not a cheap answer - it means some village was never reachable at
+all, and there is no valid scheme.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def kruskal_mst(n, edges):
+        # edges: list of (weight, u, v); nodes 0..n-1
+        parent = list(range(n))
+
+  Every node starts as its own group, so `parent[x] == x` for all x - n separate islands. The
+  array IS the union-find structure; there is nothing else to it.
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+  Walk up to the group's root - the node that is its own parent. The middle line is PATH
+  COMPRESSION: it points `x` at its grandparent on the way past, halving the remaining climb
+  and permanently flattening the structure for later lookups. Without it, find still works but
+  can degrade to a long walk.
+
+  The root is the group's identity, so `find(u) == find(v)` means "u and v are already
+  connected".
+
+        total = 0
+        used = 0
+
+  The running weight, and how many edges have been accepted.
+
+        for w, u, v in sorted(edges):
+
+  CHEAPEST FIRST - the whole greedy. Because each edge is stored as `(weight, u, v)` with the
+  weight FIRST, a plain `sorted` orders by weight with no key function needed. Dropping this
+  sort still produces a spanning tree, just not a minimum one: wrong on 2,315 of 4,000.
+
+            ru, rv = find(u), find(v)
+            if ru != rv:
+
+  Different roots means different groups, so this edge joins something new and cannot close a
+  cycle. Same roots means both ends are already connected - skip it silently.
+
+                parent[ru] = rv
+
+  MERGE THE GROUPS BY POINTING ONE ROOT AT THE OTHER. `parent[u] = v` instead would overwrite
+  whatever `u` already pointed at, destroying the record of an earlier merge - wrong on 434 of
+  4,000, and in a way that leaves nodes unconnected. A root points at itself and therefore
+  carries nothing to lose, which is exactly why it is the safe thing to reassign.
+
+                total += w
+                used += 1
+                if used == n - 1:
+                    break
+
+  Accept the edge. Each accepted edge reduces the number of groups by exactly one, and there
+  were n to begin with, so n - 1 acceptances means precisely one group remains - the spanning
+  tree is complete and the remaining edges cannot help. This `break` is exact, not a heuristic.
+
+        return total
+
+  WHAT IS MISSING, and worth adding out loud: there is no check that `used` actually reached
+  n - 1. On a DISCONNECTED graph this returns the weight of a forest as though it were a tree.
+  One line - `return total if used == n - 1 else -1` - fixes it, and mentioning it unprompted
+  is the difference between a correct answer and a complete one.""",
+
+    """9. TRACED ON A REAL GRAPH
+
+    n = 4.  edges (weight, u, v):  (1, 0, 1), (2, 0, 2), (3, 1, 2), (10, 2, 3)
+
+              0 ---1--- 1
+              | \\       |
+              2  \\      3
+              |    \\    |
+              2 ---------
+              |
+             10
+              |
+              3
+
+    sorted by weight: (1,0,1), (2,0,2), (3,1,2), (10,2,3)   - already in order here
+
+    START     parent = [0, 1, 2, 3]     groups {0} {1} {2} {3}     total 0, used 0
+
+    EDGE (1, 0, 1)
+        find(0) = 0,  find(1) = 1.   Different -> ACCEPT
+        parent[0] = 1                parent = [1, 1, 2, 3]
+        total = 1,  used = 1         groups {0,1} {2} {3}
+
+    EDGE (2, 0, 2)
+        find(0): parent[0] = 1, parent[1] = 1, so root 1.   find(2) = 2.   Different -> ACCEPT
+        parent[1] = 2                parent = [1, 2, 2, 3]
+        total = 3,  used = 2         groups {0,1,2} {3}
+
+    EDGE (3, 1, 2)
+        find(1): parent[1] = 2, parent[2] = 2, so root 2.
+        find(2) = 2.
+        SAME ROOT -> SKIP.  This edge would close the triangle 0-1-2 and connect nothing new.
+        total stays 3,  used stays 2
+
+    EDGE (10, 2, 3)
+        find(2) = 2,  find(3) = 3.   Different -> ACCEPT
+        parent[2] = 3                parent = [1, 2, 3, 3]
+        total = 13,  used = 3
+        used == n - 1 == 3  ->  BREAK
+
+    return 13
+
+THE STEPS AT A GLANCE:
+
+    edge      | find(u) | find(v) | same? | action | total | used | groups
+    ----------+---------+---------+-------+--------+-------+------+-------------
+    (1, 0, 1) |    0    |    1    |  no   | accept |    1  |  1   | {0,1} {2} {3}
+    (2, 0, 2) |    1    |    2    |  no   | accept |    3  |  2   | {0,1,2} {3}
+    (3, 1, 2) |    2    |    2    |  YES  |  skip  |    3  |  2   | {0,1,2} {3}
+    (10,2, 3) |    2    |    3    |  no   | accept |   13  |  3   | {0,1,2,3}
+
+Three edges for four nodes, as a spanning tree must have. The expensive 10 was taken not
+because it is good but because it is the ONLY way to reach node 3 - which is precisely what the
+"n-1 cheapest edges" shortcut gets wrong: it would take 1, 2 and 3 for a total of 6 and leave
+node 3 stranded.
+
+WHAT THE WRONG VERSIONS RETURN ON RELATED GRAPHS:
+
+    NO SORT, on n=3 with edges given as (10,0,1), (1,0,2), (1,1,2):
+        takes 0-1 for 10, then 0-2 for 1, stops at 2 edges.  Total 11.  Correct is 2.
+
+    UNION BY ENDPOINTS, on n=4 with edges 0-1(1), 0-2(1), 1-2(1), 0-3(2):
+        accept 0-1: parent[0] = 1
+        accept 0-2: find(0) = 1, find(2) = 2 - but it writes parent[0] = 2, DESTROYING the
+                    0 -> 1 link.  Now 1's group and 2's group are separate again.
+        accept 1-2: they now look unconnected, so it is taken - reaching 3 edges and stopping.
+        Total 3, and NODE 3 IS NEVER CONNECTED.  Correct is 4.
+
+    DISCONNECTED GRAPH, n=4 with only 0-1(1) and 2-3(2):
+        no cycle is ever detected, both edges are accepted, `used` reaches 2 and never 3, and
+        the function returns 3 - the weight of a FOREST, reported as though it were a tree.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. With m edges and n nodes, the sort dominates: O(m log m). Every edge then
+costs two `find` calls, and with path compression those are effectively constant - formally
+O(alpha(n)), the inverse Ackermann function, which is below 5 for any input that will ever
+exist. So O(m log m) overall, and if the edges arrive already sorted it is essentially O(m).
+
+SPACE: one parent array of size n - O(n).
+
+THE #1 MISTAKE: forgetting to sort. Wrong on 2,315 of 4,000 random connected graphs, and it
+always returns a VALID spanning tree - just not the minimum - so any test that checks
+connectivity or edge count passes it. "Cheapest first" is not a detail of the implementation;
+it is the algorithm.
+
+THE #2: taking the n-1 cheapest edges without the cycle check. 1,454 of 4,000, always too
+CHEAP, because it returns the cost of something that does not span the graph. The four-node
+triangle-plus-one-outlier is the counterexample to keep.
+
+THE #3, and the subtle one: `parent[u] = v` instead of `parent[ru] = rv`. Only 434 of 4,000
+because it needs a particular merge order to bite - which is exactly why it survives casual
+testing. Union roots, always.
+
+THE THING TO MENTION UNPROMPTED: the disconnected case. This code returns a forest's weight
+without complaint. Adding `if used != n - 1: return -1` costs one line, and noticing it is a
+strong signal.
+
+WHAT TO SAY OUT LOUD, in this order: (1) sort the edges cheapest first and take each one unless
+its endpoints are already connected; (2) that greedy is provably optimal by an exchange
+argument - the cheapest edge crossing between two groups can always be swapped into an optimal
+solution; (3) the "already connected?" test is union-find with path compression, effectively
+constant time; (4) union the ROOTS, not the endpoints; (5) O(m log m) dominated by the sort,
+O(n) space; (6) and I would check `used == n-1` to detect a disconnected graph. Point 2 is what
+distinguishes someone who understands the algorithm from someone who has memorised it.
+
+KRUSKAL VERSUS PRIM, the comparison you will be asked to make:
+
+    KRUSKAL  sorts all edges, grows a FOREST that merges into one tree, needs union-find.
+             Best when the graph is SPARSE, or when the edges are already sorted.
+    PRIM     grows ONE tree outward from a starting node, repeatedly taking the cheapest edge
+             leaving it, using a priority queue. O(m log n). Best when the graph is DENSE.
+
+Both are greedy and both are optimal; they differ in what "the cheapest safe edge" is measured
+against.
+
+THE FAMILY. Min Cost to Connect All Points (this exact algorithm, with the edges being every
+pair of points and the weight being Manhattan distance - the standard LeetCode dressing),
+Connecting Cities With Minimum Cost, Optimize Water Distribution in a Village (a lovely one -
+add a virtual node for wells and it becomes a plain MST), Number of Connected Components
+(union-find without the weights), Redundant Connection (find the edge that closes a cycle),
+Accounts Merge, and Number of Provinces. If you learn union-find properly here, five other
+problems come free.
+
+ONE-SENTENCE TAKEAWAY: sort the edges cheapest first and accept each one whose endpoints are in
+different groups - merging the two groups by pointing one ROOT at the other - and stop when you
+have accepted n - 1 edges.""",
 ]
 
 _EX_P1V["What is fine-tuning with LoRA (parameter-efficient tuning)?"] = [
@@ -115050,63 +116253,416 @@ for _e in ENTRIES:
 _EX_P1W = {}
 
 _EX_P1W["Hashing — the 'have I seen this?' pattern"] = [
-    """The three questions that should trigger a hash map.
-'Have I seen X before?' -> a SET. 'How many times have I seen X?' -> a COUNTER.
-'Does the value that completes X exist?' -> a MAP from value to index.
-Each turns an O(n) inner scan into an O(1) average lookup, which is what drops
-a nested loop from O(n^2) to O(n). If you catch yourself writing an inner loop
-whose only job is to search, that inner loop is a hash map.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Two Sum, traced - the canonical case.
-nums = [2,7,11,15], target = 9.
-i=0, x=2: is 7 in seen? No. Record seen[2] = 0.
-i=1, x=7: is 2 in seen? YES at index 0 -> return [0,1].
-The subtle detail: check the complement BEFORE recording the current value.
-Reversed, a target of 4 with a single 2 in the array would match the 2 against
-itself and return [0,0]. That check-then-record ordering appears in every
-variant of this pattern.""",
+This entry is about a PATTERN rather than a single puzzle, and the pattern is triggered by a
+question you will find yourself asking constantly:
 
-    """What the hash map costs, stated honestly.
-Lookups are O(1) AVERAGE, not worst case - with adversarial keys that all
-collide, a hash table degrades to O(n) per operation and the whole algorithm to
-O(n^2). Python randomises string hashing per process specifically to make that
-attack impractical.
-Space is O(n), which is the trade: you are buying time with memory. If the
-input is sorted, two pointers give the same result in O(1) space, and if it is
-not sorted but you may sort it, O(n log n) time with O(1) space is sometimes
-the better deal. Say which trade you are making.""",
+    "HAVE I SEEN THIS BEFORE?"        "HOW MANY TIMES HAVE I SEEN IT?"
+    "DOES ITS PARTNER EXIST?"          "WHICH POSITION WAS IT AT?"
 
-    """The variants worth recognising instantly.
-COMPLEMENT lookup: Two Sum, Pairs With Absolute Difference K, Pairs Divisible
-by 60.
-GROUPING by a canonical key: Group Anagrams (sort each word to make the key),
-Group Shifted Strings.
-PREFIX-SUM plus map: Subarray Sum Equals K, Continuous Subarray Sum, Path Sum
-III - store how many prefixes had each value.
-SET for membership: Longest Consecutive Sequence (only start counting a run at
-a number whose predecessor is absent - that check is what makes it O(n) rather
-than O(n^2)), Contains Duplicate.
-Four shapes cover most of the family.""",
+Whenever one of those appears, the answer is almost always a HASH MAP (a dictionary) or a HASH
+SET. They answer such questions in constant time, which turns a great many slow solutions into
+fast ones.
 
-    """Choosing the KEY is the actual skill.
-The algorithm is trivial; the insight is what to key on. Group Anagrams keys on
-the sorted string ('eat' -> 'aet') or on a 26-length count tuple. Subarray Sum
-Equals K keys on the running prefix sum. Continuous Subarray Sum keys on the
-prefix sum MODULO k. Isomorphic Strings keys on the first-occurrence pattern.
-When a hash-map solution is not obvious, the question to ask is not 'should I
-use a map' but 'what quantity, if two items shared it, would answer the
-question?'.""",
+THE WORKED EXAMPLE, and the most-asked interview question in existence: TWO SUM.
 
-    """Edge cases and the language footnote.
-Empty input -> the loop never runs; return the empty result rather than
-crashing.
-Duplicates in the input are usually the interesting case - decide whether the
-map stores the FIRST or LAST index (assignment overwrites, so it stores the
-last unless you guard with setdefault).
-Unhashable keys: lists cannot be dict keys in Python, so a list must become a
-tuple first - which is exactly what Group Anagrams needs. And keys must be
-immutable, or mutating one after insertion makes it unfindable, which is a
-genuinely confusing bug.""",
+    Given a list of numbers and a target, find the positions of the TWO numbers that add up to
+    the target.
+
+    nums = [2, 7, 11, 15],  target = 9
+    2 + 7 = 9, and they sit at positions 0 and 1, so the answer is [0, 1].
+
+    nums = [3, 2, 4],  target = 6
+    3 + 3 would be 6, but there is only one 3 - you may not use the same element twice.
+    2 + 4 = 6, at positions 1 and 2, so the answer is [1, 2].
+
+That second example is not an afterthought - LeetCode chose it precisely to catch the most
+common bug in this problem, and section 4 measures how often that bug fires.
+
+You return POSITIONS, not the values. And exactly one valid answer is guaranteed to exist, so
+you never have to decide between two.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE OBVIOUS METHOD - CHECK EVERY PAIR. For each number, walk the rest of the list looking for
+one that completes it. Correct, and it does about n squared over 2 comparisons: for 10,000
+numbers that is 50 million.
+
+THE FLIP THAT CHANGES EVERYTHING. Do not ask "which other number pairs with this one?" - that
+is a search. Ask instead:
+
+    "I NEED target - x.  HAVE I ALREADY WALKED PAST IT?"
+
+That is not a search, it is a LOOKUP - and a dictionary answers it instantly, no matter how many
+numbers you have already seen.
+
+    nums = [2, 7, 11, 15],  target = 9
+
+    at 2:   I need 9 - 2 = 7.   Seen 7 before?  No.   Remember: 2 is at position 0.
+    at 7:   I need 9 - 7 = 2.   Seen 2 before?  YES, at position 0.   Answer [0, 1].
+
+One pass. The 11 and the 15 are never even looked at.
+
+THE PICTURE - A GUEST LIST AT A DOOR. People arrive one at a time. As each arrives you check a
+list of everyone already inside to see whether their partner is there. If so, you have your
+pair. If not, you write the new arrival's name on the list and carry on. The list grows, but
+checking it never gets slower, because it is a dictionary rather than a queue you have to read
+through.
+
+THE ORDER OF THE TWO ACTIONS IS THE WHOLE PROBLEM. CHECK FIRST, THEN RECORD.
+
+    at 3 with target 6:   I need 6 - 3 = 3.
+        CHECK FIRST:  have I seen a 3 BEFORE this one?  No - this is the first.  Correct.
+        RECORD FIRST: write 3 down, then look for a 3 - and find the one just written.
+                      The algorithm pairs the number with ITSELF and returns [0, 0].
+
+That is why the dictionary holds only what came BEFORE the current position: it makes "use each
+element once" true automatically, with no index comparison anywhere.
+
+WHY THE DICTIONARY MAPS VALUE TO POSITION rather than just holding values: the question asks for
+positions, so you need to be able to say not only "yes, I saw a 2" but "and it was at index 0".""",
+
+    """3. EVERY TERM, DEFINED
+
+HASH MAP / DICTIONARY. A structure storing KEY -> VALUE pairs, where looking up a key takes
+constant time on average, however many entries there are. In Python it is `dict`. Here the key
+is a number from the list and the value is the position it appeared at.
+
+HASH SET. The same machinery without the values - it answers only "is this in here?". Python's
+`set`. Use it when you need membership but not extra information; use a dict when you need
+something back, such as an index.
+
+HASHING. The trick underneath. A hash function turns a key into a number, that number picks a
+slot in an array, and the value is stored there - so finding it later is one calculation and one
+array access, not a search. That is why lookup does not slow down as the structure grows.
+
+O(1) AVERAGE. Constant time on average. It is "average" rather than guaranteed because two keys
+can land in the same slot (a COLLISION) and the structure has to do a little extra work. In
+practice it is constant; the worst case is theoretically worse, and saying so out loud is a
+small mark of precision.
+
+COMPLEMENT. The number you would need to complete a pair - `target - x`. The name is worth
+knowing because it is what interviewers call it.
+
+ONE PASS. Doing everything in a single walk through the input rather than building a structure
+first and then scanning it. Both are O(n) here, but one pass avoids a bug that the two-pass
+version has to guard against explicitly - see trap 2.
+
+INDEX vs VALUE. The list position versus the number stored there. Returning values when
+positions were asked for is a real and common slip.
+
+HASHABLE. Whether something can be used as a dictionary key. Numbers, strings and tuples can be;
+LISTS AND SETS CANNOT, because they can change. That is why grouping problems convert a list
+into a tuple before using it as a key - a detail that appears the moment you leave Two Sum for
+Group Anagrams.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - RECORDING THE NUMBER BEFORE CHECKING FOR ITS COMPLEMENT. Swap the two lines and the
+current element can be paired with ITSELF, because it is now in the dictionary when you look.
+
+    nums = [3, 2, 4],  target = 6      correct [1, 2]      record-first: [0, 0]
+    nums = [1, 2],     target = 4      correct []          record-first: [1, 1]
+
+    MEASURED: wrong on 786 of 6,000 random cases - and it fires exactly when the list contains a
+    number that is half the target, which happened in 916 of those 6,000. THE OFFICIAL SECOND
+    EXAMPLE, [3, 2, 4] WITH TARGET 6, IS PRECISELY THIS CASE. LeetCode put it there on purpose.
+
+    Note what the correct order buys you: because the dictionary holds only elements from
+    STRICTLY BEFORE the current position, "do not use the same element twice" is enforced by the
+    structure of the loop. There is no `if i != j` anywhere, and there does not need to be.
+
+TRAP 2 - BUILDING THE WHOLE DICTIONARY FIRST, THEN SCANNING. A natural two-pass version, and it
+has the same self-pairing problem in a different disguise: the complement it finds may be the
+current element itself.
+
+    MEASURED: wrong on 547 of 6,000. It needs an explicit guard - check that the index you found
+    is not the index you are standing on - and the one-pass version needs no such guard. There is
+    a second, quieter issue too: with duplicate values, `{x: i for i, x in enumerate(nums)}` keeps
+    only the LAST index of each value, so an earlier occurrence is invisible.
+
+TRAP 3 - USING A SET WHEN YOU NEED THE INDICES. A set answers "have I seen this?" but cannot say
+where. People then reach for `nums.index(complement)` to recover the position - which works, and
+quietly throws away the entire point of the exercise: `list.index` SCANS THE LIST, so the
+solution is back to O(n^2) in the worst case. MEASURED wrong on 0 of 6,000, so this is a
+performance bug rather than a correctness one - which makes it easy to ship. USE A DICT WHEN YOU
+NEED SOMETHING BACK.
+
+TRAP 4 - RETURNING THE VALUES INSTEAD OF THE POSITIONS. Read the required output. This problem
+wants indices; several of its siblings want the values; some want a boolean.
+
+WHAT IS NOT A TRAP: duplicate values in the list. `seen[x] = i` overwrites an earlier index for
+the same value, and that is harmless here - if an earlier occurrence had completed a pair, the
+algorithm would already have returned when it reached the second element of that pair. Verified
+across 3,485 of 6,000 random arrays that contained duplicates.
+
+ALSO NOT A TRAP: negative numbers and zero. `target - x` is arithmetic; nothing about it assumes
+positivity. [0, 4, 3, 0] with target 0 correctly returns [0, 3].""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - EVERY PAIR:
+
+    def two_sum(nums, target):
+        for i in range(len(nums)):
+            for j in range(i + 1, len(nums)):        # j starts after i, so no reuse
+                if nums[i] + nums[j] == target:
+                    return [i, j]
+        return []
+
+IT IS CORRECT - it is the definition acted out, and it is how the ground truth for this entry was
+computed. Say it out loud in an interview and then improve it; starting from the brute force and
+naming its cost is a better opening than jumping to the answer. COST: about n squared over 2
+pairs. At the problem's limit of 10,000 numbers that is 50 million comparisons.
+
+WHERE THE WASTE IS. The inner loop is a LINEAR SEARCH for a specific value - `target - nums[i]` -
+and it is repeated from scratch for every i, over data that never changes. Any time an inner loop
+is searching for an exact value, a hash structure can replace it.
+
+THE UPGRADE, IN ONE SUBSTITUTION:
+
+    for each x:  search the rest of the list for target - x      O(n) per element
+    for each x:  ASK A DICTIONARY whether target - x has been seen   O(1) per element
+
+and the total falls from O(n^2) to O(n).
+
+WHY CHECKING BEFORE RECORDING IS THE WHOLE TRICK, FROM SCRATCH. It looks like a stylistic
+ordering. It is a correctness invariant:
+
+    AT THE MOMENT OF THE LOOKUP, THE DICTIONARY CONTAINS EXACTLY THE ELEMENTS STRICTLY BEFORE
+    THE CURRENT POSITION.
+
+Hold that invariant and two things follow for free. A hit is guaranteed to be a DIFFERENT element,
+so "you may not use the same element twice" needs no code at all. And the pair is found at the
+moment its SECOND member is reached, so every pair is discovered exactly once. Record first and
+the invariant breaks - the dictionary now includes the current element, and a number can complete
+itself.
+
+HOW THE VALUE TRAVELS: each number is written into the dictionary once, as a key, with its index
+as the value. It sits there unused unless some later number needs it, at which point the stored
+INDEX is what makes the answer possible - a set would have said "yes, it is here" and been unable
+to say where.
+
+THE GENERAL PATTERN, which is the real content of this entry:
+
+    "have I seen X?"                  -> a set
+    "how many times have I seen X?"   -> a dict of counts, or collections.Counter
+    "where did I see X?"              -> a dict of value -> index
+    "does the complement exist?"      -> a dict, checked BEFORE recording
+    "which items share a property?"   -> a dict of property -> list of items
+
+If you find yourself writing a loop inside a loop where the inner one is looking for an exact
+match, stop and ask which of those five you are really doing.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make an empty dictionary. It will map each number you have walked past to the position it
+       was at.
+
+    2. Walk the list once, keeping track of both the position and the number at it.
+
+    3. At each number, work out its COMPLEMENT - the value that would complete the pair, which is
+       the target minus this number.
+
+    4. CHECK THE DICTIONARY FOR THAT COMPLEMENT FIRST, before recording anything about the
+       current number. If it is there, you have found the pair: the answer is the position stored
+       against the complement, followed by the position you are standing on. Return immediately.
+
+    5. ONLY THEN record the current number and its position in the dictionary, so that later
+       numbers can find it.
+
+    6. If the walk finishes with no match, there is no pair.
+
+STEPS 4 AND 5 MUST BE IN THAT ORDER, and it is not a matter of taste. Because the dictionary
+holds only numbers from strictly before the current position, a match is always a different
+element - so the rule "you may not use the same element twice" is enforced by the shape of the
+loop rather than by a check. Do step 5 first and a number can pair with itself, which is wrong on
+786 of 6,000 random cases and on the problem's own second example.
+
+NO RECURSION, no sorting, no second pass. One walk, one dictionary.
+
+A NOTE ON WHAT NOT TO DO: sorting the list first and using two pointers is a genuinely good
+technique for this shape of problem - it is the standard approach for Three Sum - but here it
+destroys the original positions, which are what you have been asked to return. You would have to
+remember each number's original index before sorting, at which point you may as well have used
+the dictionary.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture someone on the door of a party with a clipboard, looking for two guests whose ticket
+numbers add up to a particular total.
+
+The plodding way is to wait until everyone has arrived and then compare every guest with every
+other guest. With three hundred guests that is forty-five thousand comparisons, and most of them
+are pointless.
+
+The clipboard way is to deal with each guest as they arrive. When someone turns up holding ticket
+number 7 and the total wanted is 9, the doorkeeper does one subtraction - 9 minus 7 is 2 - and
+asks a single question: HAS SOMEONE WITH TICKET 2 ALREADY COME IN? Not "who is inside", not "let
+me look through the list" - the clipboard is organised so that any ticket number can be found
+instantly. If ticket 2 is there, the pair is complete and the doorkeeper writes down where each
+of them was standing in the queue. If not, ticket 7 goes onto the clipboard and the next guest is
+called.
+
+The subtlety, and the thing that separates a working doorkeeper from a broken one, is the ORDER
+of those two actions. You look before you write. Write the arriving guest onto the clipboard
+first and then go looking for their partner, and if someone turns up whose ticket is exactly half
+the total, the doorkeeper finds THEM - the very person standing in front of them - and
+triumphantly announces a pair consisting of one guest counted twice.
+
+Looking first makes that impossible without any extra rule, because the clipboard only ever
+contains people who arrived EARLIER. The constraint enforces itself.
+
+And what the clipboard records matters too. If it only recorded that a ticket number had been
+seen, the doorkeeper could confirm the pair exists but not say where in the queue the first guest
+had been standing - which is what was asked for. So each entry stores both the ticket and the
+position.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def two_sum(nums, target):
+        seen = {}
+
+  The dictionary mapping A VALUE ALREADY WALKED PAST -> THE POSITION IT WAS AT. A plain set would
+  answer "have I seen it?" but not "where?", and the question asks for positions.
+
+        for i, x in enumerate(nums):
+
+  `enumerate` hands over the position and the value together, which is exactly what is needed -
+  the value for the arithmetic, the position for the answer.
+
+            if target - x in seen:
+                return [seen[target - x], i]
+
+  THE LOOKUP, AND IT MUST COME FIRST. `target - x` is the COMPLEMENT: the number that would
+  complete the pair. `in seen` is a hash lookup - constant time on average regardless of how many
+  entries have accumulated, which is the whole reason this beats the nested loop.
+
+  The returned pair is `[the earlier position, the current position]`. The earlier one comes out
+  of the dictionary; the current one is `i`.
+
+  BECAUSE THIS LINE RUNS BEFORE THE NEXT ONE, `seen` contains only elements from strictly before
+  `i` - so a hit is always a genuinely different element. That is why there is no `if i != j`
+  anywhere in this function, and why swapping these two lines is wrong on 786 of 6,000 cases,
+  including the problem's own second example.
+
+            seen[x] = i
+
+  Record the current number so that LATER numbers can find it. If `x` was already a key, this
+  overwrites the older index - harmless, because had that older occurrence completed a pair, the
+  function would already have returned when its partner arrived.
+
+        return []
+
+  The walk finished with nothing found. LeetCode guarantees a solution exists, so this line is
+  never reached there - but returning something defined beats falling off the end and returning
+  None.
+
+TOTAL: five lines, one dictionary, one pass. The nested-loop version is about the same length and
+5,000 times slower at the problem's limits.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL FIRST EXAMPLE. nums = [2, 7, 11, 15], target = 9.
+
+    seen = {}
+
+    i=0, x=2    complement = 9 - 2 = 7.   Is 7 in seen ({})?  No.
+                seen = {2: 0}
+
+    i=1, x=7    complement = 9 - 7 = 2.   Is 2 in seen ({2: 0})?  YES, at position 0.
+                return [0, 1]
+
+    The 11 and the 15 are never examined at all.
+
+    i | x | complement | in seen? | seen after   | action
+    --+---+------------+----------+--------------+------------------
+    0 | 2 |     7      |    no    | {2: 0}       | record and move on
+    1 | 7 |     2      |   YES    | -            | return [0, 1]
+
+CASE TWO - THE OFFICIAL SECOND EXAMPLE, which exists to catch trap 1. nums = [3, 2, 4], target = 6.
+
+    seen = {}
+
+    i=0, x=3    complement = 6 - 3 = 3.   Is 3 in seen ({})?  NO - the dictionary is still empty,
+                                          because we check BEFORE recording.
+                seen = {3: 0}
+
+    i=1, x=2    complement = 6 - 2 = 4.   Is 4 in seen ({3: 0})?  No.
+                seen = {3: 0, 2: 1}
+
+    i=2, x=4    complement = 6 - 4 = 2.   Is 2 in seen?  YES, at position 1.
+                return [1, 2]
+
+    NOW THE RECORD-FIRST VERSION ON THE SAME INPUT:
+
+    i=0, x=3    seen = {3: 0}   FIRST
+                complement = 3.  Is 3 in seen?  YES - the 3 just written, which is this very
+                element.  return [0, 0].
+
+    Two positions, both 0: one number used twice. That is the entire bug, exposed by the sample
+    input on the first iteration.
+
+CASE THREE - DUPLICATES AND ZEROS. nums = [0, 4, 3, 0], target = 0.
+
+    i=0, x=0    complement 0.  seen is empty.  No.       seen = {0: 0}
+    i=1, x=4    complement -4. Not present.              seen = {0: 0, 4: 1}
+    i=2, x=3    complement -3. Not present.              seen = {0: 0, 4: 1, 3: 2}
+    i=3, x=0    complement 0.  Is 0 in seen?  YES, at 0. return [0, 3]
+
+    Two different zeros, correctly paired - and note the overwrite `seen[0] = 3` never happens,
+    because the function returns first. Negative complements caused no trouble; it is only
+    arithmetic.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over n numbers, and each does one subtraction, one dictionary
+lookup and at most one dictionary insert - all constant on average. So O(n) TIME. The dictionary
+can grow to hold every number, so O(n) SPACE. That trade is the point: you spend memory to buy
+speed, turning 50 million comparisons into 10,000 at the problem's limits.
+
+Say "O(1) average" rather than "O(1)" for the lookups. Hash collisions make the worst case worse
+in theory, and the precision is noticed.
+
+THE #1 MISTAKE: recording before checking. Wrong on 786 of 6,000 random cases, fires exactly when
+some element is half the target (916 of 6,000 contained one), and IS CAUGHT BY THE OFFICIAL SECOND
+EXAMPLE. Learn the order as a sentence: CHECK FOR THE COMPLEMENT, THEN RECORD YOURSELF.
+
+THE #2: the two-pass version that builds the whole dictionary first. 547 of 6,000, needing an
+explicit "not the same index" guard that the one-pass version does not need at all - and it
+silently loses earlier duplicates, since a dict comprehension keeps the last index per value.
+
+THE #3, which is a performance bug and therefore easy to ship: using a set and then calling
+`nums.index()` to recover the position. Correct on all 6,000 runs, and quietly back to O(n^2)
+because `index` scans. If you need something back, use a dict.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the brute force is every pair, O(n^2); (2) the inner loop
+is really a search for an exact value, and a hash map turns that into a lookup; (3) I check for
+the complement BEFORE inserting, which both finds each pair once and stops an element pairing with
+itself; (4) O(n) time, O(n) space - I am trading memory for speed; (5) lookups are O(1) on average,
+not guaranteed. Point 3 is the one that shows you understand the invariant rather than the code.
+
+THE PATTERN, WHICH IS WHY THIS ENTRY EXISTS. Any time you write a loop inside a loop where the
+inner loop is looking for an exact match, a hash structure removes it. The five recurring shapes:
+
+    have I seen X?                  -> set
+    how many times?                 -> dict of counts, or collections.Counter
+    where did I see X?              -> dict of value -> index
+    does the complement exist?      -> dict, checked BEFORE recording
+    which things share a property?  -> dict of property -> list
+
+THE FAMILY. Two Sum II (sorted input - use two pointers instead, O(1) space, and knowing WHY the
+sortedness changes the answer is the point), Three Sum (sort, then fix one number and two-pointer
+the rest), Contains Duplicate and Contains Duplicate II (set, and set-within-a-window), Group
+Anagrams (dict keyed by the sorted string - and remember a list is not hashable, so use a tuple or
+a string), Longest Consecutive Sequence, Subarray Sum Equals K (a prefix-sum dict - the same
+complement idea applied to running totals, and the natural step up from this entry), Valid
+Anagram, First Unique Character, and Top K Frequent Elements.
+
+ONE-SENTENCE TAKEAWAY: when an inner loop is searching for an exact value, replace it with a hash
+map - and for complement problems, LOOK BEFORE YOU RECORD, so the map holds only earlier elements
+and nothing can pair with itself.""",
 ]
 
 _EX_P1W["Linked List Cycle"] = [
