@@ -131,7 +131,14 @@
       "Bash(PYTHONPATH=/tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/eca85c32-7517-43e8-a1be-d46032dba087/scratchpad python3 /tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/eca85c32-7517-43e8-a1be-d46032dba087/scratchpad/patch.py nb_bbt)",
       "Bash(PYTHONPATH=/tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/eca85c32-7517-43e8-a1be-d46032dba087/scratchpad python3 /tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/eca85c32-7517-43e8-a1be-d46032dba087/scratchpad/patch.py nb5)",
       "Bash(PYTHONPATH=/tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/eca85c32-7517-43e8-a1be-d46032dba087/scratchpad python3 /tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/eca85c32-7517-43e8-a1be-d46032dba087/scratchpad/patch.py nb6)",
-      "Bash(PYTHONPATH=$SP python3 *)"
+      "Bash(PYTHONPATH=$SP python3 *)",
+      "Bash(pkill -f m145.py)",
+      "Bash(sed -i 's/^run145\\(\\); run146\\(\\); run147\\(\\); run148\\(\\)$/import os\\\\nif os.environ.get\\(\"ONLY\"\\):\\\\n    globals\\(\\)[\"run\"+os.environ[\"ONLY\"]]\\(\\)\\\\nelse:\\\\n    run145\\(\\); run146\\(\\); run147\\(\\); run148\\(\\)/' m145.py)",
+      "Bash(ONLY=145 timeout 200 python3 m145.py)",
+      "Bash(ONLY=146 timeout 200 python3 m145.py)",
+      "Bash(ONLY=148 timeout 200 python3 m145.py)",
+      "Bash(ONLY=148 timeout 300 python3 /tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/27383e10-93b7-499c-bff0-9bfd230a74d2/scratchpad/m145.py)",
+      "Bash(ONLY=147 timeout 500 python3 m145.py)"
     ]
   }
 }

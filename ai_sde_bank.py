@@ -107599,125 +107599,824 @@ for _e in ENTRIES:
 _EX_P1R = {}
 
 _EX_P1R["Subarray Product Less Than K"] = [
-    """The counting identity that IS the problem.
-When the window [left..right] is valid, every subarray ENDING at right and
-starting anywhere in that window is also valid - because dropping elements from
-the front of a positive-number product only makes it smaller. There are
-right - left + 1 such subarrays, so add that to the count each step.
-nums = [10,5,2,6], k = 100. right=0: window [10], add 1. right=1: [10,5]
-product 50 < 100, add 2 ([5] and [10,5]). right=2: product 100 not < 100, so
-shrink - divide out 10 -> product 10, left=1; add 3 ([2],[5,2],[10,5,2]... no,
-[2],[5,2] and the window is [5,2] so add 2). right=3: product 60, add 3.
-Total 8.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why `count += right - left + 1` and not `count += 1`.
-Adding 1 per valid window counts only the maximal window at each step and
-misses every shorter subarray ending there. The window length IS the number of
-new subarrays introduced by extending to `right`, because each start position
-in the window gives a distinct valid subarray.
-This is the single most common error on this problem, and it undercounts
-dramatically - on [10,5,2,6] with k=100 it would give 4 instead of 8. If your
-answer is roughly the array length, this is why.""",
+A row of number cards is laid out on a table, and you are given a budget k. Count how
+many UNBROKEN STRETCHES of neighbouring cards multiply together to something strictly
+less than k.
 
-    """Why positivity is load-bearing.
-The shrink step divides the product, and the 'every suffix of a valid window is
-valid' argument both assume all numbers are POSITIVE. With a zero, the product
-collapses to 0 and the division breaks. With negatives, multiplying can DECREASE
-the product, so the window is no longer monotone and the sliding window is
-simply invalid.
-The constraint says nums[i] >= 1, which is what licenses the whole approach.
-Say that out loud - and note that if zeros were allowed you would split the
-array at each zero and solve the pieces independently.""",
+    cards:   10   5   2   6          budget k = 100
 
-    """The k <= 1 guard.
-Every product of positive integers is at least 1, so nothing can be strictly
-less than 1 - and with k = 0 or k = 1 the answer is 0. Without the guard, the
-inner while loop would try to shrink an already-empty window and either divide
-by an out-of-range index or loop forever.
-It is one line, and it is the case an interviewer supplies to see whether you
-thought about the domain rather than only the algorithm.""",
+Unbroken means you may not skip a card. [10, 2] is not allowed - the 5 sits between
+them. [5, 2] is allowed, because 5 and 2 are neighbours.
 
-    """Edge cases.
-Single element less than k -> 1. Single element >= k -> the window shrinks to
-empty, right - left + 1 = 0, so 0. Note the window legitimately becomes empty
-(left passes right), and the arithmetic still gives the right answer without a
-special case.
-All elements >= k -> 0.
-k very large -> every subarray counts, n*(n+1)/2 of them.
-The count can be large: 50,000 elements gives over a billion subarrays, which
-overflows 32-bit in other languages.""",
+Strictly less means EXACTLY 100 does not count. This sounds like a pedantic detail and
+section 4 shows it is the single most common way to get this problem wrong.
 
-    """Complexity and the family.
-O(n) time - left and right each advance at most n times in total, so the inner
-while is amortised O(1) - and O(1) space.
-The family is the VARIABLE-size sliding window: Longest Substring Without
-Repeating Characters, Minimum Size Subarray Sum, Longest Repeating Character
-Replacement, Minimum Window Substring, Fruit Into Baskets.
-The shape is always: expand right, shrink from left while invalid, record
-something. What varies is what 'invalid' means and what you record - and here
-the recording step (window length rather than 1) is the whole difficulty.""",
+Here are all the legal stretches, written out by hand:
+
+    [10]        = 10    yes        [10, 5]     = 50     yes
+    [5]         = 5     yes        [5, 2]      = 10     yes
+    [2]         = 2     yes        [2, 6]      = 12     yes
+    [6]         = 6     yes        [5, 2, 6]   = 60     yes
+                                   [10, 5, 2]  = 100    NO - not strictly less
+                                   [10, 5, 2, 6] = 600  no
+                                   [10, 2] - not a stretch, cards are not neighbours
+
+Count the yeses: 8. That is the answer, and it is the official first example of this
+problem.
+
+ONE MORE RULE THAT MATTERS ENORMOUSLY: every card holds a number that is 1 or bigger.
+No zeros, no negatives. Everything in this entry depends on that, and section 4 says
+what breaks without it.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE OBVIOUS METHOD, AND WHY IT IS SLOW. Try every stretch. Start at each card, keep
+multiplying rightwards, count the ones that stay under budget. With n cards there are
+about n * n / 2 stretches, so for n = 30,000 (this problem's limit) that is 450 million
+multiplications. Too slow - but hold onto it, because the fast method is that idea with
+one observation bolted on.
+
+THE OBSERVATION. All the numbers are 1 or bigger, so ADDING A CARD ON THE RIGHT NEVER
+MAKES THE PRODUCT SMALLER, and DROPPING A CARD FROM THE LEFT NEVER MAKES IT BIGGER.
+That is the whole engine. Product only grows one way and shrinks the other, which means
+you never have to go back and re-check something you have already passed.
+
+THE PICTURE: A CARDBOARD FRAME. Cut a rectangular hole in a piece of card and lay it
+over the row so it shows a run of neighbouring cards. Two rules:
+
+    slide the RIGHT edge one card further along - the product goes up
+    slide the LEFT edge one card inward     - the product goes down
+
+Now the procedure is physical. Push the right edge along one card at a time. Whenever
+the visible product reaches the budget, pull the left edge in until it drops below
+again. The frame always shows the LONGEST legal stretch that ends at the card the right
+edge is on.
+
+    10   5   2   6          k = 100
+    [10]                    product 10   legal
+    [10   5]                product 50   legal
+    [10   5   2]            product 100  TOO BIG - pull the left edge in
+        [5   2]             product 10   legal again
+        [5   2   6]         product 60   legal
+
+THE COUNTING STEP, WHICH IS THE ACTUAL DIFFICULTY. Each time you move the right edge,
+you do not want to recount everything - you want the stretches that are NEW, meaning
+the ones ENDING at the card the right edge just landed on. And here is the gift: if the
+whole visible frame is legal, then every stretch ending at the right edge and starting
+anywhere inside the frame is ALSO legal, because starting later means multiplying fewer
+numbers, and fewer numbers can only mean a smaller product.
+
+So the number of new stretches is just THE NUMBER OF CARDS CURRENTLY VISIBLE. No inner
+loop, no re-multiplying. That is why this runs in one pass.""",
+
+    """3. EVERY TERM, DEFINED
+
+SUBARRAY. A run of neighbouring entries, taken in order, nothing skipped. [5, 2] is a
+subarray of [10, 5, 2, 6]; [10, 2] is not. It is the same thing this entry has been
+calling a stretch.
+
+PRODUCT. All the numbers multiplied together. The product of [5, 2, 6] is 5 * 2 * 6 =
+60. The product of an EMPTY stretch is 1, not 0 - the same way the sum of nothing is 0,
+the product of nothing is 1, because 1 is the number that changes nothing when you
+multiply by it. The code relies on this: it starts `product = 1` before any card is in
+the frame.
+
+SLIDING WINDOW. The technique the cardboard frame acts out: two markers, one at each
+end of a run, both only ever moving forwards, with the run's summary (here a product)
+updated as they move instead of recomputed. It is called sliding because the frame
+never jumps or goes backwards.
+
+LEFT AND RIGHT. Two positions in the list. `right` is the card the frame's right edge
+sits on; `left` is the leftmost card still inside the frame. The frame holds the cards
+from `left` to `right` inclusive.
+
+WINDOW WIDTH. How many cards are visible: `right - left + 1`. The `+ 1` catches
+beginners every time, so check it on a case where you can count: if left = 1 and
+right = 3, the visible cards are at positions 1, 2 and 3 - that is three cards, and
+3 - 1 + 1 = 3. Correct. Without the `+ 1` you would say two.
+
+VALID / INVALID WINDOW. Valid means the visible product is strictly less than k.
+
+FLOOR DIVISION, `//`. Divide and throw away any fraction: 7 // 2 = 3. The code uses it
+to remove a card from the product. Because the product was built by multiplying those
+exact whole numbers, dividing one of them out is always exact and nothing is thrown
+away - `//` here is a choice to stay in whole numbers rather than an approximation.
+
+AMORTISED. A cost that is high on one particular step but small on average across the
+whole run. Section 10 uses it, and it is the reason a loop nested inside another loop
+can still be O(n) overall.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - `while product > k` INSTEAD OF `while product >= k`. The problem says STRICTLY
+less than k, so a product of exactly k is illegal and the window must still shrink. With
+`>` the code stops shrinking one step too early and counts stretches worth exactly k.
+
+    [10, 5, 2, 6]  k = 100     correct 8      `>` gives 9
+    [2, 3, 4]      k = 12      correct 4      `>` gives 5   (it counts [3, 4] = 12)
+    [1, 2, 3]      k = 6       correct 4      `>` gives 6
+    [5, 5]         k = 25      correct 2      `>` gives 3
+
+    MEASURED: wrong on 590 of 6,000 random arrays. That looks survivable until you
+    notice why the rate is low - it needs a stretch whose product lands on k EXACTLY,
+    which happened in only 614 of 6,000 random tests. THE PROBLEM'S OWN FIRST EXAMPLE
+    IS ONE OF THEM. [10, 5, 2, 6] with k = 100 contains [10, 5, 2] = 100 on purpose.
+    You will not sneak this past the sample input.
+
+TRAP 2 - DROPPING THE `if k <= 1: return 0` GUARD. It looks like defensive
+boilerplate. It is load-bearing, and what it prevents is a crash, not a wrong number.
+Every card is at least 1, so the smallest product any window can have is 1 (the empty
+window). If k is 1 or 0, NOTHING is strictly less than k, so the shrink loop's condition
+`product >= k` stays true forever. It keeps dividing, `left` walks past `right`, off the
+end of the list, and Python raises IndexError.
+
+    MEASURED: 188 crashes in 6,000 random tests - and all 188 of the failures were
+    crashes, never a wrong count. The rate is low only because k has to be 0 or 1.
+    THE OFFICIAL SECOND EXAMPLE IS nums = [1, 2, 3], k = 0. LeetCode put it there for
+    exactly this reason.
+
+TRAP 3 - COUNTING 1 PER WINDOW INSTEAD OF THE WINDOW WIDTH. Writing `count += 1` counts
+WINDOWS, and the question asks for SUBARRAYS. This is the conceptual heart of the
+problem rendered as a one-character mistake.
+
+    MEASURED: wrong on 4,304 of 6,000 - by far the most destructive of the four, and it
+    is wrong on the first official example too (it answers 4 instead of 8).
+
+TRAP 4 - ASSUMING IT SURVIVES ZEROS OR NEGATIVES. It does not, and this is worth saying
+out loud in an interview because it shows you know WHY the method works. A zero makes
+every product zero, so a window can be legal, then illegal, then legal again as the
+right edge moves - the frame would have to go backwards, and sliding windows cannot. A
+negative number does the same by flipping the product's sign. The constraint
+`1 <= nums[i]` is not decoration; it is the licence to use a window at all.
+
+WHAT IS NOT A TRAP, checked rather than assumed: using true division `/=` and floats
+instead of `//=`. It was wrong on 0 of 6,000 at these sizes. It is still the worse
+choice - float error is real once the products get large - but do not claim it produces
+wrong answers on small inputs, because it does not.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - START AT EVERY CARD AND WALK RIGHT:
+
+    count = 0
+    for i in range(len(nums)):          # every possible starting card
+        product = 1
+        for j in range(i, len(nums)):   # extend rightwards
+            product *= nums[j]
+            if product < k:
+                count += 1
+            else:
+                break                   # it will only get bigger - stop
+    return count
+
+IT IS CORRECT - it is the ground truth every number in this entry was checked against -
+and it is the definition acted out. The `break` is already using the key fact that
+products only grow, so it is not even naive in spirit. COST: in the worst case (all
+cards are 1 and k is large) nothing ever breaks, and you do about n * n / 2 = 450
+million multiplications at n = 30,000. Too slow.
+
+WHY THE UPGRADE IS POSSIBLE - THE PART WORTH SAYING SLOWLY. In the naive version, the
+inner loop for starting card i and the inner loop for starting card i + 1 redo almost
+the same multiplications. The sliding window removes that repetition by noticing
+something about where the inner loop STOPS.
+
+    for the stretch starting at card i, let stop(i) be the first card that busts the
+    budget. Then stop(i + 1) IS NEVER EARLIER THAN stop(i).
+
+Why? The stretch starting at i + 1 is the stretch starting at i with its first card
+removed, so its product is smaller or equal at every point, so it can only survive
+longer. Therefore the stopping point never moves backwards - and a marker that only ever
+moves forwards can be carried from one starting card to the next instead of being
+recomputed. That is the entire saving, and it is the reason `left` in the real code is
+declared OUTSIDE the loop and never reset.
+
+THE SECOND HALF OF THE UPGRADE - COUNT WIDTHS, NOT WINDOWS. Fixing the pointer movement
+alone does not finish the job; you still need every stretch counted exactly once. Anchor
+each stretch by its RIGHT END. Every subarray has exactly one right end, so if for each
+position `right` you count the legal stretches ending there, you count every subarray
+once and none twice. And because the frame [left..right] is legal, all of
+
+    [left..right], [left+1..right], ..., [right..right]
+
+are legal too - that is `right - left + 1` of them, available for free. No inner loop
+survives. One pass, one multiply, one count per card.
+
+HOW THE VALUE TRAVELS: `product` is never rebuilt from scratch. It is multiplied by the
+new card on the way in and floor-divided by the departing card on the way out, so it
+always holds the product of exactly what the frame shows. If you ever set it back to 1
+in the middle of the loop, you have thrown that away and you are back to the naive
+version wearing a disguise.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. If the budget k is 1 or smaller, answer 0 immediately and stop. Nothing built
+       from numbers of 1 or more can be strictly below 1. This also stops step 5 from
+       running off the end of the list.
+
+    2. Set up three things: a running product starting at 1 (the product of nothing),
+       a left edge starting at position 0, and a counter starting at 0.
+
+    3. Walk the right edge across the list, one card at a time. Everything below happens
+       once per card.
+
+    4. Multiply the new card into the running product.
+
+    5. While the running product has reached the budget - reached, not passed - remove
+       the leftmost card by dividing it out of the product, and move the left edge one
+       step right. Repeat until the product is back under budget.
+
+    6. Add the number of cards now visible, which is right - left + 1, to the counter.
+
+    7. When the right edge has passed the last card, the counter is the answer.
+
+NO RECURSION IS INVOLVED - two markers and a running number, walking forwards. But there
+is a loop inside a loop at step 5, and it is worth being clear about why that is not the
+disaster it looks like: the inner loop's only action is to move `left` forward, `left`
+never moves back, and it can never pass the end of the list. So across the ENTIRE run
+step 5 executes at most n times in total, no matter how it clusters. Section 10 puts a
+name to that.
+
+THE ONE STEP PEOPLE GET WRONG is step 6. The instinct is to add 1 - you found a legal
+window, tick. But the question counts subarrays, not windows, and a window of width 3
+contains 3 subarrays that end at the right edge. Add the width.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of a shop with a single long shelf and a strict manager. A trolley is pushed along
+the shelf from left to right, and there is a rule: the numbers on the items in the
+trolley, multiplied together, must stay UNDER the budget written on the manager's card.
+
+The trolley moves one item at a time. Each time it reaches a new item, that item goes
+in at the back. If the trolley is now over budget, items are taken out from the FRONT -
+the ones that went in earliest - one at a time until it is legal again. The trolley
+never reverses and never puts an item back once removed.
+
+Now the clever part, which is a piece of bookkeeping rather than a piece of shopping.
+Every time an item is added at the back, the shopper writes down HOW MANY ITEMS ARE IN
+THE TROLLEY. Not one tick for the trolley being legal - the actual count of items.
+
+Why that number? Because every legal selection that ENDS with the item just added is
+some run of items at the trolley's back: just the new item, or the last two, or the last
+three, all the way up to the whole trolley. There are exactly as many of those as there
+are items in the trolley. By writing down the trolley size at each step, the shopper
+counts every legal selection exactly once - each one gets counted at the moment its LAST
+item was added, and never again.
+
+At the end of the shelf, the total of everything written down is the answer. The trolley
+travelled the shelf once. Nothing was multiplied twice.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def num_subarray_product_less_than_k(nums, k):
+
+  `nums` is the row of cards, every entry at least 1. `k` is the budget.
+
+        if k <= 1:
+            return 0
+
+  The guard from trap 2. Every product is at least 1, so with a budget of 1 or 0 nothing
+  qualifies. This is also what stops the shrink loop below from running off the list -
+  it is a correctness guard disguised as a shortcut.
+
+        product = 1
+        left = 0
+        count = 0
+
+  The frame's running product, starting at 1 because the frame is empty and the product
+  of nothing is 1. The frame's left edge. The running answer.
+
+        for right in range(len(nums)):
+
+  The right edge sweeps every position once. `right` is the card just added, and the
+  card that every stretch counted on this pass will END on.
+
+            product *= nums[right]
+
+  The new card joins the frame. This is the only multiplication in the whole function.
+
+            while product >= k:
+
+  `>=`, not `>`, because a product of exactly k is not strictly less than k. `while`,
+  not `if`, because one new card can be big enough to need several cards removed - a
+  card worth 50 arriving at a budget of 100 may evict two or three small ones.
+
+                product //= nums[left]
+                left += 1
+
+  Remove the leftmost card from the frame: divide its value out of the running product,
+  then move the edge past it. These two lines must stay in this order - once `left` has
+  moved you no longer know which value to divide out.
+
+            count += right - left + 1
+
+  The counting step, and the whole idea of the problem. `right - left + 1` is how many
+  cards the frame shows, which is exactly how many legal stretches end at `right`. Note
+  it sits OUTSIDE the while loop but INSIDE the for loop: once per card, after shrinking.
+  If the frame emptied completely, `left` is `right + 1`, this evaluates to 0, and
+  nothing is added - which is right, because that card alone already busts the budget.
+
+        return count
+
+  Every subarray was counted exactly once, at the moment its right end was reached.""",
+
+    """9. TRACED ON REAL NUMBERS - nums = [10, 5, 2, 6], k = 100
+
+Start: product = 1, left = 0, count = 0.
+
+    right=0, card 10
+        product = 1 * 10 = 10
+        10 >= 100?  no - no shrinking
+        frame is [10], width = 0 - 0 + 1 = 1
+        count = 0 + 1 = 1                 new stretches: [10]
+
+    right=1, card 5
+        product = 10 * 5 = 50
+        50 >= 100?  no
+        frame is [10, 5], width = 1 - 0 + 1 = 2
+        count = 1 + 2 = 3                 new stretches: [5], [10, 5]
+
+    right=2, card 2
+        product = 50 * 2 = 100
+        100 >= 100?  YES - this is the exact-equality moment from trap 1
+            product //= nums[0] = 10  ->  product = 10,  left = 1
+        10 >= 100?  no - stop shrinking
+        frame is [5, 2], width = 2 - 1 + 1 = 2
+        count = 3 + 2 = 5                 new stretches: [2], [5, 2]
+
+    right=3, card 6
+        product = 10 * 6 = 60
+        60 >= 100?  no
+        frame is [5, 2, 6], width = 3 - 1 + 1 = 3
+        count = 5 + 3 = 8                 new stretches: [6], [2, 6], [5, 2, 6]
+
+    return 8
+
+THE VARIABLES AT A GLANCE, after each pass:
+
+    right | card | product | left | width | count
+    ------+------+---------+------+-------+------
+      0   |  10  |    10   |   0  |   1   |   1
+      1   |   5  |    50   |   0  |   2   |   3
+      2   |   2  |    10   |   1  |   2   |   5
+      3   |   6  |    60   |   1  |   3   |   8
+
+Collect the eight stretches the trace named: [10], [5], [10,5], [2], [5,2], [6], [2,6],
+[5,2,6]. That is the same list section 1 found by hand, and [10, 5, 2] = 100 is absent
+from both. Note what the `>=` did at right = 2: had it been `>`, no shrink would have
+happened, the width would have been 3 instead of 2, and the final answer would have
+been 9 - counting [10, 5, 2] as if 100 were less than 100.
+
+A SECOND, SHORTER TRACE - THE EMPTY-FRAME CASE. nums = [7], k = 5.
+
+    right=0: product = 7. 7 >= 5, so divide out nums[0] = 7 -> product = 1, left = 1.
+             1 >= 5? no. width = 0 - 1 + 1 = 0. count += 0.
+    return 0
+
+The frame closed completely and the width formula returned 0 all by itself. No special
+case was needed, and this is also the moment where a budget of 1 would have looped
+forever - which is what the guard at the top exists to prevent.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The `for` loop runs once per card: n steps. The `while` loop
+inside it looks like it multiplies that cost, and this is where people either state the
+right answer confidently or waffle. The honest argument in one line: THE WHILE LOOP'S
+ONLY EFFECT IS TO MOVE `left` FORWARD, AND `left` STARTS AT 0, NEVER MOVES BACK, AND
+NEVER PASSES n. So it can execute at most n times across the entire function, however
+those executions are distributed. Total work is n + n, which is O(n) time.
+
+That is what AMORTISED means: one particular pass through the for loop might shrink the
+window five times, but it can only do that by using up five of the n moves that `left`
+will ever have. Averaged over the run, each card costs a constant amount.
+
+SPACE: four variables regardless of input size - O(1). The list is not copied and not
+modified.
+
+THE #1 MISTAKE: `count += 1` instead of `count += right - left + 1`. Measured wrong on
+4,304 of 6,000 random arrays, and wrong on the first official example. It is the
+difference between counting windows and counting subarrays, and if you can say the
+sentence "every subarray has exactly one right end, so I anchor the count there" you
+have shown the interviewer the actual insight rather than a memorised line.
+
+THE #2 MISTAKE: `>` instead of `>=`. Only 590 of 6,000 - but the sample input is one of
+them, so it is caught immediately and cheaply. Read the word STRICTLY in the statement.
+
+WHAT TO SAY OUT LOUD. Three things, in this order: (1) products of positive numbers only
+grow rightwards, which is what licenses a window at all; (2) I count by right end, so the
+window width is the number of new subarrays; (3) it breaks if zeros or negatives are
+allowed, and here is what I would do instead - for a SUM version with negatives, prefix
+sums plus a hash map. That last remark is the one that separates a candidate who
+memorised the pattern from one who knows its boundary.
+
+THE FAMILY. Longest Substring Without Repeating Characters, Minimum Size Subarray Sum,
+Fruit Into Baskets, Longest Repeating Character Replacement. All are: expand right,
+shrink left while invalid, record something. What varies is what invalid means and what
+you record - and this problem is the one where the RECORDING step, not the shrinking
+step, is the difficulty.
+
+ONE-SENTENCE TAKEAWAY: slide a window whose product stays under k, and at every step add
+the window's WIDTH - because every subarray ending here starts somewhere inside it.""",
 ]
 
 _EX_P1R["Subsets II (with duplicates)"] = [
-    """The duplicate-skip rule, traced.
-nums = [1,2,2] after sorting.
-backtrack(0, []): record []. i=0 -> path [1].
-  backtrack(1, [1]): record [1]. i=1 -> [1,2].
-    backtrack(2, [1,2]): record [1,2]. i=2: i > start(2)? No, i == start -> do
-    NOT skip -> [1,2,2], record it.
-  back at depth 1, i=2: i > start(1) and nums[2] == nums[1] -> SKIP.
-i=1 at depth 0 -> [2] ... i=2 at depth 0: i > start(0) and nums[2]==nums[1] ->
-SKIP.
-Result [[], [1], [1,2], [1,2,2], [2], [2,2]] - six unique subsets, no
-duplicates generated and none filtered afterwards.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the condition is `i > start` and not `i > 0`.
-`i == start` means this is the FIRST time at this depth that we are choosing a
-value - so even if it equals the previous element, it is a legitimate new
-branch (it is the second '2' being appended to a path that already contains the
-first). `i > start` means we are choosing an alternative SIBLING at the same
-depth, and picking an equal value there would regenerate a branch already
-explored.
-Using `i > 0` instead skips the [1,2,2] case entirely and silently loses valid
-subsets. This one comparison is the whole problem.""",
+You have a handful of items. List every different way of choosing some of them -
+including choosing none, and including choosing all. That list is called the SUBSETS.
 
-    """Why sorting first is mandatory.
-The skip rule compares nums[i] to nums[i-1], which only identifies duplicates
-if equal values are ADJACENT. On unsorted [2,1,2] the two 2s are not neighbours,
-the rule never fires, and you generate [2],[2] as separate subsets.
-Sorting is O(n log n) and is dominated by the O(2^n) enumeration anyway, so it
-is free in practice. Any problem whose de-duplication compares neighbours needs
-this precondition - Combination Sum II and 3Sum have the identical
-requirement.""",
+With three different items, say a red, a green and a blue token, there are 8 ways:
 
-    """Why every node records, with no base case.
-`result.append(path[:])` sits at the TOP of backtrack, not inside an
-`if` - because every prefix along every branch is itself a valid subset,
-including the empty one. There is no 'we have reached the bottom' condition;
-the recursion ends naturally when the for loop has no more indices.
-Contrast Permutations, where only complete paths count and the record happens
-at a base case. Knowing which shape a problem has - record everywhere vs record
-at leaves - decides where that line goes.""",
+    {}          {red}          {green}          {blue}
+    {red,green} {red,blue}     {green,blue}     {red,green,blue}
 
-    """The copy, again.
-`path[:]` must copy. `path` is one list mutated throughout the search, so
-appending it directly stores a reference and every recorded subset ends up
-identical (and empty at the end). Same failure as Path Sum II and Palindrome
-Partitioning: the right NUMBER of answers, all wrong.
-Paired with `path.pop()` after the recursive call, this is the standard
-backtracking triple - choose, explore, un-choose - and forgetting either half
-produces a distinctive, recognisable bug.""",
+Now the twist that makes this problem its own problem: SOME ITEMS ARE IDENTICAL. Say you
+hold 1, 2 and 2 - two of the twos, and they are indistinguishable. Choosing "the first
+2" and choosing "the second 2" is the SAME choice, and must be listed only once.
 
-    """Complexity and the family.
-O(n * 2^n) time - up to 2^n subsets, each costing O(n) to copy - and O(n) space
-for the recursion and path, excluding the output. You cannot beat exponential
-when the output is exponential.
-The family: Subsets (no duplicates, so no skip rule), Combination Sum II (same
-sort-and-skip with a target), Permutations II (duplicates in permutations,
-which needs a used[] array rather than the index comparison because order
-matters), and Palindrome Partitioning.
-The sort-then-skip-equal-siblings idiom is the reusable piece; it appears
-verbatim in three of those.""",
+    nums = [1, 2, 2]
+
+    the answer:   []   [1]   [1,2]   [1,2,2]   [2]   [2,2]        6 in total
+
+Compare that with what you would get if you pretended the two 2s were different: 8
+subsets, of which [2] appears twice and [1,2] appears twice. Those two extra copies are
+the entire difficulty of this problem. Everything below is about killing them AT BIRTH -
+never generating them - rather than generating them and filtering afterwards.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE OBVIOUS METHOD FIRST. Generate all subsets as if every item were unique, then throw
+away repeats by dumping them into a set. It works. It is also the answer that gets you
+the follow-up "and can you avoid generating the duplicates in the first place?" - so
+know it, present it, then improve it.
+
+THE PICTURE: A DECISION TREE. Building a subset is a sequence of yes/no choices made
+left to right. Walk the items in order and, for each one, decide whether to take it.
+
+    nums = [1, 2, 2]                  start with nothing: []
+                        /                                        \\
+              take the 1                                    skip the 1
+                 [1]                                            []
+              /       \\                                      /       \\
+        take 2a        skip 2a                          take 2a       skip 2a
+        [1,2]           [1]                              [2]            []
+        /    \\         /    \\                          /    \\        /    \\
+   [1,2,2]  [1,2]   [1,2]   [1]                   [2,2]   [2]      [2]     []
+
+Read the bottom row and the collision is visible: [1,2] appears twice, [2] appears twice.
+Look at WHERE the two copies come from. In each pair, one branch took the first 2 and the
+other took the second 2 - the same multiset of values, reached by two different routes.
+
+THE RULE THAT KILLS IT. Sort first, so identical values sit next to each other. Then, at
+any single decision point, ALLOW EACH DISTINCT VALUE TO BE PICKED ONLY ONCE. If you are
+choosing which item to add next and you have already tried a 2 at this same point, do not
+try the other 2 - it leads to an identical subtree.
+
+Said the way that actually makes it click: WHEN THERE ARE TWO 2s, THE ONLY SUBSETS THAT
+DIFFER ARE THE ONES WITH ZERO 2s, ONE 2, AND TWO 2s. There is no such thing as "the
+subset with the second 2 but not the first". So force the twos to be used in order - you
+may only take a second 2 if you have just taken the first. That single restriction turns
+8 branches into 6.""",
+
+    """3. EVERY TERM, DEFINED
+
+SUBSET. Any selection of items from the collection, in the collection's order, including
+the empty selection and the whole thing. Note this is NOT the same as a subarray from the
+sliding-window problems: a subset may skip items freely, a subarray may not.
+
+BACKTRACKING. A way of exploring all possibilities by building a partial answer one
+choice at a time, and UNDOING the last choice when you return, so the next possibility
+starts from a clean state. The undoing is what the word backtrack means - you retrace
+your step.
+
+RECURSION, AND WHAT IT IS ACTUALLY DOING HERE. A function that calls itself on a smaller
+version of the problem. `backtrack(start, path)` means: "the subset so far is `path`, and
+you may only add items from position `start` onwards - now find everything reachable from
+here." Calling `backtrack(i + 1, path)` after taking the item at `i` is the sentence
+"I have taken this one, now solve the smaller problem to its right."
+
+THE CALL STACK. Python keeps a pile of paused function calls. Each recursive call is set
+down on top of the pile and the one below it waits, frozen at exactly the line it was on,
+with its own values of `start` and `i`. When the top call finishes, it is thrown away and
+the one beneath resumes on the very next line - which here is `path.pop()`. That is the
+mechanism by which the undo happens at the right moment.
+
+BASE CASE. The condition that stops the recursion. This function does not have an
+explicit one, which surprises people. It stops because the `for` loop runs from `start`
+to the end of the list - once `start` reaches the end, the loop body never executes and
+the call returns immediately. The stopping is built into the loop bounds.
+
+PATH. The subset being built right now. It is ONE list object, shared by every call, and
+mutated as we go - which is why the code has to copy it before recording it.
+
+DEPTH / SAME DEPTH. How many items are currently in `path`. Two branches at "the same
+depth" are two choices for the SAME slot in the subset. `start` identifies the depth's
+starting position, which is why the duplicate test compares `i` against `start`.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - `if i > 0` INSTEAD OF `if i > start`. This is the mistake this problem exists to
+catch, and it is a single character. `i > 0` says "never take a value equal to the one
+before it, anywhere". That does not just skip duplicate SUBSETS, it makes it impossible
+to ever hold two copies of a value at once.
+
+    [1, 1]      correct  []  [1]  [1,1]           `i > 0` gives  []  [1]
+    [1, 1, 2]   correct  []  [1]  [1,1]  [1,1,2]  [1,2]  [2]
+                `i > 0` gives  []  [1]  [1,2]  [2]        - [1,1] and [1,1,2] vanish
+
+    MEASURED: wrong on 4,087 of 6,000 random arrays. Note WHAT KIND of wrong it is: it
+    never produces a duplicate - 0 of 6,000 - it silently DROPS valid answers. A wrong
+    answer that looks tidy is more dangerous than one that looks broken.
+
+    THE DISTINCTION IN ONE LINE: `i > start` means "I have already tried this value in
+    THIS slot"; `i > 0` means "this value appeared earlier in the list". Only the first
+    is what you want, because taking the same value at a DEEPER slot is exactly how you
+    legitimately collect two of them.
+
+TRAP 2 - FORGETTING TO SORT. The duplicate test only compares `nums[i]` with its
+immediate neighbour `nums[i-1]`, so it only sees duplicates that are ADJACENT. Unsorted,
+[2, 1, 2] has its two 2s separated and the test never fires.
+
+    [2, 1, 2] unsorted produces  []  [2]  [2,1]  [2,1,2]  [2,2]  [1]  [1,2]  [2]
+                                     [2] twice, and [2,1] instead of [1,2]
+
+    MEASURED: wrong on 4,128 of 6,000, producing actual duplicate subsets in 2,727 of
+    them. The sort is not a tidy-up; it is what makes the one-neighbour test sufficient.
+
+TRAP 3 - `result.append(path)` INSTEAD OF `result.append(path[:])`. `path` is a single
+list that keeps being mutated. Appending it stores a REFERENCE, so every entry in the
+result is the same object, and when the recursion finally unwinds and empties `path`,
+every stored entry is empty too.
+
+    [1, 2, 2] with the missing copy:   [[], [], [], [], [], []]
+
+    MEASURED: wrong on 6,000 of 6,000. It fails on every input with at least one item,
+    including the sample. `path[:]` takes a snapshot - a fresh list with the same
+    contents - and that snapshot is what gets stored.
+
+WHAT IS NOT A TRAP: recording BEFORE the loop rather than at some base case. Appending
+`path[:]` at the top of every call is correct precisely because every partial path IS
+itself a valid subset. There is no "am I finished" test to write.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - GENERATE EVERYTHING, DEDUPE AFTERWARDS:
+
+    def subsets_with_dup(nums):
+        nums.sort()                       # so that equal subsets look identical
+        seen = set()
+        for mask in range(1 << len(nums)):        # every yes/no pattern, as bits
+            pick = tuple(nums[i] for i in range(len(nums)) if mask & (1 << i))
+            seen.add(pick)
+        return [list(t) for t in seen]
+
+IT IS CORRECT and it is genuinely worth showing - it is how the ground truth for this
+entry was computed. `1 << n` is 2 to the power n, and each number from 0 to 2^n - 1 is
+read as a pattern of yes/no bits, one per item. COST: 2^n subsets built, each up to n
+long, so about n * 2^n work, plus the memory to hold every duplicate before discarding
+it. At n = 10 (this problem's limit) that is 1,024 subsets - perfectly fine, honestly.
+The reason to improve it is not the runtime; it is that the interviewer wants to see you
+control the search.
+
+THE UPGRADE, AND WHY THE TRICK IS SAFE. Sort, then walk a decision tree that refuses to
+try the same VALUE twice in the same SLOT. The refusal is this one line:
+
+    if i > start and nums[i] == nums[i-1]:
+        continue
+
+Read it as two conditions doing two different jobs:
+
+    nums[i] == nums[i-1]   this candidate is the same value as the previous candidate.
+                           Only meaningful because sorting made equal values adjacent.
+
+    i > start              ... and the previous candidate was ALSO offered in this same
+                           slot. When i == start, `nums[i-1]` is the value we took to get
+                           HERE, one level up - a different slot entirely - so comparing
+                           against it would be meaningless, and skipping would be wrong.
+
+HOW THE VALUE TRAVELS - this is the part worth being able to say out loud. When
+`backtrack(i + 1, path)` is called after taking a 2 at position i, the new call has
+`start = i + 1`. If position i + 1 also holds a 2, then inside that call `i == start` on
+the first iteration, the skip does NOT fire, and the second 2 is taken. That is precisely
+how [2, 2] is generated. The rule is not "never take two equal values" - it is "take
+equal values only in an unbroken run, left to right". `start` is what carries that
+permission down the tree.
+
+The saving is real, not cosmetic: on [1, 2, 2] the naive tree has 8 leaves, this one
+visits 6 nodes and produces 6 subsets, with no set and no filtering pass.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Sort the list, so equal values sit next to each other.
+
+    2. Make an empty results list, and an empty list called `path` to hold the subset
+       being built.
+
+    3. Define a helper that takes one number, `start` - the earliest position it is
+       still allowed to choose from - and does the following.
+
+    4. First, record a COPY of the current `path` as a finished subset. Every partial
+       selection is itself a valid subset, so there is no waiting and no completion test.
+
+    5. Then loop over the positions from `start` to the end of the list. For each one:
+
+       a. If this is not the first candidate in this loop, and its value equals the value
+          at the position just before it, skip it - that value has already been tried in
+          this same slot, and trying it again would rebuild an identical subtree.
+
+       b. Otherwise, add the value to `path`.
+
+       c. Call the helper again with `start` set to one past the position just taken.
+          That explores everything that can follow this choice.
+
+       d. Remove the value from the end of `path`, putting things back exactly as they
+          were before step b, so the next candidate starts clean.
+
+    6. Kick it all off by calling the helper with `start = 0`, then return the results.
+
+THE RECURSION, SPELLED OUT. Step 5c pauses the current loop mid-iteration and starts a
+fresh copy of the helper with a bigger `start`. That copy runs its own loop, possibly
+pausing for its own children, and when it finally returns, the paused loop resumes at
+step 5d with all of its own variables exactly as it left them. The pile of paused calls
+is the call stack, and its height is at most the number of items. What stops it growing
+forever is step 5's loop bounds: when `start` reaches the end of the list, there are no
+positions left, the loop body never runs, and the call returns immediately.
+
+THE STEP PEOPLE GET WRONG is 4 - recording `path` itself instead of a copy - and 5a's
+first half, "if this is not the first candidate in THIS loop". Not "in the list". In
+this loop.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a tray of chocolates laid out in a row and sorted so that identical ones sit
+together: one caramel, then two identical hazelnuts. You want to write down every
+different selection a guest could take.
+
+You do it by walking down the row with a notepad. At every point you first write down
+what is currently in your hand - even if that is nothing, because "take nothing" is a
+legitimate selection. Then you consider each remaining chocolate to your right in turn:
+pick it up, walk on from there, and when you come back, put it down again so your hand is
+exactly as it was.
+
+The duplicate rule is a small piece of table manners. When you are standing at one spot
+deciding what to pick up next, and you have already tried a hazelnut from this spot, you
+do not try the other hazelnut - it is the same chocolate as far as anyone can tell, and
+everything that follows would be identical to what you just did.
+
+But - and this is the whole subtlety - if you have JUST picked up a hazelnut and walked
+one step to your right, you are now at a NEW spot, and the hazelnut sitting there is the
+first thing you are considering from this new spot. So you may take it. That is how you
+end up holding two hazelnuts.
+
+The rule is not "one hazelnut ever". It is "one hazelnut per decision", and taking two in
+a row is two decisions made at two different places. At the end the notepad holds every
+distinct selection, each written exactly once, and nothing was ever crossed out.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def subsets_with_dup(nums):
+        nums.sort()
+
+  Sorting is what makes equal values adjacent, which is what makes the one-neighbour
+  test on the next page sufficient. Note this sorts the CALLER'S list in place; if that
+  matters, write `nums = sorted(nums)` instead and pay O(n) space for the copy.
+
+        result = []
+
+  Where finished subsets are collected.
+
+        def backtrack(start, path):
+
+  The helper. `start` is the earliest position still allowed. `path` is the subset built
+  so far - one shared list, mutated as we go.
+
+            result.append(path[:])
+
+  Record the current subset. `path[:]` is a SNAPSHOT - a new list with the same contents.
+  Storing `path` itself would store a reference to a list that is about to change again,
+  and section 4 shows exactly how that ends. The record happens FIRST, with no condition,
+  because every partial path is already a valid subset.
+
+            for i in range(start, len(nums)):
+
+  Consider each remaining item as the next one to add. Starting at `start`, never at 0 -
+  that is what stops the same subset being built in a different order.
+
+                if i > start and nums[i] == nums[i-1]:
+                    continue
+
+  The duplicate guard. `nums[i] == nums[i-1]`: same value as the previous candidate.
+  `i > start`: and that previous candidate was offered in THIS loop, at this same depth.
+  When `i == start` the comparison would reach back past the start of this loop into a
+  decision made one level up, which is a different slot - so the guard deliberately does
+  not fire there, and that exemption is what allows [2, 2] to exist.
+
+                path.append(nums[i])
+
+  Take it.
+
+                backtrack(i + 1, path)
+
+  Explore everything that can follow. `i + 1`, so each item is used at most once per
+  subset, and so the recursion always moves rightwards and therefore always terminates.
+
+                path.pop()
+
+  Undo. `path` is back to what it was before `append`, ready for the next candidate. This
+  line is the word backtracking made literal, and it runs after the recursive call has
+  fully finished and been discarded from the call stack.
+
+        backtrack(0, [])
+        return result
+
+  Start with nothing chosen and everything allowed.""",
+
+    """9. TRACED ON REAL NUMBERS - nums = [1, 2, 2]
+
+Already sorted. Writing `2a` and `2b` for the two 2s only so you can see which is which -
+the code cannot tell them apart, and that is the point.
+
+    backtrack(start=0, path=[])
+        record []                                    result: [[]]
+        i=0: value 1. i > start? no (0 > 0 is false). Take it.  path=[1]
+            backtrack(start=1, path=[1])
+                record [1]                           result: [[], [1]]
+                i=1: value 2a. i > start? no (1 > 1). Take it.  path=[1,2]
+                    backtrack(start=2, path=[1,2])
+                        record [1,2]                 result: [[], [1], [1,2]]
+                        i=2: value 2b. i > start? no (2 > 2). Take it. path=[1,2,2]
+                            backtrack(start=3, path=[1,2,2])
+                                record [1,2,2]       result: ..., [1,2,2]
+                                loop range(3,3) is empty - return
+                        pop -> path=[1,2]
+                        loop ends - return
+                pop -> path=[1]
+                i=2: value 2b. i > start? YES (2 > 1). nums[2]==nums[1]? 2==2 YES.
+                     SKIP.  <-- this is the line doing the work
+                loop ends - return
+            pop -> path=[]
+        i=1: value 2a. i > start? YES (1 > 0). nums[1]==nums[0]? 2==1 no. Take it.
+             path=[2]
+            backtrack(start=2, path=[2])
+                record [2]                           result: ..., [2]
+                i=2: value 2b. i > start? no (2 > 2). Take it. path=[2,2]
+                    backtrack(start=3, path=[2,2])
+                        record [2,2]                 result: ..., [2,2]
+                        return
+                pop -> path=[2]
+                return
+            pop -> path=[]
+        i=2: value 2b. i > start? YES (2 > 0). nums[2]==nums[1]? YES. SKIP.
+        loop ends - return
+
+    FINAL: [], [1], [1,2], [1,2,2], [2], [2,2]        6 subsets
+
+THE TWO SKIPS ARE THE WHOLE PROBLEM. Both fired at `i=2` on value 2b, at depths where a
+2 had already been offered. Meanwhile 2b was TAKEN twice - inside `backtrack(2, [1,2])`
+and inside `backtrack(2, [2])` - both times with `i == start`, meaning it was the first
+candidate at a fresh depth. Same value, same position in the list, skipped in one context
+and taken in another. That is `i > start` earning its keep, and it is why `i > 0` (which
+would have skipped all four) destroys the answer.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. In the worst case - all values distinct - there are 2^n subsets, and
+each one is copied into the result at a cost of up to n. So O(n * 2^n) time. You cannot
+do better in the big-O sense, because just WRITING DOWN the answer is that big; the
+output is the bottleneck. Duplicates only help: [2,2,2,2] has 5 subsets rather than 16,
+and the skip rule prunes those branches before they are explored rather than after.
+
+SPACE: the call stack is at most n deep, and `path` is at most n long, so O(n) of working
+space on top of the output. The sort costs O(n log n), which disappears next to 2^n.
+
+THE #1 MISTAKE: `i > 0` instead of `i > start`. Measured wrong on 4,087 of 6,000, and
+wrong in the quiet way - it never produces a duplicate, it just silently loses every
+subset that needed two copies of a value. If you can only remember one sentence from this
+entry, make it: `start` MARKS THE SLOT, SO `i > start` ASKS "HAVE I ALREADY TRIED THIS
+VALUE IN THIS SLOT?"
+
+THE #2 MISTAKE: forgetting `nums.sort()` - 4,128 of 6,000, and it produces visible
+duplicates so at least it fails loudly.
+
+THE #3, WHICH IS NOT REALLY ABOUT THIS PROBLEM: `result.append(path)` without the copy.
+100% failure, and it will bite you again in Permutations, Combination Sum and N-Queens.
+Learn it once here: when you store a list you are still mutating, store a snapshot.
+
+WHAT TO SAY OUT LOUD. Offer the generate-and-dedupe version first, in one sentence, so
+the interviewer knows you have a working answer. Then say: "but I would rather not
+generate them at all - if I sort first, duplicates are adjacent, and I can skip a value
+that has already been tried at this depth." Then write it. If they ask why `i > start`
+and not `i > 0`, answer with [1,1]: you must still be able to produce [1,1].
+
+THE FAMILY. Subsets (this without the skip line), Permutations II (same skip idea, but
+with a `used` array because permutations may pick from anywhere), Combination Sum II
+(same skip line, plus a target), and N-Queens (same append/recurse/pop skeleton). The
+transferable shape is: sort, then at each decision point allow each distinct value once.
+
+ONE-SENTENCE TAKEAWAY: sort so duplicates sit together, then refuse to try the same value
+twice IN THE SAME SLOT - `i > start`, not `i > 0` - and every subset is built exactly
+once.""",
 ]
 
 _EX_P1R["'Why this company / why you?'"] = [
@@ -107783,126 +108482,862 @@ paragraph.""",
 ]
 
 _EX_P1R["Surrounded Regions"] = [
-    """The inversion that makes it easy.
-Finding regions that ARE surrounded is awkward - you would have to explore each
-region and prove it never touches an edge. Instead find the regions that are
-NOT surrounded: any 'O' reachable from a border 'O' survives. Everything else
-is captured.
-So: DFS inward from every border 'O', marking survivors; then sweep the whole
-board turning unmarked 'O' into 'X' and marked cells back to 'O'.
-Reframing 'find the enclosed' as 'find the escapees, then flip the rest' is the
-whole insight, and it turns an O(regions x area) search into two linear
-passes.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The trace, on a board where one region survives.
-board = X X X X / X O O X / X X O X / X O X X
-Border scan: only the 'O' at row 3, column 1 is on an edge. DFS from it marks
-just that cell 'S' - its neighbours are all 'X'.
-Final sweep: the middle region (row1 col1-2, row2 col2) is unmarked -> becomes
-'X'. The 'S' becomes 'O' again.
-Result X X X X / X X X X / X X X X / X O X X.
-Note the middle region touched no border even though it was three cells and
-adjacent to the edge column - adjacency is not connectivity.""",
+You are given a rectangular grid whose squares hold either 'X' or 'O'. Think of the 'X's
+as walls and the 'O's as open ground. Any patch of open ground that is COMPLETELY WALLED
+IN gets filled with wall. Any patch that touches the outside edge of the grid escapes and
+stays open.
 
-    """Why a THIRD marker is needed.
-You cannot mark survivors as 'O' (they already are) or as 'X' (that is the
-capture value). A temporary sentinel - 'S', or '#' - distinguishes 'known
-survivor' from 'not yet examined', and the final pass translates it back.
-Two passes over the board then suffice: one to mark, one to flip. Without the
-sentinel you would need a separate boolean grid, which is the same idea with
-more memory - correct, and worth mentioning as the non-mutating alternative if
-the interviewer objects to writing sentinel values into the input.""",
+    before                  after
+    X X X X                 X X X X
+    X O O X                 X X X X          the middle patch was fenced in - captured
+    X X O X                 X X X X
+    X O X X                 X O X X          this one sits on the bottom edge - it lives
 
-    """Why only the BORDER is seeded.
-An 'O' survives exactly when it is connected to the outside, and the only way
-to reach the outside is through a border cell. So seeding every border 'O'
-captures all escape routes in one sweep - there is no need to try interior
-cells at all.
-The border loop must cover all four edges: both full columns and both full
-rows. Missing one edge (commonly the bottom row or the last column) leaves real
-survivors unmarked, and they get wrongly captured - a bug that only appears on
-boards where the only escape is through the forgotten edge.""",
+Two 'O's belong to the same patch if you can walk between them moving only UP, DOWN,
+LEFT or RIGHT. Diagonals do not count - two 'O's touching only at a corner are in
+different patches. This is exactly the rule you would use for water leaking through a
+grid of pipes: leaks go along the pipes, not across corners.
 
-    """Edge cases.
-A 1x1 board: the single cell is on the border, so an 'O' survives.
-Any board with fewer than 3 rows or columns: EVERY cell is on a border, so
-nothing can ever be captured - a useful sanity check and a legitimate early
-return.
-All 'X' -> nothing to do. All 'O' -> everything is border-connected, nothing
-captured.
-Recursion depth: a 200x200 board of all 'O' gives a DFS 40,000 frames deep,
-which exceeds Python's limit - so the iterative stack or BFS version is not
-optional at real sizes. That is the standard follow-up.""",
+TOUCHING THE EDGE means sitting in the top row, the bottom row, the leftmost column or
+the rightmost column. A patch that reaches any of those has a way out, so it is not
+surrounded.
 
-    """Complexity and the family.
-O(rows * cols) time - each cell is visited a constant number of times across
-the two passes - and O(rows * cols) space for the recursion stack in the worst
-case.
-The family: Number of Islands (plain flood fill), Pacific Atlantic Water Flow
-(the same border-seeded inward search, run twice from two different borders and
-intersected), Number of Enclaves and Number of Closed Islands (literally this
-problem with a different output), and Flood Fill.
-The reusable idea: when a property is defined by REACHING the boundary, search
-inward from the boundary rather than outward from each candidate.""",
+The board is modified IN PLACE - you change the grid you were given rather than building
+and returning a new one.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE OBVIOUS METHOD, AND WHY IT IS AWKWARD. Go through the grid; every time you meet an
+'O' you have not seen, explore its whole patch, remember every square in it, and check
+whether ANY of them touched the edge. If none did, go back and fill them all in. That
+works - it is how the ground truth for this entry was computed - but notice how much
+bookkeeping it needs: a list of squares per patch, a flag, and a second pass over the
+patch to fill it. You are proving a NEGATIVE ("this patch never touches the edge"), and
+proving a negative always means examining everything.
+
+THE INVERSION THAT MAKES IT EASY. Turn the question inside out.
+
+    hard question:  which patches are surrounded?     - a negative, patch by patch
+    easy question:  which patches ESCAPE?             - a positive, and there is one
+                                                        obvious place to start looking
+
+A patch escapes if and only if it contains at least one edge square. So instead of
+starting at each patch and asking whether it reaches the edge, START AT THE EDGE and see
+what it reaches. Everything the edge can reach survives; everything else - by definition -
+is surrounded. No flags, no per-patch lists.
+
+THE PICTURE: FLOOD FROM THE COAST. Picture the grid as land, with 'X' as high rock and
+'O' as low ground. Now let the sea rise around the outside. Water enters at every low
+square on the border and spreads inward through connected low ground. When it stops:
+
+    wet 'O'  = connected to the outside = survives
+    dry 'O'  = no path to the outside   = surrounded, so fill it in
+
+    X X X X          flood from every border square that is 'O'
+    X O O X          the only border 'O' is the one at the bottom left
+    X X O X          it has no 'O' neighbour above or beside it, so the flood ends there
+    X O X X          <- this one is wet.   The three in the middle stayed dry.
+
+THE ONE PROBLEM THIS CREATES, AND ITS FIX. You now need to tell wet 'O' from dry 'O' at
+the end - but they are both spelled 'O'. So while flooding, write a THIRD character into
+the wet squares. This entry uses 'S' for survives. Then one final sweep translates the
+board back into the two letters the answer is allowed to use: every remaining 'O' was
+dry, so it becomes 'X'; every 'S' was wet, so it goes back to 'O'.
+
+That temporary third letter is the whole technique, and section 4 measures what happens
+if you skip it.""",
+
+    """3. EVERY TERM, DEFINED
+
+GRID / BOARD / CELL. The board is a list of rows; each row is a list of single
+characters. `board[r][c]` is the cell in row r, column c. Row 0 is the top row and
+column 0 is the leftmost column, so `board[0][0]` is the top-left corner.
+
+NEIGHBOUR (4-DIRECTIONAL). The cells directly above, below, left and right:
+`(r-1, c)`, `(r+1, c)`, `(r, c-1)`, `(r, c+1)`. Not the diagonals. When a problem says
+"connected" without qualification in a grid, this is almost always what it means, and
+asking the interviewer to confirm costs you nothing.
+
+REGION / PATCH / CONNECTED COMPONENT. A group of 'O' cells you can walk between using
+only neighbour steps. Three names for the same thing; "connected component" is the term
+a textbook would use.
+
+BORDER CELL. Any cell in row 0, the last row, column 0 or the last column. In a 1-row or
+1-column board every cell is a border cell, which is a case worth checking mentally.
+
+DFS - DEPTH-FIRST SEARCH. A way of visiting everything reachable from a starting point:
+go as deep as you can down one path, and only when it dead-ends do you back up and try
+another. Here it means: from this cell, step to a neighbour, and from there immediately
+step to one of ITS neighbours, and so on until you hit a wall or the edge of the board.
+
+RECURSION, AND WHAT IT IS DOING HERE. `mark(r, c)` calls `mark` on each of its four
+neighbours. Each of those calls is a fresh, paused copy of the function with its own r
+and c, stacked on top of the current one. Python keeps that pile - the CALL STACK - and
+resumes each paused call only when the one above it finishes. So `mark(r+1, c)` finishes
+its ENTIRE subtree of exploration before `mark(r-1, c)` even starts.
+
+WHAT STOPS IT. Two things, both in the first `if`. Stepping off the board stops it, and
+landing on a cell that is not 'O' stops it. The second is the important one: the very
+first thing a surviving cell does is turn itself into 'S', so if the search ever comes
+back to it, it is no longer 'O' and the call returns at once. That is what keeps the four
+mutual calls from bouncing between two neighbouring cells forever - see trap 4.
+
+IN PLACE. The function edits the board it was handed rather than making a new one, so the
+caller sees the change. The 'S' marks are temporary graffiti on that same board, cleaned
+up before returning.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - FLOODING THE BORDER REGIONS TO 'X' DIRECTLY, WITH NO 'S'. It feels efficient:
+why use a temporary letter when you can just fill as you go? Because you would be filling
+in the SURVIVORS. The cells you reach from the border are the ones that must be LEFT
+ALONE. It is the answer, exactly inverted.
+
+    X X X X   flooding border-connected O to X gives   X X X X
+    X O O X                                            X O O X   the surrounded patch is
+    X X O X                                            X X O X   untouched...
+    X O X X                                            X X X X   ...and the survivor died
+
+    MEASURED: wrong on 3,744 of 4,000 random boards - the worst of the four, and it is
+    wrong on the official example.
+
+TRAP 2 - FORGETTING TO TURN 'S' BACK INTO 'O'. The flood is right, the capture is right,
+and then the function returns a board with a letter on it that the problem never
+mentioned. This is the mistake of someone who tested by eye on a board with no survivors.
+
+    MEASURED: wrong on 3,737 of 4,000. It fails on any board that has a surviving 'O' at
+    all, which is most of them, including the official example.
+
+TRAP 3 - SEEDING ONLY THE FOUR CORNERS. A quicker-looking way to "start from the edge".
+It is wrong whenever a patch touches an edge somewhere in the middle of that edge without
+reaching a corner - which is common.
+
+    MEASURED: wrong on 1,641 of 4,000. You must seed EVERY cell of all four sides:
+    both full columns and both full rows.
+
+TRAP 4 - WRITING THE GUARD AS `if board[r][c] == 'X': return` INSTEAD OF
+`if board[r][c] != 'O': return`. These look interchangeable - the board only holds 'X'
+and 'O', after all. But by the time the search is running, the board also holds 'S', and
+`== 'X'` does not stop on 'S'. So the search walks back onto a cell it already marked,
+re-marks it, and calls its neighbours again, which call back, forever.
+
+    MEASURED: the `== 'X'` version FAILED TO TERMINATE on 207 of 300 boards (cut off
+    after 20,000 steps). The `!= 'O'` form is doing two jobs at once - refusing walls AND
+    refusing already-visited cells - and only the second one is obvious in hindsight.
+
+TRAP 5 - RECURSION DEPTH, and this one is real rather than theoretical. The DFS goes as
+deep as the region is large, and Python's default recursion limit is about 1,000 frames.
+
+    MEASURED on all-'O' square boards: 30 x 30 (900 cells) completes; 32 x 32 (1,024
+    cells) raises RecursionError. This problem allows boards up to 200 x 200 - 40,000
+    cells - so a single large open region will crash the recursive version outright.
+
+    THE FIX IS NOT A BIGGER LIMIT. Convert the DFS to a loop with an explicit stack (push
+    the four neighbours onto a list instead of calling), or use BFS with a queue. Say this
+    out loud in the interview even if you write the recursive version - it is exactly the
+    kind of constraint-reading that gets noticed.
+
+WHAT IS NOT A TRAP: an empty board, or a board of one row or one column. Every cell is
+then a border cell, everything gets flooded, and nothing is captured - which is correct,
+and needs no special case.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - EXAMINE EVERY REGION AND JUDGE IT:
+
+    for every cell:
+        if it is an unvisited 'O':
+            explore its whole region, collecting the cells into a list
+            note whether ANY cell in it sat on the border
+            if none did:
+                go back over the collected list and set every cell to 'X'
+
+IT IS CORRECT - this is the ground truth every figure above was checked against - and it
+is the definition acted out. It also costs about the same asymptotically: O(rows * cols).
+So the upgrade is not about speed. COST OF THE BOOKKEEPING is the real difference: a
+visited grid, a list per region, a boolean per region, and a second pass over each
+region's cells to fill it in.
+
+THE UPGRADE, IN ONE OBSERVATION:
+
+    A REGION SURVIVES IF AND ONLY IF IT CONTAINS A BORDER CELL.
+
+Read the "if and only if" both ways, because both directions get used. If a region
+contains a border cell then flooding from the border reaches all of it. And if flooding
+from the border reaches a cell, that cell's region certainly contains a border cell. So
+"reachable from the border" and "survives" are the same set - which means you never have
+to identify regions at all. You never build a list, never set a flag, never ask which
+region a cell belongs to. You flood once from outside and then read the board.
+
+WHY THE TEMPORARY 'S' IS SAFE, AND HOW IT TRAVELS. The trick is writing a third character
+into a board that is only supposed to hold two. It is safe for one specific reason: 'S'
+IS A VALUE THE INPUT CAN NEVER CONTAIN, so seeing an 'S' can only mean "this function put
+it there", and it can never be confused with real data. That is the same reason -1 works
+as a flag for a height that is never negative.
+
+Follow one cell's journey through the two states. A surviving cell starts as 'O'. During
+the flood it becomes 'S' - which simultaneously records "this one lives" and "do not visit
+me again", two jobs in one write. In the final sweep it is translated back to 'O'. A
+doomed cell is never touched by the flood, so it is still 'O' when the final sweep
+arrives, and the sweep turns it into 'X'.
+
+THE FINAL SWEEP IS THEREFORE A SWAP, AND ITS ORDER MATTERS. Read it as: whatever is still
+'O' was never reached, so it dies; whatever is 'S' was reached, so it is restored. If you
+restored 'S' to 'O' first and then filled 'O' to 'X' in a separate pass, you would kill
+the survivors you just restored. Doing both inside the same if/elif on the same visit to
+each cell is what keeps them apart.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. If the board is empty, return it unchanged.
+
+    2. Note how many rows and columns there are.
+
+    3. Define a helper, `mark(r, c)`, meaning "this cell survives, and so does everything
+       open that is connected to it". It does the following:
+
+       a. If (r, c) is off the board, do nothing and return.
+       b. If the cell is not an 'O' - so it is a wall, or an 'S' you already marked - do
+          nothing and return.
+       c. Otherwise write 'S' into the cell. This records BOTH that it survives and that
+          it has been visited.
+       d. Call the helper on the four neighbours: below, above, right, left.
+
+    4. Seed the flood from the whole border, not just the corners: run the helper on
+       every cell of the first and last COLUMN, and on every cell of the first and last
+       ROW. Cells that are already 'S', or are walls, cost nothing - step 3b turns them
+       away immediately.
+
+    5. Sweep the entire board once, cell by cell, and translate:
+           an 'O' was never reached, so it was surrounded  ->  write 'X'
+           an 'S' was reached, so it survives              ->  write 'O'
+           an 'X' was always a wall                        ->  leave it
+       Both translations must happen on the same visit to each cell, or one will undo the
+       other.
+
+    6. The board has been modified in place; return it.
+
+THE RECURSION, SPELLED OUT. Step 3d does not "loop over the neighbours" in any ordinary
+sense - each call goes all the way down. `mark(r+1, c)` explores the entire region
+reachable downwards, possibly hundreds of cells deep, and only when all of that has
+finished and been discarded does `mark(r-1, c)` begin. The pile of paused calls is the
+call stack, and its height is the length of the current path, which is why a large open
+region can exhaust it (trap 5). What stops the recursion is step 3c: a cell writes 'S'
+into itself BEFORE calling its neighbours, so when a neighbour calls back - and it always
+will, since neighbourliness is mutual - step 3b sees a non-'O' and returns at once.
+
+THE STEP PEOPLE GET WRONG is 3c happening BEFORE 3d. Mark first, then descend. Reverse
+them and the search never terminates.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a walled garden seen from above. The 'X's are hedges, the 'O's are lawn. The
+question is which stretches of lawn are completely enclosed by hedge, because those are
+going to be dug up and turfed over.
+
+Rather than walking each lawn and trying to prove there is no way out - which means
+checking every square metre of it before you can be sure - you do the opposite. You stand
+outside the garden and let a garden roller in at every gap along the perimeter. The
+roller drives freely across connected lawn but cannot cross a hedge. Wherever it goes, it
+leaves a chalk mark.
+
+When the roller has been everywhere it can reach, the answer is written on the ground.
+Chalked lawn was reachable from outside - it stays. Unchalked lawn had no route to the
+perimeter, however winding, and gets dug up. Then a groundsman walks the whole garden once
+and tidies up: unchalked lawn becomes hedge, and chalked lawn has its chalk washed off so
+it looks like ordinary lawn again.
+
+Two details make this work rather than just sound nice. The roller has to be let in at
+EVERY gap in the perimeter, not just at the four corners, or whole lawns get missed. And
+the chalk is essential: without a third mark, the groundsman arriving afterwards cannot
+tell reachable lawn from enclosed lawn, because both are just lawn.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def solve(board):
+        if not board:
+            return board
+
+  An empty board has no rows, so `board[0]` below would fail. Guard and leave.
+
+        rows, cols = len(board), len(board[0])
+
+  `len(board)` counts rows; `len(board[0])` counts columns in the first row. Captured once
+  rather than recomputed inside the search.
+
+        def mark(r, c):
+
+  "This cell survives, and so does every open cell connected to it." Defined inside
+  `solve` so it can see `board`, `rows` and `cols` without them being passed down through
+  every call.
+
+            if r < 0 or r >= rows or c < 0 or c >= cols or board[r][c] != 'O':
+                return
+
+  One line doing three jobs. The first four checks are the board's edges - without them a
+  negative index would silently wrap around to the far side of the row, which is worse
+  than a crash because it is quiet. The last check, `!= 'O'`, refuses both walls ('X')
+  and cells already marked ('S'). Writing it as `== 'X'` compiles, runs, and never
+  terminates - see trap 4.
+
+                board[r][c] = 'S'
+
+  Mark it as a survivor. This happens BEFORE the neighbour calls, and that order is what
+  makes the search terminate: the cell is no longer 'O', so when a neighbour calls back
+  here the line above returns immediately.
+
+                mark(r+1, c); mark(r-1, c); mark(r, c+1); mark(r, c-1)
+
+  Down, up, right, left. Each call finishes its whole branch before the next begins.
+
+        for r in range(rows):
+            mark(r, 0); mark(r, cols - 1)
+
+  Seed the flood down the left and right edges - every row, not just the corners.
+
+        for c in range(cols):
+            mark(0, c); mark(rows - 1, c)
+
+  And along the top and bottom edges. The four corners get seeded twice, which is
+  harmless: the second attempt finds an 'S' and returns.
+
+        for r in range(rows):
+            for c in range(cols):
+                if board[r][c] == 'O':
+                    board[r][c] = 'X'
+                elif board[r][c] == 'S':
+                    board[r][c] = 'O'
+
+  The translation sweep. Still 'O' means the flood never got here, so it was surrounded -
+  capture it. 'S' means it was reached - restore it. `elif`, not a second `if`, and both
+  in the same pass, so a cell is decided once and cannot be flipped twice.
+
+        return board
+
+  The board was edited in place, so the caller already has the answer; returning it is a
+  convenience.""",
+
+    """9. TRACED ON A REAL BOARD
+
+    input           positions (row, col)
+    X X X X         the 'O's are at (1,1), (1,2), (2,2) and (3,1)
+    X O O X
+    X X O X
+    X O X X
+
+STEP 1 - SEED THE LEFT AND RIGHT COLUMNS.
+
+    r=0: mark(0,0) -> 'X', return.        mark(0,3) -> 'X', return.
+    r=1: mark(1,0) -> 'X', return.        mark(1,3) -> 'X', return.
+    r=2: mark(2,0) -> 'X', return.        mark(2,3) -> 'X', return.
+    r=3: mark(3,0) -> 'X', return.        mark(3,3) -> 'X', return.
+
+    Nothing happened. Every left/right edge cell is a wall.
+
+STEP 2 - SEED THE TOP AND BOTTOM ROWS.
+
+    c=0: mark(0,0) 'X'.   mark(3,0) 'X'.
+    c=1: mark(0,1) 'X'.   mark(3,1) is 'O'  <-- THE FLOOD STARTS HERE
+             board[3][1] = 'S'
+             mark(4,1) - row 4 is off the board, return
+             mark(2,1) - board[2][1] is 'X', return
+             mark(3,2) - board[3][2] is 'X', return
+             mark(3,0) - board[3][0] is 'X', return
+         the flood dies immediately - this survivor is a region of one cell
+    c=2: mark(0,2) 'X'.   mark(3,2) 'X'.
+    c=3: mark(0,3) 'X'.   mark(3,3) 'X'.
+
+    board now:      X X X X
+                    X O O X          the middle three are still 'O' - never reached
+                    X X O X
+                    X S X X          the survivor is marked
+
+STEP 3 - THE TRANSLATION SWEEP, cell by cell.
+
+    (1,1) 'O' -> 'X'        never reached, so it was surrounded
+    (1,2) 'O' -> 'X'
+    (2,2) 'O' -> 'X'
+    (3,1) 'S' -> 'O'        reached, so restored
+    everything else is 'X' and matches neither branch - untouched
+
+    final:          X X X X
+                    X X X X
+                    X X X X
+                    X O X X
+
+That is the official expected output. Notice what the middle patch never did: it was
+never explored, never collected into a list, never judged. It was captured by DEFAULT,
+simply for still being 'O' when the sweep arrived. That is the inversion from section 2
+paying off.
+
+WHAT THE WRONG VERSIONS RETURN ON THIS SAME BOARD, for contrast:
+
+    forgot to restore 'S':      row 3 comes back as  X S X X   - an illegal character
+    flooded border O to 'X':    X X X X / X O O X / X X O X / X X X X  - exactly inverted
+    corners only:               the flood never starts, so ALL FOUR 'O's are captured""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Let the board be r rows by c columns, so r * c cells. The flood
+touches each cell at most once - because the first thing it does on arrival is write 'S',
+and an 'S' is turned away instantly - and the final sweep touches each cell exactly once.
+So O(r * c) time, which is the best possible: you cannot decide a cell's fate without
+looking at it.
+
+SPACE: no extra grid is allocated - the 'S' marks live in the board itself, which is why
+this is called an in-place marker. But the recursion is NOT free: the call stack grows as
+deep as the longest path the flood takes, which in the worst case (a board that is all
+'O') is r * c frames. So O(r * c) space in the worst case, hidden in the call stack. Say
+this explicitly - candidates routinely claim O(1) space here and it is not true.
+
+THE #1 MISTAKE: filling the border-connected regions instead of protecting them. Wrong on
+3,744 of 4,000 random boards, and wrong on the sample. It comes from reading the problem
+as "fill the regions I find from the border" rather than "the regions I find from the
+border are the ones I must not fill".
+
+THE #2 MISTAKE: leaving 'S' on the board. 3,737 of 4,000. The last sweep is not optional
+tidying; it is where the answer is actually written.
+
+THE ONE THAT WILL COST YOU IN A REAL SUBMISSION: recursion depth. Measured to break
+between 30 x 30 and 32 x 32 on an all-'O' board at Python's default limit, against a
+problem that allows 200 x 200. Mention it, and offer the explicit-stack version.
+
+WHAT TO SAY OUT LOUD, in this order: (1) I will invert the question - instead of proving
+a region never touches the border, I will find everything the border reaches; (2) I need
+a third temporary character so I can tell reached from unreached at the end; (3) I will
+seed every border cell, not just the corners; (4) for a 200 x 200 board I would write the
+DFS with an explicit stack rather than recursion.
+
+THE FAMILY. Number of Islands (count regions instead of judging them), Number of Enclaves
+and Number of Closed Islands (this exact problem with a different thing returned), Pacific
+Atlantic Water Flow (flood from TWO borders and intersect the results), and Flood Fill
+(the plain version with no border logic). The reusable idea is bigger than grids: WHEN A
+PROPERTY IS DEFINED BY REACHING THE BOUNDARY, SEARCH INWARD FROM THE BOUNDARY RATHER THAN
+OUTWARD FROM EVERY CANDIDATE.
+
+ONE-SENTENCE TAKEAWAY: flood inward from every border 'O', mark what you reach with a
+temporary letter, and then capture everything still spelled 'O' - because it had no way
+out.""",
 ]
 
 _EX_P1R["Swap Nodes in Pairs"] = [
-    """The three relinks, in the order that works.
-For a pair (first, second) hanging off prev:
-    first.next  = second.next   # first now points past the pair
-    second.next = first         # second points back at first
-    prev.next   = second        # prev adopts second as the new head of the pair
-Order matters: you must save what comes AFTER the pair before overwriting
-first.next, which the first line does by reading second.next while it is still
-intact. Doing prev.next = second first would lose your handle on first.
-Draw four boxes and three arrows before typing; this is a problem lost on paper,
-not on logic.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The trace on 1 -> 2 -> 3 -> 4.
-dummy -> 1. prev = dummy, first = 1, second = 2.
-first.next = second.next -> 1 -> 3. second.next = first -> 2 -> 1. prev.next =
-second -> dummy -> 2.
-List is now dummy -> 2 -> 1 -> 3 -> 4. Advance prev to first (node 1).
-Next round: first = 3, second = 4. Same three relinks -> 3 -> ... wait, 1 -> 4
--> 3.
-Final: 2 -> 1 -> 4 -> 3. Return dummy.next = 2.""",
+You have a chain of boxes. Each box holds a value and an arrow pointing to the next box;
+the last box's arrow points at nothing. Swap the boxes in pairs - first with second,
+third with fourth, and so on - and return the chain's new first box.
 
-    """Why `prev = first` and not `prev = second`.
-After the swap the pair reads second -> first, so FIRST is now the second node
-of the pair and therefore the node preceding the next pair. Advancing to second
-would leave prev pointing at the pair's new head and re-swap the same nodes
-forever.
-A quick check: after processing, prev should sit immediately before the next
-untouched node. On 1->2->3->4 after the first swap, that is node 1, whose next
-is 3. Correct.""",
+    before:   1 -> 2 -> 3 -> 4 -> None
+    after:    2 -> 1 -> 4 -> 3 -> None
 
-    """Why the dummy head is required here.
-The head changes - 1 -> 2 becomes 2 -> 1 - so the function must return a
-different node than it was given, and every relink of the first pair needs a
-stable predecessor to write into. The dummy provides one, and `return
-dummy.next` yields the new head with no special case.
-This is the same rule as in Remove Linked List Elements: if the first node can
-move or vanish, allocate a dummy. Swapping VALUES instead of nodes would avoid
-all of this - and is usually explicitly forbidden, because the exercise is the
-pointer surgery.""",
+If there is an odd number of boxes, the last one has no partner and stays where it is.
 
-    """The loop condition, and both parities.
-`while prev.next and prev.next.next` requires a full PAIR to exist. An odd
-number of nodes leaves the last one alone: 1->2->3 becomes 2->1->3, with node 3
-untouched because prev.next.next is None.
-Test both 4 nodes (even, all swapped) and 3 nodes (odd, tail preserved) - each
-condition is exercised by only one of them, and a solution checking only
-`prev.next` dereferences None on the odd case.""",
+    before:   1 -> 2 -> 3 -> None
+    after:    2 -> 1 -> 3 -> None
 
-    """Complexity and the family.
-O(n) time - each node is touched a constant number of times - and O(1) space
-with the iterative version. The recursive version is elegant (swap the first
-pair, recurse on the rest) but costs O(n) stack.
-The family: Reverse Nodes in k-Group (this generalised to any k, and genuinely
-harder - you must check a full group exists before reversing it), Reverse
-Linked List, Rotate List, Odd Even Linked List, Reorder List.
-Swap Nodes in Pairs is the k=2 special case of Reverse Nodes in k-Group, which
-is worth knowing because the follow-up is almost always 'now do it for k'.""",
+THE RULE THAT MAKES THIS A REAL PROBLEM: you must swap THE BOXES, not the values inside
+them. Swapping values is two lines and takes ten seconds; the problem forbids it
+precisely because the interesting work is rearranging the arrows. Section 5 shows the
+forbidden version anyway, because it is worth seeing what you are being asked to do the
+hard way and why the hard way is not just pedantry.
+
+WHY IT IS FIDDLY. The chain is one-directional. Standing at a box you can see the next
+one, but you have no way back. So the moment you overwrite an arrow, whatever it used to
+point at is gone unless you saved it first. The entire problem is: which arrows do I
+rewrite, in which order, and what do I need to be holding before I start.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE PROBLEM WITH THE OBVIOUS APPROACH. Take the pair 1 and 2 and try to swap them by
+hand. You want 2 to come first, so set 2's arrow to point at 1. But 2's arrow was the
+only thing pointing at 3, and you have just overwritten it - the rest of the chain is
+lost. So the order of operations is not a style preference here; it is the difference
+between working and not.
+
+THE PICTURE - THREE ARROWS, ONE PAIR. Every swap involves exactly three arrows, and it is
+worth naming them before touching anything. Call the box before the pair `prev`, and the
+two boxes of the pair `first` and `second`.
+
+    before:      prev -> first -> second -> rest
+    after:       prev -> second -> first -> rest
+
+Now compare the two lines and read off what must change:
+
+    prev's arrow      was first,   must become second
+    first's arrow     was second,  must become rest
+    second's arrow    was rest,    must become first
+
+Three rewrites - and the safe order falls out of one question: what am I about to
+destroy? `rest` is only reachable through `second`, so capture or use it FIRST.
+
+    1.  first.next  = second.next     read `rest` while second still points at it,
+                                      and hang it off first. `rest` is now safe.
+    2.  second.next = first           now second's old arrow can be overwritten
+    3.  prev.next   = second          finally reattach the pair to the chain
+
+Do these in this order and nothing is ever lost. Do step 3 first and you create a loop
+that hangs the program - measured in section 4.
+
+THE SECOND PICTURE - WHAT ABOUT THE VERY FIRST PAIR? The recipe needs a `prev`, but the
+first pair has nothing before it. Rather than writing a special case for it, INVENT one:
+put a fake box in front of the whole chain.
+
+    dummy -> 1 -> 2 -> 3 -> 4
+
+Now the first pair has a `prev` like everyone else, the same three lines work for it, and
+when you are finished the true head of the new chain is simply `dummy.next` - which is
+correct whether the chain got swapped, was empty, or had one box. One fake box removes
+every special case.""",
+
+    """3. EVERY TERM, DEFINED
+
+NODE. One box: a value (`val`) and a reference to the next box (`next`). In Python a node
+is just an object, and `first.next = second.next` copies a REFERENCE - it makes `first`
+point at the same box `second` was pointing at. Nothing is copied or moved in memory; only
+arrows change.
+
+LINKED LIST. A chain of nodes, identified by its first node, the HEAD. There is no
+indexing and no way to walk backwards. To reach the fifth node you must step through four.
+
+None. The end of the chain. The last node's `next` is None. Reading `.next` on None is an
+AttributeError, and that crash is exactly what the loop condition exists to prevent.
+
+DUMMY NODE (also called a sentinel). A fake node placed in front of the real head so that
+the real head is not a special case. Its value is never read. At the end, the real answer
+is `dummy.next` - which is why the function can return the correct head even if the head
+changed, and even if the list was empty.
+
+POINTER SURGERY. The nickname for reassigning `.next` fields to rearrange a list. It is
+called surgery because order matters and you can kill the patient by cutting in the wrong
+sequence.
+
+IN PLACE / O(1) SPACE. No new nodes are created. The same node objects come back out in a
+different order - VERIFIED: on a four-node list the set of node identities before and
+after is identical, with zero allocations. This is why swapping values is considered
+cheating: it leaves the structure untouched and only edits the cargo.
+
+CYCLE. When following `.next` returns you to a node you have already visited, so the walk
+never ends. Section 4 shows how one reordered line creates one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - ADVANCING `prev` TO THE WRONG NODE. After the swap the chain reads
+prev -> second -> first -> rest, so the node now sitting just before the NEXT pair is
+`first`, not `second`. `prev = first` is correct. `prev = second` looks right - second is
+the node you just moved to the front - and it is wrong.
+
+What it produces is not noise. It is a LEFT ROTATION.
+
+    [1, 2, 3, 4]        correct  [2, 1, 4, 3]        prev = second gives  [2, 3, 4, 1]
+    [1, 2, 3, 4, 5, 6]  correct  [2, 1, 4, 3, 6, 5]  prev = second gives  [2, 3, 4, 5, 6, 1]
+
+Why: setting `prev = second` leaves `first` as the very next node, so the following
+iteration swaps `first` with the node after IT, and the one after that, and so on. Node 1
+gets bubbled all the way to the back of the list like a bubble in a sort, and everything
+else shuffles up one.
+
+    MEASURED: wrong on 4,155 of 6,000 random lists, with no crash and no hang - it
+    returns a perfectly well-formed list that is simply the wrong one. Lists of length 2
+    are the only ones it gets right, so a two-element test will not catch it. TEST WITH
+    FOUR.
+
+TRAP 2 - NO DUMMY NODE. Starting with `prev = head` seems reasonable, but then the first
+pair is the pair AFTER the head, and the head itself never gets swapped.
+
+    [1, 2, 3, 4]  ->  [1, 3, 2, 4]        the first pair was never touched
+    [1, 2]        ->  [1, 2]              unchanged
+
+    MEASURED: wrong on 4,804 of 6,000. It is also wrong on the sample input, so it fails
+    immediately - which honestly makes it the least dangerous mistake here.
+
+TRAP 3 - DOING THE THREE RELINKS IN THE WRONG ORDER. Writing `prev.next = second` and
+`second.next = first` before `first.next = second.next` means that by the time you read
+`second.next`, it has already been changed to `first` - so you set `first.next = first`.
+The node points at itself, the loop condition stays true forever, and the program hangs.
+
+    MEASURED: infinite loop on 4,832 of 6,000 lists - and a hang is far nastier to debug
+    than a wrong answer, because there is no output to inspect. THE RULE IS: READ
+    `second.next` BEFORE ANYTHING OVERWRITES IT.
+
+TRAP 4 - TESTING ONLY `while prev.next`. The loop needs TWO nodes to swap, so it must
+check for both. With only the first check, an odd-length list reaches its last node,
+`second` is set to None, and `second.next` raises AttributeError.
+
+    MEASURED: crashed on 2,993 of 6,000 - almost exactly half, which is the proportion of
+    randomly-generated lists with an odd number of nodes. `prev.next and prev.next.next`
+    also short-circuits correctly: if `prev.next` is None Python never evaluates
+    `prev.next.next`, so the check itself cannot crash.
+
+WHAT IS NOT A TRAP: the empty list and the single-node list. With the dummy in place,
+`prev.next and prev.next.next` is false straight away, the loop never runs, and
+`dummy.next` returns the original head - None or the lone node. Both correct with no
+special case, which is the dummy earning its keep.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE FORBIDDEN VERSION - SWAP THE VALUES:
+
+    def swap_pairs_values(head):
+        node = head
+        while node and node.next:
+            node.val, node.next.val = node.next.val, node.val   # swap the cargo
+            node = node.next.next
+        return head
+
+IT PRODUCES THE RIGHT OUTPUT and it is genuinely simpler - no dummy, no three-step
+surgery, no way to create a cycle. Show it, say what it is, and say why it is not the
+answer: THE PROBLEM EXPLICITLY FORBIDS MODIFYING VALUES, and the reason is not fussiness.
+Real nodes carry payloads you may not be allowed to touch - a node might be shared, or
+large, or hold data another part of the program is holding a reference to. Rearranging
+structure without touching contents is a genuinely different capability from editing
+contents in place, and this problem is a test of the first.
+
+THE UPGRADE, IN TWO OBSERVATIONS.
+
+    FIRST: THREE ARROWS, IN A SAFE ORDER. Reading `second.next` before anything can
+        overwrite it is the entire correctness argument. Everything else is bookkeeping.
+
+    SECOND: A DUMMY NODE DELETES THE SPECIAL CASE. Without it you need one code path for
+        the first pair (which changes the head) and another for the rest. With it there
+        is one path, and `dummy.next` reports the new head for free.
+
+HOW THE VALUE TRAVELS - FOLLOW `prev`. `prev` is the node the current pair hangs off. It
+starts as the dummy, so the first pair hangs off something. After a swap the chain reads
+prev -> second -> first -> rest, and the next pair hangs off `first` - so `prev = first`
+moves it exactly two positions along the ORIGINAL list, which is what "advance by two"
+means once the swap has happened. Trap 1 is what advancing by one looks like, and it
+looks like a rotation.
+
+THE RECURSIVE ALTERNATIVE, worth knowing because interviewers ask for it:
+
+    def swap_pairs(head):
+        if not head or not head.next:
+            return head                  # nothing to swap - this is the base case
+        second = head.next
+        head.next = swap_pairs(second.next)   # the rest, already swapped, hangs off head
+        second.next = head                    # second takes the front
+        return second                         # second is the new head of this piece
+
+It reads beautifully: swap the first two, and trust the function to have handled
+everything after them. Each call handles one pair and hands the rest to a fresh copy of
+itself; the base case is "fewer than two nodes left", which every call moves towards by
+two. What it costs is a call stack as deep as half the list - O(n) space against the
+loop's O(1) - which for a long list is a real difference, and is why the iterative version
+is the one to lead with.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make a fake node - a dummy - and point its arrow at the real head of the list.
+       This gives the first pair something to hang off, exactly like every other pair.
+
+    2. Keep a marker, `prev`, standing on the node just before the pair being worked on.
+       It starts on the dummy.
+
+    3. Repeat as long as there are AT LEAST TWO nodes after `prev`. Both checks are
+       needed: one node after prev is not a pair.
+
+       a. Name the two nodes of the pair: `first` is the one right after `prev`, and
+          `second` is the one after `first`.
+
+       b. Point `first` at whatever `second` was pointing at - the rest of the list. Do
+          this FIRST, while `second` still remembers where the rest is. After this line
+          the rest of the list is safely attached to `first` and cannot be lost.
+
+       c. Point `second` back at `first`. The pair is now reversed, but still detached
+          from the part of the list in front of it.
+
+       d. Point `prev` at `second`, reattaching the reversed pair to the chain.
+
+       e. Move `prev` onto `first`. After the swap, `first` is the node sitting just
+          before the next pair - NOT `second`, which is now in front of it.
+
+    4. When the loop ends, the new head of the list is whatever the dummy points at.
+       Return that, and let the dummy be forgotten.
+
+NO RECURSION IS INVOLVED in this version - one marker walking forwards and three arrow
+assignments per pair. The list shrinks in front of `prev` by exactly two nodes each time
+round, so the loop always terminates, and `prev` never moves backwards.
+
+THE STEPS PEOPLE GET WRONG are 3b's position (it must come before 3c and 3d, or the rest
+of the list is orphaned) and 3e's target (`first`, not `second`). Those two account for
+almost 9,000 of the roughly 12,000 failures measured in section 4.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of a line of railway wagons coupled nose to tail, and a shunter whose job is to
+reverse every neighbouring pair - wagons 1 and 2, then 3 and 4, and so on. Wagons can only
+be coupled front-to-back, and from any wagon you can only see the one behind it.
+
+The shunter puts a marker wagon at the very front of the train first. It carries nothing
+and it will be uncoupled at the end, but it means the first real pair has a wagon in front
+of it, so there is no special routine for the front of the train.
+
+Standing at the marker, the shunter works one pair at a time, and always in the same
+order. FIRST, couple the front wagon of the pair to whatever was behind the pair - this is
+done before anything else, because the only thing that knows where the rest of the train
+is, is the wagon about to be moved. Once that is done, the remainder of the train can no
+longer be lost. SECOND, couple the rear wagon of the pair onto the front one, reversing
+them. THIRD, couple the pair back onto the wagon in front.
+
+Then the shunter walks forward and stands on the wagon that is now at the BACK of the pair
+just handled - which is the wagon that started at the front. That is the one now coupled
+to the next pair. Stepping onto the other wagon instead is the classic error, and its
+result is oddly tidy: the first wagon gets shunted backwards down the whole train, one
+pair at a time, and the train comes out rotated by one instead of paired up.
+
+At the end the shunter uncouples the marker and reports which wagon is now at the head.
+Not one wagon's cargo was opened; only couplings changed.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    class ListNode:
+        def __init__(self, val=0, next=None):
+            self.val = val; self.next = next
+
+  One node: `val` is the cargo, `next` is the arrow.
+
+    def swap_pairs(head):
+        dummy = ListNode(0, head)
+
+  The fake node from section 2, created already pointing at the real head. Its `val` of 0
+  is never read. This single line is what removes every special case for the front of the
+  list, including the empty list.
+
+        prev = dummy
+
+  The marker, standing just before the pair we are about to swap.
+
+        while prev.next and prev.next.next:
+
+  "Are there at least two nodes after prev?" Both halves are required - see trap 4 - and
+  Python's `and` short-circuits, so if `prev.next` is None the second half is never
+  evaluated and cannot crash. When this is false, either zero or one node remains and
+  there is nothing left to pair.
+
+            first = prev.next
+            second = first.next
+
+  Name the pair. Naming them costs nothing and makes the three relinks readable rather
+  than a puzzle of `.next.next.next`.
+
+            first.next = second.next
+
+  THE LOAD-BEARING LINE, AND IT MUST BE FIRST. `second.next` is the rest of the list, and
+  `second` is the only node pointing at it. Reading it now, before anything overwrites it,
+  is what keeps the tail attached. After this line `first` holds the rest, and the pair
+  can be rearranged freely.
+
+            second.next = first
+
+  Reverse the pair. Safe now, because `second.next` has already been read out.
+
+            prev.next = second
+
+  Reattach: the node before the pair now points at the pair's new front. The three
+  rewrites are complete, and the list is well-formed again at this exact moment.
+
+            prev = first
+
+  Advance. After the swap the order is prev -> second -> first -> rest, so `first` is the
+  node immediately before the next pair. Writing `prev = second` here advances by one
+  instead of two and rotates the list - trap 1.
+
+        return dummy.next
+
+  The dummy's arrow was updated by the first swap, so it points at the true new head. If
+  the list was empty or had one node, no swap happened and this returns the original head
+  unchanged - correct without a special case.""",
+
+    """9. TRACED ON REAL NUMBERS - 1 -> 2 -> 3 -> 4
+
+Writing the nodes as N1, N2, N3, N4 so it is clear that BOXES move, not values.
+
+    setup:   dummy -> N1 -> N2 -> N3 -> N4 -> None
+             prev = dummy
+
+    ITERATION 1
+        prev.next is N1, prev.next.next is N2 - two nodes available, so the loop runs.
+        first = N1,  second = N2
+
+        first.next = second.next     N1 -> N3        (the rest is now safe on N1)
+            chain: dummy -> N1 -> N3 -> N4,  with N2 -> N3 still dangling
+        second.next = first          N2 -> N1
+            chain: dummy -> N1 -> N3 -> N4,  N2 -> N1 -> N3 -> N4
+        prev.next = second           dummy -> N2
+            chain: dummy -> N2 -> N1 -> N3 -> N4 -> None      <- well-formed again
+        prev = first                 prev is now N1
+
+    ITERATION 2
+        prev.next is N3, prev.next.next is N4 - two available, loop runs.
+        first = N3,  second = N4
+
+        first.next = second.next     N3 -> None
+        second.next = first          N4 -> N3
+        prev.next = second           N1 -> N4
+            chain: dummy -> N2 -> N1 -> N4 -> N3 -> None
+        prev = first                 prev is now N3
+
+    LOOP TEST
+        prev.next is None, so `prev.next` is falsy and the loop stops. Python never
+        evaluates `prev.next.next`, which would have crashed.
+
+    return dummy.next  ->  N2, and the list reads 2 -> 1 -> 4 -> 3
+
+THE VARIABLES AT A GLANCE:
+
+    iter | prev before | first | second | chain after the three relinks | prev after
+    -----+-------------+-------+--------+-------------------------------+-----------
+      1  |   dummy     |  N1   |   N2   | dummy -> 2 -> 1 -> 3 -> 4     |    N1
+      2  |    N1       |  N3   |   N4   | dummy -> 2 -> 1 -> 4 -> 3     |    N3
+
+THE ODD-LENGTH CASE, briefly - 1 -> 2 -> 3.
+
+    Iteration 1 swaps N1 and N2 exactly as above, leaving dummy -> N2 -> N1 -> N3, with
+    prev = N1. The test then finds prev.next = N3 (truthy) but prev.next.next = None, so
+    the loop stops and N3 is left alone. Result: 2 -> 1 -> 3. The lone tail node needed no
+    special handling - the two-part loop condition took care of it.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. `prev` walks forward two nodes per iteration and never goes back, so
+the loop runs about n / 2 times and does a fixed three assignments each time. That is
+O(n) time - every node is visited once. Big-O ignores the constant factor, so n / 2
+iterations is still called O(n).
+
+SPACE: one dummy node and three named references, regardless of list length - O(1). No
+node is allocated for the list itself: VERIFIED on a four-node list, the set of node
+object identities coming out is identical to the set going in, with zero new allocations.
+The recursive version in section 5 is O(n) space instead, because the call stack holds one
+frame per pair; if an interviewer asks for constant space, that is the version to avoid.
+
+THE #1 MISTAKE: `prev = second` instead of `prev = first`. Measured wrong on 4,155 of
+6,000 random lists, and it is the dangerous kind of wrong - no crash, no hang, a
+well-formed list that happens to be a left rotation. Two-element tests pass. Test on four.
+
+THE #2 MISTAKE: reordering the three relinks so `second.next` is overwritten before it is
+read. Infinite loop on 4,832 of 6,000, because a node ends up pointing at itself. Fix it
+by rule rather than by memory: ALWAYS READ THE ARROW THAT LEADS TO THE REST OF THE LIST
+BEFORE YOU OVERWRITE IT.
+
+WHAT TO SAY OUT LOUD. Four sentences, in this order: (1) I will use a dummy node so the
+head is not a special case and so I can return the new head easily; (2) each pair is three
+pointer writes, and the order matters because reading `second.next` late loses the tail;
+(3) the loop condition checks two nodes ahead, which is also what handles an odd-length
+list; (4) O(n) time, O(1) space, and no values are touched - only structure. If they ask
+for the recursive version, give it, and volunteer that it costs O(n) stack.
+
+THE FAMILY. Reverse Nodes in k-Group is this problem generalised to any group size, and
+genuinely harder because you must confirm a full group of k exists before reversing it -
+Swap Nodes in Pairs is exactly the k = 2 case, and "now do it for general k" is the
+standard follow-up. Nearby: Reverse Linked List (the same surgery in a tighter loop),
+Rotate List, Reorder List, Remove Nth Node From End - all of which use a dummy node for
+the same reason.
+
+ONE-SENTENCE TAKEAWAY: hang the list off a dummy node, then for each pair rewrite three
+arrows in the order first-second-prev, and advance `prev` onto `first` - the node that
+ends up at the BACK of the pair you just swapped.""",
 ]
 
 for _e in ENTRIES:
