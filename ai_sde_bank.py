@@ -9637,63 +9637,428 @@ first element so an all-negative row still gets a legal answer.""",
 ]
 
 _EXAMPLES["Majority Element (Boyer-Moore voting)"] = [
-    """The textbook case, fully traced.
-nums = [2,2,1,1,1,2,2]  ->  answer 2  (2 appears 4 times out of 7)
-  x=2: count is 0 -> candidate 2, count 1
-  x=2: matches      -> count 2
-  x=1: differs      -> count 1
-  x=1: differs      -> count 0   (candidate 2 now has no backing)
-  x=1: count is 0 -> candidate 1, count 1
-  x=2: differs      -> count 0
-  x=2: count is 0 -> candidate 2, count 1
-The candidate flipped to 1 in the middle and it did not matter - the true
-majority had enough votes left to take the lead back before the end.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The simplest case.
-nums = [3,3,4]  ->  answer 3
-  x=3: candidate 3, count 1
-  x=3: count 2
-  x=4: count 1
-3 appears twice out of three, which is more than 1.5. The counter ends at 1,
-not 2 - a reminder that the counter is a SURPLUS of unmatched votes, not a
-frequency. If you need the actual count, you have to do a second pass.""",
+Given a list, find the value that appears MORE THAN HALF the time. The problem guarantees such
+a value exists, so you do not have to handle the case where it does not.
 
-    """The candidate flips repeatedly and still lands correctly.
-nums = [1,2,1,2,1]  ->  answer 1  (1 appears 3 times out of 5)
-  x=1: candidate 1, count 1
-  x=2: differs, count 0
-  x=1: count is 0 -> candidate 1, count 1
-  x=2: differs, count 0
-  x=1: count is 0 -> candidate 1, count 1
-Every 2 was paired off against a 1 and both were discarded. The 2s ran out of
-ammunition first, exactly as the cancellation argument predicts.""",
+    [3, 2, 3]                    length 3, so the majority needs more than 1.5 - at least 2.
+                                 3 appears twice.  Answer: 3.
 
-    """The recovery-at-the-last-moment case.
-nums = [5,5,1,1,2,2,5,5,5]  ->  answer 5  (5 appears 5 times out of 9)
-  5 -> cand 5 c1;  5 -> c2;  1 -> c1;  1 -> c0;  2 -> cand 2 c1;
-  2 -> c2;  5 -> c1;  5 -> c0;  5 -> cand 5 c1
-The candidate was 2 with a surplus of two votes at one point. It still ends on
-5. This is the case to run mentally when you are tempted to believe the
-algorithm 'locks in' early - it does not, and it does not need to.""",
+    [2, 2, 1, 1, 1, 2, 2]        length 7, so more than 3.5 - at least 4.
+                                 2 appears four times, 1 appears three.  Answer: 2.
 
-    """When there is NO majority - the failure mode you must know about.
-nums = [1,2,3]  ->  the algorithm returns 3, which is WRONG.
-  x=1: candidate 1, count 1
-  x=2: differs, count 0
-  x=3: count is 0 -> candidate 3, count 1
-No element appears more than 1.5 times, so there is no valid answer at all,
-but the algorithm hands back whatever survived. Boyer-Moore is only correct
-when a majority is GUARANTEED to exist. If it is not guaranteed, add a second
-pass that counts the candidate and confirm it exceeds n/2.""",
+MORE THAN HALF IS A VERY STRONG CONDITION, and everything here comes from it. It is not "the
+most common value" - it is a value with an absolute majority, so it appears more often than
+EVERYTHING ELSE PUT TOGETHER. There can be at most one such value, which is why the answer is
+unique.
 
-    """Uniform input, and the extension to n/3.
-nums = [7,7,7]  ->  answer 7. The count only ever increases; no cancellation
-happens at all.
-For the harder variant 'find all elements appearing more than n/3 times', the
-same idea needs TWO candidates and two counters, because at most two values
-can clear the n/3 bar. On nums = [1,1,1,3,3,2,2,2] the two survivors are 1 and
-2, and you must still verify both with a counting pass, since the n/3 version
-does not guarantee any element qualifies.""",
+THE OBVIOUS SOLUTIONS ALL WORK. Count everything with a dictionary and take the biggest -
+O(n) time, O(n) space. Or sort the list and take the middle element, which must be the
+majority because it occupies more than half the positions - O(n log n) time. Both are correct
+here; both were measured wrong on 0 of 6,000 cases with a guaranteed majority.
+
+THE POINT OF THE PROBLEM is to do it in ONE PASS WITH ONE COUNTER AND NO EXTRA MEMORY. That
+algorithm is called BOYER-MOORE VOTING, it is five lines long, and it is genuinely surprising
+the first time you see it.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF IT AS A BRAWL WHERE EVERY PAIR OF OPPONENTS KNOCKS EACH OTHER OUT.
+
+Line everybody up. Whenever someone from the majority party meets someone from any other
+party, both are eliminated - one for one. Since the majority party has more members than
+everyone else combined, IT IS IMPOSSIBLE TO ELIMINATE THEM ALL. When the dust settles, the
+only people left standing must be from the majority.
+
+    [2, 2, 1, 1, 1, 2, 2]        four 2s, three 1s
+
+    pair a 2 with a 1  ->  both gone.  Three 2s, two 1s left.
+    pair a 2 with a 1  ->  both gone.  Two 2s, one 1 left.
+    pair a 2 with a 1  ->  both gone.  One 2 left, no 1s.
+
+    the survivor is 2 - the majority
+
+THE ALGORITHM IS THAT BRAWL RUN AS A SINGLE PASS, using one CANDIDATE and one COUNT:
+
+    the CANDIDATE is whoever is currently standing
+    the COUNT is how many of them are standing
+
+    see the same value as the candidate  ->  a reinforcement arrives:   count + 1
+    see a different value                ->  a mutual knockout:         count - 1
+    count hits 0                         ->  nobody is standing, so the next value you
+                                             see becomes the new candidate
+
+    [2, 2, 1, 1, 1, 2, 2]
+
+    x=2   count is 0, so adopt 2.   vote for.     candidate 2, count 1
+    x=2   same as candidate.        vote for.     candidate 2, count 2
+    x=1   different.                knockout.     candidate 2, count 1
+    x=1   different.                knockout.     candidate 2, count 0
+    x=1   count is 0, so adopt 1.   vote for.     candidate 1, count 1
+    x=2   different.                knockout.     candidate 1, count 0
+    x=2   count is 0, so adopt 2.   vote for.     candidate 2, count 1
+
+    survivor: 2.  Correct.
+
+WHAT THE COUNT IS NOT. It is NOT how many times the candidate has appeared. Look at the trace:
+2 appears four times but the count never gets above 2. THE COUNT IS THE CANDIDATE'S SURPLUS -
+how many of them are left standing after the knockouts so far. That misunderstanding is the
+source of most confusion about this algorithm, and it is worth saying to yourself explicitly.
+
+WHY THE SURVIVOR MUST BE THE MAJORITY. Every decrement destroys one majority member and one
+non-majority member, or two non-majority members. The first kind can happen at most as many
+times as there are non-majority members - which is fewer than half. So the majority cannot be
+wiped out, and whoever is left at the end is it.""",
+
+    """3. EVERY TERM, DEFINED
+
+MAJORITY ELEMENT. A value appearing STRICTLY MORE than n/2 times, where n is the list's
+length. For n = 7 that means at least 4 - more than half, not "the most common". At most one
+such value can exist, which is why the answer is unique.
+
+n // 2. Integer division, rounding down. For n = 7 that is 3, and the majority needs MORE than
+that, so at least 4.
+
+CANDIDATE. The value currently believed to be the majority. It changes as the pass proceeds,
+and it is only guaranteed correct at the very end.
+
+COUNT. The candidate's SURPLUS - how many instances of it survive after cancelling against
+everything else seen so far. Not its frequency. This distinction is the one thing to be clear
+about.
+
+VOTING / CANCELLATION. Each occurrence of the candidate adds one to the surplus; each
+occurrence of anything else subtracts one, as if the two annihilated.
+
+BOYER-MOORE VOTING ALGORITHM. The name of this method (Robert Boyer and J Strother Moore, the
+same pair as the string-searching algorithm). Interviewers use the name, so know it.
+
+ONE PASS. A single left-to-right walk with no second traversal and no lookahead.
+
+O(1) SPACE. Two variables, regardless of list length. This is the whole reason the algorithm
+exists - counting with a dictionary is easier and costs O(n) memory.
+
+INVARIANT. Something that stays true throughout. Here: AFTER PROCESSING ANY PREFIX, IF SOME
+VALUE HAS AN ABSOLUTE MAJORITY IN THAT PREFIX, IT IS THE CURRENT CANDIDATE. That is the formal
+version of "the majority cannot be eliminated".
+
+CANDIDATE vs GUARANTEE. If no majority exists, the algorithm still returns something - it just
+means nothing. Section 4 shows this, and it is the standard follow-up question.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - ADOPTING THE NEW CANDIDATE AFTER VOTING INSTEAD OF BEFORE. The two lines look
+independent and are not: the vote must be cast for whoever is standing, and if nobody is
+standing you must first put the current value forward.
+
+    if count == 0: candidate = x           CORRECT
+    count += 1 if x == candidate else -1
+
+    count += 1 if x == candidate else -1   WRONG
+    if count == 0: candidate = x
+
+    MEASURED: wrong on 6,000 of 6,000 - every single case. With the candidate starting as None,
+    the first value votes AGAINST a candidate that does not exist, the count goes to -1, and it
+    never recovers into a sensible state. On [3,2,3] it returns None.
+
+    A total failure caught by any test at all, which makes it the least dangerous mistake here -
+    but it is easy to make while typing quickly, so get the order right: ADOPT, THEN VOTE.
+
+TRAP 2 - NEVER ADOPTING A NEW CANDIDATE. Dropping the `if count == 0` line and just counting
+votes for the FIRST element turns the algorithm into "is the first element the majority?".
+
+    MEASURED: wrong on 1,931 of 6,000. Note it is right whenever the majority happens to be
+    first, which is often enough to look plausible in casual testing. The re-adoption is the
+    algorithm - it is what lets the survivor of one section carry forward into the next.
+
+TRAP 3 - THINKING THE COUNT IS THE FREQUENCY. Not a coding error but a reasoning one, and it
+leads people to "fix" working code. In the [2,2,1,1,1,2,2] trace the answer 2 appears FOUR
+times and the count never exceeds 2. The count is a surplus after cancellations, not a tally.
+
+TRAP 4 - ASSUMING THE RESULT IS MEANINGFUL WHEN NO MAJORITY EXISTS. The algorithm always
+returns SOMETHING, and if no value has an absolute majority, that something is arbitrary.
+
+    [1, 2, 3] has no majority at all, and Boyer-Moore returns 3.
+
+    THE FIX IS A SECOND PASS: count how many times the candidate actually appears and check it
+    exceeds n // 2. That costs another O(n) and no extra memory. This problem guarantees a
+    majority so the check is unnecessary here - but say out loud that you know it would be
+    needed otherwise, because that is the standard follow-up.
+
+WHAT IS NOT A TRAP, checked rather than assumed - two alternatives that are simply correct:
+
+    COUNT WITH A DICTIONARY AND TAKE THE MOST COMMON: wrong on 0 of 6,000. O(n) time, O(n)
+    space. Perfectly good; just not the one-variable answer.
+
+    SORT AND TAKE THE MIDDLE ELEMENT: wrong on 0 of 6,000. A value occupying more than half the
+    positions must cover the midpoint, whichever end it starts from. O(n log n), one line, and
+    a genuinely elegant answer worth offering.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - COUNT EVERYTHING:
+
+    from collections import Counter
+    def majority_element(nums):
+        return Counter(nums).most_common(1)[0][0]
+
+IT IS CORRECT - measured wrong on 0 of 6,000 arrays that have a majority - and it is one line.
+Say it first. COST: O(n) time and O(n) SPACE for the counter, and the space is the only thing
+wrong with it.
+
+THE SECOND ANSWER, WORTH OFFERING BECAUSE IT IS PRETTY - SORT AND TAKE THE MIDDLE:
+
+    def majority_element(nums):
+        return sorted(nums)[len(nums) // 2]
+
+Also measured wrong on 0 of 6,000. The argument is one sentence: a value occupying more than
+half the positions must, once sorted, form a block longer than half the list, and any such
+block must cover the middle position. O(n log n) time, and O(1) extra space if the sort is in
+place.
+
+THE UPGRADE - ONE PASS, TWO VARIABLES. The insight is that you do not need the counts at all,
+because of how strong "more than half" is:
+
+    PAIR OFF EACH MAJORITY ELEMENT WITH A NON-MAJORITY ONE AND DISCARD BOTH. Since the
+    majority outnumbers everything else COMBINED, you run out of non-majority elements first,
+    and what remains is majority.
+
+Turning that into a single pass needs only a current survivor and how many of them survive:
+
+    count == 0     nobody is standing - whatever comes next takes the floor
+    x == candidate a reinforcement:  count + 1
+    x != candidate a mutual knockout: count - 1
+
+THE TRICK, FROM SCRATCH - WHY RESETTING THE CANDIDATE LOSES NOTHING. This is the step that
+feels unsafe: when the count hits zero you throw away everything learned so far and start
+again from the next element. Why is that not catastrophic?
+
+    Because when the count reaches 0, THE PREFIX PROCESSED SO FAR CONTAINED EXACTLY AS MANY
+    CANDIDATE ELEMENTS AS NON-CANDIDATE ONES - they cancelled perfectly. So that prefix has no
+    majority of its own, and a value that is the majority of the WHOLE list must still be the
+    majority of the REMAINDER. Discarding a perfectly balanced prefix cannot change the answer.
+
+That is the real proof, and it is short enough to say in an interview. The invariant it
+maintains: after any prefix, if some value has an absolute majority in that prefix, it is the
+current candidate.
+
+HOW THE VALUE TRAVELS: `candidate` holds whoever survived the cancellations so far, and
+`count` holds by how much. Nothing else is remembered - not the frequencies, not the values
+seen, not the positions.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Start with no candidate and a count of zero.
+
+    2. Walk the list once. For each value:
+
+       a. FIRST, if the count is currently zero, nobody is standing - so adopt THIS value as
+          the new candidate.
+
+       b. THEN cast the vote: if this value equals the candidate, add one to the count;
+          otherwise subtract one.
+
+    3. When the walk finishes, the candidate is the majority element.
+
+STEP 2a MUST COME BEFORE 2b. The vote is cast for whoever is standing, so if nobody is
+standing you must put someone forward first. Doing them the other way round fails on every
+input - the very first value votes against a candidate that does not exist.
+
+WHY IT IS SAFE TO THROW AWAY THE OLD CANDIDATE at step 2a: the count reaching zero means the
+part of the list processed so far contained exactly as many of the old candidate as of
+everything else - a perfect tie. A tied section has no majority of its own, so the overall
+majority must still be the majority of what remains. Nothing is lost.
+
+NO RECURSION, no dictionary, no sorting - one walk and two variables.
+
+WHAT PEOPLE MISUNDERSTAND rather than mistype: the count is NOT how many times the candidate has
+appeared. It is the candidate's surplus after cancellations. In a list where the answer appears
+four times, the count may never exceed two.
+
+IF A MAJORITY IS NOT GUARANTEED: do a second walk, count how many times the final candidate
+actually appears, and confirm it is more than half. One extra pass, still no extra memory.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a hall filling up with supporters of several football clubs, arriving one at a time
+through a single door, and a steward with no notebook and no memory for faces - only room in
+his head for ONE club name and ONE number.
+
+The rule is that rival supporters cancel each other out. Whoever the steward is currently
+tracking, if the next person through the door supports that same club, the number goes up by
+one - reinforcements. If they support anyone else, the two of them are considered to have
+neutralised each other and the number goes down by one.
+
+If the number ever reaches zero, the steward has no one left standing, and no reason to prefer
+any club. So he simply takes the name of the very next person through the door and starts
+again from there.
+
+That resetting looks reckless, and it is the cleverest part. The number hitting zero means
+that among everyone who has come in so far, the club he was tracking was matched exactly, one
+for one, by everyone else. That whole crowd cancelled itself out perfectly - so it cannot
+contain a club with an outright majority, and it can be forgotten entirely. Whatever club has
+a majority across the WHOLE evening must still have a majority among the people yet to arrive.
+
+At the end of the night, the name in the steward's head is the club with the outright
+majority. It has to be: to eliminate them completely you would need at least as many rival
+supporters as majority supporters, and by definition there are not that many.
+
+The catch, and the steward knows it, is that he can always name a club whether or not any club
+actually had a majority. If the evening was a three-way split with no one dominant, he will
+still have a name in his head, and it will mean nothing. Answering "was there a majority?"
+honestly needs a second walk round the hall to count.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def majority_element(nums):
+        candidate = None
+        count = 0
+
+  `candidate` is whoever is currently standing; `count` is how many of them survive after the
+  cancellations so far. Starting `candidate` at None is safe because `count` is 0, so the very
+  first value will replace it before any comparison matters.
+
+        for x in nums:
+
+  One pass. No index is needed - positions never enter the algorithm.
+
+            if count == 0:
+                candidate = x
+
+  NOBODY IS STANDING, SO ADOPT THIS VALUE. This is the line that makes the algorithm work, and
+  dropping it turns the function into "is the first element the majority?" - wrong on 1,931 of
+  6,000.
+
+  It is safe to discard the previous candidate here because count reaching 0 means the prefix
+  seen so far contained exactly as many of that candidate as of everything else. A perfectly
+  balanced prefix has no majority of its own, so throwing it away cannot change the answer.
+
+            count += 1 if x == candidate else -1
+
+  THE VOTE. Same as the candidate - a reinforcement, so add one. Different - a mutual knockout,
+  so subtract one.
+
+  THIS MUST COME AFTER THE ADOPTION. Reverse the two lines and the first value votes against a
+  candidate of None, the count goes to -1, and it never recovers: wrong on 6,000 of 6,000.
+
+  Note that immediately after an adoption, `x == candidate` is true by construction, so the
+  count goes 0 -> 1. The adoption and its vote are really one action.
+
+        return candidate
+
+  Whoever is left standing. Given the problem's guarantee that a majority exists, this is it.
+
+WHAT IS NOT HERE, and should be if the guarantee were removed: a second pass counting the
+candidate's actual occurrences and checking it exceeds len(nums) // 2. Without a majority the
+function still returns a value, and it means nothing - [1,2,3] returns 3.""",
+
+    """9. TRACED ON REAL NUMBERS - nums = [2, 2, 1, 1, 1, 2, 2]
+
+Four 2s and three 1s, so 2 is the majority (4 > 7/2).
+
+    START     candidate = None,  count = 0
+
+    x = 2     count is 0 -> ADOPT 2.        candidate = 2
+              2 == 2, so count 0 + 1 = 1
+    x = 2     count is 1, no adoption.
+              2 == 2, so count 1 + 1 = 2
+    x = 1     count is 2, no adoption.
+              1 != 2, so count 2 - 1 = 1
+    x = 1     count is 1, no adoption.
+              1 != 2, so count 1 - 1 = 0        <- the 2s are wiped out for now
+    x = 1     count is 0 -> ADOPT 1.        candidate = 1
+              1 == 1, so count 0 + 1 = 1
+    x = 2     count is 1, no adoption.
+              2 != 1, so count 1 - 1 = 0        <- and now the 1 is wiped out
+    x = 2     count is 0 -> ADOPT 2.        candidate = 2
+              2 == 2, so count 0 + 1 = 1
+
+    return 2
+
+THE VARIABLES AT A GLANCE:
+
+     x | count before | adopt? | candidate | count after
+    ---+--------------+--------+-----------+------------
+     2 |      0       |  YES   |     2     |     1
+     2 |      1       |   no   |     2     |     2
+     1 |      2       |   no   |     2     |     1
+     1 |      1       |   no   |     2     |     0
+     1 |      0       |  YES   |     1     |     1
+     2 |      1       |   no   |     1     |     0
+     2 |      0       |  YES   |     2     |     1
+
+TWO THINGS TO NOTICE, and they are the two things people get wrong.
+
+FIRST: THE COUNT NEVER REACHES 4, even though the answer appears four times. Its maximum is 2.
+The count is a surplus, not a frequency.
+
+SECOND: THE CANDIDATE WAS BRIEFLY 1 - the wrong answer - in the middle of the pass. That is not
+a bug. At the moment the candidate became 1, the prefix [2,2,1,1] had cancelled perfectly, so
+it could be discarded, and 2 is still the majority of what was left: [1,2,2]. Sure enough, the
+remainder re-elects it.
+
+A SECOND TRACE - THE ALTERNATING CASE, nums = [1, 2, 1, 2, 1]. Three 1s and two 2s.
+
+    x=1: adopt 1, count 1        x=2: differ, count 0
+    x=1: adopt 1, count 1        x=2: differ, count 0
+    x=1: adopt 1, count 1        ->  return 1
+
+    The candidate is knocked down to zero twice and re-elected each time - because there are
+    simply more 1s to keep re-electing it.
+
+A THIRD - THE CASE THE ALGORITHM CANNOT ANSWER. nums = [1, 2, 3], which has no majority at all.
+
+    x=1: adopt 1, count 1;  x=2: differ, count 0;  x=3: adopt 3, count 1  ->  returns 3
+
+    3 is not a majority of anything. THE ALGORITHM ALWAYS RETURNS A CANDIDATE; only a second
+    counting pass can turn that into a guarantee.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass, one comparison and one addition per element: O(n) time. Two
+variables regardless of length: O(1) space. The list is neither sorted nor copied nor modified.
+You cannot beat O(n) - an unexamined element could be the majority.
+
+Compare the three solutions honestly, because the interviewer wants the ladder:
+
+    dictionary of counts   O(n) time,        O(n) space,   one line
+    sort and take middle   O(n log n) time,  O(1) extra,   one line
+    Boyer-Moore voting     O(n) time,        O(1) space,   five lines
+
+THE #1 MISTAKE: voting before adopting. Wrong on 6,000 of 6,000 - a complete failure, returning
+None on the simplest input. ADOPT, THEN VOTE.
+
+THE #2: omitting the re-adoption entirely, so the first element is the candidate forever. 1,931
+of 6,000, and right whenever the majority happens to come first - which is exactly why it
+survives a couple of hand-written tests.
+
+THE #3 IS NOT A TYPO BUT A MISREADING: believing the count is the candidate's frequency. In the
+worked trace the answer appears four times and the count peaks at 2. It is a SURPLUS.
+
+TWO HONEST NEGATIVES: counting with a dictionary and sorting-then-taking-the-middle were both
+wrong on 0 of 6,000. They are correct solutions with different trade-offs, not mistakes.
+
+WHAT TO SAY OUT LOUD, in this order: (1) more than half is very strong - the majority
+outnumbers everything else combined; (2) so if I cancel each majority element against a
+non-majority one, the majority survives; (3) that becomes a single pass with a candidate and a
+surplus count; (4) resetting when the count hits zero is safe, because a prefix that cancelled
+perfectly has no majority of its own and can be discarded; (5) O(n) time, O(1) space; (6) and
+if a majority were not guaranteed I would add a second pass to verify. Point 4 is the proof,
+and it is what separates understanding the algorithm from having memorised five lines.
+
+THE FOLLOW-UP: "find all elements appearing more than n/3 times" - Majority Element II. There
+can be at most two, and the same idea generalises to TWO candidates and TWO counters, with a
+verification pass at the end (which is mandatory there, since existence is not guaranteed).
+Being able to say "it generalises to n/k with k-1 counters" is the strongest answer available.
+
+THE FAMILY. Majority Element II (n/3), Boyer-Moore string search (same authors, different
+algorithm - do not confuse them), Single Number (another O(1)-space trick over an array,
+using XOR), and Find the Duplicate Number. The shared theme: a strong guarantee in the
+problem statement lets you replace a data structure with two variables.
+
+ONE-SENTENCE TAKEAWAY: keep one candidate and a surplus count - adopt whatever you see when the
+count is zero, then add one for a match and subtract one for a mismatch - and the value left
+standing at the end is the majority.""",
 ]
 
 _EXAMPLES["Container With Most Water"] = [
@@ -116666,178 +117031,1323 @@ and nothing can pair with itself.""",
 ]
 
 _EX_P1W["Linked List Cycle"] = [
-    """Why the two pointers must meet, which is the proof to have ready.
-Slow moves 1 step per iteration, fast moves 2. Once both are inside the cycle,
-fast gains exactly ONE step on slow per iteration - so the gap between them
-shrinks by 1 each time and cannot jump over 0. It therefore hits 0 exactly, and
-they meet.
-If fast moved 3 steps, the gap would shrink by 2 and could skip past a gap of
-1 in an odd-length cycle - which is why the classic uses 1 and 2. That is the
-answer to 'why not faster?'.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The trace.
-1 -> 2 -> 3 -> 4 -> 5 -> back to 3.
-slow 1, fast 1. Step: slow 2, fast 3. Step: slow 3, fast 5. Step: slow 4,
-fast 4 -> MET, return True.
-No cycle, 1 -> 2 -> 3: slow 2, fast 3; then fast.next is None -> exit -> False.
-Note the loop condition checks both `fast` and `fast.next`, because fast takes
-two steps and either could fall off the end - checking only one dereferences
-None on a list of even length.""",
+A LINKED LIST is a chain of boxes; each box holds a value and an arrow to the next box.
+Normally the last box's arrow points at nothing, and the chain ends.
 
-    """The hash-set alternative, and why the pointers win.
-Storing every visited node in a set and checking membership is correct, easier
-to explain, and O(n) SPACE. Floyd's is O(1) space, which is the entire point of
-the problem - the constraint in the prompt is what forces the two-pointer
-answer.
-Worth presenting both: the set version first as the obvious solution, then the
-pointers as the constant-space improvement. That ordering shows you can produce
-a working answer and then optimise, which is what interviewers want to see.""",
+    3 -> 2 -> 0 -> -4 -> None          a normal list, no cycle
 
-    """Finding the cycle's START - the follow-up that always comes.
-After the meeting point, reset one pointer to the head and advance BOTH one
-step at a time; they meet at the cycle entrance.
-The proof in one line: if the tail before the cycle has length a and the meeting
-point is b steps into a cycle of length c, then the maths works out so that a
-and (c - b) are congruent - so a pointer from the head and one from the meeting
-point converge exactly at the entrance.
-You do not have to derive it live, but you should be able to state the
-procedure and that it is a known result.""",
+But an arrow could point BACKWARDS to a box you have already passed. Then following the
+arrows never ends - you go round and round forever.
 
-    """Edge cases.
-Empty list -> the loop condition fails immediately -> False.
-Single node with no cycle -> fast.next is None -> False.
-Single node pointing at ITSELF -> slow and fast both move to the same node and
-meet -> True. This is the smallest possible cycle and a good test.
-Two nodes in a cycle -> meet on the second iteration.
-The whole list being one big cycle -> detected normally; there is no special
-case for a cycle that includes the head.""",
+    3 -> 2 -> 0 -> -4
+         ^          |
+         |__________|                  the last box points back at the 2
 
-    """Complexity and the family.
-O(n) time - slow travels at most n steps before fast laps it - and O(1) space.
-The family: Linked List Cycle II (find the entrance, above), Find the Duplicate
-Number (the same tortoise-and-hare applied to an ARRAY treated as a linked list
-via index -> value, which is a genuinely clever reuse), Happy Number (cycle
-detection on a number sequence), Middle of the Linked List (fast/slow with fast
-at 2x, so slow lands in the middle), and Palindrome Linked List (find the
-middle, reverse the second half, compare).
-Fast/slow pointers are one primitive with many disguises.""",
+Your job is just to answer YES or NO: does this list contain such a loop?
+
+    [3, 2, 0, -4] with the tail pointing back at position 1   ->  TRUE
+    [1, 2] with the tail pointing back at position 0          ->  TRUE
+    [1] with no back-link                                     ->  FALSE
+    an empty list                                             ->  FALSE
+
+WHY IT IS NOT TRIVIAL. You cannot simply walk to the end and see, because if there IS a
+cycle there is no end - the walk never terminates, and your program hangs rather than
+answering. You also cannot count steps and give up after some number, because the list might
+legitimately be that long.
+
+THE OBVIOUS FIX is to write down every box you visit and check whether you are somewhere
+you have been. That works and it is a perfectly good answer, but it costs memory
+proportional to the list. The interesting solution uses FOUR VARIABLES AND NO MEMORY AT ALL,
+and section 2 builds it up.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF TWO RUNNERS ON A TRACK. One jogs, one sprints at double the speed. They set off
+together from the start line.
+
+    IF THE TRACK IS A STRAIGHT LINE, the sprinter reaches the far end and stops. They never
+    meet again - the gap only grows.
+
+    IF THE TRACK IS A LOOP, the sprinter comes round behind the jogger and eventually catches
+    up. On a circular track a faster runner ALWAYS laps a slower one; there is nowhere to
+    escape to.
+
+That is the entire algorithm. Send two pointers through the list, one moving ONE box at a
+time and one moving TWO. If the fast one runs off the end, there is no cycle. If the two ever
+land on the SAME BOX, there is.
+
+    3 -> 2 -> 0 -> -4
+         ^          |
+         |__________|
+
+    start   slow = 3        fast = 3
+    step 1  slow = 2        fast = 0            (fast moved two)
+    step 2  slow = 0        fast = 2            (fast went -4 then round to 2)
+    step 3  slow = -4       fast = -4           SAME BOX -> there is a cycle
+
+WHY THEY CANNOT SKIP PAST EACH OTHER - the question everybody asks, and the answer is
+pleasingly simple. Once both pointers are inside the loop, look at the GAP between them,
+measured as how many steps the fast one is behind the slow one going forwards. Each round,
+slow advances 1 and fast advances 2, so the gap SHRINKS BY EXACTLY ONE.
+
+    gap: 5 -> 4 -> 3 -> 2 -> 1 -> 0
+
+A quantity that decreases by exactly 1 each step and can never go below 0 must hit 0. It
+cannot jump from 1 to -1, because it only ever changes by one. So they MEET; they never
+overshoot. That is why the speeds are 1 and 2 rather than, say, 1 and 3 - with a gap
+shrinking by 2 you would have to worry about parity and stepping over.
+
+    THE NAME. This is FLOYD'S CYCLE DETECTION, usually called the TORTOISE AND HARE.
+
+WHAT ABOUT THE STRAIGHT-LINE CASE? The fast pointer covers twice the ground, so it reaches
+the end after about half as many steps as the list is long - and the moment it finds nothing
+ahead, the answer is NO. Which is why the loop's condition has to check the fast pointer has
+somewhere to go BEFORE trying to move it two places.""",
+
+    """3. EVERY TERM, DEFINED
+
+LINKED LIST. A chain of NODES. Each node holds a value (`val`) and a reference to the next
+node (`next`). There is no indexing - to reach the fifth node you walk past four.
+
+HEAD. The first node. The whole list is identified by it. `head` may be None, meaning the
+list is empty.
+
+None. The absence of a node. In a normal list, the last node's `next` is None, and that is
+what tells you the list has ended. Asking for `.next` on None raises AttributeError, which is
+exactly what the loop condition is written to prevent.
+
+CYCLE. Some node's `next` points back to a node already visited, so following the arrows
+never reaches None.
+
+TWO POINTERS / FAST AND SLOW. Two variables walking the same list at different speeds. Here
+`slow` moves one node per round and `fast` moves two.
+
+FLOYD'S CYCLE DETECTION (TORTOISE AND HARE). The name for this technique. Worth knowing,
+because interviewers use it and because it appears in three other problems - see section 10.
+
+`is` vs `==`. `is` asks "are these the SAME OBJECT?"; `==` asks "are these EQUAL?". You want
+`is`, because two different boxes might hold the same number and that is not a cycle. In this
+particular class `==` happens to behave identically - see section 4 for the precise reason -
+but writing `is` is what states the intent.
+
+O(1) SPACE / CONSTANT SPACE. Using a fixed number of variables regardless of input size. This
+solution uses two pointers, however long the list is - which is the whole reason it is
+preferred over the obvious set-based version.
+
+SHORT-CIRCUIT `and`. In `while fast and fast.next`, if `fast` is None, Python never evaluates
+`fast.next` - so the check itself cannot crash. That ordering is not optional; reversing it
+would raise on the last node.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - COMPARING THE POINTERS BEFORE MOVING THEM. Both start on the head, so `slow is fast`
+is true straight away and the function announces a cycle on any list with at least two nodes.
+
+    MEASURED: wrong on 754 of 6,000 random lists - which is every acyclic list of two or more
+    nodes in the sample. It says TRUE for essentially everything, and is right on cyclic lists
+    only by accident. MOVE FIRST, THEN COMPARE.
+
+TRAP 2 - MOVING BOTH POINTERS BY ONE. If they travel at the same speed they never separate,
+so they are equal after the first move and the function reports a cycle immediately.
+
+    MEASURED: wrong on 754 of 6,000 - EXACTLY the same figure as trap 1, because it is
+    exactly the same failure wearing different clothes. THE DIFFERENCE IN SPEED IS THE
+    ALGORITHM; without it there are just two names for one pointer.
+
+TRAP 3 - TESTING ONLY `while fast:` INSTEAD OF `while fast and fast.next:`. The fast pointer
+takes two steps, so BOTH the node it is on and the one after it must exist. With only the
+first check, `fast.next.next` is evaluated when `fast.next` is None.
+
+    MEASURED: 573 of 6,000 raised AttributeError - "NoneType object has no attribute next".
+    It crashes rather than answering wrongly, so at least it is loud. And note the order
+    inside the condition matters too: `fast and fast.next` short-circuits safely, while
+    `fast.next and fast` would raise on the very node it is meant to protect.
+
+TRAP 4 - USING A SET OF VISITED NODES AND CALLING IT DONE. It is CORRECT - measured wrong on
+0 of 6,000 - and it is a perfectly good first answer. What it is not is the answer being
+looked for: it costs O(n) memory, and this problem is famous precisely because the memory can
+be removed entirely. Offer it, then improve it.
+
+WHAT IS NOT A TRAP, checked rather than assumed: USING `==` INSTEAD OF `is`. Measured wrong on
+0 of 6,000, and the reason is worth knowing rather than guessing. The `ListNode` class does not
+define `__eq__`, so Python's default equality falls back to identity - `==` and `is` do exactly
+the same thing here. VERIFIED: two distinct nodes both holding the value 1 compare as not
+equal. So `==` is not a bug, but it becomes one the moment someone adds an `__eq__` to the
+class, and `is` says what you actually mean.
+
+ALSO NOT A TRAP: an empty list or a single node. `while fast and fast.next` is false
+immediately, and False is returned. No special case needed.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - REMEMBER EVERY NODE YOU HAVE VISITED:
+
+    def has_cycle(head):
+        seen = set()
+        node = head
+        while node:
+            if node in seen:            # been here before -> cycle
+                return True
+            seen.add(node)
+            node = node.next
+        return False                    # reached None -> no cycle
+
+IT IS CORRECT - measured wrong on 0 of 6,000 - and it is the right thing to say first,
+because it shows you understand the problem: the danger is revisiting a node, so record the
+nodes. Note the set stores the NODES THEMSELVES, not their values; two boxes holding 7 are
+different boxes.
+
+COST: O(n) time, and O(n) MEMORY. That memory is the whole target. On a list of ten million
+nodes you are holding ten million references purely to answer yes or no.
+
+THE UPGRADE - TWO SPEEDS AND NO MEMORY. Send a second pointer through the same list at double
+speed:
+
+    NO CYCLE:  the fast pointer runs off the end and you answer no.
+    CYCLE:     the fast pointer re-enters the loop behind the slow one and catches it.
+
+WHY IT MUST CATCH, FROM SCRATCH - and this is the part to be able to say out loud, because
+"they meet" sounds like a hope rather than a fact. Once BOTH pointers are inside the loop,
+define the gap as the number of forward steps from fast to slow around the loop. Each round:
+
+    slow advances 1,  fast advances 2,  so the gap DECREASES BY EXACTLY 1.
+
+The gap is a non-negative whole number that goes down by one every round, so it must reach 0,
+and 0 means they are on the same node. It cannot skip past 0, because it changes by exactly
+one - which is precisely why the speeds are 1 and 2. With speeds 1 and 3 the gap would fall by
+2 each round and could step from 1 straight to -1, and you would have to reason about whether
+the loop length is even or odd. THE CHOICE OF 2 IS NOT ARBITRARY; IT IS WHAT MAKES THE
+ARGUMENT ONE LINE.
+
+HOW LONG DOES IT TAKE? MEASURED, on lists where the tail links back to position `pos`:
+
+    n=10   pos=0   -> they meet after   10 rounds        (loop length 10)
+    n=10   pos=5   -> they meet after    5 rounds        (loop length  5)
+    n=100  pos=0   -> they meet after  100 rounds
+    n=100  pos=50  -> they meet after   50 rounds
+    n=1000 pos=0   -> they meet after 1000 rounds
+
+So the meeting happens within O(n) rounds - the pointers do not wander for long. Overall O(n)
+time and O(1) space, which is the whole point.
+
+HOW THE VALUE TRAVELS: nothing is stored and nothing accumulates. The only state is where the
+two pointers are, and the answer is read off from whether they collide or whether one falls
+off the end.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Put two markers on the first node. Call one SLOW and one FAST.
+
+    2. Repeat the following for as long as the fast marker is on a real node AND the node
+       after it also exists. Both checks are needed, because the fast marker is about to take
+       two steps, so two nodes must be there for it to land on.
+
+       a. Move the slow marker forward ONE node.
+       b. Move the fast marker forward TWO nodes.
+       c. NOW compare them. If they are on the SAME node, there is a cycle - answer yes and
+          stop.
+
+    3. If the loop ever ends - meaning the fast marker found nothing ahead of it - then the
+       list has a genuine end, so there is no cycle. Answer no.
+
+THE ORDER OF 2a-2c MATTERS. Comparing before moving is wrong on essentially every input,
+because both markers start in the same place, so they are trivially equal before anyone has
+moved. Move, then compare.
+
+THE DIFFERENCE IN SPEED IS THE ALGORITHM. If both markers move one step they can never
+separate, and the function reports a cycle for every list. If you can only remember one thing:
+ONE STEP AND TWO STEPS.
+
+NO RECURSION, no list, no set - two variables. Termination: on a straight list the fast marker
+reaches the end in about half the list's length; on a cyclic list the gap between the markers
+falls by exactly one each round and so must hit zero.
+
+WHAT PEOPLE ALSO GET WRONG is the loop condition. Checking only that the fast marker exists
+lets it try to step through a missing node and raises an error. Check the node AND the one
+after it, in that order, so the check itself is safe.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Two people set off walking along a path from the same gate. One strolls; the other walks at
+exactly twice the pace. Neither of them can see any further ahead than the next stretch of
+path, and neither is allowed to leave markers, drop breadcrumbs or write anything down. The
+question they have been sent to answer is simply: does this path eventually loop back on
+itself, or does it come to an end?
+
+If the path is a straight one, the fast walker reaches the end first, sees there is nothing
+beyond, and that settles it - a path with an end cannot be a loop.
+
+If the path circles back on itself, something inevitable happens. The fast walker, having gone
+round, comes up behind the slow one. And because they are on a closed circuit, there is
+nowhere for the slow walker to escape to. Every minute, the fast walker closes the distance by
+exactly one stretch of path - two forward against one. A distance that shrinks by exactly one
+each time cannot leap over zero; sooner or later they are standing in the same place. When
+they find themselves together, they have their answer.
+
+The reason this is worth doing at all, rather than the obvious thing of leaving a marker at
+each spot and watching for a marker you recognise, is the "write nothing down" rule. Markers
+work perfectly and they cost you one marker per stretch of path. Two walkers cost you two
+walkers, whether the path is a hundred stretches long or ten million.
+
+The one thing that has to be right is that the fast walker checks there is actually path ahead
+before taking two strides. Stride into a gap and you do not get an answer, you get an accident.
+And they must compare positions AFTER walking, not before - at the gate they are obviously in
+the same place, and concluding "a loop!" before anyone has moved would be a very short and
+very wrong survey.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    class ListNode:
+        def __init__(self, val, next=None):
+            self.val = val
+            self.next = next
+
+  One node: a value and an arrow.
+
+    def has_cycle(head):
+        slow = fast = head
+
+  Both pointers start on the first node. `slow = fast = head` binds both names to the SAME
+  node - which is exactly why the comparison must come after the moves, not before.
+
+  If `head` is None, both are None and the loop below never runs.
+
+        while fast and fast.next:
+
+  THE SAFETY CONDITION, and it must have both halves. `fast` is about to advance TWO nodes, so
+  both the node it is on and the node after it must exist. `fast and fast.next` also
+  SHORT-CIRCUITS: if `fast` is None, Python never evaluates `fast.next`, so the check itself
+  cannot raise.
+
+  Checking only `while fast:` raises AttributeError on 573 of 6,000 lists.
+
+  When this condition is false, the fast pointer has found the end of the list - which means
+  there is no cycle, and the function falls through to `return False`.
+
+            slow = slow.next
+            fast = fast.next.next
+
+  One step and two steps. THIS DIFFERENCE IS THE ALGORITHM. Moving both by one is wrong on 754
+  of 6,000 lists, because pointers at equal speed never separate and so are equal after the
+  first move.
+
+            if slow is fast:
+                return True
+
+  AFTER moving, not before. `is` asks whether they are the same OBJECT - which is what a cycle
+  means. (`==` behaves the same here only because `ListNode` defines no `__eq__` and Python
+  falls back to identity; `is` says what you mean and stays correct if someone adds one.)
+
+  Comparing before the moves returns True for any list of two or more nodes - wrong on 754 of
+  6,000.
+
+        return False
+
+  The fast pointer ran out of list. A list with an end cannot have a cycle.
+
+TWO VARIABLES, NO ALLOCATION - O(1) space, which is the entire reason this solution exists
+rather than the set-based one.""",
+
+    """9. TRACED ON REAL LISTS
+
+CASE ONE - A CYCLE. The official example: values [3, 2, 0, -4], with the tail pointing back at
+position 1 (the node holding 2). Naming the nodes A, B, C, D so it is clear which box is
+which:
+
+        A(3) -> B(2) -> C(0) -> D(-4)
+                 ^                |
+                 |________________|
+
+    START     slow = A,  fast = A
+
+    ROUND 1   fast is A and A.next is B - both exist, so continue
+              slow = A.next = B
+              fast = A.next.next = C
+              B is C?  no
+
+    ROUND 2   fast is C and C.next is D - continue
+              slow = B.next = C
+              fast = C.next.next = D.next = B      (round the loop)
+              C is B?  no
+
+    ROUND 3   fast is B and B.next is C - continue
+              slow = C.next = D
+              fast = B.next.next = C.next = D
+              D is D?  YES  ->  return True
+
+    round | slow | fast | same?
+    ------+------+------+------
+      1   |  B   |  C   |  no
+      2   |  C   |  B   |  no
+      3   |  D   |  D   |  YES
+
+    Notice round 2: fast passed the slow pointer's position without landing on it, and that is
+    fine - what matters is the GAP shrinking by one each round, and it does: the gap went 2,
+    then 1, then 0.
+
+CASE TWO - NO CYCLE. Values [1, 2, 3], a plain list.
+
+    START     slow = A(1),  fast = A(1)
+    ROUND 1   fast is A, A.next is B - continue
+              slow = B(2),  fast = C(3)
+              B is C?  no
+    LOOP TEST fast is C, and C.next is None -> the condition is FALSE
+    return False
+
+    The fast pointer found the end of the list in a single round. Note the safety check doing
+    its job: had the condition been `while fast:` alone, the code would have tried
+    `C.next.next` and crashed.
+
+CASE THREE - THE SMALLEST CYCLE. Two nodes, each pointing at the other.
+
+    A -> B -> A
+
+    ROUND 1   fast is A and A.next is B - continue
+              slow = A.next = B
+              fast = A.next.next = B.next = A      (two steps takes it right round)
+              B is A?  no
+    ROUND 2   fast is A and A.next is B - continue
+              slow = B.next = A
+              fast = A.next.next = A
+              A is A?  YES -> return True
+
+    Two rounds. And the version that compares before moving would have returned True in round
+    1 without establishing anything.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. On a list with no cycle, the fast pointer reaches the end in about n/2
+rounds. On a list with a cycle, the pointers meet within O(n) rounds - MEASURED at 10 rounds
+for a 10-node full loop, 50 for a 100-node list looping from the midpoint, 1000 for a
+1000-node full loop. So O(n) TIME either way.
+
+SPACE: two pointers, whatever the length - O(1). That is the entire reason this algorithm is
+famous, because the obvious set-based version is O(n) memory and otherwise just as good.
+
+THE #1 MISTAKE: comparing the pointers before moving them. Wrong on 754 of 6,000 lists - every
+acyclic list of two or more nodes - because both start on the head. MOVE, THEN COMPARE.
+
+THE #2: moving both pointers by one. Wrong on exactly the same 754, because it is the same
+failure: equal speeds never separate. The speed difference IS the algorithm.
+
+THE #3: `while fast:` without `and fast.next`. AttributeError on 573 of 6,000. The fast pointer
+takes two steps, so two nodes must exist.
+
+ONE HONEST NEGATIVE: `==` instead of `is` is wrong on 0 of 6,000, because `ListNode` defines no
+`__eq__` so equality falls back to identity - VERIFIED with two distinct nodes both holding 1.
+It is not a bug today; it would become one the moment the class gained an `__eq__`, so write
+`is`.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the obvious solution stores every visited node in a
+set - O(n) time and O(n) space; (2) I can remove the memory with two pointers at different
+speeds, because a faster runner always laps a slower one on a closed loop; (3) they cannot skip
+past each other, because the gap shrinks by exactly one each round; (4) O(n) time, O(1) space;
+(5) the loop condition checks two nodes ahead, since the fast pointer takes two steps. Point 3
+is the one interviewers listen for - it is the difference between reciting the trick and being
+able to defend it.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "now return the node where the cycle BEGINS" - that is Linked
+List Cycle II, and the answer is beautiful: after the pointers meet, reset one of them to the
+head and advance BOTH one step at a time; they meet again exactly at the cycle's entrance. It
+falls out of the arithmetic of how far each has travelled. Know that it exists even if you
+cannot derive it on the spot.
+
+THE FAMILY. Linked List Cycle II (the entrance), Find the Duplicate Number (a beautiful
+disguise - treat the array as a linked list where index i points to nums[i], and the duplicate
+is the cycle's entrance), Happy Number (the same tortoise and hare over a number transformation
+rather than a list), Middle of the Linked List (fast and slow, no cycle involved - when fast
+reaches the end, slow is at the middle), and Palindrome Linked List. The transferable idea:
+TWO POINTERS AT DIFFERENT SPEEDS TURN "HAVE I BEEN HERE BEFORE?" FROM A MEMORY PROBLEM INTO A
+GEOMETRY ONE.
+
+ONE-SENTENCE TAKEAWAY: walk one pointer at one step and another at two - if they ever land on
+the same node there is a cycle, and if the fast one falls off the end there is not.""",
 ]
 
 _EX_P1W["Missing Number"] = [
-    """Three correct solutions, ranked - which is what this problem is for.
-SORT and scan for the gap: O(n log n), trivial.
-HASH SET of the array, then check 0..n: O(n) time, O(n) space.
-SUM formula: expected n(n+1)/2 minus the actual sum: O(n) time, O(1) space.
-XOR: XOR 0..n and every element together; pairs cancel and the missing number
-survives: O(n) time, O(1) space AND no overflow risk.
-Producing all four and explaining the trade is a much better answer than
-producing only the clever one - it shows you can reason about the constraints
-rather than having memorised a trick.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The sum trick, traced.
-nums = [3,0,1], n = 3. Expected sum of 0..3 is 3*4/2 = 6. Actual sum is 4.
-6 - 4 = 2 -> the missing number is 2. Correct.
-The whole idea: you know exactly what the total SHOULD be, so the shortfall is
-precisely the absent value. It works because the numbers are DISTINCT and the
-range is known - remove either guarantee and the arithmetic means nothing.""",
+You are handed a list that SHOULD contain every whole number from 0 up to n, but exactly one
+is missing. The list therefore has n entries instead of n + 1. Find the missing one.
 
-    """The overflow argument for preferring XOR.
-For n around 100,000 the expected sum is about 5 billion, which exceeds a
-signed 32-bit integer. In Java or C++ the formula silently overflows and
-returns nonsense; Python's arbitrary-precision integers hide it entirely.
-XOR has no such problem - it never produces a value larger than the largest
-input. So in a language with fixed-width integers, XOR is the better answer,
-and saying so unprompted signals you are thinking past your interpreter.
-The safer variant of the sum approach is to subtract as you go
-(`result += i - nums[i]`), keeping the running value small.""",
+    [3, 0, 1]
 
-    """The XOR version, traced.
-nums = [3,0,1]. XOR of indices 0,1,2 and the sentinel n=3 gives 0^1^2^3 = 0.
-XOR of the values 3^0^1 = 2.
-Combined: 0 ^ 2 = 2. Correct.
-In one loop: `result = n; for i, x in enumerate(nums): result ^= i ^ x`.
-Why it works: every number that IS present appears once as an index (or as n)
-and once as a value, so it cancels itself to 0; the missing number appears only
-on the index side and survives.""",
+    Three entries, so n = 3 and the numbers should be 0, 1, 2, 3.
+    Present: 0, 1, 3.  MISSING: 2.
 
-    """Edge cases.
-n = 1 with nums = [0] -> expected 1, actual 0 -> missing 1. The missing number
-can be n itself, at the END of the range - which a scan-for-a-gap solution can
-miss if it only checks between elements.
-nums = [1] -> missing 0, at the START. Those two inputs bracket the range and
-are the ones to test.
-Empty array -> missing 0.
-The problem guarantees exactly one missing and no duplicates; without those the
-sum tells you only the NET difference, and both tricks break.""",
+    [0, 1]        two entries, so the range is 0, 1, 2.  MISSING: 2.
+    [1]           one entry, so the range is 0, 1.       MISSING: 0.
+    [0]           one entry, so the range is 0, 1.       MISSING: 1.
 
-    """Complexity and the family.
-O(n) time, O(1) space with either the sum or XOR approach.
-The family is 'exploit a stated constraint instead of searching': Single Number
-(XOR, because everything else appears exactly twice), Find All Numbers
-Disappeared in an Array (mark indices negative in place - a different trick for
-MULTIPLE missing values, where sum and XOR both fail), Find the Duplicate
-Number (Floyd's cycle detection on the value range), First Missing Positive
-(index-as-hash placement), and Missing Number in an arithmetic progression.
-When a prompt volunteers an unusual guarantee - distinct, a known range,
-exactly one - that guarantee is almost always the intended route.""",
+TWO THINGS THAT TRIP PEOPLE UP AND ARE WORTH FIXING NOW:
+
+    THE RANGE GOES UP TO n, WHERE n IS THE LIST'S LENGTH - not up to n - 1. A list of three
+    numbers covers 0, 1, 2, 3, which is four values, one of which is absent. Getting this
+    boundary wrong is the single biggest failure in section 4.
+
+    THE MISSING VALUE CAN BE 0 OR n - either end. It is not always somewhere in the middle, and
+    it is not always the largest, so a solution that only looks for a gap in the interior is
+    wrong on both ends.
+
+The numbers appear in any order, and they are all distinct.
+
+THE OBVIOUS SOLUTION - sort it, or put everything in a set and scan - works fine. The reason
+this problem is asked is that there is a solution needing NO SORTING AND NO EXTRA MEMORY, and
+it is one line of arithmetic.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+WORK OUT WHAT THE TOTAL SHOULD BE, AND SUBTRACT WHAT IT ACTUALLY IS. The difference is the
+missing number, because that is the only thing that could be causing the shortfall.
+
+    [3, 0, 1]
+
+    what SHOULD be there:   0 + 1 + 2 + 3  =  6
+    what IS there:          3 + 0 + 1      =  4
+    the shortfall:          6 - 4          =  2      <- the missing number
+
+That is the entire algorithm. It works because the numbers are all distinct and the range is
+completely known, so the expected total is fixed in advance and exactly one thing is absent
+from it.
+
+BUT YOU MUST NOT ADD UP 0 TO n BY LOOPING - that would be fine, but there is a formula for it
+that everybody should know:
+
+    0 + 1 + 2 + ... + n  =  n * (n + 1) / 2
+
+THE PICTURE THAT MAKES THAT FORMULA OBVIOUS - fold the row in half and pair the ends:
+
+    0 + 1 + 2 + 3 + 4 + 5 + 6        wanted: the sum of 0..6
+
+    pair the outside inwards:        0 + 6 = 6
+                                     1 + 5 = 6
+                                     2 + 4 = 6
+                                     3 is left in the middle
+
+    six pairs' worth: there are 6 + 1 = 7 numbers, so 7 x 6 / 2 = 21 - and indeed
+    0+1+2+3+4+5+6 = 21.
+
+    In general: n + 1 numbers, each pair summing to n, giving (n + 1) * n / 2.
+
+WHY THE DIVISION IS EXACT. Of any two consecutive whole numbers n and n + 1, one is even, so
+their product is always even and `n * (n + 1) // 2` never loses anything. Integer division is
+safe here, not an approximation.
+
+    n = 3:  3 * 4 / 2 = 6           n = 4:  4 * 5 / 2 = 10
+
+THE OTHER GOOD SOLUTION - XOR. Combine every index and every value with exclusive-or.
+Everything that appears twice cancels out and the missing number is left. It avoids the
+theoretical worry about the sum overflowing in languages with fixed-size integers, and section
+5 works through why the cancellation happens.""",
+
+    """3. EVERY TERM, DEFINED
+
+n. The LENGTH of the list. Because one number is missing, the list holds n entries and the
+complete range would be 0 through n - that is n + 1 values. Fixing this in your head is most
+of the problem.
+
+DISTINCT. No repeats. This matters: the sum trick would break instantly if a number could
+appear twice, because then two things would be changing the total.
+
+SUM OF THE FIRST n NATURAL NUMBERS. The formula `n * (n + 1) // 2`, sometimes called a
+TRIANGULAR NUMBER because that many dots make a triangle. Worth memorising - it appears in
+complexity analysis constantly (the number of pairs in a list, the comparisons in a bubble
+sort).
+
+`//` - FLOOR DIVISION. Divides and discards any fraction. Used here rather than `/` to stay
+with whole numbers; the result is exact anyway, since one of n and n + 1 is always even.
+
+XOR (`^`) - EXCLUSIVE OR. A bit-by-bit operation: 1 where the two bits differ, 0 where they
+match. Three properties are all you need, and all three are used in section 5:
+
+    x ^ x = 0          anything cancels itself
+    x ^ 0 = x          zero changes nothing
+    order does not matter - you may combine values in any sequence you like
+
+O(1) SPACE. A fixed number of variables regardless of input size. The sum solution stores one
+running total; a set-based solution stores the whole list again.
+
+INTEGER OVERFLOW. In languages with fixed-size integers, a large sum can exceed what an `int`
+holds and wrap around to nonsense. PYTHON HAS NO SUCH LIMIT - its integers grow as needed - but
+the concern is real in Java or C++, and mentioning it is the mark of someone who has written
+this in another language. MEASURED for scale: at n = 100,000 the expected sum is 5,000,050,000,
+which overflows a 32-bit signed int but fits comfortably in 64 bits.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - USING THE WRONG UPPER LIMIT: `(n - 1) * n // 2` instead of `n * (n + 1) // 2`. This is
+the sum of 0 through n - 1, but the range runs to n. It is the classic off-by-one, and here it
+is total.
+
+    [3, 0, 1]        correct 2       with (n-1)n/2:  -1
+    [0, 1]           correct 2       with (n-1)n/2:   0
+    [1]              correct 0       with (n-1)n/2:  -1
+
+    MEASURED: wrong on 6,000 of 6,000 - EVERY case. And notice the answers are frequently
+    NEGATIVE, which is a useful diagnostic: a negative result from this function means the
+    expected sum was computed over the wrong range.
+
+    THE REASON, stated so it sticks: a list of length n is MISSING one entry, so the complete
+    set had n + 1 members - 0 through n inclusive.
+
+TRAP 2 - ASSUMING THE MISSING NUMBER IS ALWAYS THE LARGEST, so returning `max(nums) + 1`. It
+is right exactly when the absent value happens to be n itself.
+
+    MEASURED: wrong on 4,884 of 6,000 - and right on the other 1,116, which is exactly the
+    number of cases where the largest value WAS the one missing. The missing number is equally
+    likely to be 0, or n, or anything in between.
+
+    [3, 0, 1] gives 4 rather than 2, and [1] gives 2 rather than 0.
+
+TRAP 3 - ASSUMING THE MISSING NUMBER IS NEVER AT THE ENDS. Any solution built on "find the
+first place where the value does not match its position" must also handle running off the end
+of the list - because if nothing mismatches, the missing value is n. The sorted-scan version in
+section 5 gets this right only because of its final `return len(s)`; forget that line and the
+function returns None whenever n is the missing value.
+
+TRAP 4 - OVERFLOW, in other languages. Not an issue in Python, where integers are unbounded,
+but a genuine one in Java or C++: for large n the expected sum can exceed a 32-bit integer.
+MEASURED: at n = 100,000 the expected sum is 5,000,050,000 - beyond a 32-bit signed int, fine
+in 64. The XOR solution sidesteps the issue entirely, which is the main reason to prefer it.
+
+WHAT IS NOT A TRAP, checked rather than assumed - two alternatives that are simply correct:
+
+    THE XOR SOLUTION - exclusive-or every index and every value together. Wrong on 0 of 6,000.
+    Same O(n) time, O(1) space, and no overflow concern at all.
+
+    SORT AND FIND THE FIRST POSITION WHERE THE VALUE DOES NOT EQUAL THE INDEX. Wrong on 0 of
+    6,000, given the fall-through for the missing-n case. O(n log n), so slower, but perfectly
+    correct and easy to explain.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - PUT EVERYTHING IN A SET AND LOOK FOR THE GAP:
+
+    def missing_number(nums):
+        present = set(nums)
+        for i in range(len(nums) + 1):        # note the + 1: the range runs to n
+            if i not in present:
+                return i
+
+IT IS CORRECT - this is exactly how the ground truth for every figure in this entry was
+computed - and it is a fine first answer. It is also the version that makes the `+ 1` visible,
+which is worth pointing at while you write it. COST: O(n) time but O(n) SPACE, since the set
+holds a copy of everything.
+
+A SECOND REASONABLE ANSWER - SORT AND SCAN. After sorting, entry i should equal i; the first
+place that fails is the missing value, and if nothing fails, the answer is n. Wrong on 0 of
+6,000. O(n log n) time, O(1) extra space if sorted in place. Slower, but nothing wrong with it.
+
+THE UPGRADE - ARITHMETIC INSTEAD OF SEARCHING. You know exactly which numbers SHOULD be there,
+so you know their total in advance without looking at the list at all:
+
+    expected = 0 + 1 + ... + n  =  n * (n + 1) // 2
+
+Add up what is actually there, and the difference must be the missing value - nothing else
+could account for it, because every other number is present exactly once.
+
+WHY THE FORMULA IS TRUE, FROM SCRATCH - the classic pairing argument, and it is worth being
+able to reproduce rather than recite:
+
+    write the numbers forwards and backwards, one row above the other:
+
+        0    1    2    3    4    5    6
+        6    5    4    3    2    1    0
+        --------------------------------
+        6    6    6    6    6    6    6      every column sums to 6, and there are 7 columns
+
+    so twice the sum is 7 x 6 = 42, and the sum is 21.  In general: (n + 1) * n / 2.
+
+WHY THE INTEGER DIVISION IS EXACT: of n and n + 1, one is always even, so their product is
+always even. `//` throws nothing away here.
+
+THE OTHER UPGRADE - XOR, AND WHY IT WORKS. Combine every INDEX and every VALUE with exclusive-or,
+starting from n:
+
+    result = n
+    for i, x in enumerate(nums):
+        result ^= i ^ x
+
+Every number from 0 to n appears exactly once as an index-or-final-n, and every number except
+the missing one also appears once as a value. So each present number is XORed in TWICE and
+cancels itself (`x ^ x = 0`), while the missing one appears only once and survives.
+
+    nums = [3, 0, 1],  n = 3
+    result = 3 ^ (0^3) ^ (1^0) ^ (2^1)
+           = (3^3) ^ (0^0) ^ (1^1) ^ 2
+           = 0 ^ 0 ^ 0 ^ 2  =  2
+
+    the reordering is legitimate because XOR does not care about order
+
+MEASURED wrong on 0 of 6,000. Prefer it when overflow is a real concern; prefer the sum when
+you want the argument to be obvious to a reader.
+
+HOW THE VALUE TRAVELS in the sum version: nothing accumulates except a single running total.
+The missing number is never searched for - it is deduced from a discrepancy.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Note the length of the list and call it n. Because exactly one number is absent, the
+       complete set is 0 through n INCLUSIVE - that is n + 1 numbers.
+
+    2. Work out what those numbers add up to, using the formula: n times (n plus 1), divided by
+       two. Do not loop to compute it; the formula is exact, and one of n and n + 1 is always
+       even so the division never loses anything.
+
+    3. Add up the numbers that are actually in the list.
+
+    4. Subtract the actual total from the expected total. The difference is the missing number -
+       it is the only thing that could account for the shortfall, since every other number is
+       present exactly once.
+
+NO LOOPS OF YOUR OWN, no sorting, no set, no extra memory. Three lines.
+
+THE STEP PEOPLE GET WRONG is 2 - specifically the range. It runs to n, not to n - 1, because a
+list of n entries is missing one from a set of n + 1. Using the sum of 0 through n - 1 is wrong
+on every single input, and it often returns a NEGATIVE number, which is the tell.
+
+THE ALTERNATIVE, IF YOU ARE WORRIED ABOUT LARGE SUMS in a language with fixed-size integers:
+start a running result at n, then walk the list combining in both the position and the value
+with exclusive-or. Every number that is present gets combined in twice and cancels itself out;
+the missing one is combined in once and is what remains. Same single pass, same constant
+memory, and no total is ever formed.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A teacher has a class where the register runs from 0 to n, and every pupil has a numbered
+badge. This morning exactly one pupil is absent, and the teacher wants to know which - without
+reading out the whole register and without writing anything down.
+
+The slow way is to tick off names. The teacher does something quicker: before the pupils walk
+in, she works out what all the badge numbers WOULD add up to if everyone were present. That
+figure depends only on the size of the class, so she knows it in advance without seeing a
+single pupil.
+
+Then the pupils file past and she simply adds up the badge numbers she sees. The two figures
+disagree by some amount - and since every single pupil except one is present, and each badge
+carries a different number, the gap can only be one thing: the badge number of the pupil who
+is not there.
+
+She never looks for the missing pupil. She deduces them from a discrepancy in a total.
+
+The one thing she must get right is the size of the class. If thirty pupils file past, the
+register does not run from 0 to 29 - one pupil is absent, so it runs from 0 to 30, thirty-one
+badges of which she saw thirty. Get that boundary wrong and every answer is wrong, usually
+coming out as a negative number, which is at least an obvious sign that something is off.
+
+There is a variant of the trick that avoids adding anything up at all, which matters if the
+class is enormous and the totals get unwieldy. Instead of summing, the teacher pairs each badge
+she sees against the corresponding number in the register, and pairs cancel out. Everything
+present is matched and vanishes; the one number with no partner is the answer. Same idea -
+match what should be there against what is - with no running total to grow out of hand.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def missing_number(nums):
+        n = len(nums)
+
+  The LIST'S LENGTH. Because one number is absent, the complete set is 0 through n inclusive -
+  n + 1 values, of which n are present. Every bug in this function comes from getting that
+  sentence wrong.
+
+        expected = n * (n + 1) // 2
+
+  The sum of 0 + 1 + ... + n, by the pairing formula. Note it is `n * (n + 1)`, NOT
+  `(n - 1) * n` - the range runs up to n. The wrong version is wrong on 6,000 of 6,000 inputs
+  and often returns a negative number.
+
+  `//` rather than `/` keeps this an integer. It is exact regardless: of n and n + 1, one is
+  always even, so the product is always even.
+
+  This line never looks at the list's contents at all - it depends only on how many entries
+  there are.
+
+        return expected - sum(nums)
+
+  `sum(nums)` is what is actually present; the difference is what is absent. Since every number
+  except one appears exactly once, no other value could account for the gap.
+
+  One pass over the list inside `sum`, no extra storage, no sorting.
+
+THE WHOLE FUNCTION IS THREE LINES, and the only thing to be careful about is the `+ 1`.
+
+THE XOR ALTERNATIVE, if fixed-size integer overflow is a concern in your language:
+
+    def missing_number(nums):
+        result = len(nums)                    # start with n, which is never an index
+        for i, x in enumerate(nums):
+            result ^= i ^ x                   # combine in the position and the value
+        return result
+
+  Every number from 0 to n gets combined in exactly twice - once as a position (or as the
+  starting n) and once as a value - EXCEPT the missing one, which is combined in only once.
+  Anything XORed with itself is 0, so the pairs vanish and the loner survives. Measured wrong
+  on 0 of 6,000, and no running total is ever formed.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [3, 0, 1].
+
+    n = len(nums) = 3
+    the complete range is therefore 0, 1, 2, 3
+
+    expected = 3 * (3 + 1) // 2 = 3 * 4 // 2 = 12 // 2 = 6
+               check by hand:  0 + 1 + 2 + 3 = 6.  Agreed.
+
+    sum(nums) = 3 + 0 + 1 = 4
+
+    return 6 - 4 = 2
+
+    And indeed 2 is the value absent from [3, 0, 1].
+
+CASE TWO - A LONGER ONE. nums = [9, 6, 4, 2, 3, 5, 7, 0, 1].
+
+    n = 9,  so the range is 0 through 9 - ten numbers, nine present
+    expected  = 9 * 10 // 2 = 45
+    sum(nums) = 9+6+4+2+3+5+7+0+1 = 37
+    return 45 - 37 = 8
+
+    Scanning the list by eye: 0,1,2,3,4,5,6,7,9 are there.  8 is not.  Correct.
+
+CASE THREE - THE MISSING NUMBER AT EITHER END, which is what kills the "it must be the largest"
+shortcut.
+
+    nums = [0]        n = 1.  expected = 1*2//2 = 1.  sum = 0.  return 1.
+                      The range is 0, 1 - and 1 is missing, the TOP of the range.
+
+    nums = [1]        n = 1.  expected = 1.  sum = 1.  return 0.
+                      The range is 0, 1 - and 0 is missing, the BOTTOM of the range.
+
+    Same length, same formula, opposite ends. `max(nums) + 1` gives 2 for both, and is wrong on
+    the second - measured wrong on 4,884 of 6,000 overall.
+
+THE FIGURES SIDE BY SIDE:
+
+    nums                    | n | expected | actual sum | answer
+    ------------------------+---+----------+------------+-------
+    [3, 0, 1]               | 3 |     6    |      4     |   2
+    [0, 1]                  | 2 |     3    |      1     |   2
+    [9,6,4,2,3,5,7,0,1]     | 9 |    45    |     37     |   8
+    [0]                     | 1 |     1    |      0     |   1
+    [1]                     | 1 |     1    |      1     |   0
+
+WHAT THE OFF-BY-ONE VERSION DOES to that same table: it computes `(n-1)*n//2`, giving 3, 1, 36,
+0 and 0 respectively - and therefore answers -1, 0, -1, 0, -1. Three of the five are NEGATIVE,
+which is the quickest way to spot the bug.
+
+THE XOR VERSION ON CASE ONE, for comparison:
+
+    result starts at n = 3
+    i=0, x=3:  result = 3 ^ 0 ^ 3 = 0
+    i=1, x=0:  result = 0 ^ 1 ^ 0 = 1
+    i=2, x=1:  result = 1 ^ 2 ^ 1 = 2
+    return 2
+
+    The 3s cancelled, the 0s cancelled, the 1s cancelled, and 2 - which appeared only as an
+    index and never as a value - was left behind.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. `sum(nums)` walks the list once: O(n) time. The formula is arithmetic and
+costs nothing. Two variables of working memory: O(1) space. The list is not sorted, copied or
+modified. You cannot beat O(n) - an unread entry could be any value.
+
+Compare the four solutions honestly, because the ladder is what the interviewer wants:
+
+    set and scan          O(n) time,        O(n) space
+    sort and scan         O(n log n) time,  O(1) extra
+    sum formula           O(n) time,        O(1) space,  3 lines
+    XOR                   O(n) time,        O(1) space,  no overflow risk
+
+THE #1 MISTAKE: `(n - 1) * n // 2` instead of `n * (n + 1) // 2`. Wrong on 6,000 of 6,000. A
+list of n entries is missing one from a set of n + 1 - say that sentence before you write the
+formula. The tell is a negative answer.
+
+THE #2: assuming the missing value is the largest and returning `max(nums) + 1`. Wrong on 4,884
+of 6,000, and right on exactly the 1,116 cases where the largest genuinely was missing. Test
+with [1], whose answer is 0.
+
+THE #3 IS ABOUT ANOTHER LANGUAGE, and worth raising unprompted: in Java or C++ the expected sum
+can overflow a 32-bit integer for large n. MEASURED: at n = 100,000 it is 5,000,050,000 - past
+a 32-bit int, fine in 64. In Python integers are unbounded so it cannot happen, but saying "in
+Java I would use XOR or a 64-bit type here" shows you have thought past the immediate problem.
+
+TWO HONEST NEGATIVES: the XOR solution and the sort-and-scan solution were both wrong on 0 of
+6,000. They are alternatives, not mistakes.
+
+WHAT TO SAY OUT LOUD, in this order: (1) I know exactly which numbers should be present, so I
+know their total in advance; (2) subtract the actual total and the difference is the missing
+one; (3) the range runs to n, not n - 1, because the list is one short; (4) O(n) time, O(1)
+space; (5) XOR does the same job without forming a large total, which matters in a language
+with fixed-size integers. Point 3 is the one to say deliberately, because it is where almost
+everyone slips.
+
+A FOLLOW-UP TO BE READY FOR: "what if TWO numbers are missing?" One equation is no longer
+enough - you need a second, so use the sum AND the sum of squares, or partition the values by a
+bit position and XOR each group. Saying "one missing number needs one equation; two need two"
+is the right shape of answer.
+
+THE FAMILY. Single Number (XOR again - every value appears twice except one), Find All Numbers
+Disappeared in an Array (several missing, so index-marking rather than arithmetic), Find the
+Duplicate Number (the mirror image - one extra rather than one absent, solved with Floyd's
+cycle detection), First Missing Positive (much harder, because the range is not given), and
+Set Mismatch (one duplicated AND one missing, which needs both ideas at once).
+
+ONE-SENTENCE TAKEAWAY: you know what the numbers should add up to - `n * (n + 1) // 2`, with the
+range running all the way to n - so subtract what they actually add up to and the shortfall is
+the missing number.""",
 ]
 
 _EX_P1W["Number of 1 Bits (popcount)"] = [
-    """Why `n &= n - 1` clears the lowest set bit.
-Subtracting 1 flips the lowest set bit to 0 and turns every zero below it into
-1. ANDing with the original therefore keeps everything above the lowest set bit
-and zeroes that bit and everything below.
-n = 12 (1100). n-1 = 11 (1011). 1100 & 1011 = 1000 -> the lowest set bit (the
-4) is gone.
-Next: 1000 & 0111 = 0000. Two iterations, two set bits. The loop runs exactly
-as many times as there are 1s - not 32 times.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The naive version, and when the difference matters.
-Checking each bit with `n & 1` then `n >>= 1` runs 32 times regardless, so it
-is O(number of BITS). The Brian Kernighan trick above is O(number of SET bits).
-For a sparse value like 2^31 (one set bit) that is 1 iteration versus 32 - a
-32x difference on the hot path of something like a bitmap index or a chess
-engine's board evaluation, where popcount is called billions of times.
-For a single call neither matters, and being clear about WHEN the optimisation
-is worth it is part of the answer.""",
+Every whole number is stored inside a computer as a row of 0s and 1s - its BINARY
+representation. Count how many of those digits are 1.
 
-    """The production answer, which you should give last.
-Every real language exposes a hardware popcount: Python's `bin(n).count('1')`
-or `int.bit_count()` in 3.10+, Java's Integer.bitCount, C++'s
-__builtin_popcount, and the x86 POPCNT instruction that does it in ONE cycle.
-So the honest ordering in an interview: implement it by hand because that is
-what is being asked, then note the built-in exists and compiles to a single
-instruction. Reaching for the built-in first skips the exercise; not knowing it
-exists looks naive.""",
+    the number 11  is  1011  in binary          three 1s   ->  answer 3
+    the number 128 is  10000000                  one 1     ->  answer 1
+    the number 7   is  111                      three 1s   ->  answer 3
+    the number 0   is  0                          no 1s    ->  answer 0
 
-    """Edge cases.
-n = 0 -> the loop never runs -> 0.
-n = 1 -> one iteration -> 1.
-All ones, n = 0xFFFFFFFF -> 32 iterations -> 32.
-NEGATIVE numbers are the real trap: in Python, integers are arbitrary
-precision and two's-complement negatives conceptually have infinitely many
-leading 1s, so `while n` never terminates for n < 0. Mask first with
-`n & 0xFFFFFFFF` if the input can be negative.
-In Java the same problem appears as an infinite loop with `>>` (arithmetic
-shift preserves the sign bit) which is why you use `>>>` there.""",
+HOW BINARY WORKS, if it is new. Ordinary decimal digits stand for 1s, 10s, 100s and so on.
+Binary digits stand for 1s, 2s, 4s, 8s, 16s - each place is worth twice the one to its right,
+and each place holds only 0 or 1.
 
-    """The bit tricks worth knowing alongside it.
-n & (n-1) -> clears the lowest set bit (this problem), and `n & (n-1) == 0`
-tests for a POWER OF TWO.
-n & -n -> ISOLATES the lowest set bit, which is what Fenwick trees use to walk
-their index structure.
-n | (n+1) -> sets the lowest zero bit.
-n ^ (n >> 1) -> converts to Gray code.
-These four cover most bit-manipulation questions, and each is one line - worth
-memorising as a set rather than deriving under pressure.""",
+    1011  =  1x8  +  0x4  +  1x2  +  1x1  =  8 + 0 + 2 + 1  =  11
 
-    """Complexity and the family.
-O(k) time where k is the number of set bits (at most 32 or 64), O(1) space.
-The family: Counting Bits (compute popcount for 0..n using dp[i] = dp[i >> 1] +
-(i & 1), which is DP over bits and a lovely little problem), Power of Two,
-Reverse Bits, Single Number, Hamming Distance (popcount of a XOR b), Subsets
-(iterate 0..2^n and read each integer as a membership mask), and Bitmask DP for
-travelling-salesman style problems.""",
+So counting the 1s is counting how many of those powers of two were needed to build the
+number.
+
+THIS COUNT HAS A NAME: the POPULATION COUNT, or POPCOUNT, or the HAMMING WEIGHT. All three
+mean the same thing, and processors have a dedicated instruction for it because it comes up
+so often - in error-correcting codes, in database bitmap indexes, in chess engines counting
+pieces on a board, and in measuring how different two records are.
+
+THE OBVIOUS SOLUTIONS ARE FINE. In Python, `bin(n).count("1")` is one line and correct. Or walk
+the number one bit at a time. The point of the problem is a two-line trick that does exactly as
+many steps as there are 1s - so a number with a single 1 among thirty-two bits costs ONE step
+rather than thirty-two.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START WITH THE STRAIGHTFORWARD METHOD: look at the last bit, count it if it is a 1, then shift
+the whole number right by one place so the next bit becomes the last. Repeat until nothing is
+left.
+
+    n = 11 = 1011      last bit 1  ->  count 1,  shift to 101
+    n =  5 =  101      last bit 1  ->  count 2,  shift to  10
+    n =  2 =   10      last bit 0  ->  count 2,  shift to   1
+    n =  1 =    1      last bit 1  ->  count 3,  shift to   0
+    done, answer 3
+
+That works and it is perfectly acceptable. Its cost is one step PER BIT POSITION - so for a
+32-bit number it always takes about 32 steps, even if only one of them is a 1.
+
+NOW THE TRICK, WHICH COSTS ONE STEP PER 1 INSTEAD.
+
+    n & (n - 1)  REMOVES THE LOWEST 1 FROM n, AND CHANGES NOTHING ELSE.
+
+So you can just keep removing the lowest 1 and counting how many times you managed it. When
+the number reaches 0, the count is the answer.
+
+WHY SUBTRACTING 1 DOES THAT - build it up on a real number rather than taking it on trust.
+Subtracting 1 in binary works exactly like subtracting 1 in decimal from a number ending in
+zeros: you borrow.
+
+    n     = 12 = 00001100
+    n - 1 = 11 = 00001011
+
+    Look at what changed. The LOWEST 1 (the 4s place) became a 0, and every 0 BELOW it became
+    a 1. Everything ABOVE it is untouched.
+
+Now AND them together. AND keeps a bit only where BOTH numbers have a 1.
+
+            00001100        n
+        &   00001011        n - 1
+        -------------
+            00001000        the bits above the lowest 1 survive; the lowest 1 and
+                            everything below it are wiped out
+
+The bits above match, so they survive. The lowest 1 is paired with a 0, so it dies. The bits
+below were 0 in n, so they die too regardless. NET EFFECT: exactly one 1 removed.
+
+    VERIFIED on more examples:
+        n=40  00101000   n-1=39  00100111   n&(n-1)=32   00100000
+        n=7   00000111   n-1=6   00000110   n&(n-1)=6    00000110
+
+So the loop is: while the number is not zero, knock out its lowest 1 and add one to the count.
+
+MEASURED, how much that saves:
+
+    n = 2147483648 (a single 1 in bit 31):   n &= n-1 loops  1 time,  shifting loops 32 times
+    n = 4294967295 (all 32 bits set):        n &= n-1 loops 32,       shifting loops 32
+    n = 11:                                  n &= n-1 loops  3,       shifting loops  4
+
+So the trick is never worse and often dramatically better - it does exactly as many rounds as
+there are 1s.""",
+
+    """3. EVERY TERM, DEFINED
+
+BIT. One binary digit, 0 or 1. A 32-bit number is a row of 32 of them.
+
+BINARY. Base two: each place is worth twice the place to its right. 1011 is 8 + 2 + 1 = 11.
+In Python, `bin(11)` gives the string `'0b1011'`, and `format(11, '08b')` gives `'00001011'`
+padded to eight places.
+
+SET BIT. A bit that is 1. "Clear" means 0. "Counting the set bits" is this problem.
+
+POPULATION COUNT / POPCOUNT / HAMMING WEIGHT. Three names for the count of 1s. Python 3.10 and
+later have `n.bit_count()`; `bin(n).count("1")` works everywhere.
+
+BITWISE AND (`&`). Compares two numbers bit by bit and keeps a 1 only where BOTH have a 1.
+
+    1100  &  1010  =  1000
+
+BITWISE OR (`|`) keeps a 1 where EITHER has one; XOR (`^`) where EXACTLY ONE has one. Only AND
+is needed here, but the trio is worth knowing together.
+
+RIGHT SHIFT (`>>`). Moves every bit one place towards the low end, discarding what falls off -
+which is the same as integer division by two. `1011 >> 1` is `101`.
+
+`n &= n - 1`. Shorthand for `n = n & (n - 1)`. THE WHOLE TRICK: it clears the lowest set bit.
+
+LOWEST SET BIT. The rightmost 1. In 1100 it is the 4s place.
+
+TRUTHINESS OF ZERO. In Python, `while n:` means "while n is not zero", which is why the loop
+needs no explicit comparison. Careful, though: it also stops on 0 for negative numbers in other
+languages - see section 4 on what this code assumes.
+
+O(k) WHERE k IS THE NUMBER OF SET BITS. The cost of this algorithm: proportional to the ANSWER,
+not to the size of the number. Contrast with the shift method, which is proportional to the
+number of bit POSITIONS.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - WRITING `n = n - 1` INSTEAD OF `n &= n - 1`. One missing ampersand, and the loop stops
+being about bits at all - it just counts down to zero, so it returns n itself.
+
+    n = 11    correct 3       with `n = n - 1`:  11
+    n = 128   correct 1       with `n = n - 1`:  128
+
+    MEASURED: wrong on 1,984 of 2,000 small integers - it is right only when n is 0 or 1, which
+    is exactly when "count down to zero" and "count the 1s" happen to agree. It is also
+    catastrophically slow: for a 32-bit number it would loop billions of times. THE `&` IS THE
+    ALGORITHM; without it there is no bit manipulation at all.
+
+TRAP 2 - SHIFTING WITHOUT UPDATING, or updating without shifting. In the shift-and-test method,
+`count += n & 1` reads the lowest bit but does not consume it; the `n >>= 1` is what advances.
+Omit it and the loop never terminates for any odd number - the same bit is read forever.
+
+    This is a hang rather than a wrong answer, so it announces itself, but it costs you the
+    interview minute you spend finding it.
+
+TRAP 3 - ASSUMING IT WORKS FOR NEGATIVE NUMBERS. It does not, and the reason is worth
+understanding. In Python, integers are conceptually infinite in width and a negative number has
+infinitely many leading 1s, so `while n:` never terminates - `-1 & -2` is `-2`, then `-2 & -3`
+is `-4`, and it marches off towards negative infinity forever.
+
+    THE PROBLEM ASSUMES A NON-NEGATIVE 32-BIT INPUT, which is why the code is safe as written.
+    If you must handle a negative, mask first: `n &= 0xFFFFFFFF` turns it into the 32-bit
+    pattern you actually meant. Say this out loud - it is the standard follow-up, because in
+    Java the input is a signed int and the same question has a different answer.
+
+TRAP 4 - COUNTING THE STRING CHARACTERS WITHOUT REMOVING THE PREFIX. `str(bin(n)).count("1")`
+is fine because the prefix is `0b`, but if you convert some other way and end up with a "1" in
+the prefix or in a sign, you count it. Minor, but it is why `bin(n).count("1")` is the idiom
+rather than something home-made.
+
+WHAT IS NOT A TRAP, checked rather than assumed: THE SHIFT-AND-TEST METHOD -
+`while n: count += n & 1; n >>= 1`. MEASURED wrong on 0 of 6,000 random 32-bit integers. It is
+completely correct. Its only shortcoming is speed: it takes one round per BIT POSITION rather
+than one per SET BIT, which for a number like 2^31 means 32 rounds instead of 1. Do not call it
+wrong; call it slower, and say by how much.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE SIMPLEST CORRECT ANSWER, and in Python it is one line:
+
+    def hamming_weight(n):
+        return bin(n).count("1")
+
+`bin(11)` produces the string `'0b1011'`, and counting the "1" characters gives 3. The `0b`
+prefix contains no 1, so it does not interfere. Say this first - it is correct, idiomatic, and
+shows you know your language. (Python 3.10 and later also have `n.bit_count()`, which is the
+same thing done properly.)
+
+THE VERSION THAT SHOWS YOU UNDERSTAND BITS - SHIFT AND TEST:
+
+    def hamming_weight(n):
+        count = 0
+        while n:
+            count += n & 1          # is the lowest bit a 1?
+            n >>= 1                 # discard it and bring the next one down
+        return count
+
+`n & 1` isolates the lowest bit: AND with 1 keeps only that position. `n >>= 1` slides
+everything right. MEASURED wrong on 0 of 6,000, so this is a genuinely correct answer. COST:
+one round per BIT POSITION - about 32 for a 32-bit number, whatever it contains.
+
+THE UPGRADE - ONE ROUND PER SET BIT:
+
+    while n:
+        n &= n - 1
+        count += 1
+
+THE TRICK, FROM SCRATCH. The claim is that `n & (n - 1)` clears the lowest 1 and leaves
+everything else alone. Here is why, in three observations:
+
+    1. SUBTRACTING 1 FLIPS THE LOWEST 1 TO A 0 AND ALL THE 0s BELOW IT TO 1s. That is just
+       borrowing, exactly as in decimal: 1100 - 1 = 1011.
+
+    2. THE BITS ABOVE THE LOWEST 1 ARE UNCHANGED by the subtraction - the borrow stops as soon
+       as it finds a 1 to take from.
+
+    3. SO WHEN YOU AND THEM: the high bits match and survive; the lowest 1 is now paired with a
+       0 and dies; the positions below it were 0 in n, so they die whatever n-1 has there.
+
+            00001100     n     = 12
+        &   00001011     n - 1 = 11
+        ------------
+            00001000     = 8.  Exactly one 1 removed, everything else intact.
+
+Each round therefore removes exactly one 1, so THE NUMBER OF ROUNDS IS THE ANSWER. The loop
+does not need to know how wide the number is, and it never visits a 0 bit at all.
+
+MEASURED, rounds taken by each method:
+
+    n                     popcount   n &= n-1 rounds   shift rounds
+    2147483648 (2^31)         1             1               32
+    4294967295 (all set)     32            32               32
+    11                        3             3                4
+    1                         1             1                1
+    0                         0             0                0
+
+The trick is never worse and up to 32 times better. That is the whole reason it is the answer
+people want.
+
+HOW THE VALUE TRAVELS: `n` is destroyed as you go, losing one 1 per round until nothing is left.
+Nothing is remembered except the tally.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Start a counter at zero.
+
+    2. Repeat for as long as the number is not zero:
+
+       a. Replace the number with itself ANDed against one less than itself. That single
+          operation removes the lowest 1 from the number and changes nothing else.
+       b. Add one to the counter, because you have just removed one 1.
+
+    3. When the number reaches zero, every 1 has been removed and the counter holds how many
+       there were.
+
+WHY STEP 2a REMOVES EXACTLY ONE 1. Subtracting 1 turns the lowest 1 into a 0 and turns every 0
+below it into a 1, leaving everything above untouched. ANDing keeps a bit only where both
+numbers have one: the high bits agree and survive, the lowest 1 is now matched against a 0 and
+disappears, and the positions below were 0 in the original so they disappear too.
+
+NO RECURSION and no knowledge of how wide the number is - the loop simply runs until nothing is
+left. It terminates because every round strictly reduces the number of 1s, and a count of 1s
+cannot go below zero.
+
+THE OPERATOR PEOPLE OMIT is the `&`. Writing "replace the number with one less than itself"
+turns the loop into a countdown, so it returns the number rather than its bit count - and takes
+billions of rounds doing it.
+
+THE ALTERNATIVE, if this feels too clever to trust: look at the lowest bit by ANDing with 1, add
+that to the counter, then shift the whole number one place right, and repeat until zero. It is
+completely correct and does one round per bit POSITION rather than one per 1 - about 32 rounds
+for a 32-bit number regardless of its contents.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of the number as a row of light switches, some on and some off, and the job is to count
+how many are on.
+
+The plain approach is to walk the row from one end to the other, glancing at each switch and
+adding one to your tally for each that is on. It works, and it takes as many glances as there
+are switches - thirty-two of them for a thirty-two-switch row, even if only one is actually on.
+
+The clever approach is to stop walking. There is a single mechanical action that always turns
+off the lowest switch that is currently on - whichever one that happens to be - and leaves every
+other switch exactly as it was. You do not have to know where it is. You just perform the
+action, add one to the tally, and perform it again. When the row is completely dark, the tally
+is your answer.
+
+The number of actions is therefore the number of switches that were on, and nothing else. A row
+with one switch on takes one action, whether that switch is at the near end or the far end.
+
+The mechanism behind the action is worth seeing once, because it is not magic. Subtracting one
+from the whole row does something very specific: the lowest lit switch goes dark, and every
+switch below it - all of which were dark - lights up. Everything above is untouched. Then
+"keeping only the switches that are on in BOTH the old row and the new row" leaves the untouched
+high switches alone, kills the one that just went dark, and kills the newly-lit low ones too,
+because they were dark in the original. One switch turned off, cleanly.
+
+The trap, and it is a single missing symbol, is to subtract one WITHOUT the combining step. That
+turns the whole thing into counting down to zero, which reports the number itself instead of how
+many switches were on - and takes as many steps as the number is large, which for a real
+thirty-two bit value is billions.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def hamming_weight(n):
+        count = 0
+
+  The tally. It will end up equal to the number of rounds the loop runs.
+
+        while n:
+
+  "While n is not zero." In Python a non-zero integer is truthy, so no explicit comparison is
+  needed. The loop ends when every 1 has been removed.
+
+  This ASSUMES n IS NON-NEGATIVE, which the problem guarantees. A negative Python integer
+  behaves as though it has infinitely many leading 1s, so this loop would never end - mask with
+  `n &= 0xFFFFFFFF` first if that is a possibility.
+
+            n &= n - 1
+
+  THE WHOLE ALGORITHM, and it is worth reading as three separate facts:
+
+        n - 1        flips the lowest 1 to 0, and every 0 below it to 1, leaving the bits above
+                     untouched - ordinary borrowing, just as in decimal
+        n & (n - 1)  keeps a bit only where BOTH have one: the high bits agree and survive, the
+                     lowest 1 is now matched against a 0 and dies, and the bits below it were 0
+                     in n so they die too
+        net effect   exactly one 1 removed, nothing else changed
+
+            00001100    n     = 12
+        &   00001011    n - 1 = 11
+        ------------
+            00001000    = 8
+
+  Writing `n = n - 1` instead - dropping the `&` - turns this into a countdown and returns n
+  itself: wrong on 1,984 of 2,000 small integers, right only for 0 and 1.
+
+            count += 1
+
+  One 1 was just removed, so one more for the tally.
+
+        return count
+
+  Every 1 has been removed, and `count` says how many there were.
+
+NOTE WHAT THE LOOP NEVER DOES: it never looks at a 0 bit, and it never needs to know how wide the
+number is. It runs exactly as many times as there are 1s.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - n = 11, which is 1011 in binary. Expected answer: 3.
+
+    ROUND 1   n = 11 = 1011
+              n - 1 = 10 = 1010
+                  1011
+              &   1010
+              -------
+                  1010  = 10        the lowest 1 (the 1s place) is gone
+              count = 1
+
+    ROUND 2   n = 10 = 1010
+              n - 1 =  9 = 1001
+                  1010
+              &   1001
+              -------
+                  1000  = 8         the lowest remaining 1 (the 2s place) is gone
+              count = 2
+
+    ROUND 3   n = 8 = 1000
+              n - 1 = 7 = 0111
+                  1000
+              &   0111
+              -------
+                  0000  = 0         the last 1 is gone
+              count = 3
+
+    n is 0, the loop ends.  return 3.
+
+    round | n before | binary | n - 1 | n & (n-1) | count
+    ------+----------+--------+-------+-----------+------
+      1   |    11    |  1011  |  1010 |    10     |   1
+      2   |    10    |  1010  |  1001 |     8     |   2
+      3   |     8    |  1000  |  0111 |     0     |   3
+
+    THREE ROUNDS FOR THREE 1s. The shift-and-test method would have taken four rounds here -
+    one per bit position, including the 0 in the 4s place.
+
+CASE TWO - WHERE THE SAVING IS DRAMATIC. n = 2147483648, which is 2^31: a single 1 followed by
+thirty-one 0s.
+
+    ROUND 1   n - 1 is 2147483647, which is thirty-one 1s and no 32nd bit.
+              10000000000000000000000000000000
+          &   01111111111111111111111111111111
+              --------------------------------
+              00000000000000000000000000000000  = 0
+              count = 1
+
+    Done. ONE ROUND. The shift method would take 32, sliding a lone 1 down thirty-one empty
+    places. MEASURED: 1 round versus 32.
+
+CASE THREE - THE WORST CASE. n = 4294967295, all thirty-two bits set. Each round removes one 1,
+so it takes 32 rounds - exactly the same as the shift method. The trick is never worse.
+
+CASE FOUR - n = 0. The loop never runs and 0 is returned. No special case needed.
+
+WHAT THE MISSING-AMPERSAND VERSION DOES on case one: 11 becomes 10, 9, 8, 7, ... 1, 0 - eleven
+rounds - and returns 11. It is not a small error; it has stopped being a bit-counting algorithm
+entirely.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The loop runs exactly once per set bit, so O(k) where k is THE ANSWER - at
+most 32 for a 32-bit number, and often far fewer. One counter of working memory: O(1) space.
+
+The comparison to state, with the measured figures:
+
+    method                  rounds for 2^31   rounds for all-ones   correctness
+    n &= n - 1                     1                 32             correct
+    shift and test                32                 32             correct
+    bin(n).count("1")            n/a                n/a             correct, one line
+
+All three are correct; they differ in how much work they do and in what they demonstrate.
+Complexity-wise every one of them is O(1) for a fixed 32-bit width, so the real argument is
+about constants and about showing you understand the representation.
+
+THE #1 MISTAKE: `n = n - 1` instead of `n &= n - 1`. Wrong on 1,984 of 2,000 small integers -
+right only for 0 and 1 - and it returns the number itself rather than its bit count. It also
+turns a 32-round loop into a billions-of-rounds one. THE `&` IS THE ALGORITHM.
+
+THE #2: forgetting the shift in the shift-and-test version, which hangs forever on any odd
+number.
+
+THE #3, AND THE ONE TO RAISE UNPROMPTED: negative inputs. In Python a negative integer behaves
+as though it has infinitely many leading 1s, so `while n:` never terminates. The problem
+guarantees non-negative input, but in Java the parameter is a signed int and the same code needs
+`n & 0xFFFFFFFF` or an unsigned shift. Mentioning this is a genuine signal.
+
+ONE HONEST NEGATIVE: the shift-and-test method is wrong on 0 of 6,000 random 32-bit integers. It
+is correct, not buggy - just slower by a measurable factor, up to 32x on sparse inputs.
+
+WHAT TO SAY OUT LOUD, in this order: (1) in Python I would just write `bin(n).count("1")`, and
+in 3.10+ `n.bit_count()`; (2) but the bit-level answer is `n &= n - 1`, which clears the lowest
+set bit; (3) here is why subtracting 1 then ANDing does that - the borrow flips the lowest 1 and
+everything below it; (4) so the loop runs once per set bit rather than once per bit position;
+(5) and it assumes a non-negative input, which matters in Java. Point 3 is the whole interview:
+anyone can memorise the two lines, and being able to derive them from borrowing is what is being
+tested.
+
+THE FAMILY, and this trick reappears constantly. Counting Bits (compute the popcount of every
+number from 0 to n - the elegant answer is `dp[i] = dp[i & (i-1)] + 1`, literally this trick
+turned into a recurrence). Power of Two (a number is a power of two exactly when `n & (n-1)`
+is 0, since it has exactly one set bit - a one-line answer straight out of this idea). Also
+Single Number (XOR), Reverse Bits, Hamming Distance (the popcount of `a ^ b`), Bitwise AND of
+Numbers Range, and Subsets (using bit patterns to enumerate every combination). Learn
+`n & (n-1)` properly here and three of those become one-liners.
+
+ONE-SENTENCE TAKEAWAY: `n &= n - 1` clears the lowest set bit - because subtracting 1 flips that
+bit and everything below it - so count how many times you can do it before the number reaches
+zero.""",
 ]
 
 _EX_P1W["Single Number (XOR)"] = [
