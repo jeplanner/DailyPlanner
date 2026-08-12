@@ -147,7 +147,11 @@
       "Bash(ONLY=158 timeout 400 python3 m158.py)",
       "Bash(ONLY=159 timeout 300 python3 m158.py)",
       "Bash(ONLY=160 timeout 400 python3 m158.py)",
-      "Bash(ONLY=161 timeout 500 python3 m158.py)"
+      "Bash(ONLY=161 timeout 500 python3 m158.py)",
+      "Bash(ONLY=162 timeout 300 python3 m162.py)",
+      "Bash(ONLY=165 timeout 400 python3 m162.py)",
+      "Bash(ONLY=163 timeout 500 python3 m162.py)",
+      "Bash(ONLY=164 timeout 500 python3 m162.py)"
     ]
   }
 }

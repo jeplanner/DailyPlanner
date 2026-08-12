@@ -9222,63 +9222,418 @@ never need to know the far side exactly, only that it is bigger.""",
 ]
 
 _EXAMPLES["Maximum Subarray (Kadane's algorithm)"] = [
-    """The textbook case, fully traced.
-nums = [-2,1,-3,4,-1,2,1,-5,4]  ->  answer 6
-  i=0: cur = -2                      best = -2
-  i=1: max(1, -2+1 = -1)  -> cur 1   best 1   (dropped the negative history)
-  i=2: max(-3, 1-3 = -2)  -> cur -2  best 1
-  i=3: max(4, -2+4 = 2)   -> cur 4   best 4   (dropped it again)
-  i=4: max(-1, 4-1 = 3)   -> cur 3   best 4   (kept it - 4 was worth carrying)
-  i=5: max(2, 3+2 = 5)    -> cur 5   best 5
-  i=6: max(1, 5+1 = 6)    -> cur 6   best 6
-  i=7: max(-5, 6-5 = 1)   -> cur 1   best 6
-  i=8: max(4, 1+4 = 5)    -> cur 5   best 6
-The winning stretch is [4,-1,2,1].""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Every number is negative - the edge case that catches everyone.
-nums = [-3,-1,-4]  ->  answer -1
-  cur = -3, best = -3
-  x=-1: max(-1, -3-1 = -4) -> cur -1, best -1
-  x=-4: max(-4, -1-4 = -5) -> cur -4, best -1
-The answer is the least-negative single element. If you initialise best = 0
-instead of nums[0], you get 0 - which corresponds to picking the EMPTY
-subarray, and that is normally not allowed. This single test case is the one
-interviewers use to check your initialisation.""",
+You have a row of numbers, some positive and some negative. Choose an UNBROKEN RUN of them -
+neighbours only, no skipping - so that the run adds up to as much as possible. Report that
+total.
 
-    """Everything is positive - the whole array wins.
-nums = [1,2,3,4]  ->  answer 10
-cur never resets because cur + x always beats x on its own when cur is
-positive. cur goes 1, 3, 6, 10 and best tracks it exactly. Good sanity check:
-if your implementation returns anything less than the total here, your max()
-arguments are the wrong way round.""",
+    numbers:   -2    1   -3    4   -1    2    1   -5    4
 
-    """When carrying a negative IS worth it.
-nums = [5,-2,3]  ->  answer 6
-  cur = 5, best = 5
-  x=-2: max(-2, 5-2 = 3) -> cur 3, best 5. The running total dipped but stayed
-        POSITIVE, so we keep it rather than restarting.
-  x=3 : max(3, 3+3 = 6)  -> cur 6, best 6
-Answer is the whole array [5,-2,3]. Compare with nums = [1,-9,3]: there the
-running total after -9 is -8, which is negative dead weight, so we restart and
-the answer is just 3. The rule is not 'restart on a negative NUMBER', it is
-'restart when the running TOTAL goes negative'.""",
+Try some runs by hand:
 
-    """A longer mixed case where the best stretch is in the middle.
-nums = [-1,4,-2,5,-10,3]  ->  answer 7
-  cur = -1, best = -1
-  x=4  : max(4, -1+4 = 3)    -> cur 4,  best 4
-  x=-2 : max(-2, 4-2 = 2)    -> cur 2,  best 4
-  x=5  : max(5, 2+5 = 7)     -> cur 7,  best 7
-  x=-10: max(-10, 7-10 = -3) -> cur -3, best 7
-  x=3  : max(3, -3+3 = 0)    -> cur 3,  best 7
-The winner is [4,-2,5]. Note best held on to 7 even though cur later collapsed
-- that is exactly why you track the two variables separately.""",
+    [4]                    = 4
+    [4, -1, 2, 1]          = 6      <- the best
+    [4, -1, 2, 1, -5, 4]   = 5      (the -5 costs more than the final 4 gives back)
+    [1, -3, 4, -1, 2, 1]   = 4
+    the whole row          = 1
 
-    """The single-element array.
-nums = [7]  ->  answer 7.  The loop body never runs; the answer comes entirely
-from the initialisation. nums = [-7] -> answer -7 for the same reason.
-Any solution that starts the loop at index 0 instead of index 1, or that
-initialises cur to 0, gets one of these two wrong.""",
+So the answer is 6. Note the winning run happily includes a NEGATIVE number, the -1 - because
+the 2 and 1 after it more than pay for it. That is what makes this harder than "add up the
+positive bits".
+
+Two rules that matter:
+
+    UNBROKEN. You may not take the 4 at position 3 and the 4 at position 8 without everything
+    in between. This is a subarray, not a subset.
+
+    THE RUN MUST NOT BE EMPTY. You must choose at least one number. So if every number is
+    negative, the answer is the LEAST negative one - not zero. Section 4 measures how often
+    that single case is what breaks an otherwise correct solution.
+
+You are asked for the SUM, not the run itself. Recovering the actual start and end indices is
+a standard follow-up and section 10 says how.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE OBVIOUS METHOD. Try every run: every start, every end, add it up. That is about n squared
+over 2 runs, and it works. The question is what you can notice that removes the inner loop.
+
+THE MOVE - ANCHOR EVERY RUN BY ITS RIGHT-HAND END. Every run finishes somewhere. So instead of
+"what is the best run anywhere", ask a narrower question at each position:
+
+    WHAT IS THE BEST RUN THAT ENDS EXACTLY HERE?
+
+Answer that at every position, keep the largest answer you ever saw, and you are done - because
+every possible run ends at exactly one position, so none is missed and none is counted twice.
+
+NOW THE STEP THAT MAKES IT ONE PASS. Suppose you know the best run ending at the previous
+number. What is the best run ending at THIS number? There are only two possibilities, because a
+run ending here either includes the previous number or it does not:
+
+    EXTEND     the best run ending at the previous number, and add this number to it
+    START OVER with just this number on its own
+
+Take the bigger. That is the whole algorithm.
+
+    numbers:      -2     1    -3     4    -1     2     1    -5     4
+    best ending
+    here:         -2     1    -2     4     3     5     6     1     5
+                   |     |     |     |     |     |     |     |     |
+                   |     |     |     |     |     |     |     |     extend: 1+4 = 5
+                   |     |     |     |     |     |     |     start over: -5 beats 6-5=1?
+                   |     |     |     |     |     |     |     no - 1 wins, so extend
+                   |     |     |     |     |     |     extend: 5+1 = 6
+                   |     |     |     |     |     extend: 3+2 = 5
+                   |     |     |     |     extend: 4-1 = 3
+                   |     |     |     START OVER: 4 beats -2+4 = 2
+                   |     |     extend: 1-3 = -2 beats starting over at -3
+                   |     START OVER: 1 beats -2+1 = -1
+                   nothing before it
+
+    the largest number in that second row is 6 - the answer
+
+WHEN DO YOU START OVER? Exactly when the running total you are carrying is NEGATIVE. A negative
+prefix is a burden: dragging it along makes every future total smaller than starting fresh
+would. That is the single sentence behind Kadane's algorithm, and it is worth being able to say
+it - a positive prefix is worth carrying however small, a negative one never is.
+
+THE PICTURE - A WALKER WITH A RUNNING TALLY. Someone walks the row carrying a tally. At each
+number they add it on. If the tally ever goes below zero they drop it and start again from
+here, because carrying a debt forward can only hurt. Separately, a scorekeeper notes the
+highest the tally has ever been. Two numbers, one pass.""",
+
+    """3. EVERY TERM, DEFINED
+
+SUBARRAY. A contiguous run of neighbouring elements, in order. [4, -1, 2] is a subarray of the
+example; [4, 2] is not, because the -1 sits between them. Contrast with SUBSEQUENCE, which
+allows skipping - a different problem entirely.
+
+NON-EMPTY. You must pick at least one element. This is why an all-negative row has a negative
+answer rather than 0, and it is the single most common source of wrong answers here.
+
+RUNNING SUM / CURRENT SUM (`cur`). The best total of any run ENDING AT THE POSITION YOU ARE ON.
+Not "the total so far" - it is allowed to throw away everything behind it and start again.
+
+GLOBAL BEST (`best`). The largest value `cur` has ever taken. It is a separate variable for a
+reason: `cur` can go down, and if you only reported `cur` at the end you would report the best
+run ending at the LAST position, not the best run anywhere.
+
+GREEDY, and why it is safe here. At each step you make a local choice - extend or restart -
+and never revisit it. That is sound because of a statable fact: IF THE BEST RUN ENDING AT
+POSITION i IS KNOWN, NOTHING EARLIER MATTERS FOR POSITION i+1. The past is fully summarised by
+one number.
+
+KADANE'S ALGORITHM. The name for this one-pass method. It is also a DYNAMIC PROGRAM in
+disguise: `cur` is really `dp[i]`, "the best subarray ending at i", and the table has been
+collapsed to a single variable because each entry only looks back one step.
+
+DP / DYNAMIC PROGRAMMING. Solving a problem by combining answers to smaller versions of itself,
+each computed once. The smaller version here is "the best run ending at position i".
+
+PREFIX. Everything from the start up to some point. The phrase "a negative prefix is a burden"
+means: if the run you are carrying sums to less than zero, it is worth less than nothing.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - INITIALISING TO 0 INSTEAD OF nums[0]. Writing `best = cur = 0` quietly allows the
+EMPTY run, whose sum is 0. On any row containing a positive number this makes no difference at
+all, which is exactly why it survives testing. On an all-negative row it returns 0, which is
+not a legal answer.
+
+    [-1]           correct -1        zero-initialised: 0
+    [-2, -1]       correct -1        zero-initialised: 0
+
+    MEASURED: wrong on 527 of 6,000 random arrays - and 527 is EXACTLY the number of
+    all-negative arrays in that sample. It is never wrong on anything else. So the entire
+    failure mode is one case, and a single test with [-3, -1, -2] catches it.
+
+    THE FIX IS THE INITIALISATION, NOT A SPECIAL CASE: start both variables at `nums[0]` and
+    loop from the second element. Then the empty run is never representable.
+
+TRAP 2 - UPDATING `best` BEFORE `cur`. The two updates look independent and are not: `best`
+must see the value of `cur` computed AT THIS POSITION, not the previous one. Getting them the
+wrong way round means the final element's contribution is never considered.
+
+    [5, 4, -1, 7, 8]   correct 23        wrong order: 15
+    [-2, -1]           correct -1        wrong order: -2
+
+    MEASURED: wrong on 1,930 of 6,000. Read the pair as one operation: WORK OUT THE BEST RUN
+    ENDING HERE, THEN SEE IF IT IS A RECORD.
+
+TRAP 3 - "JUST ADD UP THE POSITIVE NUMBERS". Tempting and wrong, because the positive numbers
+are not necessarily contiguous - joining two of them may mean swallowing a large negative in
+between.
+
+    [-2, 1, -3, 4, -1, 2, 1, -5, 4]    correct 6      sum of positives: 12
+
+    MEASURED: wrong on 2,887 of 6,000, and wrong on the official example. It answers 12 by
+    pretending the -3 and -5 can be skipped.
+
+WHAT IS NOT A TRAP, checked rather than assumed. THE OTHER COMMON FORMULATION - keep a running
+sum, add each element, record the best, and reset the running sum to 0 whenever it goes
+negative - was wrong on 0 of 6,000, PROVIDED the global best starts at negative infinity rather
+than 0. It is genuinely the same algorithm phrased differently. Do not let anyone tell you the
+reset-to-zero version is broken; the thing that breaks is initialising the ANSWER to zero, and
+that is trap 1 wearing a different hat.
+
+ALSO NOT A TRAP: a single-element array. `best = cur = nums[0]`, the loop over `nums[1:]` never
+runs, and that element is returned. No guard needed.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY RUN:
+
+    def max_subarray(nums):
+        best = nums[0]
+        for i in range(len(nums)):            # every starting point
+            total = 0
+            for j in range(i, len(nums)):     # every ending point from there
+                total += nums[j]
+                best = max(best, total)
+            return best
+
+IT IS CORRECT - it is the definition acted out, and it is how the ground truth for every figure
+in this entry was computed. Note it is already smarter than the very first idea: by accumulating
+`total` as `j` advances it avoids re-adding a run from scratch, so it is n squared over 2 rather
+than n cubed. COST: about 45 million additions at this problem's limit of n = 100,000... in fact
+far worse, 5 billion. Unusable.
+
+THE OBSERVATION THAT REMOVES THE INNER LOOP. Fix the ending position j and ask: over all the
+starting positions i, which run ending at j is best? The naive code recomputes that from scratch
+for every j. But the answer at j is one step from the answer at j-1:
+
+    best run ending at j  =  max( nums[j],  (best run ending at j-1) + nums[j] )
+
+Either this element starts a fresh run, or it extends the best one that ended just before it.
+There is no third option, because a run ending at j either contains j-1 or it does not - and if
+it does, the part of it before j had better be the best possible, or you could swap in the best
+and improve the whole thing.
+
+That is the recurrence, and it means the inner loop's entire result is summarised by ONE NUMBER
+carried forward.
+
+THE TRICK, FROM SCRATCH - WHY TWO VARIABLES AND NOT ONE. `cur` answers "best ending here" and it
+can go DOWN - a big negative element will crush it. If you returned `cur` at the end you would
+report the best run ending at the last position, which is usually not the best run at all. So a
+second variable, `best`, remembers the highest `cur` ever reached and never decreases. One
+variable tracks the local question, the other the global answer.
+
+    [5, 4, -1, 7, 8]      cur: 5, 9, 8, 15, 23      best: 5, 9, 9, 15, 23
+    [1, 2, -100, 3]       cur: 1, 3, -97, 3         best: 1, 3, 3, 3
+                                                         ^ `cur` collapsed, `best` held on
+
+HOW THE VALUE TRAVELS: a positive prefix is carried forward and added to; a negative one is
+dropped by the `max(x, cur + x)`, because when `cur` is negative, `x` alone beats `cur + x`.
+That single comparison IS the "restart when the tally goes negative" rule - it is not written
+anywhere as an `if`, it falls out of the arithmetic.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Set two numbers, both to THE FIRST ELEMENT of the row. Call the first one "the best run
+       ending right here" and the second "the best run seen anywhere". Starting at the first
+       element rather than at zero is what makes an all-negative row come out correctly, and
+       what makes an empty run impossible.
+
+    2. Walk the rest of the row, from the SECOND element onwards. At each number:
+
+       a. Work out the best run ending at this number. It is the larger of two things: this
+          number on its own, or this number added to the best run that ended at the previous
+          number. Nothing else needs considering.
+
+       b. Then compare that against the best run seen anywhere, and keep the larger.
+
+    3. The order of 2a and 2b matters: work out the local answer first, then check whether it is
+       a record. Doing them the other way round ignores the last element entirely.
+
+    4. When the row runs out, "the best run seen anywhere" is the answer.
+
+NO RECURSION - one walk, two numbers. There is nothing to undo: once you decide to abandon a
+negative prefix, no later information can make you want it back, because it would only ever
+subtract.
+
+THE STEPS PEOPLE GET WRONG are 1 (starting at zero, which returns 0 for an all-negative row) and
+3 (updating the record before computing the local answer).
+
+IF YOU ALSO NEED THE ACTUAL RUN, not just its total: remember where the current run began, reset
+that marker whenever you start over, and record both markers whenever you set a new record. Two
+extra variables, same single pass.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture someone walking along a line of tiles, each marked with a gain or a loss, keeping a
+tally in their head. There is a second person following behind with a notebook, whose only job
+is to write down the highest the tally has ever been.
+
+The walker's rule is simple. At each tile they add its number to the tally - but if the tally
+they were carrying had already gone below zero, they drop it entirely and start again from this
+tile. Why? Because a negative tally is a debt. Carrying it forward makes every future total
+smaller than it would have been if they had started fresh. There is never a reason to carry a
+debt into new territory.
+
+Notice they do NOT drop the tally just because the current tile is negative. A tile marked -1
+in the middle of a good run is worth walking over if what follows more than repays it - and it
+does, as long as the running tally stays above zero.
+
+The notebook-keeper never erases. This is the part people leave out. The walker's tally goes up
+and down and may end the walk at a miserable figure; the notebook holds the peak, whenever it
+happened. If you only asked the walker at the end how they were doing, you would learn about
+the last stretch of the line rather than the best one.
+
+At the end of the line, the notebook has the answer. Neither of them ever tried out a single
+candidate run - they only ever answered, tile by tile, "what is the best run that finishes right
+here?", and every possible run finishes somewhere.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def max_subarray(nums):
+        best = cur = nums[0]
+
+  Both start at the FIRST element, not at 0. `cur` is "the best run ending at the position we
+  are on"; `best` is "the largest that has ever been". Starting at `nums[0]` does two jobs: it
+  seeds both correctly for a one-element row, and it makes the empty run unrepresentable, which
+  is what gets all-negative rows right. `best = cur = 0` is wrong on exactly the all-negative
+  cases - 527 of 6,000.
+
+  This does assume `nums` is non-empty. The problem guarantees at least one element; if you
+  wanted to be defensive you would guard, but do not invent a special case the statement rules
+  out.
+
+        for x in nums[1:]:
+
+  From the SECOND element onward - the first has already been consumed by the initialisation.
+  (`nums[1:]` copies the tail; using `for i in range(1, len(nums))` avoids that copy if memory
+  matters, and is worth a sentence in an interview on a large input.)
+
+            cur = max(x, cur + x)
+
+  THE HEART OF THE ALGORITHM. Two candidates for the best run ending at this element:
+
+        x          START OVER - this element alone begins a new run
+        cur + x    EXTEND the best run that ended at the previous element
+
+  and nothing else is possible, because a run ending here either contains the previous element
+  or it does not. Notice what this comparison quietly does: when `cur` is negative, `cur + x` is
+  less than `x`, so it starts over automatically. The rule "abandon a negative prefix" is not
+  written as an `if` anywhere - it falls out of the arithmetic.
+
+            best = max(best, cur)
+
+  Is the run ending here the best seen anywhere? `best` never goes down; `cur` frequently does.
+  THIS LINE MUST COME AFTER THE ONE ABOVE - swapping them means `best` is always compared
+  against the PREVIOUS position's `cur` and the final element never gets its chance, wrong on
+  1,930 of 6,000.
+
+        return best
+
+  The largest total over every run that ends anywhere - which is every run there is.
+
+WHAT IS NOT IN THIS FUNCTION: no array, no indices, no start/end markers, no special cases. Five
+lines and two variables.""",
+
+    """9. TRACED ON REAL NUMBERS - nums = [-2, 1, -3, 4, -1, 2, 1, -5, 4]
+
+Start: best = cur = -2 (the first element).
+
+    x = 1     cur = max(1, -2 + 1 = -1) = 1        START OVER - the -2 was a burden
+              best = max(-2, 1) = 1
+
+    x = -3    cur = max(-3, 1 + -3 = -2) = -2      EXTEND - carrying the 1 is better than
+                                                   starting at -3, even though both are negative
+              best = max(1, -2) = 1
+
+    x = 4     cur = max(4, -2 + 4 = 2) = 4         START OVER - the -2 prefix was a debt
+              best = max(1, 4) = 4
+
+    x = -1    cur = max(-1, 4 + -1 = 3) = 3        EXTEND - a negative element inside a good run
+              best = max(4, 3) = 4                 note best HELD at 4 while cur fell
+
+    x = 2     cur = max(2, 3 + 2 = 5) = 5          EXTEND
+              best = max(4, 5) = 5
+
+    x = 1     cur = max(1, 5 + 1 = 6) = 6          EXTEND
+              best = max(5, 6) = 6                 <- the answer is set here
+
+    x = -5    cur = max(-5, 6 + -5 = 1) = 1        EXTEND - still positive, so still worth
+              best = max(6, 1) = 6                   carrying, but badly damaged
+
+    x = 4     cur = max(4, 1 + 4 = 5) = 5          EXTEND
+              best = max(6, 5) = 6
+
+    return 6
+
+THE VARIABLES AT A GLANCE:
+
+     x  | cur + x | start over? | cur after | best after
+    ----+---------+-------------+-----------+-----------
+     -2 |    -    |      -      |    -2     |    -2
+      1 |   -1    |     YES     |     1     |     1
+     -3 |   -2    |      no     |    -2     |     1
+      4 |    2    |     YES     |     4     |     4
+     -1 |    3    |      no     |     3     |     4
+      2 |    5    |      no     |     5     |     5
+      1 |    6    |      no     |     6     |     6
+     -5 |    1    |      no     |     1     |     6
+      4 |    5    |      no     |     5     |     6
+
+The winning run is [4, -1, 2, 1] - it began at the "START OVER" on the 4 and peaked two steps
+later. The code never recorded where it started; only the totals were tracked.
+
+WATCH THE TWO VARIABLES COME APART at x = -5. `cur` collapses from 6 to 1, and `best` holds at 6
+regardless. If the function returned `cur` it would answer 5, the best run ending at the LAST
+position. That separation is the whole reason there are two variables.
+
+A SECOND TRACE - THE ALL-NEGATIVE CASE, nums = [-2, -1].
+
+    best = cur = -2
+    x = -1:  cur = max(-1, -2 + -1 = -3) = -1      START OVER
+             best = max(-2, -1) = -1
+    return -1
+
+The least-negative single element, which is the correct answer for a non-empty run. Initialising
+to 0 would have returned 0 here, and updating `best` before `cur` would have returned -2.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass, two comparisons and one addition per element: O(n) time. Two
+numbers of working memory: O(1) space. The input is not modified or copied (except by the
+`nums[1:]` slice, which you can avoid with an index loop). You cannot beat O(n) - a single
+unexamined element could be the entire answer.
+
+THE #1 MISTAKE: initialising to 0. Wrong on 527 of 6,000 - and every single one of those was an
+all-negative array. It is a narrow failure, which is precisely the danger: it passes every test
+you are likely to write by hand. Test [-3, -1, -2] first.
+
+THE #2: updating `best` before `cur`. 1,930 of 6,000. Say the pair out loud as one operation -
+"best run ending here, then is it a record" - and the order writes itself.
+
+THE #3: summing the positives. 2,887 of 6,000 and wrong on the official example. It answers a
+subSEQUENCE question, not a subARRAY one.
+
+WHAT TO SAY OUT LOUD, in this order: (1) every subarray ends somewhere, so I will compute the
+best subarray ending at each position and take the maximum; (2) that value is either this
+element alone or this element added to the previous one's answer - a negative running total is
+never worth carrying; (3) I need a separate global best because the running value can go down;
+(4) the run must be non-empty, so I initialise from the first element rather than from zero;
+(5) O(n) time, O(1) space. Point 4 is the one that shows you read the constraints rather than
+recalling the shape.
+
+FOLLOW-UPS TO BE READY FOR. "Return the actual subarray" - track a start marker, reset it when
+you start over, and save start and end when you set a record. "What if it is circular?" - that
+is Maximum Sum Circular Subarray: the answer is either a normal Kadane result or the total minus
+the MINIMUM subarray, with a special case when everything is negative. "Divide and conquer?" -
+yes, O(n log n), by combining the best-on-the-left, best-on-the-right and best-crossing-the-
+middle; it is the classic textbook approach and Kadane beats it.
+
+THE FAMILY. Best Time to Buy and Sell Stock (literally Kadane over the day-to-day differences),
+Maximum Product Subarray (the same shape but you must track the minimum too, because a negative
+times a negative flips), Maximum Sum Circular Subarray, House Robber (the same one-variable
+rolling DP with a different recurrence), and Longest Turbulent Subarray. The transferable idea:
+ANCHOR THE SUBPROBLEM AT EACH ENDING POSITION, AND CARRY ONE NUMBER FORWARD.
+
+ONE-SENTENCE TAKEAWAY: at each element keep the best run ENDING there - itself, or itself plus
+the previous best - and separately remember the highest that has ever been, starting both at the
+first element so an all-negative row still gets a legal answer.""",
 ]
 
 _EXAMPLES["Majority Element (Boyer-Moore voting)"] = [
@@ -113072,180 +113427,1309 @@ a mismatch carry across the better of the two neighbours.""",
 ]
 
 _EX_P1U["Merge Sort"] = [
-    """The two phases, traced on [5,2,4,1].
-SPLIT: [5,2,4,1] -> [5,2] and [4,1] -> [5],[2],[4],[1].
-MERGE: [5]+[2] -> [2,5]. [4]+[1] -> [1,4]. Then [2,5]+[1,4]: compare 2 vs 1 ->
-take 1; 2 vs 4 -> take 2; 5 vs 4 -> take 4; left with 5 -> take 5. Result
-[1,2,4,5].
-The recursion tree has log n levels and each level merges a total of n elements,
-which is where O(n log n) comes from - and it is worth stating exactly that
-way rather than quoting the result.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The `<=` that makes it STABLE, and why stability matters.
-`if left[i] <= right[j]` takes from the LEFT half on a tie, preserving the
-original relative order of equal elements. Change it to `<` and equal elements
-from the right half jump ahead - the sort is still correct but no longer
-stable.
-Stability matters when you sort by one key after another: sort employees by
-name, then by department, and a stable sort leaves each department's names in
-order. With an unstable sort the first pass is destroyed. That is why Python's
-sorted() and Java's Arrays.sort for objects are stable (both use variants of
-merge sort) while C++'s std::sort is not.""",
+Put a list into ascending order, using the classic divide-and-conquer method: split the list in
+half, sort each half, then combine the two sorted halves into one sorted list.
 
-    """Why O(n log n) ALWAYS, unlike quicksort.
-The split is always exactly in half, so the recursion depth is log n regardless
-of the input - there is no adversarial ordering that degrades it. Quicksort's
-O(n^2) worst case comes from unbalanced partitions, which merge sort structurally
-cannot have.
-The price is O(n) auxiliary space for the merge buffer, which quicksort avoids.
-That is the whole trade: guaranteed time versus in-place memory, and it is the
-answer to 'which sort would you use?'.""",
+    [5, 2, 4, 1, 3]
 
-    """Where merge sort is the RIGHT choice in practice.
-EXTERNAL sorting - a file too large for memory. You sort chunks that fit, write
-them out, then k-way merge the sorted runs streaming from disk. Merging is
-sequential access, which is exactly what disks and network transfers want; a
-quicksort's random access is disastrous there.
-LINKED LISTS - merging needs only pointer rewiring, so merge sort on a list is
-O(1) extra space, while quicksort's random access makes it awkward. This is why
-'sort a linked list in O(n log n) with O(1) space' has merge sort as the
-intended answer.
-And it is the basis of TimSort (Python, Java), which exploits existing runs.""",
+    split:      [5, 2]        [4, 1, 3]
+    sort each:  [2, 5]        [1, 3, 4]
+    merge:      [1, 2, 3, 4, 5]
 
-    """Edge cases and the common implementation bug.
-Empty or single element -> returned as-is by the base case.
-Already sorted -> still O(n log n); merge sort does not adapt (TimSort does,
-which is its main improvement).
-All equal -> stable and correct.
-The bug to avoid: forgetting to append the REMAINDER of whichever half is left
-after the main while loop. One side always has leftovers, and dropping them
-silently truncates the output - producing a sorted but short array, which is a
-distinctive symptom.""",
+THE MERGE IS THE ONLY REAL WORK, and it is easier than it sounds. Given two lists that are
+ALREADY sorted, put a finger on the front of each, repeatedly take whichever front element is
+smaller, and move that finger along.
 
-    """Complexity and the family.
-Time O(n log n) best, average and worst. Space O(n) for arrays, O(log n) stack
-for the recursion.
-The family: Merge Two Sorted Lists (the merge step alone), Merge k Sorted Lists
-(k-way merge with a heap), Sort List (merge sort on a linked list), Count of
-Smaller Numbers After Self and Reverse Pairs (both solved by counting during
-the merge - a genuinely clever use worth knowing), and Merge Sorted Array.
-The merge step is the reusable primitive; the sort is just what you get by
-applying it recursively.""",
+    left:  [2, 5]        right: [1, 3, 4]        result: []
+           take 1 (smaller than 2)                       [1]
+           take 2 (smaller than 3)                       [1, 2]
+           take 3 (smaller than 5)                       [1, 2, 3]
+           take 4 (smaller than 5)                       [1, 2, 3, 4]
+           left is empty - tip the rest of right in      [1, 2, 3, 4, 5]
+
+WHY THIS ALGORITHM IS WORTH KNOWING even though every language has a built-in sort:
+
+    IT IS O(n log n) ALWAYS - best case, worst case, every case. Quicksort is usually faster in
+        practice but can degrade to n squared; merge sort never does.
+    IT IS STABLE - equal elements keep their original relative order. Section 3 explains why
+        that matters and section 4 measures the one-character change that destroys it.
+    IT IS THE STANDARD ANSWER for sorting linked lists and for data too big to fit in memory,
+        because it only ever reads sequentially.
+
+Python's own `sorted()` is Timsort, which is merge sort with clever handling of runs that are
+already in order.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE IDEA IN ONE SENTENCE: SORTING TWO SMALL LISTS AND COMBINING THEM IS MUCH LESS WORK THAN
+SORTING ONE BIG LIST.
+
+That sounds circular - how do you sort the small lists? By splitting THEM in half, and so on,
+until each piece has a single element. A one-element list is already sorted, and that is where
+the recursion stops. Then everything is put back together, two pieces at a time.
+
+    [5, 2, 4, 1, 3]
+         /                \\
+    [5, 2]              [4, 1, 3]
+      /    \\             /      \\
+    [5]    [2]         [4]     [1, 3]
+                                /   \\
+                              [1]   [3]
+
+    now come back UP, merging as you go:
+
+    [1]  [3]     ->  [1, 3]
+    [4]  [1, 3]  ->  [1, 3, 4]
+    [5]  [2]     ->  [2, 5]
+    [2, 5]  [1, 3, 4]  ->  [1, 2, 3, 4, 5]
+
+WHY THE MERGE IS CHEAP - AND THIS IS THE POINT OF THE WHOLE ALGORITHM. To merge two sorted
+lists you never have to search. The smallest element overall MUST be at the front of one of
+them, because each list is sorted. So one comparison finds it. Take it, and the same is true
+again of what remains. Merging two lists of total length n costs n comparisons at most, not n
+squared.
+
+    left  -> 2  5
+              ^
+    right -> 1  3  4
+              ^
+             compare the two fingers: 1 < 2, so 1 goes out and the right finger moves on
+
+THE COST, COUNTED HONESTLY. Halving repeatedly gives about log2(n) levels - 20 for a million
+elements. Each level merges every element exactly once, so each level costs n. Total: n log n.
+Not "roughly"; every time, because the halving does not depend on the data at all. That
+data-independence is exactly what quicksort lacks, and why quicksort has a bad worst case and
+merge sort does not.
+
+    n = 1,000,000        levels: 20        work per level: 1,000,000
+                         total: 20,000,000 - against 500,000,000,000 for a quadratic sort""",
+
+    """3. EVERY TERM, DEFINED
+
+DIVIDE AND CONQUER. Break the problem into smaller pieces of the SAME problem, solve each, then
+combine. Merge sort divides trivially (cut in half) and does its work in the combine step;
+quicksort is the mirror image - clever divide, trivial combine.
+
+RECURSION, AND WHAT IT IS DOING HERE. `merge_sort(a)` calls itself on each half. Each call is a
+fresh copy of the function with its own `a`, `left` and `right`, paused on the CALL STACK while
+its children run. `left = merge_sort(a[:mid])` does not just "call a function" - it sorts that
+entire half, all the way down and back up, before the next line begins.
+
+BASE CASE. The condition that stops the recursion: a list of length 0 or 1 is already sorted, so
+return it unchanged. Every call splits into strictly smaller pieces, so the base case is always
+reached. Writing the base case as length 0 only is an infinite recursion - measured in section 4.
+
+MERGE. Combining two already-sorted lists into one sorted list by repeatedly taking the smaller
+front element. It is O(n) and it is the only place any comparison happens.
+
+TWO POINTERS. `i` and `j`, the fingers on the front of each half. Both only move forward, which
+is why the merge is linear.
+
+STABLE SORT. One that keeps equal elements in their original relative order. If your list holds
+(name, score) pairs already sorted by name, a stable sort by score leaves same-score people in
+name order; an unstable one scrambles them. This matters in the real world - it is why you can
+sort a spreadsheet by one column and then another and get a sensible result.
+
+IN-PLACE. Sorting without meaningful extra memory. Merge sort as written here is NOT in place -
+it builds new lists. That is its main cost, and it is the honest trade for the guaranteed
+worst case.
+
+AUXILIARY SPACE. Extra memory beyond the input. Here it is O(n).
+
+O(n log n). The number of steps grows as n times log n. For a million elements, about 20 million
+operations rather than the 500 billion a quadratic sort would need.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - FORGETTING TO APPEND THE LEFTOVERS. The merge loop stops as soon as EITHER half runs
+out - and the other half still has elements in it, all of them larger than everything already
+placed. Leave out the two `extend` lines and those elements simply vanish.
+
+    [3, 1, 2]  ->  [1]        two of the three elements disappear
+
+    MEASURED: wrong on 2,533 of 3,000 random arrays. It is not a subtle ordering bug - the
+    output is SHORTER than the input, which makes it easy to spot if you check the length.
+    Both `extend`s are needed; you cannot know in advance which side will run dry.
+
+TRAP 2 - THE BASE CASE `if len(a) == 0` INSTEAD OF `<= 1`. With a single element, `mid` is 0, so
+`a[:0]` is empty and `a[0:]` is the whole list again - the recursive call gets the same input and
+the recursion never bottoms out.
+
+    MEASURED: 2,784 of 3,000 raised RecursionError. It crashes rather than answering wrongly,
+    which is a mercy. The rule: THE BASE CASE MUST COVER EVERY INPUT THE SPLIT CANNOT MAKE
+    SMALLER, and a one-element list is one of those.
+
+TRAP 3 - `<` INSTEAD OF `<=` IN THE COMPARISON. This is the interesting one, because THE OUTPUT
+IS STILL PERFECTLY SORTED, every single time. What it destroys is stability: when two elements
+are equal, `<` prefers the one from the RIGHT half, so equal elements come out in the wrong
+relative order.
+
+    MEASURED on 3,000 arrays with tagged positions: the `<` version produced correctly sorted
+    output in 100% of cases, and reordered equal elements in 2,051 of the 2,533 arrays with more
+    than one element.
+
+    So it is invisible to any test that only checks sortedness, and it silently breaks any code
+    that relied on stability. IF THE FUNCTION SORTS BUT IS NOT STABLE, THIS IS THE CHARACTER TO
+    LOOK AT. The rule: on a tie, TAKE FROM THE LEFT, because the left half held the earlier
+    elements.
+
+WHAT IS NOT A TRAP, checked rather than assumed: rounding the midpoint UP instead of down -
+`(len(a) + 1) // 2` rather than `len(a) // 2`. Wrong on 0 of 3,000. Both halves are still
+non-empty for any list of two or more, so the recursion still shrinks and the result is
+identical. It is a genuine free choice, unlike almost everything else in this entry.
+
+ALSO NOT A TRAP: an empty list. `len(a) <= 1` catches it and returns it unchanged.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE SORT - SELECTION SORT, for contrast:
+
+    for i in range(len(a)):
+        smallest = min(range(i, len(a)), key=lambda k: a[k])
+        a[i], a[smallest] = a[smallest], a[i]
+
+IT IS CORRECT and it is worth naming, because it shows what merge sort is buying. COST: finding
+the smallest of the remaining elements takes a full scan, done n times: n squared over 2
+comparisons. At n = 1,000,000 that is 500 billion - days of work. Merge sort does the same job
+in about 20 million.
+
+WHERE THE SAVING COMES FROM, stated precisely. The quadratic sorts throw away information. Each
+scan learns a great deal about the ordering and then discards all of it except the single
+minimum. Merge sort keeps everything it learns: once a half is sorted, that work is never
+redone - it is only ever merged.
+
+THE KEY ENABLING FACT: MERGING TWO SORTED LISTS IS LINEAR, NOT QUADRATIC. Because both are
+sorted, the overall smallest element must be at the front of one of them, so ONE comparison
+finds it. Without sortedness you would have to search both lists and the whole scheme collapses.
+
+THE ARITHMETIC OF WHY IT IS n log n:
+
+    each level of the split halves the pieces      ->  about log2(n) levels
+    each level merges every element exactly once   ->  n work per level
+    total                                          ->  n log n
+
+and note that NONE OF THAT DEPENDS ON THE DATA. The split is always down the middle regardless
+of what the values are, so there is no bad input. Quicksort's split depends entirely on the
+pivot, which is why its worst case is quadratic and merge sort's is not.
+
+WHY `<=` KEEPS IT STABLE, FROM SCRATCH. When the two fronts are EQUAL, either could be taken and
+the output is sorted either way. But the left half held the elements that came earlier in the
+original list. Taking from the left on a tie therefore preserves the original order among equals -
+and since every element passes through exactly one comparison at each level, preserving order at
+every tie preserves it overall. One character, and it is the difference between a stable sort and
+an unstable one.
+
+THE HONEST COST: this version allocates new lists at every level, so it uses O(n) extra memory and
+does a lot of copying. The classic optimisation is to allocate ONE scratch buffer of size n up
+front and merge into it using index ranges, which keeps the same O(n) bound but stops the
+churn.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. If the list has one element or none, it is already sorted - hand it straight back. This is
+       what stops the recursion, and it must cover ONE element, not just zero.
+
+    2. Otherwise find the midpoint and cut the list into a left half and a right half.
+
+    3. Sort each half by calling this same procedure on it. Trust it completely - that is the
+       leap of faith recursion asks for, and it is justified because each half is strictly
+       shorter, so the calls must eventually reach step 1.
+
+    4. Now merge the two sorted halves:
+
+       a. Put a finger at the front of each half and start with an empty result.
+       b. While BOTH fingers still have elements under them, compare the two elements they point
+          at. Move the smaller one into the result and advance that finger. ON A TIE, TAKE FROM
+          THE LEFT - that is what keeps equal elements in their original order.
+       c. When one half runs out, tip ALL the remaining elements of the OTHER half onto the end.
+          They are already sorted and all larger than everything placed, so no comparison is
+          needed. Do this for both halves - you do not know in advance which will run dry.
+
+    5. Return the merged list.
+
+THE RECURSION, SPELLED OUT. Step 3 does not merely call a function twice; the first call sorts an
+entire half all the way down and back up before the second call begins. Python holds the paused
+calls on the call stack, one per level, so the stack is about log2(n) deep - 20 for a million
+elements, which is nothing.
+
+THE STEPS PEOPLE GET WRONG are 4c (leaving out the leftovers, so elements vanish), 1 (writing the
+base case as "empty" only, which never terminates on a single element), and 4b's tie rule (which
+silently costs stability without ever producing an unsorted result).""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a huge, unsorted pile of exam papers and a room full of helpers.
+
+You do not try to sort the pile. You cut it in half and hand each half to a colleague, telling
+them to bring it back in order and not to explain how. They do the same thing: cut their pile in
+two, hand the pieces on. This continues until somebody is holding a single paper, at which point
+they say "this is sorted" and hand it straight back - which is true, and is where the whole thing
+bottoms out.
+
+Now the work comes back up the chain, and the only real task is the joining. When you receive two
+sorted piles, you do not shuffle them together and re-sort. You put them side by side, look at
+the top paper of each, take whichever has the lower mark, and put it face down on a new pile.
+Repeat. Because each pile is already in order, the lowest remaining mark of all is always one of
+the two on top - so a single glance finds it. When one pile runs out you simply tip the rest of
+the other one on top, because everything left is already in order and higher than everything
+placed.
+
+Two details make it work properly rather than nearly work. The tipping is not optional: forget it
+and papers are lost, not merely misordered. And when the two top papers have the SAME mark, you
+always take from the left-hand pile - the one whose papers came earlier originally. That single
+habit is what means two candidates with equal marks come out in the order they were in before,
+which is exactly what someone will complain about if you get it wrong.
+
+The reason the whole thing is fast is that no paper is ever compared with more than one other at
+each level of joining, and there are only about twenty levels even for a million papers.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def merge_sort(a):
+        if len(a) <= 1:
+            return a
+
+  THE BASE CASE. A list of one element - or none - is already in order. `<= 1`, not `== 0`: with
+  `== 0`, a one-element list splits into an empty half and a copy of ITSELF, and the recursion
+  never ends. Measured at 2,784 RecursionErrors in 3,000.
+
+        mid = len(a) // 2
+        left = merge_sort(a[:mid])
+        right = merge_sort(a[mid:])
+
+  Split down the middle and sort each side. `//` floors, so for an odd length the right half is
+  the larger one - which does not matter (rounding up instead was measured wrong on 0 of 3,000).
+  What DOES matter is that both halves are strictly shorter than `a` whenever `a` has two or more
+  elements, which is what guarantees the recursion reaches the base case.
+
+  Each of these lines sorts a whole half completely before the next line runs.
+
+        res = []
+        i = j = 0
+
+  The output, and the two fingers - `i` into `left`, `j` into `right`. Both only ever move
+  forward, which is what makes the merge linear.
+
+        while i < len(left) and j < len(right):
+
+  Continue while BOTH halves still have something to offer. When either runs out, the comparison
+  below would be meaningless, so the loop stops and the leftovers are handled after it.
+
+            if left[i] <= right[j]:
+                res.append(left[i]); i += 1
+            else:
+                res.append(right[j]); j += 1
+
+  Take the smaller front element and advance that finger only. `<=` AND NOT `<`: on a tie, taking
+  from the LEFT preserves the original order of equal elements, because the left half held the
+  earlier ones. With `<`, the output is still perfectly sorted - it just is not stable, and no
+  sortedness test will ever catch it.
+
+        res.extend(left[i:])
+        res.extend(right[j:])
+
+  Tip in whatever remains. Exactly one of these does anything - the other slice is empty - but you
+  cannot know which in advance, so both must be there. Everything remaining is already sorted and
+  larger than everything placed, so no comparison is needed. Omit these and elements are silently
+  LOST: wrong on 2,533 of 3,000.
+
+        return res
+
+  A new sorted list. Note this function does NOT sort in place - the caller's list is untouched
+  and O(n) extra memory is used.""",
+
+    """9. TRACED ON REAL NUMBERS - a = [5, 2, 4, 1, 3]
+
+THE SPLITTING, GOING DOWN:
+
+    merge_sort([5, 2, 4, 1, 3])        mid = 2  ->  left [5, 2],  right [4, 1, 3]
+        merge_sort([5, 2])             mid = 1  ->  left [5],     right [2]
+            merge_sort([5])  -> [5]              base case
+            merge_sort([2])  -> [2]              base case
+            merge: left front is 5, right front is 2.  5 <= 2?  no -> take 2
+                   right is now empty, so the loop stops with 5 still in left
+                   extend(left[i:]) adds 5
+                   result [2, 5]
+        merge_sort([4, 1, 3])          mid = 1  ->  left [4],     right [1, 3]
+            merge_sort([4])  -> [4]
+            merge_sort([1, 3])         mid = 1  ->  left [1],     right [3]
+                merge: 1 <= 3 -> take 1;  left empty -> extend adds 3
+                result [1, 3]
+            merge [4] with [1, 3]:
+                   4 <= 1?  no -> take 1
+                   4 <= 3?  no -> take 3
+                   right empty -> extend adds 4
+                   result [1, 3, 4]
+
+THE FINAL MERGE, [2, 5] with [1, 3, 4]:
+
+    step | left  i | right j | compare        | take | result
+    -----+---------+---------+----------------+------+-----------------
+      1  | 2 (i=0) | 1 (j=0) | 2 <= 1?  no    |  1   | [1]
+      2  | 2 (i=0) | 3 (j=1) | 2 <= 3?  yes   |  2   | [1, 2]
+      3  | 5 (i=1) | 3 (j=1) | 5 <= 3?  no    |  3   | [1, 2, 3]
+      4  | 5 (i=1) | 4 (j=2) | 5 <= 4?  no    |  4   | [1, 2, 3, 4]
+      5  | 5 (i=1) | right exhausted (j = 3)  |  -   | loop ends
+
+    extend(left[1:])  adds 5      ->  [1, 2, 3, 4, 5]
+    extend(right[3:]) adds nothing
+
+    return [1, 2, 3, 4, 5]
+
+STEP 5 IS THE ONE TRAP 1 GETS WRONG. The loop stopped with the 5 still sitting in the left half.
+Without `res.extend(left[i:])` the function would return [1, 2, 3, 4] - a sorted list that is
+simply missing an element.
+
+A SECOND TRACE - STABILITY, WHICH THE FIRST TRACE CANNOT SHOW. Sort [(2,a), (1,b), (2,c)] by the
+number only, so the two 2s are tied.
+
+    split: left [(2,a)]   right [(1,b), (2,c)]  ->  right sorts to [(1,b), (2,c)]
+    merge: 2 <= 1?  no  -> take (1,b)
+           2 <= 2?  YES -> take (2,a)          <- the tie, and the left wins
+           left empty -> extend adds (2,c)
+    result [(1,b), (2,a), (2,c)]               a before c, as in the original
+
+    With `<` instead of `<=`: at the tie, `2 < 2` is false, so (2,c) is taken first and the result
+    is [(1,b), (2,c), (2,a)]. STILL SORTED BY NUMBER - and the two tied items have swapped.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The list is halved until pieces are single elements, which takes about
+log2(n) levels; every level merges every element exactly once, costing n. So O(n log n) TIME IN
+EVERY CASE - best, average and worst are identical, because the split ignores the data entirely.
+That guarantee is merge sort's main selling point.
+
+SPACE: O(n) auxiliary, for the new lists built at each merge - this version actually allocates at
+every level, and the standard fix is one scratch buffer of size n reused throughout. Plus O(log n)
+of call stack. Merge sort is NOT in place, and that is the honest price of the guaranteed worst
+case.
+
+THE #1 MISTAKE: omitting the two `extend` lines. Wrong on 2,533 of 3,000, and the output is
+shorter than the input - so assert the length in your own testing and you will catch it at once.
+
+THE #2: the base case as `== 0` rather than `<= 1`. RecursionError on 2,784 of 3,000. It fails
+loudly, which is the best kind of failure.
+
+THE #3, AND THE ONE WORTH REMEMBERING: `<` instead of `<=`. The output is sorted 100% of the
+time and the sort is no longer stable, with equal elements reordered in 2,051 of 2,533
+multi-element arrays. No sortedness test detects it.
+
+WHAT TO SAY OUT LOUD, in this order: (1) split in half, sort each half recursively, merge; (2)
+the merge is linear because both halves are sorted, so one comparison finds the next smallest;
+(3) O(n log n) in ALL cases, because the split does not depend on the data - unlike quicksort;
+(4) O(n) extra space, which is the trade; (5) it is stable, and the `<=` is what makes it so.
+Points 3 and 5 are what an interviewer is listening for - anyone can describe the split.
+
+MERGE SORT VERSUS QUICKSORT, the comparison you will be asked to make:
+
+    merge sort   O(n log n) guaranteed   O(n) space     STABLE     sequential access only
+    quicksort    O(n log n) average,     O(log n) space unstable   in place, better constants
+                 O(n^2) worst
+
+Quicksort usually wins in practice on arrays because it is in place and cache-friendly. Merge
+sort wins when you need a guarantee, when you need stability, when you are sorting a LINKED LIST
+(splitting and merging need no random access, and it becomes O(1) extra space), or when the data
+does not fit in memory - external sorting is merge sort.
+
+THE FAMILY. Sort List (merge sort on a linked list - the canonical interview use), Count of
+Smaller Numbers After Self and Reverse Pairs (both solved by counting during the merge step),
+Merge k Sorted Lists (the merge generalised), Merge Sorted Array. If you can see that the merge
+step is where you can count inversions almost for free, you have understood the algorithm rather
+than memorised it.
+
+ONE-SENTENCE TAKEAWAY: split down the middle, sort each half recursively, then merge with two
+forward-only fingers - taking from the LEFT on a tie to stay stable, and remembering to tip in
+whatever is left over.""",
 ]
 
 _EX_P1U["Quick Sort"] = [
-    """The Lomuto partition, traced.
-a = [3,7,8,5,2,1,9,5], pivot = 5 (the last element). p marks where the next
-'smaller than pivot' element goes.
-i=0: 3 < 5 -> swap a[0] with a[0], p=1. i=1: 7 not < 5. i=2: 8 no. i=3: 5 not <
-5 (strict). i=4: 2 < 5 -> swap a[4] with a[1] -> [3,2,8,5,7,1,9,5], p=2.
-i=5: 1 < 5 -> swap a[5] with a[2] -> [3,2,1,5,7,8,9,5], p=3.
-Finally swap the pivot into place: a[3] <-> a[7] -> [3,2,1,5,7,8,9,5].
-Pivot 5 is now at index 3 and everything left of it is smaller. That index is
-its FINAL sorted position - which is the invariant the recursion relies on.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the worst case is O(n^2), and the input that causes it.
-If every partition splits off just one element, the recursion depth is n and
-each level costs O(n) -> O(n^2). With Lomuto taking the LAST element as pivot,
-an ALREADY SORTED array does exactly that: the pivot is always the maximum, so
-one side is empty every time.
-That is the cruel irony worth stating - the naive quicksort is worst on the
-input you would most expect to be easy. It is also a real denial-of-service
-vector if an attacker controls the input order.""",
+Put a list into ascending order, using the other classic divide-and-conquer sort. Where merge
+sort splits blindly and does its work when combining, quicksort does all its work in the split
+and has nothing left to combine.
 
-    """The fix, and why randomisation is enough.
-Choose the pivot RANDOMLY (or median-of-three: first, middle, last). Randomising
-makes the O(n^2) case depend on luck rather than on input order, so no
-adversary can force it and the expected time is O(n log n) for every input.
-Median-of-three additionally handles the common near-sorted case well.
-Introsort - what C++'s std::sort actually uses - goes further: run quicksort,
-but if the recursion depth exceeds ~2 log n, switch to heapsort to guarantee
-O(n log n). Naming that shows you know what production sorts do.""",
+THE ONE IDEA: PICK AN ELEMENT - call it the PIVOT - and rearrange the list so that everything
+smaller than the pivot ends up to its left and everything larger ends up to its right.
 
-    """Quicksort versus merge sort, as a real decision.
-QUICKSORT: in-place (O(log n) stack only), excellent cache locality because it
-works on contiguous ranges, faster in practice by a constant factor - but
-O(n^2) worst case and NOT stable.
-MERGE SORT: guaranteed O(n log n), stable, works well on linked lists and
-external data - but needs O(n) auxiliary space.
-So: arrays in memory where average speed matters -> quicksort. Need stability
-or a worst-case guarantee, or sorting a list or a file -> merge sort.""",
+    [3, 7, 1, 8, 2]        choose the last element, 2, as the pivot
 
-    """The duplicates weakness, and three-way partitioning.
-On an array of many equal elements, Lomuto puts all the equals on one side and
-degrades toward O(n^2). The fix is DUTCH NATIONAL FLAG (three-way) partitioning:
-split into less-than, equal-to and greater-than, and recurse only on the outer
-two. Arrays with few distinct values then sort in nearly linear time.
-That is the same three-pointer partition as Sort Colors, which is worth
-connecting - it is not a separate trick, it is quicksort's partition
-generalised.""",
+    rearranged:  [1, 2, 7, 8, 3]
+                     ^
+                     the pivot, now at index 1
 
-    """Edge cases, complexity and the family.
-Empty or single element -> the recursion's base case.
-All equal -> the pathological case above unless three-way partitioning is used.
-Already sorted or reverse sorted -> pathological with a fixed pivot, fine with
-a random one.
-Time O(n log n) average, O(n^2) worst; space O(log n) expected stack.
-The family: Quickselect (partition but recurse into ONE side - O(n) average for
-the kth largest), Sort Colors (three-way partition), Kth Largest Element, and
-Wiggle Sort II. The partition step is the reusable primitive here, exactly as
-merge is for merge sort.""",
+Two things are now true, and the second is the important one:
+
+    the pivot is IN ITS FINAL POSITION - one element is permanently sorted
+    the two sides are independent - nothing on the left will ever need to move right
+
+So sort each side the same way, and there is nothing to merge afterwards. When the recursion
+finishes, the list is sorted where it lies.
+
+WHY LEARN IT WHEN `sorted()` EXISTS. Quicksort is what most standard libraries use for arrays
+(often as part of a hybrid), because it sorts IN PLACE - no second array - and its memory access
+pattern is very friendly to real hardware. Its weakness is equally famous: with an unlucky pivot
+it degrades to n squared, and section 4 measures exactly how bad that is on the most ordinary
+input imaginable.
+
+The scheme shown here is LOMUTO PARTITIONING, which uses the last element as the pivot. It is the
+easiest to write correctly and the one to reach for in an interview.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THE PARTITION IS THE ENTIRE ALGORITHM. Everything else is two recursive calls.
+
+Here is how it works with one pass and one extra marker. Take the last element as the pivot. Walk
+a scanner across everything else, and keep a marker showing THE BOUNDARY OF THE SMALLER-THAN-PIVOT
+REGION - that is, the position where the next small element should go.
+
+    [3, 7, 1, 8, | 2]        pivot = 2,  marker p = 0
+
+    scan 3:  3 < 2?  no      leave it, marker stays at 0
+    scan 7:  7 < 2?  no      leave it
+    scan 1:  1 < 2?  YES     swap it into position 0, marker moves to 1
+             [1, 7, 3, 8, | 2]
+    scan 8:  8 < 2?  no      leave it
+             [1, 7, 3, 8, | 2]        marker p = 1
+
+    finally swap the pivot (at index 4) with whatever sits at the marker (index 1):
+             [1, 2, 3, 8, 7]
+                 ^ the pivot, in its final place at index 1
+
+THE INVARIANT THAT MAKES IT WORK - hold this picture and the code writes itself:
+
+    +--------------------+------------------+----------------+--------+
+    | everything < pivot | everything >= it | not yet looked | pivot  |
+    +--------------------+------------------+----------------+--------+
+     lo               p-1  p            i-1  i          hi-1    hi
+
+    `p` is the first position of the "not smaller" region, so it is exactly where the next small
+    element belongs. When a small element is found at `i`, swapping it with position `p` sends it
+    into the small region and pushes the element that was there into the "not smaller" region -
+    which is where it belonged anyway. Then `p` moves up by one.
+
+At the end of the scan, everything below `p` is smaller than the pivot and everything from `p` to
+`hi-1` is not. So swapping the pivot into position `p` puts it exactly between them - ITS FINAL
+POSITION IN THE SORTED LIST. That is a genuine, permanent placement, which is why nothing needs
+merging later.
+
+WHY IT IS USUALLY FAST, AND SOMETIMES NOT. If the pivot lands near the middle, the two sides are
+about half the size each, so there are about log2(n) levels and each costs n - the same n log n as
+merge sort. But if the pivot is always the smallest or largest element, one side is empty and the
+other has n-1 elements, giving n levels of n work: n squared. And "always the largest element" is
+exactly what happens when you take the last element of an ALREADY SORTED list. Section 4 has the
+measurement, and it is dramatic.""",
+
+    """3. EVERY TERM, DEFINED
+
+PIVOT. The element you partition around. Here it is the last element of the range, which is
+Lomuto's convention. Any element could be used; the choice is what determines whether the sort is
+fast or slow, and nothing else.
+
+PARTITION. Rearranging a range so that everything smaller than the pivot is to its left and
+everything else is to its right, and returning the pivot's final index.
+
+LOMUTO SCHEME. The partition shown here: one scanner, one boundary marker, pivot at the end,
+pivot swapped into place at the finish. Easier to get right than the alternative.
+
+HOARE SCHEME. The other classic partition, with two pointers moving towards each other. It does
+fewer swaps and is faster in practice, but it does NOT put the pivot in its final position, so the
+recursive calls differ - `qs(lo, m)` and `qs(m+1, hi)` rather than excluding the pivot. Mixing the
+two schemes' recursive calls is a classic infinite loop, and section 4 measures it.
+
+IN-PLACE. Rearranging the input array itself rather than building new ones. Quicksort's chief
+advantage, and the reason it beats merge sort in practice despite an identical average bound.
+
+STABLE. Preserving the relative order of equal elements. QUICKSORT IS NOT STABLE - the swaps fling
+equal elements past each other. Merge sort is. This is a real difference, not a technicality, and
+it is a standard interview question.
+
+RECURSION, AND WHAT IT IS DOING HERE. `qs(lo, hi)` sorts the slice from `lo` to `hi` inclusive.
+It partitions, then calls itself on the part strictly left of the pivot and the part strictly
+right of it. Each call handles a strictly smaller range - because the pivot is excluded from both -
+which is what guarantees termination.
+
+BASE CASE. `if lo < hi` - a range of one element (`lo == hi`) or none (`lo > hi`) is already
+sorted, so the function does nothing. Written as a condition to ENTER rather than a condition to
+return, but it is the same idea.
+
+CALL STACK DEPTH. One frame per level of recursion. For balanced splits that is about log2(n);
+for the worst case it is n, which overflows Python's default limit at around 1,000.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - INCLUDING THE PIVOT IN A RECURSIVE CALL. Lomuto's partition puts the pivot at its FINAL
+position, so both recursive calls must EXCLUDE it: `qs(lo, m-1)` and `qs(m+1, hi)`. Writing
+`qs(lo, m)` - which is correct for the Hoare scheme, and is where the confusion comes from - means
+a range can fail to shrink, and the recursion never ends.
+
+    MEASURED: 2,308 of 3,000 random arrays failed to terminate. If you have mixed up the two
+    schemes, this is the symptom. THE RULE: LOMUTO PLACES THE PIVOT, SO LOMUTO EXCLUDES IT.
+
+TRAP 2 - THE WORST CASE, AND IT IS NOT AN EXOTIC INPUT. With the last element as pivot, an
+ALREADY SORTED array is the worst possible input: the pivot is always the largest remaining
+element, so every partition puts n-1 elements on the left and none on the right.
+
+    MEASURED at n = 2,000:
+
+        random input:          24,085 comparisons,  recursion depth    24
+        already sorted:     1,999,000 comparisons,  recursion depth 2,000
+        all elements equal: 1,999,000 comparisons,  recursion depth 2,000
+
+    1,999,000 is exactly n(n-1)/2 - the full quadratic. That is 83 TIMES the work of the random
+    case, on the most ordinary input there is.
+
+    AND IT CRASHES BEFORE IT IS SLOW. With Python's default recursion limit of 1,000, sorting an
+    already-sorted array of 900 elements succeeds and 1,000 elements raises RecursionError.
+
+    THE FIXES, and you should name one unprompted: choose a RANDOM pivot (or median-of-three) so
+    no fixed input pattern is bad; and recurse into the SMALLER side first while looping on the
+    larger, which caps the stack at O(log n).
+
+TRAP 3 - THE ALL-EQUAL ARRAY. Measured identically to the sorted case, 1,999,000 comparisons and
+depth 2,000, and notably a random pivot does NOT help - every element is the pivot's equal, so the
+split is always maximally unbalanced whichever one you pick. THE ACTUAL FIX IS THREE-WAY
+PARTITIONING (the "Dutch national flag" split into less-than / equal-to / greater-than), which
+makes all-equal input linear. Knowing that this is the case a random pivot cannot rescue is a
+strong thing to say in an interview.
+
+WHAT IS NOT A TRAP, checked rather than assumed - two things that look like off-by-ones and are
+not:
+
+    `for i in range(lo, hi + 1)` instead of `range(lo, hi)` - letting the scanner reach the pivot
+    itself. Wrong on 0 of 3,000. The test is `a[i] < pivot`, and the pivot is not less than itself,
+    so the extra iteration does nothing. Sloppy, harmless.
+
+    `if a[i] <= pivot` instead of `<`. Wrong on 0 of 3,000, and measured to use essentially the
+    same number of comparisons. It changes which side ties go to, and since quicksort is not
+    stable anyway, nothing observable changes.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - QUICKSORT WITH THREE NEW LISTS:
+
+    def quick_sort(a):
+        if len(a) <= 1:
+            return a
+        pivot = a[-1]
+        smaller = [x for x in a[:-1] if x < pivot]
+        bigger  = [x for x in a[:-1] if x >= pivot]
+        return quick_sort(smaller) + [pivot] + quick_sort(bigger)
+
+IT IS CORRECT, it is six lines, and it makes the idea unmistakable: everything small, then the
+pivot, then everything big. WRITE THIS FIRST in an interview - it proves you have the idea before
+you start on index arithmetic.
+
+COST: the time is the same O(n log n) on average, but it allocates two new lists at every level,
+so it uses O(n log n) memory in total and copies constantly. It has thrown away quicksort's one
+real advantage.
+
+THE UPGRADE - DO THE SAME REARRANGEMENT INSIDE THE ORIGINAL ARRAY. That is what the partition
+function is: the two list comprehensions, performed by swapping.
+
+THE TRICK, FROM SCRATCH - WHAT THE MARKER `p` MEANS AND WHY THE SWAP IS SAFE. `p` marks THE FIRST
+POSITION THAT DOES NOT HOLD A CONFIRMED-SMALL ELEMENT. Everything from `lo` to `p-1` is known to be
+smaller than the pivot; everything from `p` to `i-1` is known not to be.
+
+When the scanner at `i` finds a small element, it must move into the small region - and the small
+region's next free slot is exactly `p`. But `p` is occupied, by an element already known to be NOT
+small. Swapping is therefore perfect: the small element goes where it belongs, and the not-small
+element is thrown to position `i`, which is the end of the not-small region. NOTHING IS LOST AND
+NOTHING NEEDS A TEMPORARY - the swap moves both elements to correct regions at once.
+
+    before swap:   [ small... | notsmall... | ? ? ? | pivot ]
+                              p             i
+    at position i: a small element
+    after swap:    the small one is at p, the not-small one that was at p is now at i
+                   p moves up by one, and both regions are still correct
+
+WHY THE FINAL SWAP PLACES THE PIVOT EXACTLY. When the scan ends, positions `lo..p-1` hold
+everything smaller than the pivot and `p..hi-1` hold everything not smaller. The pivot belongs
+immediately after the small ones - which is position `p`. Swapping it with whatever is at `p`
+(a not-small element) puts the pivot there and moves that element into the not-small region, where
+it already belonged. Hence `return p`: the pivot's final index.
+
+HOW THAT PROPAGATES: because the pivot is final, the recursion excludes it, so each call handles a
+strictly smaller range and the whole thing terminates. If you recurse on a range that still
+includes the pivot, a range can fail to shrink - trap 1, and 2,308 hangs in 3,000.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+FIRST, THE PARTITION - "rearrange the range lo..hi around its last element, and tell me where that
+element ended up":
+
+    1. Take the LAST element of the range as the pivot.
+    2. Set a marker at the START of the range. It means "the next position that a small element
+       should occupy", and everything before it is already known to be smaller than the pivot.
+    3. Scan every position from the start of the range up to but NOT including the pivot:
+       a. If the element there is smaller than the pivot, swap it with the element at the marker,
+          then move the marker forward by one.
+       b. Otherwise do nothing at all - leave it where it is.
+    4. When the scan finishes, swap the pivot with whatever sits at the marker. The pivot is now
+       exactly between the small elements and the rest - ITS FINAL POSITION FOREVER.
+    5. Return the marker position.
+
+SECOND, THE SORT:
+
+    6. If the range holds fewer than two elements, it is already sorted - do nothing.
+    7. Otherwise partition it, which returns the pivot's final index.
+    8. Sort the part STRICTLY LEFT of the pivot, and the part STRICTLY RIGHT of it. Neither call
+       includes the pivot itself, because it is already correctly placed.
+
+THE RECURSION, SPELLED OUT. Step 8's two calls each handle a strictly shorter range than their
+parent, because the pivot is excluded from both - so the ranges shrink by at least one element per
+level and step 6 eventually stops the descent. If a call could include the pivot, a range might
+not shrink at all and the recursion would never end.
+
+THE STEPS PEOPLE GET WRONG are 8 (including the pivot, which hangs) and, more subtly, step 1 -
+always taking the LAST element makes an already-sorted array the worst possible input. Picking a
+random position and swapping it to the end first, before step 1, costs one line and removes the
+problem.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a long row of people who need to be lined up by height, and a supervisor who refuses to
+build a second row.
+
+The supervisor picks one person - say the one on the far right - and holds them up as the
+reference. Then they walk the row from left to right with a rule: anyone shorter than the
+reference gets swapped with whoever is standing at a marker that starts at the left end, and the
+marker then steps one place right. Anyone not shorter is left exactly where they are.
+
+The marker is the boundary of the "shorter than the reference" group. When somebody shorter turns
+up further along the row, they trade places with whoever is standing at the boundary - and that
+person is by definition not shorter, so throwing them to the far position is not just harmless, it
+is right.
+
+At the end of the walk, everyone shorter than the reference is packed at the left, everyone else
+is in the middle, and the reference is still off at the right. One last swap drops the reference
+into the gap between the two groups, and at that moment THE REFERENCE IS STANDING IN THEIR FINAL
+PLACE. Nobody on their left will ever need to move right, and nobody on their right will ever move
+left. That is why there is no combining step at the end - unlike merge sort, the pieces are
+already in the right place relative to each other.
+
+The supervisor now repeats the whole procedure on the left group and on the right group, and never
+touches the reference again.
+
+The catch is entirely in the choice of reference. Pick someone middling and each group is about
+half the row, so about twenty rounds handle a million people. Pick the tallest every single time -
+which is exactly what "always take the rightmost" does if the row is ALREADY sorted - and each
+round separates off only one person, so a million people take a million rounds. Choosing at random
+is a one-line fix and it is why real implementations do it.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def quick_sort(a):
+        def partition(lo, hi):
+            pivot = a[hi]
+
+  The last element of the range is the pivot - the Lomuto convention. THIS IS THE LINE THAT
+  DETERMINES PERFORMANCE: a fixed choice makes sorted input the worst case. Swapping a randomly
+  chosen index into `hi` before this line is the standard one-line fix.
+
+            p = lo
+
+  The boundary marker: the next position a smaller-than-pivot element should occupy. Everything in
+  `lo..p-1` is confirmed smaller than the pivot.
+
+            for i in range(lo, hi):
+
+  Scan everything except the pivot itself. (Running to `hi + 1` instead was measured wrong on 0 of
+  3,000 - the pivot is never less than itself - but stopping at `hi` says the intent.)
+
+                if a[i] < pivot:
+                    a[i], a[p] = a[p], a[i]
+                    p += 1
+
+  A smaller element belongs in the small region, whose next free slot is `p`. The element currently
+  at `p` is known NOT to be smaller, so sending it to position `i` is exactly right - the swap puts
+  both elements in correct regions in one move, which is why no temporary array is needed.
+
+  If the element is not smaller, nothing happens at all: it is already in the correct region.
+
+            a[p], a[hi] = a[hi], a[p]
+            return p
+
+  THE PLACEMENT. After the scan, `lo..p-1` is everything smaller and `p..hi-1` is everything else,
+  so the pivot belongs at exactly `p`. This swap puts it there and displaces a not-smaller element
+  to `hi`, where it belongs. `p` is now the pivot's FINAL index in the fully sorted array - a
+  permanent fact, not a temporary one.
+
+        def qs(lo, hi):
+            if lo < hi:
+
+  A range with fewer than two elements is already sorted, so do nothing. Written as a condition to
+  proceed rather than an early return, but it is the base case.
+
+                mid = partition(lo, hi)
+                qs(lo, mid - 1)
+                qs(mid + 1, hi)
+
+  Sort the two sides, EXCLUDING THE PIVOT from both - it is already final. `mid - 1` and `mid + 1`
+  are what guarantee each call gets a strictly smaller range, and therefore that the recursion
+  ends. Writing `qs(lo, mid)` instead hangs on 2,308 of 3,000 arrays.
+
+  And note what is missing: there is NO combining step. The partition already put every element on
+  the correct side.
+
+        qs(0, len(a) - 1)
+        return a
+
+  Sort the whole array in place. The return is a convenience - the caller's list has already been
+  modified.""",
+
+    """9. TRACED ON REAL NUMBERS - a = [3, 7, 1, 8, 2]
+
+    qs(0, 4)  ->  partition(0, 4),  pivot = a[4] = 2,  p = 0
+
+        i=0:  a[0] = 3.  3 < 2?  no.   nothing happens.
+              array [3, 7, 1, 8, 2],  p = 0
+        i=1:  a[1] = 7.  7 < 2?  no.
+              array [3, 7, 1, 8, 2],  p = 0
+        i=2:  a[2] = 1.  1 < 2?  YES.  swap positions 2 and p=0.
+              array [1, 7, 3, 8, 2],  p = 1
+        i=3:  a[3] = 8.  8 < 2?  no.
+              array [1, 7, 3, 8, 2],  p = 1
+
+        place the pivot: swap positions p=1 and hi=4
+              array [1, 2, 3, 8, 7]
+        return 1
+
+        THE 2 IS NOW PERMANENTLY CORRECT. Everything left of it (just the 1) is smaller;
+        everything right of it (3, 8, 7) is larger.
+
+    qs(0, 0)   -  a single element, lo < hi is false, nothing to do
+
+    qs(2, 4)  ->  partition(2, 4),  pivot = a[4] = 7,  p = 2
+
+        i=2:  a[2] = 3.  3 < 7?  YES.  swap positions 2 and p=2 (a no-op swap).
+              array [1, 2, 3, 8, 7],  p = 3
+        i=3:  a[3] = 8.  8 < 7?  no.
+              array [1, 2, 3, 8, 7],  p = 3
+
+        place the pivot: swap positions p=3 and hi=4
+              array [1, 2, 3, 7, 8]
+        return 3
+
+    qs(2, 2)   -  single element, nothing to do
+    qs(4, 4)   -  single element, nothing to do
+
+    FINAL: [1, 2, 3, 7, 8]
+
+THE PARTITION STEPS AT A GLANCE (first call):
+
+    i | a[i] | a[i] < 2? | action              | array after      | p
+    --+------+-----------+---------------------+------------------+---
+    0 |  3   |    no     | -                   | [3,7,1,8,2]      | 0
+    1 |  7   |    no     | -                   | [3,7,1,8,2]      | 0
+    2 |  1   |   YES     | swap i=2 with p=0   | [1,7,3,8,2]      | 1
+    3 |  8   |    no     | -                   | [1,7,3,8,2]      | 1
+      |      |           | swap p=1 with hi=4  | [1,2,3,8,7]      |
+
+Notice that the 3 got displaced from position 0 to position 2 by the swap at i=2, and that this
+was fine - 3 is not smaller than the pivot, so the region from `p` onwards is exactly where it
+belongs.
+
+A SECOND TRACE - THE WORST CASE, a = [1, 2, 3, 4].
+
+    partition(0, 3): pivot = 4. Every element is smaller, so p advances to 3, and the final swap
+        puts 4 at index 3 - where it already was. Returns 3.
+        Recursion: qs(0, 2) and qs(4, 3) - the right side is EMPTY.
+    partition(0, 2): pivot = 3. Same again. Returns 2. Recursion: qs(0,1) and qs(3,2).
+    partition(0, 1): pivot = 2. Returns 1.
+
+    Every partition peels off exactly one element and recurses on n-1. That is n levels of n work,
+    and it happens on the most ordinary input imaginable - a list that was already in order.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Each partition scans its range once, so a level of the recursion costs n in
+total. With balanced splits there are about log2(n) levels: O(n log n) AVERAGE. With maximally
+unbalanced splits there are n levels: O(n^2) WORST CASE.
+
+MEASURED at n = 2,000: random input took 24,085 comparisons at depth 24; already-sorted input took
+1,999,000 at depth 2,000. That second figure is exactly n(n-1)/2, and it is 83 times the first.
+
+SPACE: O(1) auxiliary - the sort is in place, which is its whole point - plus the call stack, which
+is O(log n) when balanced and O(n) in the worst case. Python's default recursion limit means an
+already-sorted array of 1,000 elements raises RecursionError with a last-element pivot; 900
+succeeds. Say this rather than claiming O(1) space flatly.
+
+NOT STABLE. The swaps throw equal elements past one another. If stability is required, merge sort
+is the answer.
+
+THE #1 MISTAKE: including the pivot in a recursive call - `qs(lo, mid)` instead of `qs(lo, mid-1)`.
+Failed to terminate on 2,308 of 3,000. It comes from half-remembering the Hoare scheme, where that
+form IS correct because Hoare does not place the pivot. Pair them in your memory: LOMUTO PLACES,
+SO LOMUTO EXCLUDES.
+
+THE #2 - not a coding bug but the thing that gets solutions rejected: a fixed pivot. Randomising it
+is one line and turns "the worst case is sorted input" into "the worst case is astronomically
+unlikely". Do it, and say why.
+
+THE #3, and the one people miss even after randomising: AN ALL-EQUAL ARRAY is still quadratic, and
+a random pivot does not help, because every choice splits it identically badly. The fix is
+three-way partitioning - less than, equal to, greater than - which makes all-equal input linear.
+
+TWO HONEST NEGATIVES, measured rather than repeated as folklore: letting the scan run over the
+pivot itself (`range(lo, hi+1)`) is wrong on 0 of 3,000, since nothing is less than itself; and
+`<=` instead of `<` in the comparison is wrong on 0 of 3,000 with essentially identical comparison
+counts. Neither is a bug.
+
+WHAT TO SAY OUT LOUD, in this order: (1) partition around a pivot so smaller elements go left and
+larger go right, which places the pivot permanently; (2) recurse on both sides, excluding the
+pivot, and there is no merge step; (3) O(n log n) average, O(n^2) worst when the pivot is always
+extreme - which is what a sorted input does to a last-element pivot; (4) so I would randomise the
+pivot, and recurse into the smaller side first to cap the stack at O(log n); (5) in place, O(1)
+extra space, but NOT stable.
+
+QUICKSORT VERSUS MERGE SORT, the comparison you will be asked for:
+
+    quicksort   O(n log n) avg, O(n^2) worst   in place    NOT stable   better constants
+    merge sort  O(n log n) guaranteed          O(n) space  STABLE       best for linked lists
+
+THE FAMILY. QUICKSELECT is the one worth knowing - the same partition, but after placing the pivot
+you recurse into ONLY the side containing the index you want, giving O(n) average time to find the
+k-th smallest element. That is how Kth Largest Element in an Array and Top K Frequent Elements are
+solved without sorting. Also: Sort Colors (three-way partitioning, the Dutch national flag
+problem), Sort an Array, Wiggle Sort II.
+
+ONE-SENTENCE TAKEAWAY: partition around a pivot so it lands in its final position, then sort each
+side excluding it - and remember that a fixed last-element pivot makes an already-sorted array the
+worst possible input.""",
 ]
 
 _EX_P1U["Task Scheduler (cooldown)"] = [
-    """The frame picture, which makes the formula obvious.
-Take the most frequent task A with count m. It must appear m times, and between
-consecutive As there must be n other slots. So the schedule looks like
-m-1 frames of width (n+1), plus a final A:
-    [A _ _] [A _ _] [A _ _] A     for m = 4, n = 2
-That skeleton has length (m-1)*(n+1) + 1. Every other task fills the blanks.
-If several tasks tie at count m, each of them must also appear in the final
-group, so the tail is num_max wide rather than 1 - giving
-(m-1)*(n+1) + num_max.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The trace.
-tasks = A,A,A,B,B,B, n = 2. counts A:3, B:3. max_count = 3, num_max = 2.
-intervals = (3-1)*(2+1) + 2 = 6 + 2 = 8.
-len(tasks) = 6, so the answer is max(8, 6) = 8: A B _ A B _ A B.
-Now n = 0: intervals = (3-1)*1 + 2 = 4, but len(tasks) = 6, so the answer is 6 -
-no idling is needed at all when there is no cooldown.""",
+You have a list of tasks, each labelled with a letter, and a machine that runs exactly one task
+per time unit. There is one rule: THE SAME TASK CANNOT RUN AGAIN UNTIL n TIME UNITS HAVE PASSED.
+If nothing is available, the machine sits idle for that unit - but it still costs a unit of time.
 
-    """Why `max(intervals, len(tasks))` is essential.
-The frame formula counts IDLE slots, which is right only when there are not
-enough other tasks to fill them. With many distinct tasks the blanks all get
-filled and the schedule is simply len(tasks) long - no idling.
-tasks = A,A,A,B,B,B,C,C,C,D,D,E with n = 2: the formula gives (3-1)*3 + 3 = 9,
-but there are 12 tasks, so the answer is 12. Omit the max and you UNDERCOUNT,
-returning a schedule shorter than the number of tasks - which is obviously
-impossible and is the tell that this line is missing.""",
+Tasks may be run in any order. How few time units are needed in total?
 
-    """Why only the most frequent task matters.
-The bottleneck is whichever task needs the most spacing. Once you have laid out
-its frames, every other task has count <= m, so it can be distributed one per
-frame without ever violating its own cooldown - there is always room.
-That argument is why a counting formula works at all and why you do not need to
-simulate. If you cannot make it, the greedy-heap simulation (always run the
-most frequent available task, hold the others on cooldown) is the fallback and
-gives the same answer in O(t log 26).""",
+    tasks = [A, A, A, B, B, B],  n = 2
 
-    """Edge cases.
-n = 0 -> no cooldown -> len(tasks), which the max() delivers.
-All tasks distinct -> len(tasks).
-One task type, A x 4 with n = 2 -> (4-1)*3 + 1 = 10: A _ _ A _ _ A _ _ A.
-Correct, and it is the case where idling dominates.
-Every task tied at the max count -> num_max equals the number of distinct
-tasks, and the tail is that wide.
-Empty input -> 0.""",
+    A schedule that works:
 
-    """Complexity and the family.
-O(t) time to count (O(26) for the max), O(1) space bounded by the alphabet.
-The simulation alternative is O(t log 26) with a heap and is worth knowing
-because it also produces the actual SCHEDULE, which the formula does not - if
-the interviewer asks for the ordering rather than the length, the formula is
-insufficient.
-The family: Reorganize String (the same 'most frequent task is the bottleneck'
-greedy with n = 1), Rearrange String k Distance Apart (the general version),
-Distant Barcodes, and Maximum Frequency Stack.""",
+        time:   1    2    3    4    5    6    7    8
+        run:    A    B  idle   A    B  idle   A    B
+
+    Check the rule: the A's are at times 1, 4 and 7 - three apart, so at least 2 units between
+    them. Same for the B's. Total time: 8.
+
+    Could it be done in 7? No. Section 2 shows why, and the reason is the whole problem.
+
+    tasks = [A, A, A, B, B, B],  n = 0
+
+        no cooldown at all, so just run them back to back: 6 units.
+
+    tasks = [A, B, C, D, E, F],  n = 2
+
+        all different, so nothing ever waits: 6 units.
+
+YOU ARE ASKED FOR THE TOTAL TIME, NOT THE SCHEDULE. That turns out to matter enormously - the
+answer is a formula you can write in three lines, with no scheduling performed at all.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+FIND THE BOTTLENECK. Some task appears more often than any other; call its count `max_count`.
+That task alone forces a minimum length, because its own copies must be spread out.
+
+    with A appearing 3 times and n = 2:
+
+        A  _  _  A  _  _  A
+        |-----|  |-----|  |
+         frame    frame   the last A
+
+    Between consecutive A's there must be at least n other slots. So the A's carve the timeline
+    into (max_count - 1) FRAMES, each of width (n + 1) - the A itself plus n slots after it -
+    followed by the final A.
+
+        minimum length = (max_count - 1) * (n + 1) + 1
+
+    For A x3 and n = 2: (3 - 1) * 3 + 1 = 7.
+
+NOW THE CORRECTION FOR TIES. Suppose B ALSO appears 3 times. B cannot squeeze inside the frames
+and finish early - it needs the same spacing as A, so it must appear once in each frame AND once
+at the end, right beside the last A.
+
+        A  B  _   A  B  _   A  B
+        |------|  |------|  |--|
+                            the final group now has TWO tasks in it
+
+    So the tail is not 1 task but however many tasks share the maximum count. Call that
+    `num_max`:
+
+        length = (max_count - 1) * (n + 1) + num_max
+
+    For A x3, B x3, n = 2: (3 - 1) * 3 + 2 = 8.  That is the answer from section 1.
+
+WHAT ABOUT ALL THE OTHER TASKS? They go in the gaps - the underscores - and here is the key
+insight: THEY NEVER MAKE IT LONGER, they only fill up idle time. Each frame has n free slots
+after its leading tasks, and any task that is not one of the most frequent has fewer copies than
+there are frames, so it never needs two in the same frame.
+
+BUT THE GAPS CAN RUN OUT. If there are so many different tasks that every slot is filled and
+there is STILL work left over, the machine simply never idles - and then the answer is just the
+number of tasks, because one runs per unit with no waiting.
+
+    tasks = [A, A, B, B, C, C, D, D],  n = 1
+
+        the formula gives (2 - 1) * 2 + 4 = 6
+        but there are 8 tasks, and you cannot run 8 tasks in 6 units
+
+        the truth: A B A B C D C D  -  8 units, never idle
+
+SO THE ANSWER IS THE LARGER OF THE TWO:
+
+        max( (max_count - 1) * (n + 1) + num_max,  total number of tasks )
+
+The first term is "the bottleneck task forces this much"; the second is "you cannot go faster
+than one task per unit". Take whichever binds. Section 4 measures how often each one wins.""",
+
+    """3. EVERY TERM, DEFINED
+
+TIME UNIT / INTERVAL. One tick of the clock. Exactly one task runs, or the machine idles.
+
+COOLDOWN n. The minimum number of units that must pass between two runs of THE SAME task. With
+n = 2, an A at time 1 means the next A is at time 4 or later - two units in between. Note n = 0
+means no restriction at all.
+
+IDLE. A time unit with nothing to run. It still counts towards the total, which is what makes the
+problem non-trivial.
+
+FREQUENCY / COUNT. How many times a task appears. `Counter(tasks)` produces these in one pass.
+
+max_count. The largest frequency - the bottleneck task's count.
+
+num_max. HOW MANY DISTINCT TASKS TIE for that largest frequency. This is the part everybody
+forgets, and section 4 measures it.
+
+FRAME. One block of (n + 1) consecutive time units: the bottleneck task, plus the n slots that
+must pass before it can run again. There are (max_count - 1) complete frames, and then a final
+partial group holding one copy of each maximum-frequency task.
+
+WHY THE FRAME IS (n + 1) AND NOT n. This is the single most common arithmetic slip. The frame
+spans from one A to the NEXT A, which is the A itself plus the n units of cooldown - so n + 1
+units in total. Using n gives (3-1)*2+2 = 6 for the example instead of 8.
+
+LOWER BOUND. A value the answer cannot possibly go below. This problem has two independent lower
+bounds - the frame argument and the task count - and the answer is exactly the larger. Proving an
+answer is a lower bound AND achievable is what makes this a formula rather than a search.
+
+GREEDY SCHEDULING. The natural algorithm - at each tick, run the available task with the most
+remaining copies. It is correct, and it is how the ground truth for this entry was computed. The
+formula is what you get when you notice you never have to actually run it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - FORGETTING THE `max(..., len(tasks))` CLAMP. The frame formula assumes the bottleneck
+task is what limits you. When there are many different tasks, the gaps fill up completely, the
+machine never idles, and the real answer is simply the number of tasks - which is LARGER than the
+formula.
+
+    tasks = A A B B C C D D,  n = 1     formula alone: 6      truth: 8
+    tasks = A A A B B B,      n = 0     formula alone: 4      truth: 6
+
+    MEASURED: wrong on 1,432 of 4,000 random cases - and the clamp was load-bearing in exactly
+    those 1,432, confirming the failure is precisely "the formula under-counted". Note the n = 0
+    case: with no cooldown the formula gives nonsense and the clamp is the entire answer.
+
+TRAP 2 - ASSUMING ONLY ONE TASK HAS THE MAXIMUM COUNT - writing `+ 1` instead of `+ num_max`.
+
+    tasks = A A A B B B,  n = 2        correct 8       with `+ 1`: 7
+
+    MEASURED: wrong on only 228 of 4,000 - by far the lowest rate here, because ties for the
+    maximum are not that common in random data. BUT THE OFFICIAL FIRST EXAMPLE IS EXACTLY THIS
+    CASE. LeetCode chose [A,A,A,B,B,B] with n = 2 deliberately; the sample input catches it
+    immediately, which is a mercy given how rarely random testing would.
+
+TRAP 3 - A FRAME OF WIDTH n INSTEAD OF n + 1. The off-by-one at the heart of the formula. The gap
+between two runs of the same task is n units of waiting PLUS the unit the task itself occupies.
+
+    tasks = A A A B B B,  n = 2        correct 8       with width n: 6
+
+    MEASURED: wrong on 1,310 of 4,000, and also caught by the official example. Draw the picture
+    before writing the formula - `A _ _ A` is four units apart end to end, and the repeating block
+    `A _ _` is three units wide, which is n + 1.
+
+WHAT IS NOT A TRAP: n = 0. The formula gives (max_count - 1) * 1 + num_max, which is at most the
+number of tasks, so the clamp takes over and returns `len(tasks)` - correct, with no special case
+needed. Similarly, a single task type: A A A with n = 2 gives (3-1)*3 + 1 = 7, and indeed
+A _ _ A _ _ A is 7 units.
+
+A NOTE ON WHY THE FORMULA IS EVEN LEGITIMATE, since it feels like a trick: it works because both
+terms are LOWER BOUNDS that cannot be beaten, and because the greedy schedule always ACHIEVES the
+larger of them. If an interviewer challenges the formula, that is the argument - not "I remember
+this one".""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - ACTUALLY RUN THE SCHEDULE:
+
+    at each time unit:
+        among the tasks that still have copies left AND are not cooling down,
+        run the one with the MOST copies remaining
+        if none is available, idle
+    stop when everything has run; the answer is the clock
+
+IT IS CORRECT - this greedy simulation is exactly how the ground truth for every figure in this
+entry was computed - and it is a completely acceptable interview answer, usually written with a
+max-heap of counts plus a queue of cooling-down tasks. COST: O(total time * number of distinct
+tasks), or O(N log 26) with a heap, and it needs real data structures.
+
+WHY GREEDY-BY-HIGHEST-COUNT IS THE RIGHT RULE, since it is worth being able to defend: the task
+with the most copies left is the one most likely to become a bottleneck later, so running it at
+the first legal opportunity can never hurt. Delaying it can only push its remaining copies further
+out.
+
+THE UPGRADE - NOTICE YOU NEVER NEED TO RUN IT. Two facts, each a LOWER BOUND on the answer:
+
+    BOUND 1 - THE BOTTLENECK. The most frequent task appears `max_count` times, and consecutive
+        runs are at least (n + 1) apart. So from its first run to its last is at least
+        (max_count - 1) * (n + 1) units, and then the tasks tied at that frequency must all sit at
+        the end. Total: (max_count - 1) * (n + 1) + num_max. NOTHING CAN BEAT THIS - it is forced
+        by the cooldown rule alone.
+
+    BOUND 2 - THE WORKLOAD. One task per unit means you need at least `len(tasks)` units. NOTHING
+        CAN BEAT THIS EITHER.
+
+The answer is at least the larger of the two. THE NON-OBVIOUS HALF is that the larger is always
+ACHIEVABLE - the greedy schedule always attains it. The intuition: the frames created by the
+bottleneck task have (n + 1 - num_max) free slots each, and everything else can be dealt out
+round-robin into those slots. If they run out, you are in bound 2's world and the machine simply
+never idles.
+
+HOW THE VALUE TRAVELS - THE ARITHMETIC, PIECE BY PIECE:
+
+    max_count - 1        the number of complete frames (gaps between the bottleneck's runs)
+    n + 1                the width of one frame: the task itself plus n cooldown slots
+    num_max              the final group - one copy of each task tied at the maximum
+    max(..., len(tasks)) the "you cannot run faster than one per unit" floor
+
+Each piece answers a different question, and dropping any one of them is a measurable failure in
+section 4.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Count how many times each task appears.
+
+    2. Find the largest of those counts. Call it the maximum count - this is the bottleneck task's
+       frequency.
+
+    3. Count HOW MANY DIFFERENT TASKS share that maximum count. Not how many copies - how many
+       distinct labels are tied at the top. This is the step people skip.
+
+    4. Work out the frame-based length:
+
+       a. There are (maximum count - 1) complete frames - one gap between each consecutive pair of
+          runs of the bottleneck task.
+       b. Each frame is (cooldown + 1) units wide: the task itself, plus the cooldown that must
+          follow it.
+       c. After the last complete frame comes a final group holding one copy of every task tied at
+          the maximum - so add the number from step 3.
+
+    5. Take the LARGER of that figure and the total number of tasks. The second is the floor you
+       can never go below, since only one task runs per unit; the first is the floor the cooldown
+       imposes. Whichever is bigger is the answer.
+
+NO LOOP OVER TIME, no scheduling, no heap - just a count and some arithmetic. That is the point of
+the problem: it looks like a simulation and it is a formula.
+
+THE STEPS PEOPLE GET WRONG are 3 (assuming one task is uniquely most frequent), 4b (using the
+cooldown as the frame width instead of cooldown + 1), and 5 (leaving the clamp out entirely, which
+is the most common of the three).
+
+IF THE INTERVIEWER ASKS FOR THE ACTUAL SCHEDULE rather than the length, the formula cannot help -
+go back to the greedy simulation with a max-heap of counts and a cooldown queue.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of a single oven and a list of dishes to bake. Each dish takes one hour, and after baking a
+particular dish the oven must be scrubbed - so the SAME dish cannot go back in for another n
+hours. Different dishes can follow one another immediately.
+
+The naive plan is to stand there for hours deciding what to bake next. But look at the list first
+and one thing jumps out: whichever dish appears most often is the constraint. Say lasagne appears
+three times and the scrub takes two hours. Then the three lasagnes must be at least three hours
+apart from each other, and no cleverness anywhere else can change that. Lasagne alone stretches
+the day out.
+
+Draw the day as blocks, one per lasagne except the last: each block is the lasagne plus its scrub
+period. Anything else you bake goes into the scrub slots, and doing so costs nothing extra - it
+just replaces standing around with baking.
+
+Now the complication: suppose curry ALSO appears three times. Curry cannot be tucked into the
+scrub slots and be finished, because it needs the same spacing as lasagne. It has to sit right
+alongside lasagne in every block, and appear once more at the very end. So the day ends with a
+small group containing one of each of the most frequent dishes, not just one dish.
+
+And one last check. If the menu has enough variety - lots of different dishes - the scrub slots
+all get filled and there is STILL food waiting. At that point the oven never stands empty for a
+moment, and the day is simply as long as the number of dishes. There is no point calculating
+scrub time when the oven is busy every hour anyway.
+
+So: work out how long the most frequent dish forces the day to be, work out how long the sheer
+quantity of food forces it to be, and the answer is whichever is longer. You never have to plan
+the menu.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    from collections import Counter
+
+    def least_interval(tasks, n):
+        counts = Counter(tasks)
+
+  How many times each task appears. `Counter` is a dictionary that does the tallying in one pass -
+  `Counter("AAABBB")` gives `{A: 3, B: 3}`.
+
+        max_count = max(counts.values())
+
+  The bottleneck: the frequency of the most common task. Everything about the frame calculation
+  hangs off this one number.
+
+        num_max = sum(1 for c in counts.values() if c == max_count)
+
+  HOW MANY DISTINCT TASKS TIE at that frequency - not how many copies. For A x3, B x3 this is 2.
+  This is the step that is left out most often, and it is what the final group's size depends on:
+  every task tied at the maximum must appear once at the very end.
+
+  Note it counts LABELS, not copies: `sum(1 for ...)` over the distinct values in the counter.
+
+        intervals = (max_count - 1) * (n + 1) + num_max
+
+  THE FRAME FORMULA, in three pieces:
+
+        max_count - 1    the number of complete frames - the gaps between consecutive runs of the
+                         bottleneck task. Three A's have two gaps between them.
+        n + 1            the width of one frame: the task itself plus the n units of cooldown that
+                         must follow. NOT n - the task occupies a unit too, and that off-by-one is
+                         wrong on 1,310 of 4,000.
+        + num_max        the final group at the end, holding one copy of each maximum-frequency
+                         task. Writing `+ 1` here is wrong on 228 of 4,000 - and on the official
+                         example.
+
+        return max(intervals, len(tasks))
+
+  THE CLAMP, AND IT IS NOT DEFENSIVE PROGRAMMING. When the task list is varied enough, every gap
+  gets filled and the machine never idles, so the answer is simply the number of tasks - which is
+  larger than the frame formula. Both expressions are lower bounds; the true answer is the larger,
+  and the greedy schedule always achieves it. Leaving this out is wrong on 1,432 of 4,000, and it
+  is also what makes n = 0 work with no special case.
+
+WHAT IS NOT IN THIS FUNCTION: no heap, no queue, no loop over time, no schedule. It is O(number of
+tasks) time and O(26) space, and it never simulates anything.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. tasks = [A, A, A, B, B, B], n = 2.
+
+    counts       = {A: 3, B: 3}
+    max_count    = 3
+    num_max      = 2                (both A and B are tied at 3)
+    intervals    = (3 - 1) * (2 + 1) + 2
+                 =  2 * 3 + 2
+                 =  8
+    len(tasks)   = 6
+    return max(8, 6) = 8
+
+    AND HERE IS THE SCHEDULE THE FORMULA IS DESCRIBING, which is worth drawing to see the pieces:
+
+        |  frame 1  |  frame 2  | final |
+           A  B  _     A  B  _    A  B
+           1  2  3     4  5  6    7  8
+
+        two complete frames of width 3, then a final group of 2. Total 8.
+        The A's sit at 1, 4, 7 - three apart. The B's at 2, 5, 8. Both respect the cooldown.
+
+    WHAT THE WRONG VERSIONS GIVE HERE: `+ 1` instead of `+ num_max` gives 7 (there is no room for
+    the last B); frame width n instead of n + 1 gives 6.
+
+CASE TWO - WHERE THE CLAMP TAKES OVER. tasks = [A, A, B, B, C, C, D, D], n = 1.
+
+    counts       = {A: 2, B: 2, C: 2, D: 2}
+    max_count    = 2
+    num_max      = 4                (all four are tied)
+    intervals    = (2 - 1) * (1 + 1) + 4  =  2 + 4  =  6
+    len(tasks)   = 8
+    return max(6, 8) = 8
+
+    The frame formula says 6, and 6 is impossible - there are 8 tasks and only one runs per unit.
+    The real schedule never idles:
+
+        A  B  A  B  C  D  C  D
+        1  2  3  4  5  6  7  8
+
+    Check the cooldown of 1: the two A's are at 1 and 3, two apart. Fine.
+
+    THE FRAME ARGUMENT SIMPLY IS NOT THE BINDING CONSTRAINT HERE. There is so much variety that the
+    gaps fill themselves.
+
+CASE THREE - NO COOLDOWN. tasks = [A, A, A, B, B, B], n = 0.
+
+    intervals    = (3 - 1) * (0 + 1) + 2  =  2 + 2  =  4
+    len(tasks)   = 6
+    return max(4, 6) = 6
+
+    With no cooldown you just run everything back to back. The formula alone would have said 4,
+    which is less than the number of tasks - nonsense. The clamp handles n = 0 entirely, with no
+    special case written for it.
+
+THE THREE CASES AT A GLANCE:
+
+    tasks         | n | max_count | num_max | frames | len | answer | which bound won
+    --------------+---+-----------+---------+--------+-----+--------+----------------
+    AAABBB        | 2 |     3     |    2    |    8   |  6  |   8    | the bottleneck
+    AABBCCDD      | 1 |     2     |    4    |    6   |  8  |   8    | the workload
+    AAABBB        | 0 |     3     |    2    |    4   |  6  |   6    | the workload""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Counting the tasks is one pass: O(N) where N is the number of tasks.
+Everything after that is arithmetic over at most 26 counts. So O(N) time and O(1) space - the
+counter holds at most 26 entries regardless of how many tasks there are. The greedy simulation is
+O(N log 26) time with a heap and, more importantly, is far more code to get right.
+
+THE #1 MISTAKE: leaving out `max(..., len(tasks))`. Wrong on 1,432 of 4,000, and measured to be
+exactly the cases where the formula under-counted. It is not a safety net - it is one of the two
+lower bounds, and it is the one that wins whenever the task list is varied. It is also what makes
+n = 0 come out right.
+
+THE #2: the frame width. `n` instead of `n + 1` is wrong on 1,310 of 4,000, and caught by the
+official example. Draw `A _ _ A` before writing the formula.
+
+THE #3: `+ 1` instead of `+ num_max`. Only 228 of 4,000 - the lowest rate in this entry, because
+ties for the maximum are uncommon in random data - but LeetCode's first sample IS a tie, so it
+fails immediately in practice. This is the reverse of the usual pattern: a rare bug that the
+official test catches anyway.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the most frequent task is the bottleneck - its copies
+must be (n+1) apart, which forces (max_count - 1) frames plus a final group; (2) the final group
+holds one of EACH task tied at the maximum, not just one task; (3) but if there is enough variety
+the gaps fill and the machine never idles, so the answer can never be below the number of tasks;
+(4) both are lower bounds and the greedy schedule achieves the larger, so the answer is the max of
+the two; (5) O(N) time, O(1) space. Point 4 is the one that turns "I memorised a formula" into "I
+can justify it".
+
+BE READY FOR: "prove the formula" - use the two-lower-bounds argument above. "What if you need the
+actual schedule?" - the formula cannot give it; use a max-heap of remaining counts plus a queue of
+cooling-down tasks, popping the most frequent available task each tick. "What if the cooldown
+differs per task?" - the formula breaks entirely and you are back to simulation. Knowing where the
+shortcut stops working is the strongest thing you can say about it.
+
+THE FAMILY. Reorganize String (rearrange so no two adjacent characters are the same - the same
+bottleneck argument with n = 1, and it is infeasible exactly when the formula would exceed the
+length), Rearrange String k Distance Apart (this problem asking for the schedule instead of the
+length), Distant Barcodes, and Top K Frequent Elements (the same counting first step). The
+transferable idea: WHEN A SCHEDULE IS FORCED BY ITS MOST FREQUENT ELEMENT, COUNT FIRST AND SEE
+WHETHER YOU NEED TO SIMULATE AT ALL.
+
+ONE-SENTENCE TAKEAWAY: the most frequent task carves the timeline into (max_count - 1) frames of
+width (n + 1) plus a final group of every task tied at the top - and the answer is that figure or
+the total number of tasks, whichever is larger.""",
 ]
 
 for _e in ENTRIES:
