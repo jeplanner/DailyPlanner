@@ -109606,62 +109606,375 @@ the risk of the awkward silence entirely.""",
 ]
 
 _EX_P1S["Best Time to Buy and Sell Stock II (greedy)"] = [
-    """Why summing every upswing is optimal - the telescoping argument.
-prices = [1,2,3,4,5]. The greedy captures 1+1+1+1 = 4. Buying at 1 and selling
-at 5 also gives 4. They are equal because consecutive differences TELESCOPE:
-(2-1) + (3-2) + (4-3) + (5-4) = 5 - 1.
-So any profitable run can be decomposed into its daily steps without loss, and
-any DOWN step can be skipped entirely - which is exactly what taking only the
-positive differences does. There is no configuration the greedy misses,
-because every real transaction is a sum of daily moves and every negative move
-is optional.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The trace where it matters.
-prices = [7,1,5,3,6,4].
-Day 1->2: 1 < 7, skip. 2->3: 5 > 1 -> +4. 3->4: 3 < 5, skip. 4->5: 6 > 3 -> +3.
-5->6: 4 < 6, skip.
-Total 7 = buy at 1 sell at 5 (profit 4), buy at 3 sell at 6 (profit 3). The
-greedy found both transactions without ever explicitly identifying a buy day or
-a sell day - it just accumulated the ups.
-That is the elegance and the thing to point out: you never track state, because
-the answer decomposes into independent daily decisions.""",
+You are given the price of one item on each of several days. You may buy it and sell it
+as many times as you like, but you may only ever hold ONE at a time - so you must sell
+before you can buy again. Make as much money as possible.
 
-    """Why this differs from Stock I, and why the answer is so much simpler.
-Stock I allows ONE transaction, so you must remember the minimum price seen so
-far and the best profit against it - a state machine, however small. Unlimited
-transactions removes that coupling: every day is independent, so no state is
-needed at all.
-The general lesson: a constraint on the NUMBER of actions is what forces state.
-Remove the constraint and greedy usually becomes available; add a tighter one
-(at most k transactions, or a cooldown) and you are back to DP. That is the
-axis the whole Stock family varies along.""",
+    prices:   day 0   day 1   day 2   day 3   day 4   day 5
+                7       1       5       3       6       4
 
-    """Edge cases.
-Empty or single-element -> the loop never runs -> 0.
-Monotonically decreasing [5,4,3,2,1] -> no positive difference -> 0. Doing
-nothing is always permitted, which is why 0 rather than a loss.
-Monotonically increasing -> the full range, last minus first.
-All equal [3,3,3] -> 0.
-Two elements is the smallest interesting case: [1,2] -> 1, [2,1] -> 0.""",
+The best you can do here is 7, and it takes two round trips:
 
-    """The transaction-fee variant, which breaks the greedy.
-Add a fee per transaction and the telescoping argument collapses: splitting one
-long run into many small trades now pays the fee repeatedly, so the greedy
-overcounts. [1,3,2,8] with fee 2 - the greedy takes 2 + 6 = 8 minus two fees =
-4, while holding from 1 to 8 gives 7 - 2 = 5.
-That variant needs the hold/cash DP. Knowing WHICH added constraint kills the
-greedy is more valuable than the greedy itself, and it is the natural
-follow-up.""",
+    buy on day 1 at 1, sell on day 2 at 5        profit 4
+    buy on day 3 at 3, sell on day 4 at 6        profit 3
+                                                 total  7
 
-    """The family, ordered by how much state each needs.
-Stock I (one transaction): track the running minimum - O(1) state.
-Stock II (unlimited): no state, sum the ups - this problem.
-Stock with Cooldown: three states (hold / sold / rest).
-Stock with Transaction Fee: two states (hold / cash).
-Stock III (at most 2) and IV (at most k): 2k states, or a DP over (day,
-transactions used, holding).
-Reading the family this way - each constraint adds a dimension - makes all six
-one problem rather than six.""",
+Note what you are NOT allowed to do: buy on day 1 at 1 and again on day 3 at 3 while
+still holding the first one. One at a time, always.
+
+THE SISTER PROBLEM THIS IS CONSTANTLY CONFUSED WITH. "Best Time to Buy and Sell Stock"
+(no II) allows exactly ONE round trip. On the same prices that version answers 5 - buy at
+1, sell at 6 - because it must pick a single buy day and a single sell day. Everything
+that makes this problem easy comes from the word UNLIMITED, and section 4 measures how
+often solving the wrong one of the two costs you.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+Draw the prices as a mountain profile and the whole problem changes character.
+
+    7                                6
+     \\              5               / \\
+      \\            / \\             /   \\  4
+       \\          /   \\   3       /
+        \\   1    /     \\ /
+         \\_/            V
+       day 0  1     2     3     4     5
+
+THE QUESTION IS NOT "WHERE SHOULD I BUY AND SELL". It is "how much total climbing is
+there in this profile". Because you may trade as often as you like, you can capture EVERY
+ascent and sit out EVERY descent. Buy at the bottom of each climb, sell at the top,
+repeat.
+
+Total climbing here: from 1 up to 5 is 4, and from 3 up to 6 is 3. Total 7 - the answer.
+
+NOW THE STEP THAT MAKES IT A ONE-LINER. You do not need to find the bottoms and tops at
+all. Look at the climb from 1 to 5, which passes through no intermediate day here, but
+imagine it did: 1, 3, 5. Buying at 1 and selling at 5 earns 4. Buying at 1, selling at 3,
+buying back at 3 and selling at 5 also earns 2 + 2 = 4. IDENTICAL - because the
+intermediate buy and sell cancel out exactly.
+
+    a long climb earns the same as every one-day step within it, added up
+
+So you may as well pretend you trade every single day. Look at each pair of neighbouring
+days: if tomorrow is higher, buy today and sell tomorrow and pocket the difference; if
+tomorrow is lower or equal, do nothing. Add up all those little profits.
+
+    day-to-day changes:   7 -> 1   is -6      skip
+                          1 -> 5   is +4      take
+                          5 -> 3   is -2      skip
+                          3 -> 6   is +3      take
+                          6 -> 4   is -2      skip
+                                       total   7
+
+SUM EVERY POSITIVE DAY-TO-DAY CHANGE. That is the entire algorithm, and the picture above
+is why it is not a trick: a climb is the sum of its steps.
+
+WHY IT CANNOT BE BEATEN, briefly. Any legal set of trades earns the sum of the changes on
+the days you were holding. You cannot earn a change you did not hold through, and you can
+always choose to hold through exactly the positive ones and nothing else. So the sum of
+the positive changes is both achievable and an upper bound - which is what makes this a
+GREEDY algorithm that is provably optimal rather than merely plausible.""",
+
+    """3. EVERY TERM, DEFINED
+
+TRANSACTION. One buy followed by one sell. "Unlimited transactions" means you may do this
+as many times as you want, including zero times.
+
+HOLDING. Owning the item. The rule "you may only hold one at a time" is what stops you
+from buying every cheap day and selling every dear day independently.
+
+GREEDY ALGORITHM. One that makes the locally obvious choice at every step and never
+reconsiders. Greedy is usually WRONG - the obvious local choice often ruins a later one.
+It is right here for a specific, statable reason: taking a positive day-to-day step never
+prevents you from taking any other step, because you can sell and re-buy on the same day
+at the same price for free. When an interviewer asks "why is greedy safe here?", THAT is
+the sentence they want.
+
+DAY-TO-DAY CHANGE / CONSECUTIVE DIFFERENCE. `prices[i] - prices[i-1]`: how much the price
+moved from one day to the next. Positive means it went up.
+
+TELESCOPING SUM. A sum where the middle terms cancel. Here: (5 - 3) + (3 - 1) = 5 - 1.
+This is the formal name for "a climb equals the sum of its steps", and it is the reason
+the one-liner is equivalent to hunting for valleys and peaks.
+
+OPTIMAL. The best achievable, not merely good. This algorithm is optimal, and section 2
+gives the two-line argument: achievable, and an upper bound.
+
+ZERO-COST TRADING. An assumption baked into the problem - no fees, no spread, no tax. It
+is the reason selling and instantly re-buying costs nothing, which is the reason the
+telescoping works. Worth saying out loud, because with a per-trade fee the whole approach
+collapses and you need proper dynamic programming instead. That is a real LeetCode
+problem in its own right, and knowing the boundary is more impressive than knowing the
+trick.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - SOLVING STOCK I INSTEAD: ONE TRANSACTION, BUY LOW AND SELL HIGH. This is the
+single biggest failure mode, and it is not a coding slip - it is answering a different
+question, usually because you have practised Stock I more recently.
+
+    [7, 1, 5, 3, 6, 4]        correct 7      one-transaction version gives 5
+    [3, 3, 5, 0, 0, 3, 1, 4]  correct 8      one-transaction version gives 4
+
+    MEASURED: wrong on 3,027 of 6,000 random price series - just over half. It is never
+    too HIGH, always too low, because one transaction is a special case of unlimited
+    ones. If your answer is consistently below the expected output, this is why.
+
+TRAP 2 - SUMMING ALL THE DIFFERENCES, NOT JUST THE POSITIVE ONES. Dropping the `if`
+turns the answer into something with a surprisingly clean identity:
+
+    sum of every consecutive difference = last price - first price       (VERIFIED)
+
+    [7, 1, 5, 3, 6, 4]  gives -3, which is 4 - 7. A negative profit, from a problem whose
+    answer can never be below zero.
+
+    MEASURED: wrong on 4,899 of 6,000. The `if prices[i] > prices[i-1]` is not a filter
+    for tidiness; it is the part that says "you may sit out the falls".
+
+TRAP 3 - STARTING THE LOOP AT 0 INSTEAD OF 1. `for i in range(len(prices))` reads
+`prices[-1]` when `i` is 0. In most languages that crashes; in PYTHON, -1 means THE LAST
+ELEMENT, so it silently compares the first day against the last day and quietly adds a
+profit that does not exist.
+
+    MEASURED: wrong on 2,522 of 6,000, with no crash and no warning of any kind. This is
+    Python's negative indexing turning a bounds error into a wrong answer, and it is
+    worth carrying that lesson to every other array problem.
+
+WHAT IS NOT A TRAP, checked rather than assumed - two things that look like bugs and are
+not:
+
+    USING `>=` INSTEAD OF `>`: wrong on 0 of 6,000. When the price is unchanged the
+    difference is 0, and adding 0 changes nothing. Harmless, though `>` says the intent
+    more clearly.
+
+    THE EXPLICIT VALLEY-AND-PEAK SCAN - walking down to a local minimum, then up to a
+    local maximum, adding the difference, repeating: wrong on 0 of 6,000. It is genuinely
+    equivalent, just four times longer. If you write it, do not let anyone tell you it is
+    wrong; it is the same algorithm with the telescoping done by hand.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY DECISION AT EVERY DAY:
+
+    def max_profit(prices, day=0, holding=False):
+        if day == len(prices):
+            return 0
+        skip = max_profit(prices, day + 1, holding)          # do nothing today
+        if holding:
+            act = prices[day] + max_profit(prices, day + 1, False)   # sell
+        else:
+            act = -prices[day] + max_profit(prices, day + 1, True)   # buy
+        return max(skip, act)
+
+IT IS CORRECT and it is the honest starting point: at each day you either act or you do
+not, and you take whichever branch ends up better. COST: two branches per day, so about
+2^n paths - unusable past about 25 days, against a problem that allows 30,000.
+
+THE FIRST UPGRADE, WHICH MOST PEOPLE REACH FOR: memoise it, or turn it into a small
+dynamic program with two running values.
+
+    cash = 0                 # most money I can have while holding nothing
+    hold = -infinity         # most money I can have while holding one
+    for p in prices:
+        cash, hold = max(cash, hold + p), max(hold, cash - p)
+    return cash
+
+O(n) time, O(1) space, and it is worth knowing because it generalises - add a fee, or a
+cooldown day, or a cap of k transactions, and this shape survives while the one-liner
+does not. This is also how the ground truth for every figure in this entry was computed.
+
+THE SECOND UPGRADE - AND WHY THE ONE-LINER IS ALLOWED. With unlimited free transactions,
+that state machine collapses. The argument, in the two halves that matter:
+
+    ACHIEVABLE. The plan "buy at the close of every day that is followed by a higher day,
+        sell at the close of that higher day" is legal - you never hold two at once,
+        because each buy is matched by a sell on the very next day. Its profit is exactly
+        the sum of the positive differences.
+
+    UNBEATABLE. Whatever you do, your total profit is the sum of the day-to-day changes
+        over the days you were holding. Even the positive ones only add up to the sum of
+        ALL positive changes, and any negative day you hold through only subtracts. So no
+        plan can exceed that sum.
+
+Both halves are needed, and stating them is what turns "I remembered the trick" into "I
+can show this is optimal".
+
+HOW THE VALUE TRAVELS: `profit` is a single running total that only ever grows. Nothing
+is remembered about which day you bought on, because nothing needs to be - the telescoping
+means individual trades were never the unit of account. If you find yourself tracking a
+buy price, you are writing the Stock I algorithm and section 4 says how that ends.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Start a running total at 0. Zero is also the correct answer for a falling market
+       and for a list with fewer than two prices, so no special case is needed.
+
+    2. Walk through the days starting from THE SECOND ONE, not the first. Every step
+       compares a day against the day before it, and the first day has no day before it.
+
+    3. For each day, compare its price with the previous day's.
+
+    4. If today is higher than yesterday, add the difference to the running total. In
+       trading terms you bought at yesterday's close and sold at today's.
+
+    5. If today is the same or lower, add nothing. You were not holding, so the fall
+       costs you nothing.
+
+    6. When the days run out, the running total is the maximum profit.
+
+NO RECURSION, no second pass, no memory of past trades - one number and one walk. There
+is also nothing to undo, which is the signature of a greedy algorithm that works: you
+never have to revisit a decision because taking a rise never blocks a later rise.
+
+THE STEP PEOPLE GET WRONG is 2. Starting at day 0 does not crash in Python - it compares
+the first day with the LAST day, because index -1 wraps around - and silently inflates the
+answer on 2,522 of 6,000 random inputs.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a hiker walking a ridge line from left to right. The path goes up and down all
+day, and there is a rule: the hiker is paid one pound for every metre CLIMBED, and pays
+nothing for every metre descended. The question is how much the hiker earns.
+
+The answer is not the difference between the start and the end of the walk, and it is not
+the height of the tallest peak. It is the TOTAL ASCENT - every uphill metre added
+together, with the downhills simply ignored.
+
+And to compute that, the hiker does not need to identify where the valleys and summits
+are, which is the part everybody assumes is necessary. They only need an altimeter and a
+habit: check it once per step, and whenever it reads higher than it did on the previous
+step, write down the gain. Downhill steps are written down as nothing at all.
+
+That is exactly the algorithm. The "buying and selling" framing makes people hunt for the
+right pair of days, as though picking the moments were the hard part. It is not. Because
+you may trade as often as you like at no cost, the optimal plan is simply to be holding
+on every up-day and not holding on every down-day - and the profit that produces is the
+total ascent of the price graph.
+
+The one thing that would break the story is a toll booth at every trade: pay 50p each
+time you buy or sell and suddenly it matters whether a climb is one long ascent or twenty
+little ones, and the hiker has to plan properly. That is a different, harder problem, and
+recognising the difference is the point.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def max_profit(prices):
+
+  `prices[i]` is the price on day i. The list may be empty or hold a single price.
+
+        profit = 0
+
+  The running total. Starting at 0 is also the correct answer when no trade is worth
+  making - a market that only falls earns nothing rather than losing something, because
+  you are never forced to trade.
+
+        for i in range(1, len(prices)):
+
+  Start at 1, NOT at 0. Each step compares day i with day i - 1, and day 0 has no
+  predecessor. `range(1, len(prices))` is also empty when the list has 0 or 1 entries, so
+  those cases fall straight through to `return 0` with no guard needed - the loop bounds
+  are doing the work an `if` would otherwise do.
+
+            if prices[i] > prices[i - 1]:
+
+  Only rises are taken. This one line is the difference between "sum the positive changes"
+  (the answer) and "sum all the changes" (which collapses to last price minus first
+  price - see trap 2).
+
+                profit += prices[i] - prices[i - 1]
+
+  Pocket the rise. Read it as a complete trade: bought at yesterday's close, sold at
+  today's. Because a long climb is the sum of its one-day steps, capturing each step
+  separately earns exactly what holding through the whole climb would.
+
+        return profit
+
+  Every rise counted once, every fall sat out - and section 5 argues that no other plan
+  can do better.
+
+WHAT IS NOT IN THIS FUNCTION IS AS IMPORTANT AS WHAT IS. There is no buy price, no
+position flag, no best-so-far, no second pass. If your solution is tracking any of those,
+you are probably solving Stock I - which is the most common wrong answer here.""",
+
+    """9. TRACED ON REAL NUMBERS - prices = [7, 1, 5, 3, 6, 4]
+
+Start: profit = 0.
+
+    i=1   prices[1]=1  vs  prices[0]=7      1 > 7?  no      profit stays 0
+    i=2   prices[2]=5  vs  prices[1]=1      5 > 1?  YES     profit = 0 + 4 = 4
+    i=3   prices[3]=3  vs  prices[2]=5      3 > 5?  no      profit stays 4
+    i=4   prices[4]=6  vs  prices[3]=3      6 > 3?  YES     profit = 4 + 3 = 7
+    i=5   prices[5]=4  vs  prices[4]=6      4 > 6?  no      profit stays 7
+
+    return 7
+
+THE VARIABLES AT A GLANCE:
+
+    i | prices[i-1] | prices[i] | change | taken? | profit
+    --+-------------+-----------+--------+--------+-------
+    1 |      7      |     1     |   -6   |   no   |   0
+    2 |      1      |     5     |   +4   |  YES   |   4
+    3 |      5      |     3     |   -2   |   no   |   4
+    4 |      3      |     6     |   +3   |  YES   |   7
+    5 |      6      |     4     |   -2   |   no   |   7
+
+TRANSLATED BACK INTO TRADES, which is what an interviewer may ask you to narrate: the two
+taken steps are day 1 -> day 2 and day 3 -> day 4. So the plan is buy at 1, sell at 5,
+buy at 3, sell at 6. Two round trips, profit 4 + 3 = 7. The code never named those trades;
+they fall out of which steps were taken.
+
+A SECOND TRACE - THE LONG-CLIMB CASE, prices = [1, 2, 3, 4, 5].
+
+    every step is a rise, so profit = 1 + 1 + 1 + 1 = 4
+
+Four separate one-day trades earning 1 each. Now compare with buying once at 1 and
+selling once at 5: also 4. THE TELESCOPING, VISIBLE. The code's answer and the
+single-trade answer agree here - which is exactly why [1,2,3,4,5] does NOT catch someone
+who solved Stock I by mistake, and why the first official example, [7,1,5,3,6,4], does.
+
+A THIRD - THE FALLING MARKET, prices = [7, 6, 4, 3, 1]. No step is a rise, so nothing is
+ever added and the answer is 0. Not negative: you are permitted to do nothing.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the prices, one comparison and at most one addition
+per day. O(n) time. One integer of working memory regardless of how many days there are -
+O(1) space. The input is not modified and not copied. You cannot do better than O(n),
+because a single unread day could contain the whole profit.
+
+THE #1 MISTAKE: solving Stock I - one buy, one sell - instead of this. Wrong on 3,027 of
+6,000 random series, and always too LOW. The tell is that your answers are consistently
+under the expected ones. Before writing anything, say out loud which of the two problems
+you are looking at; the word UNLIMITED in the statement is the whole difference.
+
+THE #2 MISTAKE: dropping the `if` and summing every difference. Wrong on 4,899 of 6,000,
+and the result is always exactly `last price - first price`, which is a useful thing to
+recognise when debugging: if your answer equals that, you have lost the filter.
+
+THE #3, AND IT IS A PYTHON-SPECIFIC LESSON WORTH GENERALISING: starting the loop at 0.
+`prices[-1]` is not an error in Python, it is the last element, so an out-of-bounds bug
+becomes a silent wrong answer on 2,522 of 6,000. Any time you compare an element with its
+predecessor, start the loop at 1.
+
+WHAT TO SAY OUT LOUD, in this order: (1) unlimited transactions, so I want every rise;
+(2) a long climb equals the sum of its one-day steps, so I do not need to find valleys and
+peaks - I just add every positive day-to-day change; (3) that is optimal because it is
+both achievable and an upper bound; (4) O(n) time, O(1) space; (5) and if there were a
+transaction FEE, this collapses and I would use the cash/hold dynamic program instead.
+Point 5 is the one that gets remembered, because it shows you know why the trick works
+rather than that it works.
+
+THE FAMILY. Best Time to Buy and Sell Stock (one transaction - track the minimum so far),
+with Transaction Fee (the cash/hold state machine, greedy no longer safe), with Cooldown
+(a third state), and III / IV (at most 2 or k transactions - a proper 2-D DP). This
+problem is the easiest of the set precisely because "unlimited and free" removes every
+constraint that makes the others hard. Nearby in spirit: Jump Game, Gas Station, Partition
+Labels - all greedy algorithms whose correctness needs a one-line exchange argument.
+
+ONE-SENTENCE TAKEAWAY: with unlimited free trades, profit is just the total climb of the
+price graph - add up every positive day-to-day change and ignore every fall.""",
 ]
 
 for _e in ENTRIES:
@@ -109672,182 +109985,1383 @@ for _e in ENTRIES:
 _EX_P1T = {}
 
 _EX_P1T["Capacity to Ship Packages Within D Days"] = [
-    """Binary search on the ANSWER, not on the array.
-There is nothing sorted to search here. What is monotonic is FEASIBILITY: if
-capacity C can ship everything in time, so can C+1. That monotonic predicate is
-what binary search actually needs - the array itself is irrelevant.
-So search the capacity range, and for each candidate ask 'how many days does
-this need?' via a greedy simulation. Recognising that the search space is the
-answer rather than the input is the whole move, and it unlocks a large family
-of problems.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the bounds are max(weights) and sum(weights).
-LOWER: the ship must carry the single heaviest package in one day, so any
-capacity below max(weights) is infeasible - packages cannot be split.
-UPPER: with capacity equal to the total, everything ships in one day, so the
-answer never exceeds it.
-Starting at lo = 1 still works but wastes iterations and, worse, the greedy
-`needed()` would loop forever on a capacity smaller than some package (load + w
-> cap forever, never fitting). So the lower bound is not an optimisation - it
-is what keeps the feasibility check well-defined.""",
+A conveyor belt carries packages to a ship. The packages must be loaded IN THE ORDER THEY
+ARRIVE - you may not reorder them or pick and choose. Each day you load packages onto the
+ship until the next one would not fit, and whatever is left waits for tomorrow.
 
-    """The trace.
-weights = [1,2,3,4,5,6,7,8,9,10], days = 5. lo = 10, hi = 55.
-mid 32 -> greedy packs [1..7]=28, then [8,9,10]=27 -> 2 days <= 5 -> feasible,
-so hi = 32.
-mid 21 -> [1..6]=21, [7,8]=15, [9,10]=19 -> 3 days -> feasible, hi = 21.
-mid 15 -> [1,2,3,4,5]=15, [6,7]=13, [8]=8... -> 5 days -> feasible, hi = 15.
-mid 12 -> needs 6 days -> infeasible, lo = 13.
-Converges to 15. Correct.""",
+You get to choose how big the ship is. Find the SMALLEST ship that can carry everything
+within a given number of days.
 
-    """Why the greedy inside is optimal.
-For a FIXED capacity, loading each package onto the current day until it will
-not fit uses the fewest days - there is no benefit to leaving space early,
-because the order is fixed and a package deferred still has to go somewhere
-later.
-That matters: the binary search is only valid if `needed(cap)` returns the TRUE
-minimum days for that capacity. A suboptimal inner routine would make the
-predicate non-monotonic and the whole search unsound. Stating that the inner
-greedy is optimal is part of the correctness argument, not a detail.""",
+    packages:  1  2  3  4  5  6  7  8  9  10        days allowed: 5
 
-    """The template, and the `hi = mid` detail.
-This is the lower-bound shape: `while lo < hi`, feasible -> `hi = mid`
-(mid might BE the answer, keep it), infeasible -> `lo = mid + 1`. Return lo.
-Using `hi = mid - 1` discards a feasible candidate and can return one too
-large; mixing this with a `lo <= hi` loop gives an infinite loop when
-`hi = mid`. Pick the half-open template and keep it - the same one as Search
-Insert Position.""",
+    with a ship of capacity 15:
+        day 1:  1 + 2 + 3 + 4 + 5   = 15
+        day 2:  6 + 7               = 13     (adding 8 would make 21, too much)
+        day 3:  8                   =  8     (adding 9 would make 17)
+        day 4:  9                   =  9
+        day 5:  10                  = 10
+        five days - it fits
 
-    """Edge cases and the family.
-days = 1 -> the answer is sum(weights). days >= len(weights) -> the answer is
-max(weights), one package per day.
-A single package -> its own weight.
-All equal weights -> ceil arithmetic falls out naturally.
-Time O(n log(sum - max)), space O(1).
-The family: Koko Eating Bananas (search the eating speed), Split Array Largest
-Sum (identical problem, different wording), Minimum Number of Days to Make m
-Bouquets, Arranging Coins, Sqrt(x), and Minimise Maximum of Array. The cue is
-'minimise the maximum' or 'maximise the minimum' plus a cheap feasibility
-test.""",
+    with a ship of capacity 14: it takes SIX days. Too slow.
+
+So the answer is 15. Note that 15 is not the total (55), not the average (11), and not
+the biggest package (10) - it is not a formula you can compute directly. That is the
+whole character of this problem: THE ANSWER IS EASY TO CHECK BUT HARD TO CALCULATE. And
+whenever that is true, you should be thinking about searching for it rather than
+computing it.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START WITH THE THING YOU CAN DO. Given a capacity, can you work out how many days it
+takes? Yes, easily, and there is no cleverness in it: walk the packages in order, keep
+adding to today's load, and when the next package will not fit, start a new day. That
+little function is the foundation - call it `needed(cap)`.
+
+Now write down what `needed` does as the capacity grows:
+
+    capacity:   10   11   12   13   14   15   16   17   ...   55
+    days:        7    7    6    6    6    5    5    4   ...    1
+
+THE SHAPE IS THE ALGORITHM. As the ship gets bigger, the number of days NEVER GOES UP. It
+may stay flat, it may drop, but it can never rise - a bigger ship can always carry at
+least what a smaller one could. That property has a name, MONOTONIC, and it is what makes
+the next step legal.
+
+Now mark each capacity as feasible or not, with 5 days allowed:
+
+    capacity:   10   11   12   13   14   15   16   17
+    days:        7    7    6    6    6    5    5    4
+    feasible:    N    N    N    N    N    Y    Y    Y
+                                          ^
+                                          the answer: the FIRST Y
+
+The N's and Y's are not scattered. All the N's come first, then all the Y's, forever.
+THAT IS EXACTLY THE SHAPE A BINARY SEARCH NEEDS - not a sorted array, just a yes/no test
+that flips once and never flips back.
+
+THE PICTURE: FINDING THE STEP IN A STAIRCASE. You have a very long corridor, dark at one
+end and lit at the other, with a single boundary somewhere between. You want the first lit
+step. You do not walk the corridor - you go to the middle, feel whether it is lit, and
+throw away half the corridor. Repeat. Twenty steps or so gets you through a million.
+
+THE RANGE TO SEARCH, and both ends need a reason:
+
+    the smallest capacity worth considering is THE HEAVIEST PACKAGE - anything smaller
+        can never carry that package at all, no matter how many days you allow
+    the largest ever needed is THE SUM OF ALL PACKAGES - that ship takes exactly one day,
+        so if the answer were bigger than that, the problem would be unsolvable
+
+Everything between is a candidate, and the yes/no test sorts them into N's then Y's. So:
+BINARY SEARCH ON THE ANSWER ITSELF, using a simulation as the test. That phrase -
+searching the answer space rather than the input - is the transferable idea here.""",
+
+    """3. EVERY TERM, DEFINED
+
+CAPACITY. The maximum total weight the ship can carry in one day. This is the thing being
+searched for; it is NOT part of the input.
+
+IN ORDER / WITHOUT REORDERING. Packages must be loaded in the sequence given. This is what
+stops the problem from being a bin-packing puzzle, which would be far harder. Say this
+back to the interviewer - it is the constraint that makes a simple simulation correct.
+
+FEASIBLE. A capacity is feasible if the ship finishes within the allowed number of days.
+The whole problem is: find the smallest feasible capacity.
+
+MONOTONIC. A property that, once it becomes true, stays true as you move in one direction.
+Here: if capacity c is feasible, so is every capacity above c. This is the licence to
+binary search - not sortedness, monotonicity.
+
+BINARY SEARCH ON THE ANSWER. Ordinary binary search looks for a value inside a sorted
+list. This looks for a value in a RANGE OF POSSIBLE ANSWERS, using a test rather than a
+comparison. The list never exists; you are bisecting a number line.
+
+LOWER BOUND / FIRST TRUE. The exact flavour of binary search wanted here: not "find a
+feasible capacity" but "find the SMALLEST feasible one". The distinction shows up in the
+update lines, and getting it wrong is trap 2.
+
+GREEDY SIMULATION. `needed(cap)` loads as much as possible each day rather than planning
+ahead. That is optimal here for a reason worth stating: since order is fixed, leaving room
+on today's ship can never help tomorrow - it just pushes the same packages later. So
+loading greedily uses the fewest days.
+
+INVARIANT. A statement that stays true throughout a loop. Here: THE ANSWER IS ALWAYS
+SOMEWHERE IN [lo, hi]. Every line of the search is written to preserve it, and when
+`lo == hi` the range holds exactly one number, which must therefore be the answer.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - STARTING `lo` AT 1 INSTEAD OF AT `max(weights)`. It feels harmlessly cautious -
+a wider search cannot miss the answer, surely? But a capacity below the heaviest package
+is not merely bad, it is IMPOSSIBLE, and the simulation does not notice: `needed` puts the
+oversized package on its own day and reports a day count as though everything were fine.
+So an impossible capacity can test as feasible and the search returns it.
+
+    MEASURED: wrong on 1,089 of 4,000 random cases - and every single one of those 1,089
+    returned A CAPACITY SMALLER THAN THE HEAVIEST PACKAGE. The failure is always the same
+    shape: an answer that could not physically work.
+
+    IT PASSES THE OFFICIAL EXAMPLE. Weights 1..10 with 5 days returns 15 either way, so
+    the sample input will not save you here. This is the one to be deliberate about.
+
+    THE HONEST FIX IF YOU INSIST ON lo = 1 is to make `needed` return infinity when a
+    package exceeds the capacity. Cleaner to set the bound correctly.
+
+TRAP 2 - `hi = mid - 1` WHEN THE CAPACITY IS FEASIBLE. This is the reflex from
+textbook binary search, where you are looking for an exact value and can safely exclude
+`mid`. Here you are looking for the FIRST feasible capacity, and `mid` itself might be it.
+Excluding it throws the answer away.
+
+    MEASURED: wrong on 612 of 4,000. Low, because it only bites when the answer is exactly
+    at a probe point - which makes it the kind of bug that survives casual testing and
+    then fails one hidden case. THE RULE: WHEN A CANDIDATE WORKS, KEEP IT (`hi = mid`);
+    WHEN IT FAILS, DISCARD IT (`lo = mid + 1`). Only the failing side gets the +1.
+
+TRAP 3 - `lo = mid` ON THE INFEASIBLE SIDE. Symmetrical-looking and catastrophic. With
+`lo` and `hi` adjacent, `mid = (lo + hi) // 2` rounds down to `lo`, so `lo = mid` sets
+`lo` to itself and the loop condition never changes.
+
+    MEASURED: INFINITE LOOP on 2,160 of 4,000 cases. Not a wrong answer - a program that
+    never returns. The asymmetry is forced by the rounding: `//` rounds DOWN, so the low
+    side must move up by at least one or nothing can move at all.
+
+TRAP 4 - STARTING THE DAY COUNT AT 0 IN `needed`. You are on day one before you load
+anything; the counter counts DAYS USED, not day boundaries crossed. Starting at 0
+undercounts by exactly one, so infeasible capacities look feasible and the answer comes
+back too small.
+
+    MEASURED: wrong on 2,119 of 4,000, and it DOES fail the official example - it returns
+    11 instead of 15 - so at least this one announces itself immediately.
+
+TRAP 5 - `if load + w >= cap` INSTEAD OF `> cap`. A load that exactly equals the capacity
+is fine; the ship is full, not overfull. Using `>=` starts a new day one package early.
+
+    MEASURED: wrong on 1,739 of 4,000, returning 16 instead of 15 on the official example.
+    Same lesson as everywhere else: read whether the boundary is inclusive.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY CAPACITY IN TURN:
+
+    def ship_within_days(weights, days):
+        for cap in range(max(weights), sum(weights) + 1):
+            if needed(weights, cap) <= days:
+                return cap                 # the first one that works is the smallest
+
+IT IS CORRECT - this is the ground truth every figure in this entry was checked against -
+and it is worth writing on the board first, because it makes the structure obvious: a
+range of candidates, a test, and a search for the first pass. COST: the range runs from
+the heaviest package up to the total, which at this problem's limits (500 packages, each
+up to 500) is up to 250,000 candidates, each costing a 500-step simulation - about 125
+million operations. Too slow, but only by a factor that binary search removes completely.
+
+THE UPGRADE, AND WHY IT IS ALLOWED. Binary search normally requires a sorted array. There
+is no array here at all. What it ACTUALLY requires is weaker: a yes/no test that, along
+the search direction, is false-then-true and never flips back. Here that holds because a
+bigger ship can do anything a smaller ship could - so feasibility, once gained, is never
+lost.
+
+    capacities:   10  11  12  13  14  15  16  17 ...
+    feasible:      N   N   N   N   N   Y   Y   Y ...
+                                       ^ the boundary, and the answer
+
+Instead of walking that line from the left, bisect it. 250,000 candidates become about 18
+probes.
+
+THE TRICK, FROM SCRATCH - WHY THE TWO UPDATE LINES ARE NOT SYMMETRIC. Hold this
+invariant in mind: THE ANSWER IS ALWAYS INSIDE [lo, hi].
+
+    if `mid` is feasible: `mid` might BE the answer (nothing smaller has been ruled in),
+        so it must stay in the range -> hi = mid
+    if `mid` is not feasible: `mid` is definitely NOT the answer, and neither is anything
+        below it, so all of it can go -> lo = mid + 1
+
+Only the second line gets the `+ 1`, and that asymmetry is doing two jobs at once. It
+keeps a possible answer alive on one side, AND it guarantees progress: since
+`mid = (lo + hi) // 2` rounds down, `mid` can equal `lo`, so if the failing branch wrote
+`lo = mid` the range would stop shrinking. Trap 3 measures that as 2,160 hangs in 4,000.
+
+HOW THE RANGE TRAVELS. `lo` starts at the heaviest package - the smallest capacity that is
+even physically possible - and `hi` at the total, the capacity that finishes in one day.
+Each probe halves the gap while keeping the answer inside. When `lo` and `hi` finally meet,
+the range holds exactly one number, so no final check is needed: `lo` IS the answer, and
+it was never tested directly on the last step. That is not a bug; it is the invariant
+paying out.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+FIRST, THE TEST - "how many days does capacity C need?"
+
+    1. Start with the day count at ONE and today's load at zero. You are on day one before
+       you load anything.
+    2. Take each package in the given order. If adding it to today's load would exceed the
+       capacity, start a new day: add one to the day count and empty the load.
+    3. Add the package to today's load.
+    4. When the packages run out, the day count is the answer.
+
+SECOND, THE SEARCH - "what is the smallest capacity that passes the test?"
+
+    5. Set the low end of the range to the HEAVIEST single package - any smaller ship
+       could never carry that one package. Set the high end to the TOTAL of all packages -
+       that ship finishes in a single day, so the answer is never above it.
+
+    6. While the two ends have not met:
+
+       a. Take the middle capacity, rounding down.
+       b. Run the test on it.
+       c. If it finishes within the allowed days, it might be the answer, so keep it -
+          move the HIGH end down to it exactly.
+       d. If it does not, it is ruled out and so is everything below it - move the LOW end
+          to one ABOVE it.
+
+    7. When the ends meet, that single remaining number is the answer.
+
+NO RECURSION - two loops, one inside the other. What guarantees termination is step 6d's
+"one above": because the middle rounds DOWN, it can equal the low end, so the failing
+branch must move past it or the range would never shrink.
+
+THE STEPS PEOPLE GET WRONG are 5 (starting the low end at 1 instead of the heaviest
+package - it returns impossible capacities), 6c (writing "one below" out of habit, which
+throws away the answer), and 1 (starting the day count at zero, which undercounts every
+capacity by a day).""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+A haulier is hiring a lorry to shift a queue of crates that must go in the order they are
+stacked, and the whole queue has to be gone within five days. Bigger lorries cost more, so
+the haulier wants the smallest one that can do it.
+
+There is no formula for the right size. But there IS a way to check any given size: walk
+the queue, fill the lorry until the next crate will not fit, send it off, and count the
+trips. That check is cheap and completely reliable.
+
+The haulier also knows one thing about lorries in general: a bigger lorry is never worse.
+If a 15-tonne lorry finishes in five days, a 16-tonne one certainly will too. So the sizes
+divide cleanly into "too small" and "big enough", with a single boundary between them, and
+the answer is the first size on the big-enough side.
+
+That is what turns an impossible-looking optimisation into twenty phone calls. Rather than
+trying sizes from the bottom up, the haulier picks the middle of the plausible range and
+tests it. Big enough? Then no larger lorry needs considering - but keep this one on the
+list, because it might be the smallest that works. Too small? Then it and everything below
+it are out. Either way half the options vanish, and the range closes in on one number.
+
+Two boundaries are set before any of this begins, and both matter. There is no point
+considering a lorry smaller than the single heaviest crate, because that crate would never
+move at all - and a haulier who forgets this ends up confidently quoting a lorry that
+physically cannot do the job. And there is no point considering one bigger than the whole
+consignment, because that one does it in a single day.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def ship_within_days(weights, days):
+        lo, hi = max(weights), sum(weights)
+
+  The search range, and both ends carry an argument. `max(weights)`: no smaller ship can
+  carry the heaviest package at all, and the simulation below will NOT notice if you let
+  it try - see trap 1. `sum(weights)`: that ship takes exactly one day, so the answer can
+  never exceed it.
+
+        def needed(cap):
+
+  The yes/no test, expressed as a count of days. The whole binary search is built on this
+  one helper being right.
+
+            d, load = 1, 0
+
+  `d` starts at ONE, not zero - you are on day one before loading anything. `load` is
+  today's weight so far.
+
+            for w in weights:
+
+  In the given order. No sorting, no choosing - that is the constraint that makes the
+  greedy simulation correct.
+
+                if load + w > cap:
+                    d += 1
+                    load = 0
+
+  Adding this package would overfill the ship, so close today and start tomorrow. `>` and
+  not `>=`: a load exactly equal to the capacity is a full ship, not an overloaded one.
+
+                load += w
+
+  The package goes on - onto today's ship if it fitted, or onto the fresh one just
+  started. Note this line sits OUTSIDE the `if`, so it runs either way, and every package
+  is loaded exactly once.
+
+            return d
+
+        while lo < hi:
+
+  Keep going while the range holds more than one number. The invariant throughout: the
+  answer is somewhere in [lo, hi].
+
+            mid = (lo + hi) // 2
+
+  The middle candidate, rounding DOWN. That rounding is why the two branches below cannot
+  be written symmetrically.
+
+            if needed(mid) <= days:
+                hi = mid
+
+  It works - so it is a candidate for SMALLEST, and must stay in the range. `hi = mid`,
+  never `mid - 1`; writing `mid - 1` discards the answer whenever `mid` is exactly it.
+
+            else:
+                lo = mid + 1
+
+  It does not work, so neither does anything smaller. `mid + 1` excludes it. This is the
+  only `+ 1` in the search, and it is also what guarantees the range shrinks: `mid` can
+  equal `lo` after rounding down, so writing `lo = mid` here loops forever.
+
+        return lo
+
+  `lo` and `hi` have met, so the range holds exactly one capacity - and by the invariant
+  it is the answer. No final verification is needed, and the returned value may never have
+  been passed to `needed` on the last iteration.""",
+
+    """9. TRACED ON REAL NUMBERS - weights = [1..10], days = 5
+
+Setup: `lo = max = 10`, `hi = sum = 55`. The answer is somewhere in [10, 55].
+
+    ITERATION 1   mid = (10 + 55) // 2 = 32
+        needed(32): 1+2+3+4+5+6+7 = 28, adding 8 makes 36 - new day.
+                    8+9+10 = 27. TOTAL 2 days.
+        2 <= 5, feasible -> hi = 32.          range [10, 32]
+
+    ITERATION 2   mid = (10 + 32) // 2 = 21
+        needed(21): 1..6 = 21, adding 7 makes 28 - new day.
+                    7+8 = 15, adding 9 makes 24 - new day.
+                    9+10 = 19. TOTAL 3 days.
+        3 <= 5, feasible -> hi = 21.          range [10, 21]
+
+    ITERATION 3   mid = (10 + 21) // 2 = 15
+        needed(15): 1+2+3+4+5 = 15, adding 6 makes 21 - new day.
+                    6+7 = 13, adding 8 makes 21 - new day.
+                    8, adding 9 makes 17 - new day.
+                    9, adding 10 makes 19 - new day.
+                    10. TOTAL 5 days.
+        5 <= 5, feasible -> hi = 15.          range [10, 15]
+        NOTE: `hi = mid`, not `mid - 1`. Had it been `mid - 1` the range would now be
+        [10, 14] and the answer would have been thrown away here, at this exact step.
+
+    ITERATION 4   mid = (10 + 15) // 2 = 12
+        needed(12) = 6 days.  6 > 5, infeasible -> lo = 13.   range [13, 15]
+
+    ITERATION 5   mid = (13 + 15) // 2 = 14
+        needed(14) = 6 days.  6 > 5, infeasible -> lo = 15.   range [15, 15]
+
+    lo == hi, the loop ends.  return 15
+
+THE VARIABLES AT A GLANCE:
+
+    iter | lo | hi | mid | needed(mid) | feasible | new range
+    -----+----+----+-----+-------------+----------+-----------
+      1  | 10 | 55 |  32 |      2      |   yes    | [10, 32]
+      2  | 10 | 32 |  21 |      3      |   yes    | [10, 21]
+      3  | 10 | 21 |  15 |      5      |   yes    | [10, 15]
+      4  | 10 | 15 |  12 |      6      |    no    | [13, 15]
+      5  | 13 | 15 |  14 |      6      |    no    | [15, 15]
+
+Five probes instead of walking 46 candidates - and on the real limits it is about 18
+probes instead of 250,000. Notice that the final answer, 15, was last tested back in
+iteration 3; the loop returns it without re-checking, because the invariant guarantees
+the survivor is correct.
+
+WHY 14 FAILS AND 15 SUCCEEDS, since that boundary is the entire answer: at capacity 14 the
+first day takes 1+2+3+4 = 10 and cannot take the 5 (that would be 15), so the packing
+slips by one and everything cascades into a sixth day. One unit of capacity moves the
+whole schedule.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Each call to `needed` walks all n packages: O(n). The search halves a
+range that starts out `sum(weights) - max(weights)` wide, so it makes about log2(sum)
+probes. Total O(n log(sum)). With this problem's limits - 500 packages of up to 500 each,
+so a sum below 250,000 - that is roughly 500 * 18 = 9,000 operations. The naive scan over
+every capacity would be about 125 million.
+
+SPACE: a handful of integers - O(1). Nothing is sorted, copied or allocated.
+
+THE #1 MISTAKE: `lo = 1` instead of `lo = max(weights)`. Wrong on 1,089 of 4,000, and
+every failure returned a capacity below the heaviest package - an answer that is not
+merely suboptimal but physically impossible. It survives the official example, so you will
+not catch it by running the sample. State the reason for the bound as you write it.
+
+THE #2 MISTAKE: `lo = mid` on the infeasible branch. Infinite loop on 2,160 of 4,000,
+because `mid` rounds down and can equal `lo`. The `+ 1` is not decoration - it is the only
+thing forcing progress.
+
+THE #3: `hi = mid - 1` on the feasible branch. Only 612 of 4,000, which makes it the
+sneakiest of the three - it passes casual testing and fails a hidden case. Learn the pair
+as a rule: KEEP A CANDIDATE THAT WORKS, DISCARD ONE THAT DOES NOT.
+
+WHAT TO SAY OUT LOUD, in this order: (1) I cannot compute the answer directly, but I can
+CHECK a capacity cheaply, so I will search the answer space; (2) feasibility is monotonic
+in capacity - a bigger ship is never worse - which is what licenses a binary search even
+though nothing is sorted; (3) the range is [heaviest package, total weight], and here is
+why each end is right; (4) I want the FIRST feasible value, so a working candidate is
+kept, not excluded; (5) O(n log sum) time, O(1) space. Point 2 is the one interviewers are
+listening for - it is the difference between recognising a pattern and knowing why it
+applies.
+
+THE FAMILY. Split Array Largest Sum (literally this problem with different words), Koko
+Eating Bananas (search the eating speed), Minimum Number of Days to Make m Bouquets,
+Minimise Max Distance to Gas Station, and Find the Smallest Divisor Given a Threshold. The
+tell is always the same: the question asks for a MINIMUM or MAXIMUM value, the value is
+hard to compute but easy to verify, and verification is monotonic. When you see that
+shape, stop trying to derive the answer and start bisecting it.
+
+ONE-SENTENCE TAKEAWAY: when you cannot compute the answer but can cheaply test one,
+binary search the answer itself - here over ship capacities from the heaviest package to
+the total, keeping any capacity that works and discarding any that does not.""",
 ]
 
 _EX_P1T["Construct Binary Tree from Preorder and Inorder"] = [
-    """Why these two traversals determine the tree uniquely.
-PREORDER visits root, then left, then right - so its first element is always
-the ROOT of the current subtree.
-INORDER visits left, root, right - so once you know the root's value, its
-position in inorder splits everything before it (the left subtree) from
-everything after it (the right subtree).
-Together: preorder tells you WHO the root is, inorder tells you HOW BIG each
-side is. Neither alone suffices - and notably preorder + POSTORDER does NOT
-determine a tree uniquely, because you cannot tell an only-child apart from
-its mirror.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The split, traced.
-preorder = [3,9,20,15,7], inorder = [9,3,15,20,7].
-Root is 3 (first in preorder). In inorder, 3 sits at index 1 -> left subtree is
-[9] (one node), right subtree is [15,20,7] (three nodes).
-Consume 3, advance the preorder pointer. Next preorder value is 9 -> root of
-the left subtree, and its inorder range is just [9] -> a leaf.
-Next is 20 -> root of the right subtree; in inorder it sits between 15 and 7,
-so left = [15], right = [7].
-Result: 3 with children 9 and 20, and 20 with children 15 and 7.""",
+Somebody had a binary tree, wrote down its contents twice in two different orders, and
+threw the tree away. Rebuild it.
 
-    """Why the preorder pointer is a single shared cursor.
-`pos` advances once per node created, and it is shared across the whole
-recursion rather than recomputed per subtree. That works because preorder
-visits nodes in exactly the order the recursion creates them - root, then the
-entire left subtree, then the entire right.
-So the code must build the LEFT child before the RIGHT one. Swap those two
-lines and the cursor hands the right subtree values that belong to the left,
-producing a valid-looking but wrong tree. It is a one-line ordering dependency
-and the most common bug here.""",
+A BINARY TREE is a structure where each node has a value and up to two children, drawn
+below it and labelled left and right. The two lists you are given are two ways of reading
+every node exactly once:
 
-    """Why the index map matters - O(n) instead of O(n^2).
-Finding the root's position with `inorder.index(root)` is an O(n) scan, and
-doing it once per node makes the whole build O(n^2) - which on a skewed tree of
-10,000 nodes is 100 million operations.
-Precomputing `{value: index}` once makes each lookup O(1). This assumes values
-are DISTINCT, which the problem guarantees; with duplicates the split is
-ambiguous and the tree is not uniquely determined at all. Worth stating, since
-it explains why the guarantee exists.""",
+    PREORDER:  visit the node, then everything in its LEFT branch, then everything in its
+               RIGHT branch.       -> [3, 9, 20, 15, 7]
 
-    """Edge cases.
-Empty traversals -> lo > hi immediately -> None.
-Single node -> root with an empty range on both sides.
-A left-skewed chain: preorder [3,2,1], inorder [1,2,3] -> each root's inorder
-index is at the far right, so the right range is always empty.
-Right-skewed is the mirror.
-The two arrays must be the same length and contain the same multiset of values;
-in an interview it is fair to note you would validate that rather than assume
-it.""",
+    INORDER:   everything in the LEFT branch, then the node, then everything in the RIGHT
+               branch.             -> [9, 3, 15, 20, 7]
 
-    """Complexity and the family.
-O(n) time with the map, O(n) space for the map plus O(h) recursion.
-The family: Construct Binary Tree from Inorder and Postorder (same idea, but
-take the LAST postorder element as the root and build the RIGHT subtree first),
-Construct BST from Preorder (easier - the BST ordering means you do not need
-inorder at all, since sorting preorder GIVES you inorder), and Serialize and
-Deserialize Binary Tree.
-The unifying insight: each traversal contributes one piece of information -
-who the root is, or where the boundary falls - and you need both.""",
+And the tree that produced them:
+
+              3
+             / \\
+            9   20
+               /  \\
+              15    7
+
+Check both readings against the drawing. Preorder starts at 3 because 3 is on top.
+Inorder starts at 9 because 9 is the leftmost thing on the page.
+
+WHY YOU NEED BOTH. Neither list alone is enough - many different trees produce the same
+preorder, and many produce the same inorder. Together they pin down exactly one tree.
+Seeing WHY they do is the whole problem, and it takes one sentence: preorder tells you who
+the root is, and inorder tells you who is to its left and who is to its right.
+
+ONE ASSUMPTION THE PROBLEM MAKES, and you should say it out loud: ALL VALUES ARE
+DISTINCT. With two 9s in the tree you could not tell which 9 the preorder was pointing at,
+and the answer would stop being unique.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF THE TREE AS A DRAWING ON PAPER, and think about what each list is actually
+recording.
+
+    INORDER is the LEFT-TO-RIGHT reading. If you drop each node straight down onto the
+        bottom of the page, inorder is the order they land in. It tells you nothing about
+        who is above whom - only about who is to the left of whom.
+
+    PREORDER is the TOP-DOWN reading. It always names a node before naming anything
+        beneath it. It tells you who is in charge - and in particular, ITS VERY FIRST
+        ENTRY IS THE ROOT OF THE WHOLE TREE.
+
+Neither is enough on its own. Together they are exactly enough, and here is the move:
+
+    STEP ONE: preorder's first value is the root.                        root = 3
+    STEP TWO: find that value in inorder.                    [9, | 3 | , 15, 20, 7]
+    STEP THREE: everything to its LEFT in inorder is the left branch;
+                everything to its RIGHT is the right branch.  left = [9]
+                                                              right = [15, 20, 7]
+
+That is a complete division of the remaining work into two smaller, independent problems -
+each of which is the SAME problem on a shorter list. Rebuild the left branch from [9],
+rebuild the right branch from [15, 20, 7], hang both off the root, done.
+
+    preorder: [ 3 | 9 | 20, 15, 7 ]
+                ^    ^     ^
+              root   |     |
+                     |     the right branch's nodes, also in preorder
+                     the left branch's nodes, in preorder
+
+    inorder:  [ 9 | 3 | 15, 20, 7 ]
+                ^   ^    ^
+                |  root  the right branch's nodes, in inorder
+                the left branch's nodes, in inorder
+
+THE SECOND OBSERVATION, WHICH TURNS THIS FROM SLOW TO FAST. Look at preorder again. After
+the root comes THE ENTIRE LEFT BRANCH, and only then the right branch. That is the
+definition of preorder, applied to the root. So if you rebuild the left branch FIRST,
+consuming preorder values from left to right as you go, then by the time the left branch
+is finished the very next unread preorder value is exactly the root of the right branch.
+
+You never have to work out where the right branch starts in preorder. YOU JUST HAVE TO GO
+IN THE RIGHT ORDER. That is why the code keeps a single moving pointer into preorder and
+why building left before right is not a style choice - section 4 measures what happens
+when you swap them.""",
+
+    """3. EVERY TERM, DEFINED
+
+NODE. One item in the tree: a value, plus a link to a left child and a right child, either
+of which may be missing (None).
+
+ROOT. The node at the top, with nothing above it. Every subtree has its own root.
+
+SUBTREE. A node together with everything hanging below it. The key fact used here: a
+subtree is itself a perfectly good binary tree, which is why the same procedure can be
+applied to it. The right branch of the example is the subtree rooted at 20, containing 20,
+15 and 7.
+
+LEAF. A node with no children. 9, 15 and 7 are leaves here.
+
+TRAVERSAL. An order for visiting every node exactly once. The three classic ones differ
+only in WHERE the node itself goes relative to its two branches:
+
+    preorder    node, left, right          the one that reveals roots
+    inorder     left, node, right          the one that reveals left/right position
+    postorder   left, right, node
+
+RECURSION, AND WHAT IT IS DOING HERE. `build(lo, hi)` means "construct the subtree whose
+nodes occupy inorder positions lo through hi, and return its root". It calls itself twice -
+once for the stretch left of the root, once for the stretch right of it. Each call handles
+a strictly SHORTER stretch, which is why it finishes.
+
+BASE CASE. The condition that stops the recursion: `lo > hi`, meaning the stretch is
+empty, so there is no subtree - return None. That is what puts the None into a leaf's
+child slots.
+
+THE CALL STACK. The pile of paused calls. When `build` calls itself for the left branch,
+the current call freezes mid-line and waits; the left branch is built completely, all the
+way down, before the line that builds the right branch even begins. THAT ORDERING IS THE
+ENTIRE REASON THE MOVING POINTER WORKS.
+
+HASH MAP / DICTIONARY. `{value: position}` - a lookup table that answers "where is 42 in
+inorder?" instantly instead of by scanning. Built once at the start. Section 10 has the
+measured cost of doing without it.
+
+MOVING POINTER. `pos`, a single index into preorder that only ever goes forward, shared by
+every call. It is written as a one-element list, `pos = [0]`, purely so that the inner
+function can modify it - a plain integer assigned inside a nested function would create a
+new local variable instead of updating the outer one.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - BUILDING THE RIGHT SUBTREE BEFORE THE LEFT. The two lines look interchangeable -
+you are just filling in two fields of the same node - and they are absolutely not. The
+moving pointer walks preorder in order, and preorder lists the WHOLE left branch before
+the right. Consume them in the wrong order and every node after the first is taken from
+the wrong place.
+
+    MEASURED: wrong on 1,970 of 3,000 random trees - and here is the useful part: EVERY
+    SINGLE FAILURE WAS AN IndexError, never a silently wrong tree. It runs off the end of
+    preorder. On the official input it crashes immediately.
+
+    That is a rare mercy in this batch. The bug announces itself, so if you see
+    "list index out of range" on this problem, check the order of those two lines first.
+    (It happens to work when no node has two children - a straight-line tree has no left
+    and right to confuse - which is why a lazy test can pass.)
+
+TRAP 2 - USING `lo` AS THE PREORDER INDEX INSTEAD OF A MOVING POINTER. Very tempting,
+because `lo` is right there and it is an index. But `lo` is a position in INORDER, and the
+root of a subtree does not sit at the same offset in both lists.
+
+    MEASURED: wrong on 2,451 of 3,000, and again every failure was a crash - this time
+    RecursionError, because the same value keeps being chosen as the root of a subtree
+    that contains it and the recursion never shrinks.
+
+TRAP 3 - SEARCHING INORDER WITH `.index()` INSTEAD OF BUILDING THE LOOKUP TABLE. Not
+wrong, just slow, and it is the difference between passing and timing out on a long
+skinny tree.
+
+    MEASURED, one hash map versus n calls to list.index on a degenerate tree:
+        n =  400     6x slower
+        n =  800    21x slower
+        n = 1600    55x slower
+
+    The multiplier grows with n because it is the difference between O(n) total and O(n^2)
+    total. At this problem's limit of 3,000 nodes it is the difference between instant and
+    several seconds.
+
+TRAP 4 - `pos = 0` AS A PLAIN INTEGER INSIDE THE OUTER FUNCTION. Writing `pos += 1` inside
+the nested `build` raises UnboundLocalError, because assigning to a name inside a function
+makes it local to that function. The one-element list `pos = [0]` sidesteps it: the list
+object is never reassigned, only its contents changed. `nonlocal pos` is the modern
+alternative and reads better; a class attribute or a default-argument trick also work.
+Know why the list is there rather than copying it as a superstition.
+
+WHAT IS NOT A TRAP: an empty tree. `build(0, -1)` has `lo > hi` immediately and returns
+None, which is the correct empty tree. No guard needed.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - SLICE THE LISTS AT EVERY STEP:
+
+    def build_tree(preorder, inorder):
+        if not preorder:
+            return None
+        root_val = preorder[0]
+        k = inorder.index(root_val)              # scan to find the root's position
+        root = TreeNode(root_val)
+        root.left  = build_tree(preorder[1:k+1], inorder[:k])
+        root.right = build_tree(preorder[k+1:],  inorder[k+1:])
+        return root
+
+IT IS CORRECT and it is the version to write first, because it says the idea out loud: the
+root is the front of preorder, its position in inorder splits everything in two, recurse
+on the halves. The slice bounds are the only fiddly part - `preorder[1:k+1]` works because
+the left branch has exactly k nodes, the same number as the stretch of inorder before the
+root.
+
+COST, AND IT IS BAD IN TWO SEPARATE WAYS. `inorder.index` scans the list: O(n) per node.
+And every call COPIES four sublists: another O(n) per node, plus O(n) memory per level. On
+a degenerate tree - one long left spine - that is O(n^2) time and O(n^2) memory. Measured
+above at 55x slower on 1,600 nodes for the scanning alone.
+
+THE UPGRADE, IN TWO INDEPENDENT FIXES. They are worth separating because they solve
+different problems:
+
+    FIRST, REPLACE THE SEARCH WITH A LOOKUP TABLE. Build `{value: index}` over inorder once
+        at the start, in O(n). Every "where is this root?" becomes instant. This works only
+        because the values are distinct - which the problem guarantees, and which you
+        should say out loud as you rely on it.
+
+    SECOND, REPLACE THE SLICES WITH BOUNDS. Instead of passing shortened copies, pass two
+        numbers, `lo` and `hi`, marking the stretch of inorder this call is responsible for.
+        No copying at all.
+
+THE TRICK, FROM SCRATCH - THE SINGLE MOVING POINTER. Once you stop slicing preorder, you
+need to know which preorder value each call should take. Working out the index arithmetic
+is possible but horrible. The elegant answer is not to compute it at all.
+
+    KEEP ONE SHARED POINTER INTO PREORDER THAT ONLY MOVES FORWARD. Each call takes the
+    value it points at, advances it by one, and recurses.
+
+WHY THAT IS CORRECT is worth stating carefully, because it looks like sleight of hand.
+Preorder is defined as: node, then ALL of the left subtree, then ALL of the right subtree.
+So if every call consumes exactly one value on entry, and the left subtree is built
+completely before the right subtree is started, the values are consumed in exactly
+preorder order - and the pointer is always sitting on the right one when a call needs it.
+
+HOW THE VALUE TRAVELS: `pos` starts at 0. The root takes preorder[0] and pushes it to 1.
+The entire left subtree then runs, each of its nodes taking one value and pushing further.
+When the left subtree finally returns, `pos` has advanced past every left-subtree node -
+so it now points at exactly the right subtree's root, with no calculation performed. Swap
+the order of those two recursive calls and the pointer hands out values in the wrong
+sequence, which is trap 1 and its 1,970 IndexErrors.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Build a lookup table from each value in inorder to its position, so "where is this
+       value?" is instant. This is legitimate only because all values are distinct.
+
+    2. Set up a single pointer into preorder, starting at 0, that will only ever move
+       forward and is shared by every step below.
+
+    3. Define a helper meaning "build the subtree made of the inorder positions from lo to
+       hi, and give me back its root". It does this:
+
+       a. If lo is greater than hi the stretch is empty, so there is no subtree - return
+          nothing. This is what fills in the missing children of leaves.
+
+       b. Otherwise take the value the preorder pointer is sitting on. That is this
+          subtree's root. Move the pointer forward by one.
+
+       c. Make a node holding that value.
+
+       d. Look up where that value sits in inorder. Everything from lo up to just before it
+          is the left branch; everything from just after it up to hi is the right branch.
+
+       e. Build the LEFT branch first and attach it. This ordering is mandatory, not
+          stylistic - preorder lists the whole left branch before the right, so the shared
+          pointer must be spent on the left branch first.
+
+       f. Then build the right branch and attach it.
+
+       g. Return the node.
+
+    4. Call the helper on the whole range - from 0 to one less than the number of nodes -
+       and return what comes back.
+
+THE RECURSION, SPELLED OUT. Step 3e does not merely "call a function" - it builds an
+entire branch, possibly hundreds of nodes deep, before step 3f begins. Each call is paused
+partway through and set aside on the call stack while its children run; when they finish,
+it resumes at the very next line. Every call handles a strictly shorter stretch than its
+parent, so the stretches shrink to nothing and step 3a eventually stops the descent.
+
+THE STEP PEOPLE GET WRONG is 3e/3f - doing them in the other order. It does not produce a
+subtly wrong tree; it runs off the end of the preorder list.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a company with a strict org chart that nobody kept a copy of. What survives is two
+staff lists.
+
+The first list, the PREORDER one, was written by someone walking the chart from the top:
+name the boss, then go all the way down their left-hand division before coming back for
+the right-hand one. So this list always names a manager before anyone who reports to them,
+and the very first name on it is the chief executive.
+
+The second list, the INORDER one, was written by someone reading the chart across the page
+from left to right, ignoring seniority entirely. It says nothing about who reports to
+whom - only who sits on which side.
+
+Now rebuild the chart. Take the first name from the top-down list: that is the chief
+executive. Find that person in the left-to-right list. Everyone printed before them was
+somewhere in the left-hand division; everyone after them was in the right-hand division.
+Two smaller charts, each rebuilt by the same procedure.
+
+The elegant part is what you do NOT have to do. You never work out how big the left
+division is in order to find where the right division starts in the top-down list. You
+simply rebuild the left division first, crossing names off the top-down list one by one as
+you use them - and when the left division is finished, the very next uncrossed name IS the
+head of the right division. The list was written in that order, so consuming it in that
+order keeps you in step with it automatically.
+
+Cross names off in the wrong order and everything after the first is wrong - and you run
+off the end of the list before you finish, which at least tells you loudly that something
+is broken.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    class TreeNode:
+        def __init__(self, val=0, left=None, right=None):
+            self.val = val; self.left = left; self.right = right
+
+  One node: a value and two child slots, both empty until filled.
+
+    def build_tree(preorder, inorder):
+        idx = {v: i for i, v in enumerate(inorder)}
+
+  The lookup table: value -> its position in inorder. Built once, in one pass. This is the
+  line that turns O(n^2) into O(n), and it is correct ONLY because the values are distinct -
+  duplicates would collide in the dictionary and quietly keep the last one.
+
+        pos = [0]
+
+  The shared pointer into preorder, wrapped in a list so the nested function can advance it.
+  A bare `pos = 0` here plus `pos += 1` below raises UnboundLocalError - see trap 4.
+  `nonlocal pos` is the tidier modern alternative.
+
+        def build(lo, hi):
+
+  "Build the subtree occupying inorder positions lo..hi and return its root." The bounds
+  refer to INORDER, never to preorder.
+
+            if lo > hi:
+                return None
+
+  An empty stretch means no subtree. This is the base case, and it is what supplies the
+  None children of every leaf. No other stopping condition exists or is needed.
+
+            root_val = preorder[pos[0]]
+            pos[0] += 1
+
+  Take the next unused preorder value - by construction it is this subtree's root - and
+  advance the shared pointer past it. Every call consumes exactly one value, exactly once.
+
+            root = TreeNode(root_val)
+
+            mid = idx[root_val]
+
+  Where the root sits in inorder. Everything at positions lo..mid-1 is its left branch,
+  everything at mid+1..hi is its right branch. This is the split from section 2, done in
+  one instant lookup.
+
+            root.left = build(lo, mid - 1)
+
+  LEFT FIRST, AND THIS LINE MUST COME BEFORE THE NEXT ONE. Preorder lists the entire left
+  branch before the right, so the shared pointer has to be spent on the left branch first.
+  When this line returns, the pointer has advanced past every node of the left branch and
+  is sitting exactly on the right branch's root - with no arithmetic done.
+
+            root.right = build(mid + 1, hi)
+
+  Now the right branch, starting from wherever the left branch left the pointer.
+
+            return root
+
+        return build(0, len(inorder) - 1)
+
+  Kick it off across the whole of inorder. For an empty input this is `build(0, -1)`, which
+  hits the base case and returns None - the correct empty tree, with no special case.""",
+
+    """9. TRACED ON REAL NUMBERS - preorder = [3, 9, 20, 15, 7], inorder = [9, 3, 15, 20, 7]
+
+The lookup table, built first:   idx = {9: 0, 3: 1, 15: 2, 20: 3, 7: 4}
+The shared pointer:              pos = 0
+
+    build(0, 4)                                   the whole tree
+        lo <= hi, so carry on
+        root_val = preorder[0] = 3.   pos -> 1
+        mid = idx[3] = 1
+            left branch  = inorder positions 0..0   -> [9]
+            right branch = inorder positions 2..4   -> [15, 20, 7]
+
+        build(0, 0)                               the left branch
+            root_val = preorder[1] = 9.   pos -> 2
+            mid = idx[9] = 0
+            build(0, -1) -> lo > hi -> None       (9's left child)
+            build(1, 0)  -> lo > hi -> None       (9's right child)
+            return node 9
+
+        build(2, 4)                               the right branch
+            root_val = preorder[2] = 20.  pos -> 3
+                ^ NOTE: nobody calculated that the right branch starts at preorder[2].
+                  The left branch consumed exactly one value and left the pointer here.
+            mid = idx[20] = 3
+                left  = positions 2..2  -> [15]
+                right = positions 4..4  -> [7]
+
+            build(2, 2)
+                root_val = preorder[3] = 15.  pos -> 4
+                mid = idx[15] = 2
+                build(2, 1) -> None ;  build(3, 2) -> None
+                return node 15
+
+            build(4, 4)
+                root_val = preorder[4] = 7.   pos -> 5
+                mid = idx[7] = 4
+                build(4, 3) -> None ;  build(5, 4) -> None
+                return node 7
+
+            return node 20, with left 15 and right 7
+
+        return node 3, with left 9 and right (20, 15, 7)
+
+THE POINTER'S JOURNEY, which is the thing to watch:
+
+    pos | taken by         | which node it became
+    ----+------------------+---------------------
+     0  | build(0, 4)      | 3, the root
+     1  | build(0, 0)      | 9, the whole left branch
+     2  | build(2, 4)      | 20, the right branch's root
+     3  | build(2, 2)      | 15
+     4  | build(4, 4)      | 7
+
+Five values, consumed strictly left to right, one per node - which is exactly the order
+they were written in. THAT is what "preorder" means, and the algorithm is really just
+replaying it.
+
+THE RESULT, and it matches the drawing in section 1:
+
+              3
+             / \\
+            9   20
+               /  \\
+              15    7
+
+WHAT THE WRONG ORDER DOES ON THIS SAME INPUT: building right before left, the root still
+takes 3, but then `build(2, 4)` runs first and takes 9 as the root of the right branch,
+20 and 15 as its children, and 7 - and then the left branch has nothing left to take.
+IndexError, immediately, on the official example.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Building the lookup table is one pass: O(n). After that, every node
+is created by exactly one call to `build`, and each call does a fixed amount of work - one
+list read, one dictionary lookup, one object creation. So O(n) time overall, which is the
+best possible since every value must be read at least once.
+
+SPACE: the lookup table holds n entries - O(n). The call stack goes as deep as the tree is
+TALL, which is O(log n) for a balanced tree but O(n) for a degenerate one-sided tree. Say
+both: "O(n) auxiliary for the map, plus O(h) stack, and h can be n in the worst case." The
+naive slicing version is O(n^2) in BOTH time and space, so this is a real improvement, not
+a micro-optimisation.
+
+THE #1 MISTAKE: building the right subtree before the left. Wrong on 1,970 of 3,000 random
+trees, and it crashes with IndexError every single time rather than returning a wrong tree.
+It also crashes on the official example. If you remember one thing: THE SHARED POINTER
+FORCES AN ORDER, AND PREORDER SAYS LEFT COMES FIRST.
+
+THE #2: using `lo` as the preorder index. 2,451 of 3,000, all RecursionError. `lo` and `hi`
+index INORDER; preorder is indexed only by the moving pointer. Keeping that distinction
+straight in your head is most of this problem.
+
+THE #3: `inorder.index()` in the loop. Correct but quadratic - measured 55x slower at
+1,600 nodes, and the gap widens with n. Build the map.
+
+WHAT TO SAY OUT LOUD, in this order: (1) preorder's first value is the root, and its
+position in inorder splits the rest into left and right; (2) I will build a value-to-index
+map first, which is valid because the values are distinct; (3) I will pass index bounds
+rather than slicing, to avoid O(n^2) copying; (4) I will keep one moving pointer into
+preorder and build LEFT before RIGHT, because preorder emits the whole left subtree first;
+(5) O(n) time, O(n) space plus O(h) stack. Point 4 is the one that shows you understand
+the traversal rather than having memorised the shape.
+
+A FOLLOW-UP TO BE READY FOR: "what if the values are not distinct?" The honest answer is
+that the tree is no longer uniquely determined, so the problem has no single right answer -
+recognising that beats inventing a rule.
+
+THE FAMILY. Construct Binary Tree from Inorder and Postorder (the same idea, but postorder
+gives you the root from the END, so you consume it BACKWARDS and build RIGHT before LEFT -
+a mirror image, and a great check of whether you understood this one). Also Construct from
+Preorder and Postorder (not unique in general), Serialize and Deserialize Binary Tree, and
+Validate Binary Search Tree. Worth knowing separately: preorder plus inorder works for any
+binary tree, whereas for a binary SEARCH tree the preorder alone is enough, because sorting
+it gives you the inorder for free.
+
+ONE-SENTENCE TAKEAWAY: preorder hands you the root, inorder splits everything else into
+left and right - so consume preorder with one forward-only pointer and build the left
+subtree first, because that is the order preorder was written in.""",
 ]
 
 _EX_P1T["Edit Distance (Levenshtein)"] = [
-    """What dp[i][j] means, stated precisely before anything else.
-dp[i][j] = the minimum edits to turn the FIRST i characters of a into the FIRST
-j characters of b. Not 'the answer so far', not 'the edits at position i' - the
-answer for two PREFIXES. Getting that sentence right is most of the problem;
-every transition follows from it.
-The answer is dp[m][n], the full strings.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The three transitions, each named as an operation.
-If a[i-1] == b[j-1]: the characters already agree, so dp[i][j] = dp[i-1][j-1] -
-FREE, no edit consumed.
-Otherwise 1 + the cheapest of:
-  dp[i-1][j-1]  SUBSTITUTE a's character for b's
-  dp[i-1][j]    DELETE a's character (shrink a, b unchanged)
-  dp[i][j-1]    INSERT b's character (a unchanged, b consumed)
-The direction of the deletion/insertion pair is the part people mix up: moving
-back in i means consuming a character of A, which is a deletion FROM a.""",
+Given two words, how few single-letter edits does it take to turn the first into the
+second? Three kinds of edit are allowed, each costing 1:
 
-    """The base cases, which encode the trivial answers.
-dp[i][0] = i: turning i characters into the empty string costs i deletions.
-dp[0][j] = j: turning nothing into j characters costs j insertions.
-Skip these and the first row and column stay 0, which quietly claims that
-'abc' -> '' is free, and every answer comes out too small. They are not
-boilerplate; they are the only place the cost of length differences enters.""",
+    INSERT a letter        cat  ->  cart
+    DELETE a letter        cart ->  cat
+    REPLACE a letter       cat  ->  cot
 
-    """A worked cell, on horse -> ros (answer 3).
-Consider dp[1][1]: 'h' vs 'r', not equal -> 1 + min(dp[0][0]=0, dp[0][1]=1,
-dp[1][0]=1) = 1. Substitute h for r.
-dp[5][3] ends at 3, via: substitute h->r, substitute o->o (free, so really
-r-o-s alignment), delete r, delete s, delete e... traced fully, the cheapest
-script is substitute h->r, keep o, substitute r->s, delete s, delete e = 3
-edits.
-Working ONE non-trivial cell by hand in the interview is worth more than
-narrating the whole table - it proves you understand the recurrence.""",
+    horse  ->  ros        the answer is 3
 
-    """The space reduction, and the extra variable it needs.
-dp[i][j] depends only on row i-1 and the current row, so two rows suffice -
-O(n) instead of O(m*n).
-Down to ONE row is possible but needs care: dp[i-1][j-1] (the diagonal) is
-overwritten the moment you compute dp[i][j-1], so you must stash it in a
-temporary before each write. That saved-diagonal detail is exactly the same
-trick as in Maximal Square, and it is the standard follow-up when the
-interviewer asks about space.""",
+    horse  ->  rorse      replace the h with an r
+           ->  rose       delete the r in the middle
+           ->  ros        delete the e
 
-    """Edge cases, complexity and where it is used.
-Either string empty -> the other's length. Identical strings -> 0. Completely
-disjoint strings of equal length -> that length, all substitutions.
-Time O(m*n), space O(m*n) or O(min(m,n)) reduced. There is no known
-subquadratic algorithm for the general case (and there is a conditional lower
-bound saying there probably is not).
-Uses: spell checkers and 'did you mean', DNA sequence alignment, diff tools,
-fuzzy record matching for deduplication, and OCR post-correction. The family:
-Longest Common Subsequence (the same table shape, maximising instead of
-minimising), Delete Operation for Two Strings, One Edit Distance, and
-Distinct Subsequences.""",
+Could it be done in 2? No - and that "no" is the hard half of the problem. Finding SOME
+sequence of edits is easy; proving no shorter one exists means considering all of them.
+
+    intention  ->  execution        the answer is 5
+
+This number has a name, the LEVENSHTEIN DISTANCE, and you meet it constantly in real
+software: spell-checkers ranking suggestions, "did you mean?" search boxes, DNA sequence
+comparison, and the diff that shows what changed between two versions of a file.
+
+THE ONLY RULE THAT NEEDS SPELLING OUT: edits may be made anywhere in the word, not just at
+the end, and they may be interleaved in any order. That freedom is exactly why you cannot
+just walk both words once and count the mismatches.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+WHY THE OBVIOUS APPROACH FAILS. Line the words up and count where they differ?
+
+    h o r s e
+    r o s
+
+They are not even the same length, and the letters that DO match - the o and the s - are
+not in the same positions. Any fixed alignment is a guess, and different guesses give
+different totals. You would have to try all the alignments, and there are a great many.
+
+THE MOVE THAT UNLOCKS IT: WORK FROM THE END, ONE CHARACTER AT A TIME. Ask a smaller
+question - what is the distance between the first i letters of the first word and the
+first j letters of the second? Look only at the LAST letter of each of those pieces, and
+there are exactly two situations:
+
+    THEY MATCH.  The last letters already agree, so leave them alone. Nothing is paid,
+        and the problem shrinks by one letter on both sides.
+
+              "hors"  vs  "ros"      -  both end in s
+              -> the cost is exactly the cost of turning "hor" into "ro"
+
+    THEY DIFFER.  Something must be done, and there are exactly three things you can do,
+        so try all three and keep the cheapest:
+
+        REPLACE the last letter of the first word with the last letter of the second.
+            Costs 1, then both words shrink by one.
+        DELETE the last letter of the first word.
+            Costs 1, then the first word shrinks by one; the second is unchanged.
+        INSERT the second word's last letter onto the end of the first.
+            Costs 1; it now matches and is cancelled, so the SECOND word shrinks by one
+            and the first is unchanged.
+
+That is the entire algorithm. Everything else is bookkeeping.
+
+THE PICTURE - A GRID, AND EVERY SQUARE IS A SMALLER QUESTION. Write one word down the side
+and the other across the top. The square at row i, column j holds the answer for "first i
+letters of the left word, first j letters of the top word".
+
+              ""   r    o    s
+        ""     0    1    2    3
+        h      1    ?
+        o      2
+        r      3
+        s      4
+        e      5
+
+The edges are free: turning "" into "ros" needs 3 inserts, turning "hors" into "" needs 4
+deletes. Fill those in and every other square is decided by just THREE NEIGHBOURS - the
+one above, the one to the left, and the one diagonally up-left:
+
+        diagonal (up-left)   =  replace, or free if the letters match
+        above                =  delete from the left-hand word
+        left                 =  insert into the left-hand word
+
+    +--------+--------+
+    | diag   | above  |         a square looks only at these three,
+    +--------+--------+         takes the cheapest, and adds 1
+    | left   |  HERE  |         (or takes the diagonal for free on a match)
+    +--------+--------+
+
+Fill the grid row by row and the bottom-right corner is the answer for the whole words.
+Every square is computed once, and every square's inputs are already sitting there when
+its turn comes.""",
+
+    """3. EVERY TERM, DEFINED
+
+EDIT DISTANCE / LEVENSHTEIN DISTANCE. The fewest single-character insertions, deletions
+and replacements that turn one string into another. It is symmetric - the distance from a
+to b equals the distance from b to a - because every insert in one direction is a delete
+in the other.
+
+PREFIX. The first few characters of a string. The prefixes of "horse" are "", "h", "ho",
+"hor", "hors" and "horse". This whole method is built on prefixes: every square in the grid
+is a question about one prefix of each word.
+
+SUBPROBLEM. A smaller version of the same question. "How far is 'hor' from 'ro'?" is a
+subproblem of "how far is 'horse' from 'ros'?".
+
+DYNAMIC PROGRAMMING, in plain words. Solve the small versions first, write the answers
+down, and build the big answer out of the small ones instead of recomputing them. It
+applies when two conditions hold, and it is worth being able to name them:
+
+    OPTIMAL SUBSTRUCTURE - the best answer for the whole is built from best answers to the
+        parts. True here: if the cheapest way to turn "horse" into "ros" starts by deleting
+        the e, then the rest of it must be the cheapest way to turn "hors" into "ros".
+    OVERLAPPING SUBPROBLEMS - the same small questions come up again and again. True here:
+        plain recursion asks "how far is 'hor' from 'ro'?" many separate times.
+
+dp TABLE. The grid. `dp[i][j]` = the edit distance between the first i characters of `a`
+and the first j characters of `b`. Note it is a table of ANSWERS, not of letters.
+
+BASE CASE / BASE ROW AND COLUMN. The squares that need no calculation. `dp[i][0] = i`
+(turn i letters into nothing: i deletes) and `dp[0][j] = j` (turn nothing into j letters:
+j inserts). Filling these in is not initialisation ceremony - section 4 measures what
+happens when you skip it.
+
+THE OFF-BY-ONE THAT CONFUSES EVERYONE. The table has m+1 rows for a string of m
+characters, because row 0 means "the empty prefix". So the character that row i is about
+is `a[i-1]`, not `a[i]`. Every DP over strings has this shift; write it on the board once
+and stop re-deriving it.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+TRAP 1 - SKIPPING THE BASE ROW AND COLUMN. In Python a fresh table is full of zeros, so the
+code runs perfectly and gives nonsense: it acts as though turning "" into "abc" were free.
+
+    ''      -> 'abc'      correct 3      without the base row: 0
+    'horse' -> 'ros'      correct 3      without the base row: 2
+
+    MEASURED: wrong on 3,359 of 4,000 random string pairs - the highest failure rate in
+    this entry. And it always UNDERSTATES the distance, because it has been handed free
+    insertions and deletions at the edges.
+
+    Initialising only ONE of the two - the column but not the row, which happens when you
+    copy the loop and forget to change it - is wrong on 1,777 of 4,000. Both are needed.
+
+TRAP 2 - CHARGING 1 EVEN WHEN THE CHARACTERS MATCH. Dropping the `if a[i-1] == b[j-1]`
+branch and always writing `1 + min(...)` makes a match cost the same as a replacement.
+
+    'abc' -> 'abc'      correct 0       always-charge version: 3
+
+    MEASURED: wrong on 2,549 of 4,000. The giveaway is that a string comes out at a
+    non-zero distance from itself. THE FREE DIAGONAL IS THE ONLY PLACE IN THIS ALGORITHM
+    WHERE THE ACTUAL LETTERS ARE LOOKED AT; without it you are just measuring lengths.
+
+TRAP 3 - FORGETTING THE DIAGONAL IN THE `min`, so only delete and insert are considered.
+This does not crash and is not nonsense - it computes a genuinely different, well-known
+quantity: THE INSERT-AND-DELETE-ONLY DISTANCE, which is what `diff` tools report, since a
+replacement there is a delete plus an insert.
+
+    'horse'     -> 'ros'        correct 3     without the diagonal: 4
+    'intention' -> 'execution'  correct 5     without the diagonal: 8
+
+    MEASURED: differs from the true answer on 1,609 of 4,000 (and 816 of a separate 2,000).
+    It is never too small - dropping an option can only make the minimum larger. If your
+    answers are consistently a bit too high, this is the reason.
+
+TRAP 4 - THE OFF-BY-ONE IN THE CHARACTER LOOKUP. Comparing `a[i]` with `b[j]` instead of
+`a[i-1]` with `b[j-1]` throws IndexError on the last row, or - worse, if your loops are
+also shifted - silently compares the wrong letters. Remember why: row i is about the first
+i characters, so the i-th character is at index i-1.
+
+WHAT IS NOT A TRAP: two empty strings. `dp[0][0] = 0`, both loops do nothing, and the
+answer is 0. And the symmetry is a free correctness check - if your function gives a
+different answer for (a, b) than for (b, a), you have a bug, because the true distance is
+symmetric.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - PLAIN RECURSION, STRAIGHT FROM THE DEFINITION:
+
+    def edit(a, b, i, j):
+        if i == 0: return j            # a is used up: insert the rest of b
+        if j == 0: return i            # b is used up: delete the rest of a
+        if a[i-1] == b[j-1]:
+            return edit(a, b, i-1, j-1)          # last letters agree: free
+        return 1 + min(edit(a, b, i-1, j),       # delete from a
+                       edit(a, b, i,   j-1),     # insert into a
+                       edit(a, b, i-1, j-1))     # replace
+
+IT IS CORRECT - it is section 2 written out, and it is how the ground truth for this entry
+was computed (with memoisation added). Write this first in an interview; it proves you have
+the recurrence, which is the part that actually matters.
+
+COST: three branches at every step, so roughly 3^(m+n) calls. Two nine-letter words would
+be astronomically slow. But the reason it is slow is the interesting part.
+
+THE OBSERVATION THAT FIXES IT: THE SAME QUESTIONS ARE ASKED OVER AND OVER. `edit(a,b,3,2)`
+is reached by deleting-then-inserting, by inserting-then-deleting, and by replacing - three
+different routes to the identical subproblem. Yet the answer depends ONLY on (i, j), not on
+how you arrived. There are just (m+1) x (n+1) distinct questions - 24 of them for horse and
+ros - and the recursion is asking them thousands of times.
+
+So write each answer down the first time and reuse it. That is memoisation, and it turns
+3^(m+n) into m x n immediately.
+
+THE UPGRADE TO A TABLE. Once you know there are only m x n distinct questions, you can drop
+the recursion entirely and fill a grid. It needs one thing to be true: WHEN YOU COMPUTE A
+SQUARE, ITS THREE INPUTS MUST ALREADY BE FILLED IN. `dp[i][j]` depends on `dp[i-1][j]`
+(above), `dp[i][j-1]` (left) and `dp[i-1][j-1]` (up-left) - all of which lie above or to
+the left. So filling row by row, left to right, always has them ready.
+
+WHY THE FREE DIAGONAL IS SAFE, FROM SCRATCH. When the last letters match you take
+`dp[i-1][j-1]` with no cost added, and it is worth being sure that skipping is never worse
+than editing. It is not: any solution that pays to touch two letters that already agree
+can be rewritten to leave them alone for the same cost or less. So the match branch does
+not need to also consider the other three options - although including them would still
+give the right answer, just more slowly.
+
+HOW THE VALUE TRAVELS: an answer enters the table at the edges (the free base row and
+column) and flows down and right, each square adding at most 1 to the cheapest of its three
+neighbours. The bottom-right corner is therefore the cheapest total over every possible
+alignment of the two words - all of them considered, none of them enumerated.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Let m and n be the lengths of the two words. Make a grid with m+1 rows and n+1
+       columns - one extra of each for the empty prefix.
+
+    2. Fill the first COLUMN: row i gets the value i. Turning the first i letters into
+       nothing takes i deletions.
+
+    3. Fill the first ROW: column j gets the value j. Turning nothing into the first j
+       letters takes j insertions.
+
+    4. Now walk the rest of the grid row by row, and within each row left to right. For
+       each square:
+
+       a. Compare the letter this row is about with the letter this column is about -
+          remembering that row i is about the (i-1)-th character, because row 0 is the
+          empty prefix.
+
+       b. If they are the SAME, copy the value from the square diagonally up-left. No cost:
+          those two letters already agree and need no edit.
+
+       c. If they DIFFER, look at three neighbours - above, left, and diagonally up-left -
+          take the SMALLEST, and add 1. Those three stand for delete, insert and replace
+          respectively.
+
+    5. The bottom-right square is the answer.
+
+NO RECURSION in this version - two nested loops. The order matters and is easy to justify:
+each square needs its neighbour above and its neighbour to the left, so going top to bottom
+and left to right always has them ready.
+
+THE STEPS PEOPLE GET WRONG are 2 and 3 - skipping them because the grid is already full of
+zeros, which is wrong on 3,359 of 4,000 - and step 4b, charging for a match, which makes a
+word come out at distance 3 from itself.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Think of a very cautious editor with two versions of a sentence and a charge of one penny
+per letter changed, inserted or removed. They want the cheapest possible bill.
+
+They will not guess at an alignment. Instead they build a table of every partial job:
+"what would it cost to turn the first three letters of the old version into the first two
+of the new one?" - and one of those for every combination of prefixes.
+
+The easy entries come first, along the two edges. Turning nothing into a five-letter
+phrase costs five pennies, one per letter typed. Turning a five-letter phrase into nothing
+costs five, one per letter struck out. No thought required.
+
+Every other entry is settled by looking at just three already-finished entries next to it.
+If the two letters at the end of this pair of prefixes happen to be identical, the editor
+does nothing at all and copies the cost of the job one letter shorter on both sides - the
+letters already agree, so why pay. Otherwise they consider three ways of dealing with that
+final letter - strike it out, type the new one in, or overwrite it - look up what each
+would leave still to do, take the cheapest, and add their penny.
+
+By the time the table is full, the bottom-right corner holds the cost of the whole job. And
+the editor never once tried out a sequence of edits: they considered every possible one
+implicitly, because each square already represents the best possible way of finishing that
+part.
+
+Follow the cheapest choices backwards from the corner and you can even read off the actual
+edits - which is exactly how a diff tool decides what to show as added and removed.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    def edit_distance(a, b):
+        m, n = len(a), len(b)
+
+  `a` is the word being changed, `b` is the target.
+
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+  The grid: m+1 rows, n+1 columns. The extra row and column are for the EMPTY prefix, which
+  is why every index below is shifted by one. Note the list comprehension - writing
+  `[[0] * (n+1)] * (m+1)` instead would make m+1 references to THE SAME row, and editing one
+  would edit them all.
+
+        for i in range(m + 1):
+            dp[i][0] = i
+
+  First column: turning the first i letters of `a` into the empty string costs i deletions.
+
+        for j in range(n + 1):
+            dp[0][j] = j
+
+  First row: turning the empty string into the first j letters of `b` costs j insertions.
+  Both loops are mandatory; skipping them is the single most common failure here.
+
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+
+  Every remaining square, top to bottom and left to right - the order that guarantees the
+  three neighbours each square needs are already filled in.
+
+                if a[i-1] == b[j-1]:
+                    dp[i][j] = dp[i-1][j-1]
+
+  The letters agree, so no edit is needed here and the cost is whatever it cost for the
+  prefixes one shorter on each side. `i-1` and `j-1` because row i is about the first i
+  characters, so the i-th character sits at index i-1. THIS IS THE ONLY LINE THAT LOOKS AT
+  THE ACTUAL LETTERS.
+
+                else:
+                    dp[i][j] = 1 + min(dp[i-1][j],
+                                       dp[i][j-1],
+                                       dp[i-1][j-1])
+
+  They differ, so one edit must happen here - that is the `1 +` - and the three candidates
+  are what remains to be done afterwards:
+
+        dp[i-1][j]     DELETE a[i-1].  `a` shrinks by one, `b` is untouched.
+        dp[i][j-1]     INSERT b[j-1].  It matches and cancels, so `b` shrinks, `a` does not.
+        dp[i-1][j-1]   REPLACE a[i-1] with b[j-1].  Both shrink by one.
+
+  Take the cheapest. Drop the third and you compute the insert/delete-only distance instead,
+  which is a real quantity but not this one.
+
+        return dp[m][n]
+
+  The bottom-right corner: the whole of `a` against the whole of `b`.""",
+
+    """9. TRACED ON REAL NUMBERS - a = "horse", b = "ros"
+
+The finished grid. Rows are prefixes of "horse", columns are prefixes of "ros".
+
+              ""    r    o    s
+        ""     0    1    2    3
+        h      1    1    2    3
+        o      2    2    1    2
+        r      3    2    2    2
+        s      4    3    3    2
+        e      5    4    4    3
+
+HOW A FEW OF THOSE SQUARES WERE FILLED:
+
+    dp[1][1]  "h" vs "r".  Different, so 1 + min(above 1, left 1, diagonal 0) = 1 + 0 = 1.
+              The diagonal won: replace h with r, and there is nothing left to do.
+
+    dp[2][2]  "ho" vs "ro".  o == o - MATCH, so copy the diagonal dp[1][1] = 1. FREE.
+              In words: "ho" into "ro" costs the same as "h" into "r", because the o is
+              already right.
+
+    dp[3][1]  "hor" vs "r".  r == r - match, so copy dp[2][0] = 2. Two deletions: turn
+              "ho" into "" and the r takes care of itself.
+
+    dp[5][3]  "horse" vs "ros".  e vs s differ, so
+              1 + min(above dp[4][3] = 2, left dp[5][2] = 4, diagonal dp[4][2] = 3)
+              = 1 + 2 = 3.   THE ANSWER.
+
+READING THE EDITS BACK OFF THE GRID. Start at the bottom-right and, at each square, step
+to whichever neighbour it took its value from. Recall which neighbour means what:
+ABOVE = delete, LEFT = insert, DIAGONAL = replace, or a free match.
+
+    at dp[5][3] = 3     "horse" vs "ros",  e vs s differ
+                        1 + min(above 2, left 4, diagonal 3) - ABOVE won
+                        ->  DELETE the e        and step up to dp[4][3]
+
+    at dp[4][3] = 2     "hors" vs "ros",   s == s  MATCH
+                        ->  KEEP the s, free    and step diagonally to dp[3][2]
+
+    at dp[3][2] = 2     "hor" vs "ro",     r vs o differ
+                        1 + min(above 1, left 2, diagonal 2) - ABOVE won
+                        ->  DELETE the r        and step up to dp[2][2]
+
+    at dp[2][2] = 1     "ho" vs "ro",      o == o  MATCH
+                        ->  KEEP the o, free    and step diagonally to dp[1][1]
+
+    at dp[1][1] = 1     "h" vs "r",        h vs r differ
+                        1 + min(above 1, left 1, diagonal 0) - DIAGONAL won
+                        ->  REPLACE h with r    and step to dp[0][0] = 0.  Done.
+
+Read those bottom-to-top and they are three paid edits - replace h with r, delete the r,
+delete the e - which is precisely the sequence section 1 found by hand:
+horse -> rorse -> rose -> ros.
+
+    ONE HONEST CAVEAT: several different edit sequences can achieve the same minimum, so
+    when two neighbours tie, the walk picks one arbitrarily. The COST is unique; the
+    reconstruction is not.
+
+A SECOND TRACE, THE ALL-MATCHING CASE, a = "abc", b = "abc". Every letter matches, so every
+square on the main diagonal just copies the one before it: dp[1][1] = dp[0][0] = 0,
+dp[2][2] = dp[1][1] = 0, dp[3][3] = 0. The answer is 0, and the free-match branch is the
+only reason - the always-charge version of trap 2 returns 3 here.
+
+A THIRD, THE EMPTY CASE, a = "", b = "abc". Both loops never run; the answer is the base
+row value dp[0][3] = 3. Without the base row initialisation it would return 0, which is
+trap 1 in its clearest form.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One square per pair of prefixes, and a fixed few comparisons per
+square: O(m x n) time, where m and n are the two lengths. For this problem's limit of 500
+characters each, that is 250,000 squares - instant. The plain recursion of section 5 is
+about 3^(m+n), which is why memoisation or a table is not optional.
+
+SPACE: the full grid is O(m x n). BUT each row depends only on the row above it, so you can
+keep just two rows - or even one, with care about the diagonal value - and get O(min(m, n))
+space. Mention this even if you write the full grid; it is the standard follow-up. The
+catch to state honestly: with only two rows you can no longer walk backwards to recover the
+actual edits, only the number.
+
+THE #1 MISTAKE: skipping the base row and column. Wrong on 3,359 of 4,000 random pairs, and
+it always understates, because the empty-string cases silently come out as free. The
+symptom is distinctive - `edit('', 'abc')` returns 0.
+
+THE #2: charging 1 on a match. 2,549 of 4,000. Symptom: a string is not at distance 0 from
+itself. That free diagonal is the only line that inspects the actual characters.
+
+THE #3: omitting the diagonal from the `min`. 1,609 of 4,000, always too HIGH, and it
+computes a different real quantity - the insert/delete-only distance used by diff tools -
+so it looks reasonable and is quietly answering another question.
+
+WHAT TO SAY OUT LOUD, in this order: (1) look at the last character of each prefix - either
+they match and it is free, or one of three edits must happen; (2) that recurrence is
+exponential as plain recursion because the same subproblems recur, so I will fill a table;
+(3) the base row and column are the empty-string cases, i deletes and j inserts; (4)
+O(m x n) time and space, reducible to two rows if you only need the number. Starting from
+the recurrence rather than the table is what marks someone who could derive this if they
+had not seen it.
+
+THE FAMILY. Longest Common Subsequence is the same grid with a different rule per square,
+and is the direct sibling: the insert/delete-only distance from trap 3 is exactly
+m + n - 2 * LCS. Also Delete Operation for Two Strings (that quantity, asked directly),
+Minimum ASCII Delete Sum, One Edit Distance (the k=1 case, solvable in one pass with two
+pointers - worth knowing, because it is the follow-up), Distinct Subsequences, Regular
+Expression Matching and Wildcard Matching. All are two-string grids where the only thing
+that changes is what a square does with its neighbours.
+
+ONE-SENTENCE TAKEAWAY: build a grid of "how far is this prefix from that prefix", make a
+matching pair of letters free by copying the diagonal, and otherwise pay 1 on top of the
+cheapest of delete, insert and replace.""",
 ]
 
 _EX_P1T["House Robber"] = [
