@@ -120764,123 +120764,1007 @@ useful thing this state machine gives you day to day.""",
 ]
 
 _EX_P1AA["Daily Temperatures (monotonic stack)"] = [
-    """The trace, and what the stack holds.
-temps = [73,74,75,71,69,72,76,73].
-i=0 (73): stack empty -> push 0. Stack holds INDICES of days still waiting.
-i=1 (74): 73 < 74 -> pop 0, result[0] = 1-0 = 1. Push 1.
-i=2 (75): 74 < 75 -> pop 1, result[1] = 1. Push 2.
-i=3 (71), i=4 (69): each colder than the top -> just push. Stack [2,3,4].
-i=5 (72): 69 < 72 -> pop 4, result[4] = 1. 71 < 72 -> pop 3, result[3] = 2.
-75 > 72 -> stop, push 5.
-i=6 (76): pops 5 (result 1) then 2 (result 4). Push 6.
-i=7 (73): push. Stack [6,7] left over -> those results stay 0.
-Answer [1,1,4,2,1,1,0,0].""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why store INDICES rather than temperatures.
-The answer is a DISTANCE - how many days to wait - so you need i - prev_index.
-Storing temperatures alone loses the position and you cannot compute it.
-This is the general habit for monotonic stacks: store indices, and index back
-into the array when you need the value (`temps[stack[-1]]`). It costs nothing
-and it makes distance-based variants free.""",
+You are given the temperature for each of several days, in order. For every single day, answer
+one question: HOW MANY DAYS DO I HAVE TO WAIT BEFORE IT IS WARMER THAN TODAY? If it never gets
+warmer, the answer for that day is 0.
 
-    """Why the stack is DECREASING, and what that invariant buys.
-Every index on the stack is waiting for a warmer day, and they are stacked in
-decreasing temperature order - because any day warmer than the one below it
-would have popped it on arrival.
-So when a new temperature arrives, it resolves a CONTIGUOUS RUN from the top,
-and the moment it hits something warmer it can stop: everything deeper is
-warmer still. That early stop is what makes the whole thing linear rather than
-quadratic.""",
+    temps  = [73, 74, 75, 71, 69, 72, 76, 73]
+    answer = [ 1,  1,  4,  2,  1,  1,  0,  0]
 
-    """Why O(n) despite the nested while loop.
-Each index is PUSHED exactly once and POPPED at most once, so the total number
-of inner-loop iterations across the whole run is at most n. The while loop can
-be long on one step and empty on the next, but the amortised cost per element
-is O(1).
-Stating it that way - 'pushed once, popped once' - is the correct complexity
-argument, and it is what distinguishes this from a genuinely nested O(n^2)
-loop.""",
+Read that off one day at a time, because the whole problem is in this table:
 
-    """Edge cases.
-Strictly increasing [1,2,3] -> every day resolves on the next -> [1,1,0].
-Strictly decreasing [3,2,1] -> nothing ever pops -> [0,0,0], and the stack ends
-holding every index.
-All equal [5,5,5] -> the comparison is STRICT (`<`), so equal temperatures do
-not resolve each other -> [0,0,0]. If the prompt said 'warmer or equal' the
-operator changes and so does the answer.
-Single element -> [0]. Empty -> [].
-The leftover stack at the end needs no cleanup because result was
-zero-initialised - a small but deliberate choice.""",
+    day 0, 73 degrees   the very next day is 74, which is warmer      wait 1 day
+    day 1, 74 degrees   the next day is 75                            wait 1 day
+    day 2, 75 degrees   71, 69, 72 are all colder; day 6 is 76        wait 4 days
+    day 3, 71 degrees   day 4 is colder (69), day 5 is 72             wait 2 days
+    day 4, 69 degrees   day 5 is 72                                   wait 1 day
+    day 5, 72 degrees   day 6 is 76                                   wait 1 day
+    day 6, 76 degrees   only day 7 is left, and 73 is colder          0 - never
+    day 7, 73 degrees   there are no days left at all                 0 - never
 
-    """Complexity and the family.
-O(n) time, O(n) space.
-The monotonic stack family: Next Greater Element I and II (II is circular -
-iterate twice modulo n), Largest Rectangle in Histogram (an INCREASING stack,
-popping when a shorter bar arrives), Trapping Rain Water, Sum of Subarray
-Minimums, Remove K Digits, and Online Stock Span.
-The cue: 'for each element, find the next/previous element that is
-greater/smaller'. Decreasing stack for next-greater, increasing for
-next-smaller - and the answer for anything still on the stack at the end is the
-default.""",
+TWO DETAILS THAT ARE EASY TO MISS. The answer is a NUMBER OF DAYS, not a temperature and not the
+day number - day 2 answers 4, not "day 6" and not "76". And WARMER MEANS STRICTLY WARMER: an
+equal temperature does not count, so a run of identical days keeps waiting.
+
+THE OBVIOUS SOLUTION WORKS. For each day, walk forward until you meet a bigger number. It is
+correct, it is what the answers above were checked against, and you should say it out loud first.
+It just costs O(n squared) time - roughly n/2 steps per day - and this problem exists to teach
+the one-pass version that costs O(n) using a STACK.
+
+THE REAL SUBJECT OF THIS PROBLEM is a pattern called the MONOTONIC STACK, which answers "for
+each item, find the next item bigger than it" for a whole array in a single pass. Once you have
+seen it here you have seen Next Greater Element, Largest Rectangle in Histogram, Trapping Rain
+Water and Online Stock Span - they are all this shape.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START FROM THE WASTE IN THE BRUTE FORCE. When you stand on day 2 (75) and scan forward past 71,
+69 and 72, you learn something about those days too - you just throw it away. Then you stand on
+day 3 (71) and scan past 69 again. THE SAME NUMBERS ARE READ OVER AND OVER. The fix is to flip
+the question around.
+
+INSTEAD OF ASKING "who will settle me", ANNOUNCE YOURSELF AND SETTLE EVERYONE YOU CAN. Walk the
+days once. Each new day looks BACKWARDS at the days that are still waiting for an answer and
+settles every one of them that it is warmer than. Then it joins the waiting list itself.
+
+Which days are still waiting? Keep them in a pile - a STACK, where you add and remove only at
+the top. Here is the run on [73, 74, 75, 71, 69, 72, 76, 73], drawing the waiting pile after
+each day (top of the pile on the right):
+
+    day 0, 73    nobody waiting                        pile: 73                    answers: . . . . . . . .
+    day 1, 74    74 > 73, so day 0 is settled: 1       pile: 74                    answers: 1 . . . . . . .
+    day 2, 75    75 > 74, so day 1 is settled: 1       pile: 75                    answers: 1 1 . . . . . .
+    day 3, 71    71 < 75, settles nobody, joins        pile: 75 71                 answers: 1 1 . . . . . .
+    day 4, 69    69 < 71, settles nobody, joins        pile: 75 71 69              answers: 1 1 . . . . . .
+    day 5, 72    72 > 69 settle day 4: 5-4 = 1
+                 72 > 71 settle day 3: 5-3 = 2
+                 72 < 75 stop, joins                   pile: 75 72                 answers: 1 1 . 2 1 . . .
+    day 6, 76    76 > 72 settle day 5: 6-5 = 1
+                 76 > 75 settle day 2: 6-2 = 4
+                 pile empty, joins                     pile: 76                    answers: 1 1 4 2 1 1 . .
+    day 7, 73    73 < 76, settles nobody, joins        pile: 76 73                 answers: 1 1 4 2 1 1 . .
+
+    two days never got settled - they stay 0
+
+LOOK AT THE PILE AND NOTICE THE SHAPE. Reading bottom to top it is always DECREASING: 75 71 69,
+then 75 72, then 76 73. That is not a coincidence you have to arrange - IT IS FORCED. A day only
+sits on top of another if it is colder, because if it were warmer it would have settled the day
+below and taken its place. That property is what makes the whole thing fast.
+
+WHY IT IS FAST, IN ONE SENTENCE. Because the pile is decreasing, the days a new temperature can
+settle are a CONTIGUOUS RUN FROM THE TOP - so the moment you meet a day you are not warmer than,
+you can stop, knowing everything deeper is even warmer. And every day joins the pile once and
+leaves at most once, so across the entire run there are at most n additions and n removals.
+MEASURED on 10,000 random days: 9,896 removals in total. Not per day - in total.
+
+WHAT YOU ACTUALLY STORE IS THE DAY NUMBER, NOT THE TEMPERATURE. The answer is a DISTANCE, so
+when day 6 settles day 2 you need to compute 6 - 2 = 4. A pile of temperatures cannot tell you
+that. Store the index and look the temperature up when you need it.""",
+
+    """3. EVERY TERM, DEFINED
+
+STACK. A container where you only ever add to the top and remove from the top - like a pile of
+plates. In Python a plain list is a stack: `push` is `append`, `pop` is `pop()`, and the top item
+is `stack[-1]`. Both operations are O(1), meaning they cost the same no matter how tall the pile.
+
+MONOTONIC. Going one way only - either never increasing or never decreasing.
+
+MONOTONIC STACK. A stack you deliberately keep in sorted order by popping anything that would
+break the order before you push. Here the temperatures on the stack decrease from bottom to top,
+so it is a DECREASING (strictly, non-increasing) monotonic stack. That is the whole technique:
+the popping is not cleanup, it IS the algorithm - each pop is one answer being written down.
+
+NEXT GREATER ELEMENT. The standard name for what this problem asks: for each position, the first
+later position holding a bigger value. Daily Temperatures is next-greater-element where you
+report the DISTANCE rather than the value.
+
+INDEX. A position in the list, counting from 0. `temps[3]` is the 4th day. The days on the stack
+are stored as indices, and `temps[stack[-1]]` reads "the temperature of the day on top".
+
+INVARIANT. A statement that is true every single time you look. Here: EVERY DAY ON THE STACK IS
+STILL WAITING FOR AN ANSWER, AND THEIR TEMPERATURES DECREASE FROM BOTTOM TO TOP. Naming the
+invariant out loud is what convinces an interviewer you did not memorise the code.
+
+STRICTLY GREATER. Bigger, with equal not counting. The comparison is `<` not `<=`, and section 4
+measures what the wrong one costs.
+
+AMORTISED O(n). The cost is O(n) IN TOTAL even though one individual step can be expensive. One
+day might pop five waiting days, but it can only do that because five earlier days each pushed
+once and will never be pushed again. Total work is bounded by total pushes, and there are exactly
+n of those. Say "amortised" in the interview and be ready to explain it in exactly that way.
+
+O(1) vs O(n) SPACE. The stack can hold every day at once (a list that only gets colder never
+pops anything - MEASURED: on a strictly decreasing list of 10,000 days the stack reaches 10,000),
+so the extra space is O(n), plus the answer array itself.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random temperature lists, checked against the brute-force
+forward scan.
+
+TRAP 1 - USING `<=` WHERE YOU NEED `<`. "Warmer" means STRICTLY warmer, so an equal temperature
+must NOT settle a waiting day. Writing `while stack and temps[stack[-1]] <= t` pops days that
+today merely ties.
+
+    SMALLEST CASE: temps = [1, 1].   Correct answer [0, 0] - it never gets warmer, ever.
+    The `<=` version pops day 0 on the tie and reports [1, 0], claiming day 1 was warmer.
+
+    MEASURED: wrong on 2,812 of 6,000. And on the 3,353 cases that contain at least one repeated
+    temperature it is wrong on 2,812 - so whenever ties exist at all it fails about 84% of the
+    time. It looks fine on data with no duplicates, which is exactly why it survives testing.
+
+TRAP 2 - `if` INSTEAD OF `while`. One warm day can settle SEVERAL waiting days (day 6 above
+settles two). An `if` settles only the topmost and leaves the rest stranded.
+
+    SMALLEST CASE: temps = [1, 1, 2].   Correct [2, 1, 0]. The `if` version gives [0, 1, 0] -
+    day 0 never gets its answer because day 2 stopped after settling day 1.
+    MEASURED: wrong on 3,506 of 6,000.
+
+TRAP 3 - PUSHING TODAY BEFORE THE POPPING LOOP. If you `stack.append(i)` first and then start
+comparing, the day on top of the stack is TODAY, and today is never warmer than itself, so the
+loop never runs and nothing is ever settled.
+
+    SMALLEST CASE: temps = [1, 2] gives [0, 0] instead of [1, 0].
+    MEASURED: wrong on 4,958 of 6,000 - and the giveaway is an answer of all zeros.
+    ORDER IS THE RULE: settle the waiting days FIRST, join the queue afterwards.
+
+TRAP 4 - SUBTRACTING THE WRONG WAY ROUND. `result[prev] = prev - i` instead of `i - prev`.
+
+    temps = [1, 2] gives [-1, 0]. MEASURED: wrong on 4,958 of 6,000. Negative answers in the
+    output mean this and nothing else. Today is LATER, so today's index is the BIGGER one.
+
+TRAP 5 - STORING TEMPERATURES INSTEAD OF INDICES. The answer is a distance in days, so you need
+positions. A stack of bare temperatures cannot produce a distance at all, and patching around it
+by comparing the stored temperature the wrong way (popping while the top is GREATER than today)
+gives nonsense: MEASURED wrong on 5,387 of 6,000. Store indices. Read the temperature with
+`temps[stack[-1]]` when you need it - it costs nothing and it makes the distance free.
+
+TRAP 6 - FORGETTING THAT THE LEFTOVERS ARE THE ANSWER 0. Days still on the stack when the walk
+ends never got a warmer day. Initialising the result array to zeros handles them silently - which
+is elegant, but say it out loud rather than letting the interviewer wonder if you noticed.
+
+WHAT IS NOT A TRAP, measured rather than assumed: WALKING RIGHT TO LEFT also works. Scan from the
+last day backwards, pop everything on the stack that is NOT warmer than today (here `<=` IS
+correct, because you are discarding candidates rather than settling debts), and whatever is left
+on top is today's next warmer day. Wrong on 0 of 6,000. Same O(n) cost, and it is worth knowing
+both - but the left-to-right version needs no extra thought about which comparison flips.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - FOR EACH DAY, LOOK FORWARD UNTIL IT IS WARMER:
+
+    def daily_temperatures(temps):
+        result = [0] * len(temps)
+        for i in range(len(temps)):
+            for j in range(i + 1, len(temps)):
+                if temps[j] > temps[i]:
+                    result[i] = j - i
+                    break
+        return result
+
+IT IS CORRECT. This is exactly the ground truth every measurement in this entry was checked
+against. Say it first, in the interview, in one sentence, and then say what is wrong with it.
+
+WHAT IS WRONG WITH IT IS REPEATED READING. O(n squared) time: on a list that only gets colder,
+every day scans the entire remainder and finds nothing - about n squared over 2 comparisons.
+Day 2's forward scan reads days 3, 4, 5; then day 3 reads 4, 5 again; then day 4 reads 5 again.
+THE INFORMATION WAS ALREADY IN FRONT OF US AND WE THREW IT AWAY.
+
+THE UPGRADE - INVERT THE DIRECTION OF THE QUESTION. Do not ask, for each day, "who settles me".
+Ask, for each day, "WHO CAN I SETTLE". Then a day's arrival is the moment several older days
+learn their answers at once, and every temperature is read a constant number of times.
+
+WHAT YOU NEED TO REMEMBER, AND WHY IT IS A STACK. The days still waiting are exactly the days
+you must keep. Two facts tell you a stack is the right container:
+
+    1.  The waiting days always DECREASE in temperature as they get older-to-newer, because a
+        warmer newcomer would have settled the day below rather than sitting on it.
+    2.  So the days a newcomer settles are always a RUN AT THE TOP - never one from the middle.
+
+Add at the top, remove from the top: that is a stack, and nothing else is needed.
+
+WHY THE DECREASING ORDER IS FREE. You never sort anything. The pops that write answers are the
+same pops that maintain the order - one loop does both jobs. That is the elegance of the pattern
+and the sentence to say out loud: "the stack is kept decreasing, and the popping that keeps it
+decreasing is exactly the popping that produces answers".
+
+WHY IT IS O(n) DESPITE THE NESTED LOOP. It LOOKS quadratic - a `while` inside a `for` - and it is
+not. Each day is pushed exactly once and popped at most once, so the total number of pops across
+the whole run is at most n. MEASURED on 10,000 random days: 9,896 pops in total, with the stack
+never taller than 114. The worst case for the stack is a list that only gets colder (nothing ever
+pops, so the stack holds all 10,000); the worst case for popping is a list that only gets warmer
+(9,999 pops, but the stack never holds more than one day).
+
+WHY YOU STORE INDICES. The answer is `i - prev`, a distance, so positions are the thing you need
+to keep. Temperatures are recoverable from positions - `temps[stack[-1]]` - but positions are not
+recoverable from temperatures. Keep the thing that can produce the other.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make an answer list the same length as the input, FILLED WITH ZEROS. Zero already means
+       "no warmer day ever came", so any day you never settle is correct by default.
+
+    2. Start an empty stack. It will hold DAY NUMBERS - the days still waiting for an answer -
+       and their temperatures will always decrease from the bottom of the stack to the top.
+
+    3. Walk the days from first to last. For each day, remember both its position and its
+       temperature.
+
+    4. FIRST, SETTLE DEBTS. While the stack is not empty AND today is STRICTLY WARMER than the
+       temperature of the day on top of the stack:
+           - take that day off the stack;
+           - write its answer: today's position minus that day's position;
+           - keep going, because today may be warmer than the next one down too.
+
+    5. THEN JOIN THE QUEUE. Put today's position on the stack. Today is now waiting for its own
+       warmer day.
+
+    6. When the walk ends, return the answer list. Whatever is still on the stack never got a
+       warmer day, and those entries are still zero - which is exactly right.
+
+THE ORDER OF STEPS 4 AND 5 IS THE WHOLE THING. Settle first, then join. Push today before the
+popping loop and the day on top is today, which is not warmer than itself, so nothing is ever
+settled and every answer stays 0 - measured wrong on 4,958 of 6,000.
+
+STEP 4 MUST BE A LOOP, NOT A SINGLE CHECK. One warm day can settle several waiting days at once.
+Using a single check instead of a loop leaves older days stranded - wrong on 3,506 of 6,000.
+
+"STRICTLY WARMER" IN STEP 4 IS LOAD-BEARING. Equal temperatures do not settle anything, because
+the question asks for warmer, not warmer-or-equal. Allowing ties is wrong on 2,812 of 6,000, and
+it fails on a list as short as [1, 1].
+
+THE SUBTRACTION IN STEP 4 IS today MINUS the waiting day. Today is later, so today's number is
+the bigger one. Getting it backwards produces negative answers - wrong on 4,958 of 6,000.
+
+SAY THIS SENTENCE BEFORE YOU WRITE ANY CODE: "the stack holds the days that are still waiting,
+their temperatures decrease from bottom to top, and each new day settles the run at the top that
+it beats". If you can say that, the code is six lines and you will not get them backwards.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a small shop where people come in one at a time, each hoping to sell something, and each
+naming a price. A customer will only buy from someone who is offering a HIGHER price than they
+themselves named - do not ask why, it is a strange shop - and what everybody actually wants to
+know is: how many customers after me until someone outbids me?
+
+The clumsy way is for each person, when their turn comes, to run out of the door and follow the
+queue outside, asking everyone in line what they will offer, until they find someone higher. Then
+the next person does the same thing and asks most of the same people all over again. Everybody
+walks the queue; the queue is walked a hundred times.
+
+Here is the better arrangement. Nobody chases anybody. Instead, people who have not yet been
+outbid WAIT IN A ROOM, and each new arrival, before doing anything else, glances into the room.
+
+And the room has a wonderful property that nobody has to enforce. The person nearest the door is
+always the LOWEST bidder in the room, the next one back is higher, and so on. Why? Because when
+someone arrives who outbids the person by the door, that person is done - they get their answer
+and go home immediately, and the newcomer takes their place by the door. So a higher bidder can
+never end up in front of a lower one. The room sorts itself.
+
+So a new arrival looks at the person by the door. If they outbid them, that person's answer is
+known right then - it is simply how many customers arrived between the two of them - and off they
+go. Then the newcomer looks at the next person by the door, who is a higher bidder, and maybe
+outbids them too, and so on, until they meet someone they cannot beat. AT THAT MOMENT THEY CAN
+STOP AND BE SURE, because everyone deeper in the room bids even higher. Then the newcomer settles
+down by the door to wait their own turn.
+
+That is the entire method. Notice what makes it cheap: nobody is ever searched for. Each person
+enters the room exactly once and leaves exactly once, so even though a single popular arrival
+might send four people home at a stroke, the total number of departures across the whole day
+cannot exceed the number of people who came in.
+
+Three details decide whether it works. A new arrival must send people home BEFORE settling down
+themselves, or they will be standing by the door looking at their own face and comparing
+themselves against themselves - and nobody ever leaves. They must keep going while they can
+rather than sending home just one person - a single arrival really can settle four debts.
+And "outbid" must mean STRICTLY higher: someone offering exactly the same price has not outbid
+anyone, and both of them keep waiting.
+
+At closing time, whoever is still in the room was never outbid. Their answer is "never", which is
+why the answer sheet is filled with zeros before the day starts - the people who never leave the
+room need no further attention at all.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # For each day, how many days until a warmer temperature (monotonic stack).
+    def daily_temperatures(temps):
+        result = [0] * len(temps)
+
+  The answers, PRE-FILLED WITH ZEROS. This is not just initialisation, it is a decision: 0 is
+  the required answer for a day that never gets warmer, so every day still on the stack at the
+  end is already correct and needs no cleanup pass.
+
+        stack = []                            # indices of days awaiting a warmer day
+
+  The waiting list. IT HOLDS INDICES, NOT TEMPERATURES, because the answer is a DISTANCE and
+  distances need positions - `i - prev`. The temperature is always one lookup away as
+  `temps[stack[-1]]`. Storing temperatures instead throws away the only thing you cannot
+  reconstruct; a version that does was measured wrong on 5,387 of 6,000.
+
+  THE INVARIANT: every index in here is still waiting for its answer, and their temperatures
+  decrease from the bottom of the stack to the top.
+
+        for i, t in enumerate(temps):
+
+  One single pass. `enumerate` gives the position and the temperature together, and you need
+  both: `t` for the comparison, `i` for the subtraction.
+
+            while stack and temps[stack[-1]] < t:
+
+  THE HEART OF IT. `stack and` comes first so `stack[-1]` is never read from an empty stack -
+  Python stops at the first false part, so this is a guard, not just a condition.
+
+  `while`, NOT `if`: today may settle a whole run of waiting days. Using `if` strands the older
+  ones - wrong on 3,506 of 6,000, and it fails on [1, 1, 2].
+
+  `<`, NOT `<=`: warmer means STRICTLY warmer, so a tie settles nothing. Using `<=` is wrong on
+  2,812 of 6,000, and on lists that actually contain ties it is wrong 84% of the time. It fails
+  on [1, 1], which is as small as a counterexample gets.
+
+  WHY IT IS SAFE TO STOP as soon as the test fails: the stack decreases downwards, so if today
+  cannot beat the top it cannot beat anything below it either.
+
+                prev = stack.pop()
+
+  This day's wait is over. Take it off the waiting list - it will never be pushed again, which is
+  why the whole loop is O(n) in total rather than O(n squared).
+
+                result[prev] = i - prev       # number of days waited
+
+  The answer, and it is a SUBTRACTION OF POSITIONS: today (later, so bigger) minus the waiting
+  day. Writing `prev - i` gives negative answers - wrong on 4,958 of 6,000. Writing a constant 1
+  is the same mistake as using `if` instead of `while`, seen from the other side - wrong on 3,506
+  of 6,000, since a wait is often longer than one day.
+
+            stack.append(i)
+
+  Today joins the waiting list. THIS MUST COME AFTER THE WHILE LOOP. Push before it and the top
+  of the stack is today, today is not warmer than itself, nothing ever pops, and every answer
+  stays 0 - wrong on 4,958 of 6,000. The all-zeros output is the fingerprint of this bug.
+
+        return result
+
+  Days still on the stack never got a warmer day, and their entries are still the zeros from line
+  one. No final loop needed.
+
+SIX LINES OF BODY, O(n) TIME, O(n) SPACE. The `while` inside the `for` is not quadratic: each
+index is pushed once and popped at most once, so pops total at most n - measured at 9,896 pops
+across 10,000 days.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. temps = [73, 74, 75, 71, 69, 72, 76, 73].
+
+The stack is written with the bottom on the left; each index is shown with its temperature in
+brackets so you can see the decreasing order.
+
+     i | t  | pops (and the answer written)        | stack after          | result so far
+    ---+----+--------------------------------------+----------------------+---------------------------
+     0 | 73 | none, stack is empty                 | 0(73)                | [0,0,0,0,0,0,0,0]
+     1 | 74 | 73 < 74: pop 0, result[0] = 1-0 = 1  | 1(74)                | [1,0,0,0,0,0,0,0]
+     2 | 75 | 74 < 75: pop 1, result[1] = 2-1 = 1  | 2(75)                | [1,1,0,0,0,0,0,0]
+     3 | 71 | 75 is not < 71, so none              | 2(75) 3(71)          | [1,1,0,0,0,0,0,0]
+     4 | 69 | 71 is not < 69, so none              | 2(75) 3(71) 4(69)    | [1,1,0,0,0,0,0,0]
+     5 | 72 | 69 < 72: pop 4, result[4] = 5-4 = 1  |                      | [1,1,0,0,1,0,0,0]
+       |    | 71 < 72: pop 3, result[3] = 5-3 = 2  |                      | [1,1,0,2,1,0,0,0]
+       |    | 75 is not < 72: STOP                 | 2(75) 5(72)          | [1,1,0,2,1,0,0,0]
+     6 | 76 | 72 < 76: pop 5, result[5] = 6-5 = 1  |                      | [1,1,0,2,1,1,0,0]
+       |    | 75 < 76: pop 2, result[2] = 6-2 = 4  |                      | [1,1,4,2,1,1,0,0]
+       |    | stack empty: STOP                    | 6(76)                | [1,1,4,2,1,1,0,0]
+     7 | 73 | 76 is not < 73, so none              | 6(76) 7(73)          | [1,1,4,2,1,1,0,0]
+
+    left on the stack: 6(76) and 7(73) - never settled, so their answers stay 0.
+    return [1, 1, 4, 2, 1, 1, 0, 0]
+
+THREE THINGS TO NOTICE IN THAT TABLE.
+
+    THE STACK IS ALWAYS DECREASING - 75 71 69, then 75 72, then 76 73. Nobody sorted it.
+
+    ROW i=5 IS WHY THE LOOP IS A `while`: one day settles two waiting days, and then stops at 75
+    because it cannot beat it. Row i=6 does it again and empties the stack.
+
+    ROW i=2 IS WHY YOU KEEP INDICES: day 2's answer is 4, computed at step 6 as 6 - 2, four steps
+    after day 2 was read. Nothing but the stored index could produce that.
+
+CASE TWO - IT ONLY EVER GETS COLDER. temps = [5, 4, 3, 2].
+Nothing is ever warmer than anything, so no pop ever happens; the stack grows to hold all four
+days and the answer is [0, 0, 0, 0]. THIS IS THE WORST CASE FOR MEMORY - on 10,000 decreasing
+days the stack reaches 10,000 - and it is why the space cost is O(n), not O(1).
+
+CASE THREE - IT ONLY EVER GETS WARMER. temps = [1, 2, 3, 4].
+Every day settles exactly one waiting day and the stack never holds more than one index:
+[1, 1, 1, 0]. THIS IS THE WORST CASE FOR POPPING - 9,999 pops over 10,000 days - and note that
+the two worst cases are opposites, which is why the total work is O(n) either way.
+
+CASE FOUR - ALL THE SAME. temps = [3, 3, 3].
+It never gets STRICTLY warmer, so the correct answer is [0, 0, 0]. Every comparison is 3 < 3,
+which is false, so nothing pops and all three days are left waiting. THIS IS THE CASE THAT KILLS
+THE `<=` VERSION: with `<=`, day 1 pops day 0 and claims 1, day 2 pops day 1 and claims 1, and
+the answer comes back [1, 1, 0].
+
+CASE FIVE - ONE DAY. temps = [50] gives [0] with no special-casing: the pop loop never runs
+because the stack is empty, the day is pushed, and the pre-filled zero is returned.
+
+WHAT THE WRONG VERSIONS RETURN on case one, [73,74,75,71,69,72,76,73]:
+    push-before-popping    [0,0,0,0,0,0,0,0]        all zeros - the fingerprint
+    `if` instead of `while` [1,1,0,0,1,1,0,0]       days 2 and 3 stranded at 0
+    prev - i               [-1,-1,-4,-2,-1,-1,0,0]  negatives - the other fingerprint""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. O(n) TIME: one pass, and although a single day can pop several, each day is
+pushed once and popped at most once, so pops total at most n. That is what "amortised" means, and
+this is the standard question for saying it properly - MEASURED at 9,896 pops across 10,000 days.
+O(n) SPACE for the stack, which really can hold every day (a list that only gets colder pops
+nothing), plus the answer array.
+
+    brute force, scan forward from each day     O(n squared) time,  O(1) extra space
+    monotonic stack, one pass                   O(n) time,          O(n) space
+    right-to-left with a stack                  O(n) time,          O(n) space, wrong on 0/6000
+
+You cannot do better than O(n) time - every temperature has to be read at least once.
+
+THE #1 MISTAKE: PUSHING TODAY BEFORE THE POPPING LOOP. The stack top becomes today, today is
+never warmer than itself, nothing pops, and every answer is 0. Wrong on 4,958 of 6,000. Settle
+debts first, join the queue second - and if your output is all zeros, this is why.
+
+THE #2: `<=` INSTEAD OF `<`. 2,812 of 6,000 - and 84% of the cases that contain a tie. It passes
+on data with no repeated temperatures, which is how it reaches production. Fails on [1, 1].
+
+THE #3: `if` INSTEAD OF `while`. 3,506 of 6,000. One warm day can settle a whole run.
+
+THE #4: `prev - i` INSTEAD OF `i - prev`. 4,958 of 6,000, recognisable instantly by the negative
+numbers in the output.
+
+TWO HONEST NEGATIVES: the brute force and the right-to-left stack version were both wrong on 0 of
+6,000. They are correct solutions with different trade-offs, not mistakes - lead with the brute
+force, and mention the right-to-left variant only if asked.
+
+WHAT TO SAY OUT LOUD, in this order: (1) brute force is scan-forward-from-each-day, O(n squared),
+and it re-reads the same days over and over; (2) so invert it - each new day settles the older
+days it beats; (3) the days still waiting form a stack whose temperatures decrease from bottom to
+top, and that ordering is forced, not maintained by hand; (4) so the days a newcomer settles are a
+run at the top, and you can stop at the first day you cannot beat; (5) store INDICES, because the
+answer is a distance; (6) O(n) amortised time because each index is pushed once and popped once,
+O(n) space; (7) the leftovers on the stack are the zeros. Point 3 is the one that shows you
+understand the pattern rather than the code.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if you want the next COLDER day instead?" Flip the
+comparison and keep the stack INCREASING - `while stack and temps[stack[-1]] > t`. Nothing else
+changes. Then: "what about the PREVIOUS warmer day?" Walk the array right to left with the same
+decreasing stack, or keep going left to right and read `stack[-1]` BEFORE pushing today - the
+day left on top after the popping is exactly today's previous-warmer day. Being able to derive all
+four variants from one invariant is what the interviewer is checking.
+
+THE FAMILY, and it is a big one: Next Greater Element I / II (the circular one, done by walking
+the array twice), Largest Rectangle in Histogram, Trapping Rain Water, Sum of Subarray Minimums,
+Remove K Digits, Online Stock Span, Car Fleet, Sliding Window Maximum (a monotonic DEQUE, the
+same idea with removal from both ends). THE CUE THAT SHOULD MAKE YOU THINK "MONOTONIC STACK": the
+phrase "for each element, find the next (or previous) element that is greater (or smaller)".
+
+ONE-SENTENCE TAKEAWAY: keep a stack of the days still waiting, in decreasing temperature order,
+and let each new day pop and answer every waiting day it beats before joining the stack itself -
+one pass, each day pushed once and popped once.""",
 ]
 
 _EX_P1AA["Decode String (stack)"] = [
-    """The trace on the nested example.
-s = '3[a2[c]]'.
-'3' -> num = 3. '[' -> push ("", 3), reset current = "" and num = 0.
-'a' -> current = "a". '2' -> num = 2. '[' -> push ("a", 2), reset.
-'c' -> current = "c".
-']' -> pop ("a", 2) -> current = "a" + "c"*2 = "acc".
-']' -> pop ("", 3) -> current = "" + "acc"*3 = "accaccacc".
-Answer 'accaccacc'. The stack depth tracks the nesting depth, which is why it
-handles arbitrary nesting with no special cases.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """What gets pushed, which is the design decision.
-You push the string built SO FAR at this level, plus the repeat count that
-applies to what comes next. On ']' you pop them and combine:
-current = previous_string + current * count.
-Pushing only the count would lose the prefix - '2[a]3[b]' would produce 'bbb'
-instead of 'aabbb', because the 'aa' was never saved. Pushing only the string
-would lose the multiplier. Both halves are required, and saying that explicitly
-is the cleanest way to explain the algorithm.""",
+You are given a compressed string where a number in front of square brackets means "repeat what
+is inside this many times". Expand it.
 
-    """Why multi-digit numbers need `num = num * 10 + int(ch)`.
-'10[a]' has two digit characters. Reading each digit separately would treat it
-as 1 then 0, producing 'a' repeated 0 times.
-The accumulate-as-you-go idiom builds 10 correctly and resets num to 0 at each
-'[', so consecutive bracket groups do not contaminate each other. Any parsing
-problem with numbers embedded in a string needs this - it is the same pattern
-as string-to-integer conversion.""",
+    "3[a]"           ->  "aaa"                    three copies of a
+    "2[abc]"         ->  "abcabc"                 two copies of abc
+    "ab3[c]"         ->  "abccc"                  the ab is not repeated, only the c
+    "2[abc]3[cd]ef"  ->  "abcabccdcdcdef"         several groups in a row, plus loose letters
+    "3[a2[c]]"       ->  "accaccacc"              NESTED - the hard case
+    "10[a]"          ->  "aaaaaaaaaa"             counts can have MORE THAN ONE DIGIT
 
-    """Edge cases.
-No brackets at all, 'abc' -> the digit and bracket branches never fire ->
-'abc'.
-Adjacent groups '2[a]3[b]' -> 'aabbb'. The first ']' sets current = 'aa', and
-the second push saves that prefix.
-Deep nesting '2[2[2[a]]]' -> 'aaaaaaaa' (8 a's), with stack depth 3.
-Count of 1, '1[a]' -> 'a'.
-Letters before a bracket, 'ab3[c]' -> 'abccc' - the 'ab' is the saved prefix.
-The problem guarantees well-formed input; if it did not, you would need to
-handle an unmatched ']' with an empty stack.""",
+WORK THROUGH THE NESTED ONE SLOWLY, because it is the whole reason this problem is asked.
+"3[a2[c]]" says: repeat "a2[c]" three times. And "a2[c]" itself says: an "a", then "c" twice -
+so "acc". Three copies of "acc" is "accaccacc". THE INNER GROUP MUST BE FINISHED BEFORE THE
+OUTER ONE CAN BE, and there is no limit on how deep the nesting goes.
 
-    """Why a stack rather than recursion.
-Recursion works and mirrors the structure - parse until ']', return the decoded
-piece - but it costs O(depth) stack frames and the index bookkeeping is
-fiddlier.
-The explicit stack makes the state visible and is easier to debug. Both are
-O(output length) in time. The general rule: nested structures can always be
-done either way, and the explicit stack is preferable when the recursion would
-be deep or when you want to inspect the intermediate state.""",
+WHAT MAKES IT AWKWARD is that you read the string LEFT TO RIGHT, but you finish groups INSIDE
+OUT. When you are half way through "3[a2[c]]" you are holding an unfinished "a" that belongs to
+the 3-group while you start work on the 2-group. Something has to hold that "a" for you, and
+remember that its repeat count is 3, until the inner group is done.
 
-    """Complexity and the family.
-Time O(output length) - the work is dominated by building the result, which can
-be exponentially larger than the input ('10[10[10[a]]]' is a thousand
-characters from twelve). Space O(depth) for the stack plus the output.
-The family: Basic Calculator I/II/III (a stack for nested parentheses and
-operator precedence), Valid Parentheses, Simplify Path, Flatten Nested List
-Iterator, Number of Atoms (chemical formulae - the same nested-multiplier
-shape), and Tag Validator.
-Cue: brackets that nest and modify what is inside them.""",
+THAT SOMETHING IS A STACK, and the shape of the solution is: when a bracket OPENS, put the work
+so far aside; when it CLOSES, take it back out and glue the repeated piece on the end.
+
+THE INPUT IS PROMISED TO BE WELL FORMED. Brackets always match, every `[` has a number in front
+of it, and the only characters are lowercase letters, digits and brackets. You do not have to
+validate anything - which is why the code is short.
+
+THREE THINGS THAT WILL BE TESTED and that people get wrong: MULTI-DIGIT COUNTS ("10[a]", not
+just 1 to 9), TEXT BEFORE A BRACKET ("ab3[c]", where the "ab" must be preserved), and NESTING
+("3[a2[c]]", to several levels).""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF EACH BRACKET PAIR AS A ROOM YOU WALK INTO. Inside a room you build up a piece of string.
+When you leave the room, that piece gets repeated and handed to whoever was building the string
+OUTSIDE - who then continues where they left off.
+
+So at any moment you are building ONE string - the contents of the room you are in - and the
+half-built strings of all the rooms further out are WAITING. That waiting list only ever grows at
+the near end and shrinks at the near end: you always come back out of the room you most recently
+entered. Always-add-and-remove-at-the-same-end is exactly a STACK.
+
+WHAT MUST BE PUT ASIDE WHEN YOU ENTER A ROOM. Two things, and forgetting either one is a bug:
+
+    - THE STRING BUILT SO FAR OUTSIDE, so you can glue the room's output onto the end of it.
+      In "ab3[c]" the "ab" must survive while "c" is being built.
+    - THE REPEAT COUNT for this room, read just before the bracket, because by the time you
+      reach the closing bracket you will have read other digits and lost it.
+
+Here is "3[a2[c]]" in full. `current` is what you are building right now; the stack is written
+with the outermost first:
+
+    ch  | action                                        | stack               | current | num
+    ----+-----------------------------------------------+---------------------+---------+-----
+     3  | a digit: build the number                     | -                   | ""      | 3
+     [  | ENTER a room. Put ("", 3) aside, reset both   | ("",3)              | ""      | 0
+     a  | a letter: add it to what I am building        | ("",3)              | "a"     | 0
+     2  | a digit                                       | ("",3)              | "a"     | 2
+     [  | ENTER. Put ("a", 2) aside, reset both         | ("",3) ("a",2)      | ""      | 0
+     c  | a letter                                      | ("",3) ("a",2)      | "c"     | 0
+     ]  | LEAVE. Take back ("a",2): "a" + "c"*2         | ("",3)              | "acc"   | 0
+     ]  | LEAVE. Take back ("",3): "" + "acc"*3        | -                   | "accaccacc" | 0
+
+    nothing left on the stack, so "accaccacc" is the answer
+
+READ THE TWO `]` ROWS AGAIN, because they are the algorithm. Each one does the same three things:
+take back the saved prefix and count, repeat what you just built, and stick it after the prefix.
+The inner room's output ("cc") became part of the outer room's `current` ("acc"), and then THAT
+got repeated. The nesting is handled without a single special case for depth.
+
+WHY THE RESET AT `[` MATTERS. When you walk into a room you start building a NEW piece of string,
+so `current` must go back to empty - the old value is safe on the stack. Forget the reset and the
+outer text gets counted twice: "ab3[c]" comes out as "ababcabcabc" instead of "abccc".
+
+WHY DIGITS ACCUMULATE. "10[a]" gives you a '1' and then a '0' as separate characters. The
+standard trick is `num = num * 10 + digit`: after '1' you have 1, and after '0' you have
+1 * 10 + 0 = 10. Read one digit at a time and you get 0 copies of "a".""",
+
+    """3. EVERY TERM, DEFINED
+
+STACK. A container where you add and remove at one end only. Python's list is one: `append` to
+push, `pop()` to take the last item back. Both cost O(1). Here it holds PAIRS.
+
+TUPLE. An immutable little group of values written with a comma, like `(current, num)`. Pushing a
+tuple stores both halves as one item, and `prev, count = stack.pop()` takes them apart again.
+That two-names-on-the-left move is called UNPACKING.
+
+NESTED. One structure inside another of the same kind - a bracket group inside a bracket group.
+Any time a problem says "nested" or "arbitrarily deep", a stack (or recursion, which uses the
+machine's own stack) is the tool.
+
+`current`. The string being built RIGHT NOW, inside the innermost unclosed bracket. It is not the
+answer until the very end - and at the very end it IS the answer.
+
+CONTEXT. The pair of things belonging to an outer bracket group that must be remembered while you
+work on an inner one: the text already built before the bracket, and the repeat count. "Saving
+the context" is what pushing does; "restoring it" is what popping does.
+
+`ch.isdigit()`. True when the single character is '0' to '9'. `int(ch)` turns '7' into 7.
+
+`num = num * 10 + int(ch)`. Building a multi-digit number one digit at a time: each new digit
+shifts what you have one place left (times 10) and adds itself. This is how "12" becomes 12.
+
+STRING REPETITION, `s * n`. In Python, `"ab" * 3` is "ababab", and `"ab" * 0` is the empty
+string. This is why the expansion needs no loop.
+
+STRING CONCATENATION, `a + b`. Joining two strings end to end. `current += ch` appends one
+character.
+
+WELL FORMED. The promise that the input is valid - matched brackets, a number before every `[`.
+It is why there is no error handling, and it is worth confirming with the interviewer.
+
+O(total output length). The honest cost here. It is NOT O(length of the input), because the input
+is compressed: "10[10[10[a]]]" is 13 characters and expands to a thousand. The work is
+proportional to the SIZE OF THE ANSWER, which is the thing to say out loud.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random well-formed encoded strings (nested up to 3 deep,
+counts including multi-digit ones), each checked against an independent recursive expander.
+
+TRAP 1 - `num = int(ch)` INSTEAD OF `num = num * 10 + int(ch)`. This is the single most common
+bug, because every small hand-written test uses a one-digit count and it passes them all.
+
+    "10[a]"   correct "aaaaaaaaaa",   this version gives ""        (it read the count as 0)
+    "12[ab]"  correct 12 copies,      this version gives "abab"    (it read the count as 2)
+
+    MEASURED: wrong on 3,004 of 6,000 - and on the 3,004 cases that actually contain a
+    multi-digit count it is wrong on ALL 3,004. It is not a probabilistic bug; it is a guaranteed
+    failure that only shows up when you test with a count of 10 or more.
+
+TRAP 2 - FORGETTING TO RESET `current` AT `[`. You push the outer text and then keep appending to
+the same variable, so the outer text is inside the repeated piece as well as before it.
+
+    "ab3[c]"        correct "abccc",       this version gives "ababcabcabc"
+    "3[a2[c]]"      correct "accaccacc",   this version gives "aacacaacacaacac"
+
+    MEASURED: wrong on 3,297 of 6,000. THE RULE: entering a bracket group starts a FRESH piece of
+    string; the old one is not lost, it is on the stack.
+
+TRAP 3 - PUSHING ONLY THE COUNT AND NOT THE TEXT SO FAR. The count feels like the interesting
+part, so people push `num` alone and then write `current = current * count`. Everything before
+the bracket vanishes.
+
+    "ab3[c]"        correct "abccc",       this version gives "ccc"
+    "2[abc]3[cd]ef" correct "abcabccdcdcdef",  this version gives "cdcdcdef"
+
+    MEASURED: wrong on 3,297 of 6,000. Notice HOW it fails: the answer is a suffix of the right
+    answer, with earlier text missing. That fingerprint tells you which bug you have.
+
+TRAP 4 - GLUING THE PIECES TOGETHER BACKWARDS: `current = current * count + prev` instead of
+`prev + current * count`. The repeated part ends up BEFORE the text it should follow.
+
+    "ab3[c]"        correct "abccc",       this version gives "cccab"
+    "2[abc]3[cd]ef" correct "abcabccdcdcdef",  this version gives "cdcdcdabcabcef"
+
+    MEASURED: wrong on 3,254 of 6,000. It is invisible whenever a group starts at the very
+    beginning of the string ("3[a]" comes out fine), which is exactly what people test.
+
+TRAP 5 - MULTIPLYING THE WRONG THING: `(prev + current) * count`. The saved prefix gets repeated
+along with the new piece. "ab3[c]" becomes "abcabcabc". The count belongs to the bracket contents
+ONLY, and the prefix is outside the bracket. Bracket the multiplication in your head before you
+type it: prefix, THEN (contents repeated).
+
+TRAP 6 - FORGETTING TO RESET `num` AT `[`, or expecting a digit to appear after `]`. Both leave a
+stale count lying around to be applied to the wrong group. Reset both variables at `[`, together,
+in the same statement - `current, num = "", 0` - so you cannot do one and forget the other.
+
+TRAP 7 - ASSUMING YOU CAN JUST RETURN `stack[-1]` OR SOMETHING FROM THE STACK. At the end the
+stack is EMPTY - every `[` was matched by a `]`, so everything pushed was popped. The answer is
+`current`. If your stack is not empty at the end on a well-formed input, you have a bug.
+
+WHAT IS NOT A TRAP: RECURSION. Write a function that expands from a position and returns the
+piece plus where it stopped, calling itself at every `[`. Wrong on 0 of 6,000 - it is exactly how
+the ground truth for these measurements was written. It is genuinely equivalent, because
+recursion uses the call stack for the same saving and restoring you were doing by hand. Say so:
+"the stack version is the recursion with the stack made explicit".""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE FIRST IDEA IS USUALLY "FIND A BRACKET GROUP, EXPAND IT, REPEAT". Scan for the innermost `[`,
+find its matching `]`, read the number in front, replace the whole thing with the expansion, and
+start over on the new string.
+
+    def decode_string_naive(s):
+        while '[' in s:
+            i = s.rindex('[')                 # the LAST '[' is always innermost
+            j = s.index(']', i)               # its match is the next ']'
+            k = i
+            while k > 0 and s[k - 1].isdigit():
+                k -= 1                        # walk back over the digits
+            count = int(s[k:i])
+            s = s[:k] + s[i + 1:j] * count + s[j + 1:]
+        return s
+
+IT IS CORRECT, and it is a perfectly good thing to say first: the last `[` in the string must be
+the innermost one, so you can always expand from the inside out. WHAT IS WRONG WITH IT is that
+every expansion REBUILDS THE ENTIRE STRING, and it does that once per bracket group - so a string
+with b groups costs O(b * final length) and repeatedly copies text that never changes.
+
+THE UPGRADE - ONE LEFT-TO-RIGHT PASS. Read the characters once, in order, and build the answer as
+you go. The obstacle is that you read left to right but must FINISH groups inside out, so at any
+moment you are holding unfinished work for every group you are inside.
+
+WHAT EXACTLY IS UNFINISHED? For each group you have entered but not left: the text that came
+BEFORE its bracket, and its REPEAT COUNT. Nothing else. And here is the key observation:
+
+    YOU ALWAYS FINISH THE MOST RECENTLY STARTED GROUP FIRST.
+
+Brackets nest, they never interleave, so the group you leave next is always the one you entered
+last. Last in, first out - that IS a stack, and this is why a stack is not a clever choice here
+but the only natural one.
+
+SO THE ALGORITHM WRITES ITSELF from the four kinds of character:
+
+    a digit    extends the pending count           num = num * 10 + digit
+    a letter   extends the current piece           current += ch
+    `[`        SAVE (current, num), then RESET both to empty and 0
+    `]`        RESTORE (prev, count), then current = prev + current * count
+
+Only the last two lines carry any real idea, and they are exact mirrors: one saves and clears,
+one restores and combines.
+
+WHY BOTH HALVES OF THE CONTEXT MUST BE SAVED. The count is obvious. The prefix is the one people
+drop, and it is what makes "ab3[c]" work: when `]` arrives you must reattach "ccc" to the "ab"
+that was there before the bracket. Pushing the count alone is wrong on 3,297 of 6,000.
+
+WHY THE RESET IS PART OF THE SAVE. The moment you enter a group you are building something new;
+the old text is already safely stored. Skipping the reset is wrong on 3,297 of 6,000, and it
+duplicates the outer text inside the repeated piece.
+
+WHY THIS IS OPTIMAL. Every character of the OUTPUT is written once, and each character is copied
+a number of times bounded by the nesting it sits inside. You cannot beat O(length of the output),
+because you have to produce the output.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Keep three things: an empty STACK, a CURRENT string that starts empty, and a NUMBER that
+       starts at 0. The stack will hold pairs - a saved string and a saved count.
+
+    2. Walk the characters of the input once, from left to right. Each character is one of four
+       kinds, and each kind has one rule.
+
+    3. A DIGIT extends the number: multiply the number by ten and add this digit. Ten, because
+       counts can have more than one digit and "1" followed by "0" means ten.
+
+    4. AN OPENING BRACKET means you are entering a group. Put the pair (current string, current
+       number) on the stack, then set the current string back to empty and the number back to 0.
+       You have just started a fresh piece of work, and the old piece is safe.
+
+    5. A CLOSING BRACKET means the group is finished. Take the saved pair back off the stack.
+       The new current string is: THE SAVED STRING, followed by THE PIECE YOU JUST BUILT REPEATED
+       THE SAVED NUMBER OF TIMES. In that order.
+
+    6. ANY LETTER simply gets added to the end of the current string.
+
+    7. When the walk ends, the current string is the answer. The stack is empty - every group you
+       entered you also left.
+
+THE TWO BRACKET STEPS ARE MIRROR IMAGES: step 4 saves and clears, step 5 restores and combines.
+If you can say those two sentences you can write this from scratch.
+
+THE STEP PEOPLE GET WRONG IS 3. Overwriting the number with each digit instead of accumulating it
+handles counts 1 to 9 and silently breaks on 10 - and it breaks on EVERY input containing a
+two-digit count, measured 3,004 of 3,004 of them.
+
+THE OTHER STEP PEOPLE GET WRONG IS 4 - saving without clearing. Then the text from outside the
+bracket sits inside the repeated piece too: "ab3[c]" comes out "ababcabcabc" instead of "abccc".
+
+AND IN STEP 5, TWO THINGS ARE ORDER-SENSITIVE. The saved string comes FIRST and the repeated
+piece SECOND (getting that backwards is wrong on 3,254 of 6,000), and the repetition applies to
+the piece you just built ONLY, never to the saved string (repeating both turns "ab3[c]" into
+"abcabcabc").
+
+WHY YOU DO NOT NEED TO KNOW HOW DEEP THE NESTING GOES. Each group's work is handled by the same
+two rules regardless of depth; the stack simply gets taller. There is no case analysis for
+"two levels deep" because there is no such case.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine you are copying out a recipe by hand, and the recipe is written by someone who hates
+repeating themselves. Instead of writing "stir, stir, stir" they write "3 times: [stir]". And
+being thorough, they nest these: "3 times: [add salt, 2 times: [stir]]".
+
+You are writing the expanded version onto a long roll of paper, and you have a desk with a spike
+on it for holding notes.
+
+You read along the recipe. Most of the time you are simply copying words onto your roll - that is
+the ordinary case, and nothing clever happens.
+
+Then you hit "3 times: [". You are about to start a section that will need repeating, and here is
+the thing: you must not write it straight onto your roll, because you do not yet know how it ends.
+So you do two things at once. You TEAR OFF the piece of paper you were writing on and spike it,
+with "3" scribbled in the corner. Then you take a completely fresh sheet and carry on copying.
+The fresh sheet is important - if you kept writing on the old one, the words you had already
+written would get caught up in the repetition.
+
+You carry on. If you hit another "2 times: [" you do exactly the same thing again: spike the
+current sheet with "2" in the corner, take another fresh one. The spike grows. Notice that you
+never need to reach into the middle of the spike - the note you want next is always the one on
+top, because you always finish the section you started most recently. Sections sit inside each
+other; they never overlap.
+
+When you reach the matching "]", the section is done. You take the top sheet off the spike, read
+its number, and copy your just-finished sheet onto the end of that one - that many times over.
+Now you are back to working on the outer sheet, with the repeated part attached, exactly as if
+you had never been interrupted. And if the outer sheet gets repeated later, the inner section
+goes along with it, repeated again, for free - which is how the nesting sorts itself out.
+
+Two details are worth pinning down. THE ORDER when you take the sheet off the spike: the old
+words come first, then the repeated section after them. Recipes say "add salt, then stir three
+times", not "stir three times, then add salt". And WHAT GETS REPEATED is only the sheet you just
+finished, not the old sheet as well - the "3 times" applied to the bracketed part, not to
+everything written before it.
+
+One more thing about the numbers. If the recipe says "12 times", you read a "1" and then a "2",
+and you must understand that as twelve, not as one and then two. Read each digit as a separate
+instruction and you will stir once instead of twelve times - or, in the case of "10", not at all.
+
+At the end of the recipe the spike is empty: every section you opened, you closed. The sheet in
+front of you is the whole expanded recipe.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Decode strings like '3[a2[c]]' -> 'accaccacc' using a stack.
+    def decode_string(s):
+        stack = []                            # holds (previous string, repeat count)
+
+  The saved contexts, one per bracket group you are currently inside. Each item is a PAIR: the
+  text built before that group's `[`, and that group's repeat count. Pushing only the count is a
+  measured 3,297-of-6,000 failure, because the text before the bracket is then lost.
+
+        current = ""
+
+  The piece being built right now - the contents of the innermost unclosed bracket. At the end,
+  when there are no unclosed brackets, this IS the answer.
+
+        num = 0
+
+  The count being read. It is 0 between groups, and it is built up digit by digit.
+
+        for ch in s:
+
+  ONE PASS, LEFT TO RIGHT. No index arithmetic, no lookahead, no scanning for matching brackets -
+  the stack removes the need for all of it.
+
+            if ch.isdigit():
+                num = num * 10 + int(ch)      # build a multi-digit number
+
+  Extend the pending count. The `* 10` is not decoration: '1' then '0' has to become 10, not 0.
+  Writing `num = int(ch)` here is the most common bug in this problem - wrong on 3,004 of 6,000,
+  and wrong on 100% of the inputs that contain a two-digit count.
+
+            elif ch == '[':
+                stack.append((current, num))  # save the outer context
+                current, num = "", 0
+
+  ENTER A GROUP: save, then clear. Both halves are saved together and both are cleared together,
+  in one statement, so you cannot do one and forget the other. Omitting the clear of `current`
+  makes the outer text part of the repeated piece - wrong on 3,297 of 6,000, turning "ab3[c]"
+  into "ababcabcabc".
+
+            elif ch == ']':
+                prev, count = stack.pop()
+                current = prev + current * count   # expand the bracketed part
+
+  LEAVE A GROUP: restore, then combine - the exact mirror of the two lines above. `prev, count =`
+  unpacks the saved pair.
+
+  THE ORDER OF THIS EXPRESSION IS THE WHOLE PROBLEM IN ONE LINE. `prev` comes first because it
+  came first in the input; `current * count` follows it. Writing `current * count + prev` puts the
+  repeated piece before the text it should follow - wrong on 3,254 of 6,000, and invisible on any
+  test where the group starts at position 0. And the multiplication binds to `current` ALONE -
+  `(prev + current) * count` would repeat the prefix too, turning "ab3[c]" into "abcabcabc".
+
+  NESTING NEEDS NO EXTRA CODE: whatever this line produces becomes the `current` of the enclosing
+  group, so it will be repeated again when that group closes.
+
+            else:
+                current += ch
+
+  An ordinary letter - just extend the current piece.
+
+        return current
+
+  Every `[` was matched, so everything pushed has been popped and THE STACK IS EMPTY. The answer
+  is not on the stack, it is `current`. If the stack is non-empty here on well-formed input, one
+  of the bracket branches is wrong.
+
+TWELVE LINES, ONE PASS, and only the two bracket branches contain any idea at all: one saves and
+clears, the other restores and combines.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE NESTED EXAMPLE. s = "3[a2[c]]", expected "accaccacc".
+
+     ch | branch          | stack (outermost first) | current      | num
+    ----+-----------------+-------------------------+--------------+-----
+        | start           | -                       | ""           | 0
+     3  | digit           | -                       | ""           | 3
+     [  | save and reset  | ("",3)                  | ""           | 0
+     a  | letter          | ("",3)                  | "a"          | 0
+     2  | digit           | ("",3)                  | "a"          | 2
+     [  | save and reset  | ("",3) ("a",2)          | ""           | 0
+     c  | letter          | ("",3) ("a",2)          | "c"          | 0
+     ]  | pop ("a",2)     | ("",3)                  | "acc"        | 0
+     ]  | pop ("",3)      | -                       | "accaccacc"  | 0
+
+    return "accaccacc"
+
+THE TWO POP ROWS ARE THE ALGORITHM, so read them as arithmetic:
+    first  `]`:  prev="a", count=2  ->  "a" + "c" * 2   = "acc"
+    second `]`:  prev="",  count=3  ->  ""  + "acc" * 3 = "accaccacc"
+The inner result became the outer `current`, and then got repeated. No depth-specific code.
+
+CASE TWO - TEXT BEFORE A BRACKET. s = "ab3[c]", expected "abccc".
+
+    'a','b'   letters       current = "ab"
+    '3'       digit         num = 3
+    '['       save+reset    stack = [("ab", 3)],  current = "",  num = 0
+    'c'       letter        current = "c"
+    ']'       pop           current = "ab" + "c"*3 = "abccc"
+
+    THIS IS THE CASE THAT SEPARATES THE CORRECT CODE FROM THREE OF THE FOUR COMMON BUGS:
+        pushes only the count      "ccc"          the "ab" was never saved
+        forgets the reset          "ababcabcabc"  the "ab" was repeated as well
+        glues on backwards         "cccab"        right pieces, wrong order
+        repeats the prefix too     "abcabcabc"    the multiplication grabbed "ab"
+    Test with "ab3[c]", not with "3[a]" - "3[a]" gives "aaa" in every one of those versions.
+
+CASE THREE - A MULTI-DIGIT COUNT. s = "12[ab]", expected 12 copies of "ab" (24 characters).
+
+    '1'  ->  num = 0 * 10 + 1 = 1
+    '2'  ->  num = 1 * 10 + 2 = 12
+    '['  ->  save ("", 12), reset
+    'a','b'  ->  current = "ab"
+    ']'  ->  current = "" + "ab" * 12 = "abababababababababababab"
+
+    The single-digit version reads num = 2 and returns "abab". On "10[a]" it reads num = 0 and
+    returns the EMPTY STRING - an answer of "" on a valid input is the fingerprint of this bug.
+
+CASE FOUR - SEVERAL GROUPS IN A ROW. s = "2[abc]3[cd]ef", expected "abcabccdcdcdef".
+
+    "2[abc]"  ->  current = "abcabc",  stack empty again
+    "3[cd]"   ->  save ("abcabc", 3), build "cd", pop  ->  "abcabc" + "cdcdcd"
+    "ef"      ->  current = "abcabccdcdcdef"
+
+    NOTE THE STACK RETURNING TO EMPTY between groups, and note that the second group's prefix is
+    the entire first group's output. That is why the prefix must be the RUNNING string, not just
+    the letters since the last bracket.
+
+CASE FIVE - NO BRACKETS AT ALL. s = "abc" - every character takes the `else` branch, nothing is
+ever pushed, and "abc" is returned. No special case needed.
+
+CASE SIX - COUNT ZERO. s = "0[abc]def" gives "" + "abc" * 0 + "def" = "def". Python's `s * 0` is
+the empty string, so the group correctly disappears with no special handling.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the input, and every character of the OUTPUT is produced by
+one string repetition. So the time is O(LENGTH OF THE OUTPUT), not O(length of the input) - and
+saying that precisely is worth real credit, because the input is compressed: "10[10[10[a]]]" is
+13 characters and expands to 1,000. Space is O(output) for the answer plus O(depth * text) for
+the saved contexts on the stack.
+
+    repeatedly expand the innermost group    O(groups * output) time, lots of recopying
+    one pass with an explicit stack          O(output) time, O(depth) contexts stored
+    recursion                                same costs; the machine's call stack replaces yours
+
+THE #1 MISTAKE: `num = int(ch)` INSTEAD OF `num = num * 10 + int(ch)`. Wrong on 3,004 of 6,000 -
+and on every single input containing a two-digit count. It passes every test you write by hand
+with counts of 1 to 9, which is exactly why it is number one. Volunteer "counts can be
+multi-digit, so I accumulate" before you are asked.
+
+THE #2: FORGETTING TO RESET `current` WHEN A BRACKET OPENS. 3,297 of 6,000. The outer text ends
+up inside the repeated piece.
+
+THE #3: PUSHING ONLY THE COUNT AND NOT THE TEXT SO FAR. Also 3,297 of 6,000, and recognisable
+because the output is missing its earlier text.
+
+THE #4: `current * count + prev` INSTEAD OF `prev + current * count`. 3,254 of 6,000, invisible
+whenever the string starts with a bracket group.
+
+ONE HONEST NEGATIVE: the recursive solution is wrong on 0 of 6,000 - it is what these numbers
+were measured against. It is not a worse answer, it is the same answer with the stack implicit.
+
+WHAT TO SAY OUT LOUD, in this order: (1) I read left to right but must finish bracket groups
+inside out, so I need to remember unfinished work; (2) groups nest and never interleave, so the
+one I finish next is always the one I started last - that is a stack; (3) each saved context is a
+PAIR, the text before the bracket and the repeat count, and both are needed; (4) `[` saves and
+resets, `]` restores and combines as prefix-then-repeated-piece; (5) counts are multi-digit, so I
+accumulate with times ten; (6) cost is O(output length), because the input is compressed. Point 2
+is the one that shows you derived the stack instead of recognising the problem.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "do it recursively". Write `parse(i)` returning the expanded
+piece and the position after it; recurse at each `[`, return at each `]`. Then the natural
+sting: "which is better?" The honest answer is that they are the same algorithm, and the explicit
+stack cannot blow the call stack on input nested thousands deep - a real consideration, since
+Python's default recursion limit is about 1,000.
+
+AND THE OTHER ONE: "what if the input might be malformed?" Now you need the checks the problem
+promised away: a `]` when the stack is empty, a `[` with no digits in front of it, a non-empty
+stack at the end. Say which check catches which case.
+
+THE FAMILY: Basic Calculator (the same push-the-context-at-a-bracket idea, with a sign instead of
+a repeat count), Valid Parentheses, Remove Outermost Parentheses, Number of Atoms (chemical
+formulas - literally this problem with element counts), Flatten Nested List Iterator, Ternary
+Expression Parser. THE CUE: NESTED STRUCTURE PLUS A LEFT-TO-RIGHT SCAN MEANS SAVE THE CONTEXT ON
+A STACK AT THE OPENING SYMBOL AND RESTORE IT AT THE CLOSING ONE.
+
+ONE-SENTENCE TAKEAWAY: walk the string once, and at `[` push the text-so-far together with the
+count and start fresh, at `]` pop them and set current to prefix plus the new piece repeated -
+digits accumulating with times-ten so multi-digit counts survive.""",
 ]
 
 for _e in ENTRIES:
@@ -120891,113 +121775,1049 @@ for _e in ENTRIES:
 _EX_P1AB = {}
 
 _EX_P1AB["Design a Min Stack"] = [
-    """The auxiliary-stack trick, traced.
-push(5): stack [5], mins [5]. push(2): 2 < 5 so mins gets 2 -> mins [5,2].
-push(7): 7 > 2 so mins REPEATS the current minimum -> mins [5,2,2].
-get_min() -> 2. pop() removes 7 from both -> mins [5,2], min still 2.
-pop() removes 2 -> mins [5], min back to 5. Correct.
-The key is that mins[i] holds the minimum of stack[0..i], so popping both in
-lockstep automatically restores the previous minimum with no recomputation.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why you cannot just track a single minimum variable.
-A single `self.min` works for push but breaks on pop: if you pop the current
-minimum, you have no idea what the previous one was, and finding it means
-scanning the whole stack - O(n), which defeats the requirement.
-The auxiliary stack IS that history. That is the insight the problem is
-testing: when an O(1) query must survive removals, you usually need to store
-the answer for every prefix rather than just the current one.""",
+Build a stack - the pile-of-plates container where you add and remove only at the top - that
+supports four operations, AND EVERY ONE OF THEM MUST BE O(1), meaning a fixed cost that does not
+grow with how much is in the stack:
 
-    """The two variants, and their trade.
-REPEAT the minimum on every push (as above): mins is always the same length as
-stack, so pop is a blind pop from both. Simple, O(n) extra space always.
-PUSH ONLY when the new value is <= the current minimum, and pop from mins only
-when the popped value equals mins[-1]. Saves space when few new minima appear,
-but the `<=` is critical - with `<`, duplicate minima break it: push(2),
-push(2), pop() would remove 2 from mins and report the wrong minimum while a 2
-is still on the stack. That off-by-one on the comparison is the classic bug.""",
+    push(x)    put x on top
+    pop()      remove the top item
+    top()      look at the top item without removing it
+    get_min()  return the SMALLEST item currently in the stack
 
-    """The O(1)-space variant, for the follow-up.
-Store `2*x - min` when a new minimum arrives, keeping a single min variable.
-On pop, if the stored value is less than the current min, the real popped value
-was the min and the previous min is recoverable as `2*min - stored`.
-It is clever, it needs care with overflow, and it is genuinely harder to read -
-so present it as the answer to 'can you do it without the second stack?' rather
-than as your first solution. Interviewers usually want the clean version
-first.""",
+The first three are what any stack does. THE WHOLE PROBLEM IS THE FOURTH ONE, and specifically the
+words "currently in the stack" - the answer has to change back correctly when items are popped.
 
-    """Edge cases.
-get_min or pop on an empty stack -> decide the contract: raise, or return None.
-The problem usually guarantees calls are valid, but saying which you chose is
-worth a sentence.
-Duplicate minima [2,2] -> handled correctly by the repeat variant, and by the
-optimised variant only with `<=`.
-All equal values -> mins mirrors stack.
-Negative numbers and a single element both work unchanged.""",
+Here is the sequence that defines the problem. Follow the min column carefully:
 
-    """Complexity and the family.
-push, pop, top and get_min all O(1). Space O(n) for the auxiliary stack.
-The family is 'augment a structure so an aggregate query stays O(1)': Max
-Stack, Min Queue (harder - needs two stacks or a monotonic deque), Sliding
-Window Maximum (monotonic deque), and LRU Cache (hash map plus doubly linked
-list).
-The unifying idea: if a query must be O(1) under mutation, precompute and store
-it alongside the data rather than deriving it on demand.""",
+    operation      stack (bottom to top)   get_min would say
+    -----------    ---------------------   -----------------
+    push(-2)       -2                      -2
+    push(0)        -2 0                    -2
+    push(-3)       -2 0 -3                 -3
+    get_min()      -2 0 -3                 -3      <-  the answer is -3
+    pop()          -2 0                    -2      <-  IT WENT BACK UP TO -2
+    top()          -2 0                    (top is 0)
+    get_min()      -2 0                    -2      <-  and it must say -2, not -3
+
+THAT ONE LINE - THE MINIMUM GOING BACK UP AFTER A POP - IS THE ENTIRE DIFFICULTY. Keeping a single
+"smallest so far" variable is the obvious idea and it works perfectly until you pop the smallest
+item, at which point the variable is stale and there is nothing in it to recover the old answer
+from. MEASURED: a single-variable version is wrong on 1,732 of 6,000 random operation sequences.
+
+THE OBVIOUS SOLUTION ALSO WORKS, SLOWLY. `get_min` can simply scan the whole stack with `min()`.
+That is CORRECT - wrong on 0 of 6,000 - and it costs O(n) per call. Say it first, then say why it
+is not the answer: the problem asks for O(1).
+
+WHAT THE QUESTION IS REALLY TESTING is whether you will think of storing HISTORY rather than a
+single value - a second stack that records, for every level of the pile, what the minimum was at
+that level. Then popping does not have to recompute anything; the old answer is simply still
+there underneath.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START FROM WHY ONE VARIABLE FAILS. A minimum is easy to maintain when things only ever ARRIVE:
+each new value either beats the record or it does not. Popping is the problem, because popping
+asks you to UNDO an update, and `min` is not reversible - once you have folded -3 into a variable
+holding -2, the -2 is gone.
+
+THE FIX IS TO STOP THROWING THE OLD ANSWER AWAY. Do not overwrite the minimum: WRITE THE NEW ONE
+DOWN NEXT TO THE OLD ONE. Then popping is not an undo at all, it is just crossing out the most
+recent line - and the previous answer is sitting right there, already correct.
+
+SO KEEP TWO STACKS OF EQUAL HEIGHT. The values, and beside them the running minimum AT EACH LEVEL:
+
+        values          mins            mins[i] means "the smallest among values[0..i]"
+        ------          ----
+    2 | -3        | -3          <- top.  get_min() is just mins[-1]
+    1 |  0        | -2
+    0 | -2        | -2          <- bottom
+
+Read the right-hand column: at level 0 the only value is -2, so the min is -2. At level 1 the
+values are -2 and 0, so the min is still -2. At level 2 they are -2, 0 and -3, so the min is -3.
+EVERY ROW ANSWERS THE QUESTION "what would get_min say if the stack ended here".
+
+NOW WATCH THE POP THAT BREAKS THE ONE-VARIABLE VERSION. Pop takes one row off BOTH columns:
+
+        values          mins
+        ------          ----
+    1 |  0        |  -2         <- top.  get_min() is mins[-1] = -2. Correct, instantly.
+    0 | -2        |  -2
+
+Nothing was recomputed. The right answer was already written down one row lower, because it was
+written down when that row was pushed, and it was never overwritten. THAT IS THE WHOLE IDEA.
+
+THE ONE LINE OF ARITHMETIC. When pushing x, what goes on the mins stack is NOT x - it is the
+smaller of x and whatever is currently on top of the mins stack:
+
+    new minimum = min(x, previous minimum)          and if the stack was empty, just x
+
+    push(-2):  mins empty              -> push -2
+    push(0):   min(0, -2)  = -2        -> push -2      (0 does not beat the record, so repeat it)
+    push(-3):  min(-3, -2) = -3        -> push -3
+
+Pushing x itself instead of `min(x, top)` is the natural slip, and it turns `get_min` into `top`:
+MEASURED wrong on 4,660 of 6,000.
+
+WHY THE TWO STACKS MUST MOVE IN LOCKSTEP. They are the same height by construction: one row on
+each per push, one row off each per pop. That is what makes `mins[-1]` line up with the current
+top and what makes popping correct with no bookkeeping. Popping only the value stack leaves a
+stale minimum behind - MEASURED wrong on 1,732 of 6,000, exactly as bad as the single variable,
+because it IS the single variable with extra steps.
+
+WHAT IT COSTS, AND WHY THAT IS FINE. One extra number per item, so O(n) extra memory. In exchange,
+all four operations are a couple of list operations - genuinely O(1), not amortised. Section 10
+covers the space-saving variant and the trap hiding in it.""",
+
+    """3. EVERY TERM, DEFINED
+
+STACK. A container where items are added and removed at ONE END ONLY - last in, first out, like a
+pile of plates. In Python a list is a stack: `append` pushes, `pop()` removes the last item,
+`stack[-1]` reads the top without removing it. All three are O(1).
+
+LIFO. Last In, First Out - the formal name for that behaviour. The opposite is a QUEUE (first in,
+first out).
+
+O(1) / CONSTANT TIME. The cost does not depend on how many items are stored. Reading `mins[-1]` is
+O(1); calling `min(stack)` is not, because it looks at everything.
+
+AMORTISED vs TRUE O(1). Amortised means "O(1) on average over many operations, though one can be
+expensive". This solution is TRUE O(1) - every single operation is a fixed handful of steps. Worth
+saying, because it is stronger than what the question asks for.
+
+RUNNING MINIMUM / PREFIX MINIMUM. The smallest value among everything up to a given point.
+`mins[i]` is the running minimum of `values[0..i]`. Because a stack only ever ends at its top, a
+prefix minimum is exactly what `get_min` needs.
+
+PARALLEL / AUXILIARY STACK. A second stack kept in step with the first, one entry per entry, so
+that index i in one corresponds to index i in the other. The whole solution is one line: keep the
+answer for every prefix in a parallel stack.
+
+INVARIANT. Something true every time you look. Here there are two, and stating them is the
+answer to "how do you know this is right": THE TWO STACKS ALWAYS HAVE THE SAME HEIGHT, and
+`mins[i]` IS ALWAYS THE MINIMUM OF `stack[0..i]`.
+
+`min(a, b)`. The smaller of two values - O(1). Distinct from `min(a_list)`, which scans - O(n).
+The solution uses the first kind, once per push. Confusing them is what makes a "clever" solution
+secretly slow.
+
+SPACE-TIME TRADE-OFF. Spending memory to save time. Here: one extra number per item buys O(1)
+`get_min` instead of O(n). Naming the trade-off explicitly is what an interviewer wants to hear.
+
+DESIGN QUESTION. A problem asking you to build a small class rather than write one function. The
+extra marks are for stating the invariant, handling the empty case, and saying which operations
+cost what - not for cleverness.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random operation sequences of 3 to 20 mixed
+push/pop/get_min calls with values from -5 to 5, checked against `min()` over a shadow list.
+
+TRAP 1 - ONE VARIABLE FOR THE MINIMUM. `self.m = min(self.m, x)` on push and nothing on pop. It
+is correct until the minimum is popped, and then it stays stale forever.
+
+    push(5), push(3), pop(), get_min()
+        correct: 5      this version: 3     the 3 is not in the stack any more
+
+    push(-2), push(0), push(-3), get_min(), pop(), get_min()
+        correct: -3 then -2      this version: -3 then -3
+
+    MEASURED: wrong on 1,732 of 6,000. THE LESSON: a minimum is easy to maintain under insertion
+    and impossible to maintain under deletion, unless you kept the history.
+
+TRAP 2 - POPPING THE VALUE STACK BUT NOT THE MIN STACK. The two-stack idea, with the pop half
+forgotten. This is Trap 1 wearing a disguise, and it measures identically: WRONG ON 1,732 OF
+6,000. The heights drift apart, `mins[-1]` refers to a level that no longer exists, and eventually
+`mins` is taller than `stack`. THE RULE: THE TWO STACKS MOVE TOGETHER, ALWAYS. Write the pop as
+two lines next to each other so the pairing is visible on the page.
+
+TRAP 3 - PUSHING x ONTO THE MIN STACK INSTEAD OF `min(x, mins[-1])`. Then `mins[-1]` is just the
+top value, so `get_min` and `top` return the same thing.
+
+    push(5), push(3) -> get_min() correctly 3, which LOOKS FINE.
+    push(-2), push(0), push(-3), get_min(), pop(), get_min()
+        correct: -3 then -2      this version: -3 then 0
+
+    MEASURED: wrong on 4,660 of 6,000 - the most frequently wrong of all these variants, because
+    it fails as soon as a pushed value is larger than the current minimum. What goes on the min
+    stack is the RUNNING minimum, not the value.
+
+TRAP 4 - THE SPACE-SAVING VARIANT WITH A STRICT `<`. There is a legitimate optimisation: only push
+onto `mins` when the new value is a new minimum, and on pop only remove from `mins` if the value
+leaving EQUALS the current minimum. It saves a lot of memory - MEASURED: after 1,000 random
+pushes the parallel version holds 1,000 entries and this one holds 8. But it must use `<=`, not
+`<`, and getting that wrong is the single subtlest bug in this problem:
+
+    push(2), push(2), pop(), get_min()
+        With `<`, the second 2 is not recorded because it does not BEAT the minimum. Then the pop
+        sees a value equal to the minimum and removes it from `mins`. Now the stack still contains
+        a 2 but `mins` is EMPTY, so `get_min()` CRASHES with IndexError.
+        With `<=`, both 2s are recorded, the pop removes one, and `get_min()` correctly says 2.
+
+    MEASURED: the strict version is wrong on 579 of 6,000 overall (579 of the 4,671 sequences
+    that push the same value twice), while the `<=` version is wrong on 0 of 6,000. A bug that
+    only fires on DUPLICATE MINIMUMS is a bug that passes casual testing and dies in production.
+
+TRAP 5 - `get_min` ON AN EMPTY STACK. `mins[-1]` raises IndexError. LeetCode promises the
+operations are always valid, so this is not required - but say out loud that you would either
+document the precondition or return `None`. Silence here reads as not having thought about it.
+
+TRAP 6 - THINKING `min(self.stack)` IS GOOD ENOUGH. It is CORRECT - wrong on 0 of 6,000 - and it
+is O(n) per call. This is not a bug, it is the naive baseline, and the whole point of the question
+is to beat it. Mention it, price it, replace it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - SCAN WHEN ASKED:
+
+    class MinStack:
+        def __init__(self):
+            self.stack = []
+        def push(self, x):
+            self.stack.append(x)
+        def pop(self):
+            return self.stack.pop()
+        def top(self):
+            return self.stack[-1]
+        def get_min(self):
+            return min(self.stack)            # O(n) - looks at everything
+
+IT IS CORRECT - wrong on 0 of 6,000 - and it is the right thing to say first. `push`, `pop` and
+`top` are O(1); only `get_min` is O(n). If `get_min` is rare, this is genuinely a reasonable
+engineering answer, and saying so is a point in your favour.
+
+THE FIRST ATTEMPT TO FIX IT IS THE INTERESTING WRONG TURN. Keep `self.m` and update it on push:
+`self.m = min(self.m, x)`. Push is O(1), get_min is O(1)... and pop is impossible. When the item
+leaving IS the minimum, the correct new answer is the minimum of everything else, and you have not
+kept anything that could tell you what that is. MEASURED wrong on 1,732 of 6,000. THE FAILURE IS
+NOT AN OVERSIGHT, IT IS STRUCTURAL: `min` throws information away, so it cannot be undone.
+
+THE INSIGHT - MAKE THE OLD ANSWERS SURVIVE. A stack is not an arbitrary bag; it is a pile that can
+only ever shrink FROM THE TOP. So the only possible future states of the stack are its own
+prefixes: values[0..0], values[0..1], values[0..2], and so on. THERE ARE ONLY n POSSIBLE ANSWERS
+TO get_min, EVER, and you already know which one belongs to each level.
+
+So compute each one at the moment its level is created, and store them in a parallel stack. Now
+`get_min` is a lookup and `pop` is not an undo - it just uncovers the answer that was already
+written.
+
+    new minimum for this level = min(x, minimum of the level below)
+
+That single line is the whole algorithm, and it is O(1) because it compares TWO numbers - `min`
+of two arguments, never `min` of a list.
+
+WHY IT IS CORRECT, ARGUED PROPERLY. Two invariants, held by construction:
+    (1) the two stacks always have the same height - each push adds one to each, each pop removes
+        one from each;
+    (2) `mins[i]` equals the minimum of `stack[0..i]` - true at i = 0 because that level holds one
+        value, and true at level i because it is defined as `min(stack[i], mins[i-1])`.
+Given (1) and (2), `mins[-1]` is the minimum of the whole current stack, which is what `get_min`
+must return. That is an induction argument, and it is exactly what to say aloud.
+
+THE PRICE, STATED HONESTLY. O(n) extra memory - one number per item. The trade is memory for time,
+and it is the answer the question is asking for. Section 10 covers the refinement that keeps only
+the DISTINCT running minimums (measured: 8 entries instead of 1,000 after 1,000 random pushes) and
+the `<=` trap that comes with it.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Keep TWO empty lists. One holds the values (this is the real stack). The other holds, for
+       each level of the stack, the smallest value at or below that level. They will always have
+       the same height.
+
+    2. TO PUSH a value:
+         - add it to the values list;
+         - work out the new running minimum: if the minimums list is empty, it is the value
+           itself; otherwise it is the SMALLER of the value and the current top of the minimums
+           list;
+         - add that to the minimums list.
+
+    3. TO POP: remove the top of BOTH lists. Return the value that came off the values list.
+
+    4. TO GET THE TOP: read the last item of the values list, without removing it.
+
+    5. TO GET THE MINIMUM: read the last item of the minimums list, without removing it. That is
+       the entire operation - no scanning, no comparing.
+
+WHY STEP 2 STORES `min(value, current top)` AND NOT THE VALUE ITSELF. The minimums list answers
+"what is the smallest at this level", and a level's smallest is either the newcomer or whatever
+was already smallest below it. Storing the raw value turns get-minimum into get-top - measured
+wrong on 4,660 of 6,000.
+
+WHY STEP 3 MUST TOUCH BOTH LISTS. That is what keeps the heights equal, and equal heights are what
+make step 5 a simple lookup. Popping only the values list is measured wrong on 1,732 of 6,000 -
+identical to keeping a single stale variable, because that is effectively what it becomes.
+
+WHY YOU CANNOT DO THIS WITH ONE VARIABLE, said in one sentence you should be able to produce: a
+minimum survives insertions easily but cannot survive a deletion, because taking the smaller of
+two numbers destroys the other one - so the previous answer has to have been written down.
+
+WHAT MAKES ALL FIVE STEPS O(1): every step is a fixed number of list operations plus at most one
+comparison of TWO numbers. Nothing here ever looks at more than the tops of the two lists.
+
+THE ONE THING TO SAY BEFORE YOU START WRITING: "the two stacks always have the same height, and
+entry i of the minimums stack is the smallest of the first i+1 values". State that invariant and
+every operation follows from it.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a stack of invoices in a tray, dropped in one at a time, and you are only ever allowed to
+take the top one off. Someone wanders past every few minutes and asks: "what is the smallest
+amount in the tray right now?" They want the answer immediately - no rummaging.
+
+The tempting approach is to remember the smallest amount on a sticky note on your monitor. Every
+time an invoice goes in you glance at it, and if the new one is smaller you cross out the note
+and write the new number. That works beautifully as long as invoices only ever arrive.
+
+Then someone takes the top invoice off the tray - and it happens to be the cheapest one. Your
+note is now a lie. What is the new smallest? You have no idea. The number that used to be on the
+note was crossed out, and there is nothing in your hand or on your monitor to recover it from.
+You would have to tip out the entire tray and look through every invoice. That is precisely the
+"scan everything" answer you were trying to avoid.
+
+Here is the trick, and it is almost silly once you see it. STOP CROSSING THINGS OUT. Instead of
+one sticky note, put a note ON EACH INVOICE as it goes in, and on that note write not the
+invoice's own amount but THE SMALLEST AMOUNT IN THE TRAY AT THE MOMENT THIS INVOICE LANDED -
+which is simply the smaller of two things: this invoice, and whatever was written on the note of
+the invoice directly beneath it.
+
+Now the question is answered by reading the note on the top invoice. Not the top invoice's amount
+- its NOTE.
+
+And here is the payoff. When the top invoice is taken away, its note goes with it, and the note
+now facing you is the one on the invoice below - which already says what the smallest amount was
+back when the tray looked like this. Which is exactly what the tray looks like NOW. Nothing was
+recalculated. The old answer was never destroyed, because you never crossed anything out; you
+just stacked answers on top of each other and the removal uncovered the previous one.
+
+Two details are the whole craft of it. THE NOTE IS NOT THE INVOICE'S OWN AMOUNT - if you wrote
+the invoice's own amount, the note would tell you the top invoice's value, which you can see
+anyway, and the question would go unanswered. And THE NOTE LEAVES WHEN THE INVOICE LEAVES: they
+are one object. If you take the invoice but leave its note in the tray, you are back to a lie on
+your monitor, only now with more paperwork.
+
+The cost of all this is one small note per invoice - a bit of paper for every item, in exchange
+for answering the question instantly, forever, no matter how deep the tray gets.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # A stack supporting push, pop, top, and get_min all in O(1).
+    class MinStack:
+        def __init__(self):
+            self.stack = []
+            self.mins = []               # mins[i] = min of stack[0..i]
+
+  TWO STACKS, and that comment is the invariant the whole class rests on: entry i of `mins` is the
+  smallest of the first i+1 values. THE SECOND INVARIANT is that the two lists always have the
+  same height - which is why `mins[-1]` always describes the stack as it stands right now.
+
+        def push(self, x):
+            self.stack.append(x)
+
+  The ordinary part: the value goes on the real stack.
+
+            # new running minimum is x or the previous minimum:
+            self.mins.append(x if not self.mins else min(x, self.mins[-1]))
+
+  THE ONE LINE THAT CARRIES THE IDEA. It records the minimum FOR THIS LEVEL, which is either x
+  (if this is the first item, so there is no level below) or the smaller of x and the level below.
+
+  `x if not self.mins else ...` is the empty-stack case: with nothing beneath, x is the minimum by
+  default. This is why no `float('inf')` sentinel is needed.
+
+  `min(x, self.mins[-1])` compares exactly TWO numbers - O(1). Note carefully that it is NOT
+  `min(self.stack)`, which would scan and cost O(n); the difference between those two expressions
+  is the difference between this solution and the naive one.
+
+  Appending plain `x` here instead of the `min(...)` is the most-often-wrong variant of this
+  problem - measured on 4,660 of 6,000 - because then `get_min` merely reports the top value.
+
+  A REPEATED MINIMUM IS STORED AGAIN, deliberately: pushing 0 on top of -2 records -2 a second
+  time. That duplication is what makes `pop` a plain removal instead of a decision.
+
+        def pop(self):
+            self.mins.pop()
+            return self.stack.pop()
+
+  BOTH STACKS, ALWAYS, IN THE SAME BREATH. This restores the previous minimum for free: the
+  correct answer for the shorter stack was written down when that level was created and is now
+  back on top. Dropping the `self.mins.pop()` line leaves a stale minimum and is wrong on 1,732
+  of 6,000 - the same failure rate as keeping one variable, because that is what it degenerates
+  into. The order of the two lines does not matter; keeping them adjacent does.
+
+        def top(self):
+            return self.stack[-1]
+
+  Look, do not remove. `[-1]` is the last item, which is the top of the stack.
+
+        def get_min(self):
+            return self.mins[-1]         # current minimum, O(1)
+
+  THE PAYOFF LINE. No loop, no comparison - the answer was computed at push time and is sitting on
+  top. It is correct because of the two invariants: the heights match, so `mins[-1]` belongs to
+  the current top level, and by construction that entry is the minimum of everything at or below
+  it - which is everything in the stack.
+
+  ON AN EMPTY STACK THIS RAISES IndexError. The problem promises valid calls, so that is
+  acceptable; say aloud that you would otherwise document the precondition or return `None`.
+
+EVERY OPERATION IS TRUE O(1) - not amortised - at a cost of O(n) extra memory, one number per
+item. That sentence is the answer to "what does it cost".""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. push(-2), push(0), push(-3), get_min(), pop(), top(), get_min().
+
+     operation   | reasoning                              | stack      | mins       | returns
+    -------------+----------------------------------------+------------+------------+---------
+     start       |                                        | []         | []         |
+     push(-2)    | mins empty, so the minimum is -2       | [-2]       | [-2]       |
+     push(0)     | min(0, -2) = -2, so -2 is RECORDED     | [-2,0]     | [-2,-2]    |
+                 | AGAIN - the duplication is deliberate  |            |            |
+     push(-3)    | min(-3, -2) = -3, a new record         | [-2,0,-3]  | [-2,-2,-3] |
+     get_min()   | read mins[-1]                          | [-2,0,-3]  | [-2,-2,-3] | -3
+     pop()       | remove from BOTH                       | [-2,0]     | [-2,-2]    | -3
+     top()       | read stack[-1]                         | [-2,0]     | [-2,-2]    | 0
+     get_min()   | read mins[-1]                          | [-2,0]     | [-2,-2]    | -2
+
+    THE LAST TWO ROWS ARE THE WHOLE PROBLEM. `top()` says 0 and `get_min()` says -2 - two
+    different values, from two different stacks, both O(1). And the -2 was not recomputed after
+    the pop: it had been written down at push(0) time and the pop simply uncovered it.
+
+    Read the `mins` column down the page: [-2], [-2,-2], [-2,-2,-3]. It is NEVER DECREASING as
+    you go down towards the bottom - each entry is at most the one before it. That is forced by
+    `min(x, previous)`, and it is worth noticing because it is what the space-saving variant in
+    section 10 exploits.
+
+CASE TWO - THE ONE THAT KILLS THE SINGLE VARIABLE. push(5), push(3), pop(), get_min().
+
+    stack [5,3], mins [5,3]. After the pop: stack [5], mins [5]. get_min() returns 5. CORRECT.
+    A single `self.m` variable holds 3 after the two pushes, is untouched by the pop, and answers
+    3 - a value that is no longer in the stack at all.
+
+CASE THREE - A DUPLICATED MINIMUM. push(2), push(2), pop(), get_min().
+
+    push(2): mins [2].   push(2): min(2,2) = 2, mins [2,2].   pop: stack [2], mins [2].
+    get_min() returns 2. CORRECT, with no special case.
+
+    THIS IS THE CASE THAT BREAKS THE SPACE-SAVING VARIANT when it uses a strict `<`: the second 2
+    is never recorded (it does not BEAT the minimum), the pop removes the only recorded 2 (it
+    matches), and `get_min` then reads an EMPTY mins stack and CRASHES. Measured wrong on 579 of
+    6,000 - always on sequences containing a duplicate push. The fix is `<=`.
+
+CASE FOUR - PUSHING IN INCREASING ORDER. push(1), push(2), push(3).
+    mins becomes [1,1,1] - the same number three times, and get_min is 1 throughout. Every pop
+    keeps answering 1 until the last one. This is the memory-worst case for the parallel-stack
+    version and the memory-best case for the space-saving variant, which stores just [1].
+
+CASE FIVE - PUSHING IN DECREASING ORDER. push(3), push(2), push(1).
+    mins becomes [3,2,1] - every push sets a new record, so both versions store all three and no
+    memory is saved. get_min after each pop walks back up: 1, then 2, then 3.
+
+MEASURED MEMORY, so the trade-off is a number and not a feeling: after 1,000 random pushes the
+parallel `mins` stack holds 1,000 entries, while the push-only-when-`<=` variant holds 8.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. push, pop, top and get_min are all TRUE O(1) - a fixed handful of list
+operations and at most one comparison of two numbers. No amortisation, no hidden loop. The price
+is O(n) EXTRA SPACE: one recorded minimum per item.
+
+    min(self.stack) on demand          push/pop/top O(1), get_min O(n),  no extra space
+    one running-minimum variable       O(1) everywhere and WRONG (1,732 of 6,000)
+    parallel stack of running minimums O(1) everywhere, O(n) extra space
+    parallel stack, push only when <=  O(1) everywhere, O(distinct minimums) space
+
+THE #1 MISTAKE: PUSHING x ONTO THE MIN STACK INSTEAD OF `min(x, mins[-1])`. Wrong on 4,660 of
+6,000 - the most frequently wrong variant measured. `get_min` then just echoes `top`. What belongs
+on the min stack is the RUNNING minimum for that level, not the value.
+
+THE #2: ONE VARIABLE FOR THE MINIMUM. Wrong on 1,732 of 6,000. It cannot survive popping the
+minimum, and the reason is worth saying precisely: taking the smaller of two numbers destroys the
+larger, so the operation cannot be undone.
+
+THE #3: POPPING ONLY THE VALUE STACK. Also 1,732 of 6,000 - it degenerates into mistake #2. The
+two stacks move together, always.
+
+THE #4, AND THE SUBTLE ONE: THE SPACE-SAVING VARIANT WITH A STRICT `<`. Wrong on 579 of 6,000, and
+it does not merely answer wrongly - it CRASHES with IndexError on push(2), push(2), pop(),
+get_min(). Duplicate minimums must each be recorded, so the test is `<=`. With `<=` it was wrong
+on 0 of 6,000.
+
+TWO HONEST NEGATIVES: `min(self.stack)` on every call is wrong on 0 of 6,000 - correct, just O(n);
+and the `<=` space-saving variant is wrong on 0 of 6,000 - correct and thriftier, MEASURED at 8
+stored entries versus 1,000 after 1,000 random pushes.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the naive answer is scanning on get_min, O(n); (2) one
+variable is O(1) but wrong, because a minimum cannot survive the deletion of the minimum; (3) a
+stack only shrinks from the top, so the only possible future answers are the prefix minimums, and
+there are only n of them; (4) so store one per level in a parallel stack - `min(x, top)` on push;
+(5) pop both stacks together, which restores the previous answer for free; (6) all four operations
+true O(1), O(n) extra space; (7) and if memory matters, only record a new entry when the value is
+LESS THAN OR EQUAL to the current minimum - equal included, or duplicates break it. Point 3 is the
+sentence that turns this from a memorised structure into a derivation.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "can you use less space?" That is the `<=` variant above - give
+the measured saving AND the duplicate trap in the same breath, because volunteering the trap is
+worth more than the optimisation.
+
+THE OTHER ONE: "now do a queue with get_min in O(1)". Much harder, and it is a real question
+(Sliding Window Maximum in disguise): a queue shrinks from the FRONT, so prefix minimums do not
+help, and the standard answer is a MONOTONIC DEQUE, or two stacks with the minimum tracked in
+each. Recognising that the difficulty comes from WHICH END SHRINKS is the answer they want.
+
+AND SOMETIMES: "make it thread safe" (a lock around each operation, and note that get_min plus
+pop as a pair still needs the caller to hold it), or "support get_max too" (a third parallel
+stack, identical reasoning).
+
+THE FAMILY: Max Stack, Implement Queue using Stacks, Implement Stack using Queues, Sliding Window
+Maximum, Design a Stack With Increment Operation, Online Stock Span. THE TRANSFERABLE IDEA:
+IF AN OPERATION CANNOT BE UNDONE, STORE THE ANSWER FOR EVERY STATE YOU MIGHT RETURN TO - and with
+a stack, the states you can return to are exactly its prefixes.
+
+ONE-SENTENCE TAKEAWAY: keep a second stack whose top always holds the minimum of everything
+currently in the stack, by pushing `min(x, current minimum)` alongside every value and popping
+both together - so get_min is a lookup and popping restores the old answer automatically.""",
 ]
 
 _EX_P1AB["Evaluate Reverse Polish Notation"] = [
-    """Why postfix needs no parentheses or precedence.
-In '3 4 + 2 *', the order of operations is fully determined by position - no
-brackets, no precedence rules. That is the whole point of RPN and why it was
-used in calculators and stack machines.
-Trace: push 3, push 4. '+' pops 4 and 3 -> push 7. Push 2. '*' pops 2 and 7 ->
-push 14. Answer 14, which is (3+4)*2.
-The infix equivalent needs parentheses to express the same thing, which is
-exactly the complexity RPN removes.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The pop ORDER, which is the bug in this problem.
-The stack pops the RIGHT operand first, then the left: `b = pop(); a = pop()`
-and compute `a op b`.
-For commutative operators (+, *) the order does not matter and the bug hides.
-For '-' and '/' it does: '5 1 -' should be 5 - 1 = 4, but popping in the wrong
-order gives 1 - 5 = -4. Always test with a subtraction; addition alone will not
-reveal it.""",
+You are given an arithmetic expression written in a slightly odd way: THE OPERATOR COMES AFTER ITS
+TWO NUMBERS instead of between them. Work out its value.
 
-    """Integer division truncation, the other classic trap.
-Most versions of this problem require truncation TOWARD ZERO: -7 / 2 = -3, not
--4.
-Python's `//` floors, so -7 // 2 = -4 - wrong. Use `int(a / b)` for
-float-then-truncate, or `int(operator.truediv(a, b))`.
-This is a genuine difference between Python and C/Java semantics, and the test
-suite will contain a negative division specifically to catch it. Mentioning it
-unprompted signals care.""",
+    normal (infix)          this problem (postfix)      value
+    --------------          ----------------------      -----
+    2 + 1                   ["2", "1", "+"]             3
+    (2 + 1) * 3             ["2", "1", "+", "3", "*"]   9
+    4 + 13 / 5              ["4", "13", "5", "/", "+"]  6      (13/5 is 2 after truncation)
+    5 - 3                   ["5", "3", "-"]             2
 
-    """Edge cases.
-A single number ['3'] -> nothing to do, the stack holds 3 -> 3.
-Negative numbers as tokens ('-4') must parse as operands, not as the '-'
-operator - so the check should be `tok in ops` (exact match) rather than
-`tok in '+-*/'` (substring), which would misclassify '-4'.
-Division by zero -> the problem usually guarantees it does not occur; say what
-you would do otherwise.
-The input is guaranteed well-formed, so the stack always has two operands when
-an operator arrives - worth stating as an assumption rather than validating.""",
+This is called POSTFIX or REVERSE POLISH NOTATION. Read the third example slowly, because it is
+where the shape becomes clear: "4 13 5 / +" means "take 13 and 5, divide them, then add that to
+4". The tokens arrive in the order the machine wants to do the work.
 
-    """Why a stack is the natural structure.
-An operator always applies to the two most RECENT unresolved values - last in,
-first out. As with Valid Parentheses, the data structure is not a choice, it is
-the shape of the problem.
-That also explains the connection to actual machines: the JVM and CPython
-bytecode are both stack-based, so `3 4 +` is very close to what the interpreter
-literally executes. Mentioning that connection makes the problem feel less
-arbitrary.""",
+THE POINT OF WRITING IT THIS WAY IS THAT THERE ARE NO BRACKETS AND NO PRECEDENCE RULES. In
+"2 + 1 * 3" you have to know that multiplication binds tighter, and to force the other reading you
+need brackets. In postfix the order of the tokens already says everything:
 
-    """Complexity and the family.
-O(n) time, O(n) space (the stack can hold up to n/2 operands).
-The family: Basic Calculator I/II/III (infix, which is harder - you need
-precedence via a second stack or the shunting-yard algorithm), Valid
-Parentheses, Decode String, Asteroid Collision, and Design a Min Stack.
-The natural follow-up is 'now evaluate INFIX', where the answer is either
-shunting-yard to convert to RPN then this, or a two-stack approach handling
-precedence directly.""",
+    ["2","1","+","3","*"]  is  (2 + 1) * 3  =  9
+    ["2","1","3","*","+"]  is  2 + (1 * 3)  =  5
+
+Same tokens, different order, different answer - and no brackets anywhere. That is why compilers
+and calculators convert to this form.
+
+FOUR RULES TO PIN DOWN BEFORE YOU START, because each one is a place people lose marks:
+    - the operators are +, -, * and / only, and each takes exactly TWO operands;
+    - DIVISION TRUNCATES TOWARDS ZERO, so 13/5 is 2 and -7/2 is -3 (NOT -4);
+    - the tokens are STRINGS, and a number token can be NEGATIVE, like "-11";
+    - the input is promised valid, so exactly one value is left at the end.
+
+THE OBVIOUS SOLUTION IS ALSO THE INTENDED ONE, which is unusual: use a stack. Push numbers; when
+an operator arrives, pop the last two, combine them, push the result back. There is no naive
+version to beat - the interest is entirely in getting three details right, and section 4 measures
+what each one costs.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+READ THE TOKENS AS INSTRUCTIONS TO A CLERK. "A number" means "write this down on a pile". "An
+operator" means "take the last two numbers off the pile, do this to them, and put the answer
+back". That is the entire method, and it works because of one observation:
+
+    AN OPERATOR ALWAYS APPLIES TO THE TWO MOST RECENTLY AVAILABLE VALUES.
+
+Not the two most recent TOKENS - the two most recent VALUES, where a value might itself be the
+result of an earlier operation. So the pile you need is one where you always take from the most
+recent end: a STACK.
+
+Here is ["2","1","+","3","*"], which is (2 + 1) * 3:
+
+    token | action                                | stack after
+    ------+---------------------------------------+------------
+      2   | a number, push it                     | 2
+      1   | a number, push it                     | 2 1
+      +   | pop 1, pop 2, push 2 + 1              | 3          <- the (2+1) is now a single value
+      3   | a number, push it                     | 3 3
+      *   | pop 3, pop 3, push 3 * 3              | 9
+
+    one value left: 9
+
+NOTICE WHAT HAPPENED AT THE `+`. Two values were replaced by one. From that moment the stack does
+not know or care that the 3 came from an addition - it is just a number. THAT COLLAPSING IS WHY NO
+BRACKETS ARE NEEDED: a completed sub-expression becomes indistinguishable from a plain number.
+
+NOW THE DETAIL THAT DECIDES WHETHER YOUR CODE WORKS. When an operator pops two values, WHICH ONE
+IS THE LEFT OPERAND? The stack hands them back in REVERSE order - the most recent first - and the
+most recent is the RIGHT operand:
+
+    ["5", "3", "-"]   means 5 - 3 = 2
+
+        stack:   5 3          the 3 went in last, so it comes out first
+        first pop  -> 3       this is the RIGHT operand
+        second pop -> 5       this is the LEFT operand
+        compute LEFT - RIGHT  =  5 - 3  =  2       correct
+        compute the other way =  3 - 5  = -2       wrong
+
+For + and * it makes no difference, which is exactly why the bug survives testing. For - and / it
+is fatal: MEASURED wrong on 4,751 of 6,000 random expressions, and on 0 of the 843 that happened
+to contain only + and *.
+
+THE PICTURE FOR "WHY IT ALWAYS WORKS OUT". Every operator token consumes two values and produces
+one, so each operator shrinks the stack by exactly one; every number token grows it by one. A
+valid expression with n numbers has n-1 operators, so the stack ends at n - (n-1) = 1 item. That
+arithmetic is also how you would VALIDATE an expression: if a pop ever finds fewer than two values,
+or more than one value is left at the end, the input was malformed.""",
+
+    """3. EVERY TERM, DEFINED
+
+INFIX. The ordinary way: the operator sits BETWEEN its operands - "2 + 3". Needs precedence rules
+and brackets.
+
+POSTFIX / REVERSE POLISH NOTATION (RPN). The operator comes AFTER its operands - "2 3 +". Needs
+neither brackets nor precedence. Named after the Polish logician Jan Lukasiewicz; PREFIX ("+ 2 3")
+is plain Polish notation, and reversing it gives postfix.
+
+TOKEN. One item of the input - either a number or an operator. Here they are STRINGS, so "12" must
+be turned into the number 12 with `int(...)`, and "-11" is a perfectly ordinary number token.
+
+OPERAND. An input to an operator. Binary operators have two: the LEFT and the RIGHT.
+
+BINARY OPERATOR. One taking exactly two operands. All four here are binary - which is why every
+operator pops exactly twice.
+
+COMMUTATIVE. An operation where order does not matter: a + b = b + a, and a * b = b * a.
+Subtraction and division are NOT commutative, and that is the entire reason the pop order matters.
+If you only test with + and *, a swapped-operand bug is invisible - measured invisible on all 843
+such cases.
+
+STACK. Add and remove at one end only. `append` pushes, `pop()` removes the most recent. The most
+recent value is the RIGHT operand - the single most useful sentence in this entry.
+
+TRUNCATE TOWARDS ZERO. Throw away the fractional part, moving towards 0: 2.6 becomes 2, and -2.6
+becomes -2. This is what the problem demands.
+
+FLOOR DIVISION, `//`. Python's integer division rounds DOWN (towards minus infinity), not towards
+zero: `-7 // 2` is -4, while the required answer is -3. For positive results the two agree, which
+is why this bug hides. `int(a / b)` truncates towards zero and is the fix; `int(-7 / 2)` is -3.
+
+INTEGER DIVISION IN OTHER LANGUAGES. C, C++, Java and Go all truncate towards zero, so `/` is
+already correct there. Python is the odd one out, and knowing that is worth a remark.
+
+`tok in ops` WHERE `ops` IS A SET. Membership in a set is O(1). Using this to classify a token -
+rather than `tok.isdigit()` - is what makes negative numbers work, because "-11".isdigit() is
+False and would be misread as an operator.
+
+O(n) TIME. One pass over the tokens, constant work each. O(n) SPACE for the stack - and it really
+can hold n/2 or so values before the operators start arriving.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random valid postfix expressions (2 to 6 operators, operands
+from -9 to 9, division by zero excluded), each checked against an independent expression-tree
+evaluator.
+
+TRAP 1 - THE OPERANDS COME OFF BACKWARDS. This is the number one bug in this problem by a wide
+margin. The stack returns the most recent value FIRST, and that is the RIGHT operand.
+
+    ["5","3","-"]   correct 2,   swapped gives -2
+    ["4","13","5","/","+"]  correct 6,  swapped gives 4    (it computes 5/13 = 0, then 0 + 4)
+    ["10","6","9","3","+","-11","*","/","*","17","+","5","+"]  correct 22,  swapped gives -198
+
+    MEASURED: wrong on 4,751 of 6,000. AND ON THE 843 EXPRESSIONS CONTAINING ONLY + AND *, WRONG
+    ON 0 - because those operations are commutative. That is the whole reason this bug reaches
+    production: it passes every test built from additions and multiplications. Restricted to the
+    5,157 expressions containing a - or a /, it is wrong on 4,751.
+
+    THE FIX IS A HABIT: write `b = stack.pop()` on the FIRST line and `a = stack.pop()` on the
+    second, so the letters read left-to-right in the expression `a - b`. Say "the first pop is the
+    right operand" out loud as you type it.
+
+TRAP 2 - `a // b` INSTEAD OF `int(a / b)`. Python's `//` rounds DOWN, and the problem wants
+truncation TOWARDS ZERO. The two agree on positive results and disagree on negative ones.
+
+    ["-7","2","/"]   correct -3,   `//` gives -4
+    ["7","-3","/"]   correct -2,   `//` gives -3
+    ["6","3","/"]    both give 2 - exact division is never affected
+
+    MEASURED: wrong on 1,081 of 6,000. AND ON ALL-POSITIVE INPUTS, WRONG ON 362 OF 6,000 - which
+    surprises people: subtraction can make an intermediate value negative even when every token
+    is positive, so "test with positive numbers only" does not protect you.
+
+    THE FIX: `int(a / b)`. It truncates because `int()` on a float throws the fraction away
+    towards zero. (`math.trunc(a / b)` says the same thing more loudly, and for very large
+    integers where float precision is a worry, `abs(a) // abs(b)` with the sign reapplied is the
+    exact version - worth one sentence if the interviewer likes edge cases.)
+
+TRAP 3 - CLASSIFYING TOKENS WITH `tok.isdigit()`. A negative number token like "-11" is not
+digits, so it gets treated as an operator, and the code either computes nonsense or crashes.
+
+    ["-7","2","/"]  raises IndexError - it tried to pop two values for the "operator" "-7" from
+    an empty stack.
+    MEASURED: wrong or crashing on 5,567 of 6,000.
+
+    THE FIX: test for membership in the operator set - `if tok in {"+","-","*","/"}` - and treat
+    everything else as a number. Decide what a token IS by what it matches, not by what it lacks.
+    (`tok.lstrip("-").isdigit()` also works but is fussier and easy to get wrong.)
+
+TRAP 4 - USING `if/elif` ON THE OPERATOR AND FORGETTING THE FINAL `else`. If the last branch is
+another `elif` and no case matches, nothing is pushed, the stack silently loses a value, and the
+error surfaces much later as an IndexError with no obvious cause. Make division the `else`, or
+use a dictionary of operations.
+
+TRAP 5 - ASSUMING SINGLE-DIGIT NUMBERS. "42" is one token, not two, and `int(tok)` handles it -
+but only if you convert the whole token. Anyone slicing characters instead of converting tokens
+has invented a bug for free.
+
+WHAT IS NOT A TRAP, measured rather than assumed: RETURNING `stack[-1]` INSTEAD OF `stack[0]`.
+On valid input exactly one value remains, so the first item IS the last item - wrong on 0 of
+6,000. `stack.pop()` is equally fine. Preferring `stack[0]` makes a hidden assertion ("there had
+better be exactly one") but neither is a bug; do not waste interview time on it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THIS PROBLEM IS UNUSUAL: THERE IS NO SLOW-BUT-CORRECT VERSION TO BEAT. The stack solution is both
+the obvious one and the optimal one, at O(n) time and one pass. So the "naive first" step here is
+about a different axis - the naive way to THINK about it, and the naive REPRESENTATION.
+
+THE NAIVE WAY TO THINK ABOUT IT is "convert it back to normal notation and evaluate that". You
+would have to reinsert brackets, restore precedence rules, and then write a second, harder
+evaluator. It is strictly more work, and it throws away the one advantage of postfix - that the
+token order already encodes the structure completely.
+
+THE NAIVE REPRESENTATION IS AN EXPRESSION TREE, and it is worth knowing because it is the mental
+model underneath everything: scan the tokens from the RIGHT, and each operator becomes a node
+whose children are the two sub-expressions to its left. Then evaluate recursively.
+
+    for ["2","1","+","3","*"]:
+
+              *
+             / \\
+            +   3
+           / \\
+          2   1
+
+IT IS CORRECT - this is exactly how the ground truth for every measurement in this entry was
+computed - and it is instructive because IT SHOWS WHY THE ANSWER IS UNIQUE with no bracket rules.
+But it builds a whole tree just to fold it up again, uses recursion depth proportional to the
+nesting, and is far more code.
+
+THE UPGRADE - EVALUATE AS YOU READ, IN ONE PASS. You never need the tree, because postfix presents
+every operator exactly when both of its operands are already reduced to single values. So:
+
+    a number    -> push it
+    an operator -> pop two values, combine, push the result
+
+WHY A STACK IS THE RIGHT CONTAINER, derived rather than recalled: an operator applies to the two
+most recently completed values, and "most recently completed" means you always take from the same
+end. Add at one end, remove from the same end - that is a stack, and nothing weaker will do.
+
+WHY THE RESULT GOES BACK ON THE STACK. A finished sub-expression is now indistinguishable from a
+plain number, and the next operator should be able to consume it exactly as it would consume a
+literal. Pushing the result is what makes arbitrary nesting work with no special cases.
+
+WHY IT ENDS WITH EXACTLY ONE VALUE. Each number token adds one item; each operator removes two and
+adds one, so it shrinks the stack by exactly one. A valid expression with n numbers has n-1
+operators, so the height finishes at n - (n-1) = 1. That is also your validity check.
+
+THE THREE DETAILS THAT ARE THE ACTUAL EXAM, all measured in section 4: the first value popped is
+the RIGHT operand (4,751 of 6,000 get this wrong when it is not enforced), division must truncate
+TOWARDS ZERO rather than floor (1,081 of 6,000), and tokens must be classified by matching the
+operator set rather than by `isdigit`, so that negative numbers survive (5,567 of 6,000).
+
+WHY IT IS OPTIMAL. Every token must be read at least once, so O(n) time cannot be beaten. The
+stack can grow to about n/2, so O(n) space is the honest figure.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Keep an empty stack, and a set containing the four operator symbols so you can recognise
+       them in one step.
+
+    2. Walk the tokens once, from left to right, and decide what each token IS by checking whether
+       it is in the operator set.
+
+    3. IF THE TOKEN IS NOT AN OPERATOR, it is a number: turn the string into an integer and push
+       it on the stack.
+
+    4. IF THE TOKEN IS AN OPERATOR:
+         - pop one value; THIS IS THE RIGHT-HAND OPERAND, because the stack gives back the most
+           recent value first;
+         - pop a second value; THIS IS THE LEFT-HAND OPERAND;
+         - combine them in the order LEFT then OPERATOR then RIGHT;
+         - push the result back on the stack, where it now behaves exactly like a plain number.
+
+    5. FOR DIVISION, cut off the fractional part TOWARDS ZERO - so minus three and a half becomes
+       minus three, not minus four. In Python that means dividing normally and then converting to
+       an integer, NOT using the floor-division operator.
+
+    6. When the tokens run out, exactly one value is left on the stack. Return it.
+
+STEP 4 IS THE ENTIRE EXAM, and its first two lines are where people fail: the FIRST value you pop
+is the one on the RIGHT of the operator. Getting it backwards is invisible for addition and
+multiplication and fatal for subtraction and division - measured wrong on 4,751 of 6,000 overall
+and on 0 of the 843 expressions that use only + and *.
+
+A HABIT THAT PREVENTS IT: name the second thing you pop `a` and the first thing you pop `b`, so
+that every expression you then write reads `a - b`, `a / b` - left to right, in the order the
+letters appear in the alphabet and in the expression.
+
+STEP 5 IS THE SECOND-MOST-COMMON FAILURE - 1,081 of 6,000 - and note that it can bite even when
+every token in the input is positive (measured on 362 of 6,000 all-positive cases), because a
+subtraction can produce a negative intermediate value.
+
+STEP 2 IS THE THIRD. Recognise operators by MATCHING them, not by testing whether the token looks
+like digits: a negative number such as minus eleven is a number, not an operator, and code that
+checks "is this all digits" will treat it as one and then crash - 5,567 of 6,000.
+
+WHY YOU DO NOT NEED BRACKETS, PRECEDENCE, OR LOOKAHEAD: the position of each operator already says
+which values it applies to, and the result being pushed back means a finished sub-expression is
+just another number. There is no case analysis anywhere in this algorithm.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a kitchen where the chef never has to be told what to do next, because the order of things
+on the counter says everything.
+
+Ingredients come along a conveyor belt one at a time. Two kinds of thing arrive. Sometimes it is an
+INGREDIENT - a chopped onion, a handful of rice - and the rule for those is simple: put it down on
+the counter, at the near end, on top of whatever is already there.
+
+Sometimes it is a CARD with an instruction: "combine". And the rule for a card is: take the two
+nearest things off the counter, do what the card says, and PUT THE RESULT BACK DOWN on the counter
+as if it were an ingredient that had always been there. Nobody records that the bowl in front of
+you is a mixture rather than a raw ingredient, and nobody needs to - a finished mixture is just
+another thing on the counter, ready to be combined again.
+
+That is the entire kitchen. Notice that the chef never looks ahead, never reads the whole belt
+before starting, and never needs a note about what to do first, because a card only ever arrives
+when the two things it needs are already sitting there, finished. That is the promise this strange
+ordering makes, and it is why no brackets are required: the belt order IS the recipe structure.
+
+Now the one thing that can go wrong, and it is the thing that actually goes wrong. Two of the
+cards care about WHICH thing goes in first. "Combine by mixing" does not - onion into rice is the
+same as rice into onion. But "pour A into B" is very much not the same as "pour B into A", and
+"take A away from B" is not the same as "take B away from A".
+
+And here is the catch: the counter hands things back in the OPPOSITE order to how they were put
+down. The nearest item - the one you grab first - is the one that arrived MOST RECENTLY, which is
+the one that was written SECOND in the recipe. So the first thing in your hand is the second thing
+in the instruction: THE RIGHT-HAND ONE. Grab it, then grab the next, and that second one is the
+left-hand one. Then perform the instruction in the written order: left, then operation, then
+right.
+
+If you forget this and simply do the operation on the two things in the order you happened to pick
+them up, everything still works perfectly for mixing - which is exactly why the mistake survives
+so long. It is only when you pour, or subtract, that the dish comes out inside out.
+
+One more kitchen convention worth stating, because it is arbitrary and someone has to decide it:
+when a division does not come out exactly, this kitchen always rounds TOWARDS ZERO - never away
+from it. Minus three and a half becomes minus three, not minus four. It matters only for negative
+results, which is precisely why it goes unnoticed in testing.
+
+When the belt runs out, exactly one thing is left on the counter. That is the dish.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Evaluate an arithmetic expression in Reverse Polish (postfix) Notation.
+    def eval_rpn(tokens):
+        stack = []
+
+  Holds the values computed so far. It contains INTEGERS, never strings - the conversion happens
+  at push time so that nothing downstream has to think about it.
+
+        ops = {'+', '-', '*', '/'}
+
+  The operator symbols, as a SET so membership is O(1). Classifying by MATCHING this set is what
+  makes negative numbers work: "-11" is not in `ops`, so it falls through to the number branch.
+  Classifying with `tok.isdigit()` instead treats "-11" as an operator and is wrong or crashing on
+  5,567 of 6,000.
+
+        for tok in tokens:
+
+  One pass, left to right. No lookahead, no bracket matching, no precedence table - the token
+  order already carries the structure.
+
+            if tok in ops:
+                b = stack.pop()               # right operand (popped first)
+
+  THE MOST IMPORTANT LINE IN THIS ENTRY. The stack returns the MOST RECENT value first, and the
+  most recent value is the one written to the RIGHT of the operator. Hence the name `b`.
+
+                a = stack.pop()               # left operand
+
+  The second pop is the LEFT operand. Now `a` and `b` read in the same order as the original
+  expression, so every line below can be written exactly as it would be spoken.
+
+  SWAPPING THESE TWO LINES is the number one bug in this problem: wrong on 4,751 of 6,000, and
+  wrong on 0 of the 843 expressions using only + and * - because those are commutative. It passes
+  every friendly test. ["5","3","-"] returns -2 instead of 2.
+
+                if tok == '+': stack.append(a + b)
+                elif tok == '-': stack.append(a - b)
+                elif tok == '*': stack.append(a * b)
+
+  `a - b`, in that order - left minus right. This is why naming the pops `b` then `a` was worth
+  doing: the code now reads like the expression and there is nothing to get backwards.
+
+                else: stack.append(int(a / b))   # truncate toward zero
+
+  DIVISION, AND THE SECOND-BIGGEST TRAP. The problem demands truncation TOWARDS ZERO. Python's
+  `//` rounds DOWN, so `-7 // 2` is -4 where the required answer is -3. `int(a / b)` divides as a
+  float and then throws the fraction away towards zero. Using `//` here is wrong on 1,081 of
+  6,000 - including 362 of 6,000 cases where every input token is positive, because a subtraction
+  can create a negative intermediate value.
+
+  NOTE ALSO that this is an `else`, not another `elif`. With four operators and three `elif`s, an
+  unmatched token would silently push nothing and cause a confusing IndexError much later.
+
+            else:
+                stack.append(int(tok))        # a number -> push it
+
+  Convert the whole token, so "42" and "-11" both work. This branch is reached for anything that
+  is not an operator, which is the correct way round: match what you know, and treat the rest as
+  numbers.
+
+        return stack[0]
+
+  On valid input exactly one value remains - each number token adds one and each operator removes
+  two and adds one, so a valid expression finishes at height 1. `stack[0]`, `stack[-1]` and
+  `stack.pop()` are therefore all the same value here; measured wrong on 0 of 6,000. Using
+  `stack[0]` quietly asserts "there had better be exactly one left", which is a mild virtue.
+
+ONE PASS, O(n) TIME, O(n) SPACE. Every difficulty in this function lives in three lines: the two
+pops and the division.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE SIMPLE ONE. tokens = ["2","1","+","3","*"], which is (2 + 1) * 3 = 9.
+
+     token | branch      | a, b      | pushed | stack after
+    -------+-------------+-----------+--------+-------------
+      "2"  | number      |           | 2      | [2]
+      "1"  | number      |           | 1      | [2, 1]
+      "+"  | operator    | a=2, b=1  | 3      | [3]
+      "3"  | number      |           | 3      | [3, 3]
+      "*"  | operator    | a=3, b=3  | 9      | [9]
+
+    return stack[0] = 9
+
+    WATCH ROW 3. Two items became one, and from then on the stack cannot tell that the 3 came from
+    an addition. That is what makes brackets unnecessary.
+
+CASE TWO - THE ONE THAT EXPOSES THE POP ORDER. tokens = ["5","3","-"], which is 5 - 3 = 2.
+
+    push 5             stack [5]
+    push 3             stack [5, 3]
+    "-"  b = pop() = 3     <- popped FIRST, so it is the RIGHT operand
+         a = pop() = 5     <- the LEFT operand
+         push a - b = 5 - 3 = 2
+
+    return 2.   THE SWAPPED VERSION computes 3 - 5 = -2. Same tokens, same stack, one line
+    transposed. This is the bug that is wrong on 4,751 of 6,000.
+
+CASE THREE - DIVISION AND TRUNCATION. tokens = ["4","13","5","/","+"], which is 4 + 13/5 = 6.
+
+    push 4, push 13, push 5     stack [4, 13, 5]
+    "/"  b = 5, a = 13, push int(13 / 5) = int(2.6) = 2      stack [4, 2]
+    "+"  b = 2, a = 4,  push 4 + 2 = 6                       stack [6]
+
+    return 6.  Note 13/5 truncating to 2, not rounding to 3.
+    THE SWAPPED VERSION computes int(5 / 13) = 0 and then 4 + 0 = 4.
+
+CASE FOUR - NEGATIVE DIVISION, WHICH IS THE `//` TRAP. tokens = ["-7","2","/"].
+
+    "-7" is not in the operator set, so it is a number: push -7.        stack [-7]
+    push 2                                                              stack [-7, 2]
+    "/"  b = 2, a = -7,  push int(-7 / 2) = int(-3.5) = -3
+
+    return -3, which is truncation towards zero and is the required answer.
+        `a // b` gives -7 // 2 = -4 - rounded DOWN, which is wrong here.
+        `tok.isdigit()` classification treats "-7" as an operator and CRASHES with IndexError,
+        because it tries to pop two values from an empty stack on the very first token.
+
+CASE FIVE - THE LONG OFFICIAL ONE.
+tokens = ["10","6","9","3","+","-11","*","/","*","17","+","5","+"]
+
+    push 10, 6, 9, 3                     stack [10, 6, 9, 3]
+    "+"   b=3,  a=9,   push 12           stack [10, 6, 12]
+    "-11" a number, push -11             stack [10, 6, 12, -11]
+    "*"   b=-11, a=12, push -132         stack [10, 6, -132]
+    "/"   b=-132, a=6, push int(6 / -132) = int(-0.045...) = 0
+                                         stack [10, 0]
+    "*"   b=0, a=10,   push 0            stack [0]
+    "17"  push 17                        stack [0, 17]
+    "+"   b=17, a=0,   push 17           stack [17]
+    "5"   push 5                         stack [17, 5]
+    "+"   b=5,  a=17,  push 22           stack [22]
+
+    return 22.  TWO TRAPS FIRE IN THIS ONE EXPRESSION: "-11" must be read as a number, and
+    int(6 / -132) must truncate to 0 rather than floor to -1. The swapped-operand version returns
+    -198; the `//` version returns 12.
+
+CASE SIX - ONE TOKEN. tokens = ["42"] returns 42. The loop pushes once and `stack[0]` is the
+answer - no special case needed.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. O(n) TIME - one pass, and each token costs a constant amount of work (a set
+membership test, at most two pops, one push). O(n) SPACE for the stack, which for an expression
+like "1 1 1 1 + + +" holds about half the tokens before the operators start consuming them. You
+cannot beat O(n) time: every token has to be read.
+
+    build an expression tree, then evaluate     O(n) time, O(n) space, recursion depth = nesting
+    one pass with a stack                       O(n) time, O(n) space, no recursion
+    convert back to infix and evaluate that     strictly more work, and throws away the point
+
+THE #1 MISTAKE: THE OPERANDS POPPED IN THE WRONG ORDER. Wrong on 4,751 of 6,000 - and wrong on 0
+of the 843 expressions containing only + and *. Commutativity hides it, so it passes exactly the
+tests people write. THE FIRST POP IS THE RIGHT OPERAND. Name it `b`, name the second `a`, and then
+`a - b` reads correctly by construction.
+
+THE #2: `a // b` INSTEAD OF `int(a / b)`. Wrong on 1,081 of 6,000, and note that 362 of 6,000
+ALL-POSITIVE inputs also fail, because subtraction can produce negative intermediates. Python's
+`//` floors; the problem wants truncation towards zero. In C, C++, Java and Go integer division
+already truncates towards zero, so this trap is Python-specific - a good remark to make.
+
+THE #3: CLASSIFYING TOKENS WITH `tok.isdigit()`. Wrong or crashing on 5,567 of 6,000, because
+"-11" is a number that is not made of digits. Match the operator set instead.
+
+ONE HONEST NEGATIVE: returning `stack[-1]` instead of `stack[0]` is wrong on 0 of 6,000 - on valid
+input exactly one value remains, so they are the same item. Not a bug; do not spend interview time
+on it.
+
+WHAT TO SAY OUT LOUD, in this order: (1) postfix needs no brackets or precedence because the token
+order already fixes the structure; (2) so evaluate in one pass - push numbers, and let each
+operator consume the two most recent values and push its result, which makes a finished
+sub-expression indistinguishable from a number; (3) the first value popped is the RIGHT operand,
+and this matters for - and / but not + and *; (4) division truncates towards zero, so `int(a / b)`
+and not `//` in Python; (5) tokens are matched against the operator set so negative numbers are
+read as numbers; (6) O(n) time, O(n) space, and exactly one value remains at the end because each
+operator shrinks the stack by one. Volunteering points 3 and 4 BEFORE being asked is what
+separates a strong answer here, because the algorithm itself is not the hard part.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if the input might be invalid?" The counting argument gives
+you every check for free: a pop with fewer than two values available means too few operands; more
+than one value left at the end means too few operators; an unrecognised token is its own error.
+State which check catches which case.
+
+THE OTHER ONE: "how would you handle INFIX input instead?" Now you need precedence - either the
+SHUNTING-YARD ALGORITHM (a second stack for operators, popping while the top has greater or equal
+precedence, which converts infix to exactly the postfix this problem hands you) or a recursive
+descent parser. Being able to say "postfix is what shunting-yard produces, which is why this
+problem is the easy half" shows you know where it sits.
+
+AND SOMETIMES: unary minus (needs a distinct symbol or arity information, since "-" alone is
+ambiguous), exponentiation (right-associative, which changes the conversion but not this
+evaluator), or floating point (drop the truncation and the trap disappears).
+
+THE FAMILY: Basic Calculator I / II / III, Different Ways to Add Parentheses, Design an Expression
+Tree With Evaluate Function, Build Binary Expression Tree From Infix Expression, Score of
+Parentheses. THE TRANSFERABLE IDEA: A STACK TURNS A NESTED STRUCTURE INTO A SINGLE LEFT-TO-RIGHT
+PASS, because completed sub-results can be pushed back and reused as if they were input.
+
+ONE-SENTENCE TAKEAWAY: push numbers, and on each operator pop twice - FIRST pop is the right
+operand - combine and push the result back, remembering that division must truncate towards zero
+rather than floor.""",
 ]
 
 _EX_P1AB["Group Anagrams"] = [
