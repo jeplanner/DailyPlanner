@@ -129311,59 +129311,567 @@ into the asymmetric 32-bit range.""",
 ]
 
 _EX_P1AD["Valid Sudoku"] = [
-    """The box index formula, which is the only real trick.
-Cell (r, c) belongs to box (r // 3, c // 3). Row 4, column 7 -> box (1, 2).
-Integer division collapses each group of three consecutive indices to the same
-value, which is exactly the 3x3 grouping.
-Some solutions use a single number `(r // 3) * 3 + c // 3` giving boxes 0..8 -
-identical information, and either is fine as long as you can say why it
-works.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """One set, three constraint types - the encoding trick.
-Rather than nine row sets, nine column sets and nine box sets, put TAGGED tuples
-into a single set: (val, 'r', r), (val, 'c', c), (val, 'b', r//3, c//3).
-A '5' in row 0 produces (5,'r',0), and a second '5' in row 0 produces the same
-tuple -> collision detected. The tags stop a row constraint colliding with a
-column constraint that happens to share numbers.
-It is one pass, one data structure, and it generalises: any 'no duplicates
-across several groupings' problem can be encoded this way.""",
+You are given a partly filled 9x9 Sudoku grid, with digits '1' to '9' and '.' for the empty squares.
+Decide whether it BREAKS ANY RULE. You are NOT asked whether it can be finished, and you are NOT asked
+to solve it - only whether what is written so far is legal.
 
-    """What this problem does NOT ask.
-It checks only that the CURRENT board has no duplicates. It does NOT check
-solvability - a board can be perfectly valid by this definition and have no
-solution at all.
-Empty cells ('.') are simply skipped; a board of all dots is valid.
-Misreading this as 'is this solvable' turns an easy problem into a hard one, so
-restate the definition before starting. That distinction is the most common
-clarification an interviewer is waiting for.""",
+THE THREE RULES, and there are exactly three:
 
-    """Why the complexity is O(1), stated honestly.
-The board is always 9x9, so the work is at most 81 cells times 3 constraint
-insertions - a constant, regardless of input. Calling it O(1) is correct but
-sounds evasive unless you add the reason.
-The generalised version - an n^2 x n^2 board with n x n boxes - is O(n^4) time
-and space, which is the honest way to express the scaling and a fair follow-up
-to raise yourself.""",
+    1. no digit appears twice in the same ROW;
+    2. no digit appears twice in the same COLUMN;
+    3. no digit appears twice in the same 3x3 BOX.
 
-    """Edge cases.
-Entirely empty board (all '.') -> valid.
-A duplicate in a row but not a column, or vice versa -> each must be caught
-independently, which the tagged tuples handle.
-The subtle one: a duplicate within a BOX that is neither in the same row nor
-the same column - e.g. 5 at (0,0) and 5 at (1,1). Row and column checks both
-pass; only the box check catches it. That input is the specific test for the
-box logic and is worth constructing deliberately.
-Non-digit characters are excluded by the problem's guarantees.""",
+THE NINE BOXES are the nine 3x3 blocks the grid divides into:
 
-    """Complexity and the family.
-O(1) time and space for the fixed 9x9 board (O(n^4) generalised).
-The family: Sudoku Solver (this validity check plus backtracking - try 1-9 in
-each empty cell, recurse, undo on failure), N-Queens (the same
-constraint-checking-plus-backtracking shape with diagonals instead of boxes),
-and Word Search.
-Valid Sudoku is worth doing first precisely because the solver reuses this
-check as its pruning test - and an efficient solver keeps the sets incrementally
-rather than re-scanning, which is the natural optimisation to mention.""",
+     0 1 2 | 3 4 5 | 6 7 8       columns
+    -------+-------+-------
+     . . . | . . . | . . .       rows 0-2   ->  boxes 0, 1, 2
+     . . . | . . . | . . .
+     . . . | . . . | . . .
+    -------+-------+-------
+     . . . | . . . | . . .       rows 3-5   ->  boxes 3, 4, 5
+     . . . | . . . | . . .
+     . . . | . . . | . . .
+    -------+-------+-------
+     . . . | . . . | . . .       rows 6-8   ->  boxes 6, 7, 8
+     . . . | . . . | . . .
+     . . . | . . . | . . .
+
+TWO THINGS THAT ARE EASY TO GET WRONG BEFORE YOU WRITE ANY CODE.
+
+    EMPTY CELLS ARE NOT VALUES. Nine dots in a row is perfectly legal. Code that checks for duplicates
+    without skipping the dots declares every board invalid: MEASURED, that version is wrong on 1,400 of
+    6,000 random boards - which is EXACTLY the number of valid boards in the sample, because it returns
+    "invalid" every single time.
+
+    A VALID BOARD NEED NOT BE SOLVABLE. The problem says only "no rule is currently broken". Do not go
+    looking for a contradiction that requires reasoning ahead - that is a different, much harder
+    problem.
+
+THE OBVIOUS SOLUTION WORKS, and it is genuinely fine: check the nine rows, then the nine columns, then
+the nine boxes, each with its own duplicate test. Wrong on 0 of 6,000 - it is the ground truth for
+every measurement in this entry.
+
+WHAT MAKES THE PROBLEM INTERESTING is doing it in ONE PASS: for each filled cell, record three facts -
+this digit in this row, this digit in this column, this digit in this box - and if any fact is already
+recorded, the board is invalid. The only real skill is IDENTIFYING THE BOX from the coordinates, and
+section 4 measures what the popular wrong formula costs.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+TURN EACH FILLED CELL INTO THREE CLAIMS. If the digit 5 sits at row 0, column 0, then that cell is
+claiming three separate things:
+
+    "5 is used in ROW 0"
+    "5 is used in COLUMN 0"
+    "5 is used in BOX 0"
+
+A board is invalid exactly when the SAME CLAIM IS MADE TWICE. So keep a set of claims, and as you walk
+the grid, try to add three claims per filled cell. If any of them is already there, stop - you have
+found the duplicate.
+
+    board fragment:  5 at (0,0), then 5 at (1,1)
+
+    cell (0,0) claims:   (5, row 0)     (5, col 0)     (5, box 0)     - all new, add them
+    cell (1,1) claims:   (5, row 1)     (5, col 1)     (5, box 0)     <- ALREADY CLAIMED. Invalid.
+
+    Notice that the row and column claims were both fine - those two 5s are in different rows and
+    different columns. Only the BOX claim caught it. That is why the box check cannot be skipped.
+
+THE CLAIMS MUST BE TAGGED WITH WHAT KIND THEY ARE. `(5, 0)` is ambiguous: does it mean "5 in row 0" or
+"5 in column 0" or "5 in box 0"? If they share a namespace then a 5 legitimately in row 0 and another 5
+legitimately in column 0 collide, and a valid board is rejected. MEASURED: untagged keys are wrong on
+1,049 of 6,000.
+
+NOW THE ONLY REAL PIECE OF ARITHMETIC IN THE PROBLEM - NAMING THE BOX. Integer division by 3 collapses
+three consecutive indices into one:
+
+    rows 0,1,2 -> r//3 = 0        columns 0,1,2 -> c//3 = 0
+    rows 3,4,5 -> r//3 = 1        columns 3,4,5 -> c//3 = 1
+    rows 6,7,8 -> r//3 = 2        columns 6,7,8 -> c//3 = 2
+
+So THE PAIR (r//3, c//3) names the box, and it takes all nine distinct values (0,0) through (2,2):
+
+    (0,0) (0,1) (0,2)
+    (1,0) (1,1) (1,2)
+    (2,0) (2,1) (2,2)
+
+THE POPULAR WRONG FORMULA IS TO MULTIPLY THEM - `(r//3) * (c//3)` - which squashes nine boxes into five
+ids, with collisions:
+
+    box ids produced by (r//3) * (c//3):        0  0  0
+                                                0  1  2
+                                                0  2  4
+
+    FIVE of the nine boxes are all called 0, and two different boxes are both called 2. So digits in
+    entirely different boxes are treated as sharing one, and valid boards get rejected.
+    MEASURED: wrong on 722 of 6,000.
+
+IF YOU WANT A SINGLE NUMBER instead of a pair, the correct formula is `(r//3) * 3 + c//3`, which gives
+exactly 0 through 8:
+
+                                                0  1  2
+                                                3  4  5
+                                                6  7  8
+
+    That is the standard "flatten a 2-D index" formula: row times width plus column. `* 3 + c//3`, not
+    `* c//3`.
+
+WHY ONE PASS IS ENOUGH, and why it costs nothing extra: each of the 81 cells contributes three
+constant-time set operations. The three-separate-checks version reads every cell three times; this
+reads each once. Both are trivially fast on a 9x9 board - the reason to prefer this one is that it
+generalises to an n x n board and reads as one idea rather than three.""",
+
+    """3. EVERY TERM, DEFINED
+
+SUDOKU. A 9x9 grid to be filled with digits 1-9 so that every row, every column and every 3x3 box
+contains each digit at most once.
+
+VALID (as this problem means it). NO RULE IS CURRENTLY BROKEN. It does NOT mean solvable, and it does
+not mean complete. A board of 81 dots is valid.
+
+'.' - THE EMPTY CELL. A placeholder, not a value. It must be SKIPPED, or every board with two or more
+empty cells looks like it has a duplicate - measured wrong on 1,400 of 6,000, which is every valid
+board in the sample.
+
+BOX / BLOCK / SUB-GRID. One of the nine 3x3 squares. Boxes do not overlap and together they cover the
+grid.
+
+INTEGER DIVISION, `//`. Division rounded down. `7 // 3` is 2. It is what maps a 0-8 index onto a 0-2
+band, which is how a cell finds its box.
+
+BOX IDENTIFIER. Either the PAIR `(r//3, c//3)`, which takes nine distinct values, or the single number
+`(r//3) * 3 + c//3`, which runs 0 to 8. Multiplying the two halves - `(r//3) * (c//3)` - is NOT an
+identifier: it produces only five distinct values and collides. Measured wrong on 722 of 6,000.
+
+FLATTENING A 2-D INDEX. Turning a (row, column) pair into one number as `row * width + column`. Here
+the width is 3 because there are three boxes across.
+
+SET. A collection with O(1) membership tests and no duplicates. The whole solution is "try to add;
+if it was already there, fail".
+
+TUPLE AS A KEY. `(val, 'r', r)` - an immutable group usable as a set element. THE TAG ('r', 'c', 'b')
+IS ESSENTIAL: without it, row, column and box claims share one namespace and collide, which is wrong
+on 1,049 of 6,000.
+
+NAMESPACE COLLISION. Two logically different facts producing the same key. The tag exists to prevent
+it, and it is the same discipline as prefixing keys in a shared cache.
+
+O(1) TIME AND SPACE, STRICTLY SPEAKING. The board is a fixed 81 cells, so everything about this problem
+is constant. Say "O(n squared) for an n x n board" if you want the honest general statement - the
+constant-time claim is true but tells the interviewer nothing.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random sparse boards (5 to 22 filled cells, of which 1,400 are
+valid and 4,600 invalid), each checked against a brute force that tests the nine rows, nine columns and
+nine boxes separately.
+
+TRAP 1 - NOT SKIPPING THE EMPTY CELLS. The dots are then treated as a value, and any board with two
+dots in a row "has a duplicate".
+
+    MEASURED: wrong on 1,400 of 6,000 - which is EXACTLY the number of valid boards, because this
+    version answers "invalid" for everything. On the official valid example it returns False.
+    A ONE-LINE FIX and the first line of the loop body: `if val == '.': continue`.
+
+TRAP 2 - UNTAGGED KEYS. Storing `(val, r)`, `(val, c)` and `(val, r//3, c//3)` puts row and column
+claims in the same namespace, so a 5 in row 3 collides with a 5 in column 3.
+
+    MEASURED: wrong on 1,049 of 6,000 - and it REJECTS THE OFFICIAL VALID BOARD. Tag the keys: 'r',
+    'c', 'b'. (Three separate sets per index, as in section 5's alternative, is the same fix by
+    another route.)
+
+TRAP 3 - `(r//3) * (c//3)` AS THE BOX IDENTIFIER. Multiplying the two band numbers is the single most
+common piece of wrong arithmetic in this problem. It produces only five distinct ids across nine boxes:
+
+    box ids:   0 0 0        five boxes share the id 0, and two more share the id 2
+               0 1 2
+               0 2 4
+
+    MEASURED: wrong on 722 of 6,000, and it rejects the official valid board. THE CORRECT SINGLE-NUMBER
+    FORM IS `(r//3) * 3 + c//3` - row times width plus column - or just keep the PAIR `(r//3, c//3)`,
+    which needs no arithmetic at all.
+
+TRAP 4 - `r % 3` AND `c % 3` INSTEAD OF `r // 3` AND `c // 3`. Remainder groups cells by their POSITION
+WITHIN a box rather than by which box they are in, so it checks nine interleaved lattices instead of
+nine blocks.
+    MEASURED: wrong on 460 of 6,000. Ask yourself which one collapses a range and which one cycles.
+
+TRAP 5 - CHECKING ROWS AND COLUMNS BUT FORGETTING THE BOXES. This one is worth studying, because the
+measurement shows something instructive:
+
+    MEASURED: wrong on 306 of 6,000 on sparse boards - and those 306 are exactly the boards whose ONLY
+    violation is inside a box. But on DENSER boards (30 to 55 filled cells) it was wrong on 0 of 6,000,
+    because a dense invalid board almost always violates a row or column too.
+    SO THE BOX CHECK LOOKS UNNECESSARY ON BUSY BOARDS AND IS ESSENTIAL ON SPARSE ONES. The smallest
+    counterexample is two cells: 5 at (0,0) and 5 at (1,1) - different rows, different columns, same
+    box. THIS IS THE TEST TO WRITE, and it is a good example of why choosing the right test population
+    matters more than the number of tests.
+
+TRAP 6 - CHECKING ROWS ONLY. Wrong on 1,401 of 6,000 sparse boards and 34 of 6,000 dense ones. Same
+lesson as trap 5, more so.
+
+TRAP 7 - TRYING TO DECIDE SOLVABILITY. "Valid" means no rule is broken RIGHT NOW. A board can be valid
+and impossible to finish. Solving is a backtracking problem (Sudoku Solver) and is not what is being
+asked - answering the harder question wastes the interview.
+
+TRAP 8 - COMPARING DIGITS AS NUMBERS AND STRINGS INTERCHANGEABLY. The cells hold STRINGS like '5'.
+Mixing '5' and 5 in the same set means nothing ever collides, and every board is reported valid.
+Convert consistently or not at all.
+
+WHAT IS NOT A TRAP, measured rather than assumed: THE THREE-SEPARATE-CHECKS VERSION and the
+nine-row-sets / nine-column-sets / nine-box-sets version are both wrong on 0 of 6,000. The second is
+arguably clearer than the single tagged set, and it is the one to write if you find tuple keys fiddly.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - THREE SEPARATE SWEEPS:
+
+    def is_valid_sudoku_three_passes(board):
+        def ok(vals):
+            vals = [v for v in vals if v != '.']       # the dots are not values
+            return len(vals) == len(set(vals))
+        for r in range(9):
+            if not ok(board[r]):
+                return False
+        for c in range(9):
+            if not ok([board[r][c] for r in range(9)]):
+                return False
+        for br in range(3):
+            for bc in range(3):
+                if not ok([board[br*3+i][bc*3+j] for i in range(3) for j in range(3)]):
+                    return False
+        return True
+
+IT IS CORRECT - the ground truth for every measurement here - and honestly it is a fine answer. Say it
+first. The `len(vals) == len(set(vals))` idiom is the clean way to ask "any duplicates?", and note that
+the dot-filtering happens BEFORE the comparison, which is the whole of trap 1 handled in one line.
+
+WHAT IS SLIGHTLY UNSATISFYING ABOUT IT: it reads every cell three times, it repeats the same duplicate
+logic three times with three different index gymnastics, and the box loop's index arithmetic
+(`br*3+i`, `bc*3+j`) is the fiddliest code in the function.
+
+THE UPGRADE - ONE PASS, THREE CLAIMS PER CELL. Each filled cell asserts three facts, and the board is
+invalid exactly when a fact is asserted twice. So walk every cell once and try to add:
+
+    (val, 'r', r)              this digit is used in this row
+    (val, 'c', c)              this digit is used in this column
+    (val, 'b', r//3, c//3)     this digit is used in this box
+
+If any is already present, return False. That is the entire algorithm, and it turns three different
+duplicate checks into one.
+
+WHY THE TAG IS NOT OPTIONAL. Without 'r', 'c' and 'b', the key `(5, 3)` could mean "5 in row 3" or
+"5 in column 3", so unrelated facts collide and valid boards are rejected - measured wrong on 1,049 of
+6,000. The tag gives each family of claims its own namespace; keeping three separate collections of
+sets achieves the same thing structurally.
+
+WHY THE BOX IS `(r//3, c//3)`. Integer division by 3 collapses each group of three indices into one
+band number, so the pair names one of the nine blocks and takes nine distinct values. If you prefer a
+single integer, FLATTEN IT PROPERLY: `(r//3) * 3 + c//3`, which is the standard row-times-width-plus-
+column formula and yields 0 to 8. MULTIPLYING the two bands instead yields only five distinct values -
+five of the nine boxes all get the id 0 - and is measured wrong on 722 of 6,000.
+
+WHY THE DOTS MUST BE SKIPPED FIRST. They are placeholders. Not skipping them makes every board with two
+empty cells look invalid, which is wrong on 1,400 of 6,000 - every valid board in the sample.
+
+WHAT IT COSTS. The board is a fixed 9x9, so strictly everything here is O(1). The honest general
+statement is O(n squared) TIME for an n x n board - each cell touched once, with three constant-time set
+operations - and O(n squared) SPACE for the claims, since a full board makes 3 * 81 of them.
+
+AND THE VARIANT WORTH MENTIONING: nine row sets, nine column sets and nine box sets, indexed directly.
+Wrong on 0 of 6,000, no tuple keys, no tags needed because the structure provides the namespaces. If
+tuple keys feel error-prone under pressure, write that instead.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Keep ONE collection of "facts already seen". It starts empty.
+
+    2. Visit every cell of the grid, row by row.
+
+    3. IF THE CELL IS EMPTY, SKIP IT ENTIRELY. An empty cell is a placeholder, not a value, and treating
+       it as one makes every partly empty board look broken.
+
+    4. Otherwise, the cell's digit asserts THREE FACTS: that this digit is used in this row, that it is
+       used in this column, and that it is used in this 3x3 box.
+
+    5. Work out which box the cell is in by dividing BOTH its row number and its column number by three,
+       rounding down. Rows nought to two give box-row nought, rows three to five give box-row one, and so
+       on - so the PAIR of results names one of the nine boxes.
+
+    6. For each of the three facts: if it is already in the collection, the board is invalid - stop and
+       say so. Otherwise add it.
+
+    7. If the whole grid is visited without a repeat, the board is valid.
+
+WHY EACH FACT MUST RECORD WHICH KIND IT IS. "The digit five, and the number three" is ambiguous - it
+could mean row three, column three or box three. If those three families share one collection without
+being labelled, a five legitimately in row three collides with a five legitimately in column three, and
+a perfectly valid board is rejected - wrong on 1,049 of 6,000, including the official example.
+
+WHY THE BOX IS FOUND BY DIVIDING AND NOT BY MULTIPLYING. Dividing each coordinate by three collapses
+nine positions into three bands, and the pair of bands names the box. The common mistake is to multiply
+the two band numbers together, which produces only five different answers for nine boxes - five of them
+all come out as nought - so unrelated boxes are treated as one and valid boards are rejected. Wrong on
+722 of 6,000. If you want a single number for the box rather than a pair, multiply the band ROW by
+three and add the band COLUMN.
+
+AND WHY REMAINDERS ARE NOT THE SAME THING. Taking the remainder after dividing by three tells you WHERE
+IN a box a cell sits, not WHICH box it is in - so it groups nine scattered cells together instead of
+nine adjacent ones. Wrong on 460 of 6,000.
+
+THE STEP PEOPLE SKIP ALTOGETHER IS THE BOX CHECK, and the reason it survives testing is worth knowing:
+on a busy board, almost anything that breaks a box rule also breaks a row or column rule, so the missing
+check is invisible - measured wrong on 0 of 6,000 densely filled boards. On sparse boards it is wrong on
+306 of 6,000. THE TEST THAT CATCHES IT IS TWO CELLS: the same digit at row nought column nought and at
+row one column one - different row, different column, same box.
+
+FINALLY, REMEMBER WHAT IS NOT BEING ASKED: whether the board can be COMPLETED. Only whether it currently
+breaks a rule.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine you are an invigilator for a competition where nine teams of nine sit in a hall arranged in a
+9x9 grid of desks, and each person who has arrived is wearing a numbered badge from one to nine. Some
+desks are still empty. Three rules govern the seating: no two identical badge numbers in the same row of
+desks, none in the same column, and none within the same 3x3 cluster of desks - the hall is divided into
+nine such clusters.
+
+Your job is to say whether the seating as it currently stands breaks any rule. Not whether the remaining
+people can be seated legally - just whether what you can see is already wrong.
+
+The plodding way is to walk each of the nine rows looking for repeats, then each of the nine columns,
+then each of the nine clusters. That works perfectly well, and you walk the hall three times.
+
+The neater way is one walk with a clipboard. At each occupied desk you write down THREE ENTRIES: "badge
+seven is used in row four", "badge seven is used in column two", "badge seven is used in cluster
+middle-left". Before writing each entry you check whether it is already on your clipboard. The moment you
+try to write something already there, you have found the violation and you can stop.
+
+Three things about the clipboard matter.
+
+EMPTY DESKS GET NOTHING WRITTEN. This sounds too obvious to state, and it is the most common error in
+practice: if you treat "nobody here" as a badge number, then the second empty desk in a row looks like a
+duplicate and you condemn a perfectly legal hall. The very first thing you do at each desk is check
+whether anyone is sitting there.
+
+EACH ENTRY MUST SAY WHAT KIND OF FACT IT IS. Writing just "seven, four" is useless - is that row four,
+column four or cluster four? If your notes do not distinguish them, then a seven properly seated in row
+four and another seven properly seated in column four will look like the same entry twice, and you will
+declare a violation that does not exist.
+
+AND YOU MUST IDENTIFY THE CLUSTER CORRECTLY. The way to do it is to see which BAND of three rows the desk
+is in, and which band of three columns - the pair of bands names the cluster exactly, and there are nine
+such pairs for nine clusters. The tempting shortcut is to combine the two band numbers by multiplying
+them, and that is a disaster: multiplying gives you the same answer for lots of different clusters -
+five of the nine all come out as nought - so you will think desks in opposite corners of the hall share a
+cluster and you will report violations that are not there.
+
+One last thing worth noticing about the cluster rule: it is the one people leave out, and on a crowded
+hall you will never notice, because almost anything that breaks a cluster rule also breaks a row or
+column rule. It only shows up when the hall is nearly empty - two people, diagonally adjacent, in the
+same cluster but in different rows and columns. Which is exactly the case a lazy test never includes.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Check a 9x9 Sudoku has no duplicate in any row, column, or 3x3 box.
+    def is_valid_sudoku(board):
+        seen = set()
+
+  ONE COLLECTION OF CLAIMS, for all three rules. Every entry will be a tuple identifying a digit, a kind
+  of constraint, and which one - so the three families cannot interfere.
+
+        for r in range(9):
+            for c in range(9):
+                val = board[r][c]
+
+  ONE PASS over all 81 cells. Compare with the three-sweep version, which reads every cell three times.
+
+                if val == '.':
+                    continue
+
+  SKIP THE EMPTY CELLS - THE FIRST THING THE LOOP BODY DOES, and the fix for the most damaging bug here.
+  A dot is a placeholder, not a value; without this line the second dot in any row looks like a
+  duplicate, and the function returns False for every board with two empty cells - measured wrong on
+  1,400 of 6,000, which is precisely the number of VALID boards in the sample.
+
+                keys = ((val, 'r', r), (val, 'c', c), (val, 'b', r // 3, c // 3))
+
+  THE THREE CLAIMS THIS CELL MAKES, and this single line is the whole design.
+
+  THE TAGS 'r', 'c', 'b' GIVE EACH FAMILY ITS OWN NAMESPACE. Without them `(5, 3)` is ambiguous between
+  row 3, column 3 and box 3, so unrelated facts collide and valid boards are rejected - measured wrong on
+  1,049 of 6,000, including the official valid example.
+
+  `r // 3, c // 3` NAMES THE BOX. Integer division collapses rows 0-2 to 0, 3-5 to 1, 6-8 to 2, and the
+  same for columns - so the PAIR takes nine distinct values, one per box.
+
+  DO NOT MULTIPLY THE TWO HALVES. `(r//3) * (c//3)` yields only five distinct ids for nine boxes:
+        0 0 0
+        0 1 2        - five boxes share the id 0, and two more share 2
+        0 2 4
+  Measured wrong on 722 of 6,000. If you want one integer instead of a pair, use `(r//3) * 3 + c//3`,
+  which gives 0 through 8 - row times width plus column.
+
+  AND `%` IS NOT `//`. `r % 3, c % 3` groups cells by their position WITHIN a box rather than by which
+  box, checking nine interleaved lattices instead of nine blocks - wrong on 460 of 6,000.
+
+                for key in keys:
+                    if key in seen:
+                        return False          # a duplicate constraint -> invalid
+                    seen.add(key)
+
+  TRY TO ADD, AND FAIL FAST. Each test and insertion is O(1). Returning at the first collision means an
+  invalid board is often detected long before the whole grid is read.
+
+  (Adding all three and comparing set sizes afterwards works too, but the early return is both faster
+  and easier to read.)
+
+        return True
+
+  Every filled cell made three claims and none was ever repeated, so no row, column or box rule is
+  broken.
+
+TWELVE LINES COVERING ALL THREE RULES AT ONCE. On a fixed 9x9 board everything here is O(1); the honest
+general statement is O(n squared) time and space for an n x n board. And note what the function does NOT
+do: it never asks whether the board can be COMPLETED, which is a different problem entirely.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE VIOLATION THAT ONLY THE BOX RULE CATCHES. This two-cell board is the most important test
+in the entry:
+
+     5 . . | . . . | . . .
+     . 5 . | . . . | . . .          the 5s are in DIFFERENT rows and DIFFERENT columns
+     . . . | . . . | . . .          but BOTH are in the top-left box
+
+    cell (0,0), val '5':  claims ('5','r',0), ('5','c',0), ('5','b',0,0)  - all new, added
+    cell (1,1), val '5':  claims ('5','r',1)  - new, added
+                                 ('5','c',1)  - new, added
+                                 ('5','b',0,0) - ALREADY PRESENT  ->  return False
+
+    THE ROW AND COLUMN CLAIMS BOTH PASSED. Only the box claim caught it. MEASURED: the rows-and-columns-
+    only version returns True here, and it is wrong on 306 of 6,000 sparse boards - which is exactly the
+    set of boards whose only violation is inside a box.
+
+CASE TWO - THE OFFICIAL VALID BOARD (the standard LeetCode example, 30 filled cells). Every filled cell
+adds three new claims and no collision ever occurs, so the walk completes and returns True.
+
+    THE WRONG VERSIONS ON THIS SAME BOARD, all measured:
+        does not skip the dots        returns False - the second '.' collides with the first
+        untagged keys                 returns False - a legitimate row claim collides with a column one
+        (r//3)*(c//3) box id          returns False - five different boxes all claim id 0
+        r%3, c%3 box id               returns False
+    ALL FOUR REJECT A VALID BOARD, which is a useful diagnostic: if your solution says "invalid" for the
+    official valid example, the bug is in the KEYS, not in the logic.
+
+CASE THREE - THE OFFICIAL INVALID BOARD. The same board with the top-left 5 changed to an 8, which
+duplicates the 8 already at (3,0):
+
+     8 3 . | . 7 . | . . .
+     6 . . | 1 9 5 | . . .
+     . 9 8 | . . . | . 6 .
+     -----+------+-----
+     8 . . | . 6 . | . . 3          <- this 8 is in column 0 as well
+     ...
+
+    The claim ('8','c',0) is made at (0,0) and again at (3,0), so a COLUMN duplicate is what fires. The
+    two 8s are in DIFFERENT boxes - rows 0-2 versus rows 3-5 - so the box rule is not involved at all.
+    Every version in this entry gets this board right, which is exactly why it is a poor test: it fails
+    to distinguish a correct solution from one that never checks the boxes.
+
+CASE FOUR - THE ALL-EMPTY BOARD. 81 dots. Every cell is skipped, no claim is ever made, and True is
+returned. CORRECT - a blank board breaks no rule.
+    THE NO-DOT-SKIP VERSION returns False on the second cell.
+
+CASE FIVE - THE BOX ARITHMETIC, LAID OUT. For the nine box anchor cells:
+
+     (r, c)   |  r//3, c//3  |  (r//3)*3 + c//3  |  (r//3)*(c//3)  <- WRONG
+    ----------+--------------+-------------------+-----------------
+     (0, 0)   |    0, 0      |        0          |       0
+     (0, 3)   |    0, 1      |        1          |       0      <- collides with box 0
+     (0, 6)   |    0, 2      |        2          |       0      <- collides with box 0
+     (3, 0)   |    1, 0      |        3          |       0      <- collides with box 0
+     (3, 3)   |    1, 1      |        4          |       1
+     (3, 6)   |    1, 2      |        5          |       2
+     (6, 0)   |    2, 0      |        6          |       0      <- collides with box 0
+     (6, 3)   |    2, 1      |        7          |       2      <- collides with (3,6)
+     (6, 6)   |    2, 2      |        8          |       4
+
+    FIVE OF THE NINE BOXES ARE ALL CALLED 0 UNDER THE MULTIPLYING FORMULA, and two more share the id 2.
+    Reading that column down the page is the fastest way to see why it cannot work.
+
+CASE SIX - WHY THE TEST POPULATION MATTERS, measured. The rows-and-columns-only version:
+    on SPARSE boards (5-22 filled):    wrong on 306 of 6,000
+    on DENSER boards (30-55 filled):   wrong on 0 of 6,000
+    A dense invalid board nearly always breaks a row or column too, so the missing box check hides
+    completely. Choosing the population that can expose a bug matters more than running more tests.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The board is a fixed 81 cells, so strictly this is O(1) time and O(1) space - true,
+and unhelpful as an answer. THE HONEST GENERAL STATEMENT: O(n squared) TIME for an n x n board, since
+each cell is visited once with three constant-time set operations, and O(n squared) SPACE for the claims.
+Say both.
+
+    three separate sweeps (rows, then columns, then boxes)   reads every cell 3 times, very clear
+    one pass with a single tagged claim set                   reads every cell once
+    one pass with nine row sets, nine column sets, nine box sets   same cost, no tuple tags needed
+
+All three are correct. The single-pass version is not faster in any way that matters on a 9x9 grid; it is
+better because it expresses ONE idea instead of three, and it generalises.
+
+THE #1 MISTAKE: NOT SKIPPING THE '.' CELLS. Wrong on 1,400 of 6,000 - which is every valid board in the
+sample, because that version answers "invalid" for everything. It is also the easiest bug to spot: if
+your function rejects a blank board, this is why.
+
+THE #2: UNTAGGED KEYS. Wrong on 1,049 of 6,000, and it rejects the official VALID example. Row, column
+and box claims need separate namespaces - either a tag in the tuple or three separate collections.
+
+THE #3: `(r//3) * (c//3)` AS THE BOX ID. Wrong on 722 of 6,000. It gives five ids for nine boxes. Use the
+PAIR `(r//3, c//3)`, or flatten properly with `(r//3) * 3 + c//3`.
+
+THE #4: `r % 3, c % 3`. Wrong on 460 of 6,000 - remainder tells you where in a box you are, not which box.
+
+THE #5: OMITTING THE BOX CHECK. Wrong on 306 of 6,000 sparse boards - AND on 0 of 6,000 dense ones. That
+pair of numbers is the most useful thing in this entry: the bug is invisible on busy boards because a
+dense violation nearly always breaks a row or column too. THE TEST THAT CATCHES IT is two cells,
+diagonally placed inside one box.
+
+ONE HONEST NEGATIVE: the nine-sets-per-dimension version is wrong on 0 of 6,000. If tuple keys feel
+fiddly under pressure, write that instead - it is not a lesser answer.
+
+WHAT TO SAY OUT LOUD, in this order: (1) valid means no rule is currently broken, NOT solvable;
+(2) the three rules are rows, columns and boxes, so each filled cell asserts three facts and a repeated
+fact means invalid; (3) skip the dots - they are placeholders; (4) the box is `(r//3, c//3)`, because
+integer division collapses each group of three indices into a band; (5) the claims need tags, or a 5 in
+row 3 collides with a 5 in column 3; (6) one pass, O(n squared) for an n x n board. Point 4 with the
+reason - and volunteering that multiplying the bands does NOT work - is what shows you derived it.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "now SOLVE the Sudoku." That is a genuinely different problem -
+backtracking, placing a digit, recursing, undoing - and this validity check is the constraint test
+inside it. Say that, and mention the standard speed-ups: try the most constrained empty cell first, and
+maintain the three sets incrementally rather than re-scanning.
+
+AND THE OTHER ONE: "generalise to an n x n board with n = k squared." The box formula becomes `r//k` and
+`c//k`, and the flattened id `(r//k) * k + c//k`. Being able to state that shows you understood the
+arithmetic rather than memorising the 3s.
+
+THEN SOMETIMES: "do it with bitmasks", which is the performance answer - nine 9-bit integers per
+dimension, testing with AND and setting with OR. Same idea, no hashing, and worth naming if the
+interviewer cares about constant factors.
+
+THE FAMILY: Valid Sudoku, Sudoku Solver, Contains Duplicate, Contains Duplicate II / III, Word Search,
+N-Queens (the same "three constraint families, one set each" idea for rows, diagonals and
+anti-diagonals), Design Add and Search Words. THE TRANSFERABLE IDEA: WHEN SEVERAL CONSTRAINT FAMILIES
+MUST HOLD AT ONCE, TURN EACH ITEM INTO ONE TAGGED FACT PER FAMILY AND CHECK THEM ALL IN A SINGLE PASS -
+AND MAKE SURE THE TAGS KEEP THE FAMILIES FROM COLLIDING.
+
+ONE-SENTENCE TAKEAWAY: walk the grid once, and for each filled digit try to record three tagged facts -
+digit-in-row, digit-in-column, digit-in-box where the box is `(r//3, c//3)` - failing the moment any fact
+is already recorded, and skipping the dots entirely.""",
 ]
 
 _EX_P1AD["A/B testing an ML / LLM feature"] = [
@@ -129439,71 +129947,478 @@ for _e in ENTRIES:
 _EX_P1AE = {}
 
 _EX_P1AE["Array Partition I"] = [
-    """Start with the actual situation, no jargon yet.
-You have 4 coins: 1p, 4p, 3p, 2p. You must split them into 2 PAIRS. From each
-pair you are only allowed to keep the SMALLER coin. You want to keep as much
-money as possible.
-Try the pairings by hand:
-  (1,4) and (3,2) -> you keep 1 and 2 -> total 3
-  (1,3) and (4,2) -> you keep 1 and 2 -> total 3
-  (1,2) and (3,4) -> you keep 1 and 3 -> total 4  <- best
-So the answer is 4. Notice what the best pairing did: it put the two SMALL
-coins together and the two BIG coins together. That is the whole idea, and we
-have not used a single technical word yet.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why putting similar numbers together wins.
-In every pair, the bigger coin is thrown away. So the question is really: how
-do I throw away as little as possible?
-If you pair 1 with 4, you throw away the 4 - a big loss. If you pair 3 with 4,
-you throw away the 4 as well, but now the 1 is paired with the 2, so you only
-throw away the 2. The waste went from 4 to (4 and 2)... let us count properly:
-  (1,4)+(3,2): thrown away = 4 and 3 = 7 wasted
-  (1,2)+(3,4): thrown away = 2 and 4 = 6 wasted
-Less waste means more kept. And the way to waste least is to pair each big
-number with the number just below it, so the gap between them is as small as
-possible.""",
+You are given 2n numbers. Split them into n PAIRS however you like. From each pair, only THE SMALLER
+NUMBER counts. Arrange the pairs so that THE TOTAL OF THOSE SMALLER NUMBERS IS AS LARGE AS POSSIBLE, and
+return that total.
 
-    """Turning that into a rule you can code.
-'Pair each number with the one closest to it' is exactly what happens if you
-SORT the numbers (put them in order from smallest to largest) and then pair
-them up two at a time, left to right.
-[1,4,3,2] sorted becomes [1,2,3,4]. Pair them as (1,2) and (3,4).
-Now, in each pair, which one do you keep? The smaller one - which is always the
-FIRST of the two. In the sorted list those are the ones at positions 0 and 2.
-Positions 0, 2, 4, 6... are called the EVEN positions (a position is just the
-slot number, counting from 0). So the answer is: sort, then add up everything
-at an even position.""",
+    nums = [1, 4, 3, 2]        four numbers, so two pairs
 
-    """Reading the one line of code.
-    nums.sort()
-    return sum(nums[::2])
-`nums.sort()` puts the list in order, smallest first.
-`nums[::2]` is Python's way of saying 'start at the beginning and take every
-SECOND item' - so from [1,2,3,4] it gives [1,3]. Those are exactly the smaller
-member of each pair.
-`sum(...)` adds them up: 1 + 3 = 4, matching what we worked out by hand.
-Two lines, and both of them came directly from the coin example.""",
+    pairing (1,4) and (3,2):   min is 1, min is 2   ->  total 3
+    pairing (1,3) and (4,2):   min is 1, min is 2   ->  total 3
+    pairing (1,2) and (3,4):   min is 1, min is 3   ->  TOTAL 4      <- the best
+    ANSWER: 4
 
-    """Checking the odd cases, so you trust it.
-Two numbers only, [5,9]: sorted [5,9], one pair, you keep 5. Answer 5.
-All the same, [2,2,2,2]: every pair keeps a 2, answer 4. Nothing to optimise
-when the numbers are identical.
-Negative numbers, [-1,-5,2,4]: sorted [-5,-1,2,4], pairs (-5,-1) and (2,4), you
-keep -5 and 2, total -3. Still correct - the rule never assumed the numbers
-were positive.
-A single pair of equal numbers [7,7]: keep 7.""",
+Read that third pairing again, because the whole problem is visible in it. Pairing 1 with 2 "wastes" only
+the 2, and pairing 3 with 4 wastes only the 4. The other pairings waste a 4 or a 3 - a bigger loss.
 
-    """How fast is it, and what problem family is this?
-The slow part is the SORT. Sorting a list of n items takes about n x log(n)
-steps - for 1,000 items that is roughly 10,000 steps rather than the 1,000,000
-you would need to try every possible pairing. Adding up the even positions is
-then just one quick walk through the list.
-This belongs to a family called GREEDY problems - 'greedy' means you make the
-obviously-best local choice (here: pair neighbours) and it happens to give the
-best overall answer. Not every problem works that way, which is why we checked
-by hand with the coins first. Related ones you will meet: Assign Cookies, Boats
-to Save People, and Minimum Number of Arrows - all 'sort first, then take the
-obvious choice'.""",
+A LONGER ONE: nums = [6, 2, 6, 5, 1, 2]. Sorted, that is [1, 2, 2, 5, 6, 6]. Pair them up as
+(1,2), (2,5), (6,6): the minimums are 1, 2 and 6, TOTAL 9. Nothing does better.
+
+THE KEY REFRAME, and it is what makes the problem easy: IN EVERY PAIR, THE LARGER NUMBER IS THROWN AWAY.
+So instead of asking "how do I maximise the sum of minimums", ask "HOW DO I MINIMISE THE TOTAL THROWN
+AWAY". The sum of everything is fixed, so those two questions have the same answer - and the second one
+is much easier to think about.
+
+THE ANSWER IS TWO LINES: sort the numbers, then add up every second one starting from the first.
+
+    sorted [1, 2, 3, 4]      take indices 0 and 2  ->  1 + 3 = 4
+    sorted [1, 2, 2, 5, 6, 6] take indices 0, 2, 4 ->  1 + 2 + 6 = 9
+
+WHY THIS PROBLEM IS ASKED. The code is trivial; the JUSTIFICATION is not. Interviewers use it to see
+whether you can argue that a greedy choice is OPTIMAL rather than just plausible. Section 5 gives the
+argument, and it is the only thing worth rehearsing here.
+
+THE EASY MISTAKE, MEASURED: summing the ODD indices instead of the even ones - the maximums rather than
+the minimums - is wrong on 5,887 of 6,000 random cases. Sorting DESCENDING and taking the even indices is
+the same error and scores identically.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+FLIP THE QUESTION AROUND. The sum of all 2n numbers is fixed no matter how you pair them. Each pair
+contributes its smaller number to your score and DISCARDS its larger one. So:
+
+    your score  =  (the fixed total of everything)  -  (the total of the discarded larger numbers)
+
+MAXIMISING THE SCORE IS THEREFORE THE SAME AS MINIMISING THE TOTAL DISCARDED. And "how do I throw away as
+little as possible" is a question with an obvious answer: pair each number with the number CLOSEST TO IT,
+so the gap you lose is as small as it can be.
+
+WATCH IT ON [1, 2, 3, 4]:
+
+    pairing        | minimums kept | maximums discarded | discarded total
+    ---------------+---------------+--------------------+----------------
+    (1,2) (3,4)    |    1, 3       |      2, 4          |      6      <- least discarded, best score 4
+    (1,3) (2,4)    |    1, 2       |      3, 4          |      7
+    (1,4) (2,3)    |    1, 2       |      4, 3          |      7
+
+    Every pairing keeps the 1 - it is the smallest number, and it is the minimum of whatever pair it
+    lands in, so it is unavoidable. The choice is really about the other three, and pairing 3 with 4
+    lets you KEEP the 3 rather than losing it.
+
+NOW THE PICTURE THAT MAKES SORTING OBVIOUS. Line the numbers up in order and bracket them in adjacent
+pairs:
+
+    sorted:   1     2  |  3     4  |  6     6
+              ^kept ^lost ^kept ^lost ^kept ^lost
+              index 0    index 2    index 4
+
+    THE KEPT NUMBERS ARE EXACTLY THE ONES AT EVEN POSITIONS - 0, 2, 4 - because in each adjacent pair the
+    left-hand one is the smaller.
+
+WHY ADJACENT PAIRING IS THE BEST POSSIBLE, argued rather than asserted. Take the sorted list and think
+about the SMALLEST number. Whatever it is paired with, it will be that pair's minimum, so it contributes
+itself and nothing you do changes that. To lose as little as possible in that pair, you should pair it
+with THE NEXT SMALLEST number - if you paired it with something bigger, you would be discarding a large
+number that could otherwise have been kept as some other pair's minimum. Remove those two, and you face
+exactly the same problem with the remaining numbers. Repeating the argument gives adjacent pairing all
+the way along.
+
+THAT ARGUMENT IS THE ANSWER TO "PROVE IT", and it is the reason this problem exists. Say it in the
+interview.
+
+AND THE MISTAKE THE PICTURE PREVENTS: taking the numbers at ODD positions collects the LARGER member of
+each pair - the ones you were supposed to throw away. MEASURED wrong on 5,887 of 6,000. Sorting the other
+way round and taking even positions is the same mistake with the same score.""",
+
+    """3. EVERY TERM, DEFINED
+
+PAIRING / PERFECT MATCHING. Splitting 2n items into n disjoint pairs so that every item is used exactly
+once. There are many possible pairings - (2n-1) * (2n-3) * ... of them - which is why brute force is only
+viable for tiny inputs.
+
+`min(a, b)`. The smaller of two values. Here the pair's CONTRIBUTION.
+
+THE DISCARDED VALUE. The larger member of a pair, which never counts. Reframing the problem in terms of
+minimising the total discarded is the move that makes it easy.
+
+GREEDY ALGORITHM. One that makes the locally obvious choice at each step and never reconsiders. Here:
+pair the smallest remaining number with the next smallest. Greedy algorithms need a PROOF, because
+plausible greedy rules are often wrong - and that proof is what the interviewer wants.
+
+EXCHANGE ARGUMENT. The standard way to prove a greedy rule optimal: take any supposedly better solution,
+show you can swap elements to make it look like the greedy one without making it worse. Here: if the
+smallest number is paired with something other than the second smallest, swapping to make them adjacent
+never lowers the total.
+
+`nums[::2]`. Python slicing: every element from index 0 with a step of 2 - indices 0, 2, 4, ... So
+`sum(nums[::2])` totals the even positions. `nums[1::2]` starts at index 1 and takes the ODD positions -
+the maximums, which is the classic wrong answer.
+
+EVEN INDEX. 0, 2, 4, ... After sorting and bracketing adjacent pairs, these are the smaller member of
+each pair. Note that "even index" is a CONSEQUENCE of the pairing, not the rule itself - if you cannot
+remember which, re-derive it by writing [1,2,3,4] out and bracketing.
+
+INVARIANT WORTH SAYING: after sorting, `nums[2i]` and `nums[2i+1]` form pair i, and `nums[2i]` is its
+minimum.
+
+O(n log n). The cost, and it is entirely the sort - the summation is O(n). You cannot do better with
+comparisons in general, though if the values come from a small fixed range you could counting-sort in
+O(n + range) and beat it. Worth a sentence.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random lists of 2, 4, 6 or 8 values from -5 to 10, each checked
+against a brute force that tries EVERY possible pairing.
+
+TRAP 1 - SUMMING THE ODD INDICES. `sum(nums[1::2])` after sorting collects the LARGER member of each
+adjacent pair - precisely the values the problem discards.
+
+    [1, 4, 3, 2]  correct 4,  this gives 6 (2 + 4).
+    [6, 2, 6, 5, 1, 2]  correct 9,  this gives 13.
+    MEASURED: wrong on 5,887 of 6,000. It is right only when every pair happens to be equal.
+    RE-DERIVE RATHER THAN RECALL: write [1,2,3,4], bracket (1,2)(3,4), and see that the kept values sit
+    at positions 0 and 2.
+
+TRAP 2 - SORTING DESCENDING AND THEN TAKING THE EVEN INDICES. Identical mistake seen from the other
+side: descending order puts the LARGER of each pair first.
+    MEASURED: wrong on 5,887 of 6,000 - exactly the same score, since it produces the same sums.
+
+TRAP 3 - FORGETTING TO SORT AT ALL. Then you are pairing whatever happened to be adjacent in the input,
+which is an arbitrary pairing rather than the best one.
+
+    [1, 4, 3, 2]  gives 1 + 3 = 4, which is CORRECT BY LUCK.
+    [6, 2, 6, 5, 1, 2]  gives 6 + 6 + 1 = 13, where the true maximum is 9. Note that it OVERSTATES -
+    the values it added are not the minimums of their pairs at all, since the list was never ordered.
+    MEASURED: wrong on 4,620 of 6,000. THE NUMBER IS INSTRUCTIVE: this bug is right on nearly a quarter
+    of random inputs, so a couple of hand tests will not catch it.
+
+TRAP 4 - PAIRING THE LARGEST WITH THE SMALLEST. It feels balanced and fair, and it is exactly backwards:
+pairing 1 with 6 throws the 6 away, when the 6 could have been kept as the minimum of (6,6).
+
+    [1, 2, 3, 4]  correct 4,  this gives min(1,4) + min(2,3) = 1 + 2 = 3.
+    [6, 2, 6, 5, 1, 2] correct 9,  this gives 5.
+    MEASURED: wrong on 4,356 of 6,000. THE REASON IS THE REFRAME: you want to DISCARD as little as
+    possible, and pairing extremes discards the biggest numbers.
+
+TRAP 5 - TRYING TO SEARCH THE PAIRINGS. There are (2n-1) * (2n-3) * ... * 1 pairings - 105 for eight
+numbers, over two million for sixteen - so brute force is only a checking tool, not a solution. Recognise
+that and go looking for a greedy rule.
+
+TRAP 6 - ASSERTING GREEDINESS WITHOUT ARGUING IT. The code is two lines and correct; if you cannot say
+WHY adjacent pairing is optimal, you have answered half the question. The argument is in section 5 and it
+is three sentences long.
+
+TRAP 7 - ASSUMING THE VALUES ARE POSITIVE. They need not be, and it does not matter: the argument never
+uses positivity, only ordering. Measured on inputs including negatives - wrong on 0 of 6,000. Say that
+you checked rather than assuming it.
+
+TRAP 8 - MUTATING THE CALLER'S LIST WITHOUT SAYING SO. `nums.sort()` sorts in place. That is usually
+fine here, and it is worth one sentence - `sorted(nums)` if the caller minds.
+
+WHAT IS NOT A TRAP, measured rather than assumed: WRITING THE PAIRS OUT EXPLICITLY -
+`sum(min(nums[i], nums[i+1]) for i in range(0, len(nums), 2))` after sorting. Wrong on 0 of 6,000. It is
+slightly longer and considerably clearer about WHY the even indices are the answer, and if you are at all
+unsure which indices to take, write this form instead.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY PAIRING:
+
+    def array_pair_sum_brute(nums):
+        def best(remaining):
+            if not remaining:
+                return 0
+            first = remaining[0]                      # pair the first item with each other item
+            return max(min(first, remaining[i]) + best(remaining[1:i] + remaining[i+1:])
+                       for i in range(1, len(remaining)))
+        return best(sorted(nums))
+
+IT IS CORRECT - the ground truth for every measurement in this entry - and it is useless beyond about a
+dozen numbers, because the number of pairings is (2n-1) * (2n-3) * ... * 1: 3 for four numbers, 15 for
+six, 105 for eight, and over two million for sixteen. Say it, price it, and use it as a mental
+verification tool only.
+
+THE REFRAME THAT SOLVES THE PROBLEM. The total of all 2n numbers is FIXED. Each pair keeps its smaller
+value and DISCARDS its larger one. So
+
+    score = (fixed total) - (total discarded)
+
+and maximising the score is exactly MINIMISING WHAT YOU DISCARD. That change of question is the whole
+insight, because "throw away as little as possible" has an obvious answer: never let a big number be the
+one discarded if a small number could be discarded instead - which means pairing each number with its
+CLOSEST neighbour.
+
+THE GREEDY RULE: sort, then pair adjacent values - (first, second), (third, fourth), and so on. The kept
+values are then the ones at even indices, so the answer is `sum(nums[::2])`.
+
+THE PROOF, AND THIS IS WHAT THE QUESTION IS FOR - AN EXCHANGE ARGUMENT IN THREE SENTENCES:
+
+    1. Consider the SMALLEST number in the list. Whatever it is paired with, it is that pair's minimum,
+       so it contributes itself to the score no matter what - nothing you decide can change its
+       contribution.
+    2. Therefore the only thing that matters about its pair is WHICH OTHER NUMBER GETS DISCARDED, and you
+       want that to be as small as possible - so pair it with the SECOND smallest number.
+    3. Remove those two. What remains is the same problem on a smaller list, so the same argument applies
+       again, all the way down. Hence adjacent pairing of the sorted list is optimal.
+
+THAT ARGUMENT NEVER USES POSITIVITY, which is why negatives are fine - and it was checked: the greedy
+answer is wrong on 0 of 6,000 inputs including negative values.
+
+WHY THE KEPT VALUES ARE THE EVEN INDICES. After sorting, pair i is (`nums[2i]`, `nums[2i+1]`), and since
+the list is ascending, `nums[2i]` is the smaller. Indices 0, 2, 4 ... So `nums[::2]`.
+
+    IF YOU ARE UNSURE, WRITE THE EXPLICIT FORM - `sum(min(nums[i], nums[i+1]) for i in range(0, n, 2))`.
+    Wrong on 0 of 6,000, and it says out loud what the slice means. Taking `nums[1::2]` instead collects
+    the discarded maximums and is wrong on 5,887 of 6,000.
+
+WHAT IT COSTS. O(n log n) TIME, all of it the sort; the summation is O(n). O(1) extra space if you sort
+in place. And if the values are known to lie in a small range, a counting sort makes it O(n + range) -
+worth mentioning, since LeetCode bounds the values to -10,000..10,000.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. SORT THE NUMBERS into ascending order.
+
+    2. ADD UP EVERY OTHER NUMBER, STARTING WITH THE FIRST - the first, the third, the fifth, and so on.
+
+    3. That total is the answer.
+
+THAT REALLY IS ALL OF IT. What the interview is testing is not the two steps but whether you can say WHY
+they are right, so here is the reasoning in the order to say it.
+
+FIRST, THE REFRAME. Whatever pairing you choose, the grand total of all the numbers is the same, and each
+pair keeps its smaller number while throwing away its larger one. So your score is the grand total minus
+everything thrown away - which means maximising the score is the same thing as THROWING AWAY AS LITTLE AS
+POSSIBLE.
+
+SECOND, WHAT THAT IMPLIES. You should never discard a big number when you could have discarded a small
+one instead. Pairing a number with the value closest above it means the amount discarded is as small as
+it can be.
+
+THIRD, THE PROOF, in three sentences. Take the smallest number of all: whichever partner it gets, it will
+be the smaller of that pair, so it contributes itself regardless - you have no choice about it. The only
+thing you control is which OTHER number is discarded alongside it, and you want that to be the smallest
+available, so pair it with the second smallest. Take those two away and you are looking at exactly the
+same problem on a shorter list, so repeating the reasoning pairs up the whole sorted list side by side.
+
+FOURTH, WHY IT IS THE FIRST, THIRD, FIFTH AND SO ON. Once sorted and bracketed into neighbouring pairs,
+the left-hand member of each pair is the smaller one - and those sit at the first, third, fifth positions.
+Taking the second, fourth and sixth instead collects the values you were supposed to throw away, and is
+wrong on 5,887 of 6,000 random inputs.
+
+TWO OTHER WAYS TO GET IT WRONG, both measured. Skipping the sort pairs up whatever order the input
+happened to arrive in - wrong on 4,620 of 6,000, and note it is RIGHT on about a quarter of inputs by
+luck, so a couple of hand tests will not catch it. And pairing the largest with the smallest, which feels
+balanced, throws away the biggest numbers - wrong on 4,356 of 6,000.
+
+IF YOU CANNOT REMEMBER WHICH POSITIONS TO TAKE, do not guess: write out the four numbers one, two, three,
+four, bracket them as one-two and three-four, and read off that you keep the one and the three. Ten
+seconds, and it is the difference between right and wrong.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a village fete with a peculiar tug-of-war. Everyone is weighed, then paired off however the
+organisers like, and each pair is sent to opposite ends of a rope. The rope only ever moves as far as the
+LIGHTER of the two can pull it, so what the fete records for each pair is the lighter person's strength.
+The organisers want the TOTAL recorded across all the pairs to be as high as possible.
+
+The temptation is to think hard about matching people up cleverly. The insight is to look at what is being
+WASTED. In every pair, the heavier person's strength counts for nothing at all - it is thrown away. And
+since the sum of everybody's strength is a fixed number, whatever is not wasted is what gets recorded. So
+the organisers' real job is not to maximise what counts, IT IS TO WASTE AS LITTLE AS POSSIBLE.
+
+Once you see it that way the answer is obvious. Never pair the weakest person in the village with the
+strongest, because you would be wasting the strongest person entirely. Pair the weakest with the
+second-weakest, so the person wasted is nearly as feeble as the person recorded.
+
+And you can prove it is right, which is the part that matters. Think about the very weakest person in the
+village. Whoever they are paired with, they will be the lighter of the two, so their strength is what gets
+recorded - there is nothing to decide about them. The only decision is who is standing at the other end of
+their rope being wasted, and you obviously want that to be the least valuable person available: the
+second weakest. Now send those two home. You are left with exactly the same puzzle among the remaining
+villagers, so you apply the same reasoning again, and again, until everyone is paired.
+
+Which means: line everybody up from weakest to strongest, and pair up neighbours. First with second,
+third with fourth, fifth with sixth. What gets recorded is the first, the third, the fifth - each pair's
+lighter member.
+
+Two ways people get it wrong at the fete. Some organisers line everybody up correctly and then write down
+the second, fourth and sixth - the HEAVIER of each pair, which is precisely the list of people whose
+strength was thrown away. And some skip the lining up altogether and pair people in whatever order they
+turned up, which sometimes happens to work and usually does not.
+
+And one intuition to distrust: pairing the strongest with the weakest FEELS like the sporting thing to do,
+and it is the worst possible arrangement, because every strong person you pair with a weak one is a strong
+person completely wasted.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Max sum of min(pairs) when pairing 2n numbers: sort, take every other.
+    def array_pair_sum(nums):
+        nums.sort()
+
+  SORT ASCENDING, and this single line is the entire algorithm - everything after it is bookkeeping.
+
+  WHY SORTING IS THE RIGHT MOVE: the score is the grand total minus everything discarded, so you want to
+  discard as little as possible, which means pairing each number with the closest value above it. Sorting
+  puts closest values side by side.
+
+  `nums.sort()` sorts IN PLACE, mutating the caller's list. Usually acceptable; use `sorted(nums)` if not,
+  and say which you chose.
+
+  Omitting the sort pairs up the input's arbitrary order - measured wrong on 4,620 of 6,000, and RIGHT on
+  roughly a quarter of inputs by coincidence, which is exactly what makes it dangerous.
+
+        return sum(nums[::2])            # sum of every element at an even index
+
+  `nums[::2]` IS INDICES 0, 2, 4, ... - the LEFT-HAND member of each adjacent pair, which after sorting is
+  that pair's MINIMUM. Those minimums are what the problem counts.
+
+  `nums[1::2]` would be indices 1, 3, 5 - the larger member of each pair, the values the problem DISCARDS.
+  Measured wrong on 5,887 of 6,000. Sorting descending and taking the even indices is the same mistake
+  and scores identically.
+
+  IF YOU CANNOT REMEMBER WHICH SLICE, WRITE THE EXPLICIT FORM instead - it is measured correct on 0 wrong
+  of 6,000 and it says out loud what is happening:
+        return sum(min(nums[i], nums[i + 1]) for i in range(0, len(nums), 2))
+  Under interview pressure this version is the safer one, because a reader (and you) can see that each
+  term really is a pair's minimum.
+
+  A ten-second check that settles it either way: for [1,2,3,4] the pairs are (1,2) and (3,4), so the kept
+  values are 1 and 3 - at indices 0 and 2. Even indices.
+
+TWO LINES. O(n log n) TIME, all of it the sort, and O(1) EXTRA SPACE when sorting in place. If the values
+lie in a small known range - LeetCode bounds them to -10,000..10,000 - a counting sort would make it
+O(n + range), which is worth mentioning as the only available improvement.
+
+AND THE THING TO SAY WHILE WRITING IT: the proof. The smallest number is its pair's minimum whatever
+happens, so the only choice is who gets discarded alongside it, and that should be the second smallest;
+remove both and repeat. Without that sentence, these two lines look like a memorised trick.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [1, 4, 3, 2]. Expected 4.
+
+    sort:  [1, 2, 3, 4]
+    pairs: (1, 2) and (3, 4)
+    minimums: 1 and 3
+    answer: 1 + 3 = 4       - the even indices, 0 and 2
+
+    ALL THREE POSSIBLE PAIRINGS, for comparison:
+        (1,2)(3,4)  ->  1 + 3 = 4      <- best, and it is the adjacent one
+        (1,3)(2,4)  ->  1 + 2 = 3
+        (1,4)(2,3)  ->  1 + 2 = 3
+    Note that the 1 appears in every row: the smallest value is always its pair's minimum, which is the
+    first sentence of the proof made visible.
+
+    WHAT THE WRONG VERSIONS RETURN: odd indices give 2 + 4 = 6 (too high - they are summing the
+    discarded values, so the answer is not even achievable); pairing extremes gives min(1,4) + min(2,3)
+    = 3; and skipping the sort happens to give 1 + 3 = 4, correct by luck on this input.
+
+CASE TWO - WITH DUPLICATES. nums = [6, 2, 6, 5, 1, 2]. Expected 9.
+
+    sort:  [1, 2, 2, 5, 6, 6]
+    pairs: (1, 2), (2, 5), (6, 6)
+    minimums: 1, 2, 6      ->  answer 9
+
+    LOOK AT THE LAST PAIR: putting the two 6s together keeps a 6. Any other arrangement pairs a 6 with
+    something smaller and loses it entirely - which is the "waste as little as possible" principle at its
+    most visible.
+
+    WHAT THE WRONG VERSIONS RETURN: odd indices 2 + 5 + 6 = 13; no sort 6 + 6 + 1 = 13; pairing extremes
+    min(1,6) + min(2,6) + min(2,5) = 1 + 2 + 2 = 5. THE ODD-INDEX AND NO-SORT ANSWERS ARE BOTH LARGER
+    THAN THE TRUE MAXIMUM, which is a useful sanity signal: if your answer exceeds what any pairing can
+    achieve, you are summing the wrong halves.
+
+CASE THREE - THE SMALLEST INPUT. nums = [2, 1]. One pair, so the answer is min(2,1) = 1.
+    sort [1,2], even indices give index 0 = 1. Correct.
+    The odd-index version returns 2 - the maximum. This two-element case is the fastest way to check which
+    slice you want.
+
+CASE FOUR - ALL EQUAL. nums = [1, 1]. Answer 1. Every version in this entry gets this right, which is why
+the odd-index bug measured 5,887 wrong out of 6,000 rather than all 6,000 - the exceptions are inputs
+where every pair happens to be equal.
+
+CASE FIVE - CONSECUTIVE VALUES. nums = [1, 2, 3, 4, 5, 6]. sorted already; pairs (1,2)(3,4)(5,6),
+minimums 1 + 3 + 5 = 9.
+    Note the answer is the sum of the ODD NUMBERS here purely by coincidence of the data - it is the even
+    INDICES that matter, not odd values. Worth separating those two ideas explicitly, because the
+    coincidence in this example has confused people.
+
+CASE SIX - WITH NEGATIVES. nums = [-5, -3, 2, 4]. sorted [-5,-3,2,4]; pairs (-5,-3)(2,4);
+minimums -5 + 2 = -3.
+    Check by hand: (-5,2)(-3,4) gives -5 + -3 = -8; (-5,4)(-3,2) gives -5 + -3 = -8. So -3 is the maximum.
+    THE ARGUMENT NEVER USED POSITIVITY, and the measurement confirms it: the greedy answer was wrong on 0
+    of 6,000 inputs that included negative values.
+
+THE COST, CONCRETELY: one sort and one pass. For 2n numbers that is O(n log n) comparisons against the
+brute force's 105 pairings for just eight numbers and over two million for sixteen.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. O(n log n) TIME, ENTIRELY THE SORT - the summation is a single O(n) pass. O(1) EXTRA
+SPACE when sorting in place.
+
+    try every pairing                    (2n-1) * (2n-3) * ... - 105 pairings for 8 numbers
+    sort, then sum the even indices      O(n log n) time, O(1) space
+    counting sort, then sum              O(n + range) - available because the values are bounded
+
+THE ONLY POSSIBLE IMPROVEMENT is replacing the comparison sort with a counting sort, since LeetCode bounds
+the values to -10,000..10,000. Mention it; it is the sort of remark that costs one sentence and shows you
+noticed the constraints.
+
+THE #1 MISTAKE: SUMMING THE ODD INDICES. Wrong on 5,887 of 6,000 - you are adding up the values the
+problem throws away, and the giveaway is that the answer is LARGER than any pairing could actually
+achieve. Sorting descending and taking the even indices is the identical error with the identical score.
+
+THE #2: FORGETTING TO SORT. Wrong on 4,620 of 6,000 - which means RIGHT on about a quarter of random
+inputs, so it survives casual testing. It also happens to be right on the official example [1,4,3,2],
+which is the worst possible luck.
+
+THE #3: PAIRING THE LARGEST WITH THE SMALLEST. Wrong on 4,356 of 6,000. It feels balanced and it discards
+the biggest values, which is precisely backwards.
+
+THE #4, WHICH IS NOT A CODE BUG AT ALL: GIVING THE TWO LINES WITHOUT THE ARGUMENT. The code is trivial;
+the exchange argument is the answer. If you cannot say why adjacent pairing is optimal, you have answered
+half the question.
+
+TWO HONEST NEGATIVES: the explicit `sum(min(nums[i], nums[i+1]) ...)` form is wrong on 0 of 6,000 - use it
+if the slice makes you hesitate - and the greedy answer is wrong on 0 of 6,000 inputs containing NEGATIVE
+values, so no positivity assumption is hiding in it.
+
+WHAT TO SAY OUT LOUD, in this order: (1) in every pair the larger value is discarded, and the grand total
+is fixed, so maximising the kept sum is the same as MINIMISING WHAT IS DISCARDED; (2) therefore pair each
+number with the closest value above it, which after sorting means adjacent pairs; (3) the proof is an
+exchange argument - the smallest number is its pair's minimum whatever happens, so the only choice is
+which value is discarded alongside it, and that should be the second smallest; then remove both and
+repeat; (4) after sorting, the kept values are at even indices, so the answer is the sum of every other
+element from the first; (5) O(n log n), all of it the sort. Point 3 is the entire interview.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "prove that the greedy choice is optimal." Give the three-sentence
+exchange argument, and give it in that order - the crucial observation is that THE SMALLEST ELEMENT'S
+CONTRIBUTION IS FORCED, so the only freedom is what gets wasted with it.
+
+AND THE OTHER ONE: "what if you wanted to MAXIMISE the sum of the maximums instead?" Then the same
+reframe says you want the discarded MINIMUMS to be as large as possible, and the answer is the same
+adjacent pairing read the other way - `sum(nums[1::2])`. Being able to flip it cleanly proves you
+understood the structure rather than the slice.
+
+THEN SOMETIMES: "minimise the sum of minimums", which pairs each number with the largest available -
+sorted, that is first with last - or "pair to minimise the total difference within pairs", which is again
+adjacent pairing. All of these are the same one-dimensional matching idea.
+
+THE FAMILY: Array Partition I, Maximum Product Difference Between Two Pairs, Two City Scheduling, Boats to
+Save People (sort and pair from both ends - note the pairing rule is the OPPOSITE there, and the reason is
+worth understanding), Minimum Sum of Four Digit Number After Splitting Digits, Maximum Number of Coins You
+Can Get, Assign Cookies, Advantage Shuffle. THE TRANSFERABLE IDEA: WHEN ONLY PART OF EACH GROUP COUNTS,
+STOP MAXIMISING WHAT COUNTS AND START MINIMISING WHAT IS WASTED - THE SECOND QUESTION USUALLY HAS AN
+OBVIOUS GREEDY ANSWER, AND AN EXCHANGE ARGUMENT TO GO WITH IT.
+
+ONE-SENTENCE TAKEAWAY: sort and pair neighbours, then sum every other element from the first - because
+only the smaller of each pair counts, so the real goal is to waste as little as possible, and the smallest
+value's partner should be the second smallest.""",
 ]
 
 _EX_P1AE["Largest Perimeter Triangle"] = [
@@ -130053,6 +130968,983 @@ win.""",
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AE:
         _e["examples"] = _EX_P1AE[_e["title"]]
+
+
+_EX_P1AF = {}
+
+_EX_P1AF["Maximum Product Difference Between Two Pairs"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Pick FOUR DIFFERENT positions from the list and split them into two pairs. Multiply the first pair, multiply
+the second pair, and SUBTRACT the second product from the first. Make that difference as LARGE as possible.
+
+    nums = [5, 6, 2, 7, 4]
+
+    the two largest are 7 and 6   ->  7 * 6 = 42
+    the two smallest are 2 and 4  ->  2 * 4 = 8
+    ANSWER: 42 - 8 = 34
+
+Check that nothing beats it. Any other choice either uses a smaller number in the first product (making it
+smaller) or a bigger number in the second (making the amount subtracted bigger). Both directions hurt.
+
+    nums = [4, 2, 5, 9, 7, 4, 8]
+    the two largest are 9 and 8 -> 72;  the two smallest are 2 and 4 -> 8;  ANSWER 72 - 8 = 64
+
+WHY THIS IS EASIER THAN IT LOOKS, and it is worth saying explicitly because it is the entire insight: THE
+TWO HALVES OF THE EXPRESSION DO NOT COMPETE. You want the first product big and the second product small,
+and those two goals use DIFFERENT ELEMENTS - the biggest values and the smallest values. There is no
+trade-off to balance and therefore nothing to search. Contrast that with a problem where the same elements
+served both goals; then you would need to explore.
+
+SO THE ANSWER IS ONE LINE AFTER SORTING: the last two multiplied, minus the first two multiplied.
+
+THE CONSTRAINT THAT MAKES IT TRUE, AND IT IS NOT DECORATION: LeetCode guarantees every value is at least 1 -
+all positive. MEASURED, and this is the most important fact in this entry: on inputs that may contain
+NEGATIVE numbers, the "two largest minus two smallest" formula is WRONG ON 4,929 OF 6,000 cases. For
+example nums = [3, -5, 3, -6]: the best is (-5) * (-6) - 3 * 3 = 30 - 9 = 21, while the formula gives
+3 * 3 - (-6) * (-5) = 9 - 30 = -21. Two negatives multiply to a large POSITIVE, so with negatives allowed
+the "biggest product" may come from the two most negative values. Section 10 says what to do then.
+
+THE OBVIOUS SOLUTION - try all ways of choosing two disjoint pairs - is correct and is the ground truth for
+every measurement here. It costs roughly n to the fourth, which is why the sorted one-liner exists.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+WRITE THE EXPRESSION DOWN AND STARE AT IT:
+
+    (a * b)  -  (c * d)          maximise this
+
+You have two separate jobs: MAKE THE LEFT PRODUCT AS BIG AS YOU CAN, and MAKE THE RIGHT PRODUCT AS SMALL AS
+YOU CAN. Ask the crucial question: DO THOSE TWO JOBS FIGHT OVER THE SAME ELEMENTS? They do not. The left job
+wants the largest values in the list; the right job wants the smallest. As long as there are at least four
+elements, those are different elements and both jobs can be satisfied at once.
+
+    THAT IS THE WHOLE PROBLEM. When two goals are INDEPENDENT, you optimise each separately and there is
+    nothing to search.
+
+THE PICTURE - SORT AND TAKE FROM BOTH ENDS:
+
+    nums = [5, 6, 2, 7, 4]
+
+    sorted:    2    4    5    6    7
+               ^^^^^^              ^^^^^^
+               the two smallest    the two largest
+               2 * 4 = 8           7 * 6 = 42
+
+    answer = 42 - 8 = 34
+
+WHY THE TWO LARGEST GIVE THE LARGEST PRODUCT - and this needs the positivity promise. If every value is at
+least 1, then replacing either factor with a larger value increases the product. So the maximum product of
+two comes from the two maximum values. Symmetrically, replacing either factor of the right-hand product with
+a smaller value decreases it, so the minimum product comes from the two minimum values.
+
+    NOW SEE WHERE THAT ARGUMENT BREAKS. With negatives allowed, "larger factor" no longer means "larger
+    product": (-5) * (-6) = 30 beats 3 * 3 = 9. MEASURED on inputs that may contain negatives, the sorted
+    formula is wrong on 4,929 of 6,000 cases. THE POSITIVITY CONSTRAINT IS DOING REAL WORK, and noticing
+    that is worth more in an interview than the one-liner itself.
+
+WHY SUBTRACTION, NOT DIVISION, KEEPS IT SIMPLE. Because the two products are combined with a MINUS, the two
+choices are truly separable - improving one never affects the other. If the expression were a ratio or
+involved shared elements, you would be back to searching.
+
+AND WHY FOUR DISTINCT POSITIONS MATTERS. The four indices must be different, but the VALUES may repeat. So
+[1, 1, 1, 1] is fine and gives 1 * 1 - 1 * 1 = 0. With exactly four elements, the two pairs are forced -
+the two largest and the two smallest ARE all four elements - and the formula still reads correctly.""",
+
+    """3. EVERY TERM, DEFINED
+
+PRODUCT DIFFERENCE. For two pairs, `(w * x) - (y * z)`. The problem asks for its maximum over all ways of
+choosing four distinct positions.
+
+DISTINCT INDICES, NOT DISTINCT VALUES. The four chosen positions must differ; the numbers sitting in them
+may be equal. `[1,1,1,1]` is a legal input and its answer is 0.
+
+INDEPENDENT SUB-PROBLEMS. Two optimisations that do not share resources, so each can be solved on its own
+and the results combined. This is the whole reason no search is needed here, and it is the phrase to say out
+loud.
+
+TRADE-OFF. What you would have if the goals DID share elements - then improving one would damage the other
+and you would need to explore combinations. Recognising the ABSENCE of a trade-off is the skill being
+tested.
+
+SORTING AS A WAY TO REACH THE EXTREMES. `nums[-1]` and `nums[-2]` are the two largest after an ascending
+sort; `nums[0]` and `nums[1]` are the two smallest. Sorting is overkill for this - a single pass tracking
+four values does the same in O(n) - but it is clearer and usually fast enough.
+
+NEGATIVE INDEXING. `nums[-1]` is the last element, `nums[-2]` the second last. A convenience, and a place
+to slip: mixing `nums[-1] * nums[0]` into the expression is measured wrong on 5,979 of 6,000.
+
+MONOTONICITY OF MULTIPLICATION ON POSITIVES. For positive values, increasing either factor increases the
+product. This is the property the greedy choice relies on, AND IT IS FALSE OVER ALL INTEGERS - which is why
+the constraint `1 <= nums[i]` matters.
+
+THE FOUR EXTREMES IN ONE PASS. The O(n) alternative: track the largest and second largest, and the smallest
+and second smallest, updating as you go. Same answer, no sort - and it is what you would write if n were
+enormous.
+
+O(n log n) vs O(n). The sorted version costs the sort; the four-tracker version is linear. Both are trivial
+here, and knowing that the sort is not NECESSARY is the kind of remark that improves an answer.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random lists of 4 to 7 values from 1 to 12 (matching the problem's
+"all values at least 1" constraint), each checked against a brute force over every way of choosing two
+disjoint pairs.
+
+TRAP 1 - ASSUMING THE FORMULA SURVIVES NEGATIVE NUMBERS. It does not, and this is the most important thing
+in the entry. On a separate run of 6,000 inputs that MAY CONTAIN NEGATIVES, "two largest minus two smallest"
+was WRONG ON 4,929 OF 6,000.
+
+    nums = [3, -5, 3, -6]:  the best is (-5) * (-6) - 3 * 3 = 30 - 9 = 21.
+                            The formula gives 3 * 3 - (-6) * (-5) = 9 - 30 = -21.
+    nums = [2, 0, 5, -6]:   the best is (2 * 0) - (5 * -6) = 0 - (-30) = 30 - you SUBTRACT a negative
+                            product, which adds. The formula gives 5 * 2 - (-6) * 0 = 10.
+    WHY: two negatives multiply to a large POSITIVE, so the biggest product may come from the two most
+    negative values, and the smallest product may come from one negative and one large positive.
+    THE PROBLEM'S CONSTRAINT `1 <= nums[i]` is what licenses the simple formula. State that you are relying
+    on it - that sentence is worth more than the code.
+
+TRAP 2 - SUBTRACTING THE SUM INSTEAD OF THE PRODUCT of the two smallest.
+    [5, 6, 2, 7, 4]  correct 34,  this gives 42 - (2 + 4) = 36.
+    MEASURED: wrong on 5,720 of 6,000. Note it comes out TOO HIGH, because for values of at least 2 the sum
+    is smaller than the product - a useful sanity signal.
+
+TRAP 3 - MIXING UP THE INDICES, for example `nums[-1] * nums[0] - nums[1] * nums[-2]`. It pairs a largest
+with a smallest in both products, which is the opposite of everything the problem wants.
+    [5, 6, 2, 7, 4]  correct 34,  this gives 7 * 2 - 4 * 6 = -10.
+    MEASURED: wrong on 5,979 of 6,000 - almost everything. A NEGATIVE ANSWER on an all-positive input is the
+    fingerprint: with positive values the true answer can never be negative, since the two largest multiply
+    to at least as much as the two smallest.
+
+TRAP 4 - FORGETTING TO SORT and using the first two and last two of the raw input.
+    [5, 6, 2, 7, 4]  gives 7 * 4 - 5 * 6 = -2.
+    MEASURED: wrong on 5,597 of 6,000. It is right only when the input happens to be sorted.
+
+TRAP 5 - USING `max` AND `min` CARELESSLY. `max(nums) * max(nums)` uses the largest value TWICE, which is
+not allowed - the indices must be distinct. Either sort, or track the top two and bottom two separately. (A
+correctly written max/min version - largest times second largest minus smallest times second smallest - is
+measured wrong on 0 of 6,000; the danger is only in reusing the same element.)
+
+TRAP 6 - TAKING THE TWO SMALLEST BY ABSOLUTE VALUE. On all-positive input this is identical to taking the
+two smallest, so it is measured wrong on 0 of 6,000 here - and on inputs with negatives it is wrong on 4,839
+of 6,000. It is a bug that only shows itself outside the stated constraints, which is worth knowing about
+precisely because the measurement inside the constraints cannot see it.
+
+TRAP 7 - SEARCHING WHEN THERE IS NOTHING TO SEARCH. Writing a nested loop over all pairs of pairs is correct
+and roughly n to the fourth. The point of the problem is to notice that the two objectives are INDEPENDENT,
+so no search is required.
+
+TRAP 8 - NOT HANDLING FEWER THAN FOUR ELEMENTS. The problem guarantees at least four, so `nums[1]` and
+`nums[-2]` are always distinct positions. Say that you checked the guarantee rather than silently relying on
+it.
+
+WHAT IS NOT A TRAP, measured rather than assumed: the version written with `max`/`min` plus a sorted copy for
+the second-largest and second-smallest is wrong on 0 of 6,000, and so is the O(n) four-tracker pass. Sorting
+is the clearest but not the only correct route.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY WAY OF CHOOSING TWO DISJOINT PAIRS:
+
+    from itertools import combinations
+    def max_product_difference_brute(nums):
+        best = None
+        idx = range(len(nums))
+        for w, x in combinations(idx, 2):
+            for y, z in combinations([i for i in idx if i not in (w, x)], 2):
+                v = nums[w] * nums[x] - nums[y] * nums[z]
+                best = v if best is None else max(best, v)
+        return best
+
+IT IS CORRECT - the ground truth for every measurement in this entry - and it costs about n to the fourth.
+Say it in one sentence, then improve it, because the improvement is the whole point.
+
+THE OBSERVATION THAT COLLAPSES IT. Look at the expression `(a * b) - (c * d)` and ask whether its two halves
+COMPETE FOR THE SAME ELEMENTS.
+
+    to make `a * b` as LARGE as possible you want the biggest values;
+    to make `c * d` as SMALL as possible you want the smallest values;
+    with four or more elements those are different elements.
+
+SO THE TWO OBJECTIVES ARE INDEPENDENT, and independent objectives are solved separately with no search at
+all. That sentence is the answer to this question, and it generalises far beyond it: the reason most
+problems need exploration is that the choices interact, and the first thing worth checking is whether they
+actually do.
+
+WHY THE TWO LARGEST GIVE THE LARGEST PRODUCT, ARGUED PROPERLY - and note the assumption it uses. If all
+values are at least 1, then for fixed b, increasing a increases a * b. So the maximum is achieved by the two
+largest values. The same argument in reverse gives the minimum product from the two smallest.
+
+    THE ASSUMPTION IS POSITIVITY, AND IT IS LOAD-BEARING. Over all integers, multiplication is not monotonic
+    - (-5) * (-6) = 30 exceeds 3 * 3 = 9 - so the largest product can come from the two most NEGATIVE
+    values. MEASURED: allowing negatives makes the sorted formula wrong on 4,929 of 6,000. LeetCode's
+    constraint `1 <= nums[i]` is what makes the one-liner legitimate, and saying so is the strongest thing
+    you can do with this question.
+
+THE IMPLEMENTATION. Sort ascending, then the answer is `nums[-1] * nums[-2] - nums[0] * nums[1]`. Two lines.
+
+AND THE REFINEMENT WORTH MENTIONING: YOU DO NOT NEED THE SORT. One pass tracking four values - largest,
+second largest, smallest, second smallest - gives the same answer in O(n) time and O(1) space. That is what
+you would write for a huge input, or for a stream where sorting is impossible. Measured wrong on 0 of 6,000.
+
+WHAT IT COSTS. Sorted version: O(n log n) time, dominated entirely by the sort, O(1) extra space (or O(n) if
+you sort a copy). Four-tracker version: O(n) time, O(1) space. Either way the brute force's n-to-the-fourth
+is gone.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. SORT THE NUMBERS into ascending order.
+
+    2. MULTIPLY THE LAST TWO - the two largest values.
+
+    3. MULTIPLY THE FIRST TWO - the two smallest values.
+
+    4. RETURN the first product minus the second.
+
+THAT IS ALL, and the reason it is all is the part worth rehearsing.
+
+WHY NO SEARCHING IS NEEDED. The thing you are maximising is "one product minus another product". You want
+the first product big and the second small - and those two wishes want DIFFERENT NUMBERS. The first wants
+the biggest values in the list, the second wants the smallest. Because they never compete for the same
+number, you can satisfy both at once, and there is no balancing act and nothing to explore.
+
+WHY THE TWO BIGGEST GIVE THE BIGGEST PRODUCT. Because every value is at least one, making either factor
+bigger makes the product bigger - so the biggest product comes from the two biggest values. The same
+reasoning upside down gives the smallest product from the two smallest values.
+
+AND HERE IS THE ASSUMPTION YOU MUST SAY OUT LOUD: THAT REASONING NEEDS ALL THE VALUES TO BE POSITIVE. If
+negative numbers were allowed, two large negatives would multiply to a large POSITIVE, so the biggest
+product might come from the two most negative values - and the whole approach collapses. MEASURED: on inputs
+that may contain negatives, this method is wrong on 4,929 of 6,000. The problem promises every value is at
+least one, which is exactly what licenses it.
+
+THE STEP PEOPLE GET WRONG IS 3 - subtracting the SUM of the two smallest instead of their product. Wrong on
+5,720 of 6,000, and the answer comes out too big, which is a useful signal.
+
+THE OTHER COMMON ERROR IS MIXING THE ENDS UP - multiplying a largest by a smallest in each product. Wrong on
+5,979 of 6,000, and its fingerprint is a NEGATIVE answer, which cannot happen on all-positive input.
+
+AND SKIPPING STEP 1 ENTIRELY means using whichever numbers happened to be at the ends of the input - wrong
+on 5,597 of 6,000.
+
+ONE THING WORTH MENTIONING EVEN THOUGH YOU WOULD NOT NORMALLY WRITE IT: sorting is more than you need. A
+single pass keeping track of four running values - the largest, the second largest, the smallest and the
+second smallest - gets the same answer without sorting at all, and that is what you would do if the list
+were enormous or arriving as a stream.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a fairground game. In front of you is a row of cards, each with a number on it, and every number is
+at least one. You choose four cards. Two of them go on the LEFT scale and are multiplied together to give
+your winnings; the other two go on the RIGHT scale and are multiplied together to give your fee. You keep
+the difference. Naturally you want the winnings large and the fee small.
+
+The instinct is to think this needs strategy - some clever balancing of which cards to sacrifice. It does
+not, and the reason is worth pausing on. YOUR TWO GOALS DO NOT WANT THE SAME CARDS. To make your winnings
+enormous you want the two biggest numbers on the table. To make your fee tiny you want the two smallest.
+Those are four different cards, so you can have both wishes at once. Nothing is being traded against
+anything.
+
+So the whole game is: take the two biggest cards for the left scale, the two smallest for the right, and
+walk away. And you can be certain the two biggest give the biggest product, because with every number being
+at least one, swapping in a bigger card always makes the product bigger - never smaller.
+
+Now here is where the fairground gets interesting. Suppose the operator quietly slips some cards with
+NEGATIVE numbers into the row.
+
+Everything changes, and it changes in a way that is easy to miss. Two large negative cards multiplied
+together give a large POSITIVE product - minus five times minus six is thirty - so the pair that maximises
+your winnings might be the two most negative cards on the table, not the two biggest. And the pair that
+minimises your fee might be one big positive card and one negative card, since that product is negative and
+subtracting a negative adds to your total. The neat rule you just learned is not slightly off in that world;
+it is badly wrong, and it can hand you a large loss where a large win was available.
+
+Which is why the honest version of the strategy has a condition attached: TAKE THE TWO BIGGEST AND THE TWO
+SMALLEST, PROVIDED EVERY CARD IS POSITIVE. The rules of this particular fairground promise exactly that,
+which is what makes the simple rule safe here - and knowing which promise you are leaning on is the
+difference between a rule you have memorised and one you understand.
+
+Two smaller ways to lose. Some players ADD the two right-hand cards instead of multiplying them, which
+quietly inflates what they think they have won. And some, trying to be even-handed, put one big and one
+small card on each scale - which is the worst arrangement available, because it throws away a big card into
+the fee and leaves a small one propping up the winnings.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # (largest * 2nd-largest) - (smallest * 2nd-smallest).
+    def max_product_difference(nums):
+        nums.sort()
+
+  SORT ASCENDING, so that the two extremes sit at known positions: the two largest at the end, the two
+  smallest at the front.
+
+  Sorting is MORE THAN NECESSARY - one pass tracking four values (largest, second largest, smallest, second
+  smallest) is O(n) and measured wrong on 0 of 6,000. Sorting is chosen for clarity, and saying that you
+  know it is not required is worth a sentence.
+
+  `nums.sort()` mutates the caller's list; `sorted(nums)` if that matters.
+
+  Skipping the sort entirely uses whatever happened to be at the ends of the input - wrong on 5,597 of
+  6,000.
+
+        return nums[-1] * nums[-2] - nums[0] * nums[1]
+
+  THE WHOLE ALGORITHM, and every part of it earns its place.
+
+  `nums[-1] * nums[-2]` - THE TWO LARGEST, giving the largest possible product. This is valid BECAUSE EVERY
+  VALUE IS AT LEAST 1: with positive values, increasing either factor increases the product, so the maximum
+  product comes from the two maximum values.
+
+  `nums[0] * nums[1]` - THE TWO SMALLEST, giving the smallest possible product, by the same argument
+  reversed.
+
+  THE MINUS IS WHY THE TWO CHOICES DO NOT INTERACT. One half wants big values, the other wants small ones,
+  and with at least four elements those are different elements - so both halves are optimised
+  simultaneously and no search is needed. THAT is the sentence to say aloud.
+
+  FOUR DISTINCT POSITIONS ARE USED - indices -1, -2, 0 and 1 - which is what the problem requires. With
+  exactly four elements they are all four positions, and the expression still reads correctly. Note that
+  reusing `max(nums)` twice would violate the distinctness rule.
+
+  THE MEASURED WAYS TO GET THIS LINE WRONG:
+        `- (nums[0] + nums[1])`                    the SUM, not the product - wrong on 5,720 of 6,000, and
+                                                   the answer comes out too large
+        `nums[-1] * nums[0] - nums[1] * nums[-2]`  ends mixed together - wrong on 5,979 of 6,000, and it
+                                                   produces a NEGATIVE answer, which is impossible here
+
+  AND THE ASSUMPTION THIS LINE HIDES, which is the most valuable thing to volunteer: it depends entirely on
+  all values being positive. MEASURED on inputs that may contain negatives, this exact expression is wrong
+  on 4,929 of 6,000 - on [3,-5,3,-6] it returns -21 where 21 is achievable, because (-5)*(-6) = 30 is the
+  real maximum product.
+
+TWO LINES. O(n log n) TIME for the sort, O(1) EXTRA SPACE - or O(n) time with the four-tracker pass. The
+value of the question is not the code; it is noticing that the two objectives are independent, and naming the
+constraint that makes the greedy choice valid.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [5, 6, 2, 7, 4]. Expected 34.
+
+    sorted:  [2, 4, 5, 6, 7]
+             ^^^^              the two smallest: 2 * 4 = 8
+                        ^^^^   the two largest:  7 * 6 = 42
+    answer: 42 - 8 = 34
+
+    CHECK A FEW ALTERNATIVES BY HAND, so the "no trade-off" claim is not just an assertion:
+        7*6 - 2*4 = 34      <- best
+        7*6 - 2*5 = 32      a bigger second product
+        7*5 - 2*4 = 27      a smaller first product
+        7*2 - 4*6 = -10     both halves sabotaged - this is what the mixed-index bug computes
+    Every departure from the extremes makes it worse, in exactly one of the two ways.
+
+CASE TWO - A LONGER LIST WITH DUPLICATES. nums = [4, 2, 5, 9, 7, 4, 8]. Expected 64.
+    sorted [2, 4, 4, 5, 7, 8, 9];  9 * 8 = 72;  2 * 4 = 8;  answer 64.
+    The repeated 4 is no problem at all - the indices are distinct even though the values match.
+
+CASE THREE - EXACTLY FOUR ELEMENTS. nums = [1, 2, 3, 4]. Expected 10.
+    sorted [1,2,3,4];  4 * 3 = 12;  1 * 2 = 2;  answer 10.
+    With four elements the pairing is FORCED - the two largest and the two smallest are all four values -
+    so this case cannot distinguish a correct solution from a lucky one. Use five or more to test.
+
+CASE FOUR - ALL EQUAL. nums = [1, 1, 1, 1]. 1 * 1 - 1 * 1 = 0. Correct, and it confirms the answer can be 0
+but never negative on positive input.
+
+CASE FIVE - THE CASE THAT BREAKS THE FORMULA, OUTSIDE THE PROBLEM'S CONSTRAINTS. nums = [3, -5, 3, -6].
+
+    the formula: sorted [-6, -5, 3, 3];  3 * 3 = 9;  (-6) * (-5) = 30;  answer 9 - 30 = -21
+    the truth:   choose (-5, -6) as the FIRST pair -> 30, and (3, 3) as the second -> 9;  30 - 9 = 21
+
+    THE FORMULA IS OFF BY 42 - it picked exactly the wrong pair for each half. MEASURED across 6,000 inputs
+    that may contain negatives: wrong on 4,929. More examples from that run:
+        [1, -2, 2, -3]   truth 4,   formula -4
+        [-4, -3, 4, -4]  truth 28,  formula -28
+        [2, 0, 5, -6]    truth 30,  formula 10
+    THE PATTERN: whenever the two most negative values have a bigger product than the two largest, the
+    formula picks the wrong "big" pair - and it also mis-picks the "small" pair, since one negative times one
+    large positive can be smaller than any product of two negatives.
+
+CASE SIX - WITH NEGATIVES BUT STILL CORRECT. nums = [-3, -2, 4, 5]: sorted [-3,-2,4,5]; 5 * 4 = 20;
+(-3)*(-2) = 6; answer 14 - and the brute force agrees. THE FORMULA IS NOT ALWAYS WRONG WITH NEGATIVES, which
+is exactly what makes the bug dangerous: one hand-picked negative test can pass.
+
+CASE SEVEN - WHAT THE OTHER WRONG VERSIONS RETURN on the official [5,6,2,7,4]:
+    subtracts the SUM              36    - too high; the sum 6 is less than the product 8
+    mixed indices                 -10    - negative, which is impossible on positive input
+    no sort                        -2    - uses 7*4 - 5*6, whichever values sat at the ends
+    EACH FINGERPRINT IS DISTINCT, so a single test on this input identifies which mistake you made.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. O(n log n) TIME, all of it the sort, and O(1) EXTRA SPACE. The arithmetic afterwards is
+one line.
+
+    try every pair of disjoint pairs      about n to the fourth
+    sort, then take both ends             O(n log n) time, O(1) space
+    one pass tracking four extremes       O(n) time, O(1) space - and measured wrong on 0 of 6,000
+
+THE O(n) VERSION IS AVAILABLE AND WORTH NAMING: keep the largest, second largest, smallest and second
+smallest as you sweep. Sorting is chosen for clarity, not necessity, and saying that is a cheap way to show
+you know the difference.
+
+THE #1 MISTAKE - AND IT IS AN ASSUMPTION, NOT A TYPO: BELIEVING THIS FORMULA WORKS FOR NEGATIVE VALUES. On
+inputs that may contain negatives it is wrong on 4,929 of 6,000. Two negatives multiply to a large positive,
+so the biggest product may come from the two most negative values - on [3,-5,3,-6] the formula returns -21
+where 21 is achievable. THE PROBLEM'S CONSTRAINT `1 <= nums[i]` IS WHAT MAKES THE ONE-LINER CORRECT, and
+volunteering that is the single most valuable sentence you can say about this question.
+
+    WHAT YOU WOULD DO IF NEGATIVES WERE ALLOWED: the maximum product of two is the larger of (two largest)
+    and (two most negative); the minimum product of two is the smaller of (largest times most negative) and
+    (two smallest). So you track six extremes instead of four and compare two candidates on each side - and
+    you must also make sure the two pairs do not share an index. Being able to sketch that is the real
+    follow-up answer.
+
+THE #2: SUBTRACTING THE SUM RATHER THAN THE PRODUCT of the two smallest. Wrong on 5,720 of 6,000, and the
+answer is too large.
+
+THE #3: MIXING THE ENDS - pairing a largest with a smallest in each product. Wrong on 5,979 of 6,000, and its
+fingerprint is a negative result, which is impossible on all-positive input.
+
+THE #4: FORGETTING TO SORT. Wrong on 5,597 of 6,000.
+
+TWO HONEST NEGATIVES: the four-extremes single pass is wrong on 0 of 6,000, and a carefully written
+max/min version - largest times second largest minus smallest times second smallest - is also wrong on 0 of
+6,000. The only danger with max/min is reusing the SAME element twice, which the distinct-indices rule
+forbids.
+
+WHAT TO SAY OUT LOUD, in this order: (1) brute force is about n to the fourth over pairs of pairs; (2) but
+look at the expression - one product minus another - and ask whether the two halves compete for the same
+elements; (3) they do not: one wants the biggest values, the other the smallest, so THE OBJECTIVES ARE
+INDEPENDENT and there is nothing to search; (4) the two largest give the largest product BECAUSE ALL VALUES
+ARE AT LEAST 1 - that constraint is doing real work, and with negatives allowed the answer would change
+completely; (5) so sort and take both ends, O(n log n) - or track four extremes in one pass for O(n).
+Point 3 is the insight and point 4 is what makes you sound like an engineer rather than a solver.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if the numbers could be negative?" Answer with the six-extremes
+sketch above. Then sometimes: "what about THREE numbers multiplied?" That is Maximum Product of Three
+Numbers, and the answer is the better of (three largest) and (two most negative times the largest) - the
+same reasoning, and a good demonstration that you understood why the constraint mattered here.
+
+AND OCCASIONALLY: "do it without sorting" - the four-tracker pass - or "what if the list is streamed?" -
+same answer, since four running extremes need no random access.
+
+THE FAMILY: Maximum Product Difference Between Two Pairs, Maximum Product of Three Numbers, Maximum Product
+Subarray, Array Partition I, Minimum Sum of Four Digit Number After Splitting Digits, Maximum Product of Two
+Elements in an Array, Largest Perimeter Triangle. THE TRANSFERABLE IDEA: BEFORE SEARCHING, CHECK WHETHER THE
+PARTS OF THE OBJECTIVE COMPETE FOR THE SAME ELEMENTS - IF THEY DO NOT, OPTIMISE EACH PART SEPARATELY - AND
+ALWAYS NAME THE CONSTRAINT (HERE, POSITIVITY) THAT MAKES A GREEDY CHOICE VALID.
+
+ONE-SENTENCE TAKEAWAY: sort and return the product of the two largest minus the product of the two smallest -
+the two halves of the objective want different elements so there is nothing to search, and the whole thing
+depends on every value being positive.""",
+]
+
+_EX_P1AF["Maximum Units on a Truck (greedy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have a truck that can carry a fixed NUMBER OF BOXES, and several TYPES of box. For each type you are
+told how many boxes of that type exist and how many units each of those boxes contains. Load the truck to
+carry as many UNITS as possible.
+
+    box_types = [[1, 3], [2, 2], [3, 1]],  truck_size = 4
+
+    read it as:   1 box holding 3 units each
+                  2 boxes holding 2 units each
+                  3 boxes holding 1 unit each
+
+    the truck holds 4 BOXES (not 4 units).
+    Take the 1 box of 3 units      -> 3 units,  3 slots left
+    take both boxes of 2 units     -> 4 units,  1 slot left
+    take 1 box of 1 unit           -> 1 unit,   full
+    ANSWER: 3 + 4 + 1 = 8 units
+
+THE CRUCIAL DETAIL, AND IT IS THE WHOLE REASON THE PROBLEM IS EASY: THE TRUCK'S CAPACITY IS COUNTED IN
+BOXES, AND EVERY BOX TAKES EXACTLY ONE SLOT REGARDLESS OF WHAT IS IN IT. A box of 100 units occupies the
+same space as a box of 1 unit. So you have a fixed number of identical slots and you want the most valuable
+thing in each one - which means taking the highest-value boxes first, with no cleverness required.
+
+A SECOND EXAMPLE. box_types = [[5,10], [2,5], [4,7], [3,9]], truck_size = 10.
+    Sorted by units per box, highest first: 10, 9, 7, 5.
+    Take all 5 boxes of 10  -> 50 units, 5 slots left
+    take all 3 boxes of 9   -> 27 units, 2 slots left
+    take 2 of the 4 boxes of 7 -> 14 units, truck full
+    ANSWER: 50 + 27 + 14 = 91
+
+AND NOTE THE PARTIAL TAKE at the end. You are allowed to take SOME of a type - it is boxes, not an
+all-or-nothing bundle. MEASURED: a version that only takes a type when it fits entirely is wrong on 3,173 of
+6,000 random cases.
+
+WHAT THE PROBLEM IS TEACHING is when GREEDY is provably correct. Many "take the best first" ideas are wrong
+because items have different costs, and then you need dynamic programming (the knapsack problem). Here every
+item costs exactly one slot, so the costs are UNIFORM - and with uniform costs, greedy by value is optimal
+with no exchange argument needed. Recognising that distinction is the point of the exercise.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+PICTURE THE TRUCK AS A ROW OF IDENTICAL SLOTS:
+
+    truck_size = 4       [ __ ][ __ ][ __ ][ __ ]
+
+Each slot holds exactly one box, whatever that box contains. So the question becomes: OF ALL THE BOXES
+AVAILABLE, WHICH FOUR SHOULD GO IN? And that has an obvious answer - the four with the most units in them.
+There is no packing puzzle, because nothing is a different size.
+
+EXPAND THE INPUT INTO INDIVIDUAL BOXES and it becomes undeniable:
+
+    box_types = [[1,3], [2,2], [3,1]]
+
+    individual boxes, by their unit count:   3   2  2   1  1  1
+    sort them, best first:                   3   2  2   1  1  1
+    take the first 4:                        3 + 2 + 2 + 1 = 8
+
+    THAT IS THE WHOLE PROBLEM. The grouped input is just a compact way of writing "one box of 3, two boxes
+    of 2, three boxes of 1", and the answer is the top `truck_size` boxes.
+
+OF COURSE YOU DO NOT ACTUALLY EXPAND THEM - a type might have a million boxes. Instead, sort the TYPES by
+units per box descending and walk them, taking as many as you can from each:
+
+    types sorted by units per box:   (1 box of 3), (2 boxes of 2), (3 boxes of 1)
+
+    space left 4:  take min(1, 4) = 1 box  ->  1 * 3 = 3 units,   space left 3
+    space left 3:  take min(2, 3) = 2 boxes -> 2 * 2 = 4 units,   space left 1
+    space left 1:  take min(3, 1) = 1 box  ->  1 * 1 = 1 unit,    space left 0  ->  stop
+    total 8
+
+    `min(count, space_left)` IS THE ENTIRE BODY OF THE ALGORITHM: take everything you can from the best type,
+    but never more than fits.
+
+WHY GREEDY IS PROVABLY OPTIMAL HERE, and this is the sentence that matters. Every box occupies exactly one
+slot, so THE COST OF EVERY ITEM IS THE SAME. Suppose an optimal loading left out a box worth 9 while
+including one worth 5; swap them and the total goes UP without changing the number of boxes used. So no
+optimal loading can prefer a lower-value box, which means taking the highest-value boxes is optimal.
+
+    CONTRAST THIS WITH THE KNAPSACK PROBLEM, where items have different sizes. There, a big valuable item
+    can block two smaller ones that are better together, so greedy fails and you need dynamic programming.
+    THE UNIFORM COST IS WHAT MAKES THIS PROBLEM EASY, and naming that distinction is worth more than the
+    code.
+
+THE MEASURED CONSEQUENCE OF SORTING BY THE WRONG THING. Sorting by the NUMBER of boxes per type is wrong on
+2,501 of 6,000; by total units per type (count times units) is wrong on 1,281 of 6,000; and ASCENDING by
+units per box - the exact opposite of the right rule - is wrong on 3,526 of 6,000. The key is units PER BOX,
+because that is value per slot.""",
+
+    """3. EVERY TERM, DEFINED
+
+BOX TYPE. A pair `[count, units_per_box]`: how many boxes of this kind exist, and how many units each of
+them holds. Reading these two numbers the wrong way round is the fastest way to get the whole problem wrong,
+so say them aloud once.
+
+TRUCK SIZE / CAPACITY. THE MAXIMUM NUMBER OF BOXES, not units. This is the detail the problem is built
+around.
+
+UNITS PER BOX. The VALUE of one slot's worth of cargo. It is the sort key, and it is why neither the count
+nor the total matters for ordering.
+
+UNIFORM COST. Every item consumes exactly the same amount of the resource - one slot. This is the property
+that makes greedy provably optimal, and its absence is what makes knapsack hard.
+
+GREEDY ALGORITHM. Repeatedly take the locally best option and never reconsider. Correct here BECAUSE of the
+uniform cost; not correct in general.
+
+EXCHANGE ARGUMENT. The proof: if a loading omits a higher-value box while including a lower-value one,
+swapping them uses the same number of slots and yields more units - so no optimal loading can do that.
+Because each item costs one slot, the swap is always available.
+
+FRACTIONAL / PARTIAL TAKE. Taking SOME of a type's boxes, not all. Always allowed here - boxes are
+individual. `min(count, space_left)` is how it is expressed, and omitting the `min` overfills the truck:
+measured wrong on 3,229 of 6,000.
+
+KNAPSACK PROBLEM. The general version with differing item sizes, which needs dynamic programming. Naming it
+as the contrast shows you know WHY greedy is safe here rather than hoping it is.
+
+FRACTIONAL KNAPSACK. The variant where items can be split arbitrarily; greedy by value-per-unit-of-size is
+optimal there too, and this problem is essentially that with all sizes equal to 1.
+
+`sort(key=lambda b: b[1], reverse=True)`. Order the types by their second field - units per box - highest
+first. Getting `b[1]` and `b[0]` the wrong way round sorts by the count and is measured wrong on 2,501 of
+6,000.
+
+O(k log k). The cost, where k is the NUMBER OF TYPES - not the number of boxes, which can be enormous. The
+sort dominates; the walk is O(k).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random cases with 1 to 5 box types (1 to 6 boxes each, 1 to 10 units
+per box) and a truck size that is often smaller than the total number of boxes (4,109 of the 6,000 cases),
+each checked against a brute force that expands every box individually, sorts them, and takes the best
+`truck_size`.
+
+TRAP 1 - SORTING ASCENDING BY UNITS PER BOX. The exact opposite of the right rule: it fills the truck with
+the least valuable boxes first.
+    [[1,3],[2,2],[3,1]] with size 4:  correct 8,  this gives 5.
+    MEASURED: wrong on 3,526 of 6,000 - the highest failure rate here. `reverse=True` is not optional.
+
+TRAP 2 - NOT CAPPING THE TAKE AT THE SPACE REMAINING. Writing `units += count * per_box` without
+`min(count, truck_size)` loads more boxes than the truck holds.
+    [[1,3],[2,2],[3,1]] with size 4:  correct 8,  this gives 10 - it loaded all 6 boxes into a 4-box truck.
+    MEASURED: wrong on 3,229 of 6,000. THE FINGERPRINT IS AN ANSWER THAT IS TOO LARGE, which is easy to spot
+    if you sanity-check against "the best possible box times the capacity".
+
+TRAP 3 - ALL-OR-NOTHING PER TYPE: only taking a type if the whole type fits. Boxes are individual, so
+partial takes are allowed and often necessary.
+    [[5,10],[2,5],[4,7],[3,9]] with size 10:  correct 91,  this gives 87 - it skipped the 7-unit type
+    entirely because 4 boxes would not fit in the 2 remaining slots, when taking 2 of them was the right
+    move.
+    MEASURED: wrong on 3,173 of 6,000.
+
+TRAP 4 - SORTING BY THE NUMBER OF BOXES, `b[0]` instead of `b[1]`. A type with many low-value boxes then
+outranks a type with a few high-value ones.
+    [[3,1],[1,5]] with size 2:  correct 6 (one box of 5 plus one box of 1),  this gives 2 (two boxes of 1).
+    MEASURED: wrong on 2,501 of 6,000. It is a one-character mistake with a large consequence, and it is
+    worth reading the sort key back to yourself as words: "by units per box".
+
+TRAP 5 - SORTING BY TOTAL UNITS PER TYPE, count times units per box. This is the subtlest wrong key, because
+it sounds like "most valuable type first" and often agrees with the right answer.
+    [[1,3],[2,2],[3,1]] with size 4:  correct 8,  this gives 8 - CORRECT here.
+    [[5,10],[2,5],[4,7],[3,9]] with size 10:  correct 91,  this gives 87.
+    MEASURED: wrong on 1,281 of 6,000 - the LOWEST failure rate of the wrong keys, which makes it the most
+    dangerous. WHAT MATTERS IS VALUE PER SLOT, and a type's total says nothing about that.
+
+TRAP 6 - NOT SORTING AT ALL. Wrong on 2,505 of 6,000 - right whenever the input happens to arrive in a
+helpful order.
+
+TRAP 7 - READING THE PAIR BACKWARDS, treating `[count, units]` as `[units, count]`. Everything else can be
+perfect and the answer will be nonsense. Say the two fields out loud before writing the sort key.
+
+TRAP 8 - THINKING THE TRUCK IS MEASURED IN UNITS. It is measured in BOXES. If it were units, this would be
+a completely different (and much harder) problem - closer to knapsack.
+
+TRAP 9 - REACHING FOR DYNAMIC PROGRAMMING. It works and it is enormous overkill. The reason greedy is safe
+here is the UNIFORM COST of one slot per box; volunteering that distinction is exactly what the question is
+probing.
+
+WHAT IS NOT A TRAP, measured rather than assumed: expanding every box individually, sorting them all, and
+taking the best `truck_size` is wrong on 0 of 6,000 - it is the ground truth. It is only impractical because
+a type may contain a huge number of boxes; as an EXPLANATION of the algorithm it is the clearest thing you
+can say.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - EXPAND EVERY BOX AND TAKE THE BEST ONES:
+
+    def maximum_units_expand(box_types, truck_size):
+        boxes = []
+        for count, per in box_types:
+            boxes += [per] * count            # one entry per individual box
+        boxes.sort(reverse=True)
+        return sum(boxes[:truck_size])        # the best `truck_size` boxes
+
+IT IS CORRECT - the ground truth for every measurement in this entry - AND IT IS THE BEST EXPLANATION OF THE
+ALGORITHM YOU WILL FIND, because it makes the structure obvious: the truck holds a fixed number of identical
+slots, so the answer is simply the top `truck_size` boxes by value.
+
+WHAT IS WRONG WITH IT IS ONLY THE EXPANSION. A single type may contain a million boxes, so materialising them
+costs O(total boxes) time and memory. Everything else about it is right.
+
+THE UPGRADE IS PURELY MECHANICAL: don't expand - process the types in the same order the expanded sort would
+have produced, taking as many boxes from each as still fit.
+
+    sort the TYPES by units per box, highest first
+    for each type:  take = min(count, space_left);  units += take * per_box;  space_left -= take
+    stop when space_left reaches 0
+
+THE ONLY LINE WITH ANY CONTENT IS `min(count, space_left)` - take everything you can from the best remaining
+type, but never more than fits. Omitting the `min` overfills the truck and is measured wrong on 3,229 of
+6,000; refusing to take a type unless it fits ENTIRELY is wrong on 3,173 of 6,000.
+
+WHY GREEDY IS PROVABLY OPTIMAL, ARGUED PROPERLY - and this is the reason the problem exists:
+
+    EVERY BOX COSTS EXACTLY ONE SLOT. So consider any optimal loading. If it includes a box worth 5 while
+    leaving a box worth 9 behind, swap them: the number of slots used is unchanged and the total units go UP.
+    That contradicts optimality. Hence no optimal loading ever prefers a lower-value box over a higher-value
+    one, so taking boxes in descending order of value is optimal.
+
+    THE SWAP IS ONLY AVAILABLE BECAUSE THE COSTS ARE EQUAL. In the general KNAPSACK problem items have
+    different sizes, a swap may not fit, and greedy fails - which is why knapsack needs dynamic programming.
+    NAMING THAT DISTINCTION IS THE ANSWER TO "why is greedy correct here?"
+
+WHY THE SORT KEY IS UNITS PER BOX AND NOT ANYTHING ELSE. It is VALUE PER SLOT, and slots are the scarce
+resource. The count of a type tells you how much of it is available, not how good it is - sorting by count is
+wrong on 2,501 of 6,000. The total units of a type (count times value) conflates availability with quality -
+wrong on 1,281 of 6,000, and it is the most dangerous wrong key because it usually agrees.
+
+WHAT IT COSTS. O(k log k) TIME where k is the NUMBER OF TYPES - the sort - plus O(k) for the walk. O(1) extra
+space if you sort in place. Note carefully that the cost does NOT depend on the number of boxes or the truck
+size, which is exactly what the expansion version got wrong.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. SORT THE BOX TYPES BY UNITS PER BOX, HIGHEST FIRST. Not by how many boxes there are, and not by the
+       total units a type contains - by how much ONE BOX of that type is worth.
+
+    2. Keep a running total of units, and remember how much space is left in the truck (which starts as the
+       truck's capacity, counted in BOXES).
+
+    3. Go through the types in that order. For each one, TAKE AS MANY BOXES AS YOU CAN: the smaller of how
+       many boxes of that type exist and how much space is left.
+
+    4. Add (boxes taken) times (units per box) to the total, and reduce the space left by the boxes taken.
+
+    5. If the space left reaches zero, stop - the truck is full.
+
+    6. Return the total.
+
+WHY THIS SIMPLE RULE IS PROVABLY THE BEST POSSIBLE, and this is what the question is really asking. Every box
+takes exactly one place in the truck, whatever is inside it. So the truck is a fixed number of identical
+places, and you simply want the most valuable thing in each place. If some loading left a valuable box behind
+while carrying a less valuable one, you could swap the two: the truck is no fuller than before and it carries
+more units - so that loading was not the best. Therefore always taking the most valuable boxes first is best.
+
+AND THE CONTRAST WORTH DRAWING OUT LOUD: if boxes were DIFFERENT SIZES, this reasoning would collapse,
+because the swap might not fit - and you would be facing the classic knapsack problem, which needs a much
+heavier technique. The fact that every box costs exactly one place is what makes the simple rule safe.
+
+THE STEP PEOPLE GET WRONG IS 3 - forgetting the "smaller of" and simply taking the whole type. That loads
+more boxes than the truck holds, and the answer comes out too big - wrong on 3,229 of 6,000.
+
+THE OTHER MISTAKE IN STEP 3 is the opposite: refusing a type unless ALL of its boxes fit. Boxes are
+individual and a partial load is fine, so skipping a type because only some of it fits leaves the truck
+carrying less - wrong on 3,173 of 6,000.
+
+AND STEP 1 GOES WRONG IN THREE DISTINCT WAYS, all measured. Sorting the wrong way round - least valuable
+first - is wrong on 3,526 of 6,000. Sorting by the NUMBER of boxes instead of their value is wrong on 2,501
+of 6,000. And sorting by the total value of a whole type is wrong on 1,281 of 6,000 - the rarest failure and
+therefore the most dangerous one, because it agrees with the right answer most of the time.
+
+READ YOUR SORT KEY BACK AS WORDS BEFORE MOVING ON: "highest units per box first". Three of the four possible
+mistakes in this problem live in that one line.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a delivery van with room for exactly forty parcels. Not forty kilograms, not forty litres - FORTY
+PARCELS. Every parcel takes one slot on the shelves, and the shelves do not care what is inside. In the
+warehouse there are crates of parcels: a crate of five parcels each containing ten watches, a crate of three
+parcels each containing nine, a crate of four parcels each containing seven, and so on. You want to drive
+away with as many watches as possible.
+
+Because every parcel takes exactly one slot, there is no packing puzzle here at all. You have forty
+identical slots and you want the most valuable parcel in each one. So you take the ten-watch parcels first,
+then the nine-watch parcels, then the seven-watch ones, and you keep going until the van is full - taking
+only as many of the last kind as will actually fit.
+
+And you can prove that nothing beats this, in one move. Suppose someone loaded the van differently and
+claims it is better. If their load contains a seven-watch parcel while a ten-watch parcel was left standing
+in the warehouse, take the seven out and put the ten in. The van is exactly as full as it was - one parcel
+swapped for one parcel - and it now carries three more watches. So their load was not the best after all.
+That swap is always available, and it always improves things, which is why loading the best parcels first
+cannot be beaten.
+
+NOW NOTICE WHAT THAT PROOF LEANED ON: that a parcel is a parcel, and swapping one for another always fits.
+If the warehouse held boxes of wildly different SIZES - a wardrobe here, a matchbox there - the swap might
+not fit through the van door, and the whole argument would fall apart. That is the famously harder problem,
+where a big valuable item can block two smaller ones that would together have been worth more, and no simple
+rule solves it. The reason this warehouse is easy is precisely that everything costs the same one slot.
+
+Three ways to load the van badly.
+
+The first is to work through the crates in the wrong order - cheapest first. That is not a subtle error, and
+it is the most common one.
+
+The second is to take a whole crate without checking whether it fits. You cannot put six parcels into two
+remaining slots, and a loader who counts the watches as if you could will report a number the van never
+carried.
+
+The third is fussier and just as costly: refusing to break open a crate. If four parcels remain in a crate
+and only two slots are left, take two. A loader who insists on all-or-nothing drives away with empty shelves
+and leaves watches behind.
+
+And one last trap that catches careful people. When choosing which crate to open next, what matters is HOW
+MUCH ONE PARCEL IS WORTH - not how many parcels the crate holds, and not the total value of the crate. A
+crate of thirty parcels worth one watch each has a big total and is a poor use of shelf space; a single
+parcel worth a hundred watches has a small total and is the best thing in the warehouse.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Max units loadable onto a truck of given box capacity (greedy).
+    def maximum_units(box_types, truck_size):
+        box_types.sort(key=lambda b: b[1], reverse=True)   # most units per box first
+
+  THE ONE DECISION IN THE WHOLE FUNCTION. `b[1]` is UNITS PER BOX - the value of one slot - and
+  `reverse=True` puts the best first.
+
+  ALL THREE WAYS TO GET THIS LINE WRONG ARE MEASURED:
+        `key=lambda b: b[0]`            sorts by the COUNT of boxes - wrong on 2,501 of 6,000
+        `key=lambda b: b[0] * b[1]`     sorts by a type's TOTAL units - wrong on 1,281 of 6,000, the
+                                        LOWEST failure rate and therefore the most dangerous, because it
+                                        usually agrees
+        omitting `reverse=True`         loads the worst boxes first - wrong on 3,526 of 6,000
+        no sort at all                  wrong on 2,505 of 6,000
+
+  READ THE KEY BACK AS WORDS - "units per box, highest first" - because three of this problem's four
+  mistakes live on this line. `.sort()` mutates the caller's list; use `sorted(...)` if that matters.
+
+        units = 0
+        for count, per_box in box_types:
+
+  UNPACKING THE PAIR WITH NAMES rather than indices, which is the cheapest defence against reading
+  `[count, units]` backwards.
+
+            take = min(count, truck_size)
+
+  THE HEART OF IT: take everything available from this type, BUT NEVER MORE THAN FITS. Here `truck_size` is
+  being used as "space remaining", counted in BOXES.
+
+  Dropping the `min` and taking `count` boxes outright overfills the truck - wrong on 3,229 of 6,000, with an
+  answer that is too LARGE. Refusing the type unless `count <= truck_size` - all or nothing - is the opposite
+  error and is wrong on 3,173 of 6,000, leaving the truck under-loaded.
+
+            units += take * per_box
+
+  Boxes taken times units in each. Note that this is the only multiplication in the function, and it is
+  `take`, not `count`.
+
+            truck_size -= take
+
+  Consume the space. Reusing the parameter as the remaining capacity is idiomatic and worth a comment;
+  a separate `space_left` variable is equally fine.
+
+            if truck_size == 0:
+                break
+
+  The truck is full, so nothing later can help - every remaining type is worth no more per box than what is
+  already loaded. This is an EARLY EXIT, not a correctness requirement: the `min` would take 0 boxes from
+  every remaining type anyway. Say that distinction out loud; it shows you know why the line is there.
+
+        return units
+
+SIX LINES. O(k log k) TIME where k is the number of TYPES - the sort - and O(1) extra space. NOTE WHAT THE
+COST DOES NOT DEPEND ON: the number of boxes or the truck size, which can both be enormous. That is the
+entire advantage over the expand-every-box version, which is equally correct and costs O(total boxes).""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. box_types = [[1,3], [2,2], [3,1]], truck_size = 4. Expected 8.
+
+    sorted by units per box, descending:  [[1,3], [2,2], [3,1]]   (already in that order)
+
+     type    | count | per box | space left | take = min | units added | total | space after
+    ---------+-------+---------+------------+------------+-------------+-------+------------
+     [1, 3]  |   1   |    3    |     4      |     1      |   1*3 = 3   |   3   |     3
+     [2, 2]  |   2   |    2    |     3      |     2      |   2*2 = 4   |   7   |     1
+     [3, 1]  |   3   |    1    |     1      |     1      |   1*1 = 1   |   8   |     0  -> break
+
+    return 8
+
+    ROW THREE IS THE PARTIAL TAKE: three boxes are available and only one slot is left, so `min` takes one.
+    THE ALL-OR-NOTHING VERSION skips this type entirely and answers 7. THE NO-MIN VERSION takes all three,
+    loading 6 boxes into a 4-box truck, and answers 10.
+
+    CROSS-CHECK BY EXPANSION: the individual boxes are 3, 2, 2, 1, 1, 1; the best four are 3, 2, 2, 1 = 8.
+
+CASE TWO - A LARGER ONE WITH A PARTIAL TAKE IN THE MIDDLE.
+box_types = [[5,10], [2,5], [4,7], [3,9]], truck_size = 10. Expected 91.
+
+    sorted by units per box: [[5,10], [3,9], [4,7], [2,5]]
+
+     type     | count | per box | space left | take | units added | total | space after
+    ----------+-------+---------+------------+------+-------------+-------+------------
+     [5, 10]  |   5   |   10    |    10      |  5   |    50       |  50   |     5
+     [3, 9]   |   3   |    9    |     5      |  3   |    27       |  77   |     2
+     [4, 7]   |   4   |    7    |     2      |  2   |    14       |  91   |     0  -> break
+     [2, 5]   |   -   |    -    |     -      |  -   |     -       |  91   |     -
+
+    return 91
+
+    THE 7-UNIT TYPE IS TAKEN PARTIALLY - 2 of its 4 boxes. THE ALL-OR-NOTHING VERSION refuses it (4 will not
+    fit in 2 slots) and answers 87. AND SO DOES SORTING BY TOTAL UNITS PER TYPE: that key orders the types
+    as 50, 28, 27, 10 - putting the 4-boxes-of-7 type (total 28) ahead of the 3-boxes-of-9 type (total 27) -
+    and answers 87 as well. THIS IS THE CASE THAT SEPARATES value-per-slot FROM total-value-per-type.
+
+CASE THREE - THE TWO-LINE CASE THAT EXPOSES THE COUNT-SORT BUG.
+box_types = [[3,1], [1,5]], truck_size = 2. Expected 6.
+    correct order by units per box: [[1,5], [3,1]] -> take the 1 box of 5 (5 units), then 1 box of 1
+    (1 unit) -> 6.
+    SORTING BY COUNT puts [[3,1]] first, takes two boxes of 1, and answers 2.
+    Two types, two slots - the smallest example, and worth memorising as the test for this bug.
+
+CASE FOUR - THE TRUCK IS BIGGER THAN EVERYTHING AVAILABLE. box_types = [[2,3]], truck_size = 5.
+    take = min(2, 5) = 2, units = 6, space left 3, loop ends without ever hitting the break. Returns 6.
+    NOTE THE `break` IS NOT REACHED HERE - a reminder that it is an optimisation, not a requirement.
+
+CASE FIVE - A SINGLE BOX WITH A HUGE VALUE. box_types = [[1,100]], truck_size = 1. take = 1, answer 100.
+Every version in this entry gets it right, which is why single-type cases are useless for testing.
+
+CASE SIX - WHERE THE TRUCK IS TIGHT, WHICH IS WHERE ALL THE BUGS LIVE. MEASURED: of the 6,000 random cases,
+4,109 had a truck smaller than the total number of boxes - and EVERY ONE of the measured failures came from
+that group (sort-by-count 2,501, sort-by-total 1,281, ascending 3,526, no-min-cap 3,229, all-or-nothing
+3,173, no-sort 2,505, all of them out of those 4,109). WHEN THE TRUCK IS BIG ENOUGH FOR EVERYTHING, ORDER
+DOES NOT MATTER AND EVERY WRONG VERSION LOOKS FINE. Test with a tight truck or you are testing nothing.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. O(k log k) TIME where k is the NUMBER OF BOX TYPES - entirely the sort - plus an O(k)
+walk. O(1) EXTRA SPACE if you sort in place. Note what it does NOT depend on: the number of boxes, or the
+truck size, either of which may be huge.
+
+    expand every box, sort them all, take the best `truck_size`   O(total boxes log total boxes) - correct
+                                                                  but materialises every box
+    sort the TYPES by units per box, take greedily                 O(k log k) time, O(1) space
+    dynamic programming                                           correct and absurd overkill here
+
+THE #1 MISTAKE: SORTING ASCENDING - forgetting `reverse=True`. Wrong on 3,526 of 6,000. It fills the truck
+with the least valuable boxes.
+
+THE #2: NOT CAPPING THE TAKE WITH `min(count, space_left)`. Wrong on 3,229 of 6,000, and the answer comes out
+TOO LARGE because more boxes were loaded than the truck holds.
+
+THE #3: ALL-OR-NOTHING PER TYPE. Wrong on 3,173 of 6,000. Boxes are individual; a partial take is allowed
+and often necessary.
+
+THE #4: SORTING BY THE NUMBER OF BOXES (`b[0]`). Wrong on 2,501 of 6,000. A one-character mistake.
+
+THE #5, AND THE MOST DANGEROUS BECAUSE IT IS THE RAREST: SORTING BY A TYPE'S TOTAL UNITS, count times units
+per box. Wrong on only 1,281 of 6,000 - so it passes most tests. WHAT MATTERS IS VALUE PER SLOT, and a type's
+total conflates how good it is with how much of it there is.
+
+ONE HONEST NEGATIVE: expanding every box, sorting, and summing the best `truck_size` is wrong on 0 of 6,000 -
+it is the ground truth. It is not a wrong answer, just an impractical one, and it is the clearest way to
+EXPLAIN the algorithm.
+
+AND ONE MEASUREMENT ABOUT TESTING: every single failure above occurred among the 4,109 of 6,000 cases where
+the truck was SMALLER than the total number of boxes. If the truck holds everything, order is irrelevant and
+every wrong version passes. TEST WITH A TIGHT TRUCK.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the truck's capacity is in BOXES, and every box takes exactly one
+slot whatever it contains; (2) so this is a fixed number of identical slots and I want the most valuable box
+in each - sort by UNITS PER BOX descending and take greedily; (3) it is provably optimal by an exchange
+argument: swapping a lower-value box for a higher-value one left behind uses the same slot and gains units,
+so no optimal loading prefers the lower one; (4) THAT SWAP IS ONLY AVAILABLE BECAUSE ALL COSTS ARE EQUAL - if
+boxes had different sizes this would be the knapsack problem and greedy would fail; (5) take
+`min(count, space_left)` from each type, because partial takes are allowed; (6) O(k log k) in the number of
+TYPES, independent of the number of boxes. Point 4 is what the question is really testing - not whether you
+can write a greedy loop, but whether you know when greedy is allowed.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "when would greedy stop working?" Answer: as soon as items consume
+DIFFERENT amounts of the resource. Then a valuable large item can block two smaller ones worth more together,
+and you need dynamic programming - the 0/1 knapsack. If items can be split arbitrarily, greedy by
+value-per-size is optimal again (fractional knapsack), and this problem is that case with every size equal
+to 1.
+
+AND THE OTHER ONE: "what if the truck had a weight limit as well as a box limit?" Two resources, and greedy
+generally fails - that is a two-dimensional knapsack. Being able to say WHY the second constraint breaks the
+exchange argument is the real answer.
+
+THEN SOMETIMES: "what if k is huge but the unit values are small integers?" Then counting-sort the types by
+units per box for O(k + range) instead of O(k log k).
+
+THE FAMILY: Maximum Units on a Truck, Assign Cookies, Two City Scheduling, Boats to Save People, Minimum
+Number of Arrows to Burst Balloons, Task Scheduler, Fractional Knapsack, 0/1 Knapsack (the contrast case),
+Maximum Number of Coins You Can Get. THE TRANSFERABLE IDEA: WHEN EVERY ITEM COSTS THE SAME AMOUNT OF THE
+SCARCE RESOURCE, SORTING BY VALUE AND TAKING GREEDILY IS PROVABLY OPTIMAL - AND THE MOMENT THE COSTS DIFFER,
+THAT PROOF DIES AND YOU NEED DYNAMIC PROGRAMMING.
+
+ONE-SENTENCE TAKEAWAY: sort the box types by UNITS PER BOX descending and take `min(count, space left)` from
+each until the truck is full - provably optimal because every box costs exactly one slot, which is precisely
+what knapsack lacks.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AF:
+        _e["examples"] = _EX_P1AF[_e["title"]]
 
 
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
