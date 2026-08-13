@@ -122821,222 +122821,2176 @@ rather than floor.""",
 ]
 
 _EX_P1AB["Group Anagrams"] = [
-    """The canonical-key idea.
-Two words are anagrams exactly when their sorted letters match, so the sorted
-string is a fingerprint every anagram of a word shares. Use it as a dict key
-and the grouping falls out in one pass.
-['eat','tea','tan','ate','nat','bat'] -> keys 'aet' (eat, tea, ate), 'ant'
-(tan, nat), 'abt' (bat) -> three groups.
-The general pattern: to group by an equivalence relation, find a CANONICAL FORM
-that every member of a class maps to, then bucket by it.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The O(k) key, which is the follow-up.
-Sorting each word costs O(k log k). Instead build a 26-length count tuple -
-tuple(counts of each letter) - which is O(k) to construct and hashable.
-Total drops from O(N k log k) to O(N k). For long words this matters; for the
-typical short words in test cases it usually does not, and the sorted key is
-more readable.
-The tuple must be a TUPLE, not a list - lists are unhashable and cannot be dict
-keys, which is exactly the kind of Python detail that trips people mid-
-interview.""",
+You are given a list of words. Put the ones that are ANAGRAMS of each other into the same group.
 
-    """Why defaultdict rather than a plain dict.
-`groups[key].append(w)` on a plain dict raises KeyError the first time a key
-appears; you would need `groups.setdefault(key, []).append(w)` instead.
-defaultdict(list) creates the empty list on first access. Small thing, but it
-is the idiomatic form and it keeps the loop to two lines.""",
+Two words are anagrams when one is a rearrangement of the other - same letters, same number of
+each, different order.
 
-    """Edge cases.
-Empty input -> [].
-Empty strings [''] -> key is '' and they group together, which is correct: all
-empty strings are anagrams of each other.
-No anagrams at all ['a','b','c'] -> three groups of one.
-Single word -> one group.
-Case sensitivity: 'Eat' and 'eat' produce different keys. If the prompt means
-case-insensitive, lowercase before keying - and ask, because it changes the
-answer on a two-word input.
-Unicode: sorting works, but combining characters mean two visually identical
-strings can differ; normalise first if that is in scope.""",
+    input:  ["eat", "tea", "tan", "ate", "nat", "bat"]
 
-    """Complexity and the space caveat.
-Time O(N k log k) with sorted keys, O(N k) with count tuples. Space O(N k) for
-the output - which is unavoidable, since every input word appears in it.
-Worth stating precisely: the algorithm's EXTRA space is the keys, O(N k) in the
-worst case, and the output is O(N k) by necessity. Conflating the two is a
-common imprecision.""",
+    output: [ ["eat", "tea", "ate"],      all three are the letters a, e, t
+              ["tan", "nat"],             both are a, n, t
+              ["bat"] ]                   nothing else is a, b, t
 
-    """The family: canonical-form grouping.
-Group Shifted Strings (key on the sequence of gaps between letters, so 'abc'
-and 'bcd' share a key), Find and Replace Pattern (key on the first-occurrence
-index pattern), Valid Anagram (the two-word case - equality rather than
-grouping), Isomorphic Strings, and Group People by Group Size.
-Every one asks the same question: what fingerprint do members of a class share?
-Once you name the fingerprint, the code is four lines.""",
+THE ORDER OF THE GROUPS DOES NOT MATTER, and neither does the order inside a group. Any arrangement
+with the right membership is accepted - which tells you the problem is about PARTITIONING, not
+about sorting anything.
+
+WHAT COUNTS AS AN ANAGRAM, EXACTLY. Same letters WITH THE SAME COUNTS. "aab" and "abb" are NOT
+anagrams even though they use the same two letters - the counts differ. That distinction is the
+source of one of the classic wrong answers in section 4, so nail it down now.
+
+THE OBVIOUS SOLUTION WORKS. Compare every word with every other word; if they are anagrams, put
+them together. It is correct - it is how the ground truth for this entry was computed - and it
+costs O(n squared) comparisons. Say it out loud, then improve it.
+
+THE IDEA THE PROBLEM IS TEACHING is this: DO NOT COMPARE THINGS - LABEL THEM. Give each word a
+label that all its anagrams share and nothing else does, then group by label with a dictionary.
+Once you have that label, no word is ever compared with another word at all.
+
+WHY THIS PROBLEM IS WORTH THE TIME. That move - invent a CANONICAL FORM, use it as a dictionary
+key - is one of the half dozen ideas that recur constantly in interviews. It also appears as
+"group by shape", "group by pattern", "detect duplicates without comparing pairs", and once you see
+it here you will recognise it everywhere.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START FROM THE WASTE. Comparing every pair asks the same question over and over. If you have
+already discovered that "eat" and "tea" belong together, and then you test "ate" against "eat" and
+"ate" against "tea", the second test could not possibly have told you anything new. The pairwise
+approach has no memory of what a group IS - only of which pairs matched.
+
+SO GIVE EACH GROUP A NAME. If every word could stamp itself with the name of the group it belongs
+to, grouping becomes filing, and filing is a dictionary lookup.
+
+WHAT NAME? Something that is IDENTICAL for anagrams and DIFFERENT for everything else. The
+simplest such thing: SORT THE LETTERS.
+
+    "eat"  ->  sorted -> "aet"
+    "tea"  ->  sorted -> "aet"          same label
+    "ate"  ->  sorted -> "aet"          same label
+    "tan"  ->  sorted -> "ant"
+    "nat"  ->  sorted -> "ant"          same label
+    "bat"  ->  sorted -> "abt"
+
+Sorting throws away exactly the thing that does not matter - the ORDER - and keeps exactly the
+thing that does - WHICH LETTERS, HOW MANY OF EACH. That is what makes it a valid label, and it is
+the sentence to say in the interview.
+
+NOW THE FILING CABINET. One drawer per label; drop each word into the drawer named by its label:
+
+        label "aet"  ->  [ "eat", "tea", "ate" ]
+        label "ant"  ->  [ "tan", "nat" ]
+        label "abt"  ->  [ "bat" ]
+
+    walk the input once:
+        "eat"  label aet   drawer aet is new      -> aet: [eat]
+        "tea"  label aet   drawer exists          -> aet: [eat, tea]
+        "tan"  label ant   new                    -> ant: [tan]
+        "ate"  label aet   exists                 -> aet: [eat, tea, ate]
+        "nat"  label ant   exists                 -> ant: [tan, nat]
+        "bat"  label abt   new                    -> abt: [bat]
+
+    the answer is the list of drawer contents - the dictionary's values
+
+NOTICE WHAT NEVER HAPPENS: no word is ever compared with another word. Each word is looked at once,
+labelled, and filed. The dictionary does all the matching, in O(1) per lookup.
+
+WHY "CANONICAL" IS THE WORD FOR THIS. A canonical form is ONE agreed representative for a whole
+family of equivalent things. All six orderings of a, e, t collapse to the single string "aet". The
+test "are these two things equivalent" becomes "are their canonical forms equal", and equality of
+strings is something a dictionary can hash.
+
+A SECOND VALID LABEL, WORTH KNOWING. Instead of sorting, COUNT: how many a's, how many b's, and so
+on - a 26-number tuple. `(1,0,0,0,1,0,...,1,...)` for "eat". Same grouping, measured wrong on 0 of
+6,000, and it costs O(L) per word instead of O(L log L). Section 10 says when that matters.
+
+AND ONE LABEL THAT LOOKS FINE AND IS NOT: the SET of letters. `set("aab")` and `set("abb")` are
+both {a, b} - the counts are gone, and two non-anagrams get merged. Measured wrong on 1,842 of
+6,000. A canonical form must preserve everything that matters and nothing that does not.""",
+
+    """3. EVERY TERM, DEFINED
+
+ANAGRAM. A word formed by rearranging the letters of another, using every letter the same number
+of times. "listen" and "silent"; not "aab" and "abb".
+
+MULTISET. A collection where repeats count but order does not. {a, a, b} is not the same multiset
+as {a, b}. TWO WORDS ARE ANAGRAMS EXACTLY WHEN THEIR LETTER MULTISETS ARE EQUAL - that is the
+formal statement of the problem, and every correct solution is a way of comparing multisets.
+
+SET (as opposed to multiset). Repeats do NOT count: {a, a, b} collapses to {a, b}. This is exactly
+why using a set as the key is wrong.
+
+CANONICAL FORM. One chosen representative for a family of equivalent things, such that two things
+are equivalent if and only if their canonical forms are IDENTICAL. Sorted letters are a canonical
+form for anagrams. The words to remember are "if and only if" - a good label must not merge things
+that differ (which `frozenset` does) and must not separate things that match.
+
+HASH MAP / DICTIONARY. A container mapping keys to values with O(1) average lookup. Python's
+`dict`. The engine of this solution: it turns "find the group with this label" into a single step.
+
+HASHABLE. Usable as a dictionary key. Strings and tuples are hashable; LISTS ARE NOT, because they
+can be modified after being filed. This is why `sorted(w)` (which returns a LIST) must be joined
+into a string - the raw list raises `TypeError: unhashable type: 'list'`, measured on 6,000 of
+6,000.
+
+`sorted(w)`. On a string, returns a LIST of its characters in order: `sorted("eat")` is
+`['a','e','t']`. `''.join(...)` glues that back into `"aet"`.
+
+`defaultdict(list)`. A dictionary that creates an empty list the first time you touch a missing
+key, so `groups[key].append(w)` works without checking whether the key exists. The plain-dict
+equivalent is `groups.setdefault(key, []).append(w)`.
+
+COLLISION (of a key scheme, not of a hash table). Two things that should be in DIFFERENT groups
+being given the SAME label. `sum(ord(c) for c in w)` collides: "ad" and "bc" both total 197.
+Measured wrong on 775 of 6,000.
+
+n AND L. n is the number of words; L is the length of a word (or the longest). The costs in this
+problem are always in terms of both: O(n * L log L) for sorted keys, O(n * L) for count keys.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random word lists (up to 8 words of up to 4 letters over a
+4-letter alphabet, so anagrams and near-misses are common), each checked against a brute-force
+pairwise grouping that compares letter counts directly.
+
+TRAP 1 - USING `sorted(w)` DIRECTLY AS THE KEY. `sorted` returns a LIST, and lists cannot be
+dictionary keys, because a key must be immutable.
+
+    groups[sorted(w)].append(w)   ->   TypeError: unhashable type: 'list'
+    MEASURED: fails on 6,000 of 6,000 - it is not a wrong answer, it is a crash on the first word.
+    THE FIX: `''.join(sorted(w))`, or `tuple(sorted(w))` if you prefer a tuple. Both are
+    immutable, therefore hashable.
+
+TRAP 2 - USING A SET OF LETTERS AS THE KEY. `frozenset(w)` is hashable and looks like the right
+idea, and it silently throws away the letter COUNTS.
+
+    ["aab", "abb"]   correct: two separate groups.   frozenset key: ONE group, both words in it.
+    MEASURED: wrong on 1,842 of 6,000.
+    Note that it gets the official example ["eat","tea","tan","ate","nat","bat"] completely right,
+    because no word there has a repeated letter. THAT is why the bug survives testing: you have to
+    test with a repeated letter to see it. Anagram means same letters AND SAME COUNTS.
+
+TRAP 3 - USING A SUM (OR ANY OTHER LOSSY ARITHMETIC) AS THE KEY. `sum(ord(c) for c in w)` feels
+clever and cheap. Different letter multisets can share a total.
+
+    ["ad", "bc"]   correct: two groups.   sum key: one group - both add up to 197.
+    MEASURED: wrong on 775 of 6,000. Rarer than trap 2, and therefore worse: it will pass your
+    tests, pass review, and fail in production on some particular pair of words.
+    THE PRINCIPLE: a key may throw away order, and NOTHING ELSE. A sum throws away which letters.
+    (A product of DISTINCT PRIMES per letter is genuinely lossless - by unique factorisation - and
+    measured wrong on 0 of 6,000. It is a legitimate answer that overflows in most languages,
+    though not in Python. Mention it as a curiosity, not as your main answer.)
+
+TRAP 4 - `key = len(w)`. Anagrams do have equal lengths, but so do thousands of unrelated words -
+the condition is necessary and nowhere near sufficient. Measured wrong on 4,171 of 6,000. Worth
+knowing only as the reminder that a key must be an "if and only if", not a "must".
+
+TRAP 5 - SORTING THE WORDS INSTEAD OF THE LETTERS. Sorting the whole input list puts anagrams
+NEAR each other only by accident ("ate", "eat", "tea" are not adjacent alphabetically once other
+words are present), so it does not group anything. The sorting happens INSIDE each word.
+
+TRAP 6 - RETURNING THE DICTIONARY. The answer is a list of groups, so return `list(groups.values())`
+- the keys are scaffolding and are not part of the answer. Similarly, returning
+`groups.values()` itself (a view object) is usually accepted in Python but is worth wrapping in
+`list(...)` so the type is exactly what was asked for.
+
+TRAP 7 - MUTATING THE WORDS. Some people sort the word IN PLACE (in languages where strings are
+mutable) and then file the sorted version, losing the original word. The label is derived FROM the
+word; the word itself goes into the group unchanged.
+
+WHAT IS NOT A TRAP, measured rather than assumed - two correct alternatives:
+    A 26-LENGTH TUPLE OF LETTER COUNTS as the key. Wrong on 0 of 6,000. O(L) per word instead of
+    O(L log L), and it is the better answer when the words are long.
+    THE BRUTE-FORCE PAIRWISE GROUPING. Wrong on 0 of 6,000 - it is the ground truth here. O(n
+    squared * L). Lead with it, price it, replace it.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - COMPARE EVERY WORD WITH EVERY EXISTING GROUP:
+
+    from collections import Counter
+    def group_anagrams_naive(words):
+        groups = []
+        for w in words:
+            for g in groups:
+                if Counter(g[0]) == Counter(w):    # same letters with the same counts?
+                    g.append(w)
+                    break
+            else:
+                groups.append([w])                 # no group matched - start a new one
+        return groups
+
+IT IS CORRECT - this is exactly how every measurement in this entry was checked - and it is the
+right thing to say first, because it makes the DEFINITION explicit: two words belong together when
+their letter counts match.
+
+WHAT IS WRONG WITH IT. Every word is compared against a representative of every group so far, so
+with n words and up to n groups the cost is O(n squared * L). And the comparisons are redundant in
+an obvious way: once "eat" and "tea" are known to match, comparing "ate" against BOTH of them is
+wasted, because whatever makes them equivalent is a property of the group, not of the pairs.
+
+THE UPGRADE - NAME THE GROUP, DO NOT SEARCH FOR IT. If each word can compute the NAME of the group
+it belongs to, then filing is a dictionary lookup and no comparison ever happens.
+
+WHAT MAKES A NAME VALID, precisely: two words must get the SAME name if they are anagrams, and
+DIFFERENT names if they are not. Both directions matter, and each direction is a real bug when it
+fails - `frozenset` breaks the second (merges "aab" with "abb", 1,842 of 6,000), and a name that
+depended on letter order would break the first.
+
+THE NAME THAT WORKS: SORT THE LETTERS. Sorting discards the order and keeps the multiset, which is
+precisely the distinction the problem draws.
+
+    "eat" -> "aet"        "tea" -> "aet"        "tan" -> "ant"        "bat" -> "abt"
+
+WHY THIS IS CORRECT, ARGUED PROPERLY. Sorting a multiset of characters yields one specific string,
+and it yields the same string for any starting order (that is what sorting means). So anagrams -
+which have equal multisets - necessarily produce identical keys. And two words with identical
+sorted strings have identical letter counts, so they ARE anagrams. That is an if-and-only-if, which
+is exactly what a canonical form must be.
+
+THE COST OF THE UPGRADE. One pass over the words; per word, a sort costing O(L log L) and a
+dictionary insertion costing O(L) (the key has to be hashed, which reads all L characters). Total
+O(n * L log L), against the naive O(n squared * L). No comparisons at all.
+
+THE REFINEMENT - COUNT INSTEAD OF SORT. A 26-number tuple of letter counts is also canonical and
+costs O(L) rather than O(L log L):
+
+    def key_of(w):
+        counts = [0] * 26
+        for ch in w:
+            counts[ord(ch) - 97] += 1
+        return tuple(counts)
+
+Wrong on 0 of 6,000. It is the better answer for long words, and the worse answer for very short
+ones, since a fixed 26-slot tuple is built even for a 2-letter word. Offering both, with the
+trade-off named, is what a strong answer looks like here.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make an empty dictionary whose keys will be LABELS and whose values will be LISTS OF WORDS.
+       Use the kind of dictionary that starts a new empty list automatically when you touch a
+       missing key, so you never have to check whether a label has been seen before.
+
+    2. Go through the words one at a time. Nothing is ever compared with anything else.
+
+    3. For each word, build its LABEL: take its letters, sort them, and join them back into a
+       single string. "eat" and "tea" and "ate" all become "aet".
+
+    4. Append the ORIGINAL word - not the label - to the list stored under that label.
+
+    5. When the words run out, the answer is the collection of lists in the dictionary. The labels
+       themselves are scaffolding and are thrown away.
+
+WHY SORTING THE LETTERS IS A LEGITIMATE LABEL, in one sentence you should be able to say: two words
+are anagrams exactly when they have the same letters in the same quantities, and sorting throws away
+the ORDER while keeping exactly that - so anagrams always produce the same label and non-anagrams
+never do.
+
+THE STEP PEOPLE GET WRONG IS 3, and there are three distinct ways to get it wrong. Sorting gives
+you a LIST of characters, and a list cannot be a dictionary key - it must be joined into a string
+(or turned into a tuple), or the program crashes immediately with "unhashable type". Using the SET
+of letters instead of the sorted letters loses how many of each there are, so "aab" and "abb" are
+wrongly merged - wrong on 1,842 of 6,000. And using any arithmetic summary such as the total of the
+letters' codes merges words that happen to add up the same, like "ad" and "bc" - wrong on 775 of
+6,000.
+
+THE STEP PEOPLE ALSO GET WRONG IS 4 - filing the LABEL instead of the WORD. The label is a
+derived thing used only for finding the right drawer; what belongs in the drawer is the word as it
+was given.
+
+THE ALTERNATIVE LABEL, worth saying aloud: instead of sorting, COUNT how many of each of the 26
+letters the word has and use those 26 numbers as the label. It groups identically and is cheaper
+for long words, because counting reads each letter once while sorting does more work than that.
+
+WHY NO COMPARISON IS EVER NEEDED, which is the insight the question is testing: comparing pairs
+asks "do these two match" over and over, while labelling asks each word ONE question about ITSELF
+and lets the dictionary do the matching.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a shop that sells sets of loose plastic letters, the kind children spell with. Every set
+comes in a little bag, and two bags are considered THE SAME PRODUCT if they contain the same
+letters in the same quantities - it does not matter what order the letters happen to lie in inside
+the bag, because you can shake a bag.
+
+A delivery of a thousand bags arrives, and you must put identical products together on shelves.
+
+The obvious method is to pick up a bag, walk along every shelf you have started, and for each one
+tip out a bag and check whether it matches. It works. It is also a great deal of walking, and it
+gets worse as the shelves multiply - and notice how much of it is pointless: if you have already
+established that three particular bags are the same product, checking a new bag against all three
+tells you nothing that checking it against one would not.
+
+Here is the better method, and it is the sort of thing a stockroom actually does. LABEL EACH BAG AS
+IT COMES IN. Tip the bag out, arrange the letters in alphabetical order, write down what you see -
+"aet" - and that string is the product code. Now put the bag on the shelf marked "aet", creating
+that shelf if it does not exist yet.
+
+No bag is ever compared with another bag. Each one is looked at once, by itself, and the label
+decides where it goes. Two bags end up on the same shelf if and only if they had the same letters,
+and the shelf sorted itself out without anyone noticing that fact.
+
+The trick to the label is that ALPHABETISING DESTROYS EXACTLY THE THING THAT DOES NOT MATTER. The
+order the letters lay in was never part of the product; alphabetising erases it, and what survives
+is which letters and how many of each - which IS the product. That is what makes the label
+trustworthy in both directions: same product always gets the same code, and different products
+never do.
+
+Now, two tempting shortcuts that a careless stockroom would take, and what goes wrong.
+
+The first is writing down only WHICH letters are in the bag, without noting the repeats - "a and
+b" rather than "aab". Two genuinely different products, one with two a's and one with two b's, get
+the same code and end up on the same shelf, and a customer is sent the wrong bag. The counts are
+part of the product.
+
+The second is weighing the bag instead of alphabetising it, or adding up some number for each
+letter. It is quick, and it is not a code - it is a summary, and two different products can weigh
+the same. "a and d" weighs exactly as much as "b and c". A label may throw away the order; it must
+not throw away anything else.
+
+At the end of the delivery, the shelves ARE the answer. You read off the contents of each shelf and
+the product codes written on them are of no further interest - they were only ever a way of finding
+the right shelf without walking the aisle.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    from collections import defaultdict
+
+    # Group words that are anagrams of one another.
+    def group_anagrams(words):
+        groups = defaultdict(list)      # sorted-letters -> [words]
+
+  THE FILING CABINET, and the comment IS the design: keys are canonical labels, values are the
+  groups. `defaultdict(list)` creates an empty list the first time a new label appears, so there is
+  no "if key not in groups" branch anywhere. The plain-dict version is
+  `groups.setdefault(key, []).append(w)` and is equally fine.
+
+        for w in words:
+
+  ONE PASS OVER THE WORDS, and note what is missing: there is no second loop. No word is ever
+  compared with another word - which is the entire improvement over the O(n squared) baseline.
+
+            key = ''.join(sorted(w))    # anagrams share the same sorted key
+
+  THE ONE LINE THAT CARRIES THE IDEA. `sorted(w)` returns the word's characters in alphabetical
+  order as a LIST - `sorted("eat")` is `['a','e','t']` - and `''.join(...)` glues them into the
+  string `"aet"`.
+
+  WHY THIS IS A VALID LABEL, in both directions: anagrams have the same letters with the same
+  counts, so sorting them gives the identical string; and two words with the identical sorted
+  string must have the same letters with the same counts, so they are anagrams. If and only if -
+  which is what makes it CANONICAL.
+
+  THE `''.join` IS NOT COSMETIC. Without it the key is a list, lists are mutable, and mutable
+  things cannot be dictionary keys: `TypeError: unhashable type: 'list'`, measured on 6,000 of
+  6,000. `tuple(sorted(w))` works equally well.
+
+  WHAT NOT TO PUT HERE: `frozenset(w)` loses the letter counts and merges "aab" with "abb" - wrong
+  on 1,842 of 6,000. `sum(ord(c) for c in w)` collides, merging "ad" with "bc" - wrong on 775 of
+  6,000. `len(w)` is not remotely enough - 4,171 of 6,000. A label may discard the ORDER and
+  nothing else.
+
+  THE FASTER LABEL, if the words are long: a 26-slot tuple of letter counts, which is O(L) instead
+  of the sort's O(L log L) and was also measured wrong on 0 of 6,000.
+
+            groups[key].append(w)
+
+  File the ORIGINAL word - not the key. The key exists only to find the right list. Because of
+  `defaultdict`, the very first word with a given label creates its group silently.
+
+        return list(groups.values())
+
+  The answer is the GROUPS, not the labels: the keys were scaffolding. `list(...)` turns the view
+  object into an actual list so the return type is exactly what was asked for. The order of the
+  groups is whatever insertion order produced, which the problem explicitly allows.
+
+FIVE LINES, ONE PASS, NO COMPARISONS. O(n * L log L) time, dominated by sorting each word;
+O(n * L) space for the dictionary, which holds every word plus a label per group.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. words = ["eat", "tea", "tan", "ate", "nat", "bat"].
+
+     word  | sorted(w)       | key   | dictionary after this step
+    -------+-----------------+-------+--------------------------------------------------
+     eat   | ['a','e','t']   | "aet" | {aet: [eat]}
+     tea   | ['a','e','t']   | "aet" | {aet: [eat, tea]}
+     tan   | ['a','n','t']   | "ant" | {aet: [eat, tea], ant: [tan]}
+     ate   | ['a','e','t']   | "aet" | {aet: [eat, tea, ate], ant: [tan]}
+     nat   | ['a','n','t']   | "ant" | {aet: [eat, tea, ate], ant: [tan, nat]}
+     bat   | ['a','b','t']   | "abt" | {aet: [eat, tea, ate], ant: [tan, nat], abt: [bat]}
+
+    return [["eat","tea","ate"], ["tan","nat"], ["bat"]]
+
+THREE THINGS TO NOTICE. The key is a STRING, not the list that `sorted` returned - that join is
+what keeps the program from crashing. No two words were ever compared with each other. And "tan"
+and "nat" landed together without anybody observing that they are anagrams; the label did it.
+
+CASE TWO - THE ONE THAT EXPOSES THE SET-KEY BUG. words = ["aab", "abb"].
+
+    "aab" -> sorted "aab",  "abb" -> sorted "abb".   Two different keys, TWO GROUPS. Correct: they
+    are not anagrams, because "aab" has two a's and "abb" has two b's.
+
+    With `frozenset(w)` as the key, both words give {a, b} and land in ONE group. The counts were
+    thrown away. Wrong on 1,842 of 6,000 - and note that this bug is INVISIBLE on case one, where
+    no word has a repeated letter.
+
+CASE THREE - THE ONE THAT EXPOSES THE SUM-KEY BUG. words = ["ad", "bc"].
+
+    sorted keys "ad" and "bc" - two groups, correct.
+    Sum of character codes: 'a'+'d' = 97 + 100 = 197, and 'b'+'c' = 98 + 99 = 197. ONE group.
+    Wrong on 775 of 6,000 - rare enough to survive review, which is what makes it dangerous.
+
+CASE FOUR - SINGLE-WORD GROUPS AND DUPLICATES. words = ["abc", "acb", "abd", "abc"].
+
+    keys: "abc", "abc", "abd", "abc"
+    result: [["abc", "acb", "abc"], ["abd"]]
+    A repeated word is just another word with the same label - duplicates need no special handling,
+    and they belong in the group with their anagrams.
+
+CASE FIVE - THE EMPTY STRING. words = ["", ""] gives one group containing both, with the key "".
+Nothing special is needed: the empty string sorts to the empty string.
+
+CASE SIX - THE SORTED-LIST CRASH. `groups[sorted(w)]` on the very first word raises
+`TypeError: unhashable type: 'list'`. Not a wrong answer - an immediate failure, measured on 6,000
+of 6,000. If you see that message, this is the line.
+
+COUNTING THE WORK ON CASE ONE, since the cost claim should be concrete: 6 words, each sorted
+(3 characters each) and each hashed once, and 3 dictionary keys created - 6 labellings, 0
+comparisons. The naive version instead compares words against group representatives
+0 + 1 + 1 + 1 + 2 + 2 = 7 times on this same tiny input, and that count grows quadratically with
+the number of words while the labelling count grows linearly.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS, with n words of length up to L. Each word is sorted, O(L log L), and hashed
+into the dictionary, O(L). So the time is O(n * L log L) and the space is O(n * L) - every word is
+stored once in some group, plus one key per group.
+
+    pairwise comparison of every word against every group   O(n squared * L) time
+    sorted-letters key                                      O(n * L log L) time, O(n * L) space
+    26-slot letter-count key                                O(n * L) time, same space
+
+THE COUNT KEY IS ASYMPTOTICALLY BETTER and it is worth saying why it is not automatically the
+answer: it builds a fixed 26-slot tuple for every word, so for very short words it does more work
+than a 3-element sort. Sorted keys for short words, count keys for long words - and saying THAT is
+worth more than picking one.
+
+THE #1 MISTAKE: `groups[sorted(w)]` - using the list that `sorted` returns as a dictionary key.
+It fails on 6,000 of 6,000, immediately, with `TypeError: unhashable type: 'list'`. Join it into a
+string or make it a tuple. Keys must be immutable.
+
+THE #2: `frozenset(w)` AS THE KEY. Wrong on 1,842 of 6,000, because a set discards how MANY of each
+letter there are, so "aab" and "abb" are merged. Invisible on the official example, since no word
+there repeats a letter.
+
+THE #3: AN ARITHMETIC SUMMARY AS THE KEY, such as the sum of character codes. Wrong on 775 of
+6,000 - "ad" and "bc" both total 197. The lower failure rate makes it MORE dangerous, not less: it
+passes casual tests.
+
+THE #4: `len(w)`. Wrong on 4,171 of 6,000. Equal length is necessary for anagrams and nowhere near
+sufficient - the reminder that a key must be an if-and-only-if.
+
+TWO HONEST NEGATIVES: the 26-slot count tuple and the brute-force pairwise grouping were both wrong
+on 0 of 6,000. So was a product-of-distinct-primes key - lossless by unique factorisation, correct
+in Python, and an overflow waiting to happen in a language with fixed-width integers.
+
+WHAT TO SAY OUT LOUD, in this order: (1) two words are anagrams exactly when their letter MULTISETS
+are equal; (2) comparing pairs is O(n squared) and redundant, so instead give each word a CANONICAL
+LABEL that all its anagrams share; (3) sorted letters work because sorting discards the order and
+keeps the multiset - and it is an if-and-only-if, which is what makes it canonical; (4) group with
+a dictionary, so no two words are ever compared; (5) O(n * L log L) time, O(n * L) space; (6) and
+if the words are long, count letters into a 26-tuple instead, for O(n * L). Point 3 is the one that
+distinguishes understanding from recall, and point 6 is what makes the answer look senior.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "can you avoid the sort?" That is the count-tuple key - give it
+with its cost. Then: "what if the alphabet is Unicode rather than 26 lowercase letters?" A fixed
+26-slot array no longer works; use a `Counter` and freeze it - `tuple(sorted(Counter(w).items()))`
+- or go back to sorting the characters, which never cared about the alphabet size in the first
+place.
+
+AND THE OTHER ONE: "what if the input does not fit in memory?" Now you are describing a MapReduce:
+the mapper emits (canonical key, word) and the reducer collects each key's words - and grouping by
+a computed key is precisely what shuffle-and-sort does for you. Saying that connects this exercise
+to real systems work and is usually the last thing the interviewer was hoping to hear.
+
+THE FAMILY: Valid Anagram (the two-word version - compare canonical forms, or count and cancel),
+Find All Anagrams in a String (sliding window over letter counts), Group Shifted Strings (a
+different canonical form: normalise so the first letter is 'a'), Isomorphic Strings, Find and
+Replace Pattern, Longest Palindrome by rearrangement. THE TRANSFERABLE IDEA: WHEN A PROBLEM ASKS
+YOU TO GROUP THINGS THAT ARE "THE SAME UP TO SOMETHING", INVENT A CANONICAL FORM THAT ERASES
+EXACTLY THAT SOMETHING, AND USE IT AS A DICTIONARY KEY.
+
+ONE-SENTENCE TAKEAWAY: label each word with its letters sorted into a string, file it in a
+dictionary under that label, and return the dictionary's values - anagrams share a label, so no two
+words are ever compared.""",
 ]
 
 _EX_P1AB["Koko Eating Bananas (binary search on the answer)"] = [
-    """Binary search on the ANSWER, traced.
-piles = [3,6,7,11], h = 8. The array is not sorted and does not need to be -
-what is monotonic is FEASIBILITY: a faster speed never needs more hours.
-lo = 1, hi = 11 (no point eating faster than the largest pile).
-speed 6 -> hours = 1+1+2+2 = 6 <= 8 -> feasible, hi = 6.
-speed 3 -> 1+2+3+4 = 10 > 8 -> infeasible, lo = 4.
-speed 5 -> 1+2+2+3 = 8 <= 8 -> feasible, hi = 5.
-speed 4 -> 1+2+2+3 = 8 <= 8 -> feasible, hi = 4.
-lo == hi == 4. Answer 4.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why hours per pile is a CEILING, and what that rule means.
-Koko eats from ONE pile per hour and does not carry leftovers to another pile.
-So a pile of 7 at speed 3 takes ceil(7/3) = 3 hours - two full hours and one
-hour eating just 1 banana.
-Using integer division instead of ceiling silently underestimates the hours,
-making infeasible speeds look feasible and returning an answer that is too
-small. `-(-p // speed)` is the integer-only ceiling if you want to avoid
-floats.""",
+There are several piles of bananas and a fixed number of hours. You get to choose a SPEED - how
+many bananas can be eaten per hour - and then the eating happens by a strict rule:
 
-    """The bounds, and why hi = max(piles).
-LOWER: speed 1 is the slowest meaningful rate.
-UPPER: at max(piles) every pile takes exactly one hour, so the total is
-len(piles) hours - the fastest useful speed. Going higher cannot reduce the
-time further, because you can never finish a pile in less than an hour.
-Setting hi to sum(piles) also works and just wastes iterations; setting it to
-something smaller than max(piles) can exclude the answer entirely.""",
+    EACH HOUR, PICK ONE PILE AND EAT UP TO `speed` BANANAS FROM IT. If the pile has fewer than
+    that left, you finish the pile and STOP FOR THAT HOUR - you do not move on to another pile.
 
-    """The template detail: hi = speed, not speed - 1.
-This is the lower-bound shape - `while lo < hi`, feasible -> `hi = mid` because
-mid might BE the answer, infeasible -> `lo = mid + 1`. Return lo.
-Writing `hi = mid - 1` discards a feasible candidate and can return one too
-large. Mixing the half-open loop with the closed-interval update is the usual
-source of infinite loops here. Same template as Search Insert Position and
-Capacity to Ship Packages - pick it once and reuse it.""",
+Find the SMALLEST speed that still finishes every pile within the allowed hours.
 
-    """Edge cases.
-h == len(piles) -> she has exactly one hour per pile, so the answer is
-max(piles).
-One pile [1000] with h = 1 -> 1000. With h = 2 -> 500.
-h much larger than the number of piles -> the answer approaches 1.
-The problem guarantees h >= len(piles); otherwise no speed suffices and you
-would return -1 or raise, which is worth noting as an assumption.
-Large piles: sum(ceil(...)) can be big but stays well within range.""",
+    piles = [3, 6, 7, 11],  hours = 8   ->   answer 4
+    piles = [30, 11, 23, 4, 20], hours = 5  ->  answer 30
+    piles = [30, 11, 23, 4, 20], hours = 6  ->  answer 23
 
-    """Complexity and the family.
-O(n log(max pile)) - a log-many binary search steps, each doing an O(n)
-feasibility check. Space O(1).
-The family: Capacity to Ship Packages Within D Days (identical structure),
-Split Array Largest Sum (the same problem again), Minimum Number of Days to
-Make m Bouquets, Minimise Maximum of Array, Arranging Coins, and Sqrt(x).
-Cue: 'minimise the maximum' / 'maximise the minimum' / 'smallest X such that Y
-is achievable', plus a cheap way to TEST a candidate. When you can test but not
-directly compute, binary-search the answer.""",
+CHECK THE FIRST ONE BY HAND, because the odd rule is the whole problem. At speed 4:
+
+    pile 3   ->  1 hour  (eat 3, the pile is gone, the rest of the hour is wasted)
+    pile 6   ->  2 hours (4, then 2)
+    pile 7   ->  2 hours (4, then 3)
+    pile 11  ->  3 hours (4, 4, 3)
+    total 8 hours - exactly the budget, so speed 4 works.
+
+    At speed 3: 1 + 2 + 3 + 4 = 10 hours. Too slow. So 4 is the smallest that works.
+
+THE HOURS FOR ONE PILE ARE ALWAYS "PILE DIVIDED BY SPEED, ROUNDED UP". A pile of 7 at speed 4
+takes 2 hours, not 1.75, because the leftover 3 still occupies a whole hour. That rounding up is
+called the CEILING, and getting it wrong is the second most common failure in this problem.
+
+WHAT MAKES THIS PROBLEM DIFFERENT FROM ORDINARY BINARY SEARCH. There is no sorted array to search.
+The thing you are searching is the SET OF POSSIBLE ANSWERS - the speeds 1, 2, 3, ... - and the
+question you ask about each candidate is not "is this the value" but "IS THIS FAST ENOUGH". This
+technique is called BINARY SEARCH ON THE ANSWER, and this problem is the standard place to learn
+it.
+
+THE OBVIOUS SOLUTION WORKS. Try speed 1, then 2, then 3, until one fits. It is correct - it is the
+ground truth used for every measurement in this entry - and with piles up to a billion it is far
+too slow. Say it first anyway, because the fast version is literally this idea with the linear scan
+replaced by a binary one.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+WRITE DOWN THE FEASIBILITY OF EVERY SPEED and the structure jumps out. For piles = [3,6,7,11] with
+8 hours, compute the hours needed at each speed:
+
+    speed:      1    2    3    4    5    6    7    8    9   10   11
+    hours:     27   15   10    8    7    6    5    5    4    4    4
+    fits in 8?  no   no   no  YES  YES  YES  YES  YES  YES  YES  YES
+
+    feasible:   N    N    N    Y    Y    Y    Y    Y    Y    Y    Y
+                          ^
+                          the answer is the FIRST Y
+
+THE PATTERN IS THE WHOLE SOLUTION: NO, NO, NO, ..., YES, YES, YES, forever. It never flips back.
+And the reason is obvious once said: EATING FASTER CANNOT TAKE MORE HOURS. If speed 4 finishes in
+time then speed 5 does too, because every pile takes at most as many hours at the higher speed.
+
+THAT PROPERTY IS CALLED MONOTONICITY, AND IT IS EXACTLY WHAT BINARY SEARCH NEEDS. Binary search
+does not actually require a sorted array - it requires a yes/no question whose answer flips at most
+once as you move along the candidates. A sorted array is just the most familiar example. Here the
+candidates are speeds and the question is "does this speed finish in time".
+
+SO SEARCH THE ANSWERS, NOT THE DATA. Two bounds first:
+
+    THE SLOWEST SENSIBLE SPEED IS 1. Zero would mean eating nothing - and a speed of 0 is not
+    merely useless, it divides by zero. Measured: starting the search at 0 fails on 644 of 6,000.
+
+    THE FASTEST SPEED WORTH CONSIDERING IS THE BIGGEST PILE. At that speed every pile takes exactly
+    one hour, and going faster changes nothing - you cannot eat from two piles in one hour. So the
+    answer is guaranteed to lie in [1, max(piles)].
+
+NOW HALVE THE RANGE REPEATEDLY. Ask about the middle speed:
+
+    piles = [3,6,7,11], h = 8.        lo = 1, hi = 11
+    mid = 6   -> 6 hours, fits    -> 6 might be the answer, but try SLOWER: hi = 6
+    lo = 1, hi = 6,  mid = 3  -> 10 hours, too slow  -> 3 and below are out: lo = 4
+    lo = 4, hi = 6,  mid = 5  -> 7 hours, fits       -> hi = 5
+    lo = 4, hi = 5,  mid = 4  -> 8 hours, fits       -> hi = 4
+    lo = 4, hi = 4   -> the range has one speed left. ANSWER 4.
+
+READ THE TWO BRANCHES CAREFULLY, because they are not symmetric and that asymmetry is the crux:
+
+    IT FITS   ->  `hi = mid`.      Not mid - 1. This speed might BE the answer, so it stays in the
+                                   range while you look for something slower.
+    TOO SLOW  ->  `lo = mid + 1`.  This speed and everything slower is definitively out, so it can
+                                   be discarded.
+
+Writing `hi = mid - 1` throws away the very speed you just proved works - measured wrong on 2,403
+of 6,000. And the loop condition must be `while lo < hi`, which stops when the range narrows to one
+candidate; `while lo <= hi` combined with `hi = mid` never terminates - measured to hang on 6,000
+of 6,000.
+
+WHY THE SPEED YOU END ON IS THE ANSWER. The invariant maintained throughout is: THE ANSWER IS
+ALWAYS INSIDE [lo, hi]. Every step preserves that (a feasible mid can be the answer or the answer
+is smaller; an infeasible mid means the answer is bigger), and the range shrinks every step, so
+when lo and hi meet, that single remaining candidate must be it.
+
+HOW FAST IS THIS. The range starts at max(piles), which can be a billion, and halves each step:
+about 30 steps. MEASURED on 1,000 piles with values up to a billion: 29 iterations. Compare
+one billion for the linear scan.""",
+
+    """3. EVERY TERM, DEFINED
+
+BINARY SEARCH. Repeatedly halve a range of candidates by asking one question about the middle. Cost
+O(log range) - about 30 questions to cover a billion candidates.
+
+BINARY SEARCH ON THE ANSWER. Binary search where the candidates are POSSIBLE ANSWERS rather than
+positions in an array. You need a FEASIBILITY TEST - a yes/no question about a candidate - and that
+test must be monotonic. The giveaway phrase in a problem statement is "find the minimum X such
+that ..." or "find the maximum X such that ...".
+
+FEASIBILITY TEST / PREDICATE. The yes/no function. Here: "at this speed, is the total number of
+hours within the budget?" It costs O(n) because it looks at every pile, and it is called about
+log(max pile) times.
+
+MONOTONIC PREDICATE. Once the answer to the question becomes YES, it stays YES for every larger
+candidate (or once NO, stays NO going the other way). THIS IS THE ONE PROPERTY THAT MAKES BINARY
+SEARCH LEGAL, and here it holds because eating faster can never take longer. If it did not hold -
+if some middling speed failed while a slower one worked - binary search would be free to walk into
+the wrong half.
+
+SEARCH SPACE. The set of candidates: the integers from 1 to max(piles). Its SIZE is what the log is
+taken of, so the cost is O(n log max(piles)) - n for each feasibility test.
+
+CEILING DIVISION. Division rounded UP: ceil(7/4) = 2. Written `math.ceil(p / speed)` or, using
+integers only, `-(-p // speed)` or `(p + speed - 1) // speed`. It is the correct model here because
+a partly-eaten hour is still a whole hour.
+
+FLOOR DIVISION, `//`. Rounded DOWN: 7 // 4 = 1. Using it here UNDERCOUNTS the hours, making slow
+speeds look feasible - measured wrong on 3,157 of 6,000.
+
+LOWER BOUND / UPPER BOUND (of the search). `lo` and `hi`, the ends of the range still under
+consideration. `lo = 1` because a speed of 0 eats nothing and divides by zero; `hi = max(piles)`
+because at that speed every pile takes one hour and going faster cannot help.
+
+INVARIANT. What stays true every iteration. Here: THE ANSWER IS ALWAYS IN [lo, hi]. Every correct
+binary search is really an argument about an invariant, and being able to state it is the
+difference between deriving the code and recalling it.
+
+`while lo < hi`. Loop until the range holds exactly ONE candidate, then return it. This shape needs
+no separate "found it" check and no post-loop adjustment - it is the shape to memorise for
+minimum-feasible-value problems.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random cases (1 to 6 piles of up to 30 bananas, with an hour
+budget between the pile count and the pile count plus 25), each checked against a linear scan that
+tries every speed from 1 upward.
+
+TRAP 1 - FLOOR DIVISION INSTEAD OF CEILING. `sum(p // speed for p in piles)` undercounts, because
+the leftover bananas at the end of a pile still cost a whole hour.
+
+    piles = [3,6,7,11], h = 8.   Correct 4.   This version answers 3.
+        At speed 3 it computes 1 + 2 + 2 + 3 = 8 hours and calls it feasible; the true cost is
+        1 + 2 + 3 + 4 = 10.
+    piles = [30,11,23,4,20], h = 6.  Correct 23.  This version answers 11.
+    MEASURED: wrong on 3,157 of 6,000 - the most common wrong answer here.
+    A pile of 7 at speed 4 takes TWO hours. Say the rounding out loud before you code it.
+
+TRAP 2 - `p // speed + 1`, "ROUNDING UP" BY ADDING ONE. It over-counts whenever the division is
+exact: a pile of 8 at speed 4 takes 2 hours, not 3.
+
+    piles = [30,11,23,4,20], h = 6.  Correct 23.  This version answers 24.
+    MEASURED: wrong on 1,665 of 6,000. Adding one is not the same as rounding up. The integer forms
+    that ARE correct: `(p + speed - 1) // speed` or `-(-p // speed)`.
+
+TRAP 3 - `hi = mid - 1` WHEN THE SPEED FITS. You have just PROVEN this speed works, and then you
+discard it. If it happens to be the answer, it is gone.
+
+    MEASURED: wrong on 2,403 of 6,000 (some runs also fail to terminate, which the measurement
+    counted as wrong).
+    THE RULE FOR MINIMUM-FEASIBLE SEARCHES: a feasible candidate stays in the range - `hi = mid`.
+    Only the infeasible side may be discarded outright - `lo = mid + 1`.
+
+TRAP 4 - `while lo <= hi` TOGETHER WITH `hi = mid`. When lo and hi are equal, mid equals both, and
+if that speed is feasible then `hi = mid` changes nothing - the loop spins forever.
+
+    MEASURED: hangs on 6,000 of 6,000. THE TWO SHAPES THAT WORK, and you must not mix them:
+        `while lo < hi` with `hi = mid` and `lo = mid + 1`, then return `lo`;
+        `while lo <= hi` with `hi = mid - 1` and `lo = mid + 1`, tracking the best feasible answer
+            in a separate variable.
+    The first is shorter and is the one to keep in your fingers.
+
+TRAP 5 - `lo = 0`. A speed of zero eats nothing, and computing hours at speed 0 divides by zero.
+
+    MEASURED: fails on 644 of 6,000 - only the cases where the search actually probes 0, which is
+    why it is not caught more often. The floor is 1, and the reason is a sentence, not a
+    convention: at speed 0 nobody ever finishes.
+
+TRAP 6 - THE WRONG UPPER BOUND. `hi = len(piles)` confuses the number of piles with the size of
+one - measured wrong on 3,084 of 6,000. `hi = sum(piles)` is the opposite error and is HARMLESS:
+measured wrong on 0 of 6,000, because the extra candidates are all feasible and get discarded. It
+just costs a few more iterations - MEASURED on 1,000 piles up to a billion: 39 iterations with
+`hi = sum(piles)` against 29 with `hi = max(piles)`. Use max; know that sum is not wrong.
+
+TRAP 7 - `hours < h` INSTEAD OF `hours <= h`. Finishing in exactly the budget is allowed - the
+whole first example finishes in exactly 8 hours. Measured wrong on 2,001 of 6,000.
+
+TRAP 8 - FLOAT CEILING ON HUGE NUMBERS, and here is the honest version of a warning you may have
+heard. `math.ceil(p / speed)` converts to a float first, and floats carry only about 15 significant
+digits. MEASURED: over 200,000 random pairs with values up to a billion - LeetCode's actual limit -
+it disagreed with exact integer arithmetic on 0. Up to 1e16 it disagreed on 2,176 of 200,000, and
+up to 1e18 on 172,358 of 200,000 - for instance `math.ceil(10**18 / 3)` gives
+333333333333333312 where the true answer is 333333333333333334. SO: `math.ceil` is fine for this
+problem as specified, and `(p + speed - 1) // speed` is the habit worth having anyway.
+
+WHAT IS NOT A TRAP, measured rather than assumed: returning `hi` instead of `lo` at the end. The
+loop only exits when they are equal, so both are the same value. Not a bug - and not worth
+discussing in the interview.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - TRY EVERY SPEED IN ORDER:
+
+    import math
+    def min_eating_speed_naive(piles, h):
+        for speed in range(1, max(piles) + 1):
+            hours = sum(math.ceil(p / speed) for p in piles)
+            if hours <= h:
+                return speed                 # the first speed that fits IS the smallest
+        return max(piles)
+
+IT IS CORRECT - this is the ground truth every measurement in this entry was checked against - and
+it says the definition out loud: walk the speeds upward and stop at the first one that fits.
+
+WHAT IS WRONG WITH IT IS ONLY THE SPEED OF THE SEARCH. The piles can hold up to a billion bananas,
+so this loop can run a billion times, each time summing over every pile: O(n * max(piles)). Note
+carefully that the FEASIBILITY TEST is not the problem - that part is already optimal. The problem
+is testing every candidate one at a time.
+
+THE OBSERVATION THAT FIXES IT. Look at the sequence of yes/no answers as the speed increases:
+
+    speed:      1    2    3    4    5    6    7  ...
+    feasible?   N    N    N    Y    Y    Y    Y  ...
+
+IT ONLY FLIPS ONCE. And the reason is not a coincidence in the data, it is a fact about the
+problem: EATING FASTER CANNOT TAKE MORE HOURS, because each pile individually takes at most as many
+hours at a higher speed. So feasibility is NO for a while and then YES forever.
+
+THAT ONE FLIP IS EXACTLY WHAT BINARY SEARCH NEEDS. Binary search is usually taught on sorted
+arrays, but the sortedness is not the real requirement - the real requirement is a yes/no question
+that changes answer at most once across the candidates. Sorted arrays satisfy it; so does this. SAY
+THIS SENTENCE IN THE INTERVIEW: "feasibility is monotonic in the speed, so I can binary search the
+answer".
+
+THE SEARCH RANGE, WITH REASONS RATHER THAN GUESSES.
+    LOWEST: 1. Speed 0 eats nothing and divides by zero (measured to fail on 644 of 6,000).
+    HIGHEST: max(piles). At that speed each pile takes exactly one hour, and no speed above it can
+    do better, because you may only eat from ONE pile per hour. So if the answer exists at all it
+    is at or below max(piles) - and `h >= len(piles)` is exactly the condition for it to exist.
+
+THE TWO BRANCHES, AND WHY THEY ARE ASYMMETRIC. This is the part people get wrong, and it follows
+directly from what you are looking for - the SMALLEST feasible candidate.
+    FEASIBLE: this candidate is a valid answer, but perhaps a slower one is too. So KEEP it and
+        shrink from above: `hi = mid`.
+    NOT FEASIBLE: this candidate and every slower one are impossible. So DISCARD them:
+        `lo = mid + 1`.
+Using `hi = mid - 1` throws away a proven-good candidate - wrong on 2,403 of 6,000.
+
+WHY THE LOOP ENDS ON THE ANSWER. The invariant is THE ANSWER IS ALWAYS INSIDE [lo, hi]: it holds at
+the start (the bounds were chosen to guarantee it), and each branch preserves it. The range strictly
+shrinks each iteration, so eventually lo equals hi - and a range of one containing the answer IS the
+answer. That argument is what you say instead of "and then it works".
+
+WHAT THE UPGRADE COSTS. About log2(max(piles)) feasibility tests, each O(n): O(n log max(piles)).
+MEASURED on 1,000 piles with values up to a billion: 29 iterations, so 29 sweeps over the piles
+instead of a billion.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Decide the range of speeds worth considering. The slowest is ONE - a speed of zero would
+       eat nothing at all. The fastest worth trying is THE LARGEST PILE, because at that speed
+       every pile takes exactly one hour and going faster cannot help, since only one pile may be
+       eaten from per hour.
+
+    2. Write down, as a separate thought, how to work out the hours a given speed needs: for each
+       pile, divide the pile size by the speed and ROUND UP, then add those up. Rounding up,
+       because the last few bananas of a pile still occupy a whole hour even if they do not fill it.
+
+    3. Now search the range. Take the speed in the MIDDLE of the current range and work out its
+       hours.
+
+    4. IF IT FINISHES IN TIME (within the budget, and exactly on budget counts as in time), then
+       this speed is achievable - but a slower one might be too. So keep this speed as a
+       possibility and narrow the range to everything from the bottom UP TO AND INCLUDING it.
+
+    5. IF IT DOES NOT FINISH IN TIME, then this speed and every slower one are hopeless. Narrow the
+       range to everything ABOVE it.
+
+    6. Repeat until the range holds a single speed. That speed is the answer.
+
+STEP 4 IS THE ONE PEOPLE GET WRONG, and in exactly one way: they exclude the middle speed when
+narrowing. It has just been PROVEN to work, so excluding it can throw the answer away - measured
+wrong on 2,403 of 6,000. Feasible candidates stay in; only the infeasible side is discarded.
+
+STEP 2 IS WHERE THE ARITHMETIC GOES WRONG, in two ways. Rounding DOWN undercounts the hours and
+makes slow speeds look workable - wrong on 3,157 of 6,000, the most common failure in this problem.
+And "adding one after dividing" over-counts whenever the division comes out exactly - wrong on
+1,665 of 6,000. A pile of eight at speed four takes two hours, not three.
+
+STEP 4 ALSO HIDES AN OFF-BY-ONE IN THE COMPARISON: finishing in EXACTLY the allowed hours is
+allowed. Requiring strictly fewer hours is wrong on 2,001 of 6,000.
+
+AND STEP 6 MUST BE "UNTIL THE RANGE HOLDS ONE SPEED", not "until the bounds cross". If you keep
+looping while the bounds are equal AND you keep the middle candidate when it is feasible, the range
+stops shrinking and the program runs forever - measured to hang on 6,000 of 6,000.
+
+WHY HALVING IS ALLOWED AT ALL, which is the sentence the whole solution rests on: if a speed
+finishes in time, every faster speed also does - so the answers to "does this work" run no, no,
+no, then yes forever, and one test on the middle tells you which half the switch point is in.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a bakery that has to get a stack of orders out before closing time, and the only dial you
+control is the OVEN TEMPERATURE - crank it up and each tray bakes faster. But there is a rule: an
+oven can hold only ONE TRAY AT A TIME, and a tray occupies the oven for a whole slot even if it
+only needs half of it. Half-full slots are wasted; you cannot slide the next tray in early.
+
+You want the GENTLEST temperature that still gets everything out before closing, because gentler is
+better for the bread - and for the electricity bill.
+
+The plodding approach is to start at the lowest setting, work out whether everything would be
+baked in time, and if not, nudge the dial up one notch and work it out again. It gets the right
+answer eventually. If the dial has a billion notches, "eventually" is the problem.
+
+Here is what you actually know about that dial, and it is the only thing you need. TURNING IT UP
+NEVER MAKES THINGS SLOWER. So if you write "in time?" against every setting, you get a run of NOs
+followed by a run of YESes, and the switch happens exactly once. There is no setting that fails
+while a cooler one succeeds - that would be an absurd oven.
+
+Which means you can find the switch by BISECTION, the way you find a word in a dictionary or a
+faulty commit in a day's work. Try the middle setting. Suppose everything bakes in time - then the
+switch is at this setting or cooler, so throw away the entire hotter half of the dial, in one
+stroke, having done one test. Suppose it does not - then this setting and every cooler one are
+hopeless, so throw away that half instead. Repeat. A dial with a billion notches is settled in
+about thirty tests.
+
+Two details decide whether you actually land on the right notch.
+
+The first: when a setting DOES bake everything in time, you must not throw it away. It is a
+candidate - the best one you have found so far - and you are only looking for something gentler.
+Keep it in the range and search below it. People discard it out of symmetry with the other branch,
+and then the answer they were holding is gone.
+
+The second: when you work out whether a tray finishes, remember the whole-slot rule. A tray that
+needs a slot and a half occupies TWO slots. Round up. If you round down you will believe a
+temperature is adequate when it is not, and that is the most common way to get this wrong. And do
+not "round up" by simply adding one slot to everything, or the trays that fit exactly will be
+charged for a slot they never used.
+
+And one small thing that is easy to overlook: the lowest setting on the dial is ONE, not zero. At
+zero the oven is off, and nothing ever bakes, no matter how long you wait.
+
+When the range narrows to a single setting, that is the gentlest temperature that works. You never
+tested more than about thirty of them.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Min eating speed to finish all piles within h hours (binary search on answer).
+    import math
+    def min_eating_speed(piles, h):
+        lo, hi = 1, max(piles)
+
+  THE SEARCH RANGE, AND BOTH ENDS HAVE A REASON. `lo = 1` because a speed of 0 eats nothing and
+  divides by zero - starting at 0 fails on 644 of 6,000. `hi = max(piles)` because at that speed
+  every pile takes exactly one hour, and no faster speed can improve on that, since only one pile
+  may be eaten from per hour.
+
+  `hi = sum(piles)` would also be correct, just looser - measured wrong on 0 of 6,000, at a cost of
+  39 iterations instead of 29 on 1,000 billion-banana piles. `hi = len(piles)` confuses the count
+  of piles with the size of one and is wrong on 3,084 of 6,000.
+
+  THE INVARIANT FROM HERE ON: THE ANSWER IS ALWAYS INSIDE [lo, hi].
+
+        while lo < hi:
+
+  Loop until the range holds exactly ONE candidate. This shape needs no "found it" test and no
+  post-loop fix-up. Writing `while lo <= hi` together with the `hi = speed` below never terminates -
+  when lo and hi are equal, mid equals both and the feasible branch changes nothing: measured to
+  hang on 6,000 of 6,000.
+
+            speed = (lo + hi) // 2
+
+  The middle candidate. In Python this cannot overflow; in C or Java prefer `lo + (hi - lo) // 2`,
+  and saying so is a cheap point in an interview.
+
+            hours = sum(math.ceil(p / speed) for p in piles)   # hours at this speed
+
+  THE FEASIBILITY TEST, and the CEILING is the whole modelling insight: an hour is not shared
+  between piles, so leftover bananas still cost a full hour. A pile of 7 at speed 4 takes 2 hours.
+
+  `p // speed` instead - floor - undercounts and makes slow speeds look workable: wrong on 3,157 of
+  6,000, the most common failure here. `p // speed + 1` over-counts on exact divisions: wrong on
+  1,665 of 6,000. The exact integer form is `(p + speed - 1) // speed` or `-(-p // speed)`.
+
+  ON `math.ceil` AND FLOATS: it converts to a float, which carries about 15 significant digits.
+  Measured over 200,000 random pairs, it disagreed with exact integer arithmetic on 0 at this
+  problem's limit of a billion, on 2,176 up to 1e16, and on 172,358 up to 1e18. Correct as
+  specified; the integer form is the better habit.
+
+  COST OF THIS LINE: O(n), and it runs about log2(max(piles)) times - which is where O(n log max)
+  comes from.
+
+            if hours <= h:
+                hi = speed                # feasible -> try a slower speed
+
+  `<=`, not `<`: finishing in exactly the budget is allowed, and the first official example finishes
+  in exactly 8 hours. Using `<` is wrong on 2,001 of 6,000.
+
+  `hi = speed`, NOT `speed - 1`. This speed has just been proven to work, so it must stay in the
+  range as the best candidate so far while you look for a slower one. `hi = speed - 1` discards a
+  proven answer: wrong on 2,403 of 6,000.
+
+            else:
+                lo = speed + 1            # too slow -> speed up
+
+  This speed fails, and by monotonicity every slower one fails too, so all of them can be discarded
+  in one step. `+ 1` is right here precisely BECAUSE this candidate is known to be impossible - the
+  asymmetry with the branch above is not an accident, it is the definition of "smallest feasible".
+
+        return lo
+
+  The loop ended because lo equals hi, so the range holds one candidate, and by the invariant that
+  candidate is the answer. Returning `hi` is identical - measured wrong on 0 of 6,000.
+
+NINE LINES. O(n log max(piles)) time, O(1) extra space - about 30 sweeps over the piles instead of
+a billion.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. piles = [3, 6, 7, 11], h = 8. Expected 4.
+
+Start: lo = 1, hi = 11 (the largest pile).
+
+     lo | hi | speed | hours needed                          | fits 8? | action
+    ----+----+-------+---------------------------------------+---------+-----------------
+      1 | 11 |   6   | 1 + 1 + 2 + 2 = 6                     |  yes    | hi = 6
+      1 |  6 |   3   | 1 + 2 + 3 + 4 = 10                    |  no     | lo = 4
+      4 |  6 |   5   | 1 + 2 + 2 + 3 = 8                     |  yes    | hi = 5
+      4 |  5 |   4   | 1 + 2 + 2 + 3 = 8                     |  yes    | hi = 4
+      4 |  4 |       | the range holds one candidate         |         | loop ends
+
+    return 4
+
+CHECK THE ARITHMETIC IN ROW 2, because it is where the ceiling earns its place. At speed 3:
+ceil(3/3)=1, ceil(6/3)=2, ceil(7/3)=3 - not 2, because 7 is 3+3+1 and that last banana costs an
+hour - and ceil(11/3)=4. Total 10, over budget. THE FLOOR VERSION computes 1+2+2+3 = 8, believes
+speed 3 is fine, and answers 3.
+
+CHECK ROW 4 TOO: speed 4 needs exactly 8 hours, which is exactly the budget, and that is ALLOWED.
+The version using `<` rejects it and answers 6.
+
+FOUR ITERATIONS TO SEARCH ELEVEN CANDIDATES. The linear scan would test 1, 2, 3, 4.
+
+CASE TWO - A TIGHT BUDGET. piles = [30, 11, 23, 4, 20], h = 5.
+
+    There are 5 piles and only 5 hours, so EVERY PILE MUST FINISH IN ONE HOUR - which forces the
+    speed to be at least the largest pile, 30. And 30 works: 5 piles, 5 hours.
+    lo = 1, hi = 30, and the search walks up to 30. Answer 30 - the upper bound itself, which is a
+    good reminder that `hi` must be big enough. `hi = len(piles)` = 5 would answer 5, badly wrong.
+
+CASE THREE - ONE HOUR OF SLACK. piles = [30, 11, 23, 4, 20], h = 6. Expected 23.
+
+    At speed 23: ceil(30/23)=2, ceil(11/23)=1, ceil(23/23)=1, ceil(4/23)=1, ceil(20/23)=1 = 6
+    hours. Fits exactly.
+    At speed 22: ceil(30/22)=2, 1, ceil(23/22)=2, 1, 1 = 7 hours. Too slow.
+    So 23 is the switch point.
+    THE FLOOR VERSION answers 11; THE PLUS-ONE VERSION answers 24 - it charges the piles that
+    divide exactly for an extra hour and so demands a faster speed than necessary.
+
+CASE FOUR - ONE ENORMOUS PILE AND ENORMOUS TIME. piles = [312884470], h = 968709470.
+
+    The budget is far larger than the pile, so speed 1 suffices: 312,884,470 hours, well within
+    budget. The search still runs its ~29 iterations and returns 1. This is the case that punishes
+    `lo = 0`: if the search ever probes speed 0 it divides by zero - measured to fail on 644 of
+    6,000.
+
+CASE FIVE - THE FLOOR OF THE ANSWER. piles = [1, 1, 1, 1], h = 4.
+    Each pile takes one hour at any speed, so the answer is 1 - and note that no speed can ever
+    finish 4 piles in fewer than 4 hours, because one hour handles one pile. If h were 3, no speed
+    would work at all; the problem guarantees h >= len(piles) so that cannot happen.
+
+CASE SIX - WHY THE LOOP MUST BE `lo < hi`. Suppose lo = hi = 4 and the loop condition were
+`lo <= hi`. Then speed = 4, it is feasible, so `hi = 4` - which changes nothing at all, and the
+same iteration repeats forever. Measured: hangs on 6,000 of 6,000.
+
+MEASURED ITERATION COUNT, so the log is not an abstraction: on 1,000 piles with sizes up to a
+billion, the search took 29 iterations with `hi = max(piles)` and 39 with `hi = sum(piles)`.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The feasibility test sweeps the piles: O(n). The search halves a range of size
+max(piles), so it runs about log2(max(piles)) times - roughly 30 for a billion. TOTAL O(n log
+max(piles)) TIME, O(1) EXTRA SPACE. MEASURED: 29 iterations on 1,000 piles of up to a billion.
+
+    try every speed from 1 upward        O(n * max(piles)) - up to a billion sweeps
+    binary search on the speed          O(n log max(piles)) - about 30 sweeps
+    same, with hi = sum(piles)          also correct, 39 sweeps instead of 29
+
+NOTE WHAT THE log IS OVER: THE SIZE OF THE VALUES, NOT THE NUMBER OF PILES. That is characteristic
+of binary-search-on-the-answer, and interviewers listen for it. n appears linearly, because every
+candidate test must look at every pile.
+
+THE #1 MISTAKE: FLOOR DIVISION INSTEAD OF CEILING when totalling the hours. Wrong on 3,157 of
+6,000. An hour is never shared between piles, so leftovers cost a whole hour: a pile of 7 at speed
+4 takes 2 hours. On the official example it answers 3 instead of 4.
+
+THE #2: `hi = mid - 1` ON THE FEASIBLE BRANCH. Wrong on 2,403 of 6,000. You have just proven this
+speed works; keep it. Only the infeasible side may be discarded.
+
+THE #3: `hours < h` INSTEAD OF `<=`. Wrong on 2,001 of 6,000. Exactly on budget counts as fitting.
+
+THE #4: `p // speed + 1` AS A HOME-MADE CEILING. Wrong on 1,665 of 6,000 - it over-charges every
+pile that divides exactly. Use `(p + speed - 1) // speed`.
+
+THE #5: `while lo <= hi` COMBINED WITH `hi = mid`. Hangs on 6,000 of 6,000. Pick one of the two
+standard shapes and do not blend them.
+
+THE #6: `lo = 0`. Fails on 644 of 6,000 with a division by zero. Only sometimes, because the search
+does not always probe 0 - which is exactly what makes it a bug that reaches production.
+
+TWO HONEST NEGATIVES: `hi = sum(piles)` is wrong on 0 of 6,000 (just looser), and returning `hi`
+instead of `lo` is wrong on 0 of 6,000 (they are equal when the loop ends). Neither deserves
+interview time.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the brute force is to try every speed from 1 up, and it is
+O(n * max pile); (2) but feasibility is MONOTONIC - eating faster can never take longer - so the
+yes/no answers are no, no, no, then yes forever; (3) one flip is all binary search needs, and here
+I am searching the ANSWERS, not an array; (4) the range is [1, max(piles)], with a reason at each
+end; (5) hours per pile is a CEILING division, because an hour is not shared between piles; (6) on
+the feasible branch I keep the candidate - `hi = mid` - because I want the SMALLEST feasible one;
+(7) O(n log max(piles)) time, O(1) space. Point 2 is what earns the marks; without stating
+monotonicity you are pattern-matching, and interviewers can tell.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "how did you know binary search applies?" The answer is not
+"because it is a search problem" - it is "because the predicate is monotonic in the candidate, so
+the feasible set is an upward-closed interval and there is exactly one switch point". Have that
+sentence ready.
+
+AND THE OTHER ONE: "what if she could eat from several piles in one hour?" Then the whole ceiling
+model collapses and the answer becomes ceil(total bananas / h) - a formula, not a search. That
+question is checking that you understood WHY the ceiling was there rather than copying it.
+
+THE FAMILY, and it is one of the most valuable families to recognise: Capacity To Ship Packages
+Within D Days (identical shape - binary search the capacity), Split Array Largest Sum, Minimum
+Number of Days to Make m Bouquets, Magnetic Force Between Two Balls (maximise instead of minimise,
+so the branches flip), Minimize Max Distance to Gas Station (a real-valued search, so you loop a
+fixed number of times instead of until the bounds meet), Find the Smallest Divisor Given a
+Threshold, Kth Smallest Element in a Sorted Matrix. THE CUE THAT SHOULD MAKE YOU THINK "BINARY
+SEARCH THE ANSWER": the problem says "minimum X such that something is possible", the possible-ness
+gets easier as X grows, and X ranges over a big numeric interval rather than over an array.
+
+ONE-SENTENCE TAKEAWAY: binary search the SPEED rather than the array - feasibility only ever flips
+once because eating faster cannot take longer - keeping a feasible middle in the range with
+`hi = mid` and counting each pile's hours with a CEILING division.""",
 ]
 
 _EX_P1AB["Longest Consecutive Sequence"] = [
-    """The one line that makes it O(n): only start counting at a run's BEGINNING.
-`if n - 1 not in num_set` means you only expand upward from numbers that have
-no predecessor - i.e. the first element of each run. Every other number is
-skipped instantly.
-Without that guard, [1,2,3,4] would count from 1 (length 4), then from 2
-(length 3), then 3, then 2 - O(n^2) on a long run. With it, only 1 starts a
-walk and the rest are O(1) rejections.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the total work is linear, which is the argument to make.
-The inner while loop looks nested, but across the WHOLE run it advances at most
-once per element in the array - each number is visited by exactly one run's
-expansion, the one that starts at its own run's beginning.
-So the outer loop is O(n) rejections plus O(n) total inner steps = O(n). That
-'each element is touched by exactly one expansion' invariant is the same shape
-as the amortised argument for monotonic stacks, and it is what an interviewer
-wants to hear rather than 'it's roughly linear'.""",
+Given a jumbled list of whole numbers, find the LENGTH of the longest run of numbers that follow
+each other one by one. The numbers may be in any order in the list, and the run does not have to
+appear in order - or even near each other - inside it.
 
-    """A trace on the messy example.
-nums = [100,4,200,1,3,2]. Set: {100,4,200,1,3,2}.
-100: is 99 present? No -> start. 101 not present -> length 1.
-4: is 3 present? YES -> skip, 4 is mid-run.
-200: 199 absent -> start, 201 absent -> length 1.
-1: 0 absent -> start. 2, 3, 4 all present -> length 4. Best 4.
-3 and 2: both have predecessors -> skipped.
-Answer 4, and note only two numbers ever triggered a walk.""",
+    nums = [100, 4, 200, 1, 3, 2]
 
-    """Why not just sort.
-Sorting then scanning for runs is O(n log n) and perfectly correct - and it is
-the right FIRST answer to state. The set version is O(n), which is the point of
-the problem, and the explicit constraint in the prompt is what rules sorting
-out.
-The trade: the set costs O(n) space, while an in-place sort costs O(1) extra.
-If memory were the binding constraint, sorting would win - so the choice is not
-absolute, and saying that reads better than presenting the set as strictly
-superior.""",
+    the numbers present are 1, 2, 3, 4, 100, 200
+    1, 2, 3, 4 follow each other -> a run of length 4
+    100 is alone; 200 is alone
+    ANSWER: 4
 
-    """Edge cases.
-Empty array -> best stays 0.
-All duplicates [1,1,1] -> the set collapses to {1}, one run of length 1.
-Iterating the SET rather than the list matters here: with a million copies of
-1, iterating the list does a million redundant lookups while the set does one.
-Negative numbers and mixed signs work unchanged; [-1,0,1] is a run of 3.
-A single element -> 1.""",
+Notice that the 1, 2, 3 and 4 are scattered across positions 3, 5, 4 and 1 of the list. Their
+POSITIONS are irrelevant; only which VALUES are present matters.
 
-    """Complexity and the family.
-O(n) time, O(n) space.
-The family: Longest Consecutive Sequence in a binary tree (different technique -
-DFS carrying the run length), Summary Ranges (the same run-detection on a
-SORTED array, where neighbours suffice), Missing Ranges, Degree of an Array,
-and Binary Subarrays With Sum.
-The transferable idea is the anchor test: when counting runs or groups, find a
-cheap way to identify the START of each one so you process each group exactly
-once.""",
+MORE CASES, to pin the rules down:
+
+    [1, 2, 0, 1]      values present are 0, 1, 2  ->  run 0,1,2  ->  ANSWER 3
+                      the duplicate 1 changes nothing; a run counts DISTINCT values
+    [5]               ANSWER 1        one number is a run of one
+    []                ANSWER 0        no numbers, no run - and this case bites, see section 4
+    [9, 1, 4, 7, 3]   no two are adjacent  ->  ANSWER 1
+    [1, 2, 2, 3]      values 1, 2, 3  ->  ANSWER 3, not 2
+
+TWO THINGS THE PROBLEM DOES NOT ASK. It does not ask WHICH numbers form the run, only how long it
+is - though the code is a line away from telling you. And it does not care about the ORDER in the
+input at all.
+
+THE OBVIOUS SOLUTION IS TO SORT. Sort the numbers, then walk along counting how long each
+consecutive run lasts. That is correct - it is how the ground truth for this entry was computed -
+and it costs O(n log n). Say it first; it is a perfectly respectable answer.
+
+WHAT THE PROBLEM ACTUALLY WANTS is O(n) TIME, which sounds impossible: how can you find runs
+without putting the numbers in order? The answer is one of the prettiest tricks in the standard
+repertoire, and it comes down to ONE EXTRA QUESTION asked before counting - section 2 derives it.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+FIRST, DROP THE LIST AND KEEP A SET. Sorting is only being used to answer "is the next number
+present?", and a SET answers that directly in one step, with no ordering at all:
+
+    nums = [100, 4, 200, 1, 3, 2]        set = {1, 2, 3, 4, 100, 200}
+
+    "is 5 in there?"  -> one step, no scanning
+    "is 2 in there?"  -> one step
+
+NOW THE OBVIOUS PLAN: for each number, walk upward while the next number is present, and remember
+the longest walk.
+
+    start at 1:    1, 2, 3, 4 present, 5 absent    -> run of 4
+    start at 2:    2, 3, 4                          -> run of 3
+    start at 3:    3, 4                             -> run of 2
+    start at 4:    4                                -> run of 1
+    start at 100:  100                              -> run of 1
+    start at 200:  200                              -> run of 1
+    answer 4
+
+IT IS CORRECT, AND IT IS WASTEFUL, and you can see the waste in the picture: the run 1,2,3,4 got
+walked FOUR TIMES, once from each of its members. On a single run of a thousand numbers that is a
+thousand walks averaging five hundred steps - a quarter of a million steps for a thousand numbers.
+MEASURED: on one run of 2,000 consecutive numbers, this version performs 2,003,000 set lookups.
+
+THE FIX IS ONE QUESTION, ASKED BEFORE COUNTING. Before walking upward from a number, ask:
+
+    IS THE NUMBER JUST BELOW ME ALSO PRESENT?
+
+If it is, then I am standing in the MIDDLE of a run, and whoever starts that run will walk through
+me anyway. So do nothing at all - skip. Only walk when the number below me is ABSENT, because then
+I am the START of a run.
+
+    for the set {1, 2, 3, 4, 100, 200}:
+
+        1:    is 0 present? NO  -> I am a start. Walk: 1,2,3,4 -> length 4
+        2:    is 1 present? yes -> skip, I am inside a run
+        3:    is 2 present? yes -> skip
+        4:    is 3 present? yes -> skip
+        100:  is 99 present? NO -> a start. Walk: 100 -> length 1
+        200:  is 199 present? NO -> a start. Walk: 200 -> length 1
+
+        answer 4 - and the run 1,2,3,4 was walked EXACTLY ONCE
+
+WHY THIS MAKES IT LINEAR, and this is the argument to say out loud because the nested loop still
+LOOKS quadratic: every number is visited by the outer loop exactly once, and is stepped over by an
+inner walk AT MOST once - because a number is only ever walked through by the walk belonging to its
+own run, and each run is walked from its unique starting element only. So the total work is at most
+2n steps. MEASURED: 4,000 lookups where the version without the check needed 2,003,000.
+
+THE PICTURE THAT MAKES IT MEMORABLE. Think of the numbers as a row of stepping stones with gaps:
+
+        1  2  3  4        100        200
+        ^                  ^          ^
+        start              start      start
+        (0 is missing)     (99 gone)  (199 gone)
+
+Only the stones at the LEFT EDGE of a group are allowed to start counting. Every group has exactly
+one left edge, so every group gets counted exactly once.
+
+WHY DOWNWARD, NOT UPWARD. The check has to look at the number BELOW (n - 1) while the walk goes
+UPWARD. Checking above instead - "is n+1 missing?" - makes the END of each run start the walk, and
+a walk upward from the end immediately stops: measured wrong on 3,918 of 6,000. The check and the
+walk must point in OPPOSITE directions.""",
+
+    """3. EVERY TERM, DEFINED
+
+CONSECUTIVE. Following one after another with no gaps: 5, 6, 7. Consecutive INTEGERS, so the step
+is always exactly 1.
+
+RUN / SEQUENCE (as this problem means it). A maximal group of consecutive values that are all
+present. In [100,4,200,1,3,2] the runs are {1,2,3,4}, {100} and {200}.
+
+NOT A SUBSEQUENCE, despite the problem's name. The elements do NOT have to appear in order in the
+input, and there is no requirement that they be adjacent in the list. This is purely about WHICH
+VALUES EXIST.
+
+SET. A collection with no duplicates and no order, supporting "is x in here" in O(1) average time.
+`set(nums)` builds one in O(n). THE SET IS DOING TWO JOBS HERE: instant membership, and free
+de-duplication.
+
+O(1) AVERAGE. A hash-based set computes a slot from the value itself, so lookups take a fixed
+amount of work regardless of size. It is "average" rather than guaranteed because pathological
+collisions can degrade it, which is a fine remark to make and not something to worry about here.
+
+`x in some_list` vs `x in some_set`. On a LIST this scans - O(n). On a SET it is O(1). Same syntax,
+completely different cost, and forgetting to convert is the classic way to write code that looks
+linear and runs quadratically. Measured: it still gives the right answer (0 wrong of 6,000), it is
+just slow.
+
+PREDECESSOR / SUCCESSOR. The number one below (n - 1) and one above (n + 1). The whole algorithm is
+one predecessor check plus a walk over successors.
+
+RUN START. A present number whose predecessor is absent. Every run has exactly ONE, which is why
+counting only from run starts counts every run exactly once.
+
+AMORTISED / TOTAL-WORK ARGUMENT. The reasoning that gives O(n) despite the nested loop: not "the
+inner loop is short" but "across the entire run of the program the inner loop takes at most n steps
+in total, because each element is stepped over at most once". That counting argument is what the
+interviewer wants to hear, and it is the same style of argument as the one for a monotonic stack.
+
+O(n) TIME, O(n) SPACE. One pass to build the set, one pass over the set, and at most n inner steps
+in total. The space is the set - a copy of the distinct values - which is the price of not sorting.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random lists (0 to 14 numbers drawn from 0 to 20, so runs,
+gaps and duplicates all occur), checked against an independent sort-the-distinct-values-and-scan
+ground truth.
+
+TRAP 1 - CHECKING THE WRONG NEIGHBOUR. Writing `if n + 1 not in num_set` instead of
+`if n - 1 not in num_set`. It sounds equally plausible - "only start where the run does" - and it
+makes the END of each run the starting point, from which the upward walk cannot move.
+
+    nums = [100, 4, 200, 1, 3, 2].  Correct 4.  This version answers 1.
+        The only numbers passing the check are 4, 100 and 200 - the ENDS - and walking upward from
+        4 gives a run of 1.
+    MEASURED: wrong on 3,918 of 6,000 - the most common wrong answer here.
+    THE RULE: THE GUARD AND THE WALK MUST POINT IN OPPOSITE DIRECTIONS. Check below, walk above.
+
+TRAP 2 - `best = length` INSTEAD OF `best = max(best, length)`. The last run examined overwrites
+the answer, and set iteration order is not the input order, so which run is last is unpredictable.
+
+    nums = [100, 4, 200, 1, 3, 2].  Correct 4.  This version answers 1 - some length-1 run happened
+    to be examined last.
+    MEASURED: wrong on 2,683 of 6,000. Keeping a maximum requires comparing, not assigning.
+
+TRAP 3 - THE EMPTY INPUT, when `best` starts at 1. `best = 1` looks harmless - "surely any list has
+a run of at least one" - and it is a lie for the empty list, whose answer is 0.
+
+    nums = [].  Correct 0.  With `best = 1`, the loop body never runs and it returns 1.
+    MEASURED: wrong on 357 of 6,000 - and restricted to NON-EMPTY inputs, wrong on 0 of 5,643. THE
+    SHAPE OF THE BUG IS INSTRUCTIVE: it is not a probabilistic failure, it is exactly one input
+    class. Start `best` at 0 and the empty case is handled with no special code.
+
+TRAP 4 - SORTING AND SCANNING WITHOUT HANDLING DUPLICATES. The sort-based solution is fine, but a
+repeated value must not reset the run.
+
+    nums = [1, 2, 2, 3].  Correct 3.  A scan that resets whenever the next value is not exactly one
+    greater sees 2 followed by 2, resets, and answers 2.
+    MEASURED: wrong on 502 of 6,000 - and on the 3,441 inputs containing duplicates, wrong on 502.
+    THE FIXES: `sorted(set(nums))`, or an explicit "if equal, continue" branch. Note how easily
+    this is missed: it needs a duplicate INSIDE a run to fire.
+
+TRAP 5 - USING A LIST INSTEAD OF A SET. `if n - 1 not in nums` where `nums` is a list is CORRECT -
+measured wrong on 0 of 6,000 - and every membership test becomes O(n), so the solution you just
+argued was linear is quadratic or worse. This is the trap that does not show up in tests at all,
+only in the complexity you claim out loud. Convert once, up front.
+
+TRAP 6 - ITERATING OVER `nums` RATHER THAN THE SET. Also correct, and it re-does the work for every
+duplicate: a list of ten thousand identical values performs ten thousand outer iterations instead
+of one. Iterate over the set.
+
+TRAP 7 - EXPECTING THE ANSWER TO BE ABOUT POSITIONS. Nothing in this problem cares where the
+numbers sit. If you find yourself writing `nums[i + 1]`, you have started solving a different
+problem.
+
+WHAT IS NOT A TRAP, measured rather than assumed - and one of these is a genuine surprise:
+
+    STARTING `length` AT 0 INSTEAD OF 1. It self-corrects: the walk's first test is `n + 0 in set`,
+    which is true because n itself is in the set, so the count reaches the same value. Wrong on 0 of
+    6,000. Correct, if slightly confusing to read.
+
+    OMITTING THE PREDECESSOR CHECK ALTOGETHER. Still CORRECT - wrong on 0 of 6,000 - just
+    quadratic. MEASURED on a single run of 2,000 consecutive numbers: 2,003,000 set lookups against
+    4,000 with the check. This is the one to be honest about in an interview: the check is not there
+    for correctness, it is there for the complexity.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - SORT, THEN SCAN:
+
+    def longest_consecutive_sorted(nums):
+        if not nums:
+            return 0
+        vals = sorted(set(nums))              # set() first, so duplicates cannot break the scan
+        best = run = 1
+        for i in range(1, len(vals)):
+            run = run + 1 if vals[i] == vals[i - 1] + 1 else 1
+            best = max(best, run)
+        return best
+
+IT IS CORRECT - this is the ground truth for every measurement in this entry - and it is the right
+first answer: O(n log n) for the sort, O(n) for the scan, O(1) extra space if you may sort in place.
+Note the `set()` inside: without it, a duplicate resets the run and [1,2,2,3] answers 2 instead of
+3 - measured wrong on 502 of 6,000.
+
+WHAT IS WRONG WITH IT is only the sort, and the sort is doing more than the problem needs. Sorting
+puts the numbers in TOTAL ORDER; all this problem ever asks is "IS THIS PARTICULAR VALUE PRESENT?"
+Total order is a much stronger thing than membership, and it costs more.
+
+THE FIRST UPGRADE - THROW THE ORDER AWAY, KEEP A SET. Now "is n+1 present" is one step, and you can
+walk a run upward without any sorting:
+
+    for each number n:  length = 1;  while n + length in the set: length += 1
+
+Correct - measured wrong on 0 of 6,000 - and quadratic, because each run gets walked once from
+EVERY one of its members. MEASURED on a single run of 2,000 consecutive numbers: 2,003,000 lookups.
+
+THE SECOND UPGRADE - THE ONE THAT MAKES IT LINEAR - IS A SINGLE `if`. Only walk when you are at the
+BEGINNING of a run:
+
+    if n - 1 not in the set:      # nothing below me, so I am a run's first element
+        ... walk upward ...
+
+WHY THAT IS ENOUGH, and this is the argument the interviewer is waiting for. Every run has EXACTLY
+ONE element whose predecessor is absent - its smallest. So exactly one walk happens per run, and
+that walk takes as many steps as the run is long. Summing over all runs: the total number of inner
+steps equals the total number of distinct values, which is at most n. Add the outer loop's n
+iterations and the whole thing is at most about 2n steps. MEASURED: 4,000 lookups where the
+unguarded version needed 2,003,000 - and that ratio grows with the run length.
+
+WHY THE CHECK MUST LOOK DOWNWARD WHILE THE WALK GOES UPWARD. They are two halves of one idea:
+"identify the unique start, then traverse from it". Point them the same way and you identify the
+unique END and then traverse away from the run, finding nothing - measured wrong on 3,918 of 6,000.
+
+WHY THE NESTED LOOP IS NOT QUADRATIC, said carefully, because it looks it: the inner `while` is not
+bounded by a small constant - one run may be a thousand long. The bound is on the TOTAL: across the
+entire program, the inner loop executes at most n times, because each value is stepped over only by
+the walk of its own run, and its own run is walked only once. Bounding total work rather than
+per-iteration work is the same style of argument as for a monotonic stack, and it is worth naming.
+
+WHAT IT COSTS. O(n) time. O(n) SPACE for the set - the honest price of not sorting, and worth
+stating as a trade rather than hiding it.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Put every number into a SET. This does two jobs at once: it makes "is this value present?" a
+       single-step question, and it removes duplicates, which stop mattering entirely.
+
+    2. Keep a variable for the best run length found so far, starting at ZERO - so that a list with
+       no numbers at all correctly answers zero.
+
+    3. Go through the numbers in the set, one at a time.
+
+    4. FIRST, ASK ONE QUESTION: is the number ONE BELOW this one also in the set? If it is, this
+       number sits in the middle or at the end of a run, and the run will be counted from its true
+       beginning by somebody else. SKIP IT ENTIRELY - do no work at all.
+
+    5. If the number below is NOT present, this number is the FIRST element of a run. Count upward:
+       is one more present? and one more after that? Keep going while each next value is in the set,
+       counting as you go.
+
+    6. Compare the run you just counted against the best so far and keep the LARGER.
+
+    7. When the numbers run out, the best value is the answer.
+
+STEP 4 IS THE ENTIRE POINT OF THE PROBLEM. Without it the answer is still correct, but every run
+gets counted once from each of its members - measured at 2,003,000 set lookups on a single run of
+2,000 numbers, against 4,000 with the check. WITH it, every run is counted exactly once, because
+every run has exactly one member with nothing below it.
+
+THE DIRECTION IN STEP 4 IS THE THING PEOPLE GET WRONG. You must look DOWN while the counting in
+step 5 goes UP. Look up instead and you will only start counting at the END of each run, where
+counting upward immediately stops - wrong on 3,918 of 6,000, and it answers 1 on the standard
+example.
+
+STEP 6 MUST COMPARE, NOT ASSIGN. Overwriting the best with the most recent run is wrong on 2,683 of
+6,000, and it is unpredictable which run comes last because a set has no order.
+
+STEP 2'S ZERO MATTERS FOR EXACTLY ONE INPUT - the empty list - and it is measured: starting at one
+is wrong on 357 of 6,000 cases, all of them empty, and wrong on 0 of the 5,643 non-empty ones.
+Start at zero and the empty case needs no special handling.
+
+AND IN STEP 1, THE SET IS NOT OPTIONAL. Everything above still gives the right answer if you leave
+the numbers in a list, but each "is it present" question then scans the whole list, and the solution
+you are claiming is linear is not. Convert once, at the start.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a long corridor of numbered lockers, and someone has scattered a handful of stickers on
+some of the doors. You want to find the longest STRETCH of consecutive stickered lockers, and you
+are told the locker numbers only as a jumbled list - you cannot see the corridor, you can only ask
+"is there a sticker on locker 57?" and get an instant yes or no.
+
+The plodding way is to take each stickered locker you know about, stand there, and walk to the
+right as long as the next door is stickered too, counting your steps; then go back and do the same
+from the next locker on your list. Correct - and you will walk every stretch over and over. A
+stretch of a thousand stickered doors gets walked from all thousand of its doors, most of them
+part-way through a walk somebody has already made.
+
+Here is the fix, and it is one question asked before you take a single step.
+
+Before walking from a locker, ASK WHETHER THE DOOR TO YOUR LEFT IS STICKERED. If it is, then you
+are standing in the middle of a stretch, and the person who starts at the left-hand end of that
+stretch is going to walk right past you anyway. So do nothing - do not walk at all. Move on.
+
+Only when the door to your LEFT is bare do you walk, because that means you are standing at the
+LEFT EDGE of a stretch. And here is the part that makes it airtight: EVERY STRETCH HAS EXACTLY ONE
+LEFT EDGE. So every stretch gets walked once, by exactly one person, and no door is ever walked
+past twice.
+
+That is the whole method. The one thing to be careful about is the DIRECTION. You look LEFT to
+decide whether to walk, and then you walk RIGHT. If you get that backwards - look right, then walk
+right - you will only start walking at the RIGHT-HAND edges of stretches, and from a right-hand edge
+there is nowhere to walk to. You will report that the longest stretch in the entire corridor is one
+door long, which is the most common wrong answer to this problem.
+
+Two smaller things. You are keeping a record of the longest stretch found so far, and you must
+compare each new stretch against that record rather than simply replacing it - otherwise you end up
+reporting whichever stretch you happened to look at last, and since your list is jumbled that could
+be anything.
+
+And if the list you were handed is empty, the answer is zero, not one. There is no stretch of length
+one when there are no stickers at all. Start your record at zero and that case takes care of itself.
+
+Notice what you never needed: you never put the lockers in order. Sorting the whole list would have
+worked, and it is more work than the question deserves - all you ever ask is whether one particular
+door has a sticker, and that question does not need the doors sorted.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Length of the longest run of consecutive integers, O(n) with a set.
+    def longest_consecutive(nums):
+        num_set = set(nums)
+
+  TWO JOBS IN ONE LINE. It makes membership O(1) instead of the O(n) a list would cost, and it
+  de-duplicates - so a repeated value cannot inflate or break a run. Built in O(n).
+
+  KEEPING `nums` AS A LIST AND TESTING `in nums` still produces the RIGHT ANSWER - measured wrong on
+  0 of 6,000 - while turning the solution quadratic. It is the bug that only shows up in the
+  complexity you claim, which is exactly where an interviewer is listening.
+
+        best = 0
+
+  Starting at ZERO, not one, so the EMPTY INPUT answers 0 with no special case. Starting at 1 is
+  wrong on 357 of 6,000 - precisely the empty cases, and wrong on 0 of the 5,643 non-empty ones.
+
+        for n in num_set:
+
+  Iterate over the SET, not the original list: duplicates would otherwise cause repeated identical
+  work. Set iteration order is arbitrary, which is fine - the answer does not depend on it - but it
+  is why line `best = max(...)` below cannot be a plain assignment.
+
+            if n - 1 not in num_set:          # only start at a run's beginning
+
+  THE ONE LINE THAT TURNS QUADRATIC INTO LINEAR. If the predecessor exists, this number is inside
+  somebody else's run and is skipped entirely - no walk, no cost.
+
+  IT IS NOT A CORRECTNESS CHECK. Removing it leaves the answer right and the cost quadratic -
+  measured at 2,003,000 set lookups on one run of 2,000 numbers, against 4,000 with it. Say that
+  plainly rather than implying the check is needed for the answer.
+
+  `n - 1`, NOT `n + 1`. The guard looks DOWN because the walk below goes UP. Reversing it makes each
+  run's LAST element the starting point, from which the walk cannot advance - wrong on 3,918 of
+  6,000, answering 1 on the standard example.
+
+  WHY EXACTLY ONE ELEMENT PER RUN PASSES THIS TEST: a run's smallest element, and only that one, has
+  no predecessor in the set. That uniqueness is what bounds the total work.
+
+                length = 1
+
+  Count this number itself. (Starting at 0 also works, because the first test below is `n + 0 in
+  num_set`, which is true - measured wrong on 0 of 6,000. Starting at 1 simply reads better.)
+
+                while n + length in num_set:  # extend the run upward
+                    length += 1
+
+  WALK UPWARD. `n + length` is neat: when `length` is 1 it tests n+1, and each success both counts
+  and advances. The loop stops at the first missing value, which is the end of the run.
+
+  THIS LOOP LOOKS LIKE IT MAKES THE FUNCTION QUADRATIC AND DOES NOT. Because of the guard, each run
+  is walked only from its unique smallest element, so across the whole function this loop executes
+  at most once per distinct value - at most n times in TOTAL, not per outer iteration.
+
+                best = max(best, length)
+
+  KEEP THE LARGER. `best = length` instead is wrong on 2,683 of 6,000: it reports whichever run
+  happened to be examined last, and set order makes that arbitrary.
+
+        return best
+
+  Zero for an empty input, otherwise the longest run found.
+
+SEVEN LINES. O(n) TIME by the total-work argument above, O(n) SPACE for the set - and that space is
+the price of not sorting, which is the trade to name out loud.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [100, 4, 200, 1, 3, 2]. num_set = {1, 2, 3, 4, 100, 200}.
+
+Set iteration order is arbitrary; this trace uses ascending order for readability. The answer does
+not depend on the order.
+
+      n  | n-1 present? | action                              | length | best
+    -----+--------------+-------------------------------------+--------+------
+       1 | 0? NO        | a run START - walk up                |        |
+         |              |   2 in set -> length 2               |        |
+         |              |   3 in set -> length 3               |        |
+         |              |   4 in set -> length 4               |        |
+         |              |   5 absent -> stop                   |   4    |  4
+       2 | 1? yes       | SKIP - inside a run, no work at all  |   -    |  4
+       3 | 2? yes       | SKIP                                 |   -    |  4
+       4 | 3? yes       | SKIP                                 |   -    |  4
+     100 | 99? NO       | a run START - 101 absent             |   1    |  4
+     200 | 199? NO      | a run START - 201 absent             |   1    |  4
+
+    return 4
+
+COUNT THE WORK IN THAT TABLE: six outer iterations, three walks, and four inner steps in total. The
+run 1,2,3,4 was walked ONCE. Without the guard, rows 2, 3 and 4 would have walked 3, 2 and 1 more
+steps - and on a long run that waste is quadratic.
+
+WHAT THE WRONG-DIRECTION GUARD DOES TO THIS CASE: with `if n + 1 not in num_set`, only 4, 100 and
+200 pass (the ENDS of the runs). Walking upward from 4 finds 5 absent immediately, so length 1. The
+answer comes back 1 instead of 4 - wrong on 3,918 of 6,000.
+
+WHAT `best = length` DOES: the last row examined is 200 with length 1, so best becomes 1. The
+answer depends on set iteration order, which is exactly the kind of bug that passes once and fails
+later - wrong on 2,683 of 6,000.
+
+CASE TWO - DUPLICATES. nums = [1, 2, 2, 3]. num_set = {1, 2, 3}.
+
+    n = 1: 0 absent -> start. 2 present, 3 present, 4 absent -> length 3.  best = 3
+    n = 2: 1 present -> skip.        n = 3: 2 present -> skip.
+    return 3.  THE DUPLICATE VANISHED at `set(nums)` and never needed a thought.
+
+    THE SORT-BASED SOLUTION WITHOUT `set()` sees 1,2,2,3, hits 2 followed by 2, resets its run, and
+    answers 2 - wrong on 502 of 6,000, and on 502 of the 3,441 inputs that contain duplicates.
+
+CASE THREE - THE EMPTY LIST. nums = []. num_set is empty, the loop never runs, `best` is still 0,
+and 0 is returned. CORRECT, WITH NO SPECIAL CASE - provided `best` started at 0. Starting at 1
+returns 1 here, and this is the only input class it gets wrong: 357 of 6,000 measured, 0 of 5,643
+non-empty.
+
+CASE FOUR - ONE NUMBER. nums = [5]. 4 is absent, so 5 is a run start; 6 is absent, so length 1.
+Returns 1.
+
+CASE FIVE - ALMOST NOTHING ADJACENT. nums = [9, 1, 4, 7, 3]. num_set = {1, 3, 4, 7, 9}.
+
+    9: 8 absent -> start, 10 absent      -> 1
+    1: 0 absent -> start, 2 absent       -> 1
+    4: 3 PRESENT -> skip                       <- 4 looks isolated and is not
+    7: 6 absent -> start, 8 absent       -> 1
+    3: 2 absent -> start, 4 present -> 2, 5 absent   -> 2
+    Answer 2. Check the guard against the actual SET rather than eyeballing the list - 3 and 4 are
+    at opposite ends of the input and are still a run.
+
+CASE SIX - ONE LONG RUN, WHICH IS THE PERFORMANCE CASE. nums = [1, 2, ..., 2000].
+    Only 1 passes the guard, and it walks 2,000 steps. Every other number is skipped after a single
+    lookup. MEASURED: 4,000 set lookups in total. Without the guard, all 2,000 numbers walk:
+    MEASURED 2,003,000 lookups - 500 times the work for the same answer.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Building the set is O(n). The outer loop runs once per distinct value. The
+inner walk executes at most once per distinct value ACROSS THE WHOLE FUNCTION, because each run is
+walked only from its unique smallest element. So the total is O(n) TIME and O(n) SPACE.
+
+    sort the distinct values and scan       O(n log n) time, O(1) extra space if sorted in place
+    set, walk from every element            O(n) space and QUADRATIC time - 2,003,000 lookups on
+                                            one run of 2,000
+    set, walk only from run starts          O(n) time, O(n) space - 4,000 lookups on the same input
+
+THE HONEST FRAMING OF THE TRADE-OFF: the linear solution BUYS TIME WITH MEMORY. If memory were
+tight and the numbers could be reordered in place, sorting is the better engineering choice. Saying
+that is worth more than reciting O(n).
+
+THE #1 MISTAKE: CHECKING `n + 1` INSTEAD OF `n - 1` IN THE GUARD. Wrong on 3,918 of 6,000, and it
+answers 1 on the official example. The guard looks DOWN because the walk goes UP - identify the
+unique start, then traverse away from it.
+
+THE #2: `best = length` INSTEAD OF `max(best, length)`. Wrong on 2,683 of 6,000, and unpredictable,
+because set iteration order decides which run is last.
+
+THE #3: `best = 1` INSTEAD OF `best = 0`. Wrong on 357 of 6,000 - every one of them the empty list,
+and 0 of the 5,643 non-empty inputs. A one-input-class bug that a hand-written test never covers.
+
+THE #4: THE SORT-BASED SOLUTION WITHOUT DE-DUPLICATION. Wrong on 502 of 6,000. A repeated value
+inside a run resets the count. `sorted(set(nums))`.
+
+THREE HONEST NEGATIVES, all measured at 0 wrong of 6,000: omitting the predecessor guard (correct,
+but quadratic - and that is the point of the problem, so say "correct but quadratic" rather than
+calling it a bug); using a list instead of a set (correct, and quadratic in a way no test will
+reveal); and starting `length` at 0 rather than 1, which self-corrects because the first test is
+`n + 0 in num_set`.
+
+WHAT TO SAY OUT LOUD, in this order: (1) sorting is the easy O(n log n) answer, and it is doing more
+than the problem needs, because all I ever ask is whether a particular VALUE is present; (2) so use
+a set - O(1) membership, and it de-duplicates for free; (3) walking upward from every element is
+correct but quadratic, since each run gets walked from all of its members; (4) so only walk from a
+run's FIRST element, identified by its predecessor being absent; (5) every run has exactly one such
+element, so each run is walked exactly once and the total inner work is at most n - that is why the
+nested loop is still linear; (6) O(n) time, O(n) space, and the space is the price of not sorting.
+Point 5 is the one that gets the marks: the nested loop LOOKS quadratic, and the total-work argument
+is the whole reason it is not.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "prove it is O(n), because I see a loop inside a loop". Answer with
+the counting argument, not with intuition: the guard means only a run's smallest element ever walks,
+so each distinct value is stepped over at most once in total, so the inner loop contributes at most
+n steps across the entire run of the function.
+
+AND THE OTHER ONE: "return the actual sequence, not just its length". Remember the starting value
+alongside the best length and reconstruct at the end. Then sometimes: "what if the numbers arrive as
+a stream and can also be REMOVED?" Now a set is not enough and you want UNION-FIND or a
+dictionary of interval endpoints that merges neighbouring runs on insertion - that is the harder
+relative, Data Stream as Disjoint Intervals.
+
+THE FAMILY: Longest Consecutive Sequence in a Binary Tree, Binary Tree Longest Consecutive Sequence,
+Missing Ranges, Summary Ranges, First Missing Positive (also uses "which values are present" rather
+than order), Contains Duplicate, Union-Find based run merging, Longest Harmonious Subsequence. THE
+TRANSFERABLE IDEAS ARE TWO: A SET REPLACES A SORT WHENEVER YOU ONLY NEED MEMBERSHIP RATHER THAN
+ORDER; and START WORK ONLY FROM THE CANONICAL BEGINNING OF A GROUP SO THAT EACH GROUP IS PROCESSED
+EXACTLY ONCE.
+
+ONE-SENTENCE TAKEAWAY: put the numbers in a set, and count a run upward only from a number whose
+predecessor is missing - every run has exactly one such number, so each run is walked once and the
+whole thing is linear.""",
 ]
 
 _EX_P1AB["Next Greater Element (monotonic stack)"] = [
-    """The mechanic, traced.
-nums = [2,1,2,4,3]. Stack holds indices still waiting for a greater value.
-i=0 (2): push 0. i=1 (1): 1 < 2, push 1. Stack [0,1].
-i=2 (2): 2 > nums[1]=1 -> pop 1, res[1] = 2. 2 is not > nums[0]=2 (strict) ->
-stop, push 2. Stack [0,2].
-i=3 (4): pops 2 (res[2]=4) and 0 (res[0]=4). Push 3.
-i=4 (3): 3 < 4, push 4.
-Leftover [3,4] keep their -1.
-Answer [4,2,4,-1,-1].""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why the stack is DECREASING, and what it buys.
-Everything on the stack is waiting, in decreasing value order - any element
-larger than the one below would have popped it on arrival.
-So a new value resolves a CONTIGUOUS RUN from the top and can stop the instant
-it meets something larger, because everything deeper is larger still. That
-early stop is the whole reason this is O(n) rather than O(n^2).""",
+For every number in a list, find THE FIRST NUMBER TO ITS RIGHT THAT IS BIGGER THAN IT. If there is
+no such number, report -1.
 
-    """Why each element is pushed once and popped at most once.
-That is the amortised argument: the inner while may be long on one iteration
-and empty on the next, but across the entire run it executes at most n times
-total. So the complexity is O(n), not O(n^2), despite the nested loop shape.
-Being able to state 'pushed once, popped once' is the correct answer to 'are
-you sure that's linear?'.""",
+    nums   = [2, 1, 2, 4, 3]
+    answer = [4, 2, 4, -1, -1]
 
-    """The circular variant, which is the standard follow-up.
-Next Greater Element II wraps around: the answer for the last element may come
-from the front. The trick is to iterate 2n times using `i % n`, pushing only
-during the first pass and only resolving during both.
-That simulates a second lap without copying the array. It is a small change and
-it is the first thing an interviewer reaches for after this problem, so it is
-worth having ready.""",
+One position at a time, because the whole problem is in this table:
 
-    """Edge cases.
-Strictly increasing [1,2,3] -> each resolves immediately -> [2,3,-1].
-Strictly decreasing [3,2,1] -> nothing ever pops -> [-1,-1,-1] and the stack
-ends full.
-All equal [5,5,5] -> the comparison is STRICT so nothing resolves -> [-1,-1,-1].
-If the prompt wanted 'greater or equal', flipping to `<=` changes every answer.
-Single element -> [-1]. Empty -> [].
-The leftover stack needs no cleanup because the result was initialised to -1.""",
+    index 0, value 2   looking right: 1 is not bigger, 2 is not bigger, 4 IS    ->  4
+    index 1, value 1   looking right: 2 is bigger                               ->  2
+    index 2, value 2   looking right: 4 is bigger                               ->  4
+    index 3, value 4   looking right: only 3 is left, and it is smaller         -> -1
+    index 4, value 3   nothing to its right at all                              -> -1
 
-    """Complexity and the family.
-O(n) time, O(n) space.
-The monotonic stack family: Daily Temperatures (the same algorithm returning a
-DISTANCE instead of a value), Next Greater Element I (map values to answers via
-this, then look up), II (circular), Largest Rectangle in Histogram (an
-INCREASING stack), Trapping Rain Water, Sum of Subarray Minimums, Remove K
-Digits, and Online Stock Span.
-Rule of thumb: DECREASING stack for next-greater, INCREASING for next-smaller,
-and whatever is left on the stack at the end takes the default answer.""",
+THREE RULES THAT DECIDE WHETHER YOUR CODE IS RIGHT:
+
+    IT MUST BE STRICTLY BIGGER. At index 0 the value 2 at index 2 does NOT qualify - equal is not
+    greater. Section 4 measures what allowing ties costs.
+
+    IT MUST BE THE FIRST ONE, not the biggest one to the right. At index 1 the answer is 2, not 4.
+
+    IT REPORTS THE VALUE, NOT THE POSITION. Index 0's answer is 4, the value - not 3, the index
+    where it lives. This is the difference from Daily Temperatures, which asks for the DISTANCE.
+
+    AND THE LARGEST VALUE IN THE LIST ALWAYS GETS -1, because nothing exceeds it. So -1 appears in
+    every answer - MEASURED: of 6,000 random lists, the number in which every element has a next
+    greater element is 0. That is not chance, it is arithmetic.
+
+THE OBVIOUS SOLUTION WORKS. For each position, scan right until you find something bigger. It is
+correct - it is the ground truth for every measurement in this entry - and it costs O(n squared).
+
+THE POINT OF THE PROBLEM is to do it in ONE PASS with a STACK, in O(n). The technique is called a
+MONOTONIC STACK, and this problem is its purest form: no distances, no circular wrapping, no
+histogram - just the pattern itself. Learn it here and Daily Temperatures, Largest Rectangle in
+Histogram, Trapping Rain Water, Online Stock Span and Sum of Subarray Minimums all become variations
+of the same six lines.
+
+A NOTE ON THE LEETCODE VARIANTS, so you are not surprised. "Next Greater Element I" asks the
+question for a small list whose values appear inside a bigger one - the same algorithm plus a
+dictionary from value to answer. "Next Greater Element II" makes the list CIRCULAR, so the search
+wraps around - the same algorithm run over two passes. This entry is the plain version that both
+are built from.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+SEE THE WASTE IN THE BRUTE FORCE FIRST. Standing at index 0 of [2, 1, 2, 4, 3] you scan past 1 and
+2 before finding 4 - and you learn things about 1 and 2 on the way that you then throw away. Then
+you stand at index 1 and read index 2 again. The same values get read over and over.
+
+SO TURN THE QUESTION AROUND. Instead of each position hunting for its answer, let each new value
+ANNOUNCE ITSELF and settle everybody it can:
+
+    WALK LEFT TO RIGHT. Each new value looks back at the positions that are still waiting for an
+    answer and settles every one it is bigger than. Then it starts waiting itself.
+
+The positions still waiting are exactly what you must remember, so keep them in a pile - a STACK,
+added to and removed from at the top only. Here is the run on [2, 1, 2, 4, 3], with the stack
+written as index(value), bottom on the left:
+
+    i=0, x=2   nobody waiting                          stack: 0(2)              answer: . . . . .
+    i=1, x=1   1 is not > 2, settles nobody, waits     stack: 0(2) 1(1)         answer: . . . . .
+    i=2, x=2   2 > 1  -> settle index 1 with 2
+               2 is NOT > 2 (strictly!) -> stop        stack: 0(2) 2(2)         answer: . 2 . . .
+    i=3, x=4   4 > 2 -> settle index 2 with 4
+               4 > 2 -> settle index 0 with 4
+               stack empty -> waits                    stack: 3(4)              answer: 4 2 4 . .
+    i=4, x=3   3 is not > 4, waits                     stack: 3(4) 4(3)         answer: 4 2 4 . .
+
+    left waiting: 3(4) and 4(3) -> they never found anything bigger, so their answers stay -1
+    final: [4, 2, 4, -1, -1]
+
+LOOK AT THE STACK AND NOTICE THE SHAPE. Reading bottom to top the values always DECREASE (or stay
+equal): 2 then 1; then 2 then 2; then 4 then 3. NOBODY ARRANGES THIS - IT IS FORCED. A value only
+gets to sit on top of another if it failed to exceed it, because if it had exceeded it, it would
+have settled it and taken its place.
+
+WHY THAT SHAPE MAKES IT FAST. Because the stack decreases downward, the positions a new value can
+settle are a CONTIGUOUS RUN FROM THE TOP. The moment you meet a position you cannot beat, you can
+STOP - everything deeper is even bigger. No searching, ever.
+
+WHY IT IS LINEAR. Every index is pushed exactly once and popped at most once, so across the whole
+run there are at most n pushes and n pops. The `while` inside the `for` is not quadratic; the right
+way to see it is TOTAL work, not per-iteration work.
+
+WHAT YOU STORE AND WHAT YOU WRITE. The stack holds INDICES, because you need to know WHERE to write
+the answer. But what you WRITE is the VALUE `x` - `res[popped] = x` - because this problem asks for
+the next greater VALUE. Writing the index instead is a measured 4,793-of-6,000 mistake, and it is
+the one line that differs from Daily Temperatures, where the answer is `i - popped`.
+
+AND THE DEFAULT IS -1. Whatever is still on the stack at the end never met anything bigger.
+Pre-filling the answers with -1 handles them with no cleanup pass - and it must be -1, not 0:
+measured wrong on 6,000 of 6,000, because at minimum the largest value in the list always ends up
+unsettled.""",
+
+    """3. EVERY TERM, DEFINED
+
+NEXT GREATER ELEMENT. For a position, the FIRST value to its right that is STRICTLY larger. "First",
+not "largest"; "strictly", so equal does not count.
+
+STACK. Add and remove at one end only - last in, first out. A Python list is one: `append` pushes,
+`pop()` removes the top, `stack[-1]` reads the top. All O(1).
+
+MONOTONIC. Ordered one way only - never increasing, or never decreasing.
+
+MONOTONIC STACK. A stack deliberately kept in order by popping anything that would break the order
+before pushing. Here the values decrease from bottom to top, so it is a DECREASING stack - and the
+crucial thing is that the popping IS THE ALGORITHM, not tidy-up: each pop writes one answer.
+
+    DECREASING STACK  ->  answers "next GREATER"
+    INCREASING STACK  ->  answers "next SMALLER"
+    Walk left to right ->  answers "NEXT (to the right)"
+    Walk right to left ->  answers "PREVIOUS (to the left)"
+    Those two choices give you all four variants from one piece of code.
+
+INDEX vs VALUE. The stack stores INDICES (so you know where to write), and the answer written is a
+VALUE. Mixing these up is the most common bug here - measured 4,793 of 6,000.
+
+INVARIANT. What is true every time you look. Here: EVERY INDEX ON THE STACK IS STILL WAITING FOR AN
+ANSWER, AND THEIR VALUES DECREASE FROM BOTTOM TO TOP. Stating this is what shows you derived the
+code.
+
+SENTINEL / DEFAULT VALUE. The -1 pre-filled into the answer array, meaning "no such element". It
+removes the need for a final loop over whatever is left on the stack.
+
+AMORTISED O(n). The total cost is linear even though one step can be expensive: one value might pop
+five waiting positions, but only because five earlier values were each pushed once and will never be
+pushed again. Total pops are bounded by total pushes, and there are exactly n of those.
+
+`enumerate(nums)`. Yields (index, value) pairs, so you have both `i` (to push) and `x` (to write)
+without indexing twice.
+
+O(n) SPACE. The stack can hold every index at once - a list that only ever decreases pops nothing -
+plus the answer array.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random lists (1 to 12 values from small alphabets, so ties are
+frequent), each checked against a brute-force scan-to-the-right ground truth.
+
+TRAP 1 - WRITING THE INDEX INSTEAD OF THE VALUE. `res[stack.pop()] = i` rather than `= x`. The code
+is otherwise perfect and the answer is a list of positions where the answers should have been.
+
+    nums = [2, 1, 2, 4, 3].  Correct [4, 2, 4, -1, -1].  This version gives [3, 2, 3, -1, -1].
+    MEASURED: wrong on 4,793 of 6,000.
+    It is a genuinely easy slip because the neighbouring problem, Daily Temperatures, wants
+    `i - popped`. DECIDE WHAT THE ANSWER IS - value, index or distance - BEFORE you write the line.
+    Note the trap in the example above: index 1's correct answer is the VALUE 2 and its index is
+    also 2, so that column matches by coincidence. Never test this with a list where values equal
+    their own indices.
+
+TRAP 2 - DEFAULTING TO 0 INSTEAD OF -1. `res = [0] * len(nums)`.
+
+    MEASURED: wrong on 6,000 of 6,000 - EVERY case. And here is why that is not an accident: the
+    LARGEST value in any list has nothing greater to its right, so at least one -1 always appears.
+    Measured directly: of 6,000 random lists, the number in which every element has a next greater
+    element is ZERO. The default is part of the specification, not a detail.
+
+TRAP 3 - `<=` INSTEAD OF `<`. "Greater" means STRICTLY greater, so an equal value must not settle a
+waiting position.
+
+    nums = [1, 1, 2].  Correct [2, 2, -1].  The `<=` version gives [1, 2, -1] - it lets the second
+    1 settle the first with the value 1, which is not greater than 1.
+    MEASURED: wrong on 3,642 of 6,000, and on the 4,094 cases containing a repeated value, wrong on
+    3,642 - so about 89% of the time ties exist at all. On data with no duplicates it is invisible,
+    which is exactly how it survives review.
+
+TRAP 4 - `if` INSTEAD OF `while`. One large value can settle SEVERAL waiting positions (at i=3
+above, the 4 settles two). An `if` settles only the top one and strands the rest.
+
+    nums = [2, 1, 2, 4, 3]: the version with `if` leaves index 0 at -1.
+    MEASURED: wrong on 3,444 of 6,000.
+
+TRAP 5 - PUSHING i BEFORE THE POPPING LOOP. Then the top of the stack is the current index, and a
+value is never strictly greater than itself, so the loop never runs and nothing is ever settled.
+
+    MEASURED: wrong on 4,967 of 6,000, and the fingerprint is an answer of ALL -1s.
+    ORDER: settle first, then join the queue.
+
+TRAP 6 - KEEPING THE STACK INCREASING BY MISTAKE - `while stack and nums[stack[-1]] > x`. That
+solves a DIFFERENT problem (next SMALLER element), and if you write it while thinking about
+"greater" you get consistent nonsense.
+
+    MEASURED: wrong on 5,360 of 6,000. Say which direction the stack runs before you type the
+    comparison: decreasing for next-greater, increasing for next-smaller.
+
+TRAP 7 - FORGETTING THAT THE LEFTOVERS ARE ALREADY CORRECT. Indices still on the stack at the end
+never found anything bigger, and the pre-filled -1 is their answer. No final loop is needed - but
+say so out loud, or it looks like an oversight.
+
+WHAT IS NOT A TRAP, measured rather than assumed: THE RIGHT-TO-LEFT VERSION. Walk from the end,
+popping every stacked VALUE that is not greater than the current one, and whatever is left on top is
+the answer for this position; then push the current value. Wrong on 0 of 6,000. Note two differences:
+it stores VALUES rather than indices (because the answer is available immediately, not later), and
+its comparison is `<=` rather than `<` - it is discarding useless candidates rather than settling
+debts, so the tie handling flips. Both directions are worth having seen; the left-to-right version
+generalises more comfortably to the distance and histogram variants.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - LOOK RIGHT UNTIL YOU FIND SOMETHING BIGGER:
+
+    def next_greater_naive(nums):
+        res = [-1] * len(nums)
+        for i in range(len(nums)):
+            for j in range(i + 1, len(nums)):
+                if nums[j] > nums[i]:
+                    res[i] = nums[j]
+                    break
+        return res
+
+IT IS CORRECT - the ground truth for every measurement here - and it is the right thing to say
+first, in one sentence, before improving it.
+
+WHAT IS WRONG WITH IT IS REPEATED READING. O(n squared): on a list that only decreases, every
+position scans the entire remainder and finds nothing. And the re-reading is blatant - position 0
+reads 1, 2, 3, 4; position 1 then reads 2, 3, 4 again.
+
+THE UPGRADE - INVERT THE QUESTION. Do not ask each position "who is my answer?". Ask each new value
+"WHOSE ANSWER AM I?". Then a value's arrival settles several older positions at once, and every
+value is read a constant number of times.
+
+WHAT MUST BE REMEMBERED: the positions that are still unanswered. Two facts make a stack the right
+container, and they are worth deriving rather than recalling:
+
+    1.  The unanswered positions, oldest to newest, always have DECREASING values - because a
+        newcomer bigger than the one below would have settled it instead of sitting on it.
+    2.  Therefore the positions a newcomer settles are always a RUN AT THE TOP, never one from the
+        middle.
+
+Add at the top, remove from the top: a stack, and nothing weaker is needed.
+
+WHY THE DECREASING ORDER IS FREE. You never sort. The pops that write answers are the same pops
+that maintain the order - one loop, two jobs. THE SENTENCE TO SAY: "the stack is kept decreasing,
+and the popping that keeps it decreasing is exactly the popping that produces answers".
+
+WHY THE NESTED LOOP IS NOT QUADRATIC. Each index is pushed exactly once and popped at most once, so
+total pops across the whole function are at most n. Bound the TOTAL, not the per-iteration cost -
+the same argument as for Longest Consecutive Sequence, and one interviewers ask you to make
+explicitly.
+
+WHAT TO STORE AND WHAT TO WRITE, which is where this problem differs from its siblings. STORE
+INDICES, because when a position is finally settled you need to know where its answer goes. WRITE
+THE VALUE, because that is what this problem asks for. The single line `res[stack.pop()] = x` is the
+specification; in Daily Temperatures the same line reads `res[prev] = i - prev`, and confusing the
+two is measured at 4,793 of 6,000.
+
+WHY THE DEFAULT MUST BE -1. Positions left on the stack never found anything greater, so -1 is
+their answer and pre-filling avoids a cleanup loop. Defaulting to 0 is wrong on 6,000 of 6,000,
+because the maximum of the list is always unsettled - measured: 0 of 6,000 random lists have a next
+greater element for every position.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make an answer list the same length as the input, FILLED WITH MINUS ONE. Minus one already
+       means "nothing greater ever appeared", so any position you never settle is right by default.
+
+    2. Start an empty stack. It holds the POSITIONS still waiting for an answer, and their values
+       will always decrease from the bottom of the stack to the top.
+
+    3. Walk the list from left to right, keeping both the position and the value of each item.
+
+    4. FIRST, SETTLE DEBTS. While the stack is not empty AND the current value is STRICTLY GREATER
+       than the value at the position on top of the stack:
+           - take that position off the stack;
+           - write THE CURRENT VALUE into that position's answer slot;
+           - keep going, because the current value may also beat the next position down.
+
+    5. THEN JOIN THE QUEUE. Push the current position onto the stack; it is now waiting for its own
+       answer.
+
+    6. When the walk finishes, return the answer list. Positions still on the stack keep their
+       minus one, which is correct.
+
+STEP 4 IS THE ENTIRE PROBLEM, and it contains three separate places to go wrong.
+
+    WHAT YOU WRITE IS THE CURRENT VALUE, not the current position. Writing the position is wrong on
+    4,793 of 6,000 - and it is the natural slip if you last solved Daily Temperatures, which wants a
+    distance instead.
+
+    "STRICTLY GREATER" IS LOAD-BEARING. An equal value settles nothing. Allowing ties is wrong on
+    3,642 of 6,000, and on inputs that actually contain repeats it fails about 89% of the time.
+
+    IT MUST BE A LOOP, NOT A SINGLE CHECK. One large value can settle several waiting positions;
+    using a single check strands the older ones - wrong on 3,444 of 6,000.
+
+THE ORDER OF STEPS 4 AND 5 IS NOT NEGOTIABLE. Push first and the position on top is the current one,
+which is not greater than itself, so nothing is ever settled and every answer stays minus one -
+wrong on 4,967 of 6,000. An answer of all minus ones is the fingerprint of this bug.
+
+AND STEP 1'S MINUS ONE IS PART OF THE SPECIFICATION, NOT A CONVENIENCE. Defaulting to zero is wrong
+on 6,000 of 6,000, because the largest value in the list can never be settled - so at least one
+"nothing found" always occurs.
+
+SAY THIS BEFORE WRITING ANY CODE: "the stack holds the positions still waiting, their values
+decrease from bottom to top, and each new value settles the run at the top that it strictly
+exceeds". Everything else follows from that sentence.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a queue of people filing past a doorway one at a time, each holding up a card with a number
+on it. Every person wants to know one thing: WHAT IS THE FIRST NUMBER AFTER MINE THAT IS BIGGER THAN
+MINE? Not the biggest one - the first.
+
+The laborious way is for each person, when their turn comes, to walk down the queue behind them
+asking to see cards until they find a bigger number. Everyone does this, so most of the queue gets
+inspected many times over.
+
+Here is the better arrangement, and it needs no walking at all. People whose question is still
+unanswered WAIT IN A SIDE ROOM. Each new arrival, before doing anything else, glances into that
+room.
+
+The room has a property nobody has to enforce. The person nearest the door holds the SMALLEST number
+in the room; further back the numbers get bigger. Why? Because when someone arrives holding a bigger
+number than the person by the door, that person's question is answered on the spot - they are handed
+the new number and they leave. So a bigger card can never end up in front of a smaller one; the room
+sorts itself.
+
+So a new arrival looks at the person by the door. If their own number is bigger, that person's
+answer is this new number - hand it over, and out they go. Then look at the next person by the door,
+whose number is bigger, and maybe beat them too, and so on. THE MOMENT YOU MEET SOMEONE YOU CANNOT
+BEAT, YOU CAN STOP AND BE CERTAIN, because everyone deeper in the room holds an even bigger number.
+Then the newcomer settles down by the door to wait for their own answer.
+
+Four details are the difference between working and not.
+
+WHAT GETS HANDED OVER IS THE NUMBER, NOT THE POSITION IN THE QUEUE. The question was "which number",
+and answering "the seventh person" is answering a different question - the sort of mix-up that
+happens when you have recently solved the very similar puzzle of "how many people until someone
+beats me".
+
+YOU MUST SEND PEOPLE OUT BEFORE SETTLING DOWN YOURSELF. Sit down first and you are standing by the
+door comparing your card against your own, which you cannot beat, so nobody ever leaves and nobody
+is ever answered.
+
+BEATING MEANS STRICTLY BIGGER. Someone holding exactly your number has not beaten you; both of you
+keep waiting.
+
+AND YOU KEEP GOING WHILE YOU CAN, rather than dismissing just one person. A high number really can
+answer four people at a stroke.
+
+When the queue is exhausted, whoever is still in the room was never beaten - and their answer is
+"there is no such number", which is why every answer sheet starts out filled with "none" rather than
+with zero. Somebody always remains: the person holding the highest card in the whole queue can never
+be beaten by anyone.
+
+Notice the economics of it. One popular arrival might empty half the room at once, but nobody ever
+enters the room twice - so however busy a single moment looks, the total number of departures across
+the whole day can never exceed the number of people who came in.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # For each element, the next greater element to its right (or -1).
+    def next_greater(nums):
+        res = [-1] * len(nums)
+
+  THE ANSWERS, PRE-FILLED WITH -1. This is a decision, not just initialisation: -1 is the required
+  answer for a position with nothing greater to its right, so every index still on the stack at the
+  end is already correct and needs no cleanup.
+
+  IT MUST BE -1, NOT 0 - measured wrong on 6,000 of 6,000, because the largest value in the list can
+  never be settled, so at least one such position always exists. (Measured directly: 0 of 6,000
+  random lists have an answer for every position.)
+
+        stack = []                     # indices still waiting for a next-greater
+
+  THE WAITING LIST, HOLDING INDICES - because when a position is finally settled you must know WHERE
+  to write its answer. Its value is one lookup away as `nums[stack[-1]]`.
+
+  THE INVARIANT: every index here is still unanswered, and their values decrease from the bottom of
+  the stack to the top. Nobody enforces that - it is a consequence of the popping below.
+
+        for i, x in enumerate(nums):
+
+  One pass. `enumerate` gives position and value together, and you need both: `x` for the comparison
+  and for the answer, `i` to push.
+
+            while stack and nums[stack[-1]] < x:
+
+  THE HEART OF IT. `stack and` comes first so `stack[-1]` is never read from an empty stack - Python
+  stops evaluating at the first false part.
+
+  `while`, NOT `if`: one value may settle a whole run of waiting positions. `if` strands the older
+  ones - wrong on 3,444 of 6,000.
+
+  `<`, NOT `<=`: greater means STRICTLY greater, so a tie settles nothing. `<=` is wrong on 3,642 of
+  6,000, and on inputs containing repeats it fails about 89% of the time - on [1,1,2] it returns
+  [1,2,-1] instead of [2,2,-1].
+
+  `<`, NOT `>`: reversing it keeps the stack INCREASING and answers the next-SMALLER question -
+  wrong on 5,360 of 6,000.
+
+  WHY STOPPING IS SAFE as soon as the test fails: the stack decreases downward, so a value that
+  cannot beat the top cannot beat anything below it.
+
+                res[stack.pop()] = x   # x is the next greater for that popped index
+
+  THE SPECIFICATION IN ONE LINE. Pop the waiting index and write THE CURRENT VALUE into its slot.
+  Two halves, each with its own reason: the POP tells you where (that is why indices are stored), and
+  `x` is what this problem asks for.
+
+  `res[stack.pop()] = i` - writing the index - is wrong on 4,793 of 6,000 and is the single most
+  common bug here, because the neighbouring problem Daily Temperatures wants `i - popped` instead.
+  Decide what the answer IS - value, index, or distance - before writing this line.
+
+  Each popped index leaves for good, which is why the whole function is linear rather than quadratic.
+
+            stack.append(i)
+
+  The current position joins the waiting list. AFTER the loop, never before: push first and the top
+  of the stack is `i` itself, `nums[i] < x` is false, nothing pops, and every answer stays -1 -
+  wrong on 4,967 of 6,000, with an all -1s output as the fingerprint.
+
+        return res
+
+  Indices still on the stack never met anything greater, and their slots still hold the -1 from the
+  first line.
+
+SIX LINES OF BODY. O(n) time - each index is pushed once and popped at most once, so the `while`
+inside the `for` contributes at most n pops in total - and O(n) space for the stack, which can hold
+every index when the list only ever decreases.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE STANDARD EXAMPLE. nums = [2, 1, 2, 4, 3]. Expected [4, 2, 4, -1, -1].
+
+The stack is shown as index(value), bottom on the left.
+
+     i | x | pops and what is written                  | stack after     | res so far
+    ---+---+-------------------------------------------+-----------------+-------------------
+     0 | 2 | stack empty, no pops                      | 0(2)            | [-1,-1,-1,-1,-1]
+     1 | 1 | 2 is not < 1, no pops                     | 0(2) 1(1)       | [-1,-1,-1,-1,-1]
+     2 | 2 | 1 < 2: pop 1, res[1] = 2                  |                 | [-1, 2,-1,-1,-1]
+       |   | 2 is NOT < 2 (strict!): STOP              | 0(2) 2(2)       | [-1, 2,-1,-1,-1]
+     3 | 4 | 2 < 4: pop 2, res[2] = 4                  |                 | [-1, 2, 4,-1,-1]
+       |   | 2 < 4: pop 0, res[0] = 4                  |                 | [ 4, 2, 4,-1,-1]
+       |   | stack empty: STOP                         | 3(4)            | [ 4, 2, 4,-1,-1]
+     4 | 3 | 4 is not < 3, no pops                     | 3(4) 4(3)       | [ 4, 2, 4,-1,-1]
+
+    left on the stack: 3(4) and 4(3) - never settled, so they keep their -1
+    return [4, 2, 4, -1, -1]
+
+FOUR THINGS TO NOTICE.
+
+    ROW i=2 IS THE STRICTNESS TEST. The arriving 2 settles the 1 but must NOT settle the 2 at index
+    0. With `<=` it would, writing res[0] = 2, and the answer becomes [2, 2, 4, -1, -1] - wrong.
+
+    ROW i=3 IS WHY IT IS A `while`: one value settles two positions and then stops because the
+    stack is empty.
+
+    THE STACK IS ALWAYS DECREASING downward - 2 then 1; 2 then 2; 4 then 3. Nobody sorted it.
+
+    WHAT IS WRITTEN IS THE VALUE. At i=3, `res[2] = 4` - the value 4, not the index 3. On this
+    particular input the index-writing bug gives [3, 2, 3, -1, -1], and note the middle column
+    matches by coincidence, since index 1's answer is the value 2 and 2 also happens to be an index.
+
+CASE TWO - THE TIE CASE. nums = [1, 1, 2]. Expected [2, 2, -1].
+
+    i=0, x=1: push.                              stack 0(1)
+    i=1, x=1: 1 is NOT < 1, so no pop. push.     stack 0(1) 1(1)
+    i=2, x=2: 1 < 2 pop 1 -> res[1] = 2;  1 < 2 pop 0 -> res[0] = 2; push.
+    return [2, 2, -1].
+
+    THE `<=` VERSION at i=1 pops index 0 and writes res[0] = 1 - claiming that 1 is greater than 1.
+    It returns [1, 2, -1]. Wrong on 3,642 of 6,000, and this three-element list is the smallest
+    example.
+
+CASE THREE - STRICTLY DECREASING. nums = [4, 3, 2, 1]. Nothing ever pops; the stack grows to hold
+all four indices; the answer is [-1, -1, -1, -1]. THIS IS THE WORST CASE FOR MEMORY, and it is why
+the space cost is O(n) rather than O(1). It is also the case that makes the 0-default bug obvious:
+that version returns [0, 0, 0, 0].
+
+CASE FOUR - STRICTLY INCREASING. nums = [1, 2, 3, 4]. Every value settles exactly one waiting index
+and the stack never holds more than one: [2, 3, 4, -1]. THIS IS THE WORST CASE FOR POPPING - and
+note the two worst cases are opposites, which is why the total work is linear either way.
+    The index-writing bug is at its most visible here: it returns [1, 2, 3, -1].
+
+CASE FIVE - ONE ELEMENT. nums = [5] returns [-1]. The pop loop never runs, 5 is pushed, and the
+pre-filled -1 is returned - no special case.
+
+WHAT THE WRONG VERSIONS RETURN on case one, [2, 1, 2, 4, 3]:
+    writes the index          [3, 2, 3, -1, -1]
+    default 0                 [4, 2, 4,  0,  0]
+    `<=` instead of `<`       [2, 2, 4, -1, -1]
+    push before the pop loop  [-1,-1,-1,-1,-1]      all -1s - the fingerprint
+    `>` instead of `<`        [1,-1,-1, 3,-1]       a different problem's answer (next SMALLER)""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. O(n) TIME: one pass, and although a single value can pop several, each index is
+pushed once and popped at most once, so pops total at most n. That is what "amortised" means, and
+this is the standard place to say it properly. O(n) SPACE for the stack, which really can hold every
+index (a strictly decreasing list pops nothing), plus the answer array.
+
+    scan right from each position       O(n squared) time, O(1) extra space
+    left-to-right monotonic stack       O(n) time, O(n) space
+    right-to-left stack of values       O(n) time, O(n) space, wrong on 0 of 6,000
+
+O(n) time cannot be beaten - every value must be read at least once.
+
+THE #1 MISTAKE: WRITING THE INDEX INSTEAD OF THE VALUE - `res[stack.pop()] = i` rather than `= x`.
+Wrong on 4,793 of 6,000. It is the natural slip when you have recently done Daily Temperatures,
+where the answer is `i - popped`. State what the answer IS before writing that line.
+
+THE #2: DEFAULTING TO 0 INSTEAD OF -1. Wrong on 6,000 of 6,000 - every single case - because the
+maximum value is never settled, so at least one "none" always occurs. Measured directly: 0 of 6,000
+random lists have an answer at every position.
+
+THE #3: PUSHING i BEFORE THE POPPING LOOP. Wrong on 4,967 of 6,000, with an all -1s output as the
+fingerprint. Settle debts, then join the queue.
+
+THE #4: `<=` INSTEAD OF `<`. Wrong on 3,642 of 6,000 - about 89% of the inputs that contain a
+repeated value, and invisible on inputs without one. Fails on [1, 1, 2].
+
+THE #5: `if` INSTEAD OF `while` (3,444 of 6,000), and `>` INSTEAD OF `<` (5,360 of 6,000 - that is
+the next-SMALLER algorithm).
+
+ONE HONEST NEGATIVE: the right-to-left version is wrong on 0 of 6,000. It is a correct alternative
+with two differences worth understanding - it stores VALUES rather than indices, and its comparison
+is `<=` rather than `<`, because it discards useless candidates instead of settling debts.
+
+WHAT TO SAY OUT LOUD, in this order: (1) brute force is scan-right-from-each-position, O(n squared),
+and it re-reads the same values; (2) so invert it - each arriving value settles the earlier positions
+it beats; (3) the unanswered positions form a stack whose values decrease from bottom to top, and
+that ordering is FORCED, not maintained by hand; (4) so the positions a newcomer settles are a run at
+the top and you can stop at the first one you cannot beat; (5) store INDICES so you know where to
+write, but write the VALUE, because that is what is asked; (6) amortised O(n) because each index is
+pushed once and popped once, O(n) space; (7) the leftovers keep the -1. Point 3 is what shows you
+understand the pattern rather than the code.
+
+THE FOLLOW-UP THAT ALWAYS COMES IN THIS FAMILY: "make it CIRCULAR" - Next Greater Element II, where
+the search wraps past the end. The trick is to run the same loop TWICE over the array (or once over
+indices 0..2n-1 using `i % n`), pushing only during the first pass, since anything unanswered after
+two laps has no answer at all.
+
+AND THE OTHER ONE: "now the query list is a subset of another list" - Next Greater Element I. Solve
+the big list with this algorithm, store value -> next greater in a dictionary, then read off the
+answers. That works because the values are distinct in that problem; if they were not, indices would
+be needed.
+
+THEN: "the next SMALLER element?" Flip the comparison and keep the stack INCREASING - nothing else
+changes. "The PREVIOUS greater element?" Either walk right to left, or stay left to right and read
+`stack[-1]` BEFORE pushing - whatever remains on top after the popping is exactly the previous
+greater element. Deriving all four variants from one invariant is what is really being tested.
+
+THE FAMILY: Daily Temperatures (the same code, answering the DISTANCE), Next Greater Element I / II /
+III, Largest Rectangle in Histogram, Trapping Rain Water, Sum of Subarray Minimums, Remove K Digits,
+Online Stock Span, Car Fleet, 132 Pattern, Sliding Window Maximum (a monotonic DEQUE - the same idea
+with removal at both ends). THE CUE THAT SHOULD MAKE YOU THINK "MONOTONIC STACK": "for each element,
+find the next or previous element that is greater or smaller".
+
+ONE-SENTENCE TAKEAWAY: keep a stack of the indices still waiting, values decreasing from bottom to
+top, and let each new value pop and answer every waiting index it strictly exceeds - writing the
+VALUE, and leaving -1 for whatever is still waiting at the end.""",
 ]
 
 for _e in ENTRIES:
