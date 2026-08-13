@@ -10861,66 +10861,531 @@ per iteration. That is the answer to 'isn't that O(n^2)?'.""",
 ]
 
 _EXAMPLES["Sort Colors (Dutch National Flag)"] = [
-    """The textbook case, fully traced.
-nums = [2,0,2,1,1,0]  ->  [0,0,1,1,2,2]     low=0, mid=0, high=5
-  mid=0 sees 2 -> swap with index 5, high=4, mid STAYS -> [0,0,2,1,1,2]
-  mid=0 sees 0 -> swap with index 0 (itself), low=1, mid=1
-  mid=1 sees 0 -> swap with index 1 (itself), low=2, mid=2
-  mid=2 sees 2 -> swap with index 4, high=3, mid STAYS -> [0,0,1,1,2,2]
-  mid=2 sees 1 -> just advance, mid=3
-  mid=3 sees 1 -> just advance, mid=4. Now mid > high, so stop.
-One pass, no counting, no second write-out.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Already sorted - no wasted work.
-nums = [0,0,1,1,2,2]  ->  unchanged
-  The two 0s each swap with themselves and push low and mid forward together.
-  The two 1s just advance mid.
-  mid then reaches index 4, sees a 2, swaps it with index 5 (a 2, so nothing
-  really changes) and pulls high in; one more step and mid passes high.
-The algorithm never detects that the input was sorted and does not need to -
-it just runs its invariant to completion.""",
+You are given a list containing only the numbers 0, 1 and 2 - they represent red, white and blue -
+and you must sort it IN PLACE, IN ONE PASS, WITHOUT counting the values first.
 
-    """Fully reversed.
-nums = [2,2,1,1,0,0]  ->  [0,0,1,1,2,2]
-  mid=0 sees 2 -> swap with index 5 -> [0,2,1,1,0,2], high=4
-  mid=0 sees 0 -> swap with index 0, low=1, mid=1
-  mid=1 sees 2 -> swap with index 4 -> [0,0,1,1,2,2], high=3
-  mid=1 sees 0 -> swap with index 1, low=2, mid=2
-  mid=2 sees 1 -> advance, mid=3
-  mid=3 sees 1 -> advance, mid=4 > high=3, stop.
-Six elements, five iterations, four swaps. Compare with counting sort, which
-would need two full passes over the array.""",
+    nums = [2, 0, 2, 1, 1, 0]    ->    [0, 0, 1, 1, 2, 2]
+    nums = [2, 0, 1]             ->    [0, 1, 2]
+    nums = [0]                   ->    [0]
 
-    """Why you must NOT advance mid after swapping a 2 - the breaking case.
-nums = [1,2,0]  ->  correct answer [0,1,2]
-  Correct run: mid=0 sees 1 -> advance, mid=1. mid=1 sees 2 -> swap with
-  index 2 -> [1,0,2], high=0... (high was 2, now 1), and mid STAYS at 1.
-  mid=1 now sees the 0 that just arrived -> swap with low=0 -> [0,1,2].
-  Result [0,1,2]. Correct.
-  Buggy run (advancing mid after the 2-swap): after the swap the array is
-  [1,0,2] and mid moves to 2, which is already past high. The loop stops and
-  returns [1,0,2]. WRONG - the 0 that was swapped in from the right end was
-  never examined.
-This single test case is what the rule exists for.""",
+THE OBVIOUS SOLUTIONS BOTH WORK AND BOTH ARE EXPLICITLY RULED OUT BY THE FOLLOW-UP.
 
-    """Uniform inputs and a single element.
-nums = [1,1,1]  ->  unchanged. mid just walks to the end; low never moves,
-high never moves, zero swaps.
-nums = [0,0,0]  ->  unchanged, but low and mid advance together every step.
-nums = [2,2,2]  ->  unchanged, though every element gets swapped with itself
-as high walks backwards to meet mid.
-nums = [0] and nums = [2] -> unchanged. Useful for checking your loop
-condition is mid <= high and not mid < high, which would drop the last
-element.""",
+    Call a library sort: O(n log n), and it ignores the fact that there are only three values.
+    COUNTING SORT: count how many 0s, 1s and 2s there are, then overwrite the list with that many 0s,
+    then that many 1s, then that many 2s. O(n) time, O(1) space, wrong on 0 of 6,000 random cases -
+    genuinely correct and genuinely good. Its only flaw is that it makes TWO passes, and it writes
+    every element rather than moving the ones that are misplaced.
 
-    """Where you have actually seen this before.
-This is the three-way partition at the heart of quicksort. Standard
-two-way-partition quicksort degrades to O(n^2) on an array full of equal keys,
-for example [5,5,5,5,5,5,5,5], because each partition peels off one element.
-Partitioning into less-than / EQUAL / greater-than instead sends the whole
-equal block straight to its final place and recursion stops there, so the same
-input becomes O(n). Recognising Sort Colors as a partition rather than a sort
-is what makes the technique reusable.""",
+WHAT THE PROBLEM WANTS is ONE pass with constant space, and the classic answer is called the DUTCH
+NATIONAL FLAG partition (the flag is three horizontal bands - Edsger Dijkstra named the problem after
+it). It is a THREE-WAY PARTITION: the same idea as quicksort's two-way partition, extended to a middle
+region.
+
+THE SHAPE OF THE SOLUTION, so you know where it is going. Three pointers carve the list into four
+regions:
+
+    [ settled 0s ][ settled 1s ][ UNKNOWN ][ settled 2s ]
+                  ^             ^         ^
+                  low           mid       high
+
+`mid` walks forward through the unknown region, and each value it meets is dispatched to where it
+belongs. When the unknown region is empty, the list is sorted.
+
+WHY THIS IS WORTH LEARNING BEYOND THE PUZZLE. A three-way partition is what makes quicksort fast on
+data with many repeated keys, it is the operation behind "partition around a pivot into less, equal,
+greater", and the same pointer discipline appears in Move Zeroes, Sort Array By Parity, and Wiggle
+Sort. And the ONE line everybody gets wrong here - whether to advance `mid` after swapping - is a
+genuinely instructive bug, measured at 2,874 of 6,000.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF IT AS SWEEPING THINGS TO THE TWO ENDS. The 0s belong at the front, the 2s at the back, and
+the 1s are simply whatever is left in the middle - you never have to place a 1 deliberately.
+
+So keep three markers:
+
+    low   the boundary of the settled 0s at the FRONT - everything before it is a 0
+    high  the boundary of the settled 2s at the BACK - everything after it is a 2
+    mid   the scanner - everything from low up to mid is a settled 1
+
+    [ 0 0 0 0 | 1 1 1 | ? ? ? ? ? | 2 2 2 ]
+              low     mid         high
+
+    THE INVARIANT, and it is worth saying aloud before writing anything:
+        nums[0 .. low-1]     are all 0
+        nums[low .. mid-1]   are all 1
+        nums[mid .. high]    are UNKNOWN
+        nums[high+1 .. end]  are all 2
+
+`mid` advances through the unknown region and dispatches whatever it finds:
+
+    A 1 IS ALREADY WHERE IT BELONGS - it is at the front of the unknown region, which is exactly the
+    end of the 1s region. Just advance `mid`. No swap.
+
+    A 0 MUST GO TO THE FRONT. Swap it with the value at `low`. And here is the key fact: WHAT COMES
+    BACK FROM `low` IS ALWAYS A 1 (or the same 0, when low == mid), because the region from low to mid
+    contains only 1s. So the value now sitting at `mid` is already settled - ADVANCE BOTH low AND mid.
+
+    A 2 MUST GO TO THE BACK. Swap it with the value at `high` and pull `high` inward. But WHAT COMES
+    BACK FROM `high` IS FROM THE UNKNOWN REGION - it could be anything at all. So YOU MUST NOT ADVANCE
+    `mid`: the value that just arrived has never been examined.
+
+THAT ASYMMETRY IS THE WHOLE PROBLEM. Advance `mid` after swapping a 2 and you skip over a value you
+have never looked at - measured wrong on 2,874 of 6,000, and on 2,874 of the 5,060 inputs that
+actually contain a 2. On [1, 2, 0] it returns [1, 0, 2].
+
+WATCH IT RUN on [2, 0, 2, 1, 1, 0]. low=0, mid=0, high=5.
+
+    step | nums              | low mid high | nums[mid] | action
+    -----+-------------------+--------------+-----------+-----------------------------------------
+      1  | [2,0,2,1,1,0]     |  0   0   5   |    2      | swap mid<->high, high=4, mid STAYS
+      2  | [0,0,2,1,1,2]     |  0   0   4   |    0      | swap mid<->low, low=1, mid=1
+      3  | [0,0,2,1,1,2]     |  1   1   4   |    0      | swap mid<->low (both index 1), low=2, mid=2
+      4  | [0,0,2,1,1,2]     |  2   2   4   |    2      | swap mid<->high, high=3, mid STAYS
+      5  | [0,0,1,1,2,2]     |  2   2   3   |    1      | just advance mid = 3
+      6  | [0,0,1,1,2,2]     |  2   3   3   |    1      | just advance mid = 4
+         | mid > high, stop  |              |           | [0,0,1,1,2,2]
+
+    STEP 1 IS WHY `mid` MUST NOT ADVANCE ON A 2: the swap brought a 0 to index 0, and step 2 needs to
+    see it. Skipping it would leave that 0 stranded in the middle of the array forever.
+
+WHY ONE PASS IS ENOUGH. Every step either advances `mid` or retreats `high`, so the unknown region
+shrinks by one every single iteration - the loop runs at most n times. MEASURED on 2,000 random
+colours: 1,320 swaps, with each element examined at most twice.
+
+AND WHY THE LOOP CONDITION IS `mid <= high`, NOT `<`. `high` is INSIDE the unknown region - the last
+unexamined slot - so it must be looked at. Using `<` leaves that final element unchecked: measured
+wrong on 1,524 of 6,000, and on [2, 0, 1] it returns [1, 0, 2].""",
+
+    """3. EVERY TERM, DEFINED
+
+IN PLACE. Rearranging the given list with only O(1) extra memory - no second list.
+
+ONE PASS. Each element is examined a constant number of times, with no separate counting phase.
+Counting sort is two passes; it is correct, and this problem asks for one.
+
+THREE-WAY PARTITION. Splitting a list into three regions - less than, equal to, and greater than a
+chosen value. This problem is exactly a three-way partition around the value 1.
+
+DUTCH NATIONAL FLAG PROBLEM. Dijkstra's name for it: the Dutch flag has three bands, and the task is
+to arrange three colours into three contiguous bands in one pass.
+
+TWO POINTERS / THREE POINTERS. Indices moving through the array under a stated rule, with the
+positions between them carrying a guaranteed property.
+
+INVARIANT. What is always true. The four-region statement in section 2 IS the algorithm; every line of
+code exists to preserve it, and stating it is what makes the code derivable rather than memorised.
+
+`low`. The boundary of the settled 0s: everything strictly before it is 0. It is also the position
+where the next 0 will be placed.
+
+`mid`. The scanner, at the front of the unknown region. Everything from `low` to `mid - 1` is a 1.
+
+`high`. The last UNEXAMINED index - everything strictly after it is 2. This is why the loop condition
+includes it: `mid <= high`.
+
+SWAP, `a, b = b, a`. Python evaluates the right side first, so no temporary is needed.
+
+WHY 1 NEEDS NO ACTION. The 1s region sits immediately before the unknown region, so a 1 found at
+`mid` is already in the right place - advancing `mid` extends the 1s region over it. This is the
+"middle value is free" property that makes the three-way partition so cheap.
+
+STABILITY. This algorithm is NOT stable - equal elements can be reordered relative to each other. For
+plain numbers that is invisible; if the values carried extra data attached, it would matter. Worth a
+sentence.
+
+O(n) TIME, O(1) SPACE. Each iteration shrinks the unknown region by one, so at most n iterations, with
+three index variables and nothing else.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random lists of 1 to 14 values drawn from {0,1,2}, each compared
+with `sorted(nums)`.
+
+TRAP 1 - ADVANCING `mid` AFTER SWAPPING A 2 TO THE BACK. This is THE bug of this problem. The value
+swapped back from `high` comes out of the UNEXAMINED region, so it might be a 0 or a 2 - advancing
+past it leaves it misplaced forever.
+
+    [1, 2, 0]   correct [0, 1, 2].   This version returns [1, 0, 2].
+    MEASURED: wrong on 2,874 of 6,000 - and on 2,874 of the 5,060 inputs that contain a 2.
+    THE ASYMMETRY IS THE POINT AND IT HAS A REASON: on a 0-swap the incoming value comes from the 1s
+    region and is therefore already known to be a 1, so `mid` may advance; on a 2-swap it comes from
+    the unknown region and must be examined.
+
+TRAP 2 - `while mid < high` INSTEAD OF `<=`. `high` is the last UNEXAMINED slot, not a settled one, so
+stopping before it leaves one element unchecked.
+
+    [2, 0, 1]   correct [0, 1, 2].   This version returns [1, 0, 2].
+    MEASURED: wrong on 1,524 of 6,000. Ask yourself what `high` MEANS - if everything after it is
+    settled, then `high` itself is not.
+
+TRAP 3 - NOT ADVANCING `mid` ON A 0. If you advance only `low` after swapping a 0 to the front, `mid`
+stays put and re-examines the value that just arrived - which is a 1 - so the loop can stall or run
+away.
+
+    MEASURED: wrong on 2,941 of 6,000, including runs that raise IndexError (on [0] it crashes,
+    because `low` outruns `mid`). BOTH POINTERS ADVANCE ON A 0.
+
+TRAP 4 - `high = len(nums)` INSTEAD OF `len(nums) - 1`. Then the first 2-swap reads off the end of the
+list.
+    MEASURED: wrong or crashing on 6,000 of 6,000. `high` is an INDEX, and it must start on the last
+    element.
+
+TRAP 5 - TREATING THE THREE BRANCHES AS SYMMETRIC. The temptation is to write the 0 case and the 2
+case as mirror images with `mid` advancing in both, because they LOOK symmetric. They are not: the
+regions on the two sides of `mid` have different contents, and that is the entire lesson. Say the
+invariant out loud and the asymmetry becomes obvious rather than arbitrary.
+
+TRAP 6 - USING A LIBRARY SORT AND CALLING IT DONE. It is correct and O(n log n), and it throws away
+the fact that there are only three values. Mention it, price it, and move on.
+
+TRAP 7 - COUNTING AND CALLING IT ONE PASS. Counting sort is two passes over the data. It is correct -
+wrong on 0 of 6,000 - and it is a genuinely good answer to give FIRST; just do not claim it is one
+pass.
+
+TRAP 8 - ASSUMING THE VALUES ARE ONLY 0, 1, 2 WITHOUT SAYING SO. This algorithm depends on it
+completely: a 3 in the input would fall into the `else` branch and be treated as a 2. If the values
+were arbitrary, this becomes a three-way partition around a chosen PIVOT, which is the real
+generalisation - and a good thing to volunteer.
+
+WHAT IS NOT A TRAP, measured rather than assumed: COUNTING SORT IS CORRECT - wrong on 0 of 6,000. Two
+passes, O(1) space, and easier to get right under pressure. If the interview is going badly, write
+that first and then do the one-pass version.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE FIRST ANSWER IS A LIBRARY SORT - `nums.sort()`. Correct, O(n log n), and it ignores everything the
+problem told you. Say it in one sentence and move on.
+
+THE SECOND ANSWER IS COUNTING SORT, and it is a good one:
+
+    def sort_colors_counting(nums):
+        counts = [0, 0, 0]
+        for v in nums:
+            counts[v] += 1                      # pass one: how many of each
+        i = 0
+        for v in range(3):
+            for _ in range(counts[v]):
+                nums[i] = v                     # pass two: write them back in order
+                i += 1
+        return nums
+
+Wrong on 0 of 6,000. O(n) TIME, O(1) SPACE - only three counters. This is the answer most engineers
+would ship, and it is worth saying so. Its two costs: it makes TWO passes over the data, and it
+OVERWRITES every element rather than moving only the misplaced ones - which matters if the elements
+are large objects rather than small integers, or if the data arrives as a stream you can only read
+once.
+
+THE UPGRADE - ONE PASS, BY SWEEPING TO BOTH ENDS AT ONCE. The 0s belong at the front and the 2s at the
+back, and if you keep both of those regions growing inward, THE 1s ARE SIMPLY WHAT IS LEFT. You never
+place a 1 deliberately, which is why three values need only three pointers rather than three passes.
+
+STATE THE INVARIANT FIRST - the code then writes itself:
+
+    nums[0 .. low-1]     all 0        (settled)
+    nums[low .. mid-1]   all 1        (settled)
+    nums[mid .. high]    unknown
+    nums[high+1 .. end]  all 2        (settled)
+
+NOW DERIVE EACH BRANCH FROM IT, rather than memorising three lines:
+
+    nums[mid] == 1:  it belongs at the end of the 1s region, which is exactly where it already is.
+                     Advance `mid`. The invariant holds.
+
+    nums[mid] == 0:  it belongs at position `low`. Swap them. WHAT COMES BACK? Position `low` was the
+                     start of the 1s region, so it held a 1 (or, when low == mid, the same 0). Either
+                     way the value now at `mid` is settled, so advance BOTH `low` and `mid`.
+
+    nums[mid] == 2:  it belongs at position `high`. Swap them and decrement `high`. WHAT COMES BACK?
+                     Position `high` was inside the UNKNOWN region, so it could be anything. `mid`
+                     MUST NOT ADVANCE - the new arrival has to be examined on the next iteration.
+
+THAT DERIVATION IS THE ANSWER TO THE ONLY HARD QUESTION IN THIS PROBLEM, and it is measured: advancing
+`mid` on a 2 is wrong on 2,874 of 6,000.
+
+WHY THE LOOP RUNS `while mid <= high`. Everything strictly after `high` is settled, so `high` ITSELF is
+still unknown and must be examined. Using `<` is wrong on 1,524 of 6,000.
+
+WHY IT TERMINATES, AND WHY IT IS ONE PASS. Every iteration either advances `mid` or decrements `high`,
+so the unknown region shrinks by exactly one each time - at most n iterations. MEASURED on 2,000
+random colours: 1,320 swaps, each element examined at most twice.
+
+WHAT IT COSTS. O(n) TIME, O(1) SPACE, ONE PASS, and only the misplaced elements are ever written. It is
+also NOT STABLE - equal items can swap order - which is irrelevant for bare numbers and would matter
+if they carried payloads.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Set up three markers. LOW at the very start, MID also at the very start, and HIGH at the LAST
+       INDEX of the list. Their meaning, which you should say out loud before writing anything:
+         - everything before LOW is a settled 0;
+         - everything from LOW up to just before MID is a settled 1;
+         - everything from MID to HIGH INCLUSIVE is still unexamined;
+         - everything after HIGH is a settled 2.
+
+    2. Repeat while MID has not passed HIGH - and note that HIGH itself is unexamined, so the two
+       being equal still means there is work to do.
+
+    3. LOOK AT THE VALUE AT MID and do one of three things.
+
+    4. IF IT IS A 1: it is already at the end of the settled-1s region, so nothing needs moving. Just
+       advance MID.
+
+    5. IF IT IS A 0: swap it with the value at LOW, then advance BOTH LOW AND MID. You may advance MID
+       because the value that came back from LOW was the first of the 1s - already settled.
+
+    6. IF IT IS A 2: swap it with the value at HIGH, then pull HIGH back by one - and DO NOT ADVANCE
+       MID. The value that came back from HIGH was never examined, so it must be looked at next time
+       round.
+
+    7. When MID passes HIGH there is nothing unexamined left, and the list is sorted.
+
+STEP 6 IS THE ENTIRE EXAM. Advancing MID there skips a value you have never looked at, and it stays
+misplaced - measured wrong on 2,874 of 6,000, and on 2,874 of the 5,060 inputs containing a 2. The
+reason the two swap branches are NOT symmetric is that the two sides of MID hold different things:
+below MID everything is known, above HIGH everything is known, but the slot HIGH itself is not.
+
+STEP 2'S "HAS NOT PASSED" MUST INCLUDE EQUALITY. HIGH is the last unexamined slot, so stopping while
+MID equals HIGH leaves one element unchecked - wrong on 1,524 of 6,000.
+
+STEP 5 MUST ADVANCE BOTH MARKERS. Advancing only LOW leaves MID looking at a value it has already
+resolved, which stalls or corrupts the walk - wrong on 2,941 of 6,000, sometimes crashing outright.
+
+AND IN STEP 1, HIGH STARTS ON THE LAST INDEX, not one past it. Starting past the end reads outside the
+list on the first 2 you meet - wrong or crashing on 6,000 of 6,000.
+
+WHY YOU NEVER HAVE TO PLACE A 1 ANYWHERE: the 1s region sits immediately before the unexamined region,
+so a 1 discovered at the front of the unexamined region is already exactly where it belongs. Three
+values, but only two of them ever need moving - which is why one pass is enough.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a long shelf of books whose spines are red, white or blue, and you have been asked to arrange
+them so all the red ones are on the left, all the blue ones on the right, and the whites in between.
+You may only swap pairs of books, you may not take them off the shelf, and you would like to walk the
+shelf once.
+
+Keep three fingers on the shelf. One finger marks where the red section ends. One marks where the blue
+section begins, at the far end. And one - your reading finger - is at the start of the muddle in the
+middle, the part you have not looked at yet.
+
+Now work through the muddle, one book at a time, with your reading finger.
+
+A WHITE BOOK is already exactly where it should be. The whites belong immediately after the reds, and
+your reading finger is sitting at precisely that spot. So do nothing at all - just move your reading
+finger along, which quietly makes that book part of the settled white section.
+
+A RED BOOK belongs back with the reds. Swap it with whatever is at the red boundary, and push the red
+boundary along. Now: WHAT DID YOU JUST RECEIVE IN EXCHANGE? Whatever was at the front of the white
+section - which is a white book. You already know what it is, it needs no inspection, so your reading
+finger can move along too.
+
+A BLUE BOOK belongs at the far end. Swap it with whatever is just inside the blue boundary, and pull
+that boundary inward. And now the crucial question again: WHAT DID YOU JUST RECEIVE? Something from
+the far end of THE MUDDLE - a book nobody has looked at. It could be red, it could be blue. SO YOUR
+READING FINGER MUST NOT MOVE. Look at the newcomer next.
+
+That single asymmetry is the whole craft of this method, and it is where nearly everybody goes wrong.
+The two swaps look like mirror images and they are not, because the two things you get back in
+exchange are different: from the red side you get a book you have already identified, from the blue
+side you get a stranger. Move your reading finger past a stranger and it stays in the wrong place for
+the rest of time.
+
+One more detail about the boundaries. The blue boundary marks the LAST BOOK YOU HAVE NOT INSPECTED,
+not the first settled blue one. So when your reading finger and that boundary land on the same book,
+there is still one book to examine - stop too early and you leave a single stray book unsorted, which
+is a maddening bug to find because it only ever shows up as one element out of place.
+
+And when the reading finger finally passes the blue boundary, the muddle has no width left. Reds,
+whites, blues - one walk along the shelf, and you only ever touched the books that needed moving.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Sort an array of 0s, 1s, 2s in one pass (Dutch national flag).
+    def sort_colors(nums):
+        low, mid, high = 0, 0, len(nums) - 1
+
+  THREE POINTERS, AND THEIR MEANING IS THE ALGORITHM:
+        nums[0 .. low-1]     all 0      (settled)
+        nums[low .. mid-1]   all 1      (settled)
+        nums[mid .. high]    UNKNOWN
+        nums[high+1 .. end]  all 2      (settled)
+
+  `high` starts on the LAST INDEX, `len(nums) - 1`. Starting at `len(nums)` reads past the end on the
+  first 2 encountered - wrong or crashing on 6,000 of 6,000.
+
+        while mid <= high:
+
+  `<=`, NOT `<`. Everything strictly AFTER `high` is settled, so `high` itself is still unexamined and
+  must be looked at. Using `<` leaves one element unchecked - wrong on 1,524 of 6,000, and on [2,0,1]
+  it returns [1,0,2].
+
+  THIS LOOP TERMINATES because every branch below either advances `mid` or decrements `high`, so the
+  unknown region shrinks by one every iteration - at most n iterations, hence ONE PASS.
+
+            if nums[mid] == 0:
+                nums[low], nums[mid] = nums[mid], nums[low]   # 0 to the front
+                low += 1; mid += 1
+
+  A 0 GOES TO THE FRONT. What comes back from `low` is the first element of the 1s region - a 1 - or,
+  when `low == mid`, the same 0 being swapped with itself. EITHER WAY IT IS ALREADY SETTLED, which is
+  the licence to advance `mid` as well as `low`.
+
+  Advancing only `low` here leaves `mid` re-reading a resolved value: wrong on 2,941 of 6,000, and on
+  the single-element input [0] it raises IndexError as `low` outruns `mid`.
+
+            elif nums[mid] == 1:
+                mid += 1                                      # 1 stays put
+
+  A 1 NEEDS NO MOVEMENT AT ALL, because the 1s region ends exactly where `mid` is standing. Advancing
+  `mid` extends that region over this element. This is the free case, and it is why three colours need
+  only two kinds of move.
+
+            else:
+                nums[mid], nums[high] = nums[high], nums[mid] # 2 to the back
+                high -= 1                                     # re-examine this slot
+
+  A 2 GOES TO THE BACK - AND `mid` DELIBERATELY DOES NOT MOVE. What comes back from `high` is drawn
+  from the UNKNOWN region, so it may be a 0, a 1 or another 2, and it has never been examined. The
+  next iteration must look at it.
+
+  THIS IS THE #1 BUG IN THE PROBLEM: adding `mid += 1` here is wrong on 2,874 of 6,000 - 2,874 of the
+  5,060 inputs that contain a 2 - and on [1,2,0] it returns [1,0,2]. The comment "re-examine this
+  slot" is doing real work; keep it.
+
+  Note also that this branch is an `else`, so any value that is not 0 or 1 is treated as a 2 - fine
+  given the problem's promise, and worth stating as a precondition.
+
+        return nums
+
+  `mid` has passed `high`, so the unknown region is empty and all three regions are settled.
+
+TEN LINES, ONE PASS, O(n) TIME, O(1) SPACE. MEASURED on 2,000 random colours: 1,320 swaps, with each
+element examined at most twice. NOT STABLE - equal elements may be reordered, which matters only if
+they carry payloads.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [2, 0, 2, 1, 1, 0]. Expected [0, 0, 1, 1, 2, 2].
+
+     step | array           | low | mid | high | nums[mid] | action
+    ------+-----------------+-----+-----+------+-----------+--------------------------------------
+       1  | [2,0,2,1,1,0]   |  0  |  0  |  5   |     2     | swap (0,5); high=4; MID STAYS
+       2  | [0,0,2,1,1,2]   |  0  |  0  |  4   |     0     | swap (0,0); low=1, mid=1
+       3  | [0,0,2,1,1,2]   |  1  |  1  |  4   |     0     | swap (1,1); low=2, mid=2
+       4  | [0,0,2,1,1,2]   |  2  |  2  |  4   |     2     | swap (2,4); high=3; MID STAYS
+       5  | [0,0,1,1,2,2]   |  2  |  2  |  3   |     1     | mid=3
+       6  | [0,0,1,1,2,2]   |  2  |  3  |  3   |     1     | mid=4
+          | mid 4 > high 3 -> stop                          | [0,0,1,1,2,2]
+
+    STEP 1 IS THE CRUX. The 2 at index 0 was swapped out and A 0 CAME BACK. Step 2 sees it and moves
+    it to the front. Had `mid` advanced in step 1, that 0 would have been skipped - though on THIS
+    input the algorithm happens to recover anyway and still returns [0,0,1,1,2,2]. MEASURED: the
+    advance-mid bug gets the official example RIGHT. That is precisely why you must test it on
+    [1, 2, 0], which it gets wrong - never validate a pointer-discipline bug on the sample input.
+
+    STEPS 2 AND 3 SWAP AN ELEMENT WITH ITSELF, because low == mid. Harmless, and it is the normal case
+    while no 1s have been seen yet.
+
+    STEP 6 examines index 3 and then leaves mid at 4, past high - six iterations for six elements.
+
+CASE TWO - THE SMALLEST CASE THAT EXPOSES THE ADVANCE-MID BUG. nums = [1, 2, 0]. Expected [0, 1, 2].
+
+    low=0, mid=0, high=2.
+    nums[0] is 1  ->  mid=1.
+    nums[1] is 2  ->  swap indices 1 and 2 giving [1,0,2]; high=1; MID STAYS at 1.
+    now mid=1 <= high=1, and nums[1] is 0  ->  swap with low=0 giving [0,1,2]; low=1, mid=2.
+    mid 2 > high 1  ->  stop. [0,1,2]. CORRECT.
+
+    THE BUG VERSION advances mid to 2 after the 2-swap, so mid > high immediately and it stops with
+    [1,0,2] - the 0 never examined. THIS IS THE THREE-ELEMENT COUNTEREXAMPLE TO MEMORISE.
+
+CASE THREE - THE CASE THAT EXPOSES `mid < high`. nums = [2, 0, 1]. Expected [0, 1, 2].
+
+    low=0, mid=0, high=2: nums[0] is 2 -> swap (0,2) giving [1,0,2]; high=1; mid stays 0.
+    mid=0 < high=1: nums[0] is 1 -> mid=1.
+    NOW mid == high == 1, and the strict version STOPS - leaving [1,0,2].
+    The correct version continues: nums[1] is 0 -> swap with low=0 giving [0,1,2]; low=1, mid=2; stop.
+    Wrong on 1,524 of 6,000, and always in this shape - exactly one element out of place.
+
+CASE FOUR - ALL THE SAME. nums = [2, 2]. high walks inward twice with two self-swaps, mid never moves,
+and the loop ends when high goes below mid. Returns [2,2]. And nums = [0, 0] advances low and mid
+together. No special cases needed.
+
+CASE FIVE - ONE ELEMENT. nums = [0]. low=mid=0, high=0, the loop runs once (mid <= high), the 0 is
+swapped with itself, both pointers advance, mid=1 > high=0, stop. [0].
+    THE NO-MID-ADVANCE-ON-ZERO VERSION crashes here with IndexError, because `low` runs past the end
+    while `mid` stays at 0 and the loop never terminates properly.
+
+CASE SIX - ALREADY SORTED. nums = [0, 1, 2]: the 0 self-swaps and both advance; the 1 advances mid;
+the 2 self-swaps with high and high retreats; mid > high, stop. Three iterations, no real movement -
+the algorithm does not detect sortedness, it simply finishes quickly.
+
+THE COST, COUNTED: on 2,000 random colours, 1,320 swaps and at most two examinations per element.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Every iteration shrinks the unknown region by one, so at most n iterations: O(n)
+TIME, ONE PASS. Three index variables: O(1) SPACE. MEASURED on 2,000 random colours: 1,320 swaps,
+each element examined at most twice.
+
+    library sort                     O(n log n), ignores the three-value structure
+    counting sort                     O(n) time, O(1) space, TWO passes, writes every element
+    Dutch national flag partition     O(n) time, O(1) space, ONE pass, moves only misplaced elements
+
+ALL THREE ARE CORRECT. The one-pass version wins on the number of passes and on the number of writes,
+which matters when the elements are big objects or the data is read-once. Saying that is better than
+implying counting sort is wrong.
+
+THE #1 MISTAKE: ADVANCING `mid` AFTER SWAPPING A 2 TO THE BACK. Wrong on 2,874 of 6,000 - 2,874 of the
+5,060 inputs containing a 2. The value swapped back comes from the UNEXAMINED region and must be
+looked at. On [1,2,0] it returns [1,0,2], and that is the three-element test to keep in your head.
+
+THE #2: NOT ADVANCING `mid` ON A 0. Wrong on 2,941 of 6,000, sometimes with an IndexError. Here the
+incoming value IS known - it is a 1 from the front of the 1s region - so both pointers advance.
+
+THE #3: `while mid < high` INSTEAD OF `<=`. Wrong on 1,524 of 6,000, always leaving exactly one
+element misplaced. `high` is the last UNEXAMINED index.
+
+THE #4: `high = len(nums)`. Wrong or crashing on 6,000 of 6,000. It is an index.
+
+ONE HONEST NEGATIVE: counting sort is wrong on 0 of 6,000. Give it first if you like; just do not call
+it one pass.
+
+WHAT TO SAY OUT LOUD, in this order: (1) a library sort is O(n log n) and ignores that there are only
+three values; (2) counting sort is O(n) and O(1) space but takes two passes and rewrites everything;
+(3) for one pass, keep FOUR REGIONS - settled 0s, settled 1s, unknown, settled 2s - with three
+pointers; (4) state the invariant, then each branch follows: a 1 is already in place, a 0 swaps to the
+front and both pointers advance BECAUSE the incoming value is a known 1, a 2 swaps to the back and
+`mid` does NOT advance BECAUSE the incoming value is unexamined; (5) the loop is `mid <= high`,
+because `high` is the last unknown slot; (6) O(n) time, O(1) space, one pass, and it is not stable.
+Point 4 is the whole interview - deriving the asymmetry from the invariant rather than remembering
+which branch moves which pointer.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if there were FOUR colours?" The three-pointer trick does not
+extend cleanly - with k values the natural answers are counting sort (O(n) time, O(k) space) or
+repeated two-way partitioning. Knowing WHY it does not extend (there is only one "free" middle region)
+is the real answer.
+
+AND THE OTHER ONE: "generalise it to arbitrary values around a pivot." That is exactly three-way
+quicksort partitioning - less than, equal to, greater than the pivot - and it is what makes quicksort
+fast on data with many duplicate keys. This problem IS that subroutine with the pivot fixed at 1,
+which is a strong thing to point out.
+
+THEN SOMETIMES: "is it stable?" No - a 2 swapped to the back jumps over everything in between. Fixing
+that requires extra space, which is a fair trade to describe.
+
+THE FAMILY: Sort Colors, Move Zeroes (the same low/mid discipline with two regions), Sort Array By
+Parity, Partition Array According to Given Pivot, Wiggle Sort, Kth Largest Element (quickselect's
+two-way partition), Remove Duplicates from Sorted Array, Rearrange Array Elements by Sign. THE
+TRANSFERABLE IDEA: NAME YOUR REGIONS AND WRITE DOWN THE INVARIANT FIRST - EVERY POINTER MOVEMENT THEN
+FOLLOWS FROM WHAT YOU KNOW ABOUT THE VALUE THAT ARRIVES IN THE SLOT YOU JUST VACATED.
+
+ONE-SENTENCE TAKEAWAY: three pointers carve the list into settled 0s, settled 1s, unknown and settled
+2s, and `mid` dispatches each unknown value - advancing on a 0 (the incoming value is a known 1) but
+NOT on a 2 (the incoming value has never been examined).""",
 ]
 
 _EXAMPLES["Product of Array Except Self"] = [
@@ -127183,61 +127648,542 @@ with the opposite order giving the anticlockwise rotation.""",
 ]
 
 _EX_P1AC["Set Matrix Zeroes (O(1) space)"] = [
-    """Why the naive approach is wrong, not just slow.
-Zeroing rows and columns AS YOU FIND zeros corrupts the scan: the zeros you
-write are indistinguishable from the zeros that were there originally, so they
-cascade and the whole matrix ends up zeroed.
-So you must first RECORD which rows and columns need clearing, then apply.
-The obvious fix is two sets - O(m + n) space. The problem asks for O(1), which
-forces the trick below.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The trick: use row 0 and column 0 as the marker storage.
-Scan the interior (from row 1, column 1). When matrix[r][c] == 0, write a 0 into
-matrix[r][0] and matrix[0][c] - the first cell of that row and column becomes
-the flag.
-Then make a second pass over the interior and zero any cell whose row flag or
-column flag is set. You have stored m + n bits of information inside the matrix
-itself, which is where the O(1) extra space comes from.""",
+You are given a grid of numbers. WHEREVER THERE IS A ZERO, the whole of that zero's row and the whole
+of that zero's column must become zero. Do it IN PLACE - rearranging the grid you were given, without
+building a second one.
 
-    """Why the first row and column need SEPARATE flags.
-matrix[0][0] is shared - it is both 'row 0 needs clearing' and 'column 0 needs
-clearing', and one cell cannot hold two independent bits.
-Hence the two booleans captured BEFORE anything is modified:
-first_row_zero and first_col_zero. Without them the two conditions collide and
-one of the edges is cleared wrongly.
-This is the part of the problem that is actually hard, and it is where almost
-every incorrect solution fails.""",
+    1  1  1                1  0  1
+    1  0  1      ->        0  0  0
+    1  1  1                1  0  1
 
-    """The ORDER of the final passes, which is the second trap.
-Zero the interior FIRST, using the flags, and only then zero row 0 and column 0
-if their booleans were set.
-Do it the other way round and you destroy the flags before you have finished
-reading them - every interior cell would then see a zeroed row 0 and clear
-itself. Direction matters for the same reason as in the rolling-array DP
-problems: you must not overwrite state you still need to read.""",
+    The single 0 sits at row 1, column 1, so row 1 becomes all zeros and column 1 becomes all zeros.
+    Everything else keeps its value.
 
-    """A trace.
-[[1,1,1],
- [1,0,1],
- [1,1,1]]
-first_row_zero = False, first_col_zero = False.
-Interior scan finds the 0 at (1,1) -> set matrix[1][0] = 0 and matrix[0][1] = 0.
-Matrix now [[1,0,1],[0,0,1],[1,1,1]].
-Second pass: (1,1) has row flag 0 -> zero. (1,2) has row flag 0 -> zero.
-(0,1)/(2,1) have column flag 0 -> zero.
-Result [[1,0,1],[0,0,0],[1,0,1]]. Row 0 and column 0 untouched because both
-booleans were False. Correct.""",
+A BIGGER ONE, worth reading slowly:
 
-    """Edge cases and complexity.
-A zero in row 0 or column 0 originally -> caught by the booleans, and this is
-the case to test deliberately.
-A single row or single column -> the interior is empty and the booleans do all
-the work.
-An all-zero matrix -> everything clears, trivially.
-No zeros -> nothing changes.
-Time O(m*n) with two passes; space O(1) extra. The O(m+n) two-sets version is
-worth presenting FIRST as the obviously-correct solution, then improving - the
-in-place version is fiddly enough that leading with it risks a muddle.""",
+    0  1  2  0             0  0  0  0
+    3  4  5  2      ->     0  4  5  0
+    1  3  1  5             0  3  1  0
+
+    There are zeros at (0,0) and (0,3). So row 0 goes, column 0 goes, and column 3 goes. Rows 1 and 2
+    survive except in columns 0 and 3.
+
+THE TRAP IS IN THE PROBLEM ITSELF, BEFORE ANY CODE. The zeros you write are indistinguishable from
+the zeros that were already there. So if you zero a row the moment you meet a zero, you have just
+created new zeros - and when your scan reaches them it will zero THEIR rows and columns too, and the
+whole grid collapses.
+
+    MEASURED: the "zero it as you find it" version is wrong on 1,754 of 6,000 random grids. On the
+    3x3 example above it returns [[1,0,0],[0,0,0],[0,0,0]] rather than [[1,0,1],[0,0,0],[1,0,1]].
+    THE RULE THIS PROBLEM TEACHES: WHEN WRITING CHANGES WHAT READING MEANS, SEPARATE THE PASSES.
+
+THE EASY CORRECT SOLUTION is two passes with two SETS: first collect which rows and which columns
+contain a zero, then zero those. Measured wrong on 0 of 6,000, and it costs O(m + n) extra memory.
+Say it first - it is a perfectly good answer and it is what most people would ship.
+
+WHAT THE PROBLEM ACTUALLY WANTS is O(1) EXTRA SPACE, and the answer is delightful: USE THE GRID'S OWN
+FIRST ROW AND FIRST COLUMN AS THE NOTEPAD. The one complication is that the notepad is also real data
+that itself needs zeroing, which is what the two extra flags in section 5 are for.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+FIRST, SEE WHY ONE PASS CANNOT WORK. Watch the 3x3 collapse:
+
+    1 1 1        meet the 0 at (1,1)        1 0 1        continue scanning... at (0,1) there is now
+    1 0 1        zero row 1 and column 1    0 0 0        a zero, so zero row 0 and column 1 as well,
+    1 1 1                                   1 0 1        and so on until almost everything is gone
+
+    The zeros you WRITE look exactly like the zeros you were LOOKING FOR. Measured wrong on 1,754 of
+    6,000 - and note it is only wrong on grids that contain a zero at all: 1,754 of the 3,901 such
+    cases.
+
+SO SPLIT IT INTO "DECIDE" AND "APPLY". First work out WHICH rows and columns are doomed, writing
+nothing. Then apply that decision. With two sets that is easy:
+
+    zero_rows = {1},  zero_cols = {1}      then zero every cell whose row or column is in a set
+
+O(m + n) memory, entirely correct. The question is how to remember those two sets WITHOUT extra
+memory.
+
+THE INSIGHT: THE DOOMED ROWS AND COLUMNS ARE ABOUT TO BE ZEROED ANYWAY, SO THEIR CELLS ARE FREE
+STORAGE. Specifically, use the first cell of each row and the first cell of each column as a
+one-bit notepad:
+
+        matrix[r][0] = 0   means   "row r is doomed"
+        matrix[0][c] = 0   means   "column c is doomed"
+
+Walk the INTERIOR (from row 1 and column 1). Every time you find a zero at (r,c), write a 0 into
+(r,0) and (0,c). You are not destroying anything you still need, because if row r is doomed then
+(r,0) is going to be 0 in the final answer regardless.
+
+    starting grid              after marking the interior
+    0  1  2  0                 0  1  2  0        no interior zeros here at all, so no marks
+    3  4  5  2                 3  4  5  2
+    1  3  1  5                 1  3  1  5
+
+    and for the 3x3:
+    1  1  1                    1  0  1           the 0 at (1,1) wrote a mark at (1,0) and at (0,1)
+    1  0  1                    0  0  1
+    1  1  1                    1  1  1
+
+Then sweep the interior again and zero any cell whose row marker or column marker is 0.
+
+NOW THE COMPLICATION THAT MAKES THIS PROBLEM MEDIUM RATHER THAN EASY. THE FIRST ROW AND FIRST COLUMN
+ARE DOING TWO JOBS AT ONCE - they are the notepad AND they are real data that may itself need zeroing.
+And the corner cell (0,0) is worst of all: it would have to mean both "row 0 is doomed" and "column 0
+is doomed", which are different facts.
+
+    MEASURED: skipping the extra bookkeeping entirely - marking, then never zeroing the first row or
+    column - is wrong on 3,143 of 6,000. Trying to make the single corner cell carry both facts is
+    wrong on 2,176 of 6,000.
+
+THE FIX IS TWO SEPARATE BOOLEANS, TAKEN BEFORE ANYTHING IS WRITTEN: does the first row contain a
+zero, and does the first column contain a zero? Then the first row and first column are handled at
+the very END, from those flags, after the notepad has finished being a notepad.
+
+AND THE ORDER OF THE LAST TWO STEPS IS LOAD-BEARING. The flags must be read BEFORE marking (measured:
+computing them afterwards is wrong on 931 of 6,000, because marking pollutes them), and the first
+row and column must be zeroed AFTER the interior pass (measured: doing it before is wrong on 1,015 of
+6,000, because it erases the markers the interior pass still needs).""",
+
+    """3. EVERY TERM, DEFINED
+
+IN PLACE. Modifying the given structure with only O(1) extra memory. Returning a newly built grid is
+not in place, however you assign it.
+
+O(1) / O(m + n) / O(m * n) EXTRA SPACE. The three tiers of solution to this problem: a constant
+number of variables; two sets of row and column indices; a full copy of the grid. All three are
+correct; the problem asks for the first.
+
+MARKER / FLAG CELL. A cell repurposed to record a fact rather than hold data. Here `matrix[r][0]`
+records "row r must be zeroed" and `matrix[0][c]` records "column c must be zeroed".
+
+THE INTERIOR. Everything from row 1 and column 1 onwards - the part of the grid that is NOT the
+notepad. Both working sweeps run over the interior only.
+
+DOUBLE DUTY. The first row and first column are simultaneously the notepad and real data. That
+conflict is the whole difficulty, and the two boolean flags are how it is resolved.
+
+THE CORNER PROBLEM. `matrix[0][0]` belongs to both the first row and the first column, so a single
+cell cannot record both facts. This is why you need TWO flags rather than relying on the corner -
+measured, relying on the corner is wrong on 2,176 of 6,000.
+
+READ-BEFORE-WRITE. The general discipline this problem drills: if writing changes the meaning of
+reading, do all the reading first. The one-pass version violates it and is wrong on 1,754 of 6,000.
+
+`any(...)`. True if any element of a sequence is true. `any(matrix[0][c] == 0 for c in range(cols))`
+asks "does the first row contain a zero" in one line.
+
+IDEMPOTENT. An operation that can be applied twice with the same result. Zeroing is idempotent, which
+is why over-marking a row that is already doomed does no harm - and it is why the notepad can safely
+live in cells that are themselves about to be zeroed.
+
+ROWS AND COLUMNS. `matrix[r][c]` is row r, column c. `len(matrix)` is the number of rows and
+`len(matrix[0])` the number of columns. This grid does NOT have to be square, unlike Rotate Image.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random grids of 1 to 4 rows by 1 to 4 columns with about a fifth
+of cells zero (3,901 of them contain at least one zero), each checked against an answer built from an
+untouched copy.
+
+TRAP 1 - ZEROING AS YOU SCAN. The zeros you write are indistinguishable from the zeros you are
+looking for, so the effect cascades.
+
+    [[1,1,1],[1,0,1],[1,1,1]]  correct [[1,0,1],[0,0,0],[1,0,1]],  this gives [[1,0,0],[0,0,0],[0,0,0]]
+    [[0,1,2,0],[3,4,5,2],[1,3,1,5]]  collapses to ALL zeros.
+    MEASURED: wrong on 1,754 of 6,000 - and on 1,754 of the 3,901 grids that contain a zero. DECIDE
+    FIRST, APPLY SECOND, always.
+
+TRAP 2 - USING THE FIRST ROW AND COLUMN AS MARKERS AND THEN FORGETTING THAT THEY ARE ALSO DATA. You
+mark, you zero the interior, and you never deal with the first row or first column themselves.
+
+    [[0,1],[1,1]]  correct [[0,0],[0,1]],  this version returns the grid UNCHANGED: [[0,1],[1,1]].
+    MEASURED: wrong on 3,143 of 6,000 - the largest failure rate here. The notepad still has to
+    become the answer.
+
+TRAP 3 - RELYING ON `matrix[0][0]` TO CARRY BOTH FACTS. The corner belongs to the first row AND the
+first column, so one cell cannot say "row 0 is doomed" and "column 0 is doomed" separately.
+    MEASURED: wrong on 2,176 of 6,000. TWO SEPARATE BOOLEANS. (Some published solutions use the
+    corner for one of the two and a single extra flag for the other, which is also correct - but two
+    plain flags are easier to reason about under pressure.)
+
+TRAP 4 - COMPUTING THE TWO FLAGS AFTER THE MARKING PASS. By then the marking has written zeros into
+the first row and column, so the flags report zeros that were never in the original data.
+
+    [[1,1,1],[1,0,1],[1,1,1]]  correct [[1,0,1],[0,0,0],[1,0,1]],  this gives [[0,0,0],[0,0,0],[0,0,1]]
+    - the whole first row and column got wiped because the marks looked like original zeros.
+    MEASURED: wrong on 931 of 6,000. READ THE FLAGS BEFORE WRITING ANY MARK.
+
+TRAP 5 - APPLYING THE FIRST ROW AND COLUMN BEFORE THE INTERIOR PASS. Zeroing the first row erases
+the column markers that the interior pass still needs to read.
+    MEASURED: wrong on 1,015 of 6,000. THE ORDER IS: flags, mark, apply to the interior, then apply
+    to the first row and column LAST.
+
+TRAP 6 - SCANNING THE MARKING PASS FROM ROW 0 OR COLUMN 0. If the marking loops start at 0, an
+original zero in the first row writes a mark that is indistinguishable from itself and the logic
+tangles. Both working loops must start at 1; the first row and column are handled only by the flags.
+
+TRAP 7 - ASSUMING THE GRID IS SQUARE. It need not be. Use separate row and column counts, and note
+that `len(matrix[0])` assumes at least one row exists - worth a guard if the input may be empty.
+
+TRAP 8 - CALLING THE TWO-SET SOLUTION O(1) SPACE. Two sets of indices cost O(m + n). That is a
+perfectly good solution and it is not constant space; say which one you are giving.
+
+WHAT IS NOT A TRAP, measured rather than assumed: THE TWO-SET SOLUTION IS CORRECT - wrong on 0 of
+6,000 - at O(m + n) extra space. Lead with it, then offer the O(1) refinement. And over-marking is
+harmless: writing a 0 into a marker cell that is already 0 changes nothing, because zeroing is
+idempotent.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE VERSION THAT DOES NOT WORK, and it is worth naming out loud so the interviewer knows you spotted
+it: zero each row and column as you meet a zero. The zeros you write are then found by the same scan
+and treated as input. Measured wrong on 1,754 of 6,000, and on the 4x3 example it collapses the entire
+grid to zeros. THE LESSON IS GENERAL: when writing changes what reading means, separate the passes.
+
+THE STRAIGHTFORWARD CORRECT VERSION - COLLECT, THEN APPLY:
+
+    def set_zeroes_sets(matrix):
+        rows, cols = len(matrix), len(matrix[0])
+        zero_rows = {r for r in range(rows) if any(matrix[r][c] == 0 for c in range(cols))}
+        zero_cols = {c for c in range(cols) if any(matrix[r][c] == 0 for r in range(rows))}
+        for r in range(rows):
+            for c in range(cols):
+                if r in zero_rows or c in zero_cols:
+                    matrix[r][c] = 0
+        return matrix
+
+Wrong on 0 of 6,000. O(m * n) time, O(m + n) SPACE. This is the answer to give first, and in real code
+it is usually the right one - it is obviously correct and trivially reviewable.
+
+THE UPGRADE - WHERE CAN THE TWO SETS LIVE FOR FREE? Here is the observation: if row r is doomed then
+EVERY cell of row r ends as 0, including `matrix[r][0]`. So that cell's final value is already
+decided, and its current value is expendable. The same goes for `matrix[0][c]` when column c is
+doomed. So:
+
+    matrix[r][0] = 0   records   "row r is doomed"
+    matrix[0][c] = 0   records   "column c is doomed"
+
+and the notepad costs nothing.
+
+THE ONE OBSTACLE: THE NOTEPAD IS ALSO DATA. The first row and the first column must themselves be
+zeroed if THEY contained a zero originally - and you cannot tell that from the notepad afterwards,
+because the notepad is now full of marks. Worse, the corner (0,0) would have to encode two separate
+facts at once - which is why trying to lean on it is wrong on 2,176 of 6,000.
+
+THE FIX IS TWO BOOLEANS, CAPTURED FIRST:
+
+    first_row_zero = does the original first row contain a zero?
+    first_col_zero = does the original first column contain a zero?
+
+Then the algorithm is four phases, and THE ORDER IS THE ANSWER:
+
+    1. READ the two flags.                       (before any writing - doing it later is wrong on 931
+                                                  of 6,000)
+    2. MARK, scanning the interior only.         (row 1 and column 1 onwards)
+    3. APPLY to the interior, reading the marks. (any cell whose row or column marker is 0)
+    4. APPLY the flags to the first row and column. (last - doing it before step 3 destroys the
+                                                     markers, wrong on 1,015 of 6,000)
+
+WHY IT IS CORRECT. After step 2, `matrix[r][0]` is 0 exactly when row r (for r >= 1) contains an
+original zero somewhere in the interior OR already had a zero at (r,0); either way row r is doomed.
+Symmetrically for columns. So step 3 zeroes exactly the interior cells that must be zeroed. The first
+row and column are then decided entirely by the flags from step 1, which were taken from the original
+data. Nothing reads a value that a previous phase might have invented.
+
+WHAT IT COSTS. O(m * n) TIME - every cell is examined a constant number of times - and O(1) EXTRA
+SPACE: two booleans and some loop counters. Compared with the two-set version, you trade a little
+clarity for O(m + n) memory; say which trade you are making.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Note the number of rows and the number of columns separately - the grid need not be square.
+
+    2. BEFORE CHANGING ANYTHING, work out two facts and remember them as two yes/no answers:
+         - does the FIRST ROW contain a zero?
+         - does the FIRST COLUMN contain a zero?
+       Take these from the original data, because everything below writes into the first row and
+       column.
+
+    3. MARKING PASS, over the interior only - every cell from the second row and second column
+       onwards. Whenever you find a zero at some row and column, write a zero into that row's FIRST
+       CELL and into that column's FIRST CELL. Those two cells are now notes saying "this row is
+       doomed" and "this column is doomed". Writing them destroys nothing you still need, because a
+       doomed row's first cell ends up zero in the final answer anyway.
+
+    4. APPLYING PASS, again over the interior only. For each cell, look at its row's first cell and
+       its column's first cell. If either is zero, zero this cell.
+
+    5. FINALLY, and only now, use the two facts from step 2: if the first row contained a zero, zero
+       the entire first row; if the first column contained a zero, zero the entire first column.
+
+WHY STEP 2 MUST COME FIRST. The marking in step 3 writes zeros into the first row and column, so
+after it there is no way to tell an original zero from a note. Computing those two facts afterwards is
+wrong on 931 of 6,000.
+
+WHY STEP 5 MUST COME LAST. The notes live in the first row and column, and step 4 reads them. Zeroing
+those cells before step 4 destroys the information step 4 depends on - wrong on 1,015 of 6,000.
+
+WHY TWO SEPARATE FACTS AND NOT ONE. The cell in the very top-left corner belongs to both the first row
+and the first column, so it cannot record two different facts. Relying on it is wrong on 2,176 of
+6,000.
+
+WHY YOU MUST NOT SIMPLY ZERO ROWS AND COLUMNS AS YOU FIND ZEROS - the mistake this whole design
+exists to avoid: the zeros you write look exactly like the zeros you are hunting for, so the scan
+finds its own work and the grid collapses. Wrong on 1,754 of 6,000.
+
+AND WHY IT IS SAFE TO WRITE NOTES INTO CELLS THAT ARE THEMSELVES DATA: because a note is only ever
+written into a row or column that is already doomed, and every cell of a doomed row or column ends up
+zero regardless. The note and the final answer happen to be the same value, which is why the trick
+works at all.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a large seating plan for a theatre, printed on paper, with a number written in every seat. The
+rule you have been given is peculiar: wherever a seat is marked with a nought, the entire ROW that
+seat is in and the entire COLUMN it is in must be crossed out. And you have no second sheet of paper -
+you must mark up the plan you have.
+
+The instinct is to work through the seats and, each time you meet a nought, cross out its row and its
+column immediately. Try it for thirty seconds and you will see the disaster: crossing out a row
+writes noughts in it, and when your eye reaches one of those it looks exactly like an original
+nought, so you cross out ITS row and column too. The infection spreads and you end up crossing out
+nearly the whole theatre.
+
+So the marking has to happen in two stages: FIRST DECIDE, THEN DO. You need somewhere to note down
+"row four is doomed, column seven is doomed" while you finish looking. Ordinarily you would grab a
+notepad - and a notepad is exactly the extra memory you have been told you cannot use.
+
+Here is the observation that solves it. THE DOOMED ROWS AND COLUMNS ARE ABOUT TO BE CROSSED OUT
+ANYWAY, so their seats are worthless to you. In particular, the FIRST SEAT of a doomed row is going to
+be crossed out whatever happens. So use it as the note: put a nought in the first seat of a row to
+mean "this row is doomed", and a nought in the top seat of a column to mean "this column is doomed".
+You are writing on paper that is already condemned, which costs you nothing.
+
+Now walk the interior of the plan - everything except the top row and the leftmost column - and make
+those notes. Then walk it again and cross out every seat whose row-note or column-note carries a
+nought. The interior is finished, and you never needed a notepad.
+
+Which leaves the awkward part. The top row and the leftmost column were serving as your margin of
+notes, and they are also real seats that might themselves have contained noughts to begin with, in
+which case they need crossing out too. And you cannot tell any more, because your notes are sitting
+in them.
+
+So the very first thing you must do, before writing a single note, is glance along the top row and
+down the leftmost column and remember two simple facts: was there a nought in the top row, and was
+there a nought in the leftmost column? Remember them in your head - that is two facts, not a notepad.
+Then at the very END, after the interior is done and the notes have served their purpose, act on those
+two facts.
+
+Two orderings are non-negotiable. The two facts must be gathered BEFORE any note is written, or your
+own notes will masquerade as original noughts and you will condemn the top row for no reason. And the
+top row and leftmost column must be crossed out LAST, after the interior pass has finished reading the
+notes - cross them out early and you have rubbed out the very notes you were about to consult.
+
+And one thing that cannot be economised: you need TWO facts, not one. The seat in the very top-left
+corner sits in both the top row and the leftmost column, so it cannot possibly stand for two
+different pieces of information at once.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # If a cell is 0, zero its entire row and column, in place (O(1) extra).
+    def set_zeroes(matrix):
+        rows, cols = len(matrix), len(matrix[0])
+
+  Separate counts, because the grid NEED NOT BE SQUARE. (`matrix[0]` assumes at least one row - worth
+  a guard if the caller might pass an empty grid.)
+
+        first_row_zero = any(matrix[0][c] == 0 for c in range(cols))
+        first_col_zero = any(matrix[r][0] == 0 for r in range(rows))
+
+  THE TWO FLAGS, TAKEN BEFORE ANY WRITING. The first row and column are about to be repurposed as a
+  notepad, and after that there is no way to distinguish an original zero from a note - so these two
+  facts must be captured now. Computing them after the marking pass is wrong on 931 of 6,000.
+
+  TWO FLAGS AND NOT ONE, because `matrix[0][0]` belongs to both the first row and the first column and
+  cannot record two separate facts. Leaning on the corner instead is wrong on 2,176 of 6,000.
+
+        for r in range(1, rows):                 # use row 0 / col 0 as markers
+            for c in range(1, cols):
+                if matrix[r][c] == 0:
+                    matrix[r][0] = 0             # mark this row
+                    matrix[0][c] = 0             # mark this column
+
+  THE MARKING PASS, OVER THE INTERIOR ONLY - note both ranges start at 1. Nothing is zeroed here
+  except notepad cells, which is what makes this pass safe: writing a 0 into `matrix[r][0]` cannot
+  mislead a later read, because row r is genuinely doomed and that cell ends as 0 anyway.
+
+  THIS IS WHY THE ONE-PASS VERSION FAILS: it writes zeros into DATA cells, which the scan then reads
+  as input - wrong on 1,754 of 6,000, collapsing the grid.
+
+  Over-marking is harmless: setting a marker that is already 0 changes nothing, because zeroing is
+  idempotent.
+
+        for r in range(1, rows):
+            for c in range(1, cols):
+                if matrix[r][0] == 0 or matrix[0][c] == 0:
+                    matrix[r][c] = 0             # zero out any marked cell
+
+  THE APPLYING PASS, again interior only, reading the notes. `or` is right: a cell dies if EITHER its
+  row or its column is doomed.
+
+  THIS PASS MUST RUN BEFORE THE FIRST ROW AND COLUMN ARE ZEROED, because it reads them as notes.
+  Swapping the order destroys the notes and is wrong on 1,015 of 6,000.
+
+        if first_row_zero:
+            for c in range(cols):
+                matrix[0][c] = 0
+        if first_col_zero:
+            for r in range(rows):
+                matrix[r][0] = 0
+
+  THE NOTEPAD BECOMES DATA AGAIN, LAST. These two blocks are decided entirely by the flags captured at
+  the top, from the original grid. Omitting them altogether - marking, applying, and never resolving
+  the first row and column - is the single most common failure here: wrong on 3,143 of 6,000.
+
+  Note the ranges here are the FULL row and column, including the corner, which both blocks may touch;
+  writing 0 twice is harmless.
+
+        return matrix
+
+FOUR PHASES IN A FIXED ORDER - read the flags, mark, apply to the interior, apply the flags - with
+O(m * n) TIME and O(1) EXTRA SPACE. Every one of the measured bugs in this entry is either a phase in
+the wrong order or a phase missing.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE 3x3 WITH A SINGLE INTERIOR ZERO. matrix = [[1,1,1],[1,0,1],[1,1,1]].
+Expected [[1,0,1],[0,0,0],[1,0,1]].
+
+    PHASE 1, flags:  first row is 1 1 1 -> first_row_zero = False
+                     first column is 1 1 1 -> first_col_zero = False
+
+    PHASE 2, mark the interior (rows 1..2, columns 1..2):
+        (1,1) is 0  ->  write 0 at (1,0) and at (0,1)
+        (1,2), (2,1), (2,2) are 1 - nothing
+
+        grid now:   1  0  1        <- (0,1) is a COLUMN note
+                    0  0  1        <- (1,0) is a ROW note
+                    1  1  1
+
+    PHASE 3, apply to the interior:
+        (1,1): row note (1,0) is 0  ->  zero it (already 0)
+        (1,2): row note is 0        ->  zero it
+        (2,1): column note (0,1) is 0 -> zero it
+        (2,2): both notes are 1     ->  leave it
+
+        grid now:   1  0  1
+                    0  0  0
+                    1  0  1
+
+    PHASE 4: both flags are False, so the first row and column are left alone. FINAL ANSWER, correct.
+
+    NOTICE THAT THE NOTES BECAME PART OF THE ANSWER. (0,1) had to be 0 because column 1 is doomed, and
+    (1,0) had to be 0 because row 1 is doomed. That coincidence is exactly why the notepad is free.
+
+CASE TWO - ZEROS IN THE FIRST ROW, WHICH IS WHAT THE FLAGS ARE FOR.
+matrix = [[0,1,2,0],[3,4,5,2],[1,3,1,5]]. Expected [[0,0,0,0],[0,4,5,0],[0,3,1,0]].
+
+    PHASE 1: the first row contains zeros -> first_row_zero = True.
+             the first column is 0,3,1 -> contains a zero -> first_col_zero = True.
+    PHASE 2: the interior (rows 1..2, columns 1..3) contains NO zeros, so no marks are written.
+    PHASE 3: reads the notes - (1,0)=3 and (2,0)=1 are not 0; the column notes are the ORIGINAL first
+             row, where (0,0)=0 and (0,3)=0. So every interior cell in columns 0 and 3 dies:
+             (1,3) and (2,3) become 0.
+             grid: [[0,1,2,0],[3,4,5,0],[1,3,1,0]]
+    PHASE 4: first_row_zero -> zero the whole first row. first_col_zero -> zero the whole first
+             column.
+             FINAL [[0,0,0,0],[0,4,5,0],[0,3,1,0]] - correct.
+
+    THE NO-FLAGS VERSION stops after phase 3 and returns [[0,1,2,0],[3,4,5,0],[1,3,1,0]] - the first
+    row and column never zeroed. Wrong on 3,143 of 6,000.
+
+CASE THREE - THE SMALLEST CASE THAT BREAKS THE NO-FLAGS VERSION. matrix = [[0,1],[1,1]].
+    Correct [[0,0],[0,1]]. The interior is just (1,1), which is 1, so no marks are written and the
+    interior pass reads (1,0)=1 and (0,1)=1 - nothing to do. Only the flags save it: both are True
+    (the single 0 is in both the first row and the first column), so both are zeroed. The no-flags
+    version returns the grid UNCHANGED.
+
+CASE FOUR - WHAT THE FLAGS-COMPUTED-LATE VERSION DOES. On case one, after phase 2 the grid's first row
+is 1 0 1 and its first column is 1 0 1, both containing a note. Computing the flags now reports True
+for both, so phase 4 wipes the entire first row and column:
+    [[0,0,0],[0,0,0],[0,0,1]] instead of [[1,0,1],[0,0,0],[1,0,1]]. Wrong on 931 of 6,000.
+
+CASE FIVE - NO ZEROS AT ALL. matrix = [[1,2],[3,4]]. Both flags False, no marks, nothing zeroed, grid
+unchanged. Every version in this entry gets this right, which is why 2,099 of the 6,000 random cases
+cannot distinguish them - the meaningful numbers are the ones restricted to grids containing a zero.
+
+CASE SIX - THE ONE-PASS DISASTER, on case one: it returns [[1,0,0],[0,0,0],[0,0,0]], having found its
+own writes and zeroed their rows and columns too.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Every cell is examined a constant number of times across the four phases:
+O(m * n) TIME, which is optimal since every cell may need inspecting. O(1) EXTRA SPACE - two booleans.
+
+    copy the grid, read from the copy         O(m*n) time, O(m*n) space
+    two sets of doomed row/column indices    O(m*n) time, O(m+n) space  - the answer to give FIRST
+    markers in the first row and column      O(m*n) time, O(1) space    - the answer they want
+    zero as you scan                         WRONG (1,754 of 6,000)
+
+THE #1 MISTAKE: USING THE FIRST ROW AND COLUMN AS MARKERS AND NEVER RESOLVING THEM. Wrong on 3,143 of
+6,000 - the largest failure rate measured here. The notepad has to become part of the answer, driven
+by the two flags.
+
+THE #2: RELYING ON `matrix[0][0]` FOR BOTH THE FIRST ROW AND THE FIRST COLUMN. Wrong on 2,176 of
+6,000. One cell, two facts, impossible.
+
+THE #3: ZEROING AS YOU SCAN. Wrong on 1,754 of 6,000 - and this is the conceptual heart of the
+problem, so say it out loud even though you would never write it: the zeros you WRITE are
+indistinguishable from the zeros you are LOOKING FOR.
+
+THE #4: APPLYING THE FIRST ROW AND COLUMN BEFORE THE INTERIOR PASS. Wrong on 1,015 of 6,000 - it
+erases the markers the interior pass is about to read.
+
+THE #5: COMPUTING THE TWO FLAGS AFTER THE MARKING PASS. Wrong on 931 of 6,000 - the marks masquerade
+as original zeros.
+
+ONE HONEST NEGATIVE: the two-set solution is wrong on 0 of 6,000. It is correct, clear, and O(m + n)
+space - lead with it and label its cost honestly rather than presenting the O(1) version as the only
+answer.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the naive in-place version fails because the zeros I write
+look like the zeros I am searching for, so I must DECIDE then APPLY; (2) the clean version collects
+two sets of doomed rows and columns - O(m + n) space; (3) to reach O(1), notice that a doomed row's
+first cell is going to be zero anyway, so the first row and column can BE the sets; (4) but they are
+also real data, so I capture two booleans about them BEFORE writing any marker; (5) the phase order
+is flags, mark, apply to the interior, then apply the flags - and each of those orderings matters;
+(6) O(m*n) time, O(1) space. Point 3 is the insight and point 4 is where the marks are actually lost.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "why two flags - can you not use matrix[0][0] for one of them?" You
+can: let the corner stand for the first ROW and keep one extra boolean for the first COLUMN, then
+process the first column last of all. It is correct and it saves one boolean, which is a saving of no
+practical value - and the two-flag version is much easier to argue about. Knowing both, and saying
+which you would ship, is the strong answer.
+
+AND THE OTHER ONE: "what if the matrix contained a value you could use as a sentinel instead?" That is
+a real alternative if the value range is bounded - mark doomed cells with some impossible value such
+as None or a number outside the legal range, then convert at the end. It is O(1) space too, and it
+depends on a promise about the data that this problem does not give you. Naming that dependency is
+the point.
+
+THEN SOMETIMES: "the grid is enormous and stored by row" - then note that the two-set version needs
+only one pass to collect and one to apply, and streams row by row, while the marker version needs
+random access to row 0. Recognising when the "worse" solution suits the storage better is a senior
+answer.
+
+THE FAMILY: Set Matrix Zeroes, Game of Life (the same read-before-write conflict, solved by encoding
+two states in one cell), Rotate Image, Spiral Matrix, Zero Matrix, Sort Colors (in-place partitioning),
+Move Zeroes, First Missing Positive (uses the array itself as a notepad, the same trick). THE
+TRANSFERABLE IDEA: WHEN WRITING WOULD CORRUPT WHAT YOU STILL NEED TO READ, EITHER SEPARATE THE PASSES
+OR HIDE YOUR NOTES IN CELLS WHOSE FINAL VALUE IS ALREADY DECIDED.
+
+ONE-SENTENCE TAKEAWAY: capture two booleans about the first row and column, use those cells as the
+notepad while marking and applying the interior, and zero the first row and column LAST from the
+booleans - four phases whose order is the entire problem.""",
 ]
 
 for _e in ENTRIES:
@@ -127248,118 +128194,1120 @@ for _e in ENTRIES:
 _EX_P1AD = {}
 
 _EX_P1AD["Spiral Matrix"] = [
-    """The four-boundary method, traced.
-matrix = [[1,2,3],[4,5,6],[7,8,9]]. top=0, bottom=2, left=0, right=2.
-Top row left->right: 1,2,3. top becomes 1.
-Right column top->bottom: 6,9. right becomes 1.
-Bottom row right->left: 8,7. bottom becomes 1.
-Left column bottom->top: 4. left becomes 1.
-Now top=1, bottom=1, left=1, right=1 -> one more lap emits 5, and the
-boundaries cross.
-Result [1,2,3,6,9,8,7,4,5]. Four directions, four boundary updates, repeat.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The two guards that non-square matrices need.
-After the top row and right column, you must re-check `top <= bottom` before
-the bottom row, and `left <= right` before the left column - otherwise a single
-remaining row or column is emitted TWICE.
-matrix = [[1,2,3]] (one row): the top pass emits 1,2,3 and top becomes 1 >
-bottom = 0. Without the guard, the bottom pass would emit 3,2,1 again.
-This is the bug that makes Spiral Matrix harder than it looks, and it only
-appears on non-square inputs - so test a 1xN and an Nx1 deliberately.""",
+Read every element of a grid in SPIRAL ORDER - clockwise, starting at the top-left, winding inward -
+and return them as a flat list.
 
-    """Why boundaries beat a visited matrix.
-Marking cells visited works and costs O(m*n) extra space. The four boundaries
-carry the same information in four integers, because the unvisited region is
-always a RECTANGLE - that is the structural fact the spiral gives you.
-Direction-vector solutions (turn right when you hit an edge or a visited cell)
-are also correct and need the visited grid. The boundary version is O(1) extra
-and, once traced, easier to reason about.""",
+     1   2   3          the path: along the top row, down the right side,
+     4   5   6          back along the bottom, up the left side, then inward
+     7   8   9
 
-    """Edge cases.
-Empty matrix or empty first row -> [].
-Single element [[1]] -> the first pass emits it, boundaries cross.
-Single row [[1,2,3]] -> [1,2,3], needing the top<=bottom guard.
-Single column [[1],[2],[3]] -> [1,2,3], needing the left<=right guard.
-2x2 -> [1,2,4,3].
-A wide 2x5 and a tall 5x2 exercise both guards in different orders; together
-with the 1xN cases they cover every branch.""",
+     answer: [1, 2, 3, 6, 9, 8, 7, 4, 5]
 
-    """The sibling worth knowing: Spiral Matrix II.
-Given n, GENERATE an n x n matrix filled 1..n^2 in spiral order. Identical
-boundary walk - you write instead of read. Because it is always square, the two
-guards are unnecessary there, which is a neat illustration of why they exist in
-this one.
-Spiral Matrix III adds a starting position and an unbounded walk, which needs a
-different (step-length) pattern.""",
+Follow it with a finger: 1 2 3 (top row, left to right), then 6 9 (right column going down), then 8 7
+(bottom row, right to left), then 4 (left column going up), and then the only thing left is the
+middle, 5.
 
-    """Complexity and the family.
-O(m*n) time - each cell emitted once - and O(1) extra space beyond the output.
-The family: Spiral Matrix II and III, Rotate Image (layer-by-layer thinking),
-Diagonal Traverse, Set Matrix Zeroes, and Game of Life (in-place with encoded
-states).
-The transferable idea: matrix traversal problems are usually about maintaining
-a shrinking REGION rather than tracking individual visited cells - which turns
-O(m*n) space into O(1).""",
+A NON-SQUARE ONE, which is where the interesting cases live:
+
+     1   2   3   4      answer: [1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7]
+     5   6   7   8
+     9  10  11  12
+
+    top row 1 2 3 4, right column 8 12, bottom row 11 10 9, left column 5, and then the leftover
+    middle row 6 7 - read LEFT TO RIGHT, because the spiral has come back round to the top.
+
+AND THE DEGENERATE ONES THAT BREAK MOST FIRST ATTEMPTS:
+
+     [[1, 2, 3, 4]]        a single row      ->  [1, 2, 3, 4]
+     [[1], [2], [3]]       a single column   ->  [1, 2, 3]
+
+    A single row has NO right column, no bottom row and no left column to walk. If your code walks
+    them anyway it will emit elements twice: MEASURED, the version without the two mid-loop guards
+    returns [1, 2, 3, 4, 3, 2, 1] for that single row - wrong on 1,701 of the 2,194 single-row or
+    single-column cases.
+
+THERE IS NO CLEVER INSIGHT HERE, AND THAT IS THE POINT. This is a SIMULATION problem: the whole
+difficulty is bookkeeping - knowing exactly which range each of the four walks covers, and when to
+stop. Interviewers use it precisely because it tests whether you can keep a loop invariant straight
+under pressure rather than whether you know a trick.
+
+THE GRID IS NOT NECESSARILY SQUARE, and it may be empty. Both matter, and both are one line of
+handling.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF FOUR WALLS CLOSING IN. Keep four numbers - `top`, `bottom`, `left`, `right` - describing the
+rectangle that has not yet been read. Walk one EDGE of that rectangle at a time, and after each edge,
+MOVE THE CORRESPONDING WALL INWARD so the edge you just consumed is gone.
+
+    top = 0, bottom = 2, left = 0, right = 3       the whole grid
+
+     1   2   3   4        walk the TOP row:  1 2 3 4        then top = 1
+     5   6   7   8
+     9  10  11  12
+
+     -   -   -   -        walk the RIGHT column: 8 12       then right = 2
+     5   6   7  [8]
+     9  10  11 [12]
+
+     -   -   -   -        walk the BOTTOM row backwards: 11 10 9   then bottom = 1
+     5   6   7   -
+    [9][10][11]  -
+
+     -   -   -   -        walk the LEFT column upwards: 5   then left = 1
+    [5]  6   7   -
+     -   -   -   -
+
+     -   -   -   -        now top=1, bottom=1, left=1, right=2 - a single row remains
+     -   6   7   -        walk the TOP row again: 6 7       then top = 2
+     -   -   -   -
+
+     top (2) > bottom (1)  ->  stop.        result [1,2,3,4,8,12,11,10,9,5,6,7]
+
+THE LOOP CONDITION IS `top <= bottom AND left <= right` - the rectangle must have both a positive
+height and a positive width to contain anything. Using OR instead lets you walk edges of an empty
+rectangle: MEASURED wrong on 2,912 of 6,000.
+
+NOW THE DETAIL THAT MAKES THIS PROBLEM MEDIUM. After walking the top row and the right column, the
+rectangle may already be EMPTY - and the bottom row and left column walks would then re-read elements
+that have already been emitted.
+
+    single row [[1,2,3,4]]:   walk top row -> 1 2 3 4, then top becomes 1, which is now GREATER than
+                              bottom (0). The rectangle is empty. But the bottom-row walk, if
+                              unguarded, walks row `bottom` = 0 backwards and emits 3 2 1 again.
+                              MEASURED: the unguarded version returns [1,2,3,4,3,2,1].
+
+    single column [[1],[2],[3]]:  top row emits 1, right column emits 2 3, right becomes -1, and the
+                              unguarded bottom-row walk emits 2 again. Returns [1,2,3,2].
+
+SO THE BOTTOM AND LEFT WALKS EACH NEED A GUARD, checked at that moment - not at the top of the loop:
+
+    after moving `top` down:    walk the bottom row ONLY IF `top <= bottom`   (there is still a row)
+    after moving `right` in:    walk the left column ONLY IF `left <= right`  (there is still a column)
+
+    MEASURED: omitting both guards is wrong on 2,419 of 6,000 - 1,701 of the 2,194 single-row or
+    single-column cases, AND 718 of the 3,806 cases with at least two rows and two columns, because
+    the same collapse happens on the innermost layer of a grid with an odd number of rows or columns.
+
+WHY THE FIRST TWO WALKS NEED NO GUARD: the loop condition just tested that the rectangle is non-empty,
+so a top row and a right column definitely exist. It is only after those two edges are consumed that
+the rectangle can vanish mid-round.
+
+THE OTHER WAY TO SEE THE WHOLE THING - and it is worth knowing because it is easier to get right:
+WALK WITH A DIRECTION VECTOR, turning right whenever the next cell is off the grid or already visited.
+Measured wrong on 0 of 6,000, at the cost of an O(m*n) visited grid. The four-walls version is O(1)
+extra space, which is why it is the one usually written.""",
+
+    """3. EVERY TERM, DEFINED
+
+SPIRAL ORDER. Clockwise from the top-left, winding inward: top row rightwards, right column downwards,
+bottom row leftwards, left column upwards, then repeat on the smaller rectangle inside.
+
+SIMULATION PROBLEM. One where the answer is "do exactly what the problem describes, carefully". There
+is no asymptotic improvement to find - the whole exercise is bookkeeping.
+
+WALLS / BOUNDARIES. `top`, `bottom`, `left`, `right`: the four indices delimiting the rectangle not yet
+read. All four are INCLUSIVE, which is why the loop condition uses `<=` and the ranges use `+ 1`.
+
+INVARIANT. Everything outside the rectangle [top..bottom] x [left..right] has already been emitted, and
+everything inside has not. Every wall move preserves it, and stating it is how you convince yourself
+the guards are needed.
+
+LAYER / RING. One full circuit of the spiral - one iteration of the outer loop.
+
+`range(left, right + 1)`. Left to right INCLUSIVE - the `+ 1` is because Python's stop is exclusive.
+Writing `range(left, right)` drops the last column of every top row: measured wrong on 6,000 of 6,000.
+
+`range(right, left - 1, -1)`. Right to left inclusive, counting down. The `- 1` in the middle is the
+exclusive stop, so it must be `left - 1` to include `left` itself. Writing `range(right, left, -1)`
+skips the leftmost element: measured wrong on 3,806 of 6,000.
+
+GUARD / MID-LOOP CHECK. The `if top <= bottom:` and `if left <= right:` tests before the third and
+fourth walks. They exist because the rectangle can become empty HALFWAY THROUGH a round, and without
+them elements are emitted twice.
+
+DEGENERATE CASE. A rectangle with one row or one column, where some of the four edges coincide. The
+guards exist entirely for these - and note they also occur as the INNERMOST layer of a large grid with
+an odd dimension.
+
+m AND n. Rows and columns. This grid need not be square, so use both: `len(matrix)` and
+`len(matrix[0])`.
+
+O(m*n) TIME, O(1) EXTRA SPACE. Every element is emitted exactly once, and only four integers are kept
+(the output list is required, so it does not count as extra).""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random grids of 1 to 5 rows by 1 to 5 columns filled with
+distinct values (so any duplicate in the output is provably a re-read), each checked against an
+independent peel-the-first-row-and-rotate implementation.
+
+TRAP 1 - `range(left, right)` FOR THE TOP ROW. Python's stop is exclusive, so this drops the last
+column of every single top-row walk.
+
+    [[1,2,3],[4,5,6],[7,8,9]]  correct [1,2,3,6,9,8,7,4,5],  this gives [1,2,6,9,8,7,4] - the 3 and
+    the 5 never appear.
+    MEASURED: wrong on 6,000 of 6,000. It is the most trivially wrong version and the easiest to spot,
+    because the output is SHORTER than the grid.
+
+TRAP 2 - OMITTING THE TWO MID-LOOP GUARDS. After the top row and right column are consumed, the
+rectangle may be empty, and the bottom-row and left-column walks then re-read what was already
+emitted.
+
+    [[1,2,3,4]]     correct [1,2,3,4],  unguarded gives [1,2,3,4,3,2,1]
+    [[1],[2],[3]]   correct [1,2,3],    unguarded gives [1,2,3,2]
+    [[1,2,3,4],[5,6,7,8],[9,10,11,12]]  correct 12 values, unguarded emits 13 - a stray 6 at the end
+    MEASURED: wrong on 2,419 of 6,000 - 1,701 of the 2,194 single-row/single-column cases AND 718 of
+    the 3,806 cases with two or more rows AND columns. THAT SECOND NUMBER IS THE IMPORTANT ONE: this is
+    not only a degenerate-input bug, it fires on the innermost layer of ordinary grids too. Testing on
+    a 3x3 alone will not catch it; testing on a 3x4 will.
+
+TRAP 3 - `while top <= bottom OR left <= right`. The rectangle needs BOTH a row and a column to
+contain anything; OR keeps looping after one dimension has collapsed.
+    MEASURED: wrong on 2,912 of 6,000, including runs that never terminate. AND.
+
+TRAP 4 - `range(right, left, -1)` FOR THE BOTTOM ROW. The middle argument is the exclusive stop, so
+this stops one short and never emits the leftmost element of a bottom row.
+    MEASURED: wrong on 3,806 of 6,000 - every grid with at least two rows and two columns. When
+    counting down, the stop must be `left - 1`.
+
+TRAP 5 - MOVING A WALL AT THE WRONG TIME. Each wall must move IMMEDIATELY after its own edge is
+walked, because the next walk's range depends on the updated value. Moving all four at the end of the
+round is a different (and also workable) formulation - but then every range must be written with the
+offsets built in (`top + 1`, `right - 1`, and so on), and mixing the two styles is how off-by-ones
+appear. MEASURED: the consistently-written shrink-at-the-end version is wrong on 0 of 6,000; it is the
+HALF-converted version that fails.
+
+TRAP 6 - FORGETTING THE EMPTY-INPUT GUARD. `len(matrix[0])` raises IndexError on `[]`. One line:
+`if not matrix: return []`.
+
+TRAP 7 - ASSUMING A SQUARE GRID. Rows and columns are independent here; using one variable for both
+breaks every non-square input. Unlike Rotate Image, this problem explicitly allows m != n.
+
+TRAP 8 - USING A VISITED GRID AND CALLING IT O(1) SPACE. The direction-vector solution needs an
+m-by-n visited array, which is O(m*n) extra. It is correct - measured wrong on 0 of 6,000 - and it is
+NOT constant space. (You can mark visited cells inside the matrix with a sentinel value instead, which
+gets you back to O(1) but requires a value that cannot appear in the data.)
+
+WHAT IS NOT A TRAP, measured rather than assumed - two correct alternatives:
+    THE DIRECTION-VECTOR WALK: keep (dr, dc), step, and turn right whenever the next cell is out of
+    bounds or already visited. Wrong on 0 of 6,000. Easier to reason about, O(m*n) space.
+    SHRINKING ALL FOUR WALLS AT THE END OF EACH ROUND, with the offsets written into the ranges.
+    Wrong on 0 of 6,000. A legitimate alternative formulation.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THERE IS NO ASYMPTOTIC IMPROVEMENT TO FIND HERE - every element must be emitted, so O(m*n) time is the
+floor and every correct solution hits it. The choice is between formulations, and it is worth saying
+that out loud rather than hunting for a trick that does not exist.
+
+FORMULATION ONE - PEEL AND ROTATE. Take the first row, then rotate the rest anticlockwise so that the
+next edge of the spiral becomes the new first row, and repeat.
+
+    def spiral_peel(matrix):
+        out = []
+        m = [list(row) for row in matrix]
+        while m:
+            out += m.pop(0)
+            m = [list(row) for row in zip(*m)][::-1]   # rotate anticlockwise
+        return out
+
+Beautifully short, and it is what the ground truth for this entry uses. It COPIES the grid on every
+layer, so it costs O(m*n) extra space and does more work than necessary - but as an explanation of what
+a spiral IS, it is unbeatable.
+
+FORMULATION TWO - DIRECTION VECTOR AND A VISITED GRID. Keep a current direction, step forward, and turn
+right whenever the next cell is off the grid or already seen. Wrong on 0 of 6,000, O(m*n) extra space
+for the visited marks. This is the easiest version to get right, and worth mentioning as the one you
+would write if correctness mattered more than memory.
+
+FORMULATION THREE, WHICH IS THE ANSWER THEY WANT - FOUR WALLS, O(1) EXTRA SPACE. Track the rectangle
+that has not been read yet, walk one edge, move that wall inward, repeat.
+
+    THE INVARIANT: everything outside [top..bottom] x [left..right] has been emitted; everything inside
+    has not. All four bounds are INCLUSIVE.
+
+    THE ROUND: top row left-to-right, then `top += 1`
+               right column top-to-bottom, then `right -= 1`
+               bottom row right-to-left, then `bottom -= 1`
+               left column bottom-to-top, then `left += 1`
+
+    THE LOOP CONDITION: `while top <= bottom and left <= right` - both a height and a width are needed.
+    OR instead of AND is wrong on 2,912 of 6,000.
+
+AND HERE IS THE ONE PLACE WHERE CARE IS ACTUALLY REQUIRED, and it is the reason this problem is asked.
+THE RECTANGLE CAN BECOME EMPTY IN THE MIDDLE OF A ROUND. The loop condition was checked before the top
+row; after the top row and the right column have been consumed, there may be nothing left, and the
+remaining two walks would then re-read emitted elements.
+
+    single row [[1,2,3,4]]: after the top row, `top` (1) exceeds `bottom` (0). The bottom-row walk,
+    unguarded, walks row 0 backwards and re-emits 3 2 1. Measured output [1,2,3,4,3,2,1].
+
+SO GUARD THE LAST TWO WALKS, AT THE MOMENT THEY HAPPEN:
+
+    if top <= bottom:  walk the bottom row;  bottom -= 1
+    if left <= right:  walk the left column; left += 1
+
+MEASURED: omitting them is wrong on 2,419 of 6,000 - and critically, on 718 of the 3,806 grids that
+have two or more rows AND two or more columns, because the innermost layer of a 3x4 or 4x3 collapses in
+exactly the same way. It is not merely a single-row edge case.
+
+WHY THE FIRST TWO WALKS NEED NO GUARD: the loop condition guarantees at least one row and one column
+exist at the start of the round. Only after consuming two edges can the rectangle vanish.
+
+WHAT IT COSTS. O(m*n) TIME - each element emitted exactly once - and O(1) EXTRA SPACE beyond the
+required output: four integers.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. If the grid is empty, return an empty list.
+
+    2. Keep FOUR BOUNDARIES describing the rectangle you have not read yet: TOP at the first row,
+       BOTTOM at the last row, LEFT at the first column, RIGHT at the last column. All four are
+       INCLUSIVE - they name real rows and columns, not one-past-the-end.
+
+    3. Repeat the following while the rectangle still has BOTH a row and a column in it - that is,
+       while TOP has not passed BOTTOM and LEFT has not passed RIGHT.
+
+    4. WALK THE TOP ROW from LEFT to RIGHT inclusive, collecting values. Then move TOP DOWN by one -
+       that row is finished.
+
+    5. WALK THE RIGHT COLUMN from the new TOP down to BOTTOM inclusive. Then move RIGHT IN by one.
+
+    6. NOW CHECK AGAIN whether a row still remains - has TOP passed BOTTOM? If a row remains, WALK THE
+       BOTTOM ROW from RIGHT back to LEFT inclusive, and move BOTTOM UP by one. If no row remains, skip
+       this entirely.
+
+    7. AND CHECK WHETHER A COLUMN STILL REMAINS - has LEFT passed RIGHT? If so, skip; otherwise WALK
+       THE LEFT COLUMN from BOTTOM up to TOP inclusive, and move LEFT IN by one.
+
+    8. When the rectangle has no rows or no columns left, return what you collected.
+
+STEPS 6 AND 7 ARE THE ENTIRE POINT OF THE PROBLEM, and skipping their checks is the classic failure.
+The rectangle was known to be non-empty when the round began, but steps 4 and 5 consumed a row and a
+column, so by step 6 it may be empty - and walking the bottom row of an empty rectangle re-emits
+elements you have already collected. Measured wrong on 2,419 of 6,000, and not only on thin inputs:
+718 of the 3,806 grids with two or more rows AND columns also fail, because the innermost ring collapses
+the same way.
+
+STEP 3 NEEDS BOTH CONDITIONS, JOINED BY "AND". A rectangle with rows but no columns contains nothing.
+Using "or" keeps the loop alive after one dimension has collapsed - wrong on 2,912 of 6,000, sometimes
+forever.
+
+EVERY WALK IS INCLUSIVE AT BOTH ENDS. The commonest arithmetic slips: stopping the top row one column
+short (wrong on 6,000 of 6,000 - the output comes out too short) and stopping the backwards bottom-row
+walk one column short so the leftmost element is missed (wrong on 3,806 of 6,000).
+
+AND EACH BOUNDARY MOVES IMMEDIATELY AFTER ITS OWN WALK, because the next walk's range depends on the
+updated value - the right column starts at the row BELOW the top row you just consumed.
+
+WHY NO CLEVERNESS IS AVAILABLE: every element has to be emitted, so the cost is fixed. This question
+tests bookkeeping, and the way to pass it is to write down what the four boundaries MEAN before writing
+any loop.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine mowing a rectangular lawn, and you have decided to do it in a spiral: all the way along the
+top edge, down the right-hand side, back along the bottom, up the left-hand side, and then round again
+on the smaller rectangle of grass that is left in the middle.
+
+The way to keep track without getting confused is to think of FOUR FENCES marking the boundary of the
+UNMOWN grass: a fence at the top, one at the bottom, one on the left, one on the right. Everything
+outside those fences is already cut; everything inside is still standing.
+
+Now the routine. Mow the strip along the top fence, from the left fence to the right fence. That strip
+is done, so MOVE THE TOP FENCE DOWN one strip's width - the unmown rectangle just got shorter. Then mow
+down the strip beside the right fence, from the new top to the bottom, and move the right fence in.
+Then along the bottom, and move the bottom fence up. Then up the left, and move the left fence in. Then
+start again at the top of the smaller rectangle.
+
+When the fences cross - when the top fence is below the bottom one, or the left is right of the right -
+there is no grass left and you are finished.
+
+Now the mistake that everyone makes, and it is a real one rather than a pedantic one.
+
+Suppose the lawn is a narrow strip only ONE ROW of grass wide - a border along a path. You mow the top
+strip, which is the entire lawn, and move the top fence down. The fences have now crossed: there is no
+grass at all. But if your routine goes blindly on to "mow along the bottom fence", you will walk back
+along the strip you have just cut, and if you are counting how much grass you cut, you will count it
+twice.
+
+So the third and fourth strips of every circuit need a LOOK BEFORE YOU MOW: is there actually any grass
+left between the fences? You checked at the start of the circuit, but you have cut two strips since
+then, so the answer may have changed.
+
+And here is the part people miss: this is NOT only about pathologically thin lawns. A perfectly ordinary
+lawn ends up thin in the MIDDLE. Mow the rings off a lawn three rows by four and eventually you are left
+with a single row two strips long - and at that moment the exact same double-cut happens. Which is why
+checking on a small square lawn tells you nothing; you have to check on one that is longer than it is
+wide.
+
+Two smaller points of care. Each strip runs FENCE TO FENCE INCLUSIVE - the fences mark real grass, not
+the empty space beyond it, so stopping one short leaves a stripe uncut every single circuit. And when
+you walk a strip BACKWARDS along the bottom, it is easy to stop one short at the far end and leave the
+last tuft standing.
+
+And the condition for there being work left needs BOTH dimensions: grass requires height AND width. A
+lawn with height but no width is not a lawn.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Elements of an m x n matrix in spiral (clockwise) order.
+    def spiral_order(matrix):
+        if not matrix:
+            return []
+
+  THE EMPTY GUARD. Without it, `len(matrix[0])` on the next line raises IndexError.
+
+        top, bottom = 0, len(matrix) - 1
+        left, right = 0, len(matrix[0]) - 1
+        res = []
+
+  THE FOUR WALLS OF THE UNREAD RECTANGLE, ALL INCLUSIVE - `bottom` and `right` name real indices, which
+  is why every comparison below uses `<=` and every forward range needs `+ 1`. Rows and columns are
+  counted separately because the grid NEED NOT BE SQUARE.
+
+  THE INVARIANT: everything outside [top..bottom] x [left..right] has already been appended to `res`;
+  everything inside has not.
+
+        while top <= bottom and left <= right:
+
+  `and`, NOT `or`. A rectangle needs both a height and a width to contain anything; `or` keeps looping
+  after one dimension collapses - wrong on 2,912 of 6,000, sometimes without terminating.
+
+            for c in range(left, right + 1):          # top row, left -> right
+                res.append(matrix[top][c])
+            top += 1
+
+  WALK ONE, THE TOP ROW. `right + 1` because the stop is exclusive and `right` is a real column;
+  `range(left, right)` drops the last column of every top row - wrong on 6,000 of 6,000, and
+  recognisable because the output is SHORTER than the grid.
+
+  `top += 1` immediately: that row is consumed, and the next walk's range depends on the new value.
+
+            for r in range(top, bottom + 1):          # right column, top -> bottom
+                res.append(matrix[r][right])
+            right -= 1
+
+  WALK TWO, THE RIGHT COLUMN, starting at the ALREADY-UPDATED `top` so the corner is not emitted twice.
+  Then the right wall moves in.
+
+  NEITHER OF THESE TWO WALKS NEEDS A GUARD, because the loop condition was checked immediately above
+  them - a row and a column certainly exist. It is only from here on that the rectangle may be empty.
+
+            if top <= bottom:
+                for c in range(right, left - 1, -1):   # bottom row, right -> left
+                    res.append(matrix[bottom][c])
+                bottom -= 1
+
+  WALK THREE, GUARDED. THIS `if` IS THE POINT OF THE WHOLE PROBLEM: two edges have been consumed since
+  the loop condition was tested, so there may be no row left. Without the guard, a single-row grid
+  re-emits its own row backwards - [[1,2,3,4]] returns [1,2,3,4,3,2,1] - and so does the innermost ring
+  of an ordinary 3x4. Measured wrong on 2,419 of 6,000: 1,701 of the 2,194 thin grids AND 718 of the
+  3,806 grids with two or more rows and columns.
+
+  `range(right, left - 1, -1)`: counting down, the middle argument is the exclusive stop, so it must be
+  `left - 1` to include `left` itself. `range(right, left, -1)` misses the leftmost element - wrong on
+  3,806 of 6,000.
+
+            if left <= right:
+                for r in range(bottom, top - 1, -1):   # left column, bottom -> top
+                    res.append(matrix[r][left])
+                left += 1
+
+  WALK FOUR, GUARDED FOR THE SAME REASON in the other dimension - a single-COLUMN grid is the case that
+  needs this one. Note the range uses the ALREADY-UPDATED `bottom` and `top`, and again `top - 1` as
+  the exclusive stop.
+
+        return res
+
+  The rectangle is empty, so every element has been emitted exactly once.
+
+TWENTY LINES, FOUR WALKS, TWO GUARDS. O(m*n) TIME - the floor, since every element must be emitted -
+and O(1) EXTRA SPACE beyond the required output list. Every measured bug here is an inclusive/exclusive
+range slip or a missing guard; there is no algorithmic subtlety at all, which is exactly what the
+question is testing.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE 3x3. matrix = [[1,2,3],[4,5,6],[7,8,9]]. Expected [1,2,3,6,9,8,7,4,5].
+
+     round | walk                     | emits   | walls after
+    -------+--------------------------+---------+--------------------------------
+       1   | top row, cols 0..2       | 1 2 3   | top=1
+           | right col, rows 1..2     | 6 9     | right=1
+           | top(1) <= bottom(2): yes |         |
+           | bottom row, cols 1..0    | 8 7     | bottom=1
+           | left(0) <= right(1): yes |         |
+           | left col, rows 1..1      | 4       | left=1
+       2   | loop test: 1<=1 and 1<=1 | -       | -
+           | top row, cols 1..1       | 5       | top=2
+           | right col, rows 2..1     | (empty) | right=0
+           | top(2) <= bottom(1): NO  | skip    |
+           | left(1) <= right(0): NO  | skip    |
+           | loop test: 2 <= 1 fails  | stop    |
+
+    result [1,2,3,6,9,8,7,4,5]
+
+    ROUND 2 IS WHERE BOTH GUARDS EARN THEIR PLACE, on a perfectly ordinary square grid: after emitting
+    the lone middle element 5, both `if`s are false and are skipped. Without them, the bottom-row walk
+    would run `range(0, 0, -1)` (empty, harmless here) - which is why a 3x3 does NOT expose the bug.
+    Use a 3x4 to test.
+
+CASE TWO - THE 3x4, WHICH DOES EXPOSE IT.
+matrix = [[1,2,3,4],[5,6,7,8],[9,10,11,12]]. Expected [1,2,3,4,8,12,11,10,9,5,6,7].
+
+    round 1: top row 1 2 3 4 (top=1); right col 8 12 (right=2); bottom row 11 10 9 (bottom=1);
+             left col 5 (left=1).
+    round 2: loop test 1<=1 and 1<=2 - still work to do.
+             top row, columns 1..2  ->  6 7,  then top=2
+             right col, rows 2..1   ->  empty, then right=1
+             top(2) <= bottom(1)? NO   -> the bottom-row walk is SKIPPED
+             left(1) <= right(1)? YES  -> the left-column walk RUNS, but its range is
+                                          range(bottom=1, top-1=1, -1), which is EMPTY, so it emits
+                                          nothing; then left=2
+             loop test: 2 <= 1 fails -> stop
+    result: 12 values, correct.
+
+    WITHOUT THE FIRST GUARD, round 2 would walk row `bottom` = 1 from column 1 back to column 1 and
+    emit 6 a SECOND time - MEASURED output has 13 elements ending in a stray 6. This is the 718-of-3,806
+    case: an ordinary grid, no thin input in sight.
+
+CASE THREE - A SINGLE ROW. matrix = [[1,2,3,4]]. Expected [1,2,3,4].
+    top=0, bottom=0, left=0, right=3.
+    top row emits 1 2 3 4, then top=1.
+    right column: range(1, 1) is empty - nothing. right=2.
+    top(1) <= bottom(0)? NO -> bottom row SKIPPED.  left(0) <= right(2)? YES -> left column:
+        range(bottom=0, top-1=0, -1) is EMPTY - nothing emitted. left=1.
+    loop test: 1 <= 0 fails -> stop. [1,2,3,4]. CORRECT.
+    UNGUARDED: the bottom-row walk runs range(2, -1, -1) over row 0 and emits 3 2 1. Output
+    [1,2,3,4,3,2,1] - three elements too many.
+
+CASE FOUR - A SINGLE COLUMN. matrix = [[1],[2],[3]]. Expected [1,2,3].
+    top row emits 1 (top=1); right column emits 2 3 (right=-1);
+    top(1) <= bottom(2)? YES -> bottom row: range(-1, -1, -1) is empty, bottom=1;
+    left(0) <= right(-1)? NO -> left column SKIPPED.
+    loop test: left 0 <= right -1 fails -> stop. [1,2,3]. CORRECT.
+    UNGUARDED (on the left-column walk): it would emit 2 again, giving [1,2,3,2].
+
+CASE FIVE - THE 2x2. matrix = [[1,2],[3,4]]. top row 1 2 (top=1); right col 4 (right=0); guard passes,
+bottom row col 0 -> 3 (bottom=0); guard: left(0) <= right(0) yes, left col range(0, 0, -1) empty,
+left=1. Stop. [1,2,4,3]. Correct - and note two of the four walks emitted nothing, which is normal.
+
+CASE SIX - WHAT THE OFF-BY-ONE VERSIONS RETURN on the 3x3 [[1,2,3],[4,5,6],[7,8,9]]:
+    `range(left, right)` for the top row      [1,2,6,9,8,7,4]     - too SHORT, missing 3 and 5
+    `range(right, left, -1)` for the bottom   drops the leftmost element of every bottom row
+    Both are easy to spot by LENGTH: a correct spiral always emits exactly m*n values, so check that
+    first when debugging.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Every element is appended exactly once: O(m*n) TIME, which is the floor for this
+problem. O(1) EXTRA SPACE - four integers, with the output list not counted since it is the required
+answer.
+
+    peel the first row and rotate the rest    O(m*n) time, O(m*n) space (copies each layer)
+    direction vector + visited grid           O(m*n) time, O(m*n) space
+    four walls closing inward                 O(m*n) time, O(1) space
+
+There is no faster algorithm and it is worth saying so early: THIS IS A BOOKKEEPING PROBLEM, and the
+competition between solutions is about space and about how easy each is to get right.
+
+THE #1 MISTAKE: OMITTING THE TWO MID-LOOP GUARDS. Wrong on 2,419 of 6,000 - and the number that
+matters is that 718 of the 3,806 grids with two or more rows AND columns fail too. Everyone thinks of
+this as a single-row edge case; it is really about the INNERMOST LAYER of any grid with an odd
+dimension. The rectangle was non-empty when the round started, and two walks have consumed an edge
+each since then.
+
+THE #2: `range(right, left, -1)` FOR THE BOTTOM ROW. Wrong on 3,806 of 6,000. Counting down, the
+exclusive stop must be `left - 1`.
+
+THE #3: `while ... or ...` INSTEAD OF `and`. Wrong on 2,912 of 6,000, sometimes non-terminating.
+
+THE #4: `range(left, right)` FOR THE TOP ROW. Wrong on 6,000 of 6,000 - and instantly recognisable,
+because the output is shorter than m*n.
+
+TWO HONEST NEGATIVES, both measured at 0 wrong of 6,000: the direction-vector-with-visited-grid
+solution (correct, easier to reason about, O(m*n) space), and the formulation that shrinks all four
+walls at the END of each round with the offsets written into the ranges (correct, just a different
+bookkeeping style - the danger is half-converting between the two styles).
+
+WHAT TO SAY OUT LOUD, in this order: (1) every element must be emitted, so this is O(m*n) whatever I
+do - the question is bookkeeping and space; (2) I will track four INCLUSIVE walls around the unread
+rectangle, walk one edge at a time and move that wall inward; (3) the loop runs while there is both a
+row AND a column left; (4) the two later walks need their own guards, because the rectangle can become
+empty HALFWAY THROUGH a round - and this bites ordinary grids at their innermost layer, not just
+single-row inputs; (5) every range is inclusive at both ends, and the backwards one needs `left - 1`;
+(6) O(m*n) time, O(1) extra space. Point 4 stated BEFORE you are asked is what distinguishes a strong
+answer, because it is the only real content in the problem.
+
+A PRACTICAL DEBUGGING RULE WORTH SAYING: a correct spiral emits exactly m*n values. If the length is
+wrong, you have a range or guard bug; if the length is right but the order is wrong, you have a
+direction or wall-update bug. That splits the space of mistakes in half immediately.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "now GENERATE a spiral matrix" - Spiral Matrix II, filling an n x n
+grid with 1..n squared in spiral order. Identical bookkeeping, writing instead of reading. Then
+sometimes "spiral order for a linked list into a matrix" (Spiral Matrix IV), or "anticlockwise"
+(reverse the order of the four walks and the direction of each).
+
+AND THE OTHER ONE: "do it without the four walls." That is the direction-vector version: turn right
+whenever the next cell is out of bounds or already visited. If asked to keep it O(1) space, mark
+visited cells inside the matrix with a value that cannot occur in the data - and note that this
+depends on a promise about the input.
+
+THE FAMILY: Spiral Matrix I / II / III / IV, Diagonal Traverse, Rotate Image, Set Matrix Zeroes,
+Zigzag Conversion, Print Matrix in Diagonal Order, Game of Life. THE TRANSFERABLE IDEA: FOR ANY
+TRAVERSAL PROBLEM, WRITE DOWN WHAT YOUR BOUNDARY VARIABLES MEAN AND WHETHER THEY ARE INCLUSIVE BEFORE
+WRITING A SINGLE LOOP - AND RE-CHECK ANY CONDITION THAT COULD HAVE CHANGED SINCE YOU LAST TESTED IT.
+
+ONE-SENTENCE TAKEAWAY: keep four inclusive walls around the unread rectangle, walk top row, right
+column, bottom row and left column while moving each wall inward as it is consumed - and guard the last
+two walks, because the rectangle can empty halfway through a round.""",
 ]
 
 _EX_P1AD["String to Integer (atoi)"] = [
-    """The four phases, in strict order.
-1. Skip leading whitespace. 2. Read at most ONE optional sign. 3. Consume
-consecutive digits, stopping at the first non-digit. 4. Clamp to the 32-bit
-signed range.
-'   -42abc' -> skip spaces, sign = -1, digits '42', stop at 'a' -> -42.
-The order is the specification: a sign AFTER a digit ('4-2') is not a sign, and
-whitespace after the sign ('- 42') means the parse fails and returns 0.
-This is a specification-reading problem more than an algorithm problem, which is
-exactly why it is asked - it tests whether you clarify before coding.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The clamp, and why you must not overflow to detect overflow.
-The 32-bit signed range is [-2147483648, 2147483647]. Out-of-range input clamps
-to the nearest bound rather than wrapping or raising.
-In C++/Java you cannot build the number and then check, because the build
-itself overflows. The standard check is BEFORE each digit:
-if result > (INT_MAX - digit) / 10, it will overflow -> clamp and stop.
-Python has no overflow, so you can build then clamp - and saying that you know
-the difference is the point of raising it.""",
+Convert the beginning of a string into an integer, the way C's `atoi` function does. This is not an
+algorithm question at all - IT IS A SPECIFICATION QUESTION, and the whole difficulty is doing four
+things in exactly the right order and clamping the result.
 
-    """Edge cases, which are the whole problem.
-'' or all whitespace -> 0.
-'+' or '-' alone -> 0 (a sign with no digits is not a number).
-'  0000000123' -> 123; leading zeros are consumed normally.
-'words and 987' -> 0, because parsing stops at the FIRST non-digit and there
-were no digits before it.
-'-91283472332' -> clamps to -2147483648.
-'3.14' -> 3, stopping at the dot. '  +-12' -> 0, since only one sign is
-allowed.
-Working through these out loud before writing code is what the interviewer is
-grading.""",
+    "42"                 ->  42
+    "   -42"             ->  -42        leading spaces are skipped, the sign is read
+    "4193 with words"    ->  4193       digits stop at the first non-digit, and that is NOT an error
+    "words and 987"      ->  0          no digits at the START, so the answer is 0
+    "-91283472332"       ->  -2147483648    too small, so CLAMPED to the 32-bit minimum
+    "91283472332"        ->  2147483647     too large, so clamped to the 32-bit maximum
+    "+-12"               ->  0          after the '+' the next character is not a digit, so nothing
+    "  +0 123"           ->  0          the space after the 0 ends the number - "123" is never seen
+    " 4 2"               ->  4          same reason: the space ends it
+    "3.14"               ->  3          the '.' is not a digit, so it stops there
+    "0032"               ->  32         leading zeros are fine
 
-    """Why it is asked at all.
-There is no clever algorithm here - it is a single linear scan. What is being
-tested is whether you enumerate the edge cases FIRST, whether you ask
-clarifying questions (what about '+-'? what about overflow? leading zeros?),
-and whether your code structure mirrors the spec cleanly rather than becoming a
-tangle of nested ifs.
-That makes it a good proxy for real work, where most bugs are specification
-misreadings rather than algorithmic errors.""",
+THE FOUR STAGES, IN THIS ORDER, EACH HAPPENING AT MOST ONCE:
 
-    """The structure that keeps it clean.
-Four sequential blocks, each doing one phase and each with an early return
-where the parse can legitimately end. Resist merging them into one loop with
-mode flags - that is where the tangles come from, and it is much harder to
-argue correct.
-A regex (`^\\s*([+-]?\\d+)`) is a legitimate one-liner and worth mentioning,
-but write the manual version: the exercise is the case analysis, and the regex
-hides it.""",
+    1. skip LEADING whitespace (leading only - not trailing, not internal);
+    2. read an OPTIONAL SINGLE sign character, '+' or '-';
+    3. read DIGITS until a non-digit or the end of the string;
+    4. apply the sign and CLAMP into the 32-bit signed range, -2147483648 to 2147483647.
 
-    """Complexity and the family.
-O(n) time, O(1) space.
-The family is other spec-heavy parsing problems: Valid Number (notoriously
-fiddly - decimals, exponents, signs), Compare Version Numbers, Multiply
-Strings, Add Binary, Roman to Integer and Integer to Roman, and Basic
-Calculator.
-All share the same lesson: enumerate the cases before you code, and let the
-structure of the code follow the structure of the specification.""",
+WHY THE ORDER IS THE WHOLE PROBLEM. Whitespace comes before the sign, and the sign before the digits,
+and none of them may repeat. That is why "+-12" is 0: the '+' consumed the sign stage, so the '-' is
+just a non-digit and the digit stage ends immediately with nothing read. And it is why "- 42" is 0: a
+space after the sign is not allowed to restart stage 1.
+
+THERE IS NOTHING TO OPTIMISE. One pass over the string, O(n) time, O(1) space, and every correct
+solution looks the same. What is being tested is whether you will ASK ABOUT AND HANDLE THE EDGE CASES
+rather than write the happy path and stop. MEASURED: the version that simply forgets the clamp is wrong
+on 1,866 of 6,000 randomly generated inputs - and on ALL 1,866 of the ones whose answer needs clamping.
+
+THE HABIT TO BRING TO THIS QUESTION is to write the stage list on the whiteboard first and then read it
+back as test cases. Every measured failure in section 4 is a stage skipped, a stage repeated, or a
+stage in the wrong place.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+THINK OF IT AS A FOUR-STAGE PIPELINE THAT ONLY EVER MOVES FORWARD. You are standing at the front of the
+string with a pointer, and you pass through four stages in order. You never go back, and you never
+re-enter a stage you have left.
+
+    "   -42abc"
+
+     stage 1: SKIP SPACES        "   -42abc"        pointer moves to the '-'
+                                  ^^^
+     stage 2: ONE OPTIONAL SIGN     "-"             sign = negative, pointer moves on
+                                     ^
+     stage 3: DIGITS                  "42"          number = 42, stops at 'a'
+                                       ^^
+     stage 4: SIGN AND CLAMP                        -42, which fits, so -42
+
+READ THE FAILURE CASES AS PIPELINE FAILURES and they stop being arbitrary:
+
+    "+-12"      stage 2 consumes the '+'. Stage 3 looks at '-', which is not a digit, so it reads
+                NOTHING. No digits means 0.
+    "- 42"      stage 2 consumes the '-'. Stage 3 looks at ' ', not a digit. NOTHING. Answer 0 - the
+                space cannot send you back to stage 1.
+    " 4 2"      stage 1 skips the space, stage 3 reads '4', then hits a space and stops. Answer 4.
+    "words 987" stage 1 skips nothing, stage 2 finds no sign, stage 3 finds 'w' - not a digit. 0.
+    "3.14"      stage 3 reads '3' and stops at '.'. Answer 3. There is no decimal handling at all.
+
+    THE RULE THAT EXPLAINS ALL OF THEM: A NON-DIGIT IN STAGE 3 ENDS THE NUMBER. It is never an error,
+    and it never skips ahead to find digits later. Code that hunts for digits anywhere in the string
+    gets "words and 987" wrong (it answers 987) - measured wrong on 920 of 6,000.
+
+NOW THE CLAMPING, WHICH IS THE OTHER HALF OF THE PROBLEM. The answer must fit in a 32-bit signed
+integer, and that range is NOT symmetric:
+
+    minimum  -2147483648   =  -2^31
+    maximum   2147483647   =   2^31 - 1        <- one SMALLER in magnitude than the minimum
+
+    "91283472332"   -> too big  -> 2147483647
+    "-91283472332"  -> too small -> -2147483648
+
+THAT ASYMMETRY IS A TRAP WITH A MEASURED COST. If you clamp the MAGNITUDE to 2147483647 and only then
+apply the sign, the most negative value becomes -2147483647 instead of -2147483648.
+
+    "-2147483648"  correct -2147483648,  magnitude-first clamping gives -2147483647
+    MEASURED: wrong on 343 of 6,000 - and on ALL 343 of the cases whose true answer is the minimum.
+    THE FIX IS THE ORDER: APPLY THE SIGN FIRST, THEN CLAMP THE SIGNED VALUE against both bounds.
+
+AND WHY CLAMPING RATHER THAN OVERFLOWING. In Python integers are unbounded, so you can build the whole
+number and clamp at the end - which is the clean way. IN C OR JAVA YOU CANNOT: `num = num * 10 + digit`
+would overflow silently before you got a chance to look at it, so there you must check BEFORE each
+multiplication, asking "is num already greater than (max - digit) / 10". Saying that out loud is worth
+real credit, because it shows you know why Python made this easy.""",
+
+    """3. EVERY TERM, DEFINED
+
+atoi. "ASCII to integer" - the C standard library function this problem imitates. Its defining
+characteristic is that it is FORGIVING: it parses what it can and stops, rather than reporting an
+error.
+
+WHITESPACE. Here, the space character. `str.lstrip()` in Python strips other whitespace too (tabs,
+newlines), which is technically broader than the specification - though LeetCode's constraints allow
+only letters, digits, spaces, '+', '-' and '.', so the difference cannot arise. MEASURED: `lstrip`
+disagreed with a space-only implementation on 0 of 6,000 generated cases; on a hand-crafted "\\t42" it
+does differ, returning 42 where a space-only reading gives 0.
+
+LEADING vs TRAILING. Only LEADING whitespace is skipped. Trailing whitespace needs no handling at all,
+because stage 3 stops at the first non-digit anyway - which is why `strip()` instead of `lstrip()`
+happens to be harmless here: measured wrong on 0 of 6,000.
+
+SIGN. One optional '+' or '-', read at most ONCE, immediately after the whitespace. Two signs is not
+"double negative", it is the end of the parse: "+-12" is 0. Allowing several is wrong on 268 of 6,000.
+
+STAGE / STATE MACHINE. The four-phase structure. Formally this is a tiny state machine, and describing
+it that way is a good way to talk about it in an interview.
+
+32-BIT SIGNED RANGE. -2147483648 to 2147483647, that is -2^31 to 2^31 - 1. NOT SYMMETRIC: the negative
+end reaches one further from zero. This is because two's-complement representation uses one bit pattern
+for zero, leaving one more pattern on the negative side.
+
+CLAMP / SATURATE. Replace anything out of range with the nearest bound rather than wrapping or erroring.
+`max(-2**31, min(num, 2**31 - 1))` does both bounds in one expression.
+
+`s.isdigit()` / `ch.isdigit()`. True for '0'..'9'. Note that on a single character it is exactly what
+you want; on a whole string it would ask whether EVERY character is a digit.
+
+`num = num * 10 + int(ch)`. Building a number one digit at a time: shift what you have one decimal place
+left and add the new digit. The same line as in Decode String, and for the same reason.
+
+OVERFLOW-BEFORE-CHECK. The problem that exists in C, C++ and Java and not in Python: the intermediate
+`num * 10 + digit` can exceed the type's range before you can test it, so the check must come first.
+Python's arbitrary-precision integers remove the issue entirely - worth stating as a language
+difference rather than pretending it is not there.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 randomly generated inputs mixing leading spaces, one or two sign
+characters, digit runs of 1 to 12 digits, and trailing junk, each checked against an independently
+written four-stage parser.
+
+TRAP 1 - NO CLAMPING AT ALL. The single most common omission, because the happy path never needs it.
+
+    "91283472332"   correct 2147483647,   unclamped returns 91283472332
+    "-91283472332"  correct -2147483648,  unclamped returns -91283472332
+    MEASURED: wrong on 1,866 of 6,000 - and on 1,866 of the 1,866 inputs whose true answer requires
+    clamping. In Python nothing crashes and nothing warns; you simply return a number that could never
+    fit in the type the problem specified.
+
+TRAP 2 - CLAMPING THE MAGNITUDE, THEN APPLYING THE SIGN. The 32-bit range is asymmetric, so the
+negative bound is one further from zero than the positive one.
+
+    "-2147483648"   correct -2147483648,  this version gives -2147483647
+    MEASURED: wrong on 343 of 6,000 - and on ALL 343 whose true answer is the minimum. Rare, precise,
+    and exactly the kind of thing a test suite is built to catch. APPLY THE SIGN FIRST, THEN CLAMP
+    AGAINST BOTH BOUNDS.
+
+TRAP 3 - ALLOWING MORE THAN ONE SIGN CHARACTER. A loop over sign characters feels tidy and changes the
+specification.
+
+    "+-12"   correct 0,   this version gives -12
+    MEASURED: wrong on 268 of 6,000. The sign stage happens AT MOST ONCE; a second sign character is
+    simply a non-digit, which ends the number before it starts.
+
+TRAP 4 - USING THE LANGUAGE'S OWN PARSER, `int(s)` IN A TRY/EXCEPT. It is stricter than atoi in exactly
+the wrong way: it rejects any trailing junk instead of stopping at it.
+
+    "4193 with words"  correct 4193,  `int()` raises and the fallback returns 0
+    " 4 2"             correct 4,     `int()` returns 0
+    "3.14"             correct 3,     `int()` returns 0
+    MEASURED: wrong on 1,344 of 6,000. It gets the clamping and the simple cases right, which makes it
+    seductive; it fundamentally misunderstands "parse a PREFIX".
+
+TRAP 5 - IGNORING THE SIGN. Easy to do if you jump straight to the digit loop.
+    MEASURED: wrong on 1,703 of 6,000 - every input with a '-'.
+
+TRAP 6 - COLLECTING EVERY DIGIT ANYWHERE IN THE STRING, for instance with a filter or a regular
+expression that is not anchored.
+
+    "words and 987"  correct 0,   this version gives 987
+    " 4 2"           correct 4,   this version gives 42
+    "  +0 123"       correct 0,   this version gives 123
+    MEASURED: wrong on 920 of 6,000. The digits must be a PREFIX after the optional sign - contiguous,
+    and starting immediately.
+
+TRAP 7 - TREATING A NON-DIGIT AS AN ERROR. atoi does not error. "4193 with words" is 4193, not a
+failure and not 0. Stop, do not throw.
+
+TRAP 8 - FORGETTING THE EMPTY AND SPACE-ONLY INPUTS. "" and "   " must both give 0, and code that
+indexes `s[0]` after stripping will crash on them. One guard covers both.
+
+TRAP 9 - MISSING THE "NO DIGITS AT ALL" CASE. If stage 3 reads nothing, the answer is 0 regardless of
+what the sign was. A `num` initialised to 0 handles this automatically, which is one more reason to
+build the number rather than slice the string.
+
+TRAP 10 - IN A LANGUAGE WITH FIXED-WIDTH INTEGERS, CHECKING FOR OVERFLOW TOO LATE. `num * 10 + digit`
+overflows before you can inspect it, so the test must be "would this multiplication overflow" BEFORE
+performing it. Python's unbounded integers make the build-then-clamp approach safe; say that you know
+the difference.
+
+WHAT IS NOT A TRAP, measured rather than assumed: `s.strip()` INSTEAD OF `s.lstrip()`. Wrong on 0 of
+6,000, because trailing whitespace would have ended the digit run anyway. It is harmless here - and
+`lstrip` remains the more honest expression of the specification.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE TEMPTING NON-ANSWER IS THE BUILT-IN PARSER:
+
+    def my_atoi_builtin(s):
+        try:
+            return max(-2**31, min(int(s), 2**31 - 1))
+        except ValueError:
+            return 0
+
+It is worth writing down for ten seconds and then rejecting out loud, because the reason is the heart of
+the problem: `int()` demands that the WHOLE string be a number, while atoi parses a PREFIX and stops.
+So "4193 with words" raises and falls back to 0 instead of returning 4193.
+MEASURED: wrong on 1,344 of 6,000. (A regular expression anchored at the start - something like
+`^\\s*[+-]?\\d+` - IS a legitimate solution; an unanchored digit search is not, and is wrong on 920 of
+6,000.)
+
+THERE IS NO SLOW-BUT-CORRECT VERSION TO IMPROVE ON, because there is no algorithm here. One pass over
+the string is both the obvious and the optimal approach. So the "upgrade" in this problem is not about
+speed - IT IS ABOUT COMPLETENESS. What you are being marked on is whether you enumerate the stages and
+handle each one exactly once.
+
+WRITE THE FOUR STAGES DOWN FIRST, before any code:
+
+    1. SKIP LEADING WHITESPACE. Leading only. Trailing needs no handling because stage 3 stops at the
+       first non-digit anyway.
+    2. READ AT MOST ONE SIGN. '+' or '-', immediately after the whitespace. At most one - "+-12" is 0
+       because the second sign is just a non-digit that ends stage 3 before it reads anything.
+    3. READ DIGITS UNTIL A NON-DIGIT OR THE END. Build the number with `num = num * 10 + digit`.
+       Stopping is not an error: "4193 with words" is 4193, "3.14" is 3, " 4 2" is 4.
+    4. APPLY THE SIGN, THEN CLAMP to -2147483648 .. 2147483647.
+
+AND THE TWO ORDERINGS INSIDE THAT LIST THAT ARE ACTUALLY LOAD-BEARING:
+
+    WHITESPACE BEFORE SIGN, AND NEITHER MAY REPEAT. A space AFTER the sign does not restart stage 1, so
+    "- 42" is 0.
+
+    SIGN BEFORE CLAMP, IN STAGE 4. The 32-bit range is asymmetric - the minimum is -2^31 and the maximum
+    only 2^31 - 1 - so clamping the magnitude first and then negating produces -2147483647 for
+    "-2147483648". MEASURED wrong on 343 of 6,000, all of them exactly this case.
+
+WHY BUILDING THE NUMBER BEATS SLICING OUT A SUBSTRING: `num` starts at 0, so the "no digits at all"
+case answers 0 for free, with no separate branch and no empty-string conversion to worry about.
+
+WHY THE CLAMP CANNOT BE SKIPPED. It is the only part of this problem that is not just careful reading -
+it is the specification's way of asking whether you know that the answer has a TYPE. MEASURED: omitting
+it is wrong on 1,866 of 6,000, and Python will not warn you.
+
+AND THE ONE THING TO SAY THAT ELEVATES THE ANSWER: in C, C++ or Java you cannot build the number and
+clamp afterwards, because `num * 10 + digit` overflows the register before you can test it. There the
+check goes BEFORE the multiplication - if `num > (INT_MAX - digit) / 10` then saturate and stop.
+Python's unbounded integers are why the simple version is safe here.
+
+WHAT IT COSTS. O(n) TIME over the length of the prefix examined, O(1) SPACE.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. SKIP LEADING SPACES. Only the ones at the very front. If nothing is left after that, the answer
+       is 0.
+
+    2. READ AN OPTIONAL SIGN - one single '+' or '-' if it is the very next character. Remember whether
+       the result is negative, and move past it. AT MOST ONE: if the next character after a sign is
+       another sign, that is not a second sign, it is just a non-digit.
+
+    3. READ DIGITS, one at a time, for as long as the next character is a digit. Build the number as you
+       go: multiply what you have by ten and add the new digit. Start from zero, so that reading no
+       digits at all naturally gives zero.
+
+    4. STOP AT THE FIRST NON-DIGIT, AND DO NOT TREAT IT AS AN ERROR. Whatever follows is ignored
+       completely - you never look past it, and you never go hunting for digits further along.
+
+    5. APPLY THE SIGN to the number you built.
+
+    6. THEN CLAMP the signed result into the 32-bit range: if it is below minus two billion one hundred
+       and forty-seven million four hundred and eighty-three thousand six hundred and forty-eight, use
+       that value; if it is above two billion one hundred and forty-seven million four hundred and
+       eighty-three thousand six hundred and forty-seven, use that.
+
+STEP 6 IS THE MOST COMMONLY OMITTED STEP IN THE WHOLE PROBLEM - wrong on 1,866 of 6,000, and on every
+single input that needs it. Nothing crashes without it; you simply return a value that does not fit the
+specified type.
+
+AND THE ORDER OF STEPS 5 AND 6 MATTERS, because the range is NOT symmetric: the negative limit reaches
+one further from zero than the positive one. Clamp the size first and then attach the minus sign, and
+the most negative possible input comes back one too small in magnitude - wrong on 343 of 6,000, all of
+them precisely that value.
+
+STEP 2 MUST HAPPEN AT MOST ONCE. Reading signs in a loop turns "plus minus twelve" into minus twelve
+when the correct answer is zero - wrong on 268 of 6,000.
+
+STEP 4 IS WHERE PEOPLE OVER-ENGINEER. A non-digit is not an error and it is not a reason to keep
+looking. Code that gathers every digit anywhere in the string turns "words and 987" into 987 - wrong on
+920 of 6,000 - and code that hands the whole string to the language's own number parser fails on any
+trailing text at all, wrong on 1,344 of 6,000.
+
+AND STEP 1 SKIPS ONLY LEADING SPACES. Trailing spaces need no thought, because step 4 stops at them
+anyway. A space in the MIDDLE ends the number: "four space two" is four.
+
+THE WAY TO PASS THIS QUESTION is to write these six lines on the whiteboard before coding and then read
+them back as your test list: empty string, spaces only, a lone sign, two signs, a sign followed by a
+space, digits then letters, letters then digits, a decimal point, leading zeros, and both overflow
+directions.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a clerk at a counter whose only job is to read the number off the front of a handwritten form.
+The forms are messy: people leave gaps before writing, some put a plus or a minus in front, and quite a
+few carry on writing prose after the number. The clerk has one instruction: TAKE WHAT YOU CAN FROM THE
+FRONT, THEN STOP - NEVER COMPLAIN, NEVER GUESS.
+
+The clerk works through four stages, in order, and never goes back a stage.
+
+FIRST, IGNORE THE BLANK SPACE at the start. Just move along until something is written.
+
+SECOND, LOOK FOR A SINGLE PLUS OR MINUS. If it is there, note it and move on. One only. If the writer
+has put a plus and then a minus, the clerk does not sit and puzzle out what was meant - the minus is
+simply not a digit, and that ends the matter.
+
+THIRD, READ DIGITS. One after another, building the number up as they come.
+
+FOURTH, STOP AT THE FIRST THING THAT IS NOT A DIGIT - a letter, a full stop, a space, the end of the
+form. This is the instruction people find hardest to accept: THE CLERK DOES NOT COMPLAIN, AND THE CLERK
+DOES NOT LOOK FURTHER DOWN THE PAGE. A form reading "4193 with words" yields 4193. A form reading "words
+and 987" yields nothing at all, because there were no digits at the front - and the 987 further along is
+none of the clerk's business. A gap in the middle stops the reading too: "4 2" is four, not
+forty-two.
+
+Then the number is written into a box on a ledger, and the box has a fixed size. Anything too large for
+the box is recorded as the largest value the box can hold; anything too small as the smallest. Not
+wrapped around, not rejected - pinned to the nearest limit.
+
+And here is the small cruelty in the ledger's design: THE BOX IS NOT SYMMETRIC. It reaches one step
+further in the negative direction than in the positive. So the correct procedure is to work out the
+number COMPLETE WITH ITS SIGN and then check it against the two limits separately. A clerk who first
+decides "the biggest size I can record is such-and-such" and only afterwards remembers to write a minus
+in front will be one short at the very bottom of the range - and it will only ever go wrong for exactly
+one value, which is precisely the value an auditor will test.
+
+Two last details of the clerk's discipline. A gap after the plus or minus does not entitle the writer
+to start again: the clerk has left the ignore-blanks stage and will not go back, so "minus, gap, 42"
+yields nothing. And if the digits stage reads nothing at all, the answer is zero - the sign, if there
+was one, applies to nothing and changes nothing.
+
+The whole job is stages, in order, once each. There is no cleverness in it, and nobody fails it for
+lack of cleverness - they fail it for forgetting the box has a size.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Parse a leading integer from a string (atoi): spaces, sign, digits, clamp.
+    def my_atoi(s):
+        s = s.lstrip()               # 1) skip leading whitespace
+
+  STAGE 1. `lstrip` removes LEADING whitespace only - trailing whitespace needs no handling because the
+  digit loop stops at the first non-digit anyway (measured: using `strip()` instead is wrong on 0 of
+  6,000, i.e. harmless).
+
+  ONE PEDANTIC NOTE, honestly stated: `lstrip()` also strips tabs and newlines, while the specification
+  says spaces. On the generated cases that never mattered - 0 disagreements of 6,000 - and on a
+  hand-crafted "\\t42" it does differ. LeetCode's constraints exclude tabs, so it cannot arise there.
+
+        if not s:
+            return 0
+
+  Empty or all-whitespace input. This also protects the `s[0]` on the next line.
+
+        sign = 1
+        i = 0
+        if s[0] in "+-":             # 2) optional sign
+            sign = -1 if s[0] == '-' else 1
+            i = 1
+
+  STAGE 2, AND NOTE THAT IT IS AN `if`, NOT A `while`. AT MOST ONE SIGN. A loop here would read "+-12"
+  as -12 when the answer is 0 - wrong on 268 of 6,000. A second sign character is simply a non-digit,
+  and stage 3 will stop on it immediately having read nothing.
+
+  Omitting this block entirely - going straight to the digits - is wrong on 1,703 of 6,000, every input
+  containing a '-'.
+
+        num = 0
+        while i < len(s) and s[i].isdigit():   # 3) consume digits
+            num = num * 10 + int(s[i])
+            i += 1
+
+  STAGE 3. `num` starts at 0, WHICH IS WHY THE "NO DIGITS AT ALL" CASE NEEDS NO SPECIAL BRANCH: "words"
+  and "+" and "- 42" all leave `num` at 0.
+
+  `num * 10 + int(s[i])` builds the value one digit at a time - the same line as in Decode String, and
+  it handles arbitrarily many digits and leading zeros ("0032" is 32) with no extra thought.
+
+  THE LOOP CONDITION IS THE SPECIFICATION: it stops at the first non-digit and DOES NOT RAISE. "4193
+  with words" is 4193, "3.14" is 3, " 4 2" is 4. Code that instead searches the whole string for digits
+  turns "words and 987" into 987 - wrong on 920 of 6,000 - and handing the string to `int()` inside a
+  try/except fails on any trailing text, wrong on 1,344 of 6,000.
+
+  IN C OR JAVA THIS LINE IS WHERE OVERFLOW HAPPENS, before you can test the result; there the check must
+  precede the multiplication. Python's unbounded integers are why building first and clamping after is
+  safe here - say so.
+
+        num *= sign
+
+  STAGE 4, PART ONE: apply the sign BEFORE clamping.
+
+        return max(-2**31, min(num, 2**31 - 1))   # 4) clamp to 32-bit range
+
+  STAGE 4, PART TWO: pin the SIGNED value between the two bounds. `min` caps the top, `max` lifts the
+  bottom, and both are needed because THE RANGE IS ASYMMETRIC: -2^31 down, only 2^31 - 1 up.
+
+  THE ORDER OF THESE LAST TWO LINES IS THE SUBTLEST BUG IN THE PROBLEM. Clamping the MAGNITUDE and then
+  multiplying by the sign returns -2147483647 for "-2147483648" - wrong on 343 of 6,000, all of them
+  exactly that value.
+
+  OMITTING THE CLAMP ALTOGETHER is the most common failure of all: wrong on 1,866 of 6,000, and on every
+  input that needed it. Nothing crashes; you just return a number the specified type could not hold.
+
+TWELVE LINES, FOUR STAGES, O(n) TIME AND O(1) SPACE. Every measured bug in this entry is a stage
+skipped, a stage repeated, or the last two lines in the wrong order.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE ORDINARY ONE. s = "   -42".
+
+    stage 1: lstrip -> "-42"
+    stage 2: s[0] is '-', so sign = -1 and i = 1
+    stage 3: '4' -> num = 0*10+4 = 4;  '2' -> num = 4*10+2 = 42;  i reaches the end
+    stage 4: num = 42 * -1 = -42, which is inside the range -> -42
+
+CASE TWO - TRAILING JUNK, WHICH IS THE SPECIFICATION'S POINT. s = "4193 with words".
+
+    stage 1: nothing to strip.   stage 2: no sign.
+    stage 3: 4 -> 41 -> 419 -> 4193, then hits ' ' and STOPS. NOT an error.
+    stage 4: 4193.
+    THE `int(s)` VERSION raises ValueError and its fallback returns 0. Wrong on 1,344 of 6,000.
+
+CASE THREE - DIGITS THAT ARE NOT AT THE FRONT. s = "words and 987".
+    stage 3 looks at 'w', not a digit, and reads nothing. `num` is still 0. Answer 0.
+    THE COLLECT-ALL-DIGITS VERSION returns 987. Wrong on 920 of 6,000.
+
+CASE FOUR - TWO SIGNS. s = "+-12".
+    stage 2 consumes the '+' (sign stays +1, i = 1). stage 3 looks at '-', not a digit, reads nothing.
+    Answer 0.
+    THE LOOPING-SIGN VERSION reads both signs and returns -12. Wrong on 268 of 6,000.
+
+CASE FIVE - THE OVERFLOW PAIR, WHICH IS WHERE THE MARKS ARE.
+    s = "91283472332":   stage 3 builds 91,283,472,332. Stage 4: sign +1, and 91283472332 > 2147483647,
+                         so the answer is 2147483647.
+    s = "-91283472332":  stage 3 builds the same digits, sign -1 gives -91,283,472,332, which is below
+                         -2147483648, so the answer is -2147483648.
+    THE UNCLAMPED VERSION returns 91283472332 and -91283472332. Wrong on 1,866 of 6,000 - and on all
+    1,866 of the cases that needed clamping.
+
+CASE SIX - THE ASYMMETRY CASE, THE SUBTLEST BUG IN THE PROBLEM. s = "-2147483648".
+    stage 3 builds 2,147,483,648. Stage 4 applies the sign FIRST: -2,147,483,648, which is exactly the
+    minimum, so it is returned unchanged. CORRECT.
+    THE MAGNITUDE-CLAMPING VERSION caps 2,147,483,648 at 2,147,483,647 and only then negates, returning
+    -2147483647 - one too small in magnitude. Wrong on 343 of 6,000, and every one of those 343 is this
+    exact value. THE ASYMMETRY IS THE WHOLE REASON: the minimum is -2^31 but the maximum is only
+    2^31 - 1.
+
+CASE SEVEN - A SPACE IN THE MIDDLE. s = "  +0 123".
+    stage 1 strips to "+0 123". stage 2 takes the '+'. stage 3 reads '0' -> num = 0, then hits ' ' and
+    stops. Answer 0 - the "123" is never looked at.
+    THE COLLECT-ALL-DIGITS VERSION returns 123.
+
+CASE EIGHT - THE DEGENERATE INPUTS.
+    ""      -> lstrip gives "", the guard returns 0.
+    "   "   -> same, 0.
+    "+"     -> stage 2 consumes it, stage 3 reads nothing, num stays 0. Answer 0.
+    "- 42"  -> stage 2 consumes the '-', stage 3 sees ' ' and stops. Answer 0 - a space cannot restart
+               stage 1.
+    "3.14"  -> 3, stopping at the '.'.
+    "0032"  -> 32: 0, then 0, then 3, then 32. Leading zeros need no special handling.
+    "+1"    -> 1.
+
+THE TEST LIST WORTH MEMORISING, because it covers every measured bug in this entry: "42", "   -42",
+"4193 with words", "words and 987", "+-12", "- 42", " 4 2", "3.14", "0032", "", "   ", "+",
+"2147483648", "-2147483649", and "-2147483648".""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One pass over the prefix you examine: O(n) TIME, O(1) SPACE. There is nothing to
+optimise, and saying that early is correct rather than lazy - it redirects the conversation to what is
+actually being tested, which is completeness.
+
+    four explicit stages                     O(n) time, O(1) space - the answer
+    an anchored regular expression            also correct, if it is anchored at the START
+    int(s) in a try/except                    WRONG (1,344 of 6,000) - demands the WHOLE string
+    an unanchored digit search                WRONG (920 of 6,000) - finds digits anywhere
+
+THE #1 MISTAKE: FORGETTING TO CLAMP. Wrong on 1,866 of 6,000 - every input that needed it. In Python
+nothing crashes, so this is the mistake that survives all the way to review. THE ANSWER HAS A TYPE, and
+the clamp is how you honour it.
+
+THE #2, AND THE MOST INSTRUCTIVE: CLAMPING THE MAGNITUDE BEFORE APPLYING THE SIGN. Wrong on 343 of
+6,000, every one of them the value -2147483648, because the 32-bit range is asymmetric - down to -2^31
+but only up to 2^31 - 1. Apply the sign, then clamp the signed value.
+
+THE #3: IGNORING THE SIGN. Wrong on 1,703 of 6,000.
+
+THE #4: `int(s)` IN A TRY/EXCEPT. Wrong on 1,344 of 6,000 - it rejects trailing junk instead of stopping
+at it, which is the exact opposite of what atoi means.
+
+THE #5: COLLECTING EVERY DIGIT IN THE STRING. Wrong on 920 of 6,000 - "words and 987" becomes 987.
+
+THE #6: ALLOWING MORE THAN ONE SIGN. Wrong on 268 of 6,000 - "+-12" becomes -12 instead of 0.
+
+ONE HONEST NEGATIVE: `s.strip()` instead of `s.lstrip()` is wrong on 0 of 6,000, because trailing
+whitespace would have terminated the digit run anyway. Harmless - and `lstrip` still expresses the
+specification more truthfully.
+
+WHAT TO SAY OUT LOUD, in this order: (1) this is a specification problem, not an algorithm problem -
+O(n) one pass whatever I do; (2) FOUR STAGES, each at most once: leading whitespace, one optional sign,
+digits, then sign-and-clamp; (3) a non-digit ENDS the number and is not an error - "4193 with words" is
+4193, and I never search further along; (4) I build the number from 0, so "no digits" gives 0 for free;
+(5) I apply the sign BEFORE clamping, because the 32-bit range is asymmetric; (6) and in C or Java I
+could not build-then-clamp at all, because the multiplication would overflow before I could test it -
+there the check goes before the multiply. Points 5 and 6 are what separate a strong answer here, since
+everybody can write the loop.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "how would you do it in a language WITHOUT arbitrary-precision
+integers?" Check before you multiply - if `num > (INT_MAX - digit) / 10`, saturate to the appropriate
+bound and stop consuming digits. Being able to write that condition is the real content of the question
+in C or Java.
+
+AND THE OTHER ONE: "what would you change to accept decimals, or hexadecimal, or underscores?" Each is
+a new stage in the pipeline, and the interesting answer is about WHERE it goes - a decimal point becomes
+a fifth stage after the digits, a hexadecimal prefix a stage between the sign and the digits. Talking in
+terms of the stage list rather than patching the loop shows you have the right mental model.
+
+THEN SOMETIMES: "write it as a state machine", which is what it already is - four states with explicit
+transitions, and worth drawing if the interviewer likes formality.
+
+THE FAMILY: String to Integer (atoi), Valid Number (the same stage discipline, much longer), Reverse
+Integer (the same 32-bit clamping question in its purest form), Add Strings, Multiply Strings, Compare
+Version Numbers, Decode String, Basic Calculator. THE TRANSFERABLE IDEA: WHEN A PROBLEM IS A
+SPECIFICATION RATHER THAN AN ALGORITHM, ENUMERATE THE STAGES ON PAPER FIRST AND READ THEM BACK AS YOUR
+TEST CASES - AND REMEMBER THAT THE ANSWER HAS A TYPE, WITH BOUNDS THAT MAY NOT BE SYMMETRIC.
+
+ONE-SENTENCE TAKEAWAY: four stages, each at most once - skip leading spaces, read one optional sign,
+consume digits stopping at the first non-digit without erroring, then apply the sign and only THEN clamp
+into the asymmetric 32-bit range.""",
 ]
 
 _EX_P1AD["Valid Sudoku"] = [
