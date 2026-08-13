@@ -10924,75 +10924,567 @@ is what makes the technique reusable.""",
 ]
 
 _EXAMPLES["Product of Array Except Self"] = [
-    """The textbook case, both sweeps traced.
-nums = [1,2,3,4]  ->  [24,12,8,6]
-  Left sweep (running product `left` starts at 1, WRITE before multiplying):
-    i=0: out[0] = 1   then left = 1x1 = 1
-    i=1: out[1] = 1   then left = 1x2 = 2
-    i=2: out[2] = 2   then left = 2x3 = 6
-    i=3: out[3] = 6   then left = 6x4 = 24
-    out is now [1,1,2,6] - each slot holds the product of everything BEFORE it
-  Right sweep (`right` starts at 1, multiply into what is already there):
-    i=3: out[3] = 6 x 1 = 6     then right = 1x4 = 4
-    i=2: out[2] = 2 x 4 = 8     then right = 4x3 = 12
-    i=1: out[1] = 1 x 12 = 12   then right = 12x2 = 24
-    i=0: out[0] = 1 x 24 = 24   then right = 24x1 = 24
-Check out[1]: everything except nums[1] is 1 x 3 x 4 = 12. Correct.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """One zero - handled with no special case at all.
-nums = [0,2,3]  ->  [6,0,0]
-  Left sweep:  out = [1, 0, 0]   (left becomes 0 immediately and stays 0)
-  Right sweep: i=2: out[2] = 0x1 = 0, right = 3
-               i=1: out[1] = 0x3 = 0, right = 6
-               i=0: out[0] = 1x6 = 6, right = 0
-Only the position holding the zero gets a non-zero answer, which is exactly
-right: the product of everything except the zero is 2 x 3 = 6, and every other
-position has the zero inside its product. No if-statements were needed.""",
+For every position in a list of numbers, produce the product of ALL THE OTHER numbers - everything
+except the one at that position. And do it WITHOUT DIVISION.
 
-    """Two zeros - everything collapses, still no special case.
-nums = [0,0,5]  ->  [0,0,0]
-  Left sweep:  out = [1,0,0]
-  Right sweep: i=2: out[2] = 0x1 = 0, right = 5
-               i=1: out[1] = 0x5 = 0, right = 0
-               i=0: out[0] = 1x0 = 0, right = 0
-With two zeros, every position still has at least one zero in its product, so
-every answer is 0. A division-based solution would need explicit counting of
-zeros here (0 zeros, exactly 1 zero, 2+ zeros - three separate branches). The
-two-sweep method needs none.""",
+    nums = [1, 2, 3, 4]
+    out  = [24, 12, 8, 6]
 
-    """Why division is banned - the crash case.
-nums = [1,2,0,4]
-  The tempting shortcut: total = 1x2x0x4 = 0, then out[i] = total / nums[i].
-  For i=2 that is 0 / 0 -> ZeroDivisionError. The program dies.
-  And the correct answer at i=2 is 1 x 2 x 4 = 8, which is not even close to
-  anything the shortcut could produce.
-  Correct output for the whole array: [0, 0, 8, 0].
-Even ignoring the crash, division needs a zero-count branch to be correct.
-Banning it is what forces the cleaner prefix/suffix idea.""",
+    position 0:  2 * 3 * 4 = 24
+    position 1:  1 * 3 * 4 = 12
+    position 2:  1 * 2 * 4 = 8
+    position 3:  1 * 2 * 3 = 6
 
-    """Negatives, and the two-element case.
-nums = [-1,2,-3]  ->  [-6,3,-2]
-  Left sweep:  out = [1,-1,-2]        (left goes 1, -1, -2, 6)
-  Right sweep: i=2: out[2] = -2x1 = -2, right = -3
-               i=1: out[1] = -1x-3 = 3, right = -6
-               i=0: out[0] = 1x-6 = -6
-Check out[1]: -1 x -3 = 3. Correct - signs take care of themselves.
-nums = [3,7] -> [7,3]. The smallest meaningful input, and a good check that
-your sweeps write before they multiply.""",
+MORE CASES, to pin the rules down:
 
-    """The off-by-one that breaks it, shown side by side.
-nums = [1,2,3,4], looking only at the left sweep.
-  CORRECT (write, then multiply):
-    i=0: out[0] = left(1); left becomes 1
-    i=1: out[1] = left(1); left becomes 2
-    -> out[1] holds 1, the product of everything strictly before index 1.
-  WRONG (multiply, then write):
-    i=0: left becomes 1; out[0] = 1
-    i=1: left becomes 2; out[1] = 2
-    -> out[1] holds 2, which INCLUDES nums[1] itself. The final answer at that
-       position comes out as 24 instead of 12.
-The whole problem is 'except self', so the ordering of those two lines is the
-problem.""",
+    [3, 7]              ->  [7, 3]           each answer is just the other element
+    [5]                 ->  [1]              the product of NOTHING is 1, not 0 and not 5
+    [-1, 1, 0, -3, 3]   ->  [0, 0, 9, 0, 0]  see below - the zero is the interesting part
+    [2, 0]              ->  [0, 2]           position 0 excludes the 2 and includes the 0
+
+READ THE ZERO CASE CAREFULLY, because it is what the whole problem is really about. In
+[-1, 1, 0, -3, 3] every answer is 0 EXCEPT at the zero's own position, where the zero is excluded
+and the answer is (-1) * 1 * (-3) * 3 = 9. So a single zero does not make the output all zeros.
+
+THE OBVIOUS SOLUTION IS DIVISION: multiply everything together once, then divide by each element.
+That is two lines and it is FORBIDDEN by the problem - and the reason it is forbidden is exactly the
+zero case. Divide by zero and you crash; special-case the zero and you find yourself writing
+different code for no zeros, one zero and two zeros. MEASURED: a division solution with a
+zero-guard is wrong on 2,148 of 6,000 random inputs - and on 2,148 of the 2,148 inputs containing
+EXACTLY ONE ZERO, since that is the case where the answer is not zero and the division cannot
+produce it. On inputs with no zero at all it is wrong on 0 of 6,000.
+
+WHAT IS ALSO ASKED, usually as the follow-up: O(n) TIME AND O(1) EXTRA SPACE, where the output array
+does not count as extra. That constraint is what makes the elegant answer necessary rather than
+optional.
+
+THE IDEA THE PROBLEM TEACHES is PREFIX AND SUFFIX PRODUCTS: everything except me = everything to my
+LEFT times everything to my RIGHT. Two sweeps, one in each direction, and the division problem
+disappears.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+SPLIT THE PRODUCT AT THE POSITION ITSELF. Everything except me is exactly two things multiplied
+together: everything BEFORE me, and everything AFTER me.
+
+    nums = [1, 2, 3, 4]
+
+    i | everything to the LEFT | everything to the RIGHT | answer
+    --+------------------------+-------------------------+--------
+    0 | (nothing) = 1          | 2*3*4 = 24              | 1 * 24 = 24
+    1 | 1                      | 3*4 = 12                | 1 * 12 = 12
+    2 | 1*2 = 2                | 4                       | 2 * 4  = 8
+    3 | 1*2*3 = 6              | (nothing) = 1           | 6 * 1  = 6
+
+    NOTE THE EMPTY PRODUCTS AT THE ENDS ARE 1, NOT 0. The product of no numbers is 1, because 1 is
+    what multiplication starts from. Getting this wrong wrecks the first and last answers.
+
+NOW NOTICE THAT THE LEFT COLUMN IS CHEAP TO BUILD. Each entry is the previous entry times the
+previous element - 1, then 1, then 1*2, then 1*2*3. So ONE SWEEP LEFT TO RIGHT, carrying a running
+product, fills that whole column:
+
+    running = 1
+    i=0:  write 1        then running *= 1  ->  1
+    i=1:  write 1        then running *= 2  ->  2
+    i=2:  write 2        then running *= 3  ->  6
+    i=3:  write 6        then running *= 4  ->  24
+
+    out = [1, 1, 2, 6]        the LEFT products
+
+THE ORDER IN THOSE TWO STEPS IS THE ENTIRE PROBLEM: WRITE FIRST, THEN UPDATE. Writing before folding
+in `nums[i]` is what EXCLUDES the element itself. Fold it in first and every slot contains its own
+value - MEASURED wrong on 4,585 of 6,000, and on [1,2,3,4] it returns [24,24,24,24].
+
+THE RIGHT COLUMN IS THE SAME SWEEP, BACKWARDS, and it can be MULTIPLIED INTO the same array rather
+than stored separately:
+
+    running = 1
+    i=3:  out[3] = 6 * 1  = 6     then running *= 4  ->  4
+    i=2:  out[2] = 2 * 4  = 8     then running *= 3  ->  12
+    i=1:  out[1] = 1 * 12 = 12    then running *= 2  ->  24
+    i=0:  out[0] = 1 * 24 = 24    then running *= 1  ->  24
+
+    out = [24, 12, 8, 6]        DONE
+
+THE PICTURE THAT MAKES IT STICK - two sweeps closing in on each position from both sides:
+
+        nums:      1     2     3     4
+        left:  1 ->  1 ->  2 ->  6           (sweep rightwards, writing before folding in)
+        right:    24 <- 12 <-  4 <- 1        (sweep leftwards, same rule)
+        answer:    24    12     8     6      (left times right, position by position)
+
+WHY NO EXTRA ARRAY IS NEEDED. The left sweep leaves its answers IN the output array; the right sweep
+multiplies into them. The only extra storage is a single running number, so the space is O(1) beyond
+the output.
+
+WHY NO DIVISION IS NEEDED - AND WHY THAT IS A FEATURE, NOT A HANDICAP. Zeros stop being a special
+case altogether. A zero in the input simply makes the running product 0 from that point on, and the
+zero's OWN slot never has it folded in, so it correctly receives the product of the others. No
+branch, no counting of zeros, no special code - measured wrong on 0 of 6,000 including the 1,329
+inputs with two or more zeros.""",
+
+    """3. EVERY TERM, DEFINED
+
+PRODUCT. The result of multiplying numbers together.
+
+EMPTY PRODUCT. The product of NO numbers, which is 1. This is not a quirk - 1 is multiplication's
+identity, so it is the only value that behaves correctly as a starting point. It is why the running
+products start at 1 and why the answer for a single-element list is [1].
+
+PREFIX PRODUCT. The product of everything BEFORE a position (not including it). For [1,2,3,4] the
+prefix products are 1, 1, 2, 6.
+
+SUFFIX PRODUCT. The product of everything AFTER a position. Here: 24, 12, 4, 1.
+
+THE KEY IDENTITY: answer[i] = prefix[i] * suffix[i]. Every solution to this problem is a way of
+computing those two families cheaply.
+
+RUNNING PRODUCT / ACCUMULATOR. A single variable carrying the product of everything seen so far,
+updated as you sweep. It replaces a whole array of prefix products.
+
+IN-PLACE / O(1) EXTRA SPACE. Using only a fixed number of variables beyond the required output. The
+output array does not count as extra space - the problem says so explicitly, and it is worth
+confirming with the interviewer rather than assuming.
+
+TWO-PASS ALGORITHM. One sweep left to right and one right to left. Two passes over n elements is
+still O(n) - a constant factor, not a complexity change.
+
+IDENTITY ELEMENT. The value that changes nothing under an operation: 1 for multiplication, 0 for
+addition. Both running products start at 1 for that reason.
+
+`out[i] = left` vs `out[i] *= right`. The FIRST sweep ASSIGNS (nothing is there yet); the SECOND
+sweep MULTIPLIES INTO what the first left behind. Making the second one an assignment throws the
+left product away - measured wrong on 5,070 of 6,000.
+
+`range(n - 1, -1, -1)`. Counting down from n-1 to 0. The `-1` in the middle is the STOP value, which
+is exclusive, so it must be -1 rather than 0 or index 0 is skipped.
+
+DIVISION-FREE. The stated constraint. The reason is zeros: dividing requires knowing there are no
+zeros, and handling zeros by counting them turns a clean two-sweep solution into three special
+cases.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random lists (1 to 7 values from -4..5, with about a fifth of
+the entries being 0, so zeros are common), each checked against a brute force that multiplies all
+the other elements for each position.
+
+TRAP 1 - UPDATING THE RUNNING PRODUCT BEFORE WRITING IT. In the left sweep, `left *= nums[i]` must
+come AFTER `out[i] = left`. Writing after updating includes the element itself, which is the one
+thing the problem excludes.
+
+    nums = [1, 2, 3, 4].  Correct [24, 12, 8, 6].  This version returns [24, 24, 24, 24].
+    nums = [3, 7].        Correct [7, 3].          This version returns [21, 21].
+    MEASURED: wrong on 4,585 of 6,000. The same slip in the RIGHT sweep - folding `nums[i]` in before
+    applying it - is also wrong on 4,585 of 6,000. WRITE FIRST, THEN UPDATE. Both sweeps.
+
+TRAP 2 - `out[i] = right` INSTEAD OF `out[i] *= right` IN THE SECOND SWEEP. The second sweep must
+COMBINE with what the first sweep left in the array; assigning discards the left product and the
+output ends up being just the suffix products.
+
+    MEASURED: wrong on 5,070 of 6,000. The first sweep assigns because the slot is empty; the second
+    multiplies because it is not.
+
+TRAP 3 - RUNNING THE SECOND SWEEP IN THE SAME DIRECTION. If both loops go left to right, the second
+one multiplies in a LEFT product again rather than a right product.
+
+    MEASURED: wrong on 5,133 of 6,000. The two sweeps must go opposite ways - that is where the two
+    halves of the product come from.
+
+TRAP 4 - USING DIVISION, WHICH IS BOTH FORBIDDEN AND WRONG. Multiply everything, then divide by each
+element.
+
+    On inputs with NO zero it is genuinely correct - measured wrong on 0 of 6,000 such inputs. That
+    is why it feels safe.
+    WITH A SINGLE ZERO it cannot work: the total product is 0, so every division gives 0, but the
+    zero's own position should hold the product of all the others.
+        nums = [-1, 1, 0, -3, 3].  Correct [0, 0, 9, 0, 0].  Division gives [0, 0, 0, 0, 0].
+    MEASURED: a division version with an `if v != 0 else 0` guard is wrong on 2,148 of 6,000 - and on
+    2,148 of the 2,148 inputs containing exactly one zero. Without a guard it raises
+    ZeroDivisionError instead: wrong or crashing on 3,477 of 6,000, which is every input containing
+    a zero.
+    THE PROPER DIVISION SOLUTION needs three cases - no zeros (divide), exactly one zero (that
+    position gets the product of the rest, everything else 0), two or more zeros (all zeros) - which
+    is more code and more thought than the two-sweep answer. THAT is why the problem bans division.
+
+TRAP 5 - STARTING A RUNNING PRODUCT AT 0. Then everything is 0 forever. The product of nothing is 1.
+The same reasoning as for any accumulator: start at the value that changes nothing.
+
+TRAP 6 - BUILDING TWO ARRAYS AND CALLING IT O(1) SPACE. Explicit prefix and suffix arrays are
+CORRECT - measured wrong on 0 of 6,000 - and they use O(n) extra space. Perfectly fine as a first
+answer, but do not claim O(1) for it; the whole point of multiplying into the output array is to
+reach O(1).
+
+TRAP 7 - GETTING THE BACKWARD RANGE WRONG. `range(n - 1, 0, -1)` stops before index 0, silently
+leaving the first answer as its left product only. The stop value is exclusive, so it must be -1.
+
+TRAP 8 - THE SINGLE-ELEMENT LIST. [5] must return [1] - the product of nothing. The two-sweep code
+gets this right with no special case: the left sweep writes 1, and the right sweep multiplies by 1.
+If your code returns [5] or [0] here, one of the traps above is present.
+
+WHAT IS NOT A TRAP, measured rather than assumed: THE EXPLICIT PREFIX-AND-SUFFIX-ARRAY VERSION is
+wrong on 0 of 6,000. It is the clearest way to explain the idea, and the one-array version is a
+space optimisation on top of it - present them in that order.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - FOR EACH POSITION, MULTIPLY ALL THE OTHERS:
+
+    def product_except_self_naive(nums):
+        out = []
+        for i in range(len(nums)):
+            p = 1
+            for j in range(len(nums)):
+                if j != i:
+                    p *= nums[j]
+            out.append(p)
+        return out
+
+IT IS CORRECT - the ground truth for every measurement in this entry - and it says the definition
+out loud, including the crucial detail that `p` starts at 1 so that a single-element list returns
+[1]. Cost: O(n squared).
+
+THE TEMPTING SHORTCUT IS DIVISION, and it is worth discussing precisely because of why it fails.
+Multiply everything once, then divide by each element: O(n), two lines. Then the interviewer says
+"what if an element is zero?" - and the answer is that the whole approach falls apart. A zero makes
+the total product 0, so every division yields 0, but the ZERO'S OWN position should hold the product
+of all the others. Measured: wrong on 2,148 of 6,000, which is exactly the set of inputs with one
+zero. Making it work needs three separate cases. The problem bans division to push you somewhere
+better.
+
+THE UPGRADE STARTS BY SPLITTING THE PRODUCT AT THE POSITION:
+
+    everything except me  =  (everything to my LEFT)  *  (everything to my RIGHT)
+
+That identity is the whole solution, and it removes division because nothing is ever undone - you
+never have to "take out" a factor, you simply never put it in.
+
+STEP ONE - THE PREFIX PRODUCTS, IN ONE SWEEP. Carry a running product; at each position, WRITE THE
+RUNNING VALUE FIRST and only THEN fold in the current element. Writing first is what excludes the
+element itself:
+
+    left = 1;  for i in 0..n-1:  out[i] = left;  left *= nums[i]
+
+Inverting those two statements is the single most common bug in this problem - measured wrong on
+4,585 of 6,000, and it makes every slot include its own value.
+
+STEP TWO - THE SUFFIX PRODUCTS, IN ONE BACKWARD SWEEP, MULTIPLIED IN:
+
+    right = 1;  for i in n-1..0:  out[i] *= right;  right *= nums[i]
+
+Note the asymmetry: the first sweep ASSIGNS (nothing is in the slot yet), the second MULTIPLIES
+(the left product is already there). Assigning in the second sweep discards the left half - wrong on
+5,070 of 6,000.
+
+WHY IT IS CORRECT, ARGUED PROPERLY. After the first sweep, out[i] holds the product of nums[0..i-1]
+- true at i = 0 because that range is empty and the empty product is 1, and preserved at each step
+because `left` is updated exactly once per position, after being written. After the second sweep,
+out[i] has additionally been multiplied by the product of nums[i+1..n-1], by the same argument
+mirrored. So out[i] is the product of everything except nums[i]. That is an induction, and it is
+what to say rather than "and then it works".
+
+WHY THE ZEROS NEED NO ATTENTION AT ALL. A zero simply makes the running product 0 from that point
+onwards - and because each slot is written BEFORE its own element is folded in, the zero is never
+included in its own answer. One zero, two zeros, all zeros: the same six lines. Measured wrong on 0
+of 6,000, including 1,329 inputs with two or more zeros. THAT is the sentence that shows why the
+division-free version is not a hoop to jump through but a better algorithm.
+
+WHAT IT COSTS. Two passes: O(n) time. Beyond the output array, ONE variable: O(1) extra space. Doing
+it with explicit prefix and suffix arrays is equally correct and uses O(n) extra - present that
+first if it is clearer, then optimise it away in front of the interviewer.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Make an output list the same length as the input. It will be used twice - first to hold the
+       left-hand products, then to be completed with the right-hand ones.
+
+    2. FIRST SWEEP, LEFT TO RIGHT. Carry a running product that starts at ONE, because the product of
+       no numbers at all is one. At each position, in this exact order:
+           - WRITE the running product into this position's slot;
+           - THEN multiply this position's own value into the running product.
+       Because you write before folding your own value in, each slot ends up holding the product of
+       everything strictly BEFORE it.
+
+    3. SECOND SWEEP, RIGHT TO LEFT. Carry a second running product, also starting at one. At each
+       position, in this exact order:
+           - MULTIPLY the running product INTO this position's slot, which already contains the
+             left-hand product;
+           - THEN multiply this position's own value into the running product.
+
+    4. The output is finished. Each slot now holds "everything to the left" times "everything to the
+       right", which is everything except itself.
+
+THE ORDER WITHIN STEPS 2 AND 3 IS THE ENTIRE PROBLEM. Write first, then update. Update first and
+every slot includes its own value - measured wrong on 4,585 of 6,000 for the left sweep and the same
+for the right.
+
+THE DIFFERENCE BETWEEN STEPS 2 AND 3 IS DELIBERATE: the first sweep ASSIGNS into an empty slot, and
+the second MULTIPLIES INTO a slot that already holds half the answer. Assigning in the second sweep
+throws the left half away - wrong on 5,070 of 6,000.
+
+AND THE DIRECTIONS MUST BE OPPOSITE. Running both sweeps left to right computes a left product
+twice - wrong on 5,133 of 6,000.
+
+WHY BOTH RUNNING PRODUCTS START AT ONE. At the very first position there is nothing to the left of
+it, and the product of nothing is one - not zero. Start at zero and every answer is zero.
+
+WHY YOU NEVER NEED TO THINK ABOUT ZEROS, which is the pleasant surprise: a zero in the input just
+makes the running product zero from there on, and because a slot is written before its own value is
+folded in, a zero is never included in its own answer. One zero, several zeros, all zeros - the same
+code, with no branches.
+
+WHY THIS IS BETTER THAN THE DIVISION SHORTCUT, said plainly: dividing requires UNDOING a
+multiplication, and you cannot undo multiplying by zero. The two-sweep method never puts the element
+in, so it never has to take it out.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Picture a row of people standing shoulder to shoulder, each holding a card with a number on it.
+Every person wants to know THE PRODUCT OF EVERYBODY ELSE'S CARD - everyone in the row except
+themselves.
+
+The obvious method: each person in turn walks the whole row, multiplying up everyone else's number.
+Correct, and everybody walks past everybody, so the effort grows with the square of the row.
+
+The tempting shortcut: someone multiplies all the cards together once, announces the grand total,
+and then each person divides the total by their own card. Quick - and it collapses the moment one
+person is holding a ZERO. Now the grand total is zero, and dividing zero by anything is still zero,
+so everyone gets told zero. But the person holding the zero should NOT get zero: exclude them and
+the rest might multiply to nine. And nobody can divide by their zero anyway. To rescue the shortcut
+you would have to count how many zeros are in the row and handle none, one, and several as three
+separate situations.
+
+Here is the method that needs no dividing and no counting. It is done by two runners.
+
+THE FIRST RUNNER JOGS DOWN THE ROW FROM LEFT TO RIGHT, carrying a running total that starts at ONE -
+because a total that has multiplied nothing in yet must be one, not zero; one is the number that
+changes nothing. At each person the runner does two things IN THIS ORDER: first WHISPERS the current
+total to them - and they write it on their sheet - and only THEN multiplies that person's card into
+the total before moving on.
+
+That order is everything. Because the whisper happens BEFORE the person's own card is folded in,
+what each person hears is the product of everyone to their LEFT and nobody else. The first person
+hears "one", which is right: there is nobody to their left.
+
+THE SECOND RUNNER DOES EXACTLY THE SAME THING FROM THE OTHER END, right to left, with a fresh total
+starting at one. But this runner does not whisper a replacement - they whisper something to
+MULTIPLY BY what is already on the sheet. Each person multiplies the two numbers together, and what
+they now hold is "everybody to my left" times "everybody to my right", which is everybody but me.
+
+Notice what neither runner ever does: neither of them ever divides, and neither of them ever has to
+remove a number they already folded in. THE ZERO PROBLEM SIMPLY DOES NOT ARISE. If somebody holds a
+zero, the runner's total goes to zero from that point on and everyone downstream hears zero - which
+is correct, because their answer includes that zero. And the person holding the zero heard their
+number BEFORE it was folded in, so their own answer is untouched by it, which is also correct. One
+zero, five zeros, all zeros: two runners, no branches, no counting.
+
+Two ways to spoil it. If a runner folds a person's card into the total BEFORE whispering, every
+person's answer includes their own card, which is precisely the thing they were told to exclude. And
+if the second runner tells people to REPLACE what is on their sheet rather than multiply into it,
+the first runner's work is wiped out and everyone ends up with only half the answer.
+
+And the runners must go in opposite directions. Two runners going the same way just tell everyone the
+left-hand answer twice.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # output[i] = product of all nums except nums[i], with no division.
+    def product_except_self(nums):
+        n = len(nums)
+        out = [1] * n
+
+  THE OUTPUT, and it doubles as the working space - which is how the algorithm reaches O(1) EXTRA
+  space. The initial 1s are a sensible default (the empty product), though every slot is written
+  before it is read.
+
+        left = 1                       # product of everything to the LEFT of i
+
+  THE RUNNING PREFIX PRODUCT, starting at 1 because the product of NO numbers is 1 - the identity for
+  multiplication. Starting at 0 makes every answer 0.
+
+        for i in range(n):
+            out[i] = left
+
+  WRITE FIRST. At this moment `left` is the product of nums[0..i-1] - everything strictly before i -
+  because nums[i] has not been folded in yet. THIS LINE, COMING BEFORE THE NEXT ONE, IS WHAT
+  EXCLUDES THE ELEMENT ITSELF.
+
+            left *= nums[i]
+
+  UPDATE SECOND. Now `left` is ready for position i+1.
+
+  SWAPPING THESE TWO LINES is the most common bug in this problem: every slot then includes its own
+  value, and [1,2,3,4] returns [24,24,24,24] instead of [24,12,8,6] - measured wrong on 4,585 of
+  6,000.
+
+        right = 1                      # product of everything to the RIGHT of i
+
+  The second running product, also starting at 1 for the same reason: there is nothing to the right of
+  the last position.
+
+        for i in range(n - 1, -1, -1):
+
+  BACKWARDS. `range(n-1, -1, -1)` visits n-1 down to 0 - the stop value is exclusive, so it must be
+  -1, not 0, or the first position is skipped. THE DIRECTION IS THE POINT: running this loop forwards
+  computes a left product a second time and is wrong on 5,133 of 6,000.
+
+            out[i] *= right
+
+  MULTIPLY IN, DO NOT ASSIGN. The slot already holds the left product from the first sweep; this line
+  completes it. `out[i] = right` discards the left half - wrong on 5,070 of 6,000. Note the
+  asymmetry with the first sweep, and note that it is not arbitrary: the first sweep writes into an
+  empty slot, the second combines with a half-built answer.
+
+            right *= nums[i]
+
+  Same write-then-update discipline, mirrored. Folding `nums[i]` in before the line above would
+  include the element in its own answer - wrong on 4,585 of 6,000.
+
+        return out
+
+  Each slot is now (everything left) * (everything right) = everything except itself.
+
+TEN LINES, TWO PASSES, NO DIVISION. O(n) TIME and O(1) EXTRA SPACE beyond the output. And note what
+is NOT in this function: no zero handling, no counting, no branches at all - a zero simply zeroes
+the running product downstream while never entering its own slot. Measured wrong on 0 of 6,000,
+including 1,329 inputs with two or more zeros.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [1, 2, 3, 4]. Expected [24, 12, 8, 6].
+
+FIRST SWEEP, left to right, writing before updating:
+
+     i | left before | out[i] = left | left after (*= nums[i]) | out so far
+    ---+-------------+---------------+-------------------------+---------------
+     0 |      1      |      1        |  1 * 1 = 1              | [1, 1, 1, 1]
+     1 |      1      |      1        |  1 * 2 = 2              | [1, 1, 1, 1]
+     2 |      2      |      2        |  2 * 3 = 6              | [1, 1, 2, 1]
+     3 |      6      |      6        |  6 * 4 = 24             | [1, 1, 2, 6]
+
+    out now holds the LEFT products: [1, 1, 2, 6]
+
+SECOND SWEEP, right to left, multiplying in:
+
+     i | right before | out[i] *= right      | right after | out so far
+    ---+--------------+----------------------+-------------+-----------------
+     3 |      1       | 6  * 1  = 6          |  1 * 4 = 4  | [1, 1, 2, 6]
+     2 |      4       | 2  * 4  = 8          |  4 * 3 = 12 | [1, 1, 8, 6]
+     1 |     12       | 1  * 12 = 12         | 12 * 2 = 24 | [1, 12, 8, 6]
+     0 |     24       | 1  * 24 = 24         | 24 * 1 = 24 | [24, 12, 8, 6]
+
+    return [24, 12, 8, 6]
+
+TWO THINGS TO NOTICE. The ends took care of themselves: out[0] got a left product of 1 (nothing to
+its left) and out[3] got a right product of 1. And at every row, the value written was the running
+product BEFORE the element was folded in - which is the whole mechanism.
+
+CASE TWO - EXACTLY ONE ZERO, WHICH IS WHY DIVISION IS BANNED. nums = [-1, 1, 0, -3, 3].
+Expected [0, 0, 9, 0, 0].
+
+    left sweep:  out = [1, -1, -1, 0, 0]
+        (at i=3 the running product has just absorbed the 0, so everything from here on is 0)
+    right sweep: right goes 1, 3, -9, 0, 0
+        out[4] = 0 * 1  = 0
+        out[3] = 0 * 3  = 0
+        out[2] = -1 * -9 = 9        <- THE ZERO'S OWN SLOT, and its left product (-1) and right
+                                       product (-9) were both computed without the zero
+        out[1] = -1 * 0 = 0
+        out[0] = 1 * 0  = 0
+    return [0, 0, 9, 0, 0].  NO SPECIAL CASE ANYWHERE.
+
+    THE DIVISION VERSION returns [0, 0, 0, 0, 0] - the total product is 0, so every division gives 0
+    and the 9 is unreachable. Measured wrong on all 2,148 one-zero inputs.
+
+CASE THREE - TWO ZEROS. nums = [2, 0, 0, 3]. Every answer includes at least one zero, so the correct
+output is [0, 0, 0, 0], and that is what the two sweeps produce. The division approach needs a third
+special case to know this; the sweeps do not notice.
+
+CASE FOUR - TWO ELEMENTS. nums = [3, 7]. Expected [7, 3].
+    left sweep:  out[0] = 1, left = 3;  out[1] = 3, left = 21   ->  out = [1, 3]
+    right sweep: out[1] = 3 * 1 = 3, right = 7;  out[0] = 1 * 7 = 7  ->  out = [7, 3]
+    THE WRITE-AFTER-UPDATE BUG returns [21, 21] here - the smallest example of it.
+
+CASE FIVE - ONE ELEMENT. nums = [5]. Expected [1], the product of nothing.
+    left sweep: out[0] = 1.  right sweep: out[0] = 1 * 1 = 1.  Returns [1] with no special case.
+    A version that returns [5] or [0] here has the write/update order or the starting value wrong.
+
+CASE SIX - A NEGATIVE ELEMENT. nums = [2, -3]. Expected [-3, 2]. Signs need no attention at all;
+they are carried by the multiplications.
+
+WHAT THE WRONG VERSIONS RETURN on case one, [1,2,3,4]:
+    update-before-write (left sweep)   [24, 24, 24, 24]
+    update-before-apply (right sweep)  [24, 24, 24, 24]
+    `out[i] = right` in the second     [24, 12,  4,  1]   - the suffix products alone
+    both sweeps left to right          [1, 1, 4, 36]      - left products multiplied in twice""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Two sweeps over the list: O(n) TIME. Beyond the output array, exactly two extra
+numbers: O(1) EXTRA SPACE. No division, no branches, no special cases.
+
+    for each i, multiply the others        O(n squared) time, O(1) extra
+    total product then divide              O(n) time - but forbidden, AND broken by zeros
+    explicit prefix and suffix arrays      O(n) time, O(n) extra space
+    two sweeps into the output array       O(n) time, O(1) extra space
+
+CONFIRM WHAT COUNTS AS SPACE. The problem states the output array does not count towards the extra
+space, which is what makes O(1) achievable. Saying that out loud shows you read the constraints.
+
+THE #1 MISTAKE: UPDATING THE RUNNING PRODUCT BEFORE WRITING IT. Wrong on 4,585 of 6,000 in the left
+sweep, and the same in the right. Every slot then includes its own value, and [1,2,3,4] returns
+[24,24,24,24]. WRITE FIRST, THEN UPDATE - in both sweeps.
+
+THE #2: `out[i] = right` INSTEAD OF `out[i] *= right`. Wrong on 5,070 of 6,000. The second sweep must
+COMBINE with the first sweep's work, not replace it.
+
+THE #3: BOTH SWEEPS IN THE SAME DIRECTION. Wrong on 5,133 of 6,000. The two halves of the product
+come from the two directions.
+
+THE #4: DIVISION. Wrong on 2,148 of 6,000 with a zero-guard - and on 2,148 of 2,148 inputs with
+exactly one zero, which is the case where the answer is NOT all zeros. Without the guard it crashes
+on every input containing a zero: 3,477 of 6,000. On inputs with no zeros it is wrong on 0 of 6,000,
+which is exactly why it feels safe and is not.
+
+ONE HONEST NEGATIVE: the explicit prefix-and-suffix-array version is wrong on 0 of 6,000. It is a
+correct solution with O(n) extra space - a fine first answer, as long as you then reduce it.
+
+WHAT TO SAY OUT LOUD, in this order: (1) brute force is O(n squared); (2) division is O(n) but banned,
+and the reason is zeros - with one zero the total product is 0 and the zero's own slot should hold the
+product of the others, so division cannot recover it; (3) instead, everything-except-me = everything
+LEFT times everything RIGHT; (4) build the left products in one sweep, WRITING BEFORE FOLDING IN THE
+CURRENT ELEMENT, which is what excludes it; (5) multiply the right products in with a backward sweep
+over the same array, so no second array is needed; (6) O(n) time, O(1) extra space, and no zero
+handling at all - which is a genuine advantage of this method, not just compliance with the rules.
+Point 5 is the space optimisation and point 2 is the insight; leaving out point 2 makes the whole
+thing look like a rule you obeyed rather than a design you chose.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "what if division WERE allowed?" Answer with the three cases -
+no zeros: divide; exactly one zero: that position gets the product of the rest and everything else
+gets 0; two or more zeros: all zeros. Then note it needs one pass plus a zero count, and it is more
+code than the two-sweep version, which is why the constraint is a kindness.
+
+AND THE OTHER ONE: "what about integer overflow?" The product of many values overflows a fixed-width
+integer, and note that the two-sweep method has exactly the same exposure as any other - all the
+intermediate products are as large. In Python integers are unbounded; in Java or C you would discuss
+64-bit types or working modulo something.
+
+THEN SOMETIMES: "do it for SUMS instead of products" - the same two sweeps with + and a starting
+value of 0, and the interesting remark is that sums CAN be done by subtraction (total minus mine)
+because subtraction always undoes addition, whereas division cannot undo multiplication by zero.
+That contrast is the sharpest way to show you understood the point.
+
+THE FAMILY: Product of Array Except Self, Running Sum of 1d Array, Range Sum Query - Immutable
+(prefix sums), Subarray Sum Equals K, Find Pivot Index, Trapping Rain Water (prefix max and suffix
+max, exactly this shape), Candy, Maximum Product Subarray, Shifting Letters. THE TRANSFERABLE IDEA:
+WHEN EVERY ANSWER DEPENDS ON "EVERYTHING BEFORE ME" AND "EVERYTHING AFTER ME", TWO SWEEPS IN
+OPPOSITE DIRECTIONS COMPUTE BOTH FAMILIES IN LINEAR TIME - AND YOU NEVER NEED AN INVERSE OPERATION.
+
+ONE-SENTENCE TAKEAWAY: sweep left to right writing the running product BEFORE folding in each
+element, then sweep right to left multiplying a second running product in - two passes, no division,
+and zeros need no special handling because a value is never included in its own answer.""",
 ]
 
 _EXAMPLES["Subarray Sum Equals K"] = [
@@ -125001,178 +125493,1693 @@ for _e in ENTRIES:
 _EX_P1AC = {}
 
 _EX_P1AC["Pow(x, n) — fast exponentiation"] = [
-    """Why squaring beats multiplying n times.
-x^10 = x^8 * x^2. Rather than ten multiplications, square repeatedly - x, x^2,
-x^4, x^8 - and multiply in the powers whose bit is set in n. 10 in binary is
-1010, so bits 1 and 3 are set -> x^2 * x^8.
-Four squarings and two multiplications instead of ten multiplications. For
-n = 10^9 that is about 30 operations instead of a billion, which is the whole
-point.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The bit walk, traced for x^10.
-n = 10 (1010). result = 1.
-Bit 0 (0): skip. Square x -> x^2.
-Bit 1 (1): result = x^2. Square -> x^4.
-Bit 2 (0): skip. Square -> x^8.
-Bit 3 (1): result = x^2 * x^8 = x^10. Square -> x^16 (unused).
-n reaches 0, return x^10.
-The invariant: at each step `x` holds x^(2^k) for the current bit position, and
-`result` accumulates the powers whose bits were set.""",
+Compute x raised to the power n - that is, x multiplied by itself n times - WITHOUT using the
+built-in power operator, and without doing n multiplications.
 
-    """Negative exponents, and the trap in them.
-x^-n = 1 / x^n, so flip x to 1/x and negate n. The code does this up front,
-which keeps the main loop dealing only with positive exponents.
-The trap in C++/Java: n = INT_MIN cannot be negated (its positive counterpart
-overflows the type). The fix is to convert to a long first. Python's
-arbitrary-precision integers make this a non-issue - which is exactly why it is
-worth raising, since the interviewer may be thinking in another language.""",
+    x = 2.0,   n = 10    ->  1024.0
+    x = 2.0,   n = 0     ->  1.0        anything to the power 0 is 1
+    x = 2.0,   n = -2    ->  0.25       a NEGATIVE power means one over the positive power
+    x = 0.5,   n = 3     ->  0.125      the base may be a fraction
+    x = -2.0,  n = 3     ->  -8.0       the base may be negative
 
-    """Edge cases.
-n = 0 -> 1 for any x, including x = 0 by convention (0^0 = 1 here).
-x = 1 or -1 with a huge n -> the loop still runs ~30 times; no shortcut needed,
-though noticing that |x| = 1 could short-circuit is a fair remark.
-x = 0 with negative n -> division by zero; the problem usually excludes it.
-Floating-point drift: repeated squaring accumulates error, so x^-2147483648
-will not be bit-exact. That is inherent to floats, not a bug in the algorithm.""",
+THE THREE FACTS THAT DEFINE THE PROBLEM, and each one is a separate place to get it wrong:
 
-    """The recursive form, and why the iterative one is preferred.
-    def pow(x, n):
-        if n == 0: return 1
-        half = pow(x, n // 2)
-        return half * half if n % 2 == 0 else half * half * x
-Clean and obviously correct, but O(log n) stack frames. The iterative bit walk
-is O(1) space and just as short. Present either; if you write the recursion,
-mention the stack cost so the choice looks deliberate.""",
+    x^0 = 1        always, for any base. This is the base case and the starting value.
+    x^-n = 1 / x^n     a negative exponent means take the reciprocal - NOT negate the answer.
+                       2^-2 is 0.25, not -4.
+    x^(a+b) = x^a * x^b    powers ADD when you multiply. This is the fact the fast method exploits.
 
-    """Complexity and the family.
-O(log n) time, O(1) space iteratively.
-The family: Super Pow (exponent given as a digit array, with modular
-arithmetic), Modular Exponentiation (the same loop with `% m` after each
-multiply - the backbone of RSA and Diffie-Hellman), Matrix Exponentiation
-(replace multiply with matrix multiply and you get the nth Fibonacci in
-O(log n)), and Count Primes / number-theory problems generally.
-The transferable idea: any associative operation can be exponentiated this way,
-not just multiplication.""",
+THE OBVIOUS SOLUTION WORKS. Multiply x into a running total n times. It is correct - it is the
+ground truth for every measurement in this entry - and it costs n multiplications. For n = 1,000,000
+that is a million multiplications, and LeetCode's n goes up to about two billion.
+
+THE POINT OF THE PROBLEM is to do it in about log n multiplications instead - roughly 30 for a
+billion. MEASURED: computing x^1,000,000 by repeated multiplication takes 1,000,000 multiplications;
+the fast method takes 20 squarings plus 7 multiplications - 27 operations in total.
+
+WHY THIS IS WORTH LEARNING BEYOND THE INTERVIEW. The same trick, done with remainders, is
+MODULAR EXPONENTIATION - the operation at the heart of RSA encryption and Diffie-Hellman key
+exchange, where the exponent is a 2048-bit number and n multiplications is not merely slow but
+physically impossible. It also gives you matrix exponentiation, which computes the millionth
+Fibonacci number in about 20 matrix multiplications. This is one of the most reused algorithms
+there is.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START FROM THE ONE FACT: MULTIPLYING POWERS ADDS THE EXPONENTS. x^4 * x^4 = x^8. So if you have
+x^4 in your hand, you can get x^8 with ONE multiplication rather than four.
+
+SO BUILD UP BY SQUARING. Each squaring doubles the exponent:
+
+    x^1  ->  square  ->  x^2  ->  square  ->  x^4  ->  square  ->  x^8  ->  square  ->  x^16 ...
+
+    four multiplications have got you to x^16, not x^4. Ten get you to x^1024.
+
+BUT THE EXPONENT YOU WANT IS NOT USUALLY A POWER OF TWO. Say you want x^13. You have x^1, x^2, x^4,
+x^8 available from the squaring chain, and:
+
+    13 = 8 + 4 + 1        so       x^13 = x^8 * x^4 * x^1
+
+CHECK IT: x^8 * x^4 = x^12, times x^1 = x^13. Three multiplications after building the chain.
+
+NOW THE BEAUTIFUL PART: THE EXPONENT'S BINARY DIGITS TELL YOU EXACTLY WHICH ONES TO USE.
+
+    13 in binary is 1101
+                    ^^^^
+                    8 4 2 1      the 8 bit is on, the 4 bit is on, the 2 bit is OFF, the 1 bit is on
+    so                           x^13 = x^8 * x^4 * x^1        - exactly the terms whose bit is 1
+
+THAT IS NOT A COINCIDENCE, IT IS WHAT BINARY MEANS. Writing 13 as 1101 IS writing 13 as 8 + 4 + 1.
+Every whole number has exactly one such decomposition, so this always works and never needs a
+choice.
+
+WATCH THE WHOLE THING RUN FOR x^13. Keep two things: the running ANSWER, and the CURRENT POWER of x
+which doubles every round. Read the bits of n from the RIGHT:
+
+    round | n (binary) | lowest bit | current power | action                  | answer
+    ------+------------+------------+---------------+-------------------------+------------
+      -   |  13 = 1101 |            |  x^1          | start                   | 1
+      1   |  13 = 1101 |     1      |  x^1          | bit set: fold x^1 in    | x^1
+      2   |   6 =  110 |     0      |  x^2          | bit clear: skip         | x^1
+      3   |   3 =   11 |     1      |  x^4          | bit set: fold x^4 in    | x^5
+      4   |   1 =    1 |     1      |  x^8          | bit set: fold x^8 in    | x^13
+      -   |   0        |            |               | n is 0, stop            | x^13
+
+    Each round does two things: maybe fold the current power into the answer, then SQUARE the
+    current power and DROP the bit you just used (n >>= 1, which is n // 2).
+
+THE TWO MOVES IN THE RIGHT ORDER: LOOK AT THE BIT, THEN SQUARE. If you square first, the power you
+fold in is one doubling ahead of the bit you tested, and everything comes out as roughly x^(2n) -
+MEASURED wrong on 5,753 of 6,000. On x^10 it returns 1,048,576, which is 2^20 rather than 2^10.
+
+WHY THE ANSWER STARTS AT 1. One is the value that changes nothing under multiplication - its
+IDENTITY - so an answer that has folded in nothing yet must be 1. It is also literally x^0.
+Starting at 0 makes every answer 0 forever: measured wrong on 6,000 of 6,000.
+
+AND THE NEGATIVE EXPONENT. x^-n means 1/x^n, so flip the BASE at the start (x becomes 1/x) and make
+the exponent positive. Flipping the SIGN of the answer instead is a different operation entirely -
+2^-2 is 0.25, not -4 - measured wrong on all 2,863 negative-exponent cases.""",
+
+    """3. EVERY TERM, DEFINED
+
+EXPONENT / POWER. In x^n, x is the BASE and n is the EXPONENT. x^n means x multiplied by itself n
+times.
+
+x^0 = 1. By definition, for any base. It is also the natural starting value for a running product.
+
+NEGATIVE EXPONENT. x^-n = 1 / x^n. A negative exponent means RECIPROCAL, never "negative answer".
+
+EXPONENTIATION BY SQUARING / BINARY EXPONENTIATION / FAST POWER. All names for this algorithm:
+build x^1, x^2, x^4, x^8 ... by repeated squaring and multiply in the ones the exponent's binary
+digits select.
+
+BINARY REPRESENTATION. Writing a number as a sum of distinct powers of two. 13 = 1101 = 8 + 4 + 1.
+Each number has exactly one such representation, which is why the method is unambiguous.
+
+BIT. One binary digit. The LOWEST (or least significant) bit is the 1s place, and it tells you
+whether the number is odd.
+
+`n & 1`. BITWISE AND with 1 - it keeps only the lowest bit, so it is 1 when n is odd and 0 when n is
+even. `n % 2` says the same thing.
+
+`n >>= 1`. RIGHT SHIFT by one - throw away the lowest bit, which is integer division by two. After
+using a bit you shift it away so the next round looks at the next one. FORGETTING THIS LINE IS AN
+INFINITE LOOP: measured to hang on 5,754 of 6,000.
+
+`result *= x`. Shorthand for `result = result * x` - fold the current power into the running answer.
+
+IDENTITY ELEMENT. The value that leaves things unchanged under an operation: 0 for addition, 1 for
+MULTIPLICATION. The running product starts at 1 for exactly that reason - and starting at 0 gives 0
+forever, measured on 6,000 of 6,000.
+
+O(log n). The cost: the exponent halves every round, so the number of rounds is the number of BITS
+in n - about 30 for a billion, about 20 for a million. Note carefully that the log is over the
+VALUE of n, not over any array length.
+
+MODULAR EXPONENTIATION. The same algorithm with `% m` applied after every multiplication, so the
+numbers never grow. This is what makes RSA possible, and mentioning it is worth real credit.
+
+OVERFLOW (a language detail worth knowing). In C, C++ or Java, `n = -n` breaks when n is the most
+negative integer, because its positive counterpart does not fit. Python's integers are unbounded so
+this problem cannot arise here - but LeetCode's constraint is exactly that boundary value, and
+saying "in Java I would widen n to a long first" is a cheap point.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random (base, exponent) pairs with bases between -2.5 and 2.5
+and exponents from -12 to 12, each checked against repeated multiplication with a tolerance for
+floating-point noise.
+
+TRAP 1 - `result = 0` INSTEAD OF `result = 1`. A running PRODUCT must start at the multiplicative
+identity. Zero times anything is zero.
+
+    MEASURED: wrong on 6,000 of 6,000 - every single case returns 0.0.
+    The mirror-image slip is starting a running SUM at 1; both come from not asking "what value
+    changes nothing here".
+
+TRAP 2 - SQUARING THE BASE BEFORE FOLDING IT IN, rather than after. Then the value you multiply in
+is always one doubling ahead of the bit you just tested.
+
+    x = 2, n = 10.   Correct 1024.   This version gives 1,048,576 - which is 2^20.
+    x = 2, n = 13.   Correct 8192.   This version gives 67,108,864.
+    MEASURED: wrong on 5,753 of 6,000 (right only when the exponent is 0).
+    THE ORDER IS: test the bit and fold in the CURRENT power, THEN square for the next round.
+
+TRAP 3 - IGNORING A NEGATIVE EXPONENT. The `while n > 0` loop simply does not run, so the answer
+comes back as 1.0 for every negative exponent.
+
+    MEASURED: wrong on 2,862 of 6,000, and on 2,862 of the 2,863 cases where the exponent is
+    negative. The single case it gets right has a base of 1, where every power is 1 anyway.
+
+TRAP 4 - NEGATING THE ANSWER FOR A NEGATIVE EXPONENT INSTEAD OF INVERTING THE BASE. A negative
+exponent means RECIPROCAL, not "minus".
+
+    x = 2, n = -2.   Correct 0.25.   This version gives -4.0.
+    MEASURED: wrong on all 2,863 negative-exponent cases. Say the rule out loud - "x to the minus n
+    is one over x to the n" - before you write the branch.
+
+TRAP 5 - FORGETTING `n >>= 1`. The exponent never shrinks, so the loop never ends.
+
+    MEASURED: hangs on 5,754 of 6,000 (the exceptions are exponent 0, where the loop never starts).
+    Every round of this algorithm must do BOTH things: square the base AND consume a bit.
+
+TRAP 6 - THE RECURSIVE VERSION FORGETTING THE ODD CASE. Writing `half = pow(x, n // 2); return half
+* half` loses one factor of x whenever n is odd, because n // 2 rounds down.
+
+    MEASURED: wrong on 5,753 of 6,000, and on ALL 2,859 cases with an odd exponent - and note that
+    it is wrong on most EVEN exponents too, because the recursion reaches an odd number on the way
+    down. It returns 1.0 for almost everything, which is the fingerprint.
+    THE FIX: `return half * half * (x if n % 2 else 1)`.
+
+TRAP 7 - `n = -n` OVERFLOWING, in a language with fixed-width integers. If n is the most negative
+32-bit integer, its positive counterpart does not fit in 32 bits and the negation silently stays
+negative. Python is immune because its integers are unbounded, but LeetCode's constraint is exactly
+that boundary. In Java or C, widen to a 64-bit type first. Mention it; do not code around it in
+Python.
+
+TRAP 8 - EXPECTING EXACT FLOATING-POINT EQUALITY. Squaring repeatedly accumulates rounding error, so
+x^10 computed this way may differ from the repeated-multiplication answer in the last bits. That is
+not a bug in the algorithm; it is what floating point is. The measurements in this entry use a
+relative tolerance for exactly this reason, and mentioning it shows numerical care.
+
+WHAT IS NOT A TRAP, measured rather than assumed - two correct alternatives:
+    THE RECURSIVE VERSION DONE PROPERLY: `half = pow(x, n // 2); return half * half * (x if n % 2
+    else 1)`, with `n < 0` handled by returning `1 / pow(x, -n)`. Wrong on 0 of 6,000. It uses
+    O(log n) stack space instead of O(1), which is the only difference worth naming.
+    TAKING THE RECIPROCAL AT THE END rather than inverting the base at the start - compute x^|n| and
+    return `1 / result` if n was negative. Wrong on 0 of 6,000. Slightly better numerically, since
+    it does one division instead of dividing before a chain of squarings.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - MULTIPLY n TIMES:
+
+    def my_pow_naive(x, n):
+        if n < 0:
+            x = 1 / x
+            n = -n
+        result = 1.0
+        for _ in range(n):
+            result *= x
+        return result
+
+IT IS CORRECT - the ground truth for every measurement here - and it makes the definition explicit,
+including the two facts the fast version still needs: the answer starts at 1, and a negative
+exponent inverts the BASE.
+
+WHAT IS WRONG WITH IT IS ONLY THE COUNT. n multiplications. With n up to two billion that is not
+merely slow, it is unusable - and the redundancy is easy to see: computing x^8 as x*x*x*x*x*x*x*x
+recomputes x^4 twice inside itself without noticing.
+
+THE OBSERVATION THAT FIXES IT. x^8 = x^4 * x^4. So if x^4 is already in your hand, x^8 costs ONE
+multiplication, not four. Squaring DOUBLES the exponent, so a chain of squarings climbs
+exponentially fast:
+
+    x^1, x^2, x^4, x^8, x^16, x^32 ...        k squarings reach x^(2^k)
+
+THE REMAINING QUESTION IS HOW TO REACH AN EXPONENT THAT IS NOT A POWER OF TWO, and binary answers it
+for free. Every whole number is a sum of distinct powers of two, in exactly one way, and that sum is
+precisely what its binary digits spell out:
+
+    13 = 1101 (binary) = 8 + 4 + 1        so       x^13 = x^8 * x^4 * x^1
+
+So walk the bits of n from the lowest upward. Keep the current power of x, doubling it each round.
+Whenever the current bit is 1, fold the current power into the answer. That is the whole algorithm,
+and it needs no array, no recursion and no lookup table.
+
+WHY IT IS CORRECT, ARGUED PROPERLY. After round k, the running answer equals x raised to the sum of
+the powers of two selected by the lowest k bits of n, and the current power equals x^(2^k). Both
+statements hold at the start (answer 1 = x^0, power x^1 = x^(2^0)) and are preserved by each round.
+When n has been shifted down to 0, all its bits have been consumed, and the running answer is x
+raised to the whole of n. That is an induction, and it is what to say instead of "and then it works".
+
+THE THREE THINGS THAT MUST BE IN THE RIGHT ORDER OR THE RIGHT PLACE:
+    START AT 1, because 1 is what a product with nothing in it equals - starting at 0 gives 0
+        forever, measured 6,000 of 6,000.
+    TEST THE BIT, THEN SQUARE - squaring first folds in a power that is one doubling too big,
+        measured 5,753 of 6,000.
+    CONSUME THE BIT with a shift every round, or the loop never ends - measured to hang on 5,754
+        of 6,000.
+
+AND THE NEGATIVE EXPONENT IS HANDLED BEFORE THE LOOP, by replacing x with 1/x and n with -n. Once
+that is done, the loop only ever sees a non-negative exponent and needs no further thought.
+
+WHAT THE UPGRADE COSTS. The number of rounds is the number of BITS in n: O(log n). MEASURED for
+n = 1,000,000: 20 squarings and 7 folds - 27 multiplications, against 1,000,000. Space is O(1) -
+three variables, no recursion.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. DEAL WITH A NEGATIVE EXPONENT FIRST, once, before anything else: replace the base with ONE
+       OVER the base, and make the exponent positive. A negative exponent means a reciprocal, and
+       after this line the rest of the code never has to think about signs again.
+
+    2. Start the answer at ONE - the value that changes nothing when you multiply, and also exactly
+       what any base raised to the power zero is.
+
+    3. Now repeat the following while the exponent is still greater than zero.
+
+    4. LOOK AT WHETHER THE EXPONENT IS ODD. If it is, multiply the current base into the answer.
+       (Odd means its lowest binary digit is a 1, which means this power of the base is one of the
+       pieces the answer is made of.)
+
+    5. THEN SQUARE THE BASE. The base now represents the next power of two up: it was the base
+       itself, then its square, then the square of that, and so on.
+
+    6. THEN HALVE THE EXPONENT, throwing away the digit you just examined.
+
+    7. When the exponent reaches zero, every digit has been used and the answer is complete.
+
+WHY THIS WORKS, in one sentence you should be able to say: any exponent is a sum of distinct powers
+of two - that is what its binary digits mean - so squaring the base repeatedly produces exactly the
+pieces you might need, and the digits of the exponent tell you which of them to multiply together.
+
+THE ORDER OF STEPS 4 AND 5 IS THE THING PEOPLE GET WRONG. Look at the digit and use the CURRENT base
+first; square afterwards, for the next round. Squaring first folds in a value that is one doubling
+too large, and the answer comes out roughly as the base to the power of twice the exponent - wrong
+on 5,753 of 6,000, returning 1,048,576 instead of 1,024 for two to the tenth.
+
+STEP 2'S ONE IS NOT DECORATION. A running product that has multiplied nothing in must equal one.
+Starting at zero returns zero for every input - wrong on 6,000 of 6,000.
+
+STEP 6 IS THE STEP PEOPLE OMIT, and omitting it does not give a wrong answer, it gives a program
+that never stops - measured to hang on 5,754 of 6,000.
+
+AND STEP 1 IS WRONG IN TWO POPULAR WAYS. Skipping it entirely means the loop never runs for a
+negative exponent and the answer is always one - wrong on 2,862 of the 2,863 negative cases. And
+handling it by putting a MINUS SIGN on the answer confuses reciprocal with negation: two to the
+minus two is a quarter, not minus four - wrong on all 2,863.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Suppose you have a photocopier that can only do one thing: take a stack of paper and produce a
+second stack exactly like it - so it DOUBLES whatever you feed it. You start with one sheet, and
+somebody asks for 13 sheets. How many trips to the copier?
+
+The plodding way does not use the copier at all: fetch sheets one at a time from the drawer,
+thirteen trips. Fine for thirteen. Ruinous for a million.
+
+The copier way is better because doubling grows terrifyingly fast. One sheet, copy: two. Copy: four.
+Copy: eight. Three trips and you have eight sheets; twenty trips and you have over a million.
+
+But 13 is not a doubling of anything - the doublings give you 1, 2, 4, 8, 16, and 13 is not on that
+list. So here is what you do. You keep a SEPARATE PILE - the pile you will actually hand over - and
+each time you have a batch in the machine, you decide whether to tip that batch into the pile or
+not.
+
+    1, 2, 4, 8 are available.    13 = 8 + 4 + 1.
+    So: tip in the batch of 1. Skip the batch of 2. Tip in the batch of 4. Tip in the batch of 8.
+
+Four trips to the machine, three tips into the pile, and you have exactly 13.
+
+How did you know it was 8 + 4 + 1 and not some other combination? BECAUSE THERE IS ONLY ONE
+COMBINATION. Write 13 in binary and it comes out 1101 - and that string is not a coincidence, it IS
+the instruction: use the eights, use the fours, skip the twos, use the ones. Every number has
+exactly one such recipe, so you never have to search for it or make a choice.
+
+Now, the way you actually execute this, one step at a time. Look at whether the number you still
+owe is ODD. If it is, the batch currently in the machine is one you need - tip it into the pile.
+Then double the batch in the machine, halve the number you owe, and go round again. When you owe
+nothing, the pile is finished.
+
+Three things will ruin it.
+
+TIPPING IN AFTER DOUBLING RATHER THAN BEFORE. If you double the machine's batch first and then tip,
+every batch you hand over is twice the size it should have been, and you end up with wildly too much
+paper - the same shape of error as producing two to the twentieth when you were asked for two to the
+tenth.
+
+STARTING THE PILE WITH NOTHING WHEN NOTHING MEANS ZERO. This is a pile you MULTIPLY into, not add
+to, so an empty pile has to count as ONE - because one is the amount that changes nothing when you
+multiply. Start it at zero and no amount of tipping ever produces anything but zero.
+
+AND FORGETTING TO HALVE WHAT YOU OWE. The number you owe is how you know when to stop and which
+batches to use. Never reduce it, and you stand at the copier forever.
+
+One last case. Sometimes you are asked for a NEGATIVE number of sheets, which in this metaphor means
+you are being asked for the reciprocal - one over the answer. The clean move is to flip the thing you
+are copying at the very start, right at the beginning, and then never think about it again. What you
+must NOT do is compute the positive answer and stick a minus sign on it: the opposite of two squared
+is not one quarter, and one quarter is what was asked for.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Compute x^n in O(log n) via fast (binary) exponentiation.
+    def my_pow(x, n):
+        if n < 0:
+            x = 1 / x
+            n = -n
+
+  THE NEGATIVE EXPONENT, HANDLED ONCE AND FOR ALL. x^-n = 1/x^n, so inverting the BASE and making
+  the exponent positive gives an equivalent problem that the rest of the function can treat as
+  ordinary. After these three lines, `n` is never negative again.
+
+  Omitting this block leaves the loop below never running, so every negative exponent returns 1.0 -
+  wrong on 2,862 of the 2,863 negative cases measured (the exception being a base of 1). Handling it
+  by negating the RESULT instead confuses reciprocal with negation - 2^-2 becomes -4.0 rather than
+  0.25 - wrong on all 2,863.
+
+  IN C OR JAVA, `n = -n` overflows for the most negative 32-bit integer; widen to 64 bits first.
+  Python's unbounded integers make this a non-issue here, and saying so is worth a remark.
+
+        result = 1.0
+
+  THE RUNNING ANSWER, starting at ONE because 1 is multiplication's IDENTITY - the value that changes
+  nothing - and because x^0 is exactly 1, which is what the answer means before any power has been
+  folded in. Starting at 0.0 returns 0.0 for every input: measured wrong on 6,000 of 6,000.
+
+        while n > 0:
+
+  One round per BIT of n. The exponent is consumed from the bottom up and the loop ends when there
+  are no bits left, so this runs about log2(n) times - roughly 30 rounds for a billion.
+
+            if n & 1:           # current bit set -> multiply in the current power
+                result *= x
+
+  THE SELECTION STEP. `n & 1` is 1 exactly when n is odd, which is exactly when the lowest binary
+  digit of n is a 1 - which is exactly when the current power of x is one of the pieces the answer is
+  built from. `n % 2` says the same thing.
+
+  IT USES THE CURRENT `x`, WHICH AT THIS MOMENT IS x^(2^k) FOR ROUND k: x, then x^2, then x^4, and
+  so on. That correspondence between the round number, the value of `x`, and the bit position is the
+  whole invariant.
+
+            x *= x              # square the base for the next bit
+
+  DOUBLE THE EXPONENT THAT `x` REPRESENTS, ready for the next bit. THIS MUST COME AFTER THE `if`,
+  not before: squaring first means the value folded in is one doubling too large, and the answer
+  comes out as roughly x^(2n) - measured wrong on 5,753 of 6,000, returning 1,048,576 for x=2, n=10.
+
+            n >>= 1
+
+  CONSUME THE BIT JUST EXAMINED - a right shift, which is integer division by two. Omitting this line
+  is an infinite loop, measured to hang on 5,754 of 6,000. Each round must do all three things:
+  maybe fold in, always square, always shift.
+
+        return result
+
+  Every bit of n has been examined, so the answer is x raised to the sum of the selected powers of
+  two - which is x^n.
+
+NINE LINES. O(log n) TIME - about 30 multiplications for an exponent of a billion, against a billion
+- and O(1) SPACE, no recursion. MEASURED for n = 1,000,000: 20 squarings plus 7 folds = 27
+multiplications.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - x = 2.0, n = 10. Expected 1024.0. Note 10 in binary is 1010.
+
+     round | n  | binary | n & 1 | x is    | fold in? | result after
+    -------+----+--------+-------+---------+----------+--------------
+       -   | 10 |  1010  |       | 2       | start    | 1
+       1   | 10 |  1010  |   0   | 2       | no       | 1
+       2   |  5 |   101  |   1   | 4       | YES      | 4
+       3   |  2 |    10  |   0   | 16      | no       | 4
+       4   |  1 |     1  |   1   | 256     | YES      | 1024
+       -   |  0 |        |       |         | stop     | 1024
+
+    return 1024.0
+
+    READ THE ARITHMETIC: 10 = 8 + 2, so x^10 = x^8 * x^2 = 256 * 4 = 1024. The two rounds that
+    folded in were exactly the rounds where the bit was 1, and the values folded in were 4 = 2^2 and
+    256 = 2^8. Four rounds, two multiplications - against ten for the naive version.
+
+CASE TWO - x = 2.0, n = 13, worked as the classic example. 13 in binary is 1101 = 8 + 4 + 1.
+
+    round 1:  n = 13 (odd)  -> fold in x = 2         result 2       then x = 4,   n = 6
+    round 2:  n = 6  (even) -> skip                  result 2       then x = 16,  n = 3
+    round 3:  n = 3  (odd)  -> fold in x = 16        result 32      then x = 256, n = 1
+    round 4:  n = 1  (odd)  -> fold in x = 256       result 8192    then x, n = 0
+    return 8192.0, and indeed 2^13 = 8192 = 2 * 16 * 256 = 2^1 * 2^4 * 2^8.
+
+    THE SQUARE-FIRST BUG on this input folds in 4, 256 and 65536 instead, giving 67,108,864.
+
+CASE THREE - THE NEGATIVE EXPONENT. x = 2.0, n = -2. Expected 0.25.
+
+    The opening block turns this into x = 0.5, n = 2.
+    round 1: n = 2 is even -> skip;  x becomes 0.25, n becomes 1
+    round 2: n = 1 is odd  -> fold in 0.25;  result 0.25
+    return 0.25.
+    THE NEGATE-THE-RESULT VERSION returns -4.0 here, and THE IGNORE-IT-ENTIRELY VERSION returns 1.0.
+
+CASE FOUR - THE EXPONENT ZERO. x = 2.0, n = 0. The loop never runs and `result` is still 1.0, which
+is the right answer with no special case. This is also the only input the square-first bug gets
+right, and the only one the missing-shift version does not hang on.
+
+CASE FIVE - A NEGATIVE BASE. x = -2.0, n = 3. 3 is binary 11.
+    round 1: odd  -> fold in -2;  result -2;   x becomes 4,  n becomes 1
+    round 2: odd  -> fold in 4;   result -8;   n becomes 0
+    return -8.0. The sign takes care of itself - squaring a negative base makes it positive, and the
+    single odd bit at the bottom is what carries the minus sign through. No sign handling is needed
+    anywhere in the code.
+
+CASE SIX - x = 2.0, n = 1. One round: n is odd, fold in 2, result 2. Returns 2.0. The square-first
+bug returns 4.0 here, which is the smallest example of it.
+
+THE COST, COUNTED. For n = 1,000,000: the exponent has 20 bits and 7 of them are 1, so MEASURED 20
+squarings and 7 folds - 27 multiplications in total, against 1,000,000 for the naive loop.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. One round per bit of the exponent, so O(log n) TIME - about 30 multiplications
+for a billion. O(1) SPACE: three variables and no recursion. MEASURED for n = 1,000,000: 27
+multiplications against 1,000,000.
+
+    multiply n times                      O(n) time, O(1) space
+    binary exponentiation, iterative      O(log n) time, O(1) space
+    binary exponentiation, recursive      O(log n) time, O(log n) STACK space
+
+NOTE WHAT THE LOG IS OVER: THE VALUE OF n, not the size of any collection. That is characteristic of
+number-theoretic algorithms, and interviewers listen for it.
+
+THE #1 MISTAKE: SQUARING THE BASE BEFORE FOLDING IT IN. Wrong on 5,753 of 6,000 - it returns roughly
+x^(2n), so x=2, n=10 gives 1,048,576 instead of 1,024. Test the bit and use the CURRENT power, then
+square for the next round.
+
+THE #2: `result = 0` INSTEAD OF `1`. Wrong on 6,000 of 6,000. A running product starts at the
+multiplicative identity, which is also x^0.
+
+THE #3: NEGATING THE ANSWER FOR A NEGATIVE EXPONENT INSTEAD OF INVERTING THE BASE. Wrong on all
+2,863 negative cases - 2^-2 becomes -4.0 rather than 0.25. And IGNORING the negative case entirely is
+wrong on 2,862 of those 2,863, always returning 1.0.
+
+THE #4: OMITTING `n >>= 1`. Not a wrong answer - an infinite loop, measured to hang on 5,754 of
+6,000.
+
+THE #5, IF YOU WRITE IT RECURSIVELY: `return half * half` without the extra factor of x when n is
+odd. Wrong on 5,753 of 6,000 and on ALL 2,859 odd-exponent cases - and it returns 1.0 for almost
+everything, because the recursion meets an odd exponent on the way down.
+
+TWO HONEST NEGATIVES: the properly written recursive version and the take-the-reciprocal-at-the-end
+version were both wrong on 0 of 6,000. The recursive one costs O(log n) stack; the reciprocal-at-the-
+end one is marginally better numerically, since it divides once rather than dividing before a chain
+of squarings.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the naive answer is n multiplications, and n can be two
+billion; (2) x^(a+b) = x^a * x^b, so squaring doubles the exponent - x^1, x^2, x^4, x^8 in four
+multiplications; (3) any exponent is a sum of distinct powers of two, and its BINARY DIGITS say
+which - 13 = 1101 = 8 + 4 + 1; (4) so walk the bits from the bottom, folding in the current power
+when the bit is set, squaring the power each round; (5) handle a negative exponent up front by
+inverting the base; (6) O(log n) time, O(1) space. Point 3 is what turns a memorised loop into a
+derivation - say "binary decomposition of the exponent", not "the bit trick".
+
+THE FOLLOW-UP THAT ALWAYS COMES: "now compute x^n mod m", because that is the version that matters
+in practice. Apply `% m` after every multiplication and after every squaring; the numbers never grow
+beyond m squared, and this is exactly how RSA and Diffie-Hellman are computed with 2048-bit
+exponents. Volunteering this connection is worth a lot.
+
+AND THE OTHER ONE: "what about overflow, or precision?" Two separate answers. In a fixed-width
+language, `n = -n` breaks at the most negative integer - widen it. And in floating point, repeated
+squaring accumulates rounding error, so the result may differ in the last bits from repeated
+multiplication; that is inherent, not a bug.
+
+THEN SOMETIMES: "use it on something other than numbers". The algorithm only needs an ASSOCIATIVE
+operation, so it works for MATRICES - giving the millionth Fibonacci number in about 20 matrix
+multiplications - and for permutations, and for modular inverses via Fermat's little theorem.
+Recognising that the algorithm is about associativity, not about arithmetic, is the senior answer.
+
+THE FAMILY: Pow(x, n), Super Pow (an exponent given as an array of digits), Count Good Numbers,
+Matrix exponentiation for linear recurrences, Modular Exponentiation, Sqrt(x) (binary search rather
+than squaring, but the same "halve the problem" instinct), Multiply Strings. THE TRANSFERABLE IDEA:
+WHEN AN OPERATION IS ASSOCIATIVE, DOUBLING GETS YOU THERE IN log n STEPS, AND THE BINARY DIGITS OF
+THE COUNT TELL YOU WHICH DOUBLINGS TO COMBINE.
+
+ONE-SENTENCE TAKEAWAY: read the exponent's binary digits from the bottom, squaring the base every
+round and multiplying it into the answer only where the digit is 1 - about 30 multiplications for an
+exponent of a billion, with a negative exponent handled once at the start by inverting the base.""",
 ]
 
 _EX_P1AC["Quickselect (kth largest)"] = [
-    """Why it beats sorting, in one sentence.
-Sorting arranges everything - O(n log n) - when you only need ONE position.
-Quickselect partitions around a pivot and then recurses into only the SIDE that
-contains the target index, discarding the other half of the work.
-The cost is n + n/2 + n/4 + ... = 2n, so O(n) average. That geometric series is
-the whole complexity argument and it is worth stating explicitly rather than
-just quoting O(n).""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """The index translation, which is where people slip.
-'kth LARGEST' in an array sorted ascending sits at index len(nums) - k. For
-[3,2,1,5,6,4] with k = 2, target = 6 - 2 = 4, and the sorted array
-[1,2,3,4,5,6] indeed has 5 at index 4.
-Getting this backwards returns the kth SMALLEST, which is a plausible-looking
-wrong answer. Write the translation down before the loop; it is the one line
-that is easy to get right and easy to skip.""",
+Find the kth LARGEST value in an unsorted list. Not the kth position in the list - the kth largest
+value, counting down from the biggest.
 
-    """The partition, traced.
-[3,2,1,5,6,4], pivot = 4 (last element), p = 0.
-3 < 4 -> swap with itself, p=1. 2 < 4 -> p=2. 1 < 4 -> p=3. 5 not <. 6 not <.
-Place the pivot: swap index 3 with the last -> [3,2,1,4,6,5], and 4 is now at
-index 3 - its FINAL sorted position.
-Since target 4 > 3, recurse right on [6,5]. Next partition puts 5 at index 4 ->
-return 5. Correct: the 2nd largest is 5.""",
+    nums = [3, 2, 1, 5, 6, 4],  k = 2
+    sorted for illustration:  [1, 2, 3, 4, 5, 6]
+                                             ^
+                            largest is 6, SECOND largest is 5      ->  answer 5
 
-    """Why a RANDOM pivot is not optional.
-With the last element as pivot, an already-sorted array partitions into an
-empty side and everything else, every time - O(n^2). And that is precisely the
-input someone will hand you.
-Choosing the pivot uniformly at random makes the worst case depend on luck
-rather than on input order, so no adversary can force it and the EXPECTED time
-is O(n) for every input. One line - `swap(random index, hi)` before
-partitioning - and it converts a fragile algorithm into a robust one.
-Median-of-medians gives a guaranteed O(n) but nobody implements it in an
-interview; naming it is enough.""",
+    nums = [3, 2, 3, 1, 2, 4, 5, 5, 6],  k = 4
+    sorted:  [1, 2, 2, 3, 3, 4, 5, 5, 6]
+                                ^
+    counting down: 6 is 1st, 5 is 2nd, 5 is 3rd, 4 is 4th          ->  answer 4
 
-    """The trade against a heap, since the interviewer will ask.
-Quickselect: O(n) average, O(1) extra space, MUTATES the input, O(n^2) worst
-case.
-Heap of size k: O(n log k), O(k) space, does not mutate, works on a STREAM.
-So: whole array in memory and k possibly large -> quickselect. Data arriving
-over time, or k tiny relative to n -> heap. If k = n/2 (the median) the heap
-degenerates to O(n log n) and quickselect clearly wins.
-Also note quickselect destroys the caller's ordering - worth saying, and worth
-copying the array first if that matters.""",
+READ THAT SECOND EXAMPLE AGAIN. DUPLICATES COUNT SEPARATELY. The two 5s are the 2nd and 3rd largest,
+so the 4th largest is 4, not 3. The question is about POSITION IN SORTED ORDER, not about distinct
+values - and that is the single most common misreading.
 
-    """Edge cases and the family.
-k = 1 -> the maximum. k = len(nums) -> the minimum.
-Single element with k = 1 -> that element.
-Duplicates: [3,3,3] with k = 2 -> 3. 'kth largest' counts POSITIONS, not
-distinct values, which is the convention to confirm.
-The family: Kth Largest Element in an Array (this), Kth Largest in a Stream
-(heap - no array to partition), K Closest Points to Origin (quickselect on
-distance), Top K Frequent Elements, Wiggle Sort II, and Sort Colors - which is
-the three-way partition that also fixes quickselect's many-duplicates
-weakness.""",
+THE ONE PIECE OF INDEX ARITHMETIC THAT THE WHOLE SOLUTION HANGS ON. If the list were sorted in
+ASCENDING order, where does the kth largest sit?
+
+    n = 6, k = 1 (the largest)          -> the LAST index, 5      = 6 - 1
+    n = 6, k = 2 (second largest)       -> index 4                = 6 - 2
+    n = 6, k = 6 (the smallest)         -> index 0                = 6 - 6
+
+    SO THE TARGET INDEX IS len(nums) - k.
+
+Get that expression wrong and everything else is irrelevant: MEASURED, using `k` as the target index
+is wrong on 5,094 of 6,000, and using `len - k - 1` is wrong on 4,379 of 6,000.
+
+THE OBVIOUS SOLUTION WORKS. Sort the list and read index len - k. That is one line, O(n log n), and
+it is the ground truth for every measurement in this entry. Say it first, always.
+
+WHAT THE PROBLEM IS TEACHING is that you do not need the whole list sorted - you need ONE POSITION
+right. QUICKSELECT gets that in O(n) AVERAGE time by reusing quicksort's partition step and then
+recursing into ONLY THE HALF THAT CONTAINS THE TARGET. MEASURED on 2,000 random values: 3,460
+comparisons to find the largest and 5,871 to find the median - against about 22,000 for a comparison
+sort.
+
+THE HONEST CAVEAT, and you must volunteer it: the WORST case is O(n squared), and with a
+last-element pivot the trigger is ALREADY-SORTED INPUT. MEASURED on 2,000 sorted values asking for
+the smallest: 1,999,000 comparisons - a thousand times n. Section 10 covers the fixes (random pivot,
+median-of-three, or a heap instead).""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+START FROM WHY SORTING IS OVERKILL. Sorting arranges all n values correctly. You asked about ONE of
+them. Everything the sort does to order the other n-1 values relative to each other is work you never
+use.
+
+WHAT WOULD BE ENOUGH? If you could get ONE value into its correct final position, and know which
+position that is, you could compare it to the position you want and immediately discard half the
+list.
+
+THAT IS EXACTLY WHAT A PARTITION DOES. Pick any value as the PIVOT and rearrange the list so that:
+
+    everything smaller than the pivot   |   PIVOT   |   everything not smaller
+    ------------------------------------+-----------+------------------------
+                                        ^
+                            the pivot is now in its FINAL SORTED POSITION
+
+Why final? Because every value below it is smaller and every value above it is not - which is the
+definition of being in the right place. AND YOU LEARN ITS INDEX FOR FREE.
+
+NOW COMPARE THAT INDEX WITH YOUR TARGET, and one of three things is true:
+
+    pivot index == target   ->  the value sitting there IS the answer. Done.
+    pivot index <  target   ->  the answer is somewhere to the RIGHT. Search only that side.
+    pivot index >  target   ->  the answer is to the LEFT. Search only that side.
+
+ONE PARTITION AND YOU HAVE THROWN AWAY (on average) HALF THE LIST. That is the entire algorithm.
+
+WATCH IT RUN on nums = [3, 2, 1, 5, 6, 4] with k = 2. Target index = 6 - 2 = 4.
+
+    range [0..5], pivot = the last element, 4
+        rearranged: [3, 2, 1, 4, 6, 5]  with the pivot landing at index 3
+        3 < 4, so the answer is to the RIGHT. Search [4..5]. HALF THE LIST IS GONE.
+
+    range [4..5], pivot = the last element, 5
+        rearranged: [3, 2, 1, 4, 5, 6]  with the pivot landing at index 4
+        4 == 4  ->  the answer is 5.  DONE.
+
+    two partitions, and the left half was never touched again
+
+WHY IT IS LINEAR ON AVERAGE, and this series is the answer to "why O(n)?":
+
+    quicksort  recurses into BOTH halves:  n + n + n + ... over log n levels  =  n log n
+    quickselect recurses into ONE half:    n + n/2 + n/4 + n/8 + ...          =  2n
+
+    That sum is a geometric series that converges to 2n, so the total work is LINEAR. Be able to
+    write those two lines down - it is the whole justification, and it is what separates
+    understanding from recital. MEASURED on 2,000 random values: 3,460 comparisons for the largest
+    (about 1.7n) and 5,871 for the median (about 2.9n).
+
+AND WHY THE WORST CASE IS QUADRATIC. If every partition splits off just ONE element instead of half,
+the ranges shrink by 1 each time: n + (n-1) + (n-2) + ... = n squared over 2. With a LAST-ELEMENT
+pivot that happens on ALREADY-SORTED input, which is not a rare adversarial case but the most
+ordinary data imaginable. MEASURED on 2,000 sorted values asking for the SMALLEST: 1,999,000
+comparisons. Say this before you are asked.
+
+ONE MORE THING TO NOTICE: THIS ALGORITHM MODIFIES THE INPUT. It shuffles the list as it goes. If the
+caller minds, copy first - and mention it, because "does it destroy the input?" is a normal
+interview question.""",
+
+    """3. EVERY TERM, DEFINED
+
+kTH LARGEST. The value in position k counting DOWN from the biggest. Duplicates count separately: in
+[5, 5, 4] the 5s are the 1st and 2nd largest and 4 is the 3rd.
+
+TARGET INDEX = len(nums) - k. Where the kth largest would sit if the list were sorted ASCENDING.
+Deriving this in front of the interviewer with a two-element example beats reciting it.
+
+PARTITION. Rearranging a range around a chosen PIVOT so that smaller values end up on one side and
+the rest on the other, with the pivot itself landing between them - at its final sorted index.
+
+PIVOT. The value the partition compares everything against. Here: the LAST element of the range,
+which is simple and is also the reason the worst case triggers on sorted input.
+
+LOMUTO PARTITION. The particular scheme in this code: one pointer `p` marks the boundary of the
+"smaller than pivot" region, one pointer `i` scans, and each smaller value is swapped down to the
+boundary. At the end the pivot is swapped into the boundary. Simpler than the alternative (HOARE'S
+two-pointer scheme, which does fewer swaps) and easier to get right under pressure.
+
+INVARIANT (of the partition loop). Everything in `nums[lo..p-1]` is smaller than the pivot, and
+everything in `nums[p..i-1]` is not. Stating that is how you convince someone the loop is right.
+
+FINAL SORTED POSITION. After partitioning, the pivot is exactly where a full sort would put it -
+because everything to its left is smaller and everything to its right is not. THIS IS THE FACT THE
+WHOLE ALGORITHM RESTS ON, and it is why one partition can produce a definite answer.
+
+PRUNING / DISCARDING A HALF. Recursing into only one side. Quicksort must do both; quickselect must
+not - that is the difference between n log n and n.
+
+AVERAGE-CASE O(n). Expected linear time, from the series n + n/2 + n/4 + ... = 2n. It assumes the
+pivot usually splits the range somewhere near the middle.
+
+WORST-CASE O(n squared). When every partition peels off one element. With a last-element pivot this
+happens on sorted or reverse-sorted input.
+
+RANDOMISED PIVOT. Swapping a random element into the pivot position first. It makes the bad case
+depend on luck rather than on the input's shape, so no particular input is reliably slow. This is the
+standard fix and the expected answer to "how would you avoid the worst case?"
+
+MEDIAN OF MEDIANS. A pivot-choosing scheme guaranteeing worst-case O(n). Real, famous, and far too
+slow in practice - know the name, do not write it.
+
+IN PLACE / DESTRUCTIVE. This algorithm reorders the caller's list. If that matters, copy first.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random cases (1 to 12 values from 1..8, so duplicates are
+frequent, with k drawn from the valid range), each checked against `sorted(nums)[len(nums) - k]`.
+
+TRAP 1 - THE TARGET INDEX. This is where most failures live, and there are two popular wrong forms.
+
+    `target = k` - treating k as an index rather than a rank.
+        nums = [3,2,1,5,6,4], k = 2.  Correct 5.  This version returns 3.
+        MEASURED: wrong on 5,094 of 6,000. It also returns -1 (the not-found fallback) whenever k
+        equals the length, because index k is off the end.
+    `target = len(nums) - k - 1` - an off-by-one from thinking in 0-based ranks.
+        Same input returns 4. MEASURED: wrong on 4,379 of 6,000.
+
+    THE FIX IS TO DERIVE IT, NOT RECALL IT: with n = 2, the 1st largest is at index 1 and the 2nd is
+    at index 0, so the index is n - k. Ten seconds of arithmetic beats a guess.
+
+TRAP 2 - FORGETTING THE FINAL PIVOT SWAP. The Lomuto loop moves smaller values below `p`, but the
+pivot is still sitting at the end of the range until you swap it into `p`. Without that swap, the
+value at index `p` is NOT the pivot and is not in its final position - so a match at `p` returns the
+wrong value, and the recursion narrows around a lie.
+
+    nums = [3,2,1,5,6,4], k = 2.  Correct 5.  This version returns 6.
+    MEASURED: wrong on 3,153 of 6,000. THE PARTITION IS NOT FINISHED UNTIL THE PIVOT IS IN PLACE.
+
+TRAP 3 - NARROWING TO `lo = p` OR `hi = p` INSTEAD OF `p + 1` / `p - 1`. Index `p` holds the pivot,
+which you have just checked and rejected, so leaving it in the range means the range may never
+shrink - and if the same pivot is chosen again, the loop spins.
+
+    MEASURED: wrong on 3,701 of 6,000 (including runs that never terminate). Exclude the position you
+    have already resolved - the same discipline as in any binary search.
+
+TRAP 4 - MISREADING "kTH LARGEST" AS "kTH LARGEST DISTINCT VALUE". In [3,2,3,1,2,4,5,5,6] with k = 4
+the answer is 4, because the two 5s occupy the 2nd and 3rd places. If you deduplicate first you get
+3. This is a specification error rather than a coding one, and it is the most expensive kind - ask,
+or state your reading out loud.
+
+TRAP 5 - MODIFYING THE CALLER'S LIST WITHOUT SAYING SO. Quickselect shuffles the input. That may be
+fine, and it may not; either copy first or say "note this is destructive". Silence looks like
+inattention.
+
+TRAP 6 - AN UNGUARDED `while lo <= hi` WITH RANGES THAT DO NOT SHRINK. Every branch must strictly
+shrink the range (via `p + 1` or `p - 1`); if any branch can leave it unchanged, you have written an
+infinite loop rather than a slow algorithm. This is the same failure mode as trap 3, seen from the
+loop's side.
+
+TRAP 7 - CLAIMING O(n) WITHOUT MENTIONING THE WORST CASE. With a last-element pivot the quadratic
+case is not exotic: it is SORTED INPUT. MEASURED on 2,000 sorted values with k = n (asking for the
+smallest): 1,999,000 comparisons, against about 22,000 for simply sorting. Note the asymmetry -
+asking for the LARGEST on that same sorted input takes only 1,999 comparisons, because the last
+element is then the perfect pivot. Say "average O(n), worst O(n squared), and I would randomise the
+pivot".
+
+TRAP 8 - A SLOW CASE WITH NO OBVIOUS SORTEDNESS: ALL VALUES EQUAL. Every partition peels off one
+element. MEASURED on 2,000 identical values with k = n/2: 1,500,499 comparisons - about 750n. Worth
+knowing that the trigger is "no useful splits available", not merely "sorted".
+
+WHAT IS NOT A TRAP, measured rather than assumed:
+
+    PARTITIONING WITH `<=` INSTEAD OF `<`. Wrong on 0 of 6,000, including all 4,394 inputs containing
+    duplicates. It changes which side equal values go to and where the pivot lands, and the algorithm
+    still finds the right value - because the pivot is still placed at a legitimate final position for
+    its value. It does NOT fix the all-equal performance case: measured at 1,499,500 comparisons
+    against 1,500,499 - the same quadratic behaviour.
+
+    A HEAP INSTEAD, or just sorting. Both correct, with different costs - see section 10.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - SORT AND INDEX:
+
+    def find_kth_largest_sorted(nums, k):
+        return sorted(nums)[len(nums) - k]
+
+IT IS CORRECT - the ground truth for every measurement here - it is one line, and in real code it is
+very often the right answer. O(n log n) time. SAY IT FIRST, ALWAYS, and say the index derivation out
+loud while you write it: with n elements, the largest is at index n-1, so the kth largest is at n-k.
+
+THE SECOND ANSWER WORTH GIVING IS A HEAP. Keep a MIN-heap of size k: push each value, and whenever
+the heap exceeds k, pop the smallest. At the end the heap's smallest element is the kth largest.
+O(n log k) time, O(k) space - and it is the answer you want when the data is a STREAM, or when k is
+tiny relative to n. Python: `heapq.nlargest(k, nums)[-1]`, or the manual loop.
+
+WHAT IS WRONG WITH SORTING is that it answers a much bigger question than the one asked. You need ONE
+position correct; sorting makes all n correct. Everything it does to order the other n-1 values
+relative to each other is wasted.
+
+THE OBSERVATION THAT FIXES IT. Quicksort's PARTITION step, applied once, puts ONE value in its final
+sorted position and tells you which position that is. That single fact is enough:
+
+    if that position IS your target, the value there is the answer;
+    if it is before your target, the answer lies entirely to the right;
+    if it is after, the answer lies entirely to the left.
+
+So you never need to sort the side that cannot contain the answer. Quicksort's mistake, for this
+problem, is that it recurses into both halves out of duty.
+
+THE COST ARGUMENT, WHICH IS THE HEART OF THE ANSWER:
+
+    quicksort:    n + n + n + ... (log n levels, both sides each time)   =  O(n log n)
+    quickselect:  n + n/2 + n/4 + n/8 + ...                             =  2n  =  O(n)
+
+The series converges because each level only touches half of what the previous level touched. Write
+those two lines on the whiteboard. MEASURED on 2,000 random values: 3,460 comparisons for the largest
+(1.7n) and 5,871 for the median (2.9n), against about 22,000 for a comparison sort.
+
+WHY THE PIVOT LANDS IN ITS FINAL POSITION, since everything depends on it: after the partition,
+every value to its left is smaller and every value to its right is not smaller. That is precisely the
+condition for being correctly placed in a sorted array. It does not matter that the two sides are
+internally unsorted.
+
+THE PARTITION ITSELF (LOMUTO), stated as an invariant rather than as code to memorise: `p` is the
+boundary of the "smaller than pivot" region. Scan with `i`; whenever `nums[i]` is smaller, swap it to
+the boundary and push the boundary up. At the end, swap the pivot from the end of the range into the
+boundary - AND THAT LAST SWAP IS PART OF THE ALGORITHM, not tidying: omitting it is wrong on 3,153
+of 6,000.
+
+THE HONEST COST. AVERAGE O(n), WORST O(n squared) - and with a last-element pivot the worst case is
+triggered by SORTED input, measured at 1,999,000 comparisons on 2,000 sorted values. Randomising the
+pivot (swap a random element into the last position before partitioning) makes the bad case a matter
+of luck rather than a property of the input. Volunteer this; do not wait to be caught.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. WORK OUT THE TARGET INDEX. If the list were sorted from smallest to largest, the kth largest
+       value would sit at position (length minus k). Derive that with a two-element example rather
+       than trusting memory - it is where most failures come from.
+
+    2. Keep a range you are still searching, starting as the whole list.
+
+    3. CHOOSE A PIVOT from the range - here, its last element.
+
+    4. PARTITION THE RANGE around the pivot. Walk through the range with a boundary marker that
+       starts at the left end. Every value you meet that is SMALLER than the pivot gets swapped down
+       to the boundary, and the boundary moves one to the right. When the walk finishes, everything
+       to the left of the boundary is smaller than the pivot and everything from the boundary
+       onwards is not.
+
+    5. NOW SWAP THE PIVOT INTO THE BOUNDARY POSITION. This is not tidying up - it is what puts the
+       pivot in its FINAL SORTED POSITION, which is the only reason any of this works.
+
+    6. COMPARE THE PIVOT'S POSITION WITH THE TARGET:
+         - the same? The value sitting there is the answer. Stop.
+         - before the target? The answer is to the right, so narrow the range to everything AFTER
+           the pivot's position.
+         - after the target? Narrow the range to everything BEFORE it.
+
+    7. Repeat from step 3 with the smaller range.
+
+STEP 1 IS THE MOST COMMON FAILURE. Using k itself as the index is wrong on 5,094 of 6,000; using
+length minus k minus one is wrong on 4,379 of 6,000. Two elements: the largest is at index one, the
+second largest at index zero - so length minus k.
+
+STEP 5 IS THE MOST COMMONLY OMITTED. Without it the value at the boundary is not the pivot, so a
+match reports the wrong number and the narrowing is based on a false position - wrong on 3,153 of
+6,000.
+
+STEP 6 MUST EXCLUDE THE PIVOT'S OWN POSITION when narrowing. You have already examined it and
+rejected it, and leaving it in means the range may not shrink at all - which is not slowness but an
+infinite loop. Measured wrong or hanging on 3,701 of 6,000.
+
+WHY DISCARDING A WHOLE SIDE IS LEGITIMATE, in one sentence: after the partition the pivot is in its
+final sorted position, so every value on its left is smaller and every value on its right is not -
+which tells you with certainty which side any given target index falls on.
+
+WHY THIS IS FASTER THAN SORTING, in one sentence you should be able to say: sorting orders all n
+values, and you only need one position to be right - so you work on the half that contains it and
+throw the other half away, giving n plus n over two plus n over four and so on, which adds up to
+about two n.
+
+AND SAY THE CAVEAT WITHOUT BEING ASKED: the average cost is linear, the worst case is quadratic, and
+with a last-element pivot the worst case is triggered by already-sorted input - so in production you
+would pick the pivot at random.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a warehouse floor covered with a few thousand unlabelled boxes of different weights, and
+somebody asks for the second-heaviest box. Just that one box; nobody cares about the rest.
+
+The thorough approach is to line every box up in weight order and then walk to the second from the
+end. That works, and it is an enormous amount of lifting - you have carefully ordered thousands of
+boxes relative to each other in order to answer a question about one of them.
+
+Here is the trick, and it starts with picking a box at random - say the one nearest the door - and
+using it as a YARDSTICK.
+
+Go through every other box and shove it to the LEFT side of the floor if it is lighter than the
+yardstick, and leave it on the right if it is not. When you have finished, put the yardstick itself
+down in the gap between the two groups.
+
+Now stop and notice what you have earned, because it is more than it looks. THE YARDSTICK IS NOW IN
+ITS EXACT FINAL PLACE. Not approximately - exactly. Every box to its left is lighter and every box to
+its right is heavier, so if you were ever to finish lining up the whole floor, that box would not
+move. And you can count along the floor to see exactly which place it occupies: the four hundredth,
+say.
+
+If the place you want is the four hundredth, you are finished after ONE PASS OVER THE FLOOR - and you
+never sorted anything.
+
+And if not, here is the payoff: you can IGNORE AN ENTIRE SIDE OF THE FLOOR. Want the six hundredth?
+Then it is somewhere to the right of the yardstick, and every box on the left is now permanently
+irrelevant. You do not sort them, you do not look at them again, you do not think about them. Pick a
+new yardstick from the right-hand side and do the same thing there - on a floor half the size.
+
+Then a quarter the size. Then an eighth. The total lifting is one floor plus half a floor plus a
+quarter plus an eighth, which never adds up to more than two floors, no matter how many boxes there
+are. Lining everything up would have cost you far more.
+
+Three details are the difference between working and not.
+
+PUTTING THE YARDSTICK DOWN IN THE GAP IS PART OF THE JOB, not tidying. If you leave it by the door
+and merely note "the gap is at position four hundred", then whatever box happens to be lying at
+position four hundred is not the yardstick, and you will hand over the wrong box with complete
+confidence.
+
+WHEN YOU MOVE ON TO ONE SIDE, LEAVE THE YARDSTICK OUT OF IT. You have already settled that box. Keep
+it in the working area and you can end up picking it as the yardstick again and again, making no
+progress at all.
+
+AND COUNTING FROM THE RIGHT END TAKES CARE. "Second heaviest" out of six hundred boxes means the five
+hundred and ninety-eighth place from the light end, not the second. Work that out on a floor with two
+boxes on it before trusting yourself on a floor with thousands.
+
+One last warning worth carrying. If the floor happens to be ALREADY in weight order and you always
+grab the box at the far end as your yardstick, you will find it is the heaviest every single time, so
+each pass eliminates exactly one box instead of half the floor - and the whole thing degenerates into
+the very slow method you were avoiding. The cure is to grab a yardstick AT RANDOM, so that no
+particular arrangement of the floor is reliably bad.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Find the kth largest element in O(n) average time (Lomuto partition).
+    def find_kth_largest(nums, k):
+        target = len(nums) - k              # kth largest sits here once sorted
+
+  THE ONE LINE OF ARITHMETIC EVERYTHING DEPENDS ON. Sorted ascending, the largest is at index n-1,
+  the 2nd largest at n-2, so the kth largest is at n-k. Derive it with n = 2 rather than recalling
+  it: using `k` is wrong on 5,094 of 6,000, and `len - k - 1` on 4,379 of 6,000.
+
+        lo, hi = 0, len(nums) - 1
+
+  The range still under consideration, inclusive at both ends.
+
+        while lo <= hi:
+
+  Loop until the answer is found. Each iteration MUST shrink the range or this is an infinite loop -
+  which is exactly what happens if the narrowing below keeps the pivot's position.
+
+            pivot = nums[hi]                # choose the last element as pivot
+
+  THE SIMPLEST CHOICE, AND THE SOURCE OF THE WORST CASE. On sorted input the last element is the
+  largest every time, so each partition peels off one element instead of half - measured at 1,999,000
+  comparisons on 2,000 sorted values asking for the smallest. In production, swap a RANDOM element
+  into `hi` first; say so out loud even if you write the simple version.
+
+            p = lo
+
+  THE BOUNDARY of the "smaller than the pivot" region. THE INVARIANT: everything in nums[lo..p-1] is
+  smaller than the pivot, and everything in nums[p..i-1] is not.
+
+            for i in range(lo, hi):
+                if nums[i] < pivot:
+                    nums[i], nums[p] = nums[p], nums[i]  # push smaller left
+                    p += 1
+
+  THE PARTITION LOOP. The scan stops BEFORE `hi`, because that is where the pivot itself is sitting.
+  Each smaller value is swapped down to the boundary and the boundary advances.
+
+  Using `<=` here also works - measured wrong on 0 of 6,000, including all 4,394 inputs with
+  duplicates - it merely sends equal values to the other side. It does NOT help the all-equal
+  performance case: 1,499,500 comparisons versus 1,500,499, both quadratic.
+
+            nums[p], nums[hi] = nums[hi], nums[p]        # put pivot in place
+
+  THE MOST-OMITTED LINE IN THIS ALGORITHM, and it is not tidying up: it is what places the pivot in
+  its FINAL SORTED POSITION, which is the only reason the next three lines are allowed to conclude
+  anything. Omit it and index `p` holds some other value - wrong on 3,153 of 6,000.
+
+            if p == target:
+                return nums[p]              # pivot landed on the answer
+
+  The pivot is correctly placed, and its place is the one you wanted, so the value there is the
+  answer - even though neither side is sorted.
+
+            if p < target:
+                lo = p + 1                  # answer is to the right
+
+  `p + 1`, NOT `p`. Position p is settled and rejected; leaving it in the range risks choosing the
+  same pivot forever - measured wrong or hanging on 3,701 of 6,000.
+
+            else:
+                hi = p - 1                  # answer is to the left
+
+  Symmetrically, `p - 1`.
+
+        return -1
+
+  Unreachable for valid input (1 <= k <= len(nums)) - the target index is always inside the initial
+  range, so some partition eventually lands on it. It is a guard against a bad k, and it is what a
+  wrong `target` expression tends to return, which is a useful diagnostic.
+
+FOURTEEN LINES. AVERAGE O(n) TIME - measured at 3,460 comparisons for the largest of 2,000 random
+values and 5,871 for the median - WORST O(n squared), O(1) extra space, AND IT REORDERS THE CALLER'S
+LIST. Mention that last point rather than leaving it to be discovered.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE OFFICIAL EXAMPLE. nums = [3, 2, 1, 5, 6, 4], k = 2. target = 6 - 2 = 4. Expected 5.
+
+ROUND ONE: range [0..5], pivot = nums[5] = 4, boundary p starts at 0.
+
+     i | nums[i] | < 4? | swap                   | array               | p after
+    ---+---------+------+------------------------+---------------------+---------
+     0 |    3    | yes  | with itself (p = 0)    | [3,2,1,5,6,4]       |   1
+     1 |    2    | yes  | with itself (p = 1)    | [3,2,1,5,6,4]       |   2
+     2 |    1    | yes  | with itself (p = 2)    | [3,2,1,5,6,4]       |   3
+     3 |    5    | no   | -                      | [3,2,1,5,6,4]       |   3
+     4 |    6    | no   | -                      | [3,2,1,5,6,4]       |   3
+
+    then the pivot swap: nums[3] and nums[5]  ->  [3,2,1,4,6,5],  pivot index p = 3
+    p = 3 < target 4  ->  the answer is to the RIGHT.  lo = 4.  Indices 0..3 are gone for good.
+
+ROUND TWO: range [4..5], pivot = nums[5] = 5, p starts at 4.
+
+     i = 4: nums[4] = 6, not < 5, so no swap; p stays 4.
+     pivot swap: nums[4] and nums[5]  ->  [3,2,1,4,5,6],  pivot index p = 4
+     p == target 4  ->  RETURN nums[4] = 5.
+
+    TWO PARTITIONS, 6 comparisons. Note the array is NOT sorted - [3,2,1,4,5,6] - and it did not need
+    to be. Only index 4 had to be right.
+
+CASE TWO - DUPLICATES, WHICH IS THE SPECIFICATION TEST.
+nums = [3, 2, 3, 1, 2, 4, 5, 5, 6], k = 4. n = 9, target = 5. Expected 4.
+
+    Sorted for reference: [1, 2, 2, 3, 3, 4, 5, 5, 6], and index 5 holds 4.
+    Counting down: 6 is 1st, 5 is 2nd, the other 5 is 3rd, 4 is 4th. So 4 is right, and anyone who
+    deduplicated first would answer 3.
+    The algorithm returns 4 with no special handling of the repeats - equal values simply land on one
+    side of the pivot or the other, and the pivot still ends at a correct final position for its
+    value.
+
+CASE THREE - THE SMALLEST LIST. nums = [1], k = 1. target = 0. The partition loop body never runs
+(range(0,0) is empty), the pivot swaps with itself, p = 0 = target, and 1 is returned.
+    THE `target = k` VERSION computes target = 1, which is off the end of a one-element list, so it
+    narrows until lo > hi and returns the -1 fallback. A -1 coming out of a valid input is the
+    fingerprint of a wrong target expression.
+
+CASE FOUR - TWO ELEMENTS, WHICH IS THE INDEX DERIVATION. nums = [2, 1], k = 2 - the SECOND largest,
+which is 1. target = 2 - 2 = 0.
+    pivot = 1, scan i = 0: 2 is not < 1, p stays 0; pivot swap gives [1, 2], p = 0 = target, return 1.
+    Do this two-element check whenever you are unsure whether the target is n-k or n-k-1.
+
+CASE FIVE - THE PERFORMANCE CASES, MEASURED ON 2,000 VALUES.
+    random values, k = 1:                      3,460 comparisons   (about 1.7 n)
+    random values, k = n/2 (the median):       5,871 comparisons   (about 2.9 n)
+    ALREADY SORTED, k = 1 (the largest):       1,999 comparisons   - the BEST case, because the last
+                                               element is the perfect pivot every time
+    ALREADY SORTED, k = n (the smallest):  1,999,000 comparisons   - the WORST case, about 1000 n
+    ALL VALUES IDENTICAL, k = n/2:         1,500,499 comparisons   - about 750 n, also quadratic
+    for reference, a comparison sort of 2,000 values is about 22,000 comparisons
+
+    THAT SORTED-INPUT PAIR IS THE MOST INSTRUCTIVE ROW IN THIS ENTRY: the same input is the best case
+    for one k and the worst case for another, purely because of which end the pivot comes from.
+
+CASE SIX - WHAT THE MISSING PIVOT SWAP DOES. On case one, after the first partition without the swap
+the array is still [3,2,1,5,6,4] and p = 3 - but nums[3] is 5, not the pivot 4, and 5 is not in its
+final position. The narrowing proceeds from a false premise and the function returns 6. Measured
+wrong on 3,153 of 6,000.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. Each partition costs a pass over its range. On average each pass halves the
+range, so the total is n + n/2 + n/4 + ... = 2n: AVERAGE O(n) TIME. O(1) EXTRA SPACE if written as a
+loop (O(log n) stack if written recursively). WORST CASE O(n squared), when every partition peels off
+one element.
+
+    sort and index                        O(n log n) time, one line, never surprising
+    min-heap of size k                    O(n log k) time, O(k) space - the answer for STREAMS
+    quickselect                           O(n) average, O(n squared) worst, O(1) space, DESTRUCTIVE
+    median of medians pivot               O(n) worst case, and slow enough in practice that nobody
+                                          uses it - know the name
+
+MEASURED ON 2,000 VALUES: 3,460 comparisons for the largest, 5,871 for the median, against about
+22,000 for a comparison sort. And the worst case is not theoretical - 1,999,000 comparisons on sorted
+input asking for the smallest.
+
+THE #1 MISTAKE: THE TARGET INDEX. `target = k` is wrong on 5,094 of 6,000; `len - k - 1` on 4,379 of
+6,000. It is `len(nums) - k`, and the way to be sure is to check it on a two-element list in front of
+the interviewer.
+
+THE #2: OMITTING THE FINAL PIVOT SWAP. Wrong on 3,153 of 6,000. Until the pivot is moved into the
+boundary position, nothing is in its final place and no conclusion may be drawn.
+
+THE #3: NARROWING TO `p` INSTEAD OF `p + 1` / `p - 1`. Wrong or non-terminating on 3,701 of 6,000.
+The pivot's position is settled; exclude it.
+
+THE #4, WHICH IS A READING ERROR NOT A CODING ONE: TREATING "kTH LARGEST" AS "kTH LARGEST DISTINCT".
+In [3,2,3,1,2,4,5,5,6] with k = 4 the answer is 4, not 3.
+
+THE #5: CLAIMING O(n) WITHOUT THE CAVEAT. With a last-element pivot, sorted input is quadratic -
+1,999,000 comparisons measured. Volunteer "average O(n), worst O(n squared), randomise the pivot".
+
+TWO HONEST NEGATIVES: partitioning with `<=` rather than `<` is wrong on 0 of 6,000 - including all
+4,394 duplicate-containing inputs - and it does NOT fix the all-equal slow case (1,499,500
+comparisons versus 1,500,499). And sorting is of course wrong on 0 of 6,000; it is the baseline, not
+a mistake.
+
+WHAT TO SAY OUT LOUD, in this order: (1) sorting and indexing is O(n log n) and always available;
+(2) a size-k min-heap is O(n log k) and is what I would use for a stream; (3) but I only need ONE
+position correct, and quicksort's partition puts one value in its FINAL position and tells me which;
+(4) so compare that position with my target and recurse into ONE side only; (5) that gives
+n + n/2 + n/4 + ... = 2n, hence average linear - and this series is the proof, not intuition;
+(6) worst case is O(n squared) on sorted input with a last-element pivot, so I would randomise the
+pivot; (7) it is in place but DESTRUCTIVE. Point 5 is what earns the marks; point 6 volunteered
+unprompted is what makes you look experienced.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "how do you avoid the worst case?" Three answers, in increasing
+order of seriousness: swap a RANDOM element into the pivot slot (one line, and it makes bad behaviour
+a matter of luck rather than a property of the input); MEDIAN OF THREE (cheap, kills the sorted-input
+case specifically); MEDIAN OF MEDIANS (guaranteed O(n) worst case, and too slow to be worth it in
+practice). Naming all three in that order is the complete answer.
+
+AND THE OTHER ONE: "what if the data does not fit in memory, or arrives as a stream?" Then
+quickselect is unavailable - it needs random access and multiple passes - and the heap of size k is
+the answer, in O(n log k) time and O(k) space. Knowing WHEN NOT to use quickselect matters as much as
+knowing it.
+
+THEN SOMETIMES: "find the MEDIAN" (quickselect with target n/2, and the even-length case needs two
+selections or one selection plus a maximum), or "the top k elements, not just the kth" (after
+quickselect the first target elements are all smaller than the pivot, so the k values from the target
+index onwards ARE the top k - unsorted, which is usually acceptable and worth pointing out).
+
+THE FAMILY: Kth Largest Element in an Array, Kth Smallest Element in a Sorted Matrix, Top K Frequent
+Elements, K Closest Points to Origin, Wiggle Sort II, Find Median from Data Stream (two heaps -
+different tool, same question), Sort Colors (a three-way partition, Dutch National Flag), Quicksort
+itself. THE TRANSFERABLE IDEA: A PARTITION PLACES ONE ELEMENT PERFECTLY AND TELLS YOU WHERE IT WENT -
+SO WHEN YOU ONLY NEED ONE POSITION TO BE CORRECT, DISCARD THE SIDE THAT CANNOT CONTAIN IT AND THE
+COST COLLAPSES FROM n log n TO n.
+
+ONE-SENTENCE TAKEAWAY: partition like quicksort, but recurse into ONLY the side containing index
+len(nums) - k - the pivot lands in its final position and tells you which side that is - giving
+n + n/2 + n/4 + ... = 2n on average, with sorted input as the quadratic worst case unless you
+randomise the pivot.""",
 ]
 
 _EX_P1AC["Rotate Image (90 degrees, in place)"] = [
-    """Transpose then reverse, traced.
-matrix = [[1,2,3],
-          [4,5,6],
-          [7,8,9]]
-TRANSPOSE (swap across the main diagonal) -> [[1,4,7],
-                                              [2,5,8],
-                                              [3,6,9]]
-REVERSE each row -> [[7,4,1],
-                     [8,5,2],
-                     [9,6,3]]
-Which is the original rotated 90 degrees clockwise. Two simple passes replace
-any reasoning about where each element lands.""",
+    """1. THE GOAL IN PLAIN ENGLISH
 
-    """Why `for j in range(i + 1, n)` - the upper triangle only.
-Transposing swaps matrix[i][j] with matrix[j][i]. If you loop over the FULL
-square you swap every pair TWICE, which returns the matrix to its original
-state - and the bug is invisible on a symmetric matrix.
-Starting j at i+1 visits each unordered pair exactly once. That single index is
-the whole correctness of the transpose step, and it is worth testing on a
-non-symmetric 3x3 where a double swap would show.""",
+You are given a square grid of numbers - an image, one number per pixel - and you must turn it
+90 degrees CLOCKWISE. IN PLACE, meaning you may not build a second grid and return that; you must
+rearrange the one you were given.
 
-    """Anticlockwise, which is the follow-up.
-Clockwise = transpose, then reverse each ROW.
-Anticlockwise = transpose, then reverse each COLUMN (equivalently: reverse the
-rows' ORDER first, then transpose).
-Both are two passes; only the second step differs. Deriving it rather than
-memorising it: a 90-degree anticlockwise turn is three clockwise turns, but it
-is far easier to note that the transpose gives you a reflection and you choose
-which axis to un-reflect along.""",
+    input                    output (rotated clockwise)
+    1  2  3                  7  4  1
+    4  5  6        ->        8  5  2
+    7  8  9                  9  6  3
 
-    """The four-way cycle alternative.
-You can rotate directly by moving four elements at a time around each ring:
-temp = top-left; top-left = bottom-left; bottom-left = bottom-right;
-bottom-right = top-right; top-right = temp - looping over rings and offsets.
-It is one pass instead of two, marginally faster, and much easier to get wrong
-(the index arithmetic for `n - 1 - i` appears four times). The
-transpose-then-reverse version is the one to write under pressure and the cycle
-version is the one to mention.""",
+CHECK IT BY FOLLOWING ONE ROW. The TOP ROW 1 2 3 becomes the RIGHT-HAND COLUMN, reading downwards:
+1 at the top-right, then 2, then 3. That is what a clockwise quarter turn does - the top edge swings
+round to become the right edge. And the left column 1 4 7 becomes the top row 7 4 1.
 
-    """Edge cases.
-1x1 -> no swaps, unchanged.
-2x2 [[1,2],[3,4]] -> transpose [[1,3],[2,4]] -> reverse rows [[3,1],[4,2]].
-Correct.
-Empty matrix -> both loops are empty.
-NON-SQUARE matrices cannot be rotated in place at all - the dimensions change,
-so an m x n becomes n x m and needs a new matrix. The problem guarantees
-square; if it did not, the in-place requirement would be impossible, which is a
-good thing to point out.""",
+WHERE DOES EACH ELEMENT GO, precisely? In an n by n grid, the element at row i, column j moves to
+row j, column n-1-i.
 
-    """Complexity and the family.
-O(n^2) time - every element is touched a constant number of times - and O(1)
-extra space, which is the constraint that makes the problem interesting.
-The family: Spiral Matrix (traverse in layers), Set Matrix Zeroes (use the
-first row and column as marker storage for O(1) space), Transpose Matrix,
-Flipping an Image (reverse then invert, fused), Rotate Array (the 1-D analogue -
-reverse the whole thing, then reverse the two parts), and Diagonal Traverse.
-The recurring theme in matrix problems: express the transformation as a
-composition of simple reflections rather than computing destination indices
-directly.""",
+    the 1 at (0,0)  ->  (0, 2)      top-left goes to top-right
+    the 3 at (0,2)  ->  (2, 2)      top-right goes to bottom-right
+    the 9 at (2,2)  ->  (2, 0)      bottom-right goes to bottom-left
+    the 7 at (2,0)  ->  (0, 0)      bottom-left goes to top-left
+    the 5 at (1,1)  ->  (1, 1)      THE CENTRE OF AN ODD-SIZED GRID NEVER MOVES
+
+Those four corners form a CYCLE - each one takes the next one's place - which is a hint about one way
+to solve it.
+
+THE OBVIOUS SOLUTION IS BANNED BY THE CONSTRAINT. Building a new grid with `out[j][n-1-i] =
+m[i][j]` is two lines and obviously right - it is the ground truth for every measurement in this
+entry - and it uses O(n squared) extra space. The problem asks for O(1) extra space.
+
+THE TRICK, AND IT IS ONE OF THE MOST ELEGANT IN THE WHOLE OF INTERVIEW PREP: a clockwise rotation is
+TWO SIMPLE OPERATIONS COMPOSED. TRANSPOSE the grid (flip it across the main diagonal), then REVERSE
+EACH ROW. Both are easy to do in place, and together they are exactly a clockwise quarter turn.
+Section 2 shows why, on the 3x3.
+
+WHY THE "IN PLACE" CONSTRAINT IS REALISTIC RATHER THAN ARTIFICIAL: real image buffers are large and
+sometimes shared with hardware, so rotating without allocating a second frame is a genuine
+requirement, not an exercise in self-denial.""",
+
+    """2. THE INTUITION, WITH A PICTURE
+
+DO IT IN TWO EASY MOVES INSTEAD OF ONE HARD ONE.
+
+MOVE ONE - TRANSPOSE. Swap the element at (i,j) with the element at (j,i). This reflects the grid
+across the main diagonal (the top-left to bottom-right line); rows become columns.
+
+    1  2  3                  1  4  7
+    4  5  6      ---->       2  5  8          the diagonal 1, 5, 9 does not move
+    7  8  9    transpose     3  6  9
+
+MOVE TWO - REVERSE EACH ROW. Read each row backwards, left-to-right becoming right-to-left.
+
+    1  4  7                  7  4  1
+    2  5  8      ---->       8  5  2          AND THIS IS THE ANSWER
+    3  6  9   reverse rows   9  6  3
+
+COMPARE THAT WITH THE TARGET FROM SECTION 1: identical. Two operations, each of them almost trivial,
+and no second grid.
+
+WHY TWO REFLECTIONS MAKE A ROTATION - this is the bit worth understanding rather than memorising.
+A transpose is a reflection across the diagonal; reversing rows is a reflection across the VERTICAL
+centre line. REFLECTING TWICE ABOUT TWO DIFFERENT AXES IS ALWAYS A ROTATION, by twice the angle
+between the axes. The diagonal and the vertical line meet at 45 degrees, so the result is a 90-degree
+rotation. Hold a piece of paper with a letter F on it and do the two flips - it is convincing in a
+way that algebra is not.
+
+CHECK IT ON ONE ELEMENT, ALGEBRAICALLY, because that is what an interviewer will ask for:
+
+    the element at (i, j)
+        after the transpose it is at   (j, i)
+        after reversing row j it is at (j, n-1-i)
+    and (j, n-1-i) is exactly where a clockwise rotation puts (i, j). Done.
+
+NOW THE DETAIL THAT BREAKS MOST FIRST ATTEMPTS - THE TRANSPOSE MUST ONLY VISIT EACH PAIR ONCE.
+Swapping is symmetric: swapping (i,j) with (j,i) and then later swapping (j,i) with (i,j) puts
+everything back. So the inner loop must start at j = i + 1, covering only the UPPER TRIANGLE:
+
+    j from i+1:   visits (0,1) (0,2) (1,2)          three pairs, each swapped once     CORRECT
+    j from 0:     visits (0,1) and (1,0), etc.      each pair swapped twice = no change
+
+    MEASURED: the j-from-0 version is wrong on 4,765 of 6,000 - and on 4,765 of the 4,778 cases with
+    a grid of size 2 or more. Its output is the input with each row reversed, which looks like a
+    horizontal mirror rather than a rotation.
+
+    (Starting j at i rather than i+1 is harmless - it swaps each diagonal element with itself, which
+    does nothing. Measured wrong on 0 of 6,000.)
+
+AND THE ORDER OF THE TWO MOVES MATTERS. Reverse the rows FIRST and then transpose, and you get the
+ANTICLOCKWISE rotation instead - MEASURED wrong on 4,778 of 6,000 against the clockwise target, and
+wrong on 0 of 6,000 when checked against the ANTICLOCKWISE answer. It is not broken; it is a
+different rotation. That is a fact worth carrying, because it means you get the other direction for
+free.
+
+THE OTHER WAY TO GET CLOCKWISE, also measured correct on 0 wrong of 6,000: REVERSE THE ORDER OF THE
+ROWS (not each row's contents) and THEN transpose. Two ways in, and knowing both means you can
+derive the direction you need instead of guessing.""",
+
+    """3. EVERY TERM, DEFINED
+
+n x n MATRIX. A square grid, n rows by n columns, stored as a list of lists: `matrix[i][j]` is row i,
+column j, both counted from 0. THE SQUARENESS MATTERS - a non-square grid cannot be rotated in place,
+because the result has different dimensions.
+
+IN PLACE. Rearranging the given structure using only a fixed amount of extra memory - O(1) extra
+space. Building a new grid and returning it is not in place, even if you assign it back afterwards.
+
+TRANSPOSE. Reflecting a matrix across its MAIN DIAGONAL, so that element (i,j) and element (j,i)
+trade places. Rows become columns.
+
+MAIN DIAGONAL. The cells where the row index equals the column index: (0,0), (1,1), (2,2). These are
+the elements a transpose leaves alone.
+
+UPPER TRIANGLE. The cells with j > i - above the diagonal. The transpose loop must cover exactly
+these, because each swap handles a PAIR and covering both halves does every swap twice.
+
+REFLECTION. A flip about a line. Transposing is a reflection about the diagonal; reversing each row is
+a reflection about the vertical centre line.
+
+TWO REFLECTIONS COMPOSE INTO A ROTATION by twice the angle between their axes. Diagonal and vertical
+meet at 45 degrees, so the composition is a 90-degree rotation. This is the reason the recipe works,
+and it is what to say rather than "transpose then reverse".
+
+CLOCKWISE vs ANTICLOCKWISE. Clockwise sends (i,j) to (j, n-1-i); anticlockwise sends it to
+(n-1-j, i). The two recipes differ only in the ORDER of the same two operations - measured, doing them
+the other way round produces exactly the anticlockwise rotation.
+
+`row.reverse()`. Reverses a list IN PLACE, in O(length). `row[::-1]` creates a NEW list instead, so
+`row = row[::-1]` inside a loop changes only the local name and leaves the matrix untouched - a
+silent no-op worth watching for.
+
+`matrix.reverse()` vs `for row in matrix: row.reverse()`. Completely different: the first reverses the
+ORDER OF THE ROWS (a vertical flip), the second reverses the CONTENTS of each row (a horizontal
+flip). Confusing them gives the anticlockwise rotation.
+
+TUPLE-SWAP, `a, b = b, a`. Python evaluates the right side first, so no temporary variable is needed
+and no clobbering occurs.
+
+CYCLIC / FOUR-WAY ROTATION. The alternative algorithm: move four elements around in one go
+(top-left to top-right to bottom-right to bottom-left to top-left), layer by layer. Same complexity,
+one pass, harder to get the index arithmetic right under pressure.
+
+O(n squared) TIME. Every one of the n squared elements must move, so this is the floor - you cannot
+rotate an image without touching its pixels.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE
+
+Every number below is measured: 6,000 random square grids of sizes 1 to 5, each checked against a
+freshly built clockwise rotation `out[j][n-1-i] = m[i][j]`.
+
+TRAP 1 - TRANSPOSING THE WHOLE GRID INSTEAD OF THE UPPER TRIANGLE. Writing the inner loop as
+`for j in range(n)` swaps every pair TWICE, and two swaps of the same pair cancel - so the transpose
+does nothing at all, and the row reversal alone is left.
+
+    [[1,2,3],[4,5,6],[7,8,9]]  ->  [[3,2,1],[6,5,4],[9,8,7]]  instead of [[7,4,1],[8,5,2],[9,6,3]]
+    MEASURED: wrong on 4,765 of 6,000 - and on 4,765 of the 4,778 grids of size 2 or more.
+    THE FINGERPRINT: the output is the input with each row reversed - a MIRROR IMAGE, not a rotation.
+    THE FIX: `for j in range(i + 1, n)`. Each pair once.
+
+TRAP 2 - FORGETTING THE ROW REVERSAL. Then you have transposed the grid and stopped. A transpose is a
+reflection, not a rotation, and the two are different: a reflection leaves the diagonal fixed, a
+rotation does not.
+
+    [[1,2,3],[4,5,6],[7,8,9]]  ->  [[1,4,7],[2,5,8],[3,6,9]]
+    MEASURED: wrong on 4,778 of 6,000 - which is every grid of size 2 or more. THE FINGERPRINT: the
+    first row of the output is the first COLUMN of the input, reading downwards.
+
+TRAP 3 - DOING THE TWO STEPS IN THE WRONG ORDER. Reversing each row first and then transposing gives
+the ANTICLOCKWISE rotation.
+
+    [[1,2,3],[4,5,6],[7,8,9]]  ->  [[3,6,9],[2,5,8],[1,4,7]]
+    MEASURED: wrong on 4,778 of 6,000 against the clockwise answer - and wrong on 0 of 6,000 when
+    compared with the ANTICLOCKWISE rotation. So it is not a broken algorithm, it is the other
+    direction. Remember it deliberately: transpose-then-reverse-rows is clockwise, reverse-rows-then-
+    transpose is anticlockwise.
+
+TRAP 4 - REVERSING THE LIST OF ROWS INSTEAD OF EACH ROW'S CONTENTS. `matrix.reverse()` flips the grid
+top-to-bottom; `for row in matrix: row.reverse()` flips each row left-to-right. After a transpose,
+you need the second.
+
+    transpose then `matrix.reverse()`  ->  [[3,6,9],[2,5,8],[1,4,7]]  - the anticlockwise rotation
+    again. MEASURED: wrong on 4,778 of 6,000.
+    (And that gives you a second correct recipe: `matrix.reverse()` BEFORE the transpose is clockwise
+    - measured wrong on 0 of 6,000.)
+
+TRAP 5 - `row = row[::-1]` INSTEAD OF `row.reverse()`. Slicing builds a NEW list and rebinds the loop
+variable; the matrix is never touched. The code runs, changes nothing, and looks right. Either call
+`.reverse()`, or assign into the slice with `row[:] = row[::-1]`.
+
+TRAP 6 - USING A TEMPORARY GRID AND CALLING IT IN PLACE. `matrix = [[...]]` inside the function
+rebinds the local name and the caller sees no change at all; `matrix[:] = new_grid` does mutate the
+caller's list but uses O(n squared) extra space, so it satisfies the letter of "in place" and not the
+point of it. If you use extra space, say so.
+
+TRAP 7 - GETTING THE FOUR-WAY CYCLIC VERSION'S INDICES WRONG. The alternative algorithm moves four
+elements at once per position, over `for i in range(n // 2)` and `for j in range(i, n - 1 - i)`. The
+inner range is the part people botch - too wide and elements get rotated twice; too narrow and a
+column is missed. It is not more efficient than transpose-plus-reverse (both are O(n squared) with the
+same number of moves), so under interview pressure prefer the two-step version and mention the cyclic
+one exists.
+
+TRAP 8 - ASSUMING THE GRID IS SQUARE WITHOUT SAYING SO. The transpose swap requires it. For a
+non-square grid the rotated result has swapped dimensions and cannot occupy the same storage - state
+that as a precondition rather than letting it be discovered.
+
+WHAT IS NOT A TRAP, measured rather than assumed:
+    `for j in range(i, n)` - INCLUDING THE DIAGONAL. Wrong on 0 of 6,000, because swapping a diagonal
+    element with itself does nothing. Harmless, one wasted operation per row.
+    REVERSING THE ROW ORDER FIRST AND THEN TRANSPOSING. Wrong on 0 of 6,000 - a second correct route
+    to the clockwise rotation.""",
+
+    """5. THE NAIVE VERSION FIRST, THEN THE UPGRADE
+
+THE NAIVE VERSION - BUILD A NEW GRID:
+
+    def rotate_copy(m):
+        n = len(m)
+        return [[m[n - 1 - j][i] for j in range(n)] for i in range(n)]
+
+IT IS CORRECT - the ground truth for every measurement in this entry - and it is the right thing to
+write first, because it forces you to state the mapping precisely: the output's (i,j) comes from the
+input's (n-1-j, i), or equivalently the input's (i,j) goes to the output's (j, n-1-i). Once that
+mapping is on the whiteboard, everything else is mechanics.
+
+WHAT IS WRONG WITH IT is only the O(n squared) EXTRA SPACE. For an interview problem that is a
+constraint; for real image buffers it is a genuine cost, and sometimes impossible - the buffer may be
+shared with hardware.
+
+THE FIRST INSTINCT FOR DOING IT IN PLACE IS THE FOUR-WAY CYCLE, and it is worth naming even if you do
+not write it. Notice from section 1 that four positions form a closed cycle - top-left to top-right to
+bottom-right to bottom-left and back. So you can hold one value in a temporary variable and rotate
+the other three into place, four elements at a time, working ring by ring from the outside in. It is
+correct and it is O(1) space. It is also the version where people mangle the loop bounds under
+pressure, because the inner range must be `range(i, n - 1 - i)` and every part of that is easy to get
+wrong.
+
+THE UPGRADE IS TO REPLACE ONE HARD OPERATION WITH TWO EASY ONES:
+
+    TRANSPOSE (swap (i,j) with (j,i)),  THEN  REVERSE EACH ROW.
+
+WHY THAT EQUALS A CLOCKWISE ROTATION - the algebra, in two lines:
+
+    (i, j)  --transpose-->  (j, i)  --reverse row j-->  (j, n-1-i)
+    and (j, n-1-i) is where a clockwise rotation sends (i, j).
+
+WHY IT EQUALS A ROTATION - the geometry, which is the version to say out loud: a transpose is a
+reflection across the diagonal, reversing rows is a reflection across the vertical centre line, and
+TWO REFLECTIONS ABOUT AXES 45 DEGREES APART COMPOSE INTO A 90-DEGREE ROTATION. That is why the recipe
+is not arbitrary, and why you can reconstruct it if you forget which order it goes in.
+
+THE ONE SUBTLETY IN THE TRANSPOSE: SWAP EACH PAIR ONLY ONCE. A swap is symmetric, so visiting both
+(i,j) and (j,i) undoes itself. Loop `j` from `i+1` to cover the upper triangle only. Looping from 0
+is measured wrong on 4,765 of 6,000, and its output is the input with each row reversed - because the
+transpose cancelled itself out and only the reversal survived.
+
+AND THE ORDER OF THE TWO STEPS SELECTS THE DIRECTION. Transpose then reverse rows = CLOCKWISE.
+Reverse rows then transpose = ANTICLOCKWISE (measured: wrong on 0 of 6,000 against the anticlockwise
+answer). Reverse the ROW ORDER then transpose = clockwise again (also 0 of 6,000). Three facts, one
+mechanism.
+
+WHAT IT COSTS. The transpose touches each of about n squared / 2 pairs once; the reversal touches each
+row once. O(n squared) TIME - which is optimal, since every pixel must move - and O(1) EXTRA SPACE:
+one temporary per swap, which Python's tuple assignment hides.""",
+
+    """6. HOW TO CODE IT - PLAIN ENGLISH STEPS, NO CODE YET
+
+    1. Note the size of the grid - the number of rows, which for a square grid is also the number of
+       columns.
+
+    2. STEP ONE, TRANSPOSE THE GRID. For every row index, and for every column index STRICTLY GREATER
+       THAN THAT ROW INDEX, swap the element at (row, column) with the element at (column, row). This
+       reflects the grid across the diagonal that runs from top-left to bottom-right, and the elements
+       ON that diagonal stay where they are.
+
+    3. STEP TWO, REVERSE EVERY ROW - each row's contents, read backwards, in place.
+
+    4. That is the whole rotation.
+
+WHY TWO SIMPLE FLIPS EQUAL A QUARTER TURN, in one sentence you should be able to say: flipping across
+the diagonal and then flipping left-to-right are two reflections about lines that meet at 45 degrees,
+and two reflections always compose into a rotation of twice the angle between them - so 90 degrees.
+
+WHY THE COLUMN INDEX MUST START STRICTLY ABOVE THE ROW INDEX. A swap involves two cells, so it
+handles the pair completely; visiting the pair again from the other side swaps it back and the grid
+ends up unchanged. Starting the column index at zero visits every pair twice, so the transpose
+cancels itself and only the row reversal is left - measured wrong on 4,765 of 6,000, and the output
+looks like a left-to-right mirror rather than a rotation. (Starting the column index AT the row index
+rather than one past it is harmless: it swaps each diagonal element with itself, which does nothing.)
+
+WHY THE ORDER OF THE TWO STEPS IS NOT NEGOTIABLE. Reversing the rows first and then transposing
+produces the ANTICLOCKWISE rotation - measured wrong on 4,778 of 6,000 against a clockwise target, and
+correct on all 6,000 when compared against the anticlockwise one. Remember it as a pair of facts
+rather than one: transpose-then-reverse is clockwise, reverse-then-transpose is anticlockwise.
+
+AND WATCH WHICH THING YOU REVERSE. Reversing the LIST OF ROWS flips the grid top-to-bottom, which is a
+different operation from reversing the CONTENTS of each row. After a transpose you want each row's
+contents; reversing the row order instead gives, once again, the anticlockwise rotation - wrong on
+4,778 of 6,000.
+
+ONE PYTHON-SPECIFIC WARNING WORTH INTERNALISING: reversing a row by making a reversed COPY and
+assigning it to the loop variable changes nothing in the grid, because you have only rebound a local
+name. Reverse in place, or assign into the row's contents.
+
+FINALLY, SAY THE PRECONDITION OUT LOUD: this only works because the grid is SQUARE. A non-square grid
+rotates to different dimensions and cannot be done in place at all.""",
+
+    """7. WHAT IT DOES, STORY-LEVEL
+
+Imagine a photograph printed on a square sheet of tracing paper, lying on a table in front of you,
+and you have been asked to turn it a quarter turn clockwise - but you are not allowed to pick it up
+and turn it, and you are not allowed to trace a fresh copy. You may only FLIP it.
+
+That sounds like a joke, and it is not, because two flips make a turn.
+
+FIRST FLIP: hold the sheet along the diagonal running from the top-left corner to the bottom-right
+corner, and fold it over about that line. Everything on one side of the diagonal swaps with the
+matching spot on the other side. The corner at the top-right ends up at the bottom-left, and the two
+corners ON the diagonal do not move at all. What you have now is a mirror image, which is not what
+you were asked for - it is inside out.
+
+SECOND FLIP: now fold the sheet about its VERTICAL centre line, left to right, so each row reads
+backwards.
+
+Look at it. The picture is now turned a quarter turn clockwise, and it is not mirrored - the second
+flip undid the mirroring of the first, and what survived the two flips is a rotation. That is a
+general fact about the world, not a coincidence about photographs: FLIP TWICE ABOUT TWO DIFFERENT
+LINES AND YOU HAVE ROTATED, BY TWICE THE ANGLE BETWEEN THE LINES. The diagonal and the vertical
+centre line sit 45 degrees apart, so the turn is 90 degrees.
+
+Now the practical part, which is where the mistakes live.
+
+WHEN YOU DO THE DIAGONAL FLIP, EACH PAIR OF SPOTS MUST BE SWAPPED ONCE AND ONLY ONCE. Swapping is its
+own undoing: exchange two spots and then exchange them again and you are exactly where you started.
+So work through the region on ONE side of the diagonal only. Someone who dutifully walks over the
+whole sheet swaps every pair twice, the diagonal flip completely cancels itself, and they are left
+with nothing but the left-right flip - which is a mirror image, and looks nothing like a rotation
+even though half the code was right.
+
+THE TWO FLIPS MUST HAPPEN IN THIS ORDER. Do the left-right flip first and the diagonal flip second
+and you will have rotated the picture ANTICLOCKWISE - a perfectly good quarter turn, in the wrong
+direction. That is worth remembering rather than fearing: if you ever need the other direction, you
+now know how to get it.
+
+AND BE CLEAR ABOUT WHICH FLIP YOU ARE DOING SECOND. Reversing each row means reading each row
+backwards - a left-to-right flip. Reversing the ORDER of the rows means turning the sheet upside down
+- a top-to-bottom flip. They are different folds about different lines, and the second one, after a
+diagonal flip, once again lands you in the anticlockwise direction.
+
+If the sheet were not square - a wide photograph rather than a square one - none of this would be
+possible. A quarter turn of a wide picture is a tall picture, and a tall picture does not fit in the
+space a wide one occupied. Squareness is what makes rotating without a second sheet possible at all.""",
+
+    """8. THE CODE, LINE BY LINE, WITH THE REAL NAMES
+
+    # Rotate an n x n matrix 90 degrees clockwise, in place.
+    def rotate(matrix):
+        n = len(matrix)
+
+  The side length. The grid must be SQUARE for any of this to work - state that as a precondition,
+  since a rotated non-square grid has different dimensions and cannot occupy the same storage.
+
+        # 1) Transpose: swap matrix[i][j] with matrix[j][i] (upper triangle only)
+        for i in range(n):
+            for j in range(i + 1, n):
+
+  THE UPPER TRIANGLE, AND `i + 1` IS THE WHOLE POINT. A swap handles both cells of a pair, so each
+  pair must be visited exactly once. `range(n)` here visits every pair twice, the swaps cancel, the
+  transpose does nothing, and only the row reversal below survives - measured wrong on 4,765 of 6,000,
+  producing a left-right MIRROR of the input.
+
+  `range(i, n)` would also be correct - it merely swaps each diagonal element with itself - measured
+  wrong on 0 of 6,000. `i + 1` skips that no-op.
+
+                matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]
+
+  THE SWAP. Python evaluates the right-hand side first, so no temporary variable is needed and
+  nothing is clobbered. After this whole double loop the grid is REFLECTED ACROSS THE MAIN DIAGONAL:
+  rows have become columns, and the diagonal itself is untouched.
+
+  A reflection is not yet a rotation - the image is mirrored - which is what the next step fixes.
+
+        # 2) Reverse each row to finish the clockwise rotation
+        for row in matrix:
+            row.reverse()
+
+  THE SECOND REFLECTION, about the vertical centre line. Two reflections about axes 45 degrees apart
+  compose into a 90-degree rotation, which is WHY this works rather than merely THAT it works.
+
+  `row.reverse()` reverses IN PLACE. `row = row[::-1]` would build a new list and rebind the loop
+  variable, leaving the matrix untouched - code that runs, looks right, and does nothing. Use
+  `row[:] = row[::-1]` if you prefer slicing.
+
+  AND IT IS EACH ROW'S CONTENTS, NOT THE ORDER OF THE ROWS. `matrix.reverse()` flips the grid
+  top-to-bottom instead, which combined with the transpose gives the ANTICLOCKWISE rotation - measured
+  wrong on 4,778 of 6,000.
+
+  OMITTING THIS LOOP ENTIRELY leaves a transpose, wrong on 4,778 of 6,000 - every grid of size 2 or
+  more.
+
+        return matrix
+
+  Returned for convenience; the caller's grid has already been modified in place, which is the point.
+
+  THE ELEMENT-LEVEL PROOF, worth writing on the whiteboard: (i,j) goes to (j,i) under the transpose,
+  and then row j is reversed so it goes to (j, n-1-i) - which is exactly where a clockwise rotation
+  sends (i,j).
+
+SIX LINES. O(n squared) TIME, which is optimal since every element must move, and O(1) EXTRA SPACE.
+The order of the two steps chooses the direction: swap them and you have the anticlockwise rotation.""",
+
+    """9. TRACED ON REAL NUMBERS
+
+CASE ONE - THE STANDARD 3x3. matrix = [[1,2,3],[4,5,6],[7,8,9]].
+
+TRANSPOSE, upper triangle only. Three pairs are visited, once each:
+
+     i, j | swap                       | grid after
+    ------+----------------------------+---------------------------
+     0, 1 | (0,1)=2  <->  (1,0)=4      | [[1,4,3],[2,5,6],[7,8,9]]
+     0, 2 | (0,2)=3  <->  (2,0)=7      | [[1,4,7],[2,5,6],[3,8,9]]
+     1, 2 | (1,2)=6  <->  (2,1)=8      | [[1,4,7],[2,5,8],[3,6,9]]
+
+    after the transpose:   1 4 7        the diagonal 1, 5, 9 never moved
+                           2 5 8
+                           3 6 9
+
+REVERSE EACH ROW:
+
+    [1,4,7] -> [7,4,1]
+    [2,5,8] -> [8,5,2]
+    [3,6,9] -> [9,6,3]
+
+    final:   7 4 1
+             8 5 2        which is the clockwise rotation. DONE.
+             9 6 3
+
+COUNT THE PAIRS IN THAT TABLE - THREE, not six. For a 3x3 the upper triangle has exactly three
+positions, and visiting all six would swap each pair twice and undo the transpose completely.
+
+WHAT THE WRONG VERSIONS PRODUCE ON THIS EXACT INPUT, all measured:
+
+    correct                         [[7,4,1],[8,5,2],[9,6,3]]
+    j from 0 (double swaps)         [[3,2,1],[6,5,4],[9,8,7]]   each row reversed - a MIRROR
+    transpose only, no reversal     [[1,4,7],[2,5,8],[3,6,9]]   first row = first column
+    reverse rows FIRST, then transpose  [[3,6,9],[2,5,8],[1,4,7]]   the ANTICLOCKWISE rotation
+    transpose then matrix.reverse() [[3,6,9],[2,5,8],[1,4,7]]   also anticlockwise
+
+    EACH FINGERPRINT IS DISTINCT, which makes debugging quick: a mirror means the triangle bound, a
+    first-row-is-first-column means the missing reversal, and a correct-looking rotation in the wrong
+    direction means the order or the wrong reverse.
+
+CASE TWO - THE 2x2, THE SMALLEST INTERESTING GRID. matrix = [[1,2],[3,4]].
+
+    transpose: only the pair (0,1)/(1,0) is in the upper triangle -> [[1,3],[2,4]]
+    reverse rows:                                                 -> [[3,1],[4,2]]
+    Check against the mapping: (0,0)=1 goes to (0,1) - yes, the 1 is at the top right. Correct.
+    THE j-FROM-0 VERSION gives [[2,1],[4,3]] here - the smallest counterexample to that bug.
+
+CASE THREE - THE 1x1. matrix = [[5]]. The transpose loop body never runs (range(1,1) is empty) and
+reversing a one-element row does nothing, so [[5]] is returned. Correct with no special case - and
+note this is the one grid size on which almost every wrong version also passes, which is why
+measurements restricted to size 2 or more are the meaningful ones.
+
+CASE FOUR - THE 4x4, TO SEE THE TRIANGLE BOUND ON AN EVEN SIZE.
+matrix = [[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16]].
+
+    the upper triangle has 6 positions: (0,1) (0,2) (0,3) (1,2) (1,3) (2,3)
+    after the transpose:   1  5  9 13
+                           2  6 10 14
+                           3  7 11 15
+                           4  8 12 16
+    after reversing rows: 13  9  5  1
+                          14 10  6  2
+                          15 11  7  3
+                          16 12  8  4
+    Check one corner: the 4 at (0,3) should land at (3, 4-1-0) = (3,3) - and there it is, bottom
+    right. An even size has NO fixed centre, unlike the 3x3 whose 5 stays put.
+
+CASE FIVE - A SYMMETRIC GRID, WHICH HIDES THE TRIANGLE BUG. matrix = [[1,2],[2,1]] is its own
+transpose, so the double-swap version accidentally agrees with the correct one. That is exactly why
+the j-from-0 bug measured 4,765 wrong out of the 4,778 grids of size 2 or more rather than all of
+them - the handful it gets right are the symmetric ones. Never test a transpose with a symmetric
+matrix.""",
+
+    """10. COST, THE #1 MISTAKE, AND WHAT IT MEANS IN THE INTERVIEW
+
+COST IN PLAIN WORDS. The transpose visits about n squared / 2 pairs and swaps each once; the reversal
+touches every element once. O(n squared) TIME - which is OPTIMAL, because every element has to move -
+and O(1) EXTRA SPACE, just the implicit temporary inside a swap.
+
+    build a rotated copy                    O(n squared) time, O(n squared) extra space
+    transpose then reverse each row          O(n squared) time, O(1) extra space
+    four-way cyclic rotation, ring by ring   O(n squared) time, O(1) extra space, fiddlier indices
+
+None of these is asymptotically better than the others in time. The whole competition is about SPACE
+and about how easy the code is to get right under pressure - and on the second criterion the
+two-step version wins, which is a legitimate thing to say out loud.
+
+THE #1 MISTAKE: TRANSPOSING THE FULL GRID INSTEAD OF THE UPPER TRIANGLE. Wrong on 4,765 of 6,000 -
+4,765 of the 4,778 grids of size 2 or more, the exceptions being symmetric grids. Every pair gets
+swapped twice, the transpose cancels itself, and the output is the input with each row reversed. THE
+INNER LOOP STARTS AT i + 1.
+
+THE #2: FORGETTING THE ROW REVERSAL. Wrong on 4,778 of 6,000 - every grid of size 2 or more. A
+transpose is a reflection, not a rotation.
+
+THE #3: THE TWO STEPS IN THE WRONG ORDER. Wrong on 4,778 of 6,000 against the clockwise target - and
+wrong on 0 of 6,000 against the ANTICLOCKWISE one. It is the other direction, not a broken algorithm.
+
+THE #4: REVERSING THE ORDER OF THE ROWS RATHER THAN EACH ROW'S CONTENTS. Also 4,778 of 6,000, also
+producing the anticlockwise rotation. And the mirror-image fact is useful: reversing the ROW ORDER
+FIRST and then transposing IS the clockwise rotation - measured wrong on 0 of 6,000.
+
+THE #5, PYTHON-SPECIFIC: `row = row[::-1]` inside the loop. It rebinds a local name and mutates
+nothing, so the function silently does half the job. Use `row.reverse()` or `row[:] = row[::-1]`.
+
+TWO HONEST NEGATIVES: starting the inner loop at `i` rather than `i + 1` is wrong on 0 of 6,000 - it
+just swaps each diagonal element with itself - and reversing the row order before transposing is
+wrong on 0 of 6,000, being a second correct route.
+
+WHAT TO SAY OUT LOUD, in this order: (1) the mapping is (i,j) goes to (j, n-1-i), and building a copy
+is trivial but costs O(n squared) space; (2) instead, a clockwise rotation is a TRANSPOSE followed by
+REVERSING EACH ROW; (3) and the reason is geometric - two reflections about axes 45 degrees apart
+compose into a 90-degree rotation - so I can re-derive the order rather than memorise it; (4) the
+transpose must cover only the upper triangle, because a swap handles a pair and doing it twice undoes
+it; (5) O(n squared) time, which is optimal since every element moves, and O(1) extra space; (6) it
+requires a SQUARE grid. Point 3 is what makes this look like understanding rather than a memorised
+recipe, and point 4 is where the marks are actually lost.
+
+THE FOLLOW-UP THAT ALWAYS COMES: "rotate ANTICLOCKWISE instead". Swap the order - reverse each row
+first, then transpose - or equivalently transpose and then reverse the ROW ORDER. Measured correct on
+all 6,000. Then: "rotate 180 degrees?" Reverse the row order AND reverse each row; no transpose at
+all, since 180 degrees is two reflections about perpendicular axes.
+
+AND THE OTHER ONE: "do it without transposing - move four elements at a time." That is the cyclic
+version: for each ring, `for i in range(n // 2)` and `for j in range(i, n - 1 - i)`, saving one value
+in a temporary and rotating four positions. Same complexity, one pass instead of two, and the inner
+range is the part everyone gets wrong. Worth naming, worth writing only if asked.
+
+THEN SOMETIMES: "what if the matrix is NOT square?" Then in-place rotation is impossible because the
+dimensions swap - you must allocate a new grid, and the transpose-and-reverse recipe still describes
+the mapping. Or: "what about a flattened one-dimensional array?" The same index arithmetic with
+`i * n + j`, which is how real image buffers are actually stored.
+
+THE FAMILY: Rotate Image, Transpose Matrix, Reshape the Matrix, Spiral Matrix, Set Matrix Zeroes,
+Rotate Array (the 1-D cousin, solved by three reversals - the SAME "compose simple reversals"
+trick), Determine Whether Matrix Can Be Obtained By Rotation, Image Overlap. THE TRANSFERABLE IDEA:
+A HARD REARRANGEMENT OFTEN FACTORS INTO TWO EASY ONES - two reflections make a rotation for a grid,
+and three reversals make a cyclic shift for an array.
+
+ONE-SENTENCE TAKEAWAY: transpose the matrix by swapping only the upper triangle, then reverse each
+row - two reflections composing into a clockwise quarter turn, in O(n squared) time and O(1) space,
+with the opposite order giving the anticlockwise rotation.""",
 ]
 
 _EX_P1AC["Set Matrix Zeroes (O(1) space)"] = [
