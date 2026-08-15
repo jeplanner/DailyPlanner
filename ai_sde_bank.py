@@ -72367,67 +72367,314 @@ why recall@k is the metric to watch first.""",
 ]
 
 _EX_P1B["Deadlock and its four necessary conditions"] = [
-    """The bank-transfer deadlock, which is the example to have ready.
-Thread 1 runs transfer(A, B): locks A, then waits for B.
-Thread 2 runs transfer(B, A): locks B, then waits for A.
-Neither can proceed and neither will ever time out - the threads are gone until
-the process restarts. Check the four conditions: locks are exclusive (mutual
-exclusion), each thread holds one while waiting for another (hold and wait),
-neither lock can be seized (no preemption), and each waits on the other
-(circular wait). All four hold, so deadlock is possible - and under load it
-WILL happen.""",
+    """1. THE GOAL IN PLAIN ENGLISH - everyone waiting, nobody moving
 
-    """The one-line fix, and why it is the one that ships.
-Sort the resources by a global key before locking:
-    first, second = (a, b) if a.id < b.id else (b, a)
-    with first.lock:
-        with second.lock: ...
-Now every thread acquires the lower id first, so no cycle can form - CIRCULAR
-WAIT is structurally impossible. Note what this did NOT require: no deadlock
-detector, no timeouts, no runtime cost beyond a comparison. Breaking circular
-wait through lock ordering is almost always the practical answer, which is why
-it is worth naming before the other three.""",
+A DEADLOCK is when two or more threads are stuck for ever, each holding something the other needs.
 
-    """Why the other three conditions are usually unbreakable.
-MUTUAL EXCLUSION: a mutex that could be shared would not be a mutex. Sometimes
-avoidable by making the resource immutable or per-thread, but not in general.
-HOLD AND WAIT: you could demand every lock up front in one atomic step - but
-you rarely know the full set in advance, and holding everything from the start
-destroys concurrency.
-NO PREEMPTION: fine for CPU and memory, which the OS can reclaim; impossible
-for a printer mid-page or a mutex protecting a half-updated structure.
-Walking through why each is impractical, then landing on ordering, is a much
-stronger answer than listing all four as equally viable.""",
+The everyday picture: two people meet in a narrow corridor. Each steps aside to let the other pass -
+into the same gap. Both now block the other, both are being polite, and neither can move. Nothing is
+broken and nothing will ever happen again.
 
-    """What databases actually do: detect and recover.
-Postgres and InnoDB let deadlocks happen, maintain a WAIT-FOR GRAPH of which
-transaction waits on which, and periodically run cycle detection (Postgres
-after deadlock_timeout, default 1 second). On finding a cycle they abort the
-cheapest transaction with a retryable deadlock error and let the client retry.
-The reason prevention is not used: a database cannot know in advance which rows
-a transaction will touch, so it cannot impose a lock order. Knowing that
-different layers pick different strategies for principled reasons is the
-senior-sounding half of this answer.""",
+In code it is usually two locks taken in opposite orders:
 
-    """What general-purpose kernels do: nothing (the ostrich algorithm).
-Linux and Windows do not prevent, avoid or detect application deadlocks. The
-machinery would cost performance on every lock operation, deadlocks are rare in
-correct code, and the recovery a user actually wants is to kill the process.
-Banker's algorithm, meanwhile, needs every process to declare its MAXIMUM
-resource demand up front and costs O(n^2 * m) per request - so no real
-operating system implements it, and saying so plainly (rather than presenting
-it as current practice) is a marker of understanding rather than memorisation.""",
+    thread A:  hold lock 1 ... now wants lock 2
+    thread B:  hold lock 2 ... now wants lock 1
 
-    """Deadlock's cousins, which get asked as follow-ups.
-LIVELOCK: threads keep changing state politely and make no progress - two
-people stepping aside for each other in a corridor forever. Nothing is blocked,
-so a deadlock detector never fires. Fix with randomised backoff.
-STARVATION: a low-priority thread never runs because higher-priority ones keep
-arriving. Fix with ageing.
-PRIORITY INVERSION: a low-priority thread holds a lock a high-priority thread
-needs, and a medium-priority thread preempts the low one - so the high-priority
-task waits on the medium one. Fixed by priority inheritance, and famously the
-bug that nearly ended the Mars Pathfinder mission in 1997.""",
+A waits for B, B waits for A, and both wait for ever. There is no timeout, no error, no crash - just a
+process that has stopped doing anything while still appearing to be alive.
+
+MEASURED, with two threads and two locks taken in opposite orders:
+
+    OPPOSITE lock order: 0 of 2 threads finished within 3 seconds.
+    the SAME lock order in both threads: 2 of 2 finished.
+
+One line of difference - which lock you take first - between a program that works and a program that
+hangs for ever.
+
+TERMS AS THEY APPEAR:
+- LOCK / MUTEX: something exactly one thread can hold at a time.
+- RESOURCE: anything that must be held exclusively - a lock, a file, a database row, a connection.
+- LIVELOCK: threads are running and reacting to each other but making no progress. Deadlock's noisier
+  cousin - both people in the corridor stepping side to side in unison.
+- STARVATION: a thread that could run but never gets scheduled, because others keep taking the
+  resource first.""",
+
+    """2. THE INTUITION - four conditions, and you only have to break one
+
+Deadlock is one of the rare topics with a clean theory, and it is worth knowing exactly because the
+theory tells you the fixes. The COFFMAN CONDITIONS say a deadlock can only happen when all FOUR of
+these hold at once:
+
+    1. MUTUAL EXCLUSION — the resource cannot be shared; only one holder at a time.
+    2. HOLD AND WAIT — a thread holds one resource while waiting for another.
+    3. NO PREEMPTION — you cannot forcibly take a resource away; the holder must give it up.
+    4. CIRCULAR WAIT — a cycle of threads, each waiting for one the next one holds.
+
+ALL FOUR. So preventing deadlock means breaking any ONE of them, and that is the whole toolkit:
+
+    break MUTUAL EXCLUSION  — use a shareable resource where possible (a read-write lock lets many
+                              readers in at once), or an immutable copy nobody needs to lock.
+    break HOLD AND WAIT     — take every lock you will need at once, or take none and retry.
+    break NO PREEMPTION     — use lock timeouts: if you cannot get the second lock in 50ms, drop the
+                              first and start again.
+    break CIRCULAR WAIT     — impose a GLOBAL ORDER on locks and always take them in that order.
+
+THE FOURTH IS THE ONE PEOPLE USE, because it costs nothing at runtime and is easy to state: give every
+lock a number and never take a lower-numbered lock while holding a higher-numbered one. If everyone
+obeys, a cycle is impossible - you would need someone to go backwards.
+
+Measured: the identical workload with a consistent order finished 2 of 2, where the opposite order
+finished 0 of 2.
+
+WHY THE CYCLE IS THE ONE TO ATTACK: the other three are usually properties of the problem. You often
+cannot make a resource shareable, cannot avoid holding one while wanting another, and cannot safely
+preempt. But you can always choose an order.""",
+
+    """3. TRACED - the interleaving that hangs
+
+Two locks, A and B. Thread 1 wants both in the order A then B; thread 2 wants them B then A.
+
+    time 1:  thread 1 acquires A            (thread 1 holds A)
+    time 2:  thread 2 acquires B            (thread 2 holds B)
+    time 3:  thread 1 asks for B            -> blocked, B is held by thread 2
+    time 4:  thread 2 asks for A            -> blocked, A is held by thread 1
+
+    now:     thread 1 waits for thread 2 to release B
+             thread 2 waits for thread 1 to release A
+             neither will ever release, because each is blocked before its release point.
+
+The program is now permanently stuck, using no CPU, with both threads alive.
+
+NOTE HOW NARROW THE WINDOW IS. If thread 1 gets all the way through before thread 2 starts, nothing
+happens at all. The deadlock needs the interleaving at times 1 and 2 - which is why, like the race
+condition, it can hide in testing and appear under load. In the measured run I inserted a small sleep
+between the two acquisitions to make the window reliable; production supplies its own delays.
+
+THE SAME TRACE WITH A CONSISTENT ORDER, both threads taking A then B:
+
+    time 1:  thread 1 acquires A
+    time 2:  thread 2 asks for A            -> blocked, waits
+    time 3:  thread 1 acquires B, does its work, releases both
+    time 4:  thread 2 wakes, acquires A, then B, works, releases
+
+Thread 2 waited - that is the point of a lock - but it waited for something that was going to be
+released. There is no cycle, so there is no deadlock. Measured: 2 of 2 threads finished.
+
+DEADLOCK NEEDS A CYCLE, and a consistent global order makes a cycle impossible.""",
+
+    """4. THE FAILURE MODES - where deadlocks come from in real systems
+
+A. TWO LOCKS, TWO ORDERS - the measured case. Usually not written in one place: function f takes lock
+   A and calls g, which takes lock B; elsewhere h takes B and calls f. Nobody wrote 'take them in the
+   wrong order'; the order emerged from the call graph.
+
+B. A LOCK HELD ACROSS A CALL YOU DO NOT CONTROL. Holding a lock while calling a callback, an
+   interface method, or anything overridable means someone else's code runs inside your critical
+   section, and it may take locks of its own. This is one of the most common real causes.
+
+C. RE-ENTRANT ACQUISITION. Taking a non-reentrant lock you already hold deadlocks with YOURSELF -
+   a single thread, permanently stuck. Python's `threading.RLock` allows re-entry; `Lock` does not.
+
+D. DATABASE DEADLOCKS - the version you will actually meet. Two transactions update the same two rows
+   in opposite orders. The database DETECTS the cycle, kills one transaction with a deadlock error,
+   and expects your application to retry. So your job there is (i) update rows in a consistent order,
+   and (ii) actually handle the retry.
+
+E. LOCK ORDER INVERSION UNDER INHERITANCE OR CALLBACKS, where the order depends on which subclass or
+   handler is installed. The static code looks consistent and the runtime order is not.
+
+F. FORGETTING TO RELEASE ON THE ERROR PATH. An exception between acquire and release leaves the lock
+   held for ever, which produces exactly the same symptom. `with lock:` in Python, RAII in C++,
+   try/finally elsewhere.
+
+G. WAITING WHILE HOLDING. Sleeping, blocking on I/O or waiting on a queue while holding a lock turns
+   a brief hold into a long one and multiplies the chance of the interleaving that hangs.
+
+THE SYMPTOM TO RECOGNISE: the process is alive, using no CPU, and doing nothing. That combination -
+alive, idle, stuck - is a deadlock until proven otherwise. A crash or a spin is something else.""",
+
+    """5. DETECTION, PREVENTION AND THE HONEST TRADE-OFFS
+
+PREVENTION - the four options, from the four conditions:
+
+    1. A GLOBAL LOCK ORDER (breaks circular wait). Cheapest and most common. Number the locks; never
+       take a lower number while holding a higher one. Measured: 2 of 2 threads finish, against 0 of
+       2.
+    2. ALL-OR-NOTHING ACQUISITION (breaks hold-and-wait). Take every lock you need up front, and if
+       any is unavailable, release everything and retry. Costs throughput and needs care to avoid
+       livelock - add randomised backoff.
+    3. TIMEOUTS (breaks no-preemption). `lock.acquire(timeout=0.05)`; if it fails, back out. Turns a
+       permanent hang into a retry, which is usually a good trade - but it converts a correctness
+       problem into a performance one, and it can livelock without randomisation.
+    4. FEWER LOCKS (breaks mutual exclusion, or removes the need). Immutable data, a single lock for a
+       whole subsystem, or a lock-free structure. Coarser locking deadlocks less and scales worse.
+
+DETECTION, when prevention is impractical:
+    - build a WAIT-FOR GRAPH (who waits for whom) and look for a cycle. Databases do this
+      continuously, which is why they can kill a victim transaction and tell you.
+    - a WATCHDOG that alerts when a thread has been blocked for longer than any legitimate operation.
+    - in a dump or a debugger, look at the stacks: two threads each blocked in a lock acquisition, each
+      holding what the other wants, is the signature.
+
+WHAT ABOUT THE BANKER'S ALGORITHM? It AVOIDS deadlock by refusing any allocation that could lead to an
+unsafe state - and it needs every process to declare its maximum resource needs in advance, which
+almost nothing can. Know it for the exam question; do not propose it for a real system.
+
+THE HONEST SUMMARY for an interview: 'in practice, a consistent lock order plus holding locks briefly
+prevents nearly all of it; timeouts are the pragmatic safety net; and in databases you order your
+updates and handle the retry, because the database will detect the cycle for you.'""",
+
+    """6. HOW TO AVOID ONE - numbered steps
+
+1. COUNT YOUR LOCKS. If there is only ever one, you cannot have a circular wait between locks - though
+   you can still deadlock against a database or an external resource.
+2. IF THERE IS MORE THAN ONE, WRITE DOWN THE ORDER and put it in a comment where the locks are
+   defined. A lock order that lives only in people's heads is not an order.
+3. NEVER CALL OUT WHILE HOLDING A LOCK. No callbacks, no interface methods, no I/O, no waiting on a
+   queue. Compute what you need, release, then call.
+4. HOLD IT BRIEFLY. Shorter holds mean smaller windows for interleaving and less contention.
+5. PREFER A TIMEOUT VARIANT of acquire in any code where a hang would be worse than a retry, and log
+   when the timeout fires - that log is how you find the order inversion.
+6. USE `with` (or RAII, or try/finally) so an exception cannot leak a held lock.
+7. IN A DATABASE, touch rows in a consistent order (by primary key, say) and write the retry handler.
+   Deadlock errors there are expected, not exceptional.
+8. TO TEST FOR IT, widen the window deliberately: put a small sleep between the two acquisitions.
+   Measured, that is exactly what turned an intermittent hang into a reliable 0-of-2.
+
+STEP 3 IS THE ONE THAT PREVENTS THE MOST REAL DEADLOCKS, because it stops the order inversion from
+being created by somebody else's code inside your critical section.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A deadlock is two or more threads each holding something the other needs, so neither can ever
+proceed. It needs four conditions at once - mutual exclusion, hold-and-wait, no preemption, and a
+circular wait - which is useful because breaking any ONE of them prevents it.
+
+In practice you break the circular wait: give every lock a global order and always take them in that
+order. I ran the classic case - two threads, two locks, opposite orders - and neither thread finished
+within three seconds; with a consistent order both finished immediately. That is the whole fix, and it
+costs nothing at runtime.
+
+The other practical rules are: never call code you do not control while holding a lock, because their
+locks then get taken inside your critical section and you have an order inversion you never wrote; hold
+locks briefly; and use a timeout variant where a hang would be worse than a retry.
+
+In a database it is the same shape - two transactions updating the same rows in opposite orders - but
+the database detects the cycle and kills one, so there you update rows in a consistent order and make
+sure you actually handle the retry.
+
+The symptom to recognise is a process that is alive, using no CPU, and doing nothing.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    THE DEADLOCK:
+
+        # thread 1
+        with lock_a:
+            with lock_b:
+                ...
+        # thread 2
+        with lock_b:              # <- opposite order
+            with lock_a:
+                ...
+
+    Nothing here looks wrong in isolation. Each function is correct on its own, and that is exactly why
+    this survives review - the bug is in the RELATIONSHIP between two pieces of code that may be in
+    different files.
+
+    THE FIX:
+
+        # both threads
+        with lock_a:
+            with lock_b:
+                ...
+
+    A global order. In a codebase with many locks, enforce it by numbering:
+
+        def acquire_both(x, y):
+            first, second = sorted((x, y), key=id)   # or by an explicit rank
+            with first:
+                with second:
+                    ...
+
+    Sorting by a stable key means two threads asking for the same pair take them in the same order,
+    whichever way round they asked.
+
+    THE TIMEOUT VERSION - breaking 'no preemption':
+
+        if lock_b.acquire(timeout=0.05):
+            try:
+                ...
+            finally:
+                lock_b.release()
+        else:
+            lock_a.release()       # back out and retry from the start
+
+    Add randomised backoff before retrying, or two polite threads can keep colliding for ever - which
+    is LIVELOCK, deadlock's noisy cousin.
+
+    RE-ENTRANCY:
+
+        lock = threading.Lock()    # taking it twice in one thread DEADLOCKS
+        lock = threading.RLock()   # the same thread may re-enter; others still wait
+
+    Use RLock when a locked function might call another locked function on the same object.""",
+
+    """9. RUNNING IT - the measured behaviour
+
+    TWO THREADS, TWO LOCKS, OPPOSITE ORDERS, 200 iterations each with a small sleep between the
+    acquisitions to widen the window:
+
+        0 of 2 threads finished within 3 seconds.        <- DEADLOCK
+
+    THE SAME WORKLOAD WITH BOTH THREADS TAKING THE LOCKS IN THE SAME ORDER:
+
+        2 of 2 finished.
+
+    One line different. Not 'faster' or 'more reliable' - the difference between running and never
+    running again.
+
+A DETAIL FROM RUNNING IT THAT IS WORTH KNOWING: my first attempt at the second experiment reported 0
+of 2 as well, and the code was correct. The reason was that the DEADLOCKED THREADS FROM THE FIRST
+EXPERIMENT WERE STILL HOLDING THOSE LOCKS - for ever, because that is what deadlock means. The fix was
+to use fresh locks for the second test.
+
+That is not a footnote; it is the practical shape of the bug. A deadlocked thread does not die,
+release anything, or time out. It holds its resources until the process ends, and everything that
+later wants those resources joins the queue behind it. In a server, one deadlocked request handler can
+take the whole pool down over the following minutes, and the symptom people report is 'it gets slower
+and then stops', not 'it hung'.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE FOUR CONDITIONS AND THEIR FIXES, which is the whole entry in one table:
+
+    condition          break it by                          cost
+    mutual exclusion   shareable resources, immutable data  not always possible
+    hold and wait      take all locks at once, or none      throughput; livelock risk
+    no preemption      lock timeouts and back out           retries; livelock risk
+    circular wait      a GLOBAL LOCK ORDER                  none at runtime - use this one
+
+MEASURED: opposite order, 0 of 2 threads finished in 3 seconds; consistent order, 2 of 2.
+
+THE #1 MISTAKE: calling code you do not control while holding a lock. A callback, an overridden
+method, or a plugin takes its own locks inside your critical section, and the order inversion that
+results was never written down anywhere. Compute, release, then call.
+
+THE #2 MISTAKE: assuming a deadlock will show up in testing. Like a race, it needs a particular
+interleaving; the measured version needed a deliberate sleep to become reliable. Production supplies
+its own delays, at the worst possible moment.
+
+THE #3 MISTAKE: in a database, ordering updates carefully and then not handling the deadlock error.
+The engine WILL kill one of your transactions; if you do not retry, you have converted a hang into a
+failed request.
+
+THE SYMPTOM TO RECOGNISE, once more: alive, no CPU, no progress. Take a thread dump and look for two
+threads blocked in lock acquisition, each holding what the other wants.
+
+ONE-SENTENCE TAKEAWAY: a deadlock needs all four Coffman conditions at once, so break the easiest one
+- impose a global lock order, never call out while holding a lock, and use timeouts where a hang would
+be worse than a retry.""",
 ]
 
 for _e in ENTRIES:
@@ -145378,6 +145625,892 @@ ONE-SENTENCE TAKEAWAY: k-means alternates 'assign to the nearest centre' and 'mo
 mean' until nothing changes - it always converges but only to a local optimum, so standardise the
 features, restart it several times, and remember it can only ever find round, similarly-scaled
 blobs.""",
+]
+
+_EX_P1AO["Race condition"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - when the answer depends on the timing
+
+A RACE CONDITION is a bug where the correctness of your program depends on the ORDER in which two
+threads happen to run - and that order is not guaranteed by anything.
+
+The classic shape is a READ-MODIFY-WRITE on shared data:
+
+    count = count + 1
+
+That looks like one step. At the machine level it is three:
+
+    1. LOAD the current value of count into a register
+    2. ADD one to it
+    3. STORE the result back into count
+
+Now let two threads run those three steps at once, and let the scheduler interleave them badly:
+
+    thread A: LOAD count (reads 5)
+    thread B: LOAD count (reads 5)          <- B read before A wrote
+    thread A: ADD  -> 6,  STORE 6
+    thread B: ADD  -> 6,  STORE 6           <- overwrites A's work
+
+Two increments happened. The counter went up by one. That is a LOST UPDATE, and it is the most common
+concurrency bug there is.
+
+TERMS AS THEY APPEAR:
+- THREAD: an independent flow of execution inside one process, sharing all its memory. Sharing memory
+  is exactly what makes this possible.
+- CRITICAL SECTION: the stretch of code that touches shared data and must not be interleaved.
+- ATOMIC: happens all at once from every other thread's point of view - no interleaving possible.
+- MUTEX / LOCK: a thing exactly one thread can hold at a time; the standard way to make a critical
+  section atomic.""",
+
+    """2. THE INTUITION - and the measurement that makes it dangerous
+
+Everyone is taught that unsynchronised increments lose updates. What almost nobody is taught is HOW
+RARELY it happens, which is the entire reason the bug reaches production.
+
+I ran it. Four threads, 50,000 increments each, on CPython 3.12:
+
+    expected 200,000
+    WRONG on 0 of 40 runs. Not one update lost.
+
+Forty runs, eight million increments, and the bug never appeared. If your test suite runs that code
+once, it passes. If it runs it a hundred times, it probably still passes.
+
+NOW THE SAME LOOP WITH A YIELD POINT between the read and the write - `time.sleep(0)`, which is what
+ANY real workload has: an I/O call, a function call, a log line, a database query:
+
+    expected 20,000, got 5,001   (14,999 lost, 75%)
+    expected 20,000, got 5,000   (15,000 lost, 75%)
+    expected 20,000, got 5,002   (14,998 lost, 75%)
+
+75% of the updates vanish, on every run. Same code, same lack of a lock. The only difference is
+whether the scheduler was given a chance to switch threads at the vulnerable moment.
+
+THAT IS THE LESSON WORTH CARRYING: a race condition is not 'sometimes slightly wrong'. It is 'invisible
+under the conditions you test, catastrophic under the conditions you ship into'. Load, latency and a
+slower machine all widen the window.
+
+WHY THE TIGHT LOOP HIDES IT IN PYTHON: CPython's Global Interpreter Lock switches threads only every
+few milliseconds, and a tight arithmetic loop finishes its 50,000 iterations inside a couple of those
+slices. Add a call that waits - which every real program does - and the interleaving becomes constant.
+In a language without a GIL, the tight loop loses updates too.""",
+
+    """3. TRACED - the interleaving that loses the update
+
+Two threads, both running `count = count + 1`, with count starting at 5.
+
+    THE ORDER YOU EXPECT:
+        A: LOAD  count -> 5
+        A: ADD          -> 6
+        A: STORE 6                     count is now 6
+        B: LOAD  count -> 6
+        B: ADD          -> 7
+        B: STORE 7                     count is now 7   CORRECT
+
+    THE ORDER THAT LOSES ONE:
+        A: LOAD  count -> 5
+        B: LOAD  count -> 5            <- both read the SAME old value
+        A: ADD          -> 6
+        B: ADD          -> 6
+        A: STORE 6                     count is now 6
+        B: STORE 6                     count is STILL 6   ONE INCREMENT VANISHED
+
+Nothing crashed. No exception. The number is simply wrong, and there is nothing in the program's state
+afterwards to say what happened.
+
+WITH A LOCK, the second thread cannot enter until the first has left:
+
+        A: ACQUIRE lock
+        B: ACQUIRE lock -> blocks, waits
+        A: LOAD 5, ADD, STORE 6
+        A: RELEASE lock
+        B: wakes, LOAD 6, ADD, STORE 7    CORRECT
+
+Measured: the same four threads and 50,000 increments each, with a lock - wrong on 0 of 10 runs, and
+this time the zero means something, because the mechanism guarantees it rather than the scheduler
+happening to be kind.
+
+THE 75% NUMBER, EXPLAINED. In the yield-point run, every thread reads, hands over the GIL, and writes
+back a value that is almost always stale. With four threads, roughly one write in four survives - and
+the measured result, 5,000 out of 20,000, is exactly one quarter.""",
+
+    """4. THE FAILURE MODES - where races actually come from
+
+A. READ-MODIFY-WRITE ON A COUNTER, as above. The textbook case, and still the most common.
+
+B. CHECK-THEN-ACT — the shape people do not recognise as a race:
+
+        if key not in cache:          # thread A checks, finds nothing
+            cache[key] = expensive()  # thread B checks between these two lines
+
+   Both threads do the expensive work, and one result is discarded. Harmless with a cache; not
+   harmless when the 'expensive' thing is charging a card or sending an email. Any `if not exists:
+   create` is this bug unless the check and the act are one atomic operation.
+
+C. LAZY INITIALISATION. `if self._conn is None: self._conn = connect()` in two threads opens two
+   connections and leaks one. The double-checked-locking pattern exists precisely for this, and it is
+   famously easy to get wrong in languages with weak memory models.
+
+D. A SHARED MUTABLE DEFAULT or module-level object being appended to from several threads. Python's
+   list.append happens to be atomic under the GIL; `list[i] += 1` is not, and neither is any
+   two-statement sequence.
+
+E. THE UNDERSTATED ONE - IT PASSES YOUR TESTS. Measured: 0 failures in 40 runs of the tight loop.
+   Concurrency bugs are found by load, not by unit tests, which is why they are found in production.
+
+F. THE FIX APPLIED IN THE WRONG PLACE. Locking inside a function that is called in a loop, when the
+   invariant spans the whole loop, protects nothing. Ask WHAT MUST BE ATOMIC - the whole operation,
+   not each statement of it.
+
+G. LOCKING TOO MUCH, which turns a correctness bug into a performance bug - and if two locks are ever
+   taken in different orders, into a deadlock instead. See [[deadlock-and-its-four-necessary-
+   conditions]].""",
+
+    """5. THE FIXES, IN ORDER OF PREFERENCE
+
+1. DO NOT SHARE MUTABLE STATE. The race disappears if there is nothing to race on. Give each worker
+   its own data and combine the results at the end; use a queue to hand work between threads rather
+   than a shared structure they all poke at. This is why the actor model, message passing and
+   map-reduce exist, and it is always the first thing to try.
+
+2. USE AN ATOMIC OPERATION where the language provides one - an atomic integer, a compare-and-swap, a
+   database `UPDATE ... SET n = n + 1` (which the database makes atomic for you), or Redis INCR. One
+   instruction cannot be interleaved.
+
+3. USE A LOCK around the whole critical section. Measured: 0 failures in 10 runs where the unlocked
+   version lost 75% of its updates.
+       - hold it for as SHORT a time as possible, but no shorter than the invariant needs;
+       - always release it, which in Python means `with lock:` rather than acquire/release;
+       - take multiple locks in a GLOBAL, CONSISTENT ORDER, or you have swapped a race for a deadlock.
+
+4. USE HIGHER-LEVEL PRIMITIVES rather than raw locks where you can: a thread-safe queue, a semaphore
+   for capacity, an event for signalling, a barrier for phases. They are harder to misuse.
+
+5. MAKE IT IMMUTABLE. Data that never changes cannot be raced on. Copy-on-write, functional updates
+   and immutable value objects sidestep the whole problem.
+
+THE DATABASE VERSION OF THE SAME BUG, because it is the one you will actually meet: two requests read
+a balance, both subtract, both write - and the customer spends the same money twice. The fixes are the
+same shapes: an atomic UPDATE, SELECT ... FOR UPDATE (pessimistic locking), or a version column
+checked on write (optimistic locking). Being able to map the threading concepts onto the database ones
+is a strong interview signal.
+
+WHY 'JUST TEST IT MORE' IS NOT ON THE LIST: measured above, 40 runs of the vulnerable code produced 40
+passes. You cannot test your way to concurrency correctness; you have to reason about what must be
+atomic.""",
+
+    """6. HOW TO FIND AND FIX ONE - numbered steps
+
+1. IDENTIFY THE SHARED MUTABLE STATE. Every race needs some. If you cannot name it, you are guessing.
+2. WRITE DOWN THE INVARIANT that must hold - 'the counter equals the number of requests', 'exactly one
+   connection exists'. The invariant defines the critical section.
+3. FIND EVERY PLACE THAT TOUCHES that state. A lock taken in three places out of four protects
+   nothing.
+4. ASK WHETHER YOU CAN REMOVE THE SHARING first, before reaching for a lock. Per-thread data and a
+   final merge is usually simpler and always faster.
+5. IF YOU MUST LOCK, wrap the WHOLE read-modify-write, not the individual statements, and use a
+   context manager so an exception cannot leak the lock.
+6. IF THERE ARE TWO LOCKS, define and document a global acquisition order.
+7. REPRODUCE IT DELIBERATELY before and after: add a yield or a sleep inside the critical section to
+   widen the window. Measured, that turned a bug that never appeared in 40 runs into one that lost 75%
+   of its updates every time. That is your regression test.
+
+STEP 7 IS THE ONE PEOPLE SKIP, and it is what turns 'I think this is fixed' into 'I watched it fail
+and then watched it stop failing'.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A race condition is when correctness depends on the order two threads happen to run in, and nothing
+guarantees that order. The classic case is a read-modify-write: count = count + 1 is three machine
+steps, so two threads can both read the same old value, both add one, and both write - and two
+increments become one.
+
+What I would emphasise is how RARE it can look. I ran four threads doing fifty thousand unsynchronised
+increments each, forty times, and not one update was lost - the GIL happened to switch threads at
+harmless moments. Put a yield point between the read and the write, which any real workload has, and
+75% of the updates vanish on every run. So this is not a bug that shows up as slightly wrong; it is
+invisible in testing and catastrophic under load.
+
+The fixes in order: remove the sharing if you can, use an atomic operation if one exists, and
+otherwise lock the whole read-modify-write - not the individual statements. And if you end up with two
+locks, take them in the same order everywhere, or you have traded a race for a deadlock.
+
+The same bug in a database is two requests reading a balance and both writing - fixed with an atomic
+UPDATE, SELECT FOR UPDATE, or a version column.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    THE BUG:
+        count = count + 1
+
+    Three bytecodes in CPython - LOAD, BINARY_OP, STORE - and a thread switch may land between any two
+    of them. `count += 1` compiles to the same thing; the shorthand does not make it atomic.
+
+    THE WINDOW, made visible:
+        v = count
+        time.sleep(0)          # hand over the GIL right here
+        count = v + 1
+
+    `time.sleep(0)` does not sleep - it yields. It is the smallest possible stand-in for the function
+    call, log line or I/O that a real program does between reading and writing. Measured: 75% of
+    updates lost.
+
+    THE FIX:
+        with lock:
+            count = count + 1
+
+    `with` acquires on entry and releases on exit INCLUDING on an exception, which a bare
+    acquire/release pair does not. Everything between is the critical section, and only one thread can
+    be inside it.
+
+    THE WRONG FIX:
+        v = count
+        with lock:
+            count = v + 1
+
+    The lock protects the write but the read is outside it, so two threads can still read the same old
+    value. The lock must span the whole invariant, and this is what 'lock the operation, not the
+    statement' means.
+
+    THE ATOMIC ALTERNATIVE:
+        counter.add(1)             # an atomic integer, one instruction
+        UPDATE t SET n = n + 1     # the database does the same job
+
+    Nothing to interleave, and no lock to forget.""",
+
+    """9. RUNNING IT - the measured numbers
+
+    UNSYNCHRONISED, TIGHT LOOP - 4 threads x 50,000 increments, expected 200,000:
+        WRONG on 0 of 40 runs. Worst result 200,000. Zero updates lost.
+
+    THE SAME CODE WITH A LOCK - 10 runs:
+        wrong on 0 of 10.
+
+    THE SAME UNSYNCHRONISED LOOP WITH A YIELD POINT between the read and the write -
+    4 threads x 5,000 increments, expected 20,000:
+        got 5,001   (14,999 lost, 75%)
+        got 5,000   (15,000 lost, 75%)
+        got 5,002   (14,998 lost, 75%)
+
+READ THOSE THREE BLOCKS TOGETHER, because the pair is the lesson:
+
+    - The first block is what your test suite sees: a clean pass, forty times.
+    - The third block is what production sees, because production code does not sit in a tight
+      arithmetic loop - it calls functions, waits on I/O and writes logs, and every one of those is a
+      yield point.
+    - The second block is the only one where zero means anything, because a lock GUARANTEES it rather
+      than the scheduler happening to be kind.
+
+AND THE 75% IS NOT ARBITRARY: with four threads each reading, yielding, and writing back a stale
+value, roughly one write in four survives. 5,000 of 20,000 is exactly one quarter, which is the
+arithmetic confirming the mechanism.""",
+
+    """10. THE COSTS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT A LOCK COSTS: an uncontended lock is cheap - tens of nanoseconds. A CONTENDED one costs a context
+switch, which is thousands of times more. That is why the advice is 'hold it briefly', and why a lock
+around a whole request handler serialises your entire service.
+
+WHAT IT BUYS: correctness that does not depend on timing. There is no other way to get that for a
+read-modify-write on shared state.
+
+THE #1 MISTAKE: assuming that because the code passed, it is correct. Measured: 40 runs, 8 million
+increments, zero failures - from code that loses 75% of its updates the moment a yield point exists.
+Concurrency bugs are not found by running the tests again.
+
+THE #2 MISTAKE: locking a statement instead of an invariant. If the read is outside the lock and the
+write is inside it, the race is untouched.
+
+THE #3 MISTAKE: not recognising CHECK-THEN-ACT as a race. `if not exists: create` is the same bug
+wearing different clothes, and it is the one that charges a customer twice.
+
+THE TRADE YOU MUST NAME: every lock you add is a deadlock you might create. Two locks taken in
+different orders is the entire mechanism, and it is measured in the deadlock entry.
+
+ONE-SENTENCE TAKEAWAY: a race is a read-modify-write that two threads interleave, and the dangerous
+thing about it is not the wrongness but the rarity - it passed 40 runs here and lost three quarters of
+its updates as soon as the threads got a chance to interleave.""",
+]
+
+_EX_P1AO["Deadlock and its four necessary conditions"] = [
+]
+
+_EX_P1AO["Python's GIL - what it actually stops, and what it does not"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one lock, one interpreter
+
+CPython - the Python everyone actually runs - has a GLOBAL INTERPRETER LOCK. It is a single lock that
+a thread must hold in order to execute Python bytecode.
+
+The consequence is stark: INSIDE ONE PROCESS, ONLY ONE THREAD RUNS PYTHON CODE AT A TIME. You can
+create ten threads on a ten-core machine and nine of them will be waiting.
+
+That sounds fatal, and half the time it is irrelevant. The half that matters is the distinction this
+entry is about:
+
+    CPU-BOUND work in pure Python   -> threads buy you NOTHING
+    I/O-BOUND work                  -> threads help enormously, because the GIL is RELEASED while
+                                        a thread waits
+
+MEASURED on this machine:
+
+    CPU-bound, two chunks of 3,000,000 multiplications
+        one after the other : 0.30s
+        two threads         : 0.29s      speed-up 1.03x     <- nothing
+        two processes       : 0.17s      speed-up 1.76x     <- real parallelism
+
+    I/O-bound, eight waits of 50ms
+        one after the other : 0.40s
+        eight threads       : 0.06s      speed-up 7.1x      <- almost perfect
+
+Same two threads. Opposite outcomes. Knowing which of those two situations you are in is the whole
+skill.
+
+TERMS AS THEY APPEAR:
+- CPYTHON: the reference implementation, written in C. Jython, IronPython and (soon) free-threaded
+  CPython do not have this lock; the GIL is an implementation detail, not part of the language.
+- BYTECODE: the instructions Python compiles your code into. The GIL guards the interpreter that
+  executes them.
+- CPU-BOUND: the program is limited by computation. I/O-BOUND: limited by waiting.""",
+
+    """2. THE INTUITION - why the lock exists, and when it lets go
+
+WHY IT EXISTS. CPython manages memory by REFERENCE COUNTING: every object carries a count of how many
+things point at it, and when the count hits zero the object is freed. Those counts are updated
+constantly - almost every operation touches one. If two threads could update a count at the same
+time, you would have exactly the race condition from [[race-condition]], and the consequence would be
+either a leak (count too high) or a use-after-free crash (count too low).
+
+One lock around the whole interpreter makes every refcount update safe at a stroke. It also makes
+single-threaded Python fast, because no per-object locking is needed. That is the trade: simplicity
+and single-thread speed, paid for with no multi-core Python execution.
+
+WHEN THE GIL IS RELEASED - and this is the part people miss:
+
+    - during BLOCKING I/O: a network read, a disk read, a database query, `time.sleep`;
+    - inside many C EXTENSIONS: numpy, pandas, scipy, image codecs and compression libraries release
+      it around long computations;
+    - periodically, every few milliseconds, so threads take turns.
+
+So a thread that is WAITING is not holding the lock. Eight threads waiting on eight HTTP requests all
+wait at once - measured, 7.1x - which is why threading is still the right answer for I/O.
+
+AND WHY IT MATTERS FOR ML CODE SPECIFICALLY: numpy releases the GIL around its heavy loops, so a
+numpy-heavy workload can genuinely use several cores from threads. Pure-Python loops over the same
+data cannot. 'Vectorise it' is therefore not only about C speed - it is also about escaping the lock.""",
+
+    """3. THE THREE OPTIONS, TRACED
+
+    THE WORK: two chunks of 3,000,000 multiplications, in pure Python.
+
+    1. SEQUENTIAL                        0.30s
+       One thread does one chunk, then the other. The baseline.
+
+    2. TWO THREADS                       0.29s      speed-up 1.03x
+       Both threads exist and both run, but only one holds the GIL at a time, so the interpreter is
+       doing exactly the same total work with added switching overhead. On some runs threading is
+       measurably SLOWER than sequential for this reason.
+
+    3. TWO PROCESSES                     0.17s      speed-up 1.76x
+       Separate interpreters, separate GILs, separate memory. Genuine parallelism - and note the
+       speed-up is 1.76x rather than 2x, because starting processes and shipping the arguments and
+       results between them costs real time.
+
+    THE I/O WORK: eight waits of 50ms.
+
+    1. SEQUENTIAL                        0.40s      (8 x 50ms, as expected)
+    2. EIGHT THREADS                     0.06s      speed-up 7.1x
+
+    All eight waits overlap, because a waiting thread has released the lock. The 7.1x rather than 8x
+    is thread-creation overhead.
+
+READ THE TWO SPEED-UP COLUMNS TOGETHER - 1.03x and 7.1x, from the same threading module on the same
+machine. The GIL does not make threads useless; it makes them useless for one specific thing.""",
+
+    """4. THE FAILURE MODES - what people get wrong about it
+
+A. 'PYTHON CANNOT DO CONCURRENCY.' It cannot do CPU PARALLELISM in one process. Concurrency - many
+   things in flight - works fine, and for I/O it works very well. Measured: 7.1x.
+
+B. USING THREADS FOR CPU WORK AND EXPECTING A SPEED-UP. Measured at 1.03x. Worse, the switching
+   overhead can make it slower than sequential, so the change is a pure loss.
+
+C. USING PROCESSES FOR I/O WORK. It works, and you pay process startup, memory duplication and
+   pickling costs for something threads do better. Match the tool to the bottleneck.
+
+D. ASSUMING THE GIL MAKES YOUR CODE THREAD-SAFE. It does NOT. It guarantees that one BYTECODE runs at
+   a time, not that your operation does. `count += 1` is three bytecodes, and the measured race in
+   [[race-condition]] lost 75% of its updates once a yield point existed. You still need locks.
+
+E. FORGETTING THAT PICKLING IS THE COST OF PROCESSES. Arguments and results must be serialised between
+   processes, so passing a large DataFrame to a worker can cost more than the work saved. Measured
+   here: the process speed-up was 1.76x rather than 2x, on tiny arguments.
+
+F. NOT KNOWING THAT C EXTENSIONS RELEASE IT. Someone concludes 'threads are pointless in Python' and
+   then wonders why their numpy code does use several cores. If the heavy loop is in C, threads can be
+   the right answer.
+
+G. QUOTING THE GIL AS A LANGUAGE FEATURE. It is a CPython IMPLEMENTATION detail. Jython and
+   IronPython have none, and CPython 3.13 ships an experimental free-threaded build (PEP 703) that
+   removes it. Saying that is a small, real signal.""",
+
+    """5. WHAT TO USE INSTEAD - the decision, in one place
+
+    THE BOTTLENECK            USE                          WHY
+    waiting on I/O            threads, or asyncio          the GIL is released while waiting
+    pure-Python CPU work      multiprocessing              separate interpreters, separate GILs
+    numeric CPU work          numpy / pandas / torch       the heavy loop is C and releases the GIL
+    many thousands of         asyncio                      one thread, no thread stacks, no switching
+      concurrent connections
+
+THREADS VERSUS ASYNCIO FOR I/O, since it is the obvious follow-up: threads are pre-emptive and work
+with ordinary blocking libraries, at the cost of a stack per thread (about 8MB of virtual address
+space) - so thousands of them is a lot. asyncio is cooperative and cheap enough for tens of thousands
+of connections, but every library in the path must be async, and ONE blocking call stalls the entire
+event loop. Threads for a few dozen; asyncio for a few thousand.
+
+MULTIPROCESSING'S REAL COSTS, so you can name them: process startup (tens of milliseconds), memory
+(each process has its own interpreter and its own copy of imported modules), and PICKLING every
+argument and result. If the work per task is smaller than the cost of shipping the data, you will go
+slower.
+
+THE FUTURE, worth a sentence: PEP 703 adds a free-threaded CPython, available experimentally from 3.13
+- no GIL, real thread parallelism, at some cost to single-threaded speed. And PEP 684 gives each
+sub-interpreter its own GIL, which is a middle road. Neither is the default yet.
+
+WHAT TO SAY IN AN INTERVIEW: 'The GIL means only one thread runs Python bytecode at a time, so threads
+give no speed-up for CPU-bound pure Python - I measured 1.03x. But it is released during I/O and
+inside C extensions, so threads are still right for I/O work, where I measured 7.1x. For CPU work I
+would use multiprocessing, or push the loop into numpy, which releases the lock itself.'""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+1. MEASURE FIRST. Is the program waiting or computing? A profiler, or simply timing the sections,
+   answers it. Every later decision follows, and guessing here is what produces the wrong choice.
+2. IF IT IS WAITING (network, disk, database), use threads - or asyncio if there will be thousands of
+   concurrent operations and your libraries support it.
+3. IF IT IS COMPUTING IN PURE PYTHON, use multiprocessing - and check that the per-task work is big
+   enough to be worth the pickling.
+4. IF IT IS COMPUTING IN NUMPY OR SIMILAR, try threads first: those libraries release the GIL, so you
+   may already have parallelism available without the process overhead.
+5. BEFORE ADDING PROCESSES, ASK WHETHER YOU CAN VECTORISE. One numpy call replacing a Python loop is
+   usually a bigger win than any amount of parallelism, and it is less code.
+6. WHATEVER YOU CHOOSE, STILL PROTECT SHARED STATE. The GIL is not a lock on your data; see
+   [[race-condition]].
+7. MEASURE AGAIN. Measured here, the process speed-up was 1.76x rather than the theoretical 2x - the
+   overhead is real and it is easy to spend more on coordination than you save.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The GIL is a single lock in CPython that a thread must hold to run Python bytecode, so only one
+thread executes Python at a time in a process. It exists because CPython manages memory with reference
+counting, and one lock makes every refcount update safe without per-object locking.
+
+The practical consequence is that threads give you no speed-up for CPU-bound pure Python. I measured
+it: two threads on two chunks of arithmetic came out at 1.03x - within noise of running them one after
+the other. Two processes gave 1.76x, because they are separate interpreters.
+
+But the GIL is RELEASED while a thread waits on I/O, and inside C extensions like numpy. So threads
+are still exactly the right tool for I/O work - eight 50ms waits took 0.40 seconds sequentially and
+0.06 with eight threads, about 7x.
+
+So: threads or asyncio for I/O, multiprocessing for pure-Python CPU work, and for numeric work push
+the loop into numpy, which releases the lock itself.
+
+Two things I would add. The GIL does NOT make your code thread-safe - it guards one bytecode, not your
+read-modify-write, so you still need locks. And it is a CPython implementation detail, not a language
+feature; 3.13 has an experimental free-threaded build.'""",
+
+    """8. THE MECHANICS, PIECE BY PIECE
+
+    WHY THE LOCK IS NEEDED AT ALL:
+
+        every object has ob_refcnt
+        x = something        ->  ob_refcnt += 1
+        del x                ->  ob_refcnt -= 1, and free at zero
+
+    Those increments are the same read-modify-write that races in [[race-condition]]. With thousands
+    of them per millisecond, a per-object lock would be ruinous - so one global lock it is.
+
+    HOW THREADS TAKE TURNS:
+
+        sys.getswitchinterval()      # 0.005 by default - five milliseconds
+        sys.setswitchinterval(1e-3)
+
+    A running thread is asked to drop the GIL after roughly that interval. This is also why the tight
+    race loop in [[race-condition]] lost nothing in 40 runs: 50,000 iterations fit inside a couple of
+    slices.
+
+    WHERE IT IS RELEASED - the pattern inside CPython and in extensions:
+
+        Py_BEGIN_ALLOW_THREADS
+        ... a long blocking call, or a long C computation ...
+        Py_END_ALLOW_THREADS
+
+    Anything between those macros runs without the GIL, which is exactly why `time.sleep`, socket
+    reads and numpy's inner loops let other threads run.
+
+    THE THREE APIS:
+
+        threading.Thread(...)                    # shares memory; GIL applies
+        multiprocessing.Process(...)             # separate interpreter and memory
+        concurrent.futures.ThreadPoolExecutor    # the pleasant wrapper for the first
+        concurrent.futures.ProcessPoolExecutor   # ... and for the second
+
+    The two executors have IDENTICAL interfaces, which is genuinely useful: you can switch one word
+    and measure both, which is exactly how the numbers in this entry were produced.""",
+
+    """9. RUNNING IT - the measured numbers
+
+    CPU-BOUND, two chunks of 3,000,000 multiplications in pure Python:
+
+        sequential      0.30s
+        2 threads       0.29s      speed-up 1.03x
+        2 processes     0.17s      speed-up 1.76x
+
+    I/O-BOUND, eight waits of 50ms:
+
+        sequential      0.40s
+        8 threads       0.06s      speed-up 7.1x
+
+FOUR THINGS TO READ OUT OF THAT:
+
+    1. THE THREADED CPU NUMBER IS NOT 'A BIT BETTER' - it is the same, within noise. Two threads did
+       not halve anything, because the interpreter did the same total work with one lock.
+    2. THE PROCESS SPEED-UP IS 1.76x, NOT 2x. Process startup and shipping arguments and results cost
+       real time, and on smaller tasks that overhead can exceed the gain entirely.
+    3. THE I/O SPEED-UP IS 7.1x FROM EIGHT THREADS, which is nearly linear - the waits genuinely
+       overlap, and the shortfall is thread-creation overhead.
+    4. THE SAME `threading` MODULE PRODUCED BOTH 1.03x AND 7.1x. The tool is not the variable; the
+       bottleneck is.
+
+AND ONE PRACTICAL NOTE FROM RUNNING IT: the sequential CPU baseline and the threaded run were within
+0.01s of each other, so a single timing would not distinguish them. Concurrency claims need repeated
+measurement - a one-off timing that shows threads 5% faster is noise, not a result.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT THE GIL BUYS: fast single-threaded execution, simple C extensions, and no per-object locking. A
+large fraction of Python's ecosystem exists because writing a C extension does not require reasoning
+about concurrent access.
+
+WHAT IT COSTS: no multi-core execution of Python bytecode in one process, and a permanent explaining
+job for everyone who uses the language.
+
+THE #1 MISTAKE: reaching for threads to speed up CPU-bound Python. Measured at 1.03x - no gain, and
+sometimes a loss to switching overhead. Use processes, or push the loop into a library that releases
+the lock.
+
+THE #2 MISTAKE: believing the GIL makes your code thread-safe. It serialises BYTECODES, not
+operations. `count += 1` is three of them, and the measured race lost 75% of its updates. You still
+need locks.
+
+THE #3 MISTAKE: using processes for I/O work, and paying startup, memory and pickling costs for
+something threads do better - measured at 7.1x with no such overhead.
+
+THE NUANCE WORTH KNOWING: it is released during I/O and inside C extensions, which is why threaded
+numpy code CAN use several cores, and why 'vectorise it' escapes the lock as well as speeding up the
+arithmetic.
+
+ONE-SENTENCE TAKEAWAY: the GIL means only one thread runs Python bytecode at a time - so threads buy
+nothing for CPU-bound Python (measured 1.03x) and a great deal for I/O (measured 7.1x), because the
+lock is released while a thread waits.""",
+]
+
+_EX_P1AO["IEEE 754 floating point (and why 0.1 + 0.2 != 0.3)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the number you stored is not the number you typed
+
+Type this into any language and you get the same answer:
+
+    0.1 + 0.2  ->  0.30000000000000004
+    0.1 + 0.2 == 0.3  ->  False
+
+This is not a Python bug, a rounding display quirk, or a mistake anyone made. It is what happens when
+you store decimal fractions in binary, and it is the same in Java, C, JavaScript and your calculator's
+firmware.
+
+THE REASON, in one line: 0.1 CANNOT BE REPRESENTED EXACTLY IN BINARY, exactly as 1/3 cannot be
+represented exactly in decimal.
+
+What is actually stored when you write 0.1 - the true value of the double, printed in full:
+
+    0.1000000000000000055511151231257827021181583404541015625
+
+Not 0.1. The nearest number to 0.1 that the format can hold. Add two such approximations and the tiny
+errors do not cancel.
+
+TERMS AS THEY APPEAR:
+- FLOAT / DOUBLE: a number stored in binary scientific notation. A 64-bit double is the default
+  floating-point type nearly everywhere, including Python's `float`.
+- MANTISSA (or significand): the digits. EXPONENT: where the point goes. SIGN: one bit.
+- PRECISION: how many significant digits survive. A double gives about 15 to 17 decimal digits.
+- EPSILON: the smallest gap between representable numbers near 1.0, about 2.2e-16 for a double.""",
+
+    """2. THE INTUITION - the same problem you already accept in decimal
+
+You are entirely comfortable with this fact: 1/3 written in decimal is 0.3333... for ever. Write it
+with ten digits and you have an approximation, and 0.3333333333 x 3 is 0.9999999999, not 1.
+
+Binary has the same limitation with DIFFERENT fractions. A binary fraction can represent sums of 1/2,
+1/4, 1/8, 1/16 and so on - and nothing else exactly. So:
+
+    0.5   = 1/2                      exact
+    0.25  = 1/4                      exact
+    0.75  = 1/2 + 1/4                exact
+    0.1   = 0.000110011001100...     repeats FOR EVER, must be rounded
+
+Any decimal whose denominator is not a power of two is a repeating binary expansion.
+
+MEASURED, which of these hold:
+
+    0.5 + 0.25 == 0.75     ->  True      halves and quarters are exact
+    0.1 + 0.2  == 0.3      ->  False     tenths are not
+    0.1 * 3    == 0.3      ->  False
+    1e16 + 1   == 1e16     ->  True      the 1 is smaller than the gap between representable
+                                          numbers up there, so it vanishes entirely
+
+That last one is the other half of the subject and it surprises people more than the first. Near 1e16
+the gap between adjacent doubles is bigger than 1, so adding 1 changes nothing at all. Precision is
+RELATIVE - about 15-17 significant digits wherever you are on the number line - not absolute.
+
+AND ADDITION STOPS BEING ASSOCIATIVE, measured:
+
+    (0.1 + 0.2) + 0.3  =  0.6000000000000001
+    0.1 + (0.2 + 0.3)  =  0.6
+    equal?  False
+
+Same three numbers, different grouping, different answer. That is worth sitting with: a mathematical
+identity you rely on without thinking does not hold in floating point.""",
+
+    """3. THE FORMAT, TRACED - what the 64 bits actually hold
+
+A double is 64 bits, split three ways:
+
+    1 bit    SIGN         0 for positive, 1 for negative
+    11 bits  EXPONENT     where the binary point goes (stored with a bias of 1023)
+    52 bits  MANTISSA     the significant digits, with an implicit leading 1
+
+The value is roughly:   (-1)^sign  x  1.mantissa  x  2^(exponent - 1023)
+
+MEASURED - the actual 64 bits of 0.1:
+
+    0011111110111001100110011001100110011001100110011001100110011010
+    ^\\_________/\\_____________________________________________________/
+    sign exponent                     mantissa
+
+Look at the mantissa: 1001100110011001... repeating, and then CUT OFF and rounded at 52 bits. That
+truncation is the entire phenomenon. The repeating pattern is 0.1 in binary trying to go on for ever.
+
+WHAT THAT BUYS AND COSTS:
+    - about 15 to 17 significant DECIMAL digits;
+    - a range from roughly 1e-308 to 1e308;
+    - exact representation of integers up to 2^53 (about 9 x 10^15) - beyond that, consecutive
+      integers stop being distinguishable, which is why 1e16 + 1 == 1e16.
+
+A 32-BIT FLOAT is the same idea with 1 + 8 + 23 bits: about 7 decimal digits. That is why ML training
+in float32 (or bfloat16, with even fewer mantissa bits) needs care with accumulation, and why loss
+scaling exists in mixed-precision training.
+
+SPECIAL VALUES, since they come up: infinity (exponent all ones, mantissa zero), NaN (exponent all
+ones, mantissa non-zero), and a signed zero - so -0.0 exists, equals 0.0, and can be told apart by
+dividing into it.""",
+
+    """4. THE FAILURE MODES - where this actually bites
+
+A. `==` ON FLOATS. `if total == 0.3` is a bug waiting for the right inputs. Measured: 0.1 + 0.2 == 0.3
+   is False. Compare with a tolerance instead - measured, `abs((0.1+0.2) - 0.3) < 1e-9` is True, and
+   `math.isclose(0.1+0.2, 0.3)` is True.
+
+B. MONEY IN FLOATS - the classic production disaster. Cents disappear, totals do not reconcile, and an
+   auditor eventually asks why. Use integer minor units (store 1999 pence, not 19.99) or a Decimal
+   type. Never a float.
+
+C. ACCUMULATED ERROR IN A LOOP. Measured: adding 0.1 ten thousand times gives
+
+        1000.0000000001588            (off by 1.6e-10)
+        math.fsum gives exactly 1000.0
+        Decimal('0.1') summed gives exactly 1000.0
+
+   Each addition rounds, and ten thousand roundings drift. In a simulation or a running total over
+   millions of rows, the drift is visible.
+
+D. ASSUMING ASSOCIATIVITY. Measured: (0.1+0.2)+0.3 != 0.1+(0.2+0.3). This is why a parallel sum can
+   give a different answer from a sequential one - the grouping differs - and why 'my GPU result
+   differs in the twelfth decimal place' is expected rather than a bug.
+
+E. LARGE PLUS SMALL. Measured: 1e16 + 1 == 1e16. Adding a small number to a large one can be a
+   complete no-op. Sum from smallest to largest, or use a compensated algorithm (Kahan summation, or
+   `math.fsum`).
+
+F. CATASTROPHIC CANCELLATION. Subtracting two nearly-equal numbers destroys the significant digits and
+   leaves you with the noise. The classic case is the quadratic formula when b^2 is much larger than
+   4ac, and the fix is to rearrange the algebra rather than the code.
+
+G. int(x) TRUNCATES, IT DOES NOT ROUND. `int(0.1 * 3 * 10)` can be 2 rather than 3 because the product
+   is a hair under 3. Use round(), and know that Python's round() does banker's rounding - round(0.5)
+   is 0, round(1.5) is 2 - which is deliberate and surprises people.
+
+H. PRINTING HIDES IT. Most languages print the SHORTEST string that round-trips, so 0.1 displays as
+   '0.1' even though it is not 0.1. That is why the bug seems to appear from nowhere at the moment two
+   of them are added.""",
+
+    """5. WHAT TO USE INSTEAD, AND WHEN
+
+    MONEY, and anything where the decimal digits are the point:
+        - INTEGER MINOR UNITS - store pence or cents as an int. Fast, exact, and the standard answer.
+        - DECIMAL - Python's `decimal.Decimal`, Java's BigDecimal, SQL's NUMERIC. Exact decimal
+          arithmetic with a configurable precision, at maybe 100x the cost of a float. Measured: the
+          Decimal sum of ten thousand 0.1s is exactly 1000.0.
+        Choose integers when the scale is fixed (currency), Decimal when it varies or you need decimal
+        rounding rules.
+
+    EXACT FRACTIONS: `fractions.Fraction`. Slow, unbounded precision, correct - useful in tests and in
+    symbolic work.
+
+    SUMS OF MANY FLOATS: `math.fsum` gives the exactly-rounded result. Measured: exactly 1000.0 where
+    the naive loop gave 1000.0000000001588. Or sort smallest-first, or use Kahan summation.
+
+    COMPARISONS:
+        math.isclose(a, b)                      # relative and absolute tolerance, sensible defaults
+        abs(a - b) < 1e-9                       # absolute only; wrong for very large or tiny numbers
+        numpy.allclose(a, b)                    # elementwise, same idea
+
+    Use isclose. The hand-rolled absolute tolerance is fine near 1.0 and useless at 1e12, where the
+    gap between representable numbers is already bigger than 1e-9.
+
+    WHEN FLOATS ARE EXACTLY RIGHT: measurements, physics, graphics, machine learning - anything whose
+    inputs are approximate anyway and where speed matters. A double gives 15-17 digits; your sensor
+    gives 3. The mistake is not USING floats, it is using them for exact decimal quantities and then
+    comparing them with ==.
+
+    THE INTERVIEW ANSWER, compressed: 'floats store binary fractions, so any decimal that is not a sum
+    of powers of two - including 0.1 - is rounded. Never use them for money, never compare them with
+    ==, and be careful adding numbers of very different sizes.'""",
+
+    """6. HOW TO HANDLE IT - numbered steps
+
+1. ASK WHETHER THE QUANTITY IS EXACT OR MEASURED. Money, counts and identifiers are exact - use
+   integers or Decimal. Temperatures, weights and probabilities are approximate - floats are correct.
+2. NEVER COMPARE FLOATS WITH ==. Use `math.isclose`, or an explicit tolerance you have chosen with
+   the magnitude of your numbers in mind.
+3. FOR MONEY, STORE MINOR UNITS AS INTEGERS. 1999, not 19.99. Convert at the display boundary only.
+4. WHEN SUMMING MANY VALUES, use `math.fsum` or sort smallest-first. Measured: the naive loop drifted
+   by 1.6e-10 over ten thousand additions, and fsum did not drift at all.
+5. AVOID SUBTRACTING NEARLY-EQUAL NUMBERS. If you must, rearrange the formula algebraically first.
+6. DO NOT ASSUME ASSOCIATIVITY - especially across parallel or GPU code, where the grouping is not
+   yours to choose. Measured: (0.1+0.2)+0.3 differs from 0.1+(0.2+0.3).
+7. WHEN A TEST FAILS BY A HAIR, look at the magnitudes before adding a tolerance. A comparison that
+   needs 1e-3 to pass is often a real bug in disguise.
+
+STEP 1 IS THE ONE THAT PREVENTS THE EXPENSIVE VERSION OF THIS. Almost every serious floating-point
+disaster is an exact quantity - a price, a balance, a share count - stored in an approximate type.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A float stores a number in binary scientific notation - a sign bit, an exponent and a mantissa. A
+64-bit double gives 1, 11 and 52 bits, which is about 15 to 17 significant decimal digits.
+
+The catch is that binary fractions can only represent sums of a half, a quarter, an eighth and so on.
+So 0.1 has no exact binary form - it repeats for ever, exactly like a third does in decimal - and what
+gets stored is the nearest representable value, which is 0.1000000000000000055511151231257827 and a
+bit. Add two of those approximations and the errors do not cancel, so 0.1 + 0.2 is 0.30000000000000004
+and comparing it to 0.3 with == is False.
+
+Two related things I would mention. Precision is RELATIVE, so 1e16 + 1 == 1e16 is True - up there the
+gap between representable numbers is bigger than one. And addition is not associative: I measured
+(0.1+0.2)+0.3 as 0.6000000000000001 and 0.1+(0.2+0.3) as 0.6, which is why parallel sums can differ
+from sequential ones.
+
+Practically: never floats for money - integer pence or Decimal - never == for comparison, use
+math.isclose, and for long sums use math.fsum, which gave exactly 1000.0 where a naive loop of ten
+thousand 0.1s drifted to 1000.0000000001588.'""",
+
+    """8. THE BITS, PIECE BY PIECE
+
+    THE LAYOUT of a 64-bit double:
+
+        [ sign 1 ][ exponent 11 ][ mantissa 52 ]
+
+        value = (-1)^sign  x  1.mantissa(binary)  x  2^(exponent - 1023)
+
+    THE IMPLICIT LEADING 1 is a neat trick: any normalised binary number starts with a 1, so there is
+    no point storing it. You get 53 bits of precision from 52 bits of storage.
+
+    THE BIAS of 1023 lets the exponent field hold a plain unsigned number while representing both
+    positive and negative exponents - so ordering the bit patterns as integers also orders the values,
+    which is why you can compare floats with integer comparisons.
+
+    0.1, MEASURED, bit for bit:
+
+        0 01111111011 1001100110011001100110011001100110011001100110011010
+        ^ ^           ^
+        | exponent    mantissa: 1001 1001 1001 ... repeating, then CUT and rounded at 52 bits
+
+    That repeating 1001 pattern is 0.1 in binary going on for ever. The final ...1010 is the rounding
+    of the next repeat - and it is why the stored value is slightly ABOVE 0.1 rather than below.
+
+    WHY 1e16 + 1 == 1e16: at that magnitude the exponent is large, so one unit in the last place of
+    the mantissa is worth more than 1. The nearest representable number to 1e16 + 1 IS 1e16, so that
+    is what you get. Integers stay exact only up to 2^53.
+
+    THE TOOLS TO INSPECT IT:
+        decimal.Decimal(0.1)        # the exact stored value, in full
+        float.hex(0.1)              # the exact value, in hex - compact and unambiguous
+        struct.pack('>d', 0.1)      # the raw bytes, for the bit pattern
+        math.ulp(1.0)               # the gap to the next representable number: 2.22e-16""",
+
+    """9. RUNNING IT - every claim, measured
+
+    THE BASIC ONE:
+        0.1 + 0.2           = 0.30000000000000004
+        0.1 + 0.2 == 0.3    -> False
+        Decimal(0.1)        = 0.1000000000000000055511151231257827021181583404541015625
+
+    WHAT IS EXACT AND WHAT IS NOT:
+        0.5 + 0.25 == 0.75  -> True         powers of two are exact
+        0.1 + 0.2  == 0.3   -> False
+        0.1 * 3    == 0.3   -> False
+        1e16 + 1   == 1e16  -> True         the addend is below the representable gap
+
+    ASSOCIATIVITY:
+        (0.1 + 0.2) + 0.3 = 0.6000000000000001
+        0.1 + (0.2 + 0.3) = 0.6
+        equal? False
+
+    ACCUMULATION - adding 0.1 ten thousand times:
+        naive loop  = 1000.0000000001588      (off by 1.6e-10)
+        math.fsum   = 1000.0                  (exactly)
+        Decimal     = 1000.0                  (exactly)
+
+    THE COMPARISONS THAT WORK:
+        abs((0.1+0.2) - 0.3) < 1e-9   -> True
+        math.isclose(0.1+0.2, 0.3)    -> True
+
+READ THE ACCUMULATION BLOCK AGAIN, because it is the one that reaches production. The error after ten
+thousand additions is 1.6e-10 - far too small to notice in a test, and far too large to ignore in a
+ledger after a million rows. `math.fsum` costs nothing and removes it entirely, and almost nobody
+knows it exists.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT FLOATS BUY: enormous range (1e-308 to 1e308), constant-time hardware arithmetic, and 15-17
+significant digits in 8 bytes. For measured quantities they are exactly the right tool, and the
+alternatives are 10 to 100 times slower.
+
+WHAT THEY COST: no exact decimal fractions, no associativity, and comparisons that need care.
+
+THE #1 MISTAKE: money in floats. Measured drift of 1.6e-10 over ten thousand additions is invisible in
+a test and unacceptable in a ledger. Store integer minor units, or use Decimal.
+
+THE #2 MISTAKE: comparing with ==. Measured: 0.1 + 0.2 == 0.3 is False. Use math.isclose, and choose
+the tolerance with the magnitude of your numbers in mind - an absolute 1e-9 is meaningless at 1e12.
+
+THE #3 MISTAKE: assuming a + (b + c) == (a + b) + c. Measured False. It is why a parallel or GPU sum
+can differ from a sequential one, and that difference is expected rather than a bug.
+
+THE ONE THAT SURPRISES PEOPLE MOST: 1e16 + 1 == 1e16 is True. Precision is relative, not absolute, and
+integers stop being exact past 2^53.
+
+ONE-SENTENCE TAKEAWAY: 0.1 has no exact binary form, exactly as a third has no exact decimal one - so
+what you stored is the nearest representable value, and every rule that follows (no ==, no money, no
+assumed associativity) comes from that single fact.""",
 ]
 
 _EX_P1AO["HTTP in depth: methods, status codes, idempotency and REST"] = [
