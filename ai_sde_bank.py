@@ -62913,72 +62913,317 @@ your impression.""",
 ]
 
 _EX_P0H["Chain-of-Thought and reasoning models"] = [
-    """The arithmetic case, both ways.
-Question: "A shop has 23 apples. It uses 20 for lunch and buys 6 more. How many
-now?"
-Direct answer, no reasoning: models frequently emit 9 - a plausible-looking wrong
-number.
-With "let's think step by step": "Start with 23. Use 20, leaving 3. Buy 6, giving
-9." ... which is also 9 - and here 9 is CORRECT (23-20+6=9). Change it to 'uses
-20 and buys 6 more, then sells half': the direct answer is usually wrong while
-the stepwise one holds up, because each step is a small, checkable operation.
-The mechanism: the model spends more forward passes on the problem and each
-intermediate result becomes context for the next step, rather than compressing
-the whole calculation into one token prediction.""",
+    """1. THE GOAL IN PLAIN ENGLISH - let it show its working
 
-    """Zero-shot vs few-shot CoT.
-Zero-shot CoT: append "Let's think step by step." One line, no examples, and it
-was the finding that launched the whole area.
-Few-shot CoT: show 2-3 fully worked examples INCLUDING their reasoning, then pose
-the new question. More tokens, more control - you get to demonstrate the exact
-reasoning STYLE you want (e.g. always list the constraints before deciding).
-Pick few-shot when the reasoning shape matters (a scoring rubric, a legal test);
-pick zero-shot when you just want the model to slow down.""",
+Ask a language model a multi-step question and demand the answer immediately, and it will often get it
+wrong. Ask the same model to WORK THROUGH IT FIRST, and it often gets it right.
 
-    """Self-consistency - a concrete majority vote.
-Sample the same CoT prompt 5 times at temperature 0.7. The final answers come out
-42, 42, 38, 42, 40.
-Take the MAJORITY (42) rather than the first sample. Accuracy on hard maths
-benchmarks improves several points, because wrong reasoning paths tend to be
-wrong in DIFFERENT ways while correct paths converge.
-The cost is linear: 5 samples is 5x the tokens. That trade - spend inference
-compute to buy accuracy - is the same lever the reasoning models pull, just done
-in the application layer.""",
+    weak:    "A shop sells pens at 3 for 2 pounds. How much for 17 pens?"
+    strong:  "Work through it step by step, then give the final answer on a line starting 'ANSWER:'."
 
-    """Reasoning models vs CoT prompting.
-Prompted CoT: a normal model that you ask to show its work; the reasoning is in
-the visible output and you pay for those tokens as output.
-Reasoning models (OpenAI o-series, Claude's extended thinking, DeepSeek-R1) are
-TRAINED with reinforcement learning to reason at length before answering; the
-thinking is a separate budgeted phase, often summarised or hidden.
-Practical differences: you do not need to prompt for step-by-step (and heavy CoT
-prompting can even hurt); latency and cost scale with the thinking budget; and
-they are strongest on maths, code and multi-constraint planning, while adding
-little to simple extraction or summarisation.""",
+That is CHAIN-OF-THOUGHT (CoT) prompting: asking the model to produce its intermediate reasoning
+before its conclusion. It costs a few extra tokens and it is one of the largest quality improvements
+available from prompting alone.
 
-    """When CoT does NOT help - and when it hurts.
-- Simple lookup, classification, extraction, formatting: the reasoning is noise
-  and it costs tokens and latency.
-- Tasks needing a strict output contract: free-form reasoning leaks into the JSON
-  unless you fence it (<scratch> ... </scratch> then <answer>).
-- Cases where the model rationalises: asking for the answer FIRST and reasoning
-  second produces a justification of a guess, which is worse than no reasoning.
-- Faithfulness caveat worth naming: the written chain is not guaranteed to be the
-  computation that actually produced the answer. Treat it as a useful artefact,
-  not as an audit trail.""",
+THE MECHANISM, and it is worth understanding rather than memorising: THE MODEL HAS NO HIDDEN
+SCRATCHPAD. It computes by producing tokens, one at a time, each conditioned on everything before it.
+If you demand the answer first, it must commit to the first token of that answer before ANY reasoning
+has happened. Let it write the reasoning first and those tokens become context it can condition on -
+so the computation actually has somewhere to happen.
 
-    """Where it pays off in a product.
-- A billing agent computing a pro-rated refund: the steps are auditable by a
-  human and each is individually checkable.
-- Code review: 'list the invariants this function assumes, THEN judge whether the
-  patch violates any'.
-- An LLM-as-judge scoring rubric: force the judge to cite evidence per criterion
-  before the score, which measurably reduces score drift.
-- Multi-step tool agents: the reasoning is what selects the next tool, so the plan
-  IS the chain.
-Practical guidance for the interview: keep the reasoning hidden from the end user
-(it is verbose and sometimes wrong-looking), keep it in the logs for debugging,
-and put a token budget on it so a hard question cannot spiral.""",
+That single fact tells you when CoT helps (multi-step arithmetic, logic, planning) and when it does
+not (recalling one fact, extracting a field, classifying a sentence - where it adds latency and an
+opportunity to talk itself out of the right answer).
+
+TERMS AS THEY APPEAR:
+- ZERO-SHOT CoT: just asking - 'let's think step by step' - with no examples.
+- FEW-SHOT CoT: showing two or three worked examples so the model copies the reasoning STYLE.
+- REASONING MODEL: a model trained to do this internally, so you do not have to ask.
+- TOKEN: the unit a model reads and writes - roughly three quarters of a word.""",
+
+    """2. THE INTUITION - why writing it down IS the computing
+
+Think about multiplying 47 by 89 in your head with no paper and no pause: you must say a number
+immediately. Most people cannot. Given paper, almost everyone can. The paper is not making you
+cleverer; it is giving the intermediate results somewhere to live.
+
+A language model is in exactly that position, permanently. Its only working memory is the text it has
+already produced. So:
+
+    "17 pens at 3 for 2 pounds. Answer immediately."
+        -> it must emit a number NOW, from pattern-matching alone.
+
+    "Work through it step by step."
+        -> "3 pens cost 2 pounds. 17 pens is 5 groups of 3 with 2 left over.
+            5 groups cost 10 pounds. 2 pens at the single-pen rate..."
+        -> each line is now IN THE CONTEXT and the next line can use it.
+
+WHAT FOLLOWS FROM THAT, and these are the practically useful consequences:
+
+· CoT HELPS ON MULTI-STEP PROBLEMS and not on single-step ones. If there is no intermediate result to
+  hold, there is nothing for the scratchpad to hold.
+· MORE TOKENS OF REASONING IS MORE COMPUTATION. That is genuinely what 'thinking longer' means for a
+  model - not deliberation in any human sense, but more forward passes conditioned on more context.
+· THE REASONING CAN BE WRONG AND THE ANSWER STILL RIGHT, and vice versa. The written chain is not a
+  faithful log of an internal process; it is text generated by the same process. Treat it as
+  ADDITIONAL OUTPUT to be checked, not as an explanation to be trusted. This is the point people get
+  wrong most often.
+· AND IT MAKES ERRORS FINDABLE. Even when unfaithful, a written chain lets a human or a verifier spot
+  the step where it went wrong - which is worth a lot in a system you have to debug.""",
+
+    """3. THE VARIANTS, TRACED
+
+    ZERO-SHOT CoT - the cheapest thing that works:
+
+        "Let's think step by step."
+        or, better because it is parseable:
+        "Work through it step by step, then give the final answer on a line starting 'ANSWER:'."
+
+    The second version matters in a real system: you get the reasoning AND a line you can extract
+    without a fragile regex over prose.
+
+    FEW-SHOT CoT - show the reasoning STYLE you want:
+
+        Q: A shop sells pens 3 for 2 pounds. What do 9 cost?
+        A: 9 pens is 3 groups of 3. Each group is 2 pounds. 3 x 2 = 6. ANSWER: 6
+
+        Q: A shop sells pens 3 for 2 pounds. What do 17 cost?
+        A:
+
+    The examples specify not just the format but the GRANULARITY of the steps - which is the thing
+    that is hard to describe in words and easy to demonstrate.
+
+    SELF-CONSISTENCY - the upgrade when accuracy matters more than cost:
+
+        sample the same question N times at a non-zero temperature
+        take the MAJORITY final answer
+
+    Different runs take different reasoning paths; wrong paths tend to disagree with each other while
+    right ones agree. It costs N times the tokens and reliably beats a single chain.
+
+    LEAST-TO-MOST - break the problem into sub-questions first, then answer them in order. Useful when
+    the decomposition is itself the hard part.
+
+    TREE OF THOUGHTS - explore several branches and backtrack. Powerful, expensive, and rarely worth
+    it outside research or genuinely search-like tasks.
+
+    REASONING MODELS (2024 onwards) - o1, o3, DeepSeek-R1, and the 'thinking' modes of current
+    frontier models. These are TRAINED to produce long internal chains, usually with reinforcement
+    learning against verifiable answers, and they do it whether or not you ask. Consequences:
+        · adding 'think step by step' is redundant, and cluttering the prompt can hurt;
+        · they are slower and cost more per question, sometimes far more;
+        · the internal reasoning may be hidden or summarised rather than returned;
+        · they are worth it for hard maths, code and planning, and wasteful for extraction,
+          classification or chat.""",
+
+    """4. THE FAILURE MODES
+
+A. USING CoT ON EVERYTHING. On extraction and classification it adds latency and cost and can talk
+   the model out of an answer it had immediately. Ask whether the task genuinely has steps.
+
+B. TREATING THE CHAIN AS AN EXPLANATION. The written reasoning is not a faithful trace of what
+   produced the answer - the model can reach the right answer by pattern-matching and then generate a
+   plausible-looking justification. Research on this is unambiguous: chains can be POST-HOC. So do not
+   put 'the model explained its reasoning' in front of a regulator as evidence.
+
+C. NOT SEPARATING THE ANSWER FROM THE REASONING. If your parser has to find the answer inside a
+   paragraph, it will eventually pick up a number from the working. Demand a fixed final line, or use
+   a structured output mode.
+
+D. ASKING A REASONING MODEL TO THINK STEP BY STEP. It already does. The instruction is redundant, adds
+   tokens, and in some cases degrades results by interfering with the trained format.
+
+E. PAYING FOR REASONING TOKENS WITHOUT NOTICING. Reasoning models bill for tokens you never see, and a
+   'thinking' mode can multiply the cost of a simple request by ten or more. Measure the cost per
+   task, not per visible token.
+
+F. LETTING THE CHAIN RUN AWAY. A long chain wanders, and a wandering chain compounds an early mistake.
+   Cap the length; ask for numbered steps; require the answer format.
+
+G. CoT ON A KNOWLEDGE PROBLEM. If the model does not KNOW something, reasoning about it produces
+   confident invention. That is a retrieval problem - see [[what-is-rag-retrieval-augmented-
+   generation]] - and no amount of step-by-step fixes it.
+
+H. ASSUMING MORE STEPS IS ALWAYS BETTER. Beyond a point, extra reasoning is extra opportunity to err.
+   Self-consistency - several shorter chains, majority vote - beats one very long one.""",
+
+    """5. WHEN TO USE WHICH - the decision
+
+    THE TASK                                  WHAT TO USE
+    extraction, classification, formatting    NO CoT. Ask directly; add examples if the format is
+                                              fiddly.
+    arithmetic, multi-step logic, planning    ZERO-SHOT CoT, with a fixed answer line.
+    the same, and the reasoning STYLE matters FEW-SHOT CoT with two or three worked examples.
+    accuracy matters more than cost           SELF-CONSISTENCY: sample several, take the majority.
+    genuinely hard maths, code, proofs        A REASONING MODEL - and stop adding CoT instructions.
+    the model lacks the FACTS                 Retrieval, not reasoning.
+
+THE COST SIDE, which is what makes this a real decision rather than a preference: CoT multiplies
+output tokens, and output tokens are the expensive ones. Self-consistency multiplies that again by the
+number of samples. A reasoning model can spend thousands of hidden tokens on a question a small model
+answers in ten. For a high-volume, low-difficulty task that difference is the entire cost of the
+feature.
+
+THE PRACTICAL COMPROMISE used in production systems: ROUTE. Send easy requests to a small model with
+no CoT and hard ones to a reasoning model, deciding by a cheap classifier or by simple heuristics
+(length, presence of numbers, user tier). Most requests are easy.
+
+AND THE ONE WORTH SAYING IN AN INTERVIEW: 'I would measure it. CoT is not free and it is not
+universally better - I would build a set of real examples and compare accuracy, latency and cost per
+task with and without it, rather than adding "think step by step" to everything because it is famous.'
+That sentence is the difference between having read the paper and having shipped the feature.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+1. ASK WHETHER THE TASK HAS STEPS. If a competent human would need scrap paper, CoT will probably
+   help. If they would answer instantly, it will not.
+2. TRY THE PLAIN VERSION FIRST and record the failures on real inputs. You need the baseline, or you
+   cannot tell whether CoT helped.
+3. ADD 'work through it step by step' AND a fixed final-answer line. Always both - the reasoning is
+   useless to your program if you cannot extract the answer reliably.
+4. IF THE STEPS COME OUT AT THE WRONG GRANULARITY, add two or three few-shot examples showing the
+   level of detail you want. Describing granularity in words rarely works.
+5. IF ACCURACY STILL MATTERS MORE THAN COST, sample the same prompt several times and take the
+   majority answer.
+6. IF THE MODEL IS A REASONING MODEL, remove the CoT instructions and let it do its thing.
+7. MEASURE ACCURACY, LATENCY AND COST together on a real set. A 3% accuracy gain for 5x the cost is a
+   decision, not an obvious win.
+8. NEVER PRESENT THE CHAIN AS AN EXPLANATION of the model's actual process. Use it to spot errors, not
+   to justify decisions to a user or an auditor.
+
+STEP 2 IS THE ONE PEOPLE SKIP, and without it every later claim is an impression. Twenty real inputs
+with known answers is enough to make the whole exercise empirical.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Chain-of-thought is asking the model to produce its intermediate reasoning before the answer, and it
+works because the model has no hidden scratchpad. It computes by generating tokens, so if you demand
+the answer immediately it has to commit before any reasoning has happened. Let it write the steps
+first and those tokens become context the next step can condition on - the writing IS the computing.
+
+That tells you when to use it: multi-step arithmetic, logic and planning yes; extraction and
+classification no, where it just adds latency and a chance to talk itself out of the right answer.
+
+In practice I would ask for the steps AND a fixed final line like "ANSWER:", because otherwise you
+cannot parse the result reliably. If the granularity is wrong, two or three few-shot examples fix it
+faster than describing it. If accuracy matters more than cost, self-consistency - sample several times
+and take the majority - beats a single chain.
+
+Two caveats I would raise. Reasoning models like o1 or R1 are trained to do this internally, so adding
+"think step by step" is redundant and can even hurt - and they bill for reasoning tokens you never
+see. And the written chain is NOT a faithful account of how the answer was produced; it can be
+post-hoc justification. It is useful for spotting where something went wrong, not as an explanation
+you can put in front of an auditor.'""",
+
+    """8. THE PROMPTS, PIECE BY PIECE
+
+    THE MINIMAL VERSION:
+
+        Work through it step by step, then give the final answer on a line starting "ANSWER:".
+
+    Two instructions doing two jobs. The first buys the computation; the second buys a parseable
+    result. Without the second you have prose with a number somewhere in it.
+
+    THE FEW-SHOT VERSION:
+
+        Q: <question>
+        A: <one worked line> <another> ANSWER: <value>
+
+        Q: <question>
+        A: <worked lines> ANSWER: <value>
+
+        Q: <the real question>
+        A:
+
+    Ending on a bare `A:` is what makes the model continue the pattern rather than start a new one.
+    And the examples are the SPECIFICATION of the reasoning granularity - two short steps versus eight
+    detailed ones is a decision you make by choosing which examples to show.
+
+    SELF-CONSISTENCY, in code shape:
+
+        answers = [call(prompt, temperature=0.7) for _ in range(5)]
+        final = most_common([extract_answer(a) for a in answers])
+
+    The temperature must be NON-ZERO or every sample takes the same path and the vote is meaningless.
+    That is the part people get wrong when they try it.
+
+    THE STRUCTURED VERSION, for a program that must consume the result:
+
+        Return JSON: {"reasoning": [<step strings>], "answer": <value>}
+
+    You keep the reasoning for debugging and get a machine-readable answer, with no parsing of prose
+    at all. Where the API offers a structured-output mode, use it rather than asking politely.
+
+    AND FOR A REASONING MODEL:
+
+        <just the question, stated precisely>
+
+    No CoT instruction. The training already contains it, and the useful prompt engineering shifts
+    from 'how to think' to 'what exactly is being asked and what does a good answer look like'.""",
+
+    """9. WORKING THROUGH ONE - where the chain earns its keep
+
+    THE QUESTION: 'A shop sells pens at 3 for 2 pounds, or 90p each individually. What is the
+    cheapest way to buy 17 pens, and what does it cost?'
+
+    WITHOUT CoT the model must produce a number immediately. The plausible-looking wrong answers are
+    easy to see: 17 x 0.90 = 15.30 (ignoring the offer), or 17/3 x 2 = 11.33 (pretending you can buy a
+    third of a group).
+
+    WITH CoT the reasoning has somewhere to happen:
+
+        17 pens. The offer is 3 for 2 pounds, which is 66.7p each - cheaper than 90p.
+        17 = 5 groups of 3, with 2 left over.
+        5 groups cost 5 x 2 = 10 pounds.
+        The remaining 2 pens: individually 2 x 0.90 = 1.80, or buy a sixth group of 3 for 2.00.
+        1.80 is cheaper than 2.00, so buy 2 singles.
+        Total 10 + 1.80 = 11.80.
+        ANSWER: 11.80
+
+    Note the fifth line. That comparison - is it cheaper to buy one more group than to buy the
+    remainder singly - is the step that makes the problem non-trivial, and it can only exist if there
+    is somewhere to write the two candidate numbers down. That is the whole argument for CoT in one
+    example.
+
+    WHERE IT DOES NOT HELP: 'extract the total from this invoice email'. There are no intermediate
+    results. Asking for steps produces 'First I will look for the word Total... I see it says 420...'
+    - three times the latency, the same answer, and one more chance to be talked out of it.
+
+    AND THE HONEST CAVEAT, once more, because it is the thing to say: if that chain had contained an
+    arithmetic slip in line 3 and still reached 11.80, that would not be a contradiction. The chain is
+    generated text, not a transcript. Read it to FIND errors; do not treat it as proof there were
+    none.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT CoT BUYS: large accuracy gains on multi-step arithmetic, logic and planning; errors that a
+    human can locate; and a natural place for a verifier to check the work.
+
+    WHAT IT COSTS: more output tokens - the expensive kind - higher latency, and a longer surface on
+    which to go wrong. Self-consistency multiplies all of it by the number of samples.
+
+    THE DECISION TABLE, compressed:
+        has steps          -> CoT, with a fixed answer line
+        no steps           -> ask directly
+        accuracy critical  -> self-consistency
+        genuinely hard     -> a reasoning model, and drop the CoT instructions
+        missing facts      -> retrieval, not reasoning
+
+THE #1 MISTAKE: adding 'think step by step' to everything because it is famous. On extraction and
+classification it is pure cost, and on a reasoning model it is redundant or harmful.
+
+THE #2 MISTAKE: treating the chain as an explanation. It can be post-hoc justification, and presenting
+it as the model's actual reasoning is a claim you cannot support.
+
+THE #3 MISTAKE: not extracting the answer separately. Prose with a number in it is not an interface;
+demand a fixed final line or a JSON field.
+
+THE COST ONE THAT SURPRISES TEAMS: reasoning models bill for tokens you never see, so the invoice can
+be many times what the visible output suggests. Measure cost per TASK.
+
+ONE-SENTENCE TAKEAWAY: the model has no hidden scratchpad, so making it write the steps IS the
+computation - which is why chain-of-thought transforms multi-step problems, does nothing for one-step
+ones, and should never be mistaken for an explanation of how the answer was really produced.""",
 ]
 
 _EX_P0H["Design a RAG-powered document Q&A chatbot"] = [
@@ -145625,6 +145870,707 @@ ONE-SENTENCE TAKEAWAY: k-means alternates 'assign to the nearest centre' and 'mo
 mean' until nothing changes - it always converges but only to a local optimum, so standardise the
 features, restart it several times, and remember it can only ever find round, similarly-scaled
 blobs.""",
+]
+
+_EX_P1AO["Pattern: Strategy - swap an algorithm at runtime"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - pull out the bit that varies
+
+You are writing a shipping calculator. Standard shipping costs one thing, express another, and free
+shipping costs nothing. The obvious first version:
+
+    def cost(kind, weight, distance):
+        if kind == "standard":
+            return 5 + 0.5 * weight
+        elif kind == "express":
+            return 15 + 1.2 * weight + 0.05 * distance
+        elif kind == "free":
+            return 0
+
+It works. Now the interviewer says: 'add next-day shipping'. You edit that function. 'Add a discount
+for orders over 50 pounds'. You edit it again. 'Now the express rate differs by country'. It grows.
+
+THE STRATEGY PATTERN says: PULL THE PART THAT VARIES INTO ITS OWN CLASS, and let the main object hold
+one of them and delegate.
+
+    class Order:
+        def __init__(self, weight, distance, shipping):
+            self.shipping = shipping           # HAS-A a strategy
+        def total(self, item_price):
+            return item_price + self.shipping.cost(self.weight, self.distance)
+
+Order no longer knows the variants exist. It calls `shipping.cost(...)` and whichever object it was
+handed answers.
+
+THE TRIGGER TO RECOGNISE: whenever you catch yourself writing `if type == A ... elif type == B` to
+choose BEHAVIOUR, that chain is a Strategy waiting to be extracted.
+
+TERMS AS THEY APPEAR:
+- STRATEGY: one interchangeable algorithm, wrapped in an object with a known method.
+- CONTEXT: the object that HOLDS a strategy and delegates to it. Here, Order.
+- INTERFACE: the shared shape - every strategy has a `cost(weight, distance)`.
+- COMPOSITION: an object HAVING another object, rather than inheriting from it. Strategy is the
+  cleanest example of 'favour composition over inheritance'.""",
+
+    """2. THE INTUITION - what the pattern actually buys
+
+Three things, and they are worth separating because only the first is obvious.
+
+1. ADDING A VARIANT TOUCHES NO EXISTING CODE. A new strategy is a new class. The if/elif version
+   requires editing a function that every other variant also lives in - so every addition risks
+   breaking the ones already working. This is the OPEN-CLOSED PRINCIPLE made concrete: open for
+   extension, closed for modification.
+
+2. EACH VARIANT IS TESTABLE ALONE. `ExpressShipping().cost(2, 100)` is a unit test with no Order, no
+   database and no setup. Testing a branch of an if/elif means constructing whatever the surrounding
+   function needs.
+
+3. THE CHOICE BECOMES DATA. Because a strategy is an object, you can pick it from a config file, a
+   database column, a feature flag, or the user's plan - at RUN time. An if/elif chain hard-codes the
+   choice into the control flow, where configuration cannot reach it.
+
+WHAT IT COSTS, stated honestly: more classes and more indirection. For two variants that will never
+grow, the if/elif is clearer and you should say so. The pattern earns its keep when variants are
+added over time or chosen at runtime - and in an interview, the follow-up is ALWAYS 'now support
+another one', which is why this is the most useful pattern to have ready.
+
+THE REAL-WORLD PICTURE: a payment terminal does not contain the logic for every card network. It has a
+slot, and whatever card you insert knows how to authorise itself. The terminal delegates. That is the
+whole pattern - and note the terminal never needs updating when a new network appears.
+
+THE SMELL THAT PRECEDES IT: the same if/elif chain appearing in more than one place. Cost is computed
+here, the estimated delivery date there, the label format somewhere else - three chains over the same
+set of kinds, guaranteed to drift apart. Strategy puts all three behaviours for one variant in one
+class.""",
+
+    """3. TRACED - the same requirement, both ways
+
+    THE IF/ELIF VERSION, and what each change costs:
+
+        def shipping_cost(kind, weight, distance):
+            if kind == "standard": return 5 + 0.5 * weight
+            elif kind == "express": return 15 + 1.2 * weight + 0.05 * distance
+            elif kind == "free":    return 0
+            raise ValueError(kind)
+
+        change 1: add next-day        -> EDIT this function
+        change 2: express varies by country -> EDIT this function, add a parameter,
+                                               and every caller now passes a country
+        change 3: delivery estimate too     -> a SECOND if/elif over the same kinds,
+                                               somewhere else, which will drift
+
+    THE STRATEGY VERSION:
+
+        class ShippingStrategy(ABC):
+            @abstractmethod
+            def cost(self, weight_kg, distance_km): ...
+
+        class StandardShipping(ShippingStrategy):
+            def cost(self, weight_kg, distance_km):
+                return 5 + 0.5 * weight_kg
+
+        class ExpressShipping(ShippingStrategy):
+            def cost(self, weight_kg, distance_km):
+                return 15 + 1.2 * weight_kg + 0.05 * distance_km
+
+        class FreeShipping(ShippingStrategy):        # added later. Nothing else changed.
+            def cost(self, weight_kg, distance_km):
+                return 0
+
+        change 1: add next-day        -> ONE new file, no edits
+        change 2: express by country  -> edit ExpressShipping ONLY; the others cannot break
+        change 3: delivery estimate   -> add a method to the interface; each strategy owns its
+                                          own answer, and they cannot drift apart
+
+    THE USE SITE:
+
+        order = Order(weight=2, distance=100, shipping=ExpressShipping())
+        order.total(item_price=40)
+
+    And because the strategy is a value, the choice can come from anywhere:
+
+        STRATEGIES = {"standard": StandardShipping, "express": ExpressShipping,
+                      "free": FreeShipping}
+        order = Order(w, d, STRATEGIES[user.preferred_shipping]())
+
+That dictionary is the if/elif chain reduced to DATA - which is the same idea as the registry in
+[[pattern-factory-and-factory-method]], and the two patterns are very often used together: a factory
+picks the strategy.""",
+
+    """4. THE FAILURE MODES
+
+A. APPLYING IT TO TWO VARIANTS THAT WILL NEVER GROW. Three classes and an interface to replace a
+   four-line if/elif is worse code. Say the trade-off out loud in an interview - 'with two fixed
+   variants I would keep the conditional; I would extract when a third arrives or when the choice
+   needs to be configurable' - because knowing when NOT to apply a pattern is what separates having
+   read the book from having used it.
+
+B. THE STRATEGY NEEDING THE CONTEXT'S INTERNALS. If `cost()` needs the customer, the basket, the date
+   and the warehouse, your interface has become a mess and the extraction was drawn in the wrong
+   place. Either pass a small parameter object, or reconsider what actually varies.
+
+C. LEAKING THE VARIANTS BACK INTO THE CONTEXT. `if isinstance(self.shipping, FreeShipping)` anywhere
+   in Order defeats the whole thing. The context must never know which strategy it holds.
+
+D. STATE IN A SHARED STRATEGY. If strategies are stateless they can be singletons - cheap and safe. As
+   soon as one holds mutable state, sharing an instance across threads or requests is a race. Keep
+   them stateless, or create one per use.
+
+E. CONFUSING IT WITH THE STATE PATTERN. The structure is identical - an object delegating to a
+   swappable object. The DIFFERENCE is who swaps it: with Strategy the CLIENT chooses, and the choice
+   usually stays put; with State the object swaps ITSELF as it transitions. Interviewers ask this
+   precisely because the code looks the same.
+
+F. CONFUSING IT WITH TEMPLATE METHOD. Both let subclasses vary behaviour. Template Method uses
+   INHERITANCE - a base class fixes the algorithm's shape and subclasses fill in steps. Strategy uses
+   COMPOSITION - the whole algorithm is swapped, at run time. Composition is more flexible; you can
+   change strategy mid-life, and you cannot change a superclass.
+
+G. FORGETTING THAT A FUNCTION IS A STRATEGY in a language with first-class functions. In Python, a
+   plain function or a lambda satisfies a one-method interface perfectly. `Order(w, d, shipping=lambda
+   kg, km: 0)` is the Strategy pattern, and the ABC is worth it only when there is more than one
+   method or you want the enforcement.""",
+
+    """5. WHEN TO REACH FOR IT, AND WHAT ELSE IT LOOKS LIKE
+
+USE STRATEGY WHEN:
+    · you have an if/elif that selects BEHAVIOUR (not just a value);
+    · the set of variants will grow;
+    · the choice must be made at run time - from config, a database, a feature flag, a user setting;
+    · the same set of variants appears in more than one chain (cost, estimate, label);
+    · you want each variant tested in isolation.
+
+DO NOT USE IT WHEN there are two variants, they are three lines each, and nothing will ever be added.
+
+WHERE YOU HAVE ALREADY SEEN IT, even if not by name:
+    · `sorted(data, key=...)` - the key function is a strategy for extracting the sort value.
+    · A comparator passed to a sort routine.
+    · Pluggable authentication backends, storage backends, cache backends.
+    · scikit-learn estimators: every model has `fit` and `predict`, so you can swap
+      LogisticRegression for RandomForest without changing the surrounding code. That is Strategy,
+      and it is why the library composes so well.
+    · Retry policies, compression codecs, serialisation formats.
+
+THE THREE RELATED PATTERNS, so you can tell them apart under questioning:
+    STRATEGY        the CLIENT picks the algorithm; the object delegates.       composition
+    STATE           the OBJECT swaps its own behaviour as it transitions.       composition
+    TEMPLATE METHOD a base class fixes the shape; subclasses fill in steps.     inheritance
+
+HOW TO PRESENT IT IN AN LLD INTERVIEW: name the thing that varies FIRST ('the pricing rule varies, so
+that is what I will extract'), then show the interface, then two implementations, then the context
+holding one. Then - before they ask - add the third variant out loud and point out that nothing else
+changed. That is the sentence the question exists to hear.""",
+
+    """6. HOW TO APPLY IT - numbered steps
+
+1. FIND THE CONDITIONAL that chooses behaviour. `if kind == ...` over a set of types is the signal.
+2. NAME WHAT VARIES in one sentence: 'how the shipping cost is calculated'. That sentence becomes the
+   interface's name and its single method.
+3. DEFINE THE INTERFACE - one method if you can manage it, with parameters that every variant needs
+   and no more.
+4. MOVE EACH BRANCH into its own class implementing that interface. The body of the branch becomes the
+   body of the method, unchanged.
+5. GIVE THE CONTEXT A FIELD holding a strategy, injected in the constructor. Do not let it construct
+   its own - that would put the choice back inside it.
+6. REPLACE THE CONDITIONAL with a single call to `self.strategy.method(...)`.
+7. MOVE THE CHOICE OUTWARD - to a factory, a registry dict, or the caller. Now it can come from
+   configuration.
+8. CHECK THE CONTEXT NEVER MENTIONS A CONCRETE STRATEGY again. If it does, step 3 drew the interface
+   in the wrong place.
+
+THE STEP THAT MAKES OR BREAKS IT IS 3. An interface with the right parameters makes every variant fall
+out naturally; one with the wrong parameters forces variants to reach back into the context, and you
+end up passing the whole world into every strategy.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Strategy means pulling the part that varies into its own class and having the main object hold one
+and delegate to it. The trigger is an if/elif that chooses BEHAVIOUR - if I see that, I extract each
+branch into a class with a common interface.
+
+The pay-off is three things. Adding a variant is a new class and no edits to existing code, so I
+cannot break the ones that already work. Each variant is testable on its own. And the choice becomes
+DATA - it can come from a config file or a database column, because a strategy is an object rather
+than a branch of control flow.
+
+The cost is more classes, so I would not do it for two variants that will never change. I would say
+that explicitly rather than applying it reflexively.
+
+In an interview I would show the interface, two implementations, and the context holding one - and
+then add a third variant out loud to make the point that nothing else changed, because the follow-up
+is always "now support another pricing rule".
+
+And in Python a plain function is a perfectly good strategy - sorted's key argument is exactly this
+pattern - so I would use an ABC when there is more than one method or I want the enforcement.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    class ShippingStrategy(ABC):
+        @abstractmethod
+        def cost(self, weight_kg, distance_km): ...
+
+    THE INTERFACE, and note what is in the signature: exactly the inputs every variant needs. Not the
+    Order, not the customer, not the database. Keeping this minimal is what stops strategies reaching
+    back into the context.
+
+    class ExpressShipping(ShippingStrategy):
+        def cost(self, weight_kg, distance_km):
+            return 15 + 1.2 * weight_kg + 0.05 * distance_km
+
+    ONE VARIANT. The body is the old if/elif branch, moved verbatim. That is what makes the refactor
+    safe: you are relocating code, not rewriting it.
+
+    class FreeShipping(ShippingStrategy):        # added later. Nothing else changed.
+        def cost(self, weight_kg, distance_km):
+            return 0
+
+    THE COMMENT IS THE POINT. This class was added after the others were working, and no existing file
+    was touched. Say that sentence in the interview.
+
+    class Order:
+        def __init__(self, weight, distance, shipping: ShippingStrategy):
+            self.weight, self.distance = weight, distance
+            self.shipping = shipping             # HAS-A a strategy
+
+    THE CONTEXT. It is handed a strategy rather than choosing one - which is DEPENDENCY INJECTION, and
+    it is what makes Order testable with a stub strategy that returns a fixed number.
+
+        def total(self, item_price):
+            return item_price + self.shipping.cost(self.weight, self.distance)
+
+    THE DELEGATION - one line, no conditional, and no knowledge of which variant it holds. If a future
+    reader can tell from this class what the variants are, the pattern has leaked.
+
+    THE CHOICE, moved outward:
+
+        STRATEGIES = {"standard": StandardShipping, "express": ExpressShipping}
+        order = Order(w, d, STRATEGIES[config.shipping]())
+
+    A dictionary lookup instead of a conditional. Adding a variant is one dict entry - and if that
+    dictionary lives in a factory, a plug-in can register itself without editing this file at all.""",
+
+    """9. RUNNING IT - the same order, three strategies, and the change that costs nothing
+
+    order = Order(weight=2, distance=100, shipping=StandardShipping())
+    order.total(item_price=40)
+        -> 40 + (5 + 0.5*2)                   = 46.0
+
+    order = Order(weight=2, distance=100, shipping=ExpressShipping())
+    order.total(item_price=40)
+        -> 40 + (15 + 1.2*2 + 0.05*100)       = 62.4
+
+    order = Order(weight=2, distance=100, shipping=FreeShipping())
+    order.total(item_price=40)
+        -> 40 + 0                             = 40.0
+
+Three different totals from the same Order class and the same call. Order was not modified, recompiled
+or reasoned about.
+
+NOW THE INTERVIEW FOLLOW-UP, and this is the whole exercise: 'add next-day shipping at 25 pounds plus
+2 per kilo.'
+
+    class NextDayShipping(ShippingStrategy):
+        def cost(self, weight_kg, distance_km):
+            return 25 + 2 * weight_kg
+
+    LINES CHANGED IN EXISTING FILES: zero.
+    LINES ADDED: three, plus one registry entry if you are choosing by name.
+
+Compare with the if/elif version: you edit the shared function, and every existing variant is now one
+typo away from breaking - and you re-test all four because they live in the same function.
+
+AND THE SECOND FOLLOW-UP, 'the delivery estimate also depends on the shipping type': add
+`days(distance)` to the interface, and each strategy answers for itself. In the conditional version
+that is a SECOND if/elif over the same kinds, in a different file, which will eventually disagree with
+the first - the drift that Strategy structurally prevents.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT BUYS                                WHAT IT COSTS
+    a new variant edits nothing                 more classes, more files
+    each variant tested in isolation            one more layer of indirection
+    the choice becomes configurable data        overkill for two fixed variants
+    related behaviours grouped per variant      the interface must be drawn correctly
+
+THE #1 MISTAKE: applying it everywhere. A pattern used where a four-line conditional would do is worse
+than the conditional, and an interviewer who sees you reach for it reflexively will probe whether you
+understand the cost. Say when you would NOT use it.
+
+THE #2 MISTAKE: an interface that needs the whole context. If `cost()` takes the order, the customer,
+the warehouse and the date, you have not extracted an algorithm - you have moved the mess. Redraw it
+around what actually varies.
+
+THE #3 MISTAKE: `isinstance` checks on the strategy inside the context. That is the conditional
+growing back, and it means the interface is missing a method.
+
+THE ONE TO GET RIGHT UNDER QUESTIONING: Strategy versus State. Same structure; the difference is that
+with Strategy the client chooses, and with State the object swaps itself as it transitions.
+
+ONE-SENTENCE TAKEAWAY: when an if/elif chooses BEHAVIOUR, extract each branch into a class behind one
+interface and have the context hold one and delegate - then adding a variant is a new file and no
+edits, which is exactly what the interviewer's follow-up is testing.""",
+]
+
+_EX_P1AO["Pattern: Factory and Factory Method - centralise object creation"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one place that knows how to build things
+
+Scattered through a codebase:
+
+    client = StripeClient(api_key, region, retries=3, timeout=10)
+
+in fifty files. Now the constructor gains a parameter, or you must support PayPal as well. You edit
+fifty files.
+
+A FACTORY is one place that knows how to construct things, so the rest of the code asks for what it
+wants rather than building it:
+
+    client = PaymentClientFactory.create("stripe")
+
+Construction knowledge - which class, which arguments, which defaults - is a DEPENDENCY like any
+other, and scattering it is what makes it expensive to change.
+
+TWO FLAVOURS WORTH KNOWING, and the interview usually wants both named:
+
+    SIMPLE FACTORY   one function or class method that decides which concrete class to build. Not
+                     technically a Gang-of-Four pattern, and by far the most useful in practice.
+
+    FACTORY METHOD   a method on a base class that SUBCLASSES override to decide what to create. The
+                     base class's algorithm calls it without knowing what will come back.
+
+TERMS AS THEY APPEAR:
+- CONCRETE CLASS: the actual implementation - EmailNotification. Against the ABSTRACT interface,
+  Notification, which the caller depends on instead.
+- REGISTRY: a dictionary from a name to a class, which replaces the if/elif inside a factory.
+- DEPENDENCY INVERSION: depend on abstractions, not concrete classes. A factory is how you do that
+  while still, somewhere, having to name a concrete class.""",
+
+    """2. THE INTUITION - what you are actually centralising
+
+The naive statement is 'a factory creates objects'. So does `new`. The useful statement is: A FACTORY
+CENTRALISES THE KNOWLEDGE OF WHICH CLASS TO CREATE AND HOW TO BUILD IT.
+
+Three specific kinds of knowledge, and each is a reason to reach for one:
+
+1. WHICH CLASS. The choice depends on a config value, a database column, a feature flag or a file's
+   contents. Callers should not each re-implement that decision.
+
+2. HOW TO BUILD. Constructing an object needs credentials, a connection pool, retry settings and
+   sensible defaults. Repeating that in fifty places means fifty places to update - and forty-nine
+   chances to get it subtly wrong.
+
+3. WHEN NOT TO BUILD AT ALL. A factory can return a CACHED instance, a pooled connection, or a shared
+   singleton. `new` cannot - it always constructs. That is a genuinely useful freedom, and it is
+   invisible to callers.
+
+THE TEST FOR WHETHER YOU NEED ONE: if adding a new variant means editing more than one file, or if
+construction takes more than a couple of obvious arguments, centralise it. If `Circle(radius)` is the
+whole story, a factory is ceremony.
+
+THE REGISTRY IS THE PART WORTH KNOWING. The textbook factory is an if/elif:
+
+    if kind == "email": return EmailNotification()
+    elif kind == "sms": return SmsNotification()
+
+A registry dictionary is strictly better:
+
+    _registry = {"email": EmailNotification, "sms": SmsNotification}
+    return _registry[kind]()
+
+Adding a channel is ONE DICT ENTRY rather than an edit to a conditional - and a plug-in can register
+itself from its own module, so the factory file need never be touched at all. That last property is
+what turns a factory into an extension point.""",
+
+    """3. THE TWO FLAVOURS, TRACED
+
+SIMPLE FACTORY - one place decides:
+
+    class Notification(ABC):
+        @abstractmethod
+        def send(self, to, msg): ...
+
+    class EmailNotification(Notification):
+        def send(self, to, msg): return f"email to {to}: {msg}"
+
+    class SmsNotification(Notification):
+        def send(self, to, msg): return f"sms to {to}: {msg}"
+
+    class NotificationFactory:
+        _registry = {"email": EmailNotification, "sms": SmsNotification}
+
+        @classmethod
+        def create(cls, kind):
+            try:
+                return cls._registry[kind]()
+            except KeyError:
+                raise ValueError(f"unknown channel: {kind}")
+
+        @classmethod
+        def register(cls, name, klass):        # <- the extension point
+            cls._registry[name] = klass
+
+    USE:  NotificationFactory.create(user.preferred_channel).send(to, msg)
+
+The calling code names a STRING and receives something with a `send` method. It has never heard of
+EmailNotification, so a new channel cannot break it.
+
+FACTORY METHOD - the SUBCLASS decides:
+
+    class Dialog(ABC):
+        @abstractmethod
+        def create_button(self): ...          # the factory method
+
+        def render(self):                     # the algorithm, fixed here
+            button = self.create_button()
+            return f"dialog with {button.render()}"
+
+    class WindowsDialog(Dialog):
+        def create_button(self): return WindowsButton()
+
+    class WebDialog(Dialog):
+        def create_button(self): return HtmlButton()
+
+Note the shape: `render()` is written ONCE in the base class and calls `create_button()`, which does
+not exist there. The base class controls the algorithm; the subclass controls WHAT IT BUILDS. That is
+the same 'base calls forward into the subclass' idea as the Template Method pattern, applied to
+construction.
+
+WHEN YOU WANT EACH: use a SIMPLE FACTORY when the choice is data (a string, a config value). Use a
+FACTORY METHOD when the choice belongs to a subclass that already exists for other reasons - and when
+you would otherwise be passing a 'which kind' flag into a class that already knows what kind it is.""",
+
+    """4. THE FAILURE MODES
+
+A. A FACTORY THAT ONLY EVER BUILDS ONE THING. `UserFactory.create()` returning `User()` is a
+   constructor with extra steps. If there is no choice and no construction complexity, delete it.
+
+B. THE IF/ELIF THAT NEVER BECOMES A REGISTRY. It works, and every new type edits the same function -
+   which is the file everyone touches and therefore the file with the merge conflicts. A dictionary
+   costs nothing and turns edits into entries.
+
+C. THE FACTORY THAT KEEPS GROWING. If creating an object needs twelve parameters, five of them
+   optional and three interdependent, a factory function becomes unreadable. That is what the BUILDER
+   pattern is for - step-by-step construction with a final `build()`. Knowing where Factory stops and
+   Builder starts is a good signal.
+
+D. HIDING A GLOBAL. A factory returning a shared singleton is convenient and it is still global state:
+   hard to test, hard to reason about across threads. Fine when deliberate; a problem when it happened
+   by accident.
+
+E. CONFUSING THE FOUR CREATIONAL PATTERNS. Be able to say them apart in one line each:
+       SIMPLE FACTORY   one function chooses the class.
+       FACTORY METHOD   a subclass chooses the class.
+       ABSTRACT FACTORY one object creates a FAMILY of related things that must match (all the widgets
+                        for one theme, all the drivers for one database).
+       BUILDER          assembles one complicated object step by step.
+
+F. TESTING BECOMING HARDER, not easier. If code calls `Factory.create()` internally, a test cannot
+   substitute a fake. Prefer INJECTING the dependency and using the factory only at the composition
+   root - the place where the application wires itself up.
+
+G. USING A FACTORY WHERE A DICTIONARY WOULD DO. In Python, `HANDLERS[kind]()` at the call site is
+   often the whole pattern, and wrapping it in a class adds nothing. Reach for the class when you need
+   registration, validation or shared construction logic.""",
+
+    """5. WHERE IT SHOWS UP, AND HOW IT PAIRS WITH STRATEGY
+
+YOU HAVE ALREADY USED FACTORIES:
+    · `logging.getLogger(name)` - returns a cached logger, and only creates one if needed. That
+      caching is exactly the freedom a factory has and a constructor does not.
+    · `open(path, mode)` - returns a different object depending on the mode and whether it is binary.
+    · `json.loads` producing dicts, lists, strings or numbers depending on the input.
+    · Database drivers: `create_engine(url)` in SQLAlchemy parses the URL and builds the right dialect.
+    · `torch.optim` and scikit-learn constructors selected from a config in almost every ML repo.
+
+THE PAIRING THAT COMES UP CONSTANTLY: a FACTORY chooses a STRATEGY.
+
+    strategy = ShippingFactory.create(user.preferred_shipping)   # factory picks
+    order = Order(weight, distance, strategy)                    # strategy does the work
+
+Strategy removes the conditional from the BEHAVIOUR; Factory removes it from the CREATION. Together
+they take an if/elif chain out of the system entirely: the choice becomes a string in a config file,
+looked up in a registry, and the rest of the code never branches on type at all. Being able to say
+that sentence connects two patterns instead of reciting them separately.
+
+DEPENDENCY INJECTION IS THE THIRD SIDE OF THIS. A factory still names concrete classes SOMEWHERE. The
+discipline is to push that somewhere to the edge of the application - the composition root - so the
+business logic depends only on interfaces and the wiring happens in one place at startup. A DI
+container is a general-purpose factory with lifetimes attached.
+
+WHEN A FACTORY IS NOT WORTH IT: one variant, simple construction, no configurability. Say that in an
+interview before you are asked - reaching for a creational pattern with no variation to manage is the
+commonest way to over-engineer an LLD answer.""",
+
+    """6. HOW TO BUILD ONE - numbered steps
+
+1. FIND THE CONSTRUCTION KNOWLEDGE that is repeated: the same `new X(...)` with the same arguments in
+   several places, or an if/elif that picks a class.
+2. DEFINE THE INTERFACE the callers should depend on. They should be able to name the shape they want
+   without naming the implementation.
+3. WRITE THE FACTORY as a registry from name to class, not as an if/elif chain.
+4. GIVE IT ONE `create(name, ...)` entry point that raises a clear error on an unknown name. 'unknown
+   channel: whatsapp' beats a KeyError from three frames down.
+5. ADD `register(name, klass)` if plug-ins or other modules should be able to extend it without
+   editing the factory.
+6. PUT ANY SHARED CONSTRUCTION LOGIC in the factory - credentials, defaults, connection pooling - so
+   it exists once.
+7. CALL THE FACTORY AT THE EDGE of your application, not deep inside business logic. Inside, take the
+   dependency as a parameter so tests can substitute a fake.
+8. CHECK THAT ADDING A NEW VARIANT touches exactly one place - the new class, plus a registry entry.
+   If it touches more, the factory is not doing its job.
+
+STEP 7 IS THE ONE THAT KEEPS IT TESTABLE. A factory called from the middle of a service is a hidden
+global; a factory called at startup and passed downward is a wiring decision.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A factory centralises the knowledge of WHICH class to build and HOW to build it. The reason it
+matters is that construction knowledge is a dependency - if fifty files call a constructor directly,
+adding a parameter or a new implementation means editing fifty files.
+
+There are two flavours. A SIMPLE factory is one function or class method that takes a name and returns
+the right object - and I would implement it as a registry dictionary rather than an if/elif, because
+then adding a variant is one entry and a plug-in can register itself without editing the factory at
+all. A FACTORY METHOD is when a base class defines the algorithm and calls a method that SUBCLASSES
+override to decide what gets created.
+
+A factory can also do things a constructor cannot - return a cached instance, a pooled connection, or
+a shared object. logging.getLogger is exactly that.
+
+It pairs naturally with Strategy: the factory picks the strategy and the strategy does the work, so
+the conditional disappears from both the creation and the behaviour, and the choice becomes a string
+in a config file.
+
+Where it goes wrong is a factory that only ever builds one thing, and calling factories deep inside
+business logic instead of injecting the dependency - which makes testing harder rather than easier.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    class NotificationFactory:
+        _registry = {
+            "email": EmailNotification,
+            "sms":   SmsNotification,
+            "push":  PushNotification,
+        }
+
+    THE REGISTRY, and note what it stores: the CLASSES themselves, not instances. Nothing is
+    constructed until someone asks. In Python classes are ordinary objects, which is why this is a
+    dictionary rather than a switch.
+
+        @classmethod
+        def create(cls, kind):
+            try:
+                return cls._registry[kind]()
+            except KeyError:
+                raise ValueError(f"unknown channel: {kind}")
+
+    `@classmethod` so it can be called on the class without an instance, and so a subclass inherits
+    the same behaviour with its own registry if it wants one.
+    The `try/except` turns a bare KeyError into a message that names the problem. That matters more
+    than it looks: the KeyError would surface three frames from the config file that actually caused
+    it.
+    The `()` at the end is the construction. Everything before it was a lookup.
+
+        @classmethod
+        def register(cls, name, klass):
+            cls._registry[name] = klass
+
+    THE EXTENSION POINT. With this, a new channel lives entirely in its own module:
+
+        class WhatsAppNotification(Notification): ...
+        NotificationFactory.register("whatsapp", WhatsAppNotification)
+
+    and the factory file is never edited. That is the difference between a factory and a switch
+    statement wearing a hat.
+
+    THE CALLER:
+
+        NotificationFactory.create(user.preferred_channel).send(to, msg)
+
+    One line, no conditional, no import of any concrete class. Search the codebase for
+    'EmailNotification' and you will find its own file and one registry entry - which is exactly the
+    property that makes the next change cheap.
+
+    THE FACTORY METHOD SHAPE, for contrast:
+
+        class Dialog(ABC):
+            @abstractmethod
+            def create_button(self): ...
+            def render(self):
+                return f"dialog with {self.create_button().render()}"
+
+    Here `render` is inherited and calls a method it does not implement. The subclass supplies the
+    creation. Same forward-calling structure as Template Method, applied to what gets built.""",
+
+    """9. RUNNING IT - what changes when a requirement arrives
+
+    NotificationFactory.create("email").send("asha@x.com", "hi")
+        -> 'email to asha@x.com: hi'
+    NotificationFactory.create("sms").send("+441234", "hi")
+        -> 'sms to +441234: hi'
+    NotificationFactory.create("carrier-pigeon")
+        -> ValueError: unknown channel: carrier-pigeon
+
+    NOW THE REQUIREMENT: 'add WhatsApp'.
+
+        # whatsapp.py - a new file
+        class WhatsAppNotification(Notification):
+            def send(self, to, msg): return f"whatsapp to {to}: {msg}"
+        NotificationFactory.register("whatsapp", WhatsAppNotification)
+
+    FILES EDITED: none.  FILES ADDED: one.
+
+    Compare with the version where fifty call sites each do `if channel == "email":
+    EmailNotification()`: fifty edits, fifty chances to miss one, and the compiler cannot tell you
+    which you missed because they are strings.
+
+    AND THE SECOND REQUIREMENT: 'every notification now needs a rate limiter and an audit log'.
+
+        @classmethod
+        def create(cls, kind):
+            obj = cls._registry[kind]()
+            return AuditedNotification(RateLimited(obj))     # wrap it, in ONE place
+
+    Every caller in the application now gets the new behaviour and not one of them changed. That is
+    the second, quieter benefit of centralising construction, and it is the one people do not think of
+    until they need it - you have a single place to wrap, decorate, cache or pool.
+
+    THE THIRD REQUIREMENT, and the one that shows where a factory stops: 'notifications now need a
+    retry policy, a template, a locale, a sender identity and an optional attachment, and some
+    combinations are invalid.' That is no longer a factory - it is a BUILDER, and saying so is the
+    right answer rather than growing `create()` to nine parameters.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR CREATIONAL PATTERNS, one line each - be able to say these apart:
+
+        SIMPLE FACTORY     one function chooses the class from a name
+        FACTORY METHOD     a SUBCLASS chooses the class, called by an inherited algorithm
+        ABSTRACT FACTORY   one object creates a matching FAMILY of things
+        BUILDER            assembles one complicated object step by step
+
+    WHAT A FACTORY BUYS: one place to change construction; the choice becomes data; freedom to cache,
+    pool or wrap; and callers that depend on an interface rather than a class.
+
+    WHAT IT COSTS: a layer of indirection, and a place where concrete classes are still named - so it
+    should live at the edge of the application, not in the middle of it.
+
+THE #1 MISTAKE: a factory that only ever builds one thing. If there is no choice and no construction
+complexity, it is a constructor with a longer name, and an interviewer will ask what it is for.
+
+THE #2 MISTAKE: the if/elif that never became a registry. It works; it also means every new type edits
+the same file, and a plug-in can never extend it.
+
+THE #3 MISTAKE: calling the factory deep inside business logic instead of injecting the dependency.
+That makes tests harder, which is the opposite of what the pattern is supposed to do.
+
+THE PAIRING TO MENTION: a factory picks a STRATEGY. One removes the conditional from creation, the
+other from behaviour, and between them the type check disappears from the system.
+
+ONE-SENTENCE TAKEAWAY: centralise 'which class and how to build it' in one registry-based factory, so
+adding a variant is a new file and one entry - and put the call at the edge of the application so the
+inside can still be tested with a fake.""",
+]
+
+_EX_P1AO["Chain-of-Thought and reasoning models"] = [
 ]
 
 _EX_P1AO["Context switch"] = [
