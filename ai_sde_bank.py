@@ -137246,6 +137246,1313 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AJ[_e["title"]]
 
 
+# ══ P1 ten-section rewrites, ranks 265-268 ════════════════════════════════
+_EX_P1AK = {}
+
+_EX_P1AK["Distribute Candies"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Alice has a bag of candies. Each candy has a FLAVOUR, written as a number - two candies with the same
+number are the same flavour. The doctor says she may eat only HALF the candies in the bag (the bag
+always holds an even number, so half is a whole number).
+
+She wants to taste as many DIFFERENT flavours as possible. How many different flavours can she manage?
+
+    candy_type = [1, 1, 2, 2, 3, 3]
+
+    six candies, so she may eat three.
+    The flavours available are 1, 2 and 3 - three of them.
+    She eats one of each: three different flavours.        ANSWER: 3
+
+    candy_type = [6, 6, 6, 6]
+
+    four candies, so she may eat two.
+    But there is only ONE flavour in the whole bag.
+    Eat two candies, still only tasted flavour 6.          ANSWER: 1
+
+Notice she chooses which candies to eat - she is not forced to take them in order or at random. That
+freedom is what makes the answer as clean as it is.
+
+TERMS AS THEY APPEAR:
+- DISTINCT / UNIQUE: different from each other. The list [1, 1, 2] has three candies but two distinct
+  flavours.
+- SET: a collection that automatically throws away duplicates. Putting [1, 1, 2] into a set leaves
+  {1, 2}, and asking for its size gives 2. That is the only data structure this problem needs.
+- `//` INTEGER DIVISION: divide and throw away any remainder. `7 // 2` is 3. Here the length is always
+  even, so `len // 2` is exact.""",
+
+    """2. THE INTUITION - two ceilings, and the lower one wins
+
+There are only two things that can limit how many flavours Alice tastes.
+
+CEILING ONE - HOW MANY FLAVOURS EXIST. She cannot taste a flavour that is not in the bag. If the bag
+holds only 3 distinct flavours, the answer is at most 3, no matter how many candies she is allowed.
+
+CEILING TWO - HOW MANY CANDIES SHE MAY EAT. Each candy she eats is one flavour tasted at most. If she
+may eat only 2 candies, she cannot possibly taste 3 flavours.
+
+So the answer is at most the SMALLER of those two numbers:
+
+    answer <= min(number of distinct flavours,  n / 2)
+
+Now the important half of the argument, and the half people skip: SHE CAN ALWAYS ACHIEVE THAT
+MINIMUM. It is not merely an upper bound she might fall short of.
+
+Why? Suppose there are k distinct flavours and she may eat h candies.
+- If k <= h, she picks one candy of each flavour - there is at least one of each, by definition of
+  'distinct flavours present' - and that is k flavours in k <= h candies. Any leftover allowance she
+  spends on repeats, which cost her nothing.
+- If k > h, she picks h candies of h different flavours, which is possible because there are more than
+  h flavours to choose from. That is h flavours.
+
+Either way she reaches the minimum exactly. No arrangement of duplicates can get in the way, because
+she is free to choose any candies she likes. That is why the answer is one line rather than a search.
+
+    [1, 1, 2, 2, 3, 3]   ->  distinct = 3, half = 3  ->  min = 3
+    [6, 6, 6, 6]         ->  distinct = 1, half = 2  ->  min = 1
+    [1, 2, 3, 4, 5, 6]   ->  distinct = 6, half = 3  ->  min = 3
+
+Measured against a brute force that tries every possible choice of n/2 candies: 4,000 agreements out
+of 4,000.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `candy_type = [1, 1, 2, 3]`.
+
+STEP 1 - count the distinct flavours by dropping everything into a set.
+
+    start with an empty set:  {}
+    see 1  ->  not there, add it       {1}
+    see 1  ->  already there, ignore   {1}
+    see 2  ->  add                     {1, 2}
+    see 3  ->  add                     {1, 2, 3}
+
+    distinct flavours = 3
+
+STEP 2 - how many may she eat? The bag holds 4 candies, so `4 // 2 = 2`.
+
+STEP 3 - take the smaller of the two ceilings.
+
+    min(3, 2) = 2
+
+    ANSWER: 2
+
+Check it by hand: she may eat two candies, and there are three flavours, so she picks any two
+different ones - say a 1 and a 2 - and tastes two flavours. She cannot do better, because two candies
+cannot be three flavours.
+
+A SECOND TRACE where the OTHER ceiling binds. Input `[1, 1, 1, 1, 2, 2]`:
+
+    distinct = 2   (just flavours 1 and 2)
+    half     = 6 // 2 = 3
+    min(2, 3) = 2
+
+She may eat three candies but there are only two flavours in existence, so she eats a 1, a 2, and then
+a third candy that repeats a flavour she has already had. Two flavours.
+
+WHY THE COUNTS OF EACH FLAVOUR NEVER APPEAR. In the second trace there were four 1s and two 2s, and
+those numbers played no part at all. As long as a flavour is present AT LEAST ONCE, she can taste it.
+Having four of them is no more useful than having one. That is the observation that lets you use a
+set - which discards counts - rather than a frequency table.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. EVERY CANDY THE SAME. `[7, 7, 7, 7, 7, 7]`. Distinct = 1, half = 3, answer 1. She eats three
+   candies and tastes one flavour. Correct and slightly sad.
+
+B. EVERY CANDY DIFFERENT. `[1, 2, 3, 4]`. Distinct = 4, half = 2, answer 2. Here the eating limit
+   binds even though the bag is a rainbow.
+
+C. THE SMALLEST BAG. `[1, 1]`. Distinct = 1, half = 1, answer 1. Both ceilings are 1.
+
+D. EXACTLY TWO OF EVERY FLAVOUR - the perfectly balanced case. `[1,1,2,2,3,3]`: distinct = 3, half = 3
+   and they tie. This is the crossover point: any bag with two of each flavour lets her taste
+   everything exactly once.
+
+E. THE #1 MISTAKE - RETURNING THE DISTINCT COUNT WITHOUT THE CAP. It reads like the natural answer to
+   'how many flavours can she taste', and it over-reports whenever the bag has more flavours than she
+   is allowed candies. Measured wrong on 1,714 of 4,000 random bags. It is right on the other 2,286 -
+   the bags with few flavours - which is exactly why a couple of hand-written tests will not catch it.
+
+F. THE #2 MISTAKE - RETURNING n/2 WITHOUT THE OTHER CAP. The mirror image: it assumes every candy she
+   eats is a new flavour. Wrong on 1,214 of 4,000, on all the bags with lots of duplicates.
+
+G. NEGATIVE OR HUGE FLAVOUR NUMBERS. Flavours are just labels - nothing is compared or added, only
+   checked for equality - so any values work. This is worth noticing because it rules OUT the
+   counting-sort style tricks that some similar-looking problems use.
+
+H. AN ODD-LENGTH BAG. The problem guarantees even, so it cannot happen. If it could, `//` would round
+   down, which is the sensible reading of 'half'. Saying that shows you read the constraints.""",
+
+    """5. THE SLOW VERSION FIRST, THEN WHY ONE LINE IS ENOUGH
+
+THE SLOW-BUT-OBVIOUS VERSION: try every possible selection of n/2 candies and keep the one with the
+most distinct flavours.
+
+    from itertools import combinations
+    def brute(candy_type):
+        half = len(candy_type) // 2
+        return max(len({candy_type[i] for i in pick})
+                   for pick in combinations(range(len(candy_type)), half))
+
+`combinations(range(n), half)` lists every way of choosing which candies to eat; the set comprehension
+counts the distinct flavours in each choice. Obviously correct, and it is what I checked the one-liner
+against - 4,000 agreements out of 4,000.
+
+WHY IT IS UNUSABLE: choosing 10 from 20 is 184,756 selections; choosing 5,000 from 10,000 is a number
+with thousands of digits. Fine as a reference implementation for small inputs, hopeless as an answer.
+
+THE UPGRADE - AND WHY IT IS A FORMULA RATHER THAN AN ALGORITHM. Most 'maximise something' problems
+need a search or a greedy sweep. This one collapses to arithmetic because of the achievability
+argument in section 2: the obvious upper bound `min(distinct, n/2)` is always reachable, so there is
+nothing to search for. When you can prove the bound is tight, the answer IS the bound.
+
+THAT IS THE TRANSFERABLE LESSON. In an interview, the move is:
+    1. State the constraints as ceilings - 'the answer cannot exceed X, and it cannot exceed Y'.
+    2. Then ask, honestly, whether the smaller ceiling can always be met.
+    3. If yes, you are done in one line and you can say WHY, which is what separates a memorised
+       answer from an understood one.
+
+WHY A SET RATHER THAN A FREQUENCY TABLE. A `Counter` or a dictionary of counts would also work, and
+`len(counter)` is the same number - but the counts are never used. Choosing the structure that carries
+exactly the information you need, and no more, is a small signal that you know what the problem
+depends on. Here it depends only on PRESENCE, not on quantity.
+
+COULD YOU DO IT WITHOUT A SET AT ALL? Yes, if the flavours were bounded small integers - a boolean
+array indexed by flavour, which is the counting-sort idea. It is not worth it here, and the flavour
+values are unbounded in the problem, so the set is the right call.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Work out how many DIFFERENT flavours are in the bag. The easy way is to drop every candy into a
+   set, which discards duplicates automatically, and ask how many items it holds.
+2. Work out how many candies she is allowed to eat: the number of candies divided by two.
+3. Return whichever of those two numbers is smaller.
+
+That is the entire program. The thinking happened before the typing, which is the shape of this
+problem.
+
+WHY A SET IS THE RIGHT TOOL: it answers 'how many different things are here?' in one pass, without you
+writing any loop or bookkeeping. Adding an item that is already present does nothing, which is exactly
+the behaviour you want.
+
+WHAT TO SAY WHILE WRITING IT, because a one-line answer with no explanation reads as a memorised
+trick: 'the answer is capped by the flavours available and by how many she may eat, and she can always
+hit the smaller cap because she chooses her candies freely - so it is the minimum of the two.' That
+sentence is the whole interview.
+
+THE FOLLOW-UP TO BE READY FOR: 'what if she must eat exactly n/2 and no flavour may be repeated?' Then
+the answer is only achievable if there are at least n/2 flavours, and you would return -1 or similar
+otherwise. Being able to adapt the reasoning shows you derived it rather than recalled it.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Count how many different flavours are in the bag - tip everything into a set, which quietly ignores
+repeats, and see how big it is.
+
+Work out how many candies she is allowed: half of what is in the bag.
+
+Answer with the smaller number. If there are fewer flavours than she can eat, she tastes them all. If
+there are more flavours than she can eat, she eats one of each new flavour until her allowance runs
+out.
+
+Nothing needs to be searched, because whichever limit is smaller can always be reached exactly - she
+picks her candies, so no arrangement of duplicates can stop her.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def distribute_candies(candy_type):
+        kinds = len(set(candy_type))              # distinct flavours available
+        return min(kinds, len(candy_type) // 2)   # capped by how many you eat
+
+LINE 2: `kinds = len(set(candy_type))`
+    Read it inside out. `set(candy_type)` builds a set from the list, and a set holds each value only
+    once, so all duplicates vanish. `len(...)` then asks how many distinct values survived. That is
+    ceiling one - the number of flavours in existence. Building the set is one pass over the list, and
+    each insertion is effectively constant time thanks to hashing.
+
+LINE 3, FIRST ARGUMENT: `kinds`
+    Ceiling one again, passed to `min`.
+
+LINE 3, SECOND ARGUMENT: `len(candy_type) // 2`
+    Ceiling two - how many candies she may eat. `//` is integer division; the problem guarantees an
+    even length so nothing is lost, but using `/` would produce a float like 3.0 and make the return
+    type inconsistent, which is a small thing worth getting right.
+
+LINE 3: `min(...)`
+    The smaller ceiling is the answer. Returning `kinds` alone is wrong on 1,714 of 4,000 random bags;
+    returning the half alone is wrong on 1,214. Each is right exactly when it happens to be the
+    smaller of the two, which is why both look plausible on a couple of examples.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 is the four set-insertions that produced {1, 2, 3}. The
+second argument of line 3 is the `4 // 2 = 2`. The `min` is the final comparison that produced 2.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `candy_type = [1, 1, 2, 3]`.
+
+    LINE 2 - building the set, element by element:
+        set so far: {}         insert 1  ->  {1}
+        set so far: {1}        insert 1  ->  {1}          (no change, already present)
+        set so far: {1}        insert 2  ->  {1, 2}
+        set so far: {1, 2}     insert 3  ->  {1, 2, 3}
+
+        len({1, 2, 3}) = 3
+        kinds = 3
+
+    LINE 3:
+        len(candy_type) = 4
+        4 // 2 = 2
+        min(3, 2) = 2
+
+    RETURN VALUE: 2
+
+A SECOND RUN where the flavour ceiling binds. Input `[6, 6, 6, 6]`:
+
+        set: {6}          kinds = 1
+        len = 4,  4 // 2 = 2
+        min(1, 2) = 1
+
+    RETURN VALUE: 1
+
+THE 'DISTINCT COUNT WITHOUT THE CAP' BUG on the first input returns 3, claiming she tastes three
+flavours while eating two candies. Wrong on 1,714 of 4,000 bags.
+
+THE 'HALF WITHOUT THE CAP' BUG on the second input returns 2, claiming two flavours from a bag that
+contains only one. Wrong on 1,214 of 4,000.
+
+Both bugs are right whenever their own number happens to be the smaller one - which is why testing
+either against a single hand-picked example proves nothing.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n). One pass to build the set - each insertion is constant time on average thanks to hashing -
+and then two constant-time operations. You cannot do better, since you must at least look at every
+candy to know what flavours are present.
+
+SPACE: O(k), where k is the number of distinct flavours - the size of the set. In the worst case every
+candy is unique and that is O(n).
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one pass over the
+bag.
+
+THE #1 BEGINNER MISTAKE: returning the number of distinct flavours without capping it by n/2. Wrong on
+1,714 of 4,000 random bags, and correct on the rest - so a couple of examples will bless it. The
+question asks how many flavours she can EAT, not how many exist.
+
+THE #2 MISTAKE: returning n/2 without capping it by the flavour count. Wrong on 1,214 of 4,000, the
+mirror image, and it fails on any bag with lots of repeats.
+
+A NON-MISTAKE WORTH KNOWING: nothing about the COUNTS of each flavour matters. Four copies of flavour
+1 are worth exactly as much as one copy. That is why a set is enough and a frequency table is
+overkill.
+
+ONE-SENTENCE TAKEAWAY: the answer is bounded by the flavours that exist and by the candies she may
+eat, and because she chooses her candies freely the smaller bound is always reachable - so the answer
+is simply the minimum of the two.""",
+]
+
+_EX_P1AK["Distribute Money to Maximum Children"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have some dollars and some children. You must hand out ALL the money, in whole dollars, under two
+rules:
+
+    RULE 1:  every child must receive at least $1.
+    RULE 2:  no child may end up with exactly $4.
+
+Subject to those, get as many children as possible to exactly $8. Report how many. If you cannot even
+give everybody $1, report -1.
+
+    money = 20,  children = 3
+
+    give everyone $1 first:            1, 1, 1        $17 left
+    top one child up to $8 (+$7):      8, 1, 1        $10 left
+    top a second up to $8 (+$7):       8, 8, 1        $3 left
+    but that $3 has to go somewhere, and the only child left would then hold
+    1 + 3 = $4 - forbidden!
+    so instead:                        8, 1, 11       or  8, 2, 10, etc.
+
+    ANSWER: 1
+
+That last twist is the whole problem. The arithmetic of 'how many eights fit' is easy; the question
+exists for the awkward leftovers.
+
+TERMS AS THEY APPEAR:
+- ALL the money must be distributed. You may not keep the change - which is why leftovers are a
+  problem rather than something to ignore. Read that constraint carefully; the whole difficulty
+  depends on it.
+- GREEDY: hand out the obvious best allocation, then repair the cases where it is illegal.
+- EDGE CASE: an input where the general rule needs a correction. This problem is essentially two edge
+  cases wearing a arithmetic problem as a disguise.""",
+
+    """2. THE INTUITION - the easy arithmetic, then the two repairs
+
+START WITH THE EASY PART. Everyone must get at least $1, so hand out $1 to each child immediately and
+subtract that from the pot. Now every child holds $1 and you have `money - children` dollars left to
+distribute.
+
+To bring a child from $1 to exactly $8 costs $7 more. So the number of children you can lift to $8 is
+at most:
+
+    eights = min( money_left // 7 ,  children )
+
+- `money_left // 7` because each eight costs $7 out of the pot.
+- `children` because you cannot make more eights than there are children.
+
+If that were the whole story, the answer would be one line. It is not, because of two ways the
+leftovers can go wrong.
+
+REPAIR 1 - THERE IS NOBODY LEFT TO TAKE THE CHANGE. Suppose every child has been lifted to $8 and
+there are still dollars in your hand. You are not allowed to keep them, so they must be dumped on
+somebody - and whoever receives them stops being an $8 child. So you lose one:
+
+    money = 100, children = 2
+    everyone gets $1:                    1, 1        $98 left
+    both lifted to $8 (costs $14):       8, 8        $84 left
+    the $84 has to go somewhere:         8, 92       ->  only ONE eight
+
+REPAIR 2 - THE LAST CHILD WOULD HOLD EXACTLY $4. Suppose exactly one child remains un-lifted, and the
+money left over is exactly $3. That child already holds $1, so they would end up with $1 + $3 = $4 -
+forbidden. You cannot leave the $3 anywhere else without breaking an eight, so again you sacrifice
+one:
+
+    money = 20, children = 3        (the example from section 1)
+    everyone gets $1:                 1, 1, 1        $17 left
+    two lifted to $8 (costs $14):     8, 8, 1        $3 left
+    the last child would hold $4      ->  illegal    ->  ANSWER 1
+
+THE STRUCTURE TO CARRY AWAY: compute the ideal, then check the two ways the remainder can be illegal.
+The habit worth building is enumerating those failure states OUT LOUD before writing any code - here
+they are the only reason the problem is not trivial. Measured against an exhaustive search over every
+legal distribution, the greedy plus these two repairs was correct on all 195 small cases I could brute
+force, while the version without any repairs was wrong on 81 of them.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+TRACE 1 - the normal case. `money = 20`, `children = 3`.
+
+    money >= children?   20 >= 3   yes, so nobody is left empty-handed.
+    give $1 each:        money = 20 - 3 = 17,  everyone holds $1
+    how many eights?     17 // 7 = 2,  and there are 3 children, so eights = min(2, 3) = 2
+    pay for them:        money = 17 - 2*7 = 3
+    children left over:  3 - 2 = 1
+
+    Now check the repairs:
+        repair 1 (nobody left but money remains)?  remaining is 1, not 0.  Does not apply.
+        repair 2 (one child left holding exactly $4)?  remaining == 1 AND money == 3.  APPLIES.
+            that child holds $1 + $3 = $4, which is forbidden -> eights = 2 - 1 = 1
+
+    ANSWER: 1
+
+TRACE 2 - the leftover case. `money = 100`, `children = 2`.
+
+    100 >= 2, fine.
+    give $1 each:       money = 98
+    eights:             98 // 7 = 14, capped at 2 children  ->  eights = 2
+    pay:                money = 98 - 14 = 84
+    remaining children: 0
+
+    repair 1?  remaining == 0 AND money = 84 > 0.  APPLIES.
+        the $84 has to be given to someone, and everyone is currently at $8, so one of them stops
+        being an eight  ->  eights = 2 - 1 = 1
+
+    ANSWER: 1
+
+TRACE 3 - everything works out exactly. `money = 17`, `children = 2`.
+
+    give $1 each:       money = 15
+    eights:             15 // 7 = 2, capped at 2  ->  eights = 2
+    pay:                money = 15 - 14 = 1
+    remaining children: 0
+    repair 1?  remaining == 0 and money = 1 > 0.  APPLIES  ->  eights = 1
+
+    ANSWER: 1   (the distribution is 8 and 9)
+
+TRACE 4 - not enough money at all. `money = 2`, `children = 5`.
+
+    2 >= 5?  No.  Three children would get nothing.
+    ANSWER: -1""",
+
+    """4. THE EDGE CASES AND THE ONES THAT ARE THE ENTIRE PROBLEM
+
+A. NOT ENOUGH MONEY. `money < children` returns -1 immediately. This is rule 1 being impossible to
+   satisfy, and it must be the very first check - every later step assumes everyone has their dollar.
+
+B. EXACTLY ENOUGH FOR $1 EACH. `money = 5, children = 5`. After the dollar each, money = 0, eights = 0,
+   remaining = 5. Neither repair applies (there is money left over only when repair 1's condition
+   holds). Answer 0 - correct, nobody gets $8 but the distribution is legal.
+
+C. ONE CHILD, EXACTLY $8. `money = 8, children = 1`. After the dollar, money = 7, eights = min(1, 1)
+   = 1, money = 0, remaining = 0. Repair 1 needs money > 0, and it is 0. Answer 1.
+
+D. ONE CHILD, EXACTLY $4. `money = 4, children = 1`. After the dollar, money = 3, eights = 3 // 7 = 0,
+   remaining = 1, money = 3. REPAIR 2 APPLIES: eights = 0 - 1 = -1. Which is correct - with one child
+   and $4 there is no legal distribution at all, since the child must take everything and would hold
+   exactly $4. This is the one case where the answer is legitimately negative apart from the -1 for
+   insufficient funds, and it is worth checking your code produces it.
+
+E. THE REPAIRS ARE RARE, WHICH IS EXACTLY WHY THEY ARE THE PROBLEM. Across every (money, children)
+   pair I brute-forced, the leftover repair fired on 76 of 195 cases and the exactly-$4 repair on only
+   5 of 195. A version with NO repairs was wrong on 81 of 195; a version with only the $4 repair was
+   wrong on 76; a version with only the leftover repair was wrong on 5. So each repair is responsible
+   for exactly the cases the other one misses - you need both, and the rarer one will not show up in
+   casual testing.
+
+F. THE MOST COMMON MISREADING: assuming you may keep leftover money. If you could, the answer really
+   would be `min(money_left // 7, children)` with no repairs. The requirement to distribute everything
+   is what creates both edge cases, and it is one sentence in the problem statement.
+
+G. A HUGE POT WITH ONE CHILD. `money = 1000, children = 1`. After the dollar, 999 left; eights =
+   min(142, 1) = 1; money = 999 - 7 = 992; remaining = 0 and money > 0, so repair 1 fires and the
+   answer is 0. Correct: the one child must take all $1000.""",
+
+    """5. WHY GREEDY-THEN-REPAIR IS THE RIGHT SHAPE, AND WHY THE REPAIRS ARE ENOUGH
+
+THE BRUTE FORCE, for small numbers: try every way of splitting the money among the children, discard
+any with a child at $0 or exactly $4, and keep the one with the most eights. It is exponential and
+useless beyond tiny inputs - but it is exactly what I used to verify the greedy, across every
+(money, children) pair with up to 5 children and $39, and the greedy matched all 195.
+
+WHY THE GREEDY IS RIGHT, argued in two parts:
+
+PART ONE - MORE EIGHTS IS ALWAYS BETTER, AND EIGHTS COST A FIXED $7 EACH. After the compulsory dollar
+each, every child sits at $1 and every eight costs the same $7. There is no reason to prefer one child
+over another, so the only question is HOW MANY you can afford, which is `min(money // 7, children)`.
+No cleverness in the choice, just the count.
+
+PART TWO - WHAT CAN GO WRONG WITH THE REMAINDER, exhaustively. After making `eights` children into
+eights, you have some money left and some children not yet at $8. Three situations:
+
+    (a) money left is 0.  Nothing to distribute - everything is legal. No repair.
+    (b) at least one child is not at $8, and the money left is not exactly $3.  Dump all of it on one
+        of those children. They end up at 1 + money, which is not $4 because money is not $3, and it
+        is legal. No repair. (If more than one child remains you have even more freedom.)
+    (c) the awkward pair:
+          - nobody is left un-lifted but money remains: it must break an eight   -> lose 1
+          - exactly one child remains and the money is exactly $3: they would hold $4 -> lose 1
+
+Those are the only two failure states, which is why exactly two corrections suffice. Being able to
+enumerate them like that - rather than discovering them by failing test cases - is the actual skill
+this problem tests.
+
+WHY 'LOSE ONE' IS THE RIGHT SIZE OF REPAIR IN BOTH CASES: giving up a single eight frees $7, which is
+always enough to rearrange around either problem. In case (c) first, break one eight back to $1 and
+you now have $7 + leftover to spread across two or more children - and with at least $10 across two
+children you can always avoid $4 for both. It never costs you two.
+
+WHY NOT DYNAMIC PROGRAMMING: it would work and it would be enormous overkill. When the per-unit cost
+is uniform, counting beats searching.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. If there is less money than there are children, you cannot give everyone a dollar. Return -1 and
+   stop.
+2. Give one dollar to every child and take that out of the pot. Everyone now holds exactly $1.
+3. Each child needs $7 more to reach $8. Work out how many eights you can afford: the money left
+   divided by seven, but never more than the number of children.
+4. Take the cost of those eights out of the pot, and work out how many children are still at $1.
+5. First correction: if no child is left at $1 but there is still money in your hand, that money must
+   be dumped on someone who is currently at $8 - so subtract one from your count.
+6. Second correction: otherwise, if exactly one child is left at $1 and exactly $3 remains, that child
+   would end at $4, which is forbidden - so subtract one from your count.
+7. Return the count.
+
+THE ORDER OF STEPS 5 AND 6 MATTERS ONLY IN THAT THEY ARE MUTUALLY EXCLUSIVE - step 5 requires zero
+children remaining and step 6 requires exactly one, so they cannot both apply. Writing them as
+if/else-if makes that explicit and is worth doing for clarity.
+
+WHAT TO SAY BEFORE YOU TYPE, because this problem rewards enumerating the failure states out loud:
+'the arithmetic is easy; the two ways it can be illegal are leftover money with nobody to take it, and
+a last child stuck at exactly $4.' If you say that first and then write the code, the code is
+obviously right. If you write the code first, you will find those cases by failing.
+
+BE READY FOR THE ANSWER TO BE NEGATIVE in one legitimate case: one child with exactly $4 gives -1 via
+the second correction, which is the correct 'no legal distribution' signal.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+First check you can even start: if there is less money than children, somebody gets nothing, so give
+up and report -1.
+
+Otherwise hand every child a dollar straight away - that clears the first rule out of the way. Every
+child is now at $1 and needs $7 more to reach $8, so count how many sevens you can afford, but never
+more sevens than you have children. Lift that many children to $8.
+
+Then look at what is left over, because that is where this problem hides its difficulty. If every
+child is already at $8 and you still have money in your hand, you have to give it to somebody, and
+that somebody stops being an $8 child - so your count drops by one. And if exactly one child is still
+sitting at $1 while exactly $3 remains, that child would finish on $4, which is not allowed, so again
+your count drops by one.
+
+Report the count.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def dist_money(money, children):
+        if money < children:
+            return -1                      # can't give everyone at least $1
+        money -= children                  # give $1 to each first
+        eights = min(money // 7, children) # each extra $7 makes a child's $8
+        money -= eights * 7
+        remaining = children - eights
+        if remaining == 0 and money > 0:
+            eights -= 1                    # leftover must go to someone (breaks an 8)
+        elif remaining == 1 and money == 3:
+            eights -= 1                    # the last child would get exactly $4
+        return eights
+
+LINE 2-3: `if money < children: return -1`
+    Rule 1 made concrete, and it must come first: every later line assumes the dollar-each has been
+    paid. Note it is a strict `<` - equal money and children is fine, everyone gets exactly $1.
+
+LINE 4: `money -= children`
+    Pay the compulsory dollar to everyone. From here on, `money` means 'dollars still to be
+    distributed' and every child is holding exactly $1. Getting this out of the way first is what
+    makes the rest simple arithmetic.
+
+LINE 5: `eights = min(money // 7, children)`
+    Two ceilings, the same shape as many greedy problems. `money // 7` is how many $7 top-ups you can
+    afford (`//` is integer division, throwing away the remainder). `children` is how many children
+    exist to receive them. The smaller one binds.
+
+LINE 6: `money -= eights * 7`
+    Pay for those top-ups. What is left is the awkward remainder that drives both corrections.
+
+LINE 7: `remaining = children - eights`
+    How many children are still sitting at $1. This number is what distinguishes the two failure
+    states - zero means everybody is at $8, one means exactly one child is available to absorb money.
+
+LINE 8-9: `if remaining == 0 and money > 0: eights -= 1`
+    CORRECTION ONE. Everyone is at $8 and money is still in hand. Since all of it must be given out,
+    somebody has to take it and stops being an eight. Measured: without this the answer is wrong on
+    76 of 195 brute-forced cases.
+
+LINE 10-11: `elif remaining == 1 and money == 3: eights -= 1`
+    CORRECTION TWO. One child still at $1, exactly $3 left - they would finish on $4, which is
+    forbidden. `elif` is right rather than a second `if`, because `remaining` cannot be both 0 and 1;
+    writing it as elif states that clearly. Measured: without this the answer is wrong on 5 of 195
+    cases - rare, which is exactly why it is the one people miss.
+
+LINE 12: `return eights`
+    Can legitimately be -1 for `money = 4, children = 1`, which means no legal distribution exists.
+
+WHAT MAPS BACK TO THE HAND-TRACE: trace 1's `17 // 7 = 2` was line 5, its `money = 3, remaining = 1`
+were lines 6 and 7, and the correction that dropped the answer to 1 was line 10.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `money = 20`, `children = 3`.
+
+    LINE 2:   20 < 3?  No, continue.
+    LINE 4:   money = 20 - 3 = 17          (everyone now holds $1)
+    LINE 5:   money // 7 = 17 // 7 = 2
+              min(2, 3) = 2
+              eights = 2
+    LINE 6:   money = 17 - 2*7 = 17 - 14 = 3
+    LINE 7:   remaining = 3 - 2 = 1
+    LINE 8:   remaining == 0?  No (it is 1)  ->  skip
+    LINE 10:  remaining == 1 AND money == 3?  YES  ->  eights = 2 - 1 = 1
+    LINE 12:  return 1
+
+    RETURN VALUE: 1
+    (a legal distribution: 8, 1, 11 - or 8, 2, 10, or 8, 3, 9)
+
+A SECOND RUN, the leftover case. `money = 100`, `children = 2`:
+
+    LINE 4:   money = 98
+    LINE 5:   98 // 7 = 14,  min(14, 2) = 2      eights = 2
+    LINE 6:   money = 98 - 14 = 84
+    LINE 7:   remaining = 0
+    LINE 8:   remaining == 0 AND money = 84 > 0  ->  eights = 1
+    RETURN 1                                      (8 and 92)
+
+A THIRD RUN, the negative answer. `money = 4`, `children = 1`:
+
+    LINE 2:   4 < 1?  No.
+    LINE 4:   money = 3
+    LINE 5:   3 // 7 = 0,  min(0, 1) = 0          eights = 0
+    LINE 6:   money = 3
+    LINE 7:   remaining = 1
+    LINE 10:  remaining == 1 AND money == 3  ->  eights = -1
+    RETURN -1                                     (the child would hold exactly $4 - impossible)
+
+THE NO-CORRECTIONS BUG on the first input returns 2, claiming two children on $8 out of $20 with a
+third child forced to $4. Wrong on 81 of the 195 cases I brute-forced. Adding only the leftover
+correction still misses the $4 case (wrong on 5); adding only the $4 correction still misses the
+leftover case (wrong on 76). Both are needed, and the rarer one is the one that will be missing from
+your first draft.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(1). No loops at all - just arithmetic on two numbers. That is unusual enough to be worth
+saying out loud: the entire difficulty of this problem is in the case analysis, not the running time.
+
+SPACE: O(1). Three integers.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - and here it does not
+grow at all, because the answer is a formula.
+
+THE #1 BEGINNER MISTAKE: stopping after the arithmetic and returning `min(money // 7, children)`.
+Wrong on 81 of the 195 exhaustively checked cases. It is the answer to a slightly different problem -
+the one where you may keep the change.
+
+THE #2 MISTAKE: implementing only one of the two corrections. The leftover case fires far more often
+(76 of 195) than the exactly-$4 case (5 of 195), so the $4 one is the one that gets left out and the
+one your test cases will not catch. Rarity is what makes an edge case dangerous, not difficulty.
+
+A DETAIL WORTH GETTING RIGHT: the answer can legitimately be -1 through the second correction, for
+`money = 4, children = 1`, meaning no legal distribution exists at all - a different -1 from the
+insufficient-funds one, arrived at by a different route.
+
+ONE-SENTENCE TAKEAWAY: pay everyone their compulsory $1, buy as many $7 top-ups as you can afford,
+then repair the only two illegal end states - leftover money with nobody to take it, and a last child
+stranded on exactly $4.""",
+]
+
+_EX_P1AK["Find Target Indices After Sorting Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a list of numbers and one particular number to look for, called the TARGET. Imagine
+sorting the list into increasing order. Now list all the POSITIONS where the target sits in that
+sorted arrangement.
+
+    nums = [1, 2, 5, 2, 3],   target = 2
+
+    sorted:   [1, 2, 2, 3, 5]
+    position:  0  1  2  3  4
+                  ^  ^
+                  the 2s live at positions 1 and 2
+
+    ANSWER: [1, 2]
+
+If the target does not appear at all, the answer is an empty list.
+
+    nums = [1, 2, 5, 2, 3],  target = 4   ->   []
+
+The key phrase is 'in that sorted arrangement'. The positions have nothing to do with where the target
+happened to sit in the list you were handed - a point that costs people the question, as section 4
+shows.
+
+TERMS AS THEY APPEAR:
+- INDEX / POSITION: the numbered slot in a list, counting from 0. In `[1, 2, 2]` the first 2 is at
+  index 1.
+- ASCENDING / INCREASING ORDER: smallest first.
+- TARGET INDEX: this problem's own name for 'a position that holds the target after sorting'.""",
+
+    """2. THE INTUITION - and then the version that never sorts
+
+THE STRAIGHTFORWARD IDEA is a direct reading of the question: sort the list, then walk it and note
+every position whose value equals the target. Nothing subtle, and it is a perfectly good answer.
+
+    [1, 2, 5, 2, 3]  ->  sort  ->  [1, 2, 2, 3, 5]
+    walk: index 0 holds 1, no.  index 1 holds 2, YES.  index 2 holds 2, YES.  index 3 holds 3, no...
+    -> [1, 2]
+
+The positions come out in increasing order for free, because you walked left to right. No second sort
+is needed on the answer.
+
+NOW THE BETTER IDEA, which is what this otherwise-trivial problem is really for. Ask yourself: do you
+actually need the array sorted, or do you only need to know WHERE the target would land?
+
+Think about what the sorted arrangement looks like:
+
+    [ everything smaller than the target ][ the copies of the target ][ everything larger ]
+
+If there are `smaller` elements below the target, they occupy positions 0 through smaller-1. So the
+FIRST copy of the target must land at position `smaller`. And if there are `count` copies, they
+occupy `smaller`, `smaller+1`, ... up to `smaller + count - 1`.
+
+    nums = [1, 2, 5, 2, 3], target = 2
+    how many are strictly less than 2?   just the 1        ->  smaller = 1
+    how many equal 2?                    two of them       ->  count = 2
+    so the answer is positions 1 and 2 - which is [1, 2], without sorting anything.
+
+That is two counting passes, O(n) time and no sort at all. Two numbers - how many below, how many
+equal - determine the whole answer, because sorting cannot do anything to the target's block except
+place it after everything smaller.
+
+The transferable idea: WHEN YOU ONLY NEED ONE ELEMENT'S POSITION IN SORTED ORDER, COUNT WHAT COMES
+BEFORE IT INSTEAD OF SORTING. The same observation is behind 'How Many Numbers Are Smaller Than the
+Current Number' and behind the prefix-sum step of counting sort.
+
+Measured: the counting version agreed with the sort-and-collect version on 5,000 of 5,000 random
+inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `nums = [1, 2, 5, 2, 3]`, `target = 2`.
+
+THE SORT-AND-COLLECT VERSION.
+
+STEP 1 - sort.
+
+    nums = [1, 2, 2, 3, 5]
+    index:  0  1  2  3  4
+
+STEP 2 - walk, keeping the index, and collect matches.
+
+    i = 0:  value 1,  is it 2?  no
+    i = 1:  value 2,  is it 2?  YES  ->  collect 1        result = [1]
+    i = 2:  value 2,  YES            ->  collect 2        result = [1, 2]
+    i = 3:  value 3,  no
+    i = 4:  value 5,  no
+
+    ANSWER: [1, 2]
+
+THE COUNTING VERSION, on the same input, without sorting anything.
+
+    walk the ORIGINAL list [1, 2, 5, 2, 3]:
+        smaller = how many are strictly less than 2   ->  just the 1              ->  1
+        count   = how many equal 2                    ->  the two 2s              ->  2
+
+    the target's block starts at index `smaller` = 1 and holds `count` = 2 positions:
+        1, 2
+
+    ANSWER: [1, 2]     - identical, and the array was never reordered.
+
+A SECOND TRACE where the target is missing. `nums = [4, 1, 3]`, `target = 2`:
+
+    sort version:      sorted is [1, 3, 4], no position holds 2  ->  []
+    counting version:  smaller = 1 (just the 1),  count = 0
+                       the block is 'positions 1 through 0', which is empty  ->  []
+
+Both handle it with no special case - the count being zero makes the range empty automatically.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. THE TARGET IS MISSING. Answer `[]`, as traced above. Worth checking deliberately, because a version
+   that computes `first` and `last` positions can easily produce `[1, 0]` or a crash instead of an
+   empty list.
+
+B. EVERY ELEMENT IS THE TARGET. `[7, 7, 7]`, target 7. smaller = 0, count = 3, answer `[0, 1, 2]` -
+   the whole array.
+
+C. ONE ELEMENT. `[5]` with target 5 gives `[0]`; with target 4 gives `[]`.
+
+D. THE TARGET IS THE SMALLEST OR LARGEST. `[3, 1, 2]` with target 1: smaller = 0, so the block starts
+   at 0. With target 3: smaller = 2, count = 1, answer `[2]`. No special handling at either end.
+
+E. THE #1 MISTAKE - RETURNING INDEXES INTO THE ORIGINAL ARRAY. This is the trap the problem is built
+   around: it is easy to read 'find the target indices' and forget the words 'after sorting'.
+   Measured wrong on 2,076 of 5,000 random inputs - and specifically on 2,076 of the 3,756 inputs that
+   were not ALREADY in sorted order. Test with a shuffled array or you will never see it, because on
+   sorted input the two answers are identical.
+
+F. THE #2 MISTAKE - AN OFF-BY-ONE IN THE COUNTING VERSION. The block runs from `smaller` to
+   `smaller + count - 1` INCLUSIVE, which as a Python range is `range(smaller, smaller + count)`.
+   Writing `range(smaller, smaller + count - 1)` drops the last copy. Wrong on 2,652 of 5,000. The
+   safe way to think about it: the block has `count` positions in it, so the range must produce
+   exactly `count` numbers.
+
+G. SORTING A COPY BUT REPORTING AGAINST THE ORIGINAL - a subtler version of E, where you correctly
+   sort but then look up positions in the wrong list. Same failure.
+
+H. DUPLICATES OF OTHER VALUES. `[2, 2, 3, 3, 3]` with target 3: smaller = 2, count = 3, answer
+   `[2, 3, 4]`. Duplicates of non-target values simply push the block further right, which the
+   `smaller` count already accounts for.""",
+
+    """5. THE TWO SOLUTIONS SIDE BY SIDE, AND WHY THE SECOND ONE IS THE POINT
+
+VERSION ONE - SORT AND COLLECT. O(n log n) time because of the sort, O(n) space for the sorted copy
+(or O(1) extra if you sort in place, at the cost of reordering the caller's list).
+
+    def target_indices(nums, target):
+        nums.sort()
+        return [i for i, n in enumerate(nums) if n == target]
+
+Correct, three lines, and the right thing to write first.
+
+VERSION TWO - COUNT INSTEAD OF SORTING. O(n) time, O(1) extra space beyond the output.
+
+    def target_indices_counting(nums, target):
+        smaller = sum(1 for n in nums if n < target)
+        count   = sum(1 for n in nums if n == target)
+        return list(range(smaller, smaller + count))
+
+Two passes, each a simple tally, and the array is never touched. You can even do it in one pass by
+counting both in the same loop.
+
+WHY VERSION TWO IS CORRECT, argued rather than asserted. Sorting arranges the array as three blocks:
+everything strictly less than the target, then every copy of the target, then everything strictly
+greater. The first block has exactly `smaller` elements, so it fills positions 0 through smaller-1,
+and therefore the target block begins at position `smaller`. It contains `count` elements, so it
+occupies `smaller` through `smaller + count - 1`. Nothing about WHICH elements are smaller matters -
+only how many.
+
+WHY THIS IS WORTH OFFERING IN AN INTERVIEW. On its own this is a two-minute problem, and answering it
+in three lines tells the interviewer nothing except that you know `sort`. The counting version tells
+them you noticed the question does not actually require a sorted array - only one element's place in
+it. That is the same instinct that makes 'find the k-th smallest' a quickselect problem rather than a
+sorting problem, and it is the reason this question appears in a bank at all.
+
+A THIRD APPROACH, if the input were ALREADY SORTED: binary search for the first and last occurrence of
+the target - O(log n). Not applicable here since the input arrives unsorted, but naming it shows you
+know which tool goes with which precondition.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+THE SORTING VERSION:
+1. Sort the numbers into increasing order.
+2. Walk the sorted list, keeping track of the position you are at.
+3. Every time the value at that position equals the target, remember the position.
+4. Return the remembered positions.
+
+They come out in increasing order automatically because you walked left to right - no second sort on
+the answer.
+
+THE COUNTING VERSION:
+1. Count how many numbers are STRICTLY LESS than the target. Call it `smaller`.
+2. Count how many numbers EQUAL the target. Call it `count`.
+3. The answer is the run of positions starting at `smaller` and containing exactly `count` numbers.
+4. If `count` is zero, that run is empty, which is the right answer for a missing target - no special
+   case needed.
+
+THE TWO THINGS TO SAY OUT LOUD:
+- 'after sorting' is doing real work in the problem statement - the positions are in the sorted order,
+  not the original one. Getting this wrong is the single biggest source of failure here (wrong on
+  2,076 of 5,000 inputs, all of them arrays that were not already sorted).
+- 'strictly less' in step 1, not 'less than or equal'. Including the equal ones would push the block
+  past its own copies.
+
+A NOTE ON BUILDING THE ANSWER LIST: in the sorting version, a list comprehension over `enumerate`
+gives you the index and value together in one readable line. In the counting version there is no loop
+at all - the answer is a range, turned into a list.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Put the numbers in order, then walk along them counting off positions. Every time you land on the
+target, write down which position you are at. Those positions are the answer, and they come out
+already in order because you walked from left to right.
+
+The faster way skips the sorting entirely. Ask two questions about the original list: how many numbers
+are smaller than the target, and how many are equal to it. If three numbers are smaller, then sorting
+would put those three first, so the target's first copy must land at position three. And if there are
+two copies, they take positions three and four.
+
+So two tallies tell you exactly where the target's block sits, without ever rearranging anything.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def target_indices(nums, target):
+        nums.sort()
+        return [i for i, n in enumerate(nums) if n == target]
+
+LINE 2: `nums.sort()`
+    Sorts ascending, in place. This is the line that makes the indexes mean what the question asks -
+    positions in the SORTED order. Skipping it answers a different question and is wrong on 2,076 of
+    5,000 random inputs. Note it does reorder the caller's list; `sorted(nums)` would leave the
+    original alone, and either is acceptable as long as you say which you chose and why.
+
+LINE 3: `[i for i, n in enumerate(nums) if n == target]`
+    A list comprehension - a compact way of writing 'build a list from these items, keeping the ones
+    that pass this test'. Reading it piece by piece:
+      - `enumerate(nums)` hands out pairs of (position, value): (0, 1), then (1, 2), and so on. You
+        need the position, which is the whole answer, and the value, which decides whether to keep it.
+      - `for i, n in ...` unpacks each pair into the index `i` and the value `n`.
+      - `if n == target` keeps only the positions holding the target.
+      - the leading `i` is what actually goes into the result - the position, not the value.
+    Because `enumerate` walks left to right, the collected positions are already ascending, so no
+    sorting of the result is required.
+
+    THE COUNTING VERSION, for comparison:
+
+        smaller = sum(1 for n in nums if n < target)
+        count   = sum(1 for n in nums if n == target)
+        return list(range(smaller, smaller + count))
+
+    `sum(1 for ... if ...)` is the idiomatic way to count matches - it adds a 1 for each element that
+    passes. `range(a, b)` produces a, a+1, ... up to but NOT including b, so `range(smaller, smaller +
+    count)` yields exactly `count` positions starting at `smaller`. Writing `smaller + count - 1` as
+    the end drops the final copy, which is wrong on 2,652 of 5,000.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 turned `[1,2,5,2,3]` into `[1,2,2,3,5]`, and the five
+iterations of the comprehension were the five index checks, of which i = 1 and i = 2 were kept.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [1, 2, 5, 2, 3]`, `target = 2`.
+
+    AFTER `nums.sort()`
+        nums = [1, 2, 2, 3, 5]
+
+    THE COMPREHENSION, one pair at a time:
+
+        enumerate gives (0, 1)    i = 0, n = 1    n == target?  1 == 2  ->  no
+        enumerate gives (1, 2)    i = 1, n = 2    2 == 2        ->  YES, keep i = 1
+        enumerate gives (2, 2)    i = 2, n = 2    2 == 2        ->  YES, keep i = 2
+        enumerate gives (3, 3)    i = 3, n = 3    3 == 2        ->  no
+        enumerate gives (4, 5)    i = 4, n = 5    5 == 2        ->  no
+
+        collected: [1, 2]
+
+    RETURN VALUE: [1, 2]
+
+THE COUNTING VERSION ON THE SAME INPUT, without sorting:
+
+        walking [1, 2, 5, 2, 3] looking for values < 2:   the 1                ->  smaller = 1
+        walking it again for values == 2:                 two of them          ->  count   = 2
+        range(1, 1 + 2) = range(1, 3)  ->  1, 2
+        RETURN [1, 2]
+
+    Same answer, one third of the work, and `nums` is untouched.
+
+THE 'INDEXES INTO THE ORIGINAL' BUG on the same input: the 2s sit at positions 1 and 3 in
+`[1, 2, 5, 2, 3]`, so it returns `[1, 3]` where the answer is `[1, 2]`. It looks almost right, which
+is what makes it dangerous. Wrong on 2,076 of 5,000 inputs - and correct on every input that arrived
+already sorted, which is exactly the kind of example people type by hand.
+
+THE OFF-BY-ONE IN THE RANGE: `range(1, 1 + 2 - 1)` is `range(1, 2)`, which yields only `[1]` - one 2
+reported where there are two. Wrong on 2,652 of 5,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n) for the sorting version, entirely the sort; the collecting pass is O(n). The counting
+version is O(n) - two simple passes, or one if you tally both numbers together.
+
+SPACE: O(1) extra for the sorting version if you sort in place (plus the output list); O(1) for the
+counting version too, since it builds only the answer.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'a sort' versus
+'a couple of passes'.
+
+THE #1 BEGINNER MISTAKE: returning the positions of the target in the ORIGINAL array. The words 'after
+sorting' are easy to skim past. Wrong on 2,076 of 5,000 random inputs, and identical to the right
+answer on every already-sorted input - so it survives casual testing.
+
+THE #2 MISTAKE: the off-by-one at the end of the counting version's range. The block holds `count`
+positions, so the range must produce exactly `count` numbers - `range(smaller, smaller + count)`.
+Wrong on 2,652 of 5,000.
+
+WHAT ACTUALLY MAKES THIS AN INTERVIEW QUESTION: the sorted answer is three lines and says nothing
+about you. Offering the counting version - and explaining that the target's block starts after
+everything smaller than it - shows you noticed the problem never needed a sorted array in the first
+place.
+
+ONE-SENTENCE TAKEAWAY: in sorted order the target's copies form one block that starts right after
+everything smaller than it, so count how many are smaller and how many are equal, and you have the
+positions without sorting at all.""",
+]
+
+_EX_P1AK["Height Checker"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+A teacher wants the class lined up shortest to tallest for a photograph. The students are currently
+standing in some order. Count how many of them are standing in a POSITION where the wrong height is
+standing.
+
+    heights = [1, 1, 4, 2, 1, 3]
+
+    what it should look like when sorted:
+    expected = [1, 1, 1, 2, 3, 4]
+
+    position:   0    1    2    3    4    5
+    actual:     1    1    4    2    1    3
+    expected:   1    1    1    2    3    4
+                ok   ok   X    ok   X    X
+
+    ANSWER: 3
+
+Read that carefully, because the wording matters. You are not asked how many students need to MOVE, or
+for the fewest swaps - you are asked how many POSITIONS currently hold a height different from the one
+that belongs there.
+
+TERMS AS THEY APPEAR:
+- NON-DECREASING ORDER: each value is greater than OR EQUAL TO the one before it. `[1, 1, 4]` is
+  non-decreasing. This matters because heights repeat - 'increasing' would be too strict a word.
+- EXPECTED ARRANGEMENT: the sorted version of the same heights. It is the target we compare against.
+- IN PLACE: modifying the list you were given rather than making a copy. Doing that here destroys the
+  very thing you are measuring, which is the #1 bug in this problem.""",
+
+    """2. THE INTUITION - you already know the target, so just compare
+
+Some 'how many are out of order' questions are genuinely hard - counting inversions, or the minimum
+number of swaps, needs real work. This one is not, and seeing why is the whole insight.
+
+THE TARGET ARRANGEMENT IS COMPLETELY DETERMINED. There is exactly one non-decreasing arrangement of a
+multiset of heights: the sorted one. So you do not have to search for the target or reason about it -
+you can just compute it with a sort, lay the two rows side by side, and count the mismatches.
+
+    actual:    1  1  4  2  1  3
+    expected:  1  1  1  2  3  4
+               |  |  |  |  |  |
+               =  =  X  =  X  X       ->  3 mismatches
+
+THE ONE SUBTLETY - EQUAL HEIGHTS ARE INTERCHANGEABLE. Look at position 0 and 1 above: the actual
+heights are 1 and 1, and so are the expected ones. But which STUDENT is standing there might well have
+changed - the sort may have shuffled the three students of height 1 among themselves.
+
+That does not matter, and the problem is careful about it: a position is only 'wrong' if it holds the
+wrong HEIGHT. Two students of the same height are indistinguishable in a photograph. So you compare
+VALUES, never identities or original indices.
+
+This is not a hypothetical. I measured a version that tracks which student went where and counts
+students who moved: it was wrong on 1,992 of 5,000 random inputs, and on 1,992 of the 3,609 inputs
+containing duplicate heights - it never fails when all heights are distinct, which is precisely why
+you must test with repeats.
+
+    heights = [1, 1, 1]     already in order - answer 0
+    a version that tracks identities may report movement among the three 1s: wrong.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `heights = [5, 1, 2, 3, 4]`.
+
+STEP 1 - make a SORTED COPY. The word copy is doing real work here: we need both rows at once.
+
+    expected = [1, 2, 3, 4, 5]
+    heights  = [5, 1, 2, 3, 4]      <- unchanged
+
+STEP 2 - walk both rows together, position by position.
+
+    position 0:   actual 5,  expected 1    ->  different   count = 1
+    position 1:   actual 1,  expected 2    ->  different   count = 2
+    position 2:   actual 2,  expected 3    ->  different   count = 3
+    position 3:   actual 3,  expected 4    ->  different   count = 4
+    position 4:   actual 4,  expected 5    ->  different   count = 5
+
+    ANSWER: 5
+
+Every single position is wrong, even though only ONE student is really misplaced - the tall one at the
+front, who pushed everybody along by one. That is a good illustration of what the question is actually
+measuring: mismatched positions, not misplaced people. If the question had asked for the minimum
+number of moves, the answer would be 1.
+
+A SECOND TRACE with duplicates, to watch equal heights behave. Input `[1, 1, 4, 2, 1, 3]`:
+
+    expected = [1, 1, 1, 2, 3, 4]
+
+    position 0:  1 vs 1   same
+    position 1:  1 vs 1   same
+    position 2:  4 vs 1   DIFFERENT     count = 1
+    position 3:  2 vs 2   same
+    position 4:  1 vs 3   DIFFERENT     count = 2
+    position 5:  3 vs 4   DIFFERENT     count = 3
+
+    ANSWER: 3
+
+Positions 0 and 1 are counted as fine. It is entirely possible that a different height-1 student is
+standing there now than before - nobody can tell, and the problem does not care.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ALREADY SORTED. `[1, 2, 3]`. The copy is identical, every comparison matches, answer 0.
+
+B. ALL THE SAME HEIGHT. `[2, 2, 2]`. Sorted is the same list, answer 0. This is the input that catches
+   identity-tracking solutions, which may claim students moved.
+
+C. ONE STUDENT. `[7]`. Nothing to compare against anything, answer 0.
+
+D. REVERSED. `[3, 2, 1]`. Sorted is `[1, 2, 3]`; positions 0 and 2 differ but position 1 matches -
+   answer 2, not 3. The middle element of an odd-length reversal is already home, which is a nice
+   little trap for anyone assuming 'reversed means everything is wrong'.
+
+E. THE #1 MISTAKE - SORTING IN PLACE AND THEN COMPARING. In Python, `expected = heights` does NOT
+   copy - it makes a second name for the SAME list. Then `heights.sort()` sorts the one list, both
+   names see the sorted version, every comparison matches, and you return 0 for every input. Measured
+   wrong on 3,859 of 5,000 - and it is right only on inputs that were already sorted. `sorted(heights)`
+   returns a NEW list, which is why the correct code uses it.
+
+F. THE #2 MISTAKE - COUNTING DESCENTS instead of comparing with the target. Counting positions where a
+   student is shorter than the one in front feels related, and it is not the same question. Wrong on
+   3,589 of 5,000. In trace 1 above it would count only 1 (the drop from 5 to 1), where the answer is
+   5.
+
+G. THE #3 MISTAKE - TRACKING WHICH STUDENT MOVED. Wrong on 1,992 of 5,000, and specifically on 1,992
+   of the 3,609 inputs that contain duplicate heights. It is always right when heights are distinct,
+   so distinct-only test data hides it completely.
+
+H. AN EMPTY LIST. `[]` gives 0 - `sorted([])` is `[]` and `zip` produces nothing, so the loop never
+   runs. No special case needed.""",
+
+    """5. THE STRAIGHTFORWARD VERSION, AND THE LINEAR UPGRADE
+
+THE VERSION ABOVE - sort a copy, compare position by position - is the right answer and it is O(n log
+n) because of the sort. There is no slower version worth writing first here; the problem is simple
+enough that the honest starting point IS the solution.
+
+What makes it an interview question at all is the follow-up.
+
+THE LINEAR UPGRADE, and why it is available. Look at the constraints: heights are between 1 and 100.
+That is a tiny fixed RANGE, and whenever you see that, COUNTING SORT becomes possible - you can
+produce the sorted order in O(n) time without any comparisons at all.
+
+    def height_checker_linear(heights):
+        counts = [0] * 101                    # heights are 1..100
+        for h in heights:
+            counts[h] += 1
+        result = 0
+        h = 1                                 # the height we are 'dealing out'
+        for actual in heights:
+            while counts[h] == 0:             # skip heights nobody has
+                h += 1
+            if actual != h:
+                result += 1
+            counts[h] -= 1
+        return result
+
+Read the middle of that carefully, because it is the clever part: instead of building the sorted list,
+it WALKS the tally, handing out the next expected height one at a time as it scans the original
+array. The `while` loop looks like it might make this quadratic, but `h` only ever moves forwards
+across a fixed range of 100 values in the whole run - so the total work is O(n + 100), which is O(n).
+
+WHEN TO OFFER IT: after giving the sorted-copy answer, say 'the heights are bounded at 100, so I can
+do the same thing with counting sort in O(n) instead of O(n log n)'. That sentence is what turns a
+five-second problem into a conversation. The bounded-range observation is the same one behind
+Counting Sort itself and behind 'How Many Numbers Are Smaller Than the Current Number'.
+
+WHY YOU MUST STILL COMPARE VALUES IN THE LINEAR VERSION TOO: the tally has no idea which student is
+which - it only knows heights. Which is fine, because heights are all the question asks about.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Make a SORTED COPY of the heights. A copy, not a sorted version of the same list - you need both
+   arrangements at the same time.
+2. Set a counter to zero.
+3. Walk the two rows together, one position at a time, taking one height from each.
+4. Whenever the two heights at a position differ, add one to the counter.
+5. Return the counter.
+
+STEP 1 IS THE WHOLE PROBLEM. In Python, `sorted(x)` returns a new list and leaves x alone, whereas
+`x.sort()` rearranges x itself and returns nothing. Using the second one - or writing
+`expected = heights` and then sorting - leaves you comparing a list with itself, which reports 0 every
+time. Measured wrong on 3,859 of 5,000 inputs.
+
+WHY YOU COMPARE HEIGHTS AND NOT STUDENTS: two students of the same height are interchangeable for this
+question, so a position holding the right height is correct regardless of who is standing there.
+Anything that tracks identity over-counts on duplicates - wrong on 1,992 of 5,000.
+
+A NOTE ON WALKING TWO LISTS TOGETHER: most languages give you a way to step through two rows in
+lockstep. In Python that is `zip`. Without it you would run an index `i` from 0 upward and look at
+`heights[i]` and `expected[i]` - the same thing written longer, and equally fine.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Take a photograph of the line as it is. Then make a second, separate line with the same students
+arranged shortest to tallest - that is what the teacher wants to see.
+
+Now hold the two lines side by side and walk along them together. At each position, compare the height
+standing there in the real line with the height that ought to be there. Every time they differ, add
+one to your tally.
+
+The tally is the answer. Two students of the same height count as the same thing, because a
+photograph cannot tell them apart - so a position with the right height is correct even if a different
+student is standing in it.
+
+The only thing to be careful about is making a genuine COPY when you sort, because if you sort the
+original line you have thrown away the very thing you were measuring.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def height_checker(heights):
+        expected = sorted(heights)         # target non-decreasing order
+        count = 0
+        for actual, want in zip(heights, expected):
+            if actual != want:
+                count += 1                 # this position is out of order
+        return count
+
+LINE 2: `expected = sorted(heights)`
+    `sorted(...)` builds and returns a NEW list in ascending order, leaving `heights` untouched. That
+    distinction is the entire correctness of the function: `heights.sort()` would rearrange the
+    original and leave nothing to compare against, and `expected = heights` followed by a sort is the
+    same disaster, since both names would point at one list. Wrong on 3,859 of 5,000 inputs.
+
+LINE 3: `count = 0`
+    The tally of mismatched positions.
+
+LINE 4: `for actual, want in zip(heights, expected):`
+    `zip` hands out pairs - the first of each list, then the second of each, and so on - so the two
+    rows are walked in lockstep. Unpacking into two names, `actual` and `want`, reads as the question
+    itself: what is here, and what should be here. If the lists were different lengths, zip would stop
+    at the shorter one; here they are always the same length by construction.
+
+LINE 5-6: `if actual != want: count += 1`
+    Compare the HEIGHTS. Not the students, not their original positions - the heights. That is what
+    makes duplicates behave correctly, and the reason an identity-tracking version is wrong on 1,992
+    of 5,000 inputs.
+
+LINE 7: `return count`
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 produced the `expected = [1, 1, 1, 2, 3, 4]` row. The six
+iterations of line 4 were the six position-by-position comparisons, and the three that hit line 6 were
+positions 2, 4 and 5.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `heights = [1, 1, 4, 2, 1, 3]`.
+
+    LINE 2:  expected = [1, 1, 1, 2, 3, 4]
+             heights  = [1, 1, 4, 2, 1, 3]      (unchanged - `sorted` copied)
+    LINE 3:  count = 0
+
+    PASS 1   actual = 1,  want = 1     1 != 1 is False   ->  count = 0
+    PASS 2   actual = 1,  want = 1     False             ->  count = 0
+    PASS 3   actual = 4,  want = 1     TRUE              ->  count = 1
+    PASS 4   actual = 2,  want = 2     False             ->  count = 1
+    PASS 5   actual = 1,  want = 3     TRUE              ->  count = 2
+    PASS 6   actual = 3,  want = 4     TRUE              ->  count = 3
+
+    zip is exhausted (both lists had 6 items).
+
+    RETURN VALUE: 3
+
+A SECOND RUN on `heights = [5, 1, 2, 3, 4]`:
+
+        expected = [1, 2, 3, 4, 5]
+        every pair differs: (5,1) (1,2) (2,3) (3,4) (4,5)
+        RETURN 5
+
+    - even though moving one student would fix the line. The question counts wrong POSITIONS, not
+    necessary moves.
+
+THE IN-PLACE BUG on the first input:
+
+        expected = heights          # not a copy - a second name for the same list
+        heights.sort()              # now BOTH names see [1, 1, 1, 2, 3, 4]
+        every comparison matches    ->  returns 0
+
+Zero for an input whose answer is 3, and zero for almost every input - it is only right when the list
+was sorted to begin with. Wrong on 3,859 of 5,000.
+
+THE COUNT-THE-DESCENTS BUG on `[5, 1, 2, 3, 4]`: only one position has a student shorter than the one
+in front (the 5 to 1 drop), so it returns 1 where the answer is 5. Wrong on 3,589 of 5,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n), all of it the sort; the comparison pass is O(n). With counting sort - legitimate
+here because heights are capped at 100 - the whole thing is O(n + 100), which is O(n). Offering that
+upgrade is the real content of this question.
+
+SPACE: O(n) for the sorted copy. The counting-sort version uses O(1) extra beyond a fixed 101-slot
+tally, which does not grow with the input.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - and note that a FIXED
+extra cost like 101 tally slots disappears into the constant, which is why counting sort counts as
+linear here.
+
+THE #1 BEGINNER MISTAKE: sorting the original list instead of a copy - either by calling `.sort()` on
+it or by writing `expected = heights`, which in Python creates another name for the same list rather
+than a copy. Both leave you comparing a list with itself, so the answer is 0 for every input that was
+not already sorted. Wrong on 3,859 of 5,000.
+
+THE #2 MISTAKE: counting descents - positions where a student is shorter than the one in front. It is
+a different question. Wrong on 3,589 of 5,000.
+
+THE #3 MISTAKE: tracking which STUDENT moved rather than which HEIGHT is wrong. Wrong on 1,992 of
+5,000, and only ever on inputs with duplicate heights - so distinct-height test data will never
+reveal it.
+
+ONE-SENTENCE TAKEAWAY: the target arrangement is just the sorted list, so make a COPY of it, walk both
+rows in lockstep and count the positions whose HEIGHTS differ - equal-height students are
+interchangeable.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AK:
+        _e["examples"] = _EX_P1AK[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
