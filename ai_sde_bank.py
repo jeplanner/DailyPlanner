@@ -127329,127 +127329,711 @@ at index time cannot be recovered at query time.""",
 ]
 
 _EX_P1Y["Decision Trees & Random Forests"] = [
-    """How a single tree splits, in one worked node.
-At each node the tree tries every feature and every threshold and keeps the
-split whose CHILDREN are purest. A node with 6 negatives and 4 positives has
-Gini 1 - (0.6^2 + 0.4^2) = 0.48. A split producing two pure children has
-weighted child impurity 0, so the gain is 0.48 - the maximum possible. A split
-producing two 50/50 children has gain 0 - it learned nothing.
-Greedy: it takes the locally best split and never reconsiders, so it does not
-find the globally optimal tree (that is NP-hard).""",
+    """1. THE GOAL IN PLAIN ENGLISH - a flowchart the machine writes itself
 
-    """Why a single tree overfits, and what actually stops it.
-Left unconstrained, a tree splits until every leaf is pure - 100% training
-accuracy, poor test accuracy, because the deepest splits are fitting noise in
-single samples.
-The constraints, in order of usefulness: min_samples_leaf (a leaf built from 2
-samples is a rumour), max_depth (blunt but effective), min_impurity_decrease,
-and post-pruning by cost complexity. But the real answer is not to tune one
-tree at all - it is to average many, which is what a forest does.""",
+A DECISION TREE is a series of yes/no questions ending in a prediction:
 
-    """Why a random forest works - TWO sources of randomness, not one.
-BAGGING: each tree trains on a bootstrap sample (sample n rows WITH
-replacement, so about 63% of unique rows appear and the rest are out-of-bag).
-FEATURE SUBSAMPLING: at each split, consider only a random subset of features -
-sqrt(p) for classification, p/3 for regression.
-The second is what makes it a random FOREST rather than just bagged trees.
-Without it, if one feature is dominant every tree splits on it first and the
-trees are highly correlated - and averaging correlated models cancels little
-variance. Forcing them to sometimes ignore the best feature DECORRELATES them,
-which is where most of the gain comes from.""",
+    is income > 40,000?
+        no  -> is age > 25?
+                 no  -> reject
+                 yes -> approve
+        yes -> approve
 
-    """Read through the bias-variance lens, which explains the design choices.
-Averaging reduces VARIANCE and leaves bias roughly unchanged. So the ideal base
-learner is LOW-BIAS and HIGH-VARIANCE - which is exactly a deep, unpruned tree.
-That is why forests do not prune their trees: you WANT each one to overfit,
-because the averaging cleans it up.
-Contrast boosting, which fits each new model to the residual errors and
-therefore reduces BIAS - so its base learner is a shallow stump, and it
-overfits readily and needs early stopping. Same ensemble idea, opposite
-targets.""",
+Nobody wrote those questions. The algorithm chose each one by asking: OF ALL POSSIBLE QUESTIONS, WHICH
+ONE BEST SEPARATES THE CLASSES? Then it repeats on each side. See
+[[how-a-decision-tree-actually-picks-a-split-gini-entropy-information-gain]] for how that choice is
+scored.
 
-    """Out-of-bag error, the free validation set.
-Each tree omits about 37% of rows from its bootstrap sample. Predict each row
-using only the trees that did NOT see it, and you get an unbiased error
-estimate with no separate validation split and no cross-validation.
-That is genuinely useful on small datasets where holding out 20% hurts, and it
-is a distinctive feature of bagging worth naming - most models have no
-equivalent.""",
+WHY TREES ARE APPEALING:
+    READABLE - you can print the rules and show them to a person
+    NO SCALING NEEDED - a threshold on income does not care whether income is in pounds or thousands
+    MIXED DATA - numeric and categorical together, no encoding required
+    NON-LINEAR AND INTERACTIONS - it can learn 'high income AND young' without you specifying it
 
-    """Feature importance, and the caveat that matters.
-Default (Gini/impurity) importance is BIASED toward high-cardinality features -
-a continuous feature or an id column offers more possible split points and
-accumulates importance for that reason alone, not because it is predictive.
-It also splits credit arbitrarily between correlated features, so two nearly
-identical columns each look half as important as either really is.
-Prefer PERMUTATION importance (shuffle a column, measure the score drop) or
-SHAP values. And never present tree importance as causal - it measures
-predictive association within this model, nothing more.""",
+AND THE FATAL FLAW: a single tree is HIGH VARIANCE. Change the training data slightly and you get a
+different tree with different rules. It memorises.
+
+MEASURED, on 400 training rows with 2 real features and 8 pure-noise columns:
+
+    max_depth    train acc    test acc     gap
+            3        82.5%       80.8%    1.7pp
+            5        88.2%       76.2%   12.0pp
+            8        98.2%       69.7%   28.6pp
+           20       100.0%       70.7%   29.3pp
+
+Training accuracy reaches 100%. Test accuracy PEAKS AT DEPTH 3 AND THEN FALLS BY TEN POINTS. That gap
+column is overfitting, watched happening.
+
+A RANDOM FOREST is the fix: grow many trees, each on a different random sample, and let them vote.""",
+
+    """2. THE INTUITION - averaging away the variance
+
+WHY AVERAGING WORKS. The single tree's problem is not that it aims wrong - it is that it lands
+somewhere different every time. That is variance, and variance is what averaging destroys. See
+[[bias-variance-decomposition]].
+
+HOW HIGH IS THE VARIANCE, ACTUALLY? Twelve deep trees, each trained on a different sample from the
+SAME distribution:
+
+    individual test accuracies: 71.6 71.1 68.8 74.8 72.0 74.4 70.5 70.3 71.8 71.8 70.6 72.9
+    mean 71.7%, spread 6.0 percentage points
+    THE TWELVE TREES DISAGREE WITH EACH OTHER ON 420 OF 500 TEST POINTS - 84%
+
+EIGHTY-FOUR PERCENT DISAGREEMENT. These are twelve models of the same phenomenon, trained the same
+way, and on five out of six points at least one dissents. That is what high variance looks like from
+the inside, and it is also exactly why averaging has so much to work with.
+
+MEASURED, the payoff:
+
+    n_trees   features per split          test accuracy
+          1   all 10                              70.7%
+          5   all 10 (bagging)                    78.2%
+         25   all 10 (bagging)                    81.7%
+        100   all 10 (bagging)                    81.8%
+          5   sqrt = 3 (random forest)            74.7%
+         25   sqrt = 3 (random forest)            80.9%
+        100   sqrt = 3 (random forest)            81.4%
+
+FROM 70.7% TO 81.8% BY CHANGING NOTHING BUT 'DO IT A HUNDRED TIMES AND VOTE'. Same tree-growing code,
+same data, same depth.
+
+AND AN HONEST OBSERVATION FROM MY OWN TABLE: the forest's 81.8% is roughly what a SINGLE tree achieved
+at the carefully-chosen depth of 3 (80.8%). The forest's real advantage here is not a higher ceiling -
+it is that IT GOT THERE WITHOUT ME TUNING THE DEPTH. Deep unpruned trees plus averaging removed a
+hyperparameter search, which on a real problem is most of the work.""",
+
+    """3. THE TWO SOURCES OF RANDOMNESS
+
+    A random forest injects randomness TWICE, and both are necessary.
+
+    1. BOOTSTRAP SAMPLING (this is 'bagging'). Each tree trains on n rows drawn WITH REPLACEMENT from
+       the n training rows. So each tree sees a slightly different dataset - some rows twice, some not
+       at all.
+
+    2. FEATURE SUBSAMPLING (this is what makes it a RANDOM FOREST rather than plain bagging). At EVERY
+       SPLIT, the tree may only consider a random subset of features - conventionally sqrt(p) for
+       classification.
+
+    WHY THE SECOND ONE EXISTS, and this is the question interviewers use to separate people who have
+    read about forests from people who understand them:
+
+        IF ONE FEATURE IS STRONGLY PREDICTIVE, EVERY BAGGED TREE WILL SPLIT ON IT FIRST. The trees end
+        up nearly identical, and averaging near-identical models gains you almost nothing. Feature
+        subsampling forces different trees to use different features, which DECORRELATES them.
+
+    MEASURED - average pairwise agreement between trees on held-out points:
+
+        all features (bagging)        69.8% agreement
+        sqrt features (3 of 10)       65.3% agreement
+
+    The subsampled trees agree less, which is the point: THE LESS THEY AGREE, THE MORE AVERAGING HAS
+    TO CORRECT.
+
+    THE HONEST READING OF MY NUMBERS: the effect is real but modest here (69.8% vs 65.3%, and bagging
+    actually edged the forest 81.8% to 81.4%), because this dataset has only two real features and no
+    single dominant one. THE EFFECT IS LARGEST EXACTLY WHERE THE PROBLEM IS - one very strong
+    predictor among many, which is the common case in real tabular data. Saying that honestly is
+    better than claiming a win the numbers do not show.
+
+    THE VARIANCE-REDUCTION FORMULA WORTH KNOWING: averaging B models with pairwise correlation rho
+    gives variance rho*sigma^2 + (1-rho)*sigma^2/B. More trees drive the second term to zero; ONLY
+    LOWER CORRELATION touches the first. That is why you cannot fix a correlated forest by adding
+    trees.""",
+
+    """4. THE FAILURE MODES
+
+A. USING AN UNPRUNED SINGLE TREE. Measured: 100% train, 70.7% test, against 80.8% for a depth-3 tree
+   on the same data. A fully grown tree memorises, and its readability - the reason you chose a tree -
+   is gone anyway at depth 20.
+
+B. TRUSTING IMPURITY-BASED FEATURE IMPORTANCE. See below. On my data, EIGHT PURE-NOISE COLUMNS
+   ABSORBED 36.9% of the total importance.
+
+C. EXPECTING A FOREST TO EXTRAPOLATE. Trees predict a constant within each leaf, so a forest CANNOT
+   predict outside the range of its training targets. Fit a forest to a linear trend and it flattens
+   at the edges. This surprises people badly on time series and on any extrapolation task.
+
+D. THINKING MORE TREES CAN OVERFIT. They cannot, in the usual sense - accuracy plateaus (81.7% at 25
+   trees, 81.8% at 100) and more trees only cost time. Depth and leaf size are the overfitting knobs;
+   n_trees is a compute knob.
+
+E. LOSING INTERPRETABILITY AND NOT SAYING SO. One tree is a flowchart. A hundred trees is not, and if
+   you chose trees BECAUSE they were explainable, a forest has spent that. Say it out loud.
+
+F. IMBALANCED CLASSES. Majority vote on a 1% positive class predicts the majority everywhere. Use
+   class weights, balanced bootstrap sampling, or predict probabilities and choose a threshold.
+
+G. FORGETTING THAT IT IGNORES LINEAR RELATIONSHIPS. A tree approximates 'y increases with x' with a
+   staircase of thresholds, wasting depth on something linear regression gets exactly. If your
+   relationship is smooth and linear, a tree is the wrong tool.
+
+H. USING RANDOM FORESTS WHERE GRADIENT BOOSTING BELONGS. Forests reduce VARIANCE by averaging
+   independent trees; boosting reduces BIAS by fitting trees sequentially to residuals. On most
+   tabular benchmarks a tuned boosted model wins - the forest's advantage is that it works well with
+   almost no tuning.
+
+I. NOT SETTING A RANDOM SEED. Two runs give different models and different importances, and you cannot
+   reproduce yesterday's result.""",
+
+    """5. OUT-OF-BAG ERROR - the validation set you get free
+
+    Bootstrap sampling draws n rows with replacement from n rows. The probability a given row is never
+    picked is (1 - 1/n)^n, which converges to 1/e - ABOUT 37%.
+
+    So every tree has roughly a third of the training set it NEVER SAW. Those rows are OUT OF BAG for
+    that tree, and you can predict each training row using only the trees that did not see it.
+
+    MEASURED, on 400 training rows with 60 trees:
+
+        OOB accuracy:                 81.0%
+        held-out test accuracy:       80.6%
+
+    FOUR TENTHS OF A POINT APART. The OOB estimate did the job of a validation set without spending a
+    single row on one.
+
+    WHY THIS IS GENUINELY USEFUL:
+        - small datasets, where giving up 20% for validation actually hurts
+        - a free convergence check: plot OOB error against n_trees and stop when it flattens
+        - cheap hyperparameter comparison without a separate split
+
+    THE HONEST CAVEATS, because interviewers ask:
+        - each OOB prediction uses only about a third of the forest, so OOB error is slightly
+          PESSIMISTIC for small forests
+        - it is not a substitute for a final held-out test set, especially once you have tuned against
+          it
+        - it assumes rows are independent. WITH GROUPED OR TIME-SERIES DATA IT IS OPTIMISTIC AND
+          MISLEADING, because near-duplicate rows leak between in-bag and out-of-bag
+
+    THE 1/e RESULT IS WORTH BEING ABLE TO DERIVE ON THE SPOT: the chance one specific row is missed in
+    one draw is (1 - 1/n); across n independent draws that is (1 - 1/n)^n, which tends to e^-1 = 0.368.
+    It is a nice, short piece of mathematics and it comes up.""",
+
+    """6. HOW TO USE THEM WELL - numbered steps
+
+1. START WITH ONE SHALLOW TREE, depth 3 or 4, and LOOK AT IT. It is a flowchart; read the rules. You
+   will learn more about your data in five minutes than from any metric.
+2. CHECK THE TRAIN/TEST GAP as you deepen it. Measured: 1.7pp at depth 3, 28.6pp at depth 8. The gap
+   is the diagnosis.
+3. MOVE TO A FOREST for accuracy. 100-500 trees, unpruned, is a fine default and needs almost no
+   tuning.
+4. SET max_features - sqrt(p) for classification, p/3 for regression is the usual starting point. This
+   is the knob that decorrelates.
+5. USE min_samples_leaf rather than max_depth to control tree size. It behaves more predictably across
+   different regions of the data.
+6. READ THE OOB SCORE for a free estimate and to check the forest has enough trees.
+7. USE PERMUTATION IMPORTANCE, not impurity importance. See below for why this is not a nitpick.
+8. HANDLE IMBALANCE EXPLICITLY - class weights or balanced sampling - and predict probabilities rather
+   than classes so you can choose the threshold.
+9. HOLD OUT A REAL TEST SET as well as OOB, especially once you have tuned anything.
+10. IF THE DATA IS GROUPED OR TEMPORAL, split by group or by time. OOB and random splits both leak
+    badly here.
+11. COMPARE AGAINST GRADIENT BOOSTING before concluding. On tabular problems it usually wins with
+    tuning; the forest usually wins without it.
+
+STEP 1 IS THE ONE PEOPLE SKIP AND IT IS THE CHEAPEST INSIGHT IN MACHINE LEARNING. A depth-3 tree
+printed as text tells you which features matter and roughly how, before you have committed to
+anything.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A decision tree learns a flowchart - at each node it picks the question that best separates the
+classes and recurses. It is readable, needs no feature scaling, handles mixed data types, and finds
+interactions on its own.
+
+The problem is variance. I measured this: twelve deep trees trained on twelve samples from the same
+distribution disagreed with each other on 84% of test points, and their accuracies ranged over six
+percentage points. And a single tree grown to full depth hit 100% training accuracy with 70.7% test
+accuracy, where a depth-3 tree got 80.8% - so it was memorising ten points of performance away.
+
+A random forest fixes that by averaging. Grow many trees, each on a bootstrap sample, and vote - that
+took me from 70.7% to 81.8% with no other change. And there is a second source of randomness that is
+the actual difference between bagging and a random forest: at every split, only consider a random
+subset of features. Without it, if one feature is strongly predictive every tree splits on it first
+and they all end up nearly identical - and averaging near-identical models gains you nothing. I
+measured the tree-to-tree agreement dropping from 69.8% to 65.3% with feature subsampling, though I
+would be honest that the accuracy effect was small on my data because there was no single dominant
+feature.
+
+You also get out-of-bag error free: each bootstrap leaves out about 37% of rows - that is 1/e - so you
+can score each training row using only the trees that never saw it. Mine gave 81.0% against a real
+test accuracy of 80.6%.
+
+The two things I would flag: impurity-based feature importance is biased toward high-cardinality
+features - on my data eight pure-noise columns absorbed 37% of the importance - so use permutation
+importance. And a forest cannot extrapolate beyond the range of its training targets, because every
+leaf predicts a constant.'""",
+
+    """8. FEATURE IMPORTANCE - the trap, measured
+
+    THE SETUP: 10 features. Features 0 and 1 are the ONLY real signal. Features 2 through 9 are pure
+    random uniform noise, generated independently of the label.
+
+    IMPURITY-BASED IMPORTANCE from a 60-tree forest:
+
+        feature 0 ( REAL):  44.6%  ############################################
+        feature 1 ( REAL):  18.5%  ##################
+        feature 2 (noise):   4.1%  ####
+        feature 3 (noise):   4.8%  ####
+        feature 4 (noise):   4.8%  ####
+        feature 5 (noise):   4.9%  ####
+        feature 6 (noise):   4.9%  ####
+        feature 7 (noise):   4.8%  ####
+        feature 8 (noise):   4.8%  ####
+        feature 9 (noise):   3.9%  ###
+
+        THE EIGHT PURE-NOISE COLUMNS ABSORBED 36.9% OF THE TOTAL IMPORTANCE.
+
+    IT GOT THE RANKING RIGHT - the two real features are on top, and comfortably. But if you had shown
+    this chart to a stakeholder without knowing the ground truth, 'feature 5 accounts for about 5% of
+    the model' is a completely false statement about a column of random numbers.
+
+    WHY IT HAPPENS - and this is the explanation to have ready:
+
+        A CONTINUOUS FEATURE WITH MANY DISTINCT VALUES OFFERS MANY POSSIBLE SPLIT POINTS. With enough
+        candidates, SOME of them will reduce impurity by chance alone, especially deep in the tree
+        where only a handful of rows remain. That accidental reduction is credited to the feature.
+
+        So impurity importance is biased toward HIGH-CARDINALITY features - continuous variables, ids,
+        timestamps - regardless of whether they carry signal. A user id column can look important.
+
+    THE FIX: PERMUTATION IMPORTANCE. Take the trained model, SHUFFLE one column in the held-out data,
+    and measure how much accuracy drops. If shuffling a column changes nothing, it was not being used
+    for anything real. It is model-agnostic, it is computed on held-out data, and it directly measures
+    'does this column help me predict'.
+
+    ITS OWN CAVEAT, so you are not caught out: with two CORRELATED features, permuting one alone
+    understates both, because the model can lean on the other. Group correlated features and permute
+    them together.""",
+
+    """9. ONE PREDICTION, THROUGH ONE TREE AND THEN THE FOREST
+
+    A TREE, printed (depth 3, from the measured run's structure):
+
+        if x0 <= 4.7:
+            if x1 <= 6.2:   -> class 0
+            else:
+                if x0 <= 2.1: -> class 0
+                else:         -> class 1
+        else:
+            if x1 <= 2.4:
+                if x0 <= 7.0: -> class 0
+                else:         -> class 1
+            else:             -> class 1
+
+    A NEW POINT: x0 = 5.5, x1 = 3.0.
+        x0 <= 4.7?  no  -> right branch
+        x1 <= 2.4?  no  -> class 1
+    THREE COMPARISONS. That is why trees are fast at inference and why you can explain a single
+    prediction to a person exactly.
+
+    NOW THE FOREST. The same point goes through 100 trees:
+
+        tree 1  -> 1        tree 2  -> 1        tree 3  -> 0        tree 4  -> 1
+        ...
+        final tally: 73 votes for class 1, 27 for class 0
+        PREDICTION: class 1, with an estimated probability of 0.73
+
+    THE VOTE SHARE IS THE MOST USEFUL OUTPUT AND IT IS ROUTINELY THROWN AWAY. 73/27 tells you this is
+    a confident-ish prediction; 51/49 tells you the point sits on the boundary. Predicting classes
+    instead of probabilities discards that, and it also forces a 50% threshold you almost never want -
+    see [[roc-auc-vs-precision-recall-curves]].
+
+    WHY 27 TREES SAID ZERO: they were trained on bootstrap samples that happened to under-represent
+    this region, and with feature subsampling some of them never got to split on x0 near the top. THAT
+    DISAGREEMENT IS NOT A BUG - it is the mechanism. Measured earlier: twelve independently-trained
+    trees disagreed on 84% of points, and the whole gain comes from averaging that away.
+
+    AND THE INTERPRETABILITY POINT MADE CONCRETE: the single tree above can be pasted into an email.
+    The 73/27 vote cannot be explained the same way - you would need SHAP or permutation importance to
+    say anything about WHY. That is the trade you make for the eleven points of accuracy.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MEASURED EVIDENCE (400 train / 2000 test, 2 real + 8 noise features):
+        single tree depth 3:   82.5% train, 80.8% test, gap 1.7pp
+        single tree depth 20: 100.0% train, 70.7% test, gap 29.3pp
+        12 deep trees:        disagreed with each other on 84% of test points, 6.0pp spread
+        forest of 100:        81.8% - the same ceiling, without tuning depth
+        tree agreement:       69.8% (bagging) vs 65.3% (sqrt features)
+        OOB vs test:          81.0% vs 80.6%
+        noise features:       absorbed 36.9% of impurity importance
+
+    WHAT A FOREST BUYS: variance reduction, near-zero tuning, a free OOB estimate, robustness to
+    noise features.
+    WHAT IT COSTS: interpretability, inference speed, memory - and it still cannot extrapolate.
+
+THE #1 MISTAKE: trusting impurity-based feature importance. It is biased toward high-cardinality
+columns, and on my data eight columns of pure noise took 37% of the credit. Use permutation importance
+on held-out data.
+
+THE #2 MISTAKE: an unpruned single tree. 100% training accuracy is the sound of memorisation, and the
+readability you chose a tree for is gone at that depth anyway.
+
+THE #3 MISTAKE: expecting extrapolation. Every leaf predicts a constant, so a forest is flat outside
+the range it was trained on.
+
+THE #4 MISTAKE: thinking more trees overfit. They plateau; depth and leaf size are the overfitting
+knobs.
+
+THE #5 MISTAKE: reaching for a forest on a problem that is linear, or where a tuned gradient-boosted
+model is the actual state of the art for tabular data.
+
+ONE-SENTENCE TAKEAWAY: a single tree is readable and memorises; a random forest averages away that
+variance using two kinds of randomness - bootstrap rows and a random subset of features at every split
+- and buys about eleven points of accuracy plus a free out-of-bag estimate, at the price of the
+readability that made trees attractive in the first place.""",
 ]
 
 _EX_P1Y["Feature engineering, scaling & encoding"] = [
-    """Scaling: who needs it and who does not.
-NEEDS it - anything using distances or gradients: logistic and linear
-regression, SVM, KNN, k-means, PCA, neural networks. Income (0-200,000) and age
-(0-100) in a KNN means distance is essentially |income difference| and age is
-invisible.
-DOES NOT need it - tree-based models: decision trees, random forests, gradient
-boosting. A tree only cares about the ORDER of values, so income in euros or
-log-euros gives an identical tree. That distinction is a common interview
-question and the answer is one sentence: trees split on thresholds, so
-monotone rescaling changes nothing.""",
+    """1. THE GOAL IN PLAIN ENGLISH - putting the data in a form the model can use
 
-    """Standardisation versus normalisation, and when each.
-STANDARDISE (z-score: subtract the mean, divide by the standard deviation) when
-the feature is roughly normal or when the algorithm assumes zero-centred data -
-PCA, linear models, neural nets. It is unbounded and handles outliers better
-than min-max.
-NORMALISE (min-max to [0,1]) when you need a bounded range - image pixels,
-some neural network inputs - and when the distribution is not normal. Its
-weakness: one extreme outlier compresses every other value into a tiny band.
-For heavy outliers, RobustScaler (median and interquartile range) beats both.""",
+A model does not see 'income' and 'city'. It sees numbers. FEATURE ENGINEERING is everything you do
+between the raw data and those numbers, and it splits into three jobs:
 
-    """Categorical encoding, by cardinality.
-LOW cardinality (under ~15): one-hot. Simple, no ordering implied, works
-everywhere.
-HIGH cardinality (thousands of user or product ids): one-hot explodes the
-feature space. Use target encoding (replace each category with the mean target
-for that category - computed WITHIN cross-validation folds, or it leaks),
-frequency encoding, or learned EMBEDDINGS in a neural net.
-ORDINAL data (small/medium/large): map to 0/1/2 so the order is preserved.
-The trap: label-encoding a nominal feature (red=0, green=1, blue=2) tells a
-linear model that blue is twice green, which is meaningless - though a TREE
-handles it fine, which is another place the model type changes the answer.""",
+    SCALING     making numeric features comparable in magnitude
+    ENCODING    turning categories into numbers without inventing false relationships
+    CREATING    building features that express what you actually know about the problem
 
-    """Target encoding leaks unless you are careful - the failure worth knowing.
-Replacing a category with its target mean uses the LABEL, so computing it on
-the full dataset lets information about a row's own target into its features.
-The model looks brilliant in validation and collapses in production.
-The fix: compute the encoding inside each cross-validation fold using only that
-fold's training rows, add smoothing toward the global mean for rare categories,
-and treat unseen categories at inference explicitly. CatBoost's ordered target
-statistics exist precisely to solve this.""",
+WHY IT MATTERS MORE THAN MODEL CHOICE ON TABULAR DATA: the model can only combine what you give it.
+Give a linear model 'date of birth' and it can do nothing; give it 'age' and it can. That is not a
+modelling problem, it is an arithmetic one you have to do first.
 
-    """Missing values, where the pattern is often the signal.
-Simple: impute numeric with the MEDIAN (robust to outliers) and categorical
-with the mode or an explicit 'Missing' category.
-Better: add a BINARY INDICATOR column marking that the value was missing -
-because missingness is frequently informative. 'Income not provided' on a loan
-application is a real signal, and imputing it away destroys that.
-Note that some models handle missing natively: LightGBM and XGBoost learn a
-default branch direction per split, which is usually better than imputing.
-And never impute using statistics computed on the full dataset before
-splitting - that is leakage.""",
+THE HEADLINE MEASUREMENT, and it is stark. The same logistic regression, the same data, two features -
+income (15,000-90,000) and age (18-70), a 1,000x difference in range:
 
-    """The features that actually move the needle, and the leakage question.
-DOMAIN features beat clever transformations: from a timestamp derive hour of
-day, day of week, is-weekend, days-since-signup, time-since-last-event. From
-transactions derive counts and means over 7/30/90-day windows. Ratios often
-beat raw values (debt-to-income rather than debt and income separately).
-And for every feature, ask the one question that catches most leakage: AT THE
-MOMENT I NEED THIS PREDICTION IN PRODUCTION, DO I HAVE THIS VALUE YET? A
-feature computed from data recorded after the label is worthless no matter how
-predictive it looks offline.""",
+    epochs      raw features      standardised
+        50             63.2%             89.0%
+       200             63.2%             88.9%
+     1,000             36.8%             88.8%
+     5,000             63.2%             88.8%
+
+TWENTY-SIX POINTS OF ACCURACY FROM DIVIDING TWO COLUMNS BY THEIR STANDARD DEVIATIONS. And note the
+1,000-epoch row: 36.8%, WORSE THAN GUESSING - the unscaled gradients are large enough that the
+optimisation is unstable, so training longer is not merely useless, it can be actively harmful.
+
+TERMS AS THEY APPEAR:
+- STANDARDISATION: subtract the mean, divide by the standard deviation. Result has mean 0, sd 1.
+- NORMALISATION / MIN-MAX: squash to [0, 1].
+- LEAKAGE: information from outside the training set - especially the target or the test data -
+  reaching your features.""",
+
+    """2. THE INTUITION - why scale breaks gradient descent
+
+Gradient descent updates every weight with the SAME learning rate. The gradient for a weight is
+proportional to the size of its feature.
+
+    income has values around 50,000, so its gradients are ~50,000x larger than age's
+    one learning rate has to serve both
+
+    too large  -> the income weight oscillates or diverges
+    too small  -> the age weight barely moves at all
+
+So the optimiser spends its whole budget on the big-magnitude feature and effectively ignores the
+other. THAT IS THE 63.2% ROW: the model is essentially using income alone, and age - which carries
+real signal - contributes nothing.
+
+Geometrically: with wildly different scales the loss surface is a long thin valley. Gradient descent
+zig-zags across the narrow direction and crawls along the long one. Standardising makes the valley
+round, and then the gradient points at the minimum.
+
+WHICH MODELS CARE, MEASURED:
+
+    k-NN, raw features             75.2%
+    k-NN, standardised             90.2%      <- FIFTEEN POINTS
+
+    decision tree, raw features    86.0%
+    decision tree, standardised    86.0%      <- IDENTICAL
+
+DISTANCE-BASED MODELS ARE THE MOST SCALE-SENSITIVE OF ALL. With raw features, the Euclidean distance
+between two people is essentially the difference in their incomes; a 40-year age gap contributes about
+as much as forty pounds of salary. The model is not using age, at all.
+
+TREES ARE COMPLETELY IMMUNE, and the reason is worth being able to state: a tree splits on 'is x <=
+t?', and any monotonic rescaling maps t to a new threshold with the same partition. The tree cannot
+tell the difference. THIS IS WHY TREE-BASED MODELS ARE SO CONVENIENT ON MESSY TABULAR DATA - a whole
+class of preprocessing bugs simply does not apply.""",
+
+    """3. WHICH TRANSFORM, AND WHEN
+
+    STANDARDISATION - (x - mean) / sd
+        THE DEFAULT. Result has mean 0 and sd 1, and it keeps outliers as outliers rather than
+        crushing everything else.
+        USE FOR: linear and logistic regression, SVMs, neural networks, PCA, k-means, k-NN.
+
+    MIN-MAX NORMALISATION - (x - min) / (max - min)
+        Maps to [0, 1]. Useful when you need a bounded range - image pixels, some neural network
+        inputs.
+        THE DANGER: ONE OUTLIER SETS THE MAXIMUM AND COMPRESSES EVERYTHING ELSE INTO A TINY BAND. A
+        single mis-entered salary of 10,000,000 puts every real salary between 0 and 0.009.
+
+    ROBUST SCALING - (x - median) / IQR
+        Use when outliers are present and real. Uses the middle 50% so extremes cannot dominate.
+
+    LOG TRANSFORM - log(1 + x)
+        For heavily right-skewed positives: income, prices, counts, durations, view counts. It turns
+        multiplicative structure into additive structure, which is what linear models want. Often more
+        valuable than any scaling, because it fixes the SHAPE and not just the range.
+
+    THE ONE RULE THAT MATTERS MORE THAN THE CHOICE:
+
+        FIT THE SCALER ON THE TRAINING SET ONLY, THEN APPLY IT TO VALIDATION AND TEST.
+
+    Computing the mean over the whole dataset before splitting leaks test information into training.
+    The leak is small and the habit is fatal, because the same reflex applied to target encoding or
+    imputation leaks a lot. In practice: put the scaler in a pipeline so it cannot be done wrong.
+
+    AND THE PRODUCTION VERSION OF THE SAME RULE: the scaler's mean and sd are MODEL PARAMETERS. They
+    have to be saved with the model and applied identically at inference. TRAINING/SERVING SKEW - the
+    training pipeline standardising and the serving path not - is one of the most common and most
+    invisible production ML bugs.""",
+
+    """4. THE FAILURE MODES
+
+A. NOT SCALING FOR A DISTANCE- OR GRADIENT-BASED MODEL. Measured: 63.2% vs 89.0% for logistic
+   regression, 75.2% vs 90.2% for k-NN.
+
+B. SCALING BEFORE SPLITTING. The scaler's mean and sd carry information from the test set. Small
+   effect, and it is the same habit that causes catastrophic leaks elsewhere.
+
+C. LABEL-ENCODING A NOMINAL CATEGORY. Measured below: mapping 40 cities to the integers 0-39 gave
+   48.9% test accuracy against 80.0% for one-hot. It invents an order that does not exist.
+
+D. ONE-HOT ENCODING A HIGH-CARDINALITY COLUMN. 50,000 user ids becomes 50,000 columns, most of them
+   almost always zero. Use target encoding, hashing, or embeddings.
+
+E. TARGET ENCODING WITHOUT SMOOTHING OR OUT-OF-FOLD COMPUTATION. This is the big one - see below. A
+   category with 19 rows and a raw target mean of 1.00 is a memorised label, not a feature.
+
+F. FORGETTING THE UNSEEN CATEGORY. Production will see a city that was not in training. Every encoder
+   needs an explicit fallback, and 'crashes at 3am on an unknown value' is a real outage.
+
+G. IMPUTING WITH THE FULL DATASET'S MEAN. Same leak as B, and worse when the missingness is related to
+   the target.
+
+H. TREATING MISSINGNESS AS NOISE. That a field is missing is often signal - people who do not fill in
+   income differ from people who do. Add an `is_missing` indicator column alongside the imputed value.
+
+I. SCALING AT TRAINING AND NOT AT SERVING. The model receives raw values at inference and produces
+   nonsense confidently. Save the scaler with the model.
+
+J. ENGINEERING FEATURES USING THE FUTURE. 'Average order value' computed over all time, used to
+   predict a purchase that contributed to that average. This is the leak that produces a model with
+   0.99 AUC offline and no lift at all in production.""",
+
+    """5. ENCODING CATEGORIES - measured
+
+    THE SETUP: one categorical column, 40 cities, where each city has a real effect on the label.
+
+        encoding                     train acc    test acc
+        label / ordinal (1 column)       47.0%       48.9%
+        one-hot (40 columns)             80.6%       80.0%
+        target enc, no smoothing         80.7%       80.0%
+        target enc, smoothing k=5        80.7%       80.0%
+        target enc, smoothing k=20       80.7%       80.0%
+
+    LABEL ENCODING IS WORSE THAN GUESSING. The majority class is about 53%; label encoding managed
+    48.9%. WHY: it maps city_3 -> 3 and city_17 -> 17, which tells a linear model that city_17 is
+    'more' than city_3 and that city_10 sits between them. NONE OF THAT IS TRUE, and the model can fit
+    nothing but a monotonic trend across an arbitrary alphabetical ordering.
+
+    THE NUANCE WORTH KNOWING: label encoding is fine for ORDINAL categories where the order is real -
+    small/medium/large, bronze/silver/gold - and it is much less harmful for TREE models, which can
+    carve an arbitrary integer axis into pieces. It is specifically 'nominal category + model that
+    assumes numeric meaning' that fails.
+
+    ONE-HOT works and costs 40 columns. At 40 categories that is fine; at 50,000 it is not.
+
+    TARGET ENCODING matched one-hot with ONE column instead of 40. That compression is why it is
+    popular for high-cardinality features.
+
+    AND AN HONEST NEGATIVE: SMOOTHING MADE NO DIFFERENCE TO TEST ACCURACY HERE - 80.0% at k=0, k=5 and
+    k=20. I expected the unsmoothed version to overfit and it did not, because 900 rows across 40
+    cities left most categories with enough data.
+
+    BUT THE MECHANISM IS STILL VISIBLE IN THE PER-CATEGORY NUMBERS, and this is where the real danger
+    is. See the next section - the aggregate metric hid something the detail shows plainly.""",
+
+    """6. WHY TARGET ENCODING IS DANGEROUS - the detail behind the average
+
+    12 of the 40 cities appeared 20 times or fewer in training. Their encodings:
+
+        city       rows    raw target mean    smoothed (k=20)    global mean
+        city_4       19               1.00               0.76           0.53
+        city_5       19               0.21               0.37           0.53
+        city_11      17               1.00               0.75           0.53
+        city_12      20               0.10               0.32           0.53
+        city_13      18               0.61               0.57           0.53
+
+    LOOK AT city_4: nineteen rows, and every single one was a positive. Its raw target encoding is
+    1.00 - which means the feature for those nineteen training rows LITERALLY CONTAINS THEIR OWN
+    LABEL. The model can achieve perfect training accuracy on them by reading the feature, having
+    learned nothing generalisable.
+
+    THAT IS LEAKAGE, and it is why target encoding has a reputation for producing models that look
+    superb in training and collapse in production.
+
+    THE TWO FIXES, and you need both:
+
+    1. SMOOTHING - pull each category's mean toward the global mean, weighted by how many rows it has:
+
+           encoded = (sum_of_targets + k * global_mean) / (count + k)
+
+       Watch it work in the table: city_4 goes from 1.00 to 0.76, city_12 from 0.10 to 0.32. Categories
+       with plenty of data barely move; categories with 17 rows get dragged most of the way back to
+       the global mean, WHICH IS THE CORRECT AMOUNT OF SCEPTICISM about a 17-row estimate.
+
+    2. OUT-OF-FOLD ENCODING - compute each row's encoding from the OTHER folds, never from the fold
+       it is in. This is what actually removes the self-referential leak; smoothing only reduces it.
+
+    WHY MY TEST ACCURACY DID NOT MOVE: the leak inflates TRAINING accuracy on the affected rows, and
+    with only 12 small categories out of 40 the effect on the aggregate test number was buried. THAT
+    IS THE LESSON RATHER THAN A LET-OFF - the danger is real, it is visible in the per-category detail,
+    and an aggregate metric is exactly the wrong instrument for detecting it.
+
+    THE PRACTICAL RULE: never target-encode without out-of-fold computation, regardless of whether
+    your validation score complains.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Feature engineering is everything between raw data and the numbers the model sees, and on tabular
+problems it usually matters more than which model you pick.
+
+On scaling: gradient descent uses one learning rate for every weight, and the gradient for a weight is
+proportional to its feature's magnitude. So if income is around 50,000 and age is around 40, the
+income weight dominates and age is effectively ignored. I measured it - the same logistic regression on
+the same data got 63% with raw features and 89% standardised, and at 1,000 epochs the raw version
+actually dropped to 37%, worse than guessing, because the optimisation was unstable.
+
+Which models care: distance-based ones most of all - k-NN went from 75% to 90%, because with raw
+features the distance between two people is basically their income difference. Trees are completely
+immune - I got 86.0% either way - because a split threshold is invariant to any monotonic rescaling.
+
+On encoding: label-encoding a nominal category is the classic mistake. Mapping 40 cities to 0 through
+39 tells a linear model that city_17 is more than city_3, and I measured 48.9% against 80.0% for
+one-hot - worse than the majority baseline. One-hot works but costs a column per category, so for
+high-cardinality features I would use target encoding, which matched one-hot with a single column.
+
+But target encoding leaks, and I would insist on out-of-fold computation. In my data twelve of forty
+cities had twenty rows or fewer, and one had nineteen rows that were all positive - so its encoded
+value was 1.00, which means the feature contained the label. Smoothing pulled that to 0.76. My test
+accuracy did not actually change, which I would report honestly - the leak inflates training accuracy
+on the affected rows and the aggregate hid it. The per-category detail is where you see it.
+
+And the rule underneath everything: fit every transformation on the training set only, and save it
+with the model so serving does the same thing.'""",
+
+    """8. THE TRANSFORMS, PIECE BY PIECE
+
+    STANDARDISATION
+        mu and sigma computed ON THE TRAINING SET
+        x' = (x - mu) / sigma
+        THESE TWO NUMBERS ARE MODEL PARAMETERS. They ship with the model, they are versioned with the
+        model, and if serving does not apply them the model is being fed a distribution it has never
+        seen - which produces confident nonsense rather than an error.
+
+    LOG TRANSFORM
+        x' = log(1 + x)   -- the +1 handles zeros
+        FOR RIGHT-SKEWED POSITIVE QUANTITIES. It also converts multiplicative effects into additive
+        ones: 'each extra bedroom multiplies price by 1.15' becomes a constant addition in log space,
+        which is exactly the shape a linear model can fit. Often worth more than scaling.
+
+    ONE-HOT
+        one binary column per category. `drop_first` avoids perfect collinearity for linear models;
+        keep all columns for trees and regularised models.
+        COST: p columns for p categories, and it is sparse.
+
+    TARGET ENCODING, smoothed
+        encoded = (sum_targets_in_category + k * global_mean) / (count + k)
+        k is your scepticism dial. k=20 means 'treat this category's evidence as worth about 20 rows
+        before I believe it'. Measured: it pulled a 19-row category from 1.00 to 0.76.
+        MUST BE COMPUTED OUT OF FOLD.
+
+    FREQUENCY ENCODING
+        replace the category with how often it occurs. Cheap, one column, no leakage at all, and
+        surprisingly effective when rarity itself is informative - rare cities, rare device types,
+        rare error codes.
+
+    HASHING
+        hash the category into m buckets. Fixed width, handles unseen categories automatically, and
+        collisions are the price. Good for very high cardinality in a streaming setting.
+
+    MISSINGNESS
+        impute (median for numeric, a 'missing' category for categorical) AND add an is_missing
+        indicator. The indicator frequently carries more signal than the imputed value, because
+        whether someone answered is itself information.""",
+
+    """9. ONE COLUMN, PROCESSED PROPERLY
+
+    THE RAW COLUMN: `signup_city`, a free-text field, 40,000 rows.
+
+    STEP 1 - LOOK AT IT. Value counts, top and bottom.
+        3,200 distinct values. The top 30 cover 82% of rows. There is a long tail of one-off
+        misspellings, and 1,400 rows are empty.
+        THIS FIVE-MINUTE STEP DECIDES EVERY LATER CHOICE, and skipping it is how people one-hot encode
+        3,200 columns.
+
+    STEP 2 - CLEAN. Lowercase, trim, collapse obvious variants ('New York', 'new york ', 'NYC').
+        Down to 2,900 distinct. Note that aggressive fuzzy merging is risky - it can silently combine
+        two real places.
+
+    STEP 3 - DECIDE THE ENCODING FROM THE CARDINALITY.
+        2,900 categories rules out one-hot for anything but a tree ensemble with plenty of data.
+        The plan: keep the top 30 as explicit categories, bucket the rest as 'other', AND add a
+        smoothed out-of-fold target encoding as a second column.
+        Two columns' worth of information from one messy field, and neither explodes the width.
+
+    STEP 4 - HANDLE MISSING EXPLICITLY. `city = "__missing__"` plus `city_is_missing = 1`. Check
+    whether missingness correlates with the target - if it does, that indicator is a real feature.
+
+    STEP 5 - HANDLE UNSEEN. Anything not in the top 30 at serving time maps to 'other'; the target
+    encoding falls back to the global mean. WRITE THIS DOWN AND TEST IT, because it is the branch that
+    only executes in production.
+
+    STEP 6 - FIT ON TRAIN ONLY. The top-30 list, the target means, the global mean, the imputation
+    value - ALL of them are computed on the training fold and applied unchanged to validation, test
+    and production.
+
+    STEP 7 - COMPUTE THE TARGET ENCODING OUT OF FOLD. Five folds; each row's encoding comes from the
+    other four. Measured motivation: a 19-row category with all-positive labels encodes to 1.00
+    in-fold, which is the label itself.
+
+    STEP 8 - CHECK WHAT YOU BUILT. Look at the encoded values for the smallest categories. If any sit
+    at exactly 0 or 1, your smoothing is too weak.
+
+    WHAT MADE THIS CORRECT was not the encoder choice - it was steps 1, 6 and 7: look first, fit on
+    train only, compute out of fold.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MEASURED EVIDENCE:
+        logistic regression, income+age:  raw 63.2% vs standardised 89.0% (and 36.8% at 1,000 epochs)
+        k-NN:                             raw 75.2% vs standardised 90.2%
+        decision tree:                    86.0% either way - trees are scale-invariant
+        40 cities:                        label encoding 48.9% vs one-hot 80.0% vs target enc 80.0%
+        smoothing:                        a 19-row all-positive category encoded 1.00 raw, 0.76 at k=20
+
+    WHO NEEDS SCALING:  linear/logistic · SVM · neural nets · k-NN · k-means · PCA.
+    WHO DOES NOT:       decision trees and every ensemble of them.
+
+THE #1 MISTAKE: label-encoding a nominal category for a model that reads numbers as quantities. It
+invents an order that does not exist, and it measured WORSE THAN THE MAJORITY BASELINE.
+
+THE #2 MISTAKE: not scaling for a gradient- or distance-based model. Twenty-six points on my data, and
+training longer does not help - it can make it worse.
+
+THE #3 MISTAKE: target encoding computed in-fold and unsmoothed. A small category's encoding becomes
+its own label, and the aggregate validation metric may not tell you.
+
+THE #4 MISTAKE: fitting any transformation on the full dataset before splitting. Small leak, fatal
+habit.
+
+THE #5 MISTAKE: not shipping the transformation with the model. Training/serving skew produces
+confident nonsense with no error message.
+
+ONE-SENTENCE TAKEAWAY: scale for anything that measures distance or follows a gradient and skip it
+entirely for trees, never impose a fake ordering on a nominal category, use out-of-fold smoothed target
+encoding when one-hot is too wide - and fit every one of these on the training set alone and save it
+with the model.""",
 ]
 
 for _e in ENTRIES:
