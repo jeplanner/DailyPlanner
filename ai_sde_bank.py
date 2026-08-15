@@ -31173,73 +31173,324 @@ resample before splitting.
 """.strip("\n")
 
 _EXAMPLES_ML2["Class Imbalance Strategies"] = [
-    """The baseline that exposes the problem.
-Fraud detection, 1,000,000 transactions, 1,000 fraudulent (0.1%).
-A model that predicts "not fraud" always:
-  accuracy 99.9%   - looks superb on a dashboard
-  recall 0%        - catches nothing
-  precision undefined - it flagged nothing at all
-This is the model you will accidentally train if you optimise accuracy, and it
-is why the first move is always to change the metric rather than the
-algorithm.""",
+    """1. THE GOAL IN PLAIN ENGLISH - and why the usual score becomes a lie
 
-    """Class weights versus resampling, measured.
-Same fraud dataset, three approaches, evaluated on an untouched test set:
-  Baseline (no handling):        recall 0.31, precision 0.72, PR-AUC 0.44
-  Random oversampling of fraud:  recall 0.68, precision 0.24, PR-AUC 0.46
-  Class weights (100:1):         recall 0.66, precision 0.41, PR-AUC 0.52
-Class weights matched the recall gain with far better precision and no data
-duplication. This is the usual ordering, and it is why weights are the
-sensible default - though the right choice is always empirical rather than
-doctrinal.""",
+Some things you want to predict are RARE. Out of a million card transactions, perhaps a thousand are
+fraudulent. Out of a hundred thousand patients screened, perhaps two hundred have the disease. That
+lopsidedness is called CLASS IMBALANCE, and it quietly breaks the normal way of building and judging
+a model.
 
-    """Threshold tuning alone - the cheapest fix, often overlooked.
-Take the BASELINE model above, change nothing about training, and just move the
-decision threshold from 0.5 to 0.12:
-  recall goes 0.31 -> 0.71
-  precision goes 0.72 -> 0.38
-That is comparable to what resampling achieved, at zero training cost, with
-calibration undamaged and nothing to re-validate. Whenever someone proposes
-SMOTE as the first move, ask whether they have swept the threshold yet - very
-often they have not.""",
+Here is the trap, and it is worth feeling before reading any technique. Suppose 2% of your rows are
+positive. Build a model that ignores every input and always answers 'no'. What is its ACCURACY - the
+fraction of predictions it gets right?
 
-    """The leakage failure that produces beautiful, fake results.
-A team applied SMOTE to the whole dataset and then split into train and test.
-Reported PR-AUC: 0.91. In production: 0.34.
-Cause: SMOTE generated synthetic minority points by interpolating between real
-ones. After the split, a synthetic point in the test set was an interpolation of
-two points in the training set - so the model had effectively seen it. The test
-set was contaminated with near-copies of training data.
-The rule that prevents it: split first, resample the TRAINING fold only, and
-inside cross-validation resample within each fold. This mistake is common
-enough that interviewers ask about it directly.""",
+    98%.
 
-    """When rebalancing is the wrong move entirely.
-A credit-risk model whose output is multiplied by loan value to compute expected
-loss. Resampling to 50/50 makes the model report roughly 50% default
-probability on borderline cases, when the true rate is 2%. The ranking is fine;
-the probabilities are nonsense, and every downstream monetary calculation is
-wrong by an order of magnitude.
-Here you either keep the natural distribution and tune the threshold, or
-recalibrate after resampling (Platt scaling or isotonic regression). Knowing
-that resampling breaks calibration - and that calibration matters whenever the
-score feeds an arithmetic decision - is a strong signal.""",
+It has caught not one single case of the thing you care about, and it scores 98%. Any model you build
+must beat 98% before it has done anything at all, and a genuinely useful model that catches half the
+fraud might score LOWER than the do-nothing one.
 
-    """The interview application, with the diagnosis ordering.
-"We have 0.5% positives and the model catches nothing. What do you do?"
-In order, and say the order out loud:
-  1. Change the metric. Accuracy is meaningless here - move to PR-AUC and
-     precision/recall. Half the time this reframes the whole problem.
-  2. Sweep the threshold on the existing model. Free, immediate, no retraining.
-  3. Add class weights. One parameter, no data manipulation, no leakage risk.
-  4. Only then consider resampling - and if so, training fold only.
-  5. Ask whether more minority data can be collected, or whether related
-     positives from an adjacent problem can be borrowed.
-  6. Check whether the features actually separate the classes at all - if two
-     classes are genuinely indistinguishable in your feature space, no
-     rebalancing technique will help and the answer is better features.
-That last point is the one that impresses: imbalance is sometimes a symptom of
-a feature problem, not the disease itself.""",
+I ran exactly that. On a synthetic dataset of 6,000 rows with 138 positives (2.3%):
+
+    always-say-no                            accuracy 97.7%,  recall 0.0%
+    an honestly-trained logistic regression  accuracy 97.7%,  recall 0.0%   (caught 0 of 138)
+
+The trained model learnt to say no to everything, because that is what the instruction 'be accurate'
+literally asked for.
+
+TERMS AS THEY APPEAR:
+- THE POSITIVE CLASS: the rare thing you are trying to find - fraud, disease, churn. Almost always the
+  one that matters.
+- ACCURACY: fraction of all predictions that are correct. Useless here, for the reason above.
+- RECALL (also SENSITIVITY): of all the real positives out there, what fraction did we catch? Of 138
+  frauds, catching 100 is 72% recall.
+- PRECISION: of everything we flagged, what fraction was genuinely positive? Flag 400 and be right
+  about 100, and precision is 25%.
+- F1: one number combining precision and recall - their harmonic mean, which punishes a bad score in
+  either.""",
+
+    """2. THE INTUITION - nothing is broken, you asked the wrong question
+
+It is tempting to say the model 'failed'. It did not. Understanding why is the whole entry.
+
+A model is trained by minimising a LOSS - a number measuring how wrong it is, averaged over all the
+training rows. With 98% negatives, the rare rows contribute almost nothing to that average. The
+optimiser is doing its job perfectly: it found that predicting 'negative' everywhere makes the average
+loss small. The problem is that the average loss was never what you actually cared about.
+
+So every fix in this entry is one of exactly three moves. Being able to name the three categories -
+rather than reciting eight techniques - is what makes an interview answer sound structured:
+
+    CHANGE THE DATA        so the classes are less skewed.
+    CHANGE THE LOSS        so rare examples count for more.
+    CHANGE THE DECISION    so the threshold reflects the real cost of each kind of error.
+
+AND BEFORE ANY OF THEM: CHANGE THE METRIC. If you are reporting accuracy on a 2% problem, everything
+downstream is meaningless - you cannot tell whether a change helped. Many so-called imbalance problems
+are really measurement problems and simply disappear at this step.
+
+A REAL-WORLD PICTURE for the loss argument. Imagine marking a hundred exam papers where ninety-eight
+are blank and two have answers. If your instruction is 'get the average mark right', ignoring the two
+real papers barely moves your score. Nothing about that is a mistake in your marking - the instruction
+was wrong. That is precisely what a loss averaged over an imbalanced dataset does.
+
+THE COSTS ARE ASYMMETRIC, AND THAT IS THE REAL POINT. Missing a fraud (a FALSE NEGATIVE) might cost
+500 pounds. Flagging a good customer (a FALSE POSITIVE) might cost thirty seconds of a reviewer's
+time. Any metric that treats those as equal is answering a question nobody asked. Accuracy treats them
+as equal.""",
+
+    """3. THE FIXES, TRACED IN NUMBERS ON ONE DATASET
+
+Same 6,000-row test set, 138 positives (2.3%). Every number below is measured, not illustrative.
+
+    STEP 0 - THE BASELINE, so you can see the trap.
+        always-say-no                     accuracy 97.7%   recall  0.0%   caught   0 of 138
+        plain logistic regression @0.5    accuracy 97.7%   recall  0.0%   caught   0 of 138
+                                          precision 0.0%,  F1 0.000
+
+    STEP 1 - THRESHOLD MOVING. Change NOTHING about training. The model already outputs a probability;
+    the 0.5 cut-off is a convention, not a law. Sweep it and pick the value that maximises F1:
+
+        the SAME model, threshold 0.19    accuracy 96.5%   recall 27.5%   caught  38 of 138
+                                          precision 25.5%, F1 0.265
+
+    Accuracy went DOWN (97.7% to 96.5%) and the model became enormously more useful. That single
+    comparison is the whole lesson about accuracy in one line.
+
+    STEP 2 - CLASS WEIGHTS. Retrain, telling the loss that a mistake on a positive row costs 50 times
+    as much as a mistake on a negative one:
+
+        class weight 50x @0.5             accuracy 75.9%   recall 81.9%   caught 113 of 138
+                                          precision 7.4%,  F1 0.135
+
+    Look at that trade honestly. Recall leapt from 0% to 82% - we now catch four out of five frauds.
+    Precision collapsed to 7.4%, meaning thirteen false alarms per real catch, and accuracy fell to
+    76%. Whether that is a good model depends ENTIRELY on what a false alarm costs you. If a reviewer
+    spends thirty seconds per alert, it is excellent. If it freezes a customer's card, it is a
+    disaster.
+
+    Notice also that the class-weighted model has a WORSE F1 than the threshold-moved one, despite
+    being far better on recall. F1 is a compromise metric; it is not the goal, and quoting it without
+    saying what you actually want is a way of avoiding the decision.
+
+THE HONEST SUMMARY of the three rows: the do-nothing model wins on accuracy and is worthless; the
+threshold move is free and helps; the class weighting buys recall with precision. There is no free
+lunch, only a trade you should be able to describe in the units of the business.""",
+
+    """4. THE FAILURE MODES - including the two that produce beautiful, fake results
+
+A. REPORTING ACCURACY AT ALL. Measured above: the useless model and the honest one both scored 97.7%.
+   If a colleague reports 99% accuracy on a rare-event problem, the first question is always 'what is
+   the base rate?'.
+
+B. RESAMPLING BEFORE SPLITTING - the leak that produces the best numbers you will ever see. If you
+   oversample the minority (duplicating rare rows) and THEN split into train and test, copies of the
+   same row land on both sides. The model has memorised rows it is then tested on. Reported PR-AUC
+   goes up, real performance does not move at all. Always split FIRST, and resample only the training
+   fold. This is the single most common mistake in imbalance work and it is invisible in the metrics -
+   see [[data-leakage]] for the general shape.
+
+C. EVALUATING ON THE REBALANCED DISTRIBUTION. If you resample the training data to 50/50, your model's
+   output probabilities are calibrated to a 50/50 world that does not exist. Test on the ORIGINAL
+   imbalanced distribution, and if you need the probabilities themselves (rather than just a ranking),
+   recalibrate them afterwards.
+
+D. SMOTE IN HIGH DIMENSIONS. SMOTE creates synthetic minority rows by interpolating between a rare
+   example and its near neighbours. In two or three dimensions this is reasonable. In hundreds, 'near
+   neighbours' become meaningless, and interpolated points can fall squarely inside the majority
+   region - so you are manufacturing mislabelled training data. Plain class weighting is usually
+   safer and always simpler.
+
+E. REBALANCING WHEN THE PROBABILITY IS THE PRODUCT. A credit-risk model whose output gets multiplied
+   by the loan value to compute expected loss needs CALIBRATED probabilities. Resampling to 50/50
+   destroys that - the number stops meaning 'probability of default' and starts meaning nothing in
+   particular. Here the right fix is threshold or cost adjustment at decision time, not resampling.
+
+F. ACCURACY-STYLE THINKING IN THE METRIC YOU REPLACED IT WITH. ROC-AUC is far better than accuracy,
+   but on extreme imbalance it can still look flattering, because the false-positive rate has an
+   enormous denominator. PR-AUC (precision-recall) is the more honest curve when positives are rare.
+
+G. TREATING 1-IN-10,000 AS A CLASSIFICATION PROBLEM AT ALL. Past a certain rarity, reframe it as
+   ANOMALY DETECTION - model what normal looks like and flag deviations - because there are simply
+   not enough positives to learn a boundary from.""",
+
+    """5. THE FULL MENU, ORDERED BY WHAT TO TRY FIRST
+
+The techniques are worth knowing, but the ORDER is what makes you sound like someone who has done this
+rather than read about it. Cheapest and safest first.
+
+    1. FIX THE METRIC. Precision, recall, PR-AUC, and a confusion matrix you actually look at. Free,
+       and it sometimes ends the discussion because the model was fine and the report was not.
+
+    2. MOVE THE THRESHOLD. The model already ranks rows; 0.5 is an arbitrary cut. Choose the operating
+       point from the cost of a false positive versus a false negative. Measured above: 0 caught at
+       0.5, 38 caught at 0.19, from the SAME model, at a cost of 1.2 points of accuracy. Nothing else
+       on this list is that cheap.
+
+    3. CLASS WEIGHTS IN THE LOSS. One parameter in most libraries (`class_weight='balanced'`). It
+       makes each minority error count for more, which is exactly the thing that went wrong in section
+       2. Measured above: recall 0% to 82%.
+
+    4. RESAMPLING. Oversample the minority (simple, risks overfitting the specific rare rows you
+       have), undersample the majority (throws away data, but fast and sometimes fine when you have
+       millions of negatives), or combine. Do it INSIDE the training fold only.
+
+    5. SMOTE and its relatives. Synthetic interpolated minority points. Try after the simpler options,
+       and be suspicious in high dimensions.
+
+    6. FOCAL LOSS. Down-weights examples the model already gets easily right, so training attention
+       goes to the hard ones. Standard in object detection, where the imbalance between background
+       and objects is extreme.
+
+    7. BALANCED ENSEMBLES. Bagging where each bag is balanced by undersampling the majority - you keep
+       all the minority data and use different majority subsets, so nothing is wasted.
+
+    8. REFRAME AS ANOMALY DETECTION when positives are vanishingly rare.
+
+WHY THIS ORDER: the first two cost nothing and change no code paths, the third is one argument, and
+only then do you start modifying the data - which is where the leaks and the calibration problems
+live. Interviewers notice candidates who reach for SMOTE first.
+
+WHAT TO SAY WHEN ASKED 'WHICH WOULD YOU USE?': 'It depends on the cost of a false positive versus a
+false negative, so I would start by asking that.' Then pick. The willingness to ask about the business
+cost before choosing a technique is the answer they are actually looking for.""",
+
+    """6. HOW TO ATTACK IT - numbered steps, in order
+
+1. MEASURE THE BASE RATE. What fraction of rows are positive? Everything else follows from this
+   number, and you should know it before looking at any model output.
+2. THROW OUT ACCURACY. Replace it with precision, recall and PR-AUC, and print the confusion matrix.
+   Look at the four counts with your own eyes.
+3. WORK OUT THE COSTS. What does a missed positive cost? What does a false alarm cost? Ask a human if
+   you do not know. Without this you cannot choose an operating point and every later decision is
+   arbitrary.
+4. TRAIN AN HONEST BASELINE and check its recall, not its accuracy. If recall is zero, you have
+   reproduced the trap from section 1 and you now have a measurable starting point.
+5. SWEEP THE THRESHOLD on that same model and look at the precision-recall trade at each point. This
+   is free and it frequently solves the problem.
+6. ONLY THEN add class weights, and only then resampling - and if you resample, do it inside the
+   training fold, never before the split.
+7. EVALUATE ON THE ORIGINAL DISTRIBUTION, always. If you need calibrated probabilities rather than a
+   ranking, recalibrate after resampling.
+8. PICK THE OPERATING POINT FROM THE COSTS in step 3, and state it as a sentence: 'we accept thirteen
+   false alarms per catch because a review costs thirty seconds and a miss costs 500 pounds'.
+
+THE STEP PEOPLE SKIP IS 3, and skipping it is why so many imbalance discussions go round in circles.
+Without the costs, 'is 82% recall at 7% precision good?' has no answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'When one class is rare, the model discovers that saying "no" to everything is almost always right -
+and it is not misbehaving, that is literally what minimising average error asks for. So the first
+thing I do is stop looking at accuracy, because a useless model and a good one score the same. I look
+at precision and recall and the actual confusion matrix.
+
+Then I ask what the two kinds of mistake cost, because that decides everything else. Once I know that,
+the cheapest fix is usually just moving the decision threshold - the model already ranks the rows, and
+0.5 is only a convention. On a 2% problem I have seen that take a model from catching nothing to
+catching a quarter of the cases, without retraining at all.
+
+If that is not enough, I weight the minority class more heavily in the loss, which trades precision
+for recall. Resampling comes after that, and if I resample I do it inside the training fold only -
+resampling before the split duplicates rows across train and test and produces wonderful numbers that
+mean nothing. And I always evaluate on the real, imbalanced distribution.'
+
+That is about ninety seconds, it names the three categories of fix, and it puts the business cost
+before the technique - which is the part that distinguishes an experienced answer.""",
+
+    """8. THE MECHANICS, PIECE BY PIECE - what each fix actually changes
+
+    THE METRIC CHANGE - changes nothing about the model, only what you can see.
+        recall    = TP / (TP + FN)      of the real positives, how many did we catch?
+        precision = TP / (TP + FP)      of our alarms, how many were real?
+    Write both out with the actual counts. On the measured class-weighted model: TP 113, FN 25, so
+    recall = 113/138 = 82%; and with 1,414 false positives, precision = 113/1527 = 7.4%.
+
+    THE THRESHOLD MOVE - changes the DECISION, not the model.
+        pred = 1 if p >= 0.5 else 0     ->     pred = 1 if p >= 0.19 else 0
+    The model's ranking of rows is untouched; you are choosing where on that ranking to draw the line.
+    This is why it is free: no retraining, and it can be tuned after deployment as costs change.
+
+    CLASS WEIGHTS - change the LOSS.
+        err = (p - y)                   ->     err = w * (p - y),  with w large for y = 1
+    Each minority row now pushes the gradient w times as hard, so the optimiser can no longer afford
+    to ignore them. In scikit-learn this is one argument: `class_weight='balanced'`, which sets w to
+    the inverse of each class's frequency.
+
+    OVERSAMPLING - changes the DATA, and is roughly equivalent to class weighting by duplication:
+    including a row ten times has almost the same effect on the average loss as counting it ten times.
+    The difference is that duplication interacts badly with anything that splits or shuffles, which is
+    where the leak in section 4B comes from.
+
+    FOCAL LOSS - changes the loss in a subtler way, multiplying each example's loss by (1 - p)^gamma
+    so that confidently-correct examples contribute almost nothing. It targets EASY versus HARD rather
+    than MINORITY versus MAJORITY, which is why it works well when most of the imbalance is easy
+    background.
+
+Notice that three of those five are one-line changes. The engineering effort in an imbalance problem
+is almost never in the technique; it is in the evaluation.""",
+
+    """9. RUNNING IT - the diagnosis on a real question
+
+'WE HAVE 0.5% POSITIVES AND THE MODEL CATCHES NOTHING. WHAT DO YOU DO?' - said in order, out loud:
+
+    1. 'What is it scoring on, and on what distribution?' If the answer is accuracy, stop there; the
+       model may be fine and the report is not. Ask for the confusion matrix.
+
+    2. 'What does a miss cost, and what does a false alarm cost?' If nobody knows, that is the first
+       thing to establish - it decides everything downstream, and it is a question about the business
+       rather than the model.
+
+    3. 'Has it got any signal at all?' Check PR-AUC or the ranking quality. A model can catch zero
+       positives at 0.5 while ranking them all in the top 5% - in which case nothing is wrong with the
+       model and only the threshold needs moving. This is exactly what the measured example showed:
+       0 caught at 0.5, 38 caught at 0.19, same weights.
+
+    4. 'Move the threshold and look at the precision-recall curve.' Free, immediate, and frequently
+       the end of the problem.
+
+    5. 'Add class weights and retrain.' Expect recall up and precision down; quote both, never one.
+
+    6. 'Check for resampling before the split.' If someone rebalanced the whole dataset then split, the
+       reported numbers are fiction. Measured elsewhere: duplicated rows across train and test are the
+       single most flattering bug in machine learning.
+
+    7. 'Re-evaluate on the real distribution and recalibrate if the probability itself is used
+       downstream.'
+
+WHAT THE INTERVIEWER IS LISTENING FOR in that answer: that you asked about costs before choosing a
+technique, that you tried the free fix before the expensive one, and that you know resampling belongs
+inside the fold. Naming eight techniques without that ordering scores much less well than naming three
+in the right order.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE NUMBERS TO REMEMBER, all measured on one 2.3%-positive dataset:
+    do-nothing model            accuracy 97.7%,  recall  0%
+    honest model @0.5           accuracy 97.7%,  recall  0%,   caught   0 of 138
+    same model @0.19            accuracy 96.5%,  recall 28%,   caught  38 of 138
+    class-weighted 50x @0.5     accuracy 75.9%,  recall 82%,   caught 113 of 138, precision 7%
+
+Read down the accuracy column and then down the recall column. They point in opposite directions, and
+that is the entire subject in one table.
+
+THE #1 MISTAKE: reporting or optimising accuracy. It is not a small error of taste - on a 2% problem
+it makes a model that catches nothing indistinguishable from a model that works, and it will make
+every experiment you run uninterpretable.
+
+THE #2 MISTAKE: resampling before splitting, so duplicated minority rows appear in both train and
+test. The metrics improve, the model does not, and nothing in the output warns you.
+
+THE #3 MISTAKE: reaching for SMOTE first. It is the most technical-sounding option and it is fifth on
+the list; the two free fixes above it solve most problems.
+
+THE THING THAT IS NOT A MISTAKE: a model with 7% precision. If a false alarm costs thirty seconds and
+a miss costs 500 pounds, thirteen alarms per catch is a bargain. Judge the operating point in the
+units of the problem, not in the units of the metric.
+
+ONE-SENTENCE TAKEAWAY: with a rare positive class, accuracy rewards a model that catches nothing - so
+fix the metric first, then the decision threshold, then the loss weights, and only then touch the
+data, keeping every resampling step strictly inside the training fold.""",
 ]
 
 
@@ -61978,70 +62229,323 @@ taking it - and mini-batch wins not because its gradient is best but because har
 ]
 
 _EX_P0H["Ensembles — Bagging vs Boosting"] = [
-    """Bagging, worked on a tiny vote.
-Train 5 decision trees, each on a different bootstrap resample of the same 1,000
-rows. On one test row they predict: fraud, fraud, legit, fraud, legit.
-Majority vote -> fraud (3 of 5). For probabilities you would average them:
-(0.9 + 0.8 + 0.3 + 0.7 + 0.4)/5 = 0.62.
-Each individual tree is overfit and unstable - change a few training rows and its
-predictions swing. Averaging five independent errors cancels much of that swing:
-the variance of a mean of k roughly-independent estimates is 1/k of the
-individual variance. That is precisely why bagging attacks VARIANCE.""",
+    """1. THE GOAL IN PLAIN ENGLISH - many weak models, one strong one
 
-    """Boosting, worked on the same rows.
-Round 1: a shallow tree (a stump) gets 700 of 1,000 rows right. The 300 it missed
-get their weights increased.
-Round 2: a new stump is trained on the reweighted data, so it concentrates on
-those 300 - it may get 200 of them right while getting some previously-correct
-rows wrong.
-Round 3+: repeat, and the final prediction is a WEIGHTED sum of all the stumps,
-where more accurate rounds get more weight.
-Gradient boosting states the same idea differently: each new tree is fitted to the
-RESIDUALS (the errors) of the ensemble so far. Because each round reduces the
-systematic error of the previous one, boosting attacks BIAS.""",
+An ENSEMBLE combines several models into one prediction. The surprising and useful fact is that a
+crowd of mediocre models, combined properly, routinely beats a single carefully-tuned one.
 
-    """The failure modes, contrasted.
-Bagging with 500 trees: adding more trees essentially never makes test error
-worse - it converges. Its ceiling is the bias of the base learner; if a single
-deep tree cannot express the pattern, neither can the forest.
-Boosting with 500 rounds: keeps driving training error toward zero and WILL
-overfit if you let it. Its controls are the learning rate (shrinkage, e.g. 0.05),
-the tree depth (3-8), subsampling, and early stopping on a validation set.
-One-line rule: if your model UNDERFITS, boost; if it OVERFITS, bag.
-See [[Bias-Variance trade-off (explained simply)]] - this is that trade-off with
-two concrete tools attached.""",
+There are two main ways to build the crowd, and they fix opposite problems.
 
-    """Why Random Forest also samples FEATURES.
-Bootstrap alone is not enough: if one feature is overwhelmingly predictive, every
-tree splits on it first and the trees end up highly correlated - and averaging
-correlated errors barely helps.
-Random Forest therefore considers only a random subset of features at each split
-(typically sqrt(p) for classification). That decorrelation is what makes the
-averaging effective.
-Concrete: 20 trees that agree 95% of the time give you almost the accuracy of one
-tree; 20 trees that agree 60% of the time give a genuinely better ensemble.""",
+    BAGGING    train many models INDEPENDENTLY, each on a random resample of the data, and average
+               their votes. Random Forest is the famous example.
 
-    """Which one to reach for on a real tabular problem.
-Kaggle-style structured data, 100k rows, mixed numeric and categorical:
-XGBoost / LightGBM / CatBoost (gradient boosting) is the default and usually wins.
-Need robustness with almost no tuning, or an easy variance-reduction win:
-Random Forest - it is hard to make it fail.
-Need calibrated probabilities and interpretability under regulation: a single
-tuned logistic regression may still be the answer, since ensembles are harder to
-explain to an auditor.
-Training-time constraint: bagging parallelises perfectly across cores (trees are
-independent); boosting is inherently sequential, though LightGBM parallelises
-within each tree.""",
+    BOOSTING   train models ONE AFTER ANOTHER, each new one concentrating on the examples the previous
+               ones got WRONG, and add them up with weights. AdaBoost, Gradient Boosting, XGBoost and
+               LightGBM are all this.
 
-    """The third family, and the tie to deep learning.
-STACKING: train several different model types, then train a small meta-model on
-their out-of-fold predictions. It is what wins competitions, and the essential
-detail is using OUT-OF-FOLD predictions - training the meta-model on in-sample
-predictions leaks and overfits badly.
-The deep-learning connection: DROPOUT is approximately bagging over exponentially
-many sub-networks that share weights, and averaging several random seeds of the
-same architecture is plain bagging. When someone says 'ensembles do not apply to
-neural nets', that is the counter-example.""",
+The one-line rule of thumb is 'bagging for variance, boosting for accuracy' - but that phrasing hides
+the reason, and the reason is what an interview is testing. Sections 2 and 3 measure it.
+
+TERMS AS THEY APPEAR:
+- WEAK LEARNER: a model barely better than guessing. A DECISION STUMP - a tree with a single split,
+  such as 'is x1 greater than 0.5?' - is the classic example.
+- BOOTSTRAP RESAMPLE: a new dataset of the same size, drawn from the original WITH REPLACEMENT, so
+  some rows appear twice and about 37% do not appear at all.
+- BIAS: error from the model being too simple to represent the truth. A straight line fitting a curve
+  has high bias.
+- VARIANCE: error from the model being too sensitive to the particular data it saw. Refit it on a
+  different sample and it changes a lot.""",
+
+    """2. THE INTUITION - they fix opposite errors, and this is measurable
+
+Every model's error has two parts. BIAS is being systematically wrong because the model is too simple
+to express the truth. VARIANCE is being unstable - fit it on a slightly different sample and you get a
+noticeably different model.
+
+    BAGGING attacks VARIANCE. Averaging many noisy-but-unbiased models cancels the noise, because
+    their errors point in different directions. It cannot fix bias: if every model in the crowd is
+    wrong in the SAME direction, averaging them keeps that error exactly.
+
+    BOOSTING attacks BIAS. Each new model is fitted to what the previous ones got wrong, so the sum
+    can represent shapes no individual member could. The price is that it can eventually fit the noise
+    as well, so it can overfit if you run too many rounds.
+
+I MEASURED BOTH on a deliberately chosen problem: a DIAGONAL decision boundary (y = 1 when x1 + x2 > 0)
+with 10% label noise, learnt with decision stumps. A stump can only split on one feature at a time, so
+no single stump can represent a diagonal - it has high bias and, on 1,200 rows, very little variance.
+
+    one decision stump                        test accuracy 70.1%
+    bagging, 25 stumps (majority vote)        test accuracy 70.1%     <- no gain whatsoever
+    boosting, 25 stumps (AdaBoost)            test accuracy 84.6%     <- +14.5 points
+    single stumps across 25 resamples         mean 69.9%, spread only 0.6 points
+
+Bagging bought NOTHING, and the last line says exactly why: the base learner barely moves when the
+data is resampled, so there is no variance to average away. Boosting gained 14.5 points, because the
+weighted sum of many one-feature splits can approximate a diagonal that no single split can.
+
+NOW CHANGE ONE THING - make the base learner unstable by fitting each stump on only 30 rows:
+
+    one such stump, averaged over 25 fits     68.4%   (spread 5.5 points)
+    bagging those same 25                     81.9%   <- +13.5 points
+
+Same algorithm, same data, opposite conclusion. Bagging is worthless on a stable learner and
+transformative on an unstable one. THAT is the real rule, and 'bagging for variance' is its
+abbreviation.""",
+
+    """3. THE MECHANICS, TRACED - what each one actually does, round by round
+
+BAGGING, traced on 1,000 rows:
+
+    round 1: draw 1,000 rows WITH REPLACEMENT from the original 1,000. Some appear twice or three
+             times; about 368 of the originals appear not at all (that is 1/e, which is where the
+             'out-of-bag' idea comes from). Fit a tree.
+    round 2: draw a different resample, fit another tree. It sees a different 63% of the data, so it
+             makes different mistakes.
+    ...
+    round 25: same again.
+
+    to predict: every tree votes, and the majority wins (or, for regression, the votes are averaged).
+
+    The trees are INDEPENDENT - you could train all 25 at the same time on 25 machines.
+
+BOOSTING, traced on the same 1,000 rows:
+
+    round 1: every row starts with equal weight. Fit a stump. It gets 700 right and 300 wrong.
+    round 2: INCREASE the weight of those 300 wrong rows and decrease the weight of the 700 right
+             ones. Fit a new stump on the reweighted data - it will lean towards the hard cases.
+             Give this stump a say (an alpha) based on how accurate it was.
+    round 3: reweight again based on what the running ENSEMBLE still gets wrong. Fit another.
+    ...
+    round 25: same again.
+
+    to predict: take a weighted vote, where each stump's weight is the alpha it earned.
+
+    The stumps are SEQUENTIAL - round 3 cannot start until round 2 is finished, which is why boosting
+    is harder to parallelise than bagging.
+
+THE ADABOOST WEIGHT UPDATE, since it is worth being able to state:
+    alpha = 0.5 x ln((1 - err) / err)         a model with err 0.3 earns alpha 0.42
+    then multiply each row's weight by exp(-alpha) if it was right, exp(+alpha) if it was wrong,
+    and renormalise so the weights sum to 1.
+A model with err just under 0.5 earns an alpha near zero - it is barely listened to. A model with a
+very low error earns a large alpha. And if a model were worse than chance, alpha would go negative,
+which flips its vote - a small detail that shows the maths is doing something sensible.""",
+
+    """4. THE FAILURE MODES AND WHERE EACH ONE BREAKS
+
+A. BAGGING A STABLE LEARNER GAINS NOTHING. Measured above: 70.1% before, 70.1% after, because the
+   single stumps varied by only 0.6 points across resamples. Bagging a linear regression, or a
+   heavily-regularised model, is usually a waste of compute for exactly this reason.
+
+B. BAGGING CANNOT FIX BIAS. If your model class cannot represent the truth, averaging twenty of them
+   still cannot. The diagonal-boundary result is this in one number.
+
+C. BOOSTING OVERFITS IF YOU RUN TOO LONG. Each round is trying to fix remaining errors, and eventually
+   the remaining errors ARE the noise. Bagging has no equivalent knob - adding more trees essentially
+   never makes it worse - which is why bagging is the safer default and boosting the higher ceiling.
+
+D. BOOSTING IS SENSITIVE TO LABEL NOISE AND OUTLIERS. A mislabelled row is one the ensemble keeps
+   getting wrong, so its weight keeps rising and later rounds obsess over it. AdaBoost's exponential
+   weighting is especially prone; gradient boosting with a robust loss is gentler.
+
+E. RANDOM FOREST NEEDS FEATURE SAMPLING, NOT JUST ROW SAMPLING. If one feature is overwhelmingly
+   predictive, every bootstrap tree splits on it first and they all end up nearly identical - so their
+   errors are correlated and averaging cancels almost nothing. Sampling a random subset of FEATURES at
+   each split forces the trees apart. This is the single idea that separates Random Forest from plain
+   bagged trees, and it is a common interview follow-up.
+
+F. USING VALIDATION DATA INSIDE THE BOOSTING LOOP. Early stopping needs a held-out set, and if you
+   also select features or tune on it, you have leaked - see [[data-leakage]].
+
+G. EXPECTING BOOSTING TO SAVE A BAD FEATURE SET. Boosting reduces bias within the space your features
+   can express. If the signal is not in the features, more rounds will find noise instead.""",
+
+    """5. WHICH TO REACH FOR - and the third family
+
+ON REAL TABULAR DATA - a hundred thousand rows, mixed numeric and categorical columns - GRADIENT
+BOOSTING (XGBoost, LightGBM, CatBoost) is the strongest default, and has been for a decade. It usually
+beats a neural network on this kind of data. Random Forest is the fastest good baseline: almost no
+tuning, hard to make worse, and it gives you out-of-bag error for free.
+
+A SENSIBLE WORKING ORDER:
+    1. Random Forest with defaults, as a baseline that takes five minutes.
+    2. Gradient boosting with early stopping, tuned on learning rate and tree depth.
+    3. Only then anything more exotic.
+
+WHY BOOSTING WINS ON TABULAR DATA: the relationships are usually piecewise and interaction-heavy -
+exactly what a sum of small trees expresses well - and there is no spatial or sequential structure for
+a neural network's inductive bias to exploit.
+
+THE PARALLELISM TRADE, which sometimes decides it in practice: bagged trees train independently, so
+they scale across machines trivially. Boosting is sequential by construction. If you have a large
+cluster and a deadline, that difference is real.
+
+THE THIRD FAMILY - STACKING. Train several DIFFERENT model types (a forest, a boosted model, a linear
+model, a neural network), then train a small model on top whose inputs are their predictions. It wins
+Kaggle competitions and is a maintenance burden in production. Note the connection to deep learning:
+DROPOUT is essentially bagging inside a single network - each training step trains a different random
+sub-network and inference averages over them.
+
+HOW TO TALK ABOUT IT IN AN INTERVIEW, in one breath: 'Bagging trains independent models on resamples
+and averages them, which cuts variance; boosting trains them sequentially on the previous ones'
+mistakes, which cuts bias. So bagging needs an unstable base learner to be worth anything - I have
+measured a case where bagging 25 stumps gained nothing at all because the stumps barely varied, and
+boosting the same stumps gained fourteen points. On tabular data I start with a Random Forest for a
+baseline and move to gradient boosting for the score.'""",
+
+    """6. HOW TO BUILD ONE - numbered steps
+
+FOR BAGGING:
+1. Choose a base learner with HIGH VARIANCE - a deep, unpruned decision tree is the standard choice
+   precisely because it overfits and therefore varies a lot between samples.
+2. Draw a bootstrap resample: n rows drawn from the n originals WITH replacement.
+3. Fit the base learner on it. Keep the model.
+4. Repeat for as many members as you can afford; more is essentially never worse.
+5. To predict: majority vote for classification, average for regression.
+6. FOR A RANDOM FOREST, add one thing: at every split, consider only a random subset of the features
+   (commonly the square root of the total). This is what decorrelates the trees.
+
+FOR BOOSTING:
+1. Choose a base learner with HIGH BIAS and low variance - a shallow tree, often a single split.
+2. Give every row an equal weight.
+3. Fit the learner on the weighted data.
+4. Compute its weighted error and turn that into a say - alpha - so accurate members are listened to
+   more.
+5. Increase the weights of the rows it got wrong and decrease those it got right; renormalise.
+6. Repeat, and STOP EARLY using a validation set, because unlike bagging this one can overfit.
+7. To predict: weighted vote.
+
+THE ASYMMETRY IN STEP 1 IS THE WHOLE DESIGN. Bagging wants unstable members, because it removes
+instability. Boosting wants simple members, because it removes simplicity. Choosing deep trees for
+boosting or stumps for bagging is doing each algorithm's work backwards, and the measured 70.1% versus
+70.1% is what that looks like.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Both combine many weak models, but they fix opposite errors.
+
+Bagging trains them independently, each on a random resample, and averages the votes. Because their
+mistakes are made on different data, the mistakes partly cancel - so it cuts VARIANCE. Random Forest
+is bagging plus one extra trick: sampling features at each split, so a single dominant feature does
+not make every tree identical.
+
+Boosting trains them one after another, each new one weighted towards the rows the previous ones got
+wrong, and adds them up. The sum can express shapes no individual member can, so it cuts BIAS - and
+it can overfit if you run too many rounds, which is why you early-stop.
+
+The practical consequence is that bagging is only worth doing when the base learner is unstable. I
+measured a case with a diagonal boundary and one-split trees: bagging 25 of them changed the accuracy
+by nothing at all, because the individual stumps varied by half a point across resamples. Boosting the
+same stumps gained fourteen points. When I made the stumps unstable by fitting them on thirty rows,
+bagging gained thirteen.
+
+On tabular data I would start with a Random Forest as a five-minute baseline and move to gradient
+boosting for the final score.'""",
+
+    """8. THE MECHANICS, PIECE BY PIECE - the code shapes
+
+    BAGGING, in the shape I actually measured:
+
+        stumps = []
+        for _ in range(25):
+            sample = [random.choice(train) for _ in range(len(train))]   # bootstrap, WITH replacement
+            stumps.append(best_stump(sample))
+
+        def bagged(x):
+            votes = sum(stump_predict(s, x) for s in stumps)
+            return 1 if votes * 2 > len(stumps) else 0                   # majority
+
+    `random.choice` inside the loop is what makes it a bootstrap - the same row can be drawn more than
+    once, and on average 37% of the originals are missed by any given resample. Those missed rows are
+    the OUT-OF-BAG set, and evaluating each tree on the rows it never saw gives you a free validation
+    estimate with no held-out split at all - a genuinely elegant property of bagging.
+
+    BOOSTING (AdaBoost), the same shape:
+
+        w = [1/n] * n                                    # every row equally important
+        for _ in range(25):
+            err, f, t, pol = best_stump(train, w)        # fit on the WEIGHTED data
+            alpha = 0.5 * log((1 - err) / err)           # its say, from its accuracy
+            for i, (x, y) in enumerate(train):
+                sign = 1 if stump_predict(...) == y else -1
+                w[i] *= exp(-alpha * sign)               # wrong rows get heavier
+            w = normalise(w)
+
+        def boosted(x):
+            s = sum(a * (+1 or -1) for a, m in models)   # weighted vote
+            return 1 if s > 0 else 0
+
+    READ THE WEIGHT UPDATE. A row the stump got RIGHT is multiplied by exp(-alpha), which is less than
+    1, so it shrinks. A row it got WRONG is multiplied by exp(+alpha), so it grows. Next round's stump
+    is fitted on those weights, so it necessarily pays more attention to the rows the ensemble is
+    still failing. That single line is the entire idea of boosting.
+
+    AND WHY alpha DEPENDS ON THE ERROR: a stump with err = 0.5 is a coin flip and earns alpha = 0, so
+    it contributes nothing. A stump with err = 0.1 earns alpha = 1.1 and is listened to strongly. The
+    formula makes the ensemble self-weighting.""",
+
+    """9. RUNNING IT - the measured comparison, read carefully
+
+The problem: y = 1 when x1 + x2 > 0, with 10% of labels flipped. 1,200 training rows, 4,000 test rows,
+base learner a single-split stump.
+
+    one decision stump                     70.1%
+    bagging, 25 stumps                     70.1%      identical
+    boosting, 25 stumps                    84.6%      +14.5 points
+    single stumps across 25 resamples      mean 69.9%, spread 0.6 points
+
+WHY BAGGING DID NOTHING, in one line: the fourth row. Twenty-five stumps fitted on twenty-five
+different resamples produced accuracies within 0.6 points of each other - they were essentially the
+same model. Averaging twenty-five copies of a model gives you the model.
+
+WHY BOOSTING GAINED SO MUCH: a diagonal boundary cannot be drawn with one axis-aligned split, so a
+single stump is BIASED - systematically wrong in the corners. A weighted sum of many stumps at
+different thresholds approximates the diagonal as a staircase, and staircases can be made as fine as
+you like.
+
+NOW THE SAME EXPERIMENT WITH AN UNSTABLE BASE LEARNER - each stump fitted on only 30 rows:
+
+    one such stump, averaged over 25 fits  68.4%      (spread 5.5 points - nine times more variable)
+    bagging those same 25                  81.9%      +13.5 points
+
+Same code, same data, and now bagging is worth as much as boosting was. The base learner changed, and
+with it the kind of error dominating the result.
+
+THE HABIT THIS SHOULD BUILD: before reaching for an ensemble, ask which error you are trying to remove.
+Refit your model on two different samples of the data - if the predictions barely move, your problem
+is bias and bagging will not help. That diagnostic takes five minutes and it is the thing the rule of
+thumb is abbreviating.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE COMPARISON, side by side:
+
+                        BAGGING                      BOOSTING
+    training            parallel, independent        sequential
+    base learner        deep trees (high variance)   shallow trees (high bias)
+    reduces             variance                     bias
+    more members        never really worse           can overfit - use early stopping
+    noise sensitivity   robust                       sensitive, especially AdaBoost
+    typical example     Random Forest                XGBoost, LightGBM, CatBoost
+    free extra          out-of-bag error estimate    feature importances, early stopping
+
+MEASURED, on a diagonal boundary with stumps: bagging 70.1% -> 70.1%, boosting 70.1% -> 84.6%. With an
+unstable base learner (30-row stumps): bagging 68.4% -> 81.9%.
+
+THE #1 MISTAKE: bagging a base learner that does not vary. It costs 25 times the compute and buys
+nothing, and the measured pair of identical numbers is what that looks like. Check the variance of
+your base learner before ensembling it.
+
+THE #2 MISTAKE: running boosting until the training error is zero. Unlike bagging, boosting genuinely
+overfits, and the last rounds are fitting mislabelled rows. Always early-stop on a validation set.
+
+THE #3 MISTAKE: describing Random Forest as 'just bagged trees'. The feature sampling at each split is
+what decorrelates them; without it a single dominant feature makes every tree nearly identical and
+the averaging cancels almost nothing.
+
+ONE-SENTENCE TAKEAWAY: bagging averages independent models to cancel VARIANCE and needs an unstable
+base learner to be worth anything; boosting stacks models on each other's mistakes to cut BIAS and
+needs early stopping to avoid fitting the noise.""",
 ]
 
 _EX_P0H["Prompt engineering patterns that actually work"] = [
@@ -143322,6 +143826,643 @@ how you made it free for other people to join, and finish with the fact that it 
 of thought, not size of claim, is what Think Big rewards.""",
 ]
 
+_EX_P1AO["Activation functions - which one, and why"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - why a network needs a bend
+
+A neural network is built out of LAYERS. Each layer does something very simple: it multiplies its
+inputs by some numbers, adds them up, and passes the result on. That operation is LINEAR - in two
+dimensions it draws a straight line, in three a flat plane.
+
+Now the crucial fact. STACKING LINEAR LAYERS GIVES YOU A LINEAR LAYER. Multiply by 3, then by 2, and
+you have multiplied by 6 - a hundred layers of that is still just one multiplication. So a deep
+network with nothing between its layers could never learn a curved boundary. It would be an expensive
+way to fit a straight line.
+
+An ACTIVATION FUNCTION is a small non-linear function applied to each number as it leaves a layer. It
+is the BEND. With a bend between each pair of layers, stacking starts to buy you something, and the
+network can carve out shapes a straight line never could.
+
+    input -> [multiply and add] -> BEND -> [multiply and add] -> BEND -> ... -> output
+
+TERMS AS THEY APPEAR:
+- PRE-ACTIVATION, usually written z: the number a layer produces BEFORE the bend is applied.
+- ACTIVATION: the number after it.
+- GRADIENT: how much the loss would change if you nudged a particular number. Training works by
+  computing gradients and stepping in the direction that reduces the loss.
+- BACKPROPAGATION: the procedure that carries gradients backwards through the layers. The key fact for
+  this entry is that it MULTIPLIES the layers' derivatives together as it goes - which is why a small
+  derivative repeated many times is a catastrophe.
+- SATURATION: when a function's output flattens out, so its derivative is nearly zero and the gradient
+  arriving from it is nearly zero too.""",
+
+    """2. THE INTUITION - why the choice matters is entirely about the gradient
+
+Every activation function bends. What separates them is what happens to the GRADIENT when you stack
+them, and that is a multiplication problem.
+
+Backpropagation computes the gradient at layer 1 by MULTIPLYING the derivatives of every layer above
+it. If each derivative is around 0.2, then after ten layers the gradient is 0.2 to the power of ten -
+about one ten-millionth. The early layers effectively stop learning. That is the VANISHING GRADIENT
+problem, and it is not a metaphor. I measured it.
+
+    sigmoid'(z) at various inputs - note the maximum is only 0.25, at z = 0:
+
+        z = -10   0.000045
+        z =  -4   0.017663
+        z =  -1   0.196612
+        z =   0   0.250000        <- the BEST case
+        z =   4   0.017663
+        z =  10   0.000045
+
+    Now the product through L layers, averaged over 2,000 random chains with
+    pre-activations drawn from a standard normal:
+
+        layers      sigmoid        tanh          relu
+             1     2.05e-01      5.95e-01      4.98e-01
+             5     3.74e-04      7.93e-02      2.75e-02
+            10     1.42e-07      6.38e-03      1.50e-03
+            20     1.88e-14      3.12e-05      0.00e+00
+            40     3.63e-28      4.69e-10      0.00e+00
+
+Read the sigmoid column downwards. By twenty layers the gradient reaching the bottom is 10 to the
+power of -14 - which in 32-bit floating point is indistinguishable from nothing at all. The network
+below that point is frozen. Tanh, whose derivative peaks at 1.0 rather than 0.25, decays far more
+slowly. ReLU's derivative is exactly 1 wherever the input is positive, so nothing shrinks - but note
+the zeros in its column, which is the OTHER failure mode, covered in section 4.
+
+THE ONE-LINE REASON RELU WON: its derivative is either 1 or 0. Ones multiplied together stay one. That
+is the whole story, and it is why deep learning got deep.""",
+
+    """3. THE MENU, TRACED - each function, its shape, its derivative, and its trade
+
+    SIGMOID:  1 / (1 + e^-z)      squashes any number into (0, 1)
+
+        z:   -6    -2     0     2     6
+        out: 0.002 0.119 0.500 0.881 0.998
+        derivative: peaks at 0.25 (at z = 0), and is under 0.02 by |z| = 4
+
+        USE IT: as the OUTPUT of a binary classifier, where you want a probability.
+        NEVER: in hidden layers of a deep network - the measured table in section 2 is why.
+        ALSO: its output is never negative, so all the gradients into a given weight share a sign,
+        which makes the optimiser zig-zag instead of going straight. Being 'zero-centred' matters.
+
+    TANH:  (e^z - e^-z) / (e^z + e^-z)      squashes into (-1, 1)
+
+        The zero-centred version of sigmoid. Its derivative peaks at 1.0 - four times sigmoid's
+        best case - which is exactly what the measured table shows: at 10 layers tanh retains
+        6.4e-03 where sigmoid retains 1.4e-07, a factor of about 45,000.
+        Still saturates for large |z|. Common inside LSTMs and GRUs.
+
+    RELU:  max(0, z)      the modern default for hidden layers
+
+        derivative: 1 for z > 0, 0 for z < 0 (undefined exactly at 0; libraries pick 0).
+        No saturation on the positive side, trivially cheap to compute, and it produces genuine
+        zeros, which makes activations sparse. This is what you use unless you have a reason not to.
+
+    LEAKY RELU:  z if z > 0, else 0.01z
+
+        The fix for dying units (section 4). The small negative slope means a unit pushed negative
+        still receives a gradient and can come back.
+
+    GELU:  z multiplied by the probability that a standard normal draw is below z
+
+        A smooth version of ReLU: instead of a hard on/off gate at zero it fades in. Transformers use
+        it, and the smoothness gives slightly better gradients near the origin.
+
+    SOFTMAX (an output function, not a hidden one):  exp(z_i) / sum of exp(z_j)
+
+        Turns a vector of scores into probabilities that sum to 1. Use for MULTI-CLASS output, where
+        exactly one class is correct.""",
+
+    """4. THE FAILURE MODES - and the one that is a silent bug rather than slow training
+
+A. VANISHING GRADIENTS, measured in section 2. Sigmoid in hidden layers of a deep network. The symptom
+   is that the loss falls a little and then stops, and the early layers' weights barely move from
+   their initial values. The fix is ReLU (or a residual connection, or normalisation).
+
+B. DYING RELU - the flip side of the thing that makes ReLU good. One large gradient step can push a
+   unit's pre-activation permanently negative for every input in the dataset. Its output is then
+   always zero, so its gradient is always zero, so it never updates again. It is dead for the rest of
+   training.
+
+   I measured how easily this happens: a unit whose pre-activation has drifted to a mean of -1 (with
+   unit variance) outputs zero on 3,348 of 4,000 inputs - it is silent 84% of the time, and each of
+   those inputs contributes exactly nothing to its gradient.
+
+   HOW TO DETECT IT: log the fraction of activations that are zero per layer. If a layer is 90% zeros
+   and rising, units are dying. FIXES: lower the learning rate, use Leaky ReLU or GELU, and check your
+   initialisation.
+
+C. THE MULTI-LABEL TRAP - and this is a silent WRONGNESS, not slow training, which makes it the most
+   important item here. If a photo can be BOTH 'beach' and 'sunset', those labels are not competing.
+   Softmax forces the outputs to sum to 1, so raising the confidence in 'beach' MUST lower 'sunset'.
+   The model can never say both are likely.
+
+   THE RULE: exactly one correct class -> SOFTMAX. Any number of correct classes -> a SIGMOID on each
+   output independently, each one answering its own yes/no question. Getting this wrong produces a
+   model that trains happily and is quietly incapable of the thing you wanted.
+
+D. THE WRONG OUTPUT ACTIVATION FOR REGRESSION. Predicting a house price through a sigmoid caps your
+   output at 1. Regression outputs should be RAW - no activation - unless the quantity is genuinely
+   bounded.
+
+E. SOFTMAX OVERFLOW. exp(1000) is infinity in floating point, and infinity divided by infinity is NaN.
+   Every real implementation subtracts the maximum score before exponentiating, which is
+   mathematically identical and numerically safe. If you ever see NaN appear in a loss the moment a
+   logit gets large, this is why.
+
+F. USING AN ACTIVATION ON THE FINAL LAYER AND AGAIN INSIDE THE LOSS. Most frameworks' cross-entropy
+   loss expects RAW LOGITS and applies the softmax internally for numerical stability. Applying
+   softmax yourself and then passing it to that loss applies it twice - the model still trains, badly,
+   and the bug is invisible.""",
+
+    """5. WHY RELU WON - and what to do when it is not enough
+
+THE HISTORY IN ONE PARAGRAPH, because it explains the current defaults. Networks used sigmoid and tanh
+for decades, and could not be trained deep - the measured table in section 2 is the reason. ReLU,
+which is almost embarrassingly simple, removed the multiplication problem: a derivative of exactly 1
+on the positive side means the gradient arrives at layer 1 as strong as it left layer 40. That, plus
+better initialisation and normalisation, is what made depth practical.
+
+WHY EXACTLY 1 IS THE MAGIC NUMBER. Backpropagation multiplies derivatives. Any value below 1, repeated
+L times, decays exponentially; any value above 1 explodes exponentially. Only 1 is stable under
+repetition. ReLU's derivative is exactly 1 wherever it is active - it is the only common activation
+with that property, and it is not a coincidence that it is the default.
+
+THE REMAINING PROBLEMS AND THEIR FIXES:
+    - dying units          -> Leaky ReLU (a small negative slope) or GELU (smooth, no hard zero)
+    - very deep networks   -> RESIDUAL CONNECTIONS, which add the input back to the output of a block
+                              so the gradient has a path multiplied by 1 all the way down. This is a
+                              structural fix for the same multiplication problem, and it is why
+                              hundred-layer networks work at all.
+    - unstable activations -> BATCH or LAYER NORMALISATION, which rescale the pre-activations so they
+                              sit in the useful part of the function rather than out in the saturated
+                              tails.
+
+Notice that all three fixes attack the same underlying issue from different directions: keep the
+per-layer multiplier close to 1.
+
+WHAT ABOUT THE FANCIER ONES - Swish, Mish, ELU, SELU? They exist, they are marginally better in
+particular settings, and none of them changed the field the way ReLU did. The honest interview answer
+is: 'ReLU by default, GELU if I am building a transformer, Leaky ReLU if I see units dying. I would
+not spend time on the exotic ones before fixing initialisation, normalisation and the learning rate.'
+
+THE OUTPUT LAYER IS A DIFFERENT QUESTION ENTIRELY, and conflating it with the hidden-layer question is
+common:
+    regression                  -> none (raw output)
+    binary classification       -> one sigmoid
+    multi-class, one correct    -> softmax
+    multi-label, many correct   -> one sigmoid per label""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. FOR EVERY HIDDEN LAYER, START WITH RELU. It is the default for a measured reason and you need a
+   specific problem before deviating.
+2. IF YOU ARE BUILDING A TRANSFORMER, USE GELU - that is what the architecture was tuned with.
+3. WATCH THE FRACTION OF ZERO ACTIVATIONS during training. If a layer climbs past about 50% zeros and
+   keeps rising, units are dying: lower the learning rate first, then switch to Leaky ReLU.
+4. FOR THE OUTPUT LAYER, ASK WHAT THE PREDICTION IS, NOT WHAT THE HIDDEN LAYERS USE:
+       a number                      -> no activation at all
+       one yes/no                    -> sigmoid
+       exactly one of N classes      -> softmax
+       any number of N labels        -> N independent sigmoids
+5. CHECK WHETHER YOUR LOSS FUNCTION ALREADY APPLIES THE OUTPUT ACTIVATION. Most cross-entropy
+   implementations expect raw logits. Applying softmax yourself as well is a silent bug.
+6. IF TRAINING STALLS IN A DEEP NETWORK, suspect the gradient path before the activation choice: add
+   normalisation, add residual connections, and check the initialisation. Swapping activations is
+   rarely the fix that matters.
+
+THE QUESTION TO ASK YOURSELF at step 4, because it catches the worst bug in this entry: 'can two of my
+labels be true at once?' If yes, softmax is wrong, and no amount of training will fix it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Activations exist because stacking linear layers just gives you another linear layer - you need a
+bend between them or depth buys you nothing.
+
+The choice matters because backpropagation multiplies each layer's derivative together on the way
+down. Sigmoid's derivative maxes out at 0.25, so through ten layers you are multiplying ten numbers
+smaller than a quarter and the gradient arriving at the bottom is about a ten-millionth of what it
+started as - the early layers stop learning. Tanh is better, peaking at 1.0, but it still saturates.
+ReLU's derivative is exactly 1 wherever the input is positive, and ones multiplied together stay one -
+that is essentially why deep networks became trainable.
+
+So ReLU by default in hidden layers, GELU in transformers, and Leaky ReLU if I see units dying - which
+I would detect by logging the fraction of zero activations per layer.
+
+The output layer is a separate question, and it is decided by the prediction: nothing for regression,
+sigmoid for binary, softmax when exactly one class is correct, and independent sigmoids when several
+labels can be true at once. That last one is the bug I would check first, because softmax on a
+multi-label problem trains perfectly happily and can never be right.'""",
+
+    """8. THE MECHANICS, PIECE BY PIECE
+
+    THE COLLAPSE ARGUMENT, written out, because people quote it without being able to show it:
+        layer 1:  h = W1 x           (a matrix multiply)
+        layer 2:  y = W2 h  =  W2 (W1 x)  =  (W2 W1) x
+    and `W2 W1` is just another matrix. Two layers, one matrix. With a bend f in between,
+    `y = W2 f(W1 x)` cannot be collapsed, and that is the entire justification for activations.
+
+    THE VANISHING ARITHMETIC, written out:
+        gradient at layer 1  =  (derivative at layer L) x ... x (derivative at layer 1) x (the rest)
+    With each derivative about 0.2 and L = 10, that product is 0.2^10 = 1.0e-7. The measured table
+    gives 1.4e-07 for sigmoid at ten layers, which is the same number arrived at by experiment.
+
+    SIGMOID'S DERIVATIVE, and why 0.25 is its ceiling:
+        sigmoid'(z) = sigmoid(z) x (1 - sigmoid(z))
+    That is p(1-p), a quantity maximised at p = 0.5, where it equals 0.25. So the best case is a
+    quarter and it falls away in both directions - which is exactly the measured table of values.
+
+    RELU'S DERIVATIVE:
+        1 if z > 0, else 0
+    No decay when active. The zeros are the price, and they are what section 4B measures.
+
+    SOFTMAX, AND THE MAX SUBTRACTION:
+        softmax(z)_i = exp(z_i) / sum_j exp(z_j)
+        = exp(z_i - m) / sum_j exp(z_j - m)   for any m, because the m cancels top and bottom
+    Choosing m as the largest logit makes the biggest exponent exp(0) = 1, so nothing overflows. The
+    two expressions are mathematically identical and only one of them survives float32.
+
+    LEAKY RELU:
+        z if z > 0, else alpha z   with alpha around 0.01
+    The derivative on the negative side is alpha rather than 0, so a negative unit still gets a small
+    gradient and can climb back - which is the whole fix for dying units.""",
+
+    """9. RUNNING IT - reading the symptoms in a real training run
+
+    SYMPTOM: 'the loss drops for a few epochs then flatlines, and the first layers barely change.'
+        -> vanishing gradients. Check what the hidden layers use. If sigmoid or tanh in a deep stack,
+           switch to ReLU; if already ReLU, add normalisation and residual connections, and check the
+           initialisation.
+
+    SYMPTOM: 'a large fraction of activations in one layer are exactly zero, and the fraction is
+    climbing.'
+        -> dying ReLU. Measured: a unit at mean pre-activation -1 is silent on 84% of inputs and
+           receives gradient on none of them. Lower the learning rate; switch to Leaky ReLU or GELU.
+
+    SYMPTOM: 'the loss becomes NaN as soon as the model gets confident.'
+        -> softmax overflow, or applying softmax twice (once yourself, once inside the loss). Pass raw
+           logits to the loss and let it handle the stabilisation.
+
+    SYMPTOM: 'the multi-label model never predicts two labels at once, however I train it.'
+        -> softmax on a multi-label problem. It is structurally incapable, because the outputs are
+           forced to sum to 1. Replace with independent sigmoids and a binary cross-entropy loss per
+           label. This is the one where the model is not underperforming, it is answering a different
+           question.
+
+    SYMPTOM: 'my regression model never predicts anything above 1.'
+        -> a sigmoid on the output layer. Remove it.
+
+    A GOOD DIAGNOSTIC HABIT: log, per layer and per epoch, the mean absolute activation, the fraction
+    of zeros, and the mean absolute gradient. Almost every problem in this entry is visible in those
+    three numbers before it is visible in the loss curve.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE NUMBERS TO REMEMBER, measured:
+    sigmoid'(0) = 0.25, its maximum. tanh'(0) = 1.0. ReLU' = 1 wherever active.
+    gradient surviving 10 layers:   sigmoid 1.4e-07,  tanh 6.4e-03,  relu 1.5e-03
+    gradient surviving 20 layers:   sigmoid 1.9e-14,  tanh 3.1e-05
+    a ReLU unit at mean pre-activation -1 is silent on 3,348 of 4,000 inputs.
+
+THE TRADE, stated honestly: ReLU trades saturation for sparsity. Sigmoid's problem is that its
+gradient is always small; ReLU's problem is that its gradient is sometimes exactly nothing. The first
+is a slow death for the whole network; the second kills individual units and is fixable with a small
+negative slope.
+
+THE #1 MISTAKE: softmax on a multi-label problem. It is not slow, it is not inaccurate - it is
+structurally unable to say that two labels are both likely, because its outputs must sum to 1. The
+model trains, the loss falls, and the thing you wanted is impossible. Ask 'can two labels be true at
+once?' before choosing the output activation.
+
+THE #2 MISTAKE: sigmoid in hidden layers. Measured above: through twenty layers it passes on about
+10^-14 of the gradient. Use it for a binary OUTPUT and nowhere else.
+
+THE #3 MISTAKE: applying softmax yourself and then passing the result to a loss that applies it again.
+Silent, and it degrades training rather than crashing.
+
+ONE-SENTENCE TAKEAWAY: the activation is the bend that makes depth mean something, and the only thing
+that really separates the options is what their derivative does when multiplied through many layers -
+which is why ReLU, whose derivative is exactly 1, is the default.""",
+]
+
+# This entry's examples are declared INLINE on its Q(...) in ai_sde_bank_ml.py,
+# so there is no earlier _EX_* block to splice into — the override has to live
+# here, and it needs this dict's `< 10` condition to beat the six inline ones.
+_EX_P1AO["Data leakage - the bug that makes a terrible model look excellent"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the bug that looks like success
+
+DATA LEAKAGE is when information that will NOT be available at prediction time sneaks into training.
+The model learns from something it will never have when it matters, so it scores brilliantly in your
+notebook and falls apart the day it goes live.
+
+That last sentence is the whole reason this is the most important debugging topic in applied machine
+learning: every other bug makes your numbers WORSE, and this one makes them BETTER. It arrives
+disguised as good news.
+
+    a model predicting hospital readmission, using a feature called
+    'discharge_medication_changed' ... which is recorded AFTER the readmission happens.
+
+    validation accuracy:  99%.
+    accuracy once deployed, where that column is empty at prediction time: a coin flip.
+
+I measured exactly that shape on synthetic data - a feature that is a noisy copy of the label:
+
+    offline accuracy WITH the leaked feature      99.9%
+    the same model once the feature is absent     51.3%     (a coin flip)
+    an honest model that never saw it             70.9%
+
+Look at the third line. The honest model - the one you would have built if the leak had never
+happened - is genuinely useful. The leak did not just inflate a number; it hid a real 71% model behind
+a fake 99.9% one, and it made a model that collapses to chance in production.
+
+TERMS AS THEY APPEAR:
+- PREDICTION TIME: the moment the model runs for real, and the only moment that matters. The test is
+  always 'would I have known this then?'.
+- THE TARGET (or LABEL): the thing you are predicting.
+- VALIDATION / TEST SET: the held-out data used to estimate real performance. Leakage is precisely the
+  failure of that estimate.""",
+
+    """2. THE INTUITION - one question catches almost all of it
+
+There is a single test, and it should become reflexive:
+
+    FOR EVERY FEATURE, ASK: WOULD I HAVE HAD THIS VALUE, FOR THIS ROW, AT THE MOMENT I NEEDED THE
+    PREDICTION?
+
+If the answer is no, or 'only after the outcome was known', it is a leak. That question catches target
+leakage, temporal leakage and most group leakage without any tooling at all.
+
+A REAL-WORLD PICTURE. Imagine predicting whether a student will pass an exam, and one of your features
+is 'attended the celebration afterwards'. It is enormously predictive. It is also recorded after the
+result exists, so on exam morning - the moment you need the prediction - the column is empty. Your
+model has been studying an answer key it will not be given.
+
+WHY IT SURVIVES REVIEW so often: the model does not crash, the code is not obviously wrong, and the
+metric goes UP. Every instinct you have for spotting bugs is tuned to things getting worse. Leakage
+requires a deliberate habit, not vigilance.
+
+THE SECOND, SUBTLER FORM has nothing to do with features. It is when information crosses the boundary
+between your training and test sets - because you scaled the whole dataset before splitting, because
+rows are duplicated, because the same patient appears on both sides, or because time runs in both
+directions. The model has effectively seen the answers, and your held-out set stops measuring
+anything.
+
+THE CONSEQUENCE THAT MAKES IT WORSE THAN A WRONG NUMBER: leakage does not just inflate the score, it
+also makes you choose WRONG. You will pick the leaky model over the honest one, tune hyperparameters
+towards the leak, and drop genuinely useful features because they look weak next to it. The damage
+persists long after the leak is removed.""",
+
+    """3. THE SIX FORMS, TRACED - with measured damage where it can be measured
+
+    (1) TARGET LEAKAGE - a feature that is a consequence of the label.
+        'account_closed_date' when predicting churn. 'discharge_medication_changed' when predicting
+        readmission. The tell is a SINGLE feature with implausible importance.
+        MEASURED, on a feature that is a noisy copy of the label:
+            offline 99.9%  ->  51.3% once the column is genuinely unavailable
+            an honest model without it: 70.9%
+
+    (2) TRAIN-TEST CONTAMINATION - fitting a scaler, imputer, encoder or PCA on the FULL dataset
+        before splitting. The transform now encodes statistics of the test rows - their mean, their
+        variance, their categories - so the test set is no longer untouched.
+            X_scaled = StandardScaler().fit_transform(X)     # <- the leak
+            X_train, X_test = train_test_split(X_scaled)
+        The fix is a Pipeline, so every transform is fitted INSIDE each fold.
+
+    (3) TEMPORAL LEAKAGE - splitting a time series randomly, so the model trains on the future and is
+        tested on the past.
+        MEASURED, on 365 days of a trending series:
+            random 80/20 split, mean absolute error      1.34
+            honest split on time (last 20% held out)     28.19       - 21 times worse
+        The 1.34 is not a good model; it is a model interpolating between the days either side of each
+        test day, which is a thing it can never do in production. The 28.19 is the real number.
+
+    (4) GROUP LEAKAGE - the same underlying entity appearing on both sides of the split. Five scans
+        per patient, split by scan.
+        MEASURED, 400 patients with five scans each, random 80/20:
+            patients appearing in BOTH train and test: 265 of 400 - 66%
+        For two thirds of the test set, the model has already seen that person. Split by PATIENT, not
+        by row - `GroupKFold` exists for exactly this.
+
+    (5) DUPLICATE ROWS - near-identical records that land on both sides. Common after augmentation,
+        after oversampling for class imbalance, or in scraped data. Deduplicate BEFORE splitting.
+
+    (6) LEAKAGE THROUGH THE TEST SET ITSELF, which happens slowly and to careful people. You tune
+        hyperparameters against the test set, look at the errors, adjust features, and try again.
+        After twenty iterations the test set has been fitted by hand, through you. That is why you
+        keep a THIRD set, touched once, at the very end.""",
+
+    """4. THE SYMPTOMS - what leakage looks like from the outside
+
+A. A SCORE THAT IS TOO GOOD. Any result that surprises you upward deserves suspicion before
+   celebration. The instinct to check when a number is bad is universal; the instinct to check when a
+   number is good is what separates people who have been burnt.
+
+B. ONE FEATURE WITH IMPLAUSIBLE IMPORTANCE. If a single column carries most of the model's predictive
+   power, read its definition and ask when it is populated. This is the fastest check available and it
+   catches most target leakage.
+
+C. AN ENORMOUS TRAIN-TEST GAP - or its opposite, a suspiciously SMALL one. A test score that tracks
+   the training score almost exactly, on a hard problem, means the two sets are not independent.
+
+D. PERFORMANCE THAT COLLAPSES ON DEPLOYMENT and nowhere else. Measured above: 99.9% offline, 51.3%
+   live. If a model degrades the moment it meets real traffic and the input distribution has not
+   changed, leakage is the first hypothesis.
+
+E. RESULTS THAT DO NOT REPRODUCE ON A NEW TIME PERIOD. Refit on last year, test on this year. Temporal
+   leakage cannot survive that test.
+
+F. A MODEL THAT BEATS THE THEORETICAL LIMIT. If humans achieve 85% on a task and your model reports
+   99%, either you have discovered something remarkable or you have leaked. Assume the second.
+
+THE THREE CHECKS TO RUN BEFORE CELEBRATING ANY GOOD RESULT:
+    1. SORT THE FEATURES BY IMPORTANCE and read the definition of the top one. When is it populated?
+    2. DELETE THE TOP FEATURE and retrain. If the score falls off a cliff, look harder at it.
+    3. SPLIT BY TIME, or by group, and re-run. If the number moves a lot, your split was doing work it
+       should not have been.""",
+
+    """5. WHY THE OBVIOUS FIXES ARE NOT ENOUGH, AND WHAT ACTUALLY WORKS
+
+THE OBVIOUS FIX - 'be careful' - fails, because leakage is not a carelessness problem. It is a
+STRUCTURE problem: the leak comes from the ORDER in which you did things, and the order looks fine
+when you read the code line by line.
+
+THE FIX THAT ACTUALLY WORKS IS A PIPELINE, and it works because it makes the wrong order impossible to
+express:
+
+    # LEAKY - the scaler has seen the test rows
+    X_scaled = StandardScaler().fit_transform(X)
+    X_tr, X_te, y_tr, y_te = train_test_split(X_scaled, y)
+    model.fit(X_tr, y_tr)
+
+    # SAFE - the scaler is fitted inside each fold, on training rows only
+    pipe = Pipeline([("scale", StandardScaler()), ("model", LogisticRegression())])
+    cross_val_score(pipe, X, y, cv=5)
+
+In the second version the scaler cannot see a validation row, because the cross-validator fits the
+whole pipeline separately per fold. You have not become more careful; you have made the mistake
+unrepresentable. That distinction is worth stating out loud in an interview.
+
+THE SPLIT MUST MATCH THE DEPLOYMENT REALITY, which is the general rule behind three of the six forms:
+    - predictions are made about the FUTURE     -> split by TIME, never randomly
+    - rows are grouped by an entity             -> split by GROUP (patient, user, session)
+    - the same event appears more than once     -> deduplicate BEFORE splitting
+Ask 'what does a row mean, and what will I know about it when I predict?' and the correct split
+usually falls out.
+
+THE THIRD DATASET, and why it is not paranoia. Train to fit, validate to choose, test to report - and
+the test set is opened ONCE. Every time you look at it and change something, a little information
+flows from it into your choices. After twenty rounds of tuning, your test score is optimistic by an
+amount nobody can estimate. This is leakage with a human as the channel, and it is the version that
+catches careful people.
+
+A HONEST NOTE ON WHAT IT COSTS TO BE RIGHT: the honest numbers are always worse. In the measured
+temporal example the honest error is 21 times larger, and in the target-leak example the honest
+accuracy is 71% instead of 99.9%. Reporting the smaller number is the job. A model whose true
+performance you know is worth far more than one whose reported performance is fiction.""",
+
+    """6. HOW TO PREVENT IT - numbered steps, as a checklist
+
+1. FOR EVERY FEATURE, ASK WHEN IT IS POPULATED. Write it down next to the column name if the dataset
+   is unfamiliar. Anything recorded at or after the moment the label becomes known is out.
+2. SPLIT FIRST, ALWAYS. The very first operation on a dataset is the split. Nothing - no scaling, no
+   imputation, no encoding, no feature selection, no oversampling - happens before it.
+3. WRAP EVERY TRANSFORM IN A PIPELINE so it is fitted inside each fold. This converts a discipline
+   problem into a structural one.
+4. CHOOSE THE SPLIT THAT MATCHES DEPLOYMENT: by time if you predict the future, by group if rows share
+   an entity, stratified if the classes are imbalanced.
+5. DEDUPLICATE BEFORE SPLITTING, and check for near-duplicates, not just exact ones.
+6. KEEP A HOLD-OUT YOU TOUCH ONCE. Train, validate, test - and the test set is opened at the end, not
+   during.
+7. WHEN A RESULT IS SURPRISINGLY GOOD, RUN THE THREE CHECKS from section 4 before telling anyone.
+8. RE-RUN ON A LATER TIME PERIOD before deployment. It is the single most convincing evidence that no
+   leak remains.
+
+THE STEP EVERYONE SKIPS IS 1, and it is the only one that catches target leakage - the form that does
+the most damage. It is also the one that requires talking to whoever owns the data, which is why it
+gets skipped.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Leakage is when the model trains on something it will not have at prediction time. It is the worst
+kind of bug because it makes your numbers better, so every instinct you have for catching bugs points
+the wrong way.
+
+The commonest form is a feature that is really a consequence of the label - predicting readmission
+using a field that is only filled in after the readmission. The second commonest is fitting a scaler
+or an imputer on the whole dataset before splitting, so test statistics end up inside the transform.
+Then there is temporal leakage from splitting a time series randomly, and group leakage where the same
+patient or user appears on both sides.
+
+I prevent it structurally rather than by being careful: split first, put every transform in a pipeline
+so it is fitted inside each fold, and choose the split to match how the model will actually be used -
+by time if I am predicting the future, by group if rows share an entity.
+
+And when a result looks too good I run three checks before believing it: read the definition of the
+most important feature and ask when it is populated, drop it and retrain, and re-split by time. Each
+of those has caught a leak for me.'""",
+
+    """8. THE MECHANICS, PIECE BY PIECE - where exactly the information crosses
+
+    TARGET LEAKAGE - the information crosses through a COLUMN.
+        feature 'discharge_medication_changed' is written at time T+1
+        the prediction is required at time T
+        so at prediction time the column is null, empty or default - and the model has learnt to lean
+        on it. Measured: 99.9% offline, 51.3% with the column absent.
+
+    CONTAMINATION - the information crosses through the FITTED TRANSFORM.
+        StandardScaler stores a mean and a standard deviation.
+        Fit on all 10,000 rows, and that mean encodes the 2,000 test rows.
+        Every training row is then scaled using knowledge of the test set. The effect is usually small
+        but it is real, and it is entirely avoidable.
+
+    TEMPORAL LEAKAGE - the information crosses through TIME.
+        A random split puts 1 January in test and 31 December and 2 January in train. Any model that
+        can interpolate now performs a task it will never face. Measured: error 1.34 with a random
+        split against 28.19 with an honest one - a factor of 21.
+
+    GROUP LEAKAGE - the information crosses through an ENTITY.
+        Patient 17's scans 1, 2, 4 in train and scan 3 in test. The model can recognise patient 17
+        rather than the disease. Measured: with five scans per patient and a random split, 265 of 400
+        patients appear on both sides - 66%.
+
+    DUPLICATE ROWS - the information crosses through a REPEATED RECORD, and this is exactly what
+        oversampling before the split creates. It is the reason the class-imbalance entry insists that
+        resampling happens inside the training fold.
+
+    THE HUMAN CHANNEL - the information crosses through YOU. Twenty rounds of 'try it, look at the
+        test score, adjust' is hill-climbing on the test set by hand.
+
+Notice the common shape: in every case something that belongs to the evaluation side has been allowed
+to influence the training side. Naming the CHANNEL - column, transform, time, entity, duplicate,
+human - is a better answer than listing symptoms.""",
+
+    """9. RUNNING THE INVESTIGATION - a result that is too good, diagnosed step by step
+
+'THE MODEL GETS 99% AUC AND THE PREVIOUS BEST WAS 74%. WHAT DO YOU DO?'
+
+    1. DO NOT SHIP IT, and do not announce it. Say 'that is suspiciously good, let me check for
+       leakage' - which in an interview is itself the answer they are listening for.
+
+    2. RANK THE FEATURES BY IMPORTANCE and read the top one's definition. Ask the data owner when the
+       column is written. This finds most target leaks in one question.
+
+    3. DROP THE TOP FEATURE AND RETRAIN. If the score falls from 99% to 74%, you have found it. If it
+       barely moves, the leak is structural rather than in one column - go to step 4.
+
+    4. RE-SPLIT BY TIME. Train on everything before a cut-off, test on everything after. Measured
+       elsewhere: this changed the error by a factor of 21 on a trending series. If the number moves,
+       your original split was leaking.
+
+    5. RE-SPLIT BY GROUP if rows share an entity. Measured: 66% of patients on both sides of a random
+       split. `GroupKFold` is a one-line change.
+
+    6. CHECK THE ORDER OF OPERATIONS in the preprocessing code. Was anything fitted before the split?
+       Was any resampling done before the split? Convert it to a Pipeline.
+
+    7. LOOK FOR DUPLICATES across the split boundary, including near-duplicates.
+
+    8. RE-RUN ON A COMPLETELY FRESH TIME PERIOD. If it holds there, you can start to believe it.
+
+WHAT A GOOD ANSWER SOUNDS LIKE, compressed: 'I would assume leakage first. Check the top feature's
+definition and when it is populated, drop it and retrain, then re-split by time and by group. And I
+would check whether anything was fitted or resampled before the split.' The ordering - cheapest and
+most likely first - is the part being scored.""",
+
+    """10. THE COSTS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE NUMBERS TO REMEMBER, all measured:
+    target leakage:    99.9% offline  ->  51.3% with the column absent; the honest model was 70.9%
+    temporal leakage:  error 1.34 on a random split  ->  28.19 on an honest one, 21x
+    group leakage:     265 of 400 patients on both sides of a random 80/20 split, 66%
+
+WHAT LEAKAGE ACTUALLY COSTS YOU, in order of severity:
+    1. You ship a model that does not work, and find out from users.
+    2. You choose the WRONG model, because the leaky one outscored the honest one.
+    3. You discard genuinely useful features for looking weak beside the leak.
+    4. You lose trust - in the model, and in the person who reported the number.
+
+Only the first is usually discussed, and the second is the one that quietly wastes months.
+
+THE #1 MISTAKE: fitting any transform on the full dataset before splitting. It is a single line in the
+wrong order, it looks completely reasonable, and it is committed constantly. The fix is structural -
+use a Pipeline, so the wrong order cannot be written.
+
+THE #2 MISTAKE: splitting a time series randomly. Measured at 21 times better than the truth, and it
+is the default behaviour of every `train_test_split` call.
+
+THE #3 MISTAKE: trusting a good number. Every other bug you will meet makes results worse; this one
+makes them better, which is why it needs a deliberate checklist rather than ordinary care.
+
+ONE-SENTENCE TAKEAWAY: ask of every feature and every split 'would I have known this at prediction
+time?', split before you touch anything else, put your transforms in a pipeline so the wrong order is
+impossible - and treat a surprisingly good score as a bug report.""",
+]
+
+# NOTE: Class Imbalance and Ensembles already had example blocks in earlier
+# _EX_* dicts, so their ten-section sets were spliced in there rather than
+# duplicated here — an empty block with this dict's `< 10` condition would
+# BLANK the entry if its count ever dropped.
 # NOTE the threshold: these entries already carry 6-7 examples in the older,
 # terser register, so the ten-section set must REPLACE them rather than fill a
 # gap. Every other _EX_* loop uses < 5, which would silently do nothing here.
