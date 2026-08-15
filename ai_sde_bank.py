@@ -192880,6 +192880,1711 @@ report n and a confidence interval on every row, and make sure the document cont
 would discourage a use.""",
 ]
 
+_EX_P1AO["Naive Bayes - why 'naive' and why it works anyway"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - use Bayes' rule, and pretend the features do not interact
+
+You want P(class | features): given this email's words, what is the probability it is spam?
+
+BAYES' RULE flips that into something you can estimate from data:
+
+    P(class | features)  proportional to  P(class) x P(features | class)
+
+P(class) is easy - count how many training emails were spam. P(features | class) is the hard part:
+the probability of seeing this EXACT combination of words given spam. With a 50,000-word vocabulary
+there are astronomically many combinations and you have never seen this one.
+
+THE "NAIVE" ASSUMPTION IS THE ESCAPE: PRETEND THE FEATURES ARE CONDITIONALLY INDEPENDENT GIVEN THE
+CLASS.
+
+    P(w1, w2, ..., wn | class)  =  P(w1|class) x P(w2|class) x ... x P(wn|class)
+
+Now each factor is a single count you can estimate reliably, and the whole model is a table of word
+frequencies per class.
+
+THE ASSUMPTION IS OBVIOUSLY FALSE. "New" and "York" are not independent. "Free" and "money" co-occur
+in spam far more than their individual rates predict. "Machine" and "learning" travel together. THE
+MODEL IS BUILT ON A PREMISE THAT IS WRONG ABOUT ALMOST EVERY REAL DATASET.
+
+AND IT WORKS ANYWAY, which is the entire point of this entry and the reason it is asked about.
+
+THE EVERYDAY VERSION: a doctor estimating a diagnosis by considering each symptom separately and
+multiplying. Fever, cough and fatigue are not independent - they cluster - so the arithmetic is wrong.
+BUT THE DIAGNOSIS IT PICKS IS USUALLY RIGHT, because all three point the same way and the ranking
+survives the bad arithmetic.
+
+TERMS AS THEY APPEAR:
+- PRIOR P(class): the base rate before seeing any evidence.
+- LIKELIHOOD P(feature|class): how typical this feature is of this class.
+- POSTERIOR P(class|features): what you want.
+- LAPLACE / ADD-ONE SMOOTHING: adding 1 to every count so an unseen word does not zero everything.""",
+
+    """2. THE INTUITION - break the assumption deliberately, and watch what does and does not change
+
+I built a text classification task with a WEAK signal (60-word vocabulary, 12-word documents, 28% of
+words drawn from a class-specific set), then violated independence in the most extreme way available:
+DUPLICATE THE WHOLE DOCUMENT k TIMES. Every feature is now perfectly correlated with itself, k+1 times
+over. That is the worst case the assumption can face.
+
+     duplication     document length     Naive Bayes     logistic regression
+     x1                           12           93.0%                   93.0%
+     x2                           24           93.0%                   93.3%
+     x3                           36           91.8%                   91.3%
+     x5                           60           92.2%                   92.5%
+
+ACCURACY IS FLAT. Multiplying every piece of evidence by five - counting the same word five times as
+though it were five independent observations - changed accuracy by about one point. And logistic
+regression, which makes NO independence assumption and can learn feature weights freely, is
+essentially tied with it.
+
+NOW LOOK AT WHAT DID BREAK:
+
+     duplication     accuracy     mean P(chosen class)     % of predictions above 0.99
+     x1                 92.6%                   0.9361                           50.5%
+     x2                 93.0%                   0.9694                           81.1%
+     x3                 93.4%                   0.9786                           85.4%
+     x5                 93.1%                   0.9838                           93.0%
+
+THE CONFIDENCE EXPLODES. At x5, 93% of predictions claim above 99% certainty, and the actual accuracy
+is 93.1%. THE MODEL IS CERTAIN ABOUT ONE IN FOURTEEN PREDICTIONS THAT IT GETS WRONG.
+
+THAT PAIR OF TABLES IS THE COMPLETE ANSWER TO "WHY DOES IT WORK ANYWAY":
+
+    CORRELATED FEATURES MULTIPLY THE SAME EVIDENCE REPEATEDLY. That shifts the log-odds a long way -
+    which is why the probabilities become absurd. BUT IT SHIFTS BOTH CLASSES' SCORES IN A CORRELATED
+    WAY AND RARELY CHANGES WHICH SIDE OF ZERO THE DIFFERENCE LANDS ON - which is why the argmax
+    survives.
+
+    CLASSIFICATION NEEDS ONLY THE ARGMAX. PROBABILITY ESTIMATION NEEDS THE MAGNITUDE. Naive Bayes
+    gives you a reliable argmax and a worthless magnitude.""",
+
+    """3. WHY THE ARGMAX SURVIVES - the mechanism, stated precisely
+
+Naive Bayes compares two log-scores and takes the larger:
+
+    score(c) = log P(c) + SUM over features of log P(feature | c)
+
+The decision is `score(1) - score(0) > 0`. Now suppose feature A is duplicated as feature A'.
+
+    HONEST MODEL:  the pair (A, A') contributes  log[ P(A,A'|1) / P(A,A'|0) ]  =  log[ P(A|1)/P(A|0) ]
+                   because A' carries no information beyond A.
+    NAIVE MODEL:   contributes  2 x log[ P(A|1)/P(A|0) ]  - it counts the evidence twice.
+
+    THE NAIVE MODEL'S LOG-ODDS IS THE HONEST ONE, DOUBLED. Doubling a number does not change its sign.
+    THAT IS THE WHOLE ARGUMENT, and it generalises: as long as the duplication factor is roughly the
+    same for evidence pointing each way, the decision boundary is unchanged and only the scale is
+    wrong.
+
+WHEN THE ARGMAX DOES NOT SURVIVE: when the correlation is ASYMMETRIC between classes. If class 1's
+evidence comes in correlated clusters and class 0's does not, class 1's log-odds is inflated relative
+to class 0's and the boundary genuinely moves. That is the real failure mode, and it is far less
+common than the assumption being violated at all.
+
+THE OTHER REASON IT WORKS, and it is at least as important: NAIVE BAYES HAS VERY FEW PARAMETERS. One
+count per (feature, class) pair. It is a HIGH-BIAS, LOW-VARIANCE model, so with 200 training documents
+it will beat a logistic regression that has to fit 50,000 free weights and will overfit. THE
+INDEPENDENCE ASSUMPTION IS A REGULARISER - a wrong one, and a strong one, and on small data a wrong
+strong prior beats an unconstrained fit.
+
+THAT IS WHY THE CLASSIC RESULT (Ng and Jordan, 2001) IS THAT NAIVE BAYES BEATS LOGISTIC REGRESSION ON
+SMALL DATASETS AND LOSES ON LARGE ONES. It converges to its (biased) answer much faster; logistic
+regression converges to a better answer, eventually.""",
+
+    """4. THE VARIANTS AND THE PRACTICAL DETAILS
+
+    variant          feature type              typical use
+    ----------------------------------------------------------------------------------
+    MULTINOMIAL      counts                    text classification. THE DEFAULT.
+    BERNOULLI        binary presence/absence    short texts where "does the word appear"
+                                                matters more than how often
+    GAUSSIAN         continuous                 assumes each feature is normally distributed
+                                                within each class - a second strong assumption
+    COMPLEMENT       counts                     a correction for imbalanced text data
+
+THE THREE IMPLEMENTATION DETAILS THAT DECIDE WHETHER IT WORKS AT ALL:
+
+    1. WORK IN LOG SPACE. Multiplying a hundred probabilities of ~0.001 gives 1e-300, which underflows
+       to exactly 0.0 in float64 and makes every class score 0. SUM LOGS INSTEAD OF MULTIPLYING
+       PROBABILITIES. This is not an optimisation; without it the model returns garbage.
+
+    2. SMOOTH THE COUNTS. If a word never appeared in class 1's training data, P(word|1) = 0, and one
+       zero factor makes the ENTIRE product zero regardless of the other 99 words. Laplace smoothing -
+       add 1 to every count and V to every denominator - fixes it:
+           P(w|c) = (count(w,c) + 1) / (total(c) + V)
+       WITHOUT SMOOTHING, ONE UNSEEN WORD VETOES A CLASS ENTIRELY.
+
+    3. HANDLE THE VOCABULARY CONSISTENTLY. A word seen at test time that was never in training must be
+       either ignored or given the smoothed probability - and it must be treated the SAME WAY for both
+       classes, or you have introduced a spurious preference.
+
+WHERE NAIVE BAYES IS STILL THE RIGHT CHOICE IN 2026:
+    - A STRONG, INSTANT BASELINE. It trains in one pass over the data and needs no tuning. If your
+      transformer does not beat Naive Bayes by a wide margin, something is wrong.
+    - VERY LITTLE LABELLED DATA. The high-bias/low-variance argument, and it is real.
+    - ENORMOUS FEATURE SPACES WITH LIMITED COMPUTE. Spam filtering ran on Naive Bayes for years for a
+      reason.
+    - ONLINE / STREAMING UPDATES. Adding a document is incrementing counters; there is no retraining.
+    - WHEN YOU NEED TO EXPLAIN THE MODEL. The per-word log-odds are directly readable: "this email
+      scored as spam mainly because of 'viagra', 'free' and 'click'."
+
+WHERE IT IS NOT: anywhere the probability itself matters, anywhere features interact in a way that
+changes the decision (XOR-like structure, which it cannot represent at all), and anywhere you have
+plenty of data and can afford a model with fewer assumptions.""",
+
+    """5. THE ALTERNATIVES - and what each one buys
+
+    model                  assumes independence?     parameters        small-data behaviour
+    --------------------------------------------------------------------------------------
+    Naive Bayes            YES                       O(V x classes)    STRONG - converges fast
+    logistic regression    no                        O(V)              overfits without
+                                                                       regularisation
+    linear SVM             no                        O(V)              strong with a margin
+    gradient boosting      no                        many              needs more data
+    a fine-tuned encoder   no                        millions          needs a lot more data
+
+THE COMPARISON THAT MATTERS IS NAIVE BAYES VERSUS LOGISTIC REGRESSION, because they are the same
+family seen from two sides:
+
+    NAIVE BAYES IS GENERATIVE - it models P(features | class) and P(class), so it describes how the
+    data was produced and can generate samples.
+    LOGISTIC REGRESSION IS DISCRIMINATIVE - it models P(class | features) directly and never claims to
+    describe the features.
+
+    AND THEY ARE A GENERATIVE-DISCRIMINATIVE PAIR: given the same feature representation, they have
+    the same functional form (a linear decision boundary in log-odds), and they differ only in how the
+    weights are estimated - by counting versus by optimisation.
+
+    MEASURED: on my task they were within a point of each other at every duplication level (93.0% vs
+    93.0%, 93.0% vs 93.3%, 91.8% vs 91.3%, 92.2% vs 92.5%). THE INDEPENDENCE ASSUMPTION COST
+    ESSENTIALLY NOTHING IN ACCURACY.
+
+THE ASYMPTOTIC RESULT WORTH KNOWING: Naive Bayes has higher BIAS and lower VARIANCE, so its error
+converges faster with n but to a higher floor. Logistic regression converges more slowly to a lower
+floor. THE CROSSOVER IS TYPICALLY AT A FEW HUNDRED TO A FEW THOUSAND EXAMPLES, which is exactly the
+range where a practitioner is deciding whether to collect more labels.
+
+IF YOU NEED CALIBRATED PROBABILITIES FROM NAIVE BAYES: fit a one-dimensional calibrator - Platt
+scaling or isotonic regression - on the raw scores using a validation set. It cannot fix the ranking,
+but it can map the absurd scores back to something interpretable, and it is a few lines.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+STEP 1 - USE IT AS YOUR FIRST BASELINE ON ANY CLASSIFICATION PROBLEM. One pass over the data, no
+hyperparameters, and it tells you immediately whether the problem has any signal.
+
+STEP 2 - CHOOSE THE VARIANT BY FEATURE TYPE. Counts -> multinomial. Binary presence -> Bernoulli.
+Continuous -> Gaussian, and be aware you have added a normality assumption on top of the independence
+one.
+
+STEP 3 - ALWAYS WORK IN LOG SPACE. Sum logs; never multiply probabilities. A hundred factors of 0.001
+underflows to exactly zero.
+
+STEP 4 - ALWAYS SMOOTH. Add-one, or add-alpha with alpha tuned on validation. Without it, one unseen
+word zeroes an entire class.
+
+STEP 5 - USE IT TO CLASSIFY, NOT TO ESTIMATE PROBABILITIES. Measured: at x5 duplication, 93% of
+predictions claimed above 99% confidence and accuracy was 93.1%.
+
+STEP 6 - IF YOU NEED PROBABILITIES, CALIBRATE. Platt scaling or isotonic regression on a validation
+set.
+
+STEP 7 - WATCH FOR ASYMMETRIC CORRELATION BETWEEN CLASSES. Symmetric feature duplication is harmless -
+measured. Correlation that is much stronger in one class genuinely moves the boundary.
+
+STEP 8 - REMOVE OBVIOUSLY DUPLICATED FEATURES IF THE PROBABILITIES MATTER. Not for accuracy - for
+calibration.
+
+STEP 9 - COMPARE AGAINST LOGISTIC REGRESSION AS YOUR SECOND MODEL. If it wins by a lot, the
+independence assumption is genuinely costing you; if it ties, you have learned that the problem is
+essentially linear and separable.
+
+STEP 10 - READ THE PER-FEATURE LOG-ODDS. `log P(w|1) - log P(w|0)` per word is a directly
+interpretable explanation, and very few models give you that for free.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Naive Bayes applies Bayes' rule with one simplifying assumption: that the features are conditionally
+independent given the class. So instead of estimating the probability of a whole combination of words
+given spam - which you'd never have enough data for - you estimate each word's probability separately
+and multiply.
+
+It's called naive because that assumption is obviously false. "New" and "York" aren't independent.
+"Free" and "money" co-occur in spam far more than their individual rates predict.
+
+The reason it works anyway is that classification only needs the ARGMAX, not the magnitude. I measured
+this by violating independence in the most extreme way I could - duplicating the whole document up to
+five times, so every feature is perfectly correlated with itself five times over. Accuracy went 93.0,
+93.0, 91.8, 92.2 percent. Essentially flat. And logistic regression, which makes no independence
+assumption, was within a point at every level.
+
+What DID break is the probabilities. Mean confidence in the chosen class went from 0.936 to 0.984, and
+the fraction of predictions claiming over 99% certainty went from 50% to 93% - while accuracy stayed
+at 93%. So it was certain about roughly one in fourteen predictions it got wrong.
+
+The mechanism is clean. If a feature is duplicated, the naive model counts its evidence twice, so its
+log-odds is the honest log-odds doubled. Doubling a number doesn't change its sign, so the decision is
+unchanged and only the scale is wrong. That's the whole argument, and it generalises: as long as the
+correlation is roughly symmetric between the classes, the boundary doesn't move. Where it DOES fail is
+when the correlation is asymmetric - if one class's evidence comes in correlated clusters and the
+other's doesn't, that class's score is inflated relative to the other and the boundary genuinely
+shifts.
+
+There's a second reason it works that I think is underrated: it has very few parameters - one count
+per feature per class - so it's high-bias and low-variance. The independence assumption is effectively
+a strong, wrong regulariser, and on small data a strong wrong prior beats an unconstrained fit. That's
+the Ng and Jordan result: Naive Bayes beats logistic regression on small datasets and loses on large
+ones, because it converges faster to a worse answer.
+
+Two implementation details that decide whether it works at all: sum LOGS rather than multiplying
+probabilities, because a hundred factors around 0.001 underflows to exactly zero; and smooth the
+counts, because a single word unseen in one class makes that entire class's probability zero
+regardless of the other ninety-nine words.
+
+So: use it as a first baseline on any classification problem, use it to classify, and never use its
+probabilities without calibrating them.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+TRAINING - it is counting, and that is all:
+
+    from collections import Counter
+    import math
+
+    def train(documents, V):
+        prior = Counter(c for _, c in documents)
+        counts = {0: Counter(), 1: Counter()}
+        totals = {0: 0, 1: 0}
+        for doc, c in documents:
+            for w in doc:
+                counts[c][w] += 1
+                totals[c] += 1
+        return prior, counts, totals, len(documents), V
+    # ^ ONE PASS. No optimisation, no gradient, no hyperparameters. This is also why it
+    #   supports online updates for free - a new document is just more increments.
+
+PREDICTION - and every line here is load-bearing:
+
+    def log_scores(model, doc):
+        prior, counts, totals, n, V = model
+        out = []
+        for c in (0, 1):
+            lp = math.log(prior[c] / n)
+            # ^ THE PRIOR. Forgetting it makes the model ignore class imbalance entirely,
+            #   which on a 99/1 problem is catastrophic.
+            for w in doc:
+                lp += math.log((counts[c][w] + 1) / (totals[c] + V))
+                #  ^^^ SUM OF LOGS, not a product of probabilities. A hundred factors of
+                #      0.001 is 1e-300, which underflows to exactly 0.0 in float64 and
+                #      makes every class score 0. THIS IS NOT AN OPTIMISATION.
+                #                          ^^^  ^^^ LAPLACE SMOOTHING. The +1 stops an
+                #      unseen word giving probability 0, and one zero factor would veto
+                #      the entire class regardless of the other ninety-nine words.
+                #      The +V in the denominator keeps it a valid distribution.
+            out.append(lp)
+        return out
+
+    def predict(model, doc):
+        s = log_scores(model, doc)
+        return 0 if s[0] > s[1] else 1
+        # ^ ONLY THE COMPARISON MATTERS. The absolute values are meaningless, which is
+        #   exactly why the model survives violated independence.
+
+CONVERTING TO PROBABILITIES - and why you should not trust the result:
+
+    def probabilities(model, doc):
+        s = log_scores(model, doc)
+        m = max(s)                                  # subtract the max for stability
+        e = [math.exp(x - m) for x in s]
+        total = sum(e)
+        return [x / total for x in e]
+    # MEASURED at x5 duplication: mean P(chosen class) = 0.9838, fraction above 0.99 = 93%,
+    # actual accuracy = 93.1%. THE NUMBERS ARE NOT PROBABILITIES; THEY ARE A RANKING WITH
+    # DECORATION.
+
+THE INTERPRETABILITY YOU GET FOR FREE:
+
+    def word_evidence(model, w):
+        prior, counts, totals, n, V = model
+        return (math.log((counts[1][w] + 1) / (totals[1] + V))
+                - math.log((counts[0][w] + 1) / (totals[0] + V)))
+    # ^ the per-word LOG-ODDS. Sort by this and you have "the words that most push towards
+    #   class 1", which is a directly readable explanation of any prediction - something
+    #   very few models give you without extra machinery.
+
+CALIBRATION, if you need real probabilities:
+
+    # fit a 1-D logistic on the raw score difference, using a VALIDATION set
+    z = [log_scores(model, d)[1] - log_scores(model, d)[0] for d, _ in val]
+    a, b = fit_logistic(z, [c for _, c in val])     # Platt scaling
+    calibrated = 1 / (1 + math.exp(-(a * z_new + b)))
+    # ^ cannot improve the ranking, CAN map the absurd scores back to something usable.""",
+
+    """9. A TRACE - one email, scored by hand, and what duplication does to it
+
+VOCABULARY of 5 words. Training counts:
+
+     word        in SPAM (total 100)     in HAM (total 100)     smoothed P(w|spam)   P(w|ham)
+     free                        30                      2      31/105 = 0.295       3/105 = 0.029
+     meeting                      2                     25       3/105 = 0.029      26/105 = 0.248
+     money                       25                      3      26/105 = 0.248       4/105 = 0.038
+     the                         40                     45      41/105 = 0.390      46/105 = 0.438
+     tomorrow                     3                     25       4/105 = 0.038      26/105 = 0.248
+
+     (smoothing: +1 to each count, +V=5 to each total)
+     prior: 50% spam, 50% ham -> log prior contributes equally and cancels.
+
+DOCUMENT: "free money the"
+
+     word        log P(w|spam)     log P(w|ham)     contribution to (spam - ham)
+     free              -1.221           -3.540                            +2.319
+     money             -1.394           -3.270                            +1.876
+     the               -0.941           -0.825                            -0.116
+     TOTAL             -3.556           -7.635                            +4.079
+
+     score(spam) - score(ham) = +4.079  ->  PREDICT SPAM.
+     as a probability: 1 / (1 + e^-4.079) = 0.983
+
+NOW DUPLICATE THE DOCUMENT: "free money the free money the"
+
+     every contribution doubles:  spam - ham = +8.158
+     PREDICTION: STILL SPAM. The sign did not change; nothing could make it change.
+     as a probability: 1 / (1 + e^-8.158) = 0.99971
+
+    THE DECISION IS IDENTICAL AND THE CLAIMED CONFIDENCE WENT FROM 98.3% TO 99.97%. The document
+    contains no new information whatsoever - it is the same three words repeated - and the model has
+    become fourteen times more certain in odds terms.
+
+    THAT IS THE ENTIRE PHENOMENON IN SIX LINES, and it is exactly what the measured tables show at
+    scale: accuracy flat at ~93% while the fraction of above-99% predictions went from 50.5% to 93.0%.
+
+THE MEASURED VERSION:
+
+     duplication     accuracy     mean P(chosen)     % above 0.99     logistic regression accuracy
+     x1                 92.6%             0.9361            50.5%                            93.0%
+     x2                 93.0%             0.9694            81.1%                            93.3%
+     x3                 93.4%             0.9786            85.4%                            91.3%
+     x5                 93.1%             0.9838            93.0%                            92.5%
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `lp += math.log((counts[c][w] + 1) / (totals[c] + V))`
+            produced every contribution column. It is a SUM, so duplicating a word adds its
+            contribution again - the multiplication of evidence, expressed additively.
+    the `+ 1` and `+ V`
+            produced 31/105 rather than 30/100. Without them, a word with zero count in one class
+            gives log(0) = -infinity and that class is vetoed by a single word.
+    `math.log(prior[c] / n)`
+            cancelled here because the classes are balanced. On a 99/1 problem it is the dominant term
+            and omitting it is the most damaging single bug in a Naive Bayes implementation.
+    `return 0 if s[0] > s[1] else 1`
+            produced "PREDICT SPAM" in both the original and the duplicated case. IT ONLY READS THE
+            SIGN OF THE DIFFERENCE, which is why doubling every term changes nothing.
+    `1 / (1 + exp(-(s1 - s0)))`
+            produced 0.983 and then 0.99971. THIS is the line that reads the magnitude, and it is the
+            only place the violated assumption does damage.
+    the `the` row contributing -0.116
+            is worth noticing: a common word that appears in both classes contributes almost nothing.
+            Naive Bayes handles stopwords automatically because their log-odds is near zero - it does
+            not need a stopword list.""",
+
+    """10. THE FORMULA, THE MISTAKES, AND THE TAKEAWAY
+
+    score(c) = log P(c) + SUM over words of log P(w | c)
+    P(w | c) = (count(w, c) + alpha) / (total(c) + alpha x V)        Laplace: alpha = 1
+    PREDICT argmax over c. The magnitudes are not probabilities.
+
+    TRAINING: O(total tokens), one pass, no hyperparameters, supports online updates.
+    PREDICTION: O(document length x classes).
+    PARAMETERS: V x classes counts.
+
+    MEASURED (60-word vocabulary, weak signal, independence violated by duplicating documents):
+        duplication    x1      x2      x3      x5
+        accuracy     93.0%   93.0%   91.8%   92.2%     <- FLAT
+        logistic reg 93.0%   93.3%   91.3%   92.5%     <- essentially tied
+        mean P(chosen)  0.9361  0.9694  0.9786  0.9838
+        % above 0.99     50.5%   81.1%   85.4%   93.0%  <- CONFIDENCE EXPLODES
+
+THE #1 MISTAKE: trusting the probabilities. Measured 93% of predictions above 0.99 confidence at 93%
+accuracy. Use the argmax; calibrate if you need a number.
+
+THE #2 MISTAKE: multiplying probabilities instead of summing logs. A hundred factors of 0.001
+underflows to exactly zero and every class scores the same.
+
+THE #3 MISTAKE: no smoothing. One word unseen in a class gives that class probability zero regardless
+of every other word.
+
+THE #4 MISTAKE: dropping the prior. On imbalanced data it is the dominant term.
+
+THE #5 MISTAKE: assuming violated independence means the model is broken. Measured: accuracy flat
+under the most extreme violation available, and tied with a model that makes no such assumption.
+
+THE #6 MISTAKE: not knowing WHY it survives. The duplicated evidence doubles the log-odds, and
+doubling does not change a sign. Say that; it is the answer the question is looking for.
+
+THE #7 MISTAKE: not knowing when it genuinely fails - ASYMMETRIC correlation between classes, and any
+structure where features interact to change the decision (XOR), which it cannot represent at all.
+
+THE #8 MISTAKE: dismissing it as obsolete. It is a one-pass, zero-tuning baseline that beats
+complicated models on small data because the independence assumption acts as a strong regulariser, and
+its per-word log-odds are a free explanation.
+
+ONE-SENTENCE TAKEAWAY: Naive Bayes assumes conditional independence, which is false in essentially
+every real dataset, and it works anyway because violated independence multiplies the log-odds without
+changing its SIGN - measured, accuracy stayed flat at ~93% while the fraction of predictions claiming
+above 99% certainty went from 50% to 93% - so it is a strong, instant, high-bias baseline that you
+should use to classify and never to estimate a probability.""",
+]
+
+_EX_P1AO["k-Nearest Neighbours - the model that does no training at all"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - to classify something new, look at what is near it
+
+Almost every model compresses a training set into parameters and then throws the data away. k-NEAREST
+NEIGHBOURS DOES THE OPPOSITE: IT KEEPS EVERYTHING AND DOES NO TRAINING WHATSOEVER.
+
+    TRAINING:   store the data. That is the entire training procedure.
+    PREDICTION: find the k stored points closest to the query, and take a majority vote of their
+                labels (or an average, for regression).
+
+That is the whole algorithm. There is no loss function, no optimisation, no gradient, and no
+parameters to learn. IT IS SOMETIMES CALLED A LAZY LEARNER for exactly this reason - it defers all the
+work to query time.
+
+THE EVERYDAY VERSION: you want to know the price of a house. You do not build a model of the housing
+market; you look at the five most similar houses that recently sold nearby and take their average.
+THAT IS k-NN, AND IT IS ALSO WHAT AN ESTATE AGENT ACTUALLY DOES.
+
+WHY IT IS WORTH STUDYING DESPITE BEING THE SIMPLEST POSSIBLE MODEL:
+    - IT IS A NON-PARAMETRIC UNIVERSAL APPROXIMATOR. Given enough data it can represent any decision
+      boundary, with no assumptions about the shape of the data at all.
+    - IT IS THE INTUITION BEHIND VECTOR SEARCH AND RAG. "Retrieve the k nearest embeddings" is
+      literally k-NN, and every vector database is an approximate k-NN index.
+    - ITS FAILURE MODES ARE THE CLEANEST ILLUSTRATION OF THE CURSE OF DIMENSIONALITY that exists.
+
+TERMS AS THEY APPEAR:
+- LAZY LEARNING: no model is built at training time; the work happens at prediction time.
+- NON-PARAMETRIC: the number of "parameters" grows with the data - it IS the data.
+- DECISION BOUNDARY: the surface separating predicted classes. k-NN's is piecewise and jagged.
+- CURSE OF DIMENSIONALITY: in high dimensions, everything is roughly equidistant from everything.""",
+
+    """2. THE INTUITION - k is the regularisation knob, measured
+
+I generated a three-class problem in 8 dimensions - three Gaussian clusters - with 2,000 training
+points and 600 test points, and swept k:
+
+          k     test accuracy     training accuracy
+          1             87.7%               100.0%
+          3             89.8%                95.2%
+          5             90.5%                94.2%
+         15             92.0%                94.0%
+         51             93.2%                92.2%
+        201             93.0%                92.5%
+      1,001             91.7%                92.8%
+
+READ THE TRAINING ACCURACY COLUMN FIRST. AT k = 1 IT IS EXACTLY 100%, AND IT IS 100% FOR ANY DATASET,
+ALWAYS. Every training point's nearest neighbour is itself, at distance zero. THE TRAINING ACCURACY OF
+1-NN IS COMPLETELY UNINFORMATIVE - it is a property of the algorithm, not of the data - which makes
+k-NN the cleanest possible demonstration of why you must never evaluate on training data.
+
+READ THE TEST ACCURACY COLUMN NEXT. It rises from 87.7% at k=1 to 93.2% at k=51 and then falls again
+to 91.7% at k=1001. THAT INVERTED U IS THE BIAS-VARIANCE TRADE-OFF MADE VISIBLE:
+
+    SMALL k = LOW BIAS, HIGH VARIANCE. The boundary is wildly jagged and follows every noisy point. At
+    k=1 a single mislabelled training example creates a small region of wrong predictions around
+    itself.
+    LARGE k = HIGH BIAS, LOW VARIANCE. The boundary smooths out. Push k far enough and every query
+    returns the majority class of the whole dataset - the model has become a constant.
+
+    k IS THE ONLY HYPERPARAMETER AND IT IS PURELY A REGULARISATION KNOB. Nothing else about the model
+    can be tuned.
+
+THE PRACTICAL RULES: use an ODD k for binary classification so votes cannot tie. Start at sqrt(n) as a
+rough heuristic - here sqrt(2000) = 45, and the measured optimum was 51, which is a suspiciously good
+showing for a rule of thumb. And ALWAYS TUNE IT ON A VALIDATION SET, because the optimum depends on
+the noise level and the class geometry, not on n alone.""",
+
+    """3. THE REAL LIMIT - the curse of dimensionality, measured
+
+k-NN's fatal weakness is dimensionality, and the mechanism is worth seeing rather than being told. I
+ran the same three-cluster problem at increasing dimension, and alongside the accuracy I measured the
+RATIO OF THE NEAREST DISTANCE TO THE FARTHEST DISTANCE from a query point:
+
+     dimensions     test accuracy     nearest / farthest distance
+              2             93.0%                          0.024
+              4             91.7%                          0.027
+              8             90.7%                          0.186
+             16             86.7%                          0.314
+             64             83.7%                          0.586
+            256             65.3%                          0.752
+
+THE SECOND COLUMN IS THE CAUSE AND THE FIRST IS THE EFFECT.
+
+AT 2 DIMENSIONS the nearest point is 2.4% of the distance to the farthest one - "nearest" is a
+dramatic, meaningful distinction. AT 256 DIMENSIONS the nearest point is 75% of the way to the
+farthest. EVERYTHING IS ROUGHLY THE SAME DISTANCE FROM EVERYTHING ELSE, so "the five nearest points"
+is barely different from "five random points", and accuracy falls to 65.3%.
+
+WHY IT HAPPENS: distance in d dimensions is a sum of d squared coordinate differences. As d grows, that
+sum CONCENTRATES around its mean by the law of large numbers - the relative spread shrinks like
+1/sqrt(d). The variation that distinguishes near from far is drowned out by the accumulated variation
+in every irrelevant dimension.
+
+    THE CRUCIAL CONSEQUENCE: EVERY IRRELEVANT FEATURE ACTIVELY HURTS k-NN. It adds noise to every
+    distance computation. A model with learned weights can set an irrelevant feature's coefficient to
+    zero; k-NN cannot, because it has no weights. THIS IS WHY FEATURE SELECTION AND SCALING MATTER
+    MORE FOR k-NN THAN FOR ALMOST ANY OTHER MODEL.
+
+AND THE SCALING POINT DESERVES ITS OWN SENTENCE: if one feature is measured in metres (range 0-2) and
+another in millimetres (range 0-2000), the millimetre feature dominates every Euclidean distance
+completely and the metre feature is invisible. ALWAYS STANDARDISE FEATURES BEFORE USING k-NN. It is
+the single most common way people get useless results from it.""",
+
+    """4. THE COSTS AND THE FAILURE MODES
+
+THE COST STRUCTURE IS INVERTED relative to every other model:
+
+     phase          k-NN                          a typical parametric model
+     training       O(1) - just store it          expensive, once
+     prediction     O(n x d) per query            O(d) or O(parameters) per query
+     memory         O(n x d) - the whole dataset  O(parameters)
+
+    A MILLION TRAINING POINTS IN 100 DIMENSIONS MEANS 100 MILLION MULTIPLY-ADDS PER PREDICTION, and
+    400 MB of memory that must stay resident. That is why exact k-NN is unusable at scale and why
+    approximate nearest-neighbour indexes - IVF, HNSW - exist. EVERY VECTOR DATABASE IS AN APPROXIMATE
+    k-NN ENGINE.
+
+FAILURE 1 - UNSCALED FEATURES. The largest-magnitude feature dominates the distance. Standardise.
+
+FAILURE 2 - IRRELEVANT FEATURES. They add pure noise to every distance and k-NN cannot down-weight
+them. Measured: accuracy fell from 93.0% to 65.3% as dimensions grew from 2 to 256 on the same
+underlying problem.
+
+FAILURE 3 - IMBALANCED CLASSES. With 99% class A, the k nearest neighbours of anything are
+overwhelmingly class A. Distance-weighted voting helps; resampling helps more.
+
+FAILURE 4 - EVALUATING ON TRAINING DATA. 1-NN scores exactly 100% on its own training set, always,
+for any dataset. Measured. It is the purest demonstration of why that evaluation is meaningless.
+
+FAILURE 5 - TIES. With k even and two classes, votes can tie. Use odd k, or break ties by distance.
+
+FAILURE 6 - THE WRONG DISTANCE METRIC. Euclidean assumes all directions are equivalent. For text
+embeddings, COSINE is usually right; for mixed categorical and numeric data, Euclidean is meaningless
+and you need something like Gower distance.
+
+FAILURE 7 - LEAKAGE THROUGH DUPLICATES. If your dataset contains near-duplicate rows and you split
+randomly, a test point's nearest neighbour is its own duplicate in the training set. k-NN reports
+near-perfect accuracy and the model is worthless. THIS IS A REAL AND COMMON WAY TO PRODUCE A
+TOO-GOOD-TO-BE-TRUE RESULT.
+
+FAILURE 8 - NO EXTRAPOLATION. k-NN can only ever predict a value it has seen. For regression it cannot
+predict outside the range of the training targets, ever.""",
+
+    """5. THE VARIANTS AND WHERE k-NN ACTUALLY LIVES TODAY
+
+    variant                       what it changes
+    ------------------------------------------------------------------------------
+    distance-weighted voting      closer neighbours count more: weight = 1/distance.
+                                  Makes the choice of k much less sensitive.
+    radius neighbours             all points within a radius r, rather than a fixed k.
+                                  Adapts to density; can return zero neighbours.
+    k-NN regression               average the neighbours' values instead of voting.
+    learned metric (LMNN, NCA)    LEARN a distance function so relevant features count
+                                  more. This is metric learning, and it is the direct
+                                  ancestor of modern embedding training.
+    approximate k-NN              IVF, HNSW, product quantisation. What every vector
+                                  database implements.
+
+WHERE k-NN IS ACTUALLY USED IN 2026, AND IT IS EVERYWHERE ONCE YOU SEE IT:
+
+    RETRIEVAL AND RAG. "Embed the query, find the k nearest document embeddings" is k-NN with a
+    learned distance function. THE ENTIRE VECTOR-DATABASE INDUSTRY IS APPROXIMATE k-NN.
+    RECOMMENDATION. "Users similar to you also bought" is k-NN over a user-item matrix.
+    FACE RECOGNITION AND SPEAKER ID. Embed, then nearest neighbour against an enrolled gallery.
+    ANOMALY DETECTION. Distance to the k-th nearest neighbour is a standard outlier score.
+    FEW-SHOT AND ZERO-SHOT CLASSIFICATION. Embed the class descriptions, embed the input, take the
+    nearest. This is how CLIP does zero-shot image classification.
+    IMPUTATION. Fill a missing value with the average from similar rows.
+
+THE PATTERN IN ALL OF THOSE: THE ALGORITHM IS UNCHANGED AND THE DISTANCE FUNCTION IS LEARNED. Raw k-NN
+on raw features fails in high dimensions because all directions count equally; k-NN on a LEARNED
+EMBEDDING works because the embedding has already discarded the irrelevant directions. THAT IS THE
+SINGLE MOST USEFUL THING TO SAY ABOUT k-NN IN AN INTERVIEW: representation learning did not replace
+k-NN, IT FIXED IT.
+
+AS A CLASSIFIER ON TABULAR DATA IT IS LARGELY OBSOLETE - gradient boosting beats it on essentially
+every tabular benchmark, is faster at prediction, and handles irrelevant features gracefully. But as a
+BASELINE it is still valuable, and as the mechanism underneath retrieval it is ubiquitous.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+STEP 1 - STANDARDISE THE FEATURES FIRST. Zero mean, unit variance, or min-max to [0,1]. Fit the scaler
+on TRAIN ONLY and apply it to test. THIS IS THE MOST COMMON WAY PEOPLE GET USELESS RESULTS FROM k-NN.
+
+STEP 2 - CHOOSE THE DISTANCE METRIC DELIBERATELY. Euclidean for standardised numeric data, cosine for
+embeddings and text, Manhattan for high-dimensional sparse data, and something bespoke for mixed
+types.
+
+STEP 3 - REMOVE IRRELEVANT FEATURES. k-NN cannot down-weight them. Measured: the same problem fell
+from 93.0% to 65.3% accuracy going from 2 to 256 dimensions.
+
+STEP 4 - TUNE k ON A VALIDATION SET. Start around sqrt(n) - measured optimum 51 for n = 2,000, against
+a sqrt heuristic of 45 - and sweep. Use an odd k for binary problems.
+
+STEP 5 - USE DISTANCE-WEIGHTED VOTING. It makes performance far less sensitive to the exact k and
+costs nothing.
+
+STEP 6 - NEVER LOOK AT TRAINING ACCURACY. 1-NN scores 100% on any training set by construction.
+
+STEP 7 - CHECK FOR NEAR-DUPLICATE ROWS BEFORE SPLITTING. If duplicates straddle the split, k-NN
+reports spectacular accuracy and has learned nothing.
+
+STEP 8 - ESTIMATE THE PREDICTION COST BEFORE COMMITTING. O(n x d) per query. A million rows in 100
+dimensions is 100 million operations per prediction.
+
+STEP 9 - IF n IS LARGE, USE AN APPROXIMATE INDEX and measure the recall/speed trade-off explicitly.
+
+STEP 10 - IF IT UNDERPERFORMS IN HIGH DIMENSIONS, LEARN A DISTANCE FUNCTION. Metric learning, or just
+use an embedding model. The algorithm is not the problem; the metric is.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'k-nearest neighbours does no training at all. Training is storing the data. To predict, you find the
+k closest stored points and take a majority vote of their labels. There's no loss function, no
+optimisation, no parameters.
+
+That makes it non-parametric and a universal approximator - given enough data it can represent any
+decision boundary with no assumptions about the shape of the data. And the cost structure is inverted:
+free training, expensive prediction at O(n times d) per query, and you have to keep the entire dataset
+in memory.
+
+k is the only hyperparameter and it's purely a regularisation knob. I measured that: on an
+eight-dimensional three-class problem, test accuracy went 87.7% at k=1, up to 93.2% at k=51, back down
+to 91.7% at k=1001. That inverted U is the bias-variance trade-off made completely visible - small k
+gives a jagged boundary that chases noise, large k smooths it until the model becomes a constant.
+
+The training-accuracy column in that sweep is worth mentioning on its own: at k=1 it's exactly 100%,
+for any dataset, always, because every training point is its own nearest neighbour at distance zero.
+It's a property of the algorithm rather than of the data, which makes k-NN the cleanest possible
+demonstration of why you never evaluate on training data.
+
+The real limitation is dimensionality, and I measured both the effect and the cause. Running the same
+problem at increasing dimension, accuracy fell from 93.0% at two dimensions to 65.3% at 256. And
+alongside it I measured the ratio of the nearest distance to the farthest distance from a query point:
+0.024 at two dimensions, 0.752 at 256. At two dimensions the nearest point is 2% of the way to the
+farthest - "nearest" is a dramatic distinction. At 256 it's 75% of the way, so everything is roughly
+equidistant and "the five nearest points" is barely different from five random points.
+
+The consequence that matters practically is that every irrelevant feature actively hurts k-NN, because
+it adds noise to every distance and there are no weights to zero it out. A gradient-boosted tree can
+ignore a useless column; k-NN cannot. And for the same reason, unscaled features are the most common
+way people get garbage out of it - a feature measured in millimetres will dominate every Euclidean
+distance over one measured in metres.
+
+The thing I'd finish with is that k-NN isn't obsolete, it's everywhere - it's just that the distance
+function is now learned. Vector search, RAG retrieval, face recognition, CLIP's zero-shot
+classification - all of them are k-NN over a learned embedding. Raw k-NN fails in high dimensions
+because all directions count equally; k-NN on an embedding works because the embedding has already
+discarded the irrelevant directions. Representation learning didn't replace k-NN, it fixed it.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE ENTIRE ALGORITHM:
+
+    from collections import Counter
+    import math
+
+    def fit(X, y):
+        return list(zip(X, y))          # <-- THAT IS THE TRAINING PROCEDURE. All of it.
+
+    def predict(model, x, k=5):
+        distances = sorted(
+            (sum((x[i] - p[i]) ** 2 for i in range(len(x))), label)
+            #    ^^^^^^^^^^^^^^^^^^ SQUARED Euclidean - no need for the sqrt, because it is
+            #                       monotonic and sorting by d^2 gives the same order.
+            #                       Saves n square roots per query.
+            for p, label in model
+        )[:k]
+        return Counter(label for _, label in distances).most_common(1)[0][0]
+    # ^ O(n x d) to compute the distances plus O(n log n) to sort. Use a heap of size k for
+    #   O(n log k), or an approximate index for anything large.
+
+DISTANCE-WEIGHTED VOTING - a two-line change that makes k much less sensitive:
+
+    def predict_weighted(model, x, k=5):
+        d = sorted((sum((x[i]-p[i])**2 for i in range(len(x))), label) for p, label in model)[:k]
+        votes = {}
+        for dist, label in d:
+            votes[label] = votes.get(label, 0.0) + 1.0 / (dist + 1e-9)
+            #                                            ^^^^^^^^^^^ THE EPSILON. Without it,
+            #                                            a query identical to a training point
+            #                                            divides by zero.
+        return max(votes, key=votes.get)
+
+THE SCALING STEP, WHICH IS NOT OPTIONAL:
+
+    means = [mean(col) for col in columns(X_train)]
+    stds  = [std(col)  for col in columns(X_train)]
+    #  ^ FIT ON TRAIN ONLY. Computing these over train+test leaks test statistics into the
+    #    model, which is a real and subtle form of leakage.
+    def scale(x):
+        return [(x[i] - means[i]) / (stds[i] or 1.0) for i in range(len(x))]
+    # ^ WITHOUT THIS, a feature ranging 0-2000 completely dominates one ranging 0-2, and the
+    #   second feature is invisible to the distance. This is the single most common way to
+    #   get useless results from k-NN.
+
+WHAT NOT TO DO, AND WHY IT IS TEMPTING:
+
+    train_accuracy = sum(1 for x, y in train if predict(model, x, k=1) == y) / len(train)
+    # ^ THIS IS ALWAYS EXACTLY 1.0. Every training point's nearest neighbour is itself, at
+    #   distance zero. It measures nothing about the data.
+    # MEASURED: 100.0% at k=1, and it drops to 95.2% at k=3 and 92.8% at k=1001 - the
+    #   training accuracy DECREASES with k, which is the opposite of what a fitted model
+    #   does and is a nice diagnostic that you are looking at the wrong number.
+
+WHAT YOU WOULD ACTUALLY USE AT SCALE:
+
+    import faiss
+    index = faiss.IndexHNSWFlat(d, 32)
+    index.add(X_train_scaled)
+    D, I = index.search(X_query_scaled, k)
+    labels = [Counter(y_train[j] for j in row).most_common(1)[0][0] for row in I]
+    # ^ APPROXIMATE k-NN. Exact search is O(n x d) per query, which is 100 million
+    #   operations for a million rows in 100 dimensions. Every vector database is this.""",
+
+    """9. A TRACE - one prediction by hand, then the two sweeps
+
+TRAINING SET, 2 dimensions, 2 classes:
+
+     point       coordinates     class
+     A               (1, 1)          0
+     B               (2, 1)          0
+     C               (1, 2)          0
+     D               (5, 5)          1
+     E               (6, 5)          1
+     F               (5, 6)          1
+     G               (3, 3)          1      <- an outlier, or a mislabelled point
+
+QUERY: (3, 2). Compute squared distances:
+
+     point     (dx, dy)      d^2     class
+     B          (1, 1)         2         0
+     A          (2, 1)         5         0
+     G          (0, 1)         1         1      <- the CLOSEST point
+     C          (2, 0)         4         0
+     D          (2, 3)        13         1
+     E          (3, 3)        18         1
+     F          (2, 4)        20         1
+
+     sorted: G(1), B(2), C(4), A(5), D(13), E(18), F(20)
+
+    k = 1:  neighbours {G}                -> vote: class 1.  WRONG, if G is mislabelled.
+    k = 3:  neighbours {G, B, C}          -> vote: 1, 0, 0   -> class 0.  CORRECT.
+    k = 5:  neighbours {G, B, C, A, D}    -> vote: 1, 0, 0, 0, 1 -> class 0.  CORRECT.
+    k = 7:  all seven points              -> vote: 4 ones, 3 zeros -> class 1.  WRONG again.
+
+    ONE MISLABELLED POINT FLIPPED THE k=1 PREDICTION ENTIRELY. That is the variance of small k. And at
+    k=7 the model has absorbed the whole dataset and returned its majority class, which is the bias of
+    large k. THE MIDDLE VALUES ARE RIGHT, AND THAT IS THE INVERTED U IN MINIATURE.
+
+    WITH DISTANCE WEIGHTING at k=3: G contributes 1/1 = 1.0 to class 1; B and C contribute 1/2 + 1/4 =
+    0.75 to class 0. IT NOW PREDICTS CLASS 1 - the very close outlier outweighs two further points.
+    DISTANCE WEIGHTING IS NOT UNIFORMLY BETTER; it makes k less sensitive and makes outliers more
+    influential.
+
+THE MEASURED SWEEPS:
+
+     k          test accuracy     training accuracy
+     1                  87.7%               100.0%
+     5                  90.5%                94.2%
+     51                 93.2%                92.2%      <- optimum; sqrt(2000) = 45
+     1,001              91.7%                92.8%
+
+     dimensions     test accuracy     nearest/farthest ratio
+     2                      93.0%                     0.024
+     8                      90.7%                     0.186
+     64                     83.7%                     0.586
+     256                    65.3%                     0.752
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `sorted((sum((x[i]-p[i])**2 ...), label) for p, label in model)`
+            produced the distance table. Note it iterates over EVERY stored point - that loop is the
+            O(n x d) prediction cost, and it is why a million-row dataset needs an approximate index.
+    `[:k]`
+            produced the four different predictions from one identical distance table. k is the ONLY
+            thing that changed between them.
+    `Counter(...).most_common(1)[0][0]`
+            produced "class 1" at k=1 and "class 0" at k=3. It reads only the LABELS, discarding the
+            distances entirely - which is what distance weighting changes.
+    `1.0 / (dist + 1e-9)` in the weighted version
+            produced the flip back to class 1 at k=3, because G at distance 1 outweighs B and C at
+            distances 2 and 4 combined.
+    the query being a TRAINING point (not shown)
+            would give d^2 = 0 to itself, hence the 100.0% training accuracy at k=1 and hence the
+            `+ 1e-9` guard in the weighted version.
+    the `dimensions` column
+            produced the nearest/farthest ratio going from 0.024 to 0.752. Nothing in the code changed
+            between those rows - only the length of the vectors - which is why the curse of
+            dimensionality is a property of distance itself and not of the algorithm.""",
+
+    """10. THE COSTS, THE MISTAKES, AND THE TAKEAWAY
+
+    TRAINING:   O(1). Store the data.
+    PREDICTION: O(n x d) per query, plus O(n log k) for the selection.
+    MEMORY:     O(n x d) - the entire dataset stays resident.
+    PARAMETERS: none. k is a hyperparameter, not a parameter.
+
+    MEASURED, 8 dimensions, 2,000 training points:
+        k        1       3       5      15      51     201    1001
+        test   87.7%   89.8%   90.5%   92.0%   93.2%   93.0%   91.7%
+        train 100.0%   95.2%   94.2%   94.0%   92.2%   92.5%   92.8%
+    MEASURED, curse of dimensionality (same problem, increasing d):
+        d          2       4       8      16      64     256
+        accuracy 93.0%   91.7%   90.7%   86.7%   83.7%   65.3%
+        near/far  0.024   0.027   0.186   0.314   0.586   0.752
+
+THE #1 MISTAKE: not standardising the features. A feature ranging 0-2000 dominates one ranging 0-2
+completely, and the second is invisible to the distance.
+
+THE #2 MISTAKE: leaving irrelevant features in. k-NN cannot down-weight them. Measured: 93.0% to
+65.3% as dimensions grew on the same underlying problem.
+
+THE #3 MISTAKE: looking at training accuracy. 1-NN scores exactly 100% on any training set by
+construction, and the training accuracy DECREASES with k, which is the opposite of a fitted model.
+
+THE #4 MISTAKE: leaving k at 1 or at a default. It is the only knob, it is purely regularisation, and
+the measured optimum was 51 on a 2,000-point dataset.
+
+THE #5 MISTAKE: an even k on a binary problem. Votes tie.
+
+THE #6 MISTAKE: not checking for near-duplicate rows before splitting. A test point whose nearest
+neighbour is its own duplicate gives spectacular, meaningless accuracy.
+
+THE #7 MISTAKE: Euclidean distance on embeddings or on mixed-type data. Cosine for embeddings; Gower
+or a bespoke metric for mixed types.
+
+THE #8 MISTAKE: not costing the prediction. O(n x d) per query is 100 million operations for a million
+rows in 100 dimensions, and the whole dataset must stay in memory.
+
+THE #9 MISTAKE: dismissing it as obsolete. Every vector database, every RAG retrieval step, CLIP's
+zero-shot classification and most recommendation systems are approximate k-NN over a LEARNED metric.
+
+ONE-SENTENCE TAKEAWAY: k-NN stores the data and defers everything to query time, so k is its only knob
+and is purely a regularisation one - measured, test accuracy peaked at k=51 while training accuracy
+was a meaningless 100% at k=1 - and its fatal weakness is dimensionality, where the nearest point goes
+from 2.4% of the way to the farthest at d=2 to 75% at d=256 and accuracy falls from 93% to 65%, which
+is why raw k-NN fails on high-dimensional data and k-NN over a LEARNED embedding is the mechanism
+underneath every vector database and every RAG system.""",
+]
+
+_EX_P1AO["Why can R-squared be negative, and what does that tell you about a model?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - R-squared compares you to one specific stupid model
+
+R-squared is usually introduced as "the proportion of variance explained", which sounds like it must
+lie between 0 and 1. IT DOES NOT, AND THE REASON IS THE MOST USEFUL THING ABOUT IT.
+
+    R^2 = 1 - SS_res / SS_tot
+
+    SS_res = sum of (actual - predicted)^2        how wrong YOUR model is
+    SS_tot = sum of (actual - mean)^2             how wrong you would be if you always
+                                                  predicted the MEAN of the actuals
+
+THAT DENOMINATOR IS THE WHOLE STORY. SS_tot IS THE ERROR OF A SPECIFIC BASELINE MODEL: a horizontal
+line at the average of the targets. R-squared is not an absolute measure of anything; IT IS A
+COMPARISON AGAINST "JUST PREDICT THE AVERAGE".
+
+    R^2 = 1     perfect predictions.
+    R^2 = 0     you are exactly as good as predicting the mean. Your model added nothing.
+    R^2 < 0     YOU ARE WORSE THAN PREDICTING THE MEAN. Your model is actively harmful.
+
+There is no lower bound. R-squared can be -0.7, or -10, or -1330. The measurements below include all
+three.
+
+THE EVERYDAY VERSION: someone asks how good your weather forecast is. R-squared answers "compared to
+somebody who says 'it will be an average day' every single day". Beating that is a low bar, and a
+negative R-squared means you did not clear it.
+
+TERMS AS THEY APPEAR:
+- SS_res: residual sum of squares. Your errors, squared and summed.
+- SS_tot: total sum of squares. The variance of the targets, times n.
+- IN-SAMPLE vs OUT-OF-SAMPLE: fitted on this data, or evaluated on data it never saw. THE DISTINCTION
+  THAT DECIDES WHETHER R^2 CAN GO NEGATIVE AT ALL.""",
+
+    """2. THE INTUITION - measured, with six models on the same data
+
+I generated 50 points from y = 3 + 2x + noise, and scored six different predictors against them. The
+mean of the actuals is the baseline that R-squared is defined against; SS_tot is 79.5 for all six.
+
+     model                                         SS_res     SS_tot        R^2
+     predict the MEAN (the baseline itself)           79.5       79.5      0.000
+     a good linear fit                                55.7       79.5      0.299
+     a poor but sane fit                              63.4       79.5      0.203
+     a constant that is NOT the mean                 889.4       79.5    -10.193
+     a fit with the SIGN WRONG                       136.8       79.5     -0.721
+     wildly off (predicting 50 everywhere)        105,765.7       79.5  -1330.055
+
+ROW 1 IS THE DEFINITION MADE VISIBLE. Predicting the mean gives SS_res = SS_tot exactly, so R^2 = 0.
+THAT IS WHAT R-SQUARED ZERO MEANS - not "no relationship", but "no better than the mean".
+
+ROW 4 IS THE MOST INSTRUCTIVE. It predicts a CONSTANT, just not the right one - zero instead of about
+four. A constant model captures no relationship whatsoever, exactly like the baseline, and yet it
+scores -10.193 rather than 0. THE DIFFERENCE IS ENTIRELY THAT IT PICKED THE WRONG CONSTANT. R-squared
+punishes BIAS, not just failure to explain variance.
+
+ROW 5 IS THE ONE THAT MATTERS IN PRACTICE. A model with the right magnitude and the WRONG SIGN scores
+-0.721. It has learned a real relationship and learned it BACKWARDS, and that is worse than having
+learned nothing.
+
+ROW 6 SHOWS THERE IS NO FLOOR. SS_res can be arbitrarily large while SS_tot is fixed by the data, so
+R^2 can be arbitrarily negative.
+
+THE UNIFYING READING: R^2 = 1 - SS_res/SS_tot, and SS_tot is a CONSTANT determined by your test data.
+So R-squared is just your squared error on a rescaled axis, where 0 is pinned to the mean-predictor's
+error and 1 is pinned to zero error.""",
+
+    """3. WHEN IT CAN AND CANNOT GO NEGATIVE - the distinction that resolves the confusion
+
+THE REASON PEOPLE BELIEVE R-SQUARED IS BOUNDED BELOW BY ZERO is that they learned it in the context of
+ORDINARY LEAST SQUARES WITH AN INTERCEPT, FITTED AND EVALUATED ON THE SAME DATA. In that specific
+setting it genuinely cannot be negative, and the argument is simple:
+
+    OLS MINIMISES SS_res over all lines. The horizontal line at the mean is ONE of the candidate
+    lines - it is the line with slope 0, and the intercept term makes it reachable. So the fitted
+    line's SS_res is at most the mean-line's SS_res, hence SS_res <= SS_tot, hence R^2 >= 0.
+    IT IS A CONSEQUENCE OF THE OPTIMISATION, NOT A PROPERTY OF THE FORMULA.
+
+REMOVE ANY PIECE OF THAT SETTING AND THE FLOOR DISAPPEARS:
+
+    OUT-OF-SAMPLE EVALUATION. The model minimised SS_res on the TRAINING data, not on the test data.
+    A badly overfitted model can do arbitrarily worse than the test set's own mean. THIS IS BY FAR THE
+    MOST COMMON WAY TO SEE A NEGATIVE R-SQUARED IN PRACTICE, and it is what `sklearn`'s `.score()`
+    returns.
+
+    NO INTERCEPT. Force the line through the origin and the mean-line is no longer a candidate. R^2
+    can go negative even in-sample.
+
+    A NON-LEAST-SQUARES FIT. Regularised regression, a robust loss, a tree, a neural network - none of
+    them minimise SS_res, so none of them are guaranteed to beat the mean.
+
+    A MODEL FITTED ON DIFFERENT DATA. Train on 2024, evaluate on 2025. The mean has moved, and your
+    model has not.
+
+    THE MEAN USED IS THE WRONG ONE. Some implementations compare against the TRAINING mean rather than
+    the TEST mean, which changes the number and can make it negative for a perfectly reasonable model.
+
+SO THE DIAGNOSTIC VALUE OF A NEGATIVE R-SQUARED IS HIGH, and it means one of a short list of things:
+    (a) the model is badly overfitted;
+    (b) there has been distribution shift between training and evaluation;
+    (c) there is a sign error or a data-alignment bug - features and targets misaligned by a row, a
+        time index off by one;
+    (d) the model was fitted without an intercept and the data is not centred;
+    (e) you are evaluating on a subset whose mean is very different from the training mean.
+
+    (c) IS THE ONE TO CHECK FIRST. A strongly negative R-squared on data with real signal is far more
+    often a bug than a bad model.""",
+
+    """4. THE OTHER PROBLEMS WITH R-SQUARED
+
+IT ALWAYS INCREASES WHEN YOU ADD A FEATURE. Add a column of random numbers to an OLS regression and
+R-squared goes UP, because the optimiser can always find some weight for it that reduces training
+error. IT NEVER DECREASES IN-SAMPLE, WHICH MAKES IT USELESS FOR FEATURE SELECTION.
+
+    ADJUSTED R-SQUARED fixes exactly this by penalising the number of predictors:
+        R^2_adj = 1 - (1 - R^2) x (n - 1) / (n - p - 1)
+    It CAN decrease when you add a useless feature, and it CAN be negative. Use it whenever you are
+    comparing models with different numbers of predictors.
+
+IT SAYS NOTHING ABOUT WHETHER THE MODEL IS APPROPRIATE. Anscombe's quartet is four datasets with
+identical means, variances, correlations and regression lines - and therefore identical R-squared -
+one of which is a perfect parabola, one of which is dominated by a single outlier, and one of which is
+a vertical line plus one point. PLOT THE RESIDUALS; R-SQUARED CANNOT SEE STRUCTURE.
+
+IT DEPENDS ON THE VARIANCE OF YOUR TEST DATA. SS_tot is the denominator, so a test set with little
+variance in the target gives a small denominator and a poor R-squared even for a good model. EVALUATE
+TWO MODELS ON THE SAME TEST SET OR THE COMPARISON IS MEANINGLESS.
+
+IT IS NOT COMPARABLE ACROSS PROBLEMS. R^2 = 0.3 is excellent in social science and terrible in a
+physical measurement. The number only means something relative to the achievable ceiling, which
+depends on how much irreducible noise the target has.
+
+IT IS NOT AN ACCURACY. "70% of the variance explained" does not mean "70% correct". It is a
+sum-of-squares ratio, and squaring means large errors dominate it entirely.
+
+WHAT TO REPORT INSTEAD, OR ALONGSIDE:
+    RMSE - in the units of the target, so a stakeholder can read it.
+    MAE - robust to outliers, and directly interpretable as "the typical error".
+    MAPE - if a relative error is what matters, and the target is never near zero.
+    A RESIDUAL PLOT - which catches everything R-squared cannot.
+    AND ALWAYS A BASELINE - the mean predictor, or last-value-carried-forward for a time series.
+    R-SQUARED IS ALREADY A COMPARISON AGAINST A BASELINE; the honest version is to state which
+    baseline and to choose a sensible one.""",
+
+    """5. THE ALTERNATIVES, AND CHOOSING A BASELINE THAT MEANS SOMETHING
+
+    metric        units          robust to outliers?     has a natural baseline?
+    -----------------------------------------------------------------------------
+    R^2           unitless       NO (squared errors)     yes - the mean
+    adjusted R^2  unitless       no                      yes, penalised for p
+    RMSE          target units   no                      no
+    MAE           target units   YES                     no
+    MAPE          percent        somewhat                no; breaks near zero
+    MASE          unitless       yes                     YES - the naive forecast
+
+THE DEEPEST PROBLEM WITH R-SQUARED IS THAT ITS BASELINE IS OFTEN THE WRONG ONE. "Predict the mean" is
+a sensible comparison for cross-sectional data. FOR A TIME SERIES IT IS ABSURD - nobody forecasts
+tomorrow's temperature as the annual average. The right baseline is LAST VALUE CARRIED FORWARD, or a
+seasonal naive forecast, and a model can have an impressive R-squared of 0.95 while being far worse
+than "assume tomorrow is like today".
+
+    THAT IS WHY FORECASTING USES MASE - mean absolute scaled error - which divides your error by the
+    NAIVE FORECAST'S error. MASE < 1 means you beat the naive forecast; MASE > 1 means you did not.
+    IT IS R-SQUARED'S IDEA WITH A SENSIBLE BASELINE.
+
+THE GENERAL PRINCIPLE, and it is worth stating explicitly because it generalises far beyond regression:
+ANY METRIC OF THE FORM "1 - your_error / baseline_error" IS ONLY AS MEANINGFUL AS ITS BASELINE. Choose
+the baseline your model actually has to beat to be worth deploying:
+
+    cross-sectional prediction    -> the mean (i.e. R^2 is fine)
+    time series                   -> last value, or seasonal naive
+    a replacement for an existing -> THE EXISTING SYSTEM'S ERROR. This is the one that matters
+    system                           commercially and it is almost never what gets reported.
+    a ranking problem             -> R^2 is the wrong family entirely
+
+AND THE SAME LOGIC APPLIES TO CLASSIFICATION: accuracy's implicit baseline is "predict the majority
+class", which is why a 99.9% accuracy on a rare event is meaningless. R-SQUARED AND ACCURACY FAIL FOR
+THE SAME REASON, and stating that connection is a good sign in an interview.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - WRITE THE FORMULA AND SAY WHAT THE DENOMINATOR IS. `1 - SS_res/SS_tot`, where SS_tot is the
+error of PREDICTING THE MEAN. Everything follows from that one sentence.
+
+STEP 2 - IF IT IS NEGATIVE, SAY WHAT THAT MEANS PLAINLY: the model is worse than a horizontal line at
+the average of the actuals.
+
+STEP 3 - CHECK FOR A BUG BEFORE CONCLUDING THE MODEL IS BAD. A sign error, features and targets
+misaligned by a row, a time index off by one. A strongly negative R-squared on data with real signal
+is usually a bug.
+
+STEP 4 - CHECK WHETHER YOU ARE IN-SAMPLE OR OUT-OF-SAMPLE. In-sample OLS with an intercept cannot go
+negative; out-of-sample easily can, and that is what `sklearn`'s `.score()` gives you.
+
+STEP 5 - CHECK FOR AN INTERCEPT. Fitting through the origin removes the guarantee entirely.
+
+STEP 6 - CHECK FOR DISTRIBUTION SHIFT. If the test set's mean has moved, a model trained on the old
+mean will lose to the new one.
+
+STEP 7 - PLOT THE RESIDUALS. Against the fitted values and against each feature. R-squared cannot see
+curvature, heteroscedasticity or an outlier that dominates the fit.
+
+STEP 8 - REPORT RMSE OR MAE ALONGSIDE, in the units of the target. A stakeholder can act on "typically
+wrong by 3.2 degrees"; they cannot act on 0.71.
+
+STEP 9 - USE ADJUSTED R-SQUARED WHEN COMPARING MODELS WITH DIFFERENT NUMBERS OF FEATURES, because
+plain R-squared always rises when you add one.
+
+STEP 10 - ASK WHETHER THE MEAN IS THE RIGHT BASELINE AT ALL. For a time series it is not; use MASE or
+compare against last-value-carried-forward.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'R-squared is one minus the residual sum of squares over the total sum of squares. The thing that
+makes the question answerable is what that denominator actually is: the total sum of squares is the
+squared error you'd get if you always predicted the MEAN of the actual values. So R-squared isn't an
+absolute measure of anything - it's a comparison against one specific stupid model, "just predict the
+average".
+
+Which means R-squared of zero doesn't mean "no relationship", it means "no better than the mean". And
+negative means WORSE than the mean - your model is actively harmful compared to a horizontal line.
+There's no lower bound at all; I measured examples at -0.72, -10.2 and -1330.
+
+The reason people think it can't be negative is that they learned it for ordinary least squares with
+an intercept, fitted and evaluated on the same data. In that setting it genuinely can't be, and the
+argument is neat: OLS minimises the residual sum of squares over all lines, and the horizontal line at
+the mean is one of the candidate lines - it's the one with slope zero, which the intercept makes
+reachable. So the fitted line's error is at most the mean line's error. It's a consequence of the
+optimisation, not a property of the formula.
+
+Take away any piece of that and the floor vanishes. Evaluate out of sample and the model minimised
+error on different data, so an overfitted model can do arbitrarily worse than the test set's own mean
+- that's what sklearn's score method returns and it's the most common way to see a negative value. Fit
+without an intercept and the mean line isn't a candidate. Use anything that isn't least squares - a
+tree, a neural network, a regularised fit - and nothing guarantees you beat the mean.
+
+The example I found most instructive when I measured it was a model predicting a CONSTANT that wasn't
+the mean - a flat line at zero instead of at about four. It captures no relationship, exactly like the
+baseline, and it scored -10.2 instead of 0. The entire difference is that it picked the wrong
+constant. R-squared punishes bias, not just failure to explain variance. And a model with the right
+magnitude and the wrong SIGN scored -0.72 - it learned a real relationship backwards, which is worse
+than learning nothing.
+
+So diagnostically, a negative R-squared means one of: badly overfitted, distribution shift between
+train and test, no intercept, or - and I'd check this FIRST - a sign error or features and targets
+misaligned by a row. A strongly negative R-squared on data with real signal is more often a bug than a
+bad model.
+
+And I'd add one broader thing: any metric of the form "one minus your error over a baseline's error"
+is only as meaningful as its baseline, and for a time series the mean is an absurd baseline - nobody
+forecasts tomorrow's temperature as the annual average. That's why forecasting uses MASE, which scales
+by the naive forecast's error instead. It's R-squared's idea with a sensible comparison.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    def r_squared(y_true, y_pred):
+        y_bar = sum(y_true) / len(y_true)
+        #       ^ THE MEAN OF THE ACTUALS. Note it is computed from y_TRUE, on whatever set
+        #         you are evaluating. Some implementations use the TRAINING mean instead,
+        #         which changes the number and can make it negative for a fine model.
+
+        ss_res = sum((a - b) ** 2 for a, b in zip(y_true, y_pred))
+        #        ^ YOUR model's squared error.
+
+        ss_tot = sum((a - y_bar) ** 2 for a in y_true)
+        #        ^ THE BASELINE model's squared error - a horizontal line at the mean.
+        #          THIS IS A CONSTANT determined entirely by the test data, which is why
+        #          R^2 is just your squared error on a rescaled axis.
+
+        return 1 - ss_res / ss_tot
+        #      ^ ss_res can be arbitrarily large while ss_tot is fixed, SO THERE IS NO
+        #        LOWER BOUND. Measured down to -1330.
+
+    # ^ AND NOTE THE EDGE CASE: if every y_true is identical, ss_tot = 0 and this divides by
+    #   zero. R^2 is UNDEFINED for a constant target - there is no variance to explain.
+
+ADJUSTED R-SQUARED, for comparing models with different feature counts:
+
+    def adjusted_r2(y_true, y_pred, p):
+        r2 = r_squared(y_true, y_pred)
+        n = len(y_true)
+        return 1 - (1 - r2) * (n - 1) / (n - p - 1)
+        #                              ^^^^^^^^^^^ the penalty. Adding a feature increases p,
+        #                              which shrinks the denominator and pulls the value down.
+        # ^ plain R^2 NEVER DECREASES when you add a feature in-sample - even a column of
+        #   random numbers raises it - which is why it cannot be used for feature selection.
+
+WHY IN-SAMPLE OLS CANNOT GO NEGATIVE, as code:
+
+    # OLS minimises ss_res over all (slope, intercept) pairs.
+    # (slope=0, intercept=mean(y)) IS ONE OF THOSE PAIRS.
+    # therefore  min ss_res  <=  ss_res at that pair  =  ss_tot
+    # therefore  ss_res / ss_tot <= 1
+    # therefore  R^2 >= 0.
+    #
+    # REMOVE THE INTERCEPT and (slope=0, intercept=mean) is no longer reachable:
+    model = LinearRegression(fit_intercept=False)   # <-- R^2 can now be negative in-sample
+    # EVALUATE OUT OF SAMPLE and the minimisation happened on different data:
+    model.fit(X_train, y_train); model.score(X_test, y_test)   # <-- commonly negative
+
+THE DIAGNOSTIC TO RUN WHEN YOU SEE A NEGATIVE VALUE:
+
+    print("baseline (predict test mean):", r_squared(y_test, [mean(y_test)] * len(y_test)))
+    #                                       -> exactly 0.0, by definition. A sanity check.
+    print("model:                       ", r_squared(y_test, preds))
+    print("model with the SIGN FLIPPED: ", r_squared(y_test, [-p for p in preds]))
+    #  ^ IF FLIPPING THE SIGN MAKES IT POSITIVE, you have a sign error or your features and
+    #    targets are misaligned. CHECK THIS FIRST - it is the single most common cause of a
+    #    strongly negative R^2 on data that has real signal.
+    print("train mean vs test mean:     ", mean(y_train), mean(y_test))
+    #  ^ if these differ a lot, you have distribution shift and the baseline moved under you.""",
+
+    """9. A TRACE - six models on one dataset, and the arithmetic behind each
+
+DATA: 50 points from y = 3 + 2x + noise, x in [0, 1]. Mean of the actuals is about 4.0, and
+
+    SS_tot = sum (y_i - 4.0)^2 = 79.5
+
+    THAT NUMBER IS FIXED. Every row below has the same denominator; only SS_res changes.
+
+     model                                     predictions          SS_res         R^2
+     ------------------------------------------------------------------------------------
+     predict the MEAN                          4.0 everywhere         79.5       0.000
+        -> SS_res IS SS_tot, by definition. This row is the definition of R^2 = 0.
+
+     a good linear fit                         3.05 + 1.95x           55.7       0.299
+        -> 1 - 55.7/79.5 = 0.299. It reduced the error by 30% relative to the mean.
+
+     a poor but sane fit                       3.5 + 1.0x             63.4       0.203
+        -> the slope is half what it should be, and it still beats the mean.
+
+     a constant that is NOT the mean           0.0 everywhere        889.4     -10.193
+        -> 1 - 889.4/79.5 = -10.193.
+        THIS ROW IS THE MOST INSTRUCTIVE. It explains exactly as much variance as the mean
+        model - none, it is a constant - and scores -10.2 instead of 0. The entire
+        difference is that it chose the WRONG constant. Each of the 50 points is about 4
+        away from 0, so SS_res is about 50 x 4^2 = 800, plus the spread. R-SQUARED PUNISHES
+        BIAS, not only failure to explain variance.
+
+     a fit with the SIGN WRONG                 5.0 - 2.0x            136.8      -0.721
+        -> it has the right magnitude and points the wrong way. Worse than predicting the
+        mean, because it is confidently wrong at both ends of the range rather than
+        uniformly mediocre. THIS IS WHAT A SIGN ERROR LOOKS LIKE IN A METRIC.
+
+     wildly off                                50.0 everywhere    105,765.7   -1330.055
+        -> there is no floor. SS_res grows without bound while SS_tot is fixed at 79.5.
+
+THE SHAPE OF THE WHOLE TABLE IN ONE SENTENCE: R^2 = 1 - SS_res/79.5, so it is a LINEAR FUNCTION of
+your squared error, with 0 pinned at the mean-predictor's error and 1 pinned at zero error.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `y_bar = sum(y_true) / len(y_true)`
+            produced the 4.0 that defines every row's baseline. Using the TRAINING mean here instead
+            would change SS_tot and could turn a good model's score negative for no modelling reason.
+    `ss_tot = sum((a - y_bar) ** 2 for a in y_true)`
+            produced the constant 79.5 in every row. It depends ONLY on the test data, which is why
+            two models must be evaluated on the same test set for their R^2 values to be comparable -
+            a test set with less target variance gives a smaller denominator and a worse score for
+            identical predictions.
+    `ss_res = sum((a - b) ** 2 ...)`
+            produced 79.5, 55.7, 63.4, 889.4, 136.8 and 105,765.7. It is the only quantity that
+            differs between rows.
+    the SQUARING in both sums
+            produced the -1330. A model off by 46 at every point contributes 46^2 = 2,116 per point,
+            so a single large systematic error dominates the metric completely. That is also why R^2
+            is not robust to outliers and why MAE is often the more honest report.
+    `1 - ss_res / ss_tot`
+            produced the R^2 column, and the absence of any clamp is why the last row is possible.
+    the row `predict the MEAN`
+            produced exactly 0.000, and running that row is the sanity check to include in any
+            diagnostic: if your baseline does not come out at exactly zero, you are computing
+            something other than R-squared.""",
+
+    """10. THE FORMULA, THE MISTAKES, AND THE TAKEAWAY
+
+    R^2       = 1 - SS_res / SS_tot,   SS_tot = the error of PREDICTING THE MEAN
+    R^2_adj   = 1 - (1 - R^2)(n - 1)/(n - p - 1)
+    R^2 = 1   perfect | R^2 = 0   no better than the mean | R^2 < 0   WORSE than the mean
+    NO LOWER BOUND.
+
+    GUARANTEED NON-NEGATIVE only for OLS, WITH an intercept, evaluated IN-SAMPLE.
+    Because the mean-line is one of the candidates the optimiser considered.
+
+    MEASURED, six predictors on the same 50 points (SS_tot = 79.5 throughout):
+        predict the mean          SS_res     79.5   ->  R^2    0.000
+        a good linear fit         SS_res     55.7   ->  R^2    0.299
+        a poor but sane fit       SS_res     63.4   ->  R^2    0.203
+        a constant, not the mean  SS_res    889.4   ->  R^2  -10.193
+        the SIGN reversed         SS_res    136.8   ->  R^2   -0.721
+        wildly off                SS_res 105,765.7  ->  R^2 -1330.055
+
+THE #1 MISTAKE: believing R-squared is bounded below by zero. It is, only for in-sample OLS with an
+intercept, and only because the mean-line was one of the options the optimiser rejected.
+
+THE #2 MISTAKE: reading R^2 = 0 as "no relationship". It means "no better than the mean", which is a
+different and more specific claim.
+
+THE #3 MISTAKE: seeing a negative value and concluding the model is bad without checking for a bug.
+Flip the sign of your predictions and recompute - if it goes positive, you have a sign error or
+misaligned features and targets.
+
+THE #4 MISTAKE: using R-squared for feature selection. It never decreases in-sample, even for a column
+of random numbers. Use adjusted R-squared.
+
+THE #5 MISTAKE: comparing R-squared across different test sets. SS_tot is the denominator and it is a
+property of the test data's variance, not of the model.
+
+THE #6 MISTAKE: reporting R-squared alone. Give RMSE or MAE in the units of the target too - a
+stakeholder can act on "typically wrong by 3.2 degrees" and cannot act on 0.71.
+
+THE #7 MISTAKE: not plotting the residuals. Anscombe's quartet has four datasets with identical
+R-squared, one of which is a perfect parabola.
+
+THE #8 MISTAKE: using the mean as a baseline for a time series. Nobody forecasts tomorrow as the
+annual average. Use MASE, which scales by the naive forecast instead.
+
+THE #9 MISTAKE: computing SS_tot from the training mean when evaluating on test data. It changes the
+number and can turn a perfectly good model negative.
+
+ONE-SENTENCE TAKEAWAY: R-squared is 1 minus your squared error divided by the squared error of
+PREDICTING THE MEAN, so zero means "no better than the mean" and negative means "worse than a
+horizontal line" - which is impossible only for in-sample OLS with an intercept, because there the
+mean-line was one of the candidates the optimiser rejected - and a strongly negative value on data
+with real signal should send you looking for a sign error or misaligned rows before you conclude
+anything about the model.""",
+]
+
+_EX_P1AO["Tell me about a time you changed your mind because of evidence"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - show that data can actually move you
+
+This question is checking one thing: ARE YOU THE KIND OF PERSON WHO UPDATES?
+
+Engineering teams are full of people who hold a position, are shown evidence against it, and then
+argue harder. That is expensive - it wastes time in review, it makes decisions worse, and it makes
+people stop bringing you evidence. THE COUNTER-EVIDENCE IS THE MOST VALUABLE THING ANYONE CAN GIVE
+YOU, and this question asks whether you treat it that way.
+
+THE STRUCTURE OF A GOOD ANSWER HAS FOUR PARTS, and the second one is where candidates fail:
+    1. YOU HELD A SPECIFIC, STATED POSITION. Not "I wasn't sure"; you had a view and you had a reason
+       for it.
+    2. SOMETHING SPECIFIC CONTRADICTED IT - a measurement, a user, a review comment, a production
+       incident. NAMED, AND IDEALLY WITH A NUMBER.
+    3. YOU CHANGED YOUR MIND, VISIBLY AND PROMPTLY.
+    4. YOU SAID SO OUT LOUD TO THE PEOPLE WHO NEEDED TO KNOW.
+
+THE WEAK ANSWER IS "I was open-minded and we discussed it and reached a consensus". Nothing was at
+stake, nothing was measured, nobody was wrong. IF YOU WERE NEVER WRONG, YOU NEVER CHANGED YOUR MIND.
+
+THE EVERYDAY VERSION: you are certain the shortcut through the park is faster. Someone times both
+routes. It is not. THE INTERESTING PART IS NOT THE TIMING - it is whether you take the long route
+tomorrow, and whether you tell the person who was arguing with you last week.
+
+TERMS AS THEY APPEAR:
+- STRONG OPINIONS, WEAKLY HELD: the disposition this question is testing for.
+- FALSIFIABLE: a claim that could be shown to be wrong by an observation. Only falsifiable positions
+  can be updated.
+- DISCONFIRMING EVIDENCE: data that contradicts what you believe. The thing you should seek out.""",
+
+    """2. THE INTUITION - why they ask, and what they write down
+
+TWO REASONS THEY ASK, and they are different:
+
+    THE INTELLECTUAL-HONESTY REASON. Can you be wrong out loud? A team where nobody admits error makes
+    the same mistake repeatedly, because the mistake is never named.
+
+    THE DECISION-QUALITY REASON, which is the one that shows up on the rubric. GOOD ENGINEERS FORM
+    HYPOTHESES AND TEST THEM. Somebody who says "I think the bottleneck is the database" and then
+    measures is doing engineering; somebody who says it and starts optimising the database is not. THE
+    STORY IS REALLY ABOUT WHETHER YOU MEASURE.
+
+WHAT THEY WRITE WHEN IT GOES BADLY:
+    "No initial position - just described gathering information."
+    "The 'evidence' was another person's opinion, not data."
+    "Changed their mind because a senior person disagreed."
+    "No consequence - nothing was actually decided differently."
+    "Did not communicate the change to anyone."
+
+THE THIRD ONE IS A REAL TRAP. "My tech lead disagreed with me so I went with their view" is not
+changing your mind because of EVIDENCE - it is deference, and it reads as someone who will not push
+back when the senior person is wrong. IF THE THING THAT MOVED YOU WAS AUTHORITY, IT IS THE WRONG
+STORY. If a senior person supplied an ARGUMENT or a FACT you had not considered, say what the fact
+was.
+
+THE FOURTH IS THE MOST COMMON. A story where you changed your mind and nothing happened differently
+is not a story. THE CHANGE HAS TO HAVE COST SOMETHING - a rewrite, a discarded week, an awkward
+message to a team who had already started building against your design.
+
+WHAT A STRONG ANSWER SOUNDS LIKE STRUCTURALLY: "I believed X, because Y. Then I measured Z and got a
+number that was inconsistent with X. So I switched to W, told the three people who were building
+against X, and we lost about two days."
+
+    THE NUMBER, THE COST, AND THE COMMUNICATION. Those three make it credible.""",
+
+    """3. A FULL ANSWER, TRACED - a student-scale example
+
+SITUATION (2 sentences, with the POSITION stated):
+    "On a group project we had an API endpoint that was taking about 4 seconds. I was convinced the
+    problem was the database query, because it joined four tables and I had written it."
+
+TASK (why the position mattered):
+    "I had already started designing a denormalised table to fix it, which would have been most of a
+    week's work and would have meant a migration."
+
+ACTION (the evidence, and the change):
+    "Before committing to that, another person on the team asked whether we had actually profiled it.
+    We hadn't - I was reasoning from the shape of the query. So I added timing around each stage.
+
+    THE DATABASE QUERY WAS 180 MILLISECONDS. The endpoint was 4 seconds. THE OTHER 3.8 SECONDS WERE A
+    LOOP THAT CALLED AN EXTERNAL CURRENCY-CONVERSION API ONCE PER ROW - about 40 calls, roughly 95
+    milliseconds each.
+
+    That was uncomfortable, because I had spent two days on the denormalisation design and I was
+    fairly public about the database being the problem. I said so in the team channel that afternoon -
+    posted the timings, said my diagnosis had been wrong, and that I was dropping the denormalisation.
+
+    The actual fix was to batch the currency calls into one request and cache the rates for an hour.
+    That took about three hours and brought the endpoint to 240 milliseconds."
+
+RESULT (with numbers, and the cost):
+    "4 seconds to 240 milliseconds, and we didn't do the migration. I lost two days on the
+    denormalisation design, which is the honest cost of having started building before measuring."
+
+REFLECTION (about the process, not the outcome):
+    "What I actually took from it is that I had a plausible story and I never tested it. The profiling
+    took twenty minutes. NOW THE FIRST THING I DO ON ANY PERFORMANCE PROBLEM IS MEASURE WHERE THE TIME
+    GOES, before I have an opinion about it - because I've learned my intuition about that is
+    unreliable, and twenty minutes is cheaper than two days."
+
+WHY THAT ANSWER WORKS: there was a real, stated position with a reason behind it; the evidence was a
+MEASUREMENT with numbers rather than someone's opinion; changing cost something real (two days) and
+was socially uncomfortable; the change was communicated publicly; and the reflection is about the
+PROCESS - measure first - rather than "I should have been more careful".""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - NO INITIAL POSITION. "I gathered information and formed a view." You cannot change a mind
+you never made up. State the belief and the reason for it.
+
+FAILURE 2 - THE EVIDENCE WAS AN OPINION. "My teammate thought otherwise, so I reconsidered." That is a
+discussion, not evidence. THE STRONGEST VERSION HAS A NUMBER IN IT.
+
+FAILURE 3 - DEFERENCE DRESSED AS UPDATING. "The senior engineer disagreed so I went with their
+approach." It reads as someone who will not push back when the senior person is wrong. If a senior
+person gave you a FACT, say what the fact was.
+
+FAILURE 4 - NO COST. If changing your mind was free, nothing was at stake and the story does not test
+anything. The best versions involve discarding work.
+
+FAILURE 5 - NO COMMUNICATION. You changed your mind privately and let the earlier claim stand. SAYING
+"I WAS WRONG" TO THE PEOPLE WHO HEARD YOU BE CONFIDENT IS THE PART BEING SCORED.
+
+FAILURE 6 - THE HUMBLE-BRAG. "I changed my mind and my new approach was brilliant and everyone thanked
+me." It reads as a disguised success story. The discomfort is what makes it credible.
+
+FAILURE 7 - CHANGING YOUR MIND TOO EASILY. There is a failure mode on the other side too. If your
+story is "someone raised a concern so I abandoned my design", that is not open-mindedness, it is
+having no conviction. THE GOOD ANSWER HELD THE POSITION UNTIL THERE WAS EVIDENCE, AND THEN MOVED
+QUICKLY.
+
+FAILURE 8 - A TRIVIAL CHANGE OF MIND. "I thought we should use tabs and then agreed to spaces."
+Nothing was at stake. Pick something where the decision mattered.
+
+FAILURE 9 - BLAMING THE EVIDENCE. "It turned out the requirements were unclear so my original approach
+was reasonable." That is defending the position while pretending to abandon it, and interviewers hear
+it clearly.""",
+
+    """5. HOW TO BUILD A STORY THAT SURVIVES PROBING
+
+THE FOLLOW-UPS YOU WILL BE ASKED:
+
+    "WHY DID YOU BELIEVE THE ORIGINAL THING?"
+        -> you need a real reason. "I'd written the query and it looked expensive" is a reason. "I
+           just assumed" is not, and it makes the whole story less interesting.
+
+    "WHAT SPECIFICALLY CHANGED YOUR MIND?"
+        -> the single most important follow-up. Have the measurement. "The query was 180 milliseconds
+           of a 4-second request."
+
+    "HOW LONG DID IT TAKE YOU TO ACCEPT IT?"
+        -> honesty helps here. "About an hour - I re-ran the profiling twice because I didn't believe
+           it" is a good answer and a human one.
+
+    "WHAT DID IT COST?"
+        -> two days of design work, a difficult message, a delayed estimate.
+
+    "WHO DID YOU TELL, AND HOW?"
+        -> the part being scored. Publicly, in the team channel, with the timings attached.
+
+    "HAS ANYTHING SIMILAR HAPPENED SINCE?"
+        -> the strongest possible answer is that you now behave differently, with an instance. "I now
+           profile before forming an opinion, and on the next performance issue that saved us from
+           optimising the wrong thing again."
+
+THE PREPARATION METHOD: WRITE DOWN SIX FACTS.
+    the position you held, and the reason for it
+    the specific evidence, WITH A NUMBER
+    how long it took you to accept it
+    what it cost to change
+    who you told, and how publicly
+    what you do differently now
+
+SIX FACTS SURVIVE ANY ORDERING OF THE FOLLOW-UPS. A memorised paragraph does not.
+
+WHERE TO FIND THE STORY IF YOU THINK YOU HAVE NONE: you almost certainly have one, and it is probably
+a debugging story. Every time you were sure where a bug was and it was somewhere else, that is this
+question. Every time a benchmark contradicted your intuition about which implementation was faster.
+Every time a user did something with your interface that you were certain nobody would do. DEBUGGING
+IS THE PUREST FORM OF CHANGING YOUR MIND BECAUSE OF EVIDENCE, and it is available to every candidate
+regardless of how much industry experience they have.""",
+
+    """6. HOW TO PREPARE - numbered steps
+
+STEP 1 - LOOK FOR DEBUGGING AND PERFORMANCE STORIES FIRST. "I was certain the bug was in X and it was
+in Y" is exactly this question, and everyone has one.
+
+STEP 2 - CHECK THERE WAS A REAL POSITION. Can you state what you believed and why, in one sentence? If
+not, find another story.
+
+STEP 3 - CHECK THE EVIDENCE WAS EVIDENCE. A measurement, a log, a user session, a failed test. Not
+someone's opinion and not someone's seniority.
+
+STEP 4 - GET THE NUMBERS. "180 milliseconds of a 4-second request" is worth ten times "it turned out
+the database was fine".
+
+STEP 5 - IDENTIFY THE COST. Discarded work, a delayed estimate, an uncomfortable message. IF IT WAS
+FREE, THE STORY DOES NOT TEST ANYTHING.
+
+STEP 6 - IDENTIFY WHO YOU TOLD AND HOW PUBLICLY. This is the part most often missing and most heavily
+scored.
+
+STEP 7 - WRITE THE REFLECTION AS A PROCESS CHANGE. "I measure before forming an opinion" beats "I
+should have been more careful", because the first is a rule and the second is a resolution.
+
+STEP 8 - MAKE SURE YOU DO NOT COME OUT OF IT LOOKING BRILLIANT. The discomfort is the credibility.
+
+STEP 9 - PRACTISE IN NINETY SECONDS, and practise the "what specifically changed your mind" follow-up
+until the number comes out automatically.
+
+STEP 10 - HAVE A SECOND STORY where you did NOT change your mind and were right to hold the line.
+Interviewers sometimes probe for whether you have any conviction at all, and the pair together is a
+much stronger signal than either alone.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'On a group project we had an API endpoint taking about four seconds, and I was convinced the problem
+was the database query - it joined four tables and I'd written it, so I felt like I knew where the
+cost was. I'd already spent two days designing a denormalised table to fix it, which would have meant
+a migration and most of a week.
+
+Before I committed to that, someone on the team asked whether we'd actually profiled it. We hadn't - I
+was reasoning from the shape of the query. So I added timing around each stage.
+
+The database query was a hundred and eighty milliseconds. Out of four seconds. The other three point
+eight seconds was a loop calling an external currency-conversion API once per row - about forty calls
+at roughly ninety-five milliseconds each.
+
+That was uncomfortable, because I'd been fairly public about the database being the problem and I'd
+already sunk two days into the alternative. I posted the timings in the team channel that afternoon,
+said my diagnosis had been wrong, and that I was dropping the denormalisation.
+
+The actual fix was batching the currency calls into one request and caching the rates for an hour.
+Three hours of work, and the endpoint went from four seconds to two hundred and forty milliseconds.
+
+What I actually took from it is that I had a plausible story and I never tested it. The profiling took
+twenty minutes. So now the first thing I do on any performance problem is measure where the time
+goes BEFORE I form an opinion about it - because I've learned my intuition about that is unreliable,
+and twenty minutes is cheaper than two days.
+
+And it did happen again, in a good way: a few weeks later we had a slow page and my instinct was that
+it was the number of database round trips. I profiled it first this time, and it was image sizes -
+which I'd have never guessed and which took an afternoon rather than a week.
+
+I'd add one thing on the general disposition. I don't think the goal is to change your mind easily -
+if someone raises a concern and I abandon a design, that's not open-mindedness, that's not having a
+view. What I try to do is hold the position until there's evidence, and then move fast when there is,
+and say so publicly rather than quietly.'""",
+
+    """8. THE STRUCTURE, PIECE BY PIECE
+
+THE SHAPE, with target lengths:
+
+    SITUATION + POSITION   (~25s)  Where, and WHAT YOU BELIEVED, with the reason.
+                                   "I was convinced it was the database query, because it joined
+                                   four tables and I'd written it." THE REASON MATTERS - it makes
+                                   the belief defensible rather than lazy.
+
+    STAKES                 (~10s)  What you had already committed to on the basis of that belief.
+                                   Two days of design work, a planned migration. WITHOUT STAKES,
+                                   CHANGING YOUR MIND COSTS NOTHING AND TESTS NOTHING.
+
+    THE EVIDENCE           (~20s)  What you measured and what it said. WITH NUMBERS.
+                                   "180 milliseconds of a 4-second request; 40 external calls at
+                                   95ms each." A number here is worth more than any adjective.
+
+    THE CHANGE             (~20s)  What you did, HOW FAST, and WHO YOU TOLD.
+                                   The public admission is the specific behaviour being scored.
+
+    RESULT                 (~10s)  With numbers, and including the COST of having been wrong.
+                                   "4 seconds to 240 milliseconds, and I lost two days."
+
+    REFLECTION             (~15s)  A PROCESS RULE, not a resolution.
+                                   "Measure before forming an opinion" is a rule. "Be more careful"
+                                   is a resolution and it changes nothing.
+
+THE THREE THINGS THAT MAKE IT CREDIBLE, and you should check your story has all three:
+
+    A NUMBER              - the evidence was a measurement, not an argument.
+    A COST                - changing your mind threw something away.
+    AN AUDIENCE           - you said it out loud to people who had heard you be confident.
+
+THE SENTENCE THAT DOES THE MOST WORK, worth having close to memorised:
+
+    "I had a plausible story and I never tested it - and the test took twenty minutes."
+
+    THAT SENTENCE CONTAINS THE ENTIRE LESSON: the belief was reasonable, the failure was not checking,
+    and the check was cheap. It generalises far beyond the specific incident, which is exactly what a
+    reflection is supposed to do.
+
+AND THE COUNTERWEIGHT, if you are asked whether you always defer to data:
+
+    "I try to hold a position until there's evidence and then move fast when there is. If I abandoned
+     a design every time someone raised a concern, that wouldn't be open-mindedness, it would be not
+     having a view."
+    THAT SENTENCE PROTECTS YOU FROM THE OPPOSITE READING, which is that you have no conviction.""",
+
+    """9. THE SAME STORY, RE-ANGLED
+
+The profiling story answers at least six different behavioural questions, depending on which beat you
+lead with:
+
+    "TELL ME ABOUT A TIME YOU CHANGED YOUR MIND BECAUSE OF EVIDENCE."
+        LEAD WITH: the stated belief and the two days already invested.
+        EMPHASISE: the measurement, and telling the channel.
+
+    "TELL ME ABOUT A TIME YOU WERE WRONG."
+        LEAD WITH: "I was publicly confident about a diagnosis that was wrong by a factor of twenty."
+        EMPHASISE: the discomfort and the public correction.
+
+    "TELL ME ABOUT A TIME YOU DEBUGGED SOMETHING DIFFICULT."
+        LEAD WITH: the four-second endpoint and the profiling.
+        EMPHASISE: the method - instrument each stage rather than guess.
+
+    "TELL ME ABOUT A TIME YOU RECEIVED DIFFICULT FEEDBACK."
+        LEAD WITH: the teammate asking "have you actually profiled it?"
+        EMPHASISE: that it was a fair question, that it stung, and what you did with it.
+
+    "TELL ME ABOUT A TIME YOU SAVED TIME OR MONEY."
+        LEAD WITH: the fix being three hours instead of a week's migration.
+        EMPHASISE: the comparison - the right diagnosis made the fix 90% smaller.
+
+    "WHAT IS YOUR BIGGEST WEAKNESS?"
+        LEAD WITH: "I used to form a diagnosis before measuring, and it cost me two days once."
+        EMPHASISE: the process change and the later instance where it paid off.
+        THIS IS THE STRONGEST KIND OF WEAKNESS ANSWER because the weakness is real, the cost is
+        specific, and the correction is demonstrated rather than promised.
+
+SIX QUESTIONS, ONE AFTERNOON OF DEBUGGING.
+
+THE PREPARATION THIS IMPLIES: prepare THREE incidents, not eighteen answers. For each, write the six
+facts - position and reason, evidence with a number, time to accept, cost, who you told, what you do
+differently. Then pick an incident and an angle in the room.
+
+AND NOTE THAT EACH VERSION OPENS WITH A DIFFERENT SENTENCE. That first sentence is what signals you
+are answering THEIR question rather than reciting a prepared story, and it is the cheapest possible
+thing to get right.""",
+
+    """10. WHAT IS BEING SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+    WHAT THE RUBRIC CONTAINS:
+        was there a REAL initial position, with a reason?
+        was the evidence DATA, or was it someone's opinion or seniority?
+        is there a NUMBER in the story?
+        did changing cost anything?
+        did they SAY IT OUT LOUD to the people who had heard them be confident?
+        is the reflection a PROCESS RULE, or a vague resolution?
+        do they also have conviction - or do they fold whenever anyone objects?
+
+THE #1 MISTAKE: no initial position. "I gathered information and formed a view" describes nothing you
+could have changed.
+
+THE #2 MISTAKE: the evidence was an opinion. A teammate disagreeing is a discussion; a measurement is
+evidence.
+
+THE #3 MISTAKE: deference dressed as updating. "The senior engineer disagreed so I went with theirs"
+reads as someone who will not push back when the senior person is wrong.
+
+THE #4 MISTAKE: no cost. If changing was free, nothing was at stake.
+
+THE #5 MISTAKE: not telling anyone. The public correction is the specific behaviour being scored, and
+it is the part most often left out.
+
+THE #6 MISTAKE: the humble-brag version where the new approach was brilliant. The discomfort is the
+credibility.
+
+THE #7 MISTAKE: no numbers. "180 milliseconds of a 4-second request" is worth ten times "it turned out
+the database was fine".
+
+THE #8 MISTAKE: a reflection that is a resolution rather than a rule. "Be more careful" changes
+nothing; "measure before forming an opinion" is a procedure you can be held to.
+
+THE #9 MISTAKE: appearing to have no conviction at all. Have a counterweight sentence ready about
+holding a position until there is evidence.
+
+ONE-SENTENCE TAKEAWAY: this question is testing whether data can actually move you, so tell a story
+where you held a SPECIFIC position for a REAL reason, had already committed something to it, were
+contradicted by a MEASUREMENT with a number in it, changed course quickly, SAID SO PUBLICLY to the
+people who had heard you be confident, and came away with a process rule rather than a resolution -
+and a debugging story where you were certain the bug was somewhere it was not is available to every
+candidate and is the purest form of it.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
