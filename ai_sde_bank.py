@@ -164244,6 +164244,1037 @@ repeats, route the easy majority to a smaller model, and stream the output, chec
 set after each step because every one of these levers is a quality trade.""",
 ]
 
+_EX_P1AO["Design a time-series forecasting system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - and the questions that come before any model
+
+'Forecast demand' is underspecified in ways that change everything. ASK FIRST:
+
+    WHAT HORIZON?      tomorrow, next month, next year? A model good at h=1 can be bad at h=90.
+    HOW OFTEN?         a daily forecast that is regenerated every day is different from one produced
+                       quarterly.
+    HOW MANY SERIES?   one company-wide total, or 50,000 SKUs at 200 stores? That decides the entire
+                       architecture.
+    WHAT DECISION DOES IT DRIVE?  ordering stock, staffing shifts, capacity planning? The decision
+                       determines whether over- or under-forecasting is worse.
+    POINT OR INTERVAL? 'about 400' is much less useful than '400, and 90% confident it is between 310
+                       and 520'.
+
+THAT LAST QUESTION IS THE ONE THAT MATTERS MOST AND IS ASKED LEAST. If the forecast drives inventory,
+the business needs a QUANTILE, not a mean - and asking for one is what separates a forecasting system
+from a regression exercise.
+
+AND THE DISCIPLINE THAT DEFINES THE WHOLE TOPIC:
+
+    ESTABLISH THE BASELINES FIRST, AND BEAT THEM CONVINCINGLY OR DO NOT SHIP.
+
+MEASURED, on two years of daily data with a 28-day horizon, six-fold rolling-origin backtest:
+
+    method                          MAPE      MAE
+    mean of all history            8.63%    12.61
+    naive (last value)             9.82%    13.31
+    moving average (28d)           8.00%    11.30
+    drift (last + slope)          10.24%    13.81
+    SEASONAL NAIVE (last week)     6.99%     9.88
+    trend + weekly profile        11.79%    15.69
+
+THE SEASONAL NAIVE - LITERALLY 'THE SAME DAY LAST WEEK' - WON. And the hand-built trend-plus-
+seasonality model, which is more sophisticated in every respect, came LAST.
+
+TERMS AS THEY APPEAR:
+- SEASONAL NAIVE: predict the value from one seasonal period ago. The baseline that matters.
+- ROLLING-ORIGIN BACKTEST: repeatedly train up to a point and forecast forward, moving the point.""",
+
+    """2. THE INTUITION - the baseline that beat everything
+
+    That result deserves examination rather than embarrassment, because it is the normal outcome.
+
+    WHY THE SEASONAL NAIVE IS SO STRONG: this series has a strong weekly cycle, and 'the same day last
+    week' captures the day-of-week effect PERFECTLY, for free, with zero parameters and no fitting.
+
+    WHY MY TREND MODEL LOST: it fitted a single straight line across two years, which is dominated by
+    the long-run trend and is a poor description of the recent level - and its weekly profile averaged
+    over the whole history, diluting recent behaviour. IT WAS MORE COMPLEX AND WORSE.
+
+    THAT IS THE LESSON, and it is worth stating plainly: MORE SOPHISTICATED IS NOT MORE ACCURATE.
+    Forecasting competitions have found this repeatedly - simple methods and simple combinations are
+    extremely hard to beat, and the value of a baseline is not that it is a floor but that it is
+    frequently the answer.
+
+    THE OTHER MEASUREMENT THAT MAKES THE POINT - PER-FOLD RESULTS for that same trend model:
+
+        12.31%   16.58%   16.81%   12.98%   5.27%   6.77%
+        mean 11.79%, standard deviation 4.42pp, range 5.27% to 16.81%
+
+    THREEFOLD VARIATION BETWEEN FOLDS. A single holdout would have handed you any one of those numbers
+    and you would have believed it. If you had happened to test on the fifth fold you would have
+    reported 5.27% and concluded the model beat every baseline.
+
+    THAT IS WHY YOU BACKTEST OVER MULTIPLE ORIGINS AND REPORT THE SPREAD, not one number. ONE HOLDOUT
+    ON A TIME SERIES IS NOT AN EVALUATION - it is a single sample from a distribution you have not
+    looked at.""",
+
+    """3. THE LEAKAGE THAT MAKES EVERYTHING LOOK GREAT
+
+    THE SINGLE MOST COMMON FATAL MISTAKE: splitting a time series randomly.
+
+    MEASURED. I shuffled the days, trained on 80%, and for each held-out day predicted the average of
+    its nearest surviving neighbours:
+
+        RANDOM split, interpolating from neighbours:   MAPE 6.07%
+        TEMPORAL split, seasonal naive:                MAPE 6.99%
+
+    THE RANDOM SPLIT SCORED BETTER THAN EVERY LEGITIMATE METHOD, AND THE NUMBER IS MEANINGLESS. It had
+    access to the day AFTER the one it was predicting. Interpolating between two known points is easy;
+    EXTRAPOLATING PAST THE END OF WHAT YOU KNOW IS THE ENTIRE PROBLEM.
+
+    IN PRODUCTION THE FUTURE DOES NOT EXIST. A random split silently changes the task from forecasting
+    to interpolation and reports the easier task's score.
+
+    THE OTHER LEAKAGE SOURCES, all of which are subtler:
+
+        FEATURES COMPUTED OVER THE WHOLE SERIES. A rolling mean, a scaler fitted on all the data, a
+        target encoding - if any of them saw the test period, they leaked. FIT EVERY TRANSFORMATION
+        INSIDE THE FOLD.
+        FUTURE-KNOWN vs FUTURE-UNKNOWN COVARIATES. A holiday calendar IS known in advance. Next week's
+        weather is NOT, and using actual weather instead of forecast weather makes your model look
+        good and useless.
+        REVISED DATA. Many business metrics are restated after the fact. Training on the revised
+        version means training on information you would not have had.
+        THE GAP BETWEEN FORECAST AND USE. If you forecast on Monday for the following week, you do not
+        have Monday's own data yet in most pipelines. BACKTEST WITH THE SAME GAP.
+
+    THE RULE THAT COVERS ALL OF THEM: SIMULATE THE PRODUCTION SITUATION EXACTLY - the same cutoff, the
+    same gap, the same features available, the same data vintage.""",
+
+    """4. THE FAILURE MODES
+
+A. A RANDOM TRAIN/TEST SPLIT. Measured: 6.07% MAPE from interpolation against 6.99% for the best
+   honest method. It flatters and it is meaningless.
+
+B. NOT BEATING THE BASELINE. Measured: my trend-and-seasonality model scored 11.79% against the
+   seasonal naive's 6.99%. Without the baseline it would have looked like a working model.
+
+C. A SINGLE HOLDOUT. Measured: fold MAPEs from 5.27% to 16.81% for the same model. One number is one
+   sample.
+
+D. BACKTESTING AT THE WRONG HORIZON. Measured, the ranking CHANGED: trend+seasonal beat the seasonal
+   naive at h=1, 7 and 14, and lost badly at h=28 and h=90. EVALUATE AT THE HORIZON YOU WILL ACTUALLY
+   FORECAST.
+
+E. MAPE ON SMALL OR ZERO VALUES. Measured: the same absolute error of 10 gave 10%, 100%, 1,000%,
+   2,000% and infinity as the actual fell from 100 to 0. For intermittent demand MAPE is unusable.
+
+F. FORECASTING THE MEAN WHEN THE DECISION NEEDS A QUANTILE. If stocking out costs five times as much
+   as holding stock, you want the 80th percentile, not the average - and a point forecast cannot
+   express that.
+
+G. IGNORING KNOWN FUTURE EVENTS. Holidays, promotions, launches and price changes are known in advance
+   and are usually the largest single source of error. Measured in my data, a promotion spike of +60
+   recurs every year, and no purely autoregressive method anticipates it.
+
+H. ONE GLOBAL MODEL FOR WILDLY DIFFERENT SERIES, or a separate model per series when there are 50,000
+   of them. Both extremes are wrong.
+
+I. NO RETRAINING CADENCE. Forecasting models decay faster than most, because the series IS the thing
+   that changes.
+
+J. NOT MONITORING FORECAST ERROR IN PRODUCTION. The actuals arrive, so unlike most ML this is a domain
+   where you get ground truth quickly. Not using it is inexcusable.""",
+
+    """5. THE ARCHITECTURE - and the scale question
+
+    THE DECISION THAT SHAPES EVERYTHING: HOW MANY SERIES?
+
+        ONE TO A FEW HUNDRED       fit a model per series. Classical methods - ETS, ARIMA, Prophet -
+                                   are strong and interpretable, and you can inspect each one.
+        THOUSANDS TO MILLIONS      a GLOBAL model trained across all series, with the series identity
+                                   and its attributes as features. One model learns patterns shared
+                                   across series, which is what makes short and new series forecastable
+                                   at all - and it is the same cold-start argument as
+                                   [[cold-start-problem-in-ml-systems]].
+
+    THE GLOBAL MODEL IS THE MODERN DEFAULT AT SCALE, and the reason is worth stating: a new SKU with
+    three weeks of history cannot be forecast on its own, and a global model can forecast it from what
+    similar SKUs did.
+
+    THE PIPELINE:
+
+        INGEST      raw events -> a regular time grid. Decide how to handle missing periods - a
+                    missing day is not the same as a zero, and conflating them is a classic bug.
+        FEATURES    lags, rolling statistics, calendar features, holidays, promotions, price, weather
+                    forecasts. ALL COMPUTED WITH ONLY PAST DATA, inside the fold.
+        TRAIN       per-series or global, on a rolling origin.
+        FORECAST    produce QUANTILES, not just a mean.
+        POST-PROCESS  clip at zero, enforce integer counts where appropriate, RECONCILE HIERARCHIES so
+                    the store forecasts sum to the region forecast.
+        SERVE       usually a batch job writing to a table - forecasting is rarely a request-time
+                    problem.
+        MONITOR     forecast error by series, by horizon, and by segment.
+
+    HIERARCHICAL RECONCILIATION deserves a mention because it is a real requirement people forget:
+    if you forecast each store independently, the totals will not add up to the regional forecast, and
+    the business will notice immediately. Reconciliation methods force coherence, and 'forecast the
+    total and split it down' versus 'forecast the leaves and sum up' is a genuine design choice with
+    different accuracy characteristics.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. ASK THE HORIZON, THE CADENCE, THE NUMBER OF SERIES AND THE DECISION IT DRIVES. Then ask whether they
+   need an interval rather than a point.
+2. PLOT THE DATA. Trend, seasonality - possibly several periods - outliers, level shifts, missing
+   periods, zeros. FIVE MINUTES HERE SAVES DAYS.
+3. RUN THE BASELINES. Naive, seasonal naive, moving average, drift. Measured: the seasonal naive won
+   at 6.99%.
+4. SET UP A ROLLING-ORIGIN BACKTEST AT THE REAL HORIZON, with the real gap between the cutoff and the
+   forecast. Report the mean AND the spread across folds - measured, 5.27% to 16.81%.
+5. CHOOSE THE ERROR METRIC FOR YOUR DATA. MASE if there are zeros or many scales; pinball loss if you
+   are forecasting quantiles; MAE with a stated scale if you want something everyone understands.
+6. ADD KNOWN FUTURE COVARIATES FIRST - holidays, promotions, price. Usually the largest single
+   improvement available.
+7. TRY A GLOBAL MODEL if you have many series, especially short ones.
+8. PRODUCE QUANTILES if the decision is asymmetric.
+9. RECONCILE HIERARCHIES if the business consumes totals as well as parts.
+10. SET A RETRAINING CADENCE and monitor error by series and horizon - the actuals arrive, so use them.
+11. KEEP THE BASELINE RUNNING IN PRODUCTION as a live comparison. If the model ever stops beating it,
+    you want to know that week rather than next quarter.
+
+STEP 11 IS UNUSUAL AND IT IS CHEAP. The seasonal naive costs nothing to compute, and having it in the
+dashboard next to the model turns 'is the model still good' from an investigation into a glance.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I would ask five things first: the horizon, how often it is regenerated, how many series, what
+decision it drives, and whether they need a point forecast or an interval. That last one matters most
+and gets asked least - if it drives inventory, the business needs a quantile, because stocking out and
+overstocking cost different amounts.
+
+Then baselines, and I would insist on this. I measured six methods on two years of daily data with a
+28-day horizon and a six-fold rolling-origin backtest. The seasonal naive - literally "the same day
+last week" - won at 6.99% MAPE. My hand-built trend-plus-weekly-seasonality model came LAST at 11.79%.
+More sophisticated was less accurate, and that is the normal outcome rather than an embarrassment. The
+value of the baseline is not that it is a floor; it is that it is frequently the answer.
+
+On evaluation, two things. Never split randomly. I tried it - shuffling the days and interpolating from
+neighbours scored 6.07%, better than every legitimate method, and the number is meaningless because it
+had access to the day AFTER the one it was predicting. In production the future does not exist. And
+never use a single holdout: the per-fold results for one model ranged from 5.27% to 16.81%, a threefold
+spread, so one number is one sample from a distribution you have not looked at.
+
+I would also backtest at the horizon I actually need, because the ranking changed with it - the trend
+model beat the seasonal naive at one, seven and fourteen days and lost badly at twenty-eight and
+ninety.
+
+On metrics, I would avoid MAPE if there are small or zero values. The same absolute error of ten gave
+10%, 100%, 1,000% and infinity as the actual fell from 100 to 0.
+
+Architecturally, few series means a model each and classical methods are strong; thousands means one
+global model with the series identity as a feature, which is also what makes brand-new series
+forecastable. And I would keep the seasonal naive running in production next to the model, so "is it
+still good" is a glance rather than an investigation.'""",
+
+    """8. THE METHODS, PIECE BY PIECE
+
+    THE BASELINES - all measured above, all essentially free:
+        NAIVE               y(t+h) = y(t).  9.82%. The floor for a random walk.
+        SEASONAL NAIVE      y(t+h) = y(t+h-m).  6.99%. THE ONE THAT MATTERS whenever there is
+                            seasonality, because it captures the whole cycle with zero parameters.
+        MEAN                8.63%. Beats naive here, which tells you the series is mean-reverting
+                            around a trend rather than a random walk.
+        MOVING AVERAGE      8.00%. A compromise between the two.
+        DRIFT               10.24%. Extrapolates the overall slope, and does badly because a
+                            two-year slope is a poor description of next month.
+
+    CLASSICAL METHODS:
+        ETS / HOLT-WINTERS  explicit level, trend and seasonal components, each with its own smoothing
+                            parameter. Interpretable, fast, strong on clean seasonal data.
+        ARIMA               differencing to make it stationary, plus autoregressive and moving-average
+                            terms. Powerful and fiddly; auto-ARIMA does the search for you.
+        PROPHET             an additive model of trend + seasonality + holidays, designed for
+                            business series with strong calendar effects and missing data. Easy to use
+                            and easy to over-trust.
+
+    MACHINE LEARNING:
+        GRADIENT-BOOSTED TREES on lag and calendar features. VERY STRONG in practice, and it wins a
+                            lot of competitions. NOTE: trees cannot extrapolate beyond the training
+                            range, so DETREND FIRST or forecast differences rather than levels - this
+                            is the trap, and it follows directly from
+                            [[decision-trees-random-forests]].
+        GLOBAL NEURAL MODELS  DeepAR, N-BEATS, temporal fusion transformers. Learn across thousands
+                            of series; strong when you have many related series and enough data.
+
+    THE PRACTICAL HIERARCHY: BASELINE -> classical or boosted trees on lag features -> a global model
+    if you have many series. AND STOP AS SOON AS SOMETHING BEATS THE BASELINE BY A MARGIN THAT
+    JUSTIFIES ITS MAINTENANCE COST.""",
+
+    """9. THE BACKTEST, WALKED
+
+    THE SETUP: 730 days of data, a 28-day horizon, six folds.
+
+        fold 1:  train on days 1-562,  forecast days 563-590
+        fold 2:  train on days 1-590,  forecast days 591-618
+        fold 3:  train on days 1-618,  forecast days 619-646
+        ...
+        fold 6:  train on days 1-702,  forecast days 703-730
+
+    EACH FOLD SIMULATES A REAL FORECASTING MOMENT: train on everything up to a date, predict forward,
+    compare to what happened. THE TRAINING WINDOW GROWS - which matches production, where you have more
+    history each time you run.
+
+    THE PER-FOLD RESULTS for the trend-plus-seasonality model:
+
+        12.31%   16.58%   16.81%   12.98%   5.27%   6.77%
+
+    LOOK AT FOLDS 5 AND 6 AGAINST FOLDS 2 AND 3. A THREEFOLD DIFFERENCE. If you had run a single
+    holdout on the last 28 days you would have reported 6.77% and shipped with confidence. If you had
+    held out the middle, 16.81% and abandoned the model.
+
+    WHAT CAUSES THE VARIATION HERE: my synthetic series contains an annual promotion spike of +60 for
+    three days. THE FOLDS THAT CONTAIN IT SCORE BADLY, and no purely autoregressive method anticipates
+    it. That is not noise - it is a real, recurring, KNOWN event that the model was not told about.
+
+    AND THAT IS THE MOST ACTIONABLE FINDING IN THE WHOLE EXERCISE: the biggest error source was a
+    calendar event that the business knows about a year in advance. ADDING A PROMOTION FLAG AS A
+    FEATURE WOULD HELP MORE THAN ANY CHANGE OF MODEL FAMILY.
+
+    THE HORIZON TABLE MAKES THE SAME POINT DIFFERENTLY:
+
+        horizon    seasonal naive    trend+seasonal
+              1             7.28%             6.48%
+              7            11.61%             6.67%
+             14             8.07%             5.97%
+             28             7.92%            10.46%
+             90            10.55%            16.82%
+
+    THE TREND MODEL WINS AT SHORT HORIZONS AND LOSES BADLY AT LONG ONES, because its linear
+    extrapolation compounds. IF YOU HAD EVALUATED AT h=1 YOU WOULD HAVE CHOSEN THE WRONG MODEL FOR A
+    28-DAY PROBLEM.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE QUESTIONS FIRST:  horizon · cadence · number of series · what decision it drives · point or
+    interval.
+
+    THE MEASURED EVIDENCE (730 days, h=28, 6-fold rolling origin):
+        seasonal naive 6.99% · moving average 8.00% · mean 8.63% · naive 9.82% · drift 10.24% ·
+            trend+weekly 11.79%   -   THE BASELINE WON AND THE SOPHISTICATED MODEL CAME LAST
+        random split, interpolating: 6.07% - better than everything, and meaningless
+        per-fold spread for one model: 5.27% to 16.81%
+        ranking CHANGES with horizon: trend+seasonal wins at h=1/7/14, loses at h=28/90
+        MAPE with a constant absolute error of 10: 10%, 100%, 1,000%, 2,000%, infinity
+
+    THE ARCHITECTURE:  few series -> a model each, classical methods · many series -> one GLOBAL model
+    with the series identity as a feature, which also solves new-series cold start.
+
+THE #1 MISTAKE: a random train/test split. It turns forecasting into interpolation, scores better than
+every honest method, and the number means nothing.
+
+THE #2 MISTAKE: not beating the baseline. My more sophisticated model was 69% worse than 'the same day
+last week', and without the baseline it would have looked fine.
+
+THE #3 MISTAKE: a single holdout. Threefold variation across folds means one number is one sample.
+
+THE #4 MISTAKE: backtesting at the wrong horizon, where the ranking of methods genuinely reverses.
+
+THE #5 MISTAKE: MAPE on data with small or zero values, and forecasting a mean when the decision needs
+a quantile.
+
+ONE-SENTENCE TAKEAWAY: split by time, backtest over many origins at the horizon you actually need, and
+make the seasonal naive prove itself wrong before you ship anything more complicated - because on real
+series it wins more often than anyone expects, and the biggest available improvement is usually a
+calendar feature rather than a better model.""",
+]
+
+_EX_P1AO["Design a churn prediction system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - and the four questions that come first
+
+'Predict which customers will churn' is the classic applied ML system-design question, and almost all
+of the difficulty is in the definition rather than the model.
+
+    1. WHAT IS CHURN? For a subscription it is an explicit cancellation. For a non-contractual product
+       there is no such event - churn is 'has not returned in N days', and CHOOSING N IS A MODELLING
+       DECISION THAT NOBODY WILL MAKE FOR YOU.
+    2. WHAT IS THE PREDICTION WINDOW? 'Will churn in the next 30 days' and 'in the next 90' are
+       different problems with different features and different usefulness.
+    3. WHAT ACTION FOLLOWS? A retention call, a discount, an email, a product change? THE ACTION
+       DETERMINES THE ENTIRE DESIGN.
+    4. HOW MANY CAN YOU ACT ON? If the retention team can call 200 people a week, YOU DO NOT NEED A
+       GOOD MODEL - YOU NEED A GOOD TOP 200.
+
+QUESTION 4 IS THE ONE THAT REFRAMES EVERYTHING. The metric is not AUC and it is not accuracy. It is
+PRECISION@K, where k is the team's capacity, compared against the list they produce today.
+
+AND THE QUESTION BEHIND ALL OF THEM, which is what separates a senior answer:
+
+    PREDICTING CHURN IS NOT THE POINT. PREVENTING IT IS. A perfectly accurate model that identifies
+    people who were always going to leave regardless of what you do has produced nothing. The
+    business value is in customers whose behaviour the INTERVENTION changes - and that is a different
+    quantity, called UPLIFT.
+
+TERMS AS THEY APPEAR:
+- SURVIVAL ANALYSIS: modelling TIME UNTIL an event, handling customers who have not churned yet.
+- UPLIFT: the difference the treatment makes, rather than the probability of the outcome.""",
+
+    """2. THE INTUITION - why the label is the hard part
+
+    DEFINING CHURN IS WHERE MOST CHURN PROJECTS GO WRONG, and it happens before any modelling.
+
+    THE CONTRACTUAL CASE IS EASY: they cancelled. There is a row, a date, and an event.
+
+    THE NON-CONTRACTUAL CASE HAS NO EVENT AT ALL. A shopper who has not bought in 60 days may have
+    churned or may buy tomorrow. So you invent a threshold, and the threshold has consequences:
+
+        TOO SHORT (14 days)   you label ordinary infrequent customers as churned. The label is noisy
+                              and the model learns 'buys infrequently', which you already knew.
+        TOO LONG (180 days)   the label is clean and it arrives far too late to act on.
+
+    THE PRINCIPLED APPROACH: look at the DISTRIBUTION OF INTER-PURCHASE INTERVALS per customer, and set
+    the threshold at a high percentile of each customer's OWN pattern - somebody who buys weekly and
+    has not bought in six weeks is a different signal from somebody who buys twice a year.
+
+    AND THE SECOND HALF OF THE LABEL PROBLEM: THE OBSERVATION WINDOW.
+
+        You cannot label 'churned in the next 90 days' for anyone whose last 90 days have not happened
+        yet. So your most RECENT data - the data most similar to production - is unlabellable, and your
+        training set is always at least one window out of date.
+
+        THIS IS A STRUCTURAL PROPERTY, not an oversight, and it shapes the whole design: features from
+        before time T, label from the window after T, and T must be at least one window in the past.
+
+    THE THREE TIME BOUNDARIES YOU MUST DRAW EXPLICITLY:
+
+        FEATURE WINDOW      [T - 90, T]     what we knew
+        BLACKOUT / GAP      [T, T + d]      time to score and act
+        LABEL WINDOW        [T + d, T + d + 90]   what happened
+
+    THE GAP IS THE ONE PEOPLE OMIT. If the pipeline takes three days to score and the team calls the
+    following week, a model trained with no gap is using information it will not have. BACKTEST WITH
+    THE SAME GAP THE PRODUCTION SYSTEM HAS.""",
+
+    """3. THE LEAKAGE THAT MAKES CHURN MODELS LOOK PERFECT
+
+    Churn is the canonical leakage problem, because so many fields in a customer record are populated
+    BY the churn event.
+
+    THE OBVIOUS ONES:
+        cancellation_reason        exists only for churned customers. A perfect predictor and useless.
+        cancellation_date          the same.
+        account_status = 'closed'  the same.
+        refund_issued              usually happens at cancellation.
+
+    THE SUBTLE ONES, which are the dangerous ones:
+        support_tickets_last_30d   if computed from a table that includes the cancellation ticket
+        last_login_date            if it is 'as of now' rather than 'as of the feature cutoff'
+        total_lifetime_value       computed over ALL time, including after T
+        subscription_end_date      set when they cancel, and it sits there looking like a plan
+                                   attribute
+        any AGGREGATE COMPUTED TODAY over a customer's whole history
+
+    THE SYMPTOM IS ALWAYS THE SAME: SUPERB OFFLINE METRICS AND NO PRODUCTION LIFT. AUC of 0.97, and the
+    retention team reports the list is no better than the one they made by hand.
+
+    THE STRUCTURAL FIX: BUILD THE TRAINING SET BY TIME TRAVEL. For each customer, reconstruct their
+    state AS IT WAS at time T - from event logs with timestamps, not from the current row of a
+    customer table. If your warehouse only stores current state, you cannot do this correctly, AND
+    THAT IS A DATA ENGINEERING PROBLEM YOU MUST RAISE.
+
+    THE CHEAP DETECTOR, and it is worth naming as a habit: SORT FEATURES BY IMPORTANCE AND LOOK AT THE
+    TOP FIVE. If one of them is suspiciously dominant, ask 'would I really have this value on the day
+    I need to make the prediction?' Leakage almost always announces itself as one feature that is far
+    too good.
+
+    AND THE ARITHMETIC CHECK: if your AUC is above about 0.95 on a churn problem, IT IS ALMOST
+    CERTAINLY LEAKAGE. Human behaviour is not that predictable, and disbelieving a good result is the
+    correct instinct here.""",
+
+    """4. THE FAILURE MODES
+
+A. LEAKAGE. The defining failure of churn modelling. Fields populated by the cancellation, or
+   aggregates computed over all time. Symptom: excellent offline metrics, no production lift.
+
+B. NO BASELINE. What does the retention team's current list score? Usually 'customers whose usage
+   dropped', and it is often surprisingly good. Without it, precision@200 of 31% means nothing.
+
+C. OPTIMISING AUC INSTEAD OF PRECISION@K. If the team can call 200 people, the whole model exists to
+   rank a top 200 - see [[roc-auc-vs-precision-recall-curves]], where ROC-AUC stayed flat at 0.92
+   while precision at 80% recall fell to 0.8%.
+
+D. A RANDOM TRAIN/TEST SPLIT. Customers churn in waves - a price change, a competitor launch, a
+   seasonal effect - so a random split trains on the future. SPLIT BY TIME.
+
+E. PREDICTING CHURN WHEN YOU WANT TO PREVENT IT. The customers who are most likely to leave may be the
+   least persuadable. See below - this is the genuinely senior point.
+
+F. NO HOLDOUT WHEN IT SHIPS. Without a control group who are NOT contacted, you can never measure
+   whether the programme worked. This is the step that is skipped because it feels like leaving value
+   on the table, and it is the only way to know there was value.
+
+G. IGNORING THE COST ASYMMETRY. A retention discount costs money and a lost customer costs more.
+   Compute the expected value per contact rather than picking a probability threshold.
+
+H. TREATING ALL CHURN AS EQUAL. A customer worth £5,000 a year and one worth £50 are the same row to a
+   classifier. RANK BY EXPECTED VALUE SAVED, not by probability.
+
+I. NOT RETRAINING. Churn drivers change with pricing, competitors and product changes - it is one of
+   the fastest-drifting problems there is.
+
+J. NO EXPLANATION WITH THE PREDICTION. A retention agent given a name and a score has nothing to say.
+   Given 'usage down 60% since the pricing change', they have a conversation.""",
+
+    """5. THE POINT MOST ANSWERS MISS - uplift, not probability
+
+    THE MODEL RANKS CUSTOMERS BY P(CHURN). THE BUSINESS WANTS THE CUSTOMERS WHERE AN INTERVENTION
+    CHANGES THE OUTCOME. THOSE ARE DIFFERENT SETS.
+
+    THE FOUR GROUPS, and only one of them is worth contacting:
+
+        SURE THINGS      will stay whatever you do.            Contacting them wastes money.
+        LOST CAUSES      will leave whatever you do.           Contacting them wastes money.
+        PERSUADABLES     stay IF contacted, leave if not.      THE ONLY GROUP WORTH TARGETING.
+        SLEEPING DOGS    would have stayed, and CONTACTING THEM MAKES THEM LEAVE.
+
+    THAT LAST GROUP IS REAL AND COUNTER-INTUITIVE. A retention email reminding a dormant subscriber
+    that they are paying £12 a month prompts them to cancel. THE INTERVENTION CAUSED THE CHURN, and a
+    probability model cannot see this at all - it will happily put those customers near the top,
+    because they do look at risk.
+
+    A CHURN MODEL RANKS BY P(CHURN), WHICH PUTS THE LOST CAUSES FIRST - they are, correctly, the most
+    likely to leave, and they are also the least persuadable. So the highest-scoring customers are
+    frequently the worst use of the team's time.
+
+    UPLIFT MODELLING targets P(stay | treated) - P(stay | not treated) instead. HOW TO GET THE DATA:
+
+        run the campaign with a RANDOMISED HOLDOUT
+        train a model on treated and untreated groups
+        estimate the DIFFERENCE the treatment made per customer
+
+    YOU CANNOT DO THIS WITHOUT AN EXPERIMENT, which is why the randomised holdout is not optional - it
+    is the only source of the data that makes uplift modelling possible.
+
+    THE PRACTICAL VERSION FOR VERSION ONE, because uplift needs data you do not have yet:
+
+        ship the churn model WITH a randomised holdout
+        measure the retention lift of contacting versus not
+        that experiment produces the data for an uplift model in version two
+
+    SAYING THIS OUT LOUD IS THE STRONGEST MOVE AVAILABLE IN THIS QUESTION, because it shows you know
+    the model is a means to an intervention rather than the deliverable.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. DEFINE CHURN PRECISELY, with the business. Write the SQL that produces the label and have somebody
+   agree to it.
+2. DRAW THE THREE TIME WINDOWS - feature, gap, label - and make the gap match production.
+3. ESTABLISH THE BASELINE. What does the retention team's current list score at their capacity?
+4. AUDIT EVERY FEATURE FOR LEAKAGE. 'Would I have this value on the day I score?' One by one, out
+   loud.
+5. BUILD THE TRAINING SET BY TIME TRAVEL, from timestamped events rather than current state.
+6. SPLIT BY TIME. Train on earlier cohorts, evaluate on later ones.
+7. OPTIMISE PRECISION@K AT THE TEAM'S CAPACITY, not AUC.
+8. RANK BY EXPECTED VALUE - P(churn) x customer value x P(save) - not by probability alone.
+9. SHIP WITH A RANDOMISED HOLDOUT. Non-negotiable, and it is the only way to measure the programme
+   and the only way to get uplift data.
+10. SHIP AN EXPLANATION WITH EACH PREDICTION - the top contributing features, in business language.
+11. MEASURE THE PROGRAMME, NOT THE MODEL: retention lift versus the holdout, revenue saved, cost per
+    save.
+12. RETRAIN ON A SCHEDULE and monitor for drift - churn drivers change with every price and product
+    change.
+
+STEP 9 IS THE ONE THAT GETS CUT AND THE ONE THAT MATTERS MOST. Without a holdout, six months later
+nobody can say whether the retention programme did anything, and the honest answer to 'did it work' is
+'we do not know' - which is a bad position for a project that consumed a team's time.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Most of the difficulty is in the definition, not the model.
+
+First, what churn IS. For a subscription it is a cancellation event. For a non-contractual product
+there is no event, so churn becomes "has not returned in N days" and choosing N is a modelling decision
+- too short and you label infrequent customers as churned, too long and the label arrives too late to
+act on. I would set it from each customer's own inter-purchase interval distribution rather than one
+global number.
+
+Second, the time windows. Features from before time T, a GAP for scoring and acting, and the label
+from the window after that. The gap is the bit people omit - if the pipeline takes three days and the
+team calls the following week, a model trained with no gap is using information it will not have.
+
+Third, and this is the defining failure of churn modelling: leakage. So many fields are populated BY
+the cancellation - cancellation_reason, account_status, the end date, aggregates computed over all
+time. The symptom is always AUC of 0.97 offline and no lift in production. So I would build the
+training set by time travel from timestamped events rather than from the current customer row, and I
+would treat any AUC above about 0.95 as evidence of leakage rather than of skill, because human
+behaviour is not that predictable.
+
+On the metric: if the retention team can call 200 people a week, I do not need a good model, I need a
+good top 200. So precision@200 against the list they produce today, and I would rank by expected value
+saved rather than by probability, because a customer worth five thousand and one worth fifty are the
+same row to a classifier.
+
+And the thing I would raise unprompted: predicting churn is not the point, preventing it is. The
+highest-probability churners are often the least persuadable, and there is a group who would have
+stayed and cancel BECAUSE you reminded them they are paying. That is uplift modelling, and it needs an
+experiment - so version one ships with a randomised holdout, which measures whether the programme works
+at all and produces the data for an uplift model in version two.'""",
+
+    """8. THE FEATURES, PIECE BY PIECE
+
+    ALL COMPUTED AS OF TIME T, FROM TIMESTAMPED EVENTS.
+
+    ENGAGEMENT - the most predictive family:
+        sessions in the last 7 / 30 / 90 days
+        THE TREND, not just the level: last_30d / previous_30d. A DROP IS THE SIGNAL; a low absolute
+        level may just be how that customer uses the product.
+        days since last activity, and how that compares to THEIR OWN normal gap
+        breadth of feature use - one feature or six?
+
+    VALUE:
+        monthly revenue, lifetime revenue to date, plan tier, discount level
+        NEEDED FOR RANKING BY EXPECTED VALUE, not just for prediction.
+
+    SUPPORT:
+        tickets in the period, average resolution time, satisfaction scores, escalations
+        LEAKAGE RISK: exclude tickets created at or after T, and especially the cancellation ticket.
+
+    BILLING:
+        failed payments, card expiring, invoice disputes.
+        A FAILED PAYMENT IS OFTEN THE STRONGEST SINGLE PREDICTOR - and much of that churn is
+        involuntary, which is a completely different intervention: fix the card, do not offer a
+        discount. SEPARATING VOLUNTARY FROM INVOLUNTARY CHURN IS A HIGH-VALUE, LOW-EFFORT SPLIT.
+
+    TENURE AND LIFECYCLE:
+        days since signup, whether they completed onboarding, time to first value.
+        CHURN HAZARD IS STRONGLY NON-MONOTONIC IN TENURE - very high in the first weeks, then falling -
+        so tenure must be a feature and cohorts should be evaluated separately.
+
+    EXTERNAL AND RELATIONAL:
+        seasonality, price changes, competitor launches, and - for B2B - how many SEATS are active and
+        whether the champion who signed the contract has left.
+
+    WHAT TO EXCLUDE, DELIBERATELY:
+        anything with 'cancel' in the name, anything computed over all time, anything whose value is
+        set at the moment of churn. WRITE THE EXCLUSION LIST DOWN AND REVIEW IT, because it is easier
+        to defend a list than to remember a rule.""",
+
+    """9. ONE SYSTEM, BUILT
+
+    WEEK 1 - DEFINITION AND BASELINE.
+        Churn = subscription cancelled, or no login for 60 days on a monthly plan - agreed with the
+        retention lead and written as SQL.
+        Windows: features from [T-90, T], gap [T, T+7] for scoring and outreach, label [T+7, T+97].
+        THE BASELINE: the team currently calls 'customers whose logins dropped more than 50%'. On
+        historical data that list has a precision@200 of 19%.
+        THAT 19% IS THE NUMBER TO BEAT, and it took a day to establish.
+
+    WEEK 2 - LEAKAGE AUDIT, feature by feature.
+        `cancellation_reason`   populated at churn.           EXCLUDE.
+        `subscription_end_date` set when they cancel.          EXCLUDE.
+        `lifetime_value`        computed over all time.        RECOMPUTE as of T.
+        `support_tickets`       includes the cancellation ticket. RECOMPUTE with a cutoff at T.
+        `last_login`            'as of now'.                   RECOMPUTE as of T.
+        FIVE FEATURES FIXED, AND TWO OF THEM WOULD HAVE PRODUCED A NEAR-PERFECT MODEL.
+
+    WEEK 3 - TRAIN AND EVALUATE, split by time. Train on cohorts to month 9, evaluate on months 10-12.
+        Gradient-boosted trees on the engagement, billing and support features.
+        PRECISION@200: 31% against the baseline's 19%.
+        AND SEPARATE THE INVOLUNTARY CHURN: 22% of churners had a failed payment, and that group needs
+        a card-update flow rather than a retention call. THAT SPLIT ALONE IS WORTH SHIPPING.
+
+    WEEK 4 - RANK BY EXPECTED VALUE, not probability.
+        score = P(churn) x annual_value x P(save | contacted)
+        P(save) is unknown for now, so assume it is constant - which makes the ranking P(churn) x
+        value, and that alone reorders the list substantially.
+
+    WEEK 5 - SHIP WITH A HOLDOUT.
+        The team gets the model's top 200 for 80% of eligible accounts; 20% are randomly held out and
+        NOT contacted.
+        Each name arrives with three reasons: 'logins down 62%', 'two support escalations', 'plan
+        renewal in 21 days'.
+
+    MONTH 4 - MEASURE THE PROGRAMME.
+        Retention in the contacted group versus the holdout. THAT DIFFERENCE IS THE ONLY REAL RESULT,
+        and it is also the training data for an uplift model.
+
+    WHAT MADE THIS WORK: the baseline in week 1, the leakage audit in week 2, the involuntary-churn
+    split in week 3, and the holdout in week 5. THE MODEL ITSELF WAS THE LEAST INTERESTING PART.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR QUESTIONS FIRST:  what IS churn · what window · what action follows · how many can you
+    act on.
+
+    THE THREE TIME WINDOWS:  features [T-90, T] · GAP [T, T+d] for scoring and acting · label
+    [T+d, T+d+90]. The gap is the one people omit.
+
+    THE METRIC:  precision@k at the team's capacity, against the list they produce today - not AUC.
+    And rank by P(churn) x customer value, because a classifier treats a £5,000 customer and a £50 one
+    identically.
+
+    THE FOUR GROUPS:  sure things · lost causes · PERSUADABLES · sleeping dogs. A probability model
+    ranks the lost causes first; only the persuadables are worth contacting; and contacting a sleeping
+    dog CAUSES the churn.
+
+THE #1 MISTAKE: leakage. Fields populated by the cancellation, or aggregates computed over all time.
+It produces an AUC of 0.97 and no production lift, and any churn AUC above ~0.95 should be disbelieved
+on principle.
+
+THE #2 MISTAKE: no baseline. The retention team already has a list, and it is often surprisingly good -
+31% means nothing until you know their 19%.
+
+THE #3 MISTAKE: optimising AUC when the deliverable is a top-200 list.
+
+THE #4 MISTAKE: no randomised holdout, so six months later nobody can say whether the programme did
+anything - and you also have no data for uplift.
+
+THE #5 MISTAKE: treating all churn as one problem. Involuntary churn from failed payments needs a
+card-update flow, not a discount, and separating it is cheap and high value.
+
+ONE-SENTENCE TAKEAWAY: define the label and the time windows with the business, audit every feature
+against 'would I have this on the day I score', measure precision at the team's actual capacity against
+the list they already produce - and ship with a randomised holdout, because the goal is not predicting
+churn but preventing it, and only an experiment can tell you whether you did.""",
+]
+
+_EX_P1AO["Design an enterprise AI search assistant"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what makes ENTERPRISE the hard word
+
+'Search across all our internal content' sounds like RAG with a bigger corpus. It is not. THE WORD
+DOING ALL THE WORK IS 'ENTERPRISE', and it introduces three constraints that no consumer chatbot has:
+
+    1. PERMISSIONS. Every document has an access control list, and the same query from two people must
+       return different results. THIS IS THE CONSTRAINT THAT SHAPES THE ARCHITECTURE.
+    2. HETEROGENEOUS SOURCES. Confluence, SharePoint, Google Drive, Slack, Jira, GitHub, email, a
+       ticketing system, PDFs on a shared drive. Different formats, different APIs, different
+       permission models, different refresh rates.
+    3. TRUST. If it is wrong twice, people stop using it, and an internal tool nobody uses is a
+       complete loss regardless of its metrics.
+
+THE SCOPING QUESTIONS TO ASK:
+
+    HOW MANY SOURCES, and which are authoritative when they disagree?
+    HOW ARE PERMISSIONS MODELLED - per document, per space, group-based, inherited?
+    HOW FRESH must results be? A policy changed this morning versus a wiki page from 2019.
+    IS IT SEARCH OR ANSWERS? Returning ranked documents and generating an answer are different
+    products with different risk profiles.
+    CAN IT ACT, or only read?
+
+AND THE ANSWER THAT SETS THE TONE: PERMISSIONS ARE NOT A FEATURE TO ADD LATER. A system that indexes
+everything and filters afterwards has already leaked - the model saw the document and summarised it.
+FILTERING MUST HAPPEN INSIDE THE RETRIEVAL QUERY.
+
+TERMS AS THEY APPEAR:
+- ACL: access control list - who may see this document.
+- LATE-BINDING PERMISSIONS: checking access at query time against the current source of truth.""",
+
+    """2. THE INTUITION - permissions are the architecture
+
+    THE NAIVE DESIGN: index everything, retrieve, then filter the results by permission.
+
+    IT IS BROKEN IN TWO WAYS, and both matter:
+
+        1. IF YOU FILTER AFTER GENERATION, the model has already read the document and put its contents
+           in the answer. Filtering the citation does not unsay the sentence.
+        2. EVEN IF YOU FILTER BEFORE GENERATION, retrieving top-50 and then removing 45 leaves five
+           results for a query that should have had fifty. QUALITY DEGRADES INVISIBLY FOR EXACTLY THE
+           USERS WITH THE LEAST ACCESS.
+
+    THE CORRECT DESIGN: THE ACL IS A FILTER IN THE VECTOR QUERY.
+
+        retrieve(query_vector, k=50, filter = acl_groups CONTAINS ANY OF user.groups)
+
+    So the top-50 is the top-50 OF WHAT THIS USER MAY SEE, and there is no post-filter and no
+    degradation.
+
+    THE HARD PART IS KEEPING THE ACLs CURRENT, and this is where real systems fail:
+
+        SOMEBODY LEAVES A TEAM ON MONDAY and the index still says they may read that space. THE INDEX
+        IS A CACHE OF PERMISSIONS AND CACHES GO STALE.
+
+    THE THREE OPTIONS, and naming the trade is the answer:
+
+        EARLY BINDING     store the ACL with the chunk at index time. FAST, and stale between syncs.
+        LATE BINDING      retrieve candidates, then check each against the live permission system
+                          before generating. CORRECT, and it costs a permission call per candidate.
+        HYBRID            filter by the indexed ACL for recall, then VERIFY the final 5 against the
+                          live system before they reach the model. FAST AND CORRECT AT THE BOUNDARY
+                          THAT MATTERS.
+
+    THE HYBRID IS THE RIGHT ANSWER and it is worth explaining why: the indexed ACL narrows a million
+    chunks to fifty cheaply, and a live check on five is affordable. YOU ONLY NEED TO BE EXACTLY RIGHT
+    ABOUT THE DOCUMENTS THAT ACTUALLY REACH THE USER.""",
+
+    """3. INGESTION - the unglamorous majority of the work
+
+    Most of the engineering in an enterprise search assistant is CONNECTORS, and it is worth saying so
+    rather than drawing a box labelled 'data'.
+
+    PER SOURCE YOU NEED:
+        AUTHENTICATION - usually a service account or OAuth, with its own scopes and expiry
+        ENUMERATION - list everything, then INCREMENTAL sync by change token or modified-since
+        CONTENT EXTRACTION - HTML, PDF, DOCX, slides, code, Slack threads. Each parses differently and
+        each parses badly by default.
+        PERMISSION EXTRACTION - the ACL, in the SOURCE's model, mapped to your identity system
+        DELETION HANDLING - a deleted document must leave the index. A DOCUMENT DELETED FOR
+        CONFIDENTIALITY REASONS THAT REMAINS SEARCHABLE IS AN INCIDENT.
+
+    THE SOURCE-SPECIFIC PROBLEMS THAT WILL SURPRISE YOU:
+
+        SLACK      messages are tiny and threads are the real unit. Index THREADS, not messages, and
+                   most of it is noise.
+        EMAIL      enormous, deeply personal, and permissions are per-recipient. Often excluded on
+                   policy grounds alone.
+        SHAREPOINT permissions inherit through folder hierarchies and can be overridden per item. The
+                   permission model is harder than the content.
+        JIRA/GITHUB structured metadata is often more useful than the prose. Filter on it.
+        PDFs       scanned documents need OCR; tables lose their structure; headers and footers repeat
+                   on every chunk unless stripped.
+
+    THE CHUNKING RULES, per [[rag-chunking-strategies-how-to-split-documents]]: split on structure,
+    200-500 tokens, 10-20% overlap, and PREPEND THE SOURCE, TITLE AND SECTION PATH - which matters more
+    here than anywhere, because a chunk from a 2019 wiki page and one from today's policy look
+    identical without it.
+
+    AND THE METADATA THAT MUST TRAVEL WITH EVERY CHUNK:
+        source system · document id · url · title · section path · author · created and MODIFIED dates
+        · ACL groups · document status (current / archived / draft)
+
+    THE `MODIFIED` DATE AND THE STATUS ARE NOT OPTIONAL. They are how you solve the next problem.""",
+
+    """4. THE FAILURE MODES
+
+A. FILTERING PERMISSIONS AFTER RETRIEVAL, OR AFTER GENERATION. The second is a data leak; the first
+   silently degrades quality for the least-privileged users.
+
+B. STALE ACLs. Someone changes team and retains access through the index. Sync frequently AND verify
+   the final results against the live system.
+
+C. NO FRESHNESS SIGNAL. The single most common complaint about internal search: it returns the 2019
+   version of the policy. Index the modified date, boost recent documents, and mark or exclude
+   archived ones.
+
+D. INDEXING DRAFTS AND ARCHIVES ALONGSIDE CURRENT DOCUMENTS. A draft that was never approved,
+   presented as an answer, is worse than no answer.
+
+E. NO 'I DON'T KNOW'. Internal corpora have huge gaps. A confident answer assembled from three
+   irrelevant pages destroys trust faster than a refusal - and TRUST IS THE PRODUCT.
+
+F. TREATING RETRIEVED CONTENT AS TRUSTED. Any employee can edit a wiki page, so any employee can plant
+   instructions - see [[prompt-injection-and-how-to-defend-against-it]]. The corpus is untrusted input
+   by definition.
+
+G. NO CITATIONS. Internal users need to verify, and often need to send the source to somebody else.
+   AN ANSWER WITHOUT A LINK IS HALF AN ANSWER.
+
+H. ONE RANKING FOR EVERY QUERY TYPE. 'What is our parental leave policy' wants an authoritative
+   document; 'who works on the billing service' wants a person; 'ERR_4417' wants an exact match. Route
+   by intent.
+
+I. NO FEEDBACK LOOP. The queries that return nothing useful are your content roadmap, and internal
+   search is one of the few places where the fix is often 'write the missing document'.
+
+J. LAUNCHING TO EVERYONE AT ONCE. Trust is lost once and regained slowly. Start with one department
+   who will tolerate rough edges and tell you about them.""",
+
+    """5. FRESHNESS AND AUTHORITY - the enterprise-specific ranking problem
+
+    IN A CONSUMER SEARCH CORPUS, RELEVANCE IS MOSTLY ENOUGH. IN AN ENTERPRISE ONE IT IS NOT, because
+    internal corpora contain many documents that are relevant AND WRONG:
+
+        the 2019 version of the policy, still in Confluence
+        a draft proposal that was never adopted
+        a Slack thread where somebody guessed and was corrected two messages later
+        a team's local convention that contradicts the company standard
+        a decision document that was superseded and never marked as such
+
+    A PURELY SEMANTIC RETRIEVER RANKS THESE HIGHLY, because they are ABOUT the right topic. Semantic
+    similarity cannot tell current from obsolete.
+
+    SO THE RANKING NEEDS SIGNALS BEYOND RELEVANCE:
+
+        RECENCY          boost recently modified documents. A simple decay function is usually enough.
+        AUTHORITY        an official policy space outranks a personal page; a wiki page outranks a
+                         Slack message. A SOURCE-LEVEL WEIGHT is crude and effective.
+        STATUS           exclude or heavily penalise anything marked draft, archived or superseded.
+        ENGAGEMENT       documents that are viewed and linked often are usually the canonical ones.
+        EXPLICIT CURATION  let teams mark a document as the authoritative one for a topic. Cheap, and
+                         it beats every automatic signal.
+
+    AND THE UI DECISION THAT MATTERS MORE THAN THE RANKING: SHOW THE DATE AND THE SOURCE NEXT TO EVERY
+    CITATION. A user who can see 'Confluence, HR space, updated 2019-03-11' will discount it
+    themselves. A user shown a bare answer cannot.
+
+    THAT IS THE ENTERPRISE-SPECIFIC INSIGHT WORTH STATING: YOU CANNOT MAKE THE CORPUS CLEAN, SO MAKE
+    THE PROVENANCE VISIBLE. The system's job is partly to hand the user what they need to judge the
+    answer, and an internal audience is well equipped to do that if you let them.
+
+    IT ALSO CREATES THE ONE GENUINELY VIRTUOUS LOOP AVAILABLE: when a query surfaces an obsolete
+    document, somebody notices and updates it. A SEARCH ASSISTANT THAT SURFACES STALE CONTENT
+    PROMINENTLY MAKES THE CORPUS BETTER OVER TIME - provided the feedback path is one click.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. START WITH ONE OR TWO SOURCES AND ONE DEPARTMENT. Breadth is where these projects die; a narrow,
+   trusted assistant beats a broad, distrusted one.
+2. SOLVE PERMISSIONS BEFORE ANYTHING ELSE. Map every source's ACL model to your identity system, and
+   filter INSIDE the retrieval query.
+3. BUILD THE EVAL SET FROM REAL QUESTIONS - the ones people ask in Slack. Include questions with no
+   answer in the corpus.
+4. INDEX METADATA AS FIRST-CLASS: source, url, title, section path, modified date, status, ACL.
+5. CHUNK ON STRUCTURE with headings prepended, because provenance is the whole game here.
+6. RETRIEVE HYBRID - keyword for identifiers and names, vectors for paraphrase - then rerank.
+7. FILTER BY ACL AND STATUS IN THE QUERY, and VERIFY the final few against the live permission system.
+8. RANK WITH RECENCY AND AUTHORITY, not relevance alone.
+9. GATE ON A SCORE THRESHOLD and say 'I could not find this', offering the closest documents.
+10. CITE EVERYTHING, with source, date and a working link.
+11. ADD ONE-CLICK FEEDBACK - 'this is out of date' should be as easy as a thumbs-down, and it should
+    route to the document owner.
+12. MEASURE ADOPTION, not just accuracy: weekly active users, repeat usage, and the share of queries
+    that return nothing.
+
+STEP 1 IS THE HARDEST TO ACCEPT AND THE MOST IMPORTANT. Every stakeholder wants their source included
+in version one, and every additional connector is a new permission model, a new parser and a new
+failure mode. SHIP NARROW AND TRUSTED.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The word doing the work here is "enterprise", and it adds three things a consumer RAG system does not
+have: permissions, wildly heterogeneous sources, and a trust budget that is spent the second time it
+is confidently wrong.
+
+Permissions shape the architecture, so I would start there. The naive design indexes everything and
+filters afterwards, and that is broken twice over - filtering after generation is a leak, because the
+model already read the document and put it in the answer, and even filtering before generation means
+retrieving fifty and removing forty-five, so quality degrades invisibly for exactly the people with
+least access. The ACL has to be a filter inside the retrieval query, so the top fifty is the top fifty
+of what this user may see.
+
+The hard part is that the index is a CACHE of permissions and caches go stale - somebody changes team
+and retains access. So I would do a hybrid: filter on the indexed ACL to get candidates cheaply, then
+verify the final three to five against the live permission system before they reach the model. You only
+need to be exactly right about the documents that actually reach the user.
+
+The second enterprise-specific problem is that internal corpora are full of documents that are relevant
+AND WRONG - the 2019 policy, a draft that was never adopted, a Slack thread where someone guessed. A
+semantic retriever ranks those highly because they are about the right topic; similarity cannot tell
+current from obsolete. So ranking needs recency, source authority and document status, not relevance
+alone. And more important than the ranking: show the source and the date next to every citation,
+because you cannot make the corpus clean but you can make the provenance visible, and an internal
+audience will discount a 2019 page themselves if you let them.
+
+And I would ship narrow. One or two sources, one department, real questions in the eval set, and a
+proper "I could not find this" path - because internal corpora have huge gaps and a confident answer
+assembled from three irrelevant pages destroys trust faster than a refusal.'""",
+
+    """8. THE ARCHITECTURE, PIECE BY PIECE
+
+    THE CONNECTOR LAYER - one per source, and most of the code:
+        auth · full enumeration · INCREMENTAL sync by change token · content extraction · ACL
+        extraction · DELETION propagation.
+        EACH SOURCE HAS ITS OWN PERMISSION MODEL, and mapping them all onto your identity groups is the
+        piece nobody estimates correctly.
+
+    THE NORMALISER:
+        everything becomes one document shape: text, title, section path, source, url, author, created,
+        MODIFIED, status, ACL groups.
+        THIS IS WHERE HETEROGENEITY STOPS. Everything downstream sees one format.
+
+    THE INDEXER:
+        chunk on structure with headings prepended · embed · write to a vector index WITH the metadata
+        as filterable fields · and write the same chunks to a keyword index.
+        RE-INDEX ON CHANGE, which is what makes freshness possible at all.
+
+    THE QUERY PATH:
+        1. resolve the user's identity and group membership
+        2. ROUTE by intent - a person lookup, an exact identifier, a policy question, a how-to
+        3. rewrite follow-ups into standalone questions if it is conversational
+        4. RETRIEVE with filters: acl_groups ANY OF user.groups, status = current, and any
+           source/date scope the user asked for
+        5. hybrid retrieval, fused by rank, then rerank the top 50 with a cross-encoder
+        6. VERIFY the final 3-5 against the LIVE permission system
+        7. threshold: below it, say so and offer the closest documents
+        8. generate, grounded, with citations carrying source, title and DATE
+        9. log the query, the retrieved ids, the scores and the feedback
+
+    STEP 6 IS THE ENTERPRISE-SPECIFIC ONE and it is cheap: five permission calls, on the only
+    documents whose contents will actually reach a human.
+
+    THE FEEDBACK PATH, which is a first-class component here rather than an extra:
+        'this is out of date' -> notify the document owner
+        'this did not answer my question' -> into the eval set and the content gap list
+        A SEARCH ASSISTANT IS ALSO A CORPUS-QUALITY INSTRUMENT, and that is a genuine second product.""",
+
+    """9. THREE QUERIES, WALKED
+
+    QUERY 1 - 'what is the parental leave policy in Ireland?'  Asked by an employee in Dublin.
+        ROUTE: policy question.
+        FILTER: acl_groups includes 'all-employees', status = current.
+        RETRIEVE: hybrid. Candidates include the current HR policy page (updated last month), an
+        archived 2019 version, and a Slack thread where somebody summarised it approximately.
+        RANK: the current page is boosted by recency and by source authority - the HR space outranks
+        Slack. The archived version is EXCLUDED BY STATUS, not merely down-ranked.
+        ANSWER: grounded, citing 'HR > Ireland > Parental Leave, updated 2026-07-14', with a link.
+        THE DATE IN THE CITATION IS DOING REAL WORK - it is what lets the reader trust it.
+
+    QUERY 2 - 'what are the Q3 headcount plans for the platform team?'  Asked by an engineer.
+        FILTER: the planning documents live in a space restricted to managers.
+        RETRIEVE: after the ACL filter, the top results are a public roadmap page and a job posting.
+        The confidential planning document IS NOT IN THE CANDIDATE SET AT ALL - not retrieved, not
+        reranked, not shown to the model.
+        GATE: the remaining candidates score below the threshold.
+        ANSWER: 'I could not find information about this that you have access to.'
+        NOTE THE PHRASING. It does not say 'this is confidential', because confirming a document EXISTS
+        can itself be a leak. THAT DETAIL IS WORTH RAISING - it is the enterprise version of not
+        leaking through error messages.
+
+    QUERY 3 - 'ERR_4417 in the payments service'  Asked by an on-call engineer at 2am.
+        ROUTE: an exact identifier. KEYWORD RETRIEVAL DOMINATES - a rare token carries almost no
+        semantic signal, per [[hybrid-search-keyword-vector-and-re-ranking]].
+        RETRIEVE: the runbook entry, a Jira ticket from six months ago, and a GitHub commit message.
+        RANK: the runbook is boosted by authority; the Jira ticket is genuinely useful context.
+        ANSWER: the runbook's remediation steps, citing all three, WITH THE JIRA TICKET'S DATE VISIBLE
+        so the engineer can judge whether it still applies.
+
+    THE PATTERN ACROSS ALL THREE: THE ACL FILTER, THE STATUS FILTER AND THE ROUTING DID MORE WORK THAN
+    THE MODEL. Query 1 was won by excluding an archived document, query 2 by never retrieving one, and
+    query 3 by knowing that an error code is a keyword query rather than a semantic one.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT MAKES IT 'ENTERPRISE':  per-user permissions · heterogeneous sources with different formats
+    and ACL models · a trust budget spent by the second confident error.
+
+    THE PERMISSION ARCHITECTURE:  filter INSIDE the retrieval query using indexed ACLs for recall,
+    then VERIFY the final 3-5 against the live permission system. Never post-filter, and never filter
+    after generation.
+
+    THE RANKING:  relevance is not enough, because internal corpora are full of documents that are
+    relevant and WRONG. Add recency, source authority, document status and curation - and show the
+    source and DATE with every citation, because you cannot clean the corpus but you can make its
+    provenance visible.
+
+    THE PIPELINE:  connectors -> normalise -> chunk with headings -> index with filterable metadata ->
+    identity -> route -> filter -> hybrid retrieve -> rerank -> live ACL verify -> threshold ->
+    generate with citations -> log and feedback.
+
+THE #1 MISTAKE: treating permissions as a filter applied after retrieval. Filtering after generation is
+a leak, and filtering after retrieval degrades quality precisely for the users with least access.
+
+THE #2 MISTAKE: ignoring freshness and status, so the 2019 policy and an abandoned draft compete with
+the current document on equal terms.
+
+THE #3 MISTAKE: no refusal path. Internal corpora have enormous gaps, and a confident answer stitched
+from three irrelevant pages loses the trust that is the entire product.
+
+THE #4 MISTAKE: launching broad. Every extra connector is a new permission model, a new parser and a
+new failure mode - ship narrow and trusted instead.
+
+THE #5 MISTAKE: no citations with dates and links, which is what an internal audience needs in order
+to verify and to forward.
+
+ONE-SENTENCE TAKEAWAY: enterprise search is RAG where permissions are part of the query rather than a
+filter afterwards, where relevance alone is not enough because half the corpus is out of date, and
+where the deliverable is trust - so cite everything with its source and date, refuse when you should,
+and ship to one team who will tell you what is wrong.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
