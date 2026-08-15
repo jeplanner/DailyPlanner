@@ -59,6 +59,20 @@ begin
          updated_at         = now()
    where user_id = uid;
 
+  -- Already applied? Then stop, rather than churn.
+  --
+  -- The first version soft-deleted and re-inserted unconditionally, so every
+  -- re-run left another 48 dead rows behind (a genuine double-apply during
+  -- rollout took the soft-deleted count from 28 to 76). The live state was
+  -- correct both times, but the clutter grows without bound. A marker row is
+  -- enough to make the whole block a no-op the second time.
+  if exists (select 1 from interview_topics
+              where user_id = uid and deleted_at is null
+                and title like 'DSA — %must-know)') then
+    raise notice 'AI SDE prep track already applied for % — nothing to do', uid;
+    return;
+  end if;
+
   -- Retire the inherited TPM rows. Soft delete, per house rule.
   update interview_topics  set deleted_at = now()
    where user_id = uid and deleted_at is null;

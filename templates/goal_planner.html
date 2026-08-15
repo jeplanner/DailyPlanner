@@ -19,7 +19,9 @@
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
 <style>
-  .gp-wrap { max-width: 940px; margin: 0 auto; padding: 0 4px 40px; }
+  .gp-wrap { max-width: 940px; margin: 0 auto; padding: 0 10px 40px; }
+  body { overflow-x: hidden; }
+  .hero, .row, .newbox { min-width: 0; overflow-wrap: anywhere; }
   .gp-wrap h1 { font-size: 22px; margin: 0 0 4px; }
   .gp-sub { font-size: 13px; color: var(--color-text-secondary); margin: 0 0 14px; }
 
@@ -135,7 +137,7 @@
   .budget.bad { border-color: #dc2626; color: #991b1b; } html.dark .budget.bad { color:#fca5a5; }
 
   /* ── The quiet list ── */
-  .row { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid var(--color-border);
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 11px 13px; border: 1px solid var(--color-border);
          border-radius: 11px; margin-bottom: 7px; background: var(--color-surface); }
   .row .rt { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; }
   .row .rc { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 14px; white-space: nowrap; }
@@ -185,6 +187,12 @@
     .clock .seg.secs { flex: 0 0 auto; min-width: 34px; margin-left: 4px; }
     .clock .seg.secs b { font-size: 18px; }
     .clock .detail { margin-left: 0; flex: 1 0 100%; padding-top: 6px; }
+    /* The row is title + slider + readout + countdown; on a phone the title
+       takes its own line and the controls wrap beneath it. */
+    .row .rt { flex: 1 0 100%; }
+    input.pctrange.row { width: 96px; }
+    .pctwrap { gap: 6px; }
+    input.pctrange { width: 100%; max-width: 260px; }
   }
 </style>
 

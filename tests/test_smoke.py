@@ -899,3 +899,43 @@ def test_budget_takes_a_daily_commitment_at_its_word():
     # 92 calendar days, not the 65 working ones.
     assert s["budget"]["available_minutes"] == 92 * 90
     assert s["working_days_left"] == 65, "working days stay reported separately"
+
+
+def test_ai_sde_tag_filters_do_not_depend_on_the_server_vocabulary(auth_client):
+    """The dropdowns are built from `tag_vocab`, but must not REQUIRE it. A
+    payload cached from before that field existed left every dropdown empty,
+    which presents as "tag filtering is broken" — with no options there is
+    nothing to select. The vocabulary is recoverable from the entries, which
+    each carry their own tag values."""
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    assert "function tagVocab()" in html, "no fallback when tag_vocab is absent"
+    assert "BANK.entries.map(e => e[field])" in html, "vocabulary is not derived from entries"
+    # And an untagged bank should hide the row rather than show dead controls.
+    assert 'row.style.display = "none"' in html
+
+
+def test_mobile_layout_cannot_be_cut_off(auth_client):
+    """Reported as "in mobile the UI is cutting". Two causes, both real:
+
+    1. .q-head is a flex row that now carries six chips (priority, time,
+       frequency, sub-area, difficulty, category) — two of which the tagging
+       work added. They are all flex:none, so without wrapping they cannot
+       shrink and the row is clipped off the side of the screen.
+    2. The worked examples are white-space:pre-wrap and contain ASCII tables
+       with unbreakable runs, which widen the card past the viewport unless
+       they get their own scroller."""
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    import re
+    head = re.search(r"^\s*\.q-head \{[^}]*\}", html, re.M).group(0)
+    assert "flex-wrap: wrap" in head, "the six-chip card header cannot wrap"
+    for block in (r"^\s*\.ex \.body \{[^}]*\}", r"^\s*\.fld\.deep \{[^}]*\}",
+                  r"^\s*\.fld\.recipe \{[^}]*\}"):
+        rule = re.search(block, html, re.M).group(0)
+        assert "pre-wrap" in rule and "overflow-x: auto" in rule, \
+            f"pre-wrap block without a scroller: {rule[:60]}"
+    assert "overflow-x: hidden" in html, "the page itself can still scroll sideways"
+
+    planner = auth_client.get("/goal-planner").get_data(as_text=True)
+    # Anchored: an unanchored ".row {" also matches "input.pctrange.row {".
+    row = re.search(r"^\s*\.row \{[^}]*\}", planner, re.M).group(0)
+    assert "flex-wrap: wrap" in row, "planner rows cannot wrap on a phone"

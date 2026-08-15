@@ -12,7 +12,10 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
-  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0;
+         overflow-x: hidden; }
+  /* Long unbroken strings in a title or tag must not widen the page. */
+  .q-text, .fld, .exs { overflow-wrap: anywhere; min-width: 0; }
   .wrap { max-width: 780px; margin: 0 auto; padding: 16px 16px 72px; }
   h1 { font-size: 22px; font-weight: 900; letter-spacing: -.02em; margin: 6px 0 2px; }
   .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 14px; }
@@ -28,7 +31,11 @@
 
   .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
   .q-card.done { border-color: #a7f3d0; }
-  .q-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
+  /* Wraps, because this row now carries up to six chips (priority, time,
+     frequency, sub-area, difficulty, category) and they are all flex:none.
+     Without wrapping they cannot shrink and the row is simply clipped off
+     the side of a phone. */
+  .q-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
   .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
   .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; }
   .q-head .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
@@ -46,7 +53,8 @@
   /* Long-form "explain it like I'm new to this" walkthrough: keeps the
      step/section line breaks the text was written with. */
   .fld.deep { white-space: pre-wrap; background: #f5f7ff; border-left: 3px solid #6366f1;
-              border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.62; }
+              border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.62;
+              overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .fld.deep .lbl { color: #4338ca; }
   html.dark .fld.deep { background: #131a33; border-left-color: #818cf8; }
   /* Several worked examples per topic, each numbered and independently read. */
@@ -56,7 +64,11 @@
         border-left: 3px solid #34d399; border-radius: 6px; }
   .ex .n { flex: none; width: 19px; height: 19px; border-radius: 50%; background: #059669; color: #fff;
            font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
-  .ex .body { white-space: pre-wrap; font-size: 13px; line-height: 1.6; min-width: 0; }
+  /* The worked examples contain ASCII tables and rules ("---+----+---",
+     "═══════") that pre-wrap cannot break, so without a scroller they widen
+     the whole card and the page gets cut off on a phone. */
+  .ex .body { white-space: pre-wrap; font-size: 13px; line-height: 1.6; min-width: 0;
+              overflow-x: auto; -webkit-overflow-scrolling: touch; }
   html.dark .ex { background: #0e2119; border-left-color: #10b981; }
   /* Planning chips: study priority, stack rank and how long the topic takes. */
   .q-pri { font-size: 10px; font-weight: 900; letter-spacing: .03em; border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; }
@@ -90,7 +102,8 @@
   /* The plain-English recipe you read BEFORE the code: numbered steps, kept
      on their own lines so you can follow one line at a time while typing. */
   .fld.recipe { white-space: pre-wrap; background: #fffbeb; border-left: 3px solid #f59e0b;
-                border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.6; }
+                border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.6;
+                overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .fld.recipe .lbl { color: #b45309; }
   html.dark .fld.recipe { background: #241a06; border-left-color: #fbbf24; }
   .fld.plan { background: #f5f3ff; border-left: 3px solid #8b5cf6; border-radius: 6px; padding: 6px 10px; }
@@ -115,8 +128,13 @@
     .controls { flex-direction: column; align-items: stretch; }
     .controls select, .controls input.search, .controls button { width: 100%; box-sizing: border-box; }
     .only { padding: 2px 0; }
-    .q-head { padding: 11px 12px; gap: 9px; }
-    .q-head .q-text { font-size: 14px; }
+    .q-head { padding: 11px 12px; gap: 7px; }
+    /* Title on its own line, chips wrapped underneath — six chips beside a
+       title is more than 360px can hold. */
+    .q-head .q-text { font-size: 14px; flex: 1 0 100%; order: -1; padding-left: 26px;
+                      margin-top: -24px; }
+    .q-head .q-prac { align-self: flex-start; }
+    .q-body { padding: 0 12px 12px 12px; }
     .q-head .q-badge { font-size: 9px; padding: 2px 6px; }
     .q-body { padding: 0 12px 12px 12px; }   /* drop the big left indent on phones */
     .fld { font-size: 13.5px; }
@@ -234,16 +252,49 @@
   ];
   const FREQ_CLASS = {"Must-Know":"freq-must", "Common":"freq-common", "Rare":"freq-rare"};
 
+  /* The vocabulary the filter dropdowns are built from.
+
+     The server sends it as `tag_vocab`, but the page must not DEPEND on that:
+     a payload cached from before the field existed, or an older backend,
+     used to leave every dropdown empty — which looks exactly like "tag
+     filtering is broken", because with no options there is nothing to pick.
+     Every entry already carries its own tag values, so the vocabulary is
+     recoverable from the data itself. Server first, entries as the fallback. */
+  function tagVocab(){
+    if (BANK && BANK.tag_vocab) return BANK.tag_vocab;
+    if (!BANK || !BANK.entries) return null;
+    const uniq = (field) => [...new Set(BANK.entries.map(e => e[field]).filter(Boolean))].sort();
+    const subtopics = {};
+    BANK.entries.forEach(e => {
+      if (!e.tag_topic || !e.tag_subtopic) return;
+      (subtopics[e.tag_topic] = subtopics[e.tag_topic] || new Set()).add(e.tag_subtopic);
+    });
+    Object.keys(subtopics).forEach(k => { subtopics[k] = [...subtopics[k]].sort(); });
+    const derived = {
+      topic: uniq("tag_topic"), level: uniq("tag_level"),
+      priority: uniq("tag_priority"), format: uniq("tag_format"),
+      stage: uniq("tag_stage"), time: uniq("tag_time"), subtopics: subtopics,
+    };
+    /* Nothing tagged at all — hide the row rather than show six empty
+       dropdowns that do nothing when you touch them. */
+    return derived.topic.length ? derived : null;
+  }
+
   function fillTagFilters(){
-    const v = (BANK && BANK.tag_vocab) || null;
-    if (!v) return;                       // older cached payload: leave the row empty
+    const v = tagVocab();
+    const row = document.querySelector(".controls.tagrow");
+    if (!v) { if (row) row.style.display = "none"; return; }
+    if (row) row.style.display = "";
     const opts = (sel, values) => {
       const keep = sel.value;
       sel.length = 1;                     // keep the "Any ..." placeholder
       values.forEach(x => sel.add(new Option(x, x)));
       if (values.includes(keep)) sel.value = keep;
     };
-    opts($("tpriority"), v.priority);
+    // Alphabetical would read "Common, Must-Know, Rare"; the useful order is
+    // by how often it is asked, so pin it when the list is the expected one.
+    const PRI = ["Must-Know", "Common", "Rare"];
+    opts($("tpriority"), PRI.every(x => v.priority.includes(x)) ? PRI : v.priority);
     opts($("ttopic"),    v.topic);
     opts($("tformat"),   v.format);
     opts($("tstage"),    v.stage);
@@ -255,7 +306,7 @@
   // subject choice. With no subject picked, offer every subtopic in use so the
   // filter is still usable on its own.
   function syncSubtopics(){
-    const v = (BANK && BANK.tag_vocab) || null;
+    const v = tagVocab();
     if (!v) return;
     const topic = $("ttopic").value;
     const subs = topic ? (v.subtopics[topic] || [])
