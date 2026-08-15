@@ -145627,6 +145627,971 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
+_EX_P1AO["Context switch"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the cost of taking turns
+
+Your machine runs far more threads than it has cores. The operating system creates the illusion of
+simultaneity by giving each one a slice of a core, then swapping to the next. Each swap is a CONTEXT
+SWITCH.
+
+'Context' means everything the CPU needs in order to resume that thread exactly where it left off:
+
+    · the PROGRAM COUNTER - which instruction is next
+    · the REGISTERS - the CPU's working values
+    · the STACK POINTER
+    · memory-management state, if the swap is between PROCESSES
+
+To switch, the kernel SAVES all of that for the outgoing thread, then LOADS it for the incoming one.
+That work produces no output of your program whatsoever. It is pure overhead - the price of the
+illusion.
+
+MEASURED on this machine, threads handing control back and forth 20,000 times:
+
+    20,000 hand-overs took 1.689s   ->  about 84.5 microseconds per round trip
+    40,000 plain function calls took 0.0023s  ->  about 57 nanoseconds each
+    so one hand-over costs roughly 1,479x a function call
+
+(That figure is a full round trip through Python's event machinery and the kernel, not the raw
+register-swapping cost - a bare kernel context switch is usually quoted at 1-10 microseconds. The
+useful thing is the ORDER OF MAGNITUDE: switching is thousands of times more expensive than calling.)
+
+TERMS AS THEY APPEAR:
+- KERNEL: the part of the operating system that owns the CPU and decides who runs.
+- SCHEDULER: the kernel component that picks the next thread.
+- TIME SLICE (or quantum): how long a thread runs before being interrupted, typically a few
+  milliseconds.
+- PREEMPTION: the kernel taking the CPU away, rather than the thread giving it up.""",
+
+    """2. THE INTUITION - why it costs so much more than it looks like it should
+
+Saving a few registers should take nanoseconds. It does. The expense is everything AROUND that:
+
+1. THE MODE SWITCH. Entering the kernel and leaving it again is not free, and modern mitigations for
+   speculative-execution vulnerabilities (Spectre, Meltdown) made it noticeably more expensive.
+
+2. THE CACHES GO COLD - and this is the real cost. The incoming thread's data is not in L1 or L2, so
+   its first thousands of memory accesses miss and go to RAM, which is roughly 100x slower than L1.
+   You do not pay this in the switch itself; you pay it in the slow running of the thread afterwards,
+   which is why the true cost is hard to measure and always larger than the direct one.
+
+3. THE TLB - the cache of virtual-to-physical address translations - is partly or wholly flushed on a
+   PROCESS switch, so address translation is slow again too.
+
+4. THE SCHEDULER ITSELF has to choose, which means walking run queues and doing bookkeeping.
+
+THAT ORDERING EXPLAINS THE HIERARCHY YOU SHOULD KNOW:
+
+    function call            ~1 ns          nothing leaves the core
+    thread switch, same      ~1-5 us        registers and stack; the caches are partly shared
+      process
+    process switch           ~5-10 us       plus address-space and TLB work
+    measured here, a full    ~84 us         including Python's event objects and two hand-overs
+      Python hand-over
+
+WHY IT MATTERS IN PRACTICE: a server with 10,000 threads spends its time switching rather than
+serving. That single fact is the reason event loops (asyncio, Node) and green threads (Go's
+goroutines) exist - they multiplex many logical tasks onto FEW OS threads, so the expensive switch
+happens rarely and the cheap in-process hop happens constantly.""",
+
+    """3. WHEN A SWITCH HAPPENS, TRACED
+
+    1. THE TIME SLICE EXPIRES. A timer interrupt fires, the kernel takes control, decides someone else
+       should run, and swaps. This is PREEMPTION - the thread did not ask.
+
+    2. THE THREAD BLOCKS. It reads a file, waits on a socket, acquires a contended lock, or sleeps.
+       There is nothing to run, so the kernel switches to something that can. This switch is not
+       waste - the alternative is an idle core.
+
+    3. A HIGHER-PRIORITY THREAD BECOMES READY. An interrupt arrives, a lock is released, data lands
+       on a socket. The scheduler may preempt immediately.
+
+    4. THE THREAD YIELDS or exits voluntarily.
+
+    THE SEQUENCE INSIDE ONE SWITCH:
+
+        thread A running
+          -> interrupt or system call: enter the kernel
+          -> save A's registers, program counter and stack pointer into its task structure
+          -> scheduler picks B
+          -> (if B is in another process) switch the address space, flush or tag the TLB
+          -> load B's saved state
+          -> return to user mode, now as B
+        thread B running - with cold caches for the next few thousand accesses
+
+THE DISTINCTION WORTH BEING PRECISE ABOUT: a MODE switch (user to kernel and back, as in any system
+call) is NOT a context switch. `getpid()` enters the kernel and returns to the SAME thread - that is
+tens of nanoseconds. A context switch changes WHICH THREAD runs. Interviewers do ask.
+
+CATEGORY 2 IS WHY MOST SWITCHES ARE FINE. A thread waiting for the disk should be swapped out - that
+is the operating system doing its job. The expensive switches are the ones caused by having far more
+runnable threads than cores, or by contended locks producing switch-storms.""",
+
+    """4. THE FAILURE MODES - where switching becomes the workload
+
+A. TOO MANY THREADS. One thread per connection at 10,000 connections means the scheduler is the
+   busiest thing on the machine. This is the C10K problem, and it is what event loops solved.
+
+B. LOCK CONTENTION. Every failed lock acquisition blocks a thread, which costs a switch, and the
+   thread that eventually wakes finds its caches cold. A hot lock can spend more time switching than
+   working - which is why SPINLOCKS exist: for a lock held for less time than a switch costs, it is
+   cheaper to burn CPU waiting than to sleep.
+
+C. THRASHING - the pathological case. So much switching and paging that the system does almost no
+   useful work while looking fully busy.
+
+D. FALSE SHARING, the cousin of this problem: two threads on different cores writing to variables in
+   the SAME cache line invalidate each other's caches constantly. No context switch is involved, and
+   the symptom - unexplained slowness that scales with thread count - looks identical.
+
+E. TOO SMALL A TIME SLICE, which increases responsiveness and throughput-destroying switch frequency.
+   This is the tuning trade-off every scheduler makes.
+
+F. MEASURING IT NAIVELY. Because most of the cost is COLD CACHES afterwards rather than the swap
+   itself, a microbenchmark that ping-pongs two tiny threads UNDERSTATES the real cost in a program
+   with a working set. The 84 microseconds measured here is a Python-level round trip; the true cost
+   to a real application is spread out and larger.
+
+G. ASSUMING CONTEXT SWITCHES ARE ALWAYS BAD. A thread blocked on I/O SHOULD be switched out. The
+   waste is switching between threads that all want to compute.""",
+
+    """5. WHAT TO DO ABOUT IT
+
+REDUCE THE NUMBER OF THREADS. A pool sized to the number of cores (plus a little, for I/O waits) is
+the standard answer for CPU-bound work. More threads than cores does not add throughput; it adds
+switching.
+
+USE AN EVENT LOOP FOR MANY CONNECTIONS. asyncio, Node, nginx: one thread handles thousands of sockets
+by never blocking. A task hand-over inside the loop is a function call - measured at about 57
+nanoseconds - rather than a kernel switch at microseconds. That ratio IS the argument for async, and
+it is why nginx serves more connections than Apache's thread-per-request model on the same hardware.
+
+USE GREEN THREADS / GOROUTINES. The runtime multiplexes many lightweight tasks onto a few OS threads,
+so the cheap hop is common and the expensive one is rare. Go's scheduler exists for exactly this.
+
+REDUCE BLOCKING. Batch I/O, use buffered writes, hold locks briefly, and prefer lock-free structures
+in hot paths. Every avoided block is an avoided switch.
+
+PIN THREADS TO CORES (CPU affinity) in latency-critical work, so a thread returns to a core whose
+caches still hold its data. This is real tuning in trading and games, and premature almost everywhere
+else.
+
+WHEN TO CARE AT ALL: if your service is at 30% CPU and slow, look at blocking and switching. If the
+CPU is saturated by your own computation, the switches are not your problem. Measure before tuning -
+`vmstat`, `pidstat -w`, or perf will tell you the actual switch rate.
+
+THE HONEST SUMMARY for an interview: 'a context switch is saving one thread's state and loading
+another's, and the real cost is the cold caches afterwards rather than the register swap. It is
+microseconds against nanoseconds for a function call, which is why you size thread pools to cores and
+use an event loop when you need thousands of concurrent connections.'""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+1. WORK OUT WHETHER YOU ARE BLOCKING OR COMPUTING. Switching only dominates when threads are blocking
+   and waking constantly, or when there are far more of them than cores.
+2. COUNT YOUR THREADS. If it is much larger than the core count and they are all runnable, that is the
+   problem.
+3. MEASURE THE SWITCH RATE rather than guessing - `vmstat 1` gives context switches per second,
+   `pidstat -w` per process. A number in the hundreds of thousands per second on a small machine is a
+   red flag.
+4. LOOK FOR CONTENDED LOCKS, because they turn every acquisition into a potential switch. A profiler
+   showing time in lock waits is the tell.
+5. SIZE POOLS DELIBERATELY: cores for CPU-bound work; higher for I/O-bound, because those threads
+   spend most of their time blocked and not competing.
+6. FOR THOUSANDS OF CONCURRENT CONNECTIONS, change the model rather than the tuning - an event loop or
+   green threads, not a bigger thread pool.
+7. ONLY THEN consider affinity, slice tuning or kernel parameters. These are the last 10%, and they
+   are easy to get wrong.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A context switch is the operating system saving everything a thread needs to resume - program
+counter, registers, stack pointer, and for a process switch the address-space state too - and loading
+that of another thread. It produces nothing for your program; it is the price of taking turns.
+
+The interesting part is why it costs so much more than the register copying suggests. The caches go
+cold. The incoming thread's data is not in L1 or L2 any more, so it runs slowly for thousands of
+accesses afterwards, and on a process switch the TLB is flushed too. That deferred cost is bigger than
+the switch itself and much harder to see.
+
+For scale, I measured 20,000 thread hand-overs in Python at about 84 microseconds each as a round
+trip, against 57 nanoseconds for a plain function call - about 1,500 times. A bare kernel switch is
+usually quoted at a few microseconds; either way it is microseconds against nanoseconds.
+
+That ratio is why you size thread pools to cores rather than to tasks, and why event loops and
+goroutines exist - they multiplex thousands of logical tasks onto a few OS threads, so the expensive
+switch is rare and the cheap one is common.
+
+One distinction I would make: a MODE switch into the kernel for a system call is not a context switch.
+The thread does not change.'""",
+
+    """8. THE PIECES, ONE BY ONE
+
+    WHAT GETS SAVED, and why each item is needed:
+
+        program counter    where to resume - without it the thread cannot continue
+        registers          its working values; the CPU has one set, shared by everyone
+        stack pointer      where its call stack is
+        flags / status     comparison results, mode bits
+        FPU / vector state large, and often saved LAZILY - only if the thread actually used it
+        page-table base    PROCESS switches only; this is what makes them dearer than thread switches
+
+    WHERE IT GOES: into the thread's TASK STRUCTURE (task_struct in Linux) - the kernel's record of a
+    thread, which also holds its priority, its state and its accounting.
+
+    WHY THREADS ARE CHEAPER THAN PROCESSES: threads in one process SHARE the address space, so there
+    is no page-table switch and no TLB flush. Only the per-thread registers and stack change hands.
+
+    THE THING THAT IS NOT SAVED, and therefore lost: the CPU CACHES. Nobody saves L1, L2 or the branch
+    predictor's history - they simply become wrong for the new thread and are refilled by use. That
+    is the deferred cost, and it is why the true price depends on the size of your working set.
+
+    THE MEASUREMENT USED HERE:
+
+        two threads, ping-ponging through Event objects, 20,000 times
+        -> 1.689s, about 84.5 microseconds per round trip
+        40,000 plain function calls -> 0.0023s, about 57 nanoseconds each
+
+    Note what that measurement includes: two kernel transitions, the scheduler, the Event objects, and
+    Python's own overhead. It is not a pure context-switch number and it should not be quoted as one -
+    it is a fair measure of what a hand-over costs in a Python program, which is the number that
+    actually affects your design.""",
+
+    """9. RUNNING IT - and reading the number honestly
+
+    MEASURED:
+        20,000 thread hand-overs   1.689s     ~84.5 microseconds each (round trip)
+        40,000 function calls      0.0023s    ~57 nanoseconds each
+        ratio                                 ~1,479x
+
+    WHAT THAT NUMBER IS: a full round trip in Python - thread A signals, blocks, thread B wakes,
+    signals back, A wakes. Two hand-overs, two kernel transitions, plus Python's Event objects.
+
+    WHAT IT IS NOT: a bare kernel context switch, which is usually quoted at 1 to 10 microseconds. If
+    you cite 84 microseconds as 'the cost of a context switch' in an interview, a systems person will
+    correctly push back.
+
+    WHY REPORT IT ANYWAY: because it is the number that matters for a design decision in Python. If
+    your architecture hands work between threads a million times a second, the language and library
+    overhead is part of the cost, and 84 microseconds says that design is dead before you write it.
+
+    THE COMPARISON TABLE WORTH REMEMBERING, orders of magnitude rather than exact figures:
+
+        function call                  ~1 ns
+        L1 cache hit                   ~1 ns
+        main memory access           ~100 ns
+        thread switch (same process)   ~1-5 us
+        process switch                 ~5-10 us
+        Python hand-over, measured      ~84 us
+        disk read (SSD)               ~100 us
+        network round trip (same DC)  ~500 us
+
+    Reading DOWN that list is the most useful thing in this entry: a context switch sits between a
+    memory access and a disk read. It is expensive compared with computing, and cheap compared with
+    waiting for I/O - which is exactly why switching AWAY from a thread that is about to wait for the
+    disk is a bargain, and switching between threads that all want to compute is waste.""",
+
+    """10. THE COSTS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT A SWITCH COSTS: a direct cost of microseconds (registers, kernel entry, scheduling) plus a
+deferred cost that is usually larger - cold caches and, on process switches, a flushed TLB. Measured
+here at ~84 microseconds for a Python round trip against ~57 nanoseconds for a function call.
+
+WHAT IT BUYS: the illusion that a machine with 8 cores runs 800 things. Without it, one blocked thread
+would idle a core.
+
+THE #1 MISTAKE: creating a thread per unit of work. At thousands of connections the scheduler becomes
+the workload. Size pools to cores, or change the model to an event loop.
+
+THE #2 MISTAKE: treating all switches as waste. Switching away from a thread that is about to wait for
+the disk is the operating system doing exactly the right thing. The waste is switching between threads
+that all want to compute.
+
+THE #3 MISTAKE: quoting a microbenchmark as the true cost. Most of the price is paid afterwards in
+cache misses, which a ping-pong benchmark with no working set never pays.
+
+THE DISTINCTION TO GET RIGHT: a system call is a MODE switch, not a context switch. The same thread
+comes back.
+
+ONE-SENTENCE TAKEAWAY: a context switch saves one thread's state and loads another's, costs
+microseconds directly and more than that in cold caches afterwards - so keep the number of runnable
+threads near the number of cores, and use an event loop when you need thousands of concurrent
+things.""",
+]
+
+_EX_P1AO["Normalisation worked: taking one messy table to 3NF (and when to stop)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - store every fact exactly once
+
+NORMALISATION is the process of splitting a database table so that each fact lives in exactly one
+place. The reason is not tidiness. It is that a fact stored twice will eventually disagree with
+itself.
+
+THE MESSY TABLE we will fix, one row per order line:
+
+    order_id | customer | customer_city | product | unit_price | qty
+    ---------+----------+---------------+---------+------------+----
+    1        | Asha     | Leeds         | Widget  | 20         | 2
+    2        | Asha     | Leeds         | Gadget  | 35         | 1
+    3        | Ben      | Bristol       | Widget  | 20         | 5
+    4        | Chen     | Leeds         | Widget  | 20         | 1
+
+It works. You can query it. And it has three specific diseases, all measured in section 2: you cannot
+update a customer's city safely, you cannot delete an order without losing other facts, and you cannot
+record a customer who has not ordered yet.
+
+TERMS AS THEY APPEAR:
+- PRIMARY KEY: the column (or columns) that uniquely identify a row.
+- FUNCTIONAL DEPENDENCY: 'this column determines that one'. customer determines customer_city - if you
+  know the customer, you know the city. Written customer -> customer_city.
+- ANOMALY: an operation that should be simple and instead corrupts or loses data. There are three
+  kinds - update, delete and insert - and they are the entire motivation.
+- NORMAL FORMS: 1NF, 2NF, 3NF and beyond - a ladder of increasingly strict rules. Most real schemas
+  stop at 3NF.""",
+
+    """2. THE INTUITION - the three anomalies, measured
+
+The abstract rules make no sense until you have seen what they prevent. So here is the messy table
+failing, three times, against a real database.
+
+THE UPDATE ANOMALY. Asha's city appears in two rows:
+
+    order 1 | Asha | Leeds
+    order 2 | Asha | Leeds
+
+Now she moves to York, and an UPDATE touches only one row - because somebody filtered by order_id, or
+because a second row was inserted later:
+
+    measured, after updating order 1 only:
+        ('Asha', 'York'), ('Asha', 'Leeds')
+
+The table now asserts that Asha lives in two cities. There is no error, no constraint violation, and
+no way for a later query to tell which is right. THE FACT WAS STORED TWICE, so it could disagree with
+itself.
+
+The same applies to the Widget's price, measured as stored in 3 separate rows. A price change means
+three updates that must all succeed.
+
+THE DELETE ANOMALY. Ben has exactly one order. Delete it:
+
+    measured, the set of known cities before: Leeds, Bristol, York
+    measured, after deleting Ben's only order: York, Leeds
+
+Bristol is gone. So is Ben. You deleted an ORDER and lost a CUSTOMER - because the only place that
+customer was recorded was inside an order row.
+
+THE INSERT ANOMALY, the mirror image: you cannot record a new customer at all until they place an
+order, because there is no row to put them in without inventing a fake order.
+
+ALL THREE HAVE ONE CAUSE: the table is storing facts about several DIFFERENT THINGS - orders,
+customers and products - in one place. Normalisation is just 'give each kind of thing its own table',
+and the normal forms are a precise way of saying when you have finished.""",
+
+    """3. THE LADDER, TRACED ON THIS TABLE
+
+1NF - EVERY CELL HOLDS ONE VALUE, and there are no repeating groups.
+
+    BROKEN:   products = 'Widget, Gadget'   in a single cell
+              or columns product1, product2, product3
+
+    FIXED:    one row per product per order.
+
+    Our starting table is already in 1NF. Note that JSON columns in a modern database deliberately
+    break this rule, and that is fine when the contents are opaque to the database - it stops being
+    fine the moment you want to query inside them.
+
+2NF - NO PARTIAL DEPENDENCY ON PART OF A COMPOSITE KEY.
+
+    Only relevant when the key is made of several columns. Suppose the key is (order_id, product):
+
+        qty            depends on BOTH  -> fine
+        unit_price     depends only on PRODUCT  -> a PARTIAL dependency, breaks 2NF
+        customer_city  depends only on the ORDER's customer -> also partial
+
+    FIX: move unit_price into a products table keyed by product.
+
+3NF - NO TRANSITIVE DEPENDENCY: a non-key column must not determine another non-key column.
+
+        order_id -> customer -> customer_city
+
+    customer_city depends on the KEY only THROUGH customer, which is not itself a key. That is
+    transitive, and it is exactly what produced the update anomaly.
+
+    FIX: move customer and customer_city into a customers table.
+
+THE RESULT - three tables, each fact in one place:
+
+    customers   (id, name, city)
+    products    (id, name, unit_price)
+    order_lines (order_id, customer_id, product_id, qty)
+
+THE MEMORABLE PHRASING of 3NF, worth quoting in an interview: every non-key column depends on
+'THE KEY, THE WHOLE KEY, AND NOTHING BUT THE KEY' - the key (1NF), the whole key (2NF), nothing but
+the key (3NF).""",
+
+    """4. THE SAME OPERATIONS ON THE NORMALISED SCHEMA - measured
+
+Every anomaly from section 2, run again against the three-table version.
+
+THE UPDATE. Asha moves to York:
+
+    UPDATE customers SET city = 'York' WHERE name = 'Asha'
+
+    measured afterwards:  ('Asha','York'), ('Ben','Bristol'), ('Chen','Leeds')
+
+ONE row changed. There is no second copy to fall out of step, so the anomaly is not 'less likely' - it
+is IMPOSSIBLE. That is the difference between a convention and a structure.
+
+THE DELETE. Remove Ben's order:
+
+    DELETE FROM order_lines WHERE customer_id = 2
+
+    measured afterwards:  ('Asha','York'), ('Ben','Bristol'), ('Chen','Leeds')
+
+Ben and Bristol are still there. You deleted an order and lost exactly one order.
+
+THE INSERT. Adding a customer who has never ordered is now just a row in `customers`. No fake order
+required.
+
+AND THE REPORT STILL WORKS, which is the objection people raise - measured:
+
+    SELECT c.name, p.name, p.unit_price * l.qty
+    FROM order_lines l
+    JOIN customers c ON c.id = l.customer_id
+    JOIN products  p ON p.id = l.product_id
+
+    -> ('Asha','Widget',40), ('Asha','Gadget',35), ('Chen','Widget',20)
+
+The flat table gave you that without a join. The normalised one costs two joins and gives you a
+database that cannot contradict itself. That is the trade, and section 5 is about when it is worth
+making.""",
+
+    """5. WHEN TO STOP - and when to deliberately go backwards
+
+3NF IS WHERE MOST REAL SCHEMAS STOP. It removes all three anomalies for the overwhelming majority of
+designs, and the higher forms address genuinely rare situations:
+
+    BCNF   a stricter 3NF for the unusual case of overlapping candidate keys.
+    4NF    removes multi-valued dependencies - two independent one-to-many facts in one table.
+    5NF    join dependencies. You will not meet this outside a textbook.
+
+Knowing that 3NF is the practical stopping point, and WHY, is worth more than reciting 5NF.
+
+DENORMALISATION - going backwards ON PURPOSE. Normalisation optimises for WRITE correctness; joins
+cost read time. In a read-heavy system you may deliberately duplicate:
+
+    - a `total_amount` on an order, so the summary page needs no join;
+    - a `customer_name` copied onto the order, so the list view is one table;
+    - a materialised view or a rollup table refreshed nightly;
+    - an analytics warehouse in a STAR SCHEMA, which is denormalised by design.
+
+THE RULE FOR DOING IT SAFELY: normalise first, measure, then denormalise DELIBERATELY, with the
+duplicate maintained by one mechanism - a trigger, a materialised view, or a single code path. The
+disaster is not denormalising; it is denormalising by accident and updating the copies by hand in four
+different places.
+
+AND ONE HONEST EXCEPTION: a historical record should copy the values it is recording. An invoice line
+must store the price AT THE TIME OF SALE, not join to the current product price - or last year's
+invoices change when you change a price. That looks like a 3NF violation and it is not: 'the price
+charged' and 'the current price' are DIFFERENT FACTS that happen to have had the same value once.
+Being able to say that distinction cleanly is a strong signal.
+
+WHERE NORMALISATION DOES NOT APPLY: document stores, event logs and caches deliberately embed
+everything for read speed and immutability. Different tool, different rules - but the same question
+underneath, which is 'where does this fact live, and who is responsible for changing it?'.""",
+
+    """6. HOW TO NORMALISE A TABLE - numbered steps
+
+1. WRITE DOWN WHAT EACH ROW MEANS in one sentence. 'One product on one order.' If that sentence needs
+   an 'and' - 'one order line AND the customer's details' - you already have your answer.
+2. LIST THE FUNCTIONAL DEPENDENCIES: for each column, what determines it? customer -> city,
+   product -> unit_price, (order_id, product) -> qty.
+3. IDENTIFY THE KEY - the minimal set of columns that determines every other one.
+4. ANY COLUMN THAT DEPENDS ON PART OF THE KEY moves to its own table keyed by that part. (2NF)
+5. ANY COLUMN THAT DEPENDS ON A NON-KEY COLUMN moves to a table keyed by that column. (3NF)
+6. ADD FOREIGN KEYS back, and let the database enforce them. An un-enforced relationship is a comment.
+7. RUN THE THREE ANOMALY TESTS: can I update this fact in one place? Can I delete a row without losing
+   an unrelated fact? Can I insert a thing that exists but has no related rows yet? Measured above,
+   the flat table fails all three and the normalised one passes all three.
+8. ONLY THEN think about performance, and denormalise deliberately if the measurements demand it.
+
+STEP 1 IS THE ONE THAT DOES THE WORK. Most badly-normalised tables were designed by listing the
+columns a screen needed rather than by asking what one row represents.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Normalisation means storing each fact in exactly one place, and the reason is the three anomalies.
+
+If a customer's city is repeated on every order row, then an update that touches one row leaves the
+table contradicting itself - I ran it, and afterwards the same customer had two different cities.
+Deleting a customer's only order deletes the customer entirely, because that was the only place they
+were recorded. And you cannot add a customer at all until they have ordered something.
+
+The ladder is: 1NF, one value per cell; 2NF, no column depending on only part of a composite key; 3NF,
+no column depending on another non-key column - the key, the whole key, and nothing but the key. For
+the example table that means splitting orders, customers and products into three tables, and after
+that the update is one row and deleting an order loses exactly one order.
+
+Most schemas stop at 3NF. Beyond that the forms address rare situations. And you sometimes go
+BACKWARDS on purpose - a total cached on the order, or a star schema for analytics - but deliberately,
+after measuring, with one mechanism responsible for keeping the copy in step.
+
+The one that looks like a violation and is not: an invoice line stores the price at the time of sale
+rather than joining to the current price, because "price charged" and "current price" are different
+facts.'""",
+
+    """8. THE SCHEMAS, SIDE BY SIDE
+
+    THE FLAT TABLE:
+
+        CREATE TABLE orders_flat (
+            order_id      INTEGER,
+            customer      TEXT,      -- repeated for every order this customer makes
+            customer_city TEXT,      -- depends on customer, not on order_id  <- 3NF violation
+            product       TEXT,
+            unit_price    INTEGER,   -- depends on product only               <- 2NF violation
+            qty           INTEGER    -- depends on the whole key. This one is fine.
+        );
+
+    Read the comments: two of the six columns are in the wrong table, and each one causes a specific
+    anomaly.
+
+    THE NORMALISED VERSION:
+
+        CREATE TABLE customers (
+            id   INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            city TEXT                      -- one row per customer, so one city
+        );
+        CREATE TABLE products (
+            id         INTEGER PRIMARY KEY,
+            name       TEXT NOT NULL,
+            unit_price INTEGER NOT NULL    -- one row per product, so one price
+        );
+        CREATE TABLE order_lines (
+            order_id    INTEGER,
+            customer_id INTEGER REFERENCES customers(id),
+            product_id  INTEGER REFERENCES products(id),
+            qty         INTEGER NOT NULL,
+            PRIMARY KEY (order_id, product_id)
+        );
+
+    THE FOREIGN KEYS matter. Without them the split is a convention, and nothing stops an order line
+    pointing at a customer who does not exist. With them, the database refuses.
+
+    THE COMPOSITE PRIMARY KEY (order_id, product_id) says 'a product appears at most once per order',
+    which is a business rule you have just made impossible to break.
+
+    THE JOIN THAT REBUILDS THE OLD VIEW:
+
+        SELECT c.name, c.city, p.name, p.unit_price, l.qty
+        FROM order_lines l
+        JOIN customers c ON c.id = l.customer_id
+        JOIN products  p ON p.id = l.product_id
+
+    Anything the flat table could show, a view can show - and a VIEW with exactly this query gives you
+    the convenience back without the duplication.""",
+
+    """9. RUNNING IT - the anomalies, before and after
+
+    THE FLAT TABLE
+
+        Asha's city stored in 2 rows:
+            (1,'Asha','Leeds'), (2,'Asha','Leeds')
+
+        after UPDATE ... WHERE order_id = 1:
+            ('Asha','York'), ('Asha','Leeds')          <- the table now contradicts itself
+
+        the Widget price stored in 3 rows                <- 3 updates must all succeed
+
+        the known cities before deleting Ben's order:  Leeds, Bristol, York
+        after DELETE FROM orders_flat WHERE customer='Ben':
+            York, Leeds                                  <- Bristol and Ben are gone
+
+    THE NORMALISED SCHEMA
+
+        after UPDATE customers SET city='York' WHERE name='Asha':
+            ('Asha','York'), ('Ben','Bristol'), ('Chen','Leeds')     <- one row, no contradiction
+
+        after DELETE FROM order_lines WHERE customer_id=2:
+            ('Asha','York'), ('Ben','Bristol'), ('Chen','Leeds')     <- Ben survives his order
+
+        and the report, via two joins:
+            ('Asha','Widget',40), ('Asha','Gadget',35), ('Chen','Widget',20)
+
+READ THE SECOND LINE OF THE FLAT BLOCK AGAIN. `('Asha','York'), ('Asha','Leeds')` is not an error
+state the database will ever complain about. Every constraint is satisfied. Every query still runs.
+The data is simply wrong, and it will stay wrong until somebody notices - which, on a customer's
+address, might be when a parcel goes to the wrong city.
+
+That is the whole argument for normalisation in one line of output: it does not make mistakes less
+likely, it makes this particular mistake unrepresentable.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    NORMALISED                              DENORMALISED
+    each fact in one place                  facts duplicated deliberately
+    updates touch one row                   updates must touch every copy
+    reads need joins                        reads are one table
+    anomalies impossible                    anomalies prevented by discipline
+    optimised for WRITE correctness         optimised for READ speed
+
+THE #1 MISTAKE: designing a table from the columns a SCREEN needs rather than from what one row
+REPRESENTS. That is how customer_city ends up on an order line, and every anomaly in this entry
+follows from it.
+
+THE #2 MISTAKE: splitting the tables and not adding the FOREIGN KEYS. An unenforced relationship is a
+comment, and orphan rows accumulate silently.
+
+THE #3 MISTAKE: denormalising by accident. A cached total is fine when ONE mechanism maintains it and
+somebody wrote down which one. It is a disaster when four code paths each update their own copy.
+
+THE THING THAT LOOKS LIKE A MISTAKE AND IS NOT: storing the price on an invoice line. 'The price
+charged' and 'the current price' are different facts, and a historical record must keep its own copy
+or history changes when the present does.
+
+ONE-SENTENCE TAKEAWAY: normalise until every fact lives in exactly one place - key, whole key, nothing
+but the key - because a fact stored twice will eventually disagree with itself, and I have watched a
+single UPDATE do exactly that.""",
+]
+
+_EX_P1AO["SQL: WHERE vs GROUP BY vs HAVING, and window functions"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - filter rows, or filter groups?
+
+Three clauses do jobs that sound identical and are not:
+
+    WHERE     filters ROWS, BEFORE any grouping happens
+    GROUP BY  collapses rows into one row per group
+    HAVING    filters GROUPS, AFTER the aggregate has been computed
+
+The rule that follows: if your condition is about a plain column, it belongs in WHERE. If it is about
+an AGGREGATE - a SUM, a COUNT, an AVG - it belongs in HAVING, because that number does not exist until
+the grouping has happened.
+
+THE DATA USED THROUGHOUT, small enough to check by eye:
+
+    Asha  / North / 300      Asha / North / 500
+    Ben   / North / 100
+    Chen  / South / 900      Chen / South / 250
+    Dara  / South /  50
+
+MEASURED against a real SQLite database:
+
+    SELECT rep, SUM(amount) GROUP BY rep
+        -> Asha 800, Ben 100, Chen 1150, Dara 50
+
+    ... WHERE amount > 200 GROUP BY rep          (drop small SALES first)
+        -> Asha 800, Chen 1150            Ben and Dara vanish entirely
+
+    ... GROUP BY rep HAVING SUM(amount) > 500    (drop small REPS after)
+        -> Asha 800, Chen 1150
+
+Same two rows, completely different meanings - and on this data they coincide, which is exactly how
+people convince themselves the two clauses are interchangeable.
+
+TERMS AS THEY APPEAR:
+- AGGREGATE: a function that turns many rows into one value - COUNT, SUM, AVG, MIN, MAX.
+- WINDOW FUNCTION: an aggregate that does NOT collapse the rows. Section 3.""",
+
+    """2. THE INTUITION - the order the database evaluates things
+
+Every confusion in this entry dissolves once you know the evaluation order, which is NOT the order you
+write the clauses in:
+
+    1. FROM / JOIN     assemble the rows
+    2. WHERE           throw away rows
+    3. GROUP BY        collapse what is left into groups
+    4. HAVING          throw away groups
+    5. SELECT          compute the output columns (and window functions)
+    6. ORDER BY        sort
+    7. LIMIT           truncate
+
+Read that list and the rules become obvious rather than memorised:
+
+· WHERE cannot see an aggregate, because step 2 runs before step 3. Measured:
+      SELECT rep, SUM(amount) FROM sales WHERE SUM(amount) > 500 GROUP BY rep
+      -> OperationalError: misuse of aggregate: SUM()
+  The database is not being fussy; the number genuinely does not exist yet.
+
+· HAVING can see aggregates, because step 4 runs after step 3.
+
+· SELECT cannot be referenced by WHERE (step 5 is later), which is why you often repeat an expression
+  instead of using its alias - though most databases DO let ORDER BY use an alias, since step 6 is
+  later still.
+
+· WHERE IS ALSO THE FAST ONE. Filtering at step 2 means fewer rows to group; filtering at step 4 means
+  you did the work and threw it away. When a condition could go in either - and occasionally one can -
+  put it in WHERE.
+
+THE ONE-LINE TEST: 'is this condition about a row, or about a group?' Rows go in WHERE, groups go in
+HAVING.""",
+
+    """3. WINDOW FUNCTIONS, TRACED - aggregate WITHOUT collapsing
+
+GROUP BY answers 'what is the total per region' and gives you one row per region. But often you want
+each ORIGINAL row, with the group's number attached - a running total, a share of the whole, a rank.
+That is what a WINDOW function does.
+
+    SUM(amount) OVER (PARTITION BY region ORDER BY day)
+
+Read it as: for each row, look at a WINDOW of related rows (same region, up to this day) and sum over
+that - but keep every row.
+
+MEASURED, a running total per region:
+
+    Asha  North  300  ->  300
+    Ben   North  100  ->  400
+    Asha  North  500  ->  900
+    Chen  South  900  ->  900
+    Chen  South  250  -> 1150
+    Dara  South   50  -> 1200
+
+Six rows in, six rows out - which GROUP BY could never do.
+
+EACH ROW'S SHARE OF ITS REGION, measured:
+
+    Asha 300 -> 33.3%     Asha 500 -> 55.6%     Ben 100 -> 11.1%
+    Chen 900 -> 75.0%     Chen 250 -> 20.8%     Dara 50 ->  4.2%
+
+The alternative without windows is a self-join or a correlated subquery per row - more code, slower,
+and harder to read.
+
+THE THREE RANKING FUNCTIONS, and their difference is the classic question. Measured, ranking by region
+so that ties are guaranteed:
+
+    row        RANK   DENSE_RANK   ROW_NUMBER
+    North (3 rows)   1, 1, 1      1, 1, 1        1, 2, 3
+    South (3 rows)   4, 4, 4      2, 2, 2        4, 5, 6
+
+· RANK leaves GAPS after a tie - three rows tied at 1, so the next is 4.
+· DENSE_RANK does not - the next distinct value is 2.
+· ROW_NUMBER ignores ties entirely and just numbers the rows.
+
+THE PATTERN WORTH MEMORISING - 'the top N per group':
+
+    SELECT * FROM (
+        SELECT rep, region, amount,
+               ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) AS rn
+        FROM sales
+    ) WHERE rn = 1
+
+    measured -> Asha/North/500, Chen/South/900
+
+You need the subquery because a window function is computed at step 5, AFTER WHERE - so you cannot
+filter on it in the same SELECT.""",
+
+    """4. THE FAILURE MODES
+
+A. AN AGGREGATE IN WHERE. Measured: `WHERE SUM(amount) > 500` raises `misuse of aggregate: SUM()`. At
+   least it fails loudly.
+
+B. A BARE COLUMN THAT IS NEITHER GROUPED NOR AGGREGATED - and this one does NOT fail loudly.
+
+       SELECT rep, region, SUM(amount) FROM sales GROUP BY rep
+
+   Measured in SQLite: it runs, returning ('Asha','North',800) and so on. It picked SOME row's region
+   for each group. That is fine here because region happens to be constant per rep - and it is a
+   silent lie whenever it is not. PostgreSQL rejects this query outright; SQLite and older MySQL
+   accept it. If you learnt SQL on MySQL, this is the habit to unlearn.
+
+C. HAVING WITHOUT GROUP BY. It is legal - the whole table becomes one group - and it usually means
+   somebody meant WHERE.
+
+D. COUNT(*) VERSUS COUNT(column). Measured on four reps of whom two have no manager:
+
+       SELECT COUNT(*), COUNT(manager) FROM reps   ->   4, 2
+
+   COUNT(*) counts ROWS; COUNT(col) counts NON-NULL VALUES. This is the same trap as counting after a
+   LEFT JOIN, and it is the single most common aggregate bug.
+
+E. AGGREGATES IGNORE NULLS, WHICH IS NOT THE SAME AS TREATING THEM AS ZERO. Measured on the values
+   10, 20 and NULL:
+
+       AVG = 15.0,  SUM = 30,  COUNT(x) = 2,  COUNT(*) = 3
+
+   The average is 15, not 10. If a missing value SHOULD count as zero, use COALESCE(x, 0) explicitly -
+   the database will not guess.
+
+F. FILTERING ON A WINDOW FUNCTION IN THE SAME SELECT. Windows are computed at step 5, after WHERE, so
+   `WHERE ROW_NUMBER() OVER (...) = 1` is invalid. Wrap it in a subquery or a CTE.
+
+G. HAVING WHERE WHERE WOULD DO. It works and it is slower - you aggregate rows you were about to
+   discard. On a large table that difference is not academic.""",
+
+    """5. THE SHAPES WORTH KNOWING BY HEART
+
+    TOTAL PER GROUP
+        SELECT region, SUM(amount) FROM sales GROUP BY region
+
+    GROUPS THAT PASS A TEST
+        SELECT rep, SUM(amount) FROM sales GROUP BY rep HAVING SUM(amount) > 500
+
+    FILTER FIRST, THEN GROUP (faster, and different)
+        SELECT rep, SUM(amount) FROM sales WHERE day >= '2026-01-01' GROUP BY rep
+
+    COUNT DISTINCT
+        SELECT region, COUNT(DISTINCT rep) FROM sales GROUP BY region
+
+    CONDITIONAL AGGREGATE - the trick that replaces three queries with one
+        SELECT region,
+               SUM(CASE WHEN amount > 200 THEN amount ELSE 0 END) AS big,
+               COUNT(*) FILTER (WHERE amount > 200)               AS big_count
+        FROM sales GROUP BY region
+    (FILTER is the standard spelling; CASE works everywhere.)
+
+    RUNNING TOTAL
+        SUM(amount) OVER (PARTITION BY region ORDER BY day)
+
+    SHARE OF GROUP
+        amount * 100.0 / SUM(amount) OVER (PARTITION BY region)
+
+    TOP N PER GROUP
+        ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) in a subquery, then WHERE rn <= N
+
+    COMPARE TO THE PREVIOUS ROW
+        amount - LAG(amount) OVER (PARTITION BY region ORDER BY day)
+    LAG and LEAD are the reason window functions exist for time series - month-on-month change without
+    a self-join.
+
+WHY THE 100.0 IN THE SHARE EXAMPLE: integer division. `amount * 100 / SUM(...)` truncates to whole
+percentages in most databases, and the fix is to make one operand a float. Measured shares came out as
+33.3 and 55.6 precisely because of that decimal point.""",
+
+    """6. HOW TO WRITE ONE - numbered steps
+
+1. START WITH THE ROWS: write FROM and the joins, and run it. Look at what you actually have.
+2. FILTER THE ROWS you do not want, in WHERE.
+3. DECIDE WHETHER YOU ARE COLLAPSING. If the answer is one row per group, GROUP BY. If you want every
+   original row with a group number attached, you want a WINDOW function instead.
+4. IF YOU GROUPED, every selected column must be either IN the GROUP BY or inside an aggregate. Do
+   not rely on your database letting you break that - PostgreSQL will not.
+5. FILTER THE GROUPS in HAVING, using the aggregate.
+6. IF YOU NEED TO FILTER ON A WINDOW FUNCTION, wrap the query in a subquery or CTE and filter outside.
+7. SORT AND LIMIT LAST.
+
+THE CHECK TO RUN EVERY TIME: count the rows before and after. A GROUP BY should reduce them; a window
+function should leave them alone. If a query you thought was aggregating returned the same number of
+rows, you wrote a window function by accident - or the other way round.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'WHERE filters rows before grouping, HAVING filters groups after aggregating. The reason you cannot
+put a SUM in a WHERE clause is the evaluation order: FROM, then WHERE, then GROUP BY, then HAVING,
+then SELECT, then ORDER BY. At WHERE time the sum does not exist yet - I ran it and the database says
+"misuse of aggregate".
+
+The practical rule is: conditions about a row go in WHERE, conditions about a group go in HAVING. And
+if a condition could go in either, put it in WHERE, because filtering before you aggregate is less
+work.
+
+Window functions are the third thing, and they are the one people under-use. They compute an aggregate
+WITHOUT collapsing the rows - a running total, each row's share of its group, a rank. Six rows in, six
+rows out. The pattern worth memorising is top-N-per-group: ROW_NUMBER partitioned by the group and
+ordered by the value, wrapped in a subquery so you can filter on it - which you have to do, because
+windows are evaluated after WHERE.
+
+And the trap I would mention is COUNT(*) versus COUNT(column): COUNT(*) counts rows, COUNT(col) counts
+non-null values. On four rows where two are null I measured 4 against 2.'""",
+
+    """8. THE CLAUSES, PIECE BY PIECE
+
+    SELECT rep, SUM(amount) AS total
+    FROM sales
+    WHERE amount > 200
+    GROUP BY rep
+    HAVING SUM(amount) > 500
+    ORDER BY total DESC
+    LIMIT 5;
+
+    `FROM sales`        assemble the rows. Joins happen here too.
+
+    `WHERE amount > 200`  throws away individual SALES. Note it can use an index; HAVING cannot,
+                        because by then the rows have been aggregated.
+
+    `GROUP BY rep`      collapses to one row per rep. From here on, 'a row' means 'a group', which
+                        is why a bare column becomes meaningless.
+
+    `HAVING SUM(...)`   throws away whole REPS. The SUM is repeated rather than using the alias,
+                        because SELECT has not run yet in the evaluation order.
+
+    `ORDER BY total`    CAN use the alias, because sorting happens after SELECT. That asymmetry -
+                        alias illegal in HAVING, legal in ORDER BY - follows entirely from the order.
+
+    `LIMIT 5`           last of all, which is why LIMIT never changes what the aggregates computed.
+
+    A WINDOW FUNCTION, piece by piece:
+
+        SUM(amount) OVER (PARTITION BY region ORDER BY day)
+                     ^         ^                  ^
+                     |         |                  the FRAME: with ORDER BY, the default is
+                     |         |                  'everything up to this row', which is what
+                     |         |                  makes it a RUNNING total
+                     |         the groups, like GROUP BY but without collapsing
+                     the marker that says 'this is a window function'
+
+    Drop the ORDER BY and you get the group TOTAL on every row instead of a running one - which is
+    exactly what the share-of-group example needs.""",
+
+    """9. RUNNING IT - every result, from a real database
+
+    THE DATA: Asha/North 300 and 500, Ben/North 100, Chen/South 900 and 250, Dara/South 50.
+
+    GROUP BY rep                      -> Asha 800, Ben 100, Chen 1150, Dara 50
+    WHERE amount > 200 GROUP BY rep   -> Asha 800, Chen 1150
+    GROUP BY rep HAVING SUM > 500     -> Asha 800, Chen 1150
+    WHERE SUM(amount) > 500           -> OperationalError: misuse of aggregate: SUM()
+
+    Note the middle two returning the same rows for completely different reasons. The WHERE version
+    dropped Ben's and Dara's small SALES - and Asha's 800 is unchanged only because both her sales
+    survived the filter. Had she had a 100 as well, the two queries would differ.
+
+    SELECT rep, region, SUM(amount) GROUP BY rep
+        -> ('Asha','North',800), ('Ben','North',100), ('Chen','South',1150), ('Dara','South',50)
+    SQLite ACCEPTED a column that is neither grouped nor aggregated. PostgreSQL would refuse. It is
+    right here by luck, because region happens to be constant per rep.
+
+    RUNNING TOTAL     -> 300, 400, 900 for North; 900, 1150, 1200 for South
+    SHARE OF REGION   -> 33.3%, 55.6%, 11.1% / 75.0%, 20.8%, 4.2%
+    TOP PER REGION    -> Asha/North/500, Chen/South/900
+
+    RANK vs DENSE_RANK vs ROW_NUMBER, ranking by region so every row ties:
+        North:  RANK 1,1,1   DENSE 1,1,1   ROW_NUMBER 1,2,3
+        South:  RANK 4,4,4   DENSE 2,2,2   ROW_NUMBER 4,5,6
+
+    THE NULL BEHAVIOURS:
+        COUNT(*), COUNT(manager) over four reps, two without one   ->  4, 2
+        AVG, SUM, COUNT(x), COUNT(*) over 10, 20, NULL             ->  15.0, 30, 2, 3
+
+    That last row is the one to remember: the average of 10, 20 and NULL is 15, not 10. NULLs are
+    excluded from the calculation entirely rather than counted as zero.""",
+
+    """10. THE RULES, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE EVALUATION ORDER, which generates every rule in this entry:
+        FROM -> WHERE -> GROUP BY -> HAVING -> SELECT -> ORDER BY -> LIMIT
+
+    THE THREE JOBS:
+        WHERE     filter rows      before grouping   can use an index
+        HAVING    filter groups    after aggregating cannot
+        WINDOW    aggregate WITHOUT collapsing       computed at SELECT time
+
+THE #1 MISTAKE: selecting a column that is neither grouped nor aggregated. Measured: SQLite returns it
+happily, picking an arbitrary row from each group. It is correct here only because the value happens
+to be constant within each group, and it is a silent wrong answer the day that changes. PostgreSQL
+rejects it, which is the behaviour to code against.
+
+THE #2 MISTAKE: COUNT(*) where you meant COUNT(column). Measured 4 against 2. Same trap as counting
+after a LEFT JOIN.
+
+THE #3 MISTAKE: putting a row condition in HAVING. It works and it is slower, because you aggregated
+rows you were about to throw away.
+
+THE THING WORTH LEARNING PROPERLY: window functions. Running totals, shares, ranks and month-on-month
+changes are all one line each, and every one of them is a self-join or a correlated subquery without
+them.
+
+ONE-SENTENCE TAKEAWAY: WHERE filters rows before grouping and HAVING filters groups after it - and
+when you want the group's number WITHOUT losing the rows, that is a window function.""",
+]
+
 _EX_P1AO["Race condition"] = [
     """1. THE GOAL IN PLAIN ENGLISH - when the answer depends on the timing
 
