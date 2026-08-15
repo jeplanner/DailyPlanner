@@ -26,6 +26,20 @@
 --  survives a device change; studied_at is null until the topic is
 --  ticked, so it doubles as "when did this land".
 --
+--  REVIEW SCHEDULE (added before this migration was ever run, so it
+--  is one migration and not two). Ticking a topic "studied" says it
+--  was read once; it says nothing about whether it can still be
+--  recalled a fortnight later, which is the only thing an interview
+--  measures. The recall quiz under each card grades itself, and these
+--  columns hold the resulting Leitner ladder: review_streak counts
+--  consecutive hits, review_due is when the topic comes back, and the
+--  attempt counters are what would let a coach say "you have the
+--  algorithm but keep missing the complexity".
+--
+--  review_due is nullable and null means "never drilled" — distinct
+--  from a due date in the past, which means "overdue". The page reads
+--  that difference, so do not default it to now().
+--
 --  Safe to re-run.
 -- ============================================================
 
@@ -36,6 +50,12 @@ create table if not exists ai_sde_progress (
   studied         boolean not null default false,
   studied_at      timestamptz,
   minutes_focused int not null default 0,
+  -- Recall schedule; see the header note.
+  review_due      timestamptz,
+  review_last     timestamptz,
+  review_streak   int not null default 0,
+  quiz_attempts   int not null default 0,
+  quiz_correct    int not null default 0,
   updated_at      timestamptz not null default now(),
   created_at      timestamptz not null default now(),
   is_deleted      boolean not null default false,
@@ -50,3 +70,17 @@ create unique index if not exists ai_sde_progress_user_title
 create index if not exists ai_sde_progress_user_idx
   on ai_sde_progress (user_id)
   where not is_deleted;
+
+-- Added after the table may already exist, so each is guarded.
+alter table ai_sde_progress add column if not exists review_due    timestamptz;
+alter table ai_sde_progress add column if not exists review_last   timestamptz;
+alter table ai_sde_progress add column if not exists review_streak int not null default 0;
+alter table ai_sde_progress add column if not exists quiz_attempts int not null default 0;
+alter table ai_sde_progress add column if not exists quiz_correct  int not null default 0;
+
+-- "What is due today" is the query the review queue runs on every page
+-- load, so it gets its own index. Partial, because rows that have never
+-- been drilled have a null review_due and are not part of the queue.
+create index if not exists ai_sde_progress_due_idx
+  on ai_sde_progress (user_id, review_due)
+  where review_due is not null and not is_deleted;

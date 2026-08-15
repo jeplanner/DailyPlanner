@@ -28,6 +28,7 @@ from system_design_bank import (CATEGORIES as SD_CATEGORIES,
                                  ENTRIES as SD_ENTRIES)
 from ai_sde_bank import (CATEGORIES as AI_SDE_CATEGORIES,
                          ENTRIES as AI_SDE_ENTRIES)
+import ai_sde_recall
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -330,6 +331,10 @@ def _build_ai_sde_search_index():
 _AI_SDE_LIST = _build_ai_sde_list()
 _AI_SDE_SEARCH = _build_ai_sde_search_index()
 
+#: subtopic -> sibling titles, for the quiz's transfer question. Built once;
+#: doing it per entry would be quadratic over 1,120 entries.
+_AI_SDE_SIBLINGS = ai_sde_recall.build_sibling_index(AI_SDE_ENTRIES)
+
 
 @interview_prep_bp.route("/api/ai-sde", methods=["GET"])
 @login_required
@@ -436,6 +441,10 @@ def ai_sde_entry(entry_id):
     body = {k: e[k] for k in _AI_SDE_BODY_FIELDS if e.get(k) not in (None, "", [], {})}
     body["id"] = entry_id
     body["examples"] = e.get("examples") or []
+    # The recall quiz rides along with the body rather than costing a second
+    # round trip — it is derived from these very fields, so it is already
+    # paid for. See ai_sde_recall.py for why none of it is hand-written.
+    body["quiz"] = ai_sde_recall.build(e, _AI_SDE_SIBLINGS)
     return jsonify(body)
 
 
