@@ -822,3 +822,35 @@ def test_ai_sde_page_persists_by_title_and_survives_a_missing_table(auth_client)
     # Union, not replace: an offline tick must not be erased by an older
     # server row when the two are reconciled.
     assert "!studied.has(id)" in html, "server sync overwrites local state instead of merging"
+
+
+def test_interview_coach_labels_the_ai_sde_categories():
+    """The coach is shared by two very different runs — a senior TPM loop and
+    a new-grad AI/SDE loop. MIGRATION_AI_SDE_PREP_TRACK.sql seeds the student
+    account with dsa / cs_fundamentals / ml / ai_llm categories; without a
+    label each the page prints the raw key as a section heading."""
+    from routes.interview_prep import CATEGORY_LABELS
+    for key in ("dsa", "cs_fundamentals", "ml", "ai_llm"):
+        assert key in CATEGORY_LABELS, f"{key} would render as a raw key"
+
+
+def test_ai_sde_prep_track_migration_is_derived_and_safe():
+    """The student's syllabus must come FROM the tagged bank, so the study
+    plan and the content cannot drift apart, and it must not hard-delete the
+    TPM rows it replaces."""
+    import re
+    with open("MIGRATION_AI_SDE_PREP_TRACK.sql", encoding="utf-8") as fh:
+        sql = fh.read()
+    assert "delete from" not in sql.lower(), "house rule: soft delete only"
+    assert "set deleted_at = now()" in sql, "the replaced TPM rows are not retired"
+    assert "venghateshshreya@gmail.com" in sql, "not scoped to the student account"
+
+    # Every seeded topic must name a real subtopic from the tag vocabulary.
+    import ai_sde_tags
+    known = {s.replace("-", " ") for subs in ai_sde_tags.SUBTOPICS.values() for s in subs}
+    seeded = re.findall(r"'(?:DSA|Core-CS|Python|Classical-ML|Deep-Learning|"
+                        r"Math-Stats|NLP-LLM|System-Design|MLOps|Behavioral) — "
+                        r"([A-Za-z ]+?) \(\d+ must-know\)'", sql)
+    assert seeded, "no derived topics found in the migration"
+    unknown = [s for s in seeded if s not in known]
+    assert not unknown, f"seeded topics not in the tag vocabulary: {unknown[:5]}"

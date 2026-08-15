@@ -48,6 +48,14 @@ CATEGORY_LABELS = {
     "tpm": "TPM Competencies",
     "executive": "Executive / Leadership",
     "domain": "Domain / Role-specific",
+    # The AI SDE track (see MIGRATION_AI_SDE_PREP_TRACK.sql). The coach is
+    # shared by two very different runs — a senior TPM loop and a new-grad
+    # AI/SDE loop — and without these its own category headings would show
+    # raw keys like "dsa" on the student's page.
+    "dsa": "Coding & DSA",
+    "cs_fundamentals": "CS Fundamentals",
+    "ml": "ML & AI Concepts",
+    "ai_llm": "LLMs & Modern AI",
 }
 
 # Curated starter syllabus for a senior TPM / exec run. Seeded per-user on
