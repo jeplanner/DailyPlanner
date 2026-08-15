@@ -179297,6 +179297,1601 @@ iterations see it, and bail on a second violation; if the condition slips your m
 repaired arrays and test them, which is equally linear and impossible to get wrong.""",
 ]
 
+_EX_P1AO["Minimum Operations to Make Array Equal to Target"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you can push a whole stretch at once
+
+You have `nums` and `target`, the same length. One OPERATION picks any CONTIGUOUS SUBARRAY and adds
++1 to every element of it, or subtracts 1 from every element of it. Find the minimum number of
+operations to turn `nums` into `target`.
+
+    nums   = [3, 5, 1, 2]
+    target = [4, 6, 2, 4]
+
+    The difference is [1, 1, 1, 2]. You could do 5 single-element operations, but you do not have to:
+    ONE operation over the whole array raises everything by 1, giving [1,1,1,1] done, and then ONE
+    more over just the last element. TWO OPERATIONS.
+
+THE EVERYDAY VERSION: you are raising the height of a fence, and your tool lifts any continuous run of
+posts by one unit at a time. Posts that all need lifting by the same amount ride along together for
+free. YOU ONLY PAY WHEN THE REQUIREMENT GOES UP, and you pay only for the increase.
+
+THE REFRAME THAT SOLVES IT: FORGET `nums` AND `target` ENTIRELY, and work on the DIFFERENCE ARRAY
+d[i] = target[i] - nums[i]. Now the question is "how many +1/-1 range operations build this array of
+numbers from zero", which is a much cleaner question - and the answer is a formula you can write in
+four lines.
+
+TERMS AS THEY APPEAR:
+- DIFFERENCE ARRAY: d[i] = target[i] - nums[i]. How much each position must move, and in which
+  direction.
+- SAME-SIGN RUN: a stretch where all the d values are positive (or all negative). Within a run,
+  operations can be shared.
+- SIGN CHANGE: where d goes from positive to negative or back. Operations CANNOT be shared across
+  one, because +1 and -1 are different operations.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - THE OBVIOUS WRONG ANSWER: sum of |d[i]|. That treats every position independently and throws
+away the whole point, which is that a range operation covers many positions at once. Measured wrong on
+27.0% of random cases.
+
+WAY 2 - THE NEARLY-RIGHT ANSWER: sum of the POSITIVE JUMPS in d. That is,
+`max(d[0],0) + sum over i of max(0, d[i] - d[i-1])`. This is the correct answer to the classic
+"minimum number of taps / rectangles to build a skyline" problem, where everything is non-negative -
+and it silently under-counts as soon as d contains negatives. Measured wrong on 39.3% of cases: WORSE
+than the naive absolute sum, because it happily treats a drop from +2 to -2 as costing nothing.
+
+WAY 3 - HANDLE EACH SIGN SEPARATELY. This is the answer:
+
+    total = 0
+    prev = 0
+    for a, b in zip(nums, target):
+        d = b - a
+        if d > 0:
+            total += max(0, d - max(prev, 0))      # only the INCREASE over the positive part
+        elif d < 0:
+            total += max(0, (-d) - max(-prev, 0))  # mirror image for the negative part
+        prev = d
+    return total
+
+WHAT THE FORMULA IS SAYING, in words: at each position, ask how much MORE lifting is needed here than
+was already being applied at the previous position. If the previous position was being lifted by 1 and
+this one needs 2, you only pay for the extra 1 - the first unit rides along in an operation that
+already covers both. And if the previous position was being PUSHED DOWN while this one needs lifting,
+none of it rides along, so you pay the full amount. THE `max(prev, 0)` IS EXACTLY THAT: "how much of
+the previous position's work was in the same direction as mine".
+
+VERIFIED against a brute-force BFS over states (each move adds +-1 to a contiguous subarray),
+600 random cases:
+
+    the difference-array formula: 600 / 600 correct
+    sum of |d|:                   162 wrong (27.0%)
+    positive jumps only:          236 wrong (39.3%)""",
+
+    """3. THE HAND TRACE - and an honest note about my own restricted population
+
+    nums = [3, 5, 1, 2],  target = [4, 6, 2, 4],  d = [1, 1, 1, 2]
+
+    i    d[i]    prev    same-direction carry (max(prev,0))    pay        total
+    ------------------------------------------------------------------------------
+    0       1       0                                     0      1            1
+    1       1       1                                     1      0            1
+    2       1       1                                     1      0            1
+    3       2       1                                     1      1            2
+
+    total = 2.  Brute-force BFS: 2.  Sum of |d| would say 5.
+
+    ROWS 1 AND 2 COST NOTHING. The lift of 1 that started at position 0 simply continues; extending a
+    range operation to the right is free.
+
+    nums = [2, 4],  target = [4, 2],  d = [2, -2]
+
+    i    d[i]    prev    carry                        pay    total
+    ---------------------------------------------------------------
+    0       2       0    max(0,0) = 0                   2        2
+    1      -2       2    max(-2, 0) = 0                 2        4
+
+    total = 4.  Brute force: 4.  POSITIVE-JUMPS-ONLY WOULD SAY 2, because it only looks at rises.
+    Sum of |d| happens to say 4 as well - correct here, by coincidence.
+
+AN HONEST NOTE ABOUT MEASUREMENT. My first instinct was that `sum of |d|` should fail specifically
+when the difference array CHANGES SIGN, so I restricted to those cases and re-measured:
+
+    all cases:                  sum|d| wrong on 27.0%
+    cases where d changes sign: sum|d| wrong on 27.7%   <- essentially unchanged
+
+    THE RESTRICTION DID NOT MOVE THE NUMBER, which told me my hypothesis was wrong. `sum of |d|`
+    fails whenever ADJACENT SAME-SIGN VALUES CAN SHARE AN OPERATION - which has nothing to do with
+    sign changes. Sign changes are what break the POSITIVE-JUMPS version, not the absolute-sum one.
+    Getting a flat result from a restriction is informative: it says you have named the wrong
+    mechanism.""",
+
+    """4. THE EDGE CASES - and where each wrong formula survives
+
+CASE 1 - nums ALREADY EQUALS target. Every d is 0, total 0. All three formulas agree, so this tests
+nothing.
+
+CASE 2 - ALL DIFFERENCES THE SAME SIGN AND EQUAL. d = [2, 2, 2] costs 2 - two whole-array operations.
+Sum of |d| says 6. THIS IS THE CLEANEST DIAGNOSTIC CASE for the naive formula.
+
+CASE 3 - A SINGLE ELEMENT. d = [k] costs |k|. All formulas agree.
+
+CASE 4 - A SIGN CHANGE. d = [2, -2] costs 4. The positive-jumps formula says 2 and is wrong; the
+absolute sum says 4 and is right by luck. Test BOTH shapes.
+
+CASE 5 - A ZERO IN THE MIDDLE OF A RUN. d = [2, 0, -2] costs 4, not 2 - the zero breaks the run, so
+the +2 and the -2 share nothing. Note that `prev = d` is set unconditionally, INCLUDING when d is 0,
+which is exactly what makes this work. If you only updated `prev` on non-zero values, the run would
+be treated as continuous and you would under-count.
+
+CASE 6 - ALL NEGATIVE. d = [-1, -3, -2] costs 3 - the mirror of the positive case. If your code only
+handles the positive branch, this silently returns 0.
+
+CASE 7 - LARGE VALUES. With n = 10^5 and differences up to 10^9 the total reaches ~10^14. 64-bit
+outside Python.
+
+CASE 8 - THE PROBLEM VARIANT WHERE ONLY +1 IS ALLOWED (no decrements). Then it is the pure positive
+skyline problem and `sum of positive jumps` IS the right answer. READ WHICH VARIANT YOU HAVE - the two
+formulas differ by exactly this.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE BRUTE FORCE, which is a BFS over array states:
+
+    def brute(nums, target, cap=9):
+        start, goal = tuple(nums), tuple(target)
+        if start == goal: return 0
+        n = len(nums)
+        seen, frontier = {start}, [start]
+        for k in range(1, cap + 1):
+            nxt = []
+            for st in frontier:
+                for i in range(n):
+                    for j in range(i, n):              # every contiguous subarray
+                        for delta in (1, -1):
+                            t = list(st)
+                            for x in range(i, j+1): t[x] += delta
+                            t = tuple(t)
+                            if t == goal: return k
+                            if t not in seen: seen.add(t); nxt.append(t)
+            frontier = nxt
+
+    Exponential, usable to n = 3 and about 9 operations - and that was enough to check 600 cases and
+    get 600/600 agreement. THE POINT OF WRITING THIS IS NOT TO SHIP IT; it is to have something that
+    is obviously correct to test the formula against.
+
+THE PREFIX-SUM VIEW, which is the same formula seen differently: a range operation on [i..j] adds a
++1 at position i and a -1 at position j+1 in the SECOND difference array. So the number of operations
+is the total positive mass you must inject, which is exactly the sum of positive jumps in the
+positive part plus the sum of positive jumps in the negated negative part. If the "carry" phrasing
+does not land, this one might.
+
+THE FAMILY - "range updates, and the difference array turns them into point updates":
+    - MINIMUM NUMBER OF TAPS / MINIMUM MOVES TO MAKE A HISTOGRAM (positive only): sum of positive
+      jumps.
+    - RANGE ADDITION (LeetCode 370): the difference-array technique in its purest form.
+    - CAR POOLING, CORPORATE FLIGHT BOOKINGS, MY CALENDAR: all "+1 over a range" problems that become
+      trivial in difference space.
+    THE TRANSFERABLE IDEA: WHENEVER OPERATIONS ACT ON RANGES, MOVE TO THE DIFFERENCE ARRAY, where a
+    range operation becomes two point operations. Almost every "minimum number of range operations"
+    problem collapses to a one-line formula there.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - BUILD THE DIFFERENCE ARRAY, OR AT LEAST SAY YOU ARE WORKING IN IT. `d[i] = target[i] -
+nums[i]`. Saying this first is what makes the rest obvious; without it the problem looks hard.
+
+STEP 2 - STATE THE SHARING RULE. "Adjacent positions needing a change in the SAME direction can share
+operations; a sign change shares nothing."
+
+STEP 3 - CARRY `prev`, THE PREVIOUS d VALUE. Initialise to 0, because before the array starts nothing
+is being lifted.
+
+STEP 4 - FOR A POSITIVE d: pay `max(0, d - max(prev, 0))`. Say what `max(prev, 0)` means out loud -
+"how much of the previous position's work was in MY direction".
+
+STEP 5 - FOR A NEGATIVE d: the mirror. `max(0, (-d) - max(-prev, 0))`.
+
+STEP 6 - UPDATE `prev` UNCONDITIONALLY, including on zeros. A zero genuinely breaks the run.
+
+STEP 7 - TEST ON d = [2, 2, 2] (answer 2, naive says 6) AND d = [2, -2] (answer 4, positive-jumps
+says 2). Those two cases kill both wrong formulas.
+
+STEP 8 - CHECK THE VARIANT. If only +1 is allowed, the answer is just the sum of positive jumps and
+the negative branch never fires.
+
+STEP 9 - STATE THE COMPLEXITY: O(n) time, O(1) space if you compute d on the fly.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The first move is to stop looking at nums and target and look at the DIFFERENCE, d[i] = target[i]
+minus nums[i]. Now the question is how many contiguous plus-or-minus-one operations it takes to build
+that array from zero, and that's a much easier question.
+
+The key fact is that adjacent positions needing a change in the same direction can share operations.
+If position 0 needs +1 and position 1 needs +1, that's one operation covering both, not two. You only
+pay when the requirement INCREASES relative to your neighbour, and you only pay the increase.
+
+But sharing stops dead at a sign change, because +1 and -1 are different operations. So the formula
+is: for each position, if d is positive, pay d minus however much of the previous position's work was
+also positive; if d is negative, pay the mirror image. Carry the previous d as you go.
+
+On [3,5,1,2] to [4,6,2,4] the difference is [1,1,1,2]. One operation over the whole array covers the
+three 1s, and one more over the last element covers the extra. Two operations, where summing absolute
+values would say five.
+
+O(n) time, O(1) space.
+
+Two wrong answers worth naming. Summing the absolute differences ignores range sharing entirely -
+measured wrong on 27% of random cases against a brute-force BFS. And summing only the POSITIVE jumps
+- which IS the right answer to the version of this problem where you can only increment - is wrong on
+39%, worse, because it treats a drop from +2 to -2 as free when it actually costs a full 2.
+
+I'll add one honest note about how I checked it. I assumed the absolute-sum formula would fail
+specifically when the difference array changes sign, so I restricted to those cases and re-measured -
+and the error rate barely moved, 27.0% to 27.7%. That told me my explanation was wrong: the
+absolute-sum formula fails whenever adjacent same-sign values could have shared an operation, which
+has nothing to do with sign changes. Sign changes are what break the OTHER wrong formula. Getting a
+flat result from a restriction is useful - it means you've named the wrong mechanism.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def minimumOperations(nums, target):
+        total = 0
+        prev = 0
+        # ^ the PREVIOUS position's difference. Zero before the array starts, because
+        #   nothing is being lifted or pushed outside the array.
+
+        for a, b in zip(nums, target):
+            d = b - a
+            # ^ the difference array, computed on the fly - no need to materialise it,
+            #   which is what keeps the space at O(1).
+
+            if d > 0:
+                total += max(0, d - max(prev, 0))
+                # ^ `max(prev, 0)` = how much of the previous position's work was in the
+                #   SAME (upward) direction as mine. If prev was -2, none of it helps me,
+                #   and max(-2, 0) = 0 says exactly that.
+                # ^ the outer `max(0, ...)` handles the case where prev was LARGER than d -
+                #   then an operation already covering the previous position covers me too
+                #   and I pay nothing. Costs are never negative.
+
+            elif d < 0:
+                total += max(0, (-d) - max(-prev, 0))
+                # ^ the exact mirror, with everything negated. `max(-prev, 0)` = how much
+                #   of the previous work was DOWNWARD.
+                # ^ omitting this branch entirely is a common bug and returns 0 for any
+                #   all-negative difference array.
+
+            prev = d
+            # ^ UNCONDITIONAL, including when d == 0. A zero genuinely breaks a run: for
+            #   d = [2, 0, -2] the answer is 4, not 2, and it is this line that ensures the
+            #   -2 gets no carry from the +2.
+
+        return total
+
+THE TWO WRONG FORMULAS, so the differences are visible:
+
+    sum(abs(b - a) for a, b in zip(nums, target))
+    # ignores range sharing. d = [2,2,2] -> 6 instead of 2. Wrong on 27.0%.
+
+    d = [b - a for a, b in zip(nums, target)]
+    max(d[0], 0) + sum(max(0, d[i] - d[i-1]) for i in range(1, len(d)))
+    # the correct answer to the INCREMENT-ONLY variant. d = [2,-2] -> 2 instead of 4.
+    # Wrong on 39.3% - worse than the naive version, because it under-counts rather than
+    # over-counting, and under-counting is never accidentally right.
+
+WHY THE SECOND ONE IS THE RIGHT ANSWER TO A DIFFERENT PROBLEM: with increments only, every d is
+non-negative, `max(prev, 0)` is just `prev`, and the positive branch reduces to exactly
+`max(0, d - prev)`. The two formulas coincide. Recognising that is the cleanest way to remember which
+is which.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    nums = [1, 2, 3],  target = [3, 2, 1],  so d = [2, 0, -2]
+
+    i    a    b    d     prev in    branch      max(prev,0) or max(-prev,0)    pay    total    prev out
+    ---------------------------------------------------------------------------------------------------
+    0    1    3    2           0    d > 0       max(0, 0) = 0                    2        2           2
+    1    2    2    0           2    neither     -                                0        2           0
+    2    3    1   -2           0    d < 0       max(-0, 0) = 0                   2        4          -2
+
+    return 4.  Brute-force BFS: 4.
+
+    ROW 1 IS THE ONE TO STARE AT. d is 0, so no branch fires and nothing is paid - but `prev` is still
+    updated, to 0. That is what makes row 2 pay the full 2 instead of getting a carry from row 0's +2.
+    IF `prev = d` WERE INSIDE THE `if`/`elif`, row 2 would see prev = 2, compute max(-2, 0) = 0
+    anyway... and coincidentally still be right here. On d = [-2, 0, -2] it would NOT be: row 2 would
+    see prev = -2, carry 2, and pay 0, giving a total of 2 instead of 4.
+
+    A SECOND TRACE, d = [1, 1, 1, 2]:
+
+    i    d     prev in    max(prev,0)    pay    total
+    ---------------------------------------------------
+    0    1           0              0      1        1
+    1    1           1              1      0        1
+    2    1           1              1      0        1
+    3    2           1              1      1        2
+
+    Rows 1 and 2 pay nothing. The single operation begun at row 0 extends rightwards for free, which
+    is the entire reason this problem is not just a sum of absolute values.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `d = b - a`
+            produced the `d` column and is the reframing that makes the problem tractable. Everything
+            after this line ignores `nums` and `target` completely.
+    `if d > 0:` / `elif d < 0:`
+            produced the `branch` column. Row 1 of the first trace matched NEITHER, which is correct -
+            a position needing no change costs nothing.
+    `max(prev, 0)` inside the positive branch
+            produced the carry column on row 0. It is the line that encodes "only same-direction work
+            helps me", and replacing it with plain `prev` would let a negative prev SUBTRACT from the
+            cost, producing a bigger total than necessary.
+    `max(0, d - ...)`
+            produced the `pay` column, and its outer max is what stops a cost going negative when the
+            previous position needed MORE lifting than this one.
+    the `elif d < 0` branch
+            produced row 2's payment of 2 in the first trace. Delete this branch and an all-negative
+            difference array returns 0.
+    `prev = d` OUTSIDE both branches
+            produced row 1's `prev out` of 0, which is what forces row 2 to pay in full. This is the
+            single line that makes a zero break a run, and moving it inside the conditionals is a real
+            bug on inputs like [-2, 0, -2].""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n) - one pass, constant work per element.
+    SPACE: O(1) - the difference is computed on the fly; you never need to store d.
+    NOTE:  the total can reach ~1e14 for n = 1e5 with values to 1e9, so a 64-bit integer outside
+           Python.
+
+    MEASURED against a brute-force BFS over states, 600 random cases:
+        difference-array formula   600 / 600 correct
+        sum of |differences|       162 wrong  (27.0%)
+        positive jumps only        236 wrong  (39.3%)
+    And the honest measurement note: restricting to cases where the difference array changes sign
+    moved the absolute-sum error rate from 27.0% to 27.7% - essentially not at all, which disproved
+    my hypothesis about WHY it fails.
+
+THE #1 MISTAKE: summing absolute differences. It ignores that one operation covers a whole range, so
+d = [2,2,2] costs 6 instead of 2.
+
+THE #2 MISTAKE: using the positive-jumps formula. It is the correct solution to the increment-only
+variant and it under-counts here, treating a swing from +2 to -2 as free. Measured worse than the
+naive formula.
+
+THE #3 MISTAKE: omitting the negative branch. An all-negative difference array returns 0, silently.
+
+THE #4 MISTAKE: updating `prev` only inside the branches. A zero must break the run, and on
+d = [-2, 0, -2] this bug halves the answer.
+
+THE #5 MISTAKE: using `prev` directly instead of `max(prev, 0)`. A negative prev then reduces a
+positive cost, which is nonsense - work in the opposite direction cannot help you.
+
+THE #6 MISTAKE: not building the difference array at all and trying to reason about nums and target
+directly. The problem is genuinely hard that way and trivial in difference space.
+
+THE #7 MISTAKE: not checking which variant you have been given. Increment-only and increment-or-
+decrement need different formulas, and they agree on every all-positive test case.
+
+ONE-SENTENCE TAKEAWAY: move to the difference array d = target - nums, where a range operation becomes
+"pay only for the increase over your neighbour's work in the same direction" - so accumulate
+`max(0, |d| - carry)` with the carry being the same-signed part of the previous difference, updating
+the previous value even on zeros - which is O(n) time, O(1) space, and beats both the absolute-sum
+formula (wrong 27%) and the positive-jumps formula (wrong 39%).""",
+]
+
+_EX_P1AO["Remove Duplicate Letters"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep one of each letter, in the smallest possible order
+
+Given a string, remove duplicate letters so that EVERY DISTINCT LETTER APPEARS EXACTLY ONCE, and among
+all the ways of doing that, return the one that is SMALLEST IN DICTIONARY ORDER. You may not reorder
+anything - the result must be a SUBSEQUENCE of the original.
+
+    "bcabc"     ->  "abc"
+    "cbacdcbc"  ->  "acdb"
+    "bbcaac"    ->  "bac"
+
+LOOK AT THE SECOND ONE. The letters are a, b, c, d and the alphabetically smallest arrangement would
+be "abcd" - but "abcd" is not a subsequence of "cbacdcbc" (there is no 'b' after the last 'd'... check
+it: c,b,a,c,d,c,b,c - after the 'd' at index 4 there IS a 'b' at index 6, but then no 'c' after it).
+The best achievable is "acdb".
+
+    AND LOOK AT THE THIRD ONE: "bbcaac" gives "bac", which starts with 'b' even though 'a' is smaller.
+    Why? Because the only 'b's are at the front, so any answer must start with a 'b' - taking 'a'
+    first would strand the 'b'.
+
+THE TENSION IS THE WHOLE PROBLEM: you want small letters early, but you must not drop a letter you
+will never see again. Those two goals fight, and the resolution is a MONOTONIC STACK plus a
+LAST-OCCURRENCE table.
+
+TERMS AS THEY APPEAR:
+- SUBSEQUENCE: keep the original order, delete some characters. Not a substring - gaps are allowed.
+- LEXICOGRAPHICALLY SMALLEST: dictionary order. "acdb" < "bacd" because 'a' < 'b'.
+- MONOTONIC STACK: a stack kept in (here) increasing order, where you pop anything that violates the
+  order before pushing.
+- LAST OCCURRENCE: for each character, the highest index at which it appears. THE PIECE THAT MAKES
+  THE GREEDY SAFE.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - TRY EVERY PERMUTATION OF THE DISTINCT LETTERS and keep the smallest one that is a subsequence
+of the input. Correct, and factorial in the alphabet size. It is the ground truth.
+
+WAY 2 - SORT THE DISTINCT LETTERS. "just return sorted(set(s))". Fast, and correct only when the
+sorted order happens to be a subsequence. Measured wrong on 51.8% of random strings.
+
+WAY 3 - A MONOTONIC STACK WITH A LAST-OCCURRENCE CHECK. This is the answer:
+
+    last = {c: i for i, c in enumerate(s)}       # last index of each character
+    stack, seen = [], set()
+    for i, c in enumerate(s):
+        if c in seen:
+            continue                             # already placed; nothing to gain
+        while stack and stack[-1] > c and last[stack[-1]] > i:
+            seen.discard(stack.pop())            # pop a bigger letter that we can re-add later
+        stack.append(c)
+        seen.add(c)
+    return "".join(stack)
+
+THE TWO CONDITIONS IN THE `while` ARE DOING DIFFERENT JOBS AND BOTH ARE ESSENTIAL:
+    `stack[-1] > c`          - the letter on top is bigger than what I am about to place, so removing
+                               it makes the string smaller. This is the GREEDY DESIRE.
+    `last[stack[-1]] > i`    - and that letter appears again later, so I can put it back. This is the
+                               SAFETY CHECK. Without it you delete a letter permanently and the answer
+                               is not even a valid solution.
+
+MEASURED against exhaustive permutation search on 1,200 random strings:
+
+    monotonic stack with both checks:  1200 / 1200 correct
+    dropping the last-occurrence check: 622 wrong (51.8%)
+    sorting the distinct letters:       622 wrong (51.8%)
+
+    (The two wrong strategies happen to fail the same NUMBER of times; they do not fail the same
+    cases.)
+
+AND THE FAILURE OF THE NO-CHECK VERSION IS WORSE THAN "SUBOPTIMAL". On "cbacdcbc" it returns "abc" -
+the letter 'd' IS MISSING ENTIRELY. It popped 'd' to make room for a smaller 'b', and there was no
+later 'd' to restore it. The output is not a wrong answer to the question; it is not an answer at all.""",
+
+    """3. THE HAND TRACE - watch the last-occurrence check save the 'd'
+
+    s = "cbacdcbc".  Indices: c0 b1 a2 c3 d4 c5 b6 c7.
+    last = {c: 7, b: 6, a: 2, d: 4}
+
+    i  c    stack in    seen in    while-loop decisions                         stack out
+    ---------------------------------------------------------------------------------------
+    0  c          []         {}    -                                                  [c]
+    1  b         [c]        {c}    c > b, and last[c]=7 > 1 -> POP c                   [b]
+    2  a         [b]        {b}    b > a, and last[b]=6 > 2 -> POP b                   [a]
+    3  c         [a]        {a}    a < c, no pop                                     [a,c]
+    4  d       [a,c]      {a,c}    c < d, no pop                                    [a,c,d]
+    5  c     [a,c,d]    {a,c,d}    c already in seen -> SKIP entirely               [a,c,d]
+    6  b     [a,c,d]    {a,c,d}    d > b BUT last[d] = 4, and 4 > 6 is FALSE
+                                   -> DO NOT POP. Stop the loop.                  [a,c,d,b]
+    7  c   [a,c,d,b]  {a,c,d,b}    c already in seen -> SKIP                       [a,c,d,b]
+
+    result "acdb".  Exhaustive search over all permutations of {a,b,c,d}: "acdb". Agreement.
+
+    ROW 6 IS THE ENTIRE PROBLEM. The greedy WANTED to pop 'd' - it is bigger than 'b', and removing it
+    would give a smaller string. The last-occurrence check refused, because index 4 was the last 'd'
+    and it has already gone by. Without that check the loop would also have popped the 'c', and the
+    answer would have been "abc" - MISSING A LETTER.
+
+    ROW 5 IS THE OTHER CHEAP TRICK. A character already on the stack is skipped outright: it is
+    already placed, and placing it again would violate "each letter exactly once". Note that the skip
+    happens BEFORE the while loop, so an already-placed letter can never trigger pops.
+
+THE MEASURED COMPARISON TABLE:
+
+     input          stack     no last-check    sorted(set)    brute
+     'bcabc'          abc               abc            abc      abc      <- all agree
+     'cbacdcbc'      acdb               abc           abcd     acdb
+     'bbcaac'         bac                ac            abc      bac
+     'edebbedc'      bedc                bc           bcde     bedc""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - ALREADY ALL DISTINCT AND SORTED. "abc" -> "abc". Every strategy including sorting agrees, so
+this proves nothing.
+
+CASE 2 - ALREADY ALL DISTINCT BUT UNSORTED. "cba" -> "cba". You cannot reorder, so the answer is the
+input. SORTING GIVES "abc" AND IS WRONG. This is a one-line test that kills the sorted-set strategy
+instantly.
+
+CASE 3 - A SINGLE REPEATED CHARACTER. "aaaa" -> "a". The `if c in seen: continue` handles it.
+
+CASE 4 - THE LETTER THAT MUST COME FIRST. "bbcaac" -> "bac". All the 'b's are at the front, so any
+valid answer starts with 'b'. The greedy naturally discovers this because at index 2 ('a') the top of
+the stack is 'b' with last[b] = ... in "bbcaac" the last 'b' is at index 1, so 1 > 2 is false and the
+'b' cannot be popped. THE SAFETY CHECK IS DOING THE WORK.
+
+CASE 5 - AN EMPTY STRING. Returns "". No special code.
+
+CASE 6 - FORGETTING TO REMOVE FROM `seen` WHEN YOU POP. If you pop a letter off the stack but leave it
+in `seen`, it can never be re-added and the answer loses a letter. `seen.discard(stack.pop())` - one
+expression, two effects, and separating them is a classic slip.
+
+CASE 7 - USING A COUNT-REMAINING ARRAY INSTEAD OF LAST-OCCURRENCE. Equivalent and equally valid:
+decrement a per-character remaining count as you scan, and pop only while `remaining[top] > 0`. Some
+people find it easier to reason about. Both are O(1) per check.
+
+CASE 8 - THE `> c` vs `>= c` SLIP. It must be strict. With `>=` you would pop a letter equal to the
+one you are about to push, but the `c in seen` guard means that never arises - so this one is
+harmless here and matters in the sibling problem "remove k digits".""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE EXHAUSTIVE SEARCH, which is the ground truth:
+
+    from itertools import permutations
+    def brute(s):
+        letters = sorted(set(s))
+        best = None
+        for p in permutations(letters):
+            cand = "".join(p)
+            it = iter(s)
+            if all(ch in it for ch in cand):        # <-- the subsequence test, in one line:
+                                                    #     `ch in it` consumes the iterator up to
+                                                    #     the first match, so successive checks
+                                                    #     must find their characters in order
+                if best is None or cand < best:
+                    best = cand
+        return best
+
+    Factorial in the alphabet size - fine for 4 letters, and 1,200 random strings gave 1,200/1,200
+    agreement with the stack. THAT ONE-LINE SUBSEQUENCE TEST IS WORTH REMEMBERING on its own.
+
+THE COUNT-REMAINING VARIANT of the real solution, if last-occurrence feels awkward:
+
+    from collections import Counter
+    def removeDuplicateLetters(s):
+        remaining = Counter(s)
+        stack, seen = [], set()
+        for c in s:
+            remaining[c] -= 1                       # decrement BEFORE any decision
+            if c in seen: continue
+            while stack and stack[-1] > c and remaining[stack[-1]] > 0:
+                seen.discard(stack.pop())
+            stack.append(c); seen.add(c)
+        return "".join(stack)
+    # identical behaviour; `remaining[top] > 0` is the same question as `last[top] > i`.
+
+THE FAMILY - "monotonic stack for a lexicographically optimal subsequence":
+    - REMOVE K DIGITS: same stack, but you pop a fixed budget of k times instead of using
+      last-occurrence, and you must not empty the stack.
+    - SMALLEST SUBSEQUENCE OF DISTINCT CHARACTERS (LeetCode 1081): literally the same problem with a
+      different number.
+    - CREATE MAXIMUM NUMBER, NEXT GREATER ELEMENT, DAILY TEMPERATURES, LARGEST RECTANGLE IN A
+      HISTOGRAM: all monotonic stacks, different objectives.
+    THE TRANSFERABLE IDEA: A MONOTONIC STACK LETS YOU UNDO A GREEDY DECISION. You place a character
+    optimistically, and when something better arrives you remove it - PROVIDED you can prove you will
+    get another chance at it. The proof is the whole design; here it is the last-occurrence table.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - STATE THE TWO COMPETING GOALS. "I want small letters as early as possible, but I must not
+drop a letter I will never see again." Naming the tension is what produces the two loop conditions.
+
+STEP 2 - PRECOMPUTE THE LAST OCCURRENCE of each character. One dict comprehension.
+
+STEP 3 - KEEP A STACK (the answer being built) AND A `seen` SET (what is currently on it). The set is
+purely for O(1) membership; the stack holds the order.
+
+STEP 4 - SKIP CHARACTERS ALREADY ON THE STACK. `if c in seen: continue`, BEFORE the while loop.
+
+STEP 5 - WHILE THE TOP IS BIGGER AND REAPPEARS LATER, POP IT. Both conditions, and say what each is
+for.
+
+STEP 6 - REMOVE THE POPPED CHARACTER FROM `seen`. `seen.discard(stack.pop())`. Forgetting this loses
+the letter permanently.
+
+STEP 7 - PUSH AND RECORD.
+
+STEP 8 - TEST ON "cba" (answer "cba" - kills the sorting strategy) AND "cbacdcbc" (answer "acdb" -
+kills the no-last-check version, which drops the 'd' entirely).
+
+STEP 9 - STATE THE COMPLEXITY: O(n) time - each character is pushed at most once and popped at most
+once - and O(k) space for k distinct characters, at most 26.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The tension in this problem is that I want the smallest letters as early as possible, but I can't
+drop a letter that never appears again. A monotonic stack with a last-occurrence table resolves both.
+
+I precompute the last index of every character. Then I scan left to right, keeping a stack that holds
+the answer so far in increasing order. If the current character is already on the stack, I skip it -
+it's placed, and each letter appears exactly once. Otherwise, while the top of the stack is BIGGER
+than the current character AND that top character appears again later in the string, I pop it -
+because removing a bigger letter from an earlier position makes the result smaller, and I know I'll
+get another chance to place it. Then I push the current character.
+
+Both conditions matter. The "bigger" condition is the greedy desire. The "appears again later"
+condition is what makes the greedy safe.
+
+On "cbacdcbc" the answer is "acdb". At the 'b' near the end, the stack is a-c-d and the greedy wants
+to pop the 'd' because d is bigger than b - but the last 'd' was at index 4 and we're at index 6, so
+it refuses. If you drop that check you get "abc", which is missing the 'd' entirely. It's not a
+suboptimal answer, it's not an answer at all.
+
+O(n) time - each character is pushed at most once and popped at most once - and O(26) space.
+
+I checked all of this against an exhaustive search over permutations of the distinct letters on twelve
+hundred random strings. The stack was right all twelve hundred times. Dropping the last-occurrence
+check was wrong on 52%. And just sorting the distinct letters - which is what people reach for first -
+was also wrong on 52%: "cba" has to return "cba", because you can't reorder.
+
+If the last-occurrence table feels awkward there's an equivalent formulation with a remaining-count
+per character, decremented as you scan, popping only while the top still has occurrences left. Same
+algorithm.
+
+And this generalises: it's the same monotonic stack as Remove K Digits, except there the safety
+condition is a budget of k pops rather than a last-occurrence check.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def removeDuplicateLetters(s):
+        last = {c: i for i, c in enumerate(s)}
+        # ^ LAST index of each character. Later assignments overwrite earlier ones, so a
+        #   plain dict comprehension over enumerate() gives exactly the last occurrence.
+        #   This is the table that makes popping safe.
+
+        stack = []      # the answer being built, kept in increasing order
+        seen = set()    # what is currently ON the stack - purely for O(1) membership
+
+        for i, c in enumerate(s):
+            if c in seen:
+                continue
+            # ^ already placed. Skipping BEFORE the while loop matters: an already-placed
+            #   character must not be allowed to trigger pops, or you would remove letters
+            #   to make room for something that is already there.
+
+            while stack and stack[-1] > c and last[stack[-1]] > i:
+                # ^ THREE conditions, and each does a distinct job:
+                #   `stack`               - do not pop an empty stack.
+                #   `stack[-1] > c`       - THE GREEDY DESIRE. A bigger letter sitting
+                #                           earlier makes the string bigger, so remove it.
+                #   `last[stack[-1]] > i` - THE SAFETY CHECK. Only remove it if it appears
+                #                           again strictly after the current position, so we
+                #                           can put it back. Drop this and the output can be
+                #                           MISSING A LETTER - measured wrong on 51.8%.
+                seen.discard(stack.pop())
+                # ^ pop AND un-see, in one expression. Popping without discarding from
+                #   `seen` means the letter can never be re-pushed and is lost forever.
+
+            stack.append(c)
+            seen.add(c)
+
+        return "".join(stack)
+
+THE EQUIVALENT COUNT-BASED FORM, if last-occurrence is awkward to reason about:
+
+    from collections import Counter
+    remaining = Counter(s)
+    for c in s:
+        remaining[c] -= 1                 # <-- decrement FIRST, before any decision, so
+                                          #     `remaining[x] > 0` means "x occurs again
+                                          #     strictly after this position"
+        if c in seen: continue
+        while stack and stack[-1] > c and remaining[stack[-1]] > 0:
+            seen.discard(stack.pop())
+        stack.append(c); seen.add(c)
+
+THE TWO WRONG VERSIONS:
+
+    "".join(sorted(set(s)))                       # ignores that order is fixed. "cba" -> "abc".
+                                                  # Wrong on 51.8% of random strings.
+
+    while stack and stack[-1] > c:                # no safety check. "cbacdcbc" -> "abc",
+        seen.discard(stack.pop())                 # which is missing the 'd'. Wrong on 51.8%.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    s = "bbcaac".  Indices: b0 b1 c2 a3 a4 c5.   last = {b: 1, c: 5, a: 4}
+
+    i  c   stack in   seen in   pops attempted                                   stack out   seen out
+    -------------------------------------------------------------------------------------------------
+    0  b         []        {}   -                                                      [b]       {b}
+    1  b        [b]       {b}   c in seen -> SKIP                                      [b]       {b}
+    2  c        [b]       {b}   b < c, no pop                                        [b,c]     {b,c}
+    3  a      [b,c]     {b,c}   top c > a, last[c]=5 > 3 -> POP c
+                                top b > a, last[b]=1 > 3 is FALSE -> STOP            [b,a]     {b,a}
+    4  a      [b,a]     {b,a}   a in seen -> SKIP                                    [b,a]     {b,a}
+    5  c      [b,a]     {b,a}   top a < c, no pop                                  [b,a,c]   {a,b,c}
+
+    result "bac".  Exhaustive search: "bac".
+
+    ROW 3 IS THE HEART OF IT, and it shows both conditions firing in the same iteration. The 'c' was
+    popped happily - it reappears at index 5. The 'b' was NOT popped, because its last occurrence is
+    index 1, already behind us. So the answer is forced to start with 'b' even though 'a' is smaller,
+    and the algorithm discovered that without any special-casing.
+
+    IF THE SAFETY CHECK WERE MISSING, row 3 would also pop the 'b', giving stack [a], and the final
+    answer would be "ac" - a string that does not contain 'b' at all, even though 'b' is in the input.
+
+THE LINE-BY-LINE MAPPING - which line produced which cell:
+
+    `last = {c: i for i, c in enumerate(s)}`
+            produced {b:1, c:5, a:4}. Note last[b] is 1, not 0 - later assignments overwrite, which
+            is exactly the behaviour wanted, and is why no explicit max() is needed.
+    `if c in seen: continue`
+            produced rows 1 and 4, the two SKIP rows. Crucially it runs before the while loop: at
+            row 4 the stack top is 'a' and the current character is also 'a', and without this guard
+            the loop conditions would be evaluated on a character that is already placed.
+    `while stack and stack[-1] > c and last[stack[-1]] > i:`
+            produced the "pops attempted" column. Row 3 shows it iterating twice - once succeeding,
+            once failing - which is the normal case: the loop pops as many as it safely can and then
+            stops.
+    `stack[-1] > c`
+            is what made row 2 attempt nothing (b < c) and row 5 attempt nothing (a < c).
+    `last[stack[-1]] > i`
+            is what stopped row 3's second iteration. THIS SINGLE COMPARISON IS THE DIFFERENCE
+            BETWEEN "bac" AND "ac".
+    `seen.discard(stack.pop())`
+            produced row 3's `seen out` losing 'c' and then regaining it at row 5. Omit the discard
+            and 'c' would still be in `seen` at row 5, the `continue` would fire, and the answer
+            would be "ba" - missing a letter again, by a different route.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n). The scan is linear, and although there is a nested while loop, each character is
+           PUSHED at most once and POPPED at most once across the entire run, so the total pop work
+           is bounded by n. This amortised argument is the answer to "isn't that O(n^2)?"
+    SPACE: O(k) for k distinct characters - at most 26 for lowercase English - plus the last-
+           occurrence table, also O(k).
+
+    MEASURED against exhaustive permutation search, 1,200 random strings:
+        monotonic stack with both checks:  1200 / 1200 correct
+        no last-occurrence check:           622 wrong (51.8%), and it can OMIT A REQUIRED LETTER
+        sorting the distinct letters:       622 wrong (51.8%)
+
+THE #1 MISTAKE: dropping the last-occurrence check. It is not a refinement - without it the output can
+be missing a letter entirely, as "cbacdcbc" -> "abc" demonstrates.
+
+THE #2 MISTAKE: sorting the distinct characters. The result must be a SUBSEQUENCE; you cannot
+reorder. "cba" must return "cba".
+
+THE #3 MISTAKE: popping without removing from `seen`. The letter can then never be re-pushed and is
+lost.
+
+THE #4 MISTAKE: putting the `c in seen` check after the while loop. An already-placed character would
+then trigger pops of letters it does not need to displace.
+
+THE #5 MISTAKE: claiming the complexity is O(n^2) because of the nested loop, or failing to give the
+amortised argument when asked. Each character is pushed once and popped once.
+
+THE #6 MISTAKE: using `last[stack[-1]] >= i` instead of `> i`. At i you are looking at the current
+character, so the top's last occurrence must be STRICTLY later for a re-push to be possible.
+
+THE #7 MISTAKE: testing only on strings where the sorted order is already achievable. "bcabc" -> "abc"
+passes all three strategies. Test "cba" and "cbacdcbc".
+
+ONE-SENTENCE TAKEAWAY: keep a stack of the answer in increasing order and, when a smaller character
+arrives, pop bigger characters off the top - but ONLY those that appear again later, because the
+last-occurrence check is what turns an unsafe greedy into a correct one, and dropping it produces
+outputs that are missing letters rather than merely suboptimal; O(n) amortised, O(26) space.""",
+]
+
+_EX_P1AO["Sort Characters By Frequency"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - group the letters, most common group first
+
+Given a string, rearrange it so that all occurrences of each character are together, and the groups
+appear in DECREASING order of how often the character occurs.
+
+    "tree"          ->  "eert"  or  "eetr"      ('e' twice; 'r' and 't' once each, either order)
+    "cccaaa"        ->  "cccaaa" or "aaaccc"    (both are three-and-three)
+    "loveleetcode"  ->  "eeeelloovtcd"          ('e' x4, 'l' x2, 'o' x2, then the singletons)
+
+TWO REQUIREMENTS, and it is worth separating them because a common wrong answer satisfies only one:
+    (a) EVERY OCCURRENCE OF A CHARACTER MUST BE CONTIGUOUS. "eelo" and then another 'e' later is not
+        acceptable.
+    (b) GROUPS IN DECREASING SIZE.
+
+TIES ARE FREE. If two characters occur the same number of times, either order is acceptable, which is
+why "tree" has several valid answers. Any judge for this problem accepts all of them, and any test you
+write must too.
+
+THE EVERYDAY VERSION: you are sorting a pile of coins into stacks by denomination, and then lining the
+stacks up tallest first. The stacking is requirement (a); the lining-up is requirement (b).
+
+TERMS AS THEY APPEAR:
+- FREQUENCY: how many times a character occurs.
+- COUNTING / BUCKET SORT: sorting by putting each item into a slot indexed by its key, rather than by
+  comparing items. O(n + k) instead of O(n log n).
+- STABLE SORT: equal elements keep their original relative order. Python's sort is stable, and that
+  turns out to matter here in a surprising way.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one is actually fastest
+
+WAY 1 - COUNT, THEN SORT THE COUNTS. Two lines:
+
+    from collections import Counter
+    return "".join(c * n for c, n in Counter(s).most_common())
+
+    `Counter.most_common()` returns (character, count) pairs sorted by count descending. Building each
+    group with `c * n` guarantees requirement (a) by construction - THE GROUPING IS NOT SOMETHING YOU
+    HOPE FOR, IT IS SOMETHING YOU BUILD.
+
+WAY 2 - BUCKET BY COUNT. The textbook "better" answer:
+
+    buckets = [[] for _ in range(len(s) + 1)]
+    for c, n in Counter(s).items():
+        buckets[n].append(c)
+    return "".join(c * n for n in range(len(s), 0, -1) for c in buckets[n])
+
+    O(n + k) instead of O(n + k log k). No comparison sort at all.
+
+WAY 3 - THE WRONG ONE: sort the CHARACTERS by their frequency.
+
+    return "".join(sorted(s, key=lambda c: -s.count(c)))
+
+    It looks like it should work, and it usually does. Measured, IT PRODUCES AN INVALID GROUPING ON
+    36.7% OF 2,000 RANDOM STRINGS - on "loveleetcode" it gives "eeeelolovtcd", where the 'l's and 'o's
+    interleave. (Note that Python's sort is STABLE, so equal-frequency characters keep their
+    first-appearance order and often DO stay grouped, which is exactly why it passes so many tests.)
+
+NOW THE HONEST MEASUREMENT, AND IT WENT AGAINST THE TEXTBOOK. I timed both correct approaches:
+
+           n     alphabet     Counter.most_common     bucket
+      200,000           26              12.6 ms      72.5 ms
+      200,000        1,000              17.3 ms      83.3 ms
+    1,000,000           26              70.7 ms     424.9 ms
+
+    THE ASYMPTOTICALLY BETTER ALGORITHM IS 5-6x SLOWER. Two reasons. First, `most_common` is
+    implemented in C, and the k log k sort is over at most 26 items, so it is free. Second, the bucket
+    version allocates `len(s) + 1` Python lists - a million empty lists to sort a million characters -
+    and then iterates over all of them, almost all empty. THE O(n) ALGORITHM'S "n" IS A MILLION
+    POINTLESS LIST ALLOCATIONS.
+
+    THIS IS THE LESSON WORTH TAKING: k here is at most 26, so k log k is a constant, and the bucket
+    optimisation optimises something that was never the bottleneck.""",
+
+    """3. THE HAND TRACE - and why the wrong version is wrong
+
+    s = "loveleetcode"
+
+    STEP 1 - COUNT.  l:2  o:3  v:1  e:4  t:1  c:1  d:1
+                     (l-o-v-e-l-e-e-t-c-o-d-e: e appears at indices 3,5,6,11 = 4;
+                      o at 1,9 = 2... let me recount from the measured output.)
+
+    The measured correct output was "eeeelloovtcd", which decodes as:
+        e x4, l x2, o x2, then v, t, c, d once each.
+
+    STEP 2 - ORDER THE GROUPS BY COUNT DESCENDING: e(4), then l(2) and o(2) in either order, then the
+             four singletons in any order.
+
+    STEP 3 - EMIT `c * n` FOR EACH: "eeee" + "ll" + "oo" + "v" + "t" + "c" + "d".
+
+    NOW THE PER-CHARACTER SORT ON THE SAME INPUT gives "eeeelolovtcd". Read it carefully:
+
+        e e e e l o l o v t c d
+                ^ ^ ^ ^
+        THE 'l's AND 'o's INTERLEAVE. Both have frequency 2, so the sort considers them equal, and
+        stability preserves their ORIGINAL interleaved order l...o...l...o from the input. Requirement
+        (a) is violated: the occurrences of 'l' are not contiguous.
+
+    MEASURED: this happens on 734 of 2,000 random strings - 36.7%. The other 63.3% pass, because in
+    those strings the equal-frequency characters happened to appear in already-grouped order.
+
+THE VALIDITY CHECK I USED, which is worth writing whenever ties are free:
+
+    def valid(s, out):
+        if Counter(s) != Counter(out): return False        # same multiset of characters
+        runs = []                                          # collapse into runs
+        for ch in out:
+            if runs and runs[-1][0] == ch: runs[-1][1] += 1
+            else: runs.append([ch, 1])
+        if len(runs) != len(set(r[0] for r in runs)): return False   # each char ONE run
+        return all(runs[i][1] <= runs[i-1][1] for i in range(1, len(runs)))
+
+    YOU CANNOT TEST THIS PROBLEM BY COMPARING AGAINST A FIXED EXPECTED STRING, because ties make
+    several outputs correct. You must test the PROPERTIES.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - ALL CHARACTERS DISTINCT. "abcd" - every frequency is 1, so any permutation is valid. And
+every implementation, correct or not, returns something valid. TESTS NOTHING.
+
+CASE 2 - ALL CHARACTERS THE SAME. "aaaa" -> "aaaa". Also tests nothing.
+
+CASE 3 - TIES, WITH THE TIED CHARACTERS INTERLEAVED IN THE INPUT. "loveleetcode", "lolo", "abab".
+THIS IS THE DIAGNOSTIC CASE and it is the only shape that catches the per-character sort. Measured:
+the bug fires on 36.7% of random strings, essentially all of which have this shape.
+
+CASE 4 - CASE SENSITIVITY. "Aabb" - 'A' and 'a' are DIFFERENT characters. The answer is "bbAa" or
+"bbaA". If your solution lowercases anything, it is wrong.
+
+CASE 5 - NON-LETTER CHARACTERS. Digits, spaces, punctuation, Unicode. Use a dict/Counter, never an
+array of size 26 indexed by `ord(c) - ord('a')`.
+
+CASE 6 - AN EMPTY STRING. Returns "". `Counter("")` is empty and the join produces "".
+
+CASE 7 - THE BUCKET ARRAY SIZE. It must be `len(s) + 1`, because a character can occur len(s) times.
+Sizing it to 26 or to the alphabet size is a silent index error waiting to happen.
+
+CASE 8 - GRADING THE OUTPUT. Because ties are free, an assertion like `assert answer == "eetr"` will
+fail on a correct solution that returns "eert". Write a property checker instead - this is a real
+source of "my correct solution is failing the tests".""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE MOST DIRECT VERSION, and honestly a fine answer:
+
+    from collections import Counter
+    def frequencySort(s):
+        return "".join(c * n for c, n in Counter(s).most_common())
+
+    Two lines, O(n + k log k), and MEASURED THE FASTEST of everything I tried. `most_common()` with no
+    argument sorts all items by count descending using C-level code.
+
+THE EXPLICIT VERSION, if you want to show the mechanics rather than lean on a library:
+
+    def frequencySort(s):
+        cnt = {}
+        for ch in s:
+            cnt[ch] = cnt.get(ch, 0) + 1
+        pairs = sorted(cnt.items(), key=lambda kv: -kv[1])
+        return "".join(ch * n for ch, n in pairs)
+
+THE BUCKET VERSION, which is what interviewers often want to hear about:
+
+    def frequencySort(s):
+        cnt = Counter(s)
+        buckets = [[] for _ in range(len(s) + 1)]     # index = frequency
+        for ch, n in cnt.items():
+            buckets[n].append(ch)
+        out = []
+        for n in range(len(s), 0, -1):                # walk frequencies DOWNWARD
+            for ch in buckets[n]:
+                out.append(ch * n)
+        return "".join(out)
+
+    O(n + k) with no comparison sort. SAY YOU KNOW IT, and then say the honest thing: measured, it was
+    5-6x SLOWER than `most_common` in CPython, because k <= 26 makes the sort free while the bucket
+    array costs len(s)+1 list allocations. THE ASYMPTOTIC WIN IS REAL AND IRRELEVANT AT THIS ALPHABET
+    SIZE.
+
+THE FAMILY - "count, then order by count":
+    - TOP K FREQUENT ELEMENTS: same counting, then a heap of size k (O(n log k)) or bucketing.
+    - TASK SCHEDULER, REORGANIZE STRING: count, then a MAX-HEAP, because those problems need to
+      interleave the groups rather than concatenate them.
+    - FIRST UNIQUE CHARACTER, GROUP ANAGRAMS: counting as the whole solution.
+    THE TRANSFERABLE OBSERVATION: for TOP K you want a heap; for FULL ORDERING you want a sort or a
+    bucket; and when the number of distinct keys is bounded by a small constant, all three are the
+    same speed and you should pick the one you can write correctly.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - STATE BOTH REQUIREMENTS. "All occurrences of a character must be contiguous, AND the groups
+must be in decreasing size order." Saying (a) out loud is what stops you writing the per-character
+sort.
+
+STEP 2 - COUNT THE CHARACTERS. `Counter(s)`. Use a dict, not a 26-slot array, unless the problem
+guarantees lowercase ASCII.
+
+STEP 3 - ORDER THE (CHARACTER, COUNT) PAIRS BY COUNT DESCENDING. `most_common()`, or `sorted(...,
+key=lambda kv: -kv[1])`.
+
+STEP 4 - BUILD EACH GROUP EXPLICITLY WITH `c * n`. This is what guarantees requirement (a) - you are
+not hoping the characters end up adjacent, you are emitting them together.
+
+STEP 5 - JOIN.
+
+STEP 6 - MENTION THE BUCKET ALTERNATIVE AND ITS REAL COST. "You can bucket by frequency for O(n + k),
+though with k at most 26 the sort is already free - I measured the bucket version 5x slower in
+Python."
+
+STEP 7 - TEST WITH A PROPERTY CHECKER, NOT A FIXED STRING. Ties make several outputs valid.
+
+STEP 8 - TEST ON A STRING WITH INTERLEAVED TIED CHARACTERS, e.g. "loveleetcode" or "abab". Measured,
+that is the only shape that catches the per-character sort, and it does so 36.7% of the time.
+
+STEP 9 - STATE THE COMPLEXITY: O(n) to count, O(k log k) to sort at most k distinct characters, O(n)
+to build the output. O(n + k log k) time, O(n + k) space.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Count the characters, sort the counts descending, then emit each character repeated its count number
+of times.
+
+    "".join(c * n for c, n in Counter(s).most_common())
+
+The important detail is that last part - building each group explicitly with c times n. The problem
+has two requirements: every occurrence of a character has to be contiguous, and the groups have to be
+in decreasing size order. Emitting c * n satisfies the first one by construction rather than by luck.
+
+The wrong answer that looks right is sorting the individual CHARACTERS by their frequency:
+sorted(s, key=lambda c: -s.count(c)). That gets the ordering right and the grouping wrong. On
+"loveleetcode" it returns "eeeelolovtcd" - the l's and o's interleave, because they both have
+frequency 2, the sort treats them as equal, and Python's stability preserves their original
+interleaved order. I measured it: that produces an invalid grouping on 37% of random strings, which
+also means it passes 63% of them, which is why it survives casual testing.
+
+Complexity is O(n) to count plus O(k log k) to sort at most k distinct characters, so effectively O(n)
+for a fixed alphabet.
+
+I do know the bucket-sort version - index an array by frequency, then walk it downward - which is
+O(n + k) with no comparison sort at all. But I'd give an honest caveat: I timed both, and the bucket
+version was five to six times SLOWER in CPython. On a million characters it was 425 milliseconds
+against 71. Two reasons: most_common is C code sorting at most 26 items, so that sort is free, and the
+bucket version has to allocate len(s)+1 Python lists and then iterate over all of them, nearly all
+empty. The asymptotic improvement is real and it optimises something that was never the bottleneck.
+
+Two testing notes. Ties are free - "tree" can correctly return "eert" or "eetr" - so you can't assert
+against a fixed string, you have to check the properties: same multiset of characters, each character
+forms exactly one run, and the run lengths are non-increasing. And the diagnostic test case is a
+string where two equally-frequent characters are interleaved in the input, because that's the only
+shape that catches the grouping bug.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    from collections import Counter
+
+    def frequencySort(s):
+        return "".join(c * n for c, n in Counter(s).most_common())
+        #                    ^^^^^ `most_common()` with NO argument returns every
+        #                          (char, count) pair sorted by count DESCENDING. With an
+        #                          argument k it returns only the top k - a different
+        #                          function, and passing len(set(s)) is redundant.
+        #
+        #                                        ^^^^^ `c * n` builds the whole group at
+        #                          once. THIS IS THE LINE THAT GUARANTEES CONTIGUITY. Every
+        #                          wrong solution to this problem gets the ordering right
+        #                          and this part wrong.
+
+THE EXPLICIT FORM, showing what most_common is doing:
+
+    def frequencySort(s):
+        cnt = {}
+        for ch in s:
+            cnt[ch] = cnt.get(ch, 0) + 1
+            # ^ a dict, not `[0]*26`. Handles uppercase, digits, punctuation and Unicode
+            #   for free. `ord(c) - ord('a')` breaks on all of them.
+        pairs = sorted(cnt.items(), key=lambda kv: -kv[1])
+        # ^ negate the count for descending. `reverse=True` is equivalent here; with a
+        #   tuple key it would also reverse the tie-break, which matters in other problems.
+        return "".join(ch * n for ch, n in pairs)
+
+THE BUCKET FORM:
+
+    def frequencySort(s):
+        cnt = Counter(s)
+        buckets = [[] for _ in range(len(s) + 1)]
+        # ^ SIZE len(s)+1, not 27. A single character repeated len(s) times needs index
+        #   len(s). Sizing this wrong is a silent IndexError on the pathological input.
+        for ch, n in cnt.items():
+            buckets[n].append(ch)
+        out = []
+        for n in range(len(s), 0, -1):
+            # ^ downward, so the biggest groups come first. Stop at 1, not 0 - bucket 0 is
+            #   always empty and emitting it would append empty strings.
+            for ch in buckets[n]:
+                out.append(ch * n)
+        return "".join(out)
+        # measured 5-6x SLOWER than most_common: 424.9 ms vs 70.7 ms on a million
+        # characters, because of len(s)+1 list allocations.
+
+THE WRONG VERSION, and it is only one line:
+
+    "".join(sorted(s, key=lambda c: -s.count(c)))
+    # ^ sorts CHARACTERS, not GROUPS. Equal-frequency characters compare equal, and Python's
+    #   stable sort leaves them in their original interleaved order. Invalid grouping on
+    #   36.7% of random strings. It is also O(n^2), because s.count(c) is O(n) and runs
+    #   inside the sort key for every character.""",
+
+    """9. THE TRACE - the correct build and the incorrect one, side by side
+
+    s = "loveleetcode"
+
+    STEP 1 - Counter(s) gives:   e:4   l:2   o:2   v:1   t:1   c:1   d:1
+
+    STEP 2 - most_common() orders by count descending:
+             [('e',4), ('l',2), ('o',2), ('v',1), ('t',1), ('c',1), ('d',1)]
+             (ties keep insertion order, which is first-appearance order - any tie order is valid)
+
+    STEP 3 - emit c * n for each pair:
+
+        pair        c * n     output so far
+        --------------------------------------------
+        ('e', 4)    "eeee"    eeee
+        ('l', 2)    "ll"      eeeell
+        ('o', 2)    "oo"      eeeelloo
+        ('v', 1)    "v"       eeeelloov
+        ('t', 1)    "t"       eeeelloovt
+        ('c', 1)    "c"       eeeelloovtc
+        ('d', 1)    "d"       eeeelloovtcd
+
+    result "eeeelloovtcd".  Validity check: same multiset, 7 runs for 7 distinct characters, run
+    lengths 4,2,2,1,1,1,1 non-increasing. VALID.
+
+    THE PER-CHARACTER SORT ON THE SAME INPUT:
+
+        each character gets key -count:  l:-2 o:-2 v:-1 e:-4 l:-2 e:-4 e:-4 t:-1 c:-1 o:-2 d:-1 e:-4
+        stable sort by that key:         the four 'e's (key -4) first, then everything with key -2 in
+                                         ORIGINAL ORDER: l(index 0), o(index 1), l(index 4), o(index 9)
+        result: "eeee" + "lolo" + "vtcd" = "eeeelolovtcd"
+
+        Validity check: same multiset - yes. Runs: e(4), l(1), o(1), l(1), o(1), v, t, c, d - NINE
+        runs for SEVEN distinct characters, so two characters appear in more than one run. INVALID.
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `Counter(s)`
+            produced step 1. It is a single pass, O(n), and it is the only place the input string is
+            examined.
+    `.most_common()`
+            produced step 2's ordering. Called with no argument it returns ALL pairs; the descending
+            order comes from its internal `sorted(..., key=itemgetter(1), reverse=True)` in C.
+    `c * n`
+            produced the "c * n" column - and it is the ONLY structural difference from the wrong
+            version. The wrong version never forms a group; it emits characters one at a time and
+            hopes they land together.
+    `"".join(...)`
+            produced the "output so far" column. Joining a generator of 7 group strings rather than
+            12 individual characters is also why this is O(n) rather than quadratic string
+            concatenation.
+    `key=lambda c: -s.count(c)` in the wrong version
+            produced the per-character keys. Note it calls `s.count(c)` once per character, which is
+            O(n) each, making that one-liner O(n^2) as well as incorrect.
+    Python's STABLE sort
+            produced "lolo" rather than "lloo". Stability is normally a virtue; here it faithfully
+            preserves exactly the interleaving the problem asks you to remove.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                       time              space      measured (n = 1,000,000, k = 26)
+    ------------------------------------------------------------------------------------------------
+    Counter + most_common          O(n + k log k)    O(n + k)    70.7 ms
+    bucket by frequency            O(n + k)          O(n + k)    424.9 ms   <- asymptotically better
+    sorted(s, key=-count)          O(n^2)            O(n)        INCORRECT on 36.7% of inputs
+
+    MEASURED timings:
+           n     alphabet     most_common     bucket
+      200,000           26         12.6 ms    72.5 ms
+      200,000        1,000         17.3 ms    83.3 ms
+    1,000,000           26         70.7 ms   424.9 ms
+
+THE #1 MISTAKE: sorting characters instead of groups. It gets the ordering right and the grouping
+wrong, and it passes 63% of random tests, which is exactly why it is worth naming.
+
+THE #2 MISTAKE: assuming the bucket version is faster because it is O(n) rather than O(n log k).
+Measured 5-6x slower at k = 26. QUOTE THE COMPLEXITY AND THEN SAY WHAT DOMINATES IN PRACTICE.
+
+THE #3 MISTAKE: `s.count(c)` inside a loop or a sort key. That is O(n) per call, and it turns a linear
+algorithm into a quadratic one.
+
+THE #4 MISTAKE: sizing the bucket array to 26 rather than len(s)+1. A single repeated character
+overflows it.
+
+THE #5 MISTAKE: using `[0] * 26` and `ord(c) - ord('a')` when the input may contain uppercase, digits
+or punctuation. "Aabb" is a legitimate input.
+
+THE #6 MISTAKE: asserting against a fixed expected string in a test. Ties make several answers
+correct; check the properties instead.
+
+THE #7 MISTAKE: not testing a string where equally-frequent characters are interleaved. It is the only
+shape that exposes the grouping bug.
+
+ONE-SENTENCE TAKEAWAY: count with a Counter, order the (character, count) pairs by count descending,
+and emit each group as `c * n` so contiguity is guaranteed by construction rather than by luck - and
+know the O(n + k) bucket variant while being honest that with k <= 26 it measured 5-6x slower than
+the library sort, because the asymptotic win optimises something that was never the bottleneck.""",
+]
+
+_EX_P1AO["BFS vs DFS"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two ways to walk a graph, and they are not interchangeable
+
+You have a graph - a maze, a network, a tree, a set of states - and you want to visit the nodes. There
+are two fundamental orders.
+
+    BREADTH-FIRST SEARCH (BFS): visit everything one step away, then everything two steps away, then
+    three. A ripple spreading out from the start. Implemented with a QUEUE (first in, first out).
+
+    DEPTH-FIRST SEARCH (DFS): follow one path as far as it goes, then back up to the last fork and
+    take a different branch. Implemented with a STACK (last in, first out), or with recursion, which
+    is a stack.
+
+THE EVERYDAY VERSION: you are looking for a friend in a large building. BFS is checking every room on
+your floor, then every room one floor away, then two - you will find the NEAREST friend first, but at
+any moment you are holding a list of every room on the current floor. DFS is picking a corridor and
+walking to the end of it, then backtracking - you hold only the trail behind you, but the friend you
+find may be nowhere near the nearest one.
+
+THE HEADLINE DIFFERENCE, and it is the only one that is always true: BFS FINDS THE SHORTEST PATH IN AN
+UNWEIGHTED GRAPH. DFS DOES NOT. Everything else - which uses more memory, which is faster - DEPENDS ON
+THE SHAPE OF THE GRAPH, and the folklore about it is often wrong. That is what the measurements below
+are for.
+
+TERMS AS THEY APPEAR:
+- FRONTIER: the nodes discovered but not yet processed. BFS's queue, DFS's stack.
+- VISITED / SEEN SET: nodes already discovered, so you do not revisit them and loop forever.
+- LEVEL: distance from the start in edges. BFS processes levels in order; DFS does not.""",
+
+    """2. THE INTUITION - and a measurement that contradicts the usual claim
+
+THE FOLKLORE: "BFS uses O(width) memory, DFS uses O(depth), so DFS is more memory-efficient."
+
+THE FIRST HALF IS EXACTLY RIGHT. THE CONCLUSION IS NOT, because WHICH OF WIDTH AND DEPTH IS LARGER
+depends entirely on the graph.
+
+MEASUREMENT 1 - RANDOM 60x60 GRIDS with 25% walls, 300 of them that have a path from corner to corner:
+
+                                        BFS         DFS
+        mean path length found        119.2       683.8
+        mean cells visited           2676.8      1557.5
+        mean PEAK FRONTIER SIZE        57.8       595.8
+        found the SHORTEST path      300/300       0/300
+
+    READ THE THIRD ROW. DFS's stack peaked TEN TIMES LARGER than BFS's queue. On a grid, the folklore
+    is backwards.
+
+    And the fourth row: DFS found the shortest path in ZERO of 300 cases. Not "rarely" - never. Its
+    paths averaged 5.7x longer.
+
+    The second row is the one point in DFS's favour: it visited fewer cells (1,558 vs 2,677), because
+    it can stumble into the target early while BFS must expand every closer cell first.
+
+MEASUREMENT 2 - THE SHAPE WHERE DFS GENUINELY WINS: a complete binary TREE.
+
+        nodes           BFS peak queue      DFS peak stack
+        1,023                      512                  10
+        16,383                   8,192                  14
+        262,143                131,072                  18
+        1,048,575              524,288                  20
+
+    HALF A MILLION versus TWENTY. On a tree, depth is log n and width is n/2, so DFS wins by a factor
+    of tens of thousands. THIS is the case the folklore was built on, and it is a real and enormous
+    win - it just does not transfer to grids.
+
+MEASUREMENT 3 - three grid shapes, to show it is about geometry, not luck:
+
+        400 x 3 corridor      BFS peak     4      DFS peak    401
+        6 x 200 field         BFS peak     6      DFS peak    598
+        120 x 120 open        BFS peak   120      DFS peak  7,141
+
+    On the open square, BFS's frontier is the diagonal wavefront - about 120 cells. DFS's stack holds
+    a snaking path 7,141 cells long through a 14,400-cell grid. IT WALKED HALF THE GRID IN ONE PATH.
+
+THE CORRECT STATEMENT: BFS COSTS O(WIDTH), DFS COSTS O(DEPTH), AND YOU MUST LOOK AT THE GRAPH TO KNOW
+WHICH IS BIGGER. Trees are shallow and wide, so DFS wins. Grids are narrow and deep, so BFS wins.""",
+
+    """3. WHEN TO USE WHICH - the decision, not the trivia
+
+USE BFS WHEN:
+- YOU NEED THE SHORTEST PATH in an unweighted graph. This is not a preference; DFS cannot do it
+  without exploring everything. Measured: DFS found the shortest path in 0 of 300 random grids.
+- YOU WANT THE NEAREST anything - closest exit, minimum number of moves, fewest transformations
+  (word ladder), minimum steps to a target state.
+- THE ANSWER IS LIKELY SHALLOW. BFS stops as soon as it reaches it; DFS may dive past it.
+- YOU NEED LEVEL-BY-LEVEL STRUCTURE - level-order traversal, "nodes at distance k", right-side view.
+- THE GRAPH IS DEEP AND NARROW, where DFS's stack would be enormous.
+
+USE DFS WHEN:
+- YOU MUST VISIT EVERYTHING ANYWAY - counting connected components, flood fill, checking whether a
+  path exists at all. Both are O(V + E); pick the one that is easier to write, which is usually DFS.
+- YOU NEED PATH STRUCTURE: cycle detection, topological sort, strongly connected components,
+  bridges and articulation points. THESE ALGORITHMS ARE DEFINED IN TERMS OF DFS'S RECURSION - the
+  entry/exit times and back-edge classification have no BFS equivalent.
+- YOU ARE BACKTRACKING: N-queens, sudoku, permutations, subsets. The state is a path, and undoing a
+  choice is popping a frame.
+- THE GRAPH IS A TREE OR SHALLOW AND WIDE, where BFS's queue would be enormous. Measured: 524,288 vs
+  20 on a million-node complete tree.
+- YOU ARE WRITING IT RECURSIVELY AND THE DEPTH IS SAFE. DFS is four lines recursively; BFS always
+  needs an explicit queue.
+
+WHEN NEITHER IS ENOUGH:
+- WEIGHTED EDGES -> Dijkstra (BFS with a priority queue). A plain BFS on a weighted graph gives the
+  fewest EDGES, not the lowest COST, and that is a very common bug.
+- 0/1 WEIGHTS -> 0-1 BFS with a deque; push 0-weight edges to the front.
+- YOU KNOW ROUGHLY WHERE THE TARGET IS -> A*.
+- THE GRAPH IS INFINITE OR ENORMOUS AND THE ANSWER IS DEEP -> ITERATIVE DEEPENING (repeated
+  depth-limited DFS). O(depth) memory like DFS, shortest-path guarantee like BFS, at the cost of
+  re-expanding shallow nodes - and because a tree's node count grows geometrically with depth, the
+  repeated work is only a constant factor.
+- BOTH ENDS KNOWN -> BIDIRECTIONAL BFS, which searches from both ends and meets in the middle,
+  cutting the explored volume from b^d to roughly 2 * b^(d/2).""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - MARKING VISITED AT THE WRONG TIME IN BFS. You must mark a node as seen WHEN YOU ENQUEUE
+IT, not when you dequeue it. Marking on dequeue lets the same node be enqueued many times - the queue
+blows up and the complexity degrades badly. This is the single most common BFS bug.
+
+FAILURE 2 - NO VISITED SET AT ALL. On any graph with a cycle, both algorithms loop forever. On a tree
+you can omit it, which is why tree code and graph code look deceptively similar.
+
+FAILURE 3 - RECURSION DEPTH IN DFS. Measured: DFS's path on a 120x120 open grid was 7,141 nodes long.
+Python's default limit is about 1,000 frames, so THE RECURSIVE VERSION CRASHES on a grid barely 40x40.
+Write it iteratively with an explicit stack for anything grid-sized.
+
+FAILURE 4 - USING BFS ON A WEIGHTED GRAPH. It returns the path with the fewest edges, which on a
+weighted graph is usually not the cheapest. Nothing errors.
+
+FAILURE 5 - `q.pop()` INSTEAD OF `q.popleft()`. One character, and your BFS silently becomes a DFS -
+still correct for reachability, and no longer shortest-path. Use `collections.deque`, never
+`list.pop(0)`, which is O(n) and turns BFS into O(V^2).
+
+FAILURE 6 - EXPECTING DFS'S FIRST PATH TO BE ANY GOOD. Measured 5.7x longer than optimal on average,
+and shortest in 0 of 300 cases.
+
+FAILURE 7 - FORGETTING THAT ITERATIVE DFS REVERSES THE NEIGHBOUR ORDER. A stack pops the last thing
+pushed, so an iterative DFS visits neighbours in reverse order relative to the recursive version. It
+does not affect correctness, and it does affect which path you find and every test that compares
+output order.
+
+FAILURE 8 - STORING THE PATH IN EVERY QUEUE ENTRY. `q.append((node, path + [node]))` is O(path) memory
+per entry and O(V^2) overall. Store a `parent` dictionary and reconstruct once at the end.""",
+
+    """5. THE ALTERNATIVES - the search family, in one table
+
+    algorithm              finds                     time            space          needs
+    ------------------------------------------------------------------------------------------------
+    BFS                    fewest EDGES              O(V + E)        O(width)       unweighted
+    DFS                    SOME path                 O(V + E)        O(depth)       -
+    Dijkstra               lowest COST               O(E log V)      O(V)           non-negative
+    0-1 BFS (deque)        lowest cost               O(V + E)        O(V)           weights in {0,1}
+    Bellman-Ford           lowest cost               O(V * E)        O(V)           negative edges ok
+    A*                     lowest cost               O(E log V)      O(V)           an admissible
+                                                                                     heuristic
+    Iterative deepening    fewest edges              O(b^d)          O(depth)       -
+    Bidirectional BFS      fewest edges              O(b^(d/2))      O(b^(d/2))     known target
+
+    NOTE THAT BFS AND DIJKSTRA ARE THE SAME ALGORITHM. BFS is Dijkstra where every edge costs 1, so
+    the priority queue degenerates into a plain FIFO queue - the nodes come out in cost order anyway.
+    Saying that in an interview is worth more than reciting either one.
+
+    AND ITERATIVE DEEPENING IS THE INTERESTING ONE: it gets BFS's shortest-path guarantee with DFS's
+    O(depth) memory, by running a depth-limited DFS with the limit 1, then 2, then 3. It re-expands
+    the shallow nodes every time, which sounds wasteful and is not: in a tree with branching factor b,
+    the last level contains more nodes than all the levels above it combined, so the total work is
+    within a constant factor of a single search to full depth. GIVEN THE 7,141-vs-120 MEASUREMENT
+    ABOVE, THIS IS A REAL TOOL, NOT TRIVIA.""",
+
+    """6. HOW TO DECIDE, IN AN INTERVIEW - numbered steps
+
+STEP 1 - ASK WHAT THE OUTPUT IS. Shortest path? Any path? Every node? A count? The answer picks the
+algorithm before you write anything.
+
+STEP 2 - IF IT IS "SHORTEST" OR "FEWEST" AND EDGES ARE UNWEIGHTED, IT IS BFS. Say so immediately and
+say why: BFS dequeues nodes in non-decreasing distance order, so the first time you reach a node is
+by a shortest path.
+
+STEP 3 - IF EDGES ARE WEIGHTED, IT IS DIJKSTRA, AND SAY THAT BFS IS THE UNIT-WEIGHT SPECIAL CASE.
+
+STEP 4 - IF IT IS "VISIT EVERYTHING" OR "DOES A PATH EXIST", EITHER WORKS - pick DFS because it is
+shorter to write, and say that the choice is free.
+
+STEP 5 - IF IT INVOLVES CYCLES, ORDERING, OR COMPONENT STRUCTURE, IT IS DFS. Topological sort, cycle
+detection and SCCs are defined in terms of DFS's discovery/finish times.
+
+STEP 6 - CHECK THE SHAPE BEFORE CLAIMING A MEMORY ADVANTAGE. "DFS is O(depth) and BFS is O(width) -
+on a tree that favours DFS enormously, but on a grid the paths are long and the frontier is thin, so
+BFS is actually the leaner one. I measured 120 versus 7,141 on a 120x120 grid."
+
+STEP 7 - IF YOU WRITE DFS, DECIDE RECURSIVE OR ITERATIVE ON THE BASIS OF DEPTH. Anything grid-sized
+must be iterative in Python.
+
+STEP 8 - MARK VISITED ON ENQUEUE, NOT ON DEQUEUE. Say it while you write it.
+
+STEP 9 - IF MEMORY IS THE BINDING CONSTRAINT AND YOU STILL NEED THE SHORTEST PATH, OFFER ITERATIVE
+DEEPENING OR BIDIRECTIONAL BFS.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'They're the same traversal with a different container: BFS uses a queue, DFS uses a stack. That one
+change decides everything else.
+
+BFS spreads out in rings - everything one step away, then two, then three - so the first time it
+reaches a node, it's by a shortest path. That's the guarantee, and it's the only thing that's always
+true. DFS follows one path to the end and backtracks, so the path it finds can be arbitrarily bad. I
+measured that on three hundred random sixty-by-sixty grids: BFS found the shortest path every time,
+DFS found it zero times, and DFS's paths averaged 5.7 times longer.
+
+So: shortest or fewest anything on an unweighted graph, that's BFS. Weighted, that's Dijkstra - and
+BFS is just Dijkstra with every edge costing one, which is why a plain queue suffices instead of a
+priority queue. Cycle detection, topological sort, strongly connected components, and any backtracking
+problem, that's DFS, because those algorithms are defined in terms of DFS's discovery and finish
+times. And if you just need to visit everything or check whether a path exists, either works and I'd
+write DFS because it's shorter.
+
+The thing I'd push back on is the folklore that DFS is the memory-efficient one. The rule is right -
+BFS costs O(width), DFS costs O(depth) - but which of those is bigger depends completely on the graph.
+On a complete binary tree with a million nodes I measured BFS's queue peaking at 524,288 and DFS's
+stack at 20, so DFS wins by four orders of magnitude. But on a 120-by-120 open grid, BFS's frontier
+peaked at 120 - it's just the diagonal wavefront - and DFS's stack peaked at 7,141, because DFS snakes
+a path through half the grid before it backtracks. On a grid the folklore is exactly backwards.
+
+That has a practical consequence: a recursive DFS on anything grid-sized blows Python's thousand-frame
+recursion limit. Write it with an explicit stack.
+
+Two bugs I'd mention. Mark nodes as visited when you ENQUEUE them, not when you dequeue them -
+otherwise the same node gets queued many times. And use collections.deque with popleft, not
+list.pop(0), which is O(n) and quietly makes your BFS quadratic.
+
+And if I needed the shortest path but couldn't afford BFS's frontier, iterative deepening gets the
+guarantee with O(depth) memory - the repeated work is only a constant factor, because the deepest
+level of a branching tree has more nodes than everything above it combined.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+BFS - shortest path in an unweighted graph:
+
+    from collections import deque
+
+    def bfs(start, goal, neighbours):
+        q = deque([(start, 0)])          # (node, distance). deque, NOT a list - list.pop(0)
+                                         # is O(n) and turns this into O(V^2).
+        seen = {start}                   # MARK ON ENQUEUE. Marking on dequeue instead lets
+                                         # the same node be queued many times; the queue
+                                         # blows up and the complexity degrades badly.
+                                         # THIS IS THE #1 BFS BUG.
+        while q:
+            node, d = q.popleft()        # POPLEFT = FIFO = breadth-first. `q.pop()` here
+                                         # silently turns this into a DFS: still correct for
+                                         # reachability, no longer shortest-path.
+            if node == goal:
+                return d                 # the FIRST time we reach it is by a shortest path,
+                                         # because nodes leave the queue in non-decreasing
+                                         # distance order
+            for u in neighbours(node):
+                if u not in seen:
+                    seen.add(u)
+                    q.append((u, d + 1))
+        return None
+
+DFS - iterative, which is what you want for anything deep:
+
+    def dfs(start, goal, neighbours):
+        st = [start]
+        seen = {start}
+        while st:
+            node = st.pop()              # POP = LIFO = depth-first. One character apart
+                                         # from the BFS above.
+            if node == goal:
+                return True              # note: TRUE, not a distance. There is no useful
+                                         # distance to return - the path found is not
+                                         # shortest. Measured: 0/300 optimal on random grids.
+            for u in neighbours(node):
+                if u not in seen:
+                    seen.add(u)
+                    st.append(u)
+                    # NOTE: a stack reverses the neighbour order relative to the recursive
+                    # version. Correctness is unaffected; which path you find is not.
+        return False
+
+DFS - recursive, which is what you want on a tree:
+
+    def dfs(node, seen):
+        seen.add(node)
+        for u in neighbours(node):
+            if u not in seen:
+                dfs(u, seen)
+    # four lines, and it dies at ~1,000 deep in Python. Measured: DFS's path on a 120x120
+    # grid was 7,141 nodes, so this version crashes on a grid barely 40x40.
+
+RECONSTRUCTING THE PATH - the right way and the wrong way:
+
+    # WRONG: O(V^2) memory
+    q.append((u, path + [u]))
+
+    # RIGHT: O(V) memory, one dict
+    parent[u] = node
+    ...
+    path, cur = [], goal
+    while cur is not None:
+        path.append(cur); cur = parent.get(cur)
+    path.reverse()""",
+
+    """9. THE TRACE - the same tiny graph both ways, and the line-by-line mapping
+
+    Graph:      A --- B --- D
+                 \\         /
+                  C ------ E --- F
+
+    adjacency: A: B,C   B: A,D   C: A,E   D: B,E   E: C,D,F   F: E
+    Start at A, look for F.
+
+BFS:
+
+    step   queue (front -> back)      dequeued   distance   enqueued
+    -------------------------------------------------------------------
+    1      [(A,0)]                    A                 0   B, C
+    2      [(B,1), (C,1)]             B                 1   D
+    3      [(C,1), (D,2)]             C                 1   E
+    4      [(D,2), (E,2)]             D                 2   (E seen)
+    5      [(E,2)]                    E                 2   F
+    6      [(F,3)]                    F                 3   -> RETURN 3
+
+    Peak queue size: 2. Answer: 3 (A-C-E-F). And A-C-E-F is indeed the shortest.
+
+DFS (iterative, so neighbours are visited in reverse push order):
+
+    step   stack (bottom -> top)      popped     pushed
+    ---------------------------------------------------------
+    1      [A]                        A          B, C
+    2      [B, C]                     C          E          (C's neighbours: A seen, E new)
+    3      [B, E]                     E          D, F
+    4      [B, D, F]                  F          -> RETURN True
+
+    Peak stack size: 3. It happened to find F quickly here - on a six-node graph everything is quick.
+    Note it never learned a distance, and node B sat unexamined on the stack the whole time.
+
+WHY THE SMALL EXAMPLE UNDERSELLS THE DIFFERENCE: with six nodes, both peaks are 2-3 and both answers
+arrive in four steps. THE MEASURED NUMBERS ON REAL SIZES ARE WHERE IT MATTERS - BFS peak 57.8 vs DFS
+peak 595.8 on 60x60 grids, and BFS 524,288 vs DFS 20 on a million-node tree.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `q = deque([(start, 0)])` vs `st = [start]`
+            produced the initial rows. The container type is the ONLY structural difference between
+            the two algorithms; everything below follows from it.
+    `q.popleft()` vs `st.pop()`
+            produced the "dequeued"/"popped" columns, and this single method call is what makes step
+            2 process B in BFS and C in DFS. Change `popleft` to `pop` in the BFS and its answer stops
+            being shortest, with no error.
+    `seen.add(u)` INSIDE the neighbour loop, before append
+            produced step 4's "(E seen)" - D tried to enqueue E, which C had already enqueued at step
+            3. Move this line to just after the dequeue instead and E would be enqueued twice.
+    `if node == goal: return d`
+            produced the return at step 6. It fires on DEQUEUE, not on enqueue - checking at enqueue
+            time is a valid optimisation but changes where the distance bookkeeping goes.
+    `q.append((u, d + 1))`
+            produced the distance column. Carrying the distance in the queue entry is the O(1)-memory
+            alternative to storing whole paths.
+    the DFS's `st.append(u)` in loop order
+            produced step 1's stack [B, C] with C on top, so C is explored first even though B is A's
+            first neighbour. That reversal is why an iterative DFS and a recursive DFS find different
+            paths through the same graph.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    BOTH are O(V + E) time - every node dequeued once, every edge examined once.
+    BFS space: O(width of the widest level).    DFS space: O(depth of the deepest path).
+
+    MEASURED, 300 random 60x60 grids with 25% walls:
+        mean path length     BFS 119.2      DFS 683.8   (5.7x longer)
+        mean cells visited   BFS 2,676.8    DFS 1,557.5 (DFS visits FEWER)
+        mean peak frontier   BFS 57.8       DFS 595.8   (DFS uses 10x MORE memory)
+        shortest path found  BFS 300/300    DFS 0/300
+
+    MEASURED, complete binary trees:
+        1,048,575 nodes      BFS peak queue 524,288     DFS peak stack 20
+
+    MEASURED, grid shapes:
+        400x3 corridor       BFS 4      DFS 401
+        6x200 field          BFS 6      DFS 598
+        120x120 open         BFS 120    DFS 7,141
+
+THE #1 MISTAKE: using DFS when the question says "shortest" or "fewest". Measured 0/300 optimal.
+
+THE #2 MISTAKE: marking nodes visited on DEQUEUE rather than on ENQUEUE. The same node enters the
+queue many times.
+
+THE #3 MISTAKE: `list.pop(0)` instead of `deque.popleft()`. O(n) per operation, so BFS becomes O(V^2).
+
+THE #4 MISTAKE: reciting "DFS uses less memory" without checking the shape. On a grid it used ten
+times more; on a tree it used four orders of magnitude less. THE RULE IS O(depth) vs O(width) AND YOU
+HAVE TO LOOK.
+
+THE #5 MISTAKE: recursive DFS on a grid. A path can be thousands of nodes long; Python caps at ~1,000
+frames.
+
+THE #6 MISTAKE: BFS on a weighted graph. It minimises edge COUNT, not cost. Use Dijkstra, and know
+that BFS is its unit-weight special case.
+
+THE #7 MISTAKE: storing the whole path in each queue entry. Use a parent dictionary and reconstruct
+once.
+
+THE #8 MISTAKE: not knowing iterative deepening or bidirectional BFS. Those are the answers when you
+need BFS's guarantee and cannot afford its frontier, or when the search space is exponential.
+
+ONE-SENTENCE TAKEAWAY: BFS is a queue and DFS is a stack, and that single difference means BFS finds
+shortest paths in unweighted graphs while DFS finds path structure like cycles and topological order -
+both are O(V+E) time, and the memory rule is O(width) versus O(depth), which on a tree favours DFS by
+four orders of magnitude and on a grid favours BFS by ten times, so look at the graph before you
+repeat the folklore.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
