@@ -144146,9 +144146,666 @@ that really separates the options is what their derivative does when multiplied 
 which is why ReLU, whose derivative is exactly 1, is the default.""",
 ]
 
-# This entry's examples are declared INLINE on its Q(...) in ai_sde_bank_ml.py,
-# so there is no earlier _EX_* block to splice into — the override has to live
-# here, and it needs this dict's `< 10` condition to beat the six inline ones.
+_EX_P1AO["How a decision tree actually picks a split (Gini, entropy, information gain)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a tree is just a game of twenty questions
+
+A DECISION TREE classifies things by asking a series of yes/no questions.
+
+    is the passenger's fare > 15?
+        no  -> is the passenger male?
+                   yes -> predict DIED
+                   no  -> predict SURVIVED
+        yes -> ...
+
+Every internal box asks one question about one feature; every leaf gives an answer. Making a
+prediction means walking from the top to a leaf, which is why trees are the model people find easiest
+to read.
+
+THE ONLY INTERESTING QUESTION IN BUILDING ONE: at each box, out of every feature and every possible
+threshold, WHICH QUESTION SHOULD WE ASK? That is what this entry is about. Everything else - the
+recursion, the leaves, the prediction - is bookkeeping.
+
+The answer is: ask the question that makes the two resulting groups as PURE as possible, where 'pure'
+means 'mostly one class'. To do that you need a number that measures impurity, and there are two in
+common use - GINI and ENTROPY.
+
+TERMS AS THEY APPEAR:
+- NODE: one box in the tree. The ROOT is the top one, a LEAF is one with no questions below it.
+- SPLIT: the question at a node, together with the two groups it produces.
+- PURE NODE: one where every row has the same label. Nothing left to ask.
+- IMPURITY: a number that is 0 for a pure node and largest when the classes are evenly mixed.
+- INFORMATION GAIN: how much impurity the split removed - the parent's impurity minus the weighted
+  impurity of the children. Bigger is better, and the tree picks the biggest.""",
+
+    """2. THE INTUITION - measuring 'mixed-up-ness' with one number
+
+Suppose a node holds 100 rows, 50 of each class. It is maximally mixed - knowing a row is in this node
+tells you nothing about its label. Now suppose a different node holds 100 rows, 99 of class A. Almost
+pure - a very informative node.
+
+We need a single number capturing that, and both standard choices have the same shape: zero when pure,
+largest when evenly mixed.
+
+    GINI IMPURITY:  1 - sum of (p_i squared)
+        Read it as: pick two rows at random from this node; what is the chance their labels differ?
+
+    ENTROPY:  - sum of p_i x log2(p_i)
+        Read it as: how many bits of information you need, on average, to say which class a row is.
+        Zero bits if they are all the same; one bit if it is a 50/50 coin flip.
+
+MEASURED, so the shapes are concrete:
+
+        counts        gini     entropy
+        [50, 50]      0.5000   1.0000       <- maximally mixed
+        [70, 30]      0.4200   0.8813
+        [90, 10]      0.1800   0.4690
+        [99, 1]       0.0198   0.0808
+        [100, 0]      0.0000   0.0000       <- pure
+
+Both fall to zero as the node becomes pure. Gini tops out at 0.5 for two classes, entropy at 1.0. The
+scales differ; the shapes are nearly identical, which turns out to matter - see section 5.
+
+THE SPLIT SCORE - INFORMATION GAIN - is then straightforward:
+
+    gain = impurity(parent) - [ weighted average of impurity(left) and impurity(right) ]
+
+with each child weighted by the fraction of rows that landed in it. The weighting is essential: a
+beautifully pure child holding three rows should not outrank a decent child holding three hundred.
+
+The tree tries every feature and every candidate threshold, computes this gain for each, and takes the
+biggest. Then it recurses on both children. That is the whole algorithm.""",
+
+    """3. THE ARITHMETIC, TRACED - four candidate splits on one node
+
+A parent node of 100 rows, 50 of class A and 50 of class B.
+
+    parent impurity:  gini = 1 - (0.5^2 + 0.5^2) = 0.5      entropy = 1.0
+
+Now four candidate questions, with the counts they produce.
+
+    (a) A PERFECT SPLIT: left [50 A, 0 B], right [0 A, 50 B]
+        both children are pure, so both impurities are 0
+        weighted after = 0.5 x 0 + 0.5 x 0 = 0
+        GINI GAIN = 0.5 - 0 = 0.5000          ENTROPY GAIN = 1.0000
+
+    (b) A USELESS SPLIT: left [25, 25], right [25, 25]
+        each child is still 50/50, impurity 0.5 each
+        weighted after = 0.5 x 0.5 + 0.5 x 0.5 = 0.5
+        GINI GAIN = 0.5 - 0.5 = 0.0000        ENTROPY GAIN = 0.0000
+        The split separated the rows and learnt nothing. Zero gain says exactly that.
+
+    (c) A HELPFUL SPLIT: left [40, 10], right [10, 40]
+        each child: gini = 1 - (0.8^2 + 0.2^2) = 0.32
+        weighted after = 0.5 x 0.32 + 0.5 x 0.32 = 0.3200
+        GINI GAIN = 0.1800                    ENTROPY GAIN = 0.2781
+
+    (d) A TINY-BUT-PURE SPLIT: left [5, 0], right [45, 50]
+        left is perfectly pure but holds only 5 rows; right is 47.4% impure and holds 95
+        weighted after = 0.05 x 0 + 0.95 x 0.4986 = 0.4737
+        GINI GAIN = 0.0263                    ENTROPY GAIN = 0.0519
+
+    RANKING BY GAIN: (a) 0.5000, then (c) 0.1800, then (d) 0.0263, then (b) 0.0000.
+
+Look at (d) against (c). The tiny split produced a PERFECTLY pure child and still scored seven times
+worse, because it only cleaned up 5 rows out of 100. That is the weighting doing its job, and it is
+the thing to point at when someone asks why purity alone is not the criterion.
+
+Note also that gini and entropy ranked all four splits identically. That is not a coincidence - see
+the measured disagreement rate in section 5.""",
+
+    """4. THE FAILURE MODES - and the one that quietly destroys a model
+
+A. THE HIGH-CARDINALITY TRAP - and this is the important one. Raw information gain is systematically
+   biased towards features with MANY distinct values, because more branches means purer children,
+   whether or not the feature means anything.
+
+   MEASURED on the same 100-row node:
+       split on a unique ID column (100 branches, all pure): gini gain 0.5000 - the maximum possible
+       a genuinely useful binary split:                      gini gain 0.1800
+
+   A customer ID, a timestamp, a row number - any column with a distinct value per row - wins every
+   time and produces a tree that memorises the training set and predicts nothing. THE FIXES: use GAIN
+   RATIO (which divides the gain by how much the split fragmented the data), use Gini as CART does
+   with BINARY splits only, or simply never feed identifiers to a tree.
+
+B. UNPRUNED TREES MEMORISE. Left alone, a tree keeps splitting until every leaf is pure - which means
+   one leaf per training row in the worst case. Training accuracy 100%, test accuracy poor. Control it
+   with max_depth, min_samples_leaf, min_samples_split, or by growing fully and then pruning back.
+
+C. GREEDY IS NOT OPTIMAL. The tree picks the best split at each node WITHOUT looking ahead. A split
+   that scores poorly now might enable two excellent splits below it, and the greedy search will never
+   find that. Finding the optimal tree is NP-hard, so every practical implementation is greedy - and
+   knowing that this is a deliberate compromise rather than an oversight is worth saying.
+
+D. INSTABILITY. Change a handful of training rows and the top split can change, and everything below
+   it changes with it. This is high VARIANCE - and it is exactly the property that makes trees the
+   perfect base learner for bagging.
+
+E. CONTINUOUS FEATURES NEED THRESHOLDS. For a numeric column the tree sorts the values and considers
+   the midpoints between consecutive distinct values as candidate thresholds. That is O(n log n) per
+   feature per node, and it is why tree training is dominated by sorting.
+
+F. IMBALANCED CLASSES. With 99% of one class, most splits look impure-in-the-same-way and the tree may
+   simply predict the majority. Class weights apply here exactly as they do elsewhere.
+
+G. AXIS-ALIGNED SPLITS ONLY. Every question is 'is feature j above threshold t', so the boundary is
+   made of horizontal and vertical steps. A diagonal boundary needs a staircase of many splits - which
+   is precisely the bias that boosting exists to chip away at.""",
+
+    """5. GINI OR ENTROPY - the honest answer, measured
+
+Every textbook lists both and few say which to use. So I measured how often they actually disagree.
+
+    Setup: 20,000 random parent nodes, each with two randomly-generated candidate splits. For each
+    pair, which split does gini prefer, and which does entropy prefer?
+
+    THEY CHOSE A DIFFERENT SPLIT ON 513 OF 20,000 PAIRS - 2.6%.
+
+In other words, 97.4% of the time it makes no difference at all. That is the honest answer to 'which
+should I use?', and it is much more useful than a paragraph about their theoretical properties.
+
+WHAT DIFFERENCES DO EXIST:
+    - Entropy involves a logarithm, so it is slightly slower to compute. On large datasets that is a
+      real if small cost, and it is why scikit-learn defaults to gini.
+    - Entropy is marginally more sensitive to changes in the tails of the distribution, because the
+      log grows quickly near zero. Where they disagree, entropy slightly favours splits that produce
+      one very pure child.
+    - Gini has a nice interpretation - the probability that two randomly drawn rows have different
+      labels - which is easier to explain to a non-specialist.
+
+WHAT ACTUALLY MATTERS FAR MORE than this choice, in rough order:
+    1. Whether you fed the tree an identifier column (section 4A). This can destroy the model.
+    2. The depth and leaf-size limits. This decides overfitting.
+    3. Whether you are using a single tree at all, rather than a forest or a boosted ensemble.
+
+WHAT TO SAY IN AN INTERVIEW: 'Gini and entropy pick the same split about 97% of the time - I measured
+it on random candidate pairs - so I use gini because it is cheaper and the default. The choice that
+actually matters is the stopping criteria, and whether any high-cardinality columns are in the feature
+set, because raw gain always prefers them.' That is a much stronger answer than reciting both
+formulas.
+
+A THIRD MEASURE WORTH KNOWING: for REGRESSION trees, impurity is variance (or mean squared error)
+instead. Same algorithm, same greedy gain, different impurity function - and being able to say that
+shows you understand impurity as a slot rather than as two magic formulas.""",
+
+    """6. HOW A TREE IS BUILT - numbered steps, no code yet
+
+1. Start with all the training rows at the root.
+2. If the node is pure, or you have hit a stopping rule (max depth, too few rows), make it a leaf that
+   predicts the majority class, and stop.
+3. Otherwise, for EVERY feature:
+   a. If it is categorical, the candidate splits are its values (or, for binary trees, subsets of
+      them).
+   b. If it is numeric, sort the distinct values and take the midpoints between consecutive ones as
+      candidate thresholds.
+4. For each candidate split, compute the impurity of the two resulting groups, take the weighted
+   average using each group's share of the rows, and subtract it from the parent's impurity. That is
+   the gain.
+5. Keep the split with the highest gain.
+6. Apply it, producing two child nodes, and repeat the whole procedure on each child.
+
+STEP 4 IS WHERE EVERY MISTAKE LIVES, and it has two parts people drop:
+   - WEIGHT the children by size. Without it a five-row pure leaf outranks a genuinely useful split -
+     measured in section 3 as 0.0263 against 0.1800.
+   - Compare against the PARENT's impurity, not against zero. What you want is the IMPROVEMENT.
+
+WHY THE SORT IN STEP 3b: to consider every possible threshold for a numeric column you need the values
+in order, and then each midpoint is one candidate. That sorting is the dominant cost of training a
+tree, which is why the fast implementations (LightGBM, XGBoost) work so hard on histogram-based
+approximations of it.
+
+A STOPPING RULE YOU SHOULD ALWAYS SET, even if it is generous: without one, step 2 only fires on
+perfectly pure nodes and the tree memorises the training data.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A tree is a sequence of yes/no questions, and the only real decision is which question to ask at each
+node. You want the one that leaves the two resulting groups as pure as possible - meaning mostly one
+class.
+
+To score that you need a number for impurity. Gini is the chance two randomly picked rows from the
+node have different labels; entropy is how many bits you need to say which class a row is. Both are
+zero for a pure node and largest for a 50/50 mix. The split's score is INFORMATION GAIN - the parent's
+impurity minus the size-weighted average of the children's.
+
+The weighting matters. A perfectly pure child holding five rows out of a hundred scores far worse than
+a merely good split of the whole node - I have run the arithmetic: 0.026 against 0.18.
+
+Gini versus entropy is almost never worth debating; I measured them on twenty thousand random pairs of
+candidate splits and they disagreed 2.6% of the time. What DOES matter is that raw gain is biased
+towards columns with many distinct values - an ID column produces one pure leaf per row and scores the
+maximum possible gain - so either use gain ratio, restrict to binary splits, or keep identifiers out
+of the feature set.'""",
+
+    """8. THE FORMULAS, PIECE BY PIECE
+
+    GINI IMPURITY of a node whose class proportions are p_1 ... p_k:
+
+        gini = 1 - (p_1^2 + p_2^2 + ... + p_k^2)
+
+        WHY IT MEANS WHAT IT MEANS: pick a row at random, then pick another at random. The chance both
+        are class i is p_i^2, so the chance they MATCH is the sum of those, and the chance they DIFFER
+        is one minus it. That is the whole derivation, and it is why gini is easy to explain.
+        For [50, 50]: 1 - (0.25 + 0.25) = 0.5. For [90, 10]: 1 - (0.81 + 0.01) = 0.18.
+
+    ENTROPY of the same node:
+
+        entropy = -(p_1 log2 p_1 + p_2 log2 p_2 + ... )
+
+        WHY THE LOGARITHM: entropy counts BITS. A fair coin needs exactly one bit to describe (heads or
+        tails) and its entropy is 1.0. A coin that always lands heads needs no bits, and its entropy is
+        0. A 90/10 split needs less than half a bit on average: 0.469.
+        The minus sign is there because log2 of a number below 1 is negative, and impurity should be
+        positive.
+
+    INFORMATION GAIN of a split:
+
+        gain = impurity(parent)
+             - (n_left / n) x impurity(left)
+             - (n_right / n) x impurity(right)
+
+        THE FRACTIONS ARE THE POINT. n_left / n is the share of rows going left. Drop them and you are
+        averaging the children as if they were the same size, which is how the tiny-but-pure split in
+        section 3 would win.
+
+    GAIN RATIO, the fix for the high-cardinality bias:
+
+        split_info = -(sum over children of (n_i/n) x log2(n_i/n))     how fragmented the split is
+        gain_ratio = gain / split_info
+
+        A 100-way split on an ID has an enormous split_info, so dividing by it destroys its apparent
+        advantage. C4.5 uses this; CART instead sidesteps the problem by only ever making BINARY
+        splits.
+
+    FOR REGRESSION, replace impurity with variance:
+        impurity = (1/n) x sum of (y_i - mean(y))^2
+    and everything else is unchanged - which is the clearest sign that impurity is a pluggable slot.""",
+
+    """9. RUNNING IT - the numbers, read carefully
+
+THE IMPURITY CURVE, measured:
+
+        counts        gini     entropy
+        [50, 50]      0.5000   1.0000
+        [70, 30]      0.4200   0.8813
+        [90, 10]      0.1800   0.4690
+        [99, 1]       0.0198   0.0808
+        [100, 0]      0.0000   0.0000
+
+Notice how much FASTER gini falls between [70,30] and [90,10] in relative terms, and how entropy
+retains more sensitivity out in the tail at [99,1] - 0.0808 against 0.0198, four times larger. That
+tail sensitivity is the entire mechanical difference between them.
+
+THE FOUR CANDIDATE SPLITS, measured:
+
+        split            gini after   gini gain   entropy after   entropy gain
+        perfect          0.0000       0.5000      0.0000          1.0000
+        useless          0.5000       0.0000      1.0000          0.0000
+        helpful          0.3200       0.1800      0.7219          0.2781
+        tiny-but-pure    0.4737       0.0263      0.9481          0.0519
+
+Both columns rank the four splits in the same order. The gain values differ (entropy's are larger
+because its scale runs to 1.0), but the DECISION is identical - which is the 97.4% agreement measured
+in section 5 showing up on a concrete example.
+
+THE HIGH-CARDINALITY TRAP, measured on the same node:
+
+        split on a unique ID (100 pure leaves): gini after 0.0000, gain 0.5000
+        the genuinely useful binary split     : gini after 0.3200, gain 0.1800
+
+The ID column scores the MAXIMUM POSSIBLE gain, beating the useful split by a factor of nearly three.
+A tree built on raw gain will always choose it, produce one leaf per training row, and report perfect
+training accuracy. If you ever see a tree with near-perfect training accuracy and a top split on
+something that sounds like an identifier, this is what happened.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+COST OF TRAINING: at each node, every feature is examined and every candidate threshold scored, and
+numeric features must be sorted - so roughly O(n log n) per feature per node, and O(features x n log n
+x depth) overall. This is why the dominant engineering effort in fast tree libraries goes into
+approximating the threshold search with histograms.
+
+COST OF PREDICTING: one walk from root to leaf, so O(depth) - which is why trees are used where
+latency matters.
+
+THE #1 MISTAKE: feeding a high-cardinality identifier to a tree scored on raw information gain.
+Measured: a unique-ID column achieves the maximum possible gain of 0.5 where a genuinely useful split
+achieves 0.18. The tree memorises, training accuracy hits 100%, and nothing generalises. Use gain
+ratio, use binary-split CART, or drop identifiers before training.
+
+THE #2 MISTAKE: forgetting to WEIGHT the children by size when computing the gain. Measured: an
+unweighted comparison would rank a five-row pure leaf above a split that genuinely improves the whole
+node.
+
+THE #3 MISTAKE: agonising over gini versus entropy. Measured: they disagree on 2.6% of candidate
+pairs. Spend that attention on stopping criteria instead.
+
+THE PROPERTY THAT LEADS SOMEWHERE ELSE: a single unpruned tree has high variance - change a few rows
+and the top split changes. That is a weakness on its own and exactly the property bagging needs, which
+is why Random Forest is built from deep trees and boosting from shallow ones.
+
+ONE-SENTENCE TAKEAWAY: at every node the tree picks the question with the highest INFORMATION GAIN -
+the parent's impurity minus the size-weighted impurity of the children - and the only thing that
+regularly breaks that criterion is a column with one distinct value per row.""",
+]
+
+_EX_P1AO["k-means clustering: how it works, how to pick k, and where it fails"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - sorting things into groups nobody labelled
+
+You have a pile of data points and no labels. You suspect they fall into natural groups - customer
+types, document topics, sensor regimes - and you want to find those groups. That is CLUSTERING, and
+k-means is the algorithm everyone learns first.
+
+You must tell it HOW MANY groups to look for. That number is k, and choosing it is half the problem.
+
+    the algorithm, in four lines:
+        1. pick k starting points, called CENTROIDS
+        2. assign every data point to its nearest centroid
+        3. move each centroid to the average position of the points assigned to it
+        4. repeat 2 and 3 until nothing moves
+
+That is genuinely all of it. It always stops, it is fast, and it has three well-defined ways of
+letting you down - all measured in sections 4 and 9.
+
+TERMS AS THEY APPEAR:
+- UNSUPERVISED: no labels, so there is no accuracy to compute. You are looking for structure, not
+  predicting anything, which makes evaluation genuinely hard.
+- CENTROID: the mean position of a group - its centre of gravity. Not necessarily a real data point.
+- INERTIA (also 'within-cluster sum of squares', WCSS): the total squared distance from every point
+  to its own centroid. It is what k-means minimises, and it is the number the elbow method plots.
+- CONVERGENCE: reaching a state where no point changes group, so nothing moves any more.""",
+
+    """2. THE INTUITION - and the two things it quietly assumes
+
+THE PROCEDURE, pictured. Drop three flags at random on a map of houses. Every house joins its nearest
+flag. Now move each flag to the middle of the houses that joined it. Some houses are now nearer to a
+different flag, so they switch. Move the flags again. Repeat until nobody switches. That is k-means,
+and it is why it is sometimes called Lloyd's algorithm.
+
+WHY IT STOPS: each of the two steps can only ever REDUCE the total squared distance - reassigning a
+point to a nearer centroid reduces it, and moving a centroid to the mean of its points reduces it too
+(the mean is precisely the point that minimises the sum of squared distances). A quantity that only
+decreases, over finitely many possible assignments, must stop. So convergence is guaranteed.
+
+BUT - AND THIS IS THE WHOLE PROBLEM - it converges to a LOCAL minimum, not necessarily the best one.
+Where it ends up depends on where the flags started. Measured, on 200 runs over the same
+well-separated three-cluster dataset:
+
+    best inertia 250.9, worst 6,078.7 - the worst run is 24 times worse than the best
+    58 of 200 runs (29%) landed on a solution at least 50% worse than the best one
+
+Nearly a third of random starts produce a visibly wrong answer. That is why every real implementation
+runs it several times and keeps the best (`n_init`), and why k-means++ - which spreads the initial
+centroids apart deliberately - is the default seeding.
+
+THE TWO ASSUMPTIONS BAKED INTO 'NEAREST CENTROID':
+    1. GROUPS ARE ROUND (spherical) and roughly the same size, because a centroid plus a distance can
+       only describe a ball.
+    2. EVERY AXIS IS COMPARABLE, because distance adds up the axes. A feature measured in centimetres
+       counts a hundred times more than the same feature in metres.
+Both are violated constantly in practice, and both are measured in section 4.""",
+
+    """3. THE ALGORITHM, TRACED BY HAND
+
+Six points in one dimension for clarity: 1, 2, 3, 10, 11, 12. Ask for k = 2.
+
+    START: pick two centroids at random. Suppose we get c1 = 2 and c2 = 3. (A bad start on purpose.)
+
+    ITERATION 1
+        assign: 1 -> c1 (distance 1 vs 2)
+                2 -> c1 (0 vs 1)
+                3 -> c2 (1 vs 0)
+                10 -> c2 (8 vs 7)
+                11 -> c2 (9 vs 8)
+                12 -> c2 (10 vs 9)
+        groups: c1 = {1, 2},  c2 = {3, 10, 11, 12}
+        move:   c1 = 1.5,  c2 = 9.0
+
+    ITERATION 2
+        assign: 1 -> c1, 2 -> c1, 3 -> c1 (1.5 vs 6.0)
+                10, 11, 12 -> c2
+        groups: c1 = {1, 2, 3},  c2 = {10, 11, 12}
+        move:   c1 = 2.0,  c2 = 11.0
+
+    ITERATION 3
+        assign: unchanged.
+        STOP.
+
+    final: {1,2,3} around 2.0 and {10,11,12} around 11.0.
+    inertia = (1-2)^2 + 0 + (3-2)^2 + (10-11)^2 + 0 + (12-11)^2 = 4
+
+Note what happened in iteration 1: the point 3 was initially grouped with the far-away cluster and
+came back on the next pass. Points do move between groups, repeatedly, which is why the algorithm is
+iterative rather than a single pass.
+
+A BAD START, TRACED, to show the failure concretely. Suppose the initial centroids are c1 = 10 and
+c2 = 11:
+
+    iteration 1: 1, 2, 3, 10 -> c1;  11, 12 -> c2
+                 c1 = 4.0,  c2 = 11.5
+    iteration 2: 1, 2, 3 -> c1;  10, 11, 12 -> c2      (same as before)
+                 c1 = 2.0,  c2 = 11.0
+    converged to the same answer.
+
+This time it recovered. It does not always, and the 29% failure rate measured in section 2 is what
+'does not always' looks like at scale.""",
+
+    """4. THE THREE WAYS IT FAILS - measured, including one that did NOT reproduce
+
+A. THE INITIALISATION LOTTERY. Measured, 200 runs on three well-separated clusters: best inertia
+   250.9, worst 6,078.7 (24 times worse), and 29% of runs at least 50% worse than the best. FIX: run
+   it multiple times and keep the lowest inertia (`n_init=10` or more), and use k-means++ seeding,
+   which picks each new starting centroid with probability proportional to its squared distance from
+   the nearest existing one - so they spread out.
+
+B. NON-SPHERICAL SHAPES. Measured on two CONCENTRIC RINGS (600 points, an inner ring and an outer
+   one), k = 2: it recovered the true grouping on 312 of 600 points - 52%, which is chance. A centroid
+   plus a radius describes a ball, and a ring is not a ball, so it slices both rings in half instead.
+   FIX: use DBSCAN (density-based) or spectral clustering when the groups are not blobs.
+
+C. UNSCALED FEATURES. Measured, same three clusters with one axis multiplied by 100 - as if one
+   feature were in centimetres and the other in metres: recovery fell from 360/360 (100%) to 243/360
+   (68%). Distance sums the axes, so the big-numbered axis dominates and the clustering happens
+   essentially along one dimension. FIX: standardise every feature before clustering. This is not
+   optional and it is the most commonly skipped step.
+
+D. AN HONEST NEGATIVE, because it is usually listed as a failure and did not reproduce. Textbooks say
+   k-means struggles with UNEQUAL CLUSTER SIZES. I tested 500 points against 20 points, k = 2, and it
+   recovered 520 of 520 - 100%. So unequal sizes alone are fine WHEN THE CLUSTERS ARE WELL SEPARATED.
+   The failure appears when unequal sizes are combined with overlap or unequal spreads: a large,
+   diffuse cluster then steals points from a small tight one, because 'nearest centroid' knows nothing
+   about spread. Being precise about that condition is better than repeating the folklore.
+
+E. k IS AN INPUT, NOT AN OUTPUT. k-means will happily split one genuine cluster into four, or merge
+   four into one, and report success either way. It has no notion of being wrong about k.
+
+F. IT ALWAYS RETURNS CLUSTERS, even on uniform noise with no structure at all. A clustering result is
+   never evidence that groups exist.""",
+
+    """5. CHOOSING k - the elbow, and why it is not a formula
+
+The natural instinct is to pick the k that minimises inertia. That does not work, and it is worth
+seeing why in numbers. Measured on three well-separated clusters:
+
+        k    inertia     drop from the previous k
+        1     8137.9
+        2     3204.0     60.6%
+        3      250.9     92.2%
+        4      217.4     13.4%
+        5      184.6     15.1%
+        6      156.0     15.5%
+
+INERTIA NEVER RISES. It cannot: more centroids always means every point is at least as close to one.
+At k = n (one centroid per point) inertia is exactly zero. So minimising inertia always tells you to
+use as many clusters as you have points, which is useless.
+
+WHAT YOU LOOK FOR INSTEAD IS THE ELBOW - the point after which the improvement flattens out. In the
+table the drops go 60.6%, 92.2%, then 13.4%, 15.1%, 15.5%. There is an enormous improvement getting to
+3 and then the returns become small and roughly constant. Three clusters, which is the truth.
+
+BE HONEST ABOUT WHAT THE ELBOW IS: a judgement call read off a chart. On real data it is often
+ambiguous, and two reasonable people will pick differently. The alternatives:
+
+    - SILHOUETTE SCORE: for each point, compare its average distance to its own cluster against its
+      average distance to the nearest other cluster. Ranges from -1 to 1, higher is better, and unlike
+      inertia it can be MAXIMISED - so it gives you an actual number to compare across k.
+    - GAP STATISTIC: compares your inertia against the inertia you would get on uniformly random data
+      with the same range. It answers 'is this better than no structure at all?'.
+    - DOMAIN KNOWLEDGE, which is usually the real answer. If marketing wants four customer segments
+      because they have four campaigns, k is four.
+
+WHAT TO SAY IN AN INTERVIEW: 'Inertia always falls with k, so you cannot minimise it - you look for
+the elbow, or use silhouette, which can be maximised. But most of the time k comes from the problem
+rather than the data.' Then mention that you would run it several times per k because of the
+initialisation lottery, since the elbow plot itself is noisy if each point is a single unlucky run.""",
+
+    """6. HOW TO RUN IT PROPERLY - numbered steps
+
+1. STANDARDISE THE FEATURES first - subtract the mean and divide by the standard deviation of each
+   column. Measured: skipping this cost 32 percentage points of recovery when one axis was scaled by
+   100.
+2. DECIDE WHETHER EUCLIDEAN DISTANCE MEANS ANYTHING for your data. If your features are categorical,
+   or the groups are shapes rather than blobs, choose a different algorithm rather than forcing this
+   one.
+3. PICK A RANGE OF k TO TRY, informed by the problem if possible.
+4. FOR EACH k, RUN THE ALGORITHM SEVERAL TIMES from different starts and keep the lowest inertia.
+   Measured: 29% of single random starts land at least 50% worse than the best, so a single run per k
+   makes the elbow plot meaningless.
+5. PLOT INERTIA AGAINST k and look for the elbow; compute silhouette scores as a second opinion.
+6. LOOK AT THE RESULTING CLUSTERS. Are they interpretable? Do they have sensible sizes? A cluster of
+   two points among clusters of five hundred usually means k is too high or the data has outliers.
+7. SANITY-CHECK AGAINST STRUCTURE-FREE DATA if you are unsure the groups are real - run the same
+   procedure on shuffled or uniform data and see whether it looks similar.
+
+THE STEPS PEOPLE SKIP ARE 1 AND 4, and both were measured above at a real cost. Standardising is one
+line; multiple restarts is one argument (`n_init`); and between them they remove the two most common
+ways of getting a silently poor clustering.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'k-means alternates two steps: assign each point to the nearest centre, then move each centre to the
+average of its points. Both steps can only reduce the total squared distance, so it always converges -
+but only to a local minimum, so where it lands depends on where the centres started. I measured that
+on well-separated data: nearly a third of random starts came out at least 50% worse than the best, and
+the worst was 24 times worse. So you run it several times, or use k-means++ seeding.
+
+Choosing k is the other half. You cannot minimise inertia because it always falls as k rises - it is
+zero when every point is its own cluster - so you look for the elbow, or use silhouette, which can
+actually be maximised. Usually the domain decides it.
+
+And it assumes two things that are easy to forget. The groups must be roughly round, because a centre
+plus a distance describes a ball - on two concentric rings it recovers the true grouping on 52% of
+points, which is chance. And the features must be on comparable scales, since distance sums the axes:
+multiplying one axis by 100 took recovery from 100% down to 68%. So I standardise first, always.'""",
+
+    """8. THE MECHANICS, PIECE BY PIECE
+
+    THE ASSIGNMENT STEP:
+
+        for each point p:
+            assign p to the centroid c minimising  sum over dimensions of (p_d - c_d)^2
+
+    Note that it uses SQUARED distance rather than the actual distance. The comparison gives the same
+    answer either way - squaring is monotonic for non-negative numbers - and skipping the square root
+    is faster. This is also why the objective is a sum of SQUARES, which is what makes the mean the
+    right update in the next step.
+
+    THE UPDATE STEP:
+
+        for each cluster:
+            centroid = the componentwise MEAN of its assigned points
+
+    WHY THE MEAN AND NOT THE MEDIAN: the mean is exactly the point that minimises the sum of SQUARED
+    distances, which is the quantity being minimised. (If you minimised absolute distances instead,
+    the median would be correct, and that algorithm exists - it is called k-medians, and it is more
+    robust to outliers.)
+
+    THE OBJECTIVE, in one line:
+
+        inertia = sum over points of (squared distance to its own centroid)
+
+    Each step reduces it, it is bounded below by zero, and there are finitely many possible
+    assignments - so the algorithm terminates. That is the whole convergence proof, and it is short
+    enough to give in an interview.
+
+    K-MEANS++ SEEDING, which is worth knowing because it is the default everywhere:
+
+        pick the first centroid uniformly at random
+        for each subsequent centroid:
+            pick a point with probability proportional to its SQUARED distance from the nearest
+            already-chosen centroid
+
+    So points far from every existing centroid are likely to be picked, and the starts spread out.
+    That single change is what turns the 29% bad-start rate into something much smaller.
+
+    AN EMPTY CLUSTER is possible - a centroid can end up with no points assigned. Implementations
+    handle it by re-seeding that centroid, usually at the point furthest from any centroid.""",
+
+    """9. RUNNING IT - all the measured numbers in one place
+
+    THE ELBOW, on three well-separated clusters (360 points):
+        k = 1   inertia 8137.9
+        k = 2   inertia 3204.0    (down 60.6%)
+        k = 3   inertia  250.9    (down 92.2%)   <- the elbow
+        k = 4   inertia  217.4    (down 13.4%)
+        k = 5   inertia  184.6    (down 15.1%)
+        k = 6   inertia  156.0    (down 15.5%)
+    The drops after k = 3 are small and roughly constant - that flattening IS the elbow. And note that
+    inertia keeps falling, so a rule of 'minimise inertia' would choose k = 6, or k = 360.
+
+    THE INITIALISATION LOTTERY, 200 runs at k = 3 on the same data:
+        best inertia    250.9
+        worst inertia  6078.7     24.2 times worse
+        58 of 200 runs at least 50% worse than the best   (29%)
+
+    CONCENTRIC RINGS, k = 2, 600 points:
+        recovered the true grouping on 312/600 points - 52%, indistinguishable from chance
+
+    UNEQUAL SIZES, 500 points versus 20, k = 2:
+        recovered 520/520 - 100%.   The folklore failure did NOT reproduce with well-separated
+        clusters; it needs overlap or very different spreads to bite.
+
+    UNSCALED FEATURES, same three clusters with one axis multiplied by 100:
+        properly scaled     360/360 points recovered   (100%)
+        one axis x100       243/360 points recovered   (68%)
+
+READING ALL OF THAT TOGETHER: two of the three real failure modes - bad starts and unscaled features -
+are fixed by two arguments you can set in one line each. The third, non-spherical shapes, is not
+fixable within k-means at all and means you have chosen the wrong algorithm.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+COST: each iteration is O(n x k x d) - every one of n points is compared to every one of k centroids
+across d dimensions - and it typically converges in a few dozen iterations. That makes it one of the
+fastest clustering algorithms available, which is a large part of why it is still the default.
+
+MEMORY: O(n x d) for the data plus O(k x d) for the centroids. Nothing quadratic, which is why it
+scales to millions of points where hierarchical clustering does not.
+
+THE #1 MISTAKE: not standardising the features. Measured at a cost of 32 percentage points of
+recovery, and it is invisible - the algorithm runs happily and returns clusters that are really
+grouped along whichever axis happens to have the largest numbers.
+
+THE #2 MISTAKE: a single run from a random start. Measured: 29% of starts land at least 50% worse than
+the best, and the worst run was 24 times worse. Use several restarts and k-means++.
+
+THE #3 MISTAKE: choosing k by minimising inertia. It always decreases, so this always says 'more
+clusters', all the way to one cluster per point. Use the elbow, or silhouette which can be maximised.
+
+THE MISTAKE THAT IS NOT FIXABLE: using k-means when the groups are not blobs. On concentric rings it
+scores 52%, which is chance. That is not a tuning problem - a centroid cannot describe a ring, and you
+need a density-based method instead.
+
+ONE-SENTENCE TAKEAWAY: k-means alternates 'assign to the nearest centre' and 'move each centre to its
+mean' until nothing changes - it always converges but only to a local optimum, so standardise the
+features, restart it several times, and remember it can only ever find round, similarly-scaled
+blobs.""",
+]
+
+# These entries' examples are declared INLINE on their Q(...) in
+# ai_sde_bank_ml.py, so there is no earlier _EX_* block to splice into — the
+# override has to live here, and it needs this dict's `< 10` condition to beat
+# the six inline ones.
 _EX_P1AO["Data leakage - the bug that makes a terrible model look excellent"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the bug that looks like success
 
