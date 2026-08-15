@@ -136,6 +136,11 @@ def create_app():
     app.register_blueprint(investments_bp)
     app.register_blueprint(interview_prep_bp)
 
+    # Gzip text responses on the way out. Registered after the blueprints so
+    # it wraps every one of them; see utils/compression.py for the rules.
+    from utils.compression import init_app as _init_compression
+    _init_compression(app)
+
     # Expose the bedtime-stories allowlist flag to every template so the
     # nav can hide the link from non-allowed users without each template
     # importing the helper.

@@ -317,29 +317,66 @@
     sel.value = subs.includes(keep) ? keep : "";
   }
 
-  // A fully written-up topic runs to ~16k characters of worked examples, and
-  // the bank holds over a thousand topics - shipping them all on every page
-  // load would mean a ~10MB download and a ~10MB innerHTML to parse. So the
-  // list arrives without them and each topic's examples are fetched the first
-  // time its card is opened, then kept for the rest of the session.
-  const EXS = new Map();
-  async function loadExamples(card){
-    const box = card.querySelector("[data-exs]");
-    if (!box || box.dataset.loaded) return;
-    const slot = box.querySelector(".ex-slot");
-    const id = box.dataset.exs;
-    const paint = (list) => {
-      slot.innerHTML = list.map((x,i)=>`<div class="ex"><span class="n">${i+1}</span><span class="body">${esc(x)}</span></div>`).join("");
-      box.dataset.loaded = "1";
-    };
-    if (EXS.has(id)) { paint(EXS.get(id)); return; }
-    slot.innerHTML = '<div class="ex"><span class="body">Loading…</span></div>';
+  /* ── Card bodies arrive one at a time ─────────────────────────────────
+     A written-up topic runs to ~16k characters across answer, walkthrough,
+     plain_algo, code and worked examples. Over 1,120 topics that was a 3 MB
+     JSON body on every page load, to render content that is COLLAPSED until
+     you click it — and the list rebuilt every one of those bodies as an HTML
+     string on every keystroke in the search box.
+
+     So the list ships headers only and a body is fetched the first time its
+     card is opened, then kept for the rest of the session. */
+  const BODIES = new Map();
+
+  function bodyHTML(e, b){
+    const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
+    return `
+      ${fld("plan","Prep time & priority",
+            `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
+            + (e.priority_label ? ` · ${e.priority_label} in its band` : "")
+            + (e.priority_minutes_total ? ` (${Math.round((e.priority_minutes_cumulative||0)/60)}h of ${Math.round(e.priority_minutes_total/60)}h into ${e.priority})` : "")
+            + (e.cat_rank ? ` · #${e.cat_rank} within ${catLabel[e.cat]||e.cat}` : "")
+            + (e.priority_note ? ` · ${e.priority_note}` : ""))}
+      ${e.tag_priority ? `<div class="fld tags"><span class="lbl">Interview tags</span>${esc(
+            [e.tag_priority + " for a new grad",
+             e.tag_topic + (e.tag_subtopic ? " / " + e.tag_subtopic : ""),
+             e.tag_level, e.tag_format + " question",
+             e.tag_stage + " round", e.tag_time + " to answer"].join("  ·  ")
+          )}${e.tag_flag ? `<span class="flagnote">Note: ${esc(e.tag_flag)}</span>` : ""}</div>` : ""}
+      ${fld("freq","Asked in interviews?",b.frequency)}
+      ${fld("answer","Answer / reasoning",b.answer)}
+      ${fld("deep","Explained step by step",b.walkthrough)}
+      ${fld("recipe","How to code it — plain English, step by step",b.plain_algo)}
+      ${b.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(b.code)}</div>` : ""}
+      ${b.diagram ? `<div class="fld"><span class="lbl">Diagram</span></div><div class="code diagram">${esc(b.diagram)}</div>` : ""}
+      ${(b.examples && b.examples.length)
+          ? `<div class="exs"><span class="lbl">Worked examples (${b.examples.length})</span><div class="ex-slot">${
+               b.examples.map((x,i)=>`<div class="ex"><span class="n">${i+1}</span><span class="body">${esc(x)}</span></div>`).join("")
+             }</div></div>`
+          : fld("","Example",b.example)}
+      ${fld("mnem","How to remember",b.mnemonic)}
+      ${fld("cx","Complexity",b.complexity)}
+      ${fld("pitfall","Common pitfalls",b.pitfalls)}
+      ${fld("follow","Follow-up questions",b.followups)}
+      ${b.tags&&b.tags.length ? `<div class="tags">${b.tags.map(t=>`<button class="tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
+      <div class="q-actions"><a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a></div>`;
+  }
+
+  async function loadBody(card){
+    const slot = card.querySelector(".q-body");
+    if (!slot || slot.dataset.loaded) return;
+    const id = card.dataset.id;
+    const e = BANK.entries.find(x => x.id === id);
+    if (!e) return;
+    const paint = (b) => { slot.innerHTML = bodyHTML(e, b); slot.dataset.loaded = "1"; };
+    if (BODIES.has(id)) { paint(BODIES.get(id)); return; }
+    slot.innerHTML = '<div class="fld"><span class="lbl">Loading…</span></div>';
     try {
-      const data = await api(`/api/ai-sde/entry/${encodeURIComponent(id)}`);
-      EXS.set(id, data.examples || []);
-      paint(EXS.get(id));
+      const b = await api(`/api/ai-sde/entry/${encodeURIComponent(id)}`);
+      BODIES.set(id, b);
+      paint(b);
     } catch(_) {
-      slot.innerHTML = '<div class="ex"><span class="body">Could not load the worked examples — reload the page.</span></div>';
+      slot.innerHTML = '<div class="fld"><span class="lbl">Could not load this topic — reload the page.</span></div>';
     }
   }
 
@@ -454,9 +491,42 @@
     } catch(_) { /* offline: the mirror stands in */ }
   }
 
+  /* Search runs on the SERVER now (/api/ai-sde/search), because the browser
+     no longer holds the prose to search — the bodies are not shipped. The
+     endpoint returns matching ids and everything else stays client-side and
+     instant, so only the text box costs a round trip. It is debounced: an
+     un-debounced keystroke handler fired a request per character.
+
+     `searchIds` is null when the box is empty, which means "no constraint" —
+     distinct from an empty Set, which means "matched nothing". */
+  let searchIds = null;
+  let searchSeq = 0;
+
+  async function runSearch(){
+    const term = ($("search").value||"").trim();
+    if (!term) { searchIds = null; render(); return; }
+    const seq = ++searchSeq;
+    try {
+      const r = await api(`/api/ai-sde/search?q=${encodeURIComponent(term)}`);
+      // A slow reply for an earlier keystroke must not overwrite a newer one.
+      if (seq !== searchSeq) return;
+      searchIds = new Set(r.ids || []);
+    } catch(_) {
+      if (seq !== searchSeq) return;
+      searchIds = null;                       // degrade to unfiltered, not empty
+    }
+    render();
+  }
+
+  let searchTimer = null;
+  function onSearchInput(){
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 180);
+  }
+
   function render(){
     if(!BANK) return;
-    const cat = $("cat").value, term = ($("search").value||"").trim().toLowerCase(), onlyUn = $("unstudied").checked;
+    const cat = $("cat").value, onlyUn = $("unstudied").checked;
     const diff = $("diff") ? $("diff").value : "";
     const pri = $("pri") ? $("pri").value : "", sort = $("sort") ? $("sort").value : "rank";
     // The six interview-tag filters, applied on top of everything above.
@@ -465,14 +535,15 @@
       (!cat || e.cat===cat) && (!onlyUn || !studied.has(e.id)) && (!diff || e.difficulty===diff) &&
       (!pri || e.priority===pri) &&
       TAG_FILTERS.every(([, field]) => !tv[field] || e[field] === tv[field]) &&
-      (!term || e.title.toLowerCase().includes(term) || (e.answer||"").toLowerCase().includes(term) || (e.tags||[]).some(t=>t.includes(term)))
+      (searchIds === null || searchIds.has(e.id))
     );
     // "Recommended" is the bank's own stack rank: highest-yield topic first.
     if (sort === "rank")       list.sort((a,b)=>(a.rank||0)-(b.rank||0));
     else if (sort === "quick") list.sort((a,b)=>(a.prep_minutes||0)-(b.prep_minutes||0) || (a.rank||0)-(b.rank||0));
     else if (sort === "long")  list.sort((a,b)=>(b.prep_minutes||0)-(a.prep_minutes||0) || (a.rank||0)-(b.rank||0));
     prog(); shown = list; effort(list);
-    const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
+    // HEADERS ONLY. The body is filled by loadBody() when the card is opened,
+    // which is what keeps this loop cheap enough to run on every filter change.
     $("list").innerHTML = list.map(e => `
       <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head" data-toggle>
@@ -485,35 +556,7 @@
           ${e.difficulty ? `<span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>` : ""}
           <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
         </div>
-        <div class="q-body">
-          ${fld("plan","Prep time & priority",
-                `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
-                + (e.priority_label ? ` · ${e.priority_label} in its band` : "")
-                + (e.priority_minutes_total ? ` (${Math.round((e.priority_minutes_cumulative||0)/60)}h of ${Math.round(e.priority_minutes_total/60)}h into ${e.priority})` : "")
-                + (e.cat_rank ? ` · #${e.cat_rank} within ${catLabel[e.cat]||e.cat}` : "")
-                + (e.priority_note ? ` · ${e.priority_note}` : ""))}
-          ${e.tag_priority ? `<div class="fld tags"><span class="lbl">Interview tags</span>${esc(
-                [e.tag_priority + " for a new grad",
-                 e.tag_topic + (e.tag_subtopic ? " / " + e.tag_subtopic : ""),
-                 e.tag_level, e.tag_format + " question",
-                 e.tag_stage + " round", e.tag_time + " to answer"].join("  ·  ")
-              )}${e.tag_flag ? `<span class="flagnote">Note: ${esc(e.tag_flag)}</span>` : ""}</div>` : ""}
-          ${fld("freq","Asked in interviews?",e.frequency)}
-          ${fld("answer","Answer / reasoning",e.answer)}
-          ${fld("deep","Explained step by step",e.walkthrough)}
-          ${fld("recipe","How to code it — plain English, step by step",e.plain_algo)}
-          ${e.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(e.code)}</div>` : ""}
-          ${e.diagram ? `<div class="fld"><span class="lbl">Diagram</span></div><div class="code diagram">${esc(e.diagram)}</div>` : ""}
-          ${e.example_count
-              ? `<div class="exs" data-exs="${e.id}"><span class="lbl">Worked examples (${e.example_count})</span><div class="ex-slot"></div></div>`
-              : fld("","Example",e.example)}
-          ${fld("mnem","How to remember",e.mnemonic)}
-          ${fld("cx","Complexity",e.complexity)}
-          ${fld("pitfall","Common pitfalls",e.pitfalls)}
-          ${fld("follow","Follow-up questions",e.followups)}
-          ${e.tags&&e.tags.length ? `<div class="tags">${e.tags.map(t=>`<button class="tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
-          <div class="q-actions"><a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a></div>
-        </div>
+        <div class="q-body"></div>
       </div>`).join("") || '<div class="card"><div class="empty">No topics match.</div></div>';
   }
 
@@ -532,11 +575,11 @@
       card.classList.toggle("done", e.target.checked); prog(); effort(shown); return;
     }
     const tag = e.target.closest("[data-tag]");
-    if (tag) { $("search").value = tag.dataset.tag; $("cat").value=""; render(); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    if (tag) { $("search").value = tag.dataset.tag; $("cat").value=""; runSearch(); window.scrollTo({top:0,behavior:"smooth"}); return; }
     if (e.target.closest("a")) return;               // let PDF link navigate
     if (e.target.closest(".q-head")) {
       card.classList.toggle("open");
-      if (card.classList.contains("open")) loadExamples(card);
+      if (card.classList.contains("open")) loadBody(card);
     }
   });
 
@@ -544,7 +587,7 @@
   if ($("pri")) $("pri").addEventListener("change", render);
   if ($("sort")) $("sort").addEventListener("change", render);
   if ($("diff")) $("diff").addEventListener("change", render);
-  $("search").addEventListener("input", render);
+  $("search").addEventListener("input", onSearchInput);
   $("unstudied").addEventListener("change", render);
   TAG_FILTERS.forEach(([id]) => {
     const sel = $(id); if (!sel) return;

@@ -250,31 +250,128 @@ def ai_sde_page():
     return render_template("ai_sde.html")
 
 
+# ── The list payload, and why it is only a sliver of each entry ───────
+#
+# The bank is 1,120 entries and a written-up topic runs to ~16k characters
+# across answer / walkthrough / plain_algo / code / examples. Serialising all
+# of it produced a 3 MB JSON body on every single page load — and the list
+# screen shows NONE of it, because every card is collapsed until clicked.
+# Worse, the client rebuilt all 1,120 card bodies as one HTML string on every
+# keystroke in the search box.
+#
+# So the list ships only what the collapsed header, the filters and the sort
+# actually read. Everything else arrives per-card from /api/ai-sde/entry/<id>
+# when the card is opened. 3 MB -> ~700 KB, and ~80 KB once gzipped.
+_AI_SDE_LIST_FIELDS = (
+    # Header
+    "title", "cat", "difficulty", "priority", "priority_note", "prep_label",
+    "tag_priority", "tag_subtopic", "tag_topic",
+    # Filters
+    "tag_level", "tag_format", "tag_stage", "tag_time", "tag_flag",
+    # Sort, the effort line, and the "prep time & priority" line in the body
+    "rank", "cat_rank", "prep_minutes", "priority_label", "priority_rank",
+    "priority_total", "priority_minutes_total", "priority_minutes_cumulative",
+)
+
+#: Fields the list deliberately omits — the body of the card. Kept as an
+#: explicit list rather than "everything not in _AI_SDE_LIST_FIELDS" so that
+#: adding a field to the bank is a conscious decision about which side of the
+#: line it falls on, not a silent 3 MB regression.
+_AI_SDE_BODY_FIELDS = (
+    "frequency", "answer", "walkthrough", "plain_algo", "code", "diagram",
+    "example", "mnemonic", "complexity", "pitfalls", "followups", "tags",
+)
+
+
+def _build_ai_sde_list():
+    """The thin list, built once at import rather than per request.
+
+    The bank is a static Python literal — it cannot change between requests,
+    so rebuilding 1,120 dicts on every call was pure waste (~27 ms of the
+    response, before any network).
+    """
+    items = []
+    for i, e in enumerate(AI_SDE_ENTRIES):
+        item = {"id": f"ai{i}", "example_count": len(e.get("examples") or [])}
+        for k in _AI_SDE_LIST_FIELDS:
+            v = e.get(k)
+            # Drop empties: across 1,120 entries the absent keys alone are
+            # tens of kilobytes of `"field":null`.
+            if v not in (None, "", [], {}):
+                item[k] = v
+        items.append(item)
+    return items
+
+
+def _build_ai_sde_search_index():
+    """One lowercase haystack per entry, for server-side search.
+
+    Held in the process (~1.2 MB) rather than shipped to every client. This
+    also WIDENS search: it used to match title / answer / tags only, because
+    those were the only fields the browser had. It now covers the worked
+    walkthrough, the plain-English recipe, the code and the examples, which
+    is what you actually want when hunting for where `heapq` or "monotonic"
+    is discussed.
+    """
+    index = []
+    for e in AI_SDE_ENTRIES:
+        parts = [str(e.get("title") or "")]
+        for k in _AI_SDE_BODY_FIELDS:
+            v = e.get(k)
+            if isinstance(v, str):
+                parts.append(v)
+            elif isinstance(v, (list, tuple)):
+                parts.append(" ".join(str(x) for x in v))
+        parts.extend(str(x) for x in (e.get("examples") or []))
+        index.append(" ".join(parts).lower())
+    return index
+
+
+_AI_SDE_LIST = _build_ai_sde_list()
+_AI_SDE_SEARCH = _build_ai_sde_search_index()
+
+
 @interview_prep_bp.route("/api/ai-sde", methods=["GET"])
 @login_required
 def ai_sde_bank():
     """The AI SDE prep bank: DSA patterns (with worked code), ML/AI
     concepts, ML coding, ML system design, CS fundamentals, behavioral and
-    company process — each explained in depth. Static reference content."""
-    # The worked examples are by far the heaviest field - a fully written-up
-    # topic runs to ~16k characters - and nothing on the list screen needs them
-    # until a card is actually opened. Ship every other field, plus a count so
-    # the "Worked examples (N)" heading can render, and let the page fetch the
-    # bodies one entry at a time from /api/ai-sde/entry/<id>.
-    items = []
-    for i, e in enumerate(AI_SDE_ENTRIES):
-        item = {k: v for k, v in e.items() if k != "examples"}
-        item["id"] = f"ai{i}"
-        item["example_count"] = len(e.get("examples") or [])
-        items.append(item)
+    company process — each explained in depth. Static reference content.
+
+    Headers only — see _AI_SDE_LIST_FIELDS. Card bodies come from
+    /api/ai-sde/entry/<id> as they are opened.
+    """
     return jsonify({
         "categories": [{"key": k, "label": v} for k, v in AI_SDE_CATEGORIES.items()],
-        "entries": items, "total": len(items),
+        "entries": _AI_SDE_LIST, "total": len(_AI_SDE_LIST),
         # The interview-tag vocabulary, so the filter dropdowns are built from
         # the single source of truth in ai_sde_tags.py rather than a hardcoded
         # copy in the template that would drift the moment a value is added.
         "tag_vocab": _ai_sde_tag_vocab(),
     })
+
+
+@interview_prep_bp.route("/api/ai-sde/search", methods=["GET"])
+@login_required
+def ai_sde_search():
+    """Ids of the entries matching `q`, for the client to intersect with its
+    own filters.
+
+    Search moved to the server when the card bodies stopped being shipped —
+    the browser no longer holds the prose to search. Returning ids rather
+    than entries keeps this a few kilobytes and leaves every other filter
+    (category, difficulty, the six interview tags, unstudied) client-side and
+    instant.
+
+    Multiple words are ANDed, which matches how people narrow a list.
+    """
+    q = (request.args.get("q") or "").strip().lower()
+    if not q:
+        return jsonify({"q": "", "ids": None, "total": len(_AI_SDE_LIST)})
+    terms = [t for t in q.split() if t][:8]      # a cap, so a pasted essay is cheap
+    ids = [f"ai{i}" for i, hay in enumerate(_AI_SDE_SEARCH)
+           if all(t in hay for t in terms)]
+    return jsonify({"q": q, "ids": ids, "total": len(ids)})
 
 
 #: Query-string name -> entry field, for the six filterable interview tags.
@@ -322,15 +419,24 @@ def _ai_sde_tag_select(items):
 @interview_prep_bp.route("/api/ai-sde/entry/<entry_id>", methods=["GET"])
 @login_required
 def ai_sde_entry(entry_id):
-    """The worked examples for one topic, fetched when its card is opened."""
+    """The whole body of one topic, fetched when its card is opened.
+
+    This used to return only `examples`. It now carries every field in
+    _AI_SDE_BODY_FIELDS as well, because the list endpoint stopped shipping
+    them — one request per card actually opened, instead of 1,120 bodies on
+    page load for the handful anyone reads.
+    """
     try:
         idx = int(entry_id[2:]) if entry_id.startswith("ai") else -1
     except ValueError:
         idx = -1
     if not 0 <= idx < len(AI_SDE_ENTRIES):
         return jsonify({"error": "unknown entry"}), 404
-    return jsonify({"id": entry_id,
-                    "examples": AI_SDE_ENTRIES[idx].get("examples") or []})
+    e = AI_SDE_ENTRIES[idx]
+    body = {k: e[k] for k in _AI_SDE_BODY_FIELDS if e.get(k) not in (None, "", [], {})}
+    body["id"] = entry_id
+    body["examples"] = e.get("examples") or []
+    return jsonify(body)
 
 
 # ══════════════════════════════════════════════════════════════════════
