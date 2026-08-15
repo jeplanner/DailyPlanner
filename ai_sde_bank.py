@@ -151777,6 +151777,674 @@ metric is another chance for noise to look like a win, and an underpowered test 
 find effects, it exaggerates the ones it does find.""",
 ]
 
+_EX_P1AO["Loss functions - which to use when, and why the pairing matters"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the loss is the definition of 'wrong'
+
+A model does not know what a good prediction is. The LOSS FUNCTION tells it, by turning every
+prediction into a single number that training tries to make small.
+
+    THE MODEL IS NOT TRYING TO BE ACCURATE. IT IS TRYING TO MINIMISE THE LOSS YOU CHOSE.
+
+If those two differ, the model will do exactly what you asked and not what you wanted. That is the
+whole topic in one sentence.
+
+THE THREE QUESTIONS THAT PICK A LOSS:
+
+    WHAT SHAPE IS THE OUTPUT?   a number -> regression losses. A class -> classification losses.
+    HOW SHOULD ERRORS BE WEIGHTED?   is being 10 off twice as bad as 5 off, or four times as bad?
+    WHAT SHOULD IT DO ABOUT OUTLIERS?   chase them, or ignore them?
+
+THE MEASUREMENT THAT MAKES THE THIRD QUESTION CONCRETE. 200 clean points centred on 10, then outliers
+added at 1,000, and each loss fitted to a single constant:
+
+    outliers   value      MSE fit    MAE fit    Huber fit
+           0       -         9.89       9.88        9.87
+           1   1,000        14.82       9.88        9.87
+           5   1,000        34.04       9.92        9.90
+          20   1,000        99.90      10.04      10.02
+
+ONE OUTLIER MOVED MSE FROM 9.89 TO 14.82. Twenty moved it to 99.90 - the fit is now nowhere near any
+real data point. MAE and Huber moved by less than 0.2 the entire time.
+
+THE LOSS DID NOT FAIL. It did exactly what squaring means.
+
+TERMS AS THEY APPEAR:
+- MSE: mean squared error. MAE: mean absolute error.
+- CROSS-ENTROPY: the standard classification loss, also called log loss.""",
+
+    """2. THE INTUITION - a loss is a statement about what you are estimating
+
+The deep version of the outlier result, and it is worth knowing because it explains everything else:
+
+    MINIMISING SQUARED ERROR ESTIMATES THE MEAN.
+    MINIMISING ABSOLUTE ERROR ESTIMATES THE MEDIAN.
+
+Those are theorems, not heuristics. So the question 'MSE or MAE?' is really 'do I want the mean or the
+median?' - and everyone already knows the answer to that one. If one house on the street sold for 40
+million, the MEAN house price is a number no house is near, and the MEDIAN is still useful.
+
+WHY SQUARING DOES THIS - stated as derivatives, which is what training actually sees:
+
+    residual        MSE gradient      MAE gradient      Huber (delta=1)
+           1                   2                 1                    2
+          10                  20                 1                    2
+         100                 200                 1                    2
+       1,000               2,000                 1                    2
+
+MSE'S PULL GROWS WITHOUT BOUND. A point 1,000 away exerts a thousand times the force of a point 1
+away - so a single mislabelled row can outvote hundreds of correct ones. MAE and Huber cap the force:
+every point gets at most one vote.
+
+HUBER is the compromise, and it is the one worth naming in an interview: squared near zero, linear
+beyond a threshold delta. That gives you MSE's smooth, well-behaved gradient where the errors are
+small AND MAE's resistance where they are large. The measured column shows it tracking MAE almost
+exactly under contamination.
+
+AN HONEST NOTE FROM MY OWN EXPERIMENT: at an extreme outlier value of 100,000, MAE and Huber also gave
+bad fits - but that is a CONVERGENCE artifact, not a property of the loss. Their gradients are capped
+at 1 and 2, so from a starting point 2,400 away they need far more steps to walk back. That slowness
+IS the real trade-off of MAE: robust, and slow to converge, because its gradient carries no
+information about how wrong it is.""",
+
+    """3. CLASSIFICATION - and why the pairing with the output layer matters
+
+    THE QUESTION INTERVIEWERS ACTUALLY ASK: 'why not just use MSE for classification?'
+
+    THE ANSWER IS ABOUT GRADIENTS, and it is measurable. Take a single sigmoid unit whose true label
+    is 1, and see how hard each loss pushes when the model is wrong:
+
+        prediction p     MSE gradient (dL/dz)    cross-entropy gradient (dL/dz)
+            0.00247               -0.004921                         -0.997527
+            0.01799               -0.034690                         -0.982014
+            0.11920               -0.184956                         -0.880797
+            0.50000               -0.250000                         -0.500000
+            0.88080               -0.025031                         -0.119203
+
+    LOOK AT THE FIRST ROW. The model says 0.2% when the truth is 1 - as wrong as it is possible to be.
+    MSE pushes back with a gradient of 0.0049. Cross-entropy pushes back with 0.9975. TWO HUNDRED TIMES
+    THE CORRECTIVE SIGNAL, exactly where correction is most needed.
+
+    WHY: the sigmoid's derivative is p(1-p), which goes to ZERO at both ends. MSE's chain rule
+    multiplies by it, so a saturated unit gets almost no gradient - it is stuck being confidently
+    wrong. Cross-entropy's log EXACTLY CANCELS the sigmoid's exponential, leaving the beautifully
+    simple dL/dz = p - y. The gradient is just the error.
+
+    THE CONSEQUENCE, TRAINED. Same data, same learning rate, both starting from a deliberately bad
+    initialisation (w = -6, the wrong sign):
+
+        epochs     MSE: w    MSE acc      CE: w    CE acc
+            50     -5.445       6.9%      2.391     93.2%
+           200      1.750      93.1%      2.420     93.2%
+         1,000      2.215      93.0%      2.420     93.2%
+
+    AT 50 EPOCHS, CROSS-ENTROPY IS ALREADY DONE AND MSE HAS BARELY MOVED - it is at 6.9% accuracy,
+    still confidently backwards, because its gradient at that point is tiny. It escapes eventually,
+    but it wasted 150 epochs on a problem cross-entropy solved in fifty.
+
+    THE GENERAL PRINCIPLE, and it is the sentence that answers the question properly:
+
+        THE LOSS AND THE OUTPUT ACTIVATION ARE A MATCHED PAIR. sigmoid + binary cross-entropy, and
+        softmax + categorical cross-entropy, are designed together so the activation's derivative
+        cancels and the gradient becomes (prediction - target). Mixing and matching breaks that
+        cancellation and you get vanishing gradients for free.""",
+
+    """4. THE FAILURE MODES
+
+A. MSE ON CLASSIFICATION. Measured: 200x less gradient where the model is most wrong, and 150 wasted
+   epochs escaping a bad start.
+
+B. MSE ON DATA WITH OUTLIERS, without deciding that is what you want. Measured: 20 outliers moved the
+   fit from 9.89 to 99.90.
+
+C. IMPLEMENTING CROSS-ENTROPY AS -log(p) WITH A SEPARATE SOFTMAX. p can underflow to 0 and log(0) is
+   -infinity, producing NaN losses that poison every weight. USE THE FUSED VERSION your framework
+   provides - `logits` in, loss out - which is numerically stable by construction. This is a real bug
+   that people spend days on.
+
+D. IGNORING CLASS IMBALANCE. Plain cross-entropy on a 1% positive class is dominated by the negatives.
+   Use class weights, or focal loss, which down-weights easy examples so the rare hard ones matter.
+
+E. USING ACCURACY AS THE TRAINING OBJECTIVE. It is not differentiable - it is a step function, with
+   gradient zero everywhere. That is precisely why cross-entropy exists: it is a smooth surrogate that
+   accuracy cannot be.
+
+F. FORGETTING THAT THE LOSS ENCODES YOUR BUSINESS ASYMMETRY. If a missed fraud costs 200x a false
+   alarm, an unweighted loss is asserting they cost the same. Weight the loss, or set the threshold
+   deliberately afterwards - but do one of them on purpose.
+
+G. COMPARING LOSSES ACROSS DIFFERENT SETUPS. Cross-entropy depends on the number of classes; MSE
+   depends on the units of your target. 'Our loss is 0.31' means nothing without context.
+
+H. OPTIMISING A LOSS THAT IS NOT THE PRODUCT GOAL. Ranking systems trained on click prediction
+   optimise clicks, which is why they discover clickbait. The loss is a specification, and the model
+   will meet it literally.""",
+
+    """5. THE LOSSES, AND WHEN TO REACH FOR EACH
+
+REGRESSION:
+
+    MSE / L2 - the default. Smooth, differentiable everywhere, estimates the MEAN.
+        USE WHEN: errors are roughly Gaussian and large errors genuinely are disproportionately bad.
+        AVOID WHEN: outliers exist and are not the thing you care about.
+
+    MAE / L1 - estimates the MEDIAN. Robust.
+        USE WHEN: outliers are present and should not dominate.
+        THE COST: constant gradient means slow convergence and a non-differentiable point at zero.
+
+    HUBER - squared within delta, linear beyond. The practical compromise, and usually the right answer
+        when you are unsure. delta is the boundary between 'normal error' and 'outlier'.
+
+    LOG-COSH - smooth everywhere and behaves like Huber. Nice when you want no kink at all.
+
+    QUANTILE / PINBALL - asymmetric on purpose. Optimising the 90th percentile gives you a prediction
+        that overshoots 90% of the time, which is exactly what inventory and capacity planning want.
+        WORTH NAMING: it is the loss that makes 'we under-predicted demand' a tunable decision rather
+        than an accident.
+
+CLASSIFICATION:
+
+    BINARY CROSS-ENTROPY with a sigmoid - two classes, or multi-LABEL where several can be true.
+    CATEGORICAL CROSS-ENTROPY with a softmax - one class out of many.
+    FOCAL LOSS - cross-entropy multiplied by (1-p)^gamma, which shrinks the contribution of
+        already-easy examples. Built for extreme imbalance like object detection.
+    HINGE LOSS - the SVM loss. Cares only about the margin, so points well inside contribute nothing.
+
+OTHER SHAPES WORTH KNOWING EXIST:
+    CONTRASTIVE / TRIPLET - for embeddings: pull similar pairs together, push dissimilar apart. This
+        is how the embedding models behind retrieval are trained - see
+        [[embeddings-what-they-are-and-why-they-work]].
+    KL DIVERGENCE - matching one distribution to another, used in distillation and VAEs.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. WHAT IS THE OUTPUT? A number, one class, several classes, a ranking, an embedding? This eliminates
+   most of the list immediately.
+2. LOOK AT THE TARGET'S DISTRIBUTION. Plot it. Skewed and heavy-tailed means MSE will chase the tail.
+3. DECIDE WHAT THE OUTLIERS ARE. Data errors -> use a robust loss or clean them. Real and important
+   (fraud amounts, extreme demand) -> MSE is CORRECT and you want it chasing them.
+4. IF CLASSIFYING, USE CROSS-ENTROPY, and pair it with the matching activation - sigmoid for binary
+   and multi-label, softmax for single-label multi-class.
+5. USE THE FUSED, NUMERICALLY STABLE IMPLEMENTATION. Pass logits, not probabilities.
+6. IF THE CLASSES ARE IMBALANCED, weight the loss or use focal loss - and separately decide the
+   threshold, because these are two different levers.
+7. IF THE COSTS ARE ASYMMETRIC, encode that in the loss weights, deliberately and in writing.
+8. IF YOU WANT AN INTERVAL RATHER THAN A POINT, use quantile loss and fit two models.
+9. TRACK THE LOSS FOR TRAINING AND A BUSINESS METRIC FOR DECISIONS. They are different jobs and the
+   loss is a surrogate.
+10. SANITY-CHECK AGAINST A CONSTANT BASELINE. Predicting the mean, or the majority class, gives the
+    loss you must beat. Surprisingly often the model does not.
+
+STEP 3 IS THE REAL DECISION. 'Are these outliers noise or signal?' is a question about your data and
+your product, and once you have answered it the loss chooses itself.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The loss defines what "wrong" means, and the model will minimise exactly what you wrote down - so if
+the loss and the goal differ, you get what you asked for.
+
+For regression the key fact is that minimising squared error estimates the MEAN and minimising
+absolute error estimates the MEDIAN. So "MSE or MAE" is really "mean or median", and everyone knows
+how that behaves with a 40-million-pound house on the street. I measured it: 200 points centred on 10,
+and adding a single outlier at 1,000 moved the MSE fit from 9.89 to 14.82. Twenty outliers moved it to
+99.90 - nowhere near any real data. MAE and Huber moved by less than 0.2 throughout. That is because
+MSE's gradient grows with the residual - a point 1,000 away pulls a thousand times harder - while
+MAE's is capped at 1. Huber is the compromise: squared near zero, linear beyond, so you get smooth
+gradients where errors are small and robustness where they are large.
+
+For classification, cross-entropy, and I would explain why rather than assert it. If you use MSE with
+a sigmoid, the chain rule multiplies by the sigmoid's derivative p(1-p), which goes to zero at both
+ends. So a model that is CONFIDENTLY WRONG gets almost no gradient. I measured that - at p = 0.0025
+with a true label of 1, MSE's gradient is 0.0049 and cross-entropy's is 0.9975. Two hundred times the
+signal, exactly where you need it. Cross-entropy's log cancels the sigmoid's exponential and the
+gradient becomes simply (prediction minus target).
+
+And I would make the general point: the loss and the output activation are a matched pair. Sigmoid with
+binary cross-entropy, softmax with categorical cross-entropy - they are designed together so that
+cancellation happens. Mixing them gives you vanishing gradients for free.
+
+Two practical notes: use the fused logits-in implementation, because computing softmax then log
+underflows to NaN. And accuracy cannot be a training objective at all - it is a step function with
+zero gradient everywhere, which is precisely why cross-entropy exists as its smooth surrogate.'""",
+
+    """8. THE FORMULAS, PIECE BY PIECE
+
+    MSE  =  mean( (y - yhat)^2 )
+        dL/dyhat = 2(yhat - y)      GROWS WITH THE ERROR
+        Estimates the MEAN. Smooth everywhere. Units are your target's units SQUARED, which is why
+        people report RMSE instead - it is back in the original units and directly interpretable.
+
+    MAE  =  mean( |y - yhat| )
+        dL/dyhat = sign(yhat - y)   CONSTANT, magnitude 1
+        Estimates the MEDIAN. Robust. Not differentiable at zero, which frameworks handle by
+        convention, and the constant gradient makes it slow far from the optimum - measured above.
+
+    HUBER(delta) = squared if |r| <= delta, else linear
+        dL/dr = 2r inside, ±2*delta outside
+        delta is the definition of 'outlier' in your units, and it is a real hyperparameter.
+
+    BINARY CROSS-ENTROPY  =  -[ y*log(p) + (1-y)*log(1-p) ]
+        WITH p = sigmoid(z):   dL/dz = p - y
+        THAT CANCELLATION IS THE WHOLE POINT. No p(1-p) factor survives, so the gradient is the error
+        itself and it never vanishes from the loss's side.
+        Read the two terms: if y=1 only -log(p) applies, so p -> 0 costs -log(0.001) = 6.9; if y=0
+        only -log(1-p) applies. It is 'how surprised was I by the truth', in nats.
+
+    CATEGORICAL CROSS-ENTROPY  =  -log(p_correct_class)
+        WITH softmax: dL/dz_i = p_i - y_i. Same cancellation, same simplicity.
+        NOTE IT ONLY LOOKS AT THE TRUE CLASS'S PROBABILITY. The others matter only because softmax
+        normalises.
+
+    FOCAL LOSS  =  -(1-p)^gamma * log(p)
+        The (1-p)^gamma factor is near 0 for easy examples, so they stop dominating. gamma=2 is the
+        usual value.
+
+    QUANTILE(tau) = max( tau*(y-yhat), (tau-1)*(y-yhat) )
+        Asymmetric. tau=0.9 penalises under-prediction nine times more than over-prediction.""",
+
+    """9. WHAT CROSS-ENTROPY SEES THAT ACCURACY CANNOT
+
+    Three models on the same ten points, with the same predictions rounded:
+
+        model                        accuracy    cross-entropy    Brier
+        cautious   (p = 0.55/0.45)       100%            0.598    0.202
+        confident  (p = 0.95/0.05)       100%            0.051    0.003
+        overconfident and wrong           70%            1.389    0.294
+
+    THE FIRST TWO HAVE IDENTICAL ACCURACY - both get every point right. Accuracy cannot distinguish
+    them at all. Cross-entropy says one is TWELVE TIMES better, because it is right AND sure, and a
+    model hovering at 0.55 is one noisy sample away from being wrong.
+
+    THAT IS WHY CROSS-ENTROPY IS THE TRAINING OBJECTIVE. Accuracy gives no gradient - it is a step
+    function, flat everywhere, so there is literally nothing to descend. Cross-entropy gives a smooth
+    slope that keeps rewarding a model for becoming more confident about things it already gets right,
+    which is what pushes the decision boundary to a good place rather than a barely-adequate one.
+
+    NOW THE THIRD ROW, which is the warning. It is 70% accurate and its loss is 1.389 - far worse than
+    the 100% models, as you would expect. But look at WHY:
+
+        -log(0.01) = 4.61        the cost of one confident mistake
+        -log(0.45) = 0.80        the cost of one cautious mistake
+
+    A CONFIDENT ERROR COSTS SIX TIMES A CAUTIOUS ONE. Cross-entropy is unbounded above: a single
+    prediction of 0.001 on a true positive contributes 6.9 to the sum, and a prediction of exactly 0
+    contributes infinity - which is why the fused implementations clip, and why softmax-then-log
+    produces NaN.
+
+    THE PRACTICAL READING: cross-entropy is a CALIBRATION-AWARE metric. It rewards a model that knows
+    what it does not know. If you care about the probabilities themselves - for thresholding, for
+    expected-cost decisions, for ranking - then a model with better cross-entropy at equal accuracy is
+    genuinely the better model, and accuracy alone would have told you they were the same.
+
+    THE BRIER SCORE column is the squared-error version of the same idea: bounded, less punishing of
+    confident errors, and a reasonable alternative when unbounded penalties are undesirable.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MEASURED EVIDENCE:
+        outliers, fitting a constant to 200 points centred on 10:
+            1 outlier at 1,000   -> MSE 14.82, MAE 9.88, Huber 9.87
+            20 outliers at 1,000 -> MSE 99.90, MAE 10.04, Huber 10.02
+        gradients at a residual of 1,000:  MSE 2,000 · MAE 1 · Huber 2
+        confidently-wrong sigmoid (p=0.0025, y=1): MSE gradient 0.0049 · cross-entropy 0.9975 (203x)
+        training from a bad start: at 50 epochs, cross-entropy 93.2% and MSE 6.9%
+        equal accuracy, different confidence: cross-entropy 0.598 vs 0.051
+
+    THE PAIRINGS THAT EXIST FOR A REASON:  sigmoid + binary cross-entropy · softmax + categorical
+    cross-entropy. Both give dL/dz = p - y.
+
+THE #1 MISTAKE: MSE for classification. The sigmoid's derivative kills the gradient exactly where the
+model is most wrong - 200x less corrective signal than cross-entropy at p = 0.0025.
+
+THE #2 MISTAKE: MSE on outlier-heavy data without deciding that is what you want. Squaring means one
+point 1,000 away outvotes a million points 1 away.
+
+THE #3 MISTAKE: computing softmax then taking the log yourself. It underflows to NaN; use the fused
+logits-based implementation.
+
+THE #4 MISTAKE: expecting accuracy to be trainable. It is a step function with zero gradient
+everywhere - that is why smooth surrogates exist.
+
+THE #5 MISTAKE: an unweighted loss on an asymmetric problem, which silently asserts that a miss and a
+false alarm cost the same.
+
+ONE-SENTENCE TAKEAWAY: the loss is your definition of wrong, so pick it from what you actually want -
+mean or median, robust or outlier-chasing, symmetric or not - and for classification use cross-entropy
+paired with its matching activation, because that pairing is what keeps the gradient alive when the
+model is confidently wrong.""",
+]
+
+_EX_P1AO["PCA - what it does, what it does not, and when to use it"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - finding the directions the data actually varies in
+
+You have 12 columns. Are they really 12 independent things, or are they 3 underlying factors dressed
+up as 12 measurements?
+
+PRINCIPAL COMPONENT ANALYSIS answers that. It finds new axes - the PRINCIPAL COMPONENTS - such that:
+
+    PC1 is the direction of MAXIMUM VARIANCE in the data
+    PC2 is the direction of maximum remaining variance, PERPENDICULAR to PC1
+    PC3 is perpendicular to both, and so on
+
+Then you keep the first few and throw the rest away. The components are new features, each a WEIGHTED
+COMBINATION of your original columns.
+
+THE EVERYDAY ANALOGY: photographing a shoal of fish. The shoal is a 3-D object, but if it is long and
+thin you can photograph it from the side and lose almost nothing. PCA finds the angle that loses the
+least - and tells you numerically how much you lost.
+
+MEASURED, on 12 columns generated from 3 underlying factors plus noise:
+
+    component    eigenvalue    variance %    cumulative %
+            1       205.255         77.2%          77.2%
+            2        47.493         17.9%          95.1%
+            3        11.966          4.5%          99.6%
+            4         0.146          0.1%          99.7%
+            5         0.141          0.1%          99.7%
+
+THE FIRST THREE COMPONENTS CARRY 99.6%. Components 4 onward are all about 0.14 - they are the noise
+floor, and they are indistinguishable from one another because that is exactly what noise looks like.
+PCA RECOVERED THE TRUE STRUCTURE without being told it existed.
+
+TERMS AS THEY APPEAR:
+- EIGENVALUE: how much variance a component captures.
+- LOADING: how much each original column contributes to a component.""",
+
+    """2. THE INTUITION - it is a rotation, then a truncation
+
+WHAT PCA ACTUALLY DOES, mechanically:
+
+    1. CENTRE the data - subtract each column's mean. (This is why PCA is about VARIANCE: it works on
+       deviations from the mean, not on the values themselves.)
+    2. COMPUTE THE COVARIANCE MATRIX - how each pair of columns varies together.
+    3. FIND ITS EIGENVECTORS. Each is a direction; its eigenvalue is the variance along that direction.
+    4. SORT BY EIGENVALUE, keep the top k.
+    5. PROJECT the data onto those k directions.
+
+STEPS 1-4 ARE A ROTATION - no information is lost, you have just changed the axes to line up with the
+data's natural directions. STEP 5 IS THE ONLY LOSSY PART, and it is the only part you control.
+
+WHY EIGENVECTORS OF THE COVARIANCE MATRIX? Because 'the direction of maximum variance' is exactly the
+question 'which unit vector v maximises v'Cv?', and the answer to that is the top eigenvector of C.
+That is the entire mathematical content, and it is worth being able to say in one sentence.
+
+WHY THE COMPONENTS ARE PERPENDICULAR: covariance matrices are symmetric, and symmetric matrices have
+orthogonal eigenvectors. The practical consequence is that THE NEW FEATURES ARE UNCORRELATED - which
+is often the real reason to use PCA, because correlated inputs destabilise linear models.
+
+HOW MUCH DID TRUNCATION COST? Measured, reconstructing the data from k components:
+
+    k    variance kept    mean squared reconstruction error    compression
+    1            77.2%                              5.0345          12.0x
+    2            95.1%                              1.0846           6.0x
+    3            99.6%                              0.0894           4.0x
+    4            99.7%                              0.0773           3.0x
+    8            99.8%                              0.0348           1.5x
+
+THE ERROR FALLS BY 56x FROM k=1 TO k=3 AND THEN BY 14% FOR THE NEXT FIVE COMPONENTS. That flattening
+is the ELBOW, and it is the honest way to choose k: past it you are spending dimensions on noise.""",
+
+    """3. THE TWO MISTAKES THAT MATTER
+
+    MISTAKE ONE - FORGETTING TO STANDARDISE. PCA maximises VARIANCE, and variance has units. Change a
+    column from metres to millimetres and its variance goes up by a million.
+
+    MEASURED. Same data, one column multiplied by 1,000:
+
+                              PC1 variance %    |PC1's weight on column 0|
+        original units                 77.2%                        0.168
+        column 0 x 1,000              100.0%                        1.000
+
+    PC1 BECAME THAT COLUMN. Weight 1.000 on it, zero on everything else, and it 'explains' 100% of the
+    variance. The entire analysis has been hijacked by a unit conversion.
+
+    THE FIX: standardise every column to mean 0, sd 1 before running PCA - which is equivalent to
+    running PCA on the CORRELATION matrix instead of the covariance matrix. Skip it only when all
+    columns are genuinely in the same units and their relative magnitudes are meaningful (pixel
+    intensities, say, or repeated measurements of the same quantity).
+
+    MISTAKE TWO - ASSUMING HIGH VARIANCE MEANS USEFUL. PCA NEVER LOOKS AT YOUR LABELS. It is
+    unsupervised, so it cannot know which direction predicts anything.
+
+    MEASURED, on data built to make the point: one feature with huge variance and NO label
+    information, one with tiny variance that separates the classes almost perfectly:
+
+        PC1 explains 98.9% of the variance.  Its weight on the useful feature: 0.0017
+        PC2 explains  1.1% of the variance.  Its weight on the useful feature: 1.0000
+
+        keeping PC1 only -> class separation 0.028 standard deviations   (useless)
+        keeping PC2 only -> class separation 7.999 standard deviations   (near-perfect)
+
+    'KEEP THE COMPONENT THAT EXPLAINS 98.9% OF THE VARIANCE' WOULD HAVE THROWN AWAY THE ONLY USEFUL
+    FEATURE AND KEPT PURE NOISE.
+
+    This is not a contrived edge case - it is the normal situation whenever a high-magnitude column is
+    incidental (a timestamp, a total, a scale factor) and the signal lives in something small. IF YOU
+    HAVE LABELS AND YOUR GOAL IS PREDICTION, use a supervised method - LDA, or just feature selection
+    by measured predictive value.""",
+
+    """4. THE FAILURE MODES
+
+A. NOT STANDARDISING. Measured: one unit change gave PC1 a weight of 1.000 on a single column and
+   '100% of the variance'.
+
+B. ASSUMING VARIANCE MEANS SIGNAL. Measured: the 98.9% component had a class separation of 0.028
+   standard deviations and the 1.1% component had 7.999.
+
+C. EXPECTING INTERPRETABLE COMPONENTS. PC1 is a weighted mix of ALL your columns. Sometimes it has an
+   obvious meaning ('overall size'); usually it is 0.3 x income - 0.2 x age + 0.4 x tenure and means
+   nothing you can tell a stakeholder. PCA TRADES INTERPRETABILITY FOR COMPACTNESS - say so rather
+   than inventing stories about what PC2 'represents'.
+
+D. FITTING PCA ON TRAIN AND TEST TOGETHER. The components and the column means are fitted parameters.
+   Fit on training data, apply to test. Same rule as any scaler.
+
+E. USING IT WHEN THE STRUCTURE IS NOT LINEAR. PCA finds linear subspaces only. Data on a curved
+   manifold - a spiral, a Swiss roll - is not captured by any rotation, and no number of components
+   will fix that. Kernel PCA, UMAP or t-SNE are the alternatives for visualisation.
+
+F. USING PCA OUTPUT AS INPUT TO A TREE MODEL. Trees are already invariant to scale and can select
+   features themselves; rotating into dense combinations usually makes them WORSE, because a single
+   informative column becomes smeared across every component.
+
+G. CHOOSING k BY A ROUND NUMBER. '95% of variance' is a convention, not a principle. Look at the
+   scree plot, find the elbow, and check what k does to your downstream metric.
+
+H. RUNNING IT ON ONE-HOT COLUMNS. Binary indicators have variance p(1-p), capped at 0.25, so they are
+   systematically outranked by any continuous column and PCA will effectively ignore them.
+
+I. FORGETTING IT REMOVES OUTLIER DETECTION. Outliers often live in low-variance directions, and
+   truncating those directions is exactly how you delete the evidence.""",
+
+    """5. WHEN PCA IS THE RIGHT TOOL - and when it is not
+
+USE IT FOR:
+
+    DECORRELATING FEATURES. Components are orthogonal by construction, so multicollinearity - which
+    makes linear regression coefficients unstable and uninterpretable - disappears. This is often the
+    real reason, more than dimensionality.
+
+    COMPRESSION AND SPEED. Measured: 3 components instead of 12 is 4x fewer numbers for 99.6% of the
+    variance. On a 10,000-dimensional problem the saving is what makes the next step feasible.
+
+    VISUALISATION. Project to 2 components and plot. You cannot see 12 dimensions and you can see 2 -
+    just remember you are looking at a shadow, and label the axes with their explained-variance
+    percentages so the reader knows how much shadow.
+
+    NOISE REDUCTION. Measured: components 4-8 all had eigenvalues around 0.14, which is the noise
+    floor. Dropping them removes noise while keeping the signal.
+
+    A PREPROCESSING STEP for algorithms that suffer in high dimensions - k-means, k-NN, anything
+    distance-based, where the curse of dimensionality makes all distances look alike.
+
+DO NOT USE IT FOR:
+
+    FEATURE SELECTION when you want to know WHICH original features matter. PCA gives you combinations,
+    not a subset. If the answer must be 'these five columns', use a selection method.
+
+    SUPERVISED PROBLEMS where a small-variance direction carries the signal. Measured above, and it is
+    the single most important caveat.
+
+    TREE-BASED MODELS, which do not need it and are usually hurt by it.
+
+    NON-LINEAR STRUCTURE, which a rotation cannot capture by definition.
+
+THE HONEST MODERN NOTE: with regularised linear models and gradient-boosted trees widely available,
+PCA is used less as a routine preprocessing step than it once was. It remains genuinely valuable for
+visualisation, for compression, and for decorrelating badly collinear inputs - and being able to say
+WHEN you would not use it is a stronger answer than reciting the algorithm.""",
+
+    """6. HOW TO RUN IT PROPERLY - numbered steps
+
+1. DECIDE WHY. Compression, decorrelation, visualisation, or noise reduction? The reason determines
+   how you choose k and whether PCA is right at all.
+2. HANDLE MISSING VALUES FIRST. PCA has no notion of missing; impute or drop.
+3. STANDARDISE every column - mean 0, sd 1 - unless all columns share meaningful units.
+4. FIT ON THE TRAINING SET ONLY. The means and the components are parameters; save them with the
+   model and apply them unchanged at inference.
+5. PLOT THE SCREE CURVE - eigenvalue against component index. Look for the elbow. Measured: mine fell
+   205, 47, 12, 0.15, 0.14 - the cliff after component 3 is unmissable.
+6. CHOOSE k BY THE ELBOW, or by a variance target, or by what actually helps downstream - and
+   preferably check all three agree.
+7. VERIFY WITH RECONSTRUCTION ERROR. Project to k and back; how much did you lose? Measured: 0.0894 at
+   k=3 against 0.0773 at k=4 - a 14% improvement for a 33% increase in dimensions.
+8. IF YOU HAVE LABELS, CHECK THAT THE DISCARDED COMPONENTS WERE NOT THE PREDICTIVE ONES. This is one
+   line of code and it is the check nobody runs.
+9. LOOK AT THE LOADINGS on PC1 and PC2. If one column dominates, you probably forgot step 3.
+10. COMPARE AGAINST NOT USING PCA AT ALL. It is a preprocessing step with a cost, and it should have
+    to earn its place.
+
+STEP 8 IS THE ONE THAT PREVENTS THE WORST OUTCOME. In my measurement, keeping the 98.9% component and
+discarding the 1.1% one destroyed all class separation - and no unsupervised diagnostic would have
+told me.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'PCA finds new axes that line up with the directions your data actually varies in. The first component
+is the direction of maximum variance, the second is the direction of maximum remaining variance
+perpendicular to it, and so on. Mechanically it is: centre the data, compute the covariance matrix,
+take its eigenvectors, sort by eigenvalue, and keep the top few. The rotation is lossless; the only
+lossy step is deciding how many to keep.
+
+It works when the data is genuinely lower-dimensional than it looks. I generated twelve columns from
+three underlying factors plus noise, and PCA gave 77%, 18% and 4.5% for the first three - 99.6%
+together - with components four through eight all sitting at about 0.14, which is the noise floor.
+
+Two things I would flag. First, PCA is not scale-invariant, because variance has units. I multiplied
+one column by a thousand and PC1 became that column, with a weight of 1.0 on it and "100% of the
+variance explained". So standardise first unless every column is in the same units.
+
+Second, and this is the important one: PCA never looks at the labels. High variance does not mean
+predictive. I built data with one huge-variance feature carrying no signal and one tiny-variance
+feature that separates the classes - PC1 explained 98.9% of the variance and gave a class separation of
+0.028 standard deviations, while PC2 explained 1.1% and gave a separation of 8.0. Keeping the top
+component would have thrown away the only useful feature. If I have labels and my goal is prediction, I
+would use a supervised method or just measure each feature's predictive value.
+
+And I would name what it costs: interpretability. PC1 is a weighted mix of every column, so you can no
+longer tell anyone which feature drove a prediction. Also, I would not put PCA in front of a tree
+model - trees already handle scale and select features themselves, and rotating smears an informative
+column across every component.'""",
+
+    """8. THE ALGORITHM, PIECE BY PIECE
+
+    STEP 1 - CENTRE:  X_centred[i][j] = X[i][j] - mean_j
+        Without this, PC1 points at the data's centre of mass rather than its direction of spread,
+        which makes the whole thing meaningless. The means are parameters - save them.
+
+    STEP 2 - STANDARDISE (usually):  divide each column by its standard deviation
+        Equivalent to using the correlation matrix in step 3. Measured: skipping this let one column
+        take over completely.
+
+    STEP 3 - COVARIANCE:  C[a][b] = sum_i(X[i][a] * X[i][b]) / (n - 1)
+        A d x d symmetric matrix. C[a][a] is column a's variance; the total variance is its trace.
+        NOTE THE COST: this is O(n d^2) to build and O(d^3) to decompose, which is why very
+        high-dimensional PCA is done by truncated SVD directly on X rather than by forming C.
+
+    STEP 4 - EIGENDECOMPOSE:  find v with Cv = lambda*v
+        Each v is a direction; lambda is the variance along it. Symmetric C guarantees the v's are
+        orthogonal - which is what makes the new features uncorrelated.
+
+    STEP 5 - SORT AND KEEP k. The eigenvalues sorted descending; explained variance ratio is
+        lambda_i / trace(C).
+
+    STEP 6 - PROJECT:  z[i] = (x - mu) . v_i  for i in 1..k
+        Each row becomes k numbers. THIS IS THE ONLY LOSSY STEP.
+
+    STEP 7 - RECONSTRUCT (if you want to measure the loss):
+        x_hat = mu + sum_i z[i] * v_i
+        The mean squared difference from the original is the reconstruction error - measured above at
+        5.03, 1.08 and 0.089 for k = 1, 2, 3.
+
+    WHAT THE OUTPUT IS NOT: a subset of your columns. Every component uses all of them. If someone
+    asks 'so which features matter?', the honest answer is 'PCA cannot tell you that' - and knowing
+    that boundary is more useful than any amount of fluency about eigenvectors.""",
+
+    """9. THE SCREE PLOT, READ
+
+    THE MEASURED EIGENVALUES, drawn:
+
+        PC1  205.26  ####################################################  77.2%
+        PC2   47.49  ############                                          17.9%
+        PC3   11.97  ###                                                    4.5%
+        PC4    0.15  |                                                      0.1%
+        PC5    0.14  |                                                      0.1%
+        PC6    0.13  |                                                      0.0%
+        PC7    0.12  |                                                      0.0%
+        PC8    0.12  |                                                      0.0%
+
+    HOW TO READ IT, and this is the skill:
+
+    THE CLIFF BETWEEN PC3 AND PC4 IS THE ANSWER. 11.97 down to 0.15 - a factor of eighty. Everything
+    after that cliff sits at roughly the same tiny value, and THAT FLATNESS IS THE SIGNATURE OF NOISE:
+    random variation is isotropic, so it distributes itself evenly across all remaining directions.
+
+    A REAL SIGNAL COMPONENT STANDS ABOVE ITS NEIGHBOURS. A noise component looks exactly like the one
+    after it. So the rule is not 'find where the curve bends' as an aesthetic judgement - it is 'find
+    where the components stop being distinguishable from each other'.
+
+    THE THREE WAYS TO CHOOSE k, and I would use all three:
+        THE ELBOW - here, unambiguously 3.
+        A VARIANCE TARGET - '95%' gives k=2, '99%' gives k=3. Note how much the answer depends on an
+            arbitrary threshold, which is why the elbow is better when there is one.
+        DOWNSTREAM PERFORMANCE - fit the actual model at several k and pick the best. The only one
+            that is directly about what you care about, and the most expensive.
+
+    WHEN THERE IS NO ELBOW - a curve that decays smoothly with no cliff - that is itself the finding:
+    THE DATA IS NOT LOW-DIMENSIONAL. There is no natural k, PCA is not going to compress it usefully,
+    and forcing a cut will lose real signal. Reporting 'there is no elbow, so I would not use PCA here'
+    is a better answer than picking 95% and moving on.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT DOES:  rotates to the axes of maximum variance, then truncates. Rotation is lossless;
+    truncation is the only loss and you control it.
+
+    THE MEASURED EVIDENCE (12 columns from 3 latent factors):
+        eigenvalues 205, 47, 12, then 0.15, 0.14, 0.13, 0.12, 0.12 - a cliff of 80x at k=3
+        variance kept: 77.2% / 95.1% / 99.6% for k = 1 / 2 / 3
+        reconstruction error: 5.03 / 1.08 / 0.089 - then only 0.077 at k=4
+        one column x1000: PC1's weight on it went 0.168 -> 1.000, 'explaining' 100% of variance
+        supervised check: PC1 at 98.9% variance gave 0.028 sd of separation; PC2 at 1.1% gave 7.999
+
+THE #1 MISTAKE: assuming high variance means useful. PCA is unsupervised and cannot see your labels -
+measured, the top component was noise and the bottom one was the entire signal.
+
+THE #2 MISTAKE: not standardising. Variance has units, so a unit change can hand an entire component
+to one column.
+
+THE #3 MISTAKE: expecting interpretable components. Every component mixes every column; you have
+traded interpretability for compactness.
+
+THE #4 MISTAKE: fitting on train and test together. The means and components are fitted parameters.
+
+THE #5 MISTAKE: putting PCA in front of a tree model, which needs neither the scaling nor the
+selection and is usually hurt by the smearing.
+
+ONE-SENTENCE TAKEAWAY: PCA rotates your data onto the directions of greatest variance and lets you
+drop the rest - which is excellent for compression, decorrelation and visualisation, and dangerous the
+moment you assume that the biggest direction is the one that predicts your label.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
