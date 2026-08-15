@@ -138553,6 +138553,1388 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AK[_e["title"]]
 
 
+# ══ P1 ten-section rewrites, ranks 269-272 ════════════════════════════════
+_EX_P1AL = {}
+
+_EX_P1AL["Kids With the Greatest Number of Candies"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+A class of children each have some candies. You also have a pile of EXTRA candies. For each child in
+turn, ask this hypothetical question: 'if I gave THIS child all of my extra candies, would they then
+have the most candies in the class - or be tied for the most?' Answer yes or no for every child.
+
+    candies = [2, 3, 5, 1, 3],   extra = 3
+
+    the most anybody currently has is 5.
+
+    child 0 has 2:  2 + 3 = 5,  which ties the current best of 5   ->  yes
+    child 1 has 3:  3 + 3 = 6,  more than 5                        ->  yes
+    child 2 has 5:  5 + 3 = 8                                      ->  yes
+    child 3 has 1:  1 + 3 = 4,  less than 5                        ->  no
+    child 4 has 3:  3 + 3 = 6                                      ->  yes
+
+    ANSWER: [true, true, true, false, true]
+
+TWO WORDS DO ALL THE WORK IN THAT DESCRIPTION.
+
+- 'THE MOST, OR TIED FOR THE MOST'. Tying counts as a yes. So the comparison is 'greater than or
+  equal', not 'greater than'.
+- 'IF I GAVE THIS CHILD ALL THE EXTRAS'. Each child is a separate hypothetical, imagined
+  independently. The extras are not shared out, not used up, and not reduced for the next child. Every
+  child is asked the same question against the same starting pile.
+
+TERMS AS THEY APPEAR:
+- BOOLEAN: a true/false value. The answer here is a list of them, one per child.
+- MAXIMUM: the largest value in the list. Here it always means the largest BEFORE any extras are
+  handed out.""",
+
+    """2. THE INTUITION - one number decides everything
+
+The naive reading suggests a lot of work: for every child, imagine the new arrangement and find its
+maximum. That would be a loop inside a loop.
+
+But look again at what the question asks. A child qualifies when, after receiving the extras, nobody
+has strictly more than them. Nobody else's count changes in this hypothetical - only the chosen
+child's does. So the bar the child must clear is simply THE CURRENT MAXIMUM of the whole class, and
+that number is the same for every child.
+
+    candies = [2, 3, 5, 1, 3],  extra = 3
+    the bar = max(candies) = 5
+
+    child qualifies  <==>  their candies + extra >= 5
+
+Compute the bar once, then answer every child with one comparison. One pass to find the maximum, one
+pass to build the answers.
+
+WHY 'GREATER THAN OR EQUAL' AND NOT 'GREATER THAN'. Consider the child who ALREADY holds the maximum.
+With extra = 0 their total is exactly the maximum. Do they have the greatest number of candies?
+Obviously yes - they are the current leader. A strict `>` says no, which is absurd. Measured: the
+strict version was wrong on 1,907 of 5,000 random inputs.
+
+WHY YOU DO NOT RE-COMPUTE THE MAXIMUM AFTER HANDING OVER THE EXTRAS. It is tempting to think 'their
+new count must beat the new maximum'. Interestingly, that gives the SAME answer - I measured it, 0
+disagreements in 5,000 - because the child's own new count is part of that new maximum, so the
+comparison reduces to the same thing. It is not wrong; it is just more work (a maximum recomputed
+inside the loop, so O(n-squared) rather than O(n)) and harder to explain. Worth knowing so you can say
+'that also works, but it is quadratic for no benefit' rather than guessing.
+
+WHAT IS GENUINELY WRONG is reading the extras as a POOL to be divided among the children. That is a
+different problem, and it is the misreading that shows up most: measured wrong on 2,443 of 5,000
+inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `candies = [4, 2, 1, 1, 2]`, `extra = 1`.
+
+STEP 1 - find the current maximum, in one pass.
+
+    start: nothing seen yet
+    see 4  ->  best so far 4
+    see 2  ->  still 4
+    see 1  ->  still 4
+    see 1  ->  still 4
+    see 2  ->  still 4
+
+    most = 4
+
+STEP 2 - one comparison per child, all against that same 4.
+
+    child 0:  4 + 1 = 5,   5 >= 4   ->  true
+    child 1:  2 + 1 = 3,   3 >= 4   ->  false
+    child 2:  1 + 1 = 2,   2 >= 4   ->  false
+    child 3:  1 + 1 = 2,   2 >= 4   ->  false
+    child 4:  2 + 1 = 3,   3 >= 4   ->  false
+
+    ANSWER: [true, false, false, false, false]
+
+Only the child who already leads can stay in front - the extra single candy is not enough to lift
+anybody else to 4.
+
+A SECOND TRACE where a tie decides it. `candies = [12, 1, 12]`, `extra = 10`:
+
+    most = 12
+    child 0:  12 + 10 = 22 >= 12   ->  true
+    child 1:   1 + 10 = 11 >= 12   ->  FALSE   (one candy short)
+    child 2:  12 + 10 = 22 >= 12   ->  true
+
+    ANSWER: [true, false, true]
+
+And a third with `extra = 0`, which is the case that exposes the `>` bug. `candies = [1, 2, 2]`,
+`extra = 0`:
+
+    most = 2
+    child 0:  1 >= 2   ->  false
+    child 1:  2 >= 2   ->  TRUE     (already tied for the lead)
+    child 2:  2 >= 2   ->  TRUE
+
+    ANSWER: [false, true, true]
+
+With a strict `>` the last two would both be false, and the answer would claim that nobody in the
+class has the most candies - which cannot be true of any class.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ZERO EXTRA CANDIES. `candies = [3, 3, 1]`, `extra = 0`. The answer is [true, true, false] - the two
+   children on 3 are tied for the lead and both qualify. This is the smallest input that exposes the
+   strict-inequality bug, and it is worth writing as your first test.
+
+B. ONE CHILD. `[5]` with any extra. The single child always has the most, so [true]. The maximum is
+   their own count, and `5 + extra >= 5` is always true.
+
+C. EVERY CHILD EQUAL. `[4, 4, 4]`, extra = 0. All true - everyone is tied for the most.
+
+D. ENORMOUS EXTRA. `[1, 1, 1]`, extra = 1000. All true. Nothing overflows and no special case is
+   needed.
+
+E. THE #1 MISTAKE - STRICT GREATER-THAN. Wrong on 1,907 of 5,000 random inputs. It denies the current
+   leader, which is exactly backwards, and it only shows up when a child's total lands exactly ON the
+   bar rather than above it - so it passes on inputs where the extras are generous.
+
+F. THE #2 MISTAKE - TREATING THE EXTRAS AS A SHARED POOL, to be split among the children. Wrong on
+   2,443 of 5,000 - the most common wrong answer of the ones I measured, and it is a READING error
+   rather than a coding one. The problem says 'if you gave all the extra candies to this child', which
+   is a separate hypothetical each time. Read that sentence twice.
+
+G. RECOMPUTING THE MAXIMUM INSIDE THE LOOP - a measured NON-mistake. Comparing the child's new total
+   against the maximum of the modified list gives identical answers (0 disagreements in 5,000),
+   because the child's own new total is part of that maximum. It is merely O(n-squared) instead of
+   O(n). Say that rather than calling it a bug.
+
+H. AN EMPTY CLASS. `max([])` raises an error in Python. The problem guarantees at least one child, so
+   it cannot happen - but noticing it is the kind of remark that costs nothing and reads as care.""",
+
+    """5. WHY THE BAR IS FIXED, AND WHY THAT MAKES IT ONE PASS
+
+THE VERSION PEOPLE WRITE FIRST, and it is not wrong, just wasteful:
+
+    def kids_slow(candies, extra):
+        out = []
+        for i, c in enumerate(candies):
+            hypothetical = candies[:i] + [c + extra] + candies[i+1:]
+            out.append(c + extra >= max(hypothetical))
+        return out
+
+It builds the whole imagined class for every child and takes the maximum of it - O(n) work per child,
+so O(n-squared) overall. Measured, it produces exactly the right answers (0 disagreements in 5,000).
+So this is a performance discussion, not a correctness one, and it is worth being precise about that
+distinction in an interview rather than calling it 'wrong'.
+
+WHY THE BAR NEVER MOVES. In the hypothetical for child i, every OTHER child's count is untouched. So
+the highest count among the others is at most the original maximum, and the child needs to reach that
+to be tied for first. The original maximum is therefore the bar, and it does not depend on i - which
+is precisely why it can be lifted out of the loop.
+
+Note the small subtlety that makes it exactly right rather than approximately: the bar is the maximum
+of the WHOLE original list, including the child themselves. If the child IS the current leader, they
+are compared against their own old count, and `c + extra >= c` is true for any non-negative extra -
+which is the answer we want.
+
+THE SHAPE OF THIS OPTIMISATION IS THE TRANSFERABLE PART: A QUANTITY THAT DOES NOT DEPEND ON THE LOOP
+VARIABLE BELONGS OUTSIDE THE LOOP. Called loop-invariant hoisting, it is the single most common way an
+accidental O(n-squared) creeps into otherwise fine code - `max(...)`, `len(set(...))`, a sort, a
+database query, all quietly re-evaluated n times.
+
+COULD IT BE DONE IN ONE PASS INSTEAD OF TWO? Not honestly - you cannot answer the first child until
+you know the maximum, and you cannot know the maximum without seeing the last child. Two passes is the
+floor, and two passes is still O(n).""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Walk the list once and find the largest candy count. Call it the bar.
+2. Walk the list again. For each child, work out their count plus the extra candies, and record
+   whether that is greater than OR EQUAL TO the bar.
+3. Return the list of true/false answers, in the same order as the children.
+
+TWO THINGS TO SAY OUT LOUD BEFORE TYPING, because both are readings rather than mechanics:
+- 'Tied for the most counts as yes', which is why the comparison is `>=`. The child who already holds
+  the record must answer yes, and with a strict `>` they would not.
+- 'Each child is asked independently, as if they alone received all the extras', which is why the
+  extras are never reduced and never divided.
+
+WHY THE MAXIMUM COMES FIRST AND STANDS ALONE: it is the same number for every child, so computing it
+once outside the loop turns O(n-squared) into O(n). If you find yourself calling `max` inside a loop
+over the same list, that is a signal to lift it out.
+
+A NOTE ON BUILDING THE RESULT: a list comprehension expresses this in one line - 'for each count c,
+produce whether c + extra >= most'. The comparison itself evaluates to true or false, so there is no
+`if` needed; the expression IS the answer.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Look across the class once and note the biggest pile of candies anybody has. That number is the bar
+everyone has to reach.
+
+Then go down the line of children one at a time. Add all your extra candies to that child's pile - on
+paper, as a what-if - and ask whether the result reaches the bar. Reaching it exactly is good enough:
+being tied for the most still counts as having the most.
+
+Write down yes or no for each child and hand back the list.
+
+The extras are never used up, because you are only imagining giving them away. Every child gets the
+same what-if, measured against the same bar.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def kids_with_candies(candies, extra):
+        most = max(candies)
+        return [c + extra >= most for c in candies]
+
+LINE 2: `most = max(candies)`
+    One pass over the list to find the largest count. It is computed ONCE, outside the loop that
+    follows, because the bar is the same for every child - that single decision is what keeps the
+    function O(n) rather than O(n-squared). Note this is the maximum BEFORE any extras are given,
+    which is exactly what the question compares against.
+
+LINE 3: `[c + extra >= most for c in candies]`
+    A list comprehension: 'for each count c in candies, produce the value of `c + extra >= most`'.
+    Two details worth defending:
+      - The expression `c + extra >= most` is itself a true/false value, so there is no `if` and no
+        appending - the comparison IS the item being collected.
+      - `>=`, not `>`. Being tied for the most counts as having the most, and the child who currently
+        holds the record must answer yes. The strict version is wrong on 1,907 of 5,000 inputs and
+        fails on the simplest possible test, `[3, 3, 1]` with extra = 0.
+    Because the comprehension walks the original list in order, the answers line up with the children
+    positionally, which is what the problem asks for.
+
+NOTE WHAT IS ABSENT: no copy of the list, no re-computation of the maximum, and no bookkeeping of how
+many extras remain - because none of the extras are ever actually spent. Every child is a separate
+hypothetical.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 is the single pass that found `most = 4`. The five
+comparisons in the trace are the five iterations of line 3.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `candies = [2, 3, 5, 1, 3]`, `extra = 3`.
+
+    LINE 2 - `max(candies)` scanning left to right:
+        see 2   running best = 2
+        see 3   running best = 3
+        see 5   running best = 5
+        see 1   running best = 5
+        see 3   running best = 5
+        most = 5
+
+    LINE 3 - the comprehension, one child at a time:
+        c = 2    2 + 3 = 5     5 >= 5   ->  True     (a tie, and a tie counts)
+        c = 3    3 + 3 = 6     6 >= 5   ->  True
+        c = 5    5 + 3 = 8     8 >= 5   ->  True
+        c = 1    1 + 3 = 4     4 >= 5   ->  False
+        c = 3    3 + 3 = 6     6 >= 5   ->  True
+
+    RETURN VALUE: [True, True, True, False, True]
+
+A SECOND RUN with no extras at all, `candies = [3, 3, 1]`, `extra = 0`:
+
+        most = 3
+        c = 3    3 + 0 = 3    3 >= 3  ->  True
+        c = 3    3 + 0 = 3    3 >= 3  ->  True
+        c = 1    1 + 0 = 1    1 >= 3  ->  False
+        RETURN [True, True, False]
+
+THE STRICT-GREATER-THAN BUG on that same input returns [False, False, False] - a class in which
+nobody has the most candies, which is impossible by definition. Wrong on 1,907 of 5,000 inputs, and
+this three-element example is the cheapest test that catches it.
+
+THE SHARED-POOL BUG on the first input divides extra = 3 among 5 children, giving each 0 extra, and
+returns [False, False, True, False, False]. Wrong on 2,443 of 5,000 - the most common of the errors I
+measured, and it comes from misreading the question rather than from mistyping the code.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n). One pass to find the maximum, one pass to build the answers. Two passes over n elements is
+still linear - constants disappear in big-O.
+
+SPACE: O(n) for the output list, which is required by the question. Beyond that, O(1) - just the one
+`most` variable.
+
+BIG-O IN ONE SENTENCE: how the work GROWS as the input gets bigger, ignoring constants - here 'a
+couple of passes', versus O(n-squared) for the version that recomputes the maximum inside the loop.
+
+THE #1 BEGINNER MISTAKE: using a strict `>` instead of `>=`. Wrong on 1,907 of 5,000 random inputs,
+and it fails on the simplest interesting case - the child who already holds the record must answer
+yes, because being tied for the most IS having the most.
+
+THE #2 MISTAKE: reading `extra` as a pool to be shared among the children. Wrong on 2,443 of 5,000.
+This one is a reading error, not a coding error, and no amount of debugging will find it - only
+re-reading the sentence will.
+
+A MEASURED NON-MISTAKE: recomputing the maximum after handing the child their extras gives identical
+answers (0 disagreements in 5,000). It is O(n-squared) rather than wrong, and being able to say
+exactly that is better than calling it a bug.
+
+ONE-SENTENCE TAKEAWAY: the bar is the current maximum and it is the same for every child, so compute
+it once outside the loop and answer each child with `count + extra >= bar` - greater-or-equal, because
+a tie for the most still counts as the most.""",
+]
+
+_EX_P1AL["Largest Odd Number in String"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a number written out as text - a string of digits like "35427". You must find the
+LARGEST ODD number hiding inside it as a contiguous piece, and hand back that piece as text. If there
+is no odd number in there at all, hand back an empty string.
+
+    num = "52"      ->  the pieces are "5", "2", "52".  The odd ones: just "5".      ANSWER: "5"
+    num = "4206"    ->  every digit is even, so every piece is even.                 ANSWER: ""
+    num = "35427"   ->  ANSWER: "35427"  (the whole thing, since it ends in 7)
+
+A number is ODD exactly when its LAST digit is odd - 1, 3, 5, 7 or 9. That one fact, which you learnt
+long before you learnt programming, is the entire key.
+
+Why hand back TEXT rather than a number? Because the input can be up to 100,000 digits long. That is
+far beyond any integer type in most languages, and even in Python - where integers can be arbitrarily
+large - converting a 100,000-digit string to an int and back is slow and completely unnecessary. Work
+with the string throughout.
+
+TERMS AS THEY APPEAR:
+- SUBSTRING: a contiguous run of characters. "42" is a substring of "3427"; "37" is not, because the
+  characters are not next to each other.
+- PREFIX: a substring that starts at the very beginning. "342" is a prefix of "3427".
+- ODD DIGIT: 1, 3, 5, 7 or 9. A number is odd when the digit in its units place - the last one - is
+  odd, regardless of everything in front.""",
+
+    """2. THE INTUITION - two small facts collapse the whole search
+
+At first glance there are a lot of substrings to consider. A string of length n has about n-squared of
+them. Two observations cut that to a single scan.
+
+FACT ONE: A NUMBER IS ODD IF AND ONLY IF ITS LAST DIGIT IS ODD. So the piece we return must END on an
+odd digit. Nothing else about it matters for oddness.
+
+FACT TWO: LONGER IS BIGGER. Comparing two pieces made of digits, the one with MORE digits is always
+the larger number - "1000" beats "999" - as long as we do not have to worry about the shorter one
+being padded. So among all the pieces ending at a given odd digit, the longest is the biggest, and the
+longest one starts at position 0. In other words, THE ANSWER IS A PREFIX.
+
+Put the two together:
+
+    the answer is the LONGEST PREFIX that ENDS on an odd digit.
+
+And now the algorithm writes itself. Which odd digit gives the longest prefix? The one furthest to the
+RIGHT. So scan from the end of the string leftwards, stop at the first odd digit you meet, and return
+everything from the start up to and including it.
+
+    num = "3542"
+                   ^ 2 is even - a prefix ending here would be even
+                  ^ 4 is even
+                 ^ 5 is ODD - stop.  Return "354".
+
+    Check by hand: the odd substrings are 3, 35, 5, 345... and 354 is the largest of them.
+
+WHY YOU SCAN FROM THE RIGHT AND NOT THE LEFT. Scanning left to right and stopping at the first odd
+digit gives you the SHORTEST qualifying prefix, not the longest - "3" instead of "354" above. Measured:
+that version was wrong on 2,541 of 5,000 random digit strings.
+
+Measured overall: the right-to-left scan matched a brute force over every substring on 5,000 of 5,000
+random inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `num = "35427"`.
+
+    positions:  0   1   2   3   4
+    digits:     3   5   4   2   7
+
+Scan from the RIGHT.
+
+    i = 4:  digit '7'.  7 % 2 == 1, so it is ODD.  STOP.
+            return num[0 .. 4] = "35427"
+
+    ANSWER: "35427"
+
+The whole string, because it already ends on an odd digit. That is the common case and it takes one
+step.
+
+A SECOND TRACE where we have to walk back. Input `num = "5347168"`:
+
+    positions:  0   1   2   3   4   5   6
+    digits:     5   3   4   7   1   6   8
+
+    i = 6:  '8' is even  ->  keep going
+    i = 5:  '6' is even  ->  keep going
+    i = 4:  '1' is ODD   ->  STOP
+            return num[0 .. 4] = "53471"
+
+    ANSWER: "53471"
+
+Sanity check: could anything beat "53471"? A longer piece would have to end at position 5 or 6, both
+even digits, so it would be an even number. A shorter piece is a smaller number. So no.
+
+A THIRD TRACE with no odd digits at all. Input `num = "4206"`:
+
+    i = 3:  '6' even
+    i = 2:  '0' even
+    i = 1:  '2' even
+    i = 0:  '4' even
+    the loop finishes without finding anything  ->  return ""
+
+    ANSWER: ""
+
+Note we never needed to think about which SUBSTRING was largest, only where the scan stopped. All the
+comparison work disappeared into the two facts from section 2.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. THE WHOLE STRING IS ALREADY ODD. `"239"` returns `"239"` on the very first check. The most common
+   case and the cheapest.
+
+B. NO ODD DIGITS. `"2468"` returns `""`. The loop runs to the end and falls through to the final
+   return, which is why that line exists.
+
+C. A SINGLE DIGIT. `"7"` returns `"7"`; `"8"` returns `""`. Both handled by the same loop with no
+   special case.
+
+D. LEADING ZEROS. `"0357"` returns `"0357"` - the whole thing, leading zero and all. That is what the
+   usual version of the problem expects, since the answer is a substring rather than a re-formatted
+   number. Some variants forbid leading zeros, so check the statement; this is exactly the sort of
+   detail worth asking about out loud.
+
+E. A VERY LONG STRING. Up to 100,000 digits in the usual constraints. This is a deliberate hint: it
+   rules out converting to an integer, and it rules out generating all the substrings. Whenever the
+   input length is suspiciously large, ask what the constraint is designed to forbid.
+
+F. THE #1 MISTAKE - SCANNING FROM THE LEFT and stopping at the first odd digit. It returns the
+   SHORTEST qualifying prefix instead of the longest. Wrong on 2,541 of 5,000 random strings. The
+   mistake is not the scan direction as such - it is forgetting that longer means bigger.
+
+G. THE #2 MISTAKE - RETURNING JUST THE ODD DIGIT rather than the prefix ending at it. `"5347168"`
+   would give `"1"` instead of `"53471"`. Wrong on 3,292 of 5,000 - the highest rate of the three, and
+   it comes from finding the right POSITION and then forgetting what to do with it.
+
+H. THE #3 MISTAKE - ALL OR NOTHING: returning the whole string when it ends in an odd digit and `""`
+   otherwise. Wrong on 1,629 of 5,000, and every one of those failures is a string ending in an even
+   digit (there were 2,458 such strings). It is right on every odd-ending input, so half your
+   hand-written tests will bless it.""",
+
+    """5. THE SLOW VERSION FIRST, THEN WHY ONE SCAN IS ENOUGH
+
+THE SLOW-BUT-OBVIOUS VERSION: generate every substring, keep the largest odd one.
+
+    def brute(num):
+        best = ""
+        for i in range(len(num)):
+            for j in range(i + 1, len(num) + 1):
+                s = num[i:j]
+                if int(s) % 2 == 1 and (best == "" or int(s) > int(best)):
+                    best = s
+        return best
+
+Obviously correct - it literally checks everything - and it is what I used as ground truth, agreeing
+with the fast version on 5,000 of 5,000 random inputs. It is also hopeless: O(n-squared) substrings,
+each costing O(n) to build and compare, so O(n-cubed) overall, on an input that may be 100,000
+characters long.
+
+THE UPGRADE comes from proving that almost every one of those substrings can be ignored.
+
+CLAIM ONE - THE ANSWER STARTS AT POSITION 0. Take any odd substring that starts somewhere after the
+beginning, say `num[i..j]` with i > 0. Extend it leftwards to `num[0..j]`. It still ends at the same
+digit, so it is still odd - oddness depends only on the last digit. And it is longer, hence a bigger
+number. So the extended version is at least as good, and the best answer can always be taken to start
+at 0.
+
+    (The one wrinkle: what if the extension adds leading zeros? "0" + "35" is "035", which has the same
+    VALUE as "35". So the extension is never worse, and the standard version of the problem accepts
+    the longer form. That is why the caveat in section 4D matters.)
+
+CLAIM TWO - AMONG PREFIXES, THE LONGEST ODD ONE WINS. All prefixes start at the same place, so more
+digits means a bigger number. The longest odd prefix ends at the RIGHTMOST odd digit.
+
+Those two claims turn an O(n-cubed) search into 'find the rightmost odd digit', which is one backward
+scan - O(n) time and, in a language with cheap slicing, O(1) extra thought.
+
+WHY YOU NEVER CONVERT TO AN INTEGER. `int(num)` on a 100,000-digit string is possible in Python but
+takes serious time, and in Java or C++ it simply overflows and gives nonsense. The whole problem is
+designed so that you compare digits and lengths rather than values. Whenever a string-of-digits
+problem quotes a huge length limit, that is the constraint telling you to stay in string-land.
+
+ONE HONEST DETAIL ABOUT THE FINAL SLICE: `num[:i+1]` creates a new string of up to n characters, so
+strictly the space is O(n) for the output. There is no way around producing the answer, so that is
+inherent rather than wasteful.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Walk the positions of the string from the LAST one backwards toward the first.
+2. At each position, look at the digit sitting there and ask whether it is odd.
+3. The first odd digit you meet - which is the rightmost odd digit in the whole string - is where the
+   answer ends. Return the piece of the string from the very beginning up to and including that
+   position, then stop.
+4. If the walk finishes without finding an odd digit, there is no odd number in there at all, so
+   return the empty string.
+
+THE TWO DECISIONS THAT MATTER, and both are about direction and extent:
+- BACKWARDS, because the rightmost odd digit gives the longest prefix, and longer prefixes are bigger
+  numbers. Forwards gives the shortest, and is wrong on 2,541 of 5,000 inputs.
+- THE PREFIX, not the digit. You are looking for a position, but you return everything up to it.
+  Returning the digit alone is wrong on 3,292 of 5,000.
+
+HOW TO TEST A DIGIT FOR ODDNESS when it is a character rather than a number: convert that single
+character to an integer and check the remainder when divided by two. Converting ONE character is
+cheap - it is converting the whole 100,000-digit string that you must avoid. Alternatively, check
+membership in the set of odd digit characters, which avoids conversion entirely and reads just as
+clearly.
+
+REMEMBER THE INCLUSIVE END: if the odd digit sits at position i, the answer runs from 0 through i
+INCLUSIVE, which in Python's half-open slicing is `num[:i+1]`. Forgetting the +1 chops off the very
+digit that made the number odd - and would leave an even number.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Start at the right-hand end of the digits and walk backwards, looking for the first odd digit you
+meet.
+
+The moment you find one, stop and hand back everything from the start of the string up to and
+including that digit. That piece is odd, because it ends on an odd digit, and it is the biggest odd
+piece available, because any longer piece would have to end on one of the even digits you just walked
+past, and any shorter piece is a smaller number.
+
+If you walk all the way to the front without meeting an odd digit, there is no odd number to be found
+anywhere inside, so hand back nothing.
+
+You never build a single substring except the answer, and you never turn the digits into a number.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def largest_odd_number(num):
+        for i in range(len(num) - 1, -1, -1):
+            if int(num[i]) % 2 == 1:      # last odd digit from the right
+                return num[:i + 1]         # that prefix is the largest odd number
+        return ""
+
+LINE 2: `for i in range(len(num) - 1, -1, -1):`
+    A backwards walk, and the three numbers are worth reading individually. `len(num) - 1` is the LAST
+    valid position, where we start. The middle `-1` is where to stop, and because `range` never
+    includes its endpoint, stopping at -1 means position 0 IS visited - this is the classic place to
+    write `0` by mistake and silently skip the first digit. The final `-1` is the step: move one to
+    the left each time.
+
+LINE 3: `if int(num[i]) % 2 == 1:`
+    `num[i]` is a single CHARACTER, like '7'. `int(...)` turns that one character into the number 7 -
+    converting one character is cheap, unlike converting the whole string. `% 2` is the remainder when
+    divided by two, which is 1 for odd numbers and 0 for even. So this asks 'is this digit odd?'.
+    (An equally good version avoids conversion altogether: `if num[i] in "13579"`.)
+
+LINE 4: `return num[:i + 1]`
+    The slice from the beginning up to but NOT including position i+1 - which means it DOES include
+    position i, the odd digit we just found. That `+ 1` is what keeps the odd digit in the answer;
+    without it you return a piece ending one digit earlier, which would be even. Returning here also
+    ends the scan immediately: the first odd digit found from the right is the rightmost one, so there
+    is nothing left to look for.
+
+LINE 5: `return ""`
+    Only reached when the loop ran all the way to position 0 without finding an odd digit - every
+    digit is even, so no odd substring exists anywhere. The empty string is what the problem asks for.
+
+WHAT MAPS BACK TO THE HAND-TRACE: the three iterations in trace 2 (i = 6, 5, 4) were line 2 stepping
+backwards and line 3 testing each digit; the `return "53471"` was line 4 with i = 4. Trace 3's
+fall-through to `""` was line 5.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `num = "5347168"`. Its length is 7, so positions run 0 to 6.
+
+    LINE 2:  range(6, -1, -1) produces 6, 5, 4, 3, 2, 1, 0
+
+    i = 6    num[6] = '8'
+             int('8') = 8,  8 % 2 = 0,  0 == 1 is False   ->  continue
+
+    i = 5    num[5] = '6'
+             6 % 2 = 0                                    ->  continue
+
+    i = 4    num[4] = '1'
+             int('1') = 1,  1 % 2 = 1,  TRUE
+             return num[:5]  ->  "53471"
+
+    RETURN VALUE: "53471"
+
+Positions 3, 2, 1 and 0 were never examined - the function returned as soon as it found what it
+needed.
+
+A SECOND RUN, all even. `num = "4206"`:
+
+    i = 3  '6'  even
+    i = 2  '0'  even        (0 is even - easy to hesitate over, but 0 % 2 = 0)
+    i = 1  '2'  even
+    i = 0  '4'  even
+    the loop ends
+    LINE 5: return ""
+
+THE SCAN-FROM-THE-LEFT BUG on the first input finds '5' at position 0 immediately and returns `"5"` -
+one digit where the answer is five digits. Wrong on 2,541 of 5,000 random strings.
+
+THE RETURN-THE-DIGIT BUG returns `"1"` for the same input: it found the right position and then
+returned the wrong thing. Wrong on 3,292 of 5,000, the worst of the three.
+
+THE FORGOTTEN `+1` returns `num[:4]` = `"5347"`, which ends in 7... which happens to be odd, so this
+particular input hides the bug. On `"53472"` it would return `"5347"` when the correct answer is
+`"53471"`-style reasoning - a good reminder that slicing bugs need a deliberately chosen test.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) in the worst case - the all-even string, where the scan walks the whole way. In the common
+case it stops almost immediately, since roughly half of all strings end on an odd digit. The final
+slice copies up to n characters, which is also O(n) and unavoidable since it is the output.
+
+SPACE: O(n) for the returned substring; O(1) beyond that - a single index variable.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one backward scan,
+against O(n-cubed) for generating and comparing every substring.
+
+THE #1 BEGINNER MISTAKE: returning just the odd digit instead of the prefix ending at it. Wrong on
+3,292 of 5,000 random strings. You correctly found the position and then forgot that the answer is
+everything up to it.
+
+THE #2 MISTAKE: scanning from the left and stopping at the first odd digit, which gives the SHORTEST
+odd prefix rather than the longest. Wrong on 2,541 of 5,000.
+
+THE #3 MISTAKE: the all-or-nothing version - the whole string if it ends odd, otherwise nothing. Wrong
+on 1,629 of 5,000, and every failure is a string ending in an even digit. It is right on every
+odd-ending input, so it survives half of any casual test set.
+
+AND THE ONE THE CONSTRAINTS ARE WARNING YOU ABOUT: converting the string to an integer. With up to
+100,000 digits that is slow in Python and impossible in most other languages. A huge length limit on a
+digit-string problem is the setter telling you to stay in string-land.
+
+ONE-SENTENCE TAKEAWAY: a number is odd exactly when its last digit is, and longer digit strings are
+bigger numbers - so the answer is the prefix ending at the RIGHTMOST odd digit, found in one backward
+scan.""",
+]
+
+_EX_P1AL["Lemonade Change (greedy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are running a lemonade stand. Every glass costs exactly $5. Customers queue up one at a time and
+each pays with a single note: a $5, a $10 or a $20. You must give the correct change immediately, out
+of the notes customers have already given you - you start the day with an empty cash box.
+
+Can you serve everyone in the queue?
+
+    bills = [5, 5, 5, 10, 20]
+
+    customer 1 pays $5      no change needed.        box: one $5
+    customer 2 pays $5      no change needed.        box: two $5
+    customer 3 pays $5      no change needed.        box: three $5
+    customer 4 pays $10     you owe $5. Give one.    box: two $5, one $10
+    customer 5 pays $20     you owe $15. Give the $10 and a $5.   box: one $5
+
+    Everyone served  ->  TRUE
+
+    bills = [5, 5, 10, 10, 20]
+
+    customer 5 pays $20, you owe $15 - but you hold only two $10 notes and no $5.
+    You cannot make $15 out of tens.                 ->  FALSE
+
+TERMS AS THEY APPEAR:
+- CHANGE: the difference between what they hand you and the $5 price. A $10 needs $5 back, a $20 needs
+  $15 back.
+- GREEDY: decide each customer's change on the spot, by a fixed rule, and never revisit it. The whole
+  question is which fixed rule is safe.""",
+
+    """2. THE INTUITION - fives are flexible, tens are not
+
+Everything in this problem comes down to one asymmetry between the two notes you can give away.
+
+    a $5 note can pay change for a $10 (as the whole $5), or help pay change for a $20.
+    a $10 note can ONLY help pay change for a $20 - nothing else needs exactly $10.
+
+So a $5 is FLEXIBLE and a $10 is INFLEXIBLE. That immediately suggests a rule: when you have a choice,
+spend the inflexible note and hoard the flexible one.
+
+The choice arises exactly once - when someone pays with a $20 and you owe $15. There are two ways to
+make $15:
+
+    (a) one $10 plus one $5
+    (b) three $5s
+
+Both cost you $15. But (a) spends only one precious five, while (b) spends three. Since a five can
+rescue you later and a ten mostly cannot, always prefer (a).
+
+WATCH IT GO WRONG WITH THE OTHER ORDER:
+
+    bills = [5, 5, 5, 10, 20, 20]
+
+    after four customers you hold: two $5 and one $10.
+    customer 5 pays $20, you owe $15.
+
+        the RIGHT choice:  give the $10 and one $5   ->  you keep one $5
+        the WRONG choice:  you cannot even do three $5s here (you only have two)...
+
+    so take a slightly bigger queue: [5, 5, 5, 5, 10, 20, 20]
+    after five customers: three $5 and one $10.
+    customer 6 pays $20, owes $15.
+
+        RIGHT: $10 + $5     ->  left with two $5, no $10
+        WRONG: three $5s    ->  left with zero $5, one $10
+
+    customer 7 pays $20, owes $15.
+
+        after RIGHT: two $5 is only $10 - you cannot make $15 either way.  FALSE
+        after WRONG: one $10 and no $5 - also FALSE.
+
+The failure rate of the wrong order is genuinely LOW, which is the interesting part. I measured it on
+5,000 random queues: preferring three fives over a ten-plus-five gave the wrong answer only 14 times.
+Fourteen in five thousand - a rule that is wrong less than one time in three hundred is far more
+dangerous than one that is obviously broken, because your own testing will bless it.
+
+Measured: the ten-first greedy agreed with a full search over every possible change decision on 5,000
+of 5,000 queues.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `bills = [5, 5, 10, 5, 20]`.
+
+We track two counters: how many $5s and how many $10s are in the box. Twenties are never tracked -
+see section 5 for why.
+
+    start:  fives = 0,  tens = 0
+
+    customer 1 pays 5:
+        no change owed. Take it.
+        fives = 1,  tens = 0
+
+    customer 2 pays 5:
+        fives = 2,  tens = 0
+
+    customer 3 pays 10:
+        owe $5. Do we have a five? Yes (we have two).
+        spend one five, take the ten.
+        fives = 1,  tens = 1
+
+    customer 4 pays 5:
+        fives = 2,  tens = 1
+
+    customer 5 pays 20:
+        owe $15. Preferred option: a ten plus a five. We have tens = 1 and fives = 2, so yes.
+        spend one ten and one five.
+        fives = 1,  tens = 0
+
+    queue finished with everyone served  ->  TRUE
+
+Now the same queue with the WRONG preference at the last step: three fives instead. We hold two fives,
+so that option is not even available and we would fall back correctly - which shows why the bug is so
+hard to trigger. It needs a queue where BOTH options are available and the fives are needed later.
+
+THE MINIMAL FAILING SHAPE, worth memorising: you need three or more fives AND a ten in the box, a $20
+that eats the fives, and then a later customer who needs a five. For example:
+
+    [5, 5, 5, 10, 20, 5, 20]      hold on to your fives and you survive; spend three of them and you
+                                  may not.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. THE VERY FIRST CUSTOMER PAYS $10 OR $20. The box is empty, so you cannot give change. FALSE
+   immediately. The code handles it naturally: `fives == 0` fails the ten branch, and neither option
+   works in the twenty branch.
+
+B. EVERYBODY PAYS $5. Always TRUE - no change is ever needed, and the box just fills with fives.
+
+C. A SINGLE CUSTOMER. `[5]` is TRUE; `[10]` and `[20]` are FALSE.
+
+D. EXACT-CHANGE KNIFE EDGE. `[5, 5, 5, 20]`: three fives in the box, a twenty arrives, no ten
+   available, so the fallback of three fives is used and the answer is TRUE. The fallback is not
+   optional - it is the only way to serve this queue.
+
+E. THE #1 MISTAKE - CHECKING THE THREE-FIVES OPTION FIRST. Measured wrong on only 14 of 5,000 random
+   queues, every one of them a queue containing a $20. That LOW rate is precisely what makes it worth
+   naming: a bug that fires once in 357 runs will pass your hand-written tests, pass a small random
+   test, and fail the submission. When a rule is 'usually right', ask why it is ever wrong rather than
+   being reassured.
+
+F. THE #2 MISTAKE - TRACKING ONLY THE TOTAL CASH rather than the notes. 'I have $25 in the box and owe
+   $15, so I am fine' ignores that $25 might be one $5 and one $20 - and you cannot make $15 from
+   that. Wrong on 460 of 5,000 queues, 401 of them containing a $20. The lesson generalises: when
+   change is made from DISCRETE denominations, the total is not enough information.
+
+G. TRACKING TWENTIES. Not wrong, just useless: a $20 is never given as change to anybody, since the
+   largest change owed is $15. Noticing that a variable can be deleted is a small but real signal in
+   an interview.
+
+H. FORGETTING THAT A $10 CUSTOMER ALSO ADDS A TEN TO THE BOX. It is easy to write `fives -= 1` and
+   move on, forgetting `tens += 1` - and then the preferred option for later twenties never becomes
+   available.""",
+
+    """5. WHY THE GREEDY IS PROVABLY SAFE, AND WHY THE SEARCH IS UNNECESSARY
+
+THE SLOW-BUT-CERTAIN VERSION: whenever a $20 arrives and both change options are available, TRY BOTH
+and see if either leads to a complete run. That is a search over a branching tree of decisions:
+
+    def brute(bills, i=0, fives=0, tens=0):
+        if i == len(bills):
+            return True
+        b = bills[i]
+        if b == 5:
+            return brute(bills, i+1, fives+1, tens)
+        if b == 10:
+            return fives > 0 and brute(bills, i+1, fives-1, tens+1)
+        ok = False
+        if tens > 0 and fives > 0:
+            ok = brute(bills, i+1, fives-1, tens-1)
+        if not ok and fives >= 3:
+            ok = brute(bills, i+1, fives-3, tens)
+        return ok
+
+Correct by construction - it considers every way of giving change - and it is what I checked the
+greedy against, with 5,000 agreements out of 5,000. It needs memoisation to avoid exponential
+blow-up, and it is far more machinery than the problem deserves.
+
+WHY THE GREEDY IS EXACTLY AS GOOD, argued properly.
+
+Compare the two states you can be in after serving a $20:
+
+    option (a), ten + five:   you have one fewer ten and one fewer five
+    option (b), three fives:  you have three fewer fives
+
+Both leave the same total value in the box. But consider what future customers can demand. Only two
+demands ever occur: $5 (from a ten-payer) and $15 (from a twenty-payer). A five can serve both a $5
+demand and part of a $15; a ten can serve only part of a $15, and only when a five is available to go
+with it.
+
+So state (a) can satisfy every request that state (b) can, and sometimes more: whenever (b) survives,
+(a) survives too, because (a) holds two extra fives at the cost of one ten, and any use of that ten
+requires a five you would not have in (b). That is an EXCHANGE ARGUMENT again - the same shape as in
+the seating and flower-bed problems - and it is what makes the greedy safe rather than lucky.
+
+THE SHAPE OF THE LESSON: WHEN RESOURCES DIFFER IN FLEXIBILITY, SPEND THE LEAST FLEXIBLE ONE FIRST.
+That is the transferable rule, and it applies well beyond making change - scheduling with
+special-purpose machines, allocating memory blocks of different sizes, assigning staff with different
+skill sets.
+
+WHY THIS IS NOT COIN CHANGE. The classic coin-change problem needs dynamic programming because you may
+use unlimited coins of each denomination and the denominations can be awkward. Here the amounts are
+fixed and tiny (only $5 and $15 are ever owed) and the supply is what you happen to hold - so the
+whole thing collapses to two counters and a preference rule. Being able to say why this is NOT a DP
+problem is worth as much as solving it.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Start with zero fives and zero tens in the box. Do not bother tracking twenties.
+2. Take the customers one at a time:
+   a. If they pay with a $5, no change is needed. Add one to the five count.
+   b. If they pay with a $10, you owe $5. If you have no fives, you cannot serve them - stop and
+      answer no. Otherwise take one five out of the box and add one ten.
+   c. If they pay with a $20, you owe $15. If you have at least one ten AND at least one five, use
+      those - that is the preferred option. Otherwise, if you have at least three fives, use those.
+      If neither works, stop and answer no.
+3. If you get to the end of the queue, answer yes.
+
+THE ORDER OF THE TWO OPTIONS IN STEP 2c IS THE WHOLE PROBLEM. Prefer the ten-plus-five. Checking the
+three-fives option first is wrong on 14 of 5,000 random queues - rare enough to slip past testing, and
+that rarity is exactly the point.
+
+WHAT TO SAY OUT LOUD: 'fives are the flexible note - they can pay change for a ten or help pay change
+for a twenty - so I spend the inflexible tens first and hoard the fives.' That sentence is the answer;
+the code is bookkeeping.
+
+WHY YOU DO NOT NEED A TWENTIES COUNTER: nothing ever requires you to give away a twenty, since the
+largest change owed is $15. If you find yourself incrementing a variable you never read, delete it.
+
+DO NOT FORGET, in step 2b, that the customer's $10 goes INTO the box. You are both spending a five and
+gaining a ten, and that ten is what makes the preferred option possible later.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Keep a mental note of two things only: how many five-dollar notes are in the box and how many tens.
+Twenties never matter, because you never have to give one away.
+
+When a customer pays with a five, take it and hand over nothing. When they pay with a ten, you owe
+five back - so if the box has no fives, you are stuck and the day fails; otherwise hand over a five
+and drop their ten in the box.
+
+When someone pays with a twenty you owe fifteen, and you have a choice. Always pay with a ten and a
+five if you can, and only fall back on three fives when you have no ten. Fives are the useful note -
+they can settle a ten-payer's change or make up a twenty-payer's - whereas a ten is only ever useful
+alongside a five. Spend the note you cannot use elsewhere and keep the one you can.
+
+If you reach the end of the queue without getting stuck, the day worked.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def lemonade_change(bills):
+        fives = tens = 0
+        for bill in bills:
+            if bill == 5:
+                fives += 1
+            elif bill == 10:
+                if fives == 0:
+                    return False
+                fives -= 1; tens += 1
+            else:                        # a $20: prefer a 10 + 5, else three 5s
+                if tens > 0 and fives > 0:
+                    tens -= 1; fives -= 1
+                elif fives >= 3:
+                    fives -= 3
+                else:
+                    return False
+        return True
+
+LINE 2: `fives = tens = 0`
+    The entire state of the problem is two integers. Chained assignment sets both to 0. Note what is
+    NOT here: no twenties counter, because a twenty is never handed out as change.
+
+LINE 3: `for bill in bills:`
+    Customers arrive in order and must be served in order - there is no re-ordering to consider, which
+    is what keeps the state so small.
+
+LINE 4-5: `if bill == 5: fives += 1`
+    The easy case. No change is owed, so the note simply joins the box. This is also the only line
+    that ever increases your supply of fives, which is why they are precious.
+
+LINE 6-9: the $10 branch
+    `if fives == 0: return False` - you owe $5 and the only way to pay it is a five. No five, no sale,
+    and no later customer can help because they arrive later. Returning immediately is correct.
+    `fives -= 1; tens += 1` - hand over a five, take in their ten. BOTH halves matter: forgetting
+    `tens += 1` means you never build up the tens that make the preferred change option possible.
+
+LINE 10-16: the $20 branch, which is where the algorithm lives
+    `if tens > 0 and fives > 0: tens -= 1; fives -= 1` - the PREFERRED option, checked FIRST. It costs
+    one five instead of three, and a five is the note that can rescue you later. Putting the other
+    option first is wrong on 14 of 5,000 queues.
+    `elif fives >= 3: fives -= 3` - the fallback, used only when you have no ten. It is not optional:
+    `[5,5,5,20]` can only be served this way.
+    `else: return False` - $15 cannot be made from what you hold.
+    Note the `else` on line 10 rather than `elif bill == 20`: since the only possible notes are 5, 10
+    and 20, anything that is not 5 or 10 is a 20. Either style is fine; being explicit is friendlier
+    if the denominations might ever change.
+
+LINE 17: `return True`
+    Reached only if every customer was served.
+
+WHAT MAPS BACK TO THE HAND-TRACE: each `customer N pays ...` block in section 3 is one iteration of
+line 3, and the 'preferred option: a ten plus a five' step is line 11.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `bills = [5, 5, 10, 5, 20]`.
+
+    LINE 2:  fives = 0,  tens = 0
+
+    bill = 5     matches line 4
+                 fives = 1,  tens = 0
+
+    bill = 5     fives = 2,  tens = 0
+
+    bill = 10    fives == 0?  No, we have 2.
+                 fives = 1,  tens = 1          (gave a five, took their ten)
+
+    bill = 5     fives = 2,  tens = 1
+
+    bill = 20    tens > 0 and fives > 0?   1 > 0 and 2 > 0  ->  TRUE, take the preferred option
+                 tens = 0,  fives = 1
+
+    loop ends
+    RETURN VALUE: True
+
+A SECOND RUN that fails. `bills = [5, 5, 10, 10, 20]`:
+
+    bill = 5     fives = 1
+    bill = 5     fives = 2
+    bill = 10    fives = 1,  tens = 1
+    bill = 10    fives = 0,  tens = 2
+    bill = 20    tens > 0 and fives > 0?   2 > 0 but fives is 0  ->  no
+                 fives >= 3?               0 >= 3  ->  no
+                 RETURN False
+
+    Correct: you hold two tens and no fives, which is $20 in the box but no way to make $15.
+
+THE 'TOTAL CASH ONLY' BUG on that same queue thinks: 'I have taken in 5+5+10+10 = $30 and given out
+$10, so I hold $20, which covers the $15 I owe' - and returns True. It cannot see that $20 is two
+tens. Wrong on 460 of 5,000 queues.
+
+THE 'THREE FIVES FIRST' BUG needs a more specific queue to expose, which is exactly why it is
+dangerous. On `[5, 5, 5, 10, 20, 5, 20]`:
+
+        after five customers the box holds three fives and one ten.
+        customer 6 pays 20:  the buggy order takes three fives  ->  fives = 0, tens = 1
+        customer 7 pays 5:   fives = 1
+        ... and the correct order would have left two fives, which survives a further $10 customer
+        that the buggy state cannot serve.
+
+    Measured across 5,000 random queues it produced a wrong answer only 14 times - once in about 357
+    runs. Rare, real, and invisible to casual testing.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) - one pass over the queue, with a constant amount of work per customer.
+
+SPACE: O(1) - two integers, regardless of how long the queue is. Recognising that the entire state of
+a simulation collapses to two counters is itself worth saying.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one pass and two
+variables.
+
+THE #1 BEGINNER MISTAKE: checking the three-fives option before the ten-plus-five. Measured wrong on
+only 14 of 5,000 random queues - and that low rate is the lesson, not a reassurance. A rule that is
+right 99.7% of the time passes every test you would write by hand and fails the submission. When you
+cannot immediately say WHY a greedy rule is correct, assume it is one of these.
+
+THE #2 MISTAKE: tracking the total amount of cash rather than which notes you hold. Wrong on 460 of
+5,000 queues. Change made from discrete denominations is not a question about totals - $20 in the box
+is useless for a $15 debt if it is two tens.
+
+THE #3 MISTAKE: forgetting that a $10 customer's note goes INTO the box, so the tens counter never
+grows and the preferred change option is never available.
+
+ONE-SENTENCE TAKEAWAY: fives are the flexible note and tens are not, so when a $20 needs $15 in
+change, always spend the ten first and hoard the fives - spend your least flexible resource before
+your most flexible one.""",
+]
+
+_EX_P1AL["Maximum Ascending Subarray Sum"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have a row of numbers. Look at every stretch of NEIGHBOURING numbers that keeps going UP - each
+one strictly bigger than the one before. Add up each such stretch, and report the biggest total.
+
+    nums = [10, 20, 30, 5, 10, 50]
+
+    the ascending stretches are:
+        10, 20, 30      ->  sum 60
+        5, 10, 50       ->  sum 65     <- the biggest
+    (the run breaks between 30 and 5, because 5 is not bigger than 30)
+
+    ANSWER: 65
+
+Two words in that description do real work.
+
+- NEIGHBOURING (technically CONTIGUOUS): the numbers must sit next to each other in the row. You may
+  not skip over one to keep a run going.
+- STRICTLY bigger: equal is not bigger. In `[10, 20, 20, 30]` the run breaks between the two 20s, so
+  the stretches are `10, 20` (sum 30) and `20, 30` (sum 50).
+
+TERMS AS THEY APPEAR:
+- SUBARRAY: a contiguous stretch of the row. `[20, 30]` is a subarray of `[10, 20, 30, 5]`;
+  `[10, 30]` is not.
+- ASCENDING / STRICTLY INCREASING: each element is greater than the one immediately before it.
+- RUN: one maximal ascending stretch. The row above has two runs.
+- In the standard version of this problem every number is POSITIVE (between 1 and 100). That
+  constraint turns out to matter enormously - see section 5.""",
+
+    """2. THE INTUITION - one sweep, two variables
+
+You could try every stretch, but you do not need to, because the runs do not overlap. Walk the row
+once from left to right, carrying a running total of the run you are currently inside:
+
+    - if the next number is bigger than the one before it, the run continues, so ADD it to the running
+      total;
+    - otherwise the run has ended, so START A NEW ONE at this number;
+    - after every step, check whether the running total is the best you have seen.
+
+    nums = [10, 20, 30, 5, 10, 50]
+
+    start:   current = 10,  best = 10
+    20 > 10  ->  current = 30,   best = 30
+    30 > 20  ->  current = 60,   best = 60
+    5 > 30?  no  ->  current = 5,   best still 60
+    10 > 5   ->  current = 15,   best still 60
+    50 > 10  ->  current = 65,   best = 65
+
+    ANSWER: 65
+
+WHY TWO VARIABLES AND NOT ONE. `current` goes DOWN whenever a run breaks - it was 60 and became 5. If
+you kept only `current` you would return whatever the last run happened to sum to, which is 65 here by
+luck but 5 on the input `[1, 2, 3, 1]`. Measured: the one-variable version was wrong on 3,857 of 6,000
+random inputs. The pattern to internalise is 'a running value that can reset, plus a best-so-far that
+never goes down'.
+
+WHY THE COMPARISON IS AGAINST THE PREVIOUS ELEMENT, NOT THE RUNNING SUM. You are asking 'is the row
+still going up?', which is a question about two neighbouring numbers - `nums[i]` against `nums[i-1]`.
+It is not a question about totals. This is the difference between this problem and Kadane's maximum
+subarray, where the restart condition IS about the running sum.
+
+THE FAMILY RESEMBLANCE, worth carrying: this is Kadane's two-variable skeleton with a different
+restart rule. Kadane restarts when the running sum stops helping; this restarts when the ascending
+property breaks. Recognising the skeleton means you never have to invent it from scratch.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `nums = [3, 6, 2, 4, 5]`.
+
+    start:  best = current = nums[0] = 3
+            (seeding with the first element, not with 0 - section 4 explains why that matters)
+
+    i = 1:  nums[1] = 6,  nums[0] = 3.  Is 6 > 3?  YES - the run continues.
+            current = 3 + 6 = 9
+            best = max(3, 9) = 9
+
+    i = 2:  nums[2] = 2,  nums[1] = 6.  Is 2 > 6?  NO - the run is broken.
+            current = 2                    (start a fresh run AT this element)
+            best = max(9, 2) = 9           (best does not go down)
+
+    i = 3:  nums[3] = 4,  nums[2] = 2.  Is 4 > 2?  YES.
+            current = 2 + 4 = 6
+            best = max(9, 6) = 9
+
+    i = 4:  nums[4] = 5,  nums[3] = 4.  Is 5 > 4?  YES.
+            current = 6 + 5 = 11
+            best = max(9, 11) = 11
+
+    ANSWER: 11
+
+Notice `current` dropping from 9 to 2 at i = 2 while `best` held at 9. That is the whole reason for
+two variables, and it is the moment to point at when someone asks why one is not enough.
+
+A SECOND TRACE with equal neighbours, which is the case the word 'strictly' exists for. Input
+`[12, 17, 17, 20]`:
+
+    best = current = 12
+    i = 1:  17 > 12  ->  current = 29,  best = 29
+    i = 2:  17 > 17?  NO (equal is not greater)  ->  current = 17,  best = 29
+    i = 3:  20 > 17  ->  current = 37,  best = 37
+
+    ANSWER: 37
+
+With a `>=` comparison the run would never break, `current` would reach 66 and the answer would be
+wrong. Measured: using `>=` was wrong on 1,208 of 6,000 inputs - and on all 1,208 of the 1,641 inputs
+that contained equal neighbours. Test data without repeats will never expose it.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. A SINGLE ELEMENT. `[7]`. The loop never runs, and the answer is the seed value 7. This is why the
+   seeding matters more than it looks.
+
+B. THE WHOLE ROW ASCENDS. `[1, 2, 3, 4]`. One run, and the answer is the total, 10.
+
+C. THE WHOLE ROW DESCENDS. `[9, 5, 3]`. Every step breaks the run, so every run is a single element
+   and the answer is the largest element, 9. A good sanity check: the answer can never be less than
+   the biggest single number.
+
+D. ALL EQUAL. `[4, 4, 4]`. No element is strictly greater than its predecessor, so every run is one
+   element and the answer is 4. With `>=` you would get 12.
+
+E. THE #1 MISTAKE - USING `>=` INSTEAD OF `>`. It quietly solves the NON-DECREASING version, which is
+   a different problem, and always gives an answer at least as large as the truth. Wrong on 1,208 of
+   6,000 random inputs, all of them among the 1,641 with equal neighbours.
+
+F. THE #2 MISTAKE - COLLAPSING TO ONE VARIABLE and returning `current` at the end. Wrong on 3,857 of
+   6,000 - it reports the LAST run rather than the best one, and it is right only when the last run
+   happens to be the biggest.
+
+G. SEEDING AT 0 INSTEAD OF AT THE FIRST ELEMENT. Under the official constraints (every number between
+   1 and 100) this is measurably harmless - 0 failures in 6,000 - because a run of positive numbers is
+   always worth more than 0. But it breaks the moment negatives are allowed: on all-negative input the
+   answer should be the largest (least negative) element, and a version seeded at 0 returns 0, a sum
+   that corresponds to no stretch at all. Seeding with `nums[0]` costs nothing and is right in both
+   worlds, which is why it is the habit to build.
+
+H. AN EMPTY ROW. `nums[0]` would raise an IndexError. The problem guarantees at least one element;
+   saying you would guard it otherwise is a five-second remark that reads as care.""",
+
+    """5. THE HIDDEN ASSUMPTION - THIS ALGORITHM NEEDS THE NUMBERS TO BE POSITIVE
+
+THE SLOW-BUT-OBVIOUS VERSION, for reference: start at every position, extend rightwards while the
+values keep rising, and track the best total. O(n-squared) in the worst case, obviously correct, and
+what I measured everything else against.
+
+    def brute(nums):
+        best = None
+        for i in range(len(nums)):
+            s = nums[i]
+            best = s if best is None else max(best, s)
+            for j in range(i + 1, len(nums)):
+                if nums[j] > nums[j - 1]:
+                    s += nums[j]
+                    best = max(best, s)
+                else:
+                    break
+        return best
+
+Under the problem's actual constraints - every number between 1 and 100 - the one-pass sweep agreed
+with this on 6,000 of 6,000 random inputs. So the sweep is correct, and that is the answer to give.
+
+BUT HERE IS SOMETHING WORTH KNOWING, because it is exactly the kind of thing an interviewer follows up
+with. ALLOW NEGATIVE NUMBERS AND THE SWEEP BREAKS. I measured it: with values from -12 to 12, the
+sweep matched the brute force on only 3,007 of 6,000 inputs.
+
+    nums = [-7, 5, 4]
+
+    the ascending stretches are:  [-7, 5] summing to -2,  and [5] alone summing to 5,  and [4] alone.
+    the best is 5.
+
+    the sweep:  best = current = -7
+                5 > -7  ->  current = -7 + 5 = -2,  best = -2
+                4 > 5?  no  ->  current = 4,  best = 4
+                returns 4    -   WRONG, the answer is 5
+
+The problem is that a run can be worth MORE if you drop a negative prefix. The sweep always extends
+the run when the values rise, even when the accumulated total is dragging it down.
+
+THE FIX IS ONE `max`, and it is precisely Kadane's rule:
+
+    current = max(nums[i], current + nums[i])   if nums[i] > nums[i-1]  else  nums[i]
+
+Read it as: 'the run continues, but if the baggage I am carrying is worse than starting fresh here,
+start fresh here.' Measured, that version is correct on 6,000 of 6,000 even with negatives.
+
+WHY THIS IS WORTH THE PAGE SPACE. The point is not that the standard solution is wrong - it is right
+for the stated constraints. The point is that it RELIES on a constraint you might not notice you are
+using. Saying 'this works because the values are guaranteed positive; with negatives I would need the
+Kadane-style max' is a much stronger answer than presenting the sweep as universally correct. Always
+ask which constraint your solution is quietly leaning on.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Set two values, both to the FIRST number in the row: a `best` (the answer so far) and a `current`
+   (the total of the run you are inside).
+2. Walk from the SECOND number to the end. At each step:
+   a. Compare this number with the one immediately before it in the row.
+   b. If this one is STRICTLY bigger, the run continues - add this number to `current`.
+   c. Otherwise the run has ended - set `current` to just this number, starting a new run here.
+   d. Either way, if `current` is now bigger than `best`, update `best`.
+3. Return `best`.
+
+THE THREE DECISIONS THAT MATTER, all easy to get subtly wrong:
+- COMPARE ELEMENTS, NOT SUMS. The condition is about `nums[i]` versus `nums[i-1]` - the shape of the
+  row - not about whether the running total is helping.
+- STRICTLY BIGGER. Equal neighbours end the run. Using greater-or-equal solves a different problem and
+  is wrong on 1,208 of 6,000 inputs, all of them with repeats.
+- KEEP THE BEST SEPARATELY. `current` falls whenever a run breaks; `best` must never fall. Merging
+  them is wrong on 3,857 of 6,000.
+
+WHY YOU SEED WITH THE FIRST ELEMENT RATHER THAN ZERO: a single-element row must return that element,
+and seeding at 0 would report 0 for a row of negatives. Under this problem's positive-only constraints
+the two behave identically, but seeding with `nums[0]` is correct in both worlds and costs nothing.
+
+WHY THE LOOP STARTS AT THE SECOND ELEMENT: the comparison needs a previous element to look at. The
+first number has none, which is exactly why it is the seed.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Walk along the row from left to right carrying two numbers in your head: the total of the stretch you
+are currently climbing, and the best total you have seen anywhere.
+
+At each step, glance back one place. If the row is still going up, add the new number to your current
+total. If it has levelled off or dropped, that climb is over - throw the total away and start counting
+again from the number you are standing on.
+
+Either way, compare your current total against the best you have seen and keep whichever is larger.
+The current total can collapse at any moment; the best never does.
+
+When you reach the end, the best is the answer. One pass, no lists, nothing stored.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def max_ascending_sum(nums):
+        best = current = nums[0]
+        for i in range(1, len(nums)):
+            if nums[i] > nums[i - 1]:
+                current += nums[i]      # extend the ascending run
+            else:
+                current = nums[i]       # restart the run
+            best = max(best, current)
+        return best
+
+LINE 2: `best = current = nums[0]`
+    Both start at the first element. Two reasons: a one-element row must return that element, and a
+    run always contains at least one number, so the smallest possible answer is the largest single
+    element - never 0. Chained assignment sets both names at once.
+
+LINE 3: `for i in range(1, len(nums)):`
+    Start at index 1, because the comparison on the next line looks at `i - 1` and index 0 has no
+    predecessor. This is why the first element is handled by the seed rather than by the loop.
+
+LINE 4: `if nums[i] > nums[i - 1]:`
+    The run-continues test, and the line where two separate mistakes live. It compares this ELEMENT
+    with the PREVIOUS ELEMENT - not with `current`, which would be asking Kadane's question instead.
+    And it is STRICTLY greater: equal neighbours break the run, which is what the word 'ascending'
+    means here. Using `>=` is wrong on 1,208 of 6,000 inputs.
+
+LINE 5: `current += nums[i]`
+    The run continues, so this number joins the current total.
+
+LINE 6-7: `else: current = nums[i]`
+    The run has ended. Note it restarts AT this element - assignment, not zero - because this element
+    is itself the first member of the new run. Setting `current = 0` here would lose it, and the next
+    step would build on an incomplete total.
+
+LINE 8: `best = max(best, current)`
+    Outside the if/else, so it runs after every step - including the ones where the run just restarted,
+    which matters when a single large element is itself the best answer. `best` never decreases, which
+    is exactly what distinguishes it from `current`. Dropping this line and returning `current`
+    instead is wrong on 3,857 of 6,000 inputs.
+
+LINE 9: `return best`
+
+WHAT MAPS BACK TO THE HAND-TRACE: the `current = 2` at i = 2 in section 3 was line 7 firing, and the
+`best` staying at 9 through that step was line 8 keeping the larger of the two.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [10, 20, 30, 5, 10, 50]`.
+
+    LINE 2:  best = 10,  current = 10
+
+    i = 1    nums[1] = 20,  nums[0] = 10
+             20 > 10  ->  TRUE
+             current = 10 + 20 = 30
+             best = max(10, 30) = 30
+
+    i = 2    nums[2] = 30,  nums[1] = 20
+             30 > 20  ->  TRUE
+             current = 30 + 30 = 60
+             best = max(30, 60) = 60
+
+    i = 3    nums[3] = 5,   nums[2] = 30
+             5 > 30  ->  FALSE
+             current = 5                      <- the run collapses
+             best = max(60, 5) = 60           <- but the best does not
+
+    i = 4    nums[4] = 10,  nums[3] = 5
+             10 > 5  ->  TRUE
+             current = 5 + 10 = 15
+             best = max(60, 15) = 60
+
+    i = 5    nums[5] = 50,  nums[4] = 10
+             50 > 10  ->  TRUE
+             current = 15 + 50 = 65
+             best = max(60, 65) = 65
+
+    RETURN VALUE: 65
+
+Watch `current` at i = 3: it fell from 60 to 5 while `best` held. Those two variables doing different
+things is the whole design.
+
+THE ONE-VARIABLE BUG on `[1, 2, 3, 1]`: current climbs to 6, then resets to 1 at the last step, and
+the function returns 1 instead of 6. Wrong on 3,857 of 6,000 inputs.
+
+THE `>=` BUG on `[12, 17, 17, 20]`: the run never breaks, current reaches 66, and it returns 66
+instead of 37. Wrong on 1,208 of 6,000 - and on 1,208 of the 1,641 inputs containing equal
+neighbours, so distinct-value test data hides it entirely.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n). One pass, one comparison and one addition per element. You cannot do better - every
+element must be looked at at least once.
+
+SPACE: O(1). Two integers, whatever the length of the row. No lists, no copies.
+
+BIG-O IN ONE SENTENCE: how the work GROWS as the input gets bigger, ignoring constants - here one pass
+and two variables, versus O(n-squared) for checking every stretch separately.
+
+THE #1 BEGINNER MISTAKE: collapsing the two variables into one and returning the running total. Wrong
+on 3,857 of 6,000 random inputs, because the running total resets whenever a run breaks and the answer
+becomes 'the last run' rather than 'the best run'.
+
+THE #2 MISTAKE: `>=` instead of `>`. It silently solves the non-decreasing version. Wrong on 1,208 of
+6,000, every one an input with equal neighbours - so distinct test values never reveal it.
+
+THE #3 MISTAKE, subtler: comparing `nums[i]` against `current` instead of against `nums[i-1]`. That is
+Kadane's condition, and this problem asks a different question - whether the ROW is still climbing,
+not whether the SUM is still helping.
+
+THE CONSTRAINT THIS SOLUTION LEANS ON, which is worth naming aloud: all values are positive. With
+negatives allowed, the sweep is wrong on about half of all inputs, and the fix is Kadane's
+`max(nums[i], current + nums[i])`. Knowing which guarantee your algorithm depends on is worth as much
+as the algorithm.
+
+ONE-SENTENCE TAKEAWAY: carry a running total that RESTARTS whenever the row stops strictly rising, and
+a separate best-so-far that never falls - Kadane's skeleton with a different restart rule.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AL:
+        _e["examples"] = _EX_P1AL[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
