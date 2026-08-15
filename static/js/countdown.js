@@ -19,9 +19,15 @@
         pause on visibilitychange and re-sync on return, so a phone left in
         a pocket does not burn cycles.
 
-     3. SHOWS ONE DOMINANT UNIT. The escalation from weeks to days to a live
-        clock IS the urgency signal, which is why nothing flashes until the
-        last day. A permanently pulsing page is one you stop seeing.
+     3. RENDERS TWO WAYS from one instance. Hosts that want the full
+        DAYS / HOURS / MINUTES readout provide [data-cd-d] [data-cd-h]
+        [data-cd-m] (and optionally [data-cd-s]); dense lists that only have
+        room for one line use [data-cd-compact] ("44d 06h 12m"); the older
+        single-dominant-unit hooks [data-cd-big]/[data-cd-unit] still work.
+        Because all three units are visible at once the UNIT no longer
+        escalates, so urgency is carried entirely by the tone attribute and
+        the pulse — which still starts only in the last day, since a
+        permanently pulsing page is one you stop seeing.
 
    The server computes the same breakdown in utils/countdown.py and both
    must agree; the client re-derives it only so the display can tick between
@@ -107,23 +113,67 @@
     return pad(b.hours) + ":" + pad(b.minutes) + ":" + pad(b.seconds);
   }
 
+  /* DAYS : HOURS : MINUTES, the requested format.
+
+     Note these are NOT the complementary split above: with no weeks segment
+     on show, `days` has to be the TOTAL days (44), never the remainder after
+     whole weeks (2), or a six-week deadline would read "2d 06h 12m" and be
+     wildly wrong. Hours and minutes are the ordinary remainders. */
+  function segments(b) {
+    var abs = Math.abs(b.total);
+    return {
+      d: Math.floor(abs / DAY),
+      h: Math.floor((abs % DAY) / HOUR),
+      m: Math.floor((abs % HOUR) / MIN),
+      s: Math.floor((abs % MIN) / SEC)
+    };
+  }
+
+  /* The compact one-line form of the same thing, for dense lists where three
+     separate boxes would be noise: "44d 06h 12m". */
+  function compact(b) {
+    var g = segments(b);
+    var text = g.d + "d " + pad(g.h) + "h " + pad(g.m) + "m";
+    /* Inside the last hour the minutes alone stop conveying the pressure,
+       so the seconds join in. */
+    if (!b.overdue && b.total < HOUR) text = pad(g.m) + "m " + pad(g.s) + "s";
+    return b.overdue ? text + " over" : text;
+  }
+
   function render(inst) {
     var target = inst.target;
     if (isNaN(target)) return;
     var b = split(target - Date.now());
     var d = display(b);
+    var g = segments(b);
+
+    /* Segmented D/H/M display. Any of the hooks may be absent — a host that
+       only wants days writes one of them. */
+    if (inst.dEl) inst.dEl.textContent = String(g.d);
+    if (inst.hEl) inst.hEl.textContent = pad(g.h);
+    if (inst.mEl) inst.mEl.textContent = pad(g.m);
+    if (inst.sEl) inst.sEl.textContent = pad(g.s);
+    if (inst.compactEl) inst.compactEl.textContent = compact(b);
+
+    /* Legacy single-unit hooks, still used where one number is enough. */
     if (inst.bigEl) inst.bigEl.textContent = String(d.value);
     if (inst.unitEl) inst.unitEl.textContent = d.unit;
     if (inst.detailEl) inst.detailEl.textContent = detail(b, d, target);
+
     inst.el.dataset.tone = d.tone;
+    inst.el.dataset.overdue = b.overdue ? "true" : "false";
     /* Flash is opt-in per goal AND only in the last day — an always-on
-       pulse is noise, and noise gets ignored precisely when it matters. */
+       pulse is noise, and noise gets ignored precisely when it matters.
+       Now that every unit is on screen at once the unit no longer escalates,
+       so this colour/pulse change carries the urgency by itself. */
     inst.el.classList.toggle("flash", !!inst.flash && (d.tone === "urgent" || d.tone === "overdue"));
     if (b.total <= 0 && !inst.firedZero) {
       inst.firedZero = true;
       if (typeof inst.onZero === "function") { try { inst.onZero(inst); } catch (e) {} }
     }
-    inst.tick = d.tick;
+    /* A visible seconds segment has to be redrawn every second whatever the
+       distance, or it sits there frozen and looks broken. */
+    inst.tick = (inst.sEl || (b.total < HOUR && b.total > 0)) ? SEC : d.tick;
   }
 
   /* One shared timer for every instance on the page, re-armed to the
@@ -156,6 +206,11 @@
         bigEl: el.querySelector("[data-cd-big]"),
         unitEl: el.querySelector("[data-cd-unit]"),
         detailEl: el.querySelector("[data-cd-detail]"),
+        dEl: el.querySelector("[data-cd-d]"),
+        hEl: el.querySelector("[data-cd-h]"),
+        mEl: el.querySelector("[data-cd-m]"),
+        sEl: el.querySelector("[data-cd-s]"),
+        compactEl: el.querySelector("[data-cd-compact]"),
         tick: HOUR,
         firedZero: false
       };
@@ -189,7 +244,9 @@
     },
 
     _split: split,
-    _display: display
+    _display: display,
+    _segments: segments,
+    _compact: compact
   };
 
   if (global.document) {

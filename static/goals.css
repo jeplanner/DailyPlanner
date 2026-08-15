@@ -231,8 +231,7 @@ html.dark .goal-horizon { background: #172554; }
   gap: 5px;
   font-variant-numeric: tabular-nums;
 }
-.goal-due.goal-countdown b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
-.goal-due.goal-countdown span { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.goal-due.goal-countdown b { font-size: 14px; font-weight: 800; letter-spacing: -.01em; }
 .goal-due.goal-countdown i { font-style: normal; font-size: 10.5px; opacity: .75; margin-left: 2px; }
 .goal-due.goal-countdown[data-tone="soon"]    { color: #d97706; }
 .goal-due.goal-countdown[data-tone="urgent"]  { color: #dc2626; }

@@ -264,8 +264,11 @@ function renderDueBlock(o) {
   }
   /* No flash here: /goals is a planning surface, not the urgency surface.
      The pulsing hero lives on /goal-planner, and one loud place is enough. */
+  /* One line, all three units: "44d 06h 12m". Three separate boxes per card
+     would be noise in a list this dense — the planner hero is where the big
+     segmented clock belongs. */
   return `<div class="goal-due goal-countdown" data-countdown="${esc(iso)}" data-flash="false">
-            <b data-cd-big></b><span data-cd-unit></span><i data-cd-detail></i>
+            <b data-cd-compact></b><i data-cd-detail></i>
           </div>`;
 }
 

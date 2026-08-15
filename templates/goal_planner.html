@@ -32,17 +32,31 @@
   .hero[data-tone="overdue"]::before { background: #7f1d1d; }
   .hero[data-tone="done"]::before    { background: #059669; }
   .hero-title { font-size: 17px; font-weight: 800; margin: 0 0 10px; }
-  .clock { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .clock .big { font-size: 62px; font-weight: 900; line-height: 1; letter-spacing: -.03em;
-                font-variant-numeric: tabular-nums; }
-  .clock .unit { font-size: 15px; font-weight: 800; color: var(--color-text-secondary);
-                 text-transform: uppercase; letter-spacing: .06em; }
+  /* DAYS : HRS : MINS, with seconds alongside. Tabular figures matter here —
+     without them the digits jiggle every tick and the eye keeps re-reading. */
+  .clock { display: flex; align-items: flex-end; gap: 4px; flex-wrap: wrap; }
+  .clock .seg { display: flex; flex-direction: column; align-items: center; min-width: 62px; }
+  .clock .seg b { font-size: 52px; font-weight: 900; line-height: 1; letter-spacing: -.03em;
+                  font-variant-numeric: tabular-nums; }
+  .clock .seg i { font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: .1em;
+                  text-transform: uppercase; color: var(--color-text-secondary); margin-top: 4px; }
+  .clock .sep { font-size: 38px; font-weight: 300; line-height: 1.05; color: var(--color-border);
+                padding-bottom: 14px; }
+  /* Seconds are supporting detail, not a headline — smaller, and set apart. */
+  .clock .seg.secs { min-width: 44px; margin-left: 8px; }
+  .clock .seg.secs b { font-size: 26px; color: var(--color-text-secondary); }
   .clock .detail { font-size: 13px; font-weight: 700; color: var(--color-text-secondary);
-                   font-variant-numeric: tabular-nums; margin-left: auto; }
+                   font-variant-numeric: tabular-nums; margin-left: auto; padding-bottom: 6px; }
   /* Only the last day pulses. Anything more and it becomes wallpaper. */
   @keyframes gp-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
-  .flash .big, .flash .unit { animation: gp-pulse 1.1s ease-in-out infinite; color: #dc2626; }
-  @media (prefers-reduced-motion: reduce) { .flash .big, .flash .unit { animation: none; } }
+  .flash .seg b { animation: gp-pulse 1.1s ease-in-out infinite; color: #dc2626; }
+  @media (prefers-reduced-motion: reduce) { .flash .seg b { animation: none; } }
+  /* The colour escalates even when it is not yet flashing, because with every
+     unit on screen the unit itself no longer signals urgency. */
+  .hero[data-tone="soon"] .clock .seg b   { color: #d97706; }
+  .hero[data-tone="urgent"] .clock .seg b { color: #dc2626; }
+  .hero[data-tone="overdue"] .clock .seg b { color: #b91c1c; }
+  .hero[data-overdue="true"] .clock .seg i::after { content: " over"; }
 
   .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 12.5px;
           font-weight: 700; color: var(--color-text-secondary); }
@@ -74,7 +88,10 @@
   .row { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid var(--color-border);
          border-radius: 11px; margin-bottom: 7px; background: var(--color-surface); }
   .row .rt { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; }
-  .row .rc { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 15px; white-space: nowrap; }
+  .row .rc { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 14px; white-space: nowrap; }
+  .row .rc[data-tone="soon"]    { color: #d97706; }
+  .row .rc[data-tone="urgent"]  { color: #dc2626; }
+  .row .rc[data-tone="overdue"] { color: #b91c1c; }
   .row .ru { font-size: 10.5px; font-weight: 800; color: var(--color-text-secondary);
              text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
   .row[data-tone="urgent"] .rc, .row[data-tone="overdue"] .rc { color: #dc2626; }
@@ -90,6 +107,10 @@
             border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text); width: 100%; box-sizing: border-box; }
   .newbox label { display: block; font-size: 10.5px; font-weight: 800; text-transform: uppercase;
             letter-spacing: .05em; color: var(--color-text-secondary); margin-bottom: 3px; }
+  .newbox .dl-row { display: flex; gap: 6px; }
+  .newbox .dl-row select { flex: 0 0 116px; }
+  .newbox .dl-row input { flex: 1; min-width: 0; }
+  .newbox .dl-row input[hidden] { display: none; }
   .empty { text-align: center; padding: 34px 16px; color: var(--color-text-secondary); font-size: 14px; }
   .warn { background:#fef2f2; border:1px solid #dc2626; color:#7f1d1d; padding:11px 13px; border-radius:10px;
           font-size:13px; font-weight:700; margin-bottom:12px; }
@@ -110,7 +131,22 @@
   <div class="newbox">
     <div class="grid">
       <div><label>Goal</label><input id="n-title" type="text" placeholder="e.g. Crack the TPM loop"></div>
-      <div><label>Deadline</label><input id="n-when" type="datetime-local"></div>
+      <!-- A deadline is easier to state as a duration than as a date most of
+           the time — "45 days", "36 hours" — so the unit picker leads and the
+           input follows it. Picking "On a date" swaps in the date field. -->
+      <div class="deadline">
+        <label>Deadline</label>
+        <div class="dl-row">
+          <select id="n-unit" title="How you want to give the deadline">
+            <option value="days">In days</option>
+            <option value="hours">In hours</option>
+            <option value="minutes">In minutes</option>
+            <option value="date">On a date</option>
+          </select>
+          <input id="n-amount" type="number" min="1" step="1" placeholder="45">
+          <input id="n-when" type="datetime-local" hidden>
+        </div>
+      </div>
       <div><label>Mins/day</label><input id="n-commit" type="number" min="0" step="15" placeholder="120"></div>
       <div><label>Total hours needed</label><input id="n-effort" type="number" min="0" step="1" placeholder="139"></div>
       <div style="align-self:end"><button class="btn sm" id="n-add" type="button">Add goal</button></div>
@@ -165,8 +201,12 @@
                  data-flash="${c.flash?'true':'false'}">
         <div class="hero-title">${esc(g.title)}</div>
         <div class="clock">
-          <span class="big" data-cd-big>${d.value}</span>
-          <span class="unit" data-cd-unit>${esc(d.unit)}</span>
+          <span class="seg"><b data-cd-d>${c.breakdown.total_days}</b><i>days</i></span>
+          <span class="sep">:</span>
+          <span class="seg"><b data-cd-h>${String(c.breakdown.hours).padStart(2,"0")}</b><i>hrs</i></span>
+          <span class="sep">:</span>
+          <span class="seg"><b data-cd-m>${String(c.breakdown.minutes).padStart(2,"0")}</b><i>mins</i></span>
+          <span class="seg secs"><b data-cd-s>${String(c.breakdown.seconds).padStart(2,"0")}</b><i>secs</i></span>
           <span class="detail" data-cd-detail></span>
         </div>
         ${bar}
@@ -184,7 +224,7 @@
           ${g.is_primary?'★ pinned':'☆ pin'}</span>
         <span class="rt">${esc(g.title)}</span>
         <span class="prog">${g.progress}%</span>
-        ${d ? `<span class="rc">${d.value}</span><span class="ru">${esc(d.unit)}</span>`
+        ${d ? `<span class="rc" data-countdown="${esc(c.target_iso)}" data-flash="false"><span data-cd-compact></span></span>`
             : `<span class="ru">no deadline</span>`}
       </div>`;
   }
@@ -215,21 +255,40 @@
     }
   }
 
+  /* Show the field that matches the chosen unit. */
+  function syncDeadlineInput(){
+    const byDate = $("n-unit").value === "date";
+    $("n-amount").hidden = byDate;
+    $("n-when").hidden = !byDate;
+    const ph = {days: "45", hours: "36", minutes: "90"}[$("n-unit").value];
+    if (ph) $("n-amount").placeholder = ph;
+  }
+  $("n-unit").addEventListener("change", syncDeadlineInput);
+  syncDeadlineInput();
+
   $("n-add").addEventListener("click", async () => {
     const title = ($("n-title").value||"").trim();
     if (!title) { $("n-title").focus(); return; }
-    const when = $("n-when").value;
     const commit = parseInt($("n-commit").value, 10);
     const effortH = parseFloat($("n-effort").value);
     const payload = {title: title};
-    // datetime-local has no zone; the server stores it against the user's
-    // timezone, which is the reading the person typing it intends.
-    if (when) payload.target_at = when;
+    const unit = $("n-unit").value;
+    if (unit === "date") {
+      // datetime-local has no zone; the server reads it against the user's
+      // timezone, which is what the person typing it intends.
+      if ($("n-when").value) payload.target_at = $("n-when").value;
+    } else {
+      // A relative deadline is resolved on the SERVER, not here: the browser
+      // clock can be wrong or in another zone, and "45 days from now" has to
+      // mean 45 days from the user's now.
+      const amount = parseFloat($("n-amount").value);
+      if (!isNaN(amount) && amount > 0) payload["in_" + unit] = amount;
+    }
     if (!isNaN(commit)) payload.daily_commit_minutes = commit;
     if (!isNaN(effortH)) payload.effort_minutes = Math.round(effortH * 60);
     try {
       await api("/api/goal-planner/goals", {method:"POST", body: JSON.stringify(payload)});
-      ["n-title","n-when","n-commit","n-effort"].forEach(i => $(i).value = "");
+      ["n-title","n-when","n-amount","n-commit","n-effort"].forEach(i => $(i).value = "");
       load();
     } catch (e) { $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
   });

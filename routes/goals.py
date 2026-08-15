@@ -142,7 +142,7 @@ SCHEMA MIGRATION — run in Supabase
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, render_template, request, session
 
@@ -1358,6 +1358,44 @@ _PLANNER_FIELDS = {
     "daily_commit_minutes", "effort_minutes", "flash_enabled",
 }
 
+#: Relative-deadline inputs, in the units the form offers.
+_RELATIVE_UNITS = {"in_days": "days", "in_hours": "hours", "in_minutes": "minutes"}
+
+#: A deadline further out than this is almost certainly a typo (someone
+#: meaning 45 and typing 45000). Reject it rather than storing a year 4000
+#: date that breaks every countdown on the page.
+_MAX_RELATIVE_DAYS = 3650
+
+
+def _resolve_relative_deadline(data):
+    """Turn `in_days` / `in_hours` / `in_minutes` into an absolute target_at.
+
+    Resolved SERVER-side against the user's own `now`: the browser clock can
+    be wrong or in another timezone, and "45 days from now" has to mean 45
+    days from the user's now, not the device's.
+
+    Returns (iso_string_or_None, error_or_None). An explicit `target_at`
+    always wins — if the caller sent one, the relative fields are ignored.
+    """
+    if data.get("target_at"):
+        return None, None
+    for field, unit in _RELATIVE_UNITS.items():
+        raw = data.get(field)
+        if raw in (None, ""):
+            continue
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError):
+            return None, f"{field} must be a number"
+        if amount <= 0:
+            return None, f"{field} must be greater than zero"
+        delta = timedelta(**{unit: amount})
+        if delta > timedelta(days=_MAX_RELATIVE_DAYS):
+            return None, (f"that deadline is over {_MAX_RELATIVE_DAYS // 365} years "
+                          f"away — check the number")
+        return (user_now() + delta).isoformat(), None
+    return None, None
+
 
 def _objective_progress(user_id, objectives):
     """Percent-complete per objective, averaged over its key results.
@@ -1517,6 +1555,11 @@ def goal_planner_create():
         "start_date": data.get("start_date") or user_now().date().isoformat(),
         "target_date": data.get("target_date") or None,
     }
+    relative, err = _resolve_relative_deadline(data)
+    if err:
+        return jsonify({"error": err}), 400
+    if relative:
+        payload["target_at"] = relative
     for field in ("target_at", "daily_commit_minutes", "effort_minutes"):
         if data.get(field) not in (None, ""):
             payload[field] = data[field]
@@ -1533,6 +1576,11 @@ def goal_planner_update(goal_id):
     """Update the countdown fields on one goal."""
     data = request.get_json(force=True) or {}
     patch = {k: v for k, v in data.items() if k in _PLANNER_FIELDS}
+    relative, err = _resolve_relative_deadline(data)
+    if err:
+        return jsonify({"error": err}), 400
+    if relative:
+        patch["target_at"] = relative
     if not patch:
         return jsonify({"error": "nothing to update"}), 400
     # Empty string means "clear it" — otherwise a cleared date would be

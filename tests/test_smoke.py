@@ -569,8 +569,10 @@ def test_countdown_widget_is_wired_into_goals_and_interview_prep(auth_client):
     Rename one of those hooks and the countdown silently shows nothing, which
     is exactly the kind of breakage nobody notices until a deadline passes."""
     for path, hooks in (
-        ("/goal-planner", ("data-cd-big", "data-cd-unit", "data-cd-detail")),
-        ("/interview-prep", ("data-cd-big", "data-cd-unit")),
+        # The planner hero shows the full DAYS : HRS : MINS readout...
+        ("/goal-planner", ("data-cd-d", "data-cd-h", "data-cd-m", "data-cd-detail")),
+        # ...while dense surfaces use the one-line form of the same thing.
+        ("/interview-prep", ("data-cd-compact",)),
     ):
         html = auth_client.get(path).get_data(as_text=True)
         assert "js/countdown.js" in html, f"{path} does not load countdown.js"
@@ -582,7 +584,7 @@ def test_countdown_widget_is_wired_into_goals_and_interview_prep(auth_client):
     assert "js/countdown.js" in goals_html, "/goals does not load countdown.js"
     with open("static/goals.js", encoding="utf-8") as fh:
         js = fh.read()
-    assert "data-cd-big" in js and "renderDueBlock" in js
+    assert "data-cd-compact" in js and "renderDueBlock" in js
     assert "Countdown.mountAll" in js, "goals.js never mounts the tickers it renders"
     # Re-rendering the list must drop the old instances or detached nodes keep
     # ticking; that leak is invisible until the page has been open for hours.
@@ -607,3 +609,34 @@ def test_countdown_hosts_degrade_without_the_script(auth_client):
         # all rather than assumed.
         assert 'typeof Countdown' in src, \
             f"{name} uses Countdown without guarding for it being absent"
+
+
+def test_relative_deadlines_resolve_server_side(app):
+    """A deadline can be given as a duration ("in 45 days") or as a date.
+    Durations are resolved against the USER's now, not the browser's — a
+    device clock in the wrong timezone must not shift the deadline. Junk and
+    obvious typos are rejected rather than stored as a year-4000 date that
+    would break every countdown on the page."""
+    import routes.goals as goals
+    from datetime import datetime
+    from utils.user_tz import user_now
+
+    with app.test_request_context():
+        now = user_now()
+        for payload, unit_seconds in (({"in_days": 45}, 45 * 86400),
+                                      ({"in_hours": 36}, 36 * 3600),
+                                      ({"in_minutes": 90}, 90 * 60)):
+            iso, err = goals._resolve_relative_deadline(payload)
+            assert err is None and iso
+            delta = (datetime.fromisoformat(iso) - now).total_seconds()
+            assert abs(delta - unit_seconds) < 5, f"{payload} landed at {iso}"
+
+        # An explicit moment always wins; the relative field is ignored.
+        iso, err = goals._resolve_relative_deadline(
+            {"target_at": "2026-09-28T18:00", "in_days": 999})
+        assert iso is None and err is None
+
+        for bad in ({"in_days": 0}, {"in_days": -5}, {"in_days": "abc"},
+                    {"in_days": 45000}):
+            iso, err = goals._resolve_relative_deadline(bad)
+            assert iso is None and err, f"{bad} should have been rejected"
