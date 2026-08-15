@@ -742,15 +742,21 @@ def test_typed_progress_is_clamped_and_clearable():
     assert value is None and err
 
 
-def test_goal_planner_percent_is_typeable_in_the_ui(auth_client):
-    """The number on the page must be an input, and the re-render after a save
-    must put the cursor back — a background refresh that yanks focus mid-type
-    makes the field unusable."""
+def test_goal_planner_progress_control_is_a_visible_slider(auth_client):
+    """Progress was first a number input styled to look like plain text until
+    hovered. It worked perfectly and was unusable: nothing said it could be
+    edited, so the reported bug was "not able to enter %". A range input is
+    self-evidently draggable, on a phone as much as a desktop.
+
+    Saving must happen on `change` (release) and never on `input`, or one
+    drag becomes a hundred PATCHes and a hundred re-renders."""
     html = auth_client.get("/goal-planner").get_data(as_text=True)
-    assert 'input class="pct"' in html or "input.pct" in html
-    assert "data-pct" in html, "no hook for saving a typed percentage"
-    assert "savePct" in html, "typed percentages are never persisted"
-    assert "setSelectionRange" in html, "re-render does not restore the caret"
+    assert 'type="range"' in html, "the progress control is not a slider"
+    assert "pctrange" in html and "data-pctout" in html, "no live readout beside the slider"
+    assert "data-pct" in html and "savePct" in html
+    # The readout updates on input; only change() persists.
+    assert 'addEventListener("input"' in html, "readout does not follow the drag"
+    assert "preventScroll" in html, "re-render steals focus and jumps the page"
 
 
 def test_pinned_goal_without_a_deadline_still_renders_a_hero(auth_client, monkeypatch):

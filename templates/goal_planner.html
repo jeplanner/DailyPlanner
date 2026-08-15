@@ -75,19 +75,42 @@
   .meta b { color: var(--color-text); font-weight: 900; }
   /* The percent is an input that reads as text until you touch it — typing
      over a number you can already see is the whole interaction. */
-  .pctwrap { display: inline-flex; align-items: baseline; gap: 2px; }
-  input.pct { font: inherit; font-weight: 900; color: var(--color-text); background: transparent;
-              border: 1px solid transparent; border-radius: 6px; width: 3.4em; padding: 1px 3px;
-              text-align: right; font-variant-numeric: tabular-nums; }
-  input.pct:hover { border-color: var(--color-border); }
-  input.pct:focus { border-color: var(--color-primary); background: var(--color-bg); outline: none; }
-  /* Chrome/Safari spinners steal width and look wrong inline. */
-  input.pct::-webkit-outer-spin-button, input.pct::-webkit-inner-spin-button {
-    -webkit-appearance: none; margin: 0; }
-  input.pct { -moz-appearance: textfield; }
+  /* The progress control. The first version was a number input styled to
+     look like plain text until hovered — which hid the fact that it was
+     editable at all, and the answer to "how do I enter a %" turned out to be
+     "you could not tell you were allowed to". A slider is unambiguous: it
+     looks like something you drag, on a phone as much as a desktop. */
+  .pctwrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pctlbl { font-size: 10.5px; font-weight: 800; text-transform: uppercase;
+            letter-spacing: .05em; color: var(--color-text-secondary); }
+  .pctout { font-size: 15px; font-weight: 900; font-variant-numeric: tabular-nums;
+            min-width: 3.2em; color: var(--color-text); }
+  .pctplan { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
+
+  input.pctrange { -webkit-appearance: none; appearance: none; height: 22px;
+                   width: 190px; background: transparent; cursor: pointer; margin: 0; }
+  input.pctrange.row { width: 108px; height: 18px; }
+  /* Track */
+  input.pctrange::-webkit-slider-runnable-track {
+    height: 8px; border-radius: 999px; background: var(--color-border); }
+  input.pctrange::-moz-range-track {
+    height: 8px; border-radius: 999px; background: var(--color-border); }
+  /* Thumb — deliberately large, because this is dragged with a thumb on a
+     phone and the WCAG target size is 24px. */
+  input.pctrange::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 22px; height: 22px;
+    margin-top: -7px; border-radius: 50%; background: #2563eb;
+    border: 3px solid var(--color-surface); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  input.pctrange::-moz-range-thumb {
+    width: 22px; height: 22px; border-radius: 50%; background: #2563eb;
+    border: 3px solid var(--color-surface); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  input.pctrange.row::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -5px; }
+  input.pctrange.row::-moz-range-thumb { width: 18px; height: 18px; }
+  input.pctrange:focus { outline: none; }
+  input.pctrange:focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(37,99,235,.25); }
+  /* While dragging, the number it is setting should be the loud thing. */
+  input.pctrange:active + .pctout, input.pctrange:focus + .pctout { color: #2563eb; }
   .meta .src { font-style: normal; font-size: 11px; font-weight: 700; opacity: .7; }
-  .row input.prog.pct { width: 3.6em; font-size: 11.5px; font-weight: 800;
-                        color: var(--color-text-secondary); }
   .pacebar { height: 8px; border-radius: 999px; background: var(--color-border); overflow: hidden;
              margin: 10px 0 4px; position: relative; }
   .pacebar i { display: block; height: 100%; background: #2563eb; }
@@ -229,14 +252,16 @@
     // Typeable percent. The source label matters: a typed 60% sitting next to
     // key results averaging 20% must never look like the same number.
     const srcNote = g.progress_source === "manual"
-        ? `<em class="src" title="Clear the box to go back to the key-result roll-up">typed${
+        ? `<em class="src" title="Drag to zero and the key-result roll-up takes over again">set by hand${
              g.kr_count ? ` · key results say ${g.rolled_up_progress}%` : ""}</em>`
         : (g.kr_count ? `<em class="src">from ${g.kr_count} key result${g.kr_count===1?"":"s"}</em>`
-                      : `<em class="src">type a % or add key results</em>`);
+                      : `<em class="src">drag to set, or add key results</em>`);
     meta.push(`<span class="pctwrap">
-        <input class="pct" type="number" min="0" max="100" step="1" inputmode="numeric"
+        <label class="pctlbl" for="pct-${g.id}">Progress</label>
+        <input class="pctrange" id="pct-${g.id}" type="range" min="0" max="100" step="1"
                value="${g.progress}" data-pct="${g.id}" aria-label="Percent complete">
-        <b>%</b> done${p?` · plan says <b>${p.expected}%</b>`:""} ${srcNote}</span>`);
+        <output class="pctout" data-pctout="${g.id}">${g.progress}%</output>
+        ${p?`<span class="pctplan">plan says <b>${p.expected}%</b></span>`:""} ${srcNote}</span>`);
     if (c.working_days_left) meta.push(`<span><b>${c.working_days_left}</b> working days</span>`);
     if (p && p.gap_days) meta.push(`<span><b>${p.gap_days>0?"+":""}${p.gap_days}</b> days vs plan</span>`);
     if (g.kr_count) meta.push(`<span><b>${g.kr_count}</b> key result${g.kr_count===1?"":"s"}</span>`);
@@ -279,12 +304,13 @@
           Give it one below and this becomes a plan.</div>
         <div class="meta">
           <span class="pctwrap">
-            <input class="pct" type="number" min="0" max="100" step="1" inputmode="numeric"
+            <label class="pctlbl" for="pct-${g.id}">Progress</label>
+            <input class="pctrange" id="pct-${g.id}" type="range" min="0" max="100" step="1"
                    value="${g.progress}" data-pct="${g.id}" aria-label="Percent complete">
-            <b>%</b> done
-            <em class="src">${g.progress_source === "manual" ? "typed"
+            <output class="pctout" data-pctout="${g.id}">${g.progress}%</output>
+            <em class="src">${g.progress_source === "manual" ? "set by hand"
                 : (g.kr_count ? `from ${g.kr_count} key result${g.kr_count===1?"":"s"}`
-                              : "type a % or add key results")}</em>
+                              : "drag to set, or add key results")}</em>
           </span>
         </div>
         <div class="dl-row inline-dl">
@@ -309,9 +335,10 @@
         <span class="pin ${g.is_primary?'on':''}" data-pin="${g.id}" title="Pin as the main countdown">
           ${g.is_primary?'★ pinned':'☆ pin'}</span>
         <span class="rt">${esc(g.title)}</span>
-        <input class="prog pct" type="number" min="0" max="100" step="1" inputmode="numeric"
+        <input class="pctrange row" type="range" min="0" max="100" step="1"
                value="${g.progress}" data-pct="${g.id}" aria-label="Percent complete"
-               title="${g.progress_source === 'manual' ? 'Typed' : (g.kr_count ? 'From key results' : 'Not set')}">
+               title="${g.progress_source === 'manual' ? 'Set by hand' : (g.kr_count ? 'From key results' : 'Not set')}">
+        <output class="pctout" data-pctout="${g.id}">${g.progress}%</output>
         ${d ? `<span class="rc" data-countdown="${esc(c.target_iso)}" data-flash="false"><span data-cd-compact></span></span>`
             : `<span class="ru">no deadline</span>`}
       </div>`;
@@ -323,7 +350,6 @@
        mid-type. Remember what was focused and put the cursor back. */
     const active = document.activeElement;
     const keepId = (active && active.dataset && active.dataset.pct) ? active.dataset.pct : null;
-    const keepStart = keepId ? active.selectionStart : null;
     // The ticker is an enhancement, not a dependency. If countdown.js failed
     // to load, the server already sent a rendered value and unit for every
     // goal — so the page must still show them, just frozen. Losing the whole
@@ -341,12 +367,11 @@
     $("list").innerHTML = rest.length ? rest.map(rowHTML).join("")
       : (primary ? "" : `<div class="empty">No goals yet. Add one above — a title and a date is enough to start.</div>`);
     if (CD) CD.mountAll(document);
+    /* Put focus back on the slider that was just dragged, so the arrow keys
+       keep working and the page does not jump to the top after a save. */
     if (keepId) {
       const again = document.querySelector(`[data-pct="${keepId}"]`);
-      if (again) {
-        again.focus();
-        try { again.setSelectionRange(keepStart, keepStart); } catch (e) {}
-      }
+      if (again) again.focus({preventScroll: true});
     }
   }
 
@@ -404,7 +429,11 @@
      key-result roll-up. */
   async function savePct(input){
     const id = input.dataset.pct;
-    const raw = input.value.trim();
+    /* A slider cannot be empty, so 0 doubles as "clear the override" when the
+       goal has key results to fall back on. Without that there would be no
+       way back to the automatic roll-up once you had touched the slider. */
+    const goal = DATA && DATA.goals.find(g => g.id === id);
+    const raw = (input.value === "0" && goal && goal.kr_count) ? "" : input.value.trim();
     if (input.dataset.saving === "1") return;
     input.dataset.saving = "1";
     try {
@@ -417,13 +446,18 @@
     }
   }
 
+  /* Dragging fires `input` continuously and `change` once on release. Update
+     the readout live so the slider feels connected, but only SAVE on release —
+     otherwise one drag is a hundred PATCHes and a hundred re-renders. */
+  document.addEventListener("input", (ev) => {
+    const pct = ev.target.closest("[data-pct]");
+    if (!pct) return;
+    const out = document.querySelector(`[data-pctout="${pct.dataset.pct}"]`);
+    if (out) out.textContent = pct.value + "%";
+  });
   document.addEventListener("change", (ev) => {
     const pct = ev.target.closest("[data-pct]");
     if (pct) savePct(pct);
-  });
-  document.addEventListener("keydown", (ev) => {
-    const pct = ev.target.closest("[data-pct]");
-    if (pct && ev.key === "Enter") { ev.preventDefault(); pct.blur(); }
   });
 
   /* The inline "set a deadline" control on a pinned-but-undated hero. Shares
