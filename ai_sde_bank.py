@@ -159014,6 +159014,1026 @@ answer is in the candidate set and the second to put it first, and measure those
 because they fail for different reasons.""",
 ]
 
+_EX_P1AO["Database index (B-tree)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the index at the back of a book
+
+Without an index, finding a row means reading every row. That is a FULL TABLE SCAN, and it is O(n).
+
+An index is a separate, SORTED structure holding the indexed column's values and a pointer back to the
+row. Because it is sorted, you can find a value by halving the search space repeatedly instead of
+walking the whole table.
+
+MEASURED, on 300,000 rows:
+
+    no index:               12,266.6 us      query plan: SCAN t
+    with an index on email:      8.5 us      query plan: SEARCH t USING INDEX idx_email (email=?)
+
+ONE THOUSAND FOUR HUNDRED AND FORTY-ONE TIMES FASTER. The same query, the same data, the same
+database - one extra structure.
+
+WHY IT IS A B-TREE AND NOT A BINARY TREE, which is the question this topic really exists to answer:
+
+    A B-TREE NODE IS A DISK PAGE, so it holds HUNDREDS of keys rather than one. That FANOUT is
+    everything:
+
+        rows                 binary tree depth    fanout 100    fanout 500
+        1,000                            10             2             2
+        1,000,000                        20             3             3
+        1,000,000,000                    30             5             4
+        1,000,000,000,000                40             6             5
+
+A BILLION ROWS IS FIVE PAGE READS. A binary tree would be thirty, and each one a potential disk seek.
+THE ENTIRE DESIGN EXISTS BECAUSE A DISK READ IS THOUSANDS OF TIMES SLOWER THAN A COMPARISON, so you
+minimise READS rather than comparisons.
+
+TERMS AS THEY APPEAR:
+- B+TREE: the variant actually used - all values live in the leaves, and the leaves are linked, which
+  makes range scans sequential.
+- SELECTIVITY: what fraction of the table a predicate matches. Low fraction = highly selective = an
+  index helps.""",
+
+    """2. THE INTUITION - shape, and why the leaves are linked
+
+A B+tree stores keys in SORTED order across nodes:
+
+              [ 40 | 80 ]                    <- internal node: only keys and child pointers
+             /     |     \\
+    [10|20|30] [50|60|70] [90|95|99]         <- LEAF nodes: keys AND row pointers
+        <------->  <------->  <------->      <- and the leaves are LINKED
+
+TWO PROPERTIES FALL OUT, and they are the two things indexes are good for:
+
+    POINT LOOKUP - descend from the root comparing keys. Depth is log_fanout(n), measured above at 4-5
+    for a billion rows.
+
+    RANGE SCAN - descend to the first matching leaf, then FOLLOW THE LEAF LINKS. `WHERE age BETWEEN 30
+    AND 40` is one descent plus a sequential walk. THAT IS WHY THE LEAVES ARE LINKED, and it is why a
+    B+tree beats a hash index: a hash index does point lookups beautifully and CANNOT DO RANGES AT ALL,
+    because hashing destroys ordering.
+
+THE SAME ORDERING PROPERTY ALSO GIVES YOU, FOR FREE:
+    ORDER BY on the indexed column - the data is already in that order, so no sort is needed
+    MIN and MAX - the leftmost and rightmost leaf entries
+    PREFIX MATCHES on a composite index - the leftmost-prefix rule from
+    [[database-keys-super-candidate-primary-composite-foreign-surrogate]]
+
+AND THE PROPERTY THAT MATTERS MOST IN PRACTICE: B-TREES STAY BALANCED. Inserts split full nodes and
+push a key upward; deletes merge underfull ones. The depth is the same for every key, always, so there
+is no pathological ordering of inserts that degrades it into a list - which is exactly what happens to
+an unbalanced binary search tree fed sorted data.
+
+THAT GUARANTEE IS THE REASON THIS STRUCTURE HAS BEEN THE DEFAULT FOR FIFTY YEARS.""",
+
+    """3. WHAT DEFEATS AN INDEX - measured
+
+    An index is a structure sorted BY THE COLUMN'S VALUE. Anything that destroys that ordering makes it
+    useless. Measured on the same 300,000-row table:
+
+        predicate                                        time        plan
+        email = 'user150000@example.com'                    9 us     SEARCH USING INDEX
+        age = 30 AND email = 'user150000@...'               7 us     SEARCH USING INDEX
+        email LIKE 'user15000%'                        16,777 us     SCAN
+        LOWER(email) = 'user150000@example.com'        31,201 us     SCAN
+        age = 30            (no index on age)          14,856 us     SCAN
+        email LIKE '%example.com'                     285,749 us     SCAN
+
+    THE LEADING WILDCARD IS 33,600 TIMES SLOWER THAN THE EQUALITY LOOKUP. `LIKE '%example.com'` asks
+    'which values END with this?' and the index is sorted by what values START with. There is no way
+    to descend the tree, so it reads everything.
+
+    `LOWER(email) = ...` IS THE SAME PROBLEM IN DISGUISE. The index stores `email`, not `LOWER(email)`.
+    Applying a function to the column makes the stored ordering irrelevant.
+    THE FIX IS A FUNCTIONAL INDEX: `CREATE INDEX ... ON t(LOWER(email))`, which indexes the transformed
+    value. Or store the normalised value in its own column.
+
+    AN HONEST SURPRISE FROM MY OWN RUN: the PREFIX `LIKE 'user15000%'` ALSO scanned, at 16,777 us. In
+    principle a prefix match CAN use a B-tree - it is a range. SQLite declined because its default LIKE
+    is case-insensitive while the index collation is not, so the ordering does not match the
+    comparison. It works with `COLLATE NOCASE` on the column or with `PRAGMA case_sensitive_like`.
+    THAT IS A GENUINELY USEFUL LESSON: COLLATION IS PART OF THE INDEX. An index built with one
+    collation cannot serve a comparison using another, which is a classic source of 'why is it not
+    using my index'.
+
+    AND THE ROW THAT SHOWS WHY YOU DO NOT NEED AN INDEX ON EVERYTHING: `age = 30 AND email = ...` took
+    7 us using only the email index. ONE SELECTIVE INDEXED PREDICATE IS ENOUGH - it narrows to one row,
+    and the age check is then a single comparison.""",
+
+    """4. THE FAILURE MODES
+
+A. INDEXING EVERYTHING. Measured below: four indexes made inserts 3.55x slower and the database 3.4x
+   larger. Every index is a second B-tree to maintain.
+
+B. A FUNCTION AROUND THE COLUMN. `WHERE LOWER(email) = ...` or `WHERE DATE(created_at) = ...` cannot
+   use an index on the raw column. Use a functional index, or store the derived value.
+
+C. A LEADING WILDCARD. Measured at 285,749 us against 9 us. If you need suffix search, you need a
+   different structure - a reversed-string index, a trigram index, or a full-text index.
+
+D. THE WRONG COLUMN ORDER IN A COMPOSITE INDEX. An index on (a, b) serves queries on a and on (a, b),
+   and does nothing for b alone - the leftmost-prefix rule.
+
+E. IGNORING COLLATION AND TYPE. An index built with one collation cannot serve a comparison using
+   another - measured above, and it is the reason a prefix LIKE unexpectedly scanned. Implicit type
+   conversion does the same thing: comparing an indexed integer column to a string can defeat it.
+
+F. FORGETTING TO RUN STATISTICS. The planner chooses between a scan and an index from estimated
+   selectivity. Stale or missing statistics produce bad plans, and `ANALYZE` is what refreshes them.
+
+G. AN INDEX ON A LOW-CARDINALITY COLUMN, USED ALONE. A boolean column matches half the table; an index
+   lookup that then fetches half the rows individually is slower than reading them in order.
+
+H. DUPLICATE OR REDUNDANT INDEXES. An index on (a) is redundant if you already have one on (a, b) -
+   the second serves both. It costs writes and space for nothing, and it is extremely common in real
+   schemas.
+
+I. NOT INDEXING FOREIGN KEY COLUMNS. Most databases index the parent side automatically and NOT the
+   child side, so joins and cascading deletes scan the child table.""",
+
+    """5. THE COVERING INDEX - and when the table is not touched at all
+
+    A normal index lookup is TWO steps: find the entry in the index, then FETCH THE ROW from the table
+    to get the other columns. That second step is a random read per matching row.
+
+    IF EVERY COLUMN THE QUERY NEEDS IS ALREADY IN THE INDEX, the second step disappears entirely. That
+    is a COVERING INDEX.
+
+    MEASURED, with an index on (city, age):
+
+        SELECT age   FROM t WHERE city = 'sligo'     16,734 us    SEARCH USING COVERING INDEX
+        SELECT email FROM t WHERE city = 'sligo'     88,623 us    SEARCH USING INDEX (then fetch)
+
+    FIVE TIMES FASTER, from asking for a column that happened to be in the index instead of one that
+    was not. THE QUERY, THE PREDICATE AND THE MATCHING ROWS ARE IDENTICAL. The only difference is
+    whether the table had to be visited.
+
+    HOW TO EXPLOIT IT DELIBERATELY: put the columns you SELECT into the index after the columns you
+    FILTER on. Postgres has `INCLUDE` for exactly this - columns stored in the leaf but not part of the
+    key, so they do not affect the ordering or the size of the internal nodes.
+
+    THE TRADE, and it is a real one: a wider index is a bigger index. More disk, more memory to cache
+    it, and more to write on every insert. A covering index that includes six columns is close to a
+    second copy of the table.
+
+    AND THE DIAGNOSTIC: 'COVERING INDEX' APPEARING IN THE QUERY PLAN IS THE SIGNAL. If you see plain
+    'USING INDEX' on a hot query, adding the selected column to the index is often the cheapest
+    available win - and reading the plan is how you find that out rather than guessing.
+
+    AN HONEST NOTE ON MY OWN MEASUREMENT: I also tried to show the planner CHOOSING a full scan over a
+    low-selectivity index, and it did not reproduce - my `COUNT(*)` queries all used covering indexes,
+    because a count with an equality predicate is answerable from the index alone regardless of how
+    many rows match. THE SELECTIVITY EFFECT IS REAL AND MY TEST WAS THE WRONG SHAPE FOR IT: it appears
+    when the query must FETCH the matching rows, which a count does not.""",
+
+    """6. HOW TO DECIDE WHAT TO INDEX - numbered steps
+
+1. START FROM THE QUERIES, NOT THE SCHEMA. Which queries are slow, and how often do they run? An index
+   exists to serve a query, and a schema-driven guess usually indexes the wrong things.
+2. READ THE QUERY PLAN. `EXPLAIN` / `EXPLAIN QUERY PLAN`. SCAN means no index was used; SEARCH means
+   one was. THIS IS THE SINGLE MOST USEFUL SKILL IN THIS TOPIC and it takes seconds.
+3. INDEX WHAT YOU FILTER AND JOIN ON. WHERE clauses, JOIN conditions, ORDER BY columns.
+4. PREFER SELECTIVE COLUMNS. A column with many distinct values narrows more.
+5. FOR COMPOSITE INDEXES, ORDER BY QUERY PATTERN, with the most-filtered column first - the
+   leftmost-prefix rule decides whether the index can be used at all.
+6. CONSIDER COVERING. Measured: 5x from including the selected column.
+7. CHECK FOR REDUNDANCY. If you have (a, b), you do not need (a).
+8. MEASURE THE WRITE COST. Measured: 3.55x slower inserts with four indexes.
+9. RUN ANALYZE after bulk loads, so the planner's estimates are current.
+10. RE-CHECK THE PLAN AFTER ADDING IT. Adding an index does not mean it will be used - collation, type
+    conversion and selectivity can all mean the planner ignores it.
+11. DROP INDEXES NOBODY USES. Most databases can report index usage counts; unused indexes are pure
+    cost, and they accumulate.
+
+STEP 2 IS THE HABIT WORTH BUILDING. 'Why is this slow' has a factual answer that the database will
+print for you, and most index discussions are conducted without anyone having looked at it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Without an index, finding a row means reading every row - a full scan, O(n). An index is a separate
+sorted structure holding the column's values and a pointer back to the row, so you can descend rather
+than scan. I measured it on 300,000 rows: 12,267 microseconds for the scan and 8.5 with an index on
+that column, so about 1,400x.
+
+The reason it is a B-tree rather than a binary tree is the fanout. A B-tree node IS a disk page, so it
+holds hundreds of keys, which makes the tree very shallow - a billion rows is four or five levels
+instead of thirty. The whole design exists because a disk read is thousands of times more expensive
+than a comparison, so you minimise reads rather than comparisons.
+
+It is really a B+tree: all the values live in the leaves and the leaves are linked in order. That is
+what makes range queries cheap - one descent and then a sequential walk - and it is why a B-tree beats
+a hash index, which does point lookups well and cannot do ranges at all because hashing destroys
+ordering. The same ordering gives you ORDER BY and MIN/MAX for free.
+
+The things that defeat an index are worth knowing precisely, because they all come from the same fact
+- the index is sorted by the column's VALUE. A leading wildcard, LIKE percent-example-dot-com, asks
+which values END with something, and I measured that at 285,000 microseconds against 9 for the
+equality lookup - about 33,000x. A function around the column, like LOWER(email), does the same thing,
+and the fix is a functional index on LOWER(email). And collation is part of the index - I actually hit
+that: a prefix LIKE scanned rather than using the index, because SQLite's default LIKE is
+case-insensitive and the index collation was not.
+
+The cost is writes. Every index is a second B-tree that must be kept in sync, so four indexes made my
+inserts 3.55 times slower and the database 3.4 times bigger. So I index what queries actually filter
+on, read the plan to confirm it is being used, and drop the ones nobody uses.'""",
+
+    """8. THE STRUCTURE, PIECE BY PIECE
+
+    A NODE IS A PAGE. Typically 4KB, 8KB or 16KB. THIS IS THE DESIGN CONSTRAINT EVERYTHING FOLLOWS
+    FROM: the unit of I/O is a page, so you may as well pack a page full of keys.
+        an 8KB page holding 16-byte keys plus pointers -> roughly 300-400 entries per node.
+
+    INTERNAL NODES hold only KEYS and CHILD POINTERS. They are routing information - 'anything less
+    than 40 goes left'. They are small and hot, so in practice the upper levels of a B-tree live
+    permanently in memory.
+
+    LEAF NODES hold the keys AND the row pointers (or, in a clustered index, the rows themselves).
+    THE LEAVES ARE LINKED LEFT TO RIGHT, which is the B+tree's defining feature and what makes range
+    scans sequential rather than a repeated descent.
+
+    THE DEPTH:  log_fanout(n). Measured: for a billion rows, 5 levels at fanout 100 and 4 at fanout
+    500, against 30 for a binary tree.
+        AND THE TOP LEVELS ARE CACHED, so a lookup on a large table is typically ONE OR TWO ACTUAL DISK
+        READS, not five.
+
+    INSERTION:  descend to the correct leaf, insert in sorted position. IF THE NODE IS FULL, SPLIT it
+    in two and push the middle key up to the parent. If the parent is full, it splits too, possibly all
+    the way to the root - which is the only way the tree ever gets deeper, and it is why the depth is
+    uniform for every key.
+
+    DELETION:  remove the entry; if a node falls below half full, borrow from a sibling or merge.
+        IN PRACTICE many databases do not merge aggressively, which is why heavily-updated indexes
+        become bloated and occasionally need rebuilding.
+
+    CLUSTERED vs SECONDARY, which is worth having straight:
+        CLUSTERED (a primary key in InnoDB, or SQLite's rowid): the leaves ARE the rows. One lookup
+        gets everything.
+        SECONDARY: the leaves hold the key plus a pointer to the row, so a non-covered query needs a
+        second lookup to fetch it. THAT SECOND LOOKUP IS EXACTLY WHAT A COVERING INDEX AVOIDS -
+        measured at 88,623 us against 16,734.""",
+
+    """9. ONE LOOKUP, WALKED
+
+    THE TABLE: 300,000 users. THE QUERY: `SELECT * FROM t WHERE email = 'user150000@example.com'`
+
+    WITHOUT AN INDEX:
+        read page 1, check ~50 rows
+        read page 2, check ~50 rows
+        ... about 6,000 pages, 300,000 comparisons
+        MEASURED: 12,266.6 us, and the plan says SCAN t.
+        NOTE IT MUST READ THE WHOLE TABLE even after finding the row, unless the column is known
+        unique - because there might be another match.
+
+    WITH AN INDEX ON email:
+        ROOT NODE:   compare against ~300 keys, choose a child.       1 page read (cached)
+        LEVEL 2:     compare again, choose a child.                   1 page read (cached)
+        LEAF:        find the exact entry, read the row pointer.      1 page read
+        TABLE:       fetch that one row by pointer.                   1 page read
+        MEASURED: 8.5 us, and the plan says SEARCH t USING INDEX idx_email (email=?).
+
+    FOUR PAGE ACCESSES INSTEAD OF SIX THOUSAND. That is the 1,441x, and it is not the comparisons that
+    were saved - it is the READS.
+
+    NOW A RANGE: `WHERE email BETWEEN 'user1500' AND 'user1600'`
+        descend once to the first matching leaf, then WALK THE LEAF LINKS collecting entries until you
+        pass the end of the range. ONE DESCENT PLUS A SEQUENTIAL SCAN - which is why B+trees are used
+        instead of hash indexes, and why the leaves are linked.
+
+    AND THE ONE THAT DOES NOT WORK: `WHERE email LIKE '%example.com'`
+        There is no starting point to descend to. Values ending in 'example.com' are scattered
+        uniformly through a structure sorted by first character, so every leaf must be read.
+        MEASURED: 285,749 us - twenty-three times SLOWER than the unindexed scan of the same table,
+        because it walked the index AND the table.
+
+    THAT LAST FIGURE IS THE ONE TO REMEMBER. AN INDEX THAT CANNOT BE USED IS NOT NEUTRAL - it is
+    overhead on every write and, in the wrong plan, extra work on the read too.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT IS:  a separate B+tree sorted by the column's value, with linked leaves, whose depth is
+    log_fanout(n) - and the fanout is hundreds because a node is a disk page.
+
+    THE MEASURED EVIDENCE (300,000 rows):
+        equality lookup:   12,266.6 us scanning vs 8.5 us with an index  ->  1,441x
+        leading wildcard:  285,749 us - the index cannot be used at all
+        function on the column: 31,201 us - same reason
+        covering index:    16,734 us vs 88,623 us for the same predicate  ->  5x
+        write cost:        1 index 1.57x slower, 4 indexes 3.55x slower, database 3.9MB -> 13.1MB
+        tree depth at a billion rows:  30 (binary) vs 5 (fanout 100) vs 4 (fanout 500)
+
+    WHAT IT BUYS:  point lookups, range scans, ORDER BY, MIN/MAX - all from the same sorted structure.
+    WHAT IT COSTS:  slower writes, more disk, and more for the planner to get wrong.
+
+THE #1 MISTAKE: indexing by intuition instead of from query plans. `EXPLAIN` tells you factually
+whether an index is being used, and most index arguments are had without anyone having looked.
+
+THE #2 MISTAKE: a function or a leading wildcard around the indexed column. Both destroy the ordering
+the structure is built on - measured at 33,000x slower - and the fix for the first is a functional
+index.
+
+THE #3 MISTAKE: indexing everything. Four indexes cost 3.55x on writes and 3.4x on disk, forever.
+
+THE #4 MISTAKE: forgetting collation and type. An index built under one collation cannot serve a
+comparison under another, which is why my prefix LIKE unexpectedly scanned.
+
+THE #5 MISTAKE: leaving unused and redundant indexes in place. (a) is redundant when (a, b) exists,
+and both charge you on every write.
+
+ONE-SENTENCE TAKEAWAY: an index is a sorted B+tree whose enormous fanout makes any table four or five
+page reads deep - so it converts a scan into a descent, works only when the query preserves the
+column's ordering, and charges you on every single write for the privilege.""",
+]
+
+_EX_P1AO["CPU scheduling algorithms (FCFS, SJF, SRTF, Round Robin, Priority)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - who runs next, and for how long
+
+One CPU, many processes that want it. THE SCHEDULER DECIDES WHICH ONE RUNS NEXT AND WHEN TO TAKE IT
+AWAY.
+
+THE FIVE CLASSIC ALGORITHMS:
+
+    FCFS       First Come First Served - a queue. Simple, and it is what a queue does.
+    SJF        Shortest Job First - run whichever ready job has the smallest total burst.
+    SRTF       Shortest Remaining Time First - SJF, but PREEMPTIVE: a shorter arrival kicks out the
+               running job.
+    RR         Round Robin - everyone gets a fixed QUANTUM in turn.
+    PRIORITY   run the highest-priority ready job.
+
+THE THREE METRICS THEY TRADE AGAINST EACH OTHER, and confusing them is the commonest error:
+
+    TURNAROUND TIME   arrival -> completion. How long the whole thing took.
+    WAITING TIME      time spent ready but not running. Turnaround minus burst.
+    RESPONSE TIME     arrival -> FIRST time it runs. WHAT AN INTERACTIVE USER FEELS.
+
+MEASURED, on P1(arrives 0, needs 24), P2(1, 3), P3(2, 3):
+
+    algorithm    avg turnaround   avg waiting   avg response   max waiting
+    FCFS                  26.00         16.00          16.00         25.00
+    SJF                   26.00         16.00          16.00         25.00
+    SRTF                  12.67          2.67           0.67          6.00
+    RR(q=4)               14.67          4.67           2.67          6.00
+
+SRTF HALVED THE AVERAGE TURNAROUND AND CUT RESPONSE TIME BY 24x. And note that SJF was IDENTICAL to
+FCFS here - the honest reason is in the next section.
+
+TERMS AS THEY APPEAR:
+- BURST: how long a process needs the CPU before it blocks or finishes.
+- PREEMPTIVE: the scheduler can take the CPU away mid-burst. NON-PREEMPTIVE: it cannot.
+- STARVATION: a process that never gets scheduled because something is always preferred.""",
+
+    """2. THE INTUITION - the convoy effect, and why preemption matters
+
+THE CONVOY EFFECT is what FCFS does wrong: a long job at the front makes everything behind it wait, no
+matter how short those jobs are. Measured above, two 3-unit jobs waited behind a 24-unit one and the
+maximum waiting time was 25.
+
+AND HERE IS THE HONEST RESULT FROM MY OWN SIMULATION: SJF SCORED IDENTICALLY TO FCFS - 26.00 average
+turnaround, both.
+
+WHY, AND IT IS THE MOST INSTRUCTIVE THING IN THIS TOPIC: SJF IS NON-PREEMPTIVE. At time 0 the long job
+is the only one that has arrived, so SJF starts it - and then cannot take the CPU back when the short
+jobs turn up at t=1 and t=2. SJF only helps when there is a CHOICE at the moment of scheduling.
+
+SRTF fixes exactly that: at t=1 it compares the running job's REMAINING time (23) with the new
+arrival's (3), preempts, and the numbers collapse from 26.00 to 12.67.
+
+    NON-PREEMPTIVE SCHEDULING CAN ONLY MAKE GOOD DECISIONS AT THE MOMENTS IT IS ASKED.
+
+THE SECOND EXPERIMENT MAKES IT STARKER - one 40-unit job arriving first, then eight 2-unit jobs:
+
+    algorithm    avg turnaround   avg waiting   avg response   max waiting
+    FCFS                  44.00         37.78          37.78         46.00
+    SJF                   44.00         37.78          37.78         46.00
+    SRTF                  11.11          4.89           3.11         16.00
+    RR(q=4)               15.56          9.33           7.56         16.00
+
+SRTF'S AVERAGE WAITING TIME IS FOUR TIMES BETTER THAN FCFS'S - and this is not luck. SRTF PROVABLY
+MINIMISES AVERAGE WAITING TIME. That is a theorem, and it is why SJF/SRTF is the theoretical optimum
+against which everything else is measured.
+
+SO WHY DOES NOBODY USE IT? Two reasons, and both are decisive.""",
+
+    """3. WHY THE OPTIMAL ALGORITHM IS UNUSABLE
+
+    REASON ONE: YOU DO NOT KNOW THE BURST TIME. SJF and SRTF both require knowing how long each job
+    will run BEFORE running it. A general-purpose OS has no idea whether the process you just launched
+    will finish in 3 milliseconds or run for a week.
+
+        THE PRACTICAL WORKAROUND IS PREDICTION: an exponential moving average of the process's recent
+        bursts, tau(n+1) = a*t(n) + (1-a)*tau(n). It works because CPU bursts are strongly
+        autocorrelated - a process that has been interactive tends to stay interactive.
+        MODERN SCHEDULERS DO A VERSION OF THIS IMPLICITLY: a process that yields quickly is treated as
+        interactive and boosted.
+
+    REASON TWO: STARVATION. Measured, with a 50-unit job and a steady stream of 3-unit arrivals:
+
+        algorithm    the 50-unit job waited    average waiting
+        FCFS                            0.0              51.56
+        SJF                             0.0              51.56
+        SRTF                           45.0               9.38
+        RR                             45.0              16.50
+
+        SRTF GAVE THE BEST AVERAGE BY FAR - 9.38 against 51.56 - AND MADE THE LONG JOB WAIT 45 UNITS.
+        With arrivals continuing indefinitely, that wait is unbounded. THE LONG JOB CAN LITERALLY NEVER
+        RUN.
+
+    THAT IS THE TRADE THIS WHOLE TOPIC IS ABOUT:
+
+        OPTIMISING THE AVERAGE MEANS SOMEBODY IS AT THE TAIL, AND UNDER SRTF THE TAIL IS UNBOUNDED.
+
+    THE STANDARD FIX IS AGEING: gradually raise the priority of a process that has been waiting, so
+    everything eventually reaches the front. It gives up a little average performance to bound the
+    worst case, which is almost always the right trade in a real system.
+
+    NOTE ALSO WHAT THE TABLE SAYS ABOUT FCFS: the 50-unit job waited ZERO - it arrived first and ran
+    immediately - while the average was 51.56. FCFS IS PERFECTLY FAIR IN ORDER AND TERRIBLE ON AVERAGE.
+    Those are the two ends of the same dial, and every real scheduler sits somewhere between them.""",
+
+    """4. THE FAILURE MODES
+
+A. CONFUSING WAITING TIME WITH RESPONSE TIME. Measured: RR had a WORSE average waiting time than SRTF
+   (9.33 vs 4.89) and a comparable response time, and response is what an interactive user perceives.
+   Optimising the wrong metric is the commonest analysis error here.
+
+B. ASSUMING SJF HELPS. Measured: identical to FCFS in both experiments, because it is non-preemptive
+   and the long job was already running. Non-preemptive scheduling can only decide at the moments it is
+   asked.
+
+C. IGNORING STARVATION. SRTF and strict priority both starve. Measured at 45 units and unbounded with
+   continued arrivals. If you propose either, propose ageing with it.
+
+D. A QUANTUM THAT IS TOO SMALL. Measured: q=1 produced 80 context switches and 40 units of pure
+   overhead on 80 units of work - a 50% tax.
+
+E. A QUANTUM THAT IS TOO LARGE. Measured: q=100 gave identical numbers to q=20, because every job ran
+   to completion. RR WITH A LARGE ENOUGH QUANTUM IS EXACTLY FCFS.
+
+F. FORGETTING THE CONTEXT-SWITCH COST IN THE ANALYSIS. Textbook exercises assume it is zero, and it is
+   the thing that decides the quantum in practice - cache and TLB effects make the real cost far larger
+   than the register save-and-restore.
+
+G. TREATING PRIORITY AS FREE. Strict priority starves low-priority work, and priority inversion - a
+   low-priority process holding a lock a high-priority one needs - is a real failure mode that
+   famously nearly ended the Mars Pathfinder mission. The fix is priority inheritance.
+
+H. ASSUMING ONE ALGORITHM FOR EVERYTHING. Real systems use MULTI-LEVEL FEEDBACK QUEUES: several
+   priority levels, round robin within each, and a process that uses its whole quantum is demoted while
+   one that yields early is promoted. THAT APPROXIMATES SJF WITHOUT KNOWING BURST TIMES, which is the
+   elegant part.
+
+I. FORGETTING THAT MOST PROCESSES BLOCK. Textbook models assume pure CPU bursts; real processes wait on
+   I/O constantly, and a scheduler's real job is largely deciding who to run when someone else blocks.""",
+
+    """5. ROUND ROBIN - the quantum IS the design
+
+    Round Robin gives every ready process a fixed QUANTUM in turn. It is the only one of the five that
+    bounds RESPONSE time, which is why it underlies every interactive system.
+
+    MEASURED, on four 20-unit jobs with a context switch costing 0.5 units:
+
+        quantum    avg turnaround    avg response    switches    switch overhead
+              1            117.75            2.75          80          40.0 units
+              2             96.25            4.25          40          20.0
+              4             83.25            7.25          20          10.0
+             10             68.25           16.25           8           4.0
+             20             51.25           31.25           4           2.0
+            100             51.25           31.25           4           2.0
+
+    READ THE TWO MIDDLE COLUMNS - THEY MOVE IN OPPOSITE DIRECTIONS. That is the entire quantum
+    decision:
+
+        SMALL QUANTUM   excellent response time (2.75 at q=1) and terrible throughput - 40 of the 80
+                        units of work were spent switching, a 50% tax.
+        LARGE QUANTUM   efficient (2 units of overhead) and unresponsive - the last job waits 31 units
+                        before it runs at all.
+
+    AND THE DEGENERATE CASE IS INSTRUCTIVE: q=20 AND q=100 ARE IDENTICAL, because 20 is already the
+    full burst. ROUND ROBIN WITH A QUANTUM LARGER THAN EVERY BURST IS FCFS - the algorithm has
+    continuously deformed into a different algorithm.
+
+    THE RULE OF THUMB THAT FALLS OUT: THE QUANTUM SHOULD BE LARGE ENOUGH THAT ~80% OF BURSTS COMPLETE
+    WITHIN IT, so most processes never get preempted at all, and small enough that the response time
+    is imperceptible.
+
+    REAL SYSTEMS USE 10-100 MILLISECONDS. Human perception of 'instant' is around 100 ms, and a context
+    switch costs a few microseconds plus cache effects - so at a 10 ms quantum the overhead is well
+    under 1% while the worst-case wait with ten runnable processes is 100 ms.
+
+    THAT ARITHMETIC - PERCEPTION ON ONE SIDE, SWITCH COST ON THE OTHER - IS THE ANSWER TO 'HOW WOULD
+    YOU CHOOSE A QUANTUM', and it is much better than a memorised number.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. ASK WHAT THE SYSTEM IS FOR. Interactive desktop, batch processing, real-time control and a web
+   server want different things, and the metric follows from that.
+2. PICK THE METRIC THAT MATTERS. Interactive -> RESPONSE time. Batch -> THROUGHPUT and turnaround.
+   Real-time -> DEADLINES, which none of these five address.
+3. IF RESPONSE TIME MATTERS, YOU NEED PREEMPTION. Non-preemptive scheduling cannot bound how long
+   anyone waits - measured, SJF was no better than FCFS when the long job was already running.
+4. IF YOU KNOW BURST TIMES, SRTF IS OPTIMAL FOR AVERAGE WAITING - and you almost never know them, so
+   predict from history with an exponential average.
+5. WHENEVER YOU USE SJF, SRTF OR PRIORITY, ADD AGEING. Measured: 45 units of waiting, unbounded with
+   continued arrivals.
+6. CHOOSE THE QUANTUM FROM TWO NUMBERS: the context-switch cost and the response time a human would
+   notice. Aim for most bursts to complete within it.
+7. USE MULTI-LEVEL FEEDBACK QUEUES if you want one design that handles both. Demote CPU-bound
+   processes, promote ones that yield early, and you approximate SJF without knowing anything.
+8. HANDLE PRIORITY INVERSION with priority inheritance, if priorities and locks coexist.
+9. MEASURE THE TAIL, NOT ONLY THE AVERAGE. Measured: SRTF had the best average waiting time in the
+   starvation experiment (9.38) and the worst individual wait (45.0). The average is the summary most
+   likely to hide the problem.
+
+STEP 9 IS THE ONE THAT GENERALISES BEYOND OPERATING SYSTEMS. Every queueing system - a scheduler, a
+load balancer, a support queue, a job runner - faces exactly this trade, and 'what does this do to the
+worst case?' is the question that separates a designed system from a tuned one.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The scheduler decides who runs next and when to take the CPU away, and the algorithms differ in which
+metric they optimise.
+
+FCFS is a queue, and its problem is the convoy effect - one long job blocks everything behind it. I
+measured that: two 3-unit jobs behind a 24-unit one gave an average waiting time of 16 and a maximum of
+25.
+
+SJF picks the shortest ready job, and here is the interesting part - in my simulation SJF scored
+IDENTICALLY to FCFS. The reason is that SJF is non-preemptive: at time zero the long job is the only
+one that has arrived, so it starts, and SJF cannot take the CPU back when the short jobs turn up. Non-
+preemptive scheduling can only make good decisions at the moments it is asked.
+
+SRTF is the preemptive version, and it compares remaining times, so at t=1 it preempts. Average
+turnaround dropped from 26 to 12.67, and response time from 16 to 0.67. SRTF provably minimises average
+waiting time - that is a theorem.
+
+So why does nobody use it? Two reasons. You do not know the burst times in advance, so real schedulers
+predict them from recent history. And it starves long jobs: in a test with a 50-unit job and a stream
+of short arrivals, SRTF gave the best average waiting time by far - 9.38 against 51.56 - and made the
+long job wait 45 units, which is unbounded if arrivals keep coming. The fix is ageing: raise a waiting
+process's priority over time.
+
+Round Robin is the one that bounds RESPONSE time, which is what an interactive user actually feels, and
+the quantum is the whole design. I measured four 20-unit jobs at various quanta: q=1 gave a response
+time of 2.75 and spent 40 of 80 units on context switches - a 50% tax. q=100 gave 2 units of overhead
+and a response time of 31. And q=20 and q=100 were identical, because Round Robin with a quantum bigger
+than every burst just IS FCFS.
+
+Real systems use multi-level feedback queues - several priority levels, round robin within each,
+demote processes that use their whole quantum and promote ones that yield early. That approximates SJF
+without knowing any burst times, which is the elegant part.'""",
+
+    """8. THE ALGORITHMS, PIECE BY PIECE
+
+    FCFS - a FIFO queue.
+        PREEMPTIVE: no. COMPLEXITY: trivial. STARVATION: impossible - everyone is served in order.
+        THE PROBLEM: the convoy effect. Measured, average waiting 16.00 where SRTF achieved 2.67.
+        WHERE IT IS RIGHT: batch systems where order matters and nothing is interactive.
+
+    SJF - shortest total burst among the READY processes.
+        PREEMPTIVE: no. STARVATION: yes, long jobs.
+        MEASURED: identical to FCFS in both experiments, because the long job was already running when
+        the short ones arrived. THE ALGORITHM IS ONLY AS GOOD AS ITS OPPORTUNITIES TO CHOOSE.
+        REQUIRES: knowing burst times, which you do not.
+
+    SRTF - shortest REMAINING time, checked on every arrival.
+        PREEMPTIVE: yes. STARVATION: yes, and worse.
+        OPTIMAL for average waiting time - provably.
+        MEASURED: 12.67 turnaround against FCFS's 26.00; and 45 units of starvation for the long job.
+
+    ROUND ROBIN - fixed quantum, cycling through the ready queue.
+        PREEMPTIVE: yes. STARVATION: no - with n ready processes, nobody waits more than (n-1) quanta.
+        THAT BOUND IS ITS WHOLE VALUE and it is why interactive systems are built on it.
+        MEASURED: the quantum trades response against overhead, 2.75/40 units at q=1 versus 31.25/2
+        units at q=20.
+
+    PRIORITY - highest priority first, static or dynamic.
+        PREEMPTIVE: either. STARVATION: yes, and it is the textbook example.
+        NEEDS AGEING to be usable, and PRIORITY INHERITANCE if priorities and locks coexist.
+
+    MULTI-LEVEL FEEDBACK QUEUE - what real systems actually do:
+        several queues at different priorities, round robin within each, and a SHORTER quantum at
+        higher priority.
+        a process that uses its ENTIRE quantum is CPU-bound -> demote it
+        a process that yields early is interactive -> promote it
+        THIS APPROXIMATES SJF WITHOUT KNOWING BURST TIMES, by inferring behaviour from what a process
+        actually does. That inference is the clever part, and it is the answer to 'how do real
+        schedulers get around not knowing the burst time'.""",
+
+    """9. THREE PROCESSES, SCHEDULED FOUR WAYS
+
+    P1 arrives at 0 and needs 24.  P2 arrives at 1 and needs 3.  P3 arrives at 2 and needs 3.
+
+    FCFS:
+        0-24  P1        24-27  P2        27-30  P3
+        P1 waits 0, P2 waits 23, P3 waits 22.    AVERAGE WAITING 15.0 (measured 16.00 including
+        arrival offsets).
+        NOBODY DID ANYTHING WRONG. P1 arrived first.
+
+    SJF (non-preemptive):
+        At t=0 only P1 has arrived, so P1 runs. IT CANNOT BE INTERRUPTED.
+        0-24  P1        24-27  P2        27-30  P3      IDENTICAL TO FCFS.
+        THIS IS THE MEASUREMENT THAT SURPRISES PEOPLE and it is worth stating plainly: SJF's advantage
+        is entirely about which job to pick when the CPU becomes free, and here it never became free
+        until P1 was done.
+
+    SRTF (preemptive):
+        t=0   P1 starts (remaining 24)
+        t=1   P2 arrives with 3 < 23. PREEMPT. P2 runs.
+        t=2   P3 arrives with 3; P2 has 2 remaining. P2 keeps going.
+        t=4   P2 done. P3 runs (3).
+        t=7   P3 done. P1 resumes with 23 remaining.
+        t=30  P1 done.
+        AVERAGE TURNAROUND 12.67, RESPONSE 0.67. The two short jobs were out of the way in seven units.
+        AND P1 FINISHED AT EXACTLY THE SAME TIME AS UNDER FCFS - t=30 - because the total work is the
+        same. SRTF did not make anything slower; it reordered who waited.
+
+    ROUND ROBIN (q=4):
+        0-4 P1, 4-7 P2, 7-10 P3, 10-14 P1, 14-18 P1, ... P1 finishes at 30.
+        AVERAGE TURNAROUND 14.67, RESPONSE 2.67.
+        Slightly worse than SRTF on both, and it required NO knowledge of burst times and it CANNOT
+        starve anyone. THAT COMBINATION IS WHY IT IS THE PRACTICAL CHOICE.
+
+    THE COMPARISON IN ONE LINE: SRTF is the theoretical best, RR is 15% behind it and needs to know
+    nothing and starves nobody, and FCFS is twice as bad and cannot be beaten for simplicity.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FIVE:
+        FCFS      simple, fair in order, convoy effect. Non-preemptive.
+        SJF       optimal-ish, non-preemptive, needs burst times, starves long jobs.
+        SRTF      PROVABLY optimal for average waiting, preemptive, needs burst times, starves worse.
+        RR        bounds RESPONSE time, no knowledge needed, cannot starve, costs context switches.
+        PRIORITY  expresses importance, starves, needs ageing and priority inheritance.
+
+    THE MEASURED EVIDENCE:
+        convoy effect (24, 3, 3):   FCFS turnaround 26.00 · SJF 26.00 (identical - non-preemptive) ·
+            SRTF 12.67 · RR 14.67
+        one long + eight short:     FCFS waiting 37.78 · SRTF 4.89 (4x better) · RR 9.33
+        starvation:                 SRTF best average waiting at 9.38 AND the long job waited 45.0
+        the quantum:                q=1 response 2.75 with 40 units of switch overhead on 80 units of
+            work · q=20 response 31.25 with 2 units · q=20 and q=100 identical, because RR with a
+            large quantum IS FCFS
+
+THE #1 MISTAKE: optimising the average and not looking at the tail. SRTF had the best average waiting
+time in every experiment and produced unbounded starvation - and that trade appears in every queueing
+system, not just schedulers.
+
+THE #2 MISTAKE: assuming SJF helps. Measured identical to FCFS twice, because non-preemptive
+scheduling only chooses at the moments the CPU is free.
+
+THE #3 MISTAKE: confusing waiting time with response time. Response is what a user perceives, and it
+is why Round Robin exists despite being beaten on every other metric.
+
+THE #4 MISTAKE: a quantum chosen without the context-switch cost. Measured at a 50% tax when q=1.
+
+THE #5 MISTAKE: proposing priority scheduling without ageing and without priority inheritance.
+
+ONE-SENTENCE TAKEAWAY: shortest-remaining-time minimises average waiting and starves the long jobs
+that made it look good, so real systems run round robin inside a multi-level feedback queue - bounding
+the worst case, inferring 'short job' from behaviour rather than needing to know it, and choosing the
+quantum from the switch cost on one side and human perception on the other.""",
+]
+
+_EX_P1AO["CAP theorem"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what a distributed system gives up when the network breaks
+
+CAP is three letters, and the popular summary of it is wrong.
+
+    C - CONSISTENCY   every read returns the most recent write. Specifically LINEARIZABILITY: the
+                      system behaves as if there were one copy of the data.
+    A - AVAILABILITY  every request to a non-failed node gets a non-error response.
+    P - PARTITION TOLERANCE   the system keeps working when the network drops messages between nodes.
+
+THE POPULAR SUMMARY: 'pick two of three.'
+
+WHY THAT IS MISLEADING, AND THIS IS THE ANSWER THE QUESTION IS ACTUALLY TESTING:
+
+    YOU DO NOT GET TO CHOOSE P. Networks partition. Cables are cut, switches fail, a datacentre link
+    saturates, a garbage-collection pause makes a node look dead. IF YOUR SYSTEM SPANS MORE THAN ONE
+    MACHINE, PARTITIONS WILL HAPPEN, and 'we chose CA' means 'we have not thought about what happens
+    when the network fails'.
+
+    SO THE REAL STATEMENT IS: WHEN A PARTITION OCCURS, YOU MUST CHOOSE BETWEEN C AND A.
+
+    NO PARTITION -> you can have both. That is the normal case, most of the time.
+    PARTITION     -> a node that cannot reach its peers must either
+                     REFUSE THE REQUEST (keep C, lose A), or
+                     ANSWER FROM POSSIBLY-STALE LOCAL DATA (keep A, lose C).
+
+THAT IS THE WHOLE THEOREM. It is a statement about a specific failure mode, not a taxonomy of
+databases.
+
+TERMS AS THEY APPEAR:
+- PARTITION: some nodes cannot communicate with others, but both groups are still running and still
+  receiving client requests. NOT the same as a node crashing.
+- LINEARIZABLE: reads always see the latest completed write, as if there were one copy.""",
+
+    """2. THE INTUITION - the two-node argument that proves it
+
+The proof fits in a paragraph, and being able to give it is worth more than the three letters.
+
+    Two nodes, N1 and N2, both holding a copy of x = 0.
+    The network between them fails. Both are alive; neither can talk to the other.
+
+    A client writes x = 1 to N1.
+    A different client reads x from N2.
+
+    N2 HAS EXACTLY TWO OPTIONS:
+
+        RETURN 0      it is available, and it returned stale data.        A, not C.
+        REFUSE        it is consistent, and it did not answer.            C, not A.
+
+    THERE IS NO THIRD OPTION. N2 cannot know about the write - the only channel that could have told
+    it is the one that failed. Waiting does not help: waiting IS refusing, just more slowly, and a
+    request that never returns is unavailable.
+
+THAT IS THE ENTIRE PROOF, and it makes clear why the theorem is narrow: IT IS ABOUT WHAT A NODE DOES
+WHEN IT CANNOT REACH ITS PEERS AND A CLIENT IS WAITING. It says nothing about performance, nothing
+about durability, and nothing about how the system behaves normally.
+
+THE REFINEMENT WORTH KNOWING - PACELC, which is the thing that actually shapes real designs:
+
+    IF PARTITIONED (P):   choose Availability or Consistency        <- CAP
+    ELSE (E):             choose Latency or Consistency             <- the rest of the time
+
+THE 'ELSE' HALF IS THE ONE THAT MATTERS DAY TO DAY. Partitions are rare; the choice between waiting for
+a quorum and answering fast from a local replica happens on EVERY REQUEST. A system that always
+confirms a write with a majority of nodes is paying network round trips constantly, partition or no
+partition.
+
+CITING PACELC IS THE SINGLE BEST WAY TO SHOW YOU UNDERSTAND CAP RATHER THAN HAVING MEMORISED IT.""",
+
+    """3. WHAT THE CHOICE LOOKS LIKE IN A REAL SYSTEM
+
+    CP - REFUSE RATHER THAN BE WRONG.
+
+        A write must be acknowledged by a majority (a QUORUM) before it succeeds. A node in the
+        minority side of a partition cannot form a quorum, so it REFUSES.
+        EXAMPLES: ZooKeeper, etcd, Consul, HBase, MongoDB with majority write concern, most
+        consensus-based systems.
+        USE FOR: anything where being wrong is worse than being down.
+            leader election, distributed locks, configuration, account balances, inventory allocation,
+            anything where two conflicting answers cause real damage.
+
+        THE COST IS EXACTLY WHAT IT SOUNDS LIKE: DURING A PARTITION, THE MINORITY SIDE IS DOWN. If your
+        cluster splits 3-2, the two-node side serves nothing at all - and if it splits evenly, NOBODY
+        can form a majority and the whole system stops. THAT IS WHY QUORUM SYSTEMS USE AN ODD NUMBER OF
+        NODES.
+
+    AP - ANSWER, AND RECONCILE LATER.
+
+        Every node answers from its local copy. Conflicting writes on different sides are merged
+        afterwards.
+        EXAMPLES: Cassandra and DynamoDB in their tunable-consistency modes, Riak, DNS, most CDNs, most
+        caches.
+        USE FOR: anything where a stale answer is tolerable and downtime is not.
+            product catalogues, timelines, view counts, recommendations, shopping carts, session data.
+
+        THE COST IS THAT YOU MUST DEFINE CONFLICT RESOLUTION, and 'we will figure it out later' is not
+        a design:
+            LAST WRITE WINS - simple, and it SILENTLY DISCARDS DATA. It also depends on clocks agreeing
+                across machines, which they do not.
+            VECTOR CLOCKS - detect concurrent writes and hand both versions to the application. Amazon's
+                shopping cart famously did this, and MERGED the two carts rather than choosing.
+            CRDTs - data types whose merge is mathematically guaranteed to converge: counters, sets,
+                registers. THE BEST ANSWER WHEN YOUR DATA FITS ONE, because the conflict cannot occur.
+
+    THE SENTENCE THAT SHOWS JUDGEMENT: 'CP AND AP ARE NOT PROPERTIES OF A DATABASE, THEY ARE PROPERTIES
+    OF A REQUEST.' Cassandra with QUORUM reads and writes behaves like CP; the same cluster with
+    consistency level ONE behaves like AP. DynamoDB offers both per call. The choice is usually
+    per-operation, and different operations in the same product should choose differently.""",
+
+    """4. THE FAILURE MODES
+
+A. 'WE CHOSE CA.' There is no such choice for a distributed system. Dropping P means declaring that
+   the network never fails, which means you have no defined behaviour for the day it does.
+
+B. CONFUSING CAP's C WITH ACID's C. ACID consistency means your declared constraints hold - see
+   [[acid-transactions]]. CAP consistency means every replica agrees. Completely different concerns
+   that share a letter, and interviewers ask this specifically.
+
+C. TREATING IT AS A DATABASE CLASSIFICATION. It is a property of a request. Cassandra can behave as
+   CP or AP depending on the consistency level you pass on that call.
+
+D. THINKING AVAILABILITY MEANS UPTIME. In CAP it means EVERY non-failed node answers EVERY request.
+   A system with 99.99% uptime is not 'available' in the CAP sense if any node ever refuses during a
+   partition - the definitions are stricter than the ordinary words.
+
+E. IGNORING LATENCY, which is the choice you make constantly. PACELC's else-branch is the one that
+   shapes your p99 - a majority-quorum read pays a network round trip on every single call, partition
+   or not.
+
+F. CHOOSING AP AND NOT DEFINING CONFLICT RESOLUTION. 'Last write wins' silently loses data and relies
+   on synchronised clocks. If you pick AP, the merge strategy is part of the design, not an
+   afterthought.
+
+G. FORGETTING THAT A SLOW NODE LOOKS LIKE A PARTITION. A long GC pause, an overloaded disk or a
+   saturated link is indistinguishable from a failure at the protocol level. PARTITIONS ARE FAR MORE
+   COMMON THAN 'A CABLE WAS CUT' SUGGESTS.
+
+H. AN EVEN NUMBER OF NODES IN A QUORUM SYSTEM. Split 2-2 and neither side has a majority, so the whole
+   system is unavailable. Three, five or seven.
+
+I. ASSUMING EVENTUAL CONSISTENCY MEANS 'WRONG'. It means converging once writes stop. For a great many
+   products - a view counter, a feed, a catalogue - that is completely adequate and much cheaper.""",
+
+    """5. HOW THE CHOICE IS MADE PER OPERATION
+
+    The mature version of this answer is that one system makes different choices for different data.
+    Take an e-commerce site:
+
+        PRODUCT CATALOGUE          AP. A stale price for two seconds is fine; a catalogue that is down
+                                   costs sales immediately.
+        SHOPPING CART              AP, with a MERGE on conflict. Amazon's design: if two versions of a
+                                   cart exist, union them. A re-added item is a mild annoyance; a lost
+                                   cart is a lost order.
+        INVENTORY / 'LAST ONE LEFT' CP. Selling the same physical item twice creates a refund, an
+                                   apology and a support ticket. REFUSING TO SELL IS CHEAPER THAN
+                                   SELLING TWICE.
+        PAYMENT                    CP, absolutely. And idempotency keys, so a retry after a timeout
+                                   cannot double-charge.
+        ORDER HISTORY              AP. Reading a two-second-old list of orders harms nobody.
+        SESSION / AUTH TOKENS      AP usually, with short expiry so staleness is self-limiting.
+
+    THE QUESTION TO ASK FOR EACH ONE, and it is the only question that matters:
+
+        WHAT DOES A STALE OR CONFLICTING ANSWER ACTUALLY COST, VERSUS WHAT DOES A REFUSAL COST?
+
+    IF STALENESS COSTS MONEY OR SAFETY  -> CP.
+    IF UNAVAILABILITY COSTS MONEY       -> AP with a defined merge.
+
+    AND THE THIRD OPTION PEOPLE FORGET: RESTRUCTURE SO THE CONFLICT CANNOT ARISE.
+        - a MONOTONIC COUNTER instead of a read-modify-write, so increments commute and merge trivially
+        - an APPEND-ONLY LOG instead of mutable state, so there is nothing to conflict
+        - a CRDT, where the merge is a mathematical property rather than a policy
+        - RESERVE-THEN-CONFIRM for inventory, so the strongly-consistent operation is small and rare
+          while browsing stays available
+
+    THAT LAST FAMILY IS THE STRONGEST THING TO PROPOSE, because it moves the problem rather than
+    trading it. CAP constrains what you can do with a given data model; changing the data model changes
+    what CAP demands of you.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+1. ACCEPT P. It is not a choice. If you have more than one machine, plan for partitions.
+2. IDENTIFY THE DATA, ONE KIND AT A TIME. Different data in the same system deserves different
+   answers.
+3. FOR EACH, ASK WHAT A STALE ANSWER COSTS. Money, safety, correctness, or mild annoyance?
+4. ASK WHAT A REFUSAL COSTS. A failed checkout, an unusable app, a retry?
+5. CHOOSE CP WHERE BEING WRONG IS EXPENSIVE - money, inventory, locks, leader election, identity.
+6. CHOOSE AP WHERE BEING DOWN IS EXPENSIVE and staleness is survivable - catalogues, feeds, sessions,
+   caches.
+7. IF AP, DEFINE THE MERGE EXPLICITLY. Last-write-wins, vector clocks, or a CRDT - and know that
+   last-write-wins discards data and trusts clocks.
+8. LOOK FOR A DATA MODEL WITH NO CONFLICT. Counters that commute, append-only logs, reserve-then-
+   confirm. This is the best answer when it is available.
+9. USE AN ODD NUMBER OF NODES for any quorum, so a split always has a majority side.
+10. THINK ABOUT THE 'ELSE' BRANCH - PACELC. Even with no partition, are you paying a round trip for
+    consistency on every request? That is your p99.
+11. TEST IT. Partition the network deliberately - the discipline is called chaos engineering - because
+    a behaviour nobody has observed is a behaviour nobody knows.
+
+STEP 2 IS WHAT SEPARATES A GOOD ANSWER FROM A RECITED ONE. 'Is this system CP or AP' is usually the
+wrong question; 'what does THIS operation do when it cannot reach its peers' is the right one.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'CAP says a distributed system cannot simultaneously guarantee consistency, availability and partition
+tolerance - but the popular "pick two of three" framing is misleading, because you do not get to
+choose P. Networks partition: cables fail, links saturate, and a long GC pause is indistinguishable
+from a dead node. So the real statement is that WHEN a partition occurs you must choose between C and
+A, and the rest of the time you can have both.
+
+The proof is short enough to give. Two nodes each holding x = 0, and the link between them fails. A
+client writes x = 1 to one node and reads x from the other. The second node either returns 0 - it is
+available and it returned stale data - or it refuses, in which case it is consistent and unavailable.
+There is no third option, because the only channel that could have told it about the write is the one
+that failed. And waiting is just refusing more slowly.
+
+In practice CP means a write needs a quorum, so the minority side of a partition refuses - that is
+etcd, ZooKeeper, anything consensus-based. AP means every node answers from its local copy and you
+reconcile afterwards - Cassandra or DynamoDB at low consistency levels. And I would push back on
+treating those as database labels: they are properties of a REQUEST. The same Cassandra cluster is CP
+with quorum reads and writes and AP at consistency level one.
+
+The refinement I would raise is PACELC: if Partitioned, choose Availability or Consistency; Else,
+choose Latency or Consistency. The else-branch is the one that actually shapes your system, because
+partitions are rare and the choice between waiting for a quorum and answering fast from a local
+replica happens on every single request.
+
+And practically I would decide per data type. Product catalogue AP - a stale price for two seconds is
+fine and a catalogue that is down costs sales. Inventory CP - refusing to sell is cheaper than selling
+the same item twice. Shopping cart AP with a merge, which is what Amazon did: union the two carts,
+because a re-added item is an annoyance and a lost cart is a lost order. And where I can, I would
+restructure so the conflict cannot arise at all - a commuting counter, an append-only log, or a CRDT.'""",
+
+    """8. THE THREE PROPERTIES, PIECE BY PIECE
+
+    CONSISTENCY (in CAP) - LINEARIZABILITY:
+        Every read returns the value of the most recently COMPLETED write, and the system behaves as if
+        there were a single copy.
+        THIS IS A VERY STRONG DEFINITION. It is stronger than 'the replicas agree eventually' and
+        stronger than the C in ACID, which is about your declared constraints holding within one
+        database.
+        HOW IT IS ACHIEVED: consensus. Raft or Paxos, where a majority must agree before a write is
+        acknowledged.
+
+    AVAILABILITY (in CAP):
+        EVERY request to a NON-FAILED node receives a NON-ERROR response, in finite time.
+        NOTE HOW STRICT THIS IS. One node refusing one request during a partition means the system is
+        not 'available' in the CAP sense, even if it has five nines of measured uptime. THE FORMAL
+        DEFINITIONS ARE NARROWER THAN THE ENGLISH WORDS, and most confusion about CAP comes from that.
+
+    PARTITION TOLERANCE:
+        The system continues to operate when the network arbitrarily drops or delays messages between
+        nodes.
+        CRUCIALLY, A PARTITION IS NOT A CRASH. Both sides are alive, both are serving clients, and
+        neither can tell whether the other is dead or merely unreachable. THAT AMBIGUITY IS THE ENTIRE
+        DIFFICULTY - if a node could know the other was dead, it could safely proceed alone.
+
+    THE QUORUM MECHANISM, which is how CP systems actually work:
+        with N replicas, require W acknowledgements to write and R to read, with W + R > N.
+        That inequality guarantees the read set and the write set OVERLAP in at least one node, so a
+        read always sees the latest write.
+        N=3, W=2, R=2: tolerates one node failing. A partition leaves at most one side with two nodes,
+        so at most one side can write.
+        N=3, W=3, R=1: fast reads, and any single failure blocks all writes.
+        THE TUNING KNOB IS EXACTLY THE C-VERSUS-A DIAL, expressed as arithmetic - and it is why
+        Cassandra and DynamoDB let you set it per request.""",
+
+    """9. ONE PARTITION, WALKED
+
+    A five-node cluster holding an inventory count. The network splits 3-2.
+
+    THE SETUP: `widget: 1 remaining`. Both sides have clients trying to buy it.
+
+    UNDER CP (quorum of 3 required):
+        MAJORITY SIDE (3 nodes)  can form a quorum. It sells the widget, decrements to 0, commits.
+        MINORITY SIDE (2 nodes)  cannot reach 3. It REFUSES the purchase - an error, or a timeout.
+        WHEN THE PARTITION HEALS: the minority side catches up. Count is 0. ONE SALE, CORRECT.
+        THE COST: for the duration of the partition, 40% of the cluster served nothing. Customers on
+        that side saw errors.
+
+    UNDER AP (answer from local state):
+        MAJORITY SIDE  sells the widget. Local count 0.
+        MINORITY SIDE  sells the widget. Local count 0.
+        WHEN THE PARTITION HEALS: two conflicting states. TWO CUSTOMERS BOUGHT THE SAME PHYSICAL ITEM.
+        THE COST: a refund, an apology, a support ticket, and possibly a very unhappy customer.
+        THE BENEFIT: nobody saw an error, and every other product on the site kept selling normally.
+
+    WHICH IS RIGHT? IT DEPENDS ENTIRELY ON THE ITEM.
+        A concert ticket: CP. Overselling is a legal and reputational problem.
+        A £3 phone case with 400 in a warehouse: AP is fine. Overselling by one is a backorder.
+
+    NOW THE THIRD DESIGN, WHICH IS WHAT GOOD SYSTEMS ACTUALLY DO:
+
+        BROWSING AND ADDING TO CART:  AP. Always available, possibly stale counts. This is 99% of the
+        traffic.
+        THE RESERVATION AT CHECKOUT:  CP. One small, strongly-consistent operation - 'reserve one unit'
+        - which either succeeds or fails.
+        Everything else continues to work during a partition; only the final reservation is refused on
+        the minority side.
+
+    THAT IS THE PATTERN WORTH TAKING AWAY: MAKE THE STRONGLY-CONSISTENT OPERATION AS SMALL AND AS RARE
+    AS POSSIBLE, and let everything around it be available. CAP forces a choice; good design shrinks
+    the thing you have to choose about.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE ACTUAL STATEMENT:  you do not choose P. WHEN a partition occurs, a node that cannot reach its
+    peers must either refuse (keep C, lose A) or answer from local state (keep A, lose C).
+
+    THE PROOF:  two nodes, link fails, write to one, read from the other. It returns stale data or it
+    refuses. There is no third option, and waiting is refusing more slowly.
+
+    PACELC:  if Partitioned, A or C. Else, Latency or C. The else-branch is what shapes your p99,
+    because partitions are rare and every request pays for consistency.
+
+    THE MECHANISM:  quorums with W + R > N, which guarantees the read and write sets overlap. That
+    inequality is the C-versus-A dial expressed as arithmetic.
+
+    THE CHOICES:
+        CP  etcd, ZooKeeper, consensus systems - locks, leader election, money, inventory, identity
+        AP  Cassandra/DynamoDB at low consistency, DNS, CDNs - catalogues, feeds, sessions, carts
+        and per REQUEST, not per database
+
+THE #1 MISTAKE: saying 'we chose CA'. It is not available, and it means you have no defined behaviour
+for the day the network fails - which it will.
+
+THE #2 MISTAKE: confusing CAP's C with ACID's C. Replicas agreeing versus your constraints holding.
+
+THE #3 MISTAKE: treating CP and AP as database labels rather than per-request choices, when the same
+cluster does both depending on the consistency level.
+
+THE #4 MISTAKE: choosing AP without defining the merge. Last-write-wins silently discards data and
+trusts that clocks on different machines agree.
+
+THE #5 MISTAKE: forgetting that a slow node is indistinguishable from a partitioned one, so partitions
+are far more frequent than 'a cable was cut' implies.
+
+ONE-SENTENCE TAKEAWAY: partitions are not optional, so the real question is what each individual
+operation should do when it cannot reach its peers - refuse and stay correct, or answer and reconcile
+later - and the best designs shrink the set of operations that have to be strongly consistent until
+almost everything can stay available.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
