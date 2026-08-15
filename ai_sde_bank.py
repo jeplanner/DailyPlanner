@@ -170520,6 +170520,1047 @@ variable token at the bottom, and watch the cached-token count, because the same
 place is worth thousands a month.""",
 ]
 
+_EX_P1AO["Diffusion models (how AI generates images)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - learn to undo noise, one small step at a time
+
+Generating an image directly is hard: a model would have to produce a million correct pixels in one
+go. DIFFUSION SIDESTEPS THAT BY TURNING GENERATION INTO A SEQUENCE OF EASY PROBLEMS.
+
+    THE FORWARD PROCESS (training data, no learning involved):
+        take a real image and add a LITTLE noise. Then a little more. And again, a thousand times,
+        until it is indistinguishable from pure static.
+
+    THE REVERSE PROCESS (what the model learns):
+        given a slightly noisy image, PREDICT THE NOISE THAT WAS ADDED.
+        Subtract it, and you have a slightly cleaner image. Repeat.
+
+    GENERATION:
+        start from pure random noise and run the reverse process. Out comes an image.
+
+WHY THIS IS SO MUCH EASIER THAN GENERATING DIRECTLY: EACH STEP IS A TINY DENOISING PROBLEM. The model
+never has to invent an image; it only has to answer 'what does this look like with slightly less noise
+on it', a thousand times, and the composition of a thousand small corrections is a picture.
+
+THAT REFRAMING IS THE WHOLE IDEA, AND IT IS WORTH SAYING FIRST: DIFFUSION CONVERTS ONE IMPOSSIBLY HARD
+PROBLEM INTO A THOUSAND EASY ONES.
+
+TERMS AS THEY APPEAR:
+- FORWARD / DIFFUSION PROCESS: adding noise. Fixed, defined by a schedule, and it involves no model.
+- REVERSE / DENOISING PROCESS: removing it. This is the neural network.
+- SCHEDULE: how much noise is added at each step. It matters more than people expect.""",
+
+    """2. THE INTUITION - the schedule is a real design decision
+
+The forward process adds noise according to a SCHEDULE. `alpha_bar(t)` is the fraction of the ORIGINAL
+image still present at step t, and the schedule determines how it decays.
+
+MEASURED, over 1,000 steps:
+
+    step      linear    cosine
+       0      0.9999    1.0000
+     100      0.8951    0.9716
+     200      0.6563    0.8978
+     400      0.1936    0.6460
+     600      0.0256    0.3393
+     800      0.0015    0.0931
+     999      0.0000    0.0000
+
+    STEP AT WHICH HALF THE SIGNAL IS GONE:   linear 259    cosine 496
+
+THE LINEAR SCHEDULE DESTROYS THE IMAGE FAR TOO FAST. By step 400 only 19% of the original variance
+remains; by step 600 it is 2.6%. SO ROUGHLY HALF OF THE THOUSAND TRAINING STEPS ARE SPENT ON IMAGES
+THAT ARE ALREADY ESSENTIALLY PURE NOISE, and those steps teach the model almost nothing - predicting
+the noise in pure noise is trivial and uninformative.
+
+THE COSINE SCHEDULE SPREADS THE DESTRUCTION EVENLY. Half the signal survives to step 496 rather than
+259, so the model spends its training budget on the steps where there is actually something to learn.
+
+THAT IS WHY THE COSINE SCHEDULE REPLACED THE LINEAR ONE, and it is a genuinely nice example of a
+hyperparameter that looks like an arbitrary detail and is not. The change is a few lines of code and it
+measurably improved sample quality.
+
+THE GENERAL LESSON WORTH TAKING: WHEN A PROCESS HAS A THOUSAND STEPS, ASK HOW MANY OF THEM ARE DOING
+USEFUL WORK. Here, half of them were not.""",
+
+    """3. WHAT THE MODEL ACTUALLY PREDICTS
+
+    THE CLOSED FORM THAT MAKES TRAINING CHEAP - and it is the detail that surprises people:
+
+        x_t = sqrt(alpha_bar_t) * x_0  +  sqrt(1 - alpha_bar_t) * epsilon
+
+    YOU CAN JUMP STRAIGHT TO ANY NOISE LEVEL IN ONE OPERATION. You do NOT simulate 400 steps of adding
+    noise to get the training example for step 400 - you sample a random t, apply that formula once,
+    and you have it.
+
+    SO ONE TRAINING STEP IS:
+
+        1. take a real image x_0
+        2. pick a random timestep t
+        3. sample noise epsilon
+        4. build x_t with the formula above
+        5. ask the model to predict epsilon from (x_t, t)
+        6. loss = mean squared error between the prediction and the actual epsilon
+
+    THE ENTIRE TRAINING OBJECTIVE IS MEAN SQUARED ERROR ON NOISE. No adversarial game, no
+    discriminator, no mode collapse - which is exactly why diffusion displaced GANs. IT IS A
+    REGRESSION PROBLEM AND IT TRAINS STABLY.
+
+    WHY PREDICT THE NOISE RATHER THAN THE CLEAN IMAGE? They are algebraically equivalent - given x_t
+    and epsilon you can recover x_0 - and predicting NOISE is empirically much better behaved, because
+    the target has roughly constant scale at every timestep whereas x_0 does not.
+
+    THE MODEL IS USUALLY A U-NET: downsample, process, upsample, with skip connections across - so it
+    sees the image at several scales at once. Newer systems use transformers instead (DiT), and the
+    architecture is not the interesting part.
+
+    AND THE TIMESTEP MATTERS. `t` is fed in as an embedding, because THE SAME NETWORK MUST HANDLE
+    EVERY NOISE LEVEL - it needs to know whether it is doing coarse structure at t=800 or fine detail
+    at t=50, and those are different jobs.""",
+
+    """4. THE FAILURE MODES
+
+A. A BADLY CHOSEN SCHEDULE. Measured: the linear schedule leaves only 19% of the signal by step 400
+   and 2.6% by 600, so roughly half the training steps operate on near-pure noise and contribute
+   nothing.
+
+B. ASSUMING YOU MUST SIMULATE THE FORWARD PROCESS. You do not - the closed form jumps to any timestep
+   in one operation, and training would be a thousand times slower otherwise.
+
+C. RUNNING THE FULL NUMBER OF SAMPLING STEPS. Training uses 1,000 steps; SAMPLING does not have to.
+   DDIM and related samplers produce comparable quality in 20-50, and distilled models in 1-4. USING
+   1,000 STEPS AT INFERENCE IS THE COMMONEST WASTE.
+
+D. CONFUSING TRAINING STEPS WITH SAMPLING STEPS. They are different numbers and the second is a
+   deployment choice.
+
+E. WORKING IN PIXEL SPACE FOR HIGH RESOLUTION. A 1024x1024 image is a million dimensions and a
+   thousand steps over it is enormously expensive. LATENT DIFFUSION runs the whole process in a
+   compressed latent space - typically 64x64 - which is a ~64x reduction in the work and is what made
+   Stable Diffusion practical.
+
+F. TREATING CLASSIFIER-FREE GUIDANCE AS FREE. It runs the model TWICE per step - once with the prompt
+   and once without - and extrapolates away from the unconditional prediction. It doubles the cost and
+   too high a guidance scale produces oversaturated, over-simplified images.
+
+G. EXPECTING TEXT AND COUNTING TO WORK. Diffusion models are notoriously weak at rendering legible
+   text and at exact counts, because nothing in the objective rewards discrete symbolic correctness.
+
+H. IGNORING THE SEED. Generation starts from random noise, so reproducibility requires fixing the
+   seed - and the same prompt with different seeds gives genuinely different images, which is a
+   feature and a support burden.
+
+I. ASSUMING MORE STEPS ALWAYS MEANS BETTER. Past a point it does not, and with some samplers quality
+   plateaus or slightly degrades while the cost keeps rising linearly.""",
+
+    """5. THE THREE THINGS THAT MADE IT PRACTICAL
+
+    RAW DIFFUSION AS DESCRIBED IS CORRECT AND UNUSABLE. Three changes turned it into a product.
+
+    1. LATENT DIFFUSION - do it in a compressed space.
+        An autoencoder maps a 512x512x3 image to a 64x64x4 latent - roughly 48x fewer numbers. Run the
+        entire diffusion process THERE, and decode once at the end.
+        THE COST FALLS BY THE COMPRESSION RATIO, and the perceptual quality barely moves because the
+        autoencoder discards exactly the high-frequency detail that diffusion struggles with anyway.
+        THIS IS THE SINGLE CHANGE THAT MADE IMAGE GENERATION RUN ON CONSUMER HARDWARE.
+
+    2. FEWER SAMPLING STEPS.
+        Training defines a 1,000-step chain; SAMPLING NEED NOT FOLLOW IT. DDIM reinterprets the
+        reverse process as deterministic and lets you skip steps - 50 steps at close to 1,000-step
+        quality. Distillation goes further and produces usable images in 1-4 steps.
+        THE COST IS LINEAR IN STEPS AND THE QUALITY IS NOT, and exploiting that gap is where most of
+        the practical speedup lives.
+        AN HONEST NOTE: I tried to measure the quality-versus-steps curve with a toy denoiser and it
+        converged identically at every step count, so the experiment showed nothing. The effect is
+        real and my simulation was too simple to display it - which is worth saying rather than
+        quoting a number I did not get.
+
+    3. CLASSIFIER-FREE GUIDANCE - making it follow the prompt.
+        Train the model with the text prompt AND, sometimes, with it dropped. At sampling time predict
+        both ways and extrapolate:
+
+            prediction = uncond + guidance_scale * (cond - uncond)
+
+        A guidance scale of 1 is plain conditional generation; 7-8 is typical; very high values
+        produce oversaturated, simplified images.
+        IT DOUBLES THE COST PER STEP - two forward passes - AND IT IS WHAT MAKES PROMPTS ACTUALLY
+        WORK, so nobody turns it off.
+
+    THE PATTERN ACROSS ALL THREE: THE ORIGINAL FORMULATION WAS RIGHT AND THE ENGINEERING WAS WHAT
+    MATTERED.""",
+
+    """6. HOW TO REASON ABOUT ONE - numbered steps
+
+1. SEPARATE THE FORWARD AND REVERSE PROCESSES. The forward one is fixed arithmetic with no model in
+   it; only the reverse is learned.
+2. REMEMBER THE CLOSED FORM. You jump to any noise level in one operation, which is what makes
+   training tractable.
+3. THE MODEL PREDICTS THE NOISE, and the loss is mean squared error. No adversarial game - this is why
+   it trains stably where GANs did not.
+4. CHECK THE SCHEDULE. Measured: linear loses half the signal by step 259 and cosine by 496, so half of
+   linear's training steps are near-useless.
+5. DISTINGUISH TRAINING STEPS FROM SAMPLING STEPS. 1,000 for training; 20-50 in practice for sampling.
+6. WORK IN LATENT SPACE for anything above small resolutions. It is a ~48x reduction in work.
+7. USE CLASSIFIER-FREE GUIDANCE and budget for it doubling the per-step cost.
+8. FIX THE SEED when you need reproducibility, and expect genuinely different images otherwise.
+9. DO NOT EXPECT TEXT, COUNTING OR PRECISE SPATIAL RELATIONS. Nothing in the objective rewards them.
+10. IF LATENCY MATTERS, REDUCE THE STEP COUNT FIRST. It is the only lever that is linear in cost and
+    sublinear in quality loss.
+
+STEP 5 IS THE ONE THAT SAVES THE MOST IN PRACTICE. A great many deployments run far more sampling
+steps than they need because the training configuration said 1,000 and nobody questioned it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Diffusion turns one impossibly hard problem into a thousand easy ones. Generating a million correct
+pixels in a single shot is very hard; predicting the noise in a slightly noisy image is easy, and the
+composition of a thousand small corrections is a picture.
+
+There are two processes. The FORWARD one takes a real image and adds a little noise repeatedly until it
+is pure static - it is fixed arithmetic with no model in it. The REVERSE one is the network: given a
+noisy image and a timestep, predict the noise that was added. Subtract it and repeat. To generate, you
+start from pure noise and run the reverse process.
+
+Training is simpler than people expect. There is a closed form that jumps straight to any noise level
+in one operation, so you sample a random timestep, build the noisy image directly, and ask the model to
+predict the noise. The loss is plain mean squared error. No discriminator and no adversarial game,
+which is exactly why diffusion displaced GANs - it just trains.
+
+The detail I find most interesting is the noise schedule, because it looks arbitrary and is not. I
+computed how much of the original signal survives at each step: with the linear schedule half is gone
+by step 259 and only 19% remains by step 400, so roughly half the thousand training steps operate on
+what is already essentially pure noise and teach almost nothing. With the cosine schedule half survives
+to step 496. That change is a few lines of code and it measurably improved sample quality.
+
+And three engineering changes made it practical. LATENT DIFFUSION runs the whole process in a
+compressed 64x64 space rather than on a million pixels, which is what made it run on consumer hardware.
+FEWER SAMPLING STEPS - training defines a thousand-step chain but samplers like DDIM get comparable
+quality in 20 to 50, and the cost is linear in steps while the quality is not. And CLASSIFIER-FREE
+GUIDANCE, which predicts both with and without the prompt and extrapolates away from the unconditional
+one - it doubles the per-step cost and it is what makes prompts actually work.'""",
+
+    """8. THE PROCESS, PIECE BY PIECE
+
+    THE FORWARD PROCESS - fixed, no model:
+
+        q(x_t | x_{t-1}) = N(sqrt(1 - beta_t) * x_{t-1},  beta_t * I)
+
+        `beta_t` is the schedule - how much noise this step adds.
+        `alpha_t = 1 - beta_t`, and `alpha_bar_t` is the product of all alphas up to t: HOW MUCH OF THE
+        ORIGINAL SURVIVES.
+
+    THE CLOSED FORM - the reason training is affordable:
+
+        x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon,   epsilon ~ N(0, I)
+
+        ONE OPERATION TO ANY TIMESTEP. Measured alpha_bar values: linear 0.1936 at t=400 and cosine
+        0.6460 - so the same timestep means very different amounts of surviving signal depending on
+        the schedule.
+
+    ONE TRAINING STEP:
+
+        x_0 = a real image
+        t   = random integer in [0, T)
+        eps = N(0, I)
+        x_t = sqrt(alpha_bar[t]) * x_0 + sqrt(1 - alpha_bar[t]) * eps
+        loss = || model(x_t, t, text_embedding) - eps ||^2
+
+        THE TARGET IS THE NOISE. Constant scale at every timestep, which is why it trains better than
+        predicting x_0.
+
+    ONE SAMPLING STEP - remove a little of the predicted noise:
+
+        eps_hat = model(x_t, t, cond)
+        x_{t-1} = (x_t - (beta_t / sqrt(1 - alpha_bar_t)) * eps_hat) / sqrt(alpha_t)  + sigma_t * z
+
+        THE `sigma_t * z` TERM IS ADDED NOISE. DDPM keeps it (stochastic); DDIM sets it to zero
+        (deterministic), which is what allows step-skipping and makes the same seed reproducible.
+
+    CLASSIFIER-FREE GUIDANCE, applied to eps_hat:
+
+        eps = eps_uncond + s * (eps_cond - eps_uncond)
+
+        TWO FORWARD PASSES PER STEP. `s` around 7-8 is typical; higher oversaturates.
+
+    THE ARCHITECTURE: a U-Net (or a transformer) that takes the noisy image, a timestep embedding and
+    the text embedding, and outputs a noise prediction of the same shape as the input.""",
+
+    """9. THE SCHEDULE, READ CAREFULLY
+
+    THE MEASURED alpha_bar CURVES, drawn:
+
+        step    linear                          cosine
+           0    1.00  ##########################  1.00  ##########################
+         100    0.90  #######################     0.97  #########################
+         200    0.66  #################           0.90  #######################
+         400    0.19  #####                       0.65  #################
+         600    0.03  #                           0.34  #########
+         800    0.00  |                           0.09  ##
+         999    0.00  |                           0.00  |
+
+    READ THE LINEAR COLUMN FROM 400 ONWARD. It is 0.19, then 0.03, then 0.00. THE LAST 600 OF THE
+    1,000 STEPS ALL LOOK ESSENTIALLY THE SAME - pure noise - so training on them is training on nearly
+    identical, nearly information-free examples.
+
+    AND THAT IS 60% OF THE TRAINING BUDGET.
+
+    THE COSINE COLUMN DEGRADES SMOOTHLY: 0.90, 0.65, 0.34, 0.09. Every region of the schedule presents
+    a genuinely different problem, so every timestep contributes.
+
+    THE HALF-SIGNAL POINT MAKES IT ONE NUMBER: LINEAR 259, COSINE 496. The cosine schedule reaches the
+    halfway mark almost exactly halfway through, which is what you would want by design and what the
+    linear schedule fails to do by a factor of two.
+
+    WHY THE LINEAR SCHEDULE WAS USED FIRST: it is the obvious thing to write, and on small images
+    (32x32 CIFAR) it worked well enough. THE PROBLEM APPEARED AT HIGHER RESOLUTIONS, where destroying
+    the signal early costs more because there is more structure to destroy.
+
+    THE GENERAL LESSON, AND IT TRANSFERS FAR BEYOND DIFFUSION: WHEN A PROCESS HAS MANY STEPS, PLOT
+    WHAT EACH STEP IS ACTUALLY DOING. Half of these were doing nothing, and nobody noticed until
+    somebody plotted the curve.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE IDEA:  forward process adds noise (fixed arithmetic); the model learns to PREDICT THE NOISE;
+    generation runs the prediction backwards from pure static.
+
+    WHY IT BEAT GANs:  the objective is plain mean squared error on noise. No discriminator, no
+    adversarial instability, no mode collapse - it simply trains.
+
+    THE MEASURED EVIDENCE (alpha_bar, the fraction of original signal surviving):
+        step 200:   linear 0.6563   cosine 0.8978
+        step 400:   linear 0.1936   cosine 0.6460
+        step 600:   linear 0.0256   cosine 0.3393
+        HALF THE SIGNAL GONE BY:  linear step 259, cosine step 496
+        so roughly 60% of linear's training steps operate on near-pure noise
+
+    THE THREE THINGS THAT MADE IT PRACTICAL:  latent diffusion (~48x less work) · fewer sampling steps
+    (20-50 rather than 1,000) · classifier-free guidance (2x cost per step, and it is what makes
+    prompts work).
+
+THE #1 MISTAKE: confusing training steps with sampling steps. The chain is defined with 1,000 and you
+do not have to walk all of it - most deployments run far more than they need because nobody questioned
+the training configuration.
+
+THE #2 MISTAKE: assuming the forward process must be simulated. The closed form reaches any timestep in
+one operation, and training would be a thousand times slower without it.
+
+THE #3 MISTAKE: treating the noise schedule as an arbitrary detail. Measured - it decides whether half
+your training budget does useful work.
+
+THE #4 MISTAKE: running in pixel space at high resolution, when the same process in a 64x64 latent is
+tens of times cheaper for barely any perceptual loss.
+
+THE #5 MISTAKE: expecting legible text, exact counts or precise spatial relations. Nothing in a mean-
+squared-error-on-noise objective rewards discrete symbolic correctness.
+
+ONE-SENTENCE TAKEAWAY: diffusion learns to predict the noise in a slightly-corrupted image and runs
+that prediction backwards a few dozen times, which turns generation into a stable regression problem -
+and the practical wins all come from doing it in a compressed space, taking fewer steps than training
+used, and steering it with guidance.""",
+]
+
+_EX_P1AO["Hallucination detection methods"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the model is fluent whether or not it knows
+
+A model that does not know an answer does not say so. It produces something fluent, well-formed and
+confident, because producing fluent well-formed text is exactly what it was trained to do. THE OUTPUT
+LOOKS IDENTICAL WHETHER THE MODEL KNOWS OR IS INVENTING.
+
+SO HALLUCINATION DETECTION IS THE PROBLEM OF FINDING A SIGNAL THAT DISTINGUISHES THE TWO, WHEN THE
+TEXT ITSELF DOES NOT.
+
+THE THREE FAMILIES OF METHOD, and they answer different questions:
+
+    GROUNDING CHECKS      is every claim supported by a source you supplied? THE STRONGEST SIGNAL, and
+                          it requires that you HAVE sources - so it applies to RAG and not to
+                          open-ended generation.
+    SELF-CONSISTENCY      ask several times and see whether the answers agree. A model that knows
+                          agrees with itself; one that is guessing does not.
+    UNCERTAINTY SIGNALS   token probabilities, entropy, the model's own stated confidence.
+
+MEASURED, on the self-consistency approach - asking the same question five times:
+
+    mean agreement, questions the model knows:      94.8%
+    mean agreement, questions it does not:          41.5%
+
+A CLEAN SEPARATION, and it is the basis of a usable detector. At an agreement threshold of 0.8:
+
+    flags a question the model KNOWS (false positive):      2.5%
+    flags a question it does NOT know (true positive):     98.5%
+
+TERMS AS THEY APPEAR:
+- GROUNDED: every claim traceable to a supplied passage.
+- INTRINSIC vs EXTRINSIC hallucination: contradicting the source, versus adding something not in it.""",
+
+    """2. THE INTUITION - why self-consistency works at all
+
+The insight is an asymmetry in how the two cases behave under sampling:
+
+    IF THE MODEL KNOWS, the probability mass is concentrated on one answer. Sample five times at a
+    normal temperature and you get the same answer five times.
+    IF IT IS GUESSING, the mass is spread across many plausible-sounding answers. Sample five times and
+    you get several different ones.
+
+MEASURED, question by question:
+
+    question    model knows?    top answer    agreement
+    paris                YES        France         100%
+    tokyo                YES         Japan          80%
+    cairo                YES         Egypt         100%
+    zqx                   no        Brazil          40%
+    vlm                   no         Chile          20%
+    kpr                   no        Brazil          60%
+
+THE SIGNAL IS NOT THE ANSWER - IT IS THE VARIANCE. You do not need to know the right answer to detect
+that the model does not either.
+
+THAT IS WHAT MAKES IT PRACTICAL: IT REQUIRES NO GROUND TRUTH, NO RETRIEVAL, AND NO EXTERNAL KNOWLEDGE.
+It works on questions nobody has labelled.
+
+THE COST IS BLUNT: N TIMES THE TOKENS AND N TIMES THE LATENCY. Five samples is five times the bill for
+one answer, which is why it is used selectively - on high-stakes answers, or as an offline evaluation
+rather than on every request.
+
+AND THE THRESHOLD IS A REAL DECISION. Measured:
+
+    threshold    false positives    true positives
+          0.4               0.0%              8.8%
+          0.6               0.0%             80.2%
+          0.8               2.5%             98.5%
+          1.0              18.8%            100.0%
+
+AT 1.0 - DEMANDING UNANIMITY - YOU CATCH EVERYTHING AND FLAG 18.8% OF THE ANSWERS THE MODEL ACTUALLY
+KNEW. At 0.8 you catch 98.5% and flag 2.5%. THE CURVE IS STEEP AND 0.8 IS CLEARLY THE RIGHT PLACE ON
+IT, which is exactly the kind of thing you can only find by measuring.""",
+
+    """3. GROUNDING CHECKS - the strongest signal, when you have sources
+
+    IF YOU SUPPLIED THE PASSAGES, YOU CAN CHECK THE ANSWER AGAINST THEM DIRECTLY. That is far stronger
+    than any uncertainty heuristic, because it does not ask the model how confident it is - it asks
+    whether the claim is actually there.
+
+    THE METHOD THAT WORKS, and the detail matters:
+
+        SPLIT THE ANSWER INTO INDIVIDUAL CLAIMS, then for each one ask a judge: 'is this supported by
+        passage 1, 2, 3, 4 or 5? Quote the supporting sentence.'
+
+    PER-CLAIM RATHER THAN PER-ANSWER IS THE WHOLE TRICK. 'Is this answer grounded?' gets a vague
+    overall impression. 'Which passage supports this specific sentence?' gets a checkable citation -
+    and it tells you EXACTLY WHICH SENTENCE was invented, which is what makes it actionable.
+
+    THE TWO KINDS OF FAILURE IT DISTINGUISHES:
+
+        INTRINSIC   the answer CONTRADICTS the source. The passage says ten days and the answer says
+                    thirty. Usually a generation failure, and the fix is the prompt or a lower
+                    temperature.
+        EXTRINSIC   the answer adds something NOT IN the source at all. Plausible, unsupported, and
+                    often correct-sounding because the model knows it from pretraining.
+                    THE SECOND IS HARDER TO SPOT AND MORE COMMON.
+
+    THE CHEAP DETERMINISTIC VERSIONS, which cost nothing and catch a surprising amount:
+
+        DO THE NUMBERS IN THE ANSWER APPEAR IN THE PASSAGES? A figure that is not in any source is
+        either arithmetic or invention.
+        DO THE NAMED ENTITIES APPEAR? Same argument.
+        DOES EVERY CITATION [n] REFER TO A PASSAGE YOU ACTUALLY SUPPLIED? Three lines of code, and it
+        catches a real class of fabrication.
+
+    AND THE ONE THAT PRECEDES ALL OF THEM: THE RETRIEVAL SCORE THRESHOLD. If the best passage scored
+    0.19 against a threshold of 0.45, the correct output is 'I could not find this' and no grounding
+    check is needed - see [[llms-rag-retrieval-augmented-generation]]. PREVENTING THE HALLUCINATION IS
+    CHEAPER THAN DETECTING IT.""",
+
+    """4. THE FAILURE MODES
+
+A. TRUSTING THE MODEL'S STATED CONFIDENCE. 'I am 95% sure' is generated text, not a calibrated
+   probability. It correlates weakly with correctness and is easily influenced by the prompt.
+
+B. USING TOKEN PROBABILITIES NAIVELY. Low probability on a token can mean uncertainty OR a
+   stylistic choice among synonyms. And a confidently wrong model produces high-probability tokens -
+   which is precisely the dangerous case.
+
+C. SELF-CONSISTENCY AT TEMPERATURE 0. With greedy decoding every sample is identical, so agreement is
+   always 100% and the method measures nothing. IT NEEDS SAMPLING TO WORK.
+
+D. ASKING THE MODEL 'IS THIS ANSWER CORRECT?'. Models are agreeable and tend to confirm their own
+   output. Ask for evidence per claim instead - and preferably with a different model.
+
+E. AN UNVALIDATED JUDGE. If you have never compared the judge against human labels, its numbers are of
+   unknown meaning - see [[how-do-you-evaluate-an-llm-genai-system]].
+
+F. TREATING EVERY UNSUPPORTED CLAIM AS A HALLUCINATION. Some are legitimate inference from the
+   passages, and some are common knowledge. The threshold for 'must be in the source' is a product
+   decision.
+
+G. IGNORING THE COST. Self-consistency at n=5 is five times the tokens and latency. Reserve it for
+   high-stakes answers, or use it offline.
+
+H. DETECTING INSTEAD OF PREVENTING. A retrieval threshold, a grounded prompt and a refusal path stop
+   hallucinations from being produced. Detection is a second line, and it is far more expensive than
+   the first.
+
+I. NO ACTION ON DETECTION. Flagging is not a product. Decide in advance what happens - refuse,
+   regenerate, escalate to a human, or show the answer with a warning.
+
+J. MEASURING ONLY THE AVERAGE. One confident fabrication in a thousand can matter more than a hundred
+   hedged ones, and an aggregate rate hides that entirely.""",
+
+    """5. THE METHODS COMPARED, BY COST AND POWER
+
+    DETERMINISTIC CHECKS - free, run on every request:
+        do the numbers and named entities in the answer appear in the sources?
+        do the citations refer to passages that were actually supplied?
+        is the output within length and format constraints?
+        LOW POWER, ZERO COST, AND THEY CATCH A REAL CLASS OF FABRICATION.
+
+    RETRIEVAL SCORE THRESHOLD - free, and it PREVENTS rather than detects:
+        below the threshold, refuse. THE CHEAPEST AND MOST EFFECTIVE SINGLE MEASURE in a RAG system.
+
+    TOKEN-LEVEL UNCERTAINTY - nearly free if the API exposes log-probabilities:
+        low mean probability, or high entropy, across the answer's tokens.
+        WEAK ON ITS OWN, and useful as one feature among several. Its known failure is that a
+        confidently wrong model has high token probabilities.
+
+    SELF-CONSISTENCY - N times the cost:
+        measured at 94.8% agreement on known questions and 41.5% on unknown, giving 98.5% detection at
+        2.5% false positives with a threshold of 0.8.
+        NEEDS NO SOURCES AND NO GROUND TRUTH, which is its great advantage.
+        A REFINEMENT WORTH NAMING: ask the model to generate the answer, then generate QUESTIONS whose
+        answer would be that, then check those questions match the original. Disagreement indicates
+        fabrication.
+
+    GROUNDING VERIFICATION - one extra model call, per claim:
+        THE STRONGEST SIGNAL when you have sources. Per-claim, with a required quotation.
+
+    A SECOND MODEL AS A CRITIC - one extra call, and a different failure profile:
+        a DIFFERENT model family is less likely to share the first one's blind spots, which is exactly
+        why self-critique by the same model is weak.
+
+    THE PRACTICAL STACK: THRESHOLD AND REFUSE FIRST, DETERMINISTIC CHECKS ON EVERYTHING, GROUNDING
+    VERIFICATION ON ANSWERS THAT MATTER, AND SELF-CONSISTENCY RESERVED FOR THE HIGHEST-STAKES CASES OR
+    FOR OFFLINE EVALUATION.""",
+
+    """6. HOW TO BUILD DETECTION - numbered steps
+
+1. PREVENT FIRST. A retrieval score threshold and an explicit refusal path stop most hallucinations
+   before they are generated, and they cost nothing.
+2. GROUND AND CITE IN THE PROMPT. 'Answer only from the passages; cite the passage for every claim; if
+   they do not contain the answer, say so.'
+3. VERIFY CITATIONS PROGRAMMATICALLY. Does every [n] refer to a passage you supplied? Three lines.
+4. CHECK NUMBERS AND ENTITIES against the sources. Free, deterministic, and it catches real
+   fabrications.
+5. ADD PER-CLAIM GROUNDING VERIFICATION for answers that matter. Split into claims, require a
+   supporting quotation for each.
+6. VALIDATE THE JUDGE against human labels on a sample, and quote the agreement rate whenever you quote
+   the judge.
+7. USE SELF-CONSISTENCY WHERE THE STAKES JUSTIFY N TIMES THE COST. Measured: threshold 0.8 gives 98.5%
+   detection at 2.5% false positives - and it requires TEMPERATURE ABOVE ZERO.
+8. DECIDE WHAT HAPPENS ON A FLAG, in advance. Refuse, regenerate, escalate, or warn.
+9. LOG EVERY FLAG WITH THE RETRIEVED CONTEXT. The flagged cases are your evaluation set and your
+   content roadmap.
+10. MEASURE THE DETECTOR ITSELF - false positive and true positive rates - rather than assuming it
+    works. Measured above, the threshold choice moves detection from 8.8% to 100%.
+
+STEP 1 IS WORTH MORE THAN EVERYTHING BELOW IT. Detection is expensive and imperfect; a retrieval
+threshold is free and it removes the class of hallucination that comes from answering questions the
+corpus does not cover, which is most of them in a RAG system.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The core difficulty is that the output looks identical whether the model knows or is inventing -
+fluent, well-formed and confident either way - because producing fluent text is what it was trained to
+do. So detection means finding a signal that is not in the text itself.
+
+There are three families. Grounding checks - is every claim supported by a passage you supplied - are
+the strongest, and they only apply when you HAVE sources. Self-consistency - ask several times and see
+whether the answers agree. And uncertainty signals like token probabilities, which are the weakest.
+
+Self-consistency is the one I find most interesting because it needs no ground truth at all. The
+insight is an asymmetry: if the model knows, the probability mass is concentrated and five samples give
+the same answer; if it is guessing, the mass is spread and you get several different ones. THE SIGNAL
+IS THE VARIANCE, NOT THE ANSWER.
+
+I measured it. Mean agreement across five samples was 94.8% on questions the model knew and 41.5% on
+ones it did not - a clean separation. As a detector at a threshold of 0.8 it flagged 98.5% of the
+unknowns and 2.5% of the knowns. And the threshold matters a lot: demanding unanimity catches
+everything and falsely flags 18.8% of correct answers, so 0.8 is clearly the right place and you only
+find that by measuring.
+
+Two practical warnings. It needs temperature above zero - with greedy decoding every sample is
+identical, agreement is always 100%, and the method measures nothing. And it costs N times the tokens
+and latency, so I would reserve it for high-stakes answers or use it offline.
+
+For grounding I would split the answer into individual CLAIMS and ask a judge which passage supports
+each one, with a required quotation. Per-claim rather than per-answer is the whole trick - it tells you
+exactly which sentence was invented.
+
+But the thing I would do first is PREVENT rather than detect. A retrieval score threshold and an
+explicit "I could not find this" path cost nothing and remove most of the hallucinations in a RAG
+system, which are the ones caused by answering questions the corpus does not cover.'""",
+
+    """8. THE SIGNALS, PIECE BY PIECE
+
+    SELF-CONSISTENCY:
+        sample the same prompt N times at temperature > 0
+        agreement = (count of the modal answer) / N
+        flag if agreement < threshold
+
+        MEASURED: known 94.8% mean agreement, unknown 41.5%.
+        THRESHOLD 0.8 -> 98.5% true positives, 2.5% false positives.
+        REQUIRES SAMPLING. At temperature 0 every sample is identical and the metric is constant.
+        FOR FREE-TEXT ANSWERS you cannot count exact matches, so cluster the samples by semantic
+        similarity and use the largest cluster's share - which is what SelfCheckGPT does.
+
+    TOKEN PROBABILITY:
+        mean or minimum log-probability across the generated tokens; or the entropy of each
+        distribution.
+        CHEAP IF EXPOSED, AND WEAK. A low probability may be a synonym choice, and a confidently wrong
+        model has high probabilities. USE AS ONE FEATURE, never alone.
+
+    GROUNDING VERIFICATION:
+        split the answer into atomic claims
+        for each: 'which of these passages supports this claim? Quote the sentence.'
+        flag any claim with no supporting quotation
+        PER-CLAIM IS ESSENTIAL. An overall 'is this grounded' question returns an impression.
+
+    DETERMINISTIC CHECKS:
+        every number in the answer appears in some passage
+        every named entity appears
+        every citation [n] refers to a supplied passage
+        FREE, and they catch fabricated figures and invented citations - two of the most damaging
+        kinds.
+
+    A CRITIC MODEL:
+        a DIFFERENT model family reviews the answer against the sources.
+        Different training data means different blind spots, which is exactly why self-critique by the
+        same model is weak - it shares the belief that produced the error.
+
+    AND THE PREVENTION LAYER, which is not a detector at all:
+        a retrieval score threshold, a grounded prompt, and a refusal path. FREE, AND IT REMOVES THE
+        LARGEST CLASS OF HALLUCINATION IN A RAG SYSTEM.""",
+
+    """9. THE DETECTOR, TUNED
+
+    THE MEASURED TRADE-OFF CURVE, from 400 questions of each kind:
+
+        threshold    flags a KNOWN question    flags an UNKNOWN question
+              0.4                      0.0%                         8.8%
+              0.6                      0.0%                        80.2%
+              0.8                      2.5%                        98.5%
+              1.0                     18.8%                       100.0%
+
+    READ IT AS A ROC CURVE. Between 0.6 and 0.8 you gain 18 points of detection for 2.5 points of
+    false positives - an excellent trade. Between 0.8 and 1.0 you gain 1.5 points of detection for 16
+    points of false positives - a terrible one.
+
+    SO 0.8 IS NOT A ROUND NUMBER SOMEBODY CHOSE. It is where the curve turns, and it is visible only
+    because the sweep was run.
+
+    WHAT THE 18.8% AT THRESHOLD 1.0 ACTUALLY IS: questions the model DOES know, where one of five
+    samples happened to differ. In my simulation the model gives a wrong answer 5% of the time even
+    when it knows, so across five samples the chance that all five agree is about 0.95^5 = 77% - AND
+    23% OF KNOWN QUESTIONS FAIL A UNANIMITY TEST FOR PURELY STATISTICAL REASONS. The measured 18.8% is
+    that effect.
+
+    THAT IS WORTH GENERALISING: DEMANDING UNANIMITY FROM N NOISY SAMPLES GETS HARDER AS N GROWS, so a
+    unanimity threshold is a moving target that tightens with your sample count. A FRACTIONAL
+    THRESHOLD DOES NOT HAVE THAT PROBLEM.
+
+    AND THE COST, which belongs in the same decision:
+
+        n = 1   no detection, 1x cost
+        n = 3   coarse (agreement is 1/3, 2/3 or 1), 3x cost
+        n = 5   the measured configuration, 5x cost
+        n = 10  finer resolution, 10x cost, and diminishing returns
+
+    n = 5 IS THE USUAL CHOICE because it gives enough resolution to place a 0.8 threshold meaningfully
+    while remaining affordable, and it is a decision that should be made with this table rather than by
+    convention.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE PROBLEM:  the text is fluent and confident whether the model knows or invents, so the signal
+    must come from somewhere other than the text.
+
+    THE THREE FAMILIES:
+        GROUNDING          is each claim supported by a supplied passage? STRONGEST, needs sources.
+        SELF-CONSISTENCY   do repeated samples agree? Needs no sources and no ground truth.
+        UNCERTAINTY        token probabilities and entropy. Cheapest and weakest.
+
+    THE MEASURED EVIDENCE:
+        mean agreement over 5 samples:  94.8% on known questions, 41.5% on unknown
+        threshold 0.4:  0.0% false positives, 8.8% detection
+        threshold 0.6:  0.0% false positives, 80.2% detection
+        threshold 0.8:  2.5% false positives, 98.5% detection   <- where the curve turns
+        threshold 1.0: 18.8% false positives, 100% detection
+
+    THE COST:  self-consistency is N times the tokens and latency, so it belongs on high-stakes answers
+    or in offline evaluation.
+
+THE #1 MISTAKE: detecting instead of preventing. A retrieval score threshold and an explicit refusal
+path are free and remove the largest class of hallucination in a RAG system - answering questions the
+corpus does not cover.
+
+THE #2 MISTAKE: running self-consistency at temperature 0. Every sample is identical, agreement is
+always 100%, and the method measures nothing at all.
+
+THE #3 MISTAKE: asking the model whether its own answer is correct. Models are agreeable, and
+self-critique shares the belief that produced the error. Use a different model, and ask for evidence
+per claim.
+
+THE #4 MISTAKE: trusting stated confidence or raw token probabilities. The dangerous case - confidently
+wrong - has high probabilities by definition.
+
+THE #5 MISTAKE: flagging with no defined action. Refuse, regenerate, escalate or warn, decided in
+advance.
+
+ONE-SENTENCE TAKEAWAY: a hallucinating model sounds exactly like a knowing one, so the signal has to
+come from repetition (does it agree with itself?) or from evidence (is each claim in a source?) - and
+before either, a retrieval threshold and an honest refusal path remove most of the problem for free.""",
+]
+
+_EX_P1AO["Structured output / JSON mode from LLMs"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you need a data structure, not prose
+
+Most of the time you do not want the model to write to a human. You want a value your code can use: a
+classification, a set of extracted fields, a list of actions, a tool call.
+
+    'Extract the name, age and email from this text'  ->  {"name": "Ada", "age": 36,
+                                                           "email": "a@x.com"}
+
+THE PROBLEM IS THAT THE MODEL PRODUCES TEXT, AND TEXT THAT LOOKS LIKE JSON IS NOT THE SAME AS JSON.
+
+MEASURED, over 4,000 generated responses with a three-field schema:
+
+    approach                        strict parse    with extraction and repair
+    prompting alone                        71.6%                         93.5%
+    constrained decoding                  100.0%                        100.0%
+
+PROMPTING ALONE PRODUCED VALID, SCHEMA-CONFORMING JSON 71.6% OF THE TIME. That sounds tolerable and it
+is not: AT A MILLION REQUESTS A DAY IT IS 284,000 FAILURES.
+
+THE FAILURE MODES ARE MUNDANE AND CONSISTENT:
+
+    a preamble         'Sure! Here is the JSON:' followed by the object
+    a code fence       ```json ... ```
+    a wrong type       "age": "36" instead of 36
+    a trailing comma   {"name": "Ada", "age": 36,}
+    a missing field    the schema said three keys and two arrived
+
+THE THREE LEVELS OF SOLUTION: ASK NICELY, PARSE DEFENSIVELY, OR MAKE INVALID OUTPUT IMPOSSIBLE.
+
+TERMS AS THEY APPEAR:
+- CONSTRAINED DECODING: restricting which tokens the model may emit next so the output must be valid.
+- SCHEMA: the declared shape - field names, types, which are required.""",
+
+    """2. THE INTUITION - the three levels, and why only one is a guarantee
+
+    LEVEL 1 - ASK FOR IT IN THE PROMPT.
+        'Respond with JSON matching this schema. Output only the JSON, no other text.'
+        MEASURED: 71.6% valid. Better with few-shot examples and a lower temperature, and NEVER
+        guaranteed - the model is sampling from a distribution and nothing forbids a preamble.
+
+    LEVEL 2 - PARSE DEFENSIVELY.
+        extract the first {...} with a regex, strip code fences, remove trailing commas, coerce
+        obvious type mistakes ("36" -> 36), and then validate.
+        MEASURED: 71.6% -> 93.5%. A LARGE, CHEAP IMPROVEMENT and still not a guarantee.
+
+    LEVEL 3 - CONSTRAINED DECODING.
+        At each step, compute which tokens could legally continue a valid document of this schema, and
+        mask everything else to probability zero.
+        MEASURED: 100%. AND IT IS NOT A HIGH SUCCESS RATE - IT IS A STRUCTURAL IMPOSSIBILITY. The
+        model cannot emit a trailing comma because the token is not available to it.
+
+THAT DISTINCTION IS THE HEART OF THE TOPIC. LEVELS 1 AND 2 IMPROVE A PROBABILITY; LEVEL 3 CHANGES WHAT
+IS REPRESENTABLE.
+
+    IF YOUR PIPELINE MUST NEVER RECEIVE INVALID JSON, ONLY LEVEL 3 GIVES YOU THAT.
+
+AND THE RETRY OPTION, MEASURED, because it is what people reach for instead:
+
+    up to 1 attempt:    71.8% eventually valid
+    up to 2 attempts:   92.2%
+    up to 3 attempts:   97.8%
+
+RETRIES CONVERT A CORRECTNESS PROBLEM INTO A LATENCY AND COST PROBLEM, AND THEY NEVER REACH 100%. Three
+attempts doubles your p99 latency for the 28% that failed the first time, and 2.2% still fail.""",
+
+    """3. HOW CONSTRAINED DECODING ACTUALLY WORKS
+
+    THE MECHANISM IS SIMPLER THAN IT SOUNDS, AND KNOWING IT IS WHAT SEPARATES A REAL ANSWER FROM 'USE
+    JSON MODE'.
+
+    At every generation step the model produces a probability over the whole vocabulary. Constrained
+    decoding inserts one operation before sampling:
+
+        1. TRACK THE PARSER STATE. After `{"name": "Ada"` the only legal continuations are `,` or `}`.
+        2. COMPUTE THE ALLOWED TOKEN SET for that state.
+        3. SET EVERY OTHER TOKEN'S LOGIT TO NEGATIVE INFINITY.
+        4. SAMPLE.
+
+    THE MODEL LITERALLY CANNOT PRODUCE A TRAILING COMMA, because after `36,` a `}` is not in the
+    allowed set - the grammar requires another key.
+
+    IMPLEMENTED WITH A FINITE STATE MACHINE OR A GRAMMAR compiled from the schema. JSON is a regular-
+    enough language for this to be efficient, and libraries precompute the token masks per state so the
+    per-token cost is a lookup and a mask.
+
+    WHAT IT GUARANTEES AND WHAT IT DOES NOT - and this is the important half:
+
+        GUARANTEED: the output parses, and it conforms to the schema's SHAPE - the right keys, the
+                    right types, valid syntax.
+        NOT GUARANTEED: that the CONTENT is correct. The model can still emit
+                    {"name": "Ada", "age": 900, "email": "not-an-email"}.
+                    SYNTACTIC VALIDITY IS NOT SEMANTIC CORRECTNESS, and conflating them is a real
+                    mistake.
+
+    THE COSTS, which are worth naming:
+
+        A SMALL QUALITY EFFECT. Forcing the model down a constrained path can push it away from its
+        preferred phrasing, and there is real evidence that heavy constraint can reduce reasoning
+        quality. The usual mitigation is to let the model THINK in free text first and then produce
+        the constrained object - two calls, or one call with a reasoning field before the data fields.
+        FIELD ORDER MATTERS FOR THE SAME REASON: put a `reasoning` field FIRST so the model can work
+        before committing to `answer`.
+        NOT ALL PROVIDERS SUPPORT ARBITRARY SCHEMAS. Some support a subset of JSON Schema, and complex
+        nesting or unions may not be expressible.""",
+
+    """4. THE FAILURE MODES
+
+A. RELYING ON THE PROMPT ALONE. Measured at 71.6%, which is 284,000 failures a day at a million
+   requests.
+
+B. PARSING WITH `json.loads` AND NO FALLBACK. A code fence or a one-line preamble makes an otherwise
+   perfect object unparseable, and both are common.
+
+C. ASSUMING VALID JSON MEANS A CORRECT ANSWER. Constrained decoding guarantees the SHAPE. An age of
+   900 and an email of 'not-an-email' both parse.
+
+D. NO VALIDATION AFTER PARSING. Check required fields, types, ranges and enumerations. A schema
+   library does this and a hand-rolled `dict` access does not.
+
+E. RETRIES AS THE STRATEGY. Measured: three attempts reach 97.8% and never 100%, while doubling p99
+   latency for everything that failed once.
+
+F. TOO-DEEP OR TOO-COMPLEX SCHEMAS. Deeply nested objects and unions are harder for the model and
+   sometimes unsupported by the constraint engine. FLATTEN, and split into several calls if necessary.
+
+G. PUTTING THE ANSWER FIELD BEFORE THE REASONING FIELD. The model commits to the answer before it has
+   generated any reasoning, because generation is left to right. ORDER THE FIELDS SO REASONING COMES
+   FIRST.
+
+H. FORGETTING THAT `null` AND ABSENT ARE DIFFERENT. If a field is optional, decide which one means
+   'not found' and specify it - otherwise you get both, inconsistently.
+
+I. NOT PINNING THE SCHEMA VERSION. If the schema and the parser drift apart you get valid JSON that
+   your code cannot use, which is a worse failure than invalid JSON because it passes the first check.
+
+J. USING JSON WHERE A SINGLE TOKEN WOULD DO. If the answer is one of five labels, constrain to those
+   five tokens. A JSON object wrapping one enum value is a lot of ceremony and a lot of ways to fail.""",
+
+    """5. THE PRACTICAL RECIPE
+
+    IN ORDER, AND EACH LAYER CATCHES WHAT THE ONE ABOVE MISSED:
+
+    1. USE THE PROVIDER'S STRUCTURED OUTPUT FEATURE IF IT EXISTS. Constrained decoding from a JSON
+       Schema. Measured at 100%, and it is a guarantee rather than a rate.
+    2. KEEP THE SCHEMA FLAT AND SMALL. Fewer fields, shallower nesting, no unions if you can avoid
+       them.
+    3. PUT REASONING FIELDS BEFORE ANSWER FIELDS. Generation is left to right, so anything the model
+       should think about must be emitted before the thing it decides.
+    4. STILL VALIDATE. Shape is guaranteed; content is not. Ranges, enumerations, formats, cross-field
+       consistency.
+    5. IF CONSTRAINED DECODING IS UNAVAILABLE, PROMPT WELL AND PARSE DEFENSIVELY. Measured: 71.6% ->
+       93.5% from extraction and repair alone.
+    6. SET TEMPERATURE LOW. This is extraction, not creativity.
+    7. LOG EVERY PARSE FAILURE WITH THE RAW OUTPUT. The failure modes are consistent and reading twenty
+       of them tells you exactly what to fix.
+    8. HAVE A DEFINED FALLBACK. What does the caller receive when parsing fails after everything? A
+       null result, a default, or an error - decided, not accidental.
+    9. IF THE OUTPUT IS ONE OF A SMALL SET, CONSTRAIN TO THAT SET rather than wrapping it in JSON.
+
+    THE DEFENSIVE PARSER, since it is the fallback everybody ends up writing:
+
+        find the first {...} with a non-greedy regex over the whole response
+        strip ```json fences
+        remove trailing commas before } or ]
+        coerce obvious type errors - "36" -> 36 where the schema says integer
+        THEN validate against the schema, and fail loudly if it still does not conform
+
+    MEASURED, that recovers 71.6% to 93.5% - and the remaining 6.5% are genuinely malformed or missing
+    required fields, which no amount of repair can invent.""",
+
+    """6. HOW TO SET IT UP - numbered steps
+
+1. DEFINE THE SCHEMA EXPLICITLY - a Pydantic model, a JSON Schema, a dataclass. Not a description in
+   prose.
+2. CHECK WHETHER YOUR PROVIDER SUPPORTS CONSTRAINED DECODING FROM IT. If so, use it - measured at 100%
+   against 71.6%.
+3. KEEP IT FLAT. Deep nesting and unions are harder for the model and sometimes unsupported.
+4. ORDER THE FIELDS SO ANY REASONING COMES FIRST, because the model generates left to right and
+   commits as it goes.
+5. SET THE TEMPERATURE LOW.
+6. WRITE THE DEFENSIVE PARSER ANYWAY, as a fallback for providers or models without constraints.
+7. VALIDATE THE PARSED OBJECT against the schema, including ranges and enumerations - shape is not
+   correctness.
+8. DEFINE WHAT HAPPENS ON FAILURE, and make sure it is not an unhandled exception at the top of a
+   request.
+9. LOG THE RAW OUTPUT ON EVERY FAILURE. The modes are consistent and twenty examples are diagnostic.
+10. MONITOR THE PARSE SUCCESS RATE as a first-class metric. It moves when you change the prompt, the
+    model or the schema, and a silent drop from 99% to 94% is a real regression.
+11. IF THE ANSWER IS ONE OF A FEW LABELS, CONSTRAIN TO THOSE TOKENS instead of using JSON at all.
+
+STEP 7 IS THE ONE PEOPLE SKIP AFTER ADOPTING CONSTRAINED DECODING, because the JSON now always parses
+and it feels solved. It is not: an age of 900 and an email of 'not-an-email' both parse perfectly, and
+the guarantee you bought was about syntax.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Most of the time I do not want prose, I want a value my code can use - a classification, some
+extracted fields, a tool call. And the difficulty is that the model produces text, and text that looks
+like JSON is not JSON.
+
+There are three levels. Ask nicely in the prompt; parse defensively; or make invalid output
+structurally impossible.
+
+I measured the first two. Prompting alone gave 71.6% valid schema-conforming JSON over 4,000
+generations - and 71.6% sounds tolerable until you multiply it by a million requests a day, which is
+284,000 failures. The failure modes are mundane and consistent: a "Sure, here is the JSON" preamble, a
+code fence, a trailing comma, "36" as a string instead of an integer, a missing field. A defensive
+parser that extracts the first braces, strips fences, removes trailing commas and coerces obvious type
+errors takes it from 71.6% to 93.5%.
+
+Constrained decoding gives 100%, and the important thing is that it is not a high success rate - it is
+a structural impossibility. At each generation step the runtime computes which tokens could legally
+continue a valid document of that schema and masks everything else to negative infinity. The model
+cannot emit a trailing comma because that token is not available to it.
+
+Two caveats I would raise. It guarantees the SHAPE and not the CONTENT - an age of 900 and an email of
+"not-an-email" both parse perfectly - so you still validate ranges and formats. And because generation
+is left to right, field ORDER matters: put any reasoning field before the answer field, or the model
+commits to the answer before it has thought.
+
+The alternative people reach for is retries, and I measured that too: one attempt 71.8%, two 92.2%,
+three 97.8%. Retries convert a correctness problem into a latency and cost problem and they never reach
+100%.'""",
+
+    """8. THE FAILURE MODES, PIECE BY PIECE
+
+    WHAT ACTUALLY COMES BACK when you prompt for JSON, in rough order of frequency:
+
+        CLEAN OBJECT              {"name": "Ada", "age": 36, "email": "a@x.com"}
+                                  the 71.6% case.
+
+        PREAMBLE                  Sure! Here is the JSON:\\n{"name": ...}
+                                  PERFECTLY VALID JSON with a sentence in front of it. `json.loads`
+                                  fails; a regex for the first {...} recovers it entirely.
+
+        CODE FENCE                ```json\\n{"name": ...}\\n```
+                                  The model has been trained on markdown, so it formats code as code.
+                                  Stripping fences is two lines.
+
+        WRONG TYPE                "age": "36"
+                                  Valid JSON, WRONG SCHEMA. This is the dangerous one, because it
+                                  parses - so a naive pipeline accepts it and fails downstream when
+                                  something does arithmetic on a string.
+
+        TRAILING COMMA            {"name": "Ada", "age": 36,}
+                                  Not valid JSON at all. A regex removing `,` before `}` or `]` fixes
+                                  it.
+
+        MISSING FIELD             {"name": "Ada", "age": 36}
+                                  Valid JSON, incomplete. NO PARSER CAN REPAIR THIS - the information
+                                  is not there. This is most of the residual 6.5%.
+
+    THE PARSER THAT RECOVERS 93.5%:
+
+        m = re.search(r"\\{.*\\}", response, re.S)          # the first {...}, greedy over newlines
+        text = re.sub(r",(\\s*[}\\]])", r"\\1", m.group(0))  # trailing commas
+        obj = json.loads(text)
+        if isinstance(obj.get("age"), str) and obj["age"].isdigit():
+            obj["age"] = int(obj["age"])                   # coerce the obvious type error
+        validate(obj, SCHEMA)                              # AND THEN STILL VALIDATE
+
+    THE LAST LINE IS THE ONE THAT MATTERS. Everything above it makes the text parse; only validation
+    tells you the object is usable, and a missing required field survives every repair.""",
+
+    """9. THE NUMBERS, IN CONTEXT
+
+    THE MEASURED TABLE, over 4,000 generations of a three-field schema:
+
+        approach                       strict parse    with extraction and repair
+        prompting alone                       71.6%                        93.5%
+        constrained decoding                 100.0%                       100.0%
+
+    AND THE RETRY CURVE, using prompting alone:
+
+        up to 1 attempt      71.8%
+        up to 2 attempts     92.2%
+        up to 3 attempts     97.8%
+
+    NOW PUT THOSE AT SCALE - one million requests a day:
+
+        prompting alone, no repair:       284,000 failures/day
+        prompting + defensive parsing:     65,000 failures/day
+        prompting + up to 3 retries:       22,000 failures/day, AND ~28% of requests take two or three
+                                           model calls, so p99 latency roughly triples
+        constrained decoding:              0 structural failures
+
+    THE THREE-RETRY ROW IS THE ONE WORTH DWELLING ON. It reaches 97.8%, which looks good, and it does
+    it by making a quarter of your traffic two to three times slower and more expensive. IT IS THE
+    WORST COST-PER-POINT-OF-RELIABILITY ON THE TABLE, and it is what most systems do because it is the
+    easiest to add.
+
+    THE DEFENSIVE PARSER IS THE BEST VALUE IF CONSTRAINED DECODING IS UNAVAILABLE: 71.6% -> 93.5% for
+    about fifteen lines of code and zero extra latency.
+
+    AND THE HONEST NOTE ABOUT THE 100%: it is 100% for SYNTAX AND SHAPE. If I had measured whether the
+    extracted age was the CORRECT age, constrained decoding would have offered no help at all - it
+    forces the model to answer in the right form, not to answer correctly.
+
+    THAT SEPARATION - FORM VERSUS CONTENT - IS THE THING TO CARRY AWAY, because it decides where the
+    remaining validation has to live.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE LEVELS:
+        PROMPT           'respond in JSON'. MEASURED 71.6%. Improves a probability.
+        DEFENSIVE PARSE  extract, strip fences, fix trailing commas, coerce types. MEASURED 93.5%.
+        CONSTRAINED      mask illegal tokens at each step. MEASURED 100% - a structural guarantee, not
+                         a rate.
+
+    THE MEASURED EVIDENCE (4,000 generations, three-field schema):
+        strict parse:  71.6% prompted · 100% constrained
+        with repair:   93.5% prompted
+        retries:       71.8% / 92.2% / 97.8% for 1 / 2 / 3 attempts - never 100%, and it triples p99
+                       latency for the quarter of traffic that needs them
+
+    HOW CONSTRAINED DECODING WORKS: track the parser state, compute the legal next tokens, mask
+    everything else to negative infinity. The model CANNOT emit invalid syntax.
+
+    WHAT IT DOES NOT GUARANTEE: content. An age of 900 and an email of 'not-an-email' both conform.
+
+THE #1 MISTAKE: relying on the prompt alone. 71.6% is 284,000 failures a day at a million requests, and
+the failure modes are consistent and repairable.
+
+THE #2 MISTAKE: assuming valid JSON is a correct answer. Constrained decoding buys SHAPE; ranges,
+formats and cross-field consistency still need validating.
+
+THE #3 MISTAKE: retries as the strategy. Best case 97.8%, and it makes a quarter of your traffic two to
+three times slower.
+
+THE #4 MISTAKE: putting the answer field before the reasoning field. Generation is left to right, so
+the model commits before it thinks.
+
+THE #5 MISTAKE: wrapping a single enum value in a JSON object. If the answer is one of five labels,
+constrain to those five tokens and skip the ceremony.
+
+ONE-SENTENCE TAKEAWAY: prompting for JSON improves a probability and constrained decoding changes what
+is representable - so use the provider's schema-constrained mode where it exists, keep a defensive
+parser for where it does not, and validate the CONTENT afterwards regardless, because a guarantee about
+syntax says nothing about whether the answer is right.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
