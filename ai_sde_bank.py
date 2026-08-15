@@ -161097,6 +161097,1067 @@ a measured workload genuinely differs - because joins and transactions are the f
 up, not the costs you are avoiding.""",
 ]
 
+_EX_P1AO["LLD: Design a Rate Limiter"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - and the questions to ask before designing
+
+'Design a rate limiter' means: allow at most N requests per client per time period, and reject the
+rest.
+
+BEFORE ANY DESIGN, ASK FOUR THINGS. They change the answer completely, and asking them is half of what
+is being assessed:
+
+    1. WHAT IS THE KEY? Per user, per IP, per API key, per endpoint, or a combination? An IP is shared
+       by an office; an API key identifies a customer. THE KEY IS THE PRODUCT DECISION.
+    2. WHERE DOES IT RUN? A single service, an API gateway, or every instance of a fleet? The
+       distributed case is a completely different problem - see below.
+    3. WHAT HAPPENS WHEN THE LIMIT IS HIT? Reject with 429, queue and delay, or degrade to a cheaper
+       response?
+    4. IS IT FOR ABUSE PREVENTION OR CAPACITY PROTECTION? Abuse wants strict per-client fairness;
+       capacity protection wants to shed load and cares less about who.
+
+THE FOUR ALGORITHMS, and the interview usually wants all four compared:
+
+    FIXED WINDOW       a counter that resets every period. Simplest, and it has a real flaw.
+    SLIDING LOG        keep every timestamp, count the recent ones. Exact, and expensive.
+    SLIDING COUNTER    two counters, interpolated. The practical compromise.
+    TOKEN BUCKET       tokens refill at a steady rate; each request spends one. Allows bursts on
+                       purpose.
+
+TERMS AS THEY APPEAR:
+- BOUNDARY PROBLEM: the fixed window's flaw - a burst straddling a reset gets double the limit.
+- BURST ALLOWANCE: how many requests above the steady rate a client may make after being quiet.""",
+
+    """2. THE INTUITION - the boundary problem, measured
+
+The fixed window is the obvious design: a counter per client, reset at the start of each period. It is
+two variables and it is wrong in a specific, exploitable way.
+
+MEASURED. Limit 10 per 60 seconds. Ten requests at t=59, then ten more at t=61:
+
+    algorithm            allowed      most in any 60-second window
+    fixed window          20/20                                20
+    sliding log           10/20                                10
+    sliding counter       11/20                                11
+    token bucket          10/20                                10
+
+THE FIXED WINDOW LET TWENTY REQUESTS THROUGH IN A TWO-SECOND SPAN, against a limit of ten per minute.
+TWICE THE INTENDED RATE.
+
+AND IT IS NOT AN IMPLEMENTATION BUG. The counter reset at t=60 and the algorithm has no memory of what
+happened just before. Any client who notices can exploit it deliberately, and plenty of clients hit it
+by accident because traffic tends to be periodic.
+
+THE SLIDING COUNTER'S 11 IS ALSO INSTRUCTIVE: it is an APPROXIMATION, so it is not exactly right, but
+it is off by one rather than by a factor of two. THAT IS THE WHOLE ARGUMENT FOR IT - almost all of the
+correctness for almost none of the cost.
+
+AND AN HONEST NEGATIVE FROM MY OWN MEASUREMENT: I expected the token bucket to allow a bigger burst
+after a quiet period, and all four algorithms allowed exactly 10 of 15. THE REASON IS THAT I SET THE
+BUCKET'S CAPACITY EQUAL TO THE LIMIT. The token bucket's burst allowance IS its capacity, so with
+capacity = limit it behaves like the others. IF YOU WANT A BURST ALLOWANCE, YOU MUST SET CAPACITY
+ABOVE THE STEADY RATE - and being able to say that is more useful than the demo I was trying to
+produce, because it identifies the actual knob.
+
+ALSO MEASURED: on perfectly smooth traffic at exactly the limit rate, all four allowed 19 or 20 of 20.
+THE ALGORITHMS ONLY DIFFER UNDER BURSTY TRAFFIC, so choosing between them on smooth traffic is
+choosing on nothing.""",
+
+    """3. THE FOUR ALGORITHMS, AND WHAT EACH COSTS
+
+    FIXED WINDOW
+        STATE: one counter and one window id. ~16 bytes per client.
+        LOGIC: if the window changed, reset; if count < limit, increment and allow.
+        PRO: trivial, and a single atomic INCR in Redis with a TTL.
+        CON: measured at 2x the limit across a boundary.
+        USE WHEN: the limit is a rough guardrail rather than a contract, and 2x is survivable.
+
+    SLIDING LOG
+        STATE: every timestamp in the window. Up to limit x 8 bytes per client.
+        LOGIC: drop timestamps older than the window, count what remains.
+        PRO: EXACTLY correct. Measured at 10/20 on the boundary test.
+        CON: memory. AT 10 MILLION CLIENTS WITH A LIMIT OF 1,000 PER MINUTE THAT IS 80 GB - which is
+             why it is the correct algorithm and rarely the chosen one.
+        USE WHEN: few clients, low limits, and exactness matters - a payment API, a login endpoint.
+
+    SLIDING COUNTER (sliding window counter)
+        STATE: two counters and a window id. ~24 bytes.
+        LOGIC: estimate = previous_window_count x (fraction of the window remaining) + current count.
+        PRO: fixed-window memory with near-sliding-log accuracy. Measured at 11 against the log's 10 -
+             an error of one, not a factor of two.
+        CON: an approximation, and it assumes traffic was evenly spread in the previous window.
+        USE WHEN: almost always. THIS IS THE DEFAULT ANSWER for a high-volume API.
+
+    TOKEN BUCKET
+        STATE: a token count and a timestamp. ~16 bytes.
+        LOGIC: refill at `rate` tokens per second up to `capacity`; a request costs one token.
+        PRO: TWO INDEPENDENT KNOBS - the sustained RATE and the burst CAPACITY. It smooths traffic
+             naturally and it is what most cloud providers actually use.
+        CON: two parameters to explain, and 'why did my burst succeed' is harder to reason about.
+        USE WHEN: you want to allow bursts deliberately - which is usually, because a client that has
+             been quiet has arguably earned one.
+
+    LEAKY BUCKET is the fifth, and it is the token bucket's mirror: requests QUEUE and drain at a fixed
+    rate. It SHAPES traffic to a perfectly constant output rather than merely capping it, and it adds
+    latency instead of rejecting. Worth naming; use it when a downstream system needs a smooth feed.""",
+
+    """4. THE FAILURE MODES
+
+A. THE FIXED-WINDOW BOUNDARY. Measured at 2x the limit. It is exploitable and it happens accidentally,
+   because real traffic is periodic.
+
+B. LOCAL COUNTERS IN A DISTRIBUTED SERVICE. Measured below - N instances multiply the effective limit
+   by N. This is the single biggest real-world mistake in this design.
+
+C. RATE LIMITING BY IP ALONE. An office, a university or a mobile carrier NATs thousands of users
+   behind one address. You will block a whole building for one abusive user.
+
+D. NO Retry-After HEADER. A client that receives a bare 429 retries immediately and makes the overload
+   worse. WITHOUT Retry-After, A WELL-BEHAVED CLIENT CANNOT BEHAVE WELL.
+
+E. THE LIMITER BEING SLOWER THAN THE WORK IT PROTECTS. A limiter that adds 50 ms to every request has
+   become the bottleneck. It must be O(1) and it must be fast.
+
+F. FAILING CLOSED WHEN THE STORE IS DOWN. If Redis is unavailable and you reject everything, one
+   dependency has taken down your whole API. USUALLY FAIL OPEN and alert - though for a login endpoint,
+   failing closed is the right call, and knowing which is which is the judgement.
+
+G. NOT MAKING THE CHECK ATOMIC. Read-then-write across a network is the read-modify-write race from
+   [[race-condition]]. Use a single atomic operation - Redis INCR with a TTL, or a Lua script.
+
+H. ONE GLOBAL LIMIT FOR EVERY ENDPOINT. A cheap health check and an expensive report should not share
+   a budget. Weight requests by cost, or limit per endpoint class.
+
+I. NO EXEMPTIONS. Internal services, health checks and paying customers on different tiers all need
+   different treatment, and retrofitting that is painful.
+
+J. FORGETTING CLOCK SKEW ACROSS INSTANCES. Window boundaries computed from local clocks disagree.
+   Compute them from the shared store's time.""",
+
+    """5. THE DISTRIBUTED PROBLEM - the part that is actually hard
+
+    MEASURED, one client, limit 10 per minute, traffic spread evenly across N instances each with its
+    own local counter:
+
+        instances    effective limit    overshoot
+                1                 10           1x
+                2                 20           2x
+                4                 40           4x
+               10                100          10x
+
+    THE LIMIT IS MULTIPLIED BY THE FLEET SIZE. And it gets worse: autoscaling changes N, so your
+    effective limit changes with load - exactly when you least want it to.
+
+    THE THREE ANSWERS, in order of how often they are right:
+
+    1. A SHARED STORE - Redis, with an ATOMIC operation.
+
+           INCR key
+           EXPIRE key 60 (only if it was just created)
+
+       One network round trip, typically under a millisecond in the same datacentre. The two commands
+       must be atomic together - a Lua script, or Redis's `SET key 1 EX 60 NX` followed by INCR.
+       THIS IS THE DEFAULT ANSWER and it is what most production systems do.
+       THE COST: a network hop on every request, and Redis becomes a dependency in your critical path -
+       hence the fail-open decision.
+
+    2. LOCAL COUNTERS WITH limit/N. Each instance gets a tenth of the budget.
+       CHEAP - no network call at all. AND IT REJECTS EARLY when load is uneven, which it always is:
+       a client whose requests happen to land on one instance is throttled at a tenth of their
+       entitlement.
+       Reasonable when limits are generous and precision does not matter.
+
+    3. LOCAL COUNTERS WITH PERIODIC SYNC. Each instance limits locally and broadcasts its counts every
+       few hundred milliseconds. Approximate, low latency, more machinery.
+       This is roughly what large CDNs do, because a Redis hop per request is not viable at their
+       volume.
+
+    THE SENTENCE THAT SHOWS JUDGEMENT: 'PERFECT DISTRIBUTED RATE LIMITING REQUIRES CONSENSUS ON EVERY
+    REQUEST, WHICH COSTS MORE THAN IT IS WORTH. Everyone accepts approximation; the design question is
+    which approximation and how much overshoot you can tolerate.'""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+1. ASK FOR THE KEY. Per user, per API key, per IP, per endpoint - or a tuple. This is a product
+   decision, not a technical one.
+2. ASK WHETHER IT IS DISTRIBUTED. One instance and a fleet are different problems, and the fleet case
+   is where the interesting design is.
+3. PICK THE ALGORITHM. Sliding counter as the default; token bucket if bursts should be allowed;
+   sliding log only if exactness is worth the memory.
+4. MAKE THE CHECK ATOMIC AND O(1). A Redis Lua script, or a single INCR with a TTL.
+5. DECIDE THE FAILURE MODE. Fail open for general APIs (availability first); fail closed for
+   authentication and anything security-critical.
+6. RETURN 429 WITH Retry-After, and the X-RateLimit-Limit / Remaining / Reset headers. This is not
+   politeness - it is what lets clients back off instead of hammering you.
+7. LIMIT PER ENDPOINT CLASS, or weight requests by cost. A search query and a health check are not
+   the same unit.
+8. ADD TIERS AND EXEMPTIONS FROM THE START. Free, paid, internal. Retrofitting this is unpleasant.
+9. MONITOR THE REJECT RATE, per client and overall. A sudden change is either an attack or a
+   misconfigured limit, and you want to know which.
+10. TEST THE BOUNDARY. Measured: a fixed window allows 2x across a reset, and that is the test people
+    do not write.
+
+STEP 6 IS THE ONE THAT MOST AFFECTS THE SYSTEM'S BEHAVIOUR UNDER STRESS. A fleet of clients receiving
+bare 429s will retry instantly and in unison, which converts a rate limit into a thundering herd. Tell
+them when to come back, and expect them to add jitter.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I would ask four things: what the key is - per user, per API key, per IP - whether it runs on
+one service or a whole fleet, what happens when the limit is hit, and whether this is abuse prevention
+or capacity protection. Those change the answer completely.
+
+Then the algorithms. A fixed window is a counter that resets each period, and it has a real flaw I
+measured: with a limit of ten per minute, ten requests at t=59 and ten at t=61 all got through -
+twenty in a two-second span, twice the intended rate. The counter resets and it has no memory of what
+just happened, so it is exploitable deliberately and hit accidentally, because traffic is periodic.
+
+A sliding log keeps every timestamp and is exactly correct - it allowed exactly ten - but at ten
+million clients with a limit of a thousand a minute that is about 80 gigabytes of timestamps, which
+is why it is correct and rarely used.
+
+The sliding counter is the practical compromise: two counters interpolated by how far into the current
+window you are. It allowed eleven where the log allowed ten - off by one rather than a factor of two -
+with fixed-window memory. That is my default.
+
+The token bucket is what I would choose when bursts should be allowed, because it has two independent
+knobs: the sustained refill rate and the bucket capacity, which IS the burst allowance. I would flag
+one thing from my own test - I set capacity equal to the limit and then all four algorithms behaved
+identically on a burst, which tells you the capacity is the actual knob.
+
+The hard part is the distributed case. With local counters, N instances multiply the effective limit by
+N, and autoscaling changes N. The usual answer is a shared Redis counter with an atomic INCR and a
+TTL - one sub-millisecond hop - and then you have to decide whether to fail open or closed if Redis is
+down. Open for a general API, closed for login.
+
+And always return 429 with Retry-After. Without it, clients retry immediately and in unison, and your
+rate limit has produced a thundering herd.'""",
+
+    """8. THE IMPLEMENTATIONS, PIECE BY PIECE
+
+    FIXED WINDOW:
+        w = floor(now / WINDOW) * WINDOW
+        if w != window_start: window_start = w; count = 0
+        if count < LIMIT: count += 1; return True
+        return False
+
+        IN REDIS: `INCR user:123:1735689600` with a TTL. The window id is IN THE KEY, so expiry does
+        the reset for you and there is no reset logic at all. Elegant, and it still has the boundary
+        flaw.
+
+    SLIDING LOG:
+        drop entries <= now - WINDOW
+        if len(log) < LIMIT: append(now); return True
+
+        IN REDIS: a sorted set per client. ZREMRANGEBYSCORE to trim, ZCARD to count, ZADD to record -
+        in one Lua script so it is atomic. O(log n) and O(limit) memory PER CLIENT.
+
+    SLIDING COUNTER - the one to be able to write:
+        elapsed = (now - window_start) / WINDOW              # 0.0 to 1.0
+        estimate = prev_count * (1 - elapsed) + cur_count
+        if estimate < LIMIT: cur_count += 1; return True
+
+        THE INTERPOLATION IS THE IDEA: if you are 25% into the current window, assume 75% of the
+        previous window's requests still count. It ASSUMES THE PREVIOUS WINDOW'S TRAFFIC WAS EVENLY
+        SPREAD, which is the source of its error - measured as 11 against the true 10.
+
+    TOKEN BUCKET:
+        tokens = min(capacity, tokens + (now - last) * rate)
+        last = now
+        if tokens >= 1: tokens -= 1; return True
+
+        NOTE THERE IS NO TIMER AND NO BACKGROUND JOB. Tokens are computed lazily from elapsed time on
+        each request, which is what makes it O(1) and stateless enough to hold in two numbers.
+        `rate` is the sustained throughput; `capacity` is the burst. TWO KNOBS, INDEPENDENTLY TUNABLE,
+        and that is its real advantage.
+
+    THE ATOMICITY REQUIREMENT applies to all four in a distributed setting: the read, the decision and
+    the write must be one operation, or two instances both read 'count = 9' and both allow.""",
+
+    """9. THE BOUNDARY, WALKED
+
+    LIMIT 10 PER 60 SECONDS. A client sends ten requests at t=59.0 to 59.1, then ten more at t=61.0 to
+    61.1.
+
+    FIXED WINDOW:
+        t=59.0  window is [0, 60). count 0 -> 1. ALLOW.
+        ...     count reaches 10 by t=59.1. All ten allowed.
+        t=61.0  floor(61/60)*60 = 60, a NEW window. RESET count to 0.
+                count 0 -> 1. ALLOW.
+        ...     all ten allowed.
+        TOTAL 20 IN 2.1 SECONDS. Measured, and the most in any 60-second window was 20.
+
+    SLIDING LOG:
+        t=61.0  drop timestamps <= 1.0. Nothing drops - the t=59 entries are only 2 seconds old.
+                log holds 10 entries. 10 is not < 10. REJECT.
+        TOTAL 10. Exactly correct, and it cost ten stored timestamps.
+
+    SLIDING COUNTER:
+        t=61.0  new window [60, 120). prev = 10 (the t=59 window), cur = 0.
+                elapsed = (61 - 60) / 60 = 0.0167
+                estimate = 10 x (1 - 0.0167) + 0 = 9.83
+                9.83 < 10, so ALLOW. cur = 1.
+        t=61.01 estimate = 9.83 + 1 = 10.83. REJECT.
+        TOTAL 11. ONE OVER, because the estimate assumed the previous window's ten requests were spread
+        across the whole minute rather than crammed into its final tenth of a second.
+
+    TOKEN BUCKET (capacity 10, rate 10/60 per second):
+        by t=59 the bucket has been drained to 0 by the first ten requests.
+        by t=61 it has refilled by 2 x (10/60) = 0.33 tokens. 0.33 < 1. REJECT.
+        TOTAL 10. Correct, and it required two numbers of state.
+
+    THE COMPARISON IN ONE LINE: the fixed window is wrong by 100%, the sliding counter by 10%, and the
+    log and bucket are exact - and the bucket achieves it in 16 bytes where the log needs 80.
+
+    THAT IS WHY THE TOKEN BUCKET IS WHAT MOST CLOUD PROVIDERS ACTUALLY RUN.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR ALGORITHMS:
+        fixed window     ~16 bytes   simple, and 2x over the boundary
+        sliding log      ~8N bytes   exact, and 80 GB at scale
+        sliding counter  ~24 bytes   off by one, not by a factor - THE DEFAULT
+        token bucket     ~16 bytes   exact, plus a tunable burst allowance - what providers use
+
+    THE MEASURED EVIDENCE (limit 10/60s, 10 requests at t=59 and 10 at t=61):
+        fixed window     20/20 allowed - 20 in one 60-second window, 2x the limit
+        sliding log      10/20
+        sliding counter  11/20 - the interpolation's error
+        token bucket     10/20
+        smooth traffic:  all four allowed 19-20 of 20 - they only differ on BURSTS
+        distributed:     N local counters multiply the effective limit by N
+
+THE #1 MISTAKE: local counters in a distributed service. N instances means N times the limit, and
+autoscaling changes N - so the limit moves with load, in the wrong direction.
+
+THE #2 MISTAKE: the fixed-window boundary, which is 2x the intended rate and is both exploitable and
+accidentally common.
+
+THE #3 MISTAKE: no Retry-After. A fleet of clients getting bare 429s retries instantly and in unison,
+turning a rate limit into a thundering herd.
+
+THE #4 MISTAKE: a non-atomic check-then-increment, which is the read-modify-write race across a
+network.
+
+THE #5 MISTAKE: rate limiting by IP alone, which blocks an entire office for one abusive user.
+
+ONE-SENTENCE TAKEAWAY: pick the key first, use a sliding counter or a token bucket rather than a fixed
+window because the boundary is worth 2x the limit, put the counter in a shared store with an atomic
+operation because local counters multiply the limit by your fleet size - and always tell the client
+when to come back.""",
+]
+
+_EX_P1AO["LLD: Design an e-commerce Order and Inventory model"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the two hard problems hiding in a shopping cart
+
+'Model orders and inventory' sounds like a schema exercise. It is not. TWO GENUINELY HARD PROBLEMS are
+buried in it, and the interview is about whether you find them:
+
+    1. DO NOT SELL THE SAME PHYSICAL ITEM TWICE. Two customers, one unit left, simultaneous checkout.
+    2. AN ORDER IS A HISTORICAL RECORD, NOT A VIEW OF CURRENT DATA. Prices change; last month's
+       invoice must not.
+
+THE CORE ENTITIES:
+
+    Product        the catalogue entry - name, description, category. Rarely changes.
+    ProductVariant the actual sellable thing - size, colour, SKU. THIS IS WHAT HAS STOCK.
+    Inventory      how many of a variant exist, and where.
+    Cart           a mutable, disposable collection of intentions.
+    Order          an immutable record of what was agreed.
+    OrderLine      one variant, one quantity, and THE PRICE AT THE TIME.
+    Payment        a separate lifecycle from the order, and it can be retried, partially refunded, or
+                   fail after the order exists.
+
+THE DISTINCTION THAT ORGANISES EVERYTHING: A CART IS A DRAFT AND AN ORDER IS A FACT. Carts can be
+abandoned, repriced and emptied. Orders can only move forward through their lifecycle, and their
+contents never change.
+
+TERMS AS THEY APPEAR:
+- SKU: stock keeping unit - the identifier for a specific sellable variant.
+- OVERSELLING: accepting more orders than you have stock for.
+- IDEMPOTENCY: the same request applied twice has the same effect as applying it once.""",
+
+    """2. THE INTUITION - stock is not a number, it is three numbers
+
+The naive model is `variant.stock_count`, decremented at checkout. It is wrong in a way that shows up
+the moment two people buy at once, and the fix is to recognise that ONE NUMBER IS HIDING THREE:
+
+    ON_HAND      physically in the warehouse
+    RESERVED     allocated to orders that are not yet shipped
+    AVAILABLE    on_hand - reserved            <- THIS is what you can sell
+
+WHY THIS MATTERS: between 'customer clicks buy' and 'the box leaves the warehouse' there may be
+minutes, hours or days. During that time the unit is neither sold nor available. WITHOUT A RESERVED
+COLUMN THERE IS NOWHERE TO RECORD THAT STATE, and every design that lacks it either oversells or
+decrements too early.
+
+THE THREE-PHASE FLOW that falls out:
+
+    1. RESERVE at checkout - a conditional, atomic decrement of available stock. This is the only
+       step that must be strongly consistent.
+    2. CONFIRM on payment success - the reservation becomes an allocation.
+    3. RELEASE on payment failure, cancellation, or TIMEOUT.
+
+THAT TIMEOUT IS THE STEP PEOPLE FORGET, and it is where systems break in practice. A reservation with
+no expiry is a slow leak: every abandoned checkout permanently removes a unit from sale. RESERVATIONS
+MUST HAVE A TTL and something must sweep them.
+
+AND THE RESERVATION IS THE ONLY STRONGLY-CONSISTENT OPERATION IN THE WHOLE SYSTEM. Browsing, search,
+the cart and order history can all be eventually consistent and highly available; the reservation is
+small, rare and must be exact - which is the CP-within-an-AP-system pattern from [[cap-theorem]].""",
+
+    """3. NOT SELLING THE SAME ITEM TWICE
+
+    THE RACE, concretely:
+
+        thread A: SELECT available FROM inventory WHERE variant_id = 7    -> 1
+        thread B: SELECT available FROM inventory WHERE variant_id = 7    -> 1
+        thread A: UPDATE inventory SET available = 0 WHERE variant_id = 7
+        thread B: UPDATE inventory SET available = 0 WHERE variant_id = 7
+        TWO ORDERS, ONE UNIT.
+
+    This is the read-modify-write from [[race-condition]], and measured there, four threads doing it
+    lost 38% of their updates. The fix is the same one:
+
+    THE ANSWER - A CONDITIONAL ATOMIC UPDATE:
+
+        UPDATE inventory
+           SET reserved = reserved + 1
+         WHERE variant_id = 7
+           AND on_hand - reserved >= 1;
+
+        -- then CHECK THE ROW COUNT. 1 means you got it. 0 means you did not.
+
+    THE CONDITION IS IN THE WHERE CLAUSE, so the database evaluates it while holding the row lock. THE
+    READ AND THE WRITE ARE ONE STATEMENT, so there is no gap for another transaction to occupy.
+    CHECKING THE AFFECTED ROW COUNT IS THE WHOLE MECHANISM, and it is the single most important line in
+    this design.
+
+    THE ALTERNATIVES, and being able to compare them is the discussion:
+
+        SELECT ... FOR UPDATE       lock the row, read, decide, write, commit. Correct, and it
+                                    serialises every buyer of that variant - fine for most products,
+                                    a problem for a flash sale where thousands contend for one row.
+        OPTIMISTIC / VERSION COLUMN `UPDATE ... WHERE version = ?`; zero rows means retry. Good when
+                                    conflicts are rare.
+        A ROW PER UNIT              `UPDATE units SET order_id=? WHERE variant_id=? AND order_id IS
+                                    NULL LIMIT 1`. Contention spreads across rows instead of one.
+                                    Heavier, and it is what you do for seat or ticket allocation where
+                                    the units are individually identified anyway.
+        REDIS DECRBY WITH A FLOOR   very fast, and now inventory truth lives outside the database, so
+                                    reconciliation is your problem. Used for flash sales specifically.
+
+    AND THE PRODUCT ANSWER THAT IS OFTEN CORRECT: ALLOW A SMALL OVERSELL AND HANDLE IT. For a £3 item
+    with 400 in stock, blocking every checkout behind one row lock is worse than the occasional
+    backorder email. FOR A CONCERT TICKET IT IS NOT. Say which one you are designing for.""",
+
+    """4. THE FAILURE MODES
+
+A. A SINGLE `stock_count` COLUMN. There is nowhere to record 'reserved but not shipped', so you either
+   oversell or decrement before payment succeeds and lose sales to abandoned carts.
+
+B. READ-THEN-WRITE IN APPLICATION CODE. Measured in [[race-condition]]: 38% of updates lost. Put the
+   condition in the WHERE clause and check the row count.
+
+C. RESERVATIONS WITHOUT A TTL. Every abandoned checkout permanently removes a unit from sale. This
+   leaks slowly and is discovered when a product mysteriously shows zero stock.
+
+D. STORING THE PRICE ONLY ON THE PRODUCT. Change a price and every historical invoice changes with it.
+   THE PRICE ON THE ORDER LINE IS A SNAPSHOT, and it is correct normalisation, not denormalisation -
+   see [[database-normalization]].
+
+E. A MUTABLE ORDER. If an order's contents can change, you cannot audit, cannot reconcile with
+   payments, and cannot answer 'what did they actually buy'. ORDERS ARE APPEND-ONLY; corrections are
+   new records - a return, a partial refund, an amendment.
+
+F. NO IDEMPOTENCY KEY ON CHECKOUT. A network timeout makes the client retry, and now there are two
+   orders and two charges. Every write endpoint that costs money needs one.
+
+G. COUPLING ORDER STATE TO PAYMENT STATE. They have different lifecycles: payment can be authorised
+   then captured then partially refunded, all while the order is 'shipped'. Model them separately.
+
+H. NOT MODELLING VARIANTS. Stock belongs to 'blue t-shirt, medium', not to 't-shirt'. Products that
+   are not sellable and variants that are is the standard shape and it catches people out.
+
+I. CART PRICES THAT NEVER REFRESH. A cart from three weeks ago shows an old price. The cart should
+   HOLD REFERENCES and price at display time; the ORDER freezes the price.
+
+J. IGNORING MULTI-WAREHOUSE. Inventory is per (variant, location), and 'available' depends on where you
+   can ship from. Retrofitting a location dimension into a single stock number is painful.""",
+
+    """5. THE ORDER LIFECYCLE - a state machine, deliberately
+
+    Orders should be a STATE MACHINE with explicit, enumerated transitions. Anything else becomes a
+    tangle of boolean flags that can express states that make no sense.
+
+        PENDING       created, payment not yet confirmed. Inventory RESERVED.
+          -> PAID          payment captured. Reservation CONFIRMED.
+          -> CANCELLED     timed out or abandoned. Reservation RELEASED.
+        PAID
+          -> SHIPPED       stock leaves; on_hand and reserved both decrease.
+          -> REFUNDED      money back; stock returns to available if not yet shipped.
+        SHIPPED
+          -> DELIVERED
+          -> RETURNED      stock comes back, possibly to a different condition bucket.
+
+    WHY A STATE MACHINE AND NOT FLAGS: `is_paid`, `is_shipped`, `is_cancelled` as three booleans
+    permits eight combinations, of which several are nonsense - cancelled AND shipped, paid AND
+    cancelled. AN ENUM WITH A TRANSITION TABLE MAKES THOSE STATES UNREPRESENTABLE, which is the same
+    principle as making a race unrepresentable in [[writing-thread-safe-classes-for-an-lld-round]].
+
+    THE INVENTORY EFFECT OF EACH TRANSITION, which is the part that must be exactly right:
+
+        create order       reserved += qty                    (conditional, atomic)
+        payment succeeds   no inventory change - it was already reserved
+        payment fails      reserved -= qty                    (release)
+        timeout            reserved -= qty                    (release, by a sweeper)
+        ship               on_hand -= qty; reserved -= qty
+        return             on_hand += qty
+
+    NOTICE THAT PAYMENT SUCCESS CHANGES NO STOCK. The stock was committed at reservation. That is what
+    makes the design correct: THE SCARCE RESOURCE IS CLAIMED BEFORE THE SLOW, FAILURE-PRONE STEP, not
+    after.
+
+    AND EVERY TRANSITION SHOULD BE RECORDED, not just the current state. An `order_events` table -
+    what happened, when, by whom - gives you audit, debugging, and the ability to answer questions
+    nobody anticipated. THE CURRENT STATE IS THEN A PROJECTION, and disagreements between the two are
+    themselves detectable.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+1. SEPARATE PRODUCT FROM VARIANT. Stock belongs to the variant. Get this wrong and everything else
+   inherits it.
+2. MODEL INVENTORY AS on_hand AND reserved, per (variant, location). Available is derived.
+3. MAKE THE RESERVATION A SINGLE CONDITIONAL UPDATE and check the affected row count. This is the one
+   line the whole design turns on.
+4. GIVE RESERVATIONS A TTL and write the sweeper at the same time, not later.
+5. MAKE THE ORDER IMMUTABLE. Contents and prices are frozen at creation; changes are new records.
+6. SNAPSHOT THE PRICE, the tax rate, and the shipping address onto the order. They are facts about a
+   moment.
+7. MODEL THE ORDER AS A STATE MACHINE with an explicit transition table, and record every transition
+   as an event.
+8. SEPARATE PAYMENT FROM ORDER. Different lifecycles, and payment can be retried or partially
+   refunded independently.
+9. REQUIRE AN IDEMPOTENCY KEY ON CHECKOUT, stored, so a retried request returns the ORIGINAL order
+   rather than creating a second one.
+10. DECIDE THE OVERSELL POLICY EXPLICITLY, per product class. Strict for scarce or unique items,
+    tolerant for commodity stock.
+11. KEEP EVERYTHING EXCEPT THE RESERVATION EVENTUALLY CONSISTENT. Browsing, search, order history and
+    recommendations can all be stale; only the claim must be exact.
+
+STEP 9 IS THE ONE CANDIDATES ALMOST NEVER RAISE UNPROMPTED, and it is a genuine production concern. A
+mobile client on a poor connection times out, retries, and without an idempotency key you have charged
+them twice - which is the single worst outcome in this domain.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'There are two hard problems hiding in this, and the schema is the easy part.
+
+The first is not selling the same physical item twice. The naive model has one stock_count column
+decremented at checkout, and that is a read-modify-write race: two customers both read 1, both write 0,
+two orders for one unit. The fix is to put the condition in the WHERE clause - UPDATE inventory SET
+reserved = reserved + 1 WHERE variant_id = ? AND on_hand - reserved >= 1 - and then check the affected
+row count. One means you got it, zero means you did not. The database evaluates the condition while
+holding the row lock, so there is no gap.
+
+But the deeper point is that one stock number is hiding three: on_hand, reserved, and available, which
+is the difference. Between clicking buy and the box leaving the warehouse the unit is neither sold nor
+available, and without a reserved column there is nowhere to record that. So it is three phases -
+reserve at checkout, confirm on payment, release on failure or TIMEOUT. The timeout is the step people
+forget, and without it every abandoned checkout permanently removes a unit from sale.
+
+The second hard problem is that an order is a historical record, not a view of current data. The price
+goes on the order LINE, snapshotted at purchase - if you join to the product's current price, changing
+a price rewrites every historical invoice. Same for tax rate and delivery address. And the order should
+be immutable: corrections are new records - a return, a refund - because an order you can edit cannot
+be audited or reconciled.
+
+I would model the order as an explicit state machine rather than boolean flags, because three booleans
+permit eight combinations and several are nonsense - cancelled and shipped simultaneously. And I would
+record every transition as an event, so the current state is a projection you can audit.
+
+Two more things I would raise: payment has its own lifecycle and should not be coupled to the order's,
+because it can be authorised, captured and partially refunded independently. And checkout needs an
+idempotency key, because a client that times out and retries will otherwise create two orders and two
+charges.'""",
+
+    """8. THE SCHEMA, PIECE BY PIECE
+
+    product(product_id, name, description, category_id)
+        The catalogue entry. NOT SELLABLE and it has no stock.
+
+    variant(variant_id, product_id, sku, size, colour, current_price)
+        THE SELLABLE THING. `current_price` is what the catalogue displays TODAY - it is not what
+        historical orders paid.
+
+    inventory(variant_id, location_id, on_hand, reserved)
+        PRIMARY KEY (variant_id, location_id)
+        available is DERIVED: on_hand - reserved. Do not store it; a stored derived value can disagree.
+        THE (variant, location) KEY IS DELIBERATE - 'in stock' depends on where you can ship from, and
+        adding the location dimension later is painful.
+
+    reservation(reservation_id, variant_id, location_id, qty, order_id, expires_at, state)
+        THE ROW THAT MAKES THE TTL POSSIBLE. Without an explicit reservation record there is nothing
+        for a sweeper to find and release.
+
+    cart(cart_id, user_id, updated_at)
+    cart_item(cart_id, variant_id, qty)
+        NOTE WHAT IS ABSENT: no price. THE CART HOLDS INTENTIONS AND PRICES AT DISPLAY TIME, so a
+        three-week-old cart shows today's price rather than a stale one.
+
+    orders(order_id, user_id, state, created_at, idempotency_key UNIQUE,
+           shipping_address_snapshot, currency)
+        `state` is an ENUM with a transition table. `idempotency_key` is UNIQUE, so a retried checkout
+        collides and you return the existing order instead of creating a second.
+        THE ADDRESS IS A SNAPSHOT - a customer moving house must not change where a past order went.
+
+    order_line(order_id, variant_id, qty, unit_price_at_purchase, tax_rate_at_purchase,
+               product_name_at_purchase)
+        EVERY `_at_purchase` COLUMN IS A DELIBERATE SNAPSHOT, and each is a fact about a moment rather
+        than a duplicate of a current value. Including the NAME - if a product is renamed, the old
+        invoice should still say what the customer bought.
+
+    payment(payment_id, order_id, provider_ref, amount, state, created_at)
+        A SEPARATE LIFECYCLE. One order can have several payment records - an authorisation, a
+        capture, a partial refund - and its state moves independently of the order's.
+
+    order_event(event_id, order_id, type, payload, created_at, actor)
+        APPEND-ONLY. The audit trail, and the thing that lets you answer questions you did not
+        anticipate.""",
+
+    """9. ONE CHECKOUT, WALKED - including the failures
+
+    TWO CUSTOMERS, ONE UNIT OF variant 7 LEFT.
+
+    t=0.000  A: POST /checkout with idempotency key "a-123"
+             BEGIN
+             INSERT INTO orders (... state='PENDING', idempotency_key='a-123')
+             UPDATE inventory SET reserved = reserved + 1
+                    WHERE variant_id=7 AND location_id=1 AND on_hand - reserved >= 1
+             -> 1 row affected. GOT IT.
+             INSERT INTO reservation (... expires_at = now + 15 minutes)
+             COMMIT
+
+    t=0.001  B: POST /checkout with idempotency key "b-456"
+             the same UPDATE -> 0 ROWS AFFECTED.
+             ROLLBACK. Return 409: 'no longer available'.
+             B never had an order created, and nothing was charged.
+
+    t=0.5    A's client TIMES OUT and retries with the SAME key "a-123".
+             INSERT fails on the UNIQUE constraint.
+             -> look up the existing order and RETURN IT. ONE ORDER, ONE RESERVATION.
+             WITHOUT THE IDEMPOTENCY KEY this is a second order and, shortly, a second charge.
+
+    t=2.0    A's payment is authorised and captured.
+             orders.state PENDING -> PAID. reservation.state -> CONFIRMED.
+             NO INVENTORY CHANGE - the unit was already reserved at t=0.
+
+    THE ALTERNATIVE ENDINGS, each of which needs code:
+
+        PAYMENT FAILS       state -> CANCELLED, reservation -> RELEASED,
+                            `UPDATE inventory SET reserved = reserved - 1`. The unit is sellable again.
+        A NEVER PAYS        at t=15min the SWEEPER finds expires_at < now and does the same release.
+                            WITHOUT THIS JOB THE UNIT IS LOST FOREVER.
+        SHIPPED             on_hand -= 1 AND reserved -= 1. The reservation ends because the unit has
+                            physically gone.
+        RETURNED            on_hand += 1, possibly into a 'returns' condition bucket rather than
+                            straight back to sellable.
+
+    THE FOUR LINES THAT MAKE THIS DESIGN WORK, and they are the four to say out loud:
+        the condition is in the WHERE clause
+        the row count is checked
+        the reservation has an expiry AND a sweeper
+        the checkout has an idempotency key""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO HARD PROBLEMS:  do not sell the same unit twice · an order is a historical record, not a
+    view of current data.
+
+    THE INVENTORY MODEL:  on_hand and reserved, per (variant, location). Available is derived.
+    THE THREE PHASES:  reserve (atomic, conditional) -> confirm on payment -> release on failure OR
+    TIMEOUT.
+
+    THE ONE LINE THE DESIGN TURNS ON:
+        UPDATE inventory SET reserved = reserved + 1
+         WHERE variant_id = ? AND on_hand - reserved >= ?    -- then CHECK THE ROW COUNT
+
+    THE SNAPSHOTS ON THE ORDER LINE:  unit price, tax rate, product name, shipping address. Facts about
+    a moment, not copies of current values.
+
+    THE STATE MACHINE:  PENDING -> PAID -> SHIPPED -> DELIVERED, with CANCELLED, REFUNDED and RETURNED
+    as explicit transitions - because three booleans permit eight states and several are nonsense.
+
+THE #1 MISTAKE: a single stock_count decremented in application code. It races, and it has nowhere to
+record the state between 'bought' and 'shipped'.
+
+THE #2 MISTAKE: reservations with no expiry, which quietly removes a unit from sale for every
+abandoned checkout.
+
+THE #3 MISTAKE: joining to the current price instead of snapshotting it, which makes historical
+invoices change when prices do.
+
+THE #4 MISTAKE: a mutable order. Corrections are new records; an order you can edit cannot be audited
+or reconciled against payments.
+
+THE #5 MISTAKE: no idempotency key on checkout, so a timed-out retry produces a second order and a
+second charge.
+
+ONE-SENTENCE TAKEAWAY: split stock into on-hand and reserved so there is somewhere to record the
+in-between, claim it with one conditional UPDATE whose row count you check, expire reservations that
+are never confirmed - and freeze price, tax and address onto the order, because an order is a record of
+what was agreed rather than a view of what is true now.""",
+]
+
+_EX_P1AO["Design an LLM Chatbot with RAG"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - and the questions before the diagram
+
+'Design a chatbot over our documents' is the standard AI system-design question. THE FIRST THING BEING
+ASSESSED IS WHETHER YOU SCOPE IT BEFORE DRAWING BOXES.
+
+    WHO USES IT?          internal staff (forgiving, identifiable) or customers (unforgiving, and your
+                          brand is on the answer)?
+    WHAT CORPUS?          how many documents, how often do they change, who may see which?
+    WHAT ACTIONS?         answer only, or can it DO things - refunds, tickets, emails? THIS IS THE
+                          BIGGEST RISK DECISION IN THE WHOLE DESIGN.
+    WHAT IS SUCCESS?      deflection, time saved, satisfaction, resolution rate?
+    IS IT A CONVERSATION? multi-turn changes everything about context management.
+
+THE ARCHITECTURE, at the level of a whiteboard:
+
+    OFFLINE   documents -> parse -> chunk -> embed -> index (vectors + keywords + metadata)
+    ONLINE    question -> rewrite -> retrieve -> rerank -> gate -> assemble -> generate -> cite -> log
+
+THE THREE THINGS THAT DISTINGUISH THIS FROM 'RAG WITH EXTRA STEPS':
+
+    1. IT IS A CONVERSATION, so 'what about the second one?' has to be resolved into a standalone
+       question before retrieval can work at all.
+    2. THE CONTEXT WINDOW IS A BUDGET shared by the system prompt, the history, the retrieved
+       passages and the ANSWER - see [[what-is-the-context-window-and-why-does-it-matter]].
+    3. IT MUST BE ABLE TO SAY 'I DON'T KNOW', and that path has to be built deliberately because the
+       model's default is always to answer.
+
+TERMS AS THEY APPEAR:
+- QUERY REWRITING: turning a follow-up into a self-contained question using the conversation history.
+- GROUNDING: requiring every claim to be supported by a retrieved passage.""",
+
+    """2. THE INTUITION - the multi-turn problem nobody mentions
+
+Single-turn RAG is well understood. THE THING THAT BREAKS IN A CHATBOT IS THE SECOND MESSAGE.
+
+    USER:  'What is the refund policy for electronics?'
+    BOT:   [retrieves the electronics refund policy, answers correctly]
+    USER:  'What about for sale items?'
+
+EMBED THAT SECOND MESSAGE AND RETRIEVE ON IT. You get documents about sales, discounts and promotions.
+NOTHING ABOUT REFUNDS. The word 'refund' is not in the query, and the retriever has no memory.
+
+    THE FIX IS QUERY REWRITING: a cheap model call that turns the conversation so far plus the new
+    message into a STANDALONE question.
+
+        history + 'What about for sale items?'
+        ->  'What is the refund policy for sale items?'
+
+    NOW RETRIEVAL WORKS, because the query contains what it is about.
+
+WHY THIS IS THE HIGHEST-VALUE COMPONENT PEOPLE OMIT: without it, every follow-up in a conversation
+retrieves badly, and follow-ups are most of the messages. The symptom is 'it works when I ask fresh
+questions and gets confused in conversation', which is diagnosed as a model problem and is a retrieval
+problem.
+
+IT ALSO SOLVES A SECOND PROBLEM FOR FREE: the rewriter can decide the message needs NO retrieval at
+all. 'Thanks!', 'can you shorten that?', 'explain it more simply' - none of those need a database
+lookup, and retrieving for them wastes latency and pollutes the context with irrelevant passages.
+
+    ROUTE FIRST: does this message need retrieval, need a tool, or need neither?
+
+THE COST IS ONE EXTRA MODEL CALL, on a small fast model, adding perhaps 200 ms. IT IS ALMOST ALWAYS
+WORTH IT, and saying so unprompted is a strong signal.""",
+
+    """3. THE CONTEXT BUDGET - what actually goes into the prompt
+
+    Every request assembles a prompt from competing claims on one window:
+
+        system prompt and rules            600 tokens     fixed, charged every call
+        tool definitions                   400            if the bot has tools
+        conversation history             1,000-3,000      GROWS EVERY TURN
+        retrieved passages (5 x 400)     2,000
+        the rewritten question             100
+        RESERVED FOR THE ANSWER          1,000            <- comes out of the SAME budget
+
+    THE FAILURE THIS PREVENTS is the one from [[what-is-the-context-window-and-why-does-it-matter]]:
+    the history grows unbounded, the answer's allowance is squeezed, and replies start stopping
+    mid-sentence with no error at all.
+
+    HOW TO BOUND THE HISTORY, in order of sophistication:
+        LAST N TURNS               simple, and it forgets the original task
+        SUMMARISE THE OVERFLOW     replace older turns with a running summary. The standard answer.
+        RETRIEVE OVER THE HISTORY  treat past turns as another corpus. Scales best, more machinery.
+        A STRUCTURED STATE OBJECT  extract the facts that matter - the user, the product, the decision
+                                   so far - into a small block always included. OFTEN THE BEST AND THE
+                                   LEAST USED.
+
+    AND THE ORDERING WITHIN THE PROMPT MATTERS: rules at the top, retrieved passages fenced in the
+    middle with their sources, the question at the bottom, and the critical constraint REPEATED at the
+    bottom - because attention is most reliable at the beginning and the end.
+
+    THE OTHER BUDGET IS LATENCY, and it should be spent as deliberately:
+
+        query rewrite (small model)      ~200 ms
+        embed the query                  ~20 ms
+        hybrid retrieval                 ~30 ms
+        rerank top 50                    ~40 ms batched
+        generation (streamed)            first token ~500 ms, then continuous
+
+    STREAM THE ANSWER. Time to FIRST TOKEN is what a user perceives, and streaming turns a
+    three-second wait into a half-second one - which is a bigger perceived improvement than almost any
+    quality change you could make instead.""",
+
+    """4. THE FAILURE MODES
+
+A. NO QUERY REWRITING. Every follow-up retrieves on a fragment. The symptom is 'it gets confused in
+   conversation', and it is a retrieval bug diagnosed as a model bug.
+
+B. NO 'I DON'T KNOW' PATH. The model always produces something. Deciding NOT to answer requires a
+   retrieval score threshold, tuned on your own evaluation set, and it must be built before the happy
+   path is polished.
+
+C. UNBOUNDED CONVERSATION HISTORY. It works for twenty turns and truncates the answer at forty, in
+   production, with no error - and on some stacks the system prompt is what gets dropped first.
+
+D. TRUSTING RETRIEVED CONTENT. Documents are untrusted input. If any indexed document can be edited by
+   someone outside your trust boundary, you have a remote instruction channel - see
+   [[prompt-injection-and-how-to-defend-against-it]].
+
+E. NO PERMISSION FILTERING AT RETRIEVAL TIME. Filtering after generation is too late; the model has
+   already seen and summarised the document. FILTER IN THE QUERY, using the caller's identity.
+
+F. EVALUATING ONLY THE FINAL ANSWER. Retrieval failure and grounding failure look identical from the
+   end of the pipeline and have opposite fixes - see [[how-do-you-evaluate-an-llm-genai-system]].
+
+G. NOT STREAMING. A three-second silent wait feels broken. The same three seconds with tokens
+   appearing at 500 ms feels fast.
+
+H. NO CONVERSATION-LEVEL METRICS. Per-answer quality misses the thing that matters: did the user get
+   what they needed, or did they rephrase the same question three times and give up?
+
+I. LETTING IT TAKE ACTIONS TOO EARLY. Answering is low risk; acting is not. Start read-only, and make
+   anything irreversible a draft a human approves.
+
+J. STALE INDEX. Freshness is RAG's headline advantage over fine-tuning, and it is lost silently the
+   moment re-indexing is not part of the document write path.""",
+
+    """5. THE PIPELINE, STAGE BY STAGE
+
+    OFFLINE - re-run whenever a document changes:
+
+        PARSE      PDFs, HTML, wiki pages, tickets. Keep the heading hierarchy.
+        CHUNK      200-500 tokens, 10-20% overlap, split on structure, HEADINGS PREPENDED - see
+                   [[rag-chunking-strategies-how-to-split-documents]], where fixed-width chunking
+                   scored 0/8 at recall@1 against sentence-aware's 6/8.
+        ENRICH     document title, section path, updated_at, ACL, source URL as metadata.
+        EMBED      one vector per chunk, plus a keyword index over the same chunks.
+        INDEX      vectors in an ANN index; metadata filterable.
+
+    ONLINE - per message:
+
+        1. ROUTE       does this need retrieval, a tool, or neither? 'Thanks' needs nothing.
+        2. REWRITE     history + message -> a standalone question. THE HIGHEST-VALUE OMITTED STEP.
+        3. FILTER      apply the caller's ACL and freshness IN THE RETRIEVAL QUERY.
+        4. RETRIEVE    hybrid - BM25 and vectors in parallel, fused by rank. On measured data, keyword
+                       and vector fail on opposite query types - see
+                       [[hybrid-search-keyword-vector-and-re-ranking]].
+        5. RERANK      a cross-encoder over the top 20-100, batched. Measured elsewhere at 8/10 -> 10/10.
+        6. GATE        below the score threshold, do NOT answer. Say so, and offer the closest
+                       documents. THIS IS A FEATURE.
+        7. ASSEMBLE    system prompt, fenced passages with source labels, bounded history, the
+                       question, and the reserved output budget.
+        8. GENERATE    low temperature, grounded, cited, STREAMED.
+        9. VERIFY      do the citations refer to passages you actually supplied? Three lines of code
+                       that catch a real hallucination class.
+       10. LOG         question, rewritten question, retrieved ids and scores, prompt, answer,
+                       feedback.
+
+    STEP 10 IS THE PRODUCT, not an afterthought. The log of low-score questions is your content
+    roadmap, the thumbs-down cases are your evaluation set, and without it you cannot diagnose anything.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. BUILD THE EVALUATION SET FIRST. 100-200 real questions with the passage that answers each,
+   INCLUDING questions with no answer in the corpus and questions that should be refused.
+2. GET RETRIEVAL RIGHT BEFORE ANYTHING ELSE. Measure recall@k. Nothing downstream can beat it.
+3. ADD QUERY REWRITING EARLY. It is the difference between working in a demo and working in a
+   conversation.
+4. BUILD THE REFUSAL PATH SECOND, before polishing the happy path. Set the threshold from the eval
+   set.
+5. BOUND THE HISTORY from the first version - summarise or retrieve over it. Do not wait for the
+   truncation bug.
+6. FILTER BY PERMISSION IN THE QUERY, never after.
+7. GROUND AND CITE, and verify the citations programmatically.
+8. STREAM THE RESPONSE. Time to first token is the perceived latency.
+9. INSTRUMENT CONVERSATIONS, not just answers - re-ask rate, escalation rate, conversation length,
+   thumbs.
+10. CACHE AGGRESSIVELY. Identical questions recur constantly; a semantic cache on the rewritten
+    question cuts both cost and latency substantially.
+11. FEED EVERY FAILURE BACK into the eval set so it cannot silently return.
+12. READ REAL CONVERSATIONS WEEKLY, by hand, forever. A number tells you something changed; fifty
+    transcripts tell you what.
+
+STEP 1 IS NON-NEGOTIABLE AND IT IS THE STEP THAT GETS SKIPPED. Without it, 'is 300-token chunking
+better than 500' has no answer, every prompt change is folklore, and you will not know you have
+regressed until a user tells you.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I would scope it first: who uses it, how big and how fresh the corpus is, whether it can take actions,
+and what success means. Whether it can act is the biggest risk decision in the design.
+
+Architecturally it is RAG - offline, parse and chunk on structure with headings prepended, embed, and
+index vectors alongside a keyword index. Online: retrieve, rerank, assemble, generate, cite.
+
+But there are three things that make a CHATBOT different from single-turn RAG, and they are what I
+would spend the time on.
+
+First, query rewriting. If someone asks about the refund policy for electronics and then says "what
+about for sale items?", embedding that second message retrieves documents about sales and discounts and
+nothing about refunds - the word "refund" is not in the query and the retriever has no memory. So a
+cheap model call turns the history plus the new message into a standalone question first. It is the
+highest-value component people omit, and the symptom of missing it is "it gets confused in
+conversation", which gets diagnosed as a model problem and is a retrieval problem. It also lets me
+route: "thanks" or "shorten that" needs no retrieval at all.
+
+Second, the context window is a budget shared by the system prompt, the tools, the history, the
+retrieved passages AND the answer. The history grows every turn, so I would bound it - summarise the
+overflow, or better, keep a small structured state object with the facts that matter. Otherwise it
+works for twenty turns and truncates mid-sentence at forty, with no error.
+
+Third, it has to be able to say it does not know, and that path has to be built deliberately with a
+retrieval score threshold, because the model's default is always to answer.
+
+And I would stream the response, because time to first token is what a user perceives - that turns a
+three-second wait into half a second, which is a bigger perceived improvement than most quality
+changes.'""",
+
+    """8. THE COMPONENTS, PIECE BY PIECE
+
+    THE ROUTER - a small, fast classifier or model call:
+        needs retrieval / needs a tool / needs neither / should refuse on policy grounds.
+        CHEAP AND HIGH VALUE. It stops you retrieving for 'thanks' and stops irrelevant passages
+        polluting the context.
+
+    THE QUERY REWRITER - a small model, given the last few turns and the new message:
+        'Rewrite the user's latest message as a standalone question, using the conversation for
+         context. If it needs no context, return it unchanged.'
+        ~200 ms on a small model. IT IS THE DIFFERENCE BETWEEN A DEMO AND A PRODUCT.
+
+    THE RETRIEVER - hybrid, filtered:
+        BM25 and dense in parallel, fused by RANK not by score (their scales are incomparable), with
+        the caller's ACL and a freshness filter applied INSIDE the query.
+
+    THE RERANKER - a cross-encoder over the top 20-100, in one batched forward pass:
+        it reads the query and the passage together, which is the one thing two independent embeddings
+        cannot do - see [[reranker-cross-encoders-precision-after-retrieval]].
+
+    THE GATE - a score threshold:
+        below it, return 'I could not find this' plus the closest documents. TUNE THE THRESHOLD ON THE
+        EVAL SET; a borrowed number means nothing.
+
+    THE PROMPT ASSEMBLER:
+        rules at the top · fenced passages with source labels in the middle · bounded history · the
+        question at the bottom · the critical constraint repeated · and an explicit output reservation.
+
+    THE GENERATOR:
+        low temperature - this is extraction, not creativity · streamed · citing passage numbers.
+
+    THE VERIFIER:
+        does every [n] in the answer refer to a passage that was supplied? Three lines, and it catches
+        a real class of hallucination automatically rather than hopefully.
+
+    THE MEMORY:
+        short-term - the bounded, summarised history.
+        long-term - facts about this user worth keeping across sessions, stored explicitly and shown
+        to the user, because invisible memory is a support and privacy problem.
+
+    THE FEEDBACK LOOP:
+        thumbs, copy rate, re-ask rate, escalation - all logged against the retrieved ids, so a bad
+        answer can be traced to the stage that caused it.""",
+
+    """9. ONE CONVERSATION, WALKED
+
+    TURN 1 - 'What is the refund policy for electronics?'
+
+        ROUTE      needs retrieval.
+        REWRITE    unchanged - it is already standalone.
+        FILTER     acl contains 'customer', doc_status = 'current'.
+        RETRIEVE   hybrid over 400,000 chunks, ~30 ms, top 50.
+        RERANK     to 5, batched, ~40 ms.
+        GATE       top score 0.84, threshold 0.45. Proceed.
+        GENERATE   streamed, first token at ~500 ms, citing [1] and [2].
+        LOG        question, chunk ids, scores, answer.
+
+    TURN 2 - 'What about for sale items?'
+
+        WITHOUT REWRITING: embed 'what about for sale items?' and retrieve documents about seasonal
+        sales, discount codes and promotional terms. NOTHING ABOUT REFUNDS. The answer is confidently
+        about the wrong topic, and the user concludes the bot is stupid.
+
+        WITH REWRITING: the rewriter sees turn 1 and produces 'What is the refund policy for sale
+        items?'. Retrieval finds the clause saying refunds are not available on sale items - which is
+        the passage a bi-encoder ranks poorly, because the word 'NOT' barely moves an embedding, and
+        which the cross-encoder promotes.
+
+    TURN 3 - 'Can you cancel my order 88213 then?'
+
+        ROUTE      this is an ACTION, not a question.
+        AND THE DESIGN DECISION LIVES HERE. Read-only bot: explain how to cancel and offer to connect
+        a human. Bot with tools: STAGE the cancellation and require confirmation - never perform an
+        irreversible, monetary action on the strength of one parsed sentence.
+
+    TURN 4 - 'What is your policy on returning items bought in 2019?'
+
+        GATE       top retrieval score 0.19, below the 0.45 threshold.
+        ANSWER     'I could not find a policy covering purchases from 2019. Here are the two closest
+                    documents, and I can connect you to an agent.'
+        AND LOG IT AS A CONTENT GAP. That log is the roadmap for what to write next.
+
+    THE THREE THINGS THAT MADE THIS CONVERSATION WORK: the rewriter at turn 2, the tool boundary at
+    turn 3, and the threshold at turn 4. NONE OF THEM ARE THE MODEL.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE PIPELINE:  route -> rewrite -> filter -> hybrid retrieve -> rerank -> GATE -> assemble ->
+    generate (streamed, cited) -> verify -> log.
+
+    WHAT MAKES IT A CHATBOT RATHER THAN RAG:
+        QUERY REWRITING, because follow-ups do not contain their own subject
+        A BOUNDED HISTORY, because the window is a budget the answer shares
+        A REFUSAL PATH, because the model's default is always to answer
+
+    THE BUDGETS:
+        context - system 600 + tools 400 + history (bounded) + passages 2,000 + question + RESERVED
+                  output 1,000
+        latency - rewrite 200 ms + embed 20 + retrieve 30 + rerank 40 + first token ~500, STREAMED
+
+THE #1 MISTAKE: no query rewriting. Every follow-up retrieves on a fragment, the bot 'gets confused in
+conversation', and the problem is diagnosed as the model when it is retrieval.
+
+THE #2 MISTAKE: no 'I don't know'. It needs a score threshold tuned on your own eval set, and it must
+be built before the happy path is polished.
+
+THE #3 MISTAKE: unbounded history, which truncates the answer in long conversations with no error and,
+on some stacks, drops the system prompt first.
+
+THE #4 MISTAKE: evaluating only the final answer, so retrieval failures and grounding failures - which
+have opposite fixes - are indistinguishable.
+
+THE #5 MISTAKE: giving it irreversible actions before it has earned them. Answering is low risk;
+cancelling an order is not.
+
+ONE-SENTENCE TAKEAWAY: a RAG chatbot is a retrieval system with three conversational problems bolted
+on - rewrite the follow-up into a standalone question, bound the history so the answer still has room,
+and gate on a retrieval score so it can say it does not know - and almost every quality problem you
+will have is in retrieval rather than in the model.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
