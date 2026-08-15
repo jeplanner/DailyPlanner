@@ -172742,6 +172742,1696 @@ actually overfitting, which is why the first step is always to confirm the train
 exists before you try to close it.""",
 ]
 
+_EX_P1AO["Why do Transformers need positional encoding when RNNs don't?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - self-attention reads the sentence as a bag, not a line
+
+Write six words on six index cards, shuffle them, and hand the pile to someone. They can see every
+word. They cannot see the sentence, because a sentence is words PLUS ORDER, and you threw the order
+away when you shuffled.
+
+That is exactly what self-attention receives. An RNN reads left to right, one token at a time, and
+its hidden state at step 5 is by construction a function of tokens 1-5 in that sequence - ORDER IS
+IMPLICIT IN WHEN A TOKEN ARRIVES. Self-attention has no 'when'. Every token is compared with every
+other token simultaneously, and the operation is PERMUTATION-EQUIVARIANT: shuffle the inputs and you
+get the same outputs, shuffled. It cannot tell 'dog bites man' from 'man bites dog'.
+
+POSITIONAL ENCODING IS HOW THE ORDER IS PUT BACK IN: before attention runs, every token embedding has
+a vector added to it that depends on WHERE the token sits.
+
+WHY THE TRANSFORMER GAVE UP THE ORDER IN THE FIRST PLACE - this is the part people skip: an RNN's
+step t cannot start until step t-1 has finished, so a sequence of length 1,000 takes 1,000 sequential
+steps and a GPU sits mostly idle. Self-attention computes all positions at once, in one big matrix
+multiply. THE TRANSFORMER TRADED IMPLICIT ORDER FOR PARALLELISM AND THEN BOUGHT THE ORDER BACK
+CHEAPLY. Positional encoding is the receipt for that trade.
+
+TERMS AS THEY APPEAR:
+- SELF-ATTENTION: every token computes a weighted average of every other token, where the weights
+  come from dot products between them.
+- PERMUTATION-EQUIVARIANT: reorder the input, and the output is the same set reordered. No
+  information about the ordering survives into the values.
+- POSITIONAL ENCODING (PE): a vector added to (or mixed into) each token embedding that encodes its
+  index in the sequence.
+- ABSOLUTE vs RELATIVE: whether the encoding says 'this is token 7' or 'this token is 3 to the left
+  of that one'.""",
+
+    """2. THE INTUITION - a task where order is the only signal, measured
+
+I built a task designed so that the BAG OF TOKENS CARRIES EXACTLY ZERO INFORMATION. Every sequence is
+a permutation of the same multiset - one 'a', one 'b', four 'x' - and the label is 1 if 'a' comes
+before 'b'.
+
+Because every example has an identical token count, any model that cannot see order is guessing.
+Majority-class baseline on my test set: 51.7%.
+
+                              representation      test accuracy
+                      mean-pool, no position              51.7%
+                mean-pool + learned position              51.7%
+             mean-pool + sinusoidal position              51.7%
+                  per-token MLP, no position              51.7%
+            per-token MLP + learned position             100.0%
+         per-token MLP + sinusoidal position             100.0%
+
+THE FIRST ROW IS THE EXPECTED RESULT: with no position information the model sits at chance. Fine.
+
+THE SECOND AND THIRD ROWS ARE THE INTERESTING ONES, AND THEY SURPRISED ME. I added positional
+encodings - the standard thing, added to the embeddings - and the model was STILL at chance. Adding
+position did nothing.
+
+The reason is arithmetic, and it is worth working out because it explains what positional encoding
+actually needs from the architecture around it. If the model mean-pools the vectors:
+
+    pooled = (1/n) * SUM over positions t of ( embedding(token_t) + PE(t) )
+           = (1/n) * SUM embedding(token_t)  +  (1/n) * SUM PE(t)
+                     \\____ order-free ____/      \\__ THE SAME CONSTANT FOR EVERY SEQUENCE __/
+
+The positional term separates out into a constant that does not depend on the tokens at all. It shows
+up identically in every example, so the classifier learns to ignore it. THE POSITION INFORMATION WAS
+PRESENT IN THE INPUT AND WAS DESTROYED BY THE POOLING.
+
+Rows 5 and 6 fix it by putting a per-token nonlinearity BEFORE the pooling: each token's vector goes
+through a ReLU layer first, so the layer can compute things like 'this unit fires when the token is
+"a" AND the position is early'. Content and position are now MULTIPLIED together rather than added,
+and the task goes from 51.7% to 100.0%.
+
+THE LESSON, WHICH IS THE ACTUAL ANSWER TO THIS QUESTION: POSITIONAL ENCODING IS NECESSARY BUT NOT
+SUFFICIENT. It supplies the information; the architecture must have somewhere to mix it with content.
+In a real transformer that place is the attention dot product q_i . k_j, which expands into four
+terms - content.content, content.position, position.content and position.position - and it is those
+cross terms that carry word order.""",
+
+    """3. THE TWO FAMILIES OF ENCODING, AND WHY SINUSOIDS
+
+LEARNED ABSOLUTE POSITION EMBEDDINGS. A lookup table with one trainable row per position, exactly
+like the token embedding table. Simple, and it is what BERT and GPT-2 use.
+    COST: the table has a maximum size. A model trained with 512 rows has NO ROW for position 513.
+    It cannot process a longer sequence at all - not 'badly', but at all.
+
+SINUSOIDAL ENCODING (the original 'Attention Is All You Need' formulation). No parameters. Dimension
+i of position pos is a sine or cosine of pos divided by a wavelength that grows geometrically with i:
+
+    PE(pos, 2i)   = sin( pos / 10000^(2i/d) )
+    PE(pos, 2i+1) = cos( pos / 10000^(2i/d) )
+
+Think of it as a set of clock hands turning at wildly different speeds - the fastest dimension flips
+every couple of positions, the slowest barely moves across the whole sequence. Reading all the hands
+at once identifies the position, in the same way that reading hours, minutes and seconds identifies
+a time. It is a positional number system in continuous form.
+
+THE PROPERTY THAT MATTERS, measured on my 12-dimensional version:
+
+        positions      dot product
+           0 vs 0            6.000
+           0 vs 1            5.516
+           0 vs 2            4.488
+           0 vs 5            4.729
+          0 vs 20            3.594
+         0 vs 100            2.406
+          50 vs 51           5.516
+          50 vs 55           4.729
+
+LOOK AT 0-vs-1 AND 50-vs-51: 5.516 and 5.516. IDENTICAL. And 0-vs-5 and 50-vs-55: 4.729 both. The
+similarity depends on the DISTANCE BETWEEN the positions, not on the absolute positions. That is what
+gives sinusoidal encoding its headline property - it extrapolates to sequence lengths never seen in
+training, because 'three tokens apart' means the same thing at position 5,000 as at position 5.
+
+AN HONEST WRINKLE IN MY OWN NUMBERS: 0-vs-2 scores 4.488 and 0-vs-5 scores 4.729, so the decay is NOT
+monotonic - a slightly more distant pair scored as MORE similar. That is real, not a bug. It happens
+because with only 12 dimensions there are just 6 frequencies, and a sum of a handful of cosines
+wobbles. The decay is a trend, not a guarantee, and it smooths out at d=512.
+
+ROPE (Rotary Position Embedding) - what modern models actually use. Instead of ADDING a vector, it
+ROTATES the query and key vectors by an angle proportional to position. The dot product between a
+rotated query and a rotated key then depends only on the DIFFERENCE of the two angles, so relative
+position falls out of the algebra exactly rather than approximately. Llama, Mistral, Qwen and most
+open models since 2023 use RoPE, and it is the reason context-length extension tricks (position
+interpolation, YaRN, NTK scaling) work at all - they rescale the rotation frequencies.
+
+ALiBi - simpler still: skip encodings entirely and subtract a penalty proportional to distance
+directly from the attention scores. Extrapolates well and costs nothing.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - THE LENGTH LIMIT IS HARD, NOT SOFT, FOR LEARNED EMBEDDINGS.
+    A learned table trained to 2,048 positions has no parameters for position 2,049. There is nothing
+    to interpolate from; the row does not exist. This is why 'max sequence length' is an architectural
+    fact about a model rather than a configuration choice.
+
+FAILURE 2 - EXTRAPOLATION DEGRADES EVEN WHEN IT DOES NOT CRASH.
+    Sinusoidal and RoPE encodings are DEFINED at any position, so a model will happily run past its
+    training length - and produce steadily worse output, because attention patterns at unseen relative
+    distances were never trained. 'It runs' and 'it works' are different claims.
+
+FAILURE 3 - POSITION INFORMATION GETS DILUTED IN DEEP STACKS.
+    The encoding is added once, at the bottom. By layer 30 it has passed through thirty rounds of
+    attention and MLP. Adding position at every layer, or using RoPE (which re-applies the rotation
+    inside every attention operation), keeps it sharp.
+
+FAILURE 4 - THE POOLING PROBLEM I MEASURED.
+    If anything downstream reduces the sequence by a permutation-invariant operation - mean pooling
+    for a sentence embedding, for instance - the positional information is destroyed at that point.
+    My measured 51.7% for 'mean-pool + learned position' is exactly this. Sentence-embedding models
+    handle it by pooling the OUTPUT of the transformer stack, after attention has already mixed
+    position into the content, rather than pooling the inputs.
+
+FAILURE 5 - PADDING AND POSITION INDEXING.
+    If you left-pad a batch and index positions from zero including the padding, the same sentence
+    gets different positions depending on the batch it landed in. The model's answer then changes
+    based on its neighbours in the batch. This is a real bug that ships.
+
+FAILURE 6 - INTERPOLATION WITHOUT FINE-TUNING.
+    Position interpolation stretches a model's context by scaling position indices down. It works,
+    but it degrades short-context performance because every relative distance the model learned has
+    been squashed. It needs a fine-tuning pass to recover.
+
+THE NON-FAILURE WORTH NAMING: for tasks that genuinely are order-free - a set of retrieved documents,
+a bag of user features - the permutation equivariance is a FEATURE, and you deliberately omit the
+positional encoding so the model cannot learn a spurious dependence on the order you happened to
+supply. Set Transformers do exactly this.""",
+
+    """5. THE ALTERNATIVES - a comparison you should be able to give from memory
+
+    scheme                 params   extrapolates   relative?   used by
+    ------------------------------------------------------------------------------------
+    learned absolute       L x d    NO (hard cap)  no          BERT, GPT-2, ViT
+    sinusoidal absolute    none     yes, weakly    approx.     original Transformer
+    relative (T5 bias)     buckets  yes            YES         T5
+    RoPE (rotary)          none     yes, tunable   YES         Llama, Mistral, Qwen, most
+    ALiBi (linear bias)    none     YES, strongly  YES         BLOOM, MPT
+    none                   none     n/a            n/a         Set Transformer, and
+                                                               decoder-only models where
+                                                               causal masking leaks order
+
+THAT LAST ROW IS A GOOD THING TO KNOW. A DECODER-ONLY MODEL WITH A CAUSAL MASK IS NOT ACTUALLY
+PERMUTATION-EQUIVARIANT, because the mask itself distinguishes positions - token 3 can see tokens 1-3
+and token 5 can see tokens 1-5, so the sets differ. Papers have shown such models learn implicit
+position information from the mask alone and can perform respectably with NO explicit encoding. It is
+not the recommended design, but it makes the point sharply: the requirement is 'the architecture must
+be able to distinguish positions somehow', and an added vector is only the most convenient way.
+
+HOW TO CHOOSE, IN ONE LINE EACH:
+    - fixed, known, modest sequence length and you want simplicity -> learned absolute.
+    - you need to run longer than you trained -> RoPE or ALiBi.
+    - you are fine-tuning an existing model -> use whatever it already has; you cannot swap the
+      scheme without retraining.
+    - the input genuinely has no order -> omit it deliberately, and say that you did.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - a numbered route
+
+STEP 1 - state the mathematical property, not a vague statement about order.
+    'Self-attention is permutation-equivariant: permute the inputs and the outputs are the same set
+    permuted. So without position information, "dog bites man" and "man bites dog" produce identical
+    representations for each word.'
+
+STEP 2 - explain why the RNN does not need one.
+    'An RNN's hidden state is h_t = f(h_{t-1}, x_t). Position is implicit in when a token is consumed.
+    It gets order for free from the recurrence.'
+
+STEP 3 - name the trade that created the problem.
+    'The transformer gave up the recurrence to get parallelism - all positions computed in one matrix
+    multiply instead of n sequential steps - and positional encoding is how it buys the order back.'
+    THIS STEP IS WHAT SEPARATES A GOOD ANSWER FROM A MEMORISED ONE.
+
+STEP 4 - describe the mechanism concretely.
+    'A vector depending on the index is added to each token embedding before the first attention
+    layer. In the attention dot product q_i.k_j that expands into content-content and
+    content-position cross terms, and the cross terms carry the word order.'
+
+STEP 5 - give the two families and the property that distinguishes them.
+    'Learned absolute embeddings are a lookup table - simple, but there is no row past the trained
+    maximum length. Sinusoidal encodings are parameter-free and their dot product depends on the
+    DISTANCE between positions rather than the absolute positions - I checked, positions 0-vs-1 and
+    50-vs-51 give the same value - so they extrapolate.'
+
+STEP 6 - land on what is actually used now.
+    'Modern models use RoPE, which rotates queries and keys by an angle proportional to position, so
+    the dot product depends exactly on the difference of positions. That exactness is what makes
+    context-extension methods like position interpolation and YaRN possible.'
+
+STEP 7 - if there is time, give the caveat I measured.
+    'Worth noting that supplying position is not enough on its own - the architecture has to be able
+    to MIX it with content. I tried adding positional encodings to a model that mean-pools its inputs
+    and it stayed at chance, because the positional terms sum to the same constant for every sequence.
+    Attention's pairwise dot product is what makes the addition useful.'""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'Because self-attention has no notion of order and an RNN does.
+
+An RNN's hidden state at step t is a function of the hidden state at t-1 and the current token, so
+it processes tokens one at a time and position is implicit in WHEN a token arrives. Self-attention
+compares every token with every other token simultaneously. Formally it's permutation-equivariant -
+if you shuffle the inputs you get the same outputs, shuffled - so "dog bites man" and "man bites dog"
+would produce identical representations for each word.
+
+And that's not an oversight, it's the whole point of the architecture. The RNN's sequential
+processing is exactly what stops it parallelising: a thousand-token sequence needs a thousand
+sequential steps. The transformer does all positions in one matrix multiply, which is why it trains
+on a GPU efficiently. It traded implicit order for parallelism and then bought the order back cheaply
+by adding a position-dependent vector to each embedding.
+
+The mechanism is worth being precise about. You add a vector that depends on the index to each token
+embedding before the first attention layer. Then in the attention score q_i dot k_j, you're taking a
+dot product of two sums, which expands into four terms - content with content, content with position,
+position with content, position with position. The cross terms are what carry word order.
+
+There are two families. Learned absolute embeddings are just a lookup table with a row per position -
+simple, and it's what BERT and GPT-2 use, but there's no row past the trained maximum, so the length
+limit is absolute. Sinusoidal encodings use sines and cosines at geometrically spaced frequencies,
+have no parameters, and their key property is that the dot product between two positions depends on
+the DISTANCE between them, not the absolute positions. I measured that: positions 0-and-1 and
+positions 50-and-51 give the same dot product to three decimals. That's why they extrapolate.
+
+What models actually use now is RoPE - rotating the query and key vectors by an angle proportional to
+position, so the dot product depends exactly on the difference of the angles. Relative position falls
+out of the algebra rather than approximately, and that exactness is what makes context-extension
+tricks like position interpolation work.
+
+One thing I'd add because it surprised me when I tested it: supplying positional encodings isn't
+enough by itself. I added them to a model that just mean-pools the token vectors and it stayed at
+chance on a task where order was the only signal - because the sum of the positional vectors is the
+same constant for every sequence, so it factors out. You need an architecture that can MIX position
+with content, and attention's pairwise dot product is exactly that. Positional encoding is necessary
+but not sufficient.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE SINUSOIDAL ENCODING, which is four lines and worth being able to write:
+
+    import math
+
+    def sinusoidal(pos, d):
+        out = []
+        for i in range(d):
+            # i // 2 pairs up dimensions: (0,1) share a frequency, (2,3) share one, ...
+            # 10000 ** (2*(i//2)/d) sweeps the wavelength from ~1 up to ~10000 as i
+            # grows, so early dimensions are FAST CLOCK HANDS and late ones are SLOW.
+            freq = 10000 ** (2 * (i // 2) / d)
+            out.append(math.sin(pos / freq) if i % 2 == 0 else math.cos(pos / freq))
+        return out
+
+    # WHY SIN AND COS IN PAIRS: with both, PE(pos + k) is a LINEAR FUNCTION of PE(pos)
+    # for any fixed offset k - it is a 2D rotation by angle k/freq. That is the
+    # algebraic reason a model can learn to attend "three tokens back".
+
+USING IT - the encoding is ADDED, not concatenated:
+
+    x = [[tok_emb[t][i] + pe[p][i] for i in range(d)]      # p is the position index
+         for p, t in enumerate(tokens)]
+
+    # WHY ADD RATHER THAN CONCATENATE: concatenating would cost d extra dimensions in
+    # every downstream matrix. Adding costs nothing, and because d is large the
+    # embedding space has room for the model to keep the two roughly separable.
+
+ROPE, which is what you would actually reach for now:
+
+    def rope(vec, pos, base=10000):
+        # rotate each ADJACENT PAIR of dimensions by an angle proportional to pos
+        out = vec[:]
+        for i in range(0, len(vec), 2):
+            theta = pos / (base ** (i / len(vec)))
+            c, s = math.cos(theta), math.sin(theta)
+            x, y = vec[i], vec[i + 1]
+            out[i]     = x * c - y * s          # standard 2x2 rotation matrix
+            out[i + 1] = x * s + y * c
+        return out
+
+    # applied to QUERIES AND KEYS ONLY, inside attention, at EVERY layer - not to the
+    # values, and not once at the bottom of the stack.
+    #
+    # THE KEY IDENTITY: rotating q by angle m and k by angle n gives
+    #     rope(q, m) . rope(k, n) = f(q, k, m - n)
+    # a function of the DIFFERENCE alone. Relative position, exactly, for free.
+
+THE PER-TOKEN NONLINEARITY FROM MY EXPERIMENT - the stand-in for attention's mixing:
+
+    hs = []
+    for p, w in enumerate(seq):
+        t = [emb[w][i] + pos[p][i] for i in range(D)]      # content + position
+        hs.append([max(0.0, sum(W1[k][i] * t[i] for i in range(D)) + b1[k])
+                   for k in range(HID)])                   # <-- THE RELU IS THE POINT:
+                                                           #     it is applied BEFORE the
+                                                           #     pooling, so a unit can
+                                                           #     respond to a CONJUNCTION
+                                                           #     of token and position
+    v = [sum(h[k] for h in hs) / len(seq) for k in range(HID)]   # pool AFTER mixing""",
+
+    """9. A TRACE - why the mean-pool model was stuck at chance, and the line-by-line mapping
+
+Two sequences, three positions, using tiny 2-dimensional vectors so the arithmetic is visible.
+
+    embeddings:   a = [1, 0]     b = [0, 1]     x = [0, 0]
+    positions:    P0 = [0.5, 0.1]   P1 = [0.2, 0.7]   P2 = [0.9, 0.3]
+
+SEQUENCE 1 = [a, x, b]   (label 1: 'a' before 'b')
+    token vectors:  a+P0 = [1.5, 0.1]    x+P1 = [0.2, 0.7]    b+P2 = [0.9, 1.3]
+    mean-pool:      [(1.5+0.2+0.9)/3, (0.1+0.7+1.3)/3] = [0.867, 0.700]
+
+SEQUENCE 2 = [b, x, a]   (label 0: 'b' before 'a')
+    token vectors:  b+P0 = [0.5, 1.1]    x+P1 = [0.2, 0.7]    a+P2 = [1.9, 0.3]
+    mean-pool:      [(0.5+0.2+1.9)/3, (1.1+0.7+0.3)/3] = [0.867, 0.700]
+
+IDENTICAL. Two sequences with OPPOSITE LABELS produce byte-for-byte the same representation, even
+though positional encodings were supplied. Addition is commutative, so the pool is
+
+    (1/3)(a + b + x) + (1/3)(P0 + P1 + P2)
+
+and the second bracket is the same constant no matter how the tokens are arranged. THIS IS WHY MY
+MEASURED ACCURACY WAS 51.7% - the model was not badly trained, it was being handed identical inputs
+for opposite labels. No optimiser can fix that.
+
+NOW ADD THE PER-TOKEN RELU. Take one hidden unit with weights W = [2, -2], bias 0:
+
+    SEQUENCE 1:  ReLU(2*1.5 - 2*0.1) = ReLU(2.8) = 2.8
+                 ReLU(2*0.2 - 2*0.7) = ReLU(-1.0) = 0.0
+                 ReLU(2*0.9 - 2*1.3) = ReLU(-0.8) = 0.0     -> pooled = 0.933
+
+    SEQUENCE 2:  ReLU(2*0.5 - 2*1.1) = ReLU(-1.2) = 0.0
+                 ReLU(2*0.2 - 2*0.7) = ReLU(-1.0) = 0.0
+                 ReLU(2*1.9 - 2*0.3) = ReLU(3.2)  = 3.2     -> pooled = 1.067
+
+DIFFERENT. 0.933 vs 1.067. The ReLU clipped a negative value to zero in one sequence and not the
+other, and because the clipping happens PER TOKEN - before the sum - the result now depends on which
+token sat in which position. That single nonlinearity is what took the measurement from 51.7% to
+100.0%. A real transformer does the same job with the q.k dot product, which multiplies a
+position-carrying query by a position-carrying key.
+
+THE LINE-BY-LINE MAPPING - which line produced which number above:
+
+    `t = [emb[w][i] + pos[p][i] for i in range(D)]`
+            produced 'a+P0 = [1.5, 0.1]'. The `+` here is the whole positional encoding mechanism,
+            and it is also the reason the naive pool failed - addition commutes.
+    `v = [sum(h[k] for h in hs) / len(seq) ...]` with pool BEFORE any nonlinearity
+            produced the two identical [0.867, 0.700] vectors. This is the line that destroyed the
+            information, not the line that supplied it.
+    `max(0.0, sum(W1[k][i] * t[i] ...) + b1[k])`
+            produced ReLU(2.8) = 2.8 and ReLU(-1.2) = 0.0. THE `max(0.0, ...)` IS THE LINE THAT
+            MAKES ORDER RECOVERABLE - remove it and the two sequences collapse back together.
+    the same line, run once per `p, w in enumerate(seq)`
+            is why it is a PER-TOKEN nonlinearity: the loop applies it before anything is summed.
+    `hs.append(...)` then pooling `hs`
+            produced 0.933 vs 1.067 - pooling AFTER the mixing preserves what pooling before it
+            destroyed.
+    `freq = 10000 ** (2*(i//2)/d)` in `sinusoidal`
+            is what made 0-vs-1 and 50-vs-51 score the same 5.516: a fixed offset is a fixed rotation
+            at every frequency, so the dot product depends only on the offset.
+    `theta = pos / (base ** (i/len(vec)))` in `rope`
+            makes that relative-position property exact rather than approximate, because a rotation
+            composed with a rotation is a rotation by the sum of the angles.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    COST: sinusoidal and ALiBi add zero parameters. Learned absolute adds L x d - for L = 2,048 and
+          d = 4,096 that is 8.4 million parameters, about the size of a small model's embedding
+          table. RoPE adds zero parameters but costs a rotation on every query and key at every
+          layer, which is a few percent of attention time.
+
+    MEASURED (task where order is the only signal, chance = 51.7%):
+        mean-pool, no position                  51.7%
+        mean-pool + learned position            51.7%   <- position supplied and then destroyed
+        per-token MLP, no position              51.7%
+        per-token MLP + learned position       100.0%
+        per-token MLP + sinusoidal position    100.0%
+    MEASURED (sinusoidal dot products): 0-vs-1 = 5.516 and 50-vs-51 = 5.516 - relative, not absolute.
+
+THE #1 MISTAKE: saying 'transformers have no memory of order' and stopping. The precise statement is
+PERMUTATION EQUIVARIANCE, and saying it precisely is the difference between having read a blog post
+and having understood the architecture.
+
+THE #2 MISTAKE: not explaining WHY the transformer discarded the order. The answer is parallelism.
+Without that, positional encoding sounds like a patch on a broken design rather than the price of a
+deliberate trade.
+
+THE #3 MISTAKE: claiming sinusoidal encodings are 'better' than learned ones in general. On sequences
+within the training length they perform about the same; the advantage is extrapolation.
+
+THE #4 MISTAKE: thinking a model can run beyond its trained context because the encoding is defined
+there. Defined is not trained. Quality degrades well before anything errors.
+
+THE #5 MISTAKE: assuming that adding positional encodings guarantees the model uses them. My measured
+51.7% on 'mean-pool + learned position' is the counterexample - any permutation-invariant reduction
+downstream deletes the information again.
+
+THE #6 MISTAKE: indexing positions from the start of a PADDED batch. The same sentence then gets
+different position indices depending on what else was in the batch.
+
+THE #7 MISTAKE: not knowing RoPE. Naming only sinusoidal and learned encodings dates your knowledge
+to 2018; every major open model since 2023 uses rotary embeddings, and the context-length numbers in
+every model card depend on them.
+
+ONE-SENTENCE TAKEAWAY: self-attention is permutation-equivariant because it gave up the recurrence in
+order to parallelise, so word order has to be added back explicitly as a position-dependent vector -
+and the encoding only helps if the architecture can multiply position against content, which is
+exactly what the attention dot product does and what a mean-pool does not.""",
+]
+
+_EX_P1AO["Why do Transformers need positional encodings but RNNs don't?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - self-attention reads the sentence as a bag, not a line
+
+Write six words on six index cards, shuffle them, and hand the pile to someone. They can see every
+word. They cannot see the sentence, because a sentence is words PLUS ORDER, and you threw the order
+away when you shuffled.
+
+That is exactly what self-attention receives. An RNN reads left to right, one token at a time, and
+its hidden state at step 5 is by construction a function of tokens 1-5 in that sequence - ORDER IS
+IMPLICIT IN WHEN A TOKEN ARRIVES. Self-attention has no 'when'. Every token is compared with every
+other token simultaneously, and the operation is PERMUTATION-EQUIVARIANT: shuffle the inputs and you
+get the same outputs, shuffled. It cannot tell 'dog bites man' from 'man bites dog'.
+
+POSITIONAL ENCODING IS HOW THE ORDER IS PUT BACK IN: before attention runs, every token embedding has
+a vector added to it that depends on WHERE the token sits.
+
+WHY THE TRANSFORMER GAVE UP THE ORDER IN THE FIRST PLACE - this is the part people skip: an RNN's
+step t cannot start until step t-1 has finished, so a sequence of length 1,000 takes 1,000 sequential
+steps and a GPU sits mostly idle. Self-attention computes all positions at once, in one big matrix
+multiply. THE TRANSFORMER TRADED IMPLICIT ORDER FOR PARALLELISM AND THEN BOUGHT THE ORDER BACK
+CHEAPLY. Positional encoding is the receipt for that trade.
+
+TERMS AS THEY APPEAR:
+- SELF-ATTENTION: every token computes a weighted average of every other token, where the weights
+  come from dot products between them.
+- PERMUTATION-EQUIVARIANT: reorder the input, and the output is the same set reordered. No
+  information about the ordering survives into the values.
+- POSITIONAL ENCODING (PE): a vector added to (or mixed into) each token embedding that encodes its
+  index in the sequence.
+- ABSOLUTE vs RELATIVE: whether the encoding says 'this is token 7' or 'this token is 3 to the left
+  of that one'.""",
+
+    """2. THE INTUITION - a task where order is the only signal, measured
+
+I built a task designed so that the BAG OF TOKENS CARRIES EXACTLY ZERO INFORMATION. Every sequence is
+a permutation of the same multiset - one 'a', one 'b', four 'x' - and the label is 1 if 'a' comes
+before 'b'.
+
+Because every example has an identical token count, any model that cannot see order is guessing.
+Majority-class baseline on my test set: 51.7%.
+
+                              representation      test accuracy
+                      mean-pool, no position              51.7%
+                mean-pool + learned position              51.7%
+             mean-pool + sinusoidal position              51.7%
+                  per-token MLP, no position              51.7%
+            per-token MLP + learned position             100.0%
+         per-token MLP + sinusoidal position             100.0%
+
+THE FIRST ROW IS THE EXPECTED RESULT: with no position information the model sits at chance. Fine.
+
+THE SECOND AND THIRD ROWS ARE THE INTERESTING ONES, AND THEY SURPRISED ME. I added positional
+encodings - the standard thing, added to the embeddings - and the model was STILL at chance. Adding
+position did nothing.
+
+The reason is arithmetic, and it is worth working out because it explains what positional encoding
+actually needs from the architecture around it. If the model mean-pools the vectors:
+
+    pooled = (1/n) * SUM over positions t of ( embedding(token_t) + PE(t) )
+           = (1/n) * SUM embedding(token_t)  +  (1/n) * SUM PE(t)
+                     \\____ order-free ____/      \\__ THE SAME CONSTANT FOR EVERY SEQUENCE __/
+
+The positional term separates out into a constant that does not depend on the tokens at all. It shows
+up identically in every example, so the classifier learns to ignore it. THE POSITION INFORMATION WAS
+PRESENT IN THE INPUT AND WAS DESTROYED BY THE POOLING.
+
+Rows 5 and 6 fix it by putting a per-token nonlinearity BEFORE the pooling: each token's vector goes
+through a ReLU layer first, so the layer can compute things like 'this unit fires when the token is
+"a" AND the position is early'. Content and position are now MULTIPLIED together rather than added,
+and the task goes from 51.7% to 100.0%.
+
+THE LESSON, WHICH IS THE ACTUAL ANSWER TO THIS QUESTION: POSITIONAL ENCODING IS NECESSARY BUT NOT
+SUFFICIENT. It supplies the information; the architecture must have somewhere to mix it with content.
+In a real transformer that place is the attention dot product q_i . k_j, which expands into four
+terms - content.content, content.position, position.content and position.position - and it is those
+cross terms that carry word order.""",
+
+    """3. THE TWO FAMILIES OF ENCODING, AND WHY SINUSOIDS
+
+LEARNED ABSOLUTE POSITION EMBEDDINGS. A lookup table with one trainable row per position, exactly
+like the token embedding table. Simple, and it is what BERT and GPT-2 use.
+    COST: the table has a maximum size. A model trained with 512 rows has NO ROW for position 513.
+    It cannot process a longer sequence at all - not 'badly', but at all.
+
+SINUSOIDAL ENCODING (the original 'Attention Is All You Need' formulation). No parameters. Dimension
+i of position pos is a sine or cosine of pos divided by a wavelength that grows geometrically with i:
+
+    PE(pos, 2i)   = sin( pos / 10000^(2i/d) )
+    PE(pos, 2i+1) = cos( pos / 10000^(2i/d) )
+
+Think of it as a set of clock hands turning at wildly different speeds - the fastest dimension flips
+every couple of positions, the slowest barely moves across the whole sequence. Reading all the hands
+at once identifies the position, in the same way that reading hours, minutes and seconds identifies
+a time. It is a positional number system in continuous form.
+
+THE PROPERTY THAT MATTERS, measured on my 12-dimensional version:
+
+        positions      dot product
+           0 vs 0            6.000
+           0 vs 1            5.516
+           0 vs 2            4.488
+           0 vs 5            4.729
+          0 vs 20            3.594
+         0 vs 100            2.406
+          50 vs 51           5.516
+          50 vs 55           4.729
+
+LOOK AT 0-vs-1 AND 50-vs-51: 5.516 and 5.516. IDENTICAL. And 0-vs-5 and 50-vs-55: 4.729 both. The
+similarity depends on the DISTANCE BETWEEN the positions, not on the absolute positions. That is what
+gives sinusoidal encoding its headline property - it extrapolates to sequence lengths never seen in
+training, because 'three tokens apart' means the same thing at position 5,000 as at position 5.
+
+AN HONEST WRINKLE IN MY OWN NUMBERS: 0-vs-2 scores 4.488 and 0-vs-5 scores 4.729, so the decay is NOT
+monotonic - a slightly more distant pair scored as MORE similar. That is real, not a bug. It happens
+because with only 12 dimensions there are just 6 frequencies, and a sum of a handful of cosines
+wobbles. The decay is a trend, not a guarantee, and it smooths out at d=512.
+
+ROPE (Rotary Position Embedding) - what modern models actually use. Instead of ADDING a vector, it
+ROTATES the query and key vectors by an angle proportional to position. The dot product between a
+rotated query and a rotated key then depends only on the DIFFERENCE of the two angles, so relative
+position falls out of the algebra exactly rather than approximately. Llama, Mistral, Qwen and most
+open models since 2023 use RoPE, and it is the reason context-length extension tricks (position
+interpolation, YaRN, NTK scaling) work at all - they rescale the rotation frequencies.
+
+ALiBi - simpler still: skip encodings entirely and subtract a penalty proportional to distance
+directly from the attention scores. Extrapolates well and costs nothing.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - THE LENGTH LIMIT IS HARD, NOT SOFT, FOR LEARNED EMBEDDINGS.
+    A learned table trained to 2,048 positions has no parameters for position 2,049. There is nothing
+    to interpolate from; the row does not exist. This is why 'max sequence length' is an architectural
+    fact about a model rather than a configuration choice.
+
+FAILURE 2 - EXTRAPOLATION DEGRADES EVEN WHEN IT DOES NOT CRASH.
+    Sinusoidal and RoPE encodings are DEFINED at any position, so a model will happily run past its
+    training length - and produce steadily worse output, because attention patterns at unseen relative
+    distances were never trained. 'It runs' and 'it works' are different claims.
+
+FAILURE 3 - POSITION INFORMATION GETS DILUTED IN DEEP STACKS.
+    The encoding is added once, at the bottom. By layer 30 it has passed through thirty rounds of
+    attention and MLP. Adding position at every layer, or using RoPE (which re-applies the rotation
+    inside every attention operation), keeps it sharp.
+
+FAILURE 4 - THE POOLING PROBLEM I MEASURED.
+    If anything downstream reduces the sequence by a permutation-invariant operation - mean pooling
+    for a sentence embedding, for instance - the positional information is destroyed at that point.
+    My measured 51.7% for 'mean-pool + learned position' is exactly this. Sentence-embedding models
+    handle it by pooling the OUTPUT of the transformer stack, after attention has already mixed
+    position into the content, rather than pooling the inputs.
+
+FAILURE 5 - PADDING AND POSITION INDEXING.
+    If you left-pad a batch and index positions from zero including the padding, the same sentence
+    gets different positions depending on the batch it landed in. The model's answer then changes
+    based on its neighbours in the batch. This is a real bug that ships.
+
+FAILURE 6 - INTERPOLATION WITHOUT FINE-TUNING.
+    Position interpolation stretches a model's context by scaling position indices down. It works,
+    but it degrades short-context performance because every relative distance the model learned has
+    been squashed. It needs a fine-tuning pass to recover.
+
+THE NON-FAILURE WORTH NAMING: for tasks that genuinely are order-free - a set of retrieved documents,
+a bag of user features - the permutation equivariance is a FEATURE, and you deliberately omit the
+positional encoding so the model cannot learn a spurious dependence on the order you happened to
+supply. Set Transformers do exactly this.""",
+
+    """5. THE ALTERNATIVES - a comparison you should be able to give from memory
+
+    scheme                 params   extrapolates   relative?   used by
+    ------------------------------------------------------------------------------------
+    learned absolute       L x d    NO (hard cap)  no          BERT, GPT-2, ViT
+    sinusoidal absolute    none     yes, weakly    approx.     original Transformer
+    relative (T5 bias)     buckets  yes            YES         T5
+    RoPE (rotary)          none     yes, tunable   YES         Llama, Mistral, Qwen, most
+    ALiBi (linear bias)    none     YES, strongly  YES         BLOOM, MPT
+    none                   none     n/a            n/a         Set Transformer, and
+                                                               decoder-only models where
+                                                               causal masking leaks order
+
+THAT LAST ROW IS A GOOD THING TO KNOW. A DECODER-ONLY MODEL WITH A CAUSAL MASK IS NOT ACTUALLY
+PERMUTATION-EQUIVARIANT, because the mask itself distinguishes positions - token 3 can see tokens 1-3
+and token 5 can see tokens 1-5, so the sets differ. Papers have shown such models learn implicit
+position information from the mask alone and can perform respectably with NO explicit encoding. It is
+not the recommended design, but it makes the point sharply: the requirement is 'the architecture must
+be able to distinguish positions somehow', and an added vector is only the most convenient way.
+
+HOW TO CHOOSE, IN ONE LINE EACH:
+    - fixed, known, modest sequence length and you want simplicity -> learned absolute.
+    - you need to run longer than you trained -> RoPE or ALiBi.
+    - you are fine-tuning an existing model -> use whatever it already has; you cannot swap the
+      scheme without retraining.
+    - the input genuinely has no order -> omit it deliberately, and say that you did.""",
+
+    """6. HOW TO ANSWER THIS IN AN INTERVIEW - a numbered route
+
+STEP 1 - state the mathematical property, not a vague statement about order.
+    'Self-attention is permutation-equivariant: permute the inputs and the outputs are the same set
+    permuted. So without position information, "dog bites man" and "man bites dog" produce identical
+    representations for each word.'
+
+STEP 2 - explain why the RNN does not need one.
+    'An RNN's hidden state is h_t = f(h_{t-1}, x_t). Position is implicit in when a token is consumed.
+    It gets order for free from the recurrence.'
+
+STEP 3 - name the trade that created the problem.
+    'The transformer gave up the recurrence to get parallelism - all positions computed in one matrix
+    multiply instead of n sequential steps - and positional encoding is how it buys the order back.'
+    THIS STEP IS WHAT SEPARATES A GOOD ANSWER FROM A MEMORISED ONE.
+
+STEP 4 - describe the mechanism concretely.
+    'A vector depending on the index is added to each token embedding before the first attention
+    layer. In the attention dot product q_i.k_j that expands into content-content and
+    content-position cross terms, and the cross terms carry the word order.'
+
+STEP 5 - give the two families and the property that distinguishes them.
+    'Learned absolute embeddings are a lookup table - simple, but there is no row past the trained
+    maximum length. Sinusoidal encodings are parameter-free and their dot product depends on the
+    DISTANCE between positions rather than the absolute positions - I checked, positions 0-vs-1 and
+    50-vs-51 give the same value - so they extrapolate.'
+
+STEP 6 - land on what is actually used now.
+    'Modern models use RoPE, which rotates queries and keys by an angle proportional to position, so
+    the dot product depends exactly on the difference of positions. That exactness is what makes
+    context-extension methods like position interpolation and YaRN possible.'
+
+STEP 7 - if there is time, give the caveat I measured.
+    'Worth noting that supplying position is not enough on its own - the architecture has to be able
+    to MIX it with content. I tried adding positional encodings to a model that mean-pools its inputs
+    and it stayed at chance, because the positional terms sum to the same constant for every sequence.
+    Attention's pairwise dot product is what makes the addition useful.'""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'Because self-attention has no notion of order and an RNN does.
+
+An RNN's hidden state at step t is a function of the hidden state at t-1 and the current token, so
+it processes tokens one at a time and position is implicit in WHEN a token arrives. Self-attention
+compares every token with every other token simultaneously. Formally it's permutation-equivariant -
+if you shuffle the inputs you get the same outputs, shuffled - so "dog bites man" and "man bites dog"
+would produce identical representations for each word.
+
+And that's not an oversight, it's the whole point of the architecture. The RNN's sequential
+processing is exactly what stops it parallelising: a thousand-token sequence needs a thousand
+sequential steps. The transformer does all positions in one matrix multiply, which is why it trains
+on a GPU efficiently. It traded implicit order for parallelism and then bought the order back cheaply
+by adding a position-dependent vector to each embedding.
+
+The mechanism is worth being precise about. You add a vector that depends on the index to each token
+embedding before the first attention layer. Then in the attention score q_i dot k_j, you're taking a
+dot product of two sums, which expands into four terms - content with content, content with position,
+position with content, position with position. The cross terms are what carry word order.
+
+There are two families. Learned absolute embeddings are just a lookup table with a row per position -
+simple, and it's what BERT and GPT-2 use, but there's no row past the trained maximum, so the length
+limit is absolute. Sinusoidal encodings use sines and cosines at geometrically spaced frequencies,
+have no parameters, and their key property is that the dot product between two positions depends on
+the DISTANCE between them, not the absolute positions. I measured that: positions 0-and-1 and
+positions 50-and-51 give the same dot product to three decimals. That's why they extrapolate.
+
+What models actually use now is RoPE - rotating the query and key vectors by an angle proportional to
+position, so the dot product depends exactly on the difference of the angles. Relative position falls
+out of the algebra rather than approximately, and that exactness is what makes context-extension
+tricks like position interpolation work.
+
+One thing I'd add because it surprised me when I tested it: supplying positional encodings isn't
+enough by itself. I added them to a model that just mean-pools the token vectors and it stayed at
+chance on a task where order was the only signal - because the sum of the positional vectors is the
+same constant for every sequence, so it factors out. You need an architecture that can MIX position
+with content, and attention's pairwise dot product is exactly that. Positional encoding is necessary
+but not sufficient.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE SINUSOIDAL ENCODING, which is four lines and worth being able to write:
+
+    import math
+
+    def sinusoidal(pos, d):
+        out = []
+        for i in range(d):
+            # i // 2 pairs up dimensions: (0,1) share a frequency, (2,3) share one, ...
+            # 10000 ** (2*(i//2)/d) sweeps the wavelength from ~1 up to ~10000 as i
+            # grows, so early dimensions are FAST CLOCK HANDS and late ones are SLOW.
+            freq = 10000 ** (2 * (i // 2) / d)
+            out.append(math.sin(pos / freq) if i % 2 == 0 else math.cos(pos / freq))
+        return out
+
+    # WHY SIN AND COS IN PAIRS: with both, PE(pos + k) is a LINEAR FUNCTION of PE(pos)
+    # for any fixed offset k - it is a 2D rotation by angle k/freq. That is the
+    # algebraic reason a model can learn to attend "three tokens back".
+
+USING IT - the encoding is ADDED, not concatenated:
+
+    x = [[tok_emb[t][i] + pe[p][i] for i in range(d)]      # p is the position index
+         for p, t in enumerate(tokens)]
+
+    # WHY ADD RATHER THAN CONCATENATE: concatenating would cost d extra dimensions in
+    # every downstream matrix. Adding costs nothing, and because d is large the
+    # embedding space has room for the model to keep the two roughly separable.
+
+ROPE, which is what you would actually reach for now:
+
+    def rope(vec, pos, base=10000):
+        # rotate each ADJACENT PAIR of dimensions by an angle proportional to pos
+        out = vec[:]
+        for i in range(0, len(vec), 2):
+            theta = pos / (base ** (i / len(vec)))
+            c, s = math.cos(theta), math.sin(theta)
+            x, y = vec[i], vec[i + 1]
+            out[i]     = x * c - y * s          # standard 2x2 rotation matrix
+            out[i + 1] = x * s + y * c
+        return out
+
+    # applied to QUERIES AND KEYS ONLY, inside attention, at EVERY layer - not to the
+    # values, and not once at the bottom of the stack.
+    #
+    # THE KEY IDENTITY: rotating q by angle m and k by angle n gives
+    #     rope(q, m) . rope(k, n) = f(q, k, m - n)
+    # a function of the DIFFERENCE alone. Relative position, exactly, for free.
+
+THE PER-TOKEN NONLINEARITY FROM MY EXPERIMENT - the stand-in for attention's mixing:
+
+    hs = []
+    for p, w in enumerate(seq):
+        t = [emb[w][i] + pos[p][i] for i in range(D)]      # content + position
+        hs.append([max(0.0, sum(W1[k][i] * t[i] for i in range(D)) + b1[k])
+                   for k in range(HID)])                   # <-- THE RELU IS THE POINT:
+                                                           #     it is applied BEFORE the
+                                                           #     pooling, so a unit can
+                                                           #     respond to a CONJUNCTION
+                                                           #     of token and position
+    v = [sum(h[k] for h in hs) / len(seq) for k in range(HID)]   # pool AFTER mixing""",
+
+    """9. A TRACE - why the mean-pool model was stuck at chance, and the line-by-line mapping
+
+Two sequences, three positions, using tiny 2-dimensional vectors so the arithmetic is visible.
+
+    embeddings:   a = [1, 0]     b = [0, 1]     x = [0, 0]
+    positions:    P0 = [0.5, 0.1]   P1 = [0.2, 0.7]   P2 = [0.9, 0.3]
+
+SEQUENCE 1 = [a, x, b]   (label 1: 'a' before 'b')
+    token vectors:  a+P0 = [1.5, 0.1]    x+P1 = [0.2, 0.7]    b+P2 = [0.9, 1.3]
+    mean-pool:      [(1.5+0.2+0.9)/3, (0.1+0.7+1.3)/3] = [0.867, 0.700]
+
+SEQUENCE 2 = [b, x, a]   (label 0: 'b' before 'a')
+    token vectors:  b+P0 = [0.5, 1.1]    x+P1 = [0.2, 0.7]    a+P2 = [1.9, 0.3]
+    mean-pool:      [(0.5+0.2+1.9)/3, (1.1+0.7+0.3)/3] = [0.867, 0.700]
+
+IDENTICAL. Two sequences with OPPOSITE LABELS produce byte-for-byte the same representation, even
+though positional encodings were supplied. Addition is commutative, so the pool is
+
+    (1/3)(a + b + x) + (1/3)(P0 + P1 + P2)
+
+and the second bracket is the same constant no matter how the tokens are arranged. THIS IS WHY MY
+MEASURED ACCURACY WAS 51.7% - the model was not badly trained, it was being handed identical inputs
+for opposite labels. No optimiser can fix that.
+
+NOW ADD THE PER-TOKEN RELU. Take one hidden unit with weights W = [2, -2], bias 0:
+
+    SEQUENCE 1:  ReLU(2*1.5 - 2*0.1) = ReLU(2.8) = 2.8
+                 ReLU(2*0.2 - 2*0.7) = ReLU(-1.0) = 0.0
+                 ReLU(2*0.9 - 2*1.3) = ReLU(-0.8) = 0.0     -> pooled = 0.933
+
+    SEQUENCE 2:  ReLU(2*0.5 - 2*1.1) = ReLU(-1.2) = 0.0
+                 ReLU(2*0.2 - 2*0.7) = ReLU(-1.0) = 0.0
+                 ReLU(2*1.9 - 2*0.3) = ReLU(3.2)  = 3.2     -> pooled = 1.067
+
+DIFFERENT. 0.933 vs 1.067. The ReLU clipped a negative value to zero in one sequence and not the
+other, and because the clipping happens PER TOKEN - before the sum - the result now depends on which
+token sat in which position. That single nonlinearity is what took the measurement from 51.7% to
+100.0%. A real transformer does the same job with the q.k dot product, which multiplies a
+position-carrying query by a position-carrying key.
+
+THE LINE-BY-LINE MAPPING - which line produced which number above:
+
+    `t = [emb[w][i] + pos[p][i] for i in range(D)]`
+            produced 'a+P0 = [1.5, 0.1]'. The `+` here is the whole positional encoding mechanism,
+            and it is also the reason the naive pool failed - addition commutes.
+    `v = [sum(h[k] for h in hs) / len(seq) ...]` with pool BEFORE any nonlinearity
+            produced the two identical [0.867, 0.700] vectors. This is the line that destroyed the
+            information, not the line that supplied it.
+    `max(0.0, sum(W1[k][i] * t[i] ...) + b1[k])`
+            produced ReLU(2.8) = 2.8 and ReLU(-1.2) = 0.0. THE `max(0.0, ...)` IS THE LINE THAT
+            MAKES ORDER RECOVERABLE - remove it and the two sequences collapse back together.
+    the same line, run once per `p, w in enumerate(seq)`
+            is why it is a PER-TOKEN nonlinearity: the loop applies it before anything is summed.
+    `hs.append(...)` then pooling `hs`
+            produced 0.933 vs 1.067 - pooling AFTER the mixing preserves what pooling before it
+            destroyed.
+    `freq = 10000 ** (2*(i//2)/d)` in `sinusoidal`
+            is what made 0-vs-1 and 50-vs-51 score the same 5.516: a fixed offset is a fixed rotation
+            at every frequency, so the dot product depends only on the offset.
+    `theta = pos / (base ** (i/len(vec)))` in `rope`
+            makes that relative-position property exact rather than approximate, because a rotation
+            composed with a rotation is a rotation by the sum of the angles.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    COST: sinusoidal and ALiBi add zero parameters. Learned absolute adds L x d - for L = 2,048 and
+          d = 4,096 that is 8.4 million parameters, about the size of a small model's embedding
+          table. RoPE adds zero parameters but costs a rotation on every query and key at every
+          layer, which is a few percent of attention time.
+
+    MEASURED (task where order is the only signal, chance = 51.7%):
+        mean-pool, no position                  51.7%
+        mean-pool + learned position            51.7%   <- position supplied and then destroyed
+        per-token MLP, no position              51.7%
+        per-token MLP + learned position       100.0%
+        per-token MLP + sinusoidal position    100.0%
+    MEASURED (sinusoidal dot products): 0-vs-1 = 5.516 and 50-vs-51 = 5.516 - relative, not absolute.
+
+THE #1 MISTAKE: saying 'transformers have no memory of order' and stopping. The precise statement is
+PERMUTATION EQUIVARIANCE, and saying it precisely is the difference between having read a blog post
+and having understood the architecture.
+
+THE #2 MISTAKE: not explaining WHY the transformer discarded the order. The answer is parallelism.
+Without that, positional encoding sounds like a patch on a broken design rather than the price of a
+deliberate trade.
+
+THE #3 MISTAKE: claiming sinusoidal encodings are 'better' than learned ones in general. On sequences
+within the training length they perform about the same; the advantage is extrapolation.
+
+THE #4 MISTAKE: thinking a model can run beyond its trained context because the encoding is defined
+there. Defined is not trained. Quality degrades well before anything errors.
+
+THE #5 MISTAKE: assuming that adding positional encodings guarantees the model uses them. My measured
+51.7% on 'mean-pool + learned position' is the counterexample - any permutation-invariant reduction
+downstream deletes the information again.
+
+THE #6 MISTAKE: indexing positions from the start of a PADDED batch. The same sentence then gets
+different position indices depending on what else was in the batch.
+
+THE #7 MISTAKE: not knowing RoPE. Naming only sinusoidal and learned encodings dates your knowledge
+to 2018; every major open model since 2023 uses rotary embeddings, and the context-length numbers in
+every model card depend on them.
+
+ONE-SENTENCE TAKEAWAY: self-attention is permutation-equivariant because it gave up the recurrence in
+order to parallelise, so word order has to be added back explicitly as a position-dependent vector -
+and the encoding only helps if the architecture can multiply position against content, which is
+exactly what the attention dot product does and what a mean-pool does not.""",
+]
+
+_EX_P1AO["Contextual retrieval and better chunk context"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a chunk torn out of a document stops making sense
+
+Take a page out of a report and hand it to someone who has never seen the report. The page says 'The
+company attributed the increase to strong demand in the cloud segment.' WHICH company? What increase?
+The page was perfectly clear where it came from, and it is nearly useless on its own.
+
+That is what naive chunking does to a RAG system. You split documents into 500-token pieces, embed
+each piece, and search over them. Every piece that used a pronoun, a bare 'the company', a 'this
+approach', or a heading three paragraphs up is now an orphan.
+
+CONTEXTUAL RETRIEVAL IS THE FIX: before indexing a chunk, PREPEND A SHORT DESCRIPTION OF WHERE IT
+CAME FROM, so the chunk becomes self-contained. The 'contextual retrieval' technique published by
+Anthropic in 2024 does this by asking an LLM to write a one-or-two-sentence situating summary for
+each chunk; cheaper variants prepend the document title and section heading.
+
+WHY THIS MATTERS MORE THAN CHUNK SIZE: most RAG tuning effort goes into chunk size and overlap. Those
+knobs matter, but they cannot fix an orphaned pronoun. A 1,000-token chunk that begins 'The company
+attributed...' is just as unsearchable as a 200-token one.
+
+TERMS AS THEY APPEAR:
+- CHUNK: a piece of a document, indexed and retrieved as a unit.
+- RAG (retrieval-augmented generation): retrieve relevant chunks, put them in the prompt, let the
+  model answer from them.
+- HIT@k: the fraction of queries for which the correct chunk appears in the top k results.
+- BM25: a classic keyword-scoring function. If a query word never appears in a chunk, that chunk
+  scores nothing for it - which is why an orphaned chunk with no company name is invisible.
+- SELF-CONTAINED: understandable without reading anything else. The property you are engineering for.""",
+
+    """2. THE INTUITION - measured on documents built to break
+
+I built three near-identical documents - quarterly earnings reports for three companies. Each is four
+chunks. The company name appears ONLY IN THE FIRST CHUNK; every later chunk says 'the company'. That
+is not a contrived setup, it is how business documents are actually written.
+
+Nine queries, each naming a company and asking about something described in a later chunk. Scored
+with BM25:
+
+           naive chunks:  hit@1  1/9     hit@3  5/9
+      contextual chunks:  hit@1  6/9     hit@3  7/9
+
+HIT@1 WENT FROM 1/9 TO 6/9. A six-fold improvement from prepending one sentence.
+
+The mechanism is visible if you look at the chunk itself:
+
+    naive       : 'The company attributed the increase to strong demand in the cloud segment.'
+    contextual  : 'ACME Corporation third quarter 2025 earnings report. The company attributed the
+                   increase to strong demand in the cloud segment.'
+
+The query is 'why did ACME revenue increase'. Against the naive chunk, the word ACME contributes
+NOTHING - it does not occur - so the three ACME chunks and the three Zenith chunks and the three
+Orion chunks all score identically on the only word that disambiguates them. The retriever is
+choosing at random among nine equally-scored candidates. Against the contextual chunk, ACME is
+present, carries a high IDF because it appears in only four of twelve chunks, and the right document
+wins immediately.
+
+THE HONEST PART: hit@3 only went from 5/9 to 7/9, a much smaller gain than hit@1. That is expected -
+with only three documents, a naive retriever's random choice among a document's chunks still lands
+the right one in the top 3 fairly often. WITH THOUSANDS OF DOCUMENTS THE HIT@1 GAP IS THE ONE THAT
+MATTERS, because the pool of confusable chunks is much larger. Do not over-read a small corpus.
+
+THE COST: 642 characters of index became 1,113. A 73% increase in stored and embedded text, for a
+6x improvement in top-1 accuracy on this corpus.""",
+
+    """3. THE THREE WAYS TO ADD CONTEXT, FROM CHEAPEST TO BEST
+
+METHOD 1 - PREPEND METADATA YOU ALREADY HAVE. Document title, section heading, date, author, source
+URL. Costs nothing, requires no model call, and it is what my measurement used. THIS IS THE FIRST
+THING TO TRY AND MOST TEAMS SKIP IT.
+
+    "ACME Corp Q3 2025 Earnings > Segment Performance
+     The company attributed the increase to strong demand in the cloud segment."
+
+METHOD 2 - CONTEXTUAL HEADERS FROM A CHEAP MODEL. For each chunk, send the whole document plus the
+chunk to a small model and ask for one or two sentences situating it. This is Anthropic's contextual
+retrieval recipe, and the reported result was a 35% reduction in retrieval failure rate from
+contextual embeddings alone, and 49% combined with contextual BM25.
+
+    prompt: "<document>...</document> Here is a chunk: <chunk>...</chunk>
+             Give a short context to situate this chunk within the document.
+             Answer only with the context."
+
+    THE COST DRIVER, AND THE REASON THIS IS PRACTICAL: the whole document goes into every one of
+    these calls. With PROMPT CACHING the document is charged once and each chunk call reuses it, which
+    is what took this from theoretically-nice to cheap enough to run over a corpus.
+
+METHOD 3 - LATE CHUNKING. Embed the ENTIRE document with a long-context embedding model first, so
+every token's vector has already seen the whole document, and only THEN pool the token vectors into
+per-chunk embeddings. The chunk vector carries document context without any text being added.
+    ADVANTAGE: no extra tokens stored, no LLM calls.
+    LIMITATION: needs an embedding model with a long context window, and it does nothing for the
+    keyword (BM25) half of a hybrid search, because the stored TEXT is unchanged.
+
+A FOURTH, ORTHOGONAL TECHNIQUE WORTH KNOWING - SMALL-TO-BIG (or parent-document) RETRIEVAL. Index
+small, precise chunks for matching, but return the LARGER PARENT SECTION to the model. Retrieval
+precision comes from the small chunk; the context the model reads comes from the parent. This solves
+a different half of the same problem: contextual retrieval fixes what the RETRIEVER sees, small-to-big
+fixes what the GENERATOR sees, and they compose.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - THE CONTEXT SWAMPS THE CHUNK. If the prepended header is 200 tokens and the chunk is 100,
+the embedding is mostly about the header, and every chunk in a document ends up with a similar vector.
+You have traded 'cannot tell documents apart' for 'cannot tell chunks apart'. KEEP THE CONTEXT SHORT -
+one or two sentences.
+
+FAILURE 2 - HALLUCINATED CONTEXT. An LLM writing situating summaries will sometimes invent a detail.
+That detail is now in your index, permanently, and will be retrieved. Constrain the prompt to
+'summarise only what is in the document', keep the generated context short, and spot-check.
+
+FAILURE 3 - COST AND STALENESS. Method 2 is one model call per chunk at ingest. For a million chunks
+that is a real bill, and it must be re-run whenever a document changes. Prompt caching makes it
+affordable; a nightly incremental pipeline makes it maintainable.
+
+FAILURE 4 - INDEX SIZE. My measurement: 642 characters became 1,113, a 73% increase. That is storage,
+embedding compute at ingest, and BM25 index size. On a large corpus it is a budget line.
+
+FAILURE 5 - MEASURING IT WRONG. A retrieval improvement measured on 9 queries over 3 documents is
+suggestive, not conclusive - my own hit@3 barely moved for exactly this reason. Build a real
+evaluation set of 100+ query/gold-chunk pairs from your actual corpus before and after.
+
+FAILURE 6 - IT DOES NOT FIX EVERYTHING. Contextual retrieval fixes chunks that are ambiguous about
+WHAT THEY ARE ABOUT. It does not fix a query that needs information spanning five documents, it does
+not fix a chunk boundary that cuts a table in half, and it does not fix an embedding model that does
+not understand your domain's vocabulary. DIAGNOSE THE ACTUAL FAILURE BEFORE APPLYING THE FIX.
+
+FAILURE 7 - DUPLICATE HEADERS DEFEATING BM25 IDF. If every chunk of a 500-chunk document starts with
+the same title, that title's IDF collapses and it stops discriminating. This matters most on
+documents that are long relative to the corpus.""",
+
+    """5. THE ALTERNATIVES - the rest of the retrieval-quality toolbox
+
+BETTER CHUNKING. Split on semantic boundaries - headings, paragraphs, sentence groups - rather than a
+fixed token count. Never split a table or a code block. Cheap, and often worth more than any
+reranking.
+
+CHUNK OVERLAP. Repeat the last ~50 tokens of each chunk at the start of the next so a sentence
+straddling a boundary survives. Cheap insurance; costs index size.
+
+HYBRID SEARCH. Run BM25 and dense embedding search and fuse the results. Dense search finds
+paraphrases; BM25 finds exact identifiers - product codes, error numbers, names - that embeddings
+routinely miss. Contextual retrieval helps BOTH, which is why the reported combined figure beat
+either alone.
+
+RERANKING. Retrieve 50 candidates cheaply, then score each against the query with a cross-encoder
+that reads query and chunk TOGETHER. The most reliable single quality upgrade in RAG, and the most
+expensive per query. Note it is a different lever from contextual retrieval: reranking improves the
+ORDERING of what you found, contextual retrieval improves WHAT YOU FIND AT ALL. A reranker cannot
+rescue a chunk that the first-stage retriever never surfaced.
+
+QUERY REWRITING / HyDE. Expand or rewrite the user's query before searching - or generate a
+hypothetical answer and search with that. Helps when queries are short and documents are verbose.
+
+METADATA FILTERING. If the user asks about ACME, filter to ACME's documents before ranking. Often a
+complete solution to the exact problem my measurement demonstrated, and far cheaper - but only when
+the query's entity can be reliably extracted.
+
+THE ORDER I WOULD APPLY THEM: fix chunk boundaries, prepend the metadata you already have, add hybrid
+search, then a reranker, then LLM-generated contextual headers if the evaluation still shows
+retrieval misses. That order is roughly cheapest-first, and it also happens to be
+biggest-win-per-effort-first on most corpora.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+STEP 1 - BUILD AN EVALUATION SET FIRST. 100+ real queries with the chunk that should be retrieved for
+each. Without this you cannot tell whether any of the following helped. This step is skipped more
+often than any other and it is the one that makes the rest measurable.
+
+STEP 2 - MEASURE THE BASELINE. hit@1, hit@5, and MRR (mean reciprocal rank) on naive chunks.
+
+STEP 3 - LOOK AT THE FAILURES BY HAND. Read 20 queries the system got wrong. If the gold chunks are
+full of orphaned pronouns and bare 'the company', contextual retrieval is your fix. If they are
+correct chunks ranked fourth, you need a reranker instead. DIAGNOSE BEFORE PRESCRIBING.
+
+STEP 4 - START WITH FREE CONTEXT. Prepend title, section path and date. Re-measure. On my corpus this
+alone took hit@1 from 1/9 to 6/9.
+
+STEP 5 - IF THAT IS NOT ENOUGH, GENERATE CONTEXT. One call to a cheap model per chunk, with the
+document prompt-cached. Keep the generated context to one or two sentences, and store it as a
+separate field so you can re-generate without re-chunking.
+
+STEP 6 - INDEX BOTH WAYS. Put the contextualised text into the embedding index AND the BM25 index.
+The reported gains were larger for the two combined than either alone.
+
+STEP 7 - RE-MEASURE, AND CHECK THE COST. Index size, ingest time, and the model bill. Report the
+improvement alongside the cost, because a 3% hit@1 gain for a 73% index increase is a decision, not
+an obvious win.
+
+STEP 8 - KEEP THE RAW CHUNK SEPARATE FROM THE INDEXED TEXT. What you SEARCH over and what you SEND TO
+THE MODEL do not have to be the same string. Search the contextualised version; send whatever gives
+the generator the best context, which is often the parent section.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'The problem is that chunking makes chunks unsearchable by destroying the context they depended on.
+
+Real documents use pronouns and bare references. A quarterly report names the company in the first
+line and then says "the company" for eight pages. When you split that into 500-token chunks, every
+chunk after the first is an orphan - it doesn't contain the company name, so a query mentioning that
+company can't match it at all under BM25 and matches it weakly under embeddings.
+
+I measured this on three near-identical earnings reports where the company name appeared only in the
+first chunk. Nine queries. With naive chunks, hit@1 was 1 out of 9 - essentially random, because the
+one word that disambiguates the three documents didn't appear in any of the candidate chunks, so
+they all scored the same. Prepending a one-line document header to each chunk took hit@1 to 6 out of
+9.
+
+The fix is to make each chunk self-contained before you index it. Three levels. Cheapest: prepend
+metadata you already have - the document title, the section heading, the date. That's what got me the
+6x, and most teams skip it. Next: Anthropic's contextual retrieval, where you send the whole document
+plus the chunk to a cheap model and ask for a sentence or two situating it; they reported about a 35%
+reduction in retrieval failures from that, 49% when combined with contextual BM25. That's affordable
+because prompt caching means the document is charged once per document rather than once per chunk.
+Third: late chunking, where you embed the whole document with a long-context model first so every
+token vector has already seen the document, then pool into chunk vectors - no extra stored text, but
+it doesn't help the keyword side of a hybrid search.
+
+Two caveats I'd raise. The index grew 73% in characters, which is storage and embedding cost, so it's
+a trade rather than a free win. And it only fixes one failure mode - chunks that are ambiguous about
+what they're about. If your gold chunks are being retrieved but ranked fourth, you need a reranker,
+not this. So the honest answer is: build an evaluation set, read twenty failures by hand, and pick
+the fix that matches what you actually see.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE CHUNK BUILDER - the entire technique is the one conditional in the middle:
+
+    def build_index(docs, contextual):
+        # docs: {doc_id: [chunk_text, ...]}, chunk 0 assumed to carry the title line
+        out = {}
+        for doc_id, chunks in docs.items():
+            header = chunks[0]                   # in production: title + section path
+            for i, c in enumerate(chunks):
+                if contextual and i > 0:         # <-- THE WHOLE TECHNIQUE IS THIS LINE
+                    out[(doc_id, i)] = header + " " + c
+                else:
+                    out[(doc_id, i)] = c
+        return out
+
+    # NOTE `i > 0`: chunk 0 already contains the header, so prepending it again would
+    # double-count those terms and distort BM25's term frequencies.
+
+BM25, so the scoring is not a black box:
+
+    def bm25_rank(index, query, k1=1.5, b=0.75):
+        N = len(index)
+        toks = {cid: words(t) for cid, t in index.items()}
+        df = {}                                  # document frequency per term
+        for t in toks.values():
+            for w in set(t):
+                df[w] = df.get(w, 0) + 1
+        avgdl = sum(len(t) for t in toks.values()) / N
+        scores = {}
+        for cid, t in toks.items():
+            s = 0.0
+            for w in words(query):
+                if w not in df:
+                    continue                     # <-- a query word absent from the WHOLE
+                                                 #     index contributes nothing
+                f = t.count(w)
+                if not f:
+                    continue                     # <-- AND THIS IS THE ORPHAN PROBLEM: a
+                                                 #     chunk lacking "acme" scores 0 for it
+                idf = math.log((N - df[w] + 0.5) / (df[w] + 0.5) + 1)
+                                                 # rare terms score high. "acme" appears in
+                                                 # 4 of 12 contextual chunks -> high IDF.
+                                                 # In the naive index it appears in 1 of 12,
+                                                 # so it is even rarer but matches almost
+                                                 # nothing - high IDF is useless if the term
+                                                 # is not in the chunk you need.
+                s += idf * f * (k1 + 1) / (f + k1 * (1 - b + b * len(t) / avgdl))
+                                                 # k1 saturates repeated terms; b penalises
+                                                 # long documents, which is why a bloated
+                                                 # header hurts (failure mode 1).
+            scores[cid] = s
+        return sorted(scores, key=lambda c: -scores[c])
+
+THE LLM-GENERATED VARIANT, in outline:
+
+    CONTEXT_PROMPT = (
+        "<document>{doc}</document>\\n"
+        "Here is the chunk we want to situate:\\n<chunk>{chunk}</chunk>\\n"
+        "Give a short, one-or-two-sentence context to situate this chunk within the "
+        "overall document, for improving search retrieval. Answer with the context only."
+    )
+    # cache the <document> prefix; it is identical across every chunk of that document,
+    # which turns O(chunks) full-document charges into O(1).""",
+
+    """9. A TRACE - the exact scores that flipped, and the line-by-line mapping
+
+QUERY: 'why did ACME revenue increase'.  Twelve chunks in the index (3 docs x 4 chunks).
+Gold answer: ('acme-q3', 2) - 'The company attributed the increase to strong demand in the cloud
+segment.'
+
+    NAIVE INDEX. Query terms after tokenising: why, did, acme, revenue, increase.
+
+    term 'acme':      appears in exactly ONE chunk in the whole index - ('acme-q3', 0),
+                      the title line. df = 1, so its IDF is high, about 2.0.
+                      IN THE GOLD CHUNK ('acme-q3', 2) THE COUNT IS ZERO, so it
+                      contributes 0.0 to the score that matters.
+    term 'increase':  appears in ('acme-q3', 2) once  -> contributes
+    term 'revenue':   appears in six chunks (two per doc) -> low IDF, small contribution
+    term 'why','did': appear nowhere -> skipped by `if w not in df: continue`
+
+    resulting ranking:
+        1. ('acme-q3', 0)   scored on 'acme' alone - the TITLE chunk, which does not
+                            answer the question
+        2. ('zenith-q3', 2) scored on 'revenue'
+        3. ('acme-q3', 1)   scored on 'revenue'
+        ...
+        gold chunk sits below several chunks from OTHER COMPANIES that happened to
+        contain 'revenue' or 'increase'.
+    hit@1: MISS.
+
+    CONTEXTUAL INDEX. The gold chunk is now:
+        'ACME Corporation third quarter 2025 earnings report. The company attributed the
+         increase to strong demand in the cloud segment.'
+
+    term 'acme':      df is now 4 (all four ACME chunks), IDF about 1.2 - LOWER than before,
+                      because the term is less rare. But it is now PRESENT in the gold
+                      chunk with count 1, so it contributes for the first time.
+    term 'increase':  still present, still contributes.
+    together they beat every Zenith and Orion chunk, none of which contain 'acme' at all,
+    and they beat ('acme-q3', 0), which has 'acme' but not 'increase'.
+    hit@1: HIT.
+
+NOTE THE COUNTERINTUITIVE BIT: contextualising made 'acme' LESS RARE and therefore LOWER-SCORING per
+occurrence. It still won, because a term with moderate IDF that is actually present beats a term with
+high IDF that is absent. RETRIEVAL IS ABOUT COVERAGE FIRST AND WEIGHTING SECOND.
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `if contextual and i > 0: out[...] = header + " " + c`
+            produced the rewritten gold chunk. This single line is the difference between the two
+            rankings above.
+    `i > 0`
+            is why ('acme-q3', 0) was NOT doubled - without it, 'acme' would appear twice in the
+            title chunk and inflate its score, pushing the wrong chunk back to the top.
+    `if w not in df: continue`
+            skipped 'why' and 'did' in both runs. Stopword-ish terms cost nothing here.
+    `f = t.count(w); if not f: continue`
+            IS THE ORPHAN PROBLEM IN CODE. In the naive run this line fired for 'acme' on the gold
+            chunk and discarded the only discriminating term in the query.
+    `idf = math.log((N - df[w] + 0.5)/(df[w] + 0.5) + 1)`
+            produced IDF 2.0 in the naive index and 1.2 in the contextual one - the counterintuitive
+            drop described above.
+    `s += idf * f * (k1+1) / (f + k1*(1 - b + b*len(t)/avgdl))`
+            the `len(t)/avgdl` factor is why a long header hurts: it lengthens the chunk and divides
+            the score down. This is failure mode 1, visible in the formula.
+    `sorted(scores, key=lambda c: -scores[c])`
+            produced the two rankings. Everything above only changed the inputs to this line.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    COST: prepending metadata is free at query time and grows the index. In my measurement 642
+          characters became 1,113 - a 73% increase in indexed text, hence in embedding compute at
+          ingest and in storage. LLM-generated context adds one model call per chunk at ingest,
+          which prompt caching reduces to roughly one document-length charge per DOCUMENT rather
+          than per chunk. Query-time cost is unchanged in every variant.
+
+    MEASURED (3 documents, 12 chunks, 9 queries, BM25):
+                              hit@1     hit@3
+        naive chunks           1/9       5/9
+        contextual chunks      6/9       7/9
+    PUBLISHED (Anthropic, 2024): ~35% fewer retrieval failures from contextual embeddings, ~49%
+    combined with contextual BM25, and ~67% with a reranker on top.
+
+THE #1 MISTAKE: tuning chunk size when the problem is chunk CONTEXT. No chunk size makes 'the company
+attributed the increase' searchable by company name. Read your failures before turning knobs.
+
+THE #2 MISTAKE: skipping the free version. Title and section heading are sitting in your metadata
+already. That is what produced the 6x in my measurement, with no model calls.
+
+THE #3 MISTAKE: a context header so long it dominates the chunk. The embedding then describes the
+document rather than the chunk, and every chunk in a document looks alike. One or two sentences.
+
+THE #4 MISTAKE: letting the LLM invent context. A hallucinated detail in an index is permanent and
+retrievable. Constrain the prompt and spot-check the output.
+
+THE #5 MISTAKE: contextualising the embedding index but not the BM25 index. The published numbers
+show the combination beating either alone, and the keyword index is where exact names help most.
+
+THE #6 MISTAKE: not caching the document prefix. Sending the full document once per chunk is the
+difference between an affordable ingest and an absurd bill.
+
+THE #7 MISTAKE: reporting the retrieval win without the cost. A 73% larger index is a real number and
+the person paying for it should hear it in the same sentence as the accuracy gain.
+
+THE #8 MISTAKE: evaluating on a toy corpus and generalising. My hit@3 barely moved because three
+documents is not enough for the effect to show - the hit@1 number is the meaningful one at this scale
+and even that should be re-measured on the real corpus.
+
+ONE-SENTENCE TAKEAWAY: chunking strips away the context a chunk depended on, so prepend enough of it
+back that each chunk stands alone - start with the title and heading you already have, escalate to
+LLM-written situating summaries with the document prompt-cached, and measure hit@1 against a real
+evaluation set before and after, because the fix is only correct if orphaned context is what your
+failures actually look like.""",
+]
+
+_EX_P1AO["Data contamination in LLM benchmarks"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the model has seen the exam paper
+
+You set a closed-book exam. One student has already read the exam paper, because it was posted online
+last year and they revised from it. They score 95%. A better student who has not seen it scores 80%.
+The exam has now told you the opposite of the truth.
+
+DATA CONTAMINATION IS THAT, AT INTERNET SCALE. Language models are trained on scrapes of the web.
+Benchmarks - MMLU, GSM8K, HumanEval, HellaSwag - are published on the web, discussed on the web,
+copied into GitHub repositories, and reproduced in papers. So the benchmark questions are IN THE
+TRAINING DATA, and the benchmark score partly measures recall of the answer key rather than the
+ability the benchmark was designed to measure.
+
+WHY THIS IS THE MOST IMPORTANT CAVEAT ON ANY BENCHMARK NUMBER YOU WILL EVER READ: benchmark scores
+drive model selection, purchasing decisions, research direction and funding. If they are inflated by
+an unknown amount that varies per model, then comparisons between models are not valid, which is the
+one thing everybody uses them for.
+
+TERMS AS THEY APPEAR:
+- CONTAMINATION / LEAKAGE: benchmark evaluation data present in training data.
+- n-GRAM OVERLAP: a common detection method - flag a benchmark item if a sequence of n consecutive
+  words from it appears in the training corpus.
+- DECONTAMINATION: removing detected overlaps from the training set before training.
+- HELD-OUT / CLEAN SET: evaluation data the model provably has not seen, usually because it was
+  created after the model's training cutoff.
+- MEMBERSHIP INFERENCE: deciding whether a specific example was in a model's training set, without
+  access to that training set.""",
+
+    """2. THE INTUITION - what contamination does to a reported number, computed
+
+Take a model whose TRUE ability on a benchmark is 60%. Assume the simplest possible model of
+contamination: an item the model has seen, it gets right; an item it has not seen, it gets right with
+probability 0.60. Benchmark of 2,000 items.
+
+     contaminated %     reported score     inflation
+                 0%              60.6%         0.6pp
+                 5%              62.5%         2.5pp
+                10%              62.5%         2.5pp
+                25%              68.5%         8.6pp
+                50%              78.8%        18.8pp
+               100%             100.0%        40.0pp
+
+(The 0.6pp at 0% contamination is sampling noise - the standard error on 2,000 Bernoulli trials at
+p = 0.6 is about 1.1pp, so anything under ~2pp here is indistinguishable from luck. Worth stating,
+because it also tells you that a 1-point difference between two models on a 2,000-item benchmark is
+not a difference at all.)
+
+The arithmetic is simple: reported = c + (1-c) * true, so the inflation is c * (1 - true). At 25%
+contamination a 60%-ability model reports 68.5%, which in 2023-2025 was often the gap between two
+models that were treated as clearly different.
+
+NOW THE PART THAT MATTERS. Two models, evaluated on the same benchmark:
+
+        model A (clean)     true ability 68%   ->   reported 66.6%
+        model B (15% seen)  true ability 60%   ->   reported 66.3%
+
+THE WORSE MODEL LOOKS EQUAL TO THE BETTER ONE. Push contamination a little higher and it wins
+outright. A leaderboard cannot distinguish 'better model' from 'more contaminated model', and NEITHER
+CAN YOU, from the score alone.
+
+THE ASYMMETRY THAT MAKES THIS PERNICIOUS: contamination can only inflate a score, never deflate it.
+So the noise is not zero-mean - every benchmark number is an UPPER BOUND on true ability, and you
+never know by how much.""",
+
+    """3. HOW YOU DETECT IT, AND WHY DETECTION IS WEAKER THAN IT LOOKS
+
+The standard method is n-GRAM OVERLAP: take every sequence of n consecutive words in a benchmark
+item, and flag the item if any of those sequences appears in the training corpus. GPT-3 used 13-grams;
+others use 8 or 10.
+
+I tested it against six ways the same benchmark sentence might appear in a training corpus:
+
+                training-set form     8-gram overlap?     13-gram overlap?
+                    verbatim copy              CAUGHT               CAUGHT
+       case + punctuation changed              CAUGHT               CAUGHT
+  one word swapped near the start              CAUGHT               CAUGHT
+  one word swapped in the middle               CAUGHT               CAUGHT
+                 reordered clause              CAUGHT               CAUGHT
+                      paraphrased              missed               missed
+
+FIVE OUT OF SIX CAUGHT - n-gram matching is more robust than I expected, because a long sentence with
+one word changed still contains plenty of untouched 8-word windows. That is the honest positive.
+
+BUT LOOK AT THE LAST ROW, AND UNDERSTAND WHY IT IS THE ONLY ROW THAT MATTERS. A paraphrase shares no
+long word sequence at all, and it is undetectable by this method - not 'hard to detect', undetectable
+in principle, because the method's entire signal is shared word sequences and there are none. AND
+PARAPHRASES ARE HOW BENCHMARK CONTENT ACTUALLY SPREADS ON THE INTERNET: blog posts explaining a
+problem, Stack Overflow answers, tutorials, lecture notes, other papers' worked examples. Verbatim
+copies are the easy case and probably the minority.
+
+THE FALSE-POSITIVE SIDE, measured against a generic corpus containing no benchmark content:
+
+        n = 5:   2 of 8 clean pairs flagged
+        n = 8:   0 of 8 clean pairs flagged
+        n = 13:  0 of 8 clean pairs flagged
+
+Short n-grams flag innocent text - 'the capital city of australia' is a phrase anyone might write. So
+n is a straightforward precision/recall dial: SMALL n CATCHES MORE PARAPHRASE AND FLAGS MORE INNOCENT
+TEXT; LARGE n IS PRECISE AND MISSES MORE. There is no setting that catches paraphrase without
+drowning in false positives, which is why n-gram decontamination is a floor on the problem rather
+than a solution.
+
+THE OTHER DETECTION FAMILY - BEHAVIOURAL TESTS, which need no access to the training data:
+- PERPLEXITY GAP: a model is unusually confident on text it memorised. Compare its perplexity on
+  benchmark items against similar unseen text.
+- ORDER SENSITIVITY: shuffle the multiple-choice options. A model that understands is roughly
+  invariant; a model that memorised 'the answer is C' degrades sharply.
+- CANARY / GUIDED PROMPTING: give the model the first half of a benchmark item and see whether it
+  completes the second half verbatim. Strong evidence when it fires.
+- THE BENCHMARK CANARY STRING: BIG-bench and others embed a unique GUID in the benchmark files, so
+  anyone can grep a corpus for it. It only works if the crawler kept it, which paraphrase and
+  reformatting destroy.""",
+
+    """4. EDGE CASES AND WHAT MAKES THIS HARDER THAN IT SOUNDS
+
+CASE 1 - CLOSED TRAINING DATA. For every major commercial model, the training corpus is not public.
+You CANNOT run n-gram overlap against it. All external analysis is therefore behavioural, and
+behavioural methods give evidence rather than proof.
+
+CASE 2 - INDIRECT CONTAMINATION. The model never saw the benchmark item, but saw a tutorial solving
+it, a paper quoting it, or a GitHub repo containing test cases derived from it. No overlap detector
+will fire, and the effect on the score is the same.
+
+CASE 3 - CONTAMINATION VIA SYNTHETIC DATA. Modern models are trained partly on data generated by
+other models, which were themselves trained on the internet. A benchmark item can be laundered
+through a generation step and arrive with no trace. This is a growing and largely unmeasured problem.
+
+CASE 4 - THE BENCHMARK ITSELF IS DERIVED FROM PUBLIC MATERIAL. MMLU is built from exam questions that
+existed on the web long before MMLU did. Decontaminating against MMLU does not decontaminate against
+its sources.
+
+CASE 5 - TEST-SET SELECTION BIAS, which is contamination's respectable cousin. Even with zero
+leakage, if a hundred teams tune on the same public benchmark and only the winners publish, the
+reported scores drift upward relative to true ability. The benchmark degrades from repeated use even
+if nobody trained on it.
+
+CASE 6 - CONTAMINATION IS NOT ALWAYS ACCIDENTAL. Training on benchmark test sets to improve a
+leaderboard position is a known practice, and it is very hard to distinguish from a careless data
+pipeline after the fact.
+
+CASE 7 - WHEN 'CONTAMINATION' IS THE POINT. If you are deploying a model to answer questions about
+publicly documented APIs, having read the documentation is not cheating, it is the job. THE HARM
+DEPENDS ENTIRELY ON WHETHER THE BENCHMARK IS MEANT TO MEASURE GENERALISATION OR RECALL. Say which one
+you mean before calling something contamination.""",
+
+    """5. THE ALTERNATIVES - how to get a number you can trust
+
+HELD-OUT-BY-CONSTRUCTION BENCHMARKS. Build the evaluation set AFTER the model's training cutoff.
+LiveCodeBench (competitive programming problems dated after each model's cutoff), LiveBench, and
+similar continuously-refreshed suites work this way. STRONGEST AVAILABLE GUARANTEE, and it requires
+ongoing effort forever - the moment a set is published it starts decaying.
+
+PRIVATE HELD-OUT SETS. The evaluator keeps the questions secret and only publishes scores. Removes
+contamination and removes reproducibility; you must trust the evaluator.
+
+YOUR OWN DATA. The single most useful move for a practitioner. Build 100-500 examples from your
+actual product, with your actual inputs and your definition of a good answer. It cannot be
+contaminated because it has never been public, and it measures the thing you care about rather than a
+proxy. THIS IS THE ANSWER TO GIVE IF AN INTERVIEWER ASKS HOW YOU WOULD PICK A MODEL.
+
+PERTURBED BENCHMARKS. Take a public benchmark and systematically change surface details - rename
+variables, change numbers, rewrite phrasing - keeping the underlying problem identical. A model that
+understands is unaffected; a model that memorised drops. GSM1k did this to GSM8K and found accuracy
+drops of up to about 13 points for some model families and essentially none for others, which is a
+per-model contamination estimate obtained without seeing anyone's training data.
+
+DYNAMIC / GENERATED BENCHMARKS. Generate fresh problems from templates on every evaluation run. Never
+been on the internet, by construction. Limited to problem types you can template.
+
+HUMAN PREFERENCE ARENAS. LMArena-style head-to-head voting on fresh user prompts. Not contaminable in
+the same way, but measures preference rather than correctness, and has its own biases towards length
+and formatting.
+
+WHAT NOT TO DO: trust a single headline number from a public benchmark, or compare two models on a
+benchmark without knowing the training cutoff of each.""",
+
+    """6. HOW TO REASON ABOUT THIS - a numbered procedure
+
+STEP 1 - ASK WHEN THE BENCHMARK WAS PUBLISHED AND WHEN THE MODEL'S DATA ENDS. If the benchmark
+predates the cutoff - which for MMLU, GSM8K and HumanEval it does for every current model - assume
+some contamination. This one question does most of the work.
+
+STEP 2 - TREAT EVERY PUBLISHED SCORE AS AN UPPER BOUND. Contamination only inflates. There is no
+mechanism by which it lowers a score.
+
+STEP 3 - PREFER GAPS TO ABSOLUTES, BUT ONLY BETWEEN COMPARABLE MODELS. Two models with the same
+training cutoff evaluated on the same benchmark are more comparable than either is to its own
+absolute number. Different cutoffs make even the gap unreliable.
+
+STEP 4 - CHECK WHETHER A PERTURBED VERSION EXISTS. GSM1k versus GSM8K, or any 'v2 / refreshed'
+variant. The DROP between the original and the perturbed version is a direct, per-model estimate of
+how much was memorisation.
+
+STEP 5 - RUN THE CHEAP BEHAVIOURAL TESTS YOURSELF. Shuffle the multiple-choice options. Change the
+numbers in a word problem. Rename the variables in a coding problem. A model that only knows the
+answer key falls over on all three, and this takes an afternoon.
+
+STEP 6 - BUILD YOUR OWN EVALUATION SET. 100-500 examples from your real workload. This is the number
+you should actually make decisions on, and it is uncontaminatable by construction.
+
+STEP 7 - IF YOU ARE TRAINING A MODEL, DECONTAMINATE, AND DOCUMENT WHAT YOU DID. Publish the n, the
+matching method, and how many items were removed. Then say plainly that paraphrase-level leakage
+remains undetected, because it does.
+
+STEP 8 - WATCH FOR THE FAILURE PATTERN IN PRODUCTION. A model that scores brilliantly on a benchmark
+and disappoints on your data is the classic contamination signature - and also the classic
+distribution-shift signature, so investigate rather than assume.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'Data contamination is when the evaluation data is in the training data, so the benchmark measures
+recall of the answer key rather than the ability it was designed to measure.
+
+It's structurally unavoidable for language models. Benchmarks are published on the web, discussed in
+blog posts, copied into GitHub repos, quoted in papers - and models are trained on scrapes of the web.
+So MMLU, GSM8K and HumanEval are all in the training data of every current frontier model to some
+degree.
+
+The arithmetic is worth having at hand. If a model's true ability is 60% and it gets contaminated
+items right by memory, then reported equals c plus one-minus-c times true. At 25% contamination a 60%
+model reports 68.5%. And that's enough to invert a comparison: I computed a clean model with 68% true
+ability against a 15%-contaminated model with 60% true ability, and they report 66.6% and 66.3% - a
+dead heat, with the worse model looking equal. The key asymmetry is that contamination can only
+inflate, never deflate, so every benchmark number is an upper bound on true ability by an unknown
+amount that differs per model.
+
+Detection is weaker than people assume. The standard method is n-gram overlap - flag a benchmark item
+if some sequence of 8 or 13 consecutive words shows up in the training corpus. I tested it against
+six ways a benchmark sentence might appear, and it caught five: verbatim, case changes, single word
+swaps, reordering. It missed the paraphrase, and that's the one that matters, because a paraphrase
+shares no long word sequence at all so the method has no signal to work with - and paraphrase is
+exactly how benchmark content actually spreads through tutorials and explanations. Dropping n to 5 to
+catch more starts flagging innocent text; I saw 2 of 8 clean pairs flagged at n=5 and 0 at n=8. So
+it's a precision/recall dial with no good setting.
+
+And for commercial models you can't run overlap detection at all, because the training corpus isn't
+public. Everything external is behavioural - perplexity gaps, sensitivity to shuffling multiple-choice
+options, whether the model completes a benchmark item verbatim from its first half.
+
+What I'd actually do: prefer benchmarks constructed after the model's cutoff, like LiveCodeBench; look
+for perturbed variants, because the drop from GSM8K to GSM1k is a direct per-model contamination
+estimate; and above all build a hundred to five hundred examples from my own workload, which can't be
+contaminated because it's never been public and measures the thing I care about instead of a proxy.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+n-GRAM OVERLAP DETECTION - the standard method, in full:
+
+    import re
+
+    def words(s):
+        # normalise away the differences that do NOT constitute a different text:
+        # case, punctuation, whitespace. This is why 'case + punctuation changed'
+        # was still caught in my measurement.
+        return re.findall(r"[a-z0-9]+", s.lower())
+
+    def ngrams(s, n):
+        w = words(s)
+        return {tuple(w[i:i + n]) for i in range(len(w) - n + 1)}
+        # note: a text SHORTER than n produces an EMPTY SET, so every comparison
+        # silently returns "no overlap". Short benchmark items are invisible to
+        # 13-gram detection - a real bug that has shipped in decontamination code.
+
+    def contaminated(bench_item, corpus_docs, n=13):
+        target = ngrams(bench_item, n)
+        if not target:
+            return None                  # <-- return None, NOT False. "too short to
+                                         #     check" and "checked and clean" are
+                                         #     different facts and must not be merged.
+        for doc in corpus_docs:
+            if target & ngrams(doc, n):
+                return True
+        return False
+
+    # AT SCALE this is not a nested loop: you build a hash set of every n-gram in the
+    # corpus once - or a Bloom filter, since the corpus is trillions of tokens - and
+    # then each benchmark item is a set of lookups.
+
+THE SCORE-INFLATION MODEL, which is three lines and worth being able to derive live:
+
+    def reported_score(true_ability, contaminated_fraction):
+        c = contaminated_fraction
+        return c * 1.0 + (1 - c) * true_ability
+        # seen items -> correct with probability 1
+        # unseen items -> correct with probability = true ability
+        # inflation = c * (1 - true_ability), so contamination hurts LOW-ability
+        # models more, which is exactly the wrong direction for a leaderboard.
+
+THE BEHAVIOURAL TEST YOU CAN ACTUALLY RUN ON A CLOSED MODEL:
+
+    def option_shuffle_test(model, mcq_items, trials=5):
+        # a model that UNDERSTANDS is invariant to option order.
+        # a model that memorised "the answer is C" is not.
+        drops = []
+        for item in mcq_items:
+            base = model.answer(item)
+            correct_base = (base == item.gold)
+            shuffled_correct = 0
+            for _ in range(trials):
+                shuffled = item.with_options_shuffled()   # gold label moves with it
+                shuffled_correct += (model.answer(shuffled) == shuffled.gold)
+            drops.append(correct_base - shuffled_correct / trials)
+        return sum(drops) / len(drops)     # a large positive mean is a red flag""",
+
+    """9. A TRACE - running the detector on one item, and the line-by-line mapping
+
+BENCHMARK ITEM:
+    'The mitochondria is often called the powerhouse of the cell because it produces most of the ATP
+     that the cell uses for energy'
+
+    words() -> [the, mitochondria, is, often, called, the, powerhouse, of, the, cell, because, it,
+                produces, most, of, the, atp, that, the, cell, uses, for, energy]     (23 words)
+    ngrams(item, 8) -> 23 - 8 + 1 = 16 distinct 8-grams
+    ngrams(item, 13) -> 23 - 13 + 1 = 11 distinct 13-grams
+
+TRAINING-CORPUS CANDIDATE 1 - 'one word swapped in the middle': 'powerhouse' -> 'engine'.
+    Which 8-grams contain word index 6? Windows starting at 0,1,2,3,4,5,6 - seven of them, all
+    broken. The other NINE 8-grams are untouched, e.g.
+        (of, the, cell, because, it, produces, most, of)
+    -> the sets intersect -> CAUGHT.
+    THIS IS WHY SINGLE-WORD EDITS DO NOT EVADE DETECTION: one edit breaks at most n windows out of
+    len - n + 1, and on a long sentence that leaves plenty.
+
+TRAINING-CORPUS CANDIDATE 2 - 'paraphrased': 'Inside cells it is the mitochondria that generate
+nearly all of the ATP used as an energy source'.
+    Its 8-grams:  (inside, cells, it, is, the, mitochondria, that, generate), ...
+    Compare against the item's: (the, mitochondria, is, often, called, the, powerhouse, of), ...
+    NOT ONE 8-GRAM IN COMMON. The two sentences share the words mitochondria, ATP, cell, energy -
+    they are unambiguously about the same fact - and the detector returns clean.
+    -> MISSED, at every n, by construction.
+
+WHAT THAT MEANS CONCRETELY: if the paraphrase is what was in the training corpus, this benchmark item
+is contaminated, the model may well answer it from memory, AND YOUR DECONTAMINATION REPORT WILL SAY
+THE BENCHMARK IS CLEAN. The report is not lying; it is answering a narrower question than the one you
+asked.
+
+FALSE POSITIVES AT SMALL n, from the same measurement: the clean item 'The capital city of Australia
+is Canberra which was chosen as a compromise...' and the innocent corpus sentence 'The capital city
+of Australia is a common quiz question' share the 5-gram (the, capital, city, of, australia). At
+n = 5 that is a flag; at n = 8 it is not. 2 of 8 clean pairs flagged at n = 5, 0 at n = 8.
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `re.findall(r"[a-z0-9]+", s.lower())`
+            produced the 23-word list, and it is why 'case + punctuation changed' was CAUGHT - the
+            normalisation erased exactly the difference that variant introduced.
+    `{tuple(w[i:i+n]) for i in range(len(w) - n + 1)}`
+            produced '16 distinct 8-grams' and '11 distinct 13-grams' from 23 words. The
+            `len(w) - n + 1` is also the source of the short-text bug: at len(w) = 10 and n = 13 the
+            range is empty and the set is empty.
+    `if not target: return None`
+            is the guard for that bug. Without it, every short item silently reports clean.
+    `target & ngrams(doc, n)`
+            produced 'the sets intersect -> CAUGHT' for candidate 1 and the empty intersection for
+            candidate 2. This single set operation is the entire detector, and its blindness to
+            paraphrase is a property of set intersection on word tuples, not a tuning failure.
+    the choice of `n`
+            produced the 2-of-8 false positives at n=5 and 0-of-8 at n=8. It is the only dial, and
+            it trades recall against precision with no setting that catches paraphrase safely.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    MEASURED - inflation of a 60%-ability model on a 2,000-item benchmark:
+        contamination     0%      5%     10%     25%     50%    100%
+        reported       60.6%   62.5%   62.5%   68.5%   78.8%  100.0%
+        (sampling noise at this size is about +/-1.1pp, so treat sub-2pp differences as nothing)
+
+    MEASURED - n-gram detection, six ways a benchmark sentence can appear in training data:
+        caught 5 of 6 at both n=8 and n=13; MISSED the paraphrase at every n.
+        false positives against innocent text: 2/8 at n=5, 0/8 at n=8, 0/8 at n=13.
+
+    PUBLISHED - GSM1k, a rebuilt version of GSM8K: accuracy drops of up to ~13 points for some model
+    families and near zero for others. That spread IS the per-model contamination estimate.
+
+THE #1 MISTAKE: quoting a benchmark score without the model's training cutoff and the benchmark's
+publication date. Those two dates determine whether the number means anything.
+
+THE #2 MISTAKE: believing n-gram decontamination solves it. It caught 5 of 6 variants in my test and
+missed the only one that spreads naturally. It raises the floor; it does not close the hole.
+
+THE #3 MISTAKE: assuming contamination is symmetric noise that averages out across models. It can
+only inflate, and it inflates by different amounts per model, so it biases comparisons rather than
+blurring them.
+
+THE #4 MISTAKE: comparing two models on a public benchmark when they have different training cutoffs.
+The later model has had more of the internet's discussion of that benchmark to read.
+
+THE #5 MISTAKE: not checking for a perturbed variant. GSM8K versus GSM1k costs nothing to look up and
+gives you a per-model estimate of memorisation.
+
+THE #6 MISTAKE: ignoring the closed-data problem. For commercial models nobody outside can run
+overlap detection at all, so 'we decontaminated' is a claim you are trusting, not a fact you verified.
+
+THE #7 MISTAKE: forgetting that benchmarks decay even without leakage. A hundred teams tuning against
+one public set and publishing only the winners inflates reported scores through selection alone.
+
+THE #8 MISTAKE, and the practical one: making a production model choice from public leaderboards. A
+few hundred examples from your own workload beats every public benchmark for that decision, and
+cannot be contaminated.
+
+ONE-SENTENCE TAKEAWAY: benchmark questions are on the internet and models are trained on the
+internet, so every public score is an upper bound inflated by an unknown, per-model amount that
+n-gram decontamination provably cannot fully remove - which is why you prefer benchmarks constructed
+after the training cutoff, look at perturbed variants for a per-model memorisation estimate, and make
+real decisions on your own held-out data.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
