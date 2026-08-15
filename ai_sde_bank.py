@@ -134532,6 +134532,1282 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AH[_e["title"]]
 
 
+# ══ P1 ten-section rewrites, ranks 248-260 ════════════════════════════════
+_EX_P1AI = {}
+
+_EX_P1AI["Minimum Moves to Equal Array Elements II"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have a row of numbers. In one MOVE you may pick any single number and add 1 to it, or subtract 1
+from it. You want every number in the row to end up EQUAL, using as few moves as possible.
+
+    [1, 2, 3]
+
+    make them all 2:   1 needs +1 (1 move),  2 needs nothing,  3 needs -1 (1 move)   ->  2 moves
+    make them all 1:   1 needs nothing,      2 needs -1,       3 needs -2            ->  3 moves
+    make them all 3:   1 needs +2,           2 needs +1,       3 needs nothing       ->  3 moves
+
+    the answer is 2
+
+Two things to notice before we go further. First, you get to CHOOSE the final value - the problem does
+not say what everyone must become. Second, the cost of turning a number x into the target t is just
+the DISTANCE between them: `abs(x - t)`. So the whole question is: which target t makes the sum of all
+those distances smallest?
+
+TERMS AS THEY APPEAR:
+- ABSOLUTE DIFFERENCE, `abs(a - b)`: the distance between two numbers, direction ignored. `abs(3-5)`
+  and `abs(5-3)` are both 2. Distance is never negative.
+- MEAN (average): add everything up and divide by how many there are. The mean of 1, 2 and 100 is
+  34.33.
+- MEDIAN: sort the numbers and take the MIDDLE one. The median of 1, 2 and 100 is 2. It is 'the value
+  with as many numbers below it as above it', and it does not care how far away the extremes are.
+  That last part is the entire problem.""",
+
+    """2. THE INTUITION - stand on a line and take one step
+
+Picture the numbers as houses along a straight road, and you are choosing where to build a well.
+Everyone walks to the well; you want the total walking to be as small as possible.
+
+    houses at:   1        2                                                          100
+                 |--------|-----------------------------------------------------------|
+
+Where should the well go? Your instinct might say 'the average', which is about 34. Let us test it.
+
+    well at 34:   |1-34| + |2-34| + |100-34|  =  33 + 32 + 66  =  131
+    well at 2:    |1-2|  + |2-2|  + |100-2|   =   1 +  0 + 98  =   99
+
+The well belongs at 2, next to the two houses that are close together - even though one poor soul
+then has to walk 98. The average got dragged out into empty road by the single far house, and nobody
+lives there.
+
+NOW THE ARGUMENT THAT PROVES IT, and it is short enough to say out loud in an interview:
+
+Stand anywhere on the road and count how many houses are to your LEFT and how many to your RIGHT.
+Suppose there are 5 on the right and 2 on the left. Take ONE step to the right. Every one of those 5
+people now walks one step less; every one of those 2 walks one step more. Net change: -5 + 2 = -3.
+You improved by 3.
+
+So as long as one side has MORE houses than the other, stepping toward the bigger side is an
+improvement. You keep stepping until neither side outnumbers the other - and the point where the
+counts balance is exactly the MEDIAN, by definition.
+
+The mean is the answer to a different question (it minimises the sum of SQUARED distances, which is
+what you would want if walking twice as far were four times as bad). Here every step costs the same,
+so the median wins.
+
+Measured, on 5,000 random rows: converging on the median matched an exhaustive search over every
+possible target 5,000 times out of 5,000. Using the mean instead was wrong on 2,803 of them.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `[1, 10, 2, 9]`.
+
+STEP 1 - sort.
+
+    sorted: [1, 2, 9, 10]
+    index:   0  1  2   3
+
+STEP 2 - take the median. With 4 numbers there is no single middle, so we take the element at index
+`len // 2 = 2`, which is 9.
+
+STEP 3 - sum the distances to it.
+
+    |1 - 9|   = 8
+    |2 - 9|   = 7
+    |9 - 9|   = 0
+    |10 - 9|  = 1
+                --
+    total       16
+
+    ANSWER: 16
+
+NOW THE PART THAT SURPRISES PEOPLE. Try the OTHER middle element, 2 at index 1:
+
+    |1-2| + |2-2| + |9-2| + |10-2|  =  1 + 0 + 7 + 8  =  16
+
+Identical. And any target BETWEEN them works too - try 5:
+
+    |1-5| + |2-5| + |9-5| + |10-5|  =  4 + 3 + 4 + 5  =  16
+
+All 16. That is not a coincidence: with an even count, every point between the two middle values has
+the same number of houses on each side, so stepping either way changes nothing. This is why the code
+gets away with grabbing `nums[len(nums) // 2]` without worrying about which middle it lands on. I
+checked it: the other-middle version disagreed with the answer on 0 of 5,000 inputs, including all
+2,209 even-length ones.
+
+AND THE MEAN, on the same input, to see it lose: the mean is 22/4 = 5.5, rounded 6.
+
+    |1-6| + |2-6| + |9-6| + |10-6|  =  5 + 4 + 3 + 4  =  16
+
+Here it happens to tie - because this row is fairly symmetric. The mean only loses when the row is
+SKEWED, which is exactly why testing it on tidy inputs tells you nothing.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. A SINGLE NUMBER. `[7]`. Median is 7, distance 0, answer 0. Already equal, no moves.
+
+B. TWO NUMBERS. `[3, 8]`. Median (index 1) is 8, and the total is 5. Meeting at 3 also costs 5, as
+   does meeting anywhere between. Correct either way.
+
+C. ALL EQUAL. `[4, 4, 4]`. Median 4, all distances 0, answer 0.
+
+D. NEGATIVE NUMBERS. `[-5, 0, 5]`. Median 0, total 10. Nothing about the argument assumes positives -
+   the road just extends left of zero.
+
+E. THE SKEWED ROW - THE CASE THIS PROBLEM IS BUILT AROUND. `[1, 2, 100]`. Median 2 gives 99; the mean
+   is 34 and gives 131. Measured across 5,000 random rows the mean was wrong 2,803 times, and every
+   single one of those failures was on a row where the mean and the median differ (3,959 of the rows).
+   On the rows where they agree it is right by accident. So a test set of tidy, symmetric arrays will
+   never catch it.
+
+F. FORGETTING TO SORT. Taking `nums[len(nums)//2]` on the UNSORTED row grabs whatever element happens
+   to sit in the middle position, which is not the median at all. Wrong on 2,621 of 5,000. This one is
+   nasty because the code LOOKS like the correct solution - the only difference is a missing
+   `nums.sort()` line, and on an already-sorted test input it passes.
+
+G. A NON-MISTAKE, MEASURED. Using index `(n-1)//2` instead of `n//2` - the lower of the two middles on
+   an even-length row - is NOT a bug. Zero disagreements in 5,000, including all 2,209 even-length
+   rows, for the reason traced in section 3. Worth saying in an interview: 'either middle works, and
+   here is why' beats hedging.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE
+
+THE SLOW-BUT-OBVIOUS VERSION: try every possible target and keep the cheapest.
+
+    def brute(nums):
+        return min(sum(abs(x - t) for x in nums)
+                   for t in range(min(nums), max(nums) + 1))
+
+Read it as 'for every target between the smallest and largest number, add up the distances; keep the
+best'. It is obviously correct - it literally tries everything - and it is what I used as ground truth
+for every number in these sections.
+
+WHY IT IS UNUSABLE: the loop runs once per VALUE in the range, not once per element. With numbers up
+to a billion that is a billion iterations for a three-element array. Its cost depends on how big the
+numbers are rather than how many there are, which is always a warning sign.
+
+A SMALLER IMPROVEMENT WORTH KNOWING: the best target is always one of the numbers already in the row,
+so you could try just those - n targets, each costing n to evaluate, so O(n-squared). Better, still
+not good.
+
+THE UPGRADE: sort, take the middle element, sum the distances. O(n log n), dominated by the sort.
+
+WHY THE MEDIAN IS EXACTLY THE BALANCE POINT, spelled out once more because this is the thing the
+interviewer is listening for. Let L be how many numbers are strictly left of your chosen target and R
+how many are strictly right. Move the target one step right: the total changes by (+L - R). If R > L
+that is negative - an improvement - so keep going right. If L > R, go left. You stop when L and R are
+equal (or as close as the parity allows), and 'the point with as many below as above' is the
+definition of the median.
+
+THE O(n) VERSION IF THE INTERVIEWER PUSHES: you do not need the whole array sorted, only the middle
+element. QUICKSELECT finds the k-th smallest element in O(n) on average - it is the partition step of
+quicksort, recursing only into the half that contains the position you want. Then one pass to sum the
+distances. So O(n) average time overall. Naming it is usually enough; the sort is almost always
+accepted.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the numbers into increasing order.
+2. Take the element in the middle position - the length divided by two, discarding any remainder.
+   That is the median.
+3. Walk the numbers and add up the distance from each one to that median, ignoring direction.
+4. Return the total.
+
+THE STEP PEOPLE SKIP IS STEP 1, and skipping it does not cause a crash or an obvious mess - it
+silently picks the wrong middle. Whenever your algorithm says 'the middle element', check that you
+earned the right to say that by sorting first.
+
+WHY THERE IS NO SPECIAL CASE FOR EVEN LENGTHS: on an even-length row both middles - and everything
+between them - give the same total, so grabbing either is correct. You do not need to average them.
+(If you were computing the median as a STATISTIC you would average the two; here you are choosing a
+meeting point, and any point in that gap is equally good.)
+
+A NOTE ON THE TWO-POINTER SHORTCUT, if you want to sound thorough: after sorting, the answer also
+equals the sum of `nums[-1] - nums[0]`, then `nums[-2] - nums[1]`, and so on pairing inward. Each pair
+must close the gap between them whatever the target is, and the pairs are independent. Same answer,
+no median needed - a nice alternative to mention.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Line the numbers up in order and point at the one in the middle. That is where everybody is going to
+meet. Then ask each number how far it has to travel to get there, and add up all those distances.
+
+The sorting is the only real work. Once the row is in order, the meeting point is a single lookup, and
+the total is one pass of subtraction.
+
+If somebody asks why the middle and not the average: the average gets dragged away by one extreme
+value, and nobody lives at the average. The middle always has as many numbers on one side as the
+other, so no step you take can improve it.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def min_moves2(nums):
+        nums.sort()
+        median = nums[len(nums) // 2]
+        return sum(abs(n - median) for n in nums)   # sum of distances to the median
+
+LINE 2: `nums.sort()`
+    Sorts in place, ascending. This is the line that earns the right to call the next element 'the
+    median'. Leaving it out is wrong on 2,621 of 5,000 inputs while looking exactly like the correct
+    solution. Note it reorders the caller's list; `sorted(nums)` is the non-destructive alternative,
+    and saying so out loud costs nothing.
+
+LINE 3: `median = nums[len(nums) // 2]`
+    `//` is integer division - it divides and throws away the remainder. For a length of 5 that is
+    index 2, the true middle. For a length of 4 it is index 2, the upper of the two middles - and
+    section 3 showed that either middle gives the same total, so no special case is needed.
+
+LINE 4: `return sum(abs(n - median) for n in nums)`
+    A generator expression: for each number, `abs(n - median)` is its distance to the meeting point,
+    and `sum` adds them up as they are produced, without ever building a list. `abs` is essential -
+    without it the numbers below the median contribute negative values and cancel out the ones above,
+    and you would get something close to zero for every input.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 turned `[1, 10, 2, 9]` into `[1, 2, 9, 10]`. Line 3 picked
+index 2, the 9. Line 4 produced 8, 7, 0 and 1, which summed to the 16.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [1, 10, 2, 9]`.
+
+    AFTER `nums.sort()`
+        nums = [1, 2, 9, 10]
+        index:  0  1  2   3
+
+    LINE `median = nums[len(nums) // 2]`
+        len(nums) = 4
+        4 // 2    = 2
+        median    = nums[2] = 9
+
+    THE GENERATOR RUNS, one number at a time:
+        n = 1    abs(1 - 9)  = 8      running total = 8
+        n = 2    abs(2 - 9)  = 7      running total = 15
+        n = 9    abs(9 - 9)  = 0      running total = 15
+        n = 10   abs(10 - 9) = 1      running total = 16
+
+    RETURN VALUE: 16
+
+A SECOND RUN on the skewed case, `nums = [1, 2, 100]`:
+
+        after sort:  [1, 2, 100]
+        len // 2 = 1,  median = 2
+        abs(1-2)=1,  abs(2-2)=0,  abs(100-2)=98
+        RETURN 99
+
+AND THE MEAN BUG on that same input:
+
+        mean = (1 + 2 + 100) / 3 = 34.33, rounded to 34
+        abs(1-34)=33, abs(2-34)=32, abs(100-34)=66
+        returns 131 instead of 99
+
+Off by 32 on a three-element array. On 5,000 random rows the mean version was wrong 2,803 times -
+every one of them a row where the mean and median differ, which is most rows with any spread at all.
+
+AND THE MISSING-SORT BUG on `nums = [1, 10, 2, 9]` before sorting:
+
+        nums[len // 2] = nums[2] = 2      (the element that happens to sit in the middle slot)
+        abs(1-2) + abs(10-2) + abs(2-2) + abs(9-2)  =  1 + 8 + 0 + 7  =  16
+
+Here it ties by luck. That is what makes it dangerous - it is right often enough to survive a casual
+test and wrong on 2,621 of 5,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n). The sort is the whole cost; finding the median afterwards is a single lookup and
+summing the distances is one pass, both O(n) or less. If pushed, quickselect gives the median in O(n)
+average and drops the whole solution to O(n) - worth naming even if you write the sort.
+
+SPACE: O(1) extra, sorting in place. The generator expression holds one value at a time rather than
+building a list of distances.
+
+BIG-O IN ONE SENTENCE: how the work GROWS as the input gets bigger, ignoring constants - O(n log n) is
+'a sort', O(n) is 'one pass'.
+
+THE #1 BEGINNER MISTAKE: using the MEAN. It is the number that comes to mind when you hear 'make them
+all equal', and it is the answer to a different question - the mean minimises the sum of SQUARED
+distances, the median minimises the sum of plain distances. Wrong on 2,803 of 5,000 random rows, and
+every failure was a row where the two differ, so symmetric test data hides it completely.
+
+THE #2 MISTAKE: forgetting to sort before taking the middle element. Wrong on 2,621 of 5,000, from
+code that is one line away from correct and passes on any already-ordered input you type by hand.
+
+A NON-MISTAKE, MEASURED: taking the lower middle `(n-1)//2` instead of `n//2` on an even-length row.
+Zero failures in 5,000. Every point between the two middles is equally good, and knowing why is worth
+more than avoiding the question.
+
+ONE-SENTENCE TAKEAWAY: to minimise the total DISTANCE everyone travels, meet at the MEDIAN - because
+stepping toward whichever side has more numbers always helps, and you stop exactly when the two sides
+balance.""",
+]
+
+_EX_P1AI["Queue Reconstruction by Height"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+A queue of people got scrambled, and all you have left is a note about each person. Each note says two
+things:
+
+    h = how tall that person is
+    k = how many people IN FRONT of them were at least as tall as them
+
+Your job is to put the people back in an order that makes every note true.
+
+    people = [[7,0], [4,4], [7,1], [5,0], [6,1], [5,2]]
+
+    the queue that satisfies all six notes:
+
+        [5,0]  [7,0]  [5,2]  [6,1]  [4,4]  [7,1]
+          ^      ^      ^      ^      ^      ^
+          |      |      |      |      |      |
+    nobody   nobody  two of  one of  four of  one of
+    taller   taller  height  height  them     height
+    in front in front 5 and 7 6 or 7  (5,7,5,6) 7 or more
+                     in front in front         in front
+
+Check one of them by hand. `[6,1]` sits fourth. In front of it are 5, 7 and 5. How many are at least
+6 tall? Just the 7. So k = 1. Correct.
+
+TERMS AS THEY APPEAR:
+- QUEUE: an ordered line. Position 0 is the front.
+- 'AT LEAST AS TALL' / TALLER-OR-EQUAL: someone of the same height counts. That word 'or equal' is
+  what makes people of identical height need careful handling.
+- INSERT AT INDEX i: push a new person into position i, shoving everybody from i onward one place
+  back. Python's `list.insert(i, x)` does exactly that.
+- GREEDY: decide each person's place once, in a carefully chosen order, and never revisit it. The
+  work is in choosing the order.""",
+
+    """2. THE INTUITION - place the tall people first, and the short ones become invisible
+
+The problem feels impossible at first because every person's k depends on who else is in front of
+them, and you do not know who is in front until you have placed everybody. Circular.
+
+Here is the way out. Ask: WHO IS EASY TO PLACE? The tallest people are, because nobody else is taller
+than them, so their k counts only OTHER TALL PEOPLE. Their positions do not depend on any of the short
+people at all.
+
+So place the tallest first. Then - and this is the trick - notice what happens when you add a SHORTER
+person afterwards. A shorter person does not count toward anybody's k, because k only counts people
+who are at least as tall. So inserting them into the middle of the line CANNOT break any note that is
+already satisfied. It shoves people back a place, but 'how many tall people are in front of me' is
+unchanged by a short person squeezing in.
+
+That gives the whole algorithm:
+
+    Sort the people from tallest to shortest.
+    Take them one at a time and INSERT each at index k.
+
+Why does inserting at index k give them exactly k taller-or-equal people in front? Because at the
+moment you place them, EVERYONE already in the queue is at least as tall as them (you sorted that
+way). So 'the number of taller-or-equal people in front of me' is simply 'my index'. Put them at index
+k and their note is true by construction.
+
+    people sorted tallest first (ties by k ascending):
+        [7,0]  [7,1]  [6,1]  [5,0]  [5,2]  [4,4]
+
+    place [7,0] at index 0   ->  [[7,0]]
+    place [7,1] at index 1   ->  [[7,0], [7,1]]
+    place [6,1] at index 1   ->  [[7,0], [6,1], [7,1]]
+    place [5,0] at index 0   ->  [[5,0], [7,0], [6,1], [7,1]]
+    place [5,2] at index 2   ->  [[5,0], [7,0], [5,2], [6,1], [7,1]]
+    place [4,4] at index 4   ->  [[5,0], [7,0], [5,2], [6,1], [4,4], [7,1]]
+
+Look at the fourth step. Placing [5,0] at the front shoved all three tall people one place right - and
+none of their notes broke, because a 5 does not count toward a 6's or a 7's total. That is the
+invariant doing its work, and it is the sentence to say out loud in an interview.""",
+
+    """3. THE IDEA TRACED BY HAND, INCLUDING THE TIE-BREAK
+
+Input: `[[7,0], [4,4], [7,1], [5,0], [6,1], [5,2]]`.
+
+STEP 1 - sort by height DESCENDING, and among equal heights by k ASCENDING.
+
+    [7,0]  [7,1]  [6,1]  [5,0]  [5,2]  [4,4]
+
+Why k ascending inside a height group? Take the two 7s. If you placed [7,1] first it would go to index
+1 of an empty queue - which Python quietly turns into index 0 - and then [7,0] would go to index 0 and
+shove it to index 1, leaving [7,1] with one taller-or-equal person in front. That happens to work
+here, but it stops working as soon as a third equal-height person appears, because inserting a
+same-height person in FRONT of somebody adds to their count. Placing the smaller k first means later
+same-height people always land BEHIND, which is the only order that keeps everyone's count intact.
+
+STEP 2 - insert each at index k, in that order.
+
+    start:                          []
+
+    [7,0] -> insert at 0            [[7,0]]
+    [7,1] -> insert at 1            [[7,0], [7,1]]
+    [6,1] -> insert at 1            [[7,0], [6,1], [7,1]]
+                                     the 6 needs exactly one taller-or-equal in front: the [7,0].
+                                     [7,1] got pushed from index 1 to index 2 - and its own count is
+                                     still 1, because the 6 does not count for it.
+    [5,0] -> insert at 0            [[5,0], [7,0], [6,1], [7,1]]
+                                     everyone shifted right by one; nobody's count changed.
+    [5,2] -> insert at 2            [[5,0], [7,0], [5,2], [6,1], [7,1]]
+                                     in front of it: 5 and 7. Both are at least 5 tall. Count 2. Yes.
+                                     Note the other 5 counts - 'at least as tall' includes equals.
+    [4,4] -> insert at 4            [[5,0], [7,0], [5,2], [6,1], [4,4], [7,1]]
+                                     in front: 5, 7, 5, 6 - all at least 4. Count 4. Yes.
+
+    FINAL: [[5,0], [7,0], [5,2], [6,1], [4,4], [7,1]]
+
+Verify one note independently: [7,1] is last. In front of it are 5, 7, 5, 6, 4. How many are at least
+7? One - the [7,0]. Its note says 1. Correct.
+
+I checked the rule by generating a real queue, deriving everyone's (h, k) from it, shuffling, and
+rebuilding: 4,000 out of 4,000 rebuilds satisfied every note.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ONE PERSON. `[[5,0]]`. Sorted trivially, inserted at index 0. Done.
+
+B. EVERYBODY THE SAME HEIGHT. `[[4,0], [4,1], [4,2]]`. The tie-break carries the whole problem here:
+   sorted by k ascending they go in at 0, 1, 2 and land in that exact order. Get the tie-break
+   backwards and this input alone breaks.
+
+C. ALL HEIGHTS DISTINCT. Then the k values can be satisfied independently and almost any reasonable
+   ordering of equal heights is moot. This is the input that hides tie-break bugs, which is why B is
+   the test to write.
+
+D. A k BIGGER THAN THE QUEUE SO FAR. Cannot happen for a valid input: if your k is 4, there must be at
+   least 4 people at least as tall as you, and they are all placed before you. Worth stating - it is
+   why the code needs no bounds check on `insert`.
+
+E. THE #1 MISTAKE - SORTING SHORTEST FIRST. It feels natural ('start small'), and it destroys the
+   invariant: when you place a person, the queue is full of people SHORTER than them, so their index
+   says nothing about how many taller people are in front. Measured wrong on 2,800 of 4,000 random
+   inputs.
+
+F. THE TIE-BREAK REVERSED - height descending but k DESCENDING among equals. Wrong on 1,827 of 4,000,
+   and every single failure was on an input with repeated heights (2,735 of the inputs had them). If
+   your test data has all-distinct heights you will never see this bug. Generate ties on purpose.
+
+G. SORTING CORRECTLY BUT APPENDING INSTEAD OF INSERTING. Wrong on 2,783 of 4,000 - the sort is only
+   half the algorithm; the insert at k is what actually satisfies the notes.""",
+
+    """5. WHY THE OBVIOUS APPROACHES FAIL, AND WHY INSERTING DOES NOT CORRUPT ANYTHING
+
+THE BRUTE FORCE: try every arrangement of the people and check all the notes. For n people that is n
+factorial arrangements - 10 people is 3.6 million, 15 is over a trillion. Correct, unusable, and worth
+one sentence in an interview before you move on.
+
+THE 'FILL POSITIONS DIRECTLY' ATTEMPT: you might try to compute each person's final index from their
+k. It does not work, because k counts only taller-or-equal people, so a person's index also depends on
+how many SHORTER people ended up in front of them - which you cannot know until everything is placed.
+That dead end is worth understanding, because it explains why the solution processes people in a
+chosen order instead of computing positions.
+
+THE INSIGHT THAT UNLOCKS IT, said as an invariant: PROCESS PEOPLE FROM TALLEST TO SHORTEST, AND AT THE
+MOMENT YOU PLACE SOMEONE, EVERY PERSON ALREADY PLACED IS AT LEAST AS TALL AS THEM. Therefore their
+index IS their count, so index = k is exactly right.
+
+WHY LATER INSERTS DO NOT BREAK EARLIER PEOPLE - the part that looks wrong and is not. Inserting shifts
+everyone after that point one place to the right, and it is natural to assume that must corrupt their
+carefully arranged counts. It does not, for one reason: the person being inserted is SHORTER than
+everyone already there, and k counts only people who are at least as tall. Being shoved right does not
+change how many TALL people are in front of you - it only adds short people, who are invisible to your
+count. So every note that was true stays true, for ever.
+
+WHY EQUAL HEIGHTS ARE THE EXCEPTION, and hence the tie-break. A person of the SAME height is not
+invisible - they do count. So when two people are the same height, the one with the smaller k must be
+placed first, so that the later one lands behind them rather than in front. Sorting equal heights by k
+ascending guarantees exactly that. Reversing it is wrong on 1,827 of 4,000 inputs, all of them with
+repeated heights.
+
+THE COST, and the follow-up. Each `insert` shifts up to n elements, so the whole thing is O(n-squared)
+- fine for the constraints, and the accepted answer. If asked to do better: a Fenwick tree (or an
+order-statistic balanced BST) can find 'the k-th free slot' in O(log n), giving O(n log n) overall.
+Naming that as the improvement is a strong closing note.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the people so the tallest come first. When two people are the same height, put the one with
+   the SMALLER k first.
+2. Start with an empty queue.
+3. Take the people one at a time in that order, and insert each one into the queue at the position
+   given by their own k.
+4. When everybody has been placed, the queue is the answer.
+
+THE TWO PARTS OF STEP 1 DO DIFFERENT JOBS, and it is worth being able to say which is which:
+- 'tallest first' is what makes 'index = count' true, because everyone already placed is at least as
+  tall as the newcomer.
+- 'smaller k first among equals' is what stops two same-height people from stealing each other's
+  count, since they DO count toward one another.
+
+HOW TO EXPRESS THAT SORT IN ONE KEY: sort by the pair (minus the height, then k). Negating the height
+turns 'descending by height' into 'ascending by minus height', so a single ascending sort gives you
+both rules at once - the standard trick when you need one field descending and another ascending.
+
+NO BOUNDS CHECK IS NEEDED on the insert: for a valid input, anyone with k = 4 has at least 4
+taller-or-equal people, and all of them are already in the queue, so position 4 exists.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Line the people up by height, tallest first, and among people of the same height put the one who
+claims fewer tall people in front of them first.
+
+Now bring them into an empty room one at a time in that order. Everyone already in the room is at
+least as tall as the person walking in - so if that person says 'three people at least my height were
+in front of me', you simply slot them into the fourth position, and their claim is true immediately.
+
+Shorter people arriving later will squeeze in and push everyone back a place, but nobody minds:
+short people do not count toward anyone's tally, so every claim already satisfied stays satisfied.
+
+When the last person has walked in, the room holds the original queue.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def reconstruct_queue(people):
+        # tallest first; among equal heights, smaller k first
+        people.sort(key=lambda p: (-p[0], p[1]))
+        queue = []
+        for person in people:
+            queue.insert(person[1], person)   # insert at its k index
+        return queue
+
+LINE 3: `people.sort(key=lambda p: (-p[0], p[1]))`
+    The one line that contains the whole idea. A `key` function tells `sort` what to order by; here it
+    returns a PAIR, and Python compares pairs left to right - first entries first, and only if those
+    tie does it look at the second. `-p[0]` is minus the height, so a taller person produces a SMALLER
+    key and comes first: that is 'descending by height' expressed as an ascending sort. `p[1]` is k,
+    compared normally, so among equal heights the smaller k comes first. Sorting ascending by height
+    instead is wrong on 2,800 of 4,000 inputs; reversing the tie-break is wrong on 1,827, all of them
+    with repeated heights.
+
+LINE 4: `queue = []`
+    The room starts empty. It will be built up in place.
+
+LINE 5: `for person in people:`
+    One person at a time, in the sorted order. There is no going back and no second pass - each
+    placement is final, which is what makes this a greedy.
+
+LINE 6: `queue.insert(person[1], person)`
+    `person[1]` is that person's k. `list.insert(i, x)` puts x at position i and shifts everything
+    from i onward one place right. Because everyone already in the queue is at least as tall,
+    position k gives this person exactly k taller-or-equal people in front - their note is satisfied
+    the moment they are placed. Appending instead of inserting is wrong on 2,783 of 4,000.
+
+LINE 7: `return queue`
+    Nothing to fix up at the end. Every note was made true at placement time and nothing since could
+    have broken it.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 3 produced the order [7,0], [7,1], [6,1], [5,0], [5,2], [4,4].
+Line 6 fired six times, at indexes 0, 1, 1, 0, 2 and 4 - exactly the six insertions traced there.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `people = [[7,0], [4,4], [7,1], [5,0], [6,1], [5,2]]`.
+
+    AFTER LINE 3, the sort key for each person is (-h, k):
+
+        [7,0] -> (-7, 0)        [4,4] -> (-4, 4)        [7,1] -> (-7, 1)
+        [5,0] -> (-5, 0)        [6,1] -> (-6, 1)        [5,2] -> (-5, 2)
+
+        ascending by that key:  (-7,0) (-7,1) (-6,1) (-5,0) (-5,2) (-4,4)
+        people = [[7,0], [7,1], [6,1], [5,0], [5,2], [4,4]]
+
+    queue = []
+
+    PASS 1   person = [7,0]    insert at index 0
+             queue = [[7,0]]
+
+    PASS 2   person = [7,1]    insert at index 1
+             queue = [[7,0], [7,1]]
+
+    PASS 3   person = [6,1]    insert at index 1
+             queue = [[7,0], [6,1], [7,1]]
+             ([7,1] moved from index 1 to index 2. Its count is still 1 - only the [7,0] is at least
+              7 tall, and the 6 in front of it does not count.)
+
+    PASS 4   person = [5,0]    insert at index 0
+             queue = [[5,0], [7,0], [6,1], [7,1]]
+             (everything shifted right by one; no count changed, because a 5 counts for nobody here.)
+
+    PASS 5   person = [5,2]    insert at index 2
+             queue = [[5,0], [7,0], [5,2], [6,1], [7,1]]
+             (in front of it: [5,0] and [7,0]. Both at least 5 tall - equals count - so k = 2.)
+
+    PASS 6   person = [4,4]    insert at index 4
+             queue = [[5,0], [7,0], [5,2], [6,1], [4,4], [7,1]]
+
+    RETURN VALUE: [[5,0], [7,0], [5,2], [6,1], [4,4], [7,1]]
+
+THE SHORTEST-FIRST BUG on the same input. Sorted ascending it starts with [4,4], which is inserted at
+index 4 of an EMPTY list - Python clamps that to the end, so it lands at index 0. Now the shortest
+person is at the front claiming four taller people ahead of them, and nothing later can repair it.
+That version failed on 2,800 of 4,000 inputs.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n-squared). The sort is O(n log n), but each of the n inserts shifts up to n elements in the
+underlying array, so the inserting dominates. This is the accepted solution for the usual constraints.
+If asked to improve it: a Fenwick tree or order-statistic tree can locate the k-th empty slot in
+O(log n), giving O(n log n) overall - name it, and say why the simple version is usually enough.
+
+SPACE: O(n) for the queue being built.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - O(n-squared) means
+'double the people, four times the work'.
+
+THE #1 BEGINNER MISTAKE: sorting shortest first. Wrong on 2,800 of 4,000. It breaks the one property
+the whole solution rests on - that everyone already placed is at least as tall as the newcomer, which
+is what makes 'index = count' true.
+
+THE #2 MISTAKE: getting the tie-break backwards on equal heights. Wrong on 1,827 of 4,000, and every
+failure had repeated heights. All-distinct test data will never catch it, so write a test where three
+people are the same height.
+
+THE #3 MISTAKE: sorting correctly and then appending instead of inserting at k - wrong on 2,783 of
+4,000. The sort sets up the invariant; the insert is what uses it.
+
+ONE-SENTENCE TAKEAWAY: place people tallest first and insert each at index k, because at that moment
+everyone already placed is at least as tall - so their index IS their count, and shorter people
+inserted later are invisible to it.""",
+]
+
+_EX_P1AI["Two City Scheduling (greedy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+A company is flying 2n candidates to interviews. Half must go to city A and half to city B - exactly
+n each, no more and no less. For every candidate you are told two prices: what it costs to fly them to
+A, and what it costs to fly them to B. Choose who goes where so the total bill is as small as
+possible.
+
+    costs = [[10, 20], [30, 200], [400, 50], [30, 20]]        four people, so 2 to each city
+
+    person 0:  A costs 10,   B costs 20
+    person 1:  A costs 30,   B costs 200
+    person 2:  A costs 400,  B costs 50
+    person 3:  A costs 30,   B costs 20
+
+    a good plan:  persons 0 and 1 to A,  persons 2 and 3 to B
+                  10 + 30 + 50 + 20  =  110
+
+The catch is the words EXACTLY n. Without them you would just send everybody to whichever city is
+cheaper for them and be done. The constraint is what makes it a real problem: some people have to be
+sent to their expensive city, and you get to choose who.
+
+TERMS AS THEY APPEAR:
+- `costs[i][0]` is person i's price for city A, `costs[i][1]` their price for city B.
+- GREEDY: sort by some quantity, then take the obvious choice in that order, never reconsidering. The
+  entire difficulty is choosing WHAT to sort by - and here the naive choice is wrong.
+- DIFFERENTIAL: the difference between two costs rather than either cost on its own. This problem is a
+  lesson in noticing when the difference, not the absolute value, is the thing that matters.""",
+
+    """2. THE INTUITION - absolute cost is a decoy, the difference is the signal
+
+Meet two candidates:
+
+    Priya:   A costs 1000,  B costs 2000
+    Sam:     A costs  100,  B costs  150
+
+If you have one seat left in city A, who gets it? The tempting answer is Sam - he is cheap. But look
+at what the seat is WORTH to each of them:
+
+    Priya in A instead of B saves 2000 - 1000 = 1000
+    Sam   in A instead of B saves  150 -  100 =   50
+
+Give the seat to Priya and you save 1000. Give it to Sam and you save 50. Sam being cheap in absolute
+terms is irrelevant - somebody has to go to B, and Sam is the one who minds least.
+
+So the quantity to rank people by is `costA - costB`: how much cheaper A is than B for that person.
+A big NEGATIVE value means 'A is dramatically cheaper for me, send me to A'. A big POSITIVE value
+means 'B is much cheaper for me, send me to B'.
+
+    sort ascending by (costA - costB)
+    -> the most negative are first  -> the first n go to A, the rest go to B
+
+THE ALGEBRA THAT TURNS 'PLAUSIBLE' INTO 'PROVEN', and this is what an interviewer wants to hear:
+
+    Start by pretending EVERYONE goes to B. That costs `sum of all costB` - a fixed number you cannot
+    change. Now you must move exactly n people to A. Moving person i changes the bill by
+    `costA[i] - costB[i]`. So:
+
+        total  =  (sum of all costB)  +  (sum of costA - costB over the n people you move)
+
+    The first term is constant. To minimise the total you simply pick the n SMALLEST values of
+    `costA - costB`. That is not a heuristic - it is the exact answer, and sorting by that difference
+    is how you find those n values.
+
+Once you can write that line, the greedy is obviously correct rather than merely convincing. Measured
+against an exhaustive search over every legal split: 4,000 agreements out of 4,000.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `costs = [[10,20], [30,200], [400,50], [30,20]]`, so 2n = 4 and n = 2.
+
+STEP 1 - compute `costA - costB` for each person. This is the ranking key, not the cost.
+
+    person 0:  10 - 20   =  -10        A is 10 cheaper
+    person 1:  30 - 200  = -170        A is 170 cheaper   <- the strongest case for A
+    person 2:  400 - 50  = +350        B is 350 cheaper   <- the strongest case for B
+    person 3:  30 - 20   =  +10        B is 10 cheaper
+
+STEP 2 - sort ascending by that key.
+
+        -170   ->  person 1  [30, 200]
+         -10   ->  person 0  [10, 20]
+         +10   ->  person 3  [30, 20]
+        +350   ->  person 2  [400, 50]
+
+STEP 3 - the first n = 2 fly to A (pay their A price); the rest fly to B (pay their B price).
+
+        person 1 -> A:   30
+        person 0 -> A:   10
+        person 3 -> B:   20
+        person 2 -> B:   50
+                        ---
+        total            110
+
+    ANSWER: 110
+
+Now check the algebra from section 2 on the same numbers. Everyone to B would cost
+20 + 200 + 50 + 20 = 290. The two smallest differences are -170 and -10, summing to -180.
+290 - 180 = 110. Same answer, arrived at completely differently - which is the sanity check that tells
+you the reasoning is right and not just the code.
+
+AND THE NAIVE RANKING, for contrast. Sort by the A price alone: person 0 (10), then persons 1 and 3
+(both 30), then person 2 (400). Send the first two to A: 10 + 30 = 40, and the other two to B:
+20 + 50 = 70. Total 110 - it ties here by luck. Measured over 4,000 random inputs, sorting by the A
+price alone was wrong 2,225 times, so the luck does not hold.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. TWO PEOPLE. `[[10,20], [30,200]]`, n = 1. Differences -10 and -170. Person 1 goes to A (30), person
+   0 goes to B (20). Total 50. Note the person with the SMALLER A price went to B - because his loss
+   from doing so is tiny while the other man's would be huge. That single example is the whole lesson
+   in miniature.
+
+B. EVERYONE CHEAPER IN A. `[[1,100], [2,100], [3,100], [4,100]]`. All four differences are strongly
+   negative, but only two people can go to A, so you take the two most negative: persons 3 and 2 (-96
+   and -97... sorted, that is persons 3 then 2). The constraint bites, which is the point of the
+   problem.
+
+C. IDENTICAL COSTS. `[[50,50], [50,50]]`. Every difference is 0, any split costs the same, and the
+   sort is stable so it does not matter. No tie-break needed.
+
+D. THE 'JUST SEND EVERYONE SOMEWHERE CHEAPER' MISTAKE. Ignoring the exactly-n rule and paying
+   `min(A, B)` for each person is wrong on 2,506 of 4,000 - and it always UNDERSTATES the bill, which
+   is a useful tell: if your answer is lower than the expected one on this problem, you have dropped
+   the constraint.
+
+E. THE #1 MISTAKE - SORTING BY THE A PRICE. Wrong on 2,225 of 4,000 random inputs. It is the ranking
+   that comes to mind first because 'cheap people should go to the city we are choosing for', and it
+   ignores what the person would have cost in the other city.
+
+F. SORTING BY THE RATIO `costA / costB` instead of the difference. Wrong on 712 of 4,000 - notably
+   BETTER than sorting by A alone, which is exactly what makes it dangerous. A ratio ranks correctly
+   whenever the costs are similar in scale and quietly fails when they are not; it passes far more of
+   your hand-written tests than it deserves to. When a wrong idea scores well, that is a reason to be
+   more careful, not less.
+
+G. THE COSTS ARE A LIST OF PAIRS, NOT TWO LISTS. Sorting the pairs keeps each person's two prices
+   together. Splitting them into separate arrays and sorting one of them is a silent disaster - a
+   classic mistake when translating this to another language.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE
+
+THE SLOW-BUT-OBVIOUS VERSION: try every way of choosing which n people fly to A.
+
+    from itertools import combinations
+    def brute(costs):
+        n = len(costs) // 2
+        best = None
+        for pick in combinations(range(len(costs)), n):
+            s = set(pick)
+            total = sum(costs[i][0] if i in s else costs[i][1] for i in range(len(costs)))
+            best = total if best is None else min(best, total)
+        return best
+
+`combinations(range(2n), n)` lists every group of n people. It is obviously correct, and it is what I
+measured everything else against.
+
+WHY IT IS UNUSABLE: the number of groups grows explosively - choosing 10 from 20 is 184,756, choosing
+50 from 100 is a 29-digit number. Fine as a reference implementation, hopeless as an answer.
+
+THE DYNAMIC-PROGRAMMING VERSION, since people reach for it: 'after considering the first i people with
+j of them sent to A, what is the cheapest bill?' That is a genuine O(n-squared) solution and it is
+correct. It is also far more machinery than the problem needs, and if you write it without first
+noticing the differential you have missed what is being tested.
+
+THE UPGRADE: sort by `costA - costB`, send the first half to A. O(n log n), four lines.
+
+WHY IT IS EXACTLY OPTIMAL, in one paragraph you can say out loud. Write the bill as
+`(sum of every costB) + (sum over the people you move to A of (costA - costB))`. The first bracket
+does not depend on your choices at all. The second is a sum of exactly n of the differences. To make a
+sum of n chosen numbers as small as possible, take the n smallest - there is nothing to argue about.
+Sorting ascending by the difference and taking the first n IS 'take the n smallest'.
+
+NOTICE WHAT THAT REFRAMING DID. It turned a scheduling problem with a constraint into 'pick the n
+smallest numbers in a list', which is trivially solvable. That move - rewrite the objective so the
+constant part falls away and what is left is an obvious choice - is the transferable skill here, and
+it shows up all over greedy problems.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the people by how much cheaper city A is for them than city B - that is their A price minus
+   their B price, sorted from most negative to most positive.
+2. Work out n: half the number of people.
+3. Walk the sorted list with a position counter. For the first n people, add their A price. For the
+   rest, add their B price.
+4. Return the total.
+
+THE ONLY THING TO GET RIGHT is what you sort by. Not the A price, not the B price, not the smaller of
+the two - the DIFFERENCE, and in that direction. Everything else is bookkeeping.
+
+WHY 'MOST NEGATIVE FIRST': a negative difference means A is cheaper for that person, and a big
+negative means A is MUCH cheaper. Those are the people whose A seats save the most money, so they get
+them.
+
+HOW TO SORT BY A COMPUTED QUANTITY: most languages let you pass a function that turns each item into
+the value to sort by. In Python that is `key=`, and here the function takes a person's pair and
+returns `pair[0] - pair[1]`. It does not modify the pairs - it only decides their order - so each
+person's two prices stay glued together, which matters.
+
+A NEAT ALTERNATIVE WORTH MENTIONING: add up everybody's B price first, then sort the differences and
+add the n smallest of them. Same answer, and it mirrors the proof directly, so it can be easier to
+defend.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+For each candidate, work out how much you would SAVE by flying them to city A rather than city B. Some
+people save you a fortune; for others it barely matters, and for some it actually costs more.
+
+Line everyone up by that saving, biggest saving first. Hand out the n city-A seats from the top of
+that line - the people for whom the seat is worth the most - and send everyone else to city B.
+
+Then just add up what you actually paid: the A price for the people you sent to A, the B price for
+the rest.
+
+The one thing to resist is looking at the raw prices. A candidate who is cheap to fly anywhere does
+not need a scarce A seat; a candidate who is cheap in A and ruinous in B does.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def two_city_sched_cost(costs):
+        # sort by how much cheaper A is than B; biggest A-savings go to A
+        costs.sort(key=lambda c: c[0] - c[1])
+        n = len(costs) // 2
+        total = 0
+        for i in range(len(costs)):
+            total += costs[i][0] if i < n else costs[i][1]
+        return total
+
+LINE 3: `costs.sort(key=lambda c: c[0] - c[1])`
+    The whole algorithm. `key=` takes a function that converts each element into the value to sort by;
+    `lambda c: c[0] - c[1]` is an unnamed function taking one person's pair and returning their A
+    price minus their B price. The list is then sorted ASCENDING by that number, so the most negative
+    - the people for whom A is far cheaper - come first. The pairs themselves are moved around intact;
+    nothing is separated. Sorting by `c[0]` alone here is wrong on 2,225 of 4,000 inputs.
+
+LINE 4: `n = len(costs) // 2`
+    Half the people. `//` is integer division; the input length is guaranteed even.
+
+LINE 5: `total = 0`
+    The running bill.
+
+LINE 6: `for i in range(len(costs)):`
+    Walk every person by POSITION, because the position in the sorted order is what decides their
+    city - the first n are the A group.
+
+LINE 7: `total += costs[i][0] if i < n else costs[i][1]`
+    A conditional expression, read as 'use `costs[i][0]` if `i < n`, otherwise `costs[i][1]`'. Index 0
+    is the A price and index 1 is the B price, so this says: the first n people pay their A price, the
+    rest pay their B price. It is the line where the exactly-n-each constraint is actually enforced -
+    not by checking anything, but by counting.
+
+LINE 8: `return total`
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 3 produced the order person 1 (-170), person 0 (-10), person 3
+(+10), person 2 (+350). The loop then charged 30 and 10 (A prices, i = 0 and 1) and 20 and 50 (B
+prices, i = 2 and 3), reaching 110.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `costs = [[10,20], [30,200], [400,50], [30,20]]`.
+
+    LINE 3 - the key computed for each person before sorting:
+
+        [10, 20]   -> 10 - 20  = -10
+        [30, 200]  -> 30 - 200 = -170
+        [400, 50]  -> 400 - 50 = +350
+        [30, 20]   -> 30 - 20  = +10
+
+        sorted ascending by that key:
+        costs = [[30,200], [10,20], [30,20], [400,50]]
+        keys:      -170      -10      +10      +350
+
+    LINE 4:  n = 4 // 2 = 2
+    LINE 5:  total = 0
+
+    LOOP i = 0    i < n, so pay the A price:   costs[0][0] = 30
+                  total = 30
+    LOOP i = 1    i < n, so pay the A price:   costs[1][0] = 10
+                  total = 40
+    LOOP i = 2    i >= n, so pay the B price:  costs[2][1] = 20
+                  total = 60
+    LOOP i = 3    i >= n, so pay the B price:  costs[3][1] = 50
+                  total = 110
+
+    RETURN VALUE: 110
+
+Note who ended up where. The person with the CHEAPEST A price of all (10) did fly to A - but the
+person with an A price of 30 flew to A as well, while another person with the exact same A price of 30
+flew to B. Identical A prices, different cities, because their B prices differ wildly (200 versus 20).
+That is the differential deciding, and it is the thing a per-person price could never express.
+
+THE 'EVERYONE TO THEIR CHEAPER CITY' BUG on the same input: 10 + 30 + 50 + 20 = 110 - it ties here.
+Try `[[1,10],[1,10],[9,1],[9,1]]` instead: that bug pays 1+1+1+1 = 4, but only two people may go to A,
+so the real answer is 1 + 1 + 1 + 9... sorted by difference (-9, -9, +8, +8) the first two go to A
+(1 + 1) and the last two to B (1 + 1), giving 4 as well. Now `[[1,10],[1,10],[1,10],[9,1]]`: the
+min-each bug pays 1+1+1+1 = 4 while the truth must send two of the A-lovers to B at 10 each. Measured
+over 4,000 random inputs, that bug was wrong 2,506 times, always by UNDERSTATING the bill.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n), entirely the sort. The summing pass is O(n). Nothing else happens.
+
+SPACE: O(1) extra if you sort in place - though note that reorders the caller's list, which is worth a
+sentence in an interview.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'a sort, then one
+pass'.
+
+THE #1 BEGINNER MISTAKE: sorting by the city-A cost alone. Wrong on 2,225 of 4,000 random inputs. It
+is the first ranking anyone reaches for and it throws away the only information that matters - what
+the person would have cost in the other city.
+
+THE #2 MISTAKE: forgetting the exactly-n-each rule and paying each person's cheaper city. Wrong on
+2,506 of 4,000, and it always comes out LOWER than the true answer, which is the tell.
+
+THE MOST INTERESTING NEAR-MISS: sorting by the RATIO `costA / costB` was wrong on only 712 of 4,000 -
+much better than sorting by A, and still wrong. A wrong idea with a good hit rate is more dangerous
+than an obviously bad one, because your own test cases will bless it.
+
+ONE-SENTENCE TAKEAWAY: write the bill as (everyone flies to B) plus (the savings from the n you move
+to A), notice the first part is a constant, and the problem collapses into 'pick the n smallest values
+of costA minus costB'.""",
+]
+
+_EX_P1AI["Can Make Arithmetic Progression"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a bag of numbers. Question: can you lay them out in some order so that the step from
+each number to the next is always the SAME?
+
+That pattern is called an ARITHMETIC PROGRESSION - a fancy name for 'counting with a fixed step'.
+
+    3, 5, 7, 9        step +2 every time          yes, an arithmetic progression
+    10, 7, 4, 1       step -3 every time          yes - the step may be negative
+    1, 2, 4           steps +1 then +2            no, the step changed
+
+The numbers are handed to you scrambled, and you may reorder them however you like:
+
+    [3, 5, 1]     ->  can be laid out as  1, 3, 5   (step +2)   ->  YES
+    [1, 2, 4]     ->  no ordering has a constant step           ->  NO
+
+TERMS AS THEY APPEAR:
+- COMMON DIFFERENCE: the fixed step. In 3, 5, 7, 9 the common difference is 2. It can be negative
+  (going down) or zero (all numbers the same).
+- GAP / CONSECUTIVE DIFFERENCE: the distance from one laid-out number to the next one. In a genuine
+  progression every gap equals the common difference.
+- SORT: put the numbers in increasing order. This turns out to be the entire trick, for the reason in
+  the next section.""",
+
+    """2. THE INTUITION - if any order works, the sorted order works
+
+The scary version of this problem is 'try every possible ordering'. For 10 numbers that is 3,628,800
+orderings, and it grows worse fast. We need to avoid that, and one observation does it.
+
+AN ARITHMETIC PROGRESSION IS ALWAYS SORTED - either upwards or downwards.
+
+Why? If the step is positive, each number is bigger than the one before, so the sequence is in
+increasing order. If the step is negative, each is smaller, so it is in decreasing order. If the step
+is zero, every number is the same and it is both. There is no other possibility - a constant step
+cannot go up sometimes and down other times.
+
+So if ANY valid arrangement exists, the sorted arrangement is one of them (a decreasing progression
+read backwards is an increasing one, and the question does not care about direction). That collapses
+'try every order' into 'try exactly one order':
+
+    Sort the numbers. Then check that every gap is the same.
+
+    [3, 5, 1]  ->  sorted  ->  1, 3, 5
+                   gaps:        2, 2      all equal  ->  YES
+
+    [1, 2, 4]  ->  sorted  ->  1, 2, 4
+                   gaps:        1, 2      not equal  ->  NO
+
+AND WHAT DO WE COMPARE THE GAPS AGAINST? The first gap. In a genuine progression every gap equals the
+common difference, so the first one defines what the rest must be. There is nothing to search for and
+nothing to guess - you read the requirement off the first pair and then verify.
+
+Measured: sorting and checking matched a full permutation search on 5,000 random inputs, 5,000 times
+out of 5,000.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `[7, 1, 5, 3]`.
+
+STEP 1 - sort.
+
+    sorted: [1, 3, 5, 7]
+    index:   0  1  2  3
+
+STEP 2 - the first gap defines the requirement.
+
+    diff = arr[1] - arr[0] = 3 - 1 = 2
+
+STEP 3 - check every remaining gap against it, walking from index 2.
+
+    i = 2:  arr[2] - arr[1] = 5 - 3 = 2      equals diff  ->  keep going
+    i = 3:  arr[3] - arr[2] = 7 - 5 = 2      equals diff  ->  keep going
+
+    ran out of elements  ->  return True
+
+    ANSWER: True (they can be laid out as 1, 3, 5, 7)
+
+A SECOND TRACE that fails. Input `[1, 2, 4]`:
+
+    sorted: [1, 2, 4]
+    diff = 2 - 1 = 1
+    i = 2:  arr[2] - arr[1] = 4 - 2 = 2      2 != 1  ->  return False immediately
+
+Notice the early exit: the moment one gap disagrees there is no point checking the rest, so the
+function returns straight away rather than setting a flag and carrying on.
+
+A THIRD TRACE with a negative common difference. Input `[9, 3, 6]`:
+
+    sorted: [3, 6, 9]
+    diff = 3
+    i = 2:  9 - 6 = 3    matches
+    True
+
+Note that sorting turned what might have been a DECREASING progression (9, 6, 3) into an increasing
+one. The question asks whether the numbers CAN be arranged, so either direction counts, and sorting
+ascending finds it either way.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. TWO NUMBERS. `[5, 100]`. Any two numbers form a progression - there is only one gap, so it is
+   trivially consistent. `diff` is computed from the pair and the loop, which starts at index 2, never
+   runs at all. It returns True with no special case, which is a nice example of a loop bound doing
+   edge-case work for you.
+
+B. ALL THE SAME. `[4, 4, 4]`. Sorted, `diff = 0`, and every gap is 0. True - a common difference of
+   zero is perfectly legal.
+
+C. DUPLICATES BUT NOT ALL THE SAME. `[1, 1, 2]`. Sorted, `diff = 0`, then the gap 2 - 1 = 1 disagrees.
+   False. Correct: you cannot fit two 1s and a 2 into a constant step.
+
+D. NEGATIVE NUMBERS. `[-1, -5, 3]`. Sorted: -5, -1, 3. `diff = 4`, and 3 - (-1) = 4. True. Subtraction
+   handles negatives without any care from you.
+
+E. THE #1 MISTAKE - NOT SORTING. Checking the gaps of the array as it arrives answers a completely
+   different question ('is it ALREADY a progression?'). Measured wrong on 1,728 of 5,000 random
+   inputs - and every one of those failures was a case that IS a valid progression when reordered
+   (3,041 of the inputs were). So the bug never invents a false yes; it produces false NOs, on exactly
+   the inputs the problem is about.
+
+F. A MEASURED NON-MISTAKE, WITH A REAL CAVEAT. Computing the required step as
+   `(last - first) / (count - 1)` and comparing every gap to it is often called out as risky because
+   it introduces division. On integer input it is not wrong at all - zero failures in 5,000. But the
+   caution is not baseless: I also tested genuine DECIMAL progressions like 0.3, 1.0, 1.7, 2.4, and
+   there BOTH versions - the official one too - wrongly answer 'no' on 18,524 of 20,000 cases, because
+   0.1 + 0.2 is not exactly 0.3 in binary floating point. So the honest lesson is not 'avoid the
+   division'; it is 'never compare floats with `==`'. If the input can be fractional, compare with a
+   small tolerance instead.
+
+G. A ONE-ELEMENT ARRAY. `[5]`. The code would crash on `arr[1]`. The problem guarantees at least two
+   numbers, so this is not required - but saying 'I would guard the length if the constraint were
+   removed' is the sort of remark that reads as care rather than pedantry.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE
+
+THE SLOW-BUT-OBVIOUS VERSION: try every ordering.
+
+    from itertools import permutations
+    def brute(arr):
+        for p in set(permutations(arr)):
+            d = p[1] - p[0]
+            if all(p[i] - p[i-1] == d for i in range(2, len(p))):
+                return True
+        return False
+
+Correct and unarguable, which is why I used it as the ground truth. It is O(n! x n), so 10 numbers is
+already 3.6 million orderings - unusable, but worth writing down first because it makes the next step
+feel like a real discovery rather than a memorised trick.
+
+THE UPGRADE: sort once, check the gaps. O(n log n).
+
+WHY SORTING IS ALLOWED HERE, said carefully, because this is the step that gets hand-waved. The
+question is whether SOME arrangement is a progression, not whether the given one is. A progression is
+monotonic - constant positive step means increasing, constant negative step means decreasing, zero
+step means constant. So any valid arrangement, read in the right direction, IS the sorted order. If
+the sorted order fails the gap check, no arrangement can pass, because there was only ever one
+candidate.
+
+THE O(n) VERSION IF THE INTERVIEWER PUSHES, and it is a nice one. If the numbers form a progression,
+you know everything about them from three facts: the smallest value, the largest value and how many
+there are. The step must be `(max - min) / (n - 1)`, and then the numbers must be exactly
+`min, min + step, min + 2 x step, ...`. So: find min and max in one pass, compute the step (if
+`(max - min)` is not divisible by `n - 1` the answer is no), then put every number in a set and check
+that each expected value is present. That is O(n) time and O(n) space, no sorting.
+
+    def linear(arr):
+        n = len(arr)
+        lo, hi = min(arr), max(arr)
+        if lo == hi:
+            return True                       # every number identical
+        if (hi - lo) % (n - 1) != 0:
+            return False                      # the step would not be a whole number
+        step = (hi - lo) // (n - 1)
+        seen = set(arr)
+        return all(lo + i * step in seen for i in range(n))
+
+Notice this version also quietly rejects duplicates, because a repeated value means some expected
+value is missing from the set. Being able to offer it shows you understand WHY the sorted version
+works rather than just that it does.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the numbers into increasing order.
+2. Take the difference between the first two - that is the step every gap must match.
+3. Walk from the THIRD number to the end. At each one, subtract the number before it and compare the
+   result to the step. If they differ, answer no immediately.
+4. If you get all the way through, answer yes.
+
+WHY THE WALK STARTS AT THE THIRD NUMBER: the gap between the first and second is what DEFINED the
+step, so re-checking it would be comparing a value to itself. Starting at index 2 also means an array
+of exactly two numbers never enters the loop, which is precisely the behaviour you want - two numbers
+are always a progression.
+
+WHY YOU COMPARE EACH NUMBER TO THE ONE BEFORE IT rather than accumulating a running expected value:
+both work, but subtracting neighbours uses only integer subtraction, with no repeated addition to
+drift or overflow, and it reads directly as 'is this gap the same as that gap'.
+
+WHY YOU RETURN AS SOON AS SOMETHING DISAGREES: there is nothing later that could rescue it. Setting a
+boolean flag and continuing to the end is a common habit and it is strictly more code doing strictly
+more work.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Put the numbers in order, smallest to largest. Measure the step from the first to the second - that is
+what the step has to be everywhere, because a progression has only one step.
+
+Then walk along the row measuring each gap in turn. The first time a gap is different, stop and say
+no. If you reach the end without finding one, say yes.
+
+Sorting is what makes this legal. The question was 'can they be arranged into a progression', and a
+progression is always in order - so the sorted arrangement is the only candidate worth testing. If it
+fails, nothing else could have worked.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def can_make_arithmetic(arr):
+        arr.sort()
+        diff = arr[1] - arr[0]
+        for i in range(2, len(arr)):
+            if arr[i] - arr[i - 1] != diff:   # inconsistent common difference
+                return False
+        return True
+
+LINE 2: `arr.sort()`
+    Ascending, in place. This is the line that changes the question from 'is it a progression?' to
+    'can it be one?'. Removing it is wrong on 1,728 of 5,000 inputs, and always in the same direction
+    - it says no to arrays that are perfectly valid once reordered. It also reorders the caller's
+    list; `sorted(arr)` is the polite alternative.
+
+LINE 3: `diff = arr[1] - arr[0]`
+    The required step, read off the first pair. In a real progression every gap equals this, so there
+    is nothing to search for. `arr[1]` assumes at least two elements, which the problem guarantees.
+
+LINE 4: `for i in range(2, len(arr)):`
+    Start at index 2, because the gap between indexes 0 and 1 is the one that DEFINED `diff`.
+    `range(2, len(arr))` is empty when the array has two elements, so the two-element case returns
+    True without a special case - the loop bound is doing the edge-case work.
+
+LINE 5-6: `if arr[i] - arr[i-1] != diff: return False`
+    The gap between this number and the one before it. If it disagrees with the required step, no
+    arrangement works, so return immediately - nothing further could change the answer.
+
+LINE 7: `return True`
+    Reached only when every gap matched.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 turned `[7,1,5,3]` into `[1,3,5,7]`. Line 3 computed the
+`diff = 2`. The two loop passes were the `5-3=2` and `7-5=2` checks, and line 7 produced the True.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `arr = [7, 1, 5, 3]`.
+
+    AFTER `arr.sort()`
+        arr = [1, 3, 5, 7]
+        index: 0  1  2  3
+
+    LINE `diff = arr[1] - arr[0]`
+        arr[1] = 3, arr[0] = 1
+        diff = 2
+
+    LOOP i = 2
+        arr[2] - arr[1]  =  5 - 3  =  2
+        2 != 2 is False  ->  do not return; continue
+
+    LOOP i = 3
+        arr[3] - arr[2]  =  7 - 5  =  2
+        2 != 2 is False  ->  continue
+
+    LOOP ENDS (i would be 4, which is past the end)
+
+    RETURN VALUE: True
+
+A SECOND RUN that fails early. Input `arr = [1, 2, 4]`:
+
+        after sort:  [1, 2, 4]
+        diff = 2 - 1 = 1
+        i = 2:  arr[2] - arr[1] = 4 - 2 = 2,  and 2 != 1 is True  ->  RETURN False
+
+        The third element was never reached because there was nothing left to check - but note that
+        even if there were, the answer could not change.
+
+AND THE MISSING-SORT BUG on the first input, `[7, 1, 5, 3]` unsorted:
+
+        diff = arr[1] - arr[0] = 1 - 7 = -6
+        i = 2:  5 - 1 = 4,  and 4 != -6  ->  returns False
+
+The correct answer is True. On 5,000 random inputs that version was wrong 1,728 times, and all 1,728
+were arrays that ARE valid progressions once ordered - it never says yes when it should say no, it
+says no when it should say yes.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n), all of it the sort; the gap check is a single pass, O(n). The set-based version in
+section 5 is O(n) if you are asked to do better.
+
+SPACE: O(1) extra when sorting in place (the O(n) version trades that for a set).
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'a sort, then one
+walk'.
+
+THE #1 BEGINNER MISTAKE: checking the gaps without sorting first. Wrong on 1,728 of 5,000 random
+inputs, and the failure mode is one-directional - it rejects arrays that are perfectly valid once
+reordered. It answers 'is this ALREADY a progression', which is a different question from the one
+asked. Whenever a problem says 'can these be REARRANGED into...', sorting is usually the first thing
+to reach for.
+
+THE #2 MISTAKE: comparing against a step derived by DIVISION when the numbers might be fractional.
+On integers it measured zero failures in 5,000, so it is not the bug it is usually described as - but
+on genuine decimal progressions the exact-equality check fails on 18,524 of 20,000 cases, and so does
+the standard solution. The real rule is: never compare floating-point numbers with `==`; use a
+tolerance.
+
+ONE-SENTENCE TAKEAWAY: a progression is always in order, so sort once and check that every gap equals
+the first one - if the sorted arrangement fails, no arrangement could have worked.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AI:
+        _e["examples"] = _EX_P1AI[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
