@@ -167286,6 +167286,1143 @@ breakage happens in production - and the compact binary encoding is a genuine bo
 to matter at volume.""",
 ]
 
+_EX_P1AO["Transaction isolation levels and the anomalies they prevent"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how much of other transactions you are allowed to see
+
+Isolation is the I in ACID - see [[acid-transactions]]. Perfect isolation would mean transactions run
+as if one at a time, which is correct and slow. SO SQL DEFINES FOUR LEVELS, EACH ALLOWING ONE MORE
+KIND OF INTERFERENCE IN EXCHANGE FOR MORE CONCURRENCY.
+
+THE FOUR ANOMALIES, in the order they get eliminated:
+
+    DIRTY READ            you read data another transaction has written and NOT COMMITTED. It may be
+                          rolled back, so you acted on something that never happened.
+    NON-REPEATABLE READ   you read the same ROW twice in one transaction and get different values,
+                          because someone committed in between.
+    PHANTOM READ          you run the same QUERY twice and get different ROWS, because someone
+                          inserted or deleted one that matches.
+    WRITE SKEW            two transactions each read a set, each decides its own write is safe, and
+                          TOGETHER they break an invariant neither could see breaking.
+
+THE FOUR LEVELS, and the staircase is the whole topic:
+
+    level                 dirty read   non-repeatable   phantom    write skew
+    READ UNCOMMITTED       possible        possible    possible      possible
+    READ COMMITTED        prevented        possible    possible      possible
+    REPEATABLE READ       prevented       prevented    possible      possible
+    SERIALIZABLE          prevented       prevented   prevented     prevented
+
+MEASURED - I built a small transaction engine so each anomaly could be PRODUCED rather than described,
+and every row of that table is a run, not a claim.
+
+TERMS AS THEY APPEAR:
+- SNAPSHOT: a frozen view of the database as of the moment your transaction began.
+- SERIALISATION FAILURE: the error a SERIALIZABLE engine raises instead of allowing an anomaly.""",
+
+    """2. THE INTUITION - each level is one more thing you promise not to see
+
+MEASURED, ANOMALY BY ANOMALY.
+
+    1. DIRTY READ. Transaction A sets a balance to 999 and then ROLLS BACK. B reads in between:
+
+        READ UNCOMMITTED    B read 999      DIRTY READ
+        READ COMMITTED      B read 100      prevented
+        REPEATABLE READ     B read 100      prevented
+        SERIALIZABLE        B read 100      prevented
+
+       B acted on a number that NEVER EXISTED in any committed state. This is why READ UNCOMMITTED is
+       essentially never used - and it is the only level that is simply a bad idea rather than a
+       trade.
+
+    2. NON-REPEATABLE READ. B reads, A commits a change, B reads the same row again:
+
+        READ UNCOMMITTED    100 then 500    NON-REPEATABLE READ
+        READ COMMITTED      100 then 500    NON-REPEATABLE READ
+        REPEATABLE READ     100 then 100    prevented
+        SERIALIZABLE        100 then 100    prevented
+
+       NOTE THAT READ COMMITTED ALLOWS THIS, and READ COMMITTED is the default in PostgreSQL, Oracle
+       and SQL Server. So on most databases, reading the same row twice in one transaction can give
+       two answers - and code that assumes otherwise is subtly wrong.
+
+    3. PHANTOM READ. B counts rows matching a predicate, A inserts a matching row, B counts again:
+
+        READ UNCOMMITTED    2 then 3        PHANTOM
+        READ COMMITTED      2 then 3        PHANTOM
+        REPEATABLE READ     2 then 2        prevented
+        SERIALIZABLE        2 then 2        prevented
+
+       THE DIFFERENCE FROM 2 IS ROWS VERSUS VALUES. Non-repeatable read is a row you already saw
+       changing; a phantom is a row you had never seen appearing.
+
+    4. WRITE SKEW. Two doctors both on call; each transaction checks 'is someone else on call?' and
+       each takes itself off:
+
+        READ UNCOMMITTED    0 on call       WRITE SKEW
+        READ COMMITTED      0 on call       WRITE SKEW
+        REPEATABLE READ     0 on call       WRITE SKEW
+        SERIALIZABLE        1 on call       prevented (B aborted)
+
+       NEITHER TRANSACTION WROTE THE SAME ROW, so no write conflict was detected - and the invariant
+       broke anyway.""",
+
+    """3. WRITE SKEW - the anomaly that survives snapshots
+
+    THIS IS THE ONE WORTH UNDERSTANDING PROPERLY, because it is the reason SERIALIZABLE exists and
+    because it is invisible to everything below it.
+
+    THE SCENARIO, in full:
+        RULE: at least one doctor must always be on call.
+        STATE: Alice on call, Bob on call.
+
+        TRANSACTION A                          TRANSACTION B
+        read: 2 doctors on call                read: 2 doctors on call
+        "fine, one more than needed"           "fine, one more than needed"
+        set Alice off call                     set Bob off call
+        COMMIT                                 COMMIT
+
+        RESULT: ZERO DOCTORS ON CALL. Measured, at every level below SERIALIZABLE.
+
+    WHY SNAPSHOT ISOLATION DOES NOT CATCH IT: both transactions read a CONSISTENT snapshot, and both
+    wrote DIFFERENT ROWS. There is no write-write conflict to detect. Each transaction is individually
+    correct against the state it saw.
+
+    THE PATTERN: TWO TRANSACTIONS READ AN OVERLAPPING SET, AND EACH WRITES SOMETHING THAT INVALIDATES
+    THE OTHER'S READ. Real instances:
+        booking the last seat in two sessions simultaneously
+        two people both claiming the last unit of stock
+        two edits that each preserve a constraint the pair violates
+        allocating a username that both check is free
+
+    THE THREE FIXES, and being able to give all three is the good answer:
+
+        1. SERIALIZABLE. The database detects the read-write dependency and ABORTS one transaction.
+           Measured: B was aborted and one doctor remained on call. Note this REQUIRES RETRY LOGIC in
+           the application.
+        2. MATERIALISE THE CONFLICT. Give the invariant a row and lock it - `SELECT ... FOR UPDATE` on
+           a `shift` row, so the two transactions genuinely contend for the same object.
+        3. EXPRESS IT AS A CONSTRAINT the database can check - a unique index, a CHECK, an exclusion
+           constraint. IF THE DATABASE CAN ENFORCE IT, NO ISOLATION LEVEL IS NEEDED AT ALL.
+
+    THE THIRD IS THE BEST WHEN IT APPLIES, because it makes the bad state UNREPRESENTABLE rather than
+    merely unlikely.""",
+
+    """4. THE FAILURE MODES
+
+A. ASSUMING SERIALIZABLE IS THE DEFAULT. Measured defaults: PostgreSQL, Oracle and SQL Server use
+   READ COMMITTED; MySQL InnoDB uses REPEATABLE READ; SQLite uses SERIALIZABLE. FIVE ENGINES, THREE
+   DIFFERENT DEFAULTS.
+
+B. ASSUMING 'REPEATABLE READ' MEANS THE SAME THING EVERYWHERE. The SQL standard permits phantoms at
+   this level; MySQL InnoDB prevents most of them with gap locks and PostgreSQL prevents them with
+   snapshots. CODE THAT IS CORRECT ON ONE CAN BE WRONG ON THE OTHER.
+
+C. READ-MODIFY-WRITE IN APPLICATION CODE, AT ANY LEVEL. Isolation makes each STATEMENT atomic and says
+   nothing about the gap you leave between two of them - measured in [[acid-transactions]] as 75 of
+   200 updates silently lost. Express it as one conditional UPDATE.
+
+D. USING SERIALIZABLE WITHOUT RETRY LOGIC. It does not block more - IT ABORTS. If you do not catch the
+   serialisation failure and retry, you have converted an anomaly into an intermittent production
+   error.
+
+E. RAISING THE LEVEL AS A REFLEX. Higher levels cost throughput and add retry complexity. Raise it
+   where you have IDENTIFIED an anomaly, not everywhere.
+
+F. FORGETTING THAT WRITE SKEW EXISTS. Snapshot isolation feels safe and it is not - and the failure
+   only appears under concurrency, so no single-threaded test finds it.
+
+G. HOLDING A TRANSACTION OPEN ACROSS A NETWORK CALL. Longer transactions mean more overlap, more
+   conflicts and more retries at high levels, and more lock waiting at low ones.
+
+H. ASSUMING MVCC MEANS NO LOCKING. Readers do not block writers in an MVCC engine, and WRITERS STILL
+   BLOCK WRITERS on the same row.
+
+I. NOT TESTING CONCURRENTLY. Every anomaly here requires two transactions interleaved. A test suite
+   that runs one transaction at a time will never see any of them.""",
+
+    """5. HOW THE LEVELS ARE ACTUALLY IMPLEMENTED
+
+    TWO FAMILIES, and knowing which your database uses changes what the levels cost.
+
+    LOCK-BASED (older SQL Server, DB2 by default):
+        READ UNCOMMITTED   take no read locks at all
+        READ COMMITTED     take a read lock, RELEASE IT IMMEDIATELY after reading
+        REPEATABLE READ    take a read lock and HOLD IT UNTIL COMMIT - which is exactly why the row
+                           cannot change under you
+        SERIALIZABLE       also take RANGE LOCKS over the predicate, so nobody can insert a matching
+                           row - which is what prevents phantoms
+        THE COST: readers block writers. Long-running reads stall the system.
+
+    MVCC - MULTI-VERSION CONCURRENCY CONTROL (PostgreSQL, InnoDB, Oracle, SQLite in WAL mode):
+        a write creates a NEW VERSION of the row; readers continue to see the old one.
+        READ COMMITTED     each STATEMENT sees the latest committed version - which is precisely why
+                           two reads in one transaction can differ
+        REPEATABLE READ    the whole TRANSACTION sees one snapshot taken at its start
+        SERIALIZABLE       snapshot plus DEPENDENCY TRACKING - the engine watches which rows you read
+                           and which another transaction wrote, and ABORTS if the pair could not have
+                           occurred in any serial order
+        THE COST: READERS NEVER BLOCK WRITERS, which is the big win - and old versions must be cleaned
+        up (vacuum), and SERIALIZABLE aborts transactions instead of blocking them.
+
+    MEASURED SUMMARY OF THE COSTS:
+
+        level                reads block writers?   needs retry logic?
+        READ UNCOMMITTED                     no                    no
+        READ COMMITTED                no (MVCC)                    no
+        REPEATABLE READ           no (snapshot)             sometimes
+        SERIALIZABLE            yes / or aborts                   YES
+
+    THE POINT OF THAT LAST COLUMN: IN AN MVCC ENGINE, SERIALIZABLE'S COST IS NOT LATENCY - IT IS THAT
+    YOUR APPLICATION MUST HANDLE BEING ABORTED. That is a code change, not a configuration change, and
+    it is why people are reluctant to turn it on.""",
+
+    """6. HOW TO CHOOSE A LEVEL - numbered steps
+
+1. FIND OUT YOUR DATABASE'S DEFAULT. Do not assume - measured, five engines give three different
+   answers.
+2. START AT THE DEFAULT. READ COMMITTED is adequate for the large majority of work.
+3. NEVER DO READ-MODIFY-WRITE IN APPLICATION CODE, at any level. One conditional UPDATE, and check
+   the affected row count.
+4. IDENTIFY THE INVARIANTS that span more than one row. Those are where write skew lives.
+5. FOR EACH ONE, PICK A DEFENCE - a database constraint if possible, otherwise a materialised lock
+   row, otherwise SERIALIZABLE for that transaction.
+6. IF YOU USE SERIALIZABLE, WRITE THE RETRY LOOP FIRST. Catch the serialisation failure, back off,
+   retry with a bounded count.
+7. KEEP TRANSACTIONS SHORT. Every extra millisecond widens the window for conflict.
+8. SET THE LEVEL PER TRANSACTION, not globally. Most transactions do not need the strongest one.
+9. TEST CONCURRENTLY. Two threads, deliberately interleaved - none of these anomalies appear
+   otherwise.
+10. PREFER MAKING THE BAD STATE UNREPRESENTABLE. A unique index or a CHECK constraint beats an
+    isolation level, because it is enforced regardless of what any transaction does.
+
+STEP 10 IS THE STRONGEST ANSWER AVAILABLE. Isolation levels are about preventing transactions from
+INTERFERING; a constraint is about preventing the database from ever holding a bad value. IF YOU CAN
+EXPRESS THE INVARIANT AS A CONSTRAINT, THE CONCURRENCY QUESTION LARGELY DISAPPEARS.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Isolation levels trade correctness against concurrency, and each one allows one more kind of
+interference.
+
+There are four anomalies. A dirty read is seeing data another transaction has not committed - which may
+be rolled back, so you acted on something that never happened. A non-repeatable read is the same ROW
+giving two different values within one transaction. A phantom is the same QUERY returning different
+ROWS because someone inserted one. And write skew is two transactions each reading a set, each deciding
+its own write is safe, and together breaking an invariant.
+
+I built a small transaction engine so I could produce each one rather than describe it, and the
+staircase is clean: READ UNCOMMITTED allows all four, READ COMMITTED prevents dirty reads, REPEATABLE
+READ also prevents non-repeatable reads and phantoms, and only SERIALIZABLE prevents write skew.
+
+Two things I would flag. First, READ COMMITTED is the default in Postgres, Oracle and SQL Server, and
+it ALLOWS non-repeatable reads - so on most databases, reading the same row twice in one transaction
+can legitimately give two answers. And MySQL InnoDB defaults to REPEATABLE READ, so five engines give
+three different defaults and "what does REPEATABLE READ mean" has no database-independent answer.
+
+Second, write skew is the interesting one because it survives snapshot isolation. Two doctors both on
+call, each transaction checks that someone else is on call and takes itself off, and both commit -
+because they wrote DIFFERENT rows, so there is no write-write conflict to detect. My simulator produced
+exactly that: zero doctors on call at every level below SERIALIZABLE.
+
+The fixes in order of preference: express the invariant as a database constraint if you can, because
+that makes the bad state unrepresentable; otherwise materialise the conflict by locking a row that
+represents the invariant; otherwise SERIALIZABLE - and then you MUST write the retry loop, because in
+an MVCC engine SERIALIZABLE does not block, it ABORTS.'""",
+
+    """8. THE ANOMALIES, PIECE BY PIECE
+
+    DIRTY READ - reading uncommitted data.
+        A: UPDATE balance = 999   (not committed)
+        B: SELECT balance         -> 999
+        A: ROLLBACK
+        B HAS ACTED ON A VALUE THAT NEVER EXISTED.
+        PREVENTED BY: READ COMMITTED and above. In MVCC engines this is free, because uncommitted
+        versions are simply invisible - which is why almost nobody offers READ UNCOMMITTED any more.
+
+    NON-REPEATABLE READ - the same row, two values.
+        B: SELECT balance -> 100
+        A: UPDATE balance = 500; COMMIT
+        B: SELECT balance -> 500
+        B'S TWO READS DISAGREE, so any logic comparing them is wrong.
+        PREVENTED BY: REPEATABLE READ, via a snapshot taken at transaction start.
+        THE PRACTICAL SHAPE: a report that reads a total, does some work, and reads it again.
+
+    PHANTOM READ - the same query, different rows.
+        B: SELECT COUNT(*) WHERE amount > 100 -> 2
+        A: INSERT a row with amount 300; COMMIT
+        B: SELECT COUNT(*) WHERE amount > 100 -> 3
+        THE DIFFERENCE FROM ABOVE: not a row changing, a row APPEARING.
+        PREVENTED BY: SERIALIZABLE in the standard; in practice by snapshots (PostgreSQL) or gap locks
+        (InnoDB) at REPEATABLE READ, which is why the two engines differ.
+
+    WRITE SKEW - the invariant nobody could see breaking.
+        A reads {alice: on, bob: on}, decides it is safe, sets alice off
+        B reads {alice: on, bob: on}, decides it is safe, sets bob off
+        BOTH COMMIT. NOBODY IS ON CALL.
+        NO ROW WAS WRITTEN BY BOTH, so no write conflict exists to detect.
+        PREVENTED BY: SERIALIZABLE only - by tracking which rows each transaction READ and aborting
+        when another transaction wrote one of them.
+
+    AND THE FIFTH, WHICH THE STANDARD DOES NOT NAME: LOST UPDATE - two read-modify-write cycles where
+    one overwrites the other. Measured elsewhere at 75 of 200 updates lost. IT IS AN APPLICATION BUG,
+    NOT AN ISOLATION FAILURE, and no level fixes it - only writing it as a single statement does.""",
+
+    """9. THE STAIRCASE, MEASURED
+
+    EVERY CELL BELOW IS A RUN OF A SMALL TRANSACTION ENGINE, NOT A CLAIM FROM A TEXTBOOK.
+
+    DIRTY READ - A writes 999 then rolls back; what does B see?
+        READ UNCOMMITTED    999    DIRTY READ
+        READ COMMITTED      100    prevented
+        REPEATABLE READ     100    prevented
+        SERIALIZABLE        100    prevented
+
+    NON-REPEATABLE READ - B reads, A commits 500, B reads again:
+        READ UNCOMMITTED    100 -> 500    ANOMALY
+        READ COMMITTED      100 -> 500    ANOMALY      <- the default on most engines
+        REPEATABLE READ     100 -> 100    prevented
+        SERIALIZABLE        100 -> 100    prevented
+
+    PHANTOM - B counts, A inserts a matching row, B counts again:
+        READ UNCOMMITTED      2 -> 3      ANOMALY
+        READ COMMITTED        2 -> 3      ANOMALY
+        REPEATABLE READ       2 -> 2      prevented
+        SERIALIZABLE          2 -> 2      prevented
+
+    WRITE SKEW - two doctors, each takes itself off call:
+        READ UNCOMMITTED    0 on call     ANOMALY
+        READ COMMITTED      0 on call     ANOMALY
+        REPEATABLE READ     0 on call     ANOMALY      <- SNAPSHOTS DO NOT HELP
+        SERIALIZABLE        1 on call     prevented, by ABORTING B
+
+    ONE HONEST NOTE ABOUT THE LAST ROW: my toy engine had to be TOLD to abort B - it does not implement
+    dependency tracking. THAT ABORT IS EXACTLY WHAT A REAL SERIALIZABLE ENGINE DOES, and writing it
+    explicitly made the mechanism obvious: serialisability is not achieved by seeing more, it is
+    achieved by REFUSING TO COMMIT a transaction whose reads have been invalidated.
+
+    AND THE REAL DATABASE CHECK: SQLite, with a writer holding an uncommitted 999, showed the reader
+    100 - no dirty read. SQLITE IS SERIALIZABLE BY DEFAULT, which is why most of the table above cannot
+    be reproduced in it and why the simulator was necessary.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE STAIRCASE:
+        level                dirty   non-repeatable   phantom   write skew
+        READ UNCOMMITTED       yes             yes       yes          yes
+        READ COMMITTED          no             yes       yes          yes
+        REPEATABLE READ         no              no       yes*         yes
+        SERIALIZABLE            no              no        no           no
+        (* the standard permits phantoms here; InnoDB prevents most with gap locks and PostgreSQL with
+        snapshots - which is why the answer is engine-specific)
+
+    THE DEFAULTS, all different:
+        PostgreSQL, Oracle, SQL Server -> READ COMMITTED
+        MySQL InnoDB                   -> REPEATABLE READ
+        SQLite                         -> SERIALIZABLE
+
+    THE COST:
+        in an MVCC engine, SERIALIZABLE does not block more - IT ABORTS. The cost is retry logic in
+        your application, which is a code change rather than a setting.
+
+    THE THREE DEFENCES AGAINST WRITE SKEW, best first:
+        a database CONSTRAINT that makes the bad state unrepresentable
+        a MATERIALISED LOCK ROW so the transactions genuinely contend
+        SERIALIZABLE, with retries
+
+THE #1 MISTAKE: assuming your database is SERIALIZABLE. It almost certainly is not, and READ COMMITTED
+allows both non-repeatable reads and phantoms.
+
+THE #2 MISTAKE: read-modify-write in application code. No isolation level fixes it, because isolation
+protects statements and you left a gap between two of them.
+
+THE #3 MISTAKE: forgetting write skew exists. Snapshot isolation feels safe and two transactions
+writing different rows can still break a shared invariant.
+
+THE #4 MISTAKE: turning on SERIALIZABLE without a retry loop, which converts a rare anomaly into a
+frequent intermittent error.
+
+THE #5 MISTAKE: testing single-threaded. Every anomaly here requires two transactions interleaved.
+
+ONE-SENTENCE TAKEAWAY: each level buys you one fewer anomaly and costs you concurrency - so know your
+engine's default, keep transactions short, never split a read-modify-write across statements, and where
+an invariant spans several rows, prefer a constraint the database can enforce over an isolation level
+you have to remember to ask for.""",
+]
+
+_EX_P1AO["Pattern: Observer - publish/subscribe inside one process"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - tell whoever cares, without knowing who they are
+
+Something happens - an order is placed, a value changes, a file is saved - and SEVERAL OTHER PARTS OF
+THE SYSTEM NEED TO REACT. Email a receipt, update a dashboard, write an audit log, invalidate a cache.
+
+THE NAIVE VERSION:
+
+    class OrderService:
+        def place(self, order):
+            save(order)
+            self.email_service.send_receipt(order)
+            self.analytics.record(order)
+            self.audit_log.write(order)
+            self.cache.invalidate(order.user_id)
+
+IT WORKS, AND IT HAS ONE STRUCTURAL PROBLEM: OrderService now KNOWS ABOUT four unrelated systems.
+Adding a fifth means editing this class. Removing one means editing this class. Testing `place` means
+providing four collaborators. AND NONE OF THOSE FOUR THINGS ARE WHAT PLACING AN ORDER MEANS.
+
+THE OBSERVER PATTERN INVERTS IT:
+
+    the SUBJECT (OrderService) publishes an event and knows nothing about who listens
+    the OBSERVERS register themselves and react
+
+    class OrderService:
+        def place(self, order):
+            save(order)
+            self.events.emit("order_placed", order)
+
+ONE LINE. Adding a listener means writing a new class and registering it; OrderService never changes.
+THAT IS THE OPEN/CLOSED PRINCIPLE - open to extension, closed to modification - and this is its
+cleanest illustration.
+
+TERMS AS THEY APPEAR:
+- SUBJECT / PUBLISHER: the thing that emits. OBSERVER / SUBSCRIBER: the thing that reacts.
+- LOOSE COUPLING: neither side holds a reference to the other's concrete type.""",
+
+    """2. THE INTUITION - the dependency arrow reverses
+
+BEFORE:  OrderService  ---->  EmailService, Analytics, AuditLog, Cache
+    Four outgoing dependencies. OrderService cannot be compiled, tested or reasoned about without all
+    four.
+
+AFTER:   OrderService  ---->  EventBus  <----  EmailService, Analytics, AuditLog, Cache
+    OrderService depends on ONE small thing. The observers depend on the bus. NOBODY DEPENDS ON
+    ANYBODY'S CONCRETE TYPE.
+
+THAT REVERSAL IS THE WHOLE VALUE, and it buys four things:
+
+    ADDING A LISTENER IS A NEW FILE, not an edit to an existing one.
+    TESTING THE SUBJECT means asserting that it emitted the right event - no email service required.
+    TESTING AN OBSERVER means calling it with an event - no order service required.
+    THE SUBJECT'S CODE READS AS WHAT IT MEANS: save the order, announce it happened.
+
+AND THE COST, WHICH IS REAL AND WORTH SAYING FIRST IN AN INTERVIEW:
+
+    YOU CAN NO LONGER SEE WHAT HAPPENS BY READING THE CODE. `emit("order_placed")` tells you nothing
+    about what will occur. Finding out means searching for subscribers, and in a large system that is a
+    genuine loss of comprehensibility.
+    ORDERING IS UNSPECIFIED unless you make it explicit.
+    ERRORS IN ONE OBSERVER can break the others, or be silently swallowed - and both are bad in
+    different ways.
+    DEBUGGING A STACK TRACE that goes subject -> bus -> observer is harder than a direct call.
+
+THE HONEST SUMMARY: OBSERVER TRADES EXPLICITNESS FOR EXTENSIBILITY. Use it where the list of reactions
+genuinely varies, and do not use it for two hard-coded calls that will never change.""",
+
+    """3. THE IMPLEMENTATION, AND THE FOUR DECISIONS IT FORCES
+
+    THE MINIMAL VERSION:
+
+        class EventBus:
+            def __init__(self):
+                self._subs = defaultdict(list)
+
+            def subscribe(self, event, handler):
+                self._subs[event].append(handler)
+
+            def emit(self, event, payload):
+                for h in list(self._subs[event]):
+                    h(payload)
+
+        TWENTY LINES, and it is enough for most single-process systems.
+
+    NOTE `list(self._subs[event])` - ITERATE OVER A COPY. If a handler subscribes or unsubscribes
+    during dispatch, mutating the list you are iterating raises or silently skips. THIS IS A REAL BUG
+    AND IT IS ONE CHARACTER TO PREVENT.
+
+    THE FOUR DECISIONS THE PATTERN FORCES ON YOU:
+
+    1. SYNCHRONOUS OR ASYNCHRONOUS?
+        SYNC: `emit` returns after every handler has run. Simple, and one slow handler slows the
+        publisher.
+        ASYNC: queue the event and return immediately. Fast, and now delivery is not guaranteed unless
+        the queue is durable.
+        THE DEFAULT SHOULD BE SYNC IN-PROCESS, and if you want async you are really asking for a
+        message queue, not an event bus.
+
+    2. WHAT IF A HANDLER THROWS?
+        LET IT PROPAGATE - one broken observer breaks the publisher and the remaining observers.
+        CATCH AND LOG - the publisher is safe and a failure is silent, which is its own incident.
+        THE USUAL ANSWER: catch, log, and increment a metric - and be explicit that a failed handler
+        does not roll back the publisher's work.
+
+    3. WHAT ORDER DO HANDLERS RUN IN?
+        Registration order by default, which is an accident of import order. IF ORDER MATTERS YOUR
+        DESIGN IS WRONG - observers should be independent. If it genuinely matters, add explicit
+        priorities and document them.
+
+    4. STRONG OR WEAK REFERENCES?
+        A bus holding a strong reference to a handler KEEPS ITS OBJECT ALIVE FOREVER. That is the
+        LAPSED LISTENER problem and it is the pattern's classic memory leak - see the next section.""",
+
+    """4. THE FAILURE MODES
+
+A. THE LAPSED LISTENER - the pattern's signature memory leak. An object subscribes, is discarded by
+   everything else, and THE BUS STILL HOLDS A REFERENCE, so it is never collected AND IT KEEPS
+   RECEIVING EVENTS. In a UI this is how a closed dialog still reacts to updates. THE FIXES: always
+   unsubscribe (and make it exception-safe with a context manager), or hold weak references.
+
+B. NOT COPYING THE SUBSCRIBER LIST BEFORE DISPATCH. A handler that subscribes or unsubscribes during
+   dispatch mutates the list being iterated.
+
+C. A HANDLER THAT EMITS, CAUSING A CYCLE. A updates B, B's handler updates A, and you have infinite
+   recursion or a stack overflow. Detect re-entrancy, or forbid emitting from a handler.
+
+D. SILENTLY SWALLOWING HANDLER ERRORS. Safe for the publisher and invisible to everyone. Log and
+   count.
+
+E. DEPENDING ON HANDLER ORDER. It is registration order, which is import order, which changes when
+   somebody reorders imports.
+
+F. USING IT FOR TWO FIXED CALLS. If the list of reactions is known and will not change, a direct call
+   is clearer. THE PATTERN IS FOR VARIABILITY, and applying it to a fixed pair is pure indirection.
+
+G. CONFUSING IT WITH A MESSAGE QUEUE. Observer is IN-PROCESS and IN-MEMORY. It does not survive a
+   crash, does not cross services, and guarantees nothing. If you need durability or another process,
+   you need Kafka, RabbitMQ or an outbox - and saying so is important, because 'we'll use an event bus'
+   is often said when a queue is meant.
+
+H. PUTTING TRANSACTIONAL WORK IN A HANDLER. If `place()` commits and then an observer fails, the order
+   exists and the receipt does not. EITHER EMIT AFTER COMMIT AND ACCEPT THAT, OR USE AN OUTBOX -
+   record the event in the same transaction and dispatch it separately.
+
+I. LEAKING MUTABLE STATE IN THE PAYLOAD. If handlers receive the same mutable object, one can modify
+   what the next sees. Pass an immutable event.""",
+
+    """5. WHERE YOU HAVE ALREADY MET IT
+
+    THE PATTERN IS EVERYWHERE, and naming the instances is a good way to show you understand it rather
+    than having memorised it.
+
+        DOM EVENT LISTENERS      `addEventListener('click', handler)`. The button knows nothing about
+                                 who is listening.
+        REACT / VUE REACTIVITY   a component subscribes to state; a change re-renders whoever depends
+                                 on it.
+        DATABASE TRIGGERS        the same idea inside a database engine.
+        SIGNALS AND SLOTS        Qt's version, with type-checked connections.
+        SPRING APPLICATION EVENTS, .NET events, Java's PropertyChangeListener
+        MODEL-VIEW-CONTROLLER    the view observes the model. THIS IS THE PATTERN'S ORIGINAL
+                                 MOTIVATION.
+        WEBHOOKS                 Observer across a network boundary - and the differences are
+                                 instructive: delivery is unreliable, so webhooks need retries,
+                                 idempotency and signatures, which an in-process bus does not.
+
+    AND THE PATTERNS IT IS CONFUSED WITH:
+
+        MEDIATOR    also decouples objects through a middleman - but a mediator KNOWS about the
+                    participants and CONTAINS the interaction logic. An event bus is deliberately
+                    ignorant. Mediator centralises behaviour; Observer distributes it.
+        PUB/SUB     usually means the same idea with a BROKER between publisher and subscriber, across
+                    processes, with durability. Observer is the in-process, in-memory case.
+        CALLBACK    one listener, passed directly. Observer is the many-listener generalisation.
+
+    THE DISTINCTION WORTH STATING IN AN INTERVIEW: OBSERVER IS AN IN-PROCESS PATTERN WITH NO DELIVERY
+    GUARANTEES. The moment you need it to survive a restart or reach another service, you are asking
+    for a message broker, and the design questions change completely - ordering, at-least-once
+    delivery, idempotency, dead letters.""",
+
+    """6. HOW TO APPLY IT - numbered steps
+
+1. ASK WHETHER THE LIST OF REACTIONS VARIES. If it is two fixed calls that will never change, use
+   direct calls - the pattern is for variability.
+2. DEFINE THE EVENT AS AN IMMUTABLE OBJECT, not a bag of arguments. `OrderPlaced(order_id, user_id,
+   total)`, frozen.
+3. NAME EVENTS AS FACTS IN THE PAST TENSE - `order_placed`, not `send_receipt`. AN EVENT SAYS WHAT
+   HAPPENED; A COMMAND SAYS WHAT TO DO, and confusing them re-couples the publisher to its listeners.
+4. DECIDE SYNC OR ASYNC EXPLICITLY. Default to synchronous in-process.
+5. DECIDE THE ERROR POLICY: catch, log, count - and document that a failed handler does not undo the
+   publisher's work.
+6. ITERATE OVER A COPY of the subscriber list.
+7. MAKE UNSUBSCRIBING EASY AND EXCEPTION-SAFE - a returned token, or a context manager. THE LAPSED
+   LISTENER IS THIS PATTERN'S SIGNATURE LEAK.
+8. DO NOT DEPEND ON ORDER. If you must, make priorities explicit.
+9. EMIT AFTER THE TRANSACTION COMMITS, or use an outbox if the handler's work must be as durable as
+   the publisher's.
+10. IF YOU NEED CROSS-PROCESS OR DURABLE DELIVERY, USE A BROKER. This pattern is not that, and
+    pretending otherwise is how 'we lost the receipts when the pod restarted' happens.
+
+STEP 3 IS THE ONE THAT KEEPS THE DESIGN HONEST. The moment an event is named `send_receipt`, the
+publisher has started deciding what should happen - and the decoupling you paid for is gone.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Observer is for when something happens and several unrelated parts of the system need to react. The
+naive version has the order service calling the email service, analytics, the audit log and the cache
+directly - which works, and means the order service now knows about four things that have nothing to do
+with placing an order. Adding a fifth reaction edits that class.
+
+Observer inverts the dependency. The order service emits "order_placed" and knows nothing about who
+listens; the listeners register themselves. So adding a reaction is a new file rather than an edit,
+which is the open/closed principle in its cleanest form. And testing gets much easier in both
+directions - you assert the subject emitted the right event, and you test a handler by calling it.
+
+I would state the cost first, though, because it is real: you can no longer see what happens by reading
+the code. Emit tells you nothing about what will occur, so you have to go looking for subscribers. That
+is a genuine loss of comprehensibility, and it is why I would NOT use the pattern for two hard-coded
+calls that will never change. It is for when the list of reactions genuinely varies.
+
+The implementation is about twenty lines, and it forces four decisions: synchronous or asynchronous -
+default to synchronous in-process; what happens when a handler throws - catch, log and count, and be
+explicit that it does not undo the publisher's work; what order handlers run in - do not depend on it;
+and strong or weak references, which is the signature bug.
+
+That last one is the lapsed listener: an object subscribes, everything else discards it, and the bus
+still holds a reference, so it is never collected AND it keeps receiving events. In a UI that is a
+closed dialog still reacting to updates. Always unsubscribe, and make it exception-safe.
+
+And I would draw the line clearly: this is in-process and in-memory with no delivery guarantees. The
+moment you need it to survive a restart or reach another service, you want a message broker, and the
+questions become ordering, idempotency and dead letters.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    from collections import defaultdict
+
+    class EventBus:
+        def __init__(self):
+            self._subs = defaultdict(list)
+
+        def subscribe(self, event, handler):
+            self._subs[event].append(handler)
+            return lambda: self._subs[event].remove(handler)      # AN UNSUBSCRIBE TOKEN
+
+        def emit(self, event, payload):
+            for h in list(self._subs[event]):
+                try:
+                    h(payload)
+                except Exception:
+                    log.exception("handler failed for %s", event)
+                    metrics.increment("event_handler_failed", tags={"event": event})
+
+    `defaultdict(list)`
+        so subscribing to a new event name needs no setup, and emitting an event with no subscribers
+        is a no-op rather than a KeyError.
+
+    `return lambda: ...remove(handler)`
+        RETURNING AN UNSUBSCRIBE FUNCTION rather than requiring the caller to keep the handler around
+        and pass it back. Small, and it is what makes unsubscribing reliable - and therefore what
+        prevents the lapsed listener.
+
+    `for h in list(self._subs[event])`
+        THE COPY. A handler that subscribes or unsubscribes during dispatch would otherwise mutate the
+        list being iterated - a `RuntimeError` in Python, and a silently skipped handler in some other
+        languages.
+
+    `try / except / log / metric`
+        ONE BROKEN OBSERVER MUST NOT BREAK THE OTHERS OR THE PUBLISHER. And it must not be silent -
+        the metric is what turns a swallowed exception into something you can alert on.
+
+    THE EVENT ITSELF, and it should not be a dict:
+
+        @dataclass(frozen=True)
+        class OrderPlaced:
+            order_id: int
+            user_id: int
+            total: Decimal
+
+        FROZEN, so one handler cannot mutate what the next one sees. TYPED, so a rename is a static
+        error. AND NAMED AS A FACT IN THE PAST TENSE, which is what keeps the publisher from deciding
+        what should happen.
+
+    THE WEAK-REFERENCE VARIANT, for long-lived buses and short-lived subscribers:
+
+        import weakref
+        self._subs[event].append(weakref.WeakMethod(handler))
+        ...and skip any reference whose target has been collected.
+        IT FIXES THE LEAK AND INTRODUCES A NEW SURPRISE: a handler can vanish without warning, so a
+        subscriber that is only referenced by the bus stops working silently.""",
+
+    """9. THE LAPSED LISTENER, TRACED
+
+    THE SETUP - a dashboard widget that subscribes to price updates:
+
+        class PriceWidget:
+            def __init__(self, bus):
+                bus.subscribe("price_changed", self.on_price)
+            def on_price(self, price):
+                self.render(price)
+
+        w = PriceWidget(bus)
+        ...
+        w = None                    # the user closed the widget
+
+    WHAT YOU EXPECT: the widget is garbage collected.
+    WHAT ACTUALLY HAPPENS:
+
+        bus._subs["price_changed"] still holds `w.on_price`
+        A BOUND METHOD HOLDS A REFERENCE TO ITS OBJECT
+        so `w` is still reachable, is never collected, AND IS STILL CALLED ON EVERY PRICE CHANGE
+
+    THE OBSERVABLE SYMPTOMS, and they look like unrelated bugs:
+        MEMORY GROWS in proportion to how many widgets have ever been opened
+        `render` IS CALLED ON A CLOSED WIDGET, which may touch a destroyed UI handle and crash
+        THE HANDLER COUNT ONLY EVER RISES, so each price change does more work than the last -
+        performance degrades linearly with how long the session has run
+
+    THAT THIRD SYMPTOM IS THE ONE PEOPLE MISDIAGNOSE. 'The app gets slower the longer it is open' is
+    almost always accumulated subscriptions.
+
+    THE THREE FIXES:
+
+        1. EXPLICIT UNSUBSCRIBE, made exception-safe:
+
+               with bus.subscription("price_changed", self.on_price):
+                   ...
+           A context manager guarantees it even if the widget's teardown throws.
+
+        2. WEAK REFERENCES in the bus, so the subscription does not keep the object alive.
+           THE TRADE: a handler can now disappear silently, which is a different confusing bug.
+
+        3. TIE THE SUBSCRIPTION LIFETIME TO A SCOPE the framework already manages - a component's
+           mount/unmount, a request context, a `with` block.
+
+    THE THIRD IS THE BEST WHEN AVAILABLE, because it removes the possibility of forgetting rather than
+    asking people to remember - the same principle as making a race unrepresentable rather than
+    documenting a lock.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT DOES:  reverses the dependency so a subject announces a fact and does not know who reacts.
+
+    WHAT IT BUYS:  adding a reaction is a new file rather than an edit (open/closed) · both sides are
+    independently testable · the subject's code reads as what it means.
+
+    WHAT IT COSTS:  you cannot see what happens by reading the code · ordering is unspecified · errors
+    need an explicit policy · stack traces get longer · and it is a memory leak waiting to happen.
+
+    THE FOUR DECISIONS IT FORCES:  sync or async · what happens when a handler throws · what order
+    handlers run in · strong or weak references.
+
+    WHERE YOU HAVE MET IT:  DOM listeners · React reactivity · MVC · Qt signals and slots · database
+    triggers · webhooks (the same idea across a network, where delivery is unreliable and you need
+    retries, idempotency and signatures).
+
+THE #1 MISTAKE: the lapsed listener. A subscription keeps its object alive and keeps calling it -
+memory grows, dead objects react, and the app gets slower the longer it runs. Always unsubscribe, and
+make it exception-safe.
+
+THE #2 MISTAKE: using it where a direct call would do. Two fixed reactions that will never change are
+clearer as two lines than as an indirection you have to go looking for.
+
+THE #3 MISTAKE: naming events as commands. `send_receipt` re-couples the publisher to what should
+happen; `order_placed` does not.
+
+THE #4 MISTAKE: mistaking it for a message queue. It is in-process, in-memory, and guarantees nothing -
+so anything that must survive a restart needs a broker or an outbox.
+
+THE #5 MISTAKE: iterating the subscriber list while a handler mutates it, or letting one handler's
+exception take down the rest.
+
+ONE-SENTENCE TAKEAWAY: Observer lets a subject announce that something HAPPENED without knowing who
+cares, which makes new reactions additive instead of invasive - and you pay for that by losing the
+ability to see what happens by reading the code, and by owning a subscription lifetime that will leak
+if you forget it.""",
+]
+
+_EX_P1AO["Pattern: State - when an object's behaviour depends on its mode"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop writing the same if-chain in every method
+
+An object behaves differently depending on what mode it is in. A document is DRAFT, REVIEW or
+PUBLISHED. An order is PENDING, PAID, SHIPPED or CANCELLED. A connection is DISCONNECTED, CONNECTING
+or CONNECTED.
+
+THE NAIVE VERSION PUTS THE MODE IN A FIELD AND BRANCHES ON IT EVERYWHERE:
+
+    class Document:
+        def publish(self):
+            if self.state == "DRAFT":       self.state = "REVIEW"
+            elif self.state == "REVIEW":    self.state = "PUBLISHED"
+            elif self.state == "PUBLISHED": raise Error("already published")
+
+        def edit(self, text):
+            if self.state == "DRAFT":       self.text = text
+            elif self.state == "REVIEW":    raise Error("locked for review")
+            elif self.state == "PUBLISHED": raise Error("cannot edit published")
+
+        def delete(self):
+            if self.state == "DRAFT":       ...
+            elif ...
+
+THE SAME IF-CHAIN, REPEATED IN EVERY METHOD. Add a fourth state - ARCHIVED - and you must find and
+edit every one of them, and the compiler will not tell you which you missed.
+
+THE STATE PATTERN MOVES THE BRANCHING INTO TYPES: one class per state, each implementing the same
+interface, and the context DELEGATES to whichever state object it currently holds.
+
+    class Document:
+        def publish(self): self._state = self._state.publish(self)
+        def edit(self, t): self._state.edit(self, t)
+
+NO CONDITIONALS AT ALL. Adding a state is adding a class, and every behaviour for that state is in one
+place instead of scattered across five methods.
+
+TERMS AS THEY APPEAR:
+- CONTEXT: the object whose behaviour varies (the Document).
+- STATE: an object representing one mode, holding the behaviour for it.""",
+
+    """2. THE INTUITION - the transposed table
+
+Think of it as a table: states down the side, operations across the top.
+
+                  publish       edit        delete      submit
+        DRAFT     -> REVIEW     allowed     allowed     -> REVIEW
+        REVIEW    -> PUBLISHED  ERROR       ERROR       ERROR
+        PUBLISHED ERROR         ERROR       archive     ERROR
+        ARCHIVED  ERROR         ERROR       ERROR       ERROR
+
+    THE IF-CHAIN APPROACH ORGANISES THIS BY COLUMN. Each method contains one column of the table, so
+    the behaviour of DRAFT is smeared across every method in the class.
+
+    THE STATE PATTERN ORGANISES IT BY ROW. Each class contains one row, so everything about DRAFT is
+    in `DraftState` and you can read it in one place.
+
+    WHICH ORIENTATION IS BETTER DEPENDS ENTIRELY ON WHAT CHANGES MORE OFTEN:
+
+        IF YOU ADD STATES OFTEN     -> the State pattern. A new state is a new class and nothing else
+                                       changes.
+        IF YOU ADD OPERATIONS OFTEN -> the if-chain, or a table. A new operation with the State
+                                       pattern means adding a method to EVERY state class.
+
+    THAT IS THE SAME TRADE AS THE EXPRESSION PROBLEM, and being able to name it is the difference
+    between reciting the pattern and understanding when to use it. THE PATTERN IS NOT UNIVERSALLY
+    BETTER - it is better when states outnumber and outgrow operations, which for order and document
+    lifecycles is usually true.
+
+    AND THE THIRD OPTION, WHICH IS OFTEN THE RIGHT ONE FOR SIMPLE CASES: A TRANSITION TABLE.
+
+        TRANSITIONS = {
+            ("DRAFT", "submit"): "REVIEW",
+            ("REVIEW", "approve"): "PUBLISHED",
+            ("PUBLISHED", "archive"): "ARCHIVED",
+        }
+
+    DATA RATHER THAN CODE. It is compact, the whole machine is visible at a glance, it can be
+    validated or drawn automatically, and it can be loaded from configuration. USE IT WHEN THE
+    TRANSITIONS ARE SIMPLE AND THE PER-STATE BEHAVIOUR IS THIN.""",
+
+    """3. THE IMPLEMENTATION, AND THE DECISIONS IT FORCES
+
+    THE SHAPE:
+
+        class DocumentState:                       # the interface
+            def submit(self, doc): raise InvalidTransition()
+            def approve(self, doc): raise InvalidTransition()
+            def edit(self, doc, text): raise InvalidTransition()
+
+        class Draft(DocumentState):
+            def submit(self, doc): return Review()
+            def edit(self, doc, text): doc.text = text; return self
+
+        class Review(DocumentState):
+            def approve(self, doc): return Published()
+
+        class Published(DocumentState):
+            pass                                   # everything is invalid; the base class refuses
+
+    THE BASE CLASS RAISING BY DEFAULT IS THE KEY DESIGN CHOICE. Every operation is FORBIDDEN unless a
+    state explicitly permits it, so a new state that forgets to implement `edit` fails loudly rather
+    than silently doing nothing. DEFAULT TO REFUSING.
+
+    THE FOUR DECISIONS:
+
+    1. WHO DECIDES THE NEXT STATE? Two options, and the first is better:
+       THE STATE RETURNS ITS SUCCESSOR - `def submit(self, doc): return Review()`. The transition lives
+       with the state that knows about it.
+       THE CONTEXT SETS IT - `doc.state = Review()` from inside the state. Works, and it means the
+       state mutates the context, which is harder to test.
+
+    2. ARE STATES STATELESS? IF SO, MAKE THEM SINGLETONS. A `Draft` with no instance data need not be
+       allocated per document - one shared instance is enough, which matters when you have a million
+       orders. IF A STATE CARRIES DATA - a retry count, a timestamp - it cannot be shared.
+
+    3. WHAT HAPPENS ON AN INVALID TRANSITION? Raise, return a failure, or ignore. RAISING IS USUALLY
+       RIGHT: an attempt to publish an archived document is a bug in the caller, not a normal outcome.
+
+    4. WHERE DO ENTRY AND EXIT ACTIONS GO? 'Send an email when entering PUBLISHED' belongs in the
+       state's `on_enter`, not scattered at every call site that causes the transition. THAT IS ONE OF
+       THE PATTERN'S REAL WINS - a side effect attached to a state rather than to a code path.""",
+
+    """4. THE FAILURE MODES
+
+A. USING IT FOR TWO STATES. A boolean and one `if` is clearer than two classes and an interface. THE
+   PATTERN EARNS ITS COMPLEXITY AT ABOUT FOUR STATES AND THREE OPERATIONS, and below that it is
+   ceremony.
+
+B. ADDING OPERATIONS OFTEN. Every new operation means a new method in every state class. If operations
+   change more than states do, you have chosen the wrong orientation.
+
+C. STATES THAT KNOW ABOUT EACH OTHER'S DETAILS. `Draft` should return `Review()`, not reach into
+   `Review`'s internals. Keep the coupling to construction.
+
+D. A DEFAULT THAT SILENTLY DOES NOTHING. If the base class's `edit` is a no-op rather than a raise, a
+   state that forgets to implement it silently accepts and discards the edit. DEFAULT TO REFUSING.
+
+E. FORGETTING TO PERSIST THE STATE. The object is a class in memory and a column in the database.
+   The mapping between them - a string, an enum - must be explicit and stable, because renaming a class
+   would otherwise break every stored row.
+
+F. PUTTING BUSINESS LOGIC IN THE TRANSITION AND NOT IN THE STATE. 'Charge the card' does not belong
+   inside `submit`; the state machine should orchestrate, and the work should live in a service.
+
+G. NO GUARD CONDITIONS. Real transitions are often conditional - PENDING to PAID only if the payment
+   succeeded. That is a guard, and states need to be able to express one.
+
+H. IGNORING CONCURRENCY. Two threads transitioning the same object can both read PENDING and both
+   advance it. The state machine must be under a lock or, better, a conditional UPDATE - see
+   [[lld-design-an-e-commerce-order-and-inventory-model]], where the whole design turns on exactly
+   that.
+
+I. CONFUSING STATE WITH STRATEGY. They have the SAME STRUCTURE - an interface, several
+   implementations, a context that delegates. THE DIFFERENCE IS WHO CHOOSES: with Strategy the CLIENT
+   picks the algorithm and it does not change; with State the OBJECT changes its own mode in response
+   to events. Same shape, different intent - and interviewers ask this.""",
+
+    """5. STATE vs STRATEGY vs A TRANSITION TABLE
+
+    STATE AND STRATEGY ARE STRUCTURALLY IDENTICAL AND SEMANTICALLY OPPOSITE, and this comparison is
+    the most likely follow-up.
+
+        STRATEGY   the CLIENT chooses. `Sorter(QuickSort())` - the sorter does not change its own
+                   strategy, and the strategies do not know about each other.
+                   INTENT: interchangeable algorithms for the same task.
+
+        STATE      the OBJECT changes itself. A document in DRAFT becomes REVIEW because somebody
+                   submitted it, and DRAFT is what decides that REVIEW is next.
+                   INTENT: behaviour that varies with a lifecycle, and transitions between modes.
+
+        THE TELL: DO THE IMPLEMENTATIONS KNOW ABOUT EACH OTHER? Strategies do not. States do, because
+        each one names its successors. IF YOUR 'STRATEGIES' RETURN OTHER STRATEGIES, YOU HAVE A STATE
+        MACHINE.
+
+    AND THE THIRD OPTION - A TRANSITION TABLE:
+
+        TRANSITIONS = {
+            ("DRAFT",     "submit"):  "REVIEW",
+            ("REVIEW",    "approve"): "PUBLISHED",
+            ("REVIEW",    "reject"):  "DRAFT",
+            ("PUBLISHED", "archive"): "ARCHIVED",
+        }
+
+        def fire(state, event):
+            if (state, event) not in TRANSITIONS:
+                raise InvalidTransition(state, event)
+            return TRANSITIONS[(state, event)]
+
+        WHAT IT BUYS: the entire machine is visible in one block, it can be validated automatically
+        (are all states reachable? are there dead ends?), it can be DRAWN as a diagram, and it can be
+        loaded from configuration and changed without a deploy.
+        WHAT IT COSTS: nowhere natural to put per-state BEHAVIOUR - only transitions. Once each state
+        needs real logic, the table becomes a lookup into a dictionary of functions, which is the State
+        pattern with worse tooling.
+
+    THE PRACTICAL RULE:
+        SIMPLE TRANSITIONS, THIN BEHAVIOUR   -> a transition table
+        RICH PER-STATE BEHAVIOUR             -> the State pattern
+        TWO OR THREE STATES, ONE OPERATION   -> an `if`""",
+
+    """6. HOW TO APPLY IT - numbered steps
+
+1. WRITE THE TRANSITION TABLE FIRST, on paper. States down the side, operations across the top. THIS
+   IS THE DESIGN; the code is a transcription of it.
+2. COUNT THE CELLS. Two states and one operation does not justify the pattern. Four states and three
+   operations does.
+3. ASK WHAT CHANGES MORE OFTEN - states or operations. Adding operations is cheap with an if-chain and
+   expensive with State.
+4. DEFINE THE INTERFACE with every operation REFUSING by default. A forgotten override should raise,
+   not silently succeed.
+5. ONE CLASS PER STATE, each returning its successor.
+6. MAKE STATELESS STATES SINGLETONS. If a state carries no data, one shared instance is enough.
+7. PUT ENTRY AND EXIT SIDE EFFECTS IN THE STATE, not at the call sites that trigger the transition.
+8. DECIDE HOW INVALID TRANSITIONS FAIL, and make it loud.
+9. PERSIST THE STATE AS A STABLE STRING OR ENUM, decoupled from the class name.
+10. MAKE THE TRANSITION ATOMIC if it can be concurrent - a conditional UPDATE with a row-count check,
+    not a read-then-write.
+11. RECORD EVERY TRANSITION AS AN EVENT. The current state is then a projection you can audit and
+    replay.
+
+STEP 1 IS THE ENTIRE EXERCISE. Almost every bug in a state machine is a cell somebody never thought
+about - and the table forces you to think about all of them, including the ones whose answer is
+'that is impossible'.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The State pattern is for an object whose behaviour depends on what mode it is in - an order that is
+pending, paid, shipped or cancelled, or a document that is draft, in review or published.
+
+The naive version keeps the mode in a field and branches on it in every method, so the same if-chain
+appears five times and everything about the DRAFT state is smeared across the whole class. Adding a
+fourth state means finding and editing every one of those chains, and nothing tells you which you
+missed.
+
+The pattern moves the branching into types: one class per state, all implementing the same interface,
+and the context delegates to whichever state object it holds. So there are no conditionals at all, and
+everything about DRAFT is in one class.
+
+The way I would explain the trade is as a table - states down the side, operations across the top. The
+if-chain organises it by COLUMN, so each method is one operation across all states. The State pattern
+organises it by ROW, so each class is one state across all operations. Which is better depends on what
+changes more often: adding a state is free with the pattern and expensive with the if-chain, and adding
+an OPERATION is the reverse, because you have to add a method to every state class.
+
+Two design choices I would make explicit. The base class should REFUSE every operation by default, so a
+state that forgets to implement one fails loudly rather than silently accepting. And each state should
+return its own successor, so the knowledge of what comes next lives with the state that knows.
+
+I would also raise the comparison with Strategy, because they are structurally identical - an
+interface, several implementations, a context that delegates - and semantically opposite. With Strategy
+the CLIENT picks the algorithm and it does not change. With State the OBJECT changes its own mode. The
+tell is whether the implementations know about each other: strategies do not, states do, because each
+names its successors.
+
+And for simple machines I would consider a plain transition table instead - it is data, the whole
+machine is visible at once, and you can validate or draw it automatically.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    class DocumentState:
+        def submit(self, doc):        raise InvalidTransition("submit", self)
+        def approve(self, doc):       raise InvalidTransition("approve", self)
+        def reject(self, doc):        raise InvalidTransition("reject", self)
+        def edit(self, doc, text):    raise InvalidTransition("edit", self)
+        def on_enter(self, doc):      pass
+
+    EVERY OPERATION RAISES BY DEFAULT. This is the most important line in the design: a state permits
+    an operation only by explicitly overriding it, so the failure mode of forgetting is LOUD.
+    `on_enter` defaults to doing nothing, because most states have no entry action.
+
+    class Draft(DocumentState):
+        def edit(self, doc, text):
+            doc.text = text
+            return self                      # STAY in this state
+        def submit(self, doc):
+            if not doc.text:
+                raise ValueError("cannot submit an empty document")   # A GUARD
+            return Review()                  # TRANSITION
+
+    `return self` FOR AN OPERATION THAT DOES NOT CHANGE STATE - so every operation has the same
+    signature and the context's code is uniform: `self._state = self._state.op(self)`.
+    THE GUARD IS THE CONDITIONAL TRANSITION. Real machines need them, and this is where they belong.
+
+    class Review(DocumentState):
+        def approve(self, doc): return Published()
+        def reject(self, doc):  return Draft()
+
+    class Published(DocumentState):
+        def on_enter(self, doc):
+            notify_subscribers(doc)          # THE ENTRY ACTION, attached to the state
+        def archive(self, doc): return Archived()
+
+    `on_enter` IS THE PATTERN'S UNDERRATED FEATURE. 'Notify subscribers when a document is published'
+    lives with PUBLISHED, so it happens no matter which transition arrived there - rather than being
+    duplicated at every call site that publishes.
+
+    THE CONTEXT:
+
+        class Document:
+            def __init__(self):
+                self._state = Draft()
+            def _transition(self, name, *args):
+                new = getattr(self._state, name)(self, *args)
+                if new is not self._state:
+                    self._state = new
+                    new.on_enter(self)
+            def submit(self):  self._transition("submit")
+            def approve(self): self._transition("approve")
+
+        `if new is not self._state` - ONLY FIRE on_enter ON AN ACTUAL CHANGE, so an operation that
+        stays put does not re-trigger the entry action.""",
+
+    """9. ONE DOCUMENT, THROUGH ITS LIFECYCLE
+
+    doc = Document()                  state = Draft
+
+    doc.edit("hello")                 Draft.edit sets the text, returns self.
+                                      NO TRANSITION, so on_enter does not fire. state = Draft
+
+    doc.approve()                     Draft does not override `approve`, so the BASE CLASS raises
+                                      InvalidTransition("approve", Draft).
+                                      LOUD, IMMEDIATE, AND CORRECT - approving an unsubmitted draft is
+                                      a caller bug.
+
+    doc.submit()                      Draft.submit checks the guard (text is non-empty), returns
+                                      Review(). state = Review, and Review.on_enter fires.
+
+    doc.edit("more")                  Review does not override `edit`. RAISES.
+                                      NOTE HOW LITTLE CODE THIS TOOK: Review says nothing about
+                                      editing, and the default refusal handles it. In the if-chain
+                                      version, every method needs an explicit `elif REVIEW: raise`.
+
+    doc.approve()                     Review.approve returns Published(). state = Published, and
+                                      Published.on_enter fires -> subscribers are notified.
+
+    doc.submit()                      Published does not override `submit`. RAISES.
+
+    doc.archive()                     Published.archive returns Archived(). state = Archived.
+
+    NOW ADD A FIFTH STATE - `UnderLegalReview`, which can only be entered from Published and can only
+    go back to Published or to Archived:
+
+        class UnderLegalReview(DocumentState):
+            def clear(self, doc):   return Published()
+            def archive(self, doc): return Archived()
+
+        AND ADD `def legal_hold(self, doc): return UnderLegalReview()` TO `Published`.
+
+    TWO EDITS: ONE NEW CLASS AND ONE NEW METHOD. Nothing else in the system changes, and no existing
+    method was touched. IN THE IF-CHAIN VERSION you would edit every method in Document to add an
+    `elif` for the new state - five places, with no compiler help to find them.
+
+    THAT CONTRAST IS THE ENTIRE ARGUMENT FOR THE PATTERN, and it only pays if you actually add states.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT DOES:  replaces an if-chain repeated in every method with one class per state, each
+    implementing the same interface, and a context that delegates.
+
+    THE ORIENTATION TRADE:
+        the if-chain organises the table BY COLUMN - one method per operation, all states inside
+        the State pattern organises it BY ROW - one class per state, all operations inside
+        ADDING A STATE is cheap with the pattern and invasive without it
+        ADDING AN OPERATION is the reverse - a new method in every state class
+
+    THE THREE OPTIONS, BY SIZE:
+        two or three states, one operation      -> an `if`
+        simple transitions, thin behaviour      -> a transition table (data, visible, validatable)
+        rich per-state behaviour, many states   -> the State pattern
+
+    STATE vs STRATEGY:  identical structure, opposite intent. The CLIENT picks a strategy and it does
+    not change; the OBJECT changes its own state in response to events. THE TELL is whether the
+    implementations name each other - states do.
+
+THE #1 MISTAKE: using it for two states. A boolean and one `if` is clearer than an interface and two
+classes, and the pattern earns its complexity at around four states and three operations.
+
+THE #2 MISTAKE: a base class whose default is a silent no-op. Default to REFUSING, so a forgotten
+override is a loud error rather than an operation that appears to succeed and does nothing.
+
+THE #3 MISTAKE: choosing the wrong orientation. If you add operations more often than states, the
+if-chain or a table is the better shape.
+
+THE #4 MISTAKE: ignoring concurrency. Two threads can both read PENDING and both advance it - the
+transition must be atomic, which is a conditional UPDATE with a row-count check rather than a
+read-then-write.
+
+THE #5 MISTAKE: confusing it with Strategy in an interview. Same structure, opposite intent, and the
+tell is who chooses.
+
+ONE-SENTENCE TAKEAWAY: draw the states-by-operations table first, and if you add states more often than
+operations, give each state its own class with every operation refusing by default - so a new mode is a
+new file rather than an edit to five if-chains that nothing will remind you to update.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
