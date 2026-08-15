@@ -180892,6 +180892,1587 @@ four orders of magnitude and on a grid favours BFS by ten times, so look at the 
 repeat the folklore.""",
 ]
 
+_EX_P1AO["Attention"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - every word looks at every other word and decides who matters
+
+Read this sentence: "The trophy would not fit in the suitcase because IT was too big."
+
+What does "it" refer to? You worked it out by looking back at "trophy" and "suitcase" and deciding
+which one the word "big" makes sense with. YOU ATTENDED TO SOME WORDS MORE THAN OTHERS.
+
+ATTENTION IS THAT, AS ARITHMETIC. Each token produces three vectors:
+
+    QUERY  - "here is what I am looking for"
+    KEY    - "here is what I have to offer"
+    VALUE  - "and here is the content I would contribute"
+
+Every query is compared against every key by a DOT PRODUCT - a single number saying how well they
+match. Those numbers go through a SOFTMAX, which turns them into weights that sum to 1. The output for
+each token is the WEIGHTED AVERAGE OF ALL THE VALUE VECTORS.
+
+    Attention(Q, K, V) = softmax( Q K^T / sqrt(d_k) ) V
+
+That formula is the entire transformer. Everything else - the feed-forward layers, the residual
+connections, the norms - is scaffolding around it.
+
+THE THING PEOPLE MISS: attention is a SOFT LOOKUP TABLE. A hard lookup would be "give me the value
+stored under exactly this key". Attention says "give me a blend of all the values, weighted by how
+well each key matches" - and being a blend rather than a choice is precisely what makes it
+differentiable and therefore trainable.
+
+TERMS AS THEY APPEAR:
+- d_k: the dimension of the query and key vectors. Typically 64 or 128 per head.
+- SOFTMAX: turns a list of numbers into a probability distribution; big numbers get exponentially
+  more weight.
+- SELF-ATTENTION: Q, K and V all come from the same sequence. CROSS-ATTENTION: Q from one, K and V
+  from another.
+- HEAD: one independent copy of the whole mechanism. Models run 8-128 of them in parallel.""",
+
+    """2. THE INTUITION - a worked attention matrix over five words
+
+I embedded five tokens in 4 dimensions and computed the attention each word pays to each other word:
+
+     query      the     cat     sat      on     mat
+       the    0.687   0.046   0.114   0.066   0.086
+       cat    0.035   0.619   0.250   0.067   0.028
+       sat    0.134   0.388   0.360   0.083   0.035
+        on    0.088   0.118   0.093   0.371   0.330
+       mat    0.021   0.009   0.007   0.062   0.901
+
+EVERY ROW SUMS TO 1. That is the softmax, and it is what makes the output a weighted AVERAGE rather
+than an arbitrary combination - the output vector always lives in the convex hull of the value
+vectors, which keeps the scale under control.
+
+READ ROW "sat": it splits its attention between "cat" (0.388) and itself (0.360). READ ROW "mat": 0.901
+on itself - it found nothing else useful. READ ROW "on": 0.371 on itself and 0.330 on "mat", the word
+it governs.
+
+(These embeddings are random, so the specific numbers mean nothing linguistically. What they
+demonstrate is the SHAPE of the computation: a full n x n matrix of weights, each row a probability
+distribution. A trained model's matrix looks exactly like this and the weights mean something.)
+
+THE OUTPUT for "sat" is then 0.134*V(the) + 0.388*V(cat) + 0.360*V(sat) + 0.083*V(on) + 0.035*V(mat).
+Note it is not "sat's own vector, adjusted" - IT IS A FRESH VECTOR BUILT FROM THE WHOLE SENTENCE, in
+which "sat" happens to have a large say.
+
+WHY THREE SEPARATE PROJECTIONS AND NOT ONE: the query and key spaces decide WHO TALKS TO WHOM; the
+value space decides WHAT GETS SAID. Separating them lets a head route information based on one
+property (say, syntax) while transmitting a different property (say, semantics). With Q = K = V you
+would only be able to attend to things similar to yourself.""",
+
+    """3. THE SCALING FACTOR - why sqrt(d_k), measured
+
+The formula divides by sqrt(d_k) and almost nobody can say why. Here is the reason, measured over 500
+random (query, 8 keys) draws at each dimension:
+
+      d_k    mean |q.k|    UNSCALED max weight    UNSCALED entropy    SCALED max    SCALED entropy
+        4          1.50                 0.5145           1.885 bits        0.3361        2.532 bits
+       16          3.17                 0.7597           0.925            0.3645        2.477
+       64          6.34                 0.8657           0.493            0.3543        2.499
+      256         12.70                 0.9371           0.222            0.3581        2.494
+    1,024         25.53                 0.9701           0.106            0.3652        2.472
+    4,096         51.79                 0.9846           0.048            0.3585        2.486
+
+    (maximum possible entropy for 8 keys is log2(8) = 3.000 bits, meaning perfectly uniform attention)
+
+READ THE SECOND COLUMN FIRST: the mean absolute dot product DOUBLES every time d_k QUADRUPLES. That is
+sqrt(d): the dot product of two d-dimensional vectors with unit-variance components is a sum of d
+independent products, so its variance is d and its typical size is sqrt(d).
+
+NOW THE THIRD AND FOURTH COLUMNS. Feed those growing numbers into a softmax and the distribution
+COLLAPSES. At d = 4,096 the largest weight averages 0.985 and the entropy is 0.048 bits - attention
+has become a hard argmax onto a single key.
+
+WHY THAT IS FATAL FOR TRAINING, and this is the real answer to the question: softmax's gradient is
+proportional to p(1-p). When p = 0.985 for one key and ~0.002 for the others, the gradient through
+every key is nearly zero. THE LAYER STOPS LEARNING. It is not that the attention is "too confident";
+it is that the confidence kills the signal that would fix it.
+
+THE LAST TWO COLUMNS ARE THE FIX WORKING. With the 1/sqrt(d_k) division, the max weight sits at 0.35
+and the entropy at ~2.49 bits AT EVERY DIMENSION. The scaling makes the logits dimension-independent,
+so a 4,096-dimensional head behaves like a 4-dimensional one.
+
+THAT IS THE WHOLE JUSTIFICATION, AND IT IS WORTH BEING ABLE TO GIVE: divide by the standard deviation
+of the thing you are about to exponentiate.""",
+
+    """4. THE COST - quadratic, measured, and what everyone does about it
+
+Attention compares every token with every other token, so it is O(n^2) in the sequence length. I timed
+the raw dot products:
+
+      seq len     q.k dot products     time     ratio vs previous
+          128               16,384    54.8 ms                   -
+          256               65,536   236.0 ms               4.31x
+          512              262,144   944.5 ms               4.00x
+        1,024            1,048,576  3,884 ms                4.11x
+        2,048            4,194,304 15,232 ms                3.92x
+
+DOUBLING THE SEQUENCE QUADRUPLES THE WORK, exactly as advertised. (These are pure-Python timings, so
+the absolute numbers are meaningless; the RATIO is the point, and it is 4.0 every time.)
+
+MEMORY IS THE WORSE PROBLEM. The naive implementation MATERIALISES the n x n attention matrix. At
+n = 100,000 that is 10^10 entries per head per layer - hundreds of gigabytes. Time you can wait for;
+memory you cannot.
+
+WHAT PRODUCTION DOES ABOUT IT:
+- FLASHATTENTION: computes the same result without ever writing the n x n matrix to memory, by tiling
+  the computation and keeping the running softmax statistics in fast on-chip SRAM. EXACT, not an
+  approximation, and it is the single most important systems result in this area.
+- SLIDING-WINDOW / LOCAL ATTENTION: each token only attends to the nearest w tokens. O(n * w). Used in
+  Mistral and Longformer, usually interleaved with a few global layers.
+- GROUPED-QUERY / MULTI-QUERY ATTENTION: many query heads share one key/value head. Does not change
+  the n^2, but shrinks the KV CACHE, which is what actually limits batch size at inference.
+- LINEAR ATTENTION / STATE-SPACE MODELS (Mamba and relatives): replace the softmax with something that
+  factorises, giving O(n). They give up some expressiveness and the trade is still being worked out.
+- SPARSE PATTERNS (BigBird, Longformer): a fixed mixture of local, global and random attention.
+
+AT INFERENCE THE PICTURE CHANGES: with a KV cache, generating token n costs O(n) rather than O(n^2),
+because you only compute the new query against the cached keys. THE QUADRATIC COST IS A TRAINING AND
+PREFILL PROBLEM; DECODING IS LINEAR AND MEMORY-BANDWIDTH-BOUND.""",
+
+    """5. THE VARIANTS - multi-head, masking, and the alternatives
+
+MULTI-HEAD ATTENTION. Run h independent attentions in parallel on h different projections of the same
+input, then concatenate and project. WHY: a single head computes ONE weighted average, which forces
+one notion of relevance. Eight heads can simultaneously track syntactic dependency, coreference,
+positional proximity and topic. The cost is the same as one head of the full width, because each head
+uses d_model/h dimensions.
+
+CAUSAL / MASKED ATTENTION. In a decoder, token i must not see tokens after i, or the model would learn
+to copy the answer. Implemented by setting those logits to -infinity BEFORE the softmax, so they get
+weight exactly zero. NOTE THE MASK GOES BEFORE THE SOFTMAX, not after - masking afterwards would leave
+the remaining weights not summing to 1.
+
+CROSS-ATTENTION. Queries from the decoder, keys and values from the encoder. See the separate entry;
+the mechanism is identical, only the source of Q differs.
+
+ALTERNATIVES TO ATTENTION ENTIRELY:
+- RNN / LSTM: O(n) time and O(1) state, but sequential - step t cannot start until t-1 finishes - and
+  information from far back has to survive many multiplications. Attention's whole selling point is
+  that ANY two positions are ONE operation apart.
+- CONVOLUTION: parallel and cheap, but the receptive field grows only linearly with depth.
+- STATE-SPACE MODELS (Mamba): O(n), parallelisable in training via a scan, with a selective mechanism
+  that recovers much of attention's content-dependence. The strongest current challenger.
+
+WHY ATTENTION WON: constant PATH LENGTH between any two positions, and full parallelism during
+training. Those two properties together are what let models scale to trillions of tokens - and the
+quadratic cost was an acceptable price for them.""",
+
+    """6. HOW TO EXPLAIN IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - GIVE THE ONE-SENTENCE VERSION FIRST. "Each token asks a question, every token advertises what
+it has, and the answer is a weighted average of everyone's content, weighted by how well the question
+matches the advertisement."
+
+STEP 2 - NAME THE THREE PROJECTIONS AND SAY WHY THERE ARE THREE. Q and K decide WHO TALKS TO WHOM; V
+decides WHAT IS SAID. With Q = K = V you can only attend to things like yourself.
+
+STEP 3 - WRITE THE FORMULA. softmax(QK^T / sqrt(d_k)) V. Five symbols; write them.
+
+STEP 4 - EXPLAIN THE SOFTMAX. It makes each row a probability distribution, so the output is a convex
+combination of the values - bounded, and differentiable, which a hard lookup would not be.
+
+STEP 5 - EXPLAIN THE sqrt(d_k) WITH THE VARIANCE ARGUMENT. "A dot product of d unit-variance
+components has variance d, so it grows like sqrt(d). Without the division the softmax saturates - I
+measured the largest weight going from 0.51 at d=4 to 0.985 at d=4096, with entropy dropping from 1.9
+bits to 0.05 - and once it saturates the gradient p(1-p) vanishes and the layer stops learning."
+
+STEP 6 - STATE THE COMPLEXITY AND WHAT DOMINATES. O(n^2 * d) time and O(n^2) memory for training and
+prefill; O(n * d) per token at decode with a KV cache, where the bottleneck is memory bandwidth, not
+arithmetic.
+
+STEP 7 - NAME MULTI-HEAD AND MASKING WITHOUT BEING ASKED. And say that the mask is applied before the
+softmax.
+
+STEP 8 - NAME ONE MITIGATION AND SAY WHAT KIND IT IS. "FlashAttention is exact and changes the memory
+access pattern; sliding-window is an approximation that changes what the model can see. Those are
+different sorts of answer."
+
+STEP 9 - IF THEY PUSH ON WHY ATTENTION AT ALL: constant path length between any two positions, and
+full parallelism in training. RNNs have neither.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Attention lets every token in a sequence look at every other token and decide how much each one
+matters to it.
+
+Concretely, each token is projected into three vectors: a query, a key and a value. The query is what
+this token is looking for, the key is what it advertises, and the value is the content it would
+contribute. You take the dot product of every query with every key, which gives an n-by-n grid of
+match scores, divide by the square root of the key dimension, softmax each row so it sums to one, and
+use those weights to average the value vectors. That's the whole formula: softmax of QK-transpose over
+root d-k, times V.
+
+The reason there are three projections rather than one is that queries and keys decide WHO talks to
+whom, while values decide WHAT gets said. If you used the same vector for all three, a token could
+only attend to things similar to itself.
+
+The square root of d-k is the part people can't usually justify, and it's a nice concrete argument.
+The dot product of two d-dimensional vectors with unit-variance components is a sum of d independent
+products, so its variance is d and its typical magnitude grows like root d. If you feed those into a
+softmax, the distribution collapses. I measured it: with eight keys, the largest attention weight
+averages 0.51 at d equals 4 and 0.985 at d equals 4096, and the entropy falls from 1.9 bits to 0.05
+out of a possible 3. Once it's that peaked, the softmax gradient - which is p times one-minus-p - is
+essentially zero for every key, so the layer stops learning. Dividing by root d-k makes the logits
+dimension-independent: with the scaling, the max weight stays at about 0.35 at every dimension I
+tried.
+
+The cost is quadratic in the sequence length, and I timed that too - doubling the sequence multiplied
+the work by almost exactly four each time. Memory is the harder half: materialising the n-by-n matrix
+at a hundred thousand tokens is ten to the ten entries per head per layer. That's what FlashAttention
+fixes, and it's worth being clear that it's an EXACT method - it tiles the computation and keeps the
+running softmax statistics on-chip so the big matrix is never written out - whereas sliding-window
+attention is an approximation that changes what the model can see.
+
+And at inference the picture is different: with a KV cache, generating each new token is linear, not
+quadratic, and the bottleneck becomes memory bandwidth rather than arithmetic.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+SCALED DOT-PRODUCT ATTENTION, in plain Python so nothing is hidden:
+
+    import math
+
+    def softmax(xs):
+        m = max(xs)                       # subtract the max for NUMERICAL STABILITY:
+                                          # exp(1000) overflows, exp(1000-1000) does not,
+                                          # and the result is mathematically identical
+        e = [math.exp(x - m) for x in xs]
+        s = sum(e)
+        return [v / s for v in e]
+
+    def attention(Q, K, V, mask=None):
+        n, d = len(Q), len(Q[0])
+        out = []
+        for i in range(n):
+            scores = [sum(Q[i][c] * K[j][c] for c in range(d)) / math.sqrt(d)
+                      for j in range(n)]
+            # ^ the dot product is the SIMILARITY. Dividing by sqrt(d) is what keeps the
+            #   logits at unit scale regardless of head width - measured: without it the
+            #   max softmax weight goes 0.51 -> 0.985 as d goes 4 -> 4096.
+
+            if mask is not None:
+                scores = [s if mask[i][j] else float("-inf") for j, s in enumerate(scores)]
+            # ^ MASK BEFORE THE SOFTMAX. exp(-inf) = 0, so the masked positions get weight
+            #   exactly zero AND the remaining weights still sum to 1. Masking after the
+            #   softmax would leave the row not summing to 1.
+
+            w = softmax(scores)
+            out.append([sum(w[j] * V[j][c] for j in range(len(V))) for c in range(len(V[0]))])
+            # ^ the output is a CONVEX COMBINATION of the value vectors - it always lies
+            #   inside their hull, which is what keeps activations bounded.
+        return out
+
+THE CAUSAL MASK, which is what makes a decoder a decoder:
+
+    mask = [[j <= i for j in range(n)] for i in range(n)]
+    # token i may see tokens 0..i. In practice this is a constant lower-triangular matrix
+    # of zeros and -inf added to the scores, not a Python conditional.
+
+MULTI-HEAD, in outline:
+
+    def multi_head(X, Wq, Wk, Wv, Wo, h):
+        d_model = len(X[0])
+        d_head = d_model // h              # <-- each head is NARROWER, so h heads cost the
+                                           #     same as one full-width head
+        heads = []
+        for i in range(h):
+            Q = project(X, Wq[i]); K = project(X, Wk[i]); V = project(X, Wv[i])
+            heads.append(attention(Q, K, V))
+        return project(concat(heads), Wo)  # concatenate, then ONE output projection that
+                                           # lets the heads' contributions mix
+
+WHAT THE REAL THING LOOKS LIKE: `torch.nn.functional.scaled_dot_product_attention(q, k, v,
+is_causal=True)`, which dispatches to a FlashAttention kernel when the shapes and dtypes allow it. Use
+it; a hand-written version is 10-100x slower and numerically worse.""",
+
+    """9. A TRACE - one query attending over four keys, with and without scaling
+
+Four keys, d_k = 4, one query. Suppose the raw dot products come out as:
+
+    q.k =  [ 2.0,  6.0,  1.0,  3.0 ]        (key 2 is the best match)
+
+WITHOUT SCALING:
+    exp:      [ 7.39, 403.4, 2.72, 20.1 ]   sum = 433.6
+    softmax:  [ 0.017, 0.930, 0.006, 0.046 ]
+    -> 93% of the output comes from key 2. Nearly a hard selection.
+
+WITH SCALING by sqrt(4) = 2:
+    scaled:   [ 1.0, 3.0, 0.5, 1.5 ]
+    exp:      [ 2.72, 20.1, 1.65, 4.48 ]    sum = 28.9
+    softmax:  [ 0.094, 0.694, 0.057, 0.155 ]
+    -> still favours key 2, but keys 0, 1 and 3 retain real weight, and therefore real
+       gradient.
+
+NOW SCALE THE DIMENSION UP. At d_k = 64 the same relative pattern of dot products would be about 4x
+larger (sqrt(64)/sqrt(4) = 4), so unscaled logits of [8, 24, 4, 12]:
+
+    softmax:  [ 1.1e-7, 0.99999, 2.1e-9, 3.4e-6 ]
+    -> the entropy is essentially zero. THE OTHER THREE KEYS RECEIVE NO GRADIENT AT ALL, so
+       the model can never learn that one of them should have been preferred.
+    With the /8 scaling the logits return to [1, 3, 0.5, 1.5] and the distribution is the
+    same as the d_k = 4 case. THAT DIMENSION-INDEPENDENCE IS THE ENTIRE POINT.
+
+MY MEASURED VERSION OF THIS, averaged over 500 draws with 8 keys:
+    unscaled max weight:  0.51 (d=4) -> 0.87 (d=64) -> 0.97 (d=1024) -> 0.985 (d=4096)
+    scaled max weight:    0.34, 0.35, 0.37, 0.36  - FLAT
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `sum(Q[i][c] * K[j][c] for c in range(d))`
+            produced the raw [2.0, 6.0, 1.0, 3.0]. Its typical magnitude grows like sqrt(d), which is
+            the entire reason the next operation exists.
+    `/ math.sqrt(d)`
+            produced [1.0, 3.0, 0.5, 1.5]. Removing this line is what produced the 0.99999 row above.
+    `m = max(xs)` and `math.exp(x - m)`
+            produced the exp column. The subtraction changes nothing mathematically and is what stops
+            exp() overflowing on large logits - a real crash in fp16, where exp(12) already overflows
+            the representable range in intermediate accumulations.
+    `s = sum(e)` and `v / s`
+            produced the softmax row and are why it sums to 1. That normalisation is what makes the
+            output a weighted AVERAGE rather than an unbounded sum.
+    `scores = [s if mask[i][j] else float("-inf") ...]`
+            does not appear in this trace, but placing it BEFORE the softmax is what would let masked
+            positions get exactly 0 while the surviving weights still normalise to 1.
+    `sum(w[j] * V[j][c] ...)`
+            turns the weights into the actual output. Note it indexes V, not K - the thing you match
+            on and the thing you retrieve are deliberately different vectors.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    TRAINING / PREFILL:  O(n^2 * d) time, O(n^2) memory for the naive implementation.
+    DECODE WITH A KV CACHE:  O(n * d) per generated token, memory-bandwidth-bound.
+    MULTI-HEAD:  h heads of width d/h cost the same as one head of width d.
+
+    MEASURED, 500 draws of (1 query, 8 keys) per dimension:
+        d_k        mean |q.k|    unscaled max w    unscaled entropy    scaled max w    scaled H
+        4                1.50            0.5145          1.885 bits          0.3361       2.532
+        64               6.34            0.8657          0.493               0.3543       2.499
+        4,096           51.79            0.9846          0.048               0.3585       2.486
+        (uniform attention over 8 keys would be 3.000 bits)
+    MEASURED, quadratic scaling: 128 -> 2,048 tokens, each doubling multiplied the time by
+    4.31x, 4.00x, 4.11x, 3.92x.
+
+THE #1 MISTAKE: not being able to justify the sqrt(d_k). "For numerical stability" is a hand-wave. The
+answer is that the dot product's standard deviation is sqrt(d), the softmax saturates without the
+correction, and a saturated softmax has no gradient.
+
+THE #2 MISTAKE: saying attention "finds the most relevant token". It computes a WEIGHTED AVERAGE over
+all of them. The averaging is what makes it differentiable; a hard selection would not be trainable.
+
+THE #3 MISTAKE: confusing keys and values. You match on keys and retrieve values, and they are
+deliberately different projections.
+
+THE #4 MISTAKE: applying the causal mask after the softmax. The row then does not sum to 1.
+
+THE #5 MISTAKE: claiming inference is quadratic. With a KV cache each new token is linear against the
+cached keys; the quadratic cost is training and prefill.
+
+THE #6 MISTAKE: describing FlashAttention as an approximation. It is EXACT - it changes the memory
+access pattern, not the mathematics. Sliding-window attention is the approximation.
+
+THE #7 MISTAKE: forgetting the max-subtraction in softmax. In fp16 the exponentials overflow and you
+get NaN, which is a real and common training failure.
+
+THE #8 MISTAKE: describing multi-head as "h times the compute". Each head is d/h wide, so the total
+is the same; what you buy is h independent notions of relevance for free.
+
+ONE-SENTENCE TAKEAWAY: attention is a differentiable soft lookup - dot every query against every key,
+divide by sqrt(d_k) so the softmax does not saturate and kill its own gradient, normalise, and average
+the values - which gives every pair of positions a constant path length and full training parallelism,
+at a cost that is quadratic in sequence length for training and prefill but linear per token at decode
+with a KV cache.""",
+]
+
+_EX_P1AO["Chain-of-thought prompting"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - make the model show its working
+
+Ask a language model "A shop has 23 apples, uses 20 for lunch, then buys 6 more. How many now?" and
+demand an immediate number, and it often gets it wrong. Ask it to "think step by step" and it writes:
+
+    "Started with 23. Used 20, so 23 - 20 = 3. Bought 6 more, so 3 + 6 = 9. The answer is 9."
+
+Same model, same weights, dramatically better accuracy. CHAIN-OF-THOUGHT PROMPTING IS SIMPLY ASKING
+FOR THE INTERMEDIATE STEPS.
+
+WHY IT WORKS - and there are two reasons, both worth knowing:
+
+REASON 1, THE COMPUTATIONAL ONE, which is the important one. A transformer does a FIXED AMOUNT OF
+COMPUTATION PER TOKEN - a fixed number of layers, each a fixed size. If the answer requires five
+sequential reasoning steps and the model must emit it in one token, it has to compress five steps into
+that fixed budget. WRITING INTERMEDIATE TOKENS BUYS MORE FORWARD PASSES. The chain of thought is not
+just an explanation; it is a SCRATCHPAD, and the model reads its own scratchpad through attention on
+the next step.
+
+REASON 2, THE DISTRIBUTIONAL ONE. Training data that shows working is more often correct than training
+data that blurts an answer, so conditioning on "let's think step by step" moves the model into a
+region of its distribution where careful text lives.
+
+TERMS AS THEY APPEAR:
+- ZERO-SHOT CoT: just appending "Let's think step by step". No examples.
+- FEW-SHOT CoT: giving worked examples that themselves show reasoning.
+- SELF-CONSISTENCY: sampling several chains and taking the majority answer.
+- REASONING MODELS: models trained to produce long chains before answering. The technique became the
+  architecture.""",
+
+    """2. THE INTUITION - the arithmetic of why long chains fail
+
+Here is the fact that should govern how you think about reasoning chains. IF EACH STEP IS CORRECT WITH
+PROBABILITY p, AN n-STEP CHAIN IS CORRECT WITH PROBABILITY p^n. That is not a simulation, it is
+arithmetic, and the table is sobering:
+
+     steps      p=0.99     p=0.95     p=0.90     p=0.80
+         1       99.0%      95.0%      90.0%      80.0%
+         3       97.0%      85.7%      72.9%      51.2%
+         5       95.1%      77.4%      59.0%      32.8%
+        10       90.4%      59.9%      34.9%      10.7%
+        20       81.8%      35.8%      12.2%       1.2%
+        50       60.5%       7.7%       0.5%       0.0%
+
+A MODEL THAT IS 95% RELIABLE PER STEP SOLVES A 20-STEP PROBLEM 36% OF THE TIME. Not because it is bad
+at any step, but because 0.95^20 = 0.358.
+
+THIS EXPLAINS SEVERAL THINGS AT ONCE:
+- Why chain-of-thought helps enormously on 3-8 step problems and much less on 30-step ones.
+- Why "just add more reasoning" is not a strategy - each extra step is another multiplication by p.
+- Why the effective fixes are all about RAISING p or MAKING ERRORS RECOVERABLE: verification steps,
+  tool use (a calculator has p = 1.0 for arithmetic), decomposition into independently-checkable
+  subproblems, and self-consistency.
+- Why chain-of-thought was reported as an EMERGENT ability that only appears above a certain model
+  scale: below some p, the compounding swamps the benefit and showing the working makes things worse,
+  because a wrong intermediate step gets conditioned on.
+
+THAT LAST POINT IS THE ONE PEOPLE MISS. CHAIN-OF-THOUGHT CAN HURT. A model that writes a confidently
+wrong intermediate step then attends to it and builds on it. Blurting an answer at least does not
+commit to a bad premise.""",
+
+    """3. SELF-CONSISTENCY - measured, including when it backfires
+
+Self-consistency: sample k independent chains at a non-zero temperature and take the MAJORITY ANSWER.
+The assumption is that CORRECT ANSWERS AGREE WITH EACH OTHER AND WRONG ANSWERS SCATTER.
+
+I ran a Monte Carlo with 4 possible wrong answers that the model picks among at random when it errs:
+
+     single-chain accuracy      k=1      k=3      k=5     k=11     k=21
+                      35%     35.1%    39.7%    46.1%    59.2%    73.2%
+                      45%     45.1%    51.3%    63.0%    80.4%    92.9%
+                      55%     54.5%    66.4%    78.0%    93.2%    99.0%
+                      70%     70.6%    83.0%    92.8%    99.4%   100.0%
+
+    A 45%-accurate chain becomes 92.9% accurate with 21 samples. THAT IS AN ENORMOUS GAIN, and it is
+    why self-consistency is a standard technique.
+
+NOW THE PART THAT IS USUALLY LEFT OUT. I re-ran it with ONE wrong answer instead of four - modelling a
+SYSTEMATIC error, where the model consistently makes the same mistake rather than random ones:
+
+     single-chain accuracy      k=1      k=3      k=5     k=11     k=21
+                      35%     35.3%    27.7%    23.8%    14.2%      7.5%
+                      45%     46.0%    43.3%    40.6%    36.5%     31.1%
+                      55%     54.8%    57.6%    59.3%    64.1%     68.5%
+
+    AT 35% ACCURACY, SAMPLING 21 CHAINS TOOK IT FROM 35% TO 7.5%. Majority voting AMPLIFIED the error,
+    because the wrong answer was the majority answer. Below 50%, voting makes things monotonically
+    worse; above 50% it makes them monotonically better. That is the Condorcet jury theorem, and it is
+    the honest boundary condition on self-consistency.
+
+    SELF-CONSISTENCY DOES NOT AVERAGE OUT ERROR; IT AMPLIFIES THE MAJORITY. It works when errors are
+    DIVERSE and the model is better than chance on the answer it is voting for. If the model has a
+    systematic misconception, sampling it twenty-one times just confirms the misconception.
+
+THE COST: k chains is k times the output tokens and k times the cost. Latency is k times worse too
+unless you run them in parallel, which most people do not.""",
+
+    """4. WHEN IT HELPS, WHEN IT HURTS, AND WHAT REPLACED IT
+
+WHERE CHAIN-OF-THOUGHT HELPS MOST:
+- Multi-step arithmetic and word problems - the canonical case.
+- Symbolic manipulation, logic puzzles, date arithmetic.
+- Anything where an intermediate quantity must be computed and then used.
+- Code reasoning: "what does this print" benefits enormously from tracing.
+
+WHERE IT HELPS LITTLE OR NOT AT ALL:
+- SINGLE-STEP FACTUAL RECALL. "What is the capital of Australia" gains nothing from step-by-step, and
+  the extra tokens are an opportunity to talk yourself out of a correct answer.
+- Tasks where the model simply does not know the fact. Reasoning cannot manufacture knowledge.
+- Very short classification or extraction tasks.
+
+WHERE IT ACTIVELY HURTS - the cases worth naming, because they are counter-intuitive:
+- TASKS WHERE VERBALISATION INTERFERES. There is a documented effect for tasks humans do better
+  intuitively - some face-recognition-style and aesthetic-judgement tasks - where forcing an
+  explanation degrades performance.
+- WHEN AN EARLY STEP IS WRONG. The model conditions on its own error and builds on it. Compounding
+  works both ways.
+- WHEN LATENCY MATTERS. A chain is 10-100x the output tokens of a direct answer.
+
+THE CRUCIAL CAVEAT ON FAITHFULNESS: THE STATED CHAIN IS NOT NECESSARILY THE ACTUAL COMPUTATION. Models
+can produce a correct answer with a chain that does not support it, and produce a plausible chain that
+rationalises a decision made on other grounds. DO NOT TREAT THE CHAIN AS AN EXPLANATION OF THE MODEL'S
+INTERNALS - treat it as extra computation that happens to be legible.
+
+WHAT REPLACED IT, AND IT IS THE headline development: REASONING MODELS. Models trained with
+reinforcement learning to produce long internal chains before answering - o1, o3, R1, Claude's extended
+thinking. Chain-of-thought went from a PROMPTING TRICK to a TRAINED CAPABILITY. On those models,
+"think step by step" is redundant or harmful, because they already do it and the instruction can
+interfere with their trained format. KNOWING WHICH KIND OF MODEL YOU ARE PROMPTING IS NOW PART OF THE
+ANSWER.""",
+
+    """5. THE TECHNIQUES AROUND IT - a comparison
+
+    technique                what it does                          cost         when
+    -------------------------------------------------------------------------------------------
+    zero-shot CoT            append "think step by step"           ~free        default first try
+    few-shot CoT             show worked examples                  prompt       when the FORMAT of
+                                                                   tokens       reasoning matters
+    self-consistency         sample k, majority vote               k x output   accuracy above ~50%
+                                                                                and diverse errors
+    least-to-most            decompose, then solve sub-problems    2+ calls     compositional tasks
+    tree of thoughts         branch, evaluate, backtrack           10-100x      search problems
+    program-aided (PAL)      emit CODE, execute it                 1 call +     ARITHMETIC - a
+                                                                   sandbox      calculator has p=1
+    verifier / critic        a second pass checks the chain        2x           high-stakes answers
+    reasoning models         trained to think internally           built in     just use them
+
+THE ONE THAT DESERVES SPECIAL MENTION IS PROGRAM-AIDED REASONING. Look again at the compounding table:
+the whole problem is that p < 1. For arithmetic specifically, YOU CAN MAKE p EXACTLY 1 by having the
+model emit Python and running it. A 50-step calculation that would succeed 7.7% of the time at p = 0.95
+succeeds 100% of the time if the model's only job is to write the expression correctly. TOOL USE IS
+NOT A COMPETITOR TO CHAIN-OF-THOUGHT; IT IS THE FIX FOR CHAIN-OF-THOUGHT'S ACTUAL FAILURE MODE.
+
+TREE OF THOUGHTS is the generalisation: instead of one chain, explore a tree of partial chains,
+evaluate them, and backtrack. It genuinely helps on search-like problems (game of 24, crosswords) and
+it costs one to two orders of magnitude more. RESERVE IT FOR PROBLEMS THAT ARE ACTUALLY SEARCHES.
+
+LEAST-TO-MOST is the underrated one: ask the model to list the sub-problems first, then solve them in
+order, each in its own call. It converts one long chain (p^n) into several short ones, and short
+chains are where p^n is survivable.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+STEP 1 - CHECK WHAT KIND OF MODEL YOU ARE PROMPTING. If it is a reasoning model, it already does this
+and your instruction may fight its trained format. If it is a standard model, continue.
+
+STEP 2 - COUNT THE STEPS THE PROBLEM ACTUALLY NEEDS. If it is one, chain-of-thought will not help and
+may hurt. If it is three to eight, this is the sweet spot. If it is thirty, decompose instead.
+
+STEP 3 - START WITH ZERO-SHOT. "Let's think step by step" costs nothing. Measure whether it helped;
+do not assume.
+
+STEP 4 - IF THE FORMAT OF THE REASONING MATTERS, GO FEW-SHOT. Two or three worked examples that show
+the shape of reasoning you want. The examples teach the FORMAT far more than the content.
+
+STEP 5 - PUT THE REASONING BEFORE THE ANSWER, ALWAYS. Generation is left to right; a JSON schema with
+`{"answer": ..., "reasoning": ...}` forces the model to commit before it thinks, which destroys the
+entire benefit. THIS IS THE MOST COMMON PRACTICAL ERROR.
+
+STEP 6 - IF THE TASK IS ARITHMETIC, EMIT CODE INSTEAD. Have the model write the calculation and
+execute it. That is the difference between p = 0.95 per step and p = 1.
+
+STEP 7 - IF ACCURACY MATTERS MORE THAN COST, ADD SELF-CONSISTENCY - but only if single-chain accuracy
+is comfortably above 50% and the errors look diverse. Measured: at 35% accuracy with a systematic
+error, 21-sample voting took performance from 35% to 7.5%.
+
+STEP 8 - MEASURE. Build 50-100 examples with known answers and compare direct, zero-shot CoT, few-shot
+CoT and self-consistency. The differences are large and they are task-specific.
+
+STEP 9 - DO NOT PRESENT THE CHAIN TO USERS AS AN EXPLANATION. It is extra computation, not
+introspection, and it can be unfaithful to the actual basis of the answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Chain-of-thought prompting is asking the model to produce its intermediate reasoning before its
+answer, either by just saying "let's think step by step" or by showing worked examples.
+
+The reason it works is computational, not stylistic. A transformer does a fixed amount of computation
+per token - fixed layers, fixed width. If a problem needs five sequential steps and the model has to
+emit the answer in one token, it has to squeeze five steps into that one fixed budget. Writing
+intermediate tokens buys more forward passes, and the model reads its own intermediate tokens through
+attention. The chain is a scratchpad.
+
+The fact I'd want to lead with is the compounding arithmetic. If each step is right with probability
+p, an n-step chain is right with probability p to the n. A model that's 95% reliable per step solves a
+twenty-step problem 36% of the time. That's not a model quality problem, it's multiplication. And it
+tells you what the real fixes are: raise p, or shorten the chains. Tool use raises p - a calculator is
+p equals one for arithmetic - and decomposition shortens the chains.
+
+It also explains why chain-of-thought can HURT. If the model writes a confidently wrong intermediate
+step, it then attends to that step and builds on it. Blurting an answer at least doesn't commit to a
+bad premise. And it's why chain-of-thought was reported as emergent at scale: below some per-step
+reliability, showing the working makes things worse.
+
+On self-consistency - sampling several chains and taking the majority - I measured both sides. With
+diverse errors it's very strong: a 45%-accurate chain becomes 93% accurate at 21 samples. But it rests
+on the assumption that correct answers agree and wrong ones scatter. I re-ran it with a SYSTEMATIC
+error - one wrong answer the model keeps making - and at 35% single-chain accuracy, twenty-one samples
+took it from 35% down to 7.5%. Majority voting amplifies the majority; below 50% it amplifies the
+error. That's the Condorcet condition and it's the honest limit of the technique.
+
+Two practical things. Always put the reasoning BEFORE the answer - a JSON schema with the answer field
+first forces the model to commit before it thinks, and I've seen that quietly destroy the whole
+benefit. And don't present the chain to users as an explanation of what the model did; it's extra
+computation that happens to be readable, and it can be unfaithful to the actual basis of the answer.
+
+Finally, the landscape has moved: reasoning models are trained to do this internally, so on those,
+"think step by step" is redundant or actively interferes. Knowing which kind of model you're talking
+to is now part of the answer.'""",
+
+    """8. THE CODE, PIECE BY PIECE - the prompts and the harness
+
+ZERO-SHOT CoT - the two-call version, which is the reliable form:
+
+    STEP_1 = f"{question}\\n\\nLet's think step by step."
+    reasoning = model(STEP_1)
+
+    STEP_2 = f"{question}\\n\\n{reasoning}\\n\\nTherefore, the final answer is:"
+    answer = model(STEP_2)
+    # ^ TWO calls. The first produces the reasoning; the second EXTRACTS a clean answer.
+    #   One call often works, but parsing an answer out of free-form reasoning is where
+    #   production pipelines break, and a second cheap call is more robust than a regex.
+
+FEW-SHOT CoT - the examples teach the FORMAT:
+
+    PROMPT = '''
+    Q: Roger has 5 tennis balls. He buys 2 cans of 3 balls each. How many now?
+    A: Roger started with 5. Two cans of 3 balls each is 2 * 3 = 6 balls.
+       5 + 6 = 11. The answer is 11.
+
+    Q: {question}
+    A:'''
+    # ^ note the example's reasoning is SHORT, EXPLICIT and ends with a fixed phrase
+    #   ("The answer is X"). The fixed phrase is what makes the output parseable.
+
+SELF-CONSISTENCY:
+
+    from collections import Counter
+    def self_consistent(question, k=5, temperature=0.7):
+        answers = [extract(model(cot_prompt(question), temperature=temperature))
+                   for _ in range(k)]
+        # ^ TEMPERATURE MUST BE NON-ZERO. At temperature 0 every sample is identical and
+        #   you have paid k times for one answer. This is a real and common bug.
+        return Counter(answers).most_common(1)[0][0]
+    # ^ k calls, so k times the cost. Run them concurrently or the latency is k times too.
+
+PROGRAM-AIDED, which is the fix for arithmetic:
+
+    PROMPT = f"Write Python that computes the answer to: {question}\\n" \\
+             f"Assign the result to a variable named `answer`. Output only code."
+    code = model(PROMPT)
+    answer = run_in_sandbox(code)["answer"]
+    # ^ the model's job is now to TRANSLATE, not to CALCULATE. Its per-step reliability on
+    #   translation is much higher than on arithmetic, and the arithmetic itself has p = 1.
+    # ^ run_in_sandbox is doing real work: never exec() model output in your own process.
+
+THE ORDERING RULE, in schema form:
+
+    # WRONG - the model must emit `answer` before it has reasoned
+    {"answer": "...", "reasoning": "..."}
+
+    # RIGHT - reasoning is generated first and conditions the answer
+    {"reasoning": "...", "answer": "..."}
+    # generation is strictly left to right, so field order in a schema IS execution order.""",
+
+    """9. A WORKED EXAMPLE, AND THE NUMBERS BEHIND THE ADVICE
+
+THE QUESTION: "A cafeteria had 23 apples. They used 20 to make lunch and bought 6 more. How many
+apples do they have?"
+
+DIRECT PROMPTING:
+    "The answer is 27."
+    Wrong. The model pattern-matched 23 + 6 and lost the subtraction. ONE TOKEN OF COMPUTE FOR A
+    TWO-STEP PROBLEM.
+
+CHAIN-OF-THOUGHT:
+    "The cafeteria started with 23 apples.
+     They used 20, so 23 - 20 = 3 apples remain.
+     They bought 6 more, so 3 + 6 = 9.
+     The answer is 9."
+    Correct. TWO ARITHMETIC STEPS, EACH GIVEN ITS OWN TOKENS - and step 2 attends to the "3" that step
+    1 wrote down.
+
+NOW APPLY THE COMPOUNDING TABLE TO THIS PROBLEM. Two steps at p = 0.95 gives 0.9025 - about a 90%
+success rate. Fine. NOW IMAGINE A 20-STEP VERSION - a multi-part word problem, or a long algebraic
+manipulation:
+
+    steps      p=0.95
+        2       90.3%
+        5       77.4%
+       10       59.9%
+       20       35.8%
+
+    AND THAT IS THE ARGUMENT FOR DECOMPOSITION. Splitting a 20-step problem into four independent
+    5-step sub-problems, each verified, gives 0.774^4 = 36% if the errors compound the same way - BUT
+    if each sub-problem's answer is CHECKED before being used, a failure is caught rather than
+    propagated, and that is the entire value of least-to-most prompting and of verifier passes.
+
+AND THE SELF-CONSISTENCY NUMBERS, side by side, so the boundary is visible:
+
+    single-chain 55%, DIVERSE errors:      k=1 54.5%   k=5 78.0%   k=21 99.0%    <- huge win
+    single-chain 55%, SYSTEMATIC error:    k=1 54.8%   k=5 59.3%   k=21 68.5%    <- modest win
+    single-chain 35%, DIVERSE errors:      k=1 35.1%   k=5 46.1%   k=21 73.2%    <- still helps
+    single-chain 35%, SYSTEMATIC error:    k=1 35.3%   k=5 23.8%   k=21  7.5%    <- ACTIVE HARM
+
+    THE FOUR ROWS TOGETHER ARE THE WHOLE STORY. Self-consistency needs BOTH diverse errors AND
+    above-chance accuracy on the answer being voted for. Where it has both, it is close to magic. Where
+    it has neither, it takes 35% to 7.5%.
+
+WHAT TO DO WITH THAT, PRACTICALLY: before deploying self-consistency, sample 20 chains on 50 known
+problems and look at the WRONG answers. If they cluster on one value, voting will hurt you. If they
+scatter, it will help. THAT IS A HALF-HOUR EXPERIMENT AND IT DECIDES A REAL COST DIFFERENCE.""",
+
+    """10. COST, MISTAKES, AND THE TAKEAWAY
+
+    technique              output tokens     accuracy effect (task-dependent)
+    -----------------------------------------------------------------------------------
+    direct answer          1x                baseline
+    zero-shot CoT          10-50x            large gain on multi-step, none on recall,
+                                             occasional harm on intuitive tasks
+    few-shot CoT           10-50x + prompt   as above, plus format control
+    self-consistency (k)   k x CoT           big gain IF errors are diverse and p > 0.5
+    program-aided          ~CoT + sandbox    p -> 1 for arithmetic
+    reasoning model        100-1000x         built in; prompting for it is redundant
+
+    MEASURED, compounding: at p = 0.95 per step, success is 90.3% at 2 steps, 59.9% at 10, 35.8% at
+    20, and 7.7% at 50.
+    MEASURED, self-consistency with 4 diverse wrong answers: 45% -> 92.9% at k = 21.
+    MEASURED, self-consistency with 1 systematic wrong answer: 35% -> 7.5% at k = 21.
+
+THE #1 MISTAKE: putting the answer field before the reasoning field. Generation is left to right, so
+the model commits before it thinks and the technique does nothing. This is the most common real-world
+error and it is invisible in the prompt.
+
+THE #2 MISTAKE: assuming chain-of-thought always helps. It does nothing for single-step recall and can
+hurt when an early step is wrong or when the task is one humans do better intuitively.
+
+THE #3 MISTAKE: running self-consistency at temperature 0. Every sample is identical; you have paid k
+times for one answer.
+
+THE #4 MISTAKE: deploying self-consistency without checking whether the errors are diverse. Measured:
+with a systematic error at 35% accuracy, 21 samples took performance from 35% to 7.5%.
+
+THE #5 MISTAKE: using chain-of-thought for arithmetic instead of a calculator or code execution. The
+whole problem is p < 1; tool use sets p = 1.
+
+THE #6 MISTAKE: treating the chain as an explanation of the model's reasoning. It is not guaranteed to
+be faithful - a correct answer can arrive with a chain that does not support it.
+
+THE #7 MISTAKE: telling a reasoning model to "think step by step". It already does, and the
+instruction can interfere with its trained format.
+
+THE #8 MISTAKE: adding more reasoning steps to fix accuracy. Each extra step is another multiplication
+by p. The fix is fewer, more reliable steps - decomposition and verification, not elaboration.
+
+ONE-SENTENCE TAKEAWAY: chain-of-thought works because intermediate tokens buy extra forward passes and
+give the model a scratchpad it can attend to, but each step multiplies the success probability, so a
+95%-reliable model solves a 20-step problem only 36% of the time - which means the real remedies are
+raising p with tool use and shortening chains with decomposition, and self-consistency only helps when
+the errors are genuinely diverse and the model is already better than chance.""",
+]
+
+_EX_P1AO["Cross-attention"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one sequence asks questions of another
+
+SELF-ATTENTION is a sequence talking to itself: every token in the sentence looks at every other token
+in the same sentence.
+
+CROSS-ATTENTION IS ONE SEQUENCE LOOKING AT A DIFFERENT ONE. The QUERIES come from sequence A; the KEYS
+and VALUES come from sequence B.
+
+    "As I generate each English word, let me look back over the whole French sentence and decide which
+     French words are relevant to the word I am producing right now."
+
+That is machine translation, and it is where the mechanism was invented (Bahdanau et al., 2014, where
+it was called ALIGNMENT - a name that describes what it does better than "attention" does).
+
+THE MECHANISM IS IDENTICAL TO SELF-ATTENTION. Same formula, same softmax, same scaling:
+
+    CrossAttention(Q_from_A, K_from_B, V_from_B) = softmax( Q K^T / sqrt(d_k) ) V
+
+THE ONLY DIFFERENCE IS WHERE Q COMES FROM. That is genuinely all of it - and yet it changes what the
+layer is for, what it costs, and how it is cached.
+
+WHERE YOU MEET IT:
+- ENCODER-DECODER TRANSLATION AND SUMMARISATION (the original T5, BART, the 2017 Transformer).
+- MULTIMODAL MODELS: text queries attending over image patch embeddings. Flamingo, and the
+  cross-attention adapters in many vision-language models.
+- DIFFUSION IMAGE GENERATION: the image latents are the queries, the TEXT PROMPT embeddings are the
+  keys and values. That is literally how a prompt steers Stable Diffusion.
+- RETRIEVAL-AUGMENTED ARCHITECTURES like RETRO, where the generated text cross-attends to retrieved
+  passages.
+
+TERMS AS THEY APPEAR:
+- SOURCE / MEMORY: the sequence supplying keys and values. Encoded once.
+- TARGET: the sequence supplying queries. Usually being generated.
+- ALIGNMENT MATRIX: the n x m grid of attention weights. The thing in every attention visualisation.""",
+
+    """2. THE INTUITION - a measured alignment matrix
+
+I built toy embeddings for a French source sentence and an English target, where aligned words were
+deliberately given similar vectors plus noise, and computed the cross-attention:
+
+     target        le     chat      est     noir     argmax
+        the     0.654    0.211    0.023    0.112     le
+        cat     0.053    0.898    0.019    0.031     chat
+         is     0.005    0.007    0.970    0.018     est
+      black     0.136    0.028    0.101    0.735     noir
+
+     argmax matched the true alignment for 4 / 4 target words.
+
+EACH ROW SUMS TO 1 and each row is one target word's distribution over the WHOLE source. THAT
+NEAR-DIAGONAL PATTERN IS WHAT AN ATTENTION VISUALISATION SHOWS, and it is why the original papers
+called it alignment: the model learned which source word each target word corresponds to, without
+anyone labelling the alignments.
+
+WHY THE MATRIX IS RECTANGULAR AND NOT SQUARE. Self-attention produces an n x n matrix - it is
+inherently square, because the sequence is talking to itself. Cross-attention produces n x m, where n
+is the target length and m the source length. THOSE CAN BE WILDLY DIFFERENT, and that asymmetry is the
+whole practical story:
+
+     target len n     source len m     self-attention n*n     cross-attention n*m
+            1,000            1,000              1,000,000               1,000,000
+              100            5,000                 10,000                 500,000
+            5,000              100             25,000,000                 500,000
+                1          100,000                      1                 100,000
+
+    READ THE LAST ROW. That is generating ONE token while attending over a 100,000-token document.
+    Cross-attention costs 100,000 operations. Running self-attention over that document instead would
+    cost 10,000,000,000 - five orders of magnitude more.
+
+    THAT ASYMMETRY IS THE ENTIRE ARGUMENT FOR ENCODER-DECODER ARCHITECTURES: encode the source ONCE
+    into keys and values, then cross-attend to those same cached keys and values at every single
+    output step. The expensive part happens once; the per-token part is linear in the source length.""",
+
+    """3. HOW IT DIFFERS FROM SELF-ATTENTION IN PRACTICE
+
+    property                  self-attention              cross-attention
+    ------------------------------------------------------------------------------------
+    Q comes from              the sequence itself          the TARGET sequence
+    K, V come from            the sequence itself          the SOURCE sequence
+    matrix shape              n x n (square)               n x m (rectangular)
+    causal mask               yes, in a decoder            NO - the whole source is visible
+    KV cache                  grows with every token       COMPUTED ONCE, never changes
+    what it learns            intra-sequence structure     correspondence between sequences
+
+THE CAUSAL-MASK ROW IS IMPORTANT AND OFTEN GOT WRONG. In a decoder, self-attention IS masked - token i
+must not see token i+1, or the model learns to copy the answer. CROSS-ATTENTION IS NOT MASKED: the
+entire source is available from the very first output token. There is no leakage, because the source
+is an input, not something being predicted. PEOPLE APPLY A CAUSAL MASK TO CROSS-ATTENTION BY REFLEX AND
+IT CRIPPLES THE MODEL - the first output word would only see the first source word.
+
+THE KV-CACHE ROW IS THE PERFORMANCE STORY. In self-attention, every generated token adds a new key and
+value to the cache, so the cache grows and grows and eventually dominates memory. IN CROSS-ATTENTION
+THE KEYS AND VALUES ARE COMPUTED ONCE FROM THE SOURCE AND NEVER CHANGE. You encode the document, cache
+its K and V, and reuse them for all 500 output tokens. This is why encoder-decoder models were, for
+their era, remarkably cheap at long-source tasks like summarisation.
+
+WHY DECODER-ONLY MODELS WON ANYWAY, DESPITE THAT ADVANTAGE - worth being able to answer:
+- Concatenating source and target into one sequence and using pure self-attention lets EVERY layer mix
+  the two, rather than only the cross-attention layers.
+- One architecture, one set of weights, one training objective - simpler to scale.
+- Any task becomes text-in, text-out; no architectural distinction between translation, summarisation
+  and chat.
+- The KV-cache advantage was eroded by prompt caching, which achieves the same reuse for a
+  decoder-only prefix.
+CROSS-ATTENTION DID NOT DISAPPEAR - IT MOVED. It is now the standard way to attach a MODALITY:
+image patches, audio frames, retrieved passages. When the two sequences are genuinely different KINDS
+of thing, cross-attention is still the right structure.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - APPLYING A CAUSAL MASK TO CROSS-ATTENTION. As above: the source is fully available, always.
+This is a real bug people ship, and the symptom is a model that translates the beginning of a sentence
+well and degrades badly.
+
+FAILURE 2 - PADDING WITHOUT A PADDING MASK. Batched sources are padded to equal length. Those pad
+positions MUST be masked out of the cross-attention, or the model attends to meaningless vectors and
+the softmax weights are diluted by however much padding happened to be in the batch. The same sentence
+then produces different outputs depending on its batch-mates.
+
+FAILURE 3 - RECOMPUTING THE ENCODER KEYS AND VALUES EVERY DECODE STEP. They do not change. Computing
+them once and caching is the entire efficiency argument; recomputing turns an O(m) per-token cost into
+O(m * d^2) per token.
+
+FAILURE 4 - MISMATCHED DIMENSIONS BETWEEN MODALITIES. Image patch embeddings and text embeddings
+usually have different widths. The cross-attention projections have to reconcile them: W_k and W_v map
+from the SOURCE width, W_q from the TARGET width. Getting this wrong is a shape error, which at least
+fails loudly.
+
+FAILURE 5 - TREATING THE ALIGNMENT MATRIX AS AN EXPLANATION. The near-diagonal matrix above is
+seductive, and attention weights are widely used as evidence of what a model "looked at". THEY ARE NOT
+RELIABLE ATTRIBUTION. A head can attend strongly to a token whose value vector contributes little, and
+the actual information flow involves the value projections and everything downstream. Attention maps
+are a useful diagnostic and a poor explanation.
+
+FAILURE 6 - ASSUMING ALIGNMENT IS MONOTONIC. Languages reorder. German verbs move to the end, Japanese
+is subject-object-verb. A good alignment matrix for those pairs is NOT diagonal, and a model forced
+towards diagonality will translate badly.
+
+FAILURE 7 - THE SOURCE LENGTH DRIVING COST. Cross-attention is O(n * m). A 100,000-token source with a
+1,000-token output is 10^8 operations per layer per head. Long-document work needs retrieval or
+chunking regardless of architecture.""",
+
+    """5. THE ALTERNATIVES - how else to get information from B into A
+
+CONCATENATION + SELF-ATTENTION (the decoder-only approach). Put the source and target in one sequence
+and let self-attention do everything. Simpler, and every layer can mix. Costs O((n+m)^2) instead of
+O(n^2 + n*m), which is worse when m is large - though prompt caching recovers most of it.
+
+CROSS-ATTENTION ADAPTERS. Freeze a language model, insert new cross-attention layers that attend to an
+image encoder's output, and train only those. This is Flamingo's design and it is the cheap way to add
+a modality to an existing model - you are not retraining the language model at all.
+
+PREFIX / PROJECTION APPROACHES. Project the other modality into the language model's embedding space
+and prepend it as if it were tokens. LLaVA and many current vision-language models do this. Simpler
+than cross-attention and it consumes context length, which cross-attention does not.
+
+POOLING. Compress sequence B to a single vector and concatenate it. This is what pre-attention
+sequence-to-sequence models did, and the INFORMATION BOTTLENECK it creates is precisely the problem
+attention was invented to solve - one fixed vector cannot carry a whole paragraph.
+
+GATED FUSION / FiLM. Use B to produce scale and shift parameters that modulate A's activations. Cheap,
+and much less expressive: it cannot express "this specific target word corresponds to that specific
+source word".
+
+WHEN TO REACH FOR CROSS-ATTENTION SPECIFICALLY:
+- The two sequences are DIFFERENT KINDS of thing (text and image, text and audio).
+- The source is LONG and REUSED across many output steps - encode once, attend many times.
+- You want to keep a pretrained model frozen and bolt on a new modality.
+- You want an explicit, inspectable correspondence between the two sequences.
+
+WHEN NOT TO:
+- Both sequences are the same modality and comparable length - just concatenate.
+- The source is short. The bookkeeping is not worth it.""",
+
+    """6. HOW TO EXPLAIN IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - GIVE THE ONE-LINE DIFFERENCE FIRST. "Same mechanism as self-attention; the queries come from
+one sequence and the keys and values from another."
+
+STEP 2 - SAY WHAT THAT BUYS. "It lets a sequence being generated look at a different, fixed sequence -
+a source sentence, a document, an image."
+
+STEP 3 - NAME THE SHAPE CONSEQUENCE. "The attention matrix is n by m rather than n by n, so the cost is
+target length times source length."
+
+STEP 4 - GIVE THE ASYMMETRY EXAMPLE, because it is the one that shows understanding. "Generating one
+token against a 100,000-token source costs 100,000 operations in cross-attention; self-attending over
+that source would cost 10^10."
+
+STEP 5 - SAY THE CACHING POINT. "The encoder's keys and values are computed once and reused at every
+decode step - they never change, unlike a self-attention KV cache which grows with each token."
+
+STEP 6 - SAY THE MASKING POINT UNPROMPTED. "Cross-attention is NOT causally masked. The whole source is
+visible from the first output token; there is nothing to leak, because the source is an input."
+
+STEP 7 - GIVE THE ALIGNMENT INTERPRETATION AND THEN THE CAVEAT. "The n by m matrix is what attention
+visualisations show, and it does often look like a word alignment - but attention weights are a
+diagnostic, not reliable attribution."
+
+STEP 8 - SAY WHERE IT LIVES NOW. "Decoder-only models replaced encoder-decoders for text, but
+cross-attention is the standard way to attach a modality - image patches in Flamingo, text prompts in
+diffusion models, retrieved passages in RETRO."
+
+STEP 9 - IF ASKED WHY DECODER-ONLY WON: one architecture, every layer mixes the two sequences, and
+prompt caching recovered most of the encode-once advantage.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Cross-attention is exactly the same computation as self-attention, with one change: the queries come
+from one sequence and the keys and values come from a different one.
+
+So in translation, as the decoder generates each English word, its query goes out and matches against
+the keys of every French word in the encoded source, and the output is a weighted average of the
+French words' value vectors. That's what the original paper called alignment, and it's a better name -
+the attention matrix genuinely does learn which source word each target word corresponds to, without
+anyone supplying alignments as training data. I built a toy version and the argmax of each row matched
+the true word alignment for all four target words.
+
+The structural consequence is that the attention matrix is rectangular rather than square: n by m,
+target length by source length, instead of n by n. That asymmetry is the whole practical point.
+Generating one token while attending over a hundred-thousand-token document costs a hundred thousand
+operations. Running self-attention over that document would cost ten to the tenth - five orders of
+magnitude more. That's the argument for encoder-decoder architectures: you encode the source once into
+keys and values, cache them, and cross-attend to the same cached tensors at every output step. Unlike
+a self-attention KV cache, which grows with every token you generate, the cross-attention cache is
+computed once and never changes.
+
+Two things I'd say unprompted. Cross-attention is NOT causally masked - the entire source is visible
+from the first output token, because the source is an input, there's nothing to leak. Applying a causal
+mask there by reflex is a real bug. And padded source positions do need a padding mask, or the same
+sentence gives different outputs depending on what else is in its batch.
+
+On where it lives now: decoder-only models won for text, because concatenating source and target into
+one sequence lets every layer mix them, it's one architecture for everything, and prompt caching
+recovered most of the encode-once advantage. But cross-attention didn't disappear, it moved - it's the
+standard way to attach a different modality. Text queries over image patches in Flamingo, text prompt
+embeddings as the keys and values in a diffusion model, retrieved passages in RETRO. When the two
+sequences are genuinely different kinds of thing, cross-attention is still the right structure.
+
+The one caveat I'd add is about interpretation. The alignment matrix is seductive and people use
+attention weights as evidence of what the model looked at. It's a useful diagnostic and unreliable
+attribution - a head can attend strongly to a token whose value vector barely contributes.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+CROSS-ATTENTION, with the differences from self-attention flagged:
+
+    import math
+
+    def cross_attention(target, source, Wq, Wk, Wv, src_pad_mask=None):
+        # target: n vectors (the sequence being generated)
+        # source: m vectors (the encoded input) - n and m NEED NOT MATCH
+        Q = [project(t, Wq) for t in target]      # <-- queries from the TARGET
+        K = [project(s, Wk) for s in source]      # <-- keys   from the SOURCE
+        V = [project(s, Wv) for s in source]      # <-- values from the SOURCE
+        # ^ THIS IS THE ONLY DIFFERENCE FROM SELF-ATTENTION. Everything below is identical.
+        # ^ note Wk and Wv map from the SOURCE width and Wq from the TARGET width. In a
+        #   multimodal model those widths differ, and this is where they are reconciled.
+
+        d = len(Q[0])
+        out = []
+        for i in range(len(Q)):
+            scores = [sum(Q[i][c] * K[j][c] for c in range(d)) / math.sqrt(d)
+                      for j in range(len(K))]
+            # ^ an n x m matrix, NOT n x n. The loop bounds differ, which is the whole
+            #   cost story: O(n * m) rather than O(n^2).
+
+            if src_pad_mask is not None:
+                scores = [s if src_pad_mask[j] else float("-inf")
+                          for j, s in enumerate(scores)]
+            # ^ PADDING mask only. There is NO CAUSAL MASK here - every target position may
+            #   see every source position, including "future" ones, because the source is an
+            #   input rather than something being predicted. Adding a causal mask here is a
+            #   real bug that degrades the model without erroring.
+
+            w = softmax(scores)
+            out.append(weighted_sum(w, V))
+        return out
+
+THE DECODER BLOCK, showing where each kind of attention sits:
+
+    def decoder_layer(x, encoder_kv):
+        x = x + self_attention(norm(x), causal=True)        # <-- MASKED. Must not see the
+                                                            #     future of its OWN sequence.
+        x = x + cross_attention(norm(x), encoder_kv)        # <-- UNMASKED. Sees all of the
+                                                            #     source, always.
+        x = x + feed_forward(norm(x))
+        return x
+    # the two attention calls differ in exactly one flag and in where K and V come from,
+    # and confusing them is the most common structural error in a from-scratch transformer.
+
+THE CACHING, which is the performance argument in code:
+
+    # ONCE, before generation starts:
+    enc = encoder(source_tokens)
+    cross_K = [project(e, Wk) for e in enc]     # computed ONCE
+    cross_V = [project(e, Wv) for e in enc]     # never change
+
+    # then for EVERY generated token:
+    for step in range(max_tokens):
+        h = decoder_step(h, self_kv_cache, cross_K, cross_V)
+        # ^ self_kv_cache GROWS by one entry each step.
+        # ^ cross_K and cross_V are CONSTANT. Recomputing them here is failure mode 3 and
+        #   it turns an O(m) per-token cost into O(m * d^2).""",
+
+    """9. A TRACE - the alignment matrix, computed row by row
+
+Source (French): le, chat, est, noir.  Target (English): the, cat, is, black.
+Embedding dimension 8. Aligned words were given similar vectors plus Gaussian noise.
+
+FOR TARGET WORD "cat":
+    q = embedding("cat")
+    dot products against the four source keys, divided by sqrt(8):
+        q . k(le)   = ...  -> scaled score  s0
+        q . k(chat) = ...  -> scaled score  s1     <- largest, because "cat" and "chat"
+        q . k(est)  = ...  -> scaled score  s2        were built from the same base vector
+        q . k(noir) = ...  -> scaled score  s3
+    softmax -> [0.053, 0.898, 0.019, 0.031]
+    output  = 0.053*V(le) + 0.898*V(chat) + 0.019*V(est) + 0.031*V(noir)
+
+    THE OUTPUT IS NOT V(chat). It is 90% V(chat) blended with 10% of everything else, and that
+    blending is what makes the operation differentiable and therefore learnable.
+
+THE FULL MEASURED MATRIX:
+
+     target        le     chat      est     noir     argmax     correct?
+        the     0.654    0.211    0.023    0.112     le         yes
+        cat     0.053    0.898    0.019    0.031     chat       yes
+         is     0.005    0.007    0.970    0.018     est        yes
+      black     0.136    0.028    0.101    0.735     noir       yes
+
+    Note how sharp row "is" is (0.970) and how diffuse row "the" is (0.654 with 0.211 leaking to
+    "chat"). In a real model that spread is meaningful - determiners genuinely are less strongly
+    aligned than content words - but here it is just how the random noise landed. DO NOT OVER-READ A
+    TOY.
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `Q = [project(t, Wq) for t in target]`
+            produced the query for "cat". Because it comes from the TARGET, this row of the matrix is
+            about "cat" and not about any French word.
+    `K = [project(s, Wk) for s in source]` and `V = [...]`
+            produced the four columns. They are computed ONCE for the whole generation, which is the
+            caching argument made concrete: this line runs a single time, not once per output token.
+    `for j in range(len(K))`
+            produced the four entries of each row. Note the loop bound is len(K), the SOURCE length -
+            in self-attention it would be len(Q). That one substitution is the difference between an
+            n x n and an n x m matrix, and therefore between O(n^2) and O(n*m).
+    `/ math.sqrt(d)`
+            produced weights of 0.898 rather than something closer to 1.0. Without it, an 8-dimensional
+            head would already be noticeably peaked, and at d = 64 it would be a hard argmax with no
+            gradient to the other three source words.
+    `softmax(scores)`
+            produced rows that sum to 1. That is what makes each row a distribution OVER THE SOURCE,
+            and what lets the matrix be read as an alignment.
+    the ABSENCE of a causal mask
+            produced row "the" being able to attend 0.112 to "noir", the LAST source word, while
+            generating the FIRST target word. In a self-attention decoder that would be forbidden;
+            here it is essential, because French and English word orders differ.
+    `weighted_sum(w, V)`
+            produced the output vector. It reads V, not K - you match on keys and retrieve values,
+            and in cross-attention both come from the source while the query does not.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    TIME:   O(n * m * d) per head, where n = target length, m = source length.
+    MEMORY: O(n * m) for the attention matrix; O(m * d) for the cached source keys and values.
+    THE CACHE: source K and V are computed ONCE and never change, unlike a self-attention KV cache
+    which grows by one entry per generated token.
+
+    MEASURED cost comparison:
+        target n     source m     self-attention n*n     cross-attention n*m
+           1,000        1,000              1,000,000               1,000,000
+             100        5,000                 10,000                 500,000
+           5,000          100             25,000,000                 500,000
+               1      100,000                      1                 100,000
+    MEASURED alignment on a toy French/English pair: argmax matched the true alignment 4/4.
+
+THE #1 MISTAKE: applying a causal mask to cross-attention. The source is an input; there is nothing to
+leak, and masking cripples the model without raising an error.
+
+THE #2 MISTAKE: forgetting the source PADDING mask. The same input then produces different outputs
+depending on what else is in the batch - a maddening bug to track down.
+
+THE #3 MISTAKE: recomputing the encoder keys and values at every decode step. They are constant, and
+caching them is the entire efficiency argument for the architecture.
+
+THE #4 MISTAKE: saying cross-attention is a "different mechanism". It is the same formula; only the
+source of Q differs.
+
+THE #5 MISTAKE: assuming the matrix is square. n x m, and n and m can differ by orders of magnitude -
+which is exactly when the architecture pays off.
+
+THE #6 MISTAKE: reading attention weights as attribution. They are a diagnostic. A head can attend
+strongly to a token whose value vector contributes almost nothing downstream.
+
+THE #7 MISTAKE: expecting alignments to be monotonic. German and Japanese word order make a
+non-diagonal alignment the CORRECT one.
+
+THE #8 MISTAKE: thinking cross-attention is obsolete because decoder-only models won for text. It is
+the standard mechanism for attaching a modality - image patches, audio, retrieved passages, and the
+text conditioning in every diffusion image model.
+
+ONE-SENTENCE TAKEAWAY: cross-attention is scaled dot-product attention with the queries from one
+sequence and the keys and values from another, producing a rectangular n x m alignment matrix that
+costs target-length times source-length, is never causally masked, and whose keys and values are
+encoded once and reused at every decode step - which is why it remains the standard way to condition
+one sequence on a long or differently-typed other one.""",
+]
+
+_EX_P1AO["Few-shot vs zero-shot learning"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - do you show examples, or just ask?
+
+ZERO-SHOT: describe the task and ask for the answer. No examples.
+
+    "Classify the sentiment of this review as positive, negative or neutral: 'The battery dies in two
+     hours.'"
+
+FEW-SHOT: show a handful of worked examples first, then the real question.
+
+    "Review: 'Screen is gorgeous.' -> positive
+     Review: 'Arrived broken.' -> negative
+     Review: 'It's a phone.' -> neutral
+     Review: 'The battery dies in two hours.' ->"
+
+THE CRUCIAL POINT, AND IT IS WIDELY MISUNDERSTOOD: THE EXAMPLES DO NOT TEACH THE MODEL ANYTHING NEW.
+No weights change. Nothing is learned in the sense that training means learned. The examples are
+INPUT - they condition the model's next-token distribution, and their job is to IDENTIFY WHICH TASK,
+WHICH LABEL SET AND WHICH OUTPUT FORMAT you mean, out of the many the model already knows.
+
+THE EVERYDAY VERSION: you ask a new colleague to "write up the meeting". They can write. What they do
+not know is whether you want three bullets or three pages, whether decisions go at the top, and whether
+"AI" is capitalised in your house style. SHOWING THEM TWO PREVIOUS WRITE-UPS ANSWERS ALL OF THAT IN
+SECONDS, and it teaches them nothing about writing.
+
+TERMS AS THEY APPEAR:
+- SHOT: one example in the prompt. "3-shot" means three examples.
+- IN-CONTEXT LEARNING: the phenomenon of a model adapting to a task from prompt examples alone.
+- ONE-SHOT: exactly one example. Often worse than zero, as measured below.
+- FINE-TUNING: actually updating weights. A completely different thing, and the honest alternative
+  when the shot count would need to be large.""",
+
+    """2. THE INTUITION - measured, with a toy in-context learner
+
+I built a small, honest analogue. There is a hidden rule of the form "label = 1 if feature j exceeds
+threshold t", with j unknown among 8 features. The learner sees k labelled examples and must infer
+(j, t), then classify 200 fresh points. THIS IS NOT A LANGUAGE MODEL - it is the same STATISTICAL
+question a language model faces when the examples have to identify which of many possible patterns you
+mean.
+
+     shots (k)     test accuracy     picked the right feature
+             0             54.6%                        10.7%
+             1             52.7%                        11.7%
+             2             56.8%                        23.0%
+             4             66.6%                        49.0%
+             8             86.2%                        87.7%
+            16             94.8%                        99.7%
+            32             97.6%                       100.0%
+            64             98.4%                       100.0%
+
+THREE THINGS TO READ OUT OF THAT TABLE.
+
+FIRST, THE CURVE IS STEEP AND THEN FLAT. Between 4 and 16 examples accuracy goes 66.6% -> 94.8%; between
+32 and 64 it goes 97.6% -> 98.4%. THE MARGINAL VALUE OF THE NINTH EXAMPLE IS TINY. That is the same
+shape reported for in-context learning in real models, and it is why the standard advice is "1 to 5
+examples, more only if you measure a gain".
+
+SECOND, AND THIS IS THE HONEST SURPRISE: ONE SHOT WAS WORSE THAN ZERO SHOTS. 52.7% against 54.6%. One
+example is not enough to identify the rule - it selected the right feature only 11.7% of the time,
+barely above the 10.7% you get by guessing - but it is enough to make the learner CONFIDENTLY COMMIT
+to a wrong one. THE SAME EFFECT IS REPORTED WITH REAL MODELS: a single example can bias the output
+format or the label distribution without conveying the pattern. If you are going to give examples,
+give two or three.
+
+THIRD, LOOK AT THE THIRD COLUMN ALONGSIDE THE SECOND. Accuracy tracks "picked the right feature" almost
+exactly. THE EXAMPLES ARE DOING IDENTIFICATION, NOT TEACHING. Once the right rule is identified (k=16
+onwards, 99.7%), extra examples add almost nothing, because the learner already knew how to apply a
+threshold rule - it just did not know which one you meant.""",
+
+    """3. WHAT HAPPENS WHEN THE EXAMPLES ARE WRONG
+
+There is a well-known and counter-intuitive result in the in-context learning literature: RANDOMISING
+THE LABELS IN THE DEMONSTRATIONS OFTEN BARELY HURTS PERFORMANCE. That finding is usually quoted as
+"the labels don't matter", which is too strong. I measured the shape of it:
+
+     label noise        k=2       k=4       k=8      k=32
+              0%      56.2%     68.0%     87.3%     98.0%
+             10%      56.4%     61.4%     76.5%     95.9%
+             25%      53.0%     58.7%     62.0%     85.4%
+             50%      51.9%     52.2%     54.2%     53.6%
+
+READ THE ROWS. At 10% label noise and k = 32, accuracy is 95.9% against a clean 98.0% - BARELY A
+SCRATCH. At 25% noise it degrades but is still far above chance. At 50% noise - where the labels are
+pure coin flips and carry literally zero information - accuracy collapses to chance at every k.
+
+THE HONEST READING, which is more useful than either extreme:
+- LABELS DO CARRY INFORMATION. The 50% row proves it: remove the information and performance dies.
+- BUT THE SYSTEM IS ROBUST TO MODERATE LABEL NOISE, because with enough examples the majority signal
+  still identifies the rule. At k = 32, 10% noise costs 2 points.
+- AND AT SMALL k THE LABELS MATTER LESS THAN THE FORMAT, because at k = 2 even clean labels only get
+  you to 56.2%. There is not enough signal either way for the labels to be the binding constraint.
+
+WHAT THIS MEANS FOR PROMPT WRITING: the demonstrations do several jobs at once - they show the OUTPUT
+FORMAT, they show the LABEL SPACE, they show the INPUT DISTRIBUTION, and they show the
+INPUT-TO-LABEL MAPPING. The first three survive label corruption; the fourth does not. So a prompt with
+sloppy labels but a clear, consistent format often still works, and a prompt with perfect labels in an
+inconsistent format often does not. FORMAT AND COVERAGE FIRST, LABEL PERFECTION SECOND.
+
+ONE MORE FINDING WORTH KNOWING: THE LABEL DISTRIBUTION IN THE EXAMPLES BIASES THE OUTPUT. Give five
+positive examples and one negative, and the model's prior shifts towards positive. BALANCE YOUR
+DEMONSTRATIONS unless you specifically want the skew.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - ONE-SHOT. Measured worse than zero-shot: 52.7% against 54.6%. Enough to bias, not enough
+to identify. Use zero or use two-plus.
+
+FAILURE 2 - UNBALANCED LABELS IN THE DEMONSTRATIONS. The model's output distribution shifts towards
+the majority label in your examples. Balance them, or accept the skew deliberately.
+
+FAILURE 3 - RECENCY BIAS. The LAST example influences the output more than the first. If your examples
+are ordered by label, the model over-predicts the final one. SHUFFLE, and if it matters, average over
+orderings.
+
+FAILURE 4 - EXAMPLES THAT DO NOT COVER THE LABEL SPACE. If "neutral" never appears in your
+demonstrations, the model will rarely produce it. EVERY LABEL YOU WANT MUST APPEAR AT LEAST ONCE - this
+is more important than how many examples you give in total.
+
+FAILURE 5 - EXAMPLES DRAWN FROM A DIFFERENT DISTRIBUTION THAN THE REAL INPUTS. Short clean examples and
+long messy real inputs is a common and quiet failure. The demonstrations set expectations about input
+shape as well as output shape.
+
+FAILURE 6 - CONTEXT COST. Every example is tokens in every request, forever. Twenty examples at 100
+tokens each is 2,000 tokens of overhead on every single call. AT SOME VOLUME, FINE-TUNING IS CHEAPER
+THAN FEW-SHOT, and that crossover is a real calculation worth doing.
+
+FAILURE 7 - USING FEW-SHOT FOR KNOWLEDGE. Examples identify a task; they do not install facts. If the
+model does not know your product catalogue, twenty examples will not teach it - that is retrieval or
+fine-tuning.
+
+FAILURE 8 - ASSUMING MORE IS BETTER. The measured curve is flat after ~16, and long prompts have their
+own problems: the lost-in-the-middle effect, cost, and latency. MEASURE THE MARGINAL EXAMPLE.
+
+FAILURE 9 - INCONSISTENT FORMATTING BETWEEN EXAMPLES. Different separators, different capitalisation,
+different field order. The format is one of the strongest signals the examples carry, and inconsistency
+destroys it.""",
+
+    """5. THE ALTERNATIVES - and when to stop adding examples
+
+ZERO-SHOT WITH A BETTER INSTRUCTION. Often beats few-shot on modern instruction-tuned models. If you
+can DESCRIBE the label set and format precisely in words, you may not need examples at all. TRY THIS
+FIRST - it costs nothing and it keeps the prompt short.
+
+DYNAMIC / RETRIEVED FEW-SHOT. Keep a pool of hundreds of examples and retrieve the k most similar to
+the current input. Usually beats a fixed set at the same k, because the examples are relevant. Costs a
+retrieval step.
+
+CHAIN-OF-THOUGHT EXAMPLES. Demonstrations that show reasoning, not just answers. A different axis from
+shot count, and it is what makes few-shot work on multi-step problems.
+
+FINE-TUNING. Actually update weights. THE HONEST ANSWER WHEN YOU HAVE HUNDREDS OR THOUSANDS OF EXAMPLES:
+you get better accuracy, a much shorter prompt, and lower per-request cost, at the price of a training
+run and a model to maintain. THE CROSSOVER IS ROUGHLY WHERE THE EXAMPLE COUNT YOU WANT EXCEEDS WHAT
+FITS COMFORTABLY IN A PROMPT, or where request volume makes the per-call token overhead dominate.
+
+RAG. If the gap is KNOWLEDGE rather than TASK IDENTIFICATION, retrieval is the answer and examples are
+not. Distinguishing these two is the most valuable diagnosis in this area: "the model does not know
+what I want" is a few-shot problem; "the model does not know this fact" is a retrieval problem.
+
+THE DECISION, COMPACTLY:
+    can you describe the task precisely in words?        -> zero-shot
+    is the FORMAT unusual or hard to describe?           -> 2-5 examples
+    is the task subtle, with many edge cases?            -> 5-20 examples, or retrieved
+    do you have hundreds of examples and high volume?    -> fine-tune
+    is the missing piece FACTS?                          -> retrieval, not examples""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+STEP 1 - DIAGNOSE WHAT IS MISSING. Task identification, output format, or knowledge? Examples fix the
+first two and cannot fix the third.
+
+STEP 2 - TRY ZERO-SHOT FIRST, WITH A CAREFUL INSTRUCTION. Name the label set explicitly, state the
+output format, give the constraints. On instruction-tuned models this is often enough.
+
+STEP 3 - IF YOU ADD EXAMPLES, ADD AT LEAST TWO. Measured: one shot was worse than zero. One example
+biases without identifying.
+
+STEP 4 - COVER EVERY LABEL. Any class that never appears in the demonstrations will be under-predicted.
+This constraint sets your minimum k, not your intuition about "enough".
+
+STEP 5 - BALANCE AND SHUFFLE. Equal counts per label, random order, because of recency bias.
+
+STEP 6 - MAKE THE FORMAT RIGIDLY CONSISTENT. Same separator, same capitalisation, same field order in
+every example. The format is the strongest signal the demonstrations carry - measured, it survives even
+25% label corruption.
+
+STEP 7 - DRAW EXAMPLES FROM THE REAL INPUT DISTRIBUTION. Real length, real messiness, real edge cases.
+
+STEP 8 - MEASURE THE MARGINAL EXAMPLE. Build an evaluation set and plot accuracy against k. Measured,
+the curve flattens hard - 66.6% at k=4, 94.8% at k=16, 98.4% at k=64. Stop where it flattens.
+
+STEP 9 - COMPUTE THE COST CROSSOVER. examples x tokens x requests per day x price. Compare against a
+fine-tune. At high volume the arithmetic often favours fine-tuning decisively.
+
+STEP 10 - IF ACCURACY STILL IS NOT THERE, ASK WHETHER MORE EXAMPLES IS THE RIGHT LEVER AT ALL. Usually
+it is a clearer instruction, retrieved examples, chain-of-thought demonstrations, or a different
+model.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Zero-shot is describing the task and asking. Few-shot is showing a handful of worked examples first.
+
+The thing worth being precise about is that the examples don't teach the model anything - no weights
+change. They're input. Their job is to identify WHICH task, which label set, and which output format
+you mean, out of the many the model already knows how to do. That's why it's called in-context
+learning rather than learning.
+
+I built a toy version of the same statistical question to see the shape: a hidden rule of the form
+"label is 1 if feature j exceeds a threshold", with j unknown among eight features, and a learner that
+sees k examples. Accuracy went 54.6% at zero shots, 66.6% at four, 94.8% at sixteen, and 98.4% at
+sixty-four. Steep and then flat - almost all the value is in the first handful, which is exactly the
+shape reported for real in-context learning, and it's why the standard advice is one to five examples.
+
+Two findings from that I'd bring up. First, ONE shot was WORSE than zero - 52.7% against 54.6%. One
+example isn't enough to identify the rule; it picked the right feature only 11.7% of the time against
+10.7% for guessing. But it's enough to make the model commit confidently to the wrong one. So give
+zero or give two-plus, never exactly one.
+
+Second, on the well-known result that randomising the demonstration labels barely hurts - I measured
+the shape and the honest version is more nuanced than "labels don't matter". At 10% label noise and 32
+examples, accuracy went from 98% to 96%: barely a scratch. At 50% noise, where the labels carry
+literally zero information, it collapsed to chance at every k. So labels do matter; the system is just
+robust to moderate noise, because with enough examples the majority signal still identifies the rule.
+The practical consequence is that format and coverage matter more than label perfection - the examples
+demonstrate the output format, the label space, and the input distribution as well as the mapping, and
+the first three survive corruption.
+
+The failure modes I'd watch: never covering a label you want the model to produce, unbalanced
+demonstrations skewing the output distribution, recency bias from ordering examples by label, and
+example inputs that look nothing like the real ones.
+
+And the diagnosis that matters most: if what's missing is task identification or format, examples fix
+it. If what's missing is FACTS, examples cannot help and you need retrieval. If you find yourself
+wanting more than about twenty examples and you have volume, fine-tuning is cheaper and better - you
+get a shorter prompt and lower per-request cost in exchange for a training run.'""",
+
+    """8. THE CODE, PIECE BY PIECE - prompts and the harness that measures them
+
+ZERO-SHOT, done properly - note how much work the instruction does:
+
+    ZERO_SHOT = (
+        "Classify the sentiment of the review below.\\n"
+        "Respond with exactly one word: positive, negative, or neutral.\\n"
+        "- positive: the reviewer is satisfied overall\\n"
+        "- negative: the reviewer is dissatisfied overall\\n"
+        "- neutral: factual, mixed, or no clear sentiment\\n\\n"
+        "Review: {review}\\n"
+        "Sentiment:"
+    )
+    # ^ the label set is ENUMERATED, each label is DEFINED, and the output format is
+    #   pinned to one word. On an instruction-tuned model this frequently matches or
+    #   beats few-shot, at a fraction of the tokens.
+
+FEW-SHOT, with the rules baked in:
+
+    EXAMPLES = [
+        ("Screen is gorgeous and the battery lasts all day.", "positive"),
+        ("Arrived cracked and support never replied.",        "negative"),
+        ("It is a phone. Does phone things.",                 "neutral"),
+        ("Fast delivery, but the case was the wrong colour.", "neutral"),
+        ("Best purchase I have made this year.",              "positive"),
+        ("Stopped charging after three weeks.",               "negative"),
+    ]
+    # ^ EVERY LABEL APPEARS (coverage), and each appears TWICE (balance). Coverage is the
+    #   constraint that actually sets the minimum k.
+
+    random.shuffle(EXAMPLES)      # <-- recency bias: the LAST example influences the output
+                                  #     most. Ordering by label skews the predictions.
+
+    prompt = "\\n\\n".join(f"Review: {r}\\nSentiment: {s}" for r, s in EXAMPLES)
+    prompt += f"\\n\\nReview: {review}\\nSentiment:"
+    # ^ RIGIDLY IDENTICAL FORMAT for every example and for the query. Same separator, same
+    #   field names, same capitalisation. Measured: the format signal survives even 25%
+    #   label corruption, so it is doing more work than people think.
+
+RETRIEVED (DYNAMIC) FEW-SHOT - usually better than a fixed set at the same k:
+
+    def build_prompt(query, pool, k=5):
+        scored = sorted(pool, key=lambda ex: -similarity(query, ex.text))
+        chosen = scored[:k]
+        chosen.reverse()      # <-- put the MOST similar example LAST, closest to the query,
+                              #     which exploits recency bias instead of fighting it
+        return format_examples(chosen) + f"\\n\\nReview: {query}\\nSentiment:"
+
+THE HARNESS THAT ACTUALLY DECIDES THE QUESTION:
+
+    for k in (0, 1, 2, 3, 5, 8, 16):
+        acc = evaluate(model, build_prompt_with_k_shots(k), eval_set)
+        cost = k * TOKENS_PER_EXAMPLE
+        print(k, acc, cost)
+    # ^ the curve flattens. Measured on the toy: 54.6% (k=0), 66.6% (k=4), 94.8% (k=16),
+    #   98.4% (k=64). PICK THE KNEE, not the maximum.""",
+
+    """9. A TRACE - the toy learner, and what each column is telling you
+
+THE SETUP: 8 features, uniform in [0,1]. Hidden rule: label = 1 iff feature j > t, with j drawn from
+0..7 and t from 0.3..0.7. The learner is given k labelled examples and tries every (feature,
+threshold) pair, keeping whichever explains the examples best.
+
+k = 2 EXAMPLES:
+    x = [0.8, 0.2, 0.6, ...]  ->  1
+    x = [0.1, 0.9, 0.4, ...]  ->  0
+    Many (feature, threshold) pairs explain BOTH of these perfectly - feature 0 with any threshold
+    between 0.1 and 0.8 works, and so do several others by coincidence. The learner picks one
+    arbitrarily. MEASURED: right feature 23.0% of the time, test accuracy 56.8%.
+
+k = 8 EXAMPLES:
+    Now a spurious feature has to agree with the true rule on all eight points by chance, which is
+    roughly 2^-8 per feature per threshold. Most impostors are eliminated.
+    MEASURED: right feature 87.7%, test accuracy 86.2%.
+
+k = 32 EXAMPLES:
+    MEASURED: right feature 100.0%, test accuracy 97.6%. The remaining 2.4% is threshold imprecision,
+    not feature confusion.
+
+THE TWO COLUMNS MOVE TOGETHER, and that is the whole point: ACCURACY IS IDENTIFICATION. The learner
+always knew how to apply a threshold rule. What it lacked was knowing WHICH ONE, and that is exactly
+what a language model lacks when you hand it an unfamiliar task.
+
+THE k = 1 ROW, EXPLAINED:
+    one example, say x -> 1. EVERY feature that happens to be above some threshold in x explains it.
+    That is about half the features, times every threshold below their value. The learner picks one at
+    random - measured 11.7% right, against 10.7% for pure guessing - and then applies it confidently.
+    ZERO SHOTS AT LEAST FALLS BACK ON A NEUTRAL DEFAULT; ONE SHOT COMMITS TO NOISE. Measured: 52.7%
+    versus 54.6%.
+
+THE LINE-BY-LINE MAPPING - which part of the harness produced which column:
+
+    `make_task(k, rule_feat, thr)`
+            produced the k demonstrations. Note the features are drawn from the SAME distribution as
+            the test set - the analogue of "draw your examples from the real input distribution", and
+            violating it is failure mode 5.
+    `for j in range(NFEAT): for thr in ...: score = sum(...)`
+            produced the "picked the right feature" column. It is an exhaustive search over
+            hypotheses, which is the cleanest available model of "which of the many tasks I know is
+            this one".
+    `score > best_score` (strictly greater, first-wins on ties)
+            is why k=1 lands at 11.7% rather than exactly 1/8 = 12.5%: with one example many
+            hypotheses tie, and the first one encountered wins. AN ARBITRARY TIE-BREAK IS EXACTLY THE
+            BEHAVIOUR THAT MAKES ONE-SHOT WORSE THAN ZERO-SHOT.
+    `shots = [(x, 1 - y if random.random() < noise else y) ...]`
+            produced the label-noise table. At noise = 0.5 the labels are independent of x, `score`
+            becomes uninformative, and every hypothesis ties - which is why that row sits at chance.
+    the 200-point `test` set
+            produced the accuracy column. It is regenerated per trial, so the numbers are
+            generalisation, not memorisation.""",
+
+    """10. COST, MISTAKES, AND THE TAKEAWAY
+
+    approach            per-request tokens        setup cost         when
+    -----------------------------------------------------------------------------------------
+    zero-shot           instruction only          none               task is describable
+    few-shot (k)        instruction + k examples  none               format matters, k small
+    retrieved few-shot  instruction + k examples  build a pool +     many edge cases
+                                                  retrieval
+    fine-tuning         instruction only          a training run     hundreds of examples,
+                                                                     high volume
+    RAG                 instruction + retrieved   an index           the gap is KNOWLEDGE
+                        documents
+
+    MEASURED on the toy in-context learner (8 features, hidden threshold rule):
+        k = 0 -> 54.6%,  k = 1 -> 52.7%,  k = 2 -> 56.8%,  k = 4 -> 66.6%,
+        k = 8 -> 86.2%,  k = 16 -> 94.8%, k = 32 -> 97.6%, k = 64 -> 98.4%
+    MEASURED with corrupted labels at k = 32: 0% noise 98.0%, 10% 95.9%, 25% 85.4%, 50% 53.6%.
+
+THE #1 MISTAKE: using exactly one example. Measured worse than zero - enough to bias, not enough to
+identify.
+
+THE #2 MISTAKE: not covering every label in the demonstrations. A class that never appears is
+under-predicted, and this sets your minimum example count more than any intuition about "enough".
+
+THE #3 MISTAKE: unbalanced or label-ordered demonstrations. The output distribution skews towards the
+majority and towards whatever came last.
+
+THE #4 MISTAKE: inconsistent formatting across examples. The format is one of the strongest signals -
+measured to survive 25% label corruption - and inconsistency throws it away.
+
+THE #5 MISTAKE: believing "labels don't matter" from the randomised-label literature. At 50% noise
+performance collapses to chance. The correct statement is that the system is robust to MODERATE noise.
+
+THE #6 MISTAKE: adding examples to fix a knowledge gap. Examples identify a task; they do not install
+facts. That is retrieval.
+
+THE #7 MISTAKE: piling on examples past the knee of the curve. Measured, 32 -> 64 bought 0.8 points and
+doubled the token cost.
+
+THE #8 MISTAKE: never computing the fine-tuning crossover. examples x tokens x daily requests is a real
+number, and at volume it frequently favours fine-tuning decisively.
+
+ONE-SENTENCE TAKEAWAY: few-shot examples do not teach - they IDENTIFY which task, label set and format
+you mean, which is why the accuracy curve is steep then flat (measured 54.6% at zero shots, 66.6% at
+four, 94.8% at sixteen, 98.4% at sixty-four), why exactly one shot is worse than none, and why format
+and label coverage matter more than label perfection - and if what is missing is facts rather than task
+identification, no number of examples will help.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
