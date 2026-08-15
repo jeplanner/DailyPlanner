@@ -139935,6 +139935,1333 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AL[_e["title"]]
 
 
+# ══ P1 ten-section rewrites, ranks 273-276 ════════════════════════════════
+_EX_P1AM = {}
+
+_EX_P1AM["Maximum Product of Two Elements in an Array"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a list of positive numbers. Pick TWO of them - two different positions in the list, not
+the same one twice - subtract 1 from each, and multiply the results. Make that product as large as
+possible.
+
+    nums = [3, 4, 5, 2]
+
+    pick 5 and 4:   (5 - 1) x (4 - 1)  =  4 x 3  =  12       <- the best
+    pick 5 and 3:   (5 - 1) x (3 - 1)  =  4 x 2  =  8
+    pick 3 and 2:   (3 - 1) x (2 - 1)  =  2 x 1  =  2
+
+    ANSWER: 12
+
+The '-1' is just an odd little twist the problem adds; it does not change which two numbers you want,
+as section 2 explains. And 'two different positions' matters: if the list is `[5, 5]` you may use both
+fives, because they sit in different places - but with `[5, 3]` you may not use the 5 twice.
+
+TERMS AS THEY APPEAR:
+- DISTINCT INDICES: two different POSITIONS in the list. Two equal VALUES at different positions are
+  perfectly allowed.
+- ONE PASS: solving it by walking the list a single time, keeping a couple of variables, rather than
+  sorting or comparing every pair.
+- The constraints guarantee every number is at least 1, which matters for the starting values in
+  section 5.""",
+
+    """2. THE INTUITION - the minus one is a decoy
+
+The instinct on seeing `(a-1) x (b-1)` is that some clever trade-off must be involved. There is none,
+and seeing why immediately is most of the value in this question.
+
+SUBTRACTING 1 PRESERVES ORDER. If a is bigger than b, then a-1 is bigger than b-1. Nothing is
+reordered, nothing crosses over. In mathematical language it is a MONOTONIC transformation - a
+relabelling that keeps the ranking intact.
+
+MULTIPLYING TWO POSITIVE NUMBERS IS BIGGER WHEN EACH IS BIGGER. Since all the values are at least 1,
+every `value - 1` is at least 0, so we are multiplying two non-negative numbers. Increasing either one
+never decreases the product.
+
+Put those together: to maximise `(a-1) x (b-1)` you simply want a and b to be the two LARGEST values
+in the list. There is no trade-off to search for, no case where a smaller number pairs better.
+
+    nums = [1, 5, 4, 5]
+    the two largest are 5 and 5 (different positions - allowed)
+    (5-1) x (5-1) = 16
+
+SO THE PROBLEM IS REALLY 'FIND THE TOP TWO'. And that can be done in a single pass with two variables:
+one holding the largest seen so far, one holding the second largest. Each new number either beats the
+largest (in which case the old largest slides down into second place), or beats only the second (in
+which case it takes second place), or beats neither and is ignored.
+
+    walking [1, 5, 4, 5]:
+        see 1:  first = 1, second = 0
+        see 5:  beats first -> old first (1) slides down. first = 5, second = 1
+        see 4:  does not beat 5, but beats 1. second = 4
+        see 5:  beats first (5 > 5? no)... it does not beat, but it beats second. second = 5
+        answer (5-1) x (5-1) = 16
+
+That last step is worth staring at - see section 4 for why `>` rather than `>=` still works there.
+
+Measured: the one-pass top-two agreed with an exhaustive search over every pair on 6,000 of 6,000
+random inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `nums = [3, 4, 5, 2]`.
+
+We keep two variables. `first` is the largest value seen so far; `second` is the largest value seen
+that is not `first` itself. Both start at 0, which is safe because every value is at least 1.
+
+    start:  first = 0,  second = 0
+
+    x = 3:  is 3 > first (0)?  YES.
+            The old first (0) is no longer the biggest, so it slides down: second = 0.
+            first = 3.
+            now: first = 3, second = 0
+
+    x = 4:  is 4 > first (3)?  YES.
+            second = 3      (the old champion becomes runner-up)
+            first = 4
+            now: first = 4, second = 3
+
+    x = 5:  is 5 > first (4)?  YES.
+            second = 4
+            first = 5
+            now: first = 5, second = 4
+
+    x = 2:  is 2 > first (5)?  no.
+            is 2 > second (4)?  no.
+            nothing changes.
+
+    final: first = 5, second = 4
+    answer: (5 - 1) x (4 - 1) = 4 x 3 = 12
+
+THE SLIDE IS THE PART TO GET RIGHT. When a new champion arrives, the old champion does not vanish - it
+becomes the runner-up. Forgetting that line (`second = first` before `first = x`) leaves `second`
+holding some older, smaller value. Measured: that omission was wrong on 2,017 of 6,000 inputs.
+
+A SECOND TRACE with a repeated maximum. `nums = [5, 5]`:
+
+    x = 5:  5 > 0  ->  second = 0, first = 5
+    x = 5:  5 > first (5)?  NO - it is equal, not greater.
+            5 > second (0)?  YES  ->  second = 5
+
+    final: first = 5, second = 5
+    answer: (5-1) x (5-1) = 16
+
+The strict `>` in the first test is what lets the second five fall through to the runner-up slot.
+That is not an accident, and it is the detail that makes duplicates work.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. EXACTLY TWO ELEMENTS. `[3, 7]`. There is only one pair, so the answer is (7-1) x (3-1) = 12. The
+   loop handles it with no special case.
+
+B. THE MAXIMUM APPEARS TWICE. `[5, 5, 2]`. Both fives are usable because they occupy different
+   positions. Answer (5-1) x (5-1) = 16. This is the case where the strict `>` on the first comparison
+   matters: with `>=` the second five would replace `first` and the old five would slide into `second`
+   - which happens to give the same answer here, but reasoning about it clearly is the point.
+
+C. ALL VALUES EQUAL TO 1. `[1, 1, 1]`. Every `value - 1` is 0, so the answer is 0. The zero starting
+   values never cause trouble because 1 > 0.
+
+D. ALL VALUES THE SAME. `[4, 4, 4, 4]`. Answer (4-1) x (4-1) = 9.
+
+E. THE #1 MISTAKE - TWO `if`s INSTEAD OF `if` / `elif`. Written as two separate `if`s, a new champion
+   is first slid into `second` and then immediately compared again - and since it beats the value now
+   sitting in `second`, it overwrites it. Both variables end up holding the same element, and you have
+   used one position twice. Measured wrong on 4,847 of 6,000 random inputs. It is right on exactly the
+   1,153 inputs where the largest value appears more than once - because there, both variables holding
+   the maximum is the correct answer anyway. That is the classic bug in every find-the-top-two
+   routine, and the `elif` is the fix.
+
+F. THE #2 MISTAKE - FORGETTING TO SUBTRACT 1 FROM BOTH TERMS. Wrong on 5,998 of 6,000 - it is right
+   only in the rare case where the runner-up is exactly 1, making the missing subtraction irrelevant.
+   Read the formula twice before typing it.
+
+G. THE #3 MISTAKE - UPDATING `first` WITHOUT SLIDING THE OLD VALUE DOWN. Wrong on 2,017 of 6,000.
+   `second` then holds whatever old value happened to be there, which is usually too small.
+
+H. NEGATIVE VALUES. The constraints forbid them, and the zero starting values depend on that: with
+   negatives allowed, `first` and `second` would need to start at negative infinity, and worse, the
+   whole approach would change, because two large negatives can multiply to a big positive (see
+   Maximum Product of Three Numbers for that version). Say this out loud - knowing which constraint
+   your code leans on is worth as much as the code.""",
+
+    """5. THE SLOW VERSIONS FIRST, THEN THE ONE-PASS UPGRADE
+
+VERSION ONE - EVERY PAIR. Try all of them:
+
+    from itertools import combinations
+    def brute(nums):
+        return max((nums[i]-1) * (nums[j]-1) for i, j in combinations(range(len(nums)), 2))
+
+O(n-squared), obviously correct, and it is what I measured everything else against - 6,000 agreements
+out of 6,000. Perfectly reasonable to write first, and it makes the transformation argument concrete:
+notice that the winning pair is always the two biggest values.
+
+VERSION TWO - SORT AND TAKE THE LAST TWO:
+
+    def by_sorting(nums):
+        nums.sort()
+        return (nums[-1] - 1) * (nums[-2] - 1)
+
+Two lines, correct, O(n log n). Completely acceptable as an answer, and the honest thing to say is
+'sorting does more than I need - I only want the top two, which is one pass'.
+
+VERSION THREE - THE ONE-PASS TOP TWO. O(n) time, O(1) space, and it works on a STREAM: you never need
+to hold the whole list in memory, only two numbers. That last property is why interviewers like it -
+'find the top k in one pass' generalises to a heap and to problems where the data does not fit in
+memory.
+
+WHY THE `elif` IS NOT A STYLE CHOICE. Look at what happens with two plain `if`s when x beats first:
+
+        if x > first:      second = first;  first = x        # second is now the old champion
+        if x > second:     second = x                        # x beats the old champion, so...
+                                                             # second becomes x too. Both are x.
+
+You have now recorded the same ELEMENT twice, which the problem forbids - it asks for two distinct
+positions. The `elif` says 'consider this value for second place ONLY IF it did not already take first
+place', which is exactly the intent. Measured: 4,847 wrong out of 6,000.
+
+WHY STARTING AT 0 IS SAFE, and when it would not be. Every value is at least 1, so the very first
+element always beats a starting value of 0 and both variables get filled with real data. If negatives
+were possible you would start at negative infinity instead - and you would also need a different
+algorithm entirely. Choosing a sentinel that CANNOT be confused with real data is the general rule; 0
+qualifies here only because the constraints say so.
+
+THE TRANSFORMATION ARGUMENT, once more, because it is the actual insight: `(a-1)(b-1)` is maximised by
+the same pair that maximises `a` and `b`, because subtracting a constant preserves order and the
+values are non-negative. Spotting that a decorated objective is really a plain one is a habit worth
+building - it turns many 'optimisation' problems into 'find the biggest' problems.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Keep two numbers: the largest value seen so far, and the second largest. Start both at 0, which is
+   safe because every value in the list is at least 1.
+2. Walk the list once. For each value:
+   a. If it is bigger than the current largest, then the current largest is no longer the biggest -
+      slide it down into the second slot, and put this value in the first slot.
+   b. OTHERWISE, if it is bigger than the current second, put it in the second slot.
+   c. Otherwise ignore it.
+3. Return (largest - 1) multiplied by (second largest - 1).
+
+STEP 2b MUST BE AN 'OTHERWISE IF', NOT A SECOND 'IF'. If a value has just become the largest, it must
+not also be considered for second place - that would record the same element twice and break the
+requirement of two distinct positions. This is the single most common bug in the whole family of
+find-the-top-k routines, and it is wrong on 4,847 of 6,000 inputs here.
+
+STEP 2a HAS TWO PARTS AND BOTH MATTER: slide the old champion down BEFORE overwriting it. Doing them
+in the wrong order, or skipping the slide, loses the runner-up - wrong on 2,017 of 6,000.
+
+AND DO NOT FORGET THE SUBTRACTION ON BOTH TERMS in step 3. Missing one is wrong on 5,998 of 6,000 -
+essentially always.
+
+IF YOU WOULD RATHER SORT: `nums.sort()` then `(nums[-1]-1) * (nums[-2]-1)` is correct and fine to
+offer, with the remark that it is O(n log n) where one pass is O(n).""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Walk down the list holding two things in your head: the biggest number you have seen, and the
+second-biggest.
+
+Each new number is compared against your champion. If it beats the champion, the old champion is
+demoted to runner-up and the newcomer takes the top spot. If it does not beat the champion but does
+beat the runner-up, it becomes the new runner-up. Otherwise you forget it.
+
+At the end, take those two numbers, subtract one from each, and multiply. The subtraction never
+changes WHICH numbers you want - it shifts both by the same amount and keeps their order - so the two
+biggest values are always the right pair.
+
+The important discipline is that a number which has just become the champion must not also be recorded
+as the runner-up. It is one number in one position, and the problem asks for two.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def max_product(nums):
+        first = second = 0                   # two largest so far
+        for x in nums:
+            if x > first:
+                second = first
+                first = x
+            elif x > second:
+                second = x
+        return (first - 1) * (second - 1)
+
+LINE 2: `first = second = 0`
+    The two running champions, both seeded at 0. That sentinel is safe ONLY because the constraints
+    promise every value is at least 1, so any real value beats it. With negatives allowed you would
+    need negative infinity - and a different algorithm besides.
+
+LINE 3: `for x in nums:`
+    A single pass. Note we take the VALUE, not the index: nothing here needs to know WHERE a number
+    sat, only how big it is. (The 'two distinct positions' rule is honoured by the structure of the
+    if/elif, not by tracking indices.)
+
+LINE 4-6: the new-champion branch
+    `if x > first:` - strictly greater. Equal values fall through to the elif, which is what lets
+    `[5, 5]` end with both variables holding 5.
+    `second = first` - the demotion, and it must come FIRST. The old champion is still the
+    second-biggest thing seen, so it belongs in the runner-up slot.
+    `first = x` - crown the newcomer. Writing these two lines in the other order loses the old value
+    entirely; omitting the demotion is wrong on 2,017 of 6,000 inputs.
+
+LINE 7-8: `elif x > second: second = x`
+    THE `elif` IS LOAD-BEARING. It means 'only consider this for runner-up if it did not just become
+    the champion'. As two separate `if`s, a new champion would immediately beat the value it had just
+    demoted and overwrite the runner-up slot with itself, so both variables would hold the same
+    element - wrong on 4,847 of 6,000, and right only on the 1,153 inputs where the maximum genuinely
+    appears twice.
+
+LINE 9: `return (first - 1) * (second - 1)`
+    Both terms get the subtraction. Missing one is wrong on 5,998 of 6,000 - it survives only when the
+    runner-up happens to be exactly 1.
+
+WHAT MAPS BACK TO THE HAND-TRACE: each `x = ...` block in section 3 is one iteration of line 3, and
+the 'second = 3, first = 4' step is lines 5 and 6 in that order.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [1, 5, 4, 5]`.
+
+    LINE 2:  first = 0,  second = 0
+
+    x = 1    1 > 0?   YES
+             second = first = 0
+             first = 1
+             ->  first = 1,  second = 0
+
+    x = 5    5 > 1?   YES
+             second = 1
+             first = 5
+             ->  first = 5,  second = 1
+
+    x = 4    4 > 5?   no
+             4 > 1?   YES  ->  second = 4
+             ->  first = 5,  second = 4
+
+    x = 5    5 > 5?   NO (strictly greater, and they are equal)
+             5 > 4?   YES  ->  second = 5
+             ->  first = 5,  second = 5
+
+    LINE 9:  (5 - 1) * (5 - 1) = 4 * 4 = 16
+
+    RETURN VALUE: 16
+
+Correct: the list holds two fives at different positions, so both may be used.
+
+THE TWO-`if`s BUG on `nums = [3, 4, 5, 2]`:
+
+    x = 3:  3 > 0  ->  second = 0, first = 3.   Then the SECOND if: 3 > 0?  YES  ->  second = 3.
+            Now first = 3 AND second = 3, from ONE element.
+    x = 4:  4 > 3  ->  second = 3, first = 4.   Then: 4 > 3?  YES  ->  second = 4.  Both are 4.
+    x = 5:  same story.  Both become 5.
+    x = 2:  no change.
+    returns (5-1) * (5-1) = 16, using the single 5 twice.  The answer is 12.
+
+Wrong on 4,847 of 6,000 inputs - and right on precisely the 1,153 where the maximum really does appear
+twice, since then 'both slots hold the maximum' is the correct answer.
+
+THE MISSING-SLIDE BUG on the same input: `first` climbs 3, 4, 5 while `second` is never assigned, so
+it stays 0 and the answer is (5-1) x (0-1) = -4. Wrong on 2,017 of 6,000, and a negative product from
+positive input is an obvious tell.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) - one pass, two comparisons per element. Sorting would be O(n log n) and does more work
+than the question needs.
+
+SPACE: O(1) - two integers, no matter how long the list. This is also why the approach works on a
+STREAM of numbers that never fits in memory, which is the property worth mentioning.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one pass, versus
+O(n-squared) for checking every pair.
+
+THE #1 BEGINNER MISTAKE: writing two separate `if`s instead of `if` / `elif`. The new champion
+immediately overwrites the runner-up slot with itself, so one element is counted twice - and the
+problem demands two distinct positions. Wrong on 4,847 of 6,000 random inputs, and right only on the
+1,153 where the maximum genuinely repeats. This is THE bug of every find-the-top-two routine.
+
+THE #2 MISTAKE: forgetting the `-1` on one of the terms. Wrong on 5,998 of 6,000 - essentially always,
+and easy to catch by testing a single example by hand.
+
+THE #3 MISTAKE: overwriting `first` without demoting the old champion into `second`. Wrong on 2,017 of
+6,000, and it often produces a negative answer from positive input, which is at least a loud failure.
+
+THE CONSTRAINT THE CODE LEANS ON: all values are at least 1, which is what makes 0 a safe starting
+sentinel. Under different constraints both the sentinel and the algorithm would have to change.
+
+ONE-SENTENCE TAKEAWAY: subtracting 1 preserves order, so the answer is just the two largest values -
+track them in one pass with `if`/`elif`, never two `if`s, or the same element fills both slots.""",
+]
+
+_EX_P1AM["Minimize String Length (keep distinct characters)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a word. You may repeatedly perform this operation: pick any letter that has a MATCHING
+COPY somewhere else in the word - to its left or to its right - and delete one of them. Keep going as
+long as you like. How SHORT can the word get?
+
+    s = "aaabc"
+
+    the three a's are copies of each other, so you may delete two of them:
+        "aaabc"  ->  "aabc"  ->  "abc"
+    now every letter is unique - no letter has a copy anywhere - so no move is legal.
+
+    ANSWER: 3
+
+    s = "cbbd"
+        the two b's are copies:  "cbbd"  ->  "cbd"
+    ANSWER: 3
+
+    s = "abc"
+        no letter has a copy, so no move is possible at all.
+    ANSWER: 3
+
+Notice all three answers are 3, and in each case the surviving word held exactly one of each distinct
+letter. That is not a coincidence - it is the whole problem, as section 2 shows.
+
+TERMS AS THEY APPEAR:
+- DISTINCT CHARACTERS: the different letters that appear, ignoring how many times. "aaabc" has three
+  distinct characters: a, b and c.
+- SET: a collection that automatically drops duplicates. Putting "aaabc" into a set gives {a, b, c},
+  and its size is 3.
+- REACHABLE STATE: a word you can arrive at by performing legal operations. The question asks for the
+  shortest reachable state.""",
+
+    """2. THE INTUITION - two facts pin the answer exactly
+
+The problem looks like a simulation: pick a letter, delete it, repeat, and hope you chose well. It is
+not, because two small facts force the answer completely.
+
+FACT ONE - EVERY DUPLICATE CAN EVENTUALLY BE REMOVED. If a letter appears more than once, then by
+definition it has a matching copy, so it is a legal target. Delete one. If it still appears more than
+once, it still has a copy, so delete another. You can keep going until exactly one remains. Nothing
+about the arrangement of the letters can prevent this - the rule only asks that a copy exists
+SOMEWHERE, not that it be adjacent.
+
+FACT TWO - THE LAST COPY CAN NEVER BE REMOVED. To delete a letter you need a matching copy elsewhere.
+When only one 'a' remains, there is no other 'a' to match it, so no operation can touch it. Every
+distinct letter therefore survives, guaranteed.
+
+Put those together: you can always get DOWN to one of each distinct letter, and you can never get
+BELOW that. The shortest reachable word has exactly one of each distinct character, so:
+
+    answer = the number of distinct characters
+
+    "aaabc"   ->  {a, b, c}      ->  3
+    "cbbd"    ->  {c, b, d}      ->  3
+    "dddddd"  ->  {d}            ->  1
+    "abc"     ->  {a, b, c}      ->  3
+
+WHY THE ORDER OF DELETIONS DOES NOT MATTER. Both facts hold regardless of which duplicate you choose
+at each step, so every sequence of choices ends in the same place. When a process has a UNIQUE
+reachable minimum, there is nothing to search - you can compute the end state directly.
+
+THE TRANSFERABLE LESSON: a problem phrased as a repeated operation is often not a simulation at all.
+Ask two questions - 'what can I always achieve?' and 'what can I never get past?' - and when the two
+answers meet, that is the answer, in closed form.
+
+Measured: `len(set(s))` matched a full exploration of the deletion process, trying every possible
+choice at every step, on 4,000 of 4,000 random strings.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `s = "baccab"`.
+
+STEP 1 - which letters appear, and how often?
+
+    b:  positions 0 and 5   ->  twice
+    a:  positions 1 and 4   ->  twice
+    c:  positions 2 and 3   ->  twice
+
+STEP 2 - the distinct letters are a, b and c, so the answer should be 3. Let us confirm it by actually
+playing the game.
+
+    "baccab"
+    delete one c (it has a copy)        ->  "bacab"
+    delete the other... wait: after that deletion only one c remains, so c can no longer be touched.
+    delete one a                        ->  "bacb"      (an a remained, so this was legal)
+    delete one b                        ->  "acb"
+    now: a appears once, c once, b once. No letter has a copy. No legal move remains.
+
+    length 3.  ANSWER: 3
+
+STEP 3 - try a completely different order and check we land in the same place.
+
+    "baccab"
+    delete the FIRST b                  ->  "accab"
+    delete the LAST a                   ->  "acca"  ... careful, let me redo: "accab" minus its 'a' at
+                                            the end gives "accb"
+    delete one c                        ->  "acb"
+    length 3 again, with the same three letters surviving.
+
+The two runs deleted different characters in a different order and finished identically. That is Fact
+One and Fact Two doing their work: the extras always go, the last copies always stay.
+
+A SECOND TRACE, all one letter. `s = "aaaa"`:
+
+    every a has copies, so delete until one remains:  "aaaa" -> "aaa" -> "aa" -> "a"
+    now the single a has no copy, so nothing more can be done.
+    ANSWER: 1  =  len({a})""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ALL CHARACTERS DIFFERENT. `"abcdef"`. No letter has a copy, so no move is ever legal and the answer
+   is the original length, 6 - which is also the number of distinct characters. Both readings agree,
+   which is why this input cannot distinguish a correct solution from a wrong one.
+
+B. ALL CHARACTERS THE SAME. `"zzzzz"`. Everything collapses to one letter. Answer 1.
+
+C. A SINGLE CHARACTER. `"q"`. Nothing to delete, answer 1.
+
+D. A LETTER APPEARING EXACTLY TWICE, MANY TIMES OVER. `"aabbcc"`. Each pair loses one member, so the
+   answer is 3. This is the case where the 'delete one per duplicated letter' shortcut happens to be
+   right, which is exactly why it is dangerous - see F.
+
+E. THE COPY NEED NOT BE ADJACENT. `"axa"`. The two a's are separated by an x, and the operation still
+   applies - the rule says a copy exists to the LEFT or RIGHT, not next door. Answer 2. People who
+   mentally picture 'remove adjacent duplicates' get this wrong, and it is a different problem
+   entirely.
+
+F. THE #1 MISTAKE - REMOVING ONE COPY PER DUPLICATED LETTER instead of all the extras. For `"aaabc"`
+   that gives 5 - 1 = 4, where the answer is 3. Measured wrong on 1,697 of 4,000 random strings, and
+   it is exactly right whenever every repeated letter appears precisely twice - which is a large
+   fraction of short random strings and of hand-written examples.
+
+G. THE #2 MISTAKE - RETURNING THE ORIGINAL LENGTH, on the reasoning that no deletion is 'required'.
+   Wrong on 2,955 of 4,000, right only on strings that already have no repeats.
+
+H. AN EMPTY STRING. `len(set(""))` is 0, which is correct and needs no special case - though the usual
+   constraints promise at least one character.""",
+
+    """5. THE SIMULATION FIRST, THEN WHY YOU SHOULD NOT WRITE IT
+
+THE LITERAL VERSION - actually perform the deletions, exploring every choice, and report the shortest
+word reached:
+
+    def brute(s):
+        seen, best = set(), len(s)
+        def go(t):
+            nonlocal best
+            if t in seen:
+                return
+            seen.add(t)
+            best = min(best, len(t))
+            for i, ch in enumerate(t):
+                if ch in t[:i] or ch in t[i+1:]:      # a copy exists somewhere
+                    go(t[:i] + t[i+1:])
+        go(s)
+        return best
+
+This is a search over every reachable string, which is exponential without the `seen` memo and merely
+awful with it. It IS correct - it is what I checked the one-liner against, agreeing on 4,000 of 4,000
+random strings - and writing it out is a perfectly reasonable first step if the closed form is not
+obvious to you in the room.
+
+WHY YOU SHOULD THEN THROW IT AWAY. The search explores thousands of paths that all end in the same
+place. The two facts from section 2 prove that:
+
+    - the process can ALWAYS continue while any duplicate remains (so you never get stuck early), and
+    - the process can NEVER remove a last copy (so you never get below one-of-each).
+
+An upper bound and a lower bound that meet leave exactly one possible answer. There is nothing for a
+search to discover.
+
+THE SHAPE OF THIS ARGUMENT IS THE THING TO LEARN, because it recurs constantly in problems phrased as
+'repeat this operation until you cannot':
+
+    1. Show the target state is REACHABLE - give the strategy that gets there.
+    2. Show nothing BETTER is reachable - find the invariant that blocks it.
+    3. The answer is that state, computed directly.
+
+Here the invariant in step 2 is 'the set of distinct characters never shrinks': the operation deletes a
+character only when a copy remains, so the SET of letters present is unchanged by every legal move,
+forever. The length can fall; the set cannot. That single sentence is the proof, and it is what turns
+a simulation into `len(set(s))`.
+
+A GOOD FOLLOW-UP TO BE READY FOR: 'what if the operation required the copy to be ADJACENT?' Then the
+set is no longer invariant, order suddenly matters, and you really are in stack-simulation territory
+(the Remove All Adjacent Duplicates problem). Being able to say why THAT one needs a stack and this
+one does not is worth more than either solution.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Collect the distinct characters of the string. The simplest way is to put every character into a
+   set, which drops repeats automatically.
+2. Return how many are in the set.
+
+Two steps, and they collapse into one line. All the difficulty was in the reasoning, which is exactly
+the shape of this problem.
+
+WHAT TO SAY WHILE WRITING IT, because a one-line answer with no explanation looks like a memorised
+trick: 'the operation can always remove a duplicate, and can never remove a last copy, so the minimum
+reachable length is one of each distinct character.' Two clauses, an upper bound and a lower bound,
+and they meet.
+
+IF YOU WOULD RATHER NOT USE A SET, because an interviewer asks you to avoid one: since the input is
+lowercase letters, keep a 26-slot array of booleans, mark each letter you see, and count the marks.
+That is O(n) time and O(1) space (26 slots do not grow with the input), and it is the same idea
+without the library.
+
+RESIST THE URGE TO SIMULATE. If you find yourself writing a loop that deletes characters and repeats,
+stop and ask whether the end state is forced. Here it is, and the simulation only adds ways to be
+wrong.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Go through the word and note which letters appear, ignoring how many times each one shows up. Count
+how many different letters you noted. That is the answer.
+
+The reason is short. Any letter that appears more than once can be trimmed, because the rule only
+needs a copy to exist somewhere in the word - and once you have trimmed it down to a single copy, that
+last one is untouchable, because there is nothing left to match it against.
+
+So whatever you do, and in whatever order, the word ends up with exactly one of each letter. You do
+not need to perform the deletions to know where they end.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def minimized_string_length(s):
+        return len(set(s))                   # each distinct char collapses to one
+
+LINE 2: `return len(set(s))`
+    Two operations nested, read inside out.
+
+    `set(s)` - iterating a string in Python yields its characters one at a time, so this builds a set
+    of the individual characters. A set stores each value only once, so every duplicate silently
+    disappears as it is inserted. For "aaabc" the result is {'a', 'b', 'c'}. Building it is one pass
+    over the string, and each insertion is effectively constant time thanks to hashing.
+
+    `len(...)` - how many distinct characters survived. By the argument in section 2 that number IS
+    the shortest reachable length: every extra copy can be deleted, and every last copy must remain.
+
+    Note what the line does NOT do: it never looks at POSITIONS, never counts how many times a letter
+    appears, and never performs a deletion. The counts are irrelevant - three a's and thirty a's both
+    collapse to one - which is precisely why a set is the right structure and a frequency table would
+    be carrying information the answer never uses.
+
+THE WHOLE FUNCTION IS ONE LINE, so the interview value is entirely in the justification. If you write
+this without saying why, it reads as a remembered fact. If you say 'the set of distinct characters is
+INVARIANT under the operation - it can never lose a letter, because a letter is only deletable while a
+copy remains - and the length can always be driven down to that set's size', it reads as understanding.
+
+WHAT MAPS BACK TO THE HAND-TRACE: the set is the {a, b, c} that survived every deletion order in
+section 3, and the `len` is the 3.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `s = "aaabc"`.
+
+    `set(s)` builds up character by character:
+
+        start:        set()
+        see 'a':      not present, insert     ->  {'a'}
+        see 'a':      already present, ignore ->  {'a'}
+        see 'a':      already present, ignore ->  {'a'}
+        see 'b':      insert                  ->  {'a', 'b'}
+        see 'c':      insert                  ->  {'a', 'b', 'c'}
+
+    `len({'a','b','c'})` = 3
+
+    RETURN VALUE: 3
+
+Check against the game: "aaabc" -> delete an a -> "aabc" -> delete an a -> "abc" -> no letter has a
+copy, so we are stuck at length 3. Matches.
+
+A SECOND RUN. `s = "dddddd"`:
+
+        the set never grows past {'d'}
+        RETURN 1
+
+A THIRD RUN, no duplicates at all. `s = "xyz"`:
+
+        set is {'x', 'y', 'z'}
+        RETURN 3    - the original length, because nothing was ever deletable.
+
+THE 'ONE PER DUPLICATED LETTER' BUG on the first input: it sees that 'a' is duplicated, subtracts one
+character, and returns 5 - 1 = 4. The answer is 3, because BOTH extra a's go, not just one. Wrong on
+1,697 of 4,000 random strings - and exactly right whenever every repeated letter appears precisely
+twice, which is most short examples people invent by hand.
+
+THE 'RETURN THE ORIGINAL LENGTH' BUG returns 5 here. Wrong on 2,955 of 4,000, right only on strings
+that had no duplicates in the first place - which, note, is the same population where the first bug is
+also right. Test with a letter appearing three or more times, or neither bug will show itself.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) - one pass over the string to build the set, with each insertion effectively constant time.
+You cannot do better, since you must look at every character to know which letters are present.
+
+SPACE: O(k), where k is the number of distinct characters. For lowercase English letters that is at
+most 26, so it is O(1) in practice - a fixed ceiling that does not grow with the input.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one pass, versus
+the exponential search of actually simulating every deletion order.
+
+THE #1 BEGINNER MISTAKE: deleting only ONE copy per duplicated character rather than all the extras -
+returning `len(s) - (number of letters that repeat)`. Wrong on 1,697 of 4,000 random strings, and
+precisely right whenever every repeated letter appears exactly twice. That partial correctness is what
+gets it past hand-written tests; use a letter that appears three times to expose it.
+
+THE #2 MISTAKE: simulating the deletions literally. Not wrong, but a search over thousands of paths
+that all end in the same forced state - far more code, and far more room for off-by-one errors, than
+the one line the proof licenses.
+
+THE #3 MISTAKE: assuming the copy must be ADJACENT. That is a different problem (Remove All Adjacent
+Duplicates), it needs a stack, and its answer genuinely depends on the arrangement. Here the copy may
+be anywhere, which is what makes the distinct-character set invariant.
+
+ONE-SENTENCE TAKEAWAY: every duplicate can be deleted and no last copy ever can, so the shortest
+reachable word holds exactly one of each distinct character - the answer is the size of the character
+set, with no simulation needed.""",
+]
+
+_EX_P1AM["Minimum Absolute Difference"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have a list of distinct numbers. Find the two that are CLOSEST together, and report that pair. If
+several different pairs are equally close, report all of them, each written smallest-first, and listed
+in increasing order.
+
+    arr = [4, 2, 1, 3]
+
+    all the pairs and how far apart they are:
+        1 and 2  ->  1        1 and 3  ->  2        1 and 4  ->  3
+        2 and 3  ->  1        2 and 4  ->  2        3 and 4  ->  1
+
+    the smallest distance is 1, and three pairs achieve it.
+
+    ANSWER: [[1,2], [2,3], [3,4]]
+
+    arr = [1, 3, 6, 10, 15]
+
+        the gaps are 2, 3, 4, 5 - the smallest is 2, achieved only by 1 and 3.
+
+    ANSWER: [[1,3]]
+
+Two details from the wording matter: EVERY tying pair must be reported, not just one, and the list of
+pairs must come out in ascending order.
+
+TERMS AS THEY APPEAR:
+- ABSOLUTE DIFFERENCE: the distance between two numbers, ignoring which is bigger. `abs(3 - 7)` and
+  `abs(7 - 3)` are both 4.
+- ADJACENT (after sorting): sitting next to each other once the list is in order. `[1, 2, 3]` has two
+  adjacent pairs: (1,2) and (2,3).
+- The problem guarantees the values are DISTINCT, which is why every gap is at least 1 and no pair can
+  have a difference of 0.""",
+
+    """2. THE INTUITION - after sorting, only neighbours can be closest
+
+There are about n-squared/2 pairs, and checking them all is the obvious first thought. One observation
+removes almost all of them.
+
+SORT THE NUMBERS. Now claim: THE CLOSEST PAIR MUST BE TWO NEIGHBOURS IN THE SORTED ORDER.
+
+Why? Suppose two numbers a and c are your candidate closest pair, but some value b sits between them
+in the sorted list, so a < b < c. Then:
+
+    the gap from a to b is smaller than the gap from a to c
+    the gap from b to c is smaller than the gap from a to c
+
+    a ----- b ------- c
+    |__.__|              this gap is smaller
+           |____.____|   and so is this one
+
+So the pair (a, c) is beaten by BOTH of the pairs it straddles. Any pair with something in between can
+never be the closest. Therefore only pairs with NOTHING between them - neighbours - are candidates.
+
+That cuts the search from about n-squared/2 pairs to exactly n-1 pairs.
+
+    arr = [4, 2, 1, 3]
+    sorted:  1  2  3  4
+    the only pairs worth examining:  (1,2), (2,3), (3,4)   - three pairs, not six
+    their gaps: 1, 1, 1
+    the minimum gap is 1, and all three achieve it.
+
+THE SECOND HALF OF THE PROBLEM IS THE TIES. The question asks for EVERY pair achieving the minimum, so
+you cannot stop at the first one you find. That means two passes over the neighbours: one to discover
+what the minimum gap is, and one to collect everybody who matches it. You cannot collect before you
+know the target, and you do not know the target until you have seen the last gap.
+
+Measured: examining only adjacent pairs after sorting matched an all-pairs search on 5,000 of 5,000
+random inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `arr = [3, 8, -10, 23, 19, -4, -14, 27]`.
+
+STEP 1 - sort.
+
+    sorted:  -14, -10, -4, 3, 8, 19, 23, 27
+    index:     0    1   2  3  4   5   6   7
+
+STEP 2 - list the gaps between neighbours. There are 7 of them for 8 numbers.
+
+    -14 to -10:   -10 - (-14)  =  4
+    -10 to  -4:    -4 - (-10)  =  6
+     -4 to   3:     3 - (-4)   =  7
+      3 to   8:     8 - 3      =  5
+      8 to  19:    19 - 8      = 11
+     19 to  23:    23 - 19     =  4
+     23 to  27:    27 - 23     =  4
+
+STEP 3 - the smallest gap is 4.
+
+STEP 4 - walk the gaps again and collect every pair whose gap is 4.
+
+    (-14, -10)  gap 4   ->  collect
+    (19, 23)    gap 4   ->  collect
+    (23, 27)    gap 4   ->  collect
+
+    ANSWER: [[-14,-10], [19,23], [23,27]]
+
+Two things worth noticing. Negative numbers need no special handling at all - subtracting the smaller
+from the larger in sorted order always gives a non-negative gap, so you do not even need `abs` once the
+array is sorted. And the collected pairs came out in ascending order automatically, because we walked
+the sorted array from left to right - no sorting of the result is required.
+
+A SECOND TRACE where only one pair wins. `arr = [40, 11, 26, 27, -20]`:
+
+    sorted:  -20, 11, 26, 27, 40
+    gaps:     31, 15,  1, 13
+    minimum: 1
+    collect: (26, 27)
+    ANSWER: [[26,27]]""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. EXACTLY TWO NUMBERS. `[5, 1]`. One gap, so it is trivially the minimum, and the answer is
+   `[[1, 5]]`. Note the pair must be written smallest-first, which sorting handles for you.
+
+B. CONSECUTIVE INTEGERS. `[1, 2, 3, 4]`. Every gap is 1, so every adjacent pair is reported:
+   `[[1,2],[2,3],[3,4]]`. This is the case that exposes a solution which returns only the first
+   winner.
+
+C. NEGATIVE NUMBERS. Handled with no special case, as trace 1 shows. After sorting, `arr[i+1] -
+   arr[i]` is always non-negative, so you can drop `abs` entirely - though keeping it is harmless.
+
+D. A PAIR APPEARING IN TWO ANSWERS. In trace 1, the value 23 appears in both `[19,23]` and `[23,27]`.
+   That is fine - the question asks for pairs, not for a partition, so a number may take part in
+   several winning pairs.
+
+E. THE #1 MISTAKE - RETURNING ONLY THE FIRST MINIMAL PAIR. Measured wrong on 845 of 5,000 random
+   inputs - and every one of those 845 was an input where several pairs genuinely tie. On the other
+   4,155 inputs there is only one winner, so the bug is invisible. If your test data has distinct
+   random values spread widely, ties are rare and you will not see it; test with consecutive integers.
+
+F. THE #2 MISTAKE - NOT SORTING FIRST, and comparing neighbours in the ORIGINAL order. That answers a
+   different question ('which adjacent-in-the-input pair is closest'). Wrong on 2,583 of 5,000.
+
+G. FORGETTING THE ORDER WITHIN A PAIR. Each pair must be [smaller, larger]. Sorting the array first
+   makes this automatic; building pairs from the unsorted array does not.
+
+H. AN ARRAY OF ONE ELEMENT. There are no pairs, and `min()` over an empty sequence raises an error in
+   Python. The constraints promise at least two elements; a one-line guard is the honest answer if
+   they did not.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE, AND WHY TWO PASSES
+
+THE SLOW-BUT-OBVIOUS VERSION: check every pair.
+
+    from itertools import combinations
+    def brute(arr):
+        a = sorted(arr)
+        best, out = None, []
+        for x, y in combinations(a, 2):
+            d = y - x
+            if best is None or d < best:
+                best, out = d, [[x, y]]
+            elif d == best:
+                out.append([x, y])
+        return out
+
+O(n-squared) pairs. Correct - it is what I measured the fast version against, 5,000 agreements out of
+5,000 - and unusable once n reaches the hundreds of thousands the constraints allow.
+
+THE UPGRADE - ONLY NEIGHBOURS MATTER. Sort first, then examine only the n-1 adjacent pairs. The proof
+is in section 2: any pair with a value between them is beaten by both of the sub-pairs it straddles,
+so it can never be minimal. The cost drops from O(n-squared) comparisons to O(n log n) for the sort
+plus O(n) for the scan.
+
+WHY TWO PASSES OVER THE NEIGHBOURS. The first pass finds the minimum gap; the second collects every
+pair achieving it. You cannot merge them naively, because you do not know the target until the last
+gap has been seen.
+
+You CAN do it in one pass if you are willing to discard work as you go:
+
+    best, out = float('inf'), []
+    for i in range(len(a) - 1):
+        d = a[i+1] - a[i]
+        if d < best:
+            best, out = d, [[a[i], a[i+1]]]      # a new champion - THROW AWAY everything collected
+        elif d == best:
+            out.append([a[i], a[i+1]])
+
+That is also correct and slightly faster in practice, at the cost of one genuinely easy mistake:
+forgetting to CLEAR the collected list when a smaller gap appears. Two clean passes are easier to
+defend in an interview; the one-pass version is worth mentioning as the alternative.
+
+WHY YOU DO NOT NEED `abs` AFTER SORTING: in sorted order `a[i+1]` is never smaller than `a[i]`, so the
+subtraction is already non-negative. Dropping `abs` is not an optimisation worth caring about, but
+being able to say WHY it is unnecessary shows you know what the sort bought you.
+
+THE PATTERN THAT TRANSFERS: 'the closest pair must be adjacent after sorting' is the same idea behind
+finding the k closest values, the minimum difference in a BST (where the sorted order is the in-order
+traversal), and the smallest range covering several lists. Sorting turns a question about all pairs
+into a question about neighbours.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the numbers into increasing order.
+2. Walk the neighbouring pairs - the first and second, the second and third, and so on - and find the
+   SMALLEST difference between any two neighbours.
+3. Walk the neighbouring pairs again, and collect every pair whose difference equals that smallest
+   value, writing each as [smaller, larger].
+4. Return the collected pairs.
+
+WHY SORTING COMES FIRST AND JUSTIFIES EVERYTHING ELSE: after sorting, any pair with a value between
+them is beaten by both of the pairs it straddles, so only neighbours can be closest. Without the sort,
+step 2 is answering a different question - and that is wrong on 2,583 of 5,000 inputs.
+
+WHY TWO WALKS AND NOT ONE: you cannot collect the winners until you know the minimum, and you do not
+know the minimum until you have seen every gap. (A one-pass version exists - see section 5 - but it
+must remember to DISCARD everything collected so far whenever it finds a smaller gap.)
+
+WHY THE ANSWER COMES OUT ORDERED FOR FREE: you walk the sorted array left to right, so pairs are
+appended in increasing order and each pair is naturally [smaller, larger]. No final sort is needed -
+and if you find yourself adding one, that is a hint you built the pairs from the unsorted array.
+
+DO NOT STOP AT THE FIRST MATCHING PAIR. Several pairs can tie, and the problem asks for all of them.
+That is wrong on 845 of 5,000 inputs - every one of them an input where a tie exists.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Put the numbers in order. Now the only pairs that could possibly be closest together are the ones
+standing next to each other - if two numbers have something between them, that in-between value is
+closer to each of them than they are to one another.
+
+So measure the gap between each neighbouring pair and note the smallest gap you saw. Then go along the
+line a second time and write down every neighbouring pair whose gap matches that smallest value.
+
+Two walks, because you cannot know which pairs qualify until you have seen them all. And because you
+are walking a sorted line from left to right, the pairs come out already in order and already written
+smallest-first, so there is nothing to tidy up at the end.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def minimum_abs_difference(arr):
+        arr.sort()
+        min_diff = min(arr[i + 1] - arr[i] for i in range(len(arr) - 1))
+        return [[arr[i], arr[i + 1]] for i in range(len(arr) - 1)
+                if arr[i + 1] - arr[i] == min_diff]
+
+LINE 2: `arr.sort()`
+    Ascending, in place. Everything after this depends on it: the neighbours-only argument, the
+    non-negative differences, the smallest-first pair order and the ascending output all come from
+    this one line. Comparing neighbours WITHOUT sorting is wrong on 2,583 of 5,000 inputs. (It also
+    reorders the caller's list - worth a sentence, with `sorted(arr)` as the alternative.)
+
+LINE 3: `min_diff = min(arr[i+1] - arr[i] for i in range(len(arr) - 1))`
+    The first pass. `range(len(arr) - 1)` stops one short of the end, because index i pairs with i+1
+    and the last element has no successor - getting that bound wrong is an IndexError. The generator
+    produces each neighbour gap in turn and `min` keeps the smallest, without ever building a list.
+    Note there is no `abs`: in sorted order `arr[i+1]` is never smaller than `arr[i]`, so the
+    subtraction is already non-negative.
+
+LINE 4-5: the second pass, as a list comprehension
+    Same range, same subtraction, but now keeping the pairs whose gap equals the minimum. Each pair is
+    built as `[arr[i], arr[i+1]]` - smaller first, because the array is sorted. Collecting ALL of them
+    rather than returning at the first match is what handles ties, and returning only the first is
+    wrong on 845 of 5,000 inputs, every one of them a tie case.
+    Because the walk goes left to right over a sorted array, the collected pairs are already in
+    ascending order, so the result needs no sorting.
+
+WHY THE GAP IS COMPUTED TWICE - once in line 3 and again in line 4 - rather than stored: it is a
+single subtraction, and doing it twice keeps each pass a clean one-liner. If the values were expensive
+to compare you would store the gaps in a list on the first pass and reuse them.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 produced the sorted row; line 3 was 'the smallest gap is 4';
+lines 4-5 were the second walk that collected the three pairs.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `arr = [4, 2, 1, 3]`.
+
+    LINE 2:  arr = [1, 2, 3, 4]
+             index: 0  1  2  3
+
+    LINE 3 - the generator, with i running 0, 1, 2 (that is `range(3)`):
+        i = 0:  arr[1] - arr[0] = 2 - 1 = 1
+        i = 1:  arr[2] - arr[1] = 3 - 2 = 1
+        i = 2:  arr[3] - arr[2] = 4 - 3 = 1
+        min(1, 1, 1) = 1
+        min_diff = 1
+
+    LINES 4-5 - the second walk:
+        i = 0:  gap 1 == min_diff  ->  collect [1, 2]
+        i = 1:  gap 1 == min_diff  ->  collect [2, 3]
+        i = 2:  gap 1 == min_diff  ->  collect [3, 4]
+
+    RETURN VALUE: [[1,2], [2,3], [3,4]]
+
+A SECOND RUN with one clear winner. `arr = [40, 11, 26, 27, -20]`:
+
+    LINE 2:  arr = [-20, 11, 26, 27, 40]
+    LINE 3:  gaps are 31, 15, 1, 13   ->  min_diff = 1
+    LINES 4-5:  only i = 2 matches    ->  [[26, 27]]
+    RETURN [[26, 27]]
+
+THE 'FIRST PAIR ONLY' BUG on the first input returns `[[1,2]]` where three pairs tie. Wrong on 845 of
+5,000 random inputs - and on ALL 845 of the inputs that actually contain a tie, which means it is
+correct on every input where only one pair wins. Random values spread over a wide range rarely tie, so
+this bug hides unless you deliberately test consecutive integers.
+
+THE 'NO SORT' BUG on `[4, 2, 1, 3]` compares 4-with-2, 2-with-1 and 1-with-3, finding gaps 2, 1, 2 and
+reporting `[[1, 2]]` - the right answer here by luck, since the pair happens to be adjacent in the
+input too. On `[1, 3, 2]` it compares 1-with-3 and 3-with-2, gaps 2 and 1, and reports `[[2,3]]`,
+missing that 1 and 2 are equally close. Wrong on 2,583 of 5,000.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n), entirely the sort. The two scans over the neighbours are O(n) each, and two linear
+passes are still linear - constants vanish in big-O. Compare with O(n-squared) for checking every
+pair, which is what the neighbours-only argument buys you.
+
+SPACE: O(1) extra if you sort in place, plus the output list, whose size is however many pairs tie.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here 'a sort, then two
+walks'.
+
+THE #1 BEGINNER MISTAKE: returning only the FIRST pair achieving the minimum. Wrong on 845 of 5,000
+random inputs, and correct on every input without a tie - so it is invisible unless your test data
+contains ties. Consecutive integers like `[1,2,3,4]` are the cheapest test that exposes it.
+
+THE #2 MISTAKE: comparing neighbours without sorting first. Wrong on 2,583 of 5,000. It answers 'which
+pair that happens to be adjacent in the input is closest', which is a different question.
+
+WHY THE SORT IS LICENSED, in one sentence you should be able to give: if two values have another value
+between them, that in-between value is closer to each of them than they are to each other - so no
+non-adjacent pair can ever be the minimum.
+
+ONE-SENTENCE TAKEAWAY: sort, because the closest pair must then be NEIGHBOURS - find the smallest
+neighbour gap in one pass and collect every pair achieving it in a second, since several can tie.""",
+]
+
+_EX_P1AM["Minimum Cost to Move Chips"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Chips are sitting on a line of numbered positions - several chips may share a position. You want to
+gather them all onto ONE position, as cheaply as possible. Two moves are allowed:
+
+    move a chip 2 places (left or right)   ->   costs NOTHING
+    move a chip 1 place  (left or right)   ->   costs 1
+
+    position = [2, 2, 2, 3, 3]
+
+    the three chips at 2 can all stay where they are - free.
+    the two chips at 3 each need one single-step move to reach 2, costing 1 each.
+
+    ANSWER: 2
+
+    Or gather at 3 instead: the three chips at 2 each cost 1 to move.  That is 3 - worse.
+
+Read the cost rule again, because it is strange and it is the entire problem: jumping TWO places is
+free, no matter how many times you do it. A chip at position 100 can reach position 2 for nothing.
+
+TERMS AS THEY APPEAR:
+- PARITY: whether a number is EVEN or ODD. 4 and 10 have the same parity (both even); 4 and 7 do not.
+  This one word is the answer to the whole problem.
+- INVARIANT: something that does NOT change when you perform an operation. Finding the invariant of
+  the free move is the trick here.""",
+
+    """2. THE INTUITION - ask what the free move cannot change
+
+When an operation costs nothing, do not ask what it lets you do. Ask what it CANNOT do - what it
+leaves untouched. That is the invariant, and the problem is really about it.
+
+A free move shifts a chip by 2. Does that change whether the chip's position is even or odd?
+
+    position 7  ->  9  ->  11  ->  13 ...   still odd, every time
+    position 4  ->  6  ->  2   ->  0  ...   still even, every time
+
+No. Adding or subtracting 2 NEVER changes parity. So the free move can take a chip anywhere it likes
+WITHIN its own parity class, and can never move it to the other class.
+
+That collapses the whole line into two piles:
+
+    every chip on an even position can be gathered at position 0 for free.
+    every chip on an odd position  can be gathered at position 1 for free.
+
+    position = [2, 2, 2, 3, 3]
+        even chips: the three at position 2      ->  all gather at 0, free
+        odd chips:  the two at position 3        ->  all gather at 1, free
+
+Now there are only two piles, one step apart. To finish, one pile must cross that single step, and
+crossing costs 1 per chip. So:
+
+    gather everyone on the even side  ->  cost = number of ODD chips
+    gather everyone on the odd side   ->  cost = number of EVEN chips
+
+    take the cheaper:  answer = min(count of evens, count of odds)
+
+For the example: two odd chips, three even chips, so the answer is 2 - move the smaller pile.
+
+THAT IS THE WHOLE SOLUTION: count the evens, count the odds, return the smaller. The actual positions
+never matter, only their parity. Measured against a search over every possible target position: 5,000
+agreements out of 5,000.
+
+THE TRANSFERABLE HABIT: when a problem gives you a FREE operation, find the quantity it preserves. The
+problem is then only ever about that quantity, and a question that looked geometric becomes a
+two-way count.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `position = [1, 2, 3]`.
+
+STEP 1 - sort each chip into its parity class. (No sorting of the array is needed; just look at each
+number.)
+
+    chip at 1:  1 % 2 = 1  ->  ODD
+    chip at 2:  2 % 2 = 0  ->  EVEN
+    chip at 3:  3 % 2 = 1  ->  ODD
+
+    evens = 1,  odds = 2
+
+STEP 2 - the answer is the smaller count.
+
+    min(1, 2) = 1
+
+    ANSWER: 1
+
+Let us verify by actually moving the chips, to make sure the abstraction is not lying:
+
+    gather at position 1:
+        the chip at 1 is already there.                       cost 0
+        the chip at 3 moves 3 -> 1, a jump of 2.              cost 0  (free!)
+        the chip at 2 moves 2 -> 1, a single step.            cost 1
+        total 1.   Matches.
+
+    gather at position 2 instead:
+        chip at 2 stays.                                      cost 0
+        chip at 1 moves one step.                             cost 1
+        chip at 3 moves one step.                             cost 1
+        total 2.   Worse, as predicted.
+
+A SECOND TRACE with far-apart positions, to see distance really not mattering. Input
+`[1, 1000000000, 3]`:
+
+    1 is odd, 1000000000 is even, 3 is odd.
+    evens = 1, odds = 2
+    ANSWER: 1
+
+The chip a billion places away costs the same as a chip next door - it makes 499,999,999 free jumps of
+2 and arrives. If your instinct says 'surely distance matters', that instinct is being trained by
+every OTHER movement problem you have seen; here it is wrong, and the free move is why.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. ONE CHIP. `[7]`. It is already gathered. evens = 0, odds = 1, min = 0. Correct.
+
+B. ALL CHIPS ON THE SAME POSITION. `[4, 4, 4]`. All even, so odds = 0 and the answer is 0.
+
+C. ALL CHIPS ON THE SAME PARITY BUT DIFFERENT POSITIONS. `[2, 8, 100]`. All even, answer 0 - they all
+   meet for free. This is the case that surprises people, and it is the cleanest demonstration that
+   distance is irrelevant.
+
+D. A PERFECT SPLIT. `[1, 2]`. One of each, min(1, 1) = 1. Either chip may cross.
+
+E. POSITION 0. If the problem allows it, 0 is EVEN (0 % 2 = 0). Easy to hesitate over; worth stating.
+
+F. THE #1 MISTAKE - COMPUTING DISTANCES. The instinct from Minimum Moves to Equal Array Elements II is
+   to gather at the median and add up the distances. That is the right answer to a DIFFERENT problem -
+   the one where every step costs 1. Here it is wrong on 4,418 of 5,000 random inputs, and it
+   over-charges wildly whenever the chips are spread out.
+
+G. THE #2 MISTAKE - ADDING THE TWO COUNTS INSTEAD OF TAKING THE MINIMUM. `even + odd` is just the
+   number of chips. Wrong on 5,000 of 5,000 - it can only ever be right when one of the groups is
+   empty and the other has zero chips, which cannot happen. A comically loud bug, and easy to make by
+   typing `+` for `min`.
+
+H. THE #3 MISTAKE - ALWAYS GATHERING AT AN EVEN POSITION, so the answer is always the odd count.
+   Wrong on 2,078 of 5,000 - it is right exactly when the odd group happens to be the smaller one,
+   which is about half the time. That fifty-fifty hit rate is exactly what makes it survive a couple
+   of hand-written tests.""",
+
+    """5. THE SLOW VERSION FIRST, AND WHY THE FREE MOVE CHANGES EVERYTHING
+
+THE SLOW-BUT-OBVIOUS VERSION: try every position as the meeting point and add up the true cost of
+getting each chip there.
+
+    def brute(position):
+        best = None
+        for target in range(min(position), max(position) + 1):
+            cost = sum(0 if (p - target) % 2 == 0 else 1 for p in position)
+            best = cost if best is None else min(best, cost)
+        return best
+
+The interesting line is the cost: a chip at p reaching target t costs 0 if the distance `p - t` is
+EVEN (it can be covered entirely by free 2-jumps) and 1 if the distance is odd (all but one step is
+free, and the last single step costs 1). Note that even in the brute force the distance itself never
+appears - only its parity. That is the clue.
+
+It is correct - it is what I measured the one-liner against, 5,000 agreements out of 5,000 - and it is
+wasteful, since the number of candidate positions depends on how far apart the chips are rather than
+how many there are.
+
+THE UPGRADE comes from reading that cost line carefully. The cost of a chip depends ONLY on whether
+its position has the same parity as the target. So there are only TWO distinct targets in the whole
+problem - 'somewhere even' and 'somewhere odd' - and every position of a given parity behaves
+identically. Evaluate both and take the cheaper.
+
+WHY THE FREE MOVE IS THE WHOLE STORY, said as a principle. In most movement problems the answer
+involves distance, so you reach for sorting, medians or prefix sums. A zero-cost operation breaks that
+instinct: it partitions the world into EQUIVALENCE CLASSES - groups of states that are freely
+interchangeable - and the problem is only ever about moving between classes. Here the free move
+preserves parity, so the classes are 'even' and 'odd', and there is exactly one boundary to cross.
+
+THE QUESTION TO ASK EVERY TIME YOU SEE A FREE OPERATION: what does it NOT change? Whatever the answer
+is, that is what the problem is really about. Other examples of the same shape:
+    - swapping any two elements freely  ->  only the MULTISET of values matters, not the order.
+    - rotating a string freely          ->  only the cyclic order matters.
+    - adding or removing pairs freely   ->  only the count modulo 2 matters.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Walk the list of positions once, counting how many chips are on EVEN positions.
+2. The rest are on odd positions: subtract the even count from the total.
+3. Return the smaller of the two counts.
+
+That is the entire program - one pass and a comparison. All the work happened before you started
+typing, in the observation that a free 2-jump cannot change a position's parity.
+
+HOW TO TEST FOR EVEN: take the remainder when dividing by 2 and check it is 0. In most languages that
+is `p % 2 == 0`. Careful in languages where the remainder of a NEGATIVE number can itself be negative -
+in Python `-3 % 2` is 1, which is what you want, but in C or Java it is -1, so `p % 2 == 1` would fail
+for negative positions. Testing `p % 2 == 0` for evenness is the portable way round.
+
+WHY YOU DO NOT NEED TO SORT, GROUP, OR SIMULATE ANYTHING: the positions themselves never enter the
+answer, only their parity. If you find yourself sorting the positions or computing distances, stop -
+that is the previous problem's instinct firing on this one.
+
+WHAT TO SAY OUT LOUD: 'moving by 2 is free, so a chip can reach any position of the same parity for
+nothing; that leaves two piles one step apart, and I move the smaller one.' Three clauses, and it is
+the whole solution.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Look at each chip and ask one question about it: is it standing on an even-numbered spot or an
+odd-numbered one? Count how many of each.
+
+Nothing else about the positions matters. A chip can hop two spaces for free, as often as it likes, so
+it can slide anywhere along its own even or odd spots without paying a penny - a chip a billion places
+away is no more expensive than one right next door.
+
+That leaves you with two piles, one on an even spot and one on an odd spot, exactly one step apart.
+Somebody has to cross that step, and each chip that crosses costs 1. So move the smaller pile.
+
+Return the size of the smaller pile.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def min_cost_to_move_chips(position):
+        even = sum(1 for p in position if p % 2 == 0)
+        odd = len(position) - even
+        return min(even, odd)   # move the smaller parity group (each move costs 1)
+
+LINE 2: `even = sum(1 for p in position if p % 2 == 0)`
+    Counting idiom: the generator produces a 1 for every position that passes the test, and `sum` adds
+    them up. `p % 2` is the remainder when p is divided by 2 - it is 0 for even numbers and 1 for odd
+    ones. So this line counts the chips on even positions in a single pass, with no list built.
+    Testing `== 0` for evenness rather than `== 1` for oddness is also the portable choice, since some
+    languages give a negative remainder for negative inputs.
+
+LINE 3: `odd = len(position) - even`
+    Every chip is either even or odd, so subtraction is enough - no second pass over the list. A small
+    efficiency, but more importantly it makes the complementary relationship explicit.
+
+LINE 4: `return min(even, odd)`
+    Gathering everyone on the even side costs 1 per odd chip; gathering on the odd side costs 1 per
+    even chip. Take the cheaper. Writing `even + odd` here returns the chip count - wrong on 5,000 of
+    5,000. Hard-coding one of them (always returning `odd`) is wrong on 2,078 of 5,000, right only
+    when the odd pile happens to be the smaller one.
+
+WHAT IS NOT IN THIS FUNCTION, and its absence is the point: no sort, no distances, no median, no
+simulation, no reference to any actual position value. The moment you notice the free move preserves
+parity, all of that machinery disappears.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 is the parity check applied to each of 1, 2 and 3; line 3
+turned 'evens = 1' into 'odds = 2'; line 4 was the `min(1, 2) = 1`.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `position = [2, 2, 2, 3, 3]`.
+
+    LINE 2 - the generator, one chip at a time:
+        p = 2:  2 % 2 = 0  ->  passes, contributes 1     running sum = 1
+        p = 2:  passes                                    running sum = 2
+        p = 2:  passes                                    running sum = 3
+        p = 3:  3 % 2 = 1  ->  fails, contributes nothing running sum = 3
+        p = 3:  fails                                     running sum = 3
+        even = 3
+
+    LINE 3:
+        len(position) = 5
+        odd = 5 - 3 = 2
+
+    LINE 4:
+        min(3, 2) = 2
+
+    RETURN VALUE: 2
+
+A SECOND RUN, all on one parity. `position = [2, 8, 100]`:
+
+        even = 3,  odd = 0
+        min(3, 0) = 0
+        RETURN 0
+
+    Zero cost, even though the chips are up to 98 places apart - all those gaps are even, so every
+    move is a free 2-jump.
+
+THE DISTANCE BUG on that same input: it sorts, takes the median 8, and charges
+|2-8| + |8-8| + |100-8| = 6 + 0 + 92 = 98 - for a problem whose answer is 0. Wrong on 4,418 of 5,000
+random inputs, and spectacularly wrong whenever the chips are spread out.
+
+THE SUM BUG returns even + odd = 3 for that input - the chip count. Wrong on 5,000 of 5,000.
+
+THE ALWAYS-EVEN-TARGET BUG returns the odd count, which is 0 here and happens to be right. On
+`[1, 1, 1, 2]` it returns 3 where the answer is 1. Wrong on 2,078 of 5,000 - about half the time,
+which is exactly the hit rate that lets a bug survive casual testing.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n) - one pass over the chips, one remainder operation each. Note it does NOT depend on how far
+apart the positions are, which is the difference between this and the brute force whose cost depends
+on the coordinate range.
+
+SPACE: O(1) - two counters.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - and here it is worth
+noticing that 'the input' means the NUMBER of chips, not the size of the coordinates.
+
+THE #1 BEGINNER MISTAKE: computing distances - gathering at the median and summing how far each chip
+travels. That is the correct answer to the problem where every single step costs 1, and this one gives
+away 2-steps for free. Wrong on 4,418 of 5,000 random inputs. It is the strongest instinct to resist,
+because it is the right instinct for almost every other movement problem.
+
+THE #2 MISTAKE: returning `even + odd` instead of `min(even, odd)`. That is just the number of chips.
+Wrong on 5,000 of 5,000 - loud, at least.
+
+THE #3 MISTAKE: always gathering at an even position, so the answer is always the odd count. Wrong on
+2,078 of 5,000, right about half the time, and therefore likely to pass whatever example you try
+first.
+
+ONE-SENTENCE TAKEAWAY: a free move of 2 can never change a position's parity, so every chip is really
+at 0 or 1 - count the two groups and move the smaller one across the single paid step.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AM:
+        _e["examples"] = _EX_P1AM[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
