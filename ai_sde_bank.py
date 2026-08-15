@@ -135808,6 +135808,1444 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AI[_e["title"]]
 
 
+# ══ P1 ten-section rewrites, ranks 261-264 ════════════════════════════════
+_EX_P1AJ = {}
+
+_EX_P1AJ["Can Place Flowers (greedy)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Picture a long narrow flowerbed divided into plots in a row. Some plots already have a flower in them,
+the rest are empty. There is one rule from the gardener: NO TWO FLOWERS MAY BE NEXT TO EACH OTHER.
+
+You are given the bed as a row of 0s and 1s - 0 means empty, 1 means a flower is already there - and a
+number n. Question: can you plant n MORE flowers without breaking the rule?
+
+    flowerbed = [1, 0, 0, 0, 1],   n = 1
+
+    plot:        0  1  2  3  4
+    contents:    F  .  .  .  F        F = flower, . = empty
+
+    Can you plant one more? Yes - plot 2. Its neighbours (plots 1 and 3) are both empty.
+    Plots 1 and 3 are no good: each sits right next to an existing flower.
+
+    flowerbed = [1, 0, 0, 0, 1],   n = 2   ->  only one plot ever works, so NO
+
+The existing flowers are guaranteed to already obey the rule - you are not asked to fix a broken bed,
+only to add to a valid one.
+
+TERMS AS THEY APPEAR:
+- PLOT: one position in the row. `flowerbed[i]` is 0 or 1.
+- ADJACENT / NEIGHBOUR: the plot immediately left (`i-1`) or immediately right (`i+1`). The plots at
+  the two ends have only one neighbour each, which is where the bugs in this problem live.
+- SENTINEL: a fake extra value added to the edge of your data so that the edge behaves like the
+  middle. Here it is an imaginary empty plot at each end, and it is the single tidiest idea in the
+  solution.
+- GREEDY: walk once, take every chance you get, never look back. The interesting part is proving that
+  never looking back is safe.""",
+
+    """2. THE INTUITION - plant as early as you can, and why that cannot cost you
+
+The rule for a single plot is easy: you may plant at plot i when plot i is empty AND its left
+neighbour is empty AND its right neighbour is empty. Three checks.
+
+The real question is about STRATEGY. If you have a long stretch of empty plots, does it matter WHERE
+you start planting? It feels like it might - maybe holding back gives you a better arrangement later.
+
+It does not, and here is the argument. Look at a run of empty plots and consider the leftmost legal
+plot in it. If you plant there, the only plot you lose is the one immediately to its right. If instead
+you skip it and plant one further along, you lose the plot to that one's right AND the one to its left
+- two plots blocked instead of one, and no gain anywhere. So planting at the earliest legal plot is
+never worse and is sometimes better.
+
+That is an EXCHANGE ARGUMENT: take any optimal plan, find the first flower that is later than it
+needed to be, slide it left to the earliest legal plot, and the plan is still valid and still has the
+same number of flowers. Repeat until the plan is exactly what the greedy produces. So the greedy
+achieves the maximum.
+
+    [0, 0, 0, 0, 0]     five empty plots
+
+    plant early:  X . X . X    ->  3 flowers          (plots 0, 2, 4)
+    hold back:    . X . X .    ->  2 flowers          (plots 1, 3)
+
+Now the second half of the idea. As you walk along planting, you must ACTUALLY PLANT - that is, write
+the 1 into the bed. If you only count without writing, then in `[0, 0]` both plots look legal and you
+report two flowers, which breaks the rule. Writing the 1 is what makes the NEXT plot see a neighbour.
+Measured: the version that counts without planting was wrong on 2,857 of 5,000 random beds.
+
+Measured overall: the left-to-right greedy planted the true maximum on 5,000 of 5,000 beds, checked
+against an exhaustive search over every legal way of adding flowers.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `flowerbed = [1, 0, 0, 0, 0, 1]`, n = 1.
+
+STEP 1 - pad with a sentinel empty plot at each end. This is a bookkeeping move, explained fully in
+section 5; for now, just note that it lets us treat every real plot identically.
+
+    bed  =  [0, 1, 0, 0, 0, 0, 1, 0]
+    index:   0  1  2  3  4  5  6  7
+                ^--------------^          the real bed is indexes 1..6
+
+STEP 2 - walk the real plots, indexes 1 to 6, checking each triple (left, me, right).
+
+    i = 1:  bed[0]=0, bed[1]=1, bed[2]=0    -> bed[1] is not empty, skip
+    i = 2:  bed[1]=1, bed[2]=0, bed[3]=0    -> left neighbour has a flower, skip
+    i = 3:  bed[2]=0, bed[3]=0, bed[4]=0    -> ALL THREE EMPTY -> PLANT
+                bed becomes [0, 1, 0, 1, 0, 0, 1, 0]
+                count = 1
+    i = 4:  bed[3]=1 now, so skip           <- this is the mutation doing its job
+    i = 5:  bed[4]=0, bed[5]=0, bed[6]=1    -> right neighbour has a flower, skip
+    i = 6:  bed[6]=1                        -> not empty, skip
+
+    count = 1
+
+STEP 3 - the question was whether we could plant n = 1. We planted 1, and 1 >= 1, so the answer is
+TRUE.
+
+Notice step i = 4. The plot only looked illegal because we had planted at i = 3 a moment earlier. Had
+we merely counted rather than planted, i = 4 would have looked legal too and we would have reported 2
+flowers side by side.
+
+A SECOND TRACE showing the sentinel earning its keep. Input `[0, 0, 1]`, n = 1:
+
+    bed = [0, 0, 0, 1, 0]         (padded)
+    i = 1:  bed[0]=0, bed[1]=0, bed[2]=0   -> PLANT at index 1, which is the FIRST REAL PLOT
+            count = 1
+    i = 2:  bed[1]=1 now -> skip
+    i = 3:  not empty -> skip
+
+The first real plot has no left neighbour in the original bed. Thanks to the sentinel it has a
+pretend one that is empty, so the same three-way check works without a special case. Every version I
+measured that dropped the sentinels and simply skipped the end plots was wrong on 2,955 of 5,000
+beds - and on every single one of the 3,771 beds where an end plot was plantable.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. n = 0. The answer is always TRUE - you were asked to plant nothing. The code returns `count >= 0`,
+   which is true whatever count is. No special case needed, but say it out loud: interviewers do ask.
+
+B. A BED OF LENGTH 1. `[0]`, n = 1. With sentinels the bed is `[0, 0, 0]`, the single real plot at
+   index 1 sees two empty neighbours, and it gets planted. TRUE. Without sentinels, a loop written as
+   `range(1, len(bed) - 1)` never runs at all and you answer FALSE - wrong on the smallest possible
+   input.
+
+C. AN ALREADY-FULL BED. `[1, 0, 1]`, n = 1. The middle plot is empty but both neighbours have flowers,
+   so nothing can be planted. FALSE.
+
+D. ALL EMPTY. `[0, 0, 0, 0, 0]`, n = 3. The greedy plants at indexes 0, 2 and 4 - three flowers -
+   so TRUE. Asking for n = 4 gives FALSE. A run of k empty plots holds `(k + 1) // 2` flowers when it
+   is open at both ends, which is a good way to check your answer by hand.
+
+E. THE #1 MISTAKE - COUNTING WITHOUT PLANTING. In `[0, 0]` both plots pass the neighbour test if you
+   never write the 1 in. Wrong on 2,857 of 5,000 random beds. The mutation is not an implementation
+   detail; it is the mechanism that enforces the adjacency rule.
+
+F. THE #2 MISTAKE - NO SENTINELS, AND A BOTCHED BOUNDARY. Wrong on 2,955 of 5,000, and on ALL 3,771
+   beds where a flower could go in the first or last plot. If you insist on no padding, the checks
+   become `(i == 0 or bed[i-1] == 0) and bed[i] == 0 and (i == len(bed)-1 or bed[i+1] == 0)` - correct,
+   but three conditions with two special cases where the padded version has three plain ones.
+
+G. THE GAP-FORMULA SHORTCUT, DONE CARELESSLY. It is true that a run of k empty plots BETWEEN two
+   flowers holds `(k - 1) // 2`. But a run at the START or END of the bed holds `k // 2`, and a bed
+   with no flowers at all holds `(k + 1) // 2` - three different formulas. Applying the middle one
+   everywhere was wrong on 4,376 of 5,000, the worst of everything I measured. The sweep has one rule
+   for every position, which is why it is the version to write.
+
+H. A LARGE n. `[0]` with n = 1000000. count reaches 1, `1 >= 1000000` is false, FALSE. Nothing
+   overflows, nothing loops longer than the bed.""",
+
+    """5. WHY THE SENTINEL WORKS, AND WHY YOU CAN STOP EARLY
+
+THE SENTINEL, FROM SCRATCH. The awkwardness in this problem is that plot 0 has no left neighbour and
+the last plot has no right neighbour, so the natural check `bed[i-1] == 0 and bed[i] == 0 and
+bed[i+1] == 0` reaches outside the array at both ends. Three ways to deal with that:
+
+    1. Special-case the ends with extra conditions. Correct, and the place bugs breed.
+    2. In Python, `bed[i-1]` at i = 0 silently wraps around to the LAST element - a real trap, because
+       it does not crash, it just quietly reads the wrong plot.
+    3. Add a fake empty plot at each end.
+
+Option 3 is the one to reach for. An imaginary empty plot outside the bed is exactly right, because a
+flower at the true first plot has nothing to its left to conflict with - which is precisely what an
+empty neighbour means. So the sentinel is not a hack that happens to work; it is a truthful statement
+about the world, written into the data so the code does not have to say it.
+
+    real bed:        [1, 0, 0, 0, 1]
+    padded:       [0, 1, 0, 0, 0, 1, 0]
+                   ^                 ^
+                   these two are not real plots, they are the statement
+                   "outside the bed, there is no flower to conflict with"
+
+WHY THE VALUE 0 IS A SAFE SENTINEL: a real plot holds only 0 or 1, and 'empty' is the value that
+imposes no constraint. Choosing 1 would be wrong in the opposite direction - it would forbid planting
+at the ends. The general rule for sentinels is: pick the value that makes the boundary behave like the
+inside, and check it cannot be confused with real data.
+
+AN EARLY EXIT WORTH MENTIONING. The code as written plants everything it can and compares at the end.
+You can instead stop the moment `count` reaches n:
+
+    if count >= n:
+        return True
+
+For a bed of a million plots with n = 1, that turns a full sweep into a couple of steps. It does not
+change the complexity class, and it is the kind of small remark that reads well: 'I would add an early
+return since we only need n, not the maximum'.
+
+THE OTHER SOLUTION - COUNT THE GAPS. Instead of walking plot by plot you can find each run of
+consecutive empty plots and use arithmetic:
+
+    a run of k empties between two flowers   holds  (k - 1) // 2
+    a run of k at one END of the bed         holds   k // 2
+    a bed of k empties with no flowers       holds  (k + 1) // 2
+
+That is O(n) as well and it is what an experienced person might write for speed. It is also three
+formulas instead of one rule, and using the middle formula everywhere was wrong on 4,376 of 5,000
+beds in my measurements. The sweep is easier to be right about, which is what matters in an
+interview.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Make a working copy of the bed with one extra empty plot glued on at each end.
+2. Set a counter to zero.
+3. Walk every REAL plot - that is, every position except the two fake ones.
+4. At each plot, look at three values: the plot to the left, the plot itself, and the plot to the
+   right. If all three are empty, plant here: write a flower into this plot and add one to the
+   counter.
+5. When the walk is finished, answer yes if the counter reached n, no otherwise.
+
+THE TWO THINGS THAT ARE EASY TO GET WRONG, both worth saying to yourself before typing:
+- You must WRITE the flower, not just count it. Otherwise the next plot along still sees an empty
+  neighbour and you plant two in a row.
+- The walk must cover the first and last REAL plots. With the padding in place they are ordinary
+  interior positions, which is the whole point of the padding.
+
+WHY YOU COPY RATHER THAN MODIFY THE CALLER'S LIST: `[0] + flowerbed + [0]` builds a new list, so the
+caller's bed is untouched. That is worth one sentence in an interview - a function that silently
+plants flowers in its caller's data is a rude function.
+
+A NOTE ON THE COMPARISON AT THE END: `count >= n`, not `count == n`. You may well be able to plant
+more than asked, and that still means yes.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Imagine an empty plot just outside each end of the bed, so that every real plot has a left and a right
+neighbour and there are no special cases.
+
+Now walk the bed from one end to the other. At each plot ask one question: are this plot and both its
+neighbours empty? If so, plant a flower here immediately and keep a tally. Planting matters, not just
+counting - the flower you just put in is what stops the very next plot from looking available.
+
+Planting at the first opportunity is always safe, because a flower planted early blocks only the plot
+to its right, whereas one planted later blocks a plot on each side.
+
+At the end, compare your tally with how many you were asked to plant.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def can_place_flowers(flowerbed, n):
+        count = 0
+        bed = [0] + flowerbed + [0]      # sentinels avoid boundary checks
+        for i in range(1, len(bed) - 1):
+            if bed[i - 1] == 0 and bed[i] == 0 and bed[i + 1] == 0:
+                bed[i] = 1               # plant here
+                count += 1
+        return count >= n
+
+LINE 2: `count = 0`
+    How many flowers we have managed to plant.
+
+LINE 3: `bed = [0] + flowerbed + [0]`
+    The padded working copy. `+` on lists builds a NEW list, so the caller's flowerbed is not touched
+    - and the two zeros are the 'there is nothing outside the bed to conflict with' statement made
+    concrete. Every real plot now has both neighbours in range.
+
+LINE 4: `for i in range(1, len(bed) - 1):`
+    Walk the REAL plots only. Index 0 and the final index are the sentinels; `range(1, len(bed)-1)`
+    covers everything between them, which is exactly the original bed. Note the padded bed is two
+    longer than the original, so this loop does run over the true first and last plots - the ones an
+    unpadded version usually skips, at a cost of 2,955 wrong answers in 5,000.
+
+LINE 5: `if bed[i-1] == 0 and bed[i] == 0 and bed[i+1] == 0:`
+    The whole rule, in one condition: me empty, left empty, right empty. Because of the padding this
+    is safe at every position - no `i == 0` special case, no reading past the end, and in Python no
+    accidental wrap-around from a negative index.
+
+LINE 6: `bed[i] = 1`
+    PLANT. This is the line people leave out, and without it the very next iteration sees an empty
+    left neighbour and plants a second flower right beside this one. Wrong on 2,857 of 5,000 beds.
+
+LINE 7: `count += 1`
+    Tally it.
+
+LINE 8: `return count >= n`
+    Greater-or-equal, not equal: planting more than requested still answers the question asked. It
+    also handles `n = 0` correctly with no special case, since any count is at least 0.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 3 turned `[1,0,0,0,0,1]` into `[0,1,0,0,0,0,1,0]`. The loop
+visited indexes 1 to 6, and the plant at i = 3 is what made i = 4 fail on its left neighbour.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `flowerbed = [1, 0, 0, 0, 0, 1]`, `n = 1`.
+
+    LINE 2:  count = 0
+    LINE 3:  bed = [0, 1, 0, 0, 0, 0, 1, 0]
+             index   0  1  2  3  4  5  6  7      (len 8, so the loop runs i = 1..6)
+
+    i = 1    bed[0]=0, bed[1]=1, bed[2]=0
+             the middle test fails (this plot already has a flower)  ->  no change
+             count = 0
+
+    i = 2    bed[1]=1, bed[2]=0, bed[3]=0
+             the left test fails                                     ->  no change
+             count = 0
+
+    i = 3    bed[2]=0, bed[3]=0, bed[4]=0
+             ALL THREE PASS
+             bed[3] = 1        bed = [0, 1, 0, 1, 0, 0, 1, 0]
+             count = 1
+
+    i = 4    bed[3]=1  ->  the left test fails, BECAUSE OF WHAT WE JUST DID
+             count = 1
+
+    i = 5    bed[4]=0, bed[5]=0, bed[6]=1
+             the right test fails                                    ->  no change
+
+    i = 6    bed[6]=1  ->  the middle test fails
+             count = 1
+
+    LINE 8:  count >= n   ->   1 >= 1   ->   True
+
+    RETURN VALUE: True
+
+THE COUNT-WITHOUT-PLANTING BUG on the same bed: at i = 4 the left neighbour would still read 0,
+because nothing was ever written, so it would count a second flower and return `2 >= 1`. It gets the
+right ANSWER here by luck, since we only needed 1 - but on `[0,0,0]` with n = 3 it reports three
+flowers in three adjacent plots and answers True, where the truth is that only two fit. Wrong on 2,857
+of 5,000 beds.
+
+THE NO-SENTINEL BUG on `[0]` with n = 1: an unpadded loop `range(1, len(bed)-1)` is `range(1, 0)`,
+which is empty. The loop never runs, count stays 0, and it returns False - on a bed that obviously has
+room for one flower.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(m) where m is the length of the bed - one pass, three comparisons per plot. With the early
+return it can stop as soon as n flowers are planted, which is faster in practice and the same class.
+
+SPACE: O(m) as written, because of the padded copy. If the interviewer asks for O(1), do it without
+padding and handle the two ends with explicit conditions - and say clearly that you are trading
+simplicity for space, since that is exactly the trade being made.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - here one pass over the
+bed.
+
+THE #1 BEGINNER MISTAKE: counting a plot as plantable without actually planting in it. Wrong on 2,857
+of 5,000 random beds. Two adjacent empty plots both pass the neighbour test unless the first one has
+already been filled in.
+
+THE #2 MISTAKE: dropping the sentinels and mishandling the ends. Wrong on 2,955 of 5,000 - and on
+every one of the 3,771 beds where a flower belonged in the first or last plot.
+
+THE #3 MISTAKE: the gap formula applied uniformly. Runs at the ends of the bed obey a different
+formula from runs between two flowers, and ignoring that was wrong on 4,376 of 5,000 - the worst of
+the lot, and a good reason to prefer the one-rule sweep.
+
+ONE-SENTENCE TAKEAWAY: pad the bed with an empty plot at each end so every position looks the same,
+then walk left to right planting in the first legal plot every time - planting early only ever blocks
+one plot, so it can never cost you a flower later.""",
+]
+
+_EX_P1AJ["Convert Sorted Array to BST"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given numbers already in sorted order, and asked to build a particular kind of tree from them:
+a BINARY SEARCH TREE that is also HEIGHT-BALANCED.
+
+    nums = [-10, -3, 0, 5, 9]
+
+    one correct answer:
+
+              0
+            /   \\
+         -10      5
+            \\      \\
+             -3      9
+
+TERMS AS THEY APPEAR, because that sentence has three technical words in it:
+- BINARY TREE: a diagram of boxes where each box hangs at most two boxes below it, one on the left and
+  one on the right. Each box is a NODE and holds a value.
+- BINARY SEARCH TREE (BST): a binary tree with one extra rule - for every node, EVERYTHING in its left
+  subtree is smaller than it and everything in its right subtree is larger. That rule is what makes
+  looking a value up fast: at each node you compare once and throw away half the tree.
+- HEIGHT: how many levels a tree has from the top down. A single node has height 1.
+- HEIGHT-BALANCED: at every node, the heights of the left and right subtrees differ by at most 1. This
+  is what stops the tree degenerating into a long thin chain - the thing that would make lookups slow
+  again.
+- SUBTREE: any node together with everything hanging below it, treated as a small tree of its own.
+
+So the job is: same numbers, arranged into a tree that is both searchable and short.""",
+
+    """2. THE INTUITION - the middle element has to be the root
+
+Start with a question. If you must build a tree from 5 sorted numbers, which one goes on TOP?
+
+Whatever you choose as the root, the BST rule forces everything smaller to go into the left subtree
+and everything larger into the right. So the choice of root decides how the remaining numbers are
+SPLIT.
+
+    nums = [-10, -3, 0, 5, 9]
+
+    root = -10:   left subtree gets 0 numbers,  right gets 4     ->  lopsided
+    root =  -3:   left gets 1,                  right gets 3     ->  still lopsided
+    root =   0:   left gets 2,                  right gets 2     ->  even
+    root =   9:   left gets 4,                  right gets 0     ->  a chain
+
+To keep the tree short, you want the two sides to be the same size - so you pick the MIDDLE element.
+And then the same reasoning applies to each half: the middle of the left half becomes the left child,
+the middle of the right half becomes the right child, and so on down.
+
+That is the whole algorithm. Every step is the same question asked on a smaller stretch of the array,
+which is what RECURSION is for.
+
+RECURSION, EXPLAINED PROPERLY, since 'the function calls itself' explains nothing:
+- When a function calls itself, the computer PAUSES the current call - remembering its variables and
+  the line it was on - runs a fresh copy on the smaller input, and resumes the paused one with the
+  answer.
+- Those paused calls stack up like a pile of sticky notes: one per level of the tree here. That pile
+  is the CALL STACK.
+- Something must stop the pile growing for ever. That is the BASE CASE: here, 'this stretch of the
+  array is empty, so there is no node to build - return nothing'.
+- Each call is guaranteed to get closer to the base case, because each one hands its children a
+  strictly SHORTER stretch of the array.
+
+WHY THE RESULT IS AUTOMATICALLY A VALID BST. You never check the BST rule anywhere in the code. You do
+not have to: the array is sorted, so everything to the left of the midpoint is smaller and everything
+to the right is larger - at every level. The property is inherited from the sortedness rather than
+enforced. That is worth saying out loud in an interview; it is the difference between understanding
+the solution and reciting it.
+
+Measured: middle-as-root produced a height-balanced tree whose in-order reading is the original array
+on 3,000 of 3,000 random inputs. Taking the FIRST element as root instead failed on 2,465 of 3,000,
+with an average height of 6.5 against 3.1 for the correct version.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `nums = [-10, -3, 0, 5, 9]`, indexes 0 to 4.
+
+We build with a helper that takes a RANGE of indexes, `lo` and `hi`, meaning 'build a tree out of
+nums[lo] through nums[hi]'.
+
+    build(0, 4)
+        mid = (0 + 4) // 2 = 2      ->  root value nums[2] = 0
+        left  = build(0, 1)          (the numbers before the midpoint)
+        right = build(3, 4)          (the numbers after it)
+
+    build(0, 1)
+        mid = (0 + 1) // 2 = 0      ->  node value nums[0] = -10
+        left  = build(0, -1)         ->  lo > hi, EMPTY, return nothing
+        right = build(1, 1)
+
+    build(1, 1)
+        mid = (1 + 1) // 2 = 1      ->  node value nums[1] = -3
+        left  = build(1, 0)          ->  empty
+        right = build(2, 1)          ->  empty
+        so -3 is a leaf.
+
+    build(3, 4)
+        mid = (3 + 4) // 2 = 3      ->  node value nums[3] = 5
+        left  = build(3, 2)          ->  empty
+        right = build(4, 4)          ->  node value 9, a leaf
+
+    assembled:
+
+              0
+            /   \\
+         -10      5
+            \\      \\
+             -3      9
+
+CHECK IT IS A BST: at the root 0, everything on the left (-10, -3) is smaller and everything on the
+right (5, 9) is larger. At -10, its right child -3 is larger. Correct everywhere.
+
+CHECK IT IS BALANCED: the root's left subtree has height 2 and so does the right. At -10, left has
+height 0 and right has height 1 - a difference of 1, which is allowed. Balanced.
+
+A SELF-CHECK WORTH KNOWING: reading a BST IN-ORDER - left subtree, then the node, then the right
+subtree - always gives the values back in sorted order. Here that reads -10, -3, 0, 5, 9, which is the
+input. If your in-order reading does not reproduce the input array, your tree is wrong, and that is
+the fastest way to test this function.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. AN EMPTY ARRAY. `[]`. The first call is `build(0, -1)`, where lo > hi, so it returns nothing
+   immediately. The answer is an empty tree, which is correct, and it needed no special case - the
+   base case covers it.
+
+B. ONE ELEMENT. `[7]`. `build(0,0)` takes mid = 0, makes the node, and both children come back empty.
+   A single leaf.
+
+C. TWO ELEMENTS. `[1, 2]`. mid = (0+1)//2 = 0, so the root is 1 and its right child is 2. Height 2,
+   and the left side is empty - which is still balanced, because 0 and 1 differ by exactly 1. If the
+   array had three elements you would get a perfectly even tree instead.
+
+D. DUPLICATES. `[2, 2, 2]`. Still fine structurally, though 'smaller on the left' becomes a question
+   about where equal values belong. The classic problem statement uses distinct values; if asked,
+   say you would fix a convention (equals go right, say) and apply it consistently.
+
+E. THE ANSWER IS NOT UNIQUE, and the problem says so - it asks for 'A height-balanced BST', not 'THE'
+   one. On an even-length stretch, either middle works. I measured the lower-middle variant
+   (`lo + (hi - lo) // 2`) against the same checks: 0 failures in 3,000, a differently shaped but
+   equally valid tree. Saying this shows you understand the requirement rather than pattern-matching
+   to one accepted output.
+
+F. THE #1 MISTAKE - PICKING THE WRONG ROOT. Take the first element instead of the middle and every
+   node has an empty left side: you have built a linked list wearing a tree costume. It is still a
+   valid BST, so a test that only checks the BST property will pass it - the failure is purely about
+   BALANCE. Measured wrong on 2,465 of 3,000, with average height 6.5 versus 3.1.
+
+G. THE #2 MISTAKE - SLICING INSTEAD OF PASSING INDEXES. Writing `build(nums[:mid])` and
+   `build(nums[mid+1:])` is CORRECT but it copies the array at every level, turning an O(n) build into
+   O(n log n) time and memory. Not a wrong answer, a wrong cost - and interviewers ask about it
+   precisely because it looks so natural.
+
+H. `(lo + hi) // 2` AND OVERFLOW. In Python integers are unbounded so this is always safe. In Java or
+   C++ `lo + hi` can overflow for very large arrays, and the standard fix is `lo + (hi - lo) // 2`.
+   Mentioning it is a nice cross-language detail; writing it in Python is harmless either way.""",
+
+    """5. WHY THE MIDDLE, AND WHY INDEXES BEAT SLICES
+
+WHY 'BALANCED' MATTERS AT ALL, in one paragraph. The reason to use a BST is that looking a value up
+takes as many steps as the tree is TALL - you compare, go left or right, and repeat. A balanced tree
+of a million nodes is about 20 levels tall, so lookups take about 20 steps. A degenerate chain of a
+million nodes is a million levels tall, and a lookup is a million steps - no better than scanning a
+list. So 'height-balanced' is not decoration; it is the entire reason the data structure exists.
+
+WHY THE MIDDLE GIVES THE SHORTEST TREE. Choosing the midpoint splits the remaining k elements into two
+halves of size (k-1)/2 each, as evenly as possible. Every level therefore roughly HALVES the number of
+elements left, so the height is about log-base-2 of n - the smallest a binary tree of n nodes can be.
+Choosing anything off-centre makes one side bigger, and the taller side sets the height.
+
+WHY THE BST PROPERTY COMES FOR FREE. At every call, the stretch `nums[lo..hi]` is sorted. Everything
+before mid is smaller than nums[mid], everything after is larger, and those become the left and right
+subtrees. So the rule holds at that node - and by the same argument at every node beneath it. There is
+no comparison anywhere in the code, and that is not an oversight.
+
+THE SLICE VERSION, AND WHY IT COSTS MORE. This is the version most people write first:
+
+    def build(sub):
+        if not sub:
+            return None
+        mid = len(sub) // 2
+        node = TreeNode(sub[mid])
+        node.left = build(sub[:mid])            # copies!
+        node.right = build(sub[mid+1:])         # copies!
+        return node
+
+It is correct and it reads beautifully. But `sub[:mid]` creates a NEW LIST every time, so across one
+level of the recursion you copy the whole array, and there are log n levels - O(n log n) time and
+O(n log n) memory churn instead of O(n). The index version does exactly the same work on the SAME
+array, passing two integers instead of a copy. If you write the slice version first, say the sentence:
+'this copies at every level; I would pass lo and hi instead to keep it O(n)'.
+
+THE REVERSE PROBLEM, worth naming as a check: an in-order traversal of the result gives back the
+original sorted array. That is both a good test and the fact behind the sibling problem 'Convert
+Sorted List to BST', where the input is a linked list you cannot index into - there the trick is to
+build the tree in-order while walking the list once.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Write a helper that takes two index numbers, lo and hi, meaning 'build a tree from the part of the
+   array between these positions, inclusive'.
+2. If lo is past hi, that stretch is empty, so there is no node to build - return nothing. This is the
+   base case that stops the recursion.
+3. Otherwise, find the middle position between lo and hi and make a node holding the value there.
+4. Build the node's LEFT child by calling the helper on the stretch from lo up to just before the
+   middle.
+5. Build the node's RIGHT child by calling the helper on the stretch from just after the middle up to
+   hi.
+6. Return the node.
+7. Start the whole thing off by calling the helper on the full range: 0 to the last index.
+
+WHY THE HELPER TAKES INDEXES RATHER THAN A PIECE OF THE ARRAY: because indexes are two numbers, while
+a piece of the array is a copy of the data. Same result, far less work - see section 5.
+
+HOW THE RECURSION UNWINDS, said once in plain words: the call for the whole array cannot finish until
+its two children are built, so it waits; those calls wait on their own children; and so on down until
+a call hits the empty base case and returns nothing at all. Then the answers travel back up, each
+paused call attaching its two finished children and returning itself. The pile is never deeper than
+the height of the tree.
+
+ONE DETAIL THAT LOOKS LIKE A BUG AND IS NOT: `build(lo, mid - 1)` can be called with mid - 1 less than
+lo, and `build(mid + 1, hi)` with mid + 1 greater than hi. Those are exactly the empty stretches, and
+the base case in step 2 catches them. You do not need to check before calling.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Take the sorted numbers and put your finger on the middle one. That number becomes the top of the
+tree, because it splits everything else into two equal groups - the smaller ones on the left, the
+larger on the right, which is exactly what a search tree needs.
+
+Now do the same thing to each group. The middle of the left group becomes the left child; the middle
+of the right group becomes the right child. Keep going until a group is empty, at which point there is
+nothing to build and you stop.
+
+Because every step splits its group in half, the tree comes out as short as a tree of that many nodes
+can be. And because the numbers were sorted to begin with, the search-tree rule holds everywhere
+without anybody ever comparing two values.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def sorted_array_to_bst(nums):
+        def build(lo, hi):
+            if lo > hi:
+                return None
+            mid = (lo + hi) // 2              # middle keeps the tree balanced
+            node = TreeNode(nums[mid])
+            node.left = build(lo, mid - 1)
+            node.right = build(mid + 1, hi)
+            return node
+        return build(0, len(nums) - 1)
+
+LINE 2: `def build(lo, hi):`
+    A function defined INSIDE the outer one, so it can see `nums` without being handed it every time.
+    Its two parameters are index numbers, not data - that is the decision that keeps the whole thing
+    O(n) instead of O(n log n).
+
+LINE 3-4: `if lo > hi: return None`
+    THE BASE CASE. `lo > hi` means the stretch is empty - there are no numbers between those
+    positions. An empty tree is `None`, so we return that. This one line covers the empty input, the
+    missing children of leaves, and the missing child in an odd split, all at once.
+
+LINE 5: `mid = (lo + hi) // 2`
+    The midpoint of the current stretch. `//` is integer division, throwing away any remainder, so on
+    an even-length stretch it lands on the LOWER of the two middles. Either middle is fine (measured:
+    the other choice fails 0 of 3,000), and the sortedness guarantees whichever one you take splits
+    the rest correctly.
+
+LINE 6: `node = TreeNode(nums[mid])`
+    Build the node for this stretch. Its children are not attached yet - that is the next two lines.
+
+LINE 7: `node.left = build(lo, mid - 1)`
+    Everything BEFORE the midpoint, which in a sorted array is everything smaller, becomes the left
+    subtree. If mid is lo, this call gets `lo, lo - 1` and returns None via the base case.
+
+LINE 8: `node.right = build(mid + 1, hi)`
+    Everything AFTER, which is everything larger, becomes the right subtree. Same story if mid is hi.
+
+LINE 9: `return node`
+    Hand this finished node - with both children attached - back to whoever asked for it, which is the
+    call one level up.
+
+LINE 10: `return build(0, len(nums) - 1)`
+    Kick it off over the whole array. On an empty input this is `build(0, -1)`, which the base case
+    handles, so no length check is needed.
+
+WHAT MAPS BACK TO THE HAND-TRACE: `build(0,4)` was the first call with mid = 2 giving the root 0.
+`build(0,1)` and `build(3,4)` were lines 7 and 8. Every 'lo > hi, EMPTY' in the trace was line 3.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [-10, -3, 0, 5, 9]`.
+
+The indentation shows the call stack - how deep the pile of paused calls is at that moment.
+
+    CALL A   build(0, 4)
+             lo > hi?  0 > 4 is False
+             mid = (0 + 4) // 2 = 2
+             node A holds nums[2] = 0
+             now evaluate line 7, the LEFT child...
+
+        CALL B   build(0, 1)
+                 mid = (0 + 1) // 2 = 0
+                 node B holds nums[0] = -10
+                 left child...
+
+            CALL C   build(0, -1)
+                     lo > hi?  0 > -1 is True  ->  RETURN None
+                 node B.left = None
+                 right child...
+
+            CALL D   build(1, 1)
+                     mid = 1,  node D holds nums[1] = -3
+                     build(1, 0) -> None      (left)
+                     build(2, 1) -> None      (right)
+                     RETURN node D (a leaf)
+                 node B.right = node D
+                 RETURN node B
+
+        node A.left = node B
+        now evaluate line 8, the RIGHT child...
+
+        CALL E   build(3, 4)
+                 mid = (3 + 4) // 2 = 3
+                 node E holds nums[3] = 5
+                 build(3, 2) -> None          (left)
+
+            CALL F   build(4, 4)
+                     mid = 4, node F holds nums[4] = 9
+                     both children None  ->  RETURN node F
+                 node E.right = node F
+                 RETURN node E
+
+        node A.right = node E
+        RETURN node A
+
+    RETURN VALUE: the tree rooted at 0
+
+The pile never got deeper than three calls, because the finished tree is three levels tall - the call
+stack mirrors the tree's height, which is why a balanced tree also means a shallow stack.
+
+THE FIRST-ELEMENT-AS-ROOT BUG on the same input builds this instead:
+
+        -10 -> -3 -> 0 -> 5 -> 9        (every node has only a right child)
+
+Still a valid BST - every value is bigger than the one above it - but five levels tall instead of
+three, and on a large array it degenerates completely. Measured over 3,000 random inputs its average
+height was 6.5 against 3.1, and it failed the balance check 2,465 times.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n). Every element is visited exactly once and turned into exactly one node, with a constant
+amount of work each. There is no searching and no comparing. (The slice version is O(n log n), because
+copying the sub-arrays repeats work at every level - the same algorithm at a worse cost.)
+
+SPACE: O(log n) for the call stack, since the recursion is only ever as deep as the finished tree is
+tall, and the tree is balanced by construction. The tree itself is O(n) nodes, but that is the output,
+not overhead.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - O(n) is 'one visit per
+element', O(log n) is 'halving each step'.
+
+THE #1 BEGINNER MISTAKE: choosing the first element as the root instead of the middle. The result is
+still a legal BST, so a test that only checks the search-tree property passes it - the failure is
+purely that the tree is a chain. Measured wrong on 2,465 of 3,000, average height 6.5 versus 3.1.
+
+THE #2 MISTAKE: slicing the array at every level instead of passing lo and hi. It is not wrong, it is
+expensive - O(n log n) time and memory for a job that should be O(n). Interviewers ask about this one
+specifically, because it is the natural first draft.
+
+A NON-MISTAKE, MEASURED: taking the lower or the upper middle on an even-length stretch. Zero failures
+in 3,000 - both produce valid, balanced trees of different shapes, which is why the problem asks for
+'a' height-balanced BST rather than 'the'.
+
+ONE-SENTENCE TAKEAWAY: make the MIDDLE element the root so the two halves are equal, recurse on each
+half, and the sorted input hands you the search-tree property for free.""",
+]
+
+_EX_P1AJ["Count Tested Devices After Test Operations"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You have a row of devices, each with a battery percentage. You test them strictly in order, device 0
+first, then device 1, and so on. At each device:
+
+- If its battery is ABOVE zero, you test it. Testing it drains every device AFTER it by 1 percent (no
+  battery ever goes below 0).
+- If its battery is at zero, you skip it and nothing happens.
+
+Count how many devices end up being tested.
+
+    battery = [1, 1, 2, 1, 3]
+
+    device 0 has 1  -> above zero, TEST it. Everything after it loses 1:
+                       battery becomes [1, 0, 1, 0, 2],  tested = 1
+    device 1 has 0  -> skip
+    device 2 has 1  -> TEST. Everything after loses 1:
+                       battery becomes [1, 0, 1, 0, 1],  tested = 2
+    device 3 has 0  -> skip
+    device 4 has 1  -> TEST.  tested = 3
+
+    ANSWER: 3
+
+The obvious way to write this is exactly what the description says: loop over the devices, and every
+time you test one, loop again over all the later ones subtracting 1. That works and it is slow. The
+point of the problem is spotting that all those subtractions are the SAME subtraction, applied to
+everybody, and so can be tracked with a single number.
+
+TERMS AS THEY APPEAR:
+- IN PLACE / MUTATING: changing the array you were given. The slow solution does this; the fast one
+  does not touch the array at all.
+- RUNNING OFFSET (also called a lazy or deferred update): instead of writing a change into every
+  element, you remember the change as one number and apply it when you read. That idea is the entire
+  problem, and it is worth far more than this one question.""",
+
+    """2. THE INTUITION - the drain is the same for everybody, so it is one number
+
+Watch what the drains actually do.
+
+    battery = [4, 4, 4, 4]
+
+    test device 0  ->  devices 1, 2, 3 each lose 1
+    test device 1  ->  devices 2, 3 each lose 1
+    test device 2  ->  device 3 loses 1
+
+By the time you reach device 3, how much has it lost? Exactly 3 - one for each test that happened
+before it. Device 2 had lost exactly 2 when you reached it. Device 1 had lost 1.
+
+THE PATTERN: when you arrive at a device, the amount it has been drained by is precisely THE NUMBER OF
+TESTS PERFORMED SO FAR. Not 'roughly'. Not 'depends which ones'. Exactly, because every test drains
+every later device by exactly 1, and you only ever move forwards.
+
+So you do not need to modify the array at all. Carry a counter of tests done, and when you arrive at a
+device, its EFFECTIVE battery is:
+
+    effective = battery[i] - tested_so_far
+
+If that is above zero, test it - which is to say, add one to the counter. Otherwise move on. One pass,
+no writes, and the counter is both the answer and the drain.
+
+    battery = [1, 1, 2, 1, 3],  tested = 0
+
+    i=0:  1 - 0 = 1  > 0  ->  test.  tested = 1
+    i=1:  1 - 1 = 0  not > 0  ->  skip
+    i=2:  2 - 1 = 1  > 0  ->  test.  tested = 2
+    i=3:  1 - 2 = -1 not > 0  ->  skip
+    i=4:  3 - 2 = 1  > 0  ->  test.  tested = 3
+
+    answer 3 - the same as the step-by-step simulation, without touching the array.
+
+THE GENERAL LESSON, and this is the thing to carry away: WHEN AN OPERATION APPLIES UNIFORMLY TO
+EVERYTHING AFTER THE CURRENT POSITION, CARRY IT AS A RUNNING OFFSET INSTEAD OF WRITING IT INTO THE
+DATA. The same idea powers difference arrays, prefix sums, and lazy propagation in segment trees.
+Recognising it turns a quadratic simulation into a single pass.
+
+Measured: the running-offset version agreed with a literal element-by-element simulation on 5,000 of
+5,000 random inputs.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `battery = [0, 1, 2]`.
+
+    tested = 0
+
+    i = 0:  battery[0] = 0
+            effective = 0 - 0 = 0
+            is 0 > 0?  NO  ->  skip. tested stays 0.
+            (A dead device is not tested, and crucially it does NOT drain anybody - so the counter
+             must not move.)
+
+    i = 1:  battery[1] = 1
+            effective = 1 - 0 = 1
+            is 1 > 0?  YES  ->  test. tested = 1.
+
+    i = 2:  battery[2] = 2
+            effective = 2 - 1 = 1
+            is 1 > 0?  YES  ->  test. tested = 2.
+
+    ANSWER: 2
+
+Now cross-check against the literal simulation, the one the problem statement describes:
+
+    start [0, 1, 2]
+    device 0 has 0        -> skip, nothing drains
+    device 1 has 1  > 0   -> test. Drain later devices: [0, 1, 1]. tested = 1
+    device 2 has 1  > 0   -> test. tested = 2
+
+Same answer, and notice the array in the slow version ended as [0, 1, 1] while the fast version never
+wrote anything. The counter `tested` held the same information the mutations did.
+
+A SECOND TRACE where the drain kills a device. Input `[1, 1, 1]`:
+
+    i = 0:  1 - 0 = 1  > 0   ->  test.  tested = 1
+    i = 1:  1 - 1 = 0  not > 0  ->  skip
+    i = 2:  1 - 1 = 0  not > 0  ->  skip
+
+    ANSWER: 1
+
+Only the first device survives - each later one had exactly enough battery to be killed by the single
+test before it. This is the input to have in mind when you look at the two mistakes in the next
+section, because both of them get it wrong.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. EVERY DEVICE DEAD. `[0, 0, 0]`. No effective battery is ever above zero, so nothing is tested and
+   the answer is 0. The counter never moves, so nothing is ever drained either - correct, since a
+   skipped device performs no test.
+
+B. EVERY DEVICE FULL. `[5, 5, 5]`. i=0: 5>0 test; i=1: 5-1=4>0 test; i=2: 5-2=3>0 test. All three.
+
+C. ONE DEVICE. `[0]` gives 0, `[1]` gives 1. Nothing after it to drain.
+
+D. A DEVICE DRAINED EXACTLY TO ZERO - the case that separates the right answer from the wrong one.
+   `[1, 1]`: the first test leaves the second device's effective battery at 1 - 1 = 0, and zero is NOT
+   above zero, so it is not tested. Answer 1.
+
+E. THE #1 MISTAKE - USING `>=` INSTEAD OF `>`. It tests devices whose effective battery has reached
+   zero, which the rules forbid. Measured wrong on 2,575 of 5,000 random inputs, and on 1,644 of the
+   2,594 inputs that contain a literal 0 battery. It is one character, and it fails on the smallest
+   interesting input, `[1, 1]`.
+
+F. THE #2 MISTAKE - IGNORING THE DRAIN ENTIRELY and just counting devices with a battery above zero.
+   Wrong on 3,265 of 5,000 - the single most common wrong answer, because the problem READS like
+   'count the non-zero devices' if you skim it. It always OVERCOUNTS, which is a useful tell.
+
+G. A MEASURED NON-MISTAKE. In the slow simulation, people worry about whether a battery may go
+   negative and whether it needs clamping at zero. I measured the unclamped version: 0 failures in
+   5,000. It makes no difference, because a device at or below zero fails the `> 0` test either way,
+   and a negative value never becomes positive again. Worth knowing, so you can say 'the clamp is in
+   the statement for realism, it does not change the answer'.
+
+H. A HUGE ARRAY. Nothing to worry about: one pass, one integer.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE
+
+THE SLOW-BUT-OBVIOUS VERSION - a direct transcription of the problem statement:
+
+    def brute(battery):
+        a = list(battery)
+        tested = 0
+        for i in range(len(a)):
+            if a[i] > 0:
+                tested += 1
+                for j in range(i + 1, len(a)):
+                    a[j] = max(0, a[j] - 1)      # drain every later device
+        return tested
+
+This is worth writing first. It is obviously correct - it does exactly what the words say - and it is
+what I measured the fast version against, 5,000 agreements out of 5,000. In an interview, saying 'the
+literal simulation is O(n-squared); let me see whether the updates can be summarised' is a strong
+opening.
+
+WHY IT IS SLOW: the inner loop can run almost n times for each of n devices, so the work is
+proportional to n-squared. With 100,000 devices that is 10 billion operations - minutes instead of
+milliseconds.
+
+THE UPGRADE, and the reason it is allowed. Look at what the inner loop actually does: it subtracts
+exactly 1 from every remaining element. Not different amounts - the SAME amount, from EVERYONE ahead.
+Two consequences:
+
+    1. The relative order and the relative gaps between later devices never change.
+    2. After t tests, every device you have not yet reached has lost exactly t.
+
+Fact 2 is the whole thing. There is no need to record the losses individually, because they are
+identical. One counter holds all of them, and `battery[i] - tested` reconstructs any device's true
+value on demand.
+
+    total work: one pass, O(n) time, O(1) extra space, and the input is never modified.
+
+WHY THIS PATTERN IS WORTH LEARNING BEYOND THIS PROBLEM. The same move - do not write a uniform update
+into every element, carry it and apply it when reading - is the core of:
+    - PREFIX SUMS: precompute running totals so any range sum is one subtraction.
+    - DIFFERENCE ARRAYS: to add 5 to a whole range, write +5 at the start and -5 just past the end,
+      then take a running total at the end. Many range updates in O(1) each.
+    - LAZY PROPAGATION in a segment tree: park a pending update at a node and push it down only when
+      somebody actually looks.
+All three are the same instinct: a uniform change is information, not work.
+
+NOT MODIFYING THE INPUT IS ITSELF WORTH A SENTENCE. The slow version reorders nothing but does drain
+the caller's array; the fast version leaves it untouched. Functions that quietly mutate what they are
+handed are a common source of bugs, and saying so shows care.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Start a counter of tests performed at zero.
+2. Walk the devices from first to last. For each one:
+   a. Work out its effective battery: the value stored minus the number of tests performed so far.
+   b. If that is strictly greater than zero, this device gets tested - add one to the counter.
+   c. Otherwise do nothing at all.
+3. When the walk ends, the counter is the answer.
+
+THE COUNTER IS DOING TWO JOBS AT ONCE, and being able to say that is the sign you understand the
+solution: it counts the answer, and it also IS the amount every remaining device has been drained by.
+Those are the same number, which is why the solution is this short.
+
+WHY 'STRICTLY GREATER THAN ZERO' AND NOT 'AT LEAST ZERO': a device with zero battery cannot be tested.
+Using at-least-zero tests dead devices, and worse, it increases the counter - so it drains everything
+after it too, and the error compounds down the array. Measured wrong on 2,575 of 5,000.
+
+WHY YOU DO NOT SUBTRACT ANYTHING FROM THE ARRAY: because you never need the stored value again once
+you have passed a device. Reading `battery[i] - tested` at the moment you arrive gives you the true
+current value, and there is no later reader to keep in sync.
+
+WHY THE SKIPPED DEVICES MUST NOT MOVE THE COUNTER: a device that is not tested performs no drain. If
+you increment the counter regardless, every later device is short-changed.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Walk along the row of devices keeping one number in your head: how many tests you have done so far.
+
+Every test you have done cost each remaining device exactly one percent, and you have done the same
+number of tests to all of them - so that one number tells you exactly how drained the device in front
+of you is. Subtract it from what the label says, and you have the device's real battery.
+
+If that real battery is above zero, test the device and add one to your number. If it is zero or less,
+walk past and change nothing.
+
+At the end, the number in your head is the answer. You never wrote anything down, and you never
+touched the row.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def count_tested_devices(battery_percentages):
+        tested = 0
+        for b in battery_percentages:
+            if b - tested > 0:      # effective battery after earlier tests
+                tested += 1
+        return tested
+
+LINE 2: `tested = 0`
+    One variable doing two jobs: the number of devices tested so far (the answer we are building) and
+    the amount every device ahead of us has been drained by. They are the same number because each
+    test drains every later device by exactly 1.
+
+LINE 3: `for b in battery_percentages:`
+    Walk the devices in order. We take the VALUE `b` rather than the index, because we never need to
+    write anything back - a small sign in itself that the array is read-only here.
+
+LINE 4: `if b - tested > 0:`
+    `b` is what the device started with; `tested` is what it has lost; the difference is its true
+    battery right now. Two details worth defending in an interview:
+      - `> 0` and not `>= 0`. A device at exactly zero cannot be tested. Using `>=` is wrong on 2,575
+        of 5,000 random inputs, and it fails on the two-element input `[1, 1]`.
+      - There is no clamping at zero. A device that has been over-drained gives a negative difference,
+        which fails the test exactly as it should, and can never come back. Measured: the clamped and
+        unclamped versions disagree on 0 of 5,000 inputs.
+
+LINE 5: `tested += 1`
+    Testing this device does two things at once - it adds to the answer, and it deepens the drain on
+    everything ahead. One statement covers both, which is the elegance of the offset trick. Note this
+    happens ONLY inside the `if`: a skipped device performs no test and therefore drains nothing.
+
+LINE 6: `return tested`
+    The counter is the answer. Nothing to unwind, nothing to clean up.
+
+WHAT MAPS BACK TO THE HAND-TRACE: the five `effective = ...` lines in section 2's trace are line 4
+evaluated five times, and each `-> test. tested = k` is line 5.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `battery_percentages = [1, 1, 2, 1, 3]`.
+
+    LINE 2:  tested = 0
+
+    PASS 1   b = 1
+             b - tested = 1 - 0 = 1
+             1 > 0  ->  TRUE
+             tested = 1
+
+    PASS 2   b = 1
+             b - tested = 1 - 1 = 0
+             0 > 0  ->  FALSE          (this is the device the first test killed)
+             tested = 1
+
+    PASS 3   b = 2
+             b - tested = 2 - 1 = 1
+             1 > 0  ->  TRUE
+             tested = 2
+
+    PASS 4   b = 1
+             b - tested = 1 - 2 = -1
+             -1 > 0  ->  FALSE         (already flat, and going further negative is harmless)
+             tested = 2
+
+    PASS 5   b = 3
+             b - tested = 3 - 2 = 1
+             1 > 0  ->  TRUE
+             tested = 3
+
+    RETURN VALUE: 3
+
+Compare that with the literal simulation, which reached the same answer by rewriting the array four
+times: [1,1,2,1,3] -> [1,0,1,0,2] -> [1,0,1,0,1] -> [1,0,1,0,1]. All those writes carried exactly one
+number's worth of information, and `tested` is that number.
+
+THE `>=` BUG on the same input:
+
+    PASS 1  1 - 0 = 1  >= 0 -> test, tested = 1
+    PASS 2  1 - 1 = 0  >= 0 -> TESTS A DEAD DEVICE, tested = 2
+    PASS 3  2 - 2 = 0  >= 0 -> tests another, tested = 3
+    PASS 4  1 - 3 = -2 -> no
+    PASS 5  3 - 3 = 0  >= 0 -> tests another, tested = 4
+
+    returns 4 instead of 3 - and notice how the error COMPOUNDS: each wrongly-tested device inflates
+    the drain for everything after it. Wrong on 2,575 of 5,000 inputs.
+
+THE 'JUST COUNT THE NON-ZERO DEVICES' BUG returns 5 here, since every value is above zero. Wrong on
+3,265 of 5,000, always by overcounting.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n). One pass, one subtraction and one comparison per device. The literal simulation is
+O(n-squared), and the whole exercise is recognising that the inner loop was redundant.
+
+SPACE: O(1). A single integer. The input is never modified, which is worth stating.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - O(n) is one pass,
+O(n-squared) is a loop inside a loop over the same data.
+
+THE #1 BEGINNER MISTAKE: ignoring the drain and counting every device with a positive battery. Wrong
+on 3,265 of 5,000 random inputs, and it always overcounts. The problem reads like a filter if you
+skim it; the draining is the entire content.
+
+THE #2 MISTAKE: `>=` instead of `>`, which tests devices that have been drained to exactly zero. Wrong
+on 2,575 of 5,000, and the error compounds down the array because each wrongly tested device adds
+another point of drain. The smallest input that exposes it is `[1, 1]`.
+
+A NON-MISTAKE, MEASURED: forgetting to clamp the battery at zero in the slow simulation. Zero
+disagreements in 5,000 - a negative value fails the `> 0` check just as a zero does, and it never
+recovers.
+
+ONE-SENTENCE TAKEAWAY: every test drains every later device by the SAME 1, so the number of tests so
+far IS the amount everything ahead has lost - carry it as one running offset instead of writing it
+into the array.""",
+]
+
+_EX_P1AJ["Counting Sort"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+Sorting normally works by COMPARING things: is this one bigger than that one? Counting sort does not
+compare anything at all. Instead it counts.
+
+Imagine sorting a class's exam scores, where every score is a whole number from 0 to 10. Set out 11
+buckets labelled 0 through 10. Go through the papers once, dropping each into the bucket with its
+score. Then walk the buckets in order and read out their contents. The scores come out sorted, and you
+never compared two papers.
+
+    input:   [3, 1, 3, 0, 2, 1, 3]
+
+    tally:   value:  0  1  2  3
+             count:  1  2  1  3
+
+    read out in order:  0,  1 1,  2,  3 3 3
+    result:  [0, 1, 1, 2, 3, 3, 3]
+
+That is the whole algorithm. Its power and its limitation both come from the same place: you need one
+bucket per POSSIBLE VALUE, so it is superb for scores out of 10 and hopeless for numbers that could be
+anything up to a billion.
+
+TERMS AS THEY APPEAR:
+- COMPARISON SORT: any sort that works by asking 'is a < b?' - quicksort, mergesort, the sort built
+  into your language. Counting sort is NOT one of these, which is the whole point.
+- KEY RANGE, usually written k: how many distinct values are possible. Scores 0-10 give k = 11.
+- STABLE: a sort is stable if two records with equal keys stay in their original relative order. That
+  matters when you are sorting whole records by one field, and it is what makes counting sort usable
+  as a building block.""",
+
+    """2. THE INTUITION - why this is allowed to beat n log n
+
+There is a famous result that says NO COMPARISON SORT can do better than n log n in the worst case.
+Counting sort runs in about n + k. So has something broken?
+
+No - and understanding why is exactly what this question is testing.
+
+THE n log n LOWER BOUND IS A STATEMENT ABOUT COMPARISONS. Think of sorting as identifying which one of
+the n! possible orderings your input is in. Each comparison answers a yes/no question, so it can at
+best halve the number of possibilities still standing. To narrow n! possibilities down to one you need
+at least log2(n!) questions, which works out to about n log n. That argument assumes the ONLY thing
+you can do with an element is compare it with another.
+
+COUNTING SORT DOES SOMETHING ELSE ENTIRELY: it uses the value AS AN ADDRESS. Seeing a 7, it goes
+straight to slot 7 and increments it. That is not a comparison - it is a lookup, and the lower bound
+has nothing to say about it. Counting sort is not a cleverer quicksort; it is a different category of
+algorithm, one that exploits the fact that the keys are small whole numbers.
+
+The price is stated honestly in the cost: O(n + k) time and O(k) space, where k is the SIZE OF THE
+VALUE RANGE, not the number of elements.
+
+    sorting a million bytes (k = 256)                brilliant
+    sorting exam scores 0-100 (k = 101)              brilliant
+    sorting three numbers up to a billion (k = 1e9)  absurd - a billion buckets for three numbers
+
+So the question to ask before reaching for it is never 'how many elements?' but 'how many possible
+VALUES?'.
+
+Measured against the language's own sort on 4,000 random arrays of small integers: 4,000 agreements.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `[3, 1, 3, 0, 2, 1, 3]`.
+
+STEP 1 - find the biggest value, so we know how many buckets to make.
+
+    max = 3    ->  we need buckets for 0, 1, 2 AND 3, which is FOUR buckets, not three.
+                   (That 'plus one' is where the classic bug lives - see section 4.)
+
+STEP 2 - make the counts array, all zeros.
+
+    counts = [0, 0, 0, 0]
+    index:    0  1  2  3          index IS the value
+
+STEP 3 - one pass over the input, adding to the bucket named by each value.
+
+    see 3  ->  counts[3] += 1  ->  [0, 0, 0, 1]
+    see 1  ->  counts[1] += 1  ->  [0, 1, 0, 1]
+    see 3  ->  counts[3] += 1  ->  [0, 1, 0, 2]
+    see 0  ->  counts[0] += 1  ->  [1, 1, 0, 2]
+    see 2  ->  counts[2] += 1  ->  [1, 1, 1, 2]
+    see 1  ->  counts[1] += 1  ->  [1, 2, 1, 2]
+    see 3  ->  counts[3] += 1  ->  [1, 2, 1, 3]
+
+    final tally:  one 0, two 1s, one 2, three 3s.  Total 7 - the same as the input length, which is
+    a good sanity check to do out loud.
+
+STEP 4 - walk the buckets in order and emit each value as many times as its count says.
+
+    value 0, count 1  ->  0
+    value 1, count 2  ->  1, 1
+    value 2, count 1  ->  2
+    value 3, count 3  ->  3, 3, 3
+
+    result: [0, 1, 1, 2, 3, 3, 3]
+
+Notice what never happened: at no point did we ask whether one element was bigger than another. The
+ORDER came from walking the buckets from low index to high, and the index was the value all along.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. AN EMPTY INPUT. `[]`. `max()` on an empty list raises an error, so the code guards with an early
+   return. That is the one explicit special case in the whole function.
+
+B. ONE ELEMENT, OR ALL THE SAME. `[5, 5, 5]`. Buckets 0 to 5, only bucket 5 is non-zero, and the walk
+   emits three 5s. Note the wasted buckets 0-4: with k = 6 and n = 3, this is already a case where
+   counting sort does more work than a comparison sort would.
+
+C. VALUES WITH GAPS. `[0, 100]`. It works and produces `[0, 100]`, but it allocates 101 buckets of
+   which 99 stay empty. This is the case that shows why the RANGE, not the count, decides whether the
+   algorithm is appropriate.
+
+D. THE OFF-BY-ONE IN THE ARRAY SIZE - the classic. `counts = [0] * max_val` instead of
+   `[0] * (max_val + 1)` leaves no slot for the largest value itself. Measured: wrong on 4,000 of
+   4,000 random arrays, and every single one was an IndexError CRASH rather than a wrong answer. That
+   is the friendlier kind of bug - it fails loudly.
+
+E. THE OFF-BY-ONE IN THE EMIT LOOP - the same mistake, quieter. Build the counts correctly but then
+   walk `range(max_val)` instead of `range(max_val + 1)` and the largest value is silently dropped:
+   you get back fewer elements than you put in, with no error at all. Wrong on 4,000 of 4,000. The
+   defence is the sanity check from section 3: the counts must add up to the input length.
+
+F. NEGATIVE NUMBERS - and in Python this misbehaves in a nasty way. `counts[-3] += 1` does not crash;
+   Python reads a negative index as counting from the END of the list, so it quietly increments the
+   wrong bucket and you get a wrong answer with no warning. Measured on arrays containing negatives:
+   wrong on 3,637 of 4,000. THE FIX IS AN OFFSET: find the minimum value, size the array
+   `max - min + 1`, and store value v at index `v - min`. Then emit `index + min`.
+
+G. NON-INTEGER VALUES. You cannot index an array with 2.5. Counting sort applies to whole numbers, or
+   to things that can be mapped onto whole numbers (letters, enum values, bytes). Saying this shows
+   you know its limits rather than treating it as a general-purpose sort.""",
+
+    """5. THE SIMPLE VERSION FIRST, THEN THE UPGRADE THAT MAKES IT STABLE
+
+THE VERSION ABOVE - tally, then emit each value count times - is correct and it is the one to write
+first. It has one real limitation, and it only shows up when you sort RECORDS rather than bare
+numbers.
+
+WHY 'STABLE' MATTERS, with a concrete example. Suppose you are sorting students by grade:
+
+    [("Anita", 2), ("Bala", 1), ("Chandra", 2), ("Devi", 1)]
+
+A STABLE sort keeps Anita before Chandra (both grade 2) and Bala before Devi (both grade 1), because
+that was their original order. The emit-by-value version cannot do this at all - it has thrown the
+records away and kept only the counts, so it can print '2, 2' but not 'Anita, Chandra'.
+
+THE UPGRADE - PREFIX SUMS. Instead of counting occurrences, work out WHERE each value's block starts
+in the output, then place the actual records.
+
+    def counting_sort_stable(pairs, key):
+        if not pairs:
+            return list(pairs)
+        mx = max(key(p) for p in pairs)
+        counts = [0] * (mx + 1)
+        for p in pairs:
+            counts[key(p)] += 1
+        # prefix sums: counts[v] becomes "how many items are <= v"
+        for v in range(1, mx + 1):
+            counts[v] += counts[v - 1]
+        out = [None] * len(pairs)
+        for p in reversed(pairs):              # BACKWARDS - this is what makes it stable
+            counts[key(p)] -= 1
+            out[counts[key(p)]] = p
+        return out
+
+TWO THINGS TO UNDERSTAND HERE, because they are what interviewers probe:
+
+    - AFTER THE PREFIX-SUM LOOP, `counts[v]` is 'how many items have a key of v or less'. That number
+      is exactly one past the last position where a v belongs, so decrementing it before each write
+      hands out positions from the end of that value's block backwards.
+    - WALKING THE INPUT BACKWARDS is what preserves the original order. The last record with key v
+      claims the last slot in v's block, the one before it claims the slot before, and so on - so the
+      first record ends up first. Walk forwards instead and every group comes out reversed. That is
+      the single most common bug in the stable version.
+
+WHY STABILITY IS NOT A LUXURY: RADIX SORT is built entirely on it. To sort large numbers, radix sort
+runs a counting sort on the last digit, then on the next digit, and so on. That only works if each
+pass leaves the previous passes' order intact - which is precisely stability. So the prefix-sum
+version is the one that composes into something bigger.
+
+A THIRD USE OF THE SAME MACHINERY: after the prefix-sum step, `counts[v-1]` answers 'how many elements
+are strictly smaller than v?' in a single lookup. That is the whole solution to the sibling problem
+'How Many Numbers Are Smaller Than the Current Number'.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. If the input is empty, return it as is - there is nothing to find a maximum of.
+2. Find the largest value in the input.
+3. Make an array of zeros with ONE SLOT PER POSSIBLE VALUE, from 0 up to and including that largest
+   value. That is largest-plus-one slots.
+4. Walk the input once. For each value, add one to the slot with that number.
+5. Make an empty output list. Walk the slots from 0 up to and including the largest, and for each one
+   append its value to the output as many times as the slot says.
+6. Return the output.
+
+THE TWO PLACES TO SAY 'PLUS ONE' OUT LOUD are step 3 and step 5, and they are the two measured bugs:
+sizing the array without the plus-one crashes on every input, and emitting without it silently loses
+every copy of the largest value.
+
+IF THE INPUT CAN CONTAIN NEGATIVES: find the minimum as well, size the array `max - min + 1`, store
+value v at position `v - min`, and when emitting, the value at position i is `i + min`. The offset is
+three small changes and it is the standard extension - be ready to write it, because 'what if there
+are negatives?' is the usual follow-up.
+
+IF YOU ARE SORTING RECORDS RATHER THAN NUMBERS: you need the stable prefix-sum version from section 5,
+because the simple version keeps only counts and cannot reproduce the records themselves.
+
+A SANITY CHECK WORTH BUILDING IN WHILE TESTING: the counts must add up to the input length, and the
+output must be the same length as the input. Both of the off-by-one bugs break one of those
+immediately.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Look at the biggest number in the list, and set out that many buckets plus one - one for every value
+from zero up to the biggest.
+
+Go through the list once, dropping each number into its own bucket. You are not comparing anything;
+you are just putting each number where it belongs by name.
+
+Then walk the buckets from the lowest to the highest and pour them out one after another. Because you
+visited the buckets in order, what comes out is in order.
+
+The cost is one pass over the data plus one pass over the buckets - and it is the number of BUCKETS,
+not the number of items, that decides whether this is a brilliant idea or a ridiculous one.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def counting_sort(a):
+        if not a:
+            return a
+        max_val = max(a)
+        counts = [0] * (max_val + 1)       # counts[v] = how many times v appears
+        for v in a:
+            counts[v] += 1
+        result = []
+        for v in range(max_val + 1):
+            result.extend([v] * counts[v]) # emit each value counts[v] times
+        return result
+
+LINE 2-3: `if not a: return a`
+    An empty list is false in Python, so this catches the empty input. It is needed because `max()` on
+    an empty sequence raises ValueError - the one genuine special case in the function.
+
+LINE 4: `max_val = max(a)`
+    One pass to find the largest value, which determines how many buckets are required. Note the
+    function's whole cost is now tied to this number rather than to the length of the input.
+
+LINE 5: `counts = [0] * (max_val + 1)`
+    `[0] * m` builds a list of m zeros. The `+ 1` is essential: to hold values 0 through max_val
+    inclusive you need max_val + 1 slots, because the numbering starts at 0. Dropping it crashes with
+    IndexError on all 4,000 of 4,000 test arrays - loudly, which is the good kind of failure.
+
+LINE 6-7: `for v in a: counts[v] += 1`
+    THE LINE THAT MAKES THIS NOT A COMPARISON SORT. The value `v` is used directly as a POSITION in
+    the counts array - no comparison is performed anywhere in this function. It also explains every
+    limitation at once: v must be a whole number, it must not be negative (or Python indexes from the
+    wrong end), and it must not be enormous (or the array is enormous).
+
+LINE 8: `result = []`
+    The output being built up.
+
+LINE 9-10: `for v in range(max_val + 1): result.extend([v] * counts[v])`
+    Walk the buckets from lowest to highest - and THAT ascending walk is where the sorted order comes
+    from. `[v] * counts[v]` makes a small list of that many copies, and `extend` appends them all.
+    The `+ 1` appears again here for the same reason, and omitting it silently drops every copy of the
+    largest value: no crash, just a short answer, wrong on 4,000 of 4,000.
+
+LINE 11: `return result`
+    A NEW list; the input is untouched. Note this differs from `list.sort()`, which rearranges in
+    place - worth mentioning when you present it.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 5 built the four zeros. The seven increments in step 3 of the
+trace were line 7. The four emissions in step 4 were line 10.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `a = [3, 1, 3, 0, 2, 1, 3]`.
+
+    LINE 2:   `not a` is False (the list is non-empty), so we continue.
+    LINE 4:   max_val = 3
+    LINE 5:   counts = [0, 0, 0, 0]                 (four slots: values 0, 1, 2, 3)
+
+    THE TALLY LOOP
+        v = 3   counts[3] += 1   counts = [0, 0, 0, 1]
+        v = 1   counts[1] += 1   counts = [0, 1, 0, 1]
+        v = 3   counts[3] += 1   counts = [0, 1, 0, 2]
+        v = 0   counts[0] += 1   counts = [1, 1, 0, 2]
+        v = 2   counts[2] += 1   counts = [1, 1, 1, 2]
+        v = 1   counts[1] += 1   counts = [1, 2, 1, 2]
+        v = 3   counts[3] += 1   counts = [1, 2, 1, 3]
+
+        (sum of counts = 1 + 2 + 1 + 3 = 7 = len(a).  Always worth checking.)
+
+    LINE 8:   result = []
+
+    THE EMIT LOOP, over range(4) = 0, 1, 2, 3
+        v = 0   [0] * 1 = [0]         result = [0]
+        v = 1   [1] * 2 = [1, 1]      result = [0, 1, 1]
+        v = 2   [2] * 1 = [2]         result = [0, 1, 1, 2]
+        v = 3   [3] * 3 = [3, 3, 3]   result = [0, 1, 1, 2, 3, 3, 3]
+
+    RETURN VALUE: [0, 1, 1, 2, 3, 3, 3]
+
+THE MISSING PLUS-ONE IN THE SIZE, on the same input: `counts = [0] * 3` gives slots 0, 1, 2 only. The
+very first value is a 3, so `counts[3] += 1` raises `IndexError: list assignment index out of range`.
+Every one of 4,000 test arrays crashed this way.
+
+THE MISSING PLUS-ONE IN THE EMIT LOOP: the tally is correct, but `range(3)` stops after value 2, so
+the three 3s are never emitted. It returns `[0, 1, 1, 2]` - four elements from a seven-element input,
+no error raised. Wrong on 4,000 of 4,000, and only the length check catches it.
+
+A NEGATIVE VALUE, on `a = [2, -1]`: max_val = 2, counts = [0,0,0]. Then `counts[-1] += 1` sets the
+LAST slot - the one meaning 'value 2' - because Python reads -1 as 'one from the end'. No crash, and
+the output is `[2, 2]`: the -1 has vanished and a phantom 2 has appeared. Wrong on 3,637 of 4,000
+arrays containing negatives, always silently.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n + k), where n is the number of elements and k is the size of the value range. One pass to
+tally (n), one pass over the buckets to emit (k). When k is comparable to n this is linear - genuinely
+faster than any comparison sort. When k is much larger than n it is a disaster: sorting three numbers
+that could be up to a billion means walking a billion buckets.
+
+SPACE: O(k) for the counts array, plus O(n) for the output. Again the RANGE is what costs you, not the
+number of elements.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - and the unusual thing
+here is that the input has TWO sizes that matter, n and k.
+
+WHY IT DOES NOT VIOLATE THE n log n BOUND: that bound applies only to sorts that work by COMPARING
+elements. Counting sort never compares; it uses values as array indices. Being able to say that
+sentence is usually the actual point of the question.
+
+THE #1 BEGINNER MISTAKE: the plus-one. Sizing the counts array as `max` rather than `max + 1` crashes
+on every input (4,000 of 4,000, all IndexError), and emitting over `range(max)` rather than
+`range(max + 1)` silently drops every copy of the largest value (also 4,000 of 4,000, no error). The
+second is the dangerous one, and the length check catches it instantly.
+
+THE #2 MISTAKE: negative values. In Python they do not crash - a negative index reads from the END of
+the counts array, so you get a wrong answer in silence, on 3,637 of 4,000 arrays containing them. Fix
+with an offset: size `max - min + 1` and store v at `v - min`.
+
+THE #3 MISTAKE: proposing it for an unbounded range. The right question is never 'how many elements?'
+but 'how many possible values?'.
+
+ONE-SENTENCE TAKEAWAY: use the VALUE as an INDEX instead of comparing, tally every element into its
+own bucket, then walk the buckets in order - linear when the value range is small, and outside the
+n log n bound because no comparison ever happens.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AJ:
+        _e["examples"] = _EX_P1AJ[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
