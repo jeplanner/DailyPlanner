@@ -72478,137 +72478,652 @@ whether the halves are twins rather than mirrors.""",
 ]
 
 _EX_P1B["Tokenization and Byte-Pair Encoding (BPE)"] = [
-    """BPE training, run by hand on a tiny corpus.
-Corpus: 'low low low lower lowest'. Start from characters:
-  l o w _ l o w _ l o w _ l o w e r _ l o w e s t
-Most frequent adjacent pair is ('l','o'), appearing 5 times -> merge into 'lo'.
-Next, ('lo','w') appears 5 times -> merge into 'low'.
-Next, ('low','e') appears twice ('lower', 'lowest') -> merge into 'lowe'.
-Vocabulary now holds l, o, w, e, r, s, t, lo, low, lowe. 'low' is ONE token,
-while a word never seen in training still encodes fine as a sequence of the
-pieces that exist. That is the whole algorithm: count pairs, merge the most
-frequent, repeat until the vocabulary reaches its target size.""",
+    """1. THE GOAL IN PLAIN ENGLISH - models do not read letters or words
 
-    """Why subwords rather than words or characters, as a trade-off.
-WORD-level: 'the' is one token (efficient), but the vocabulary needs hundreds
-of thousands of entries, the embedding matrix becomes enormous, and any word
-not in it becomes <UNK> - so a typo, a product code or a new name is
-information the model literally cannot see.
-CHARACTER-level: a 26-entry vocabulary and nothing is ever unknown, but a
-100-word sentence becomes ~500 tokens, and since attention costs O(n^2) that is
-25x the compute of a 100-token version.
-SUBWORD: common words stay single tokens, rare words decompose, nothing is ever
-unknown, and sequences stay short. It is the engineering compromise, not a
-linguistic theory - which is worth saying, because the pieces often do not
-match real morphemes.""",
+A language model does not see text. It sees a sequence of TOKENS - integers from a fixed vocabulary -
+and tokenisation is the step that turns your string into them.
 
-    """Token counts you should be able to estimate in an interview.
-English averages roughly 0.75 words per token, so ~750 words is ~1,000 tokens
-and one page of prose is ~500 tokens.
-Whitespace matters: ' the' (with the leading space) is usually a DIFFERENT
-token from 'the', which is why prompt formatting subtly changes token counts.
-Numbers tokenize badly - '12345' may split into '123' and '45' - which is part
-of why LLMs are unreliable at arithmetic: the model does not see the digits as
-a place-value structure.
-Code tokenizes densely because indentation and punctuation are frequent, so a
-file of Python is often more tokens than the same character count of prose.""",
+The obvious two choices are both bad:
 
-    """The cost consequence that shows up on a real bill.
-The same paragraph in English might be 100 tokens; in Hindi or Thai, written in
-a non-Latin script the tokenizer saw far less of during training, it can be
-300-500. So the identical document costs three to five times more to process,
-and it consumes the context window three to five times faster. For a product
-serving multiple languages, that is a genuine architecture consideration -
-budget by tokens per language, not by characters - and raising it unprompted in
-an LLM system-design round is a strong signal.""",
+    WHOLE WORDS      the vocabulary explodes (millions of words, plus every plural, tense and typo)
+                     and any word it has never seen becomes <UNK>, an information black hole.
+    SINGLE CHARACTERS a tiny vocabulary, but sequences become enormously long, and the model has to
+                     learn spelling before it can learn meaning.
 
-    """Why modern tokenizers work on BYTES.
-Byte-level BPE (GPT-2 onwards) starts from the 256 possible byte values rather
-than from characters, so ANY input - emoji, a corrupted file, a language the
-tokenizer never saw - is representable, and there is no <UNK> token at all. The
-cost is that a single emoji may be four bytes and therefore up to four tokens.
-SentencePiece takes a related approach and treats the text as a raw stream
-including spaces, which is why it handles languages without word boundaries
-(Chinese, Japanese, Thai) without a separate word-segmentation step.""",
+BYTE-PAIR ENCODING (BPE) is the compromise almost everything uses. It starts from characters and
+repeatedly MERGES the most frequent adjacent pair into a new token, so common words become single
+tokens and rare ones are built from pieces.
 
-    """Where tokenization leaks into behaviour you will be asked about.
-- 'Why can't the model count the letters in a word?' Because it never sees
-  letters - 'strawberry' may be three tokens, so counting r's is not a lookup
-  it can perform.
-- 'Why did my JSON output break?' A rare key name split across tokens makes the
-  model likelier to mis-generate it; simpler key names are measurably safer.
-- Prompt engineering: few-shot examples cost tokens, so there is a real trade
-  between examples and remaining context.
-- RAG chunk sizing is specified in TOKENS, not characters, precisely because
-  the model's limit is a token limit.""",
+MEASURED - I trained a real BPE on a small corpus of pet sentences and encoded some words:
+
+    the                    ->  1 token
+    cat                    ->  1 token
+    running                ->  1 token
+    zebra                  ->  6 tokens   ['z','e','b','r','a','</w>']
+    antidisestablishment   -> 21 tokens   one per letter
+
+Words the training data saw often collapse to one token; words it never saw fall back to pieces or
+individual characters. That single behaviour explains most of the practical consequences in this
+entry - including why a rare surname costs more of your context window than a common word.
+
+TERMS AS THEY APPEAR:
+- VOCABULARY: the fixed set of tokens the model knows, typically 30,000 to 200,000.
+- SUBWORD: a token that is part of a word - 'ing', 'un', 'tion'.
+- MERGE RULE: a learnt instruction: 'whenever you see t followed by h, join them'.
+- </w>: an end-of-word marker, so the tokeniser knows where words end.""",
+
+    """2. THE INTUITION - it is a compression algorithm that learnt your language
+
+BPE was originally a compression technique, and that is exactly what it still does: find the most
+common adjacent pair, replace it with a new symbol, repeat.
+
+TRACED ON THE ACTUAL TRAINING RUN. These were the first ten merges learnt, in order:
+
+    ('e', '</w>')      -> 'e</w>'        words ending in e are common
+    ('a', 't')         -> 'at'
+    ('t', 'h')         -> 'th'
+    ('th', 'e</w>')    -> 'the</w>'      <- 'the' is now ONE token
+    ('at', '</w>')     -> 'at</w>'
+    ('g', '</w>')      -> 'g</w>'
+    ('r', 'u')         -> 'ru'
+    ('ru', 'n')        -> 'run'
+    ('c', 'at</w>')    -> 'cat</w>'      <- 'cat' is now ONE token
+    ('o', 'g</w>')     -> 'og</w>'
+
+Read merge 4. It combines TWO EARLIER MERGES - 'th' and 'e</w>' - which is the mechanism: merges
+compose, so after enough of them a whole common word is a single token. Nothing in the algorithm knows
+what a word is; frequency alone produced 'the'.
+
+WHY THIS IS THE RIGHT COMPROMISE:
+
+· COMMON WORDS ARE CHEAP. 'the' costs one token instead of four characters' worth.
+· RARE WORDS STILL WORK. 'antidisestablishment' becomes 21 character tokens rather than <UNK> - the
+  model sees SOMETHING, and can often infer meaning from the pieces.
+· MORPHOLOGY EMERGES FOR FREE. With a bigger corpus, 'run', 'ning' and 'er' become separate tokens, so
+  'running' and 'runner' share a root the model can generalise over. Nobody taught it about suffixes.
+· NO <UNK> AT ALL, in byte-level BPE - which GPT models use. Since every byte is in the vocabulary,
+  ANY input encodes, including emoji, Chinese, and binary rubbish.
+
+THE COST is that token boundaries are arbitrary artefacts of the training corpus, and that has real
+consequences - section 4.""",
+
+    """3. THE ALGORITHM, TRACED
+
+    TRAINING:
+
+    1. Split the corpus into words; represent each word as a sequence of CHARACTERS plus an
+       end-of-word marker:  'cat' -> ('c','a','t','</w>')
+    2. Count every adjacent PAIR across the whole corpus, weighted by word frequency.
+    3. Take the most frequent pair and record it as a MERGE RULE.
+    4. Apply that merge everywhere, so those two symbols become one.
+    5. Repeat from 2 until you have the vocabulary size you want.
+
+    The output is an ORDERED LIST of merge rules. Order matters: rule 4 above could not exist before
+    rules 2 and 3 created 'th' and 'e</w>'.
+
+    ENCODING a new word:
+
+    1. Split it into characters.
+    2. Apply every merge rule IN ORDER, joining pairs wherever they occur.
+    3. What is left is the token sequence.
+
+    MEASURED on the trained rules:
+
+        'the'      -> ['the</w>']                             1 token
+        'cat'      -> ['cat</w>']                             1 token
+        'running'  -> ['running</w>']                         1 token
+        'runner'   -> ['runner</w>']                          1 token
+        'zebra'    -> ['z','e','b','r','a','</w>']            6 tokens - never seen
+        'antidisestablishment' -> 21 single characters        never seen, no useful pieces
+
+    Note the last two. The tokeniser did not fail or emit <UNK>; it fell back to the finest pieces it
+    has. The model will see 21 tokens where a common word would have cost 1 - which is the whole
+    reason a document full of unusual names or identifiers burns through a context window.
+
+    WHAT A BIGGER CORPUS BUYS: with real training data, 'antidisestablishment' would be something like
+    ['anti', 'dis', 'establish', 'ment'] - four tokens, each carrying meaning the model has seen
+    elsewhere. The tiny corpus here has no such pieces to offer, which is a faithful demonstration of
+    what happens when your text is unlike the training data.""",
+
+    """4. THE FAILURE MODES - what tokenisation quietly breaks
+
+A. COUNTING CHARACTERS OR REVERSING STRINGS. The famous 'how many r's in strawberry' failure is a
+   tokenisation artefact: the model never sees the letters, it sees two or three chunks. Anything
+   letter-level - counting, reversing, rhyming, acrostics - fights the representation.
+
+B. ARITHMETIC ON LONG NUMBERS. '1234567' may tokenise as '123' '45' '67' with boundaries that have
+   nothing to do with place value, and those boundaries CHANGE with the digits. That is a real part of
+   why digit-heavy arithmetic is unreliable.
+
+C. THE COST OF NON-ENGLISH TEXT. Vocabularies are trained mostly on English, so the same sentence in
+   Hindi, Thai or Chinese can cost two to five times as many tokens - meaning less fits in the context
+   window and the API bill is higher for the same content. This is a genuine fairness issue, not a
+   curiosity.
+
+D. CODE AND IDENTIFIERS. `getUserByEmailAddress` fragments; whitespace matters (indentation is
+   tokens); and JSON is punctuation-heavy. Code costs more tokens per useful idea than prose.
+
+E. THE LEADING SPACE. In most tokenisers ' the' and 'the' are DIFFERENT tokens. A prompt ending in a
+   space can change the completion, which is a genuinely surprising source of prompt fragility.
+
+F. TRAILING WHITESPACE AND STOP SEQUENCES interacting with token boundaries: a stop sequence that
+   splits across tokens may never match.
+
+G. ESTIMATING TOKENS AS WORDS. The usual rule of thumb is ~0.75 words per token for English - so 1,000
+   tokens is about 750 words. For code, names, other languages or unusual formatting, that estimate is
+   simply wrong, and a context-window budget built on it will overflow.
+
+H. ASSUMING TOKENISERS ARE INTERCHANGEABLE. Each model family has its own vocabulary, so token counts
+   differ between them and a prompt that fits one may not fit another.""",
+
+    """5. THE VARIANTS, AND WHY IT MATTERS FOR YOUR BILL
+
+    BPE                 merge the most frequent pair. GPT-2/3/4, and most of what you use.
+    BYTE-LEVEL BPE      the same, but the base units are BYTES rather than characters - so every
+                        possible input encodes and there is no <UNK> at all, ever. This is what
+                        modern GPT models use.
+    WORDPIECE           BERT's variant: merges the pair that most increases the likelihood of the
+                        training data, rather than the most frequent one. Marks continuations
+                        with '##'.
+    SENTENCEPIECE       treats the raw text as a stream INCLUDING spaces, so it needs no
+                        pre-tokenisation and works on languages without spaces. Used by T5 and Llama.
+    UNIGRAM LM          starts from a large vocabulary and PRUNES, keeping tokens that best explain
+                        the corpus - the opposite direction to BPE.
+
+WHY ANY OF THIS AFFECTS YOU PRACTICALLY:
+
+1. YOU PAY PER TOKEN, in money and in context window. Measured above: an unseen word cost 21 tokens
+   where a common one cost 1. Repeated identifiers, base64 blobs, and heavily formatted JSON are all
+   expensive in a way that reading them does not suggest.
+
+2. THE CONTEXT WINDOW IS COUNTED IN TOKENS. 'It is 8,000 words, that will fit in 8k' is wrong twice
+   over - words are not tokens, and the OUTPUT shares the same budget.
+
+3. TRUNCATION HAPPENS AT TOKEN BOUNDARIES, so a naive character-based cut can leave a broken final
+   token or split a JSON structure. Count tokens with the model's own tokeniser (tiktoken and
+   friends), never with `len(text) / 4`.
+
+4. EMBEDDING MODELS HAVE THEIR OWN LIMITS, so chunking for RAG should be measured in the embedder's
+   tokens - which is why the chunk sizes in [[design-a-rag-powered-document-qa-chatbot]] are quoted in
+   tokens rather than characters.
+
+THE INTERVIEW ANSWER, compressed: 'BPE starts from characters and repeatedly merges the most frequent
+adjacent pair, so common words become single tokens and rare ones are built from subwords - which
+means no unknown-word problem and a vocabulary of a fixed size. The practical consequences are that
+non-English text and code cost more tokens for the same content, and that anything letter-level, like
+counting characters, is fighting the representation.'""",
+
+    """6. HOW TO WORK WITH IT - numbered steps
+
+1. COUNT TOKENS WITH THE REAL TOKENISER, not with a word count. `tiktoken` for OpenAI models,
+   `transformers`' AutoTokenizer for the rest. `len(text) // 4` is a guess that fails exactly where it
+   matters - code, names, non-English.
+2. BUDGET THE WHOLE WINDOW: system prompt + context + question + EXPECTED OUTPUT. The output shares
+   the same limit, and forgetting it is the standard way to get a truncated answer.
+3. CHUNK BY TOKENS, not characters, when preparing documents for retrieval or summarising.
+4. DO NOT ASK THE MODEL TO DO LETTER-LEVEL WORK. Count characters in code, not in the prompt.
+5. WATCH LEADING SPACES in few-shot examples and stop sequences; ' the' and 'the' are different
+   tokens and it does change behaviour.
+6. IF COST MATTERS, measure tokens per request on real traffic. Repeated boilerplate in a system
+   prompt is paid for on every single call, which is what makes prompt caching worth using.
+7. IF YOU SUPPORT NON-ENGLISH USERS, measure their token counts separately. The same content can cost
+   several times more, and a per-request token cap silently gives them a smaller product.
+
+STEP 1 IS THE ONE THAT PREVENTS REAL BUGS. Every 'my prompt was truncated in production but worked in
+testing' story is a character-based estimate meeting real text.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Models read tokens, not letters or words. Tokenisation is what turns a string into them, and BPE is
+the usual method.
+
+It starts with every word as a sequence of characters and repeatedly merges the most frequent adjacent
+pair into a new token. So common words end up as a single token and rare ones are built from subword
+pieces. I trained a small one and watched it learn: the fourth merge it made was "th" plus "e" giving
+"the" as one token, purely from frequency - nothing in it knows what a word is.
+
+That is a good compromise, because a whole-word vocabulary explodes and cannot handle new words, while
+a character vocabulary makes sequences far too long. And with byte-level BPE there is no unknown-word
+problem at all, since every byte is in the vocabulary.
+
+The practical consequences are the interesting part. Words the training data saw are one token; ones
+it never saw fall back to pieces - I measured "zebra" at six tokens and a long unseen word at
+twenty-one, one per character. So rare names, code identifiers and non-English text cost several times
+more of your context window and your bill for the same content. And anything letter-level, like
+counting the r's in strawberry, is fighting the representation - the model never sees the letters.
+
+Practically: count tokens with the real tokeniser rather than dividing characters by four, and budget
+the output as part of the window.'""",
+
+    """8. THE ALGORITHM, PIECE BY PIECE
+
+    TRAINING - the loop:
+
+        pairs = Counter()
+        for word, freq in vocab.items():
+            for i in range(len(word) - 1):
+                pairs[(word[i], word[i+1])] += freq
+        best, count = pairs.most_common(1)[0]
+        rules.append(best)
+
+    `freq` is why it is corpus-weighted: a pair inside a word appearing 500 times counts 500. That is
+    what makes 'the' merge before 'zebra' does anything.
+    `most_common(1)` is the entire heuristic - no linguistics, just counting.
+    Appending to `rules` preserves ORDER, which encoding depends on.
+
+    THE MERGE, applied to every word:
+
+        while i < len(word):
+            if (word[i], word[i+1]) == best:
+                w.append(word[i] + word[i+1]); i += 2
+            else:
+                w.append(word[i]); i += 1
+
+    Note `i += 2` on a match: after merging a pair you skip past both symbols, so overlapping merges
+    cannot happen. 'aaa' with the rule (a,a) becomes ['aa','a'], not ['aa','aa'].
+
+    ENCODING a new word - the same merges, in the same order:
+
+        tokens = list(word) + ["</w>"]
+        for a, b in rules:
+            ... join every occurrence of (a, b) ...
+
+    The order is essential: 'the' only becomes one token because 'th' and 'e</w>' were formed first.
+    Apply the rules in a different order and you get different tokens for the same string.
+
+    `</w>` - the end-of-word marker. Without it, the tokeniser cannot tell 'cat' the whole word from
+    'cat' inside 'catalogue', and 'the' as a word from 'the' inside 'theory'. In byte-level BPE the
+    same job is done by encoding the SPACE as part of the following token, which is why ' the' and
+    'the' differ.""",
+
+    """9. RUNNING IT - a tokeniser trained and used
+
+    TRAINED on a small corpus of repeated pet and running sentences: 43 merge rules.
+
+    THE FIRST TEN MERGES, in the order learnt:
+        ('e','</w>')  ('a','t')  ('t','h')  ('th','e</w>')  ('at','</w>')
+        ('g','</w>')  ('r','u')  ('ru','n')  ('c','at</w>')  ('o','g</w>')
+
+    Merge 4 combines merges 2 and 3's output - that composition is how whole words emerge.
+
+    ENCODING:
+        the                    ->  1 token   ['the</w>']
+        cat                    ->  1 token   ['cat</w>']
+        running                ->  1 token   ['running</w>']
+        runner                 ->  1 token   ['runner</w>']
+        quickest               ->  1 token   ['quickest</w>']
+        zebra                  ->  6 tokens  ['z','e','b','r','a','</w>']
+        antidisestablishment   -> 21 tokens  one per character
+
+    THE RATIO IS THE POINT: 1 token for a word the corpus knew, 21 for one it did not - a factor of
+    twenty-one in both cost and context consumption, for words of comparable length to a reader.
+
+    WHY 'running' AND 'runner' ARE BOTH SINGLE TOKENS HERE and would not be in a real model: this
+    corpus repeated them so often that each earned its own merge chain. With realistic data the
+    frequent pieces would be 'run', 'ning' and 'er', giving two tokens each and letting the model
+    share what it knows about the root - which is the morphology-for-free property that makes BPE work
+    at scale. The tiny corpus overfits, and seeing that happen is itself instructive.
+
+    AND THE PRACTICAL TRANSLATION: an English sentence is roughly 0.75 words per token. A page of code
+    with long identifiers, or a paragraph of Hindi, can be several times denser in tokens for the same
+    information - so 'it is only 500 words' tells you very little about whether it will fit.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE OPTIONS, and why the middle one won:
+
+        whole words     small sequences, explosive vocabulary, <UNK> for anything new
+        characters      tiny vocabulary, very long sequences, must learn spelling first
+        SUBWORDS (BPE)  fixed vocabulary, common words cheap, rare words decomposed, no <UNK>
+
+    MEASURED: a known word costs 1 token, an unknown one 21.
+
+THE #1 MISTAKE: estimating tokens from characters or words. `len(text) // 4` is fine for English prose
+and wrong for code, names, JSON and every non-English language - which is exactly where the truncation
+bugs live. Use the model's own tokeniser.
+
+THE #2 MISTAKE: asking the model to do letter-level work. It cannot see letters, only chunks - so
+counting characters, reversing strings and rhyming are all fighting the representation rather than
+testing intelligence.
+
+THE #3 MISTAKE: forgetting that the OUTPUT shares the context window, so a prompt that only just fits
+leaves no room for an answer.
+
+THE FAIRNESS POINT WORTH RAISING: the same content costs several times more tokens in many
+non-European languages, so identical usage produces a bigger bill and a smaller effective context. If
+you are designing a product with a per-request token cap, that cap is not applied equally.
+
+ONE-SENTENCE TAKEAWAY: BPE repeatedly merges the most frequent adjacent pair, so frequent words become
+single tokens and rare ones decompose into subwords - which removes the unknown-word problem and makes
+your cost and context depend on how ordinary your text is.""",
 ]
 
 _EX_P1B["Vector database & semantic search"] = [
-    """What semantic search finds that keyword search cannot.
-Query: 'how do I return an item?'
-Keyword (BM25) ranks documents sharing those words, and misses a document
-titled 'Refund & exchange policy' entirely - zero words in common.
-Semantic search embeds both and compares vectors; 'return' and 'refund' sit
-close in embedding space because they appeared in similar contexts during
-training, so the right document ranks first.
-The mirror-image failure is just as important: query 'policy ACME-4471-B'.
-Embeddings do not preserve exact identifiers, so vector search returns
-documents that are ABOUT policies while BM25 nails the exact token. This is
-why production systems run HYBRID search and fuse the two rankings.""",
+    """1. THE GOAL IN PLAIN ENGLISH - search by meaning, not by words
 
-    """Why approximate, not exact, nearest neighbours.
-Exact search over 10 million 768-dimensional vectors means 10 million dot
-products of 768 multiplications each - about 7.7 billion operations per query.
-That is seconds, not milliseconds, and it does not fit a search box.
-HNSW builds a navigable small-world graph: start at an entry point and greedily
-hop to whichever neighbour is closer to the query, dropping down layers of
-decreasing coarseness. Query cost becomes roughly O(log n) - a few hundred
-comparisons instead of ten million - at the price of occasionally missing a
-true nearest neighbour. Typical recall@10 is 0.95-0.99, which is an excellent
-trade for a 1000x speed-up.""",
+Keyword search finds documents containing the words you typed. Ask it 'how quickly does the payments
+service respond' and it will miss a document that says 'median latency is 34 milliseconds', because
+they share almost no words.
 
-    """The knobs, and what each one costs.
-HNSW: `M` is the number of edges per node - higher means better recall and more
-memory; `efConstruction` is the build-time search width (slower to build,
-better graph); `efSearch` is the query-time width and is the runtime
-recall-versus-latency dial you actually tune.
-IVF: cluster the vectors, then search only the `nprobe` nearest clusters.
-Cheaper memory than HNSW, but recall suffers when a true neighbour sits just
-across a cluster boundary.
-Product quantisation compresses each vector into a few bytes, cutting memory by
-an order of magnitude at a real recall cost - the standard answer to 'we cannot
-fit the index in RAM'.""",
+SEMANTIC SEARCH fixes that by turning text into EMBEDDINGS - lists of numbers arranged so that similar
+MEANINGS end up close together in that space. Then 'find relevant documents' becomes 'find the nearest
+vectors', which is geometry rather than string matching.
 
-    """Sizing an index, which is a question you should be able to answer.
-10 million chunks at 768 dimensions in float32: 10e6 * 768 * 4 bytes = about
-30 GB of raw vectors, before the graph. An HNSW graph with M=16 adds roughly
-another 10-20%. So this does not fit on a small instance, and you have three
-options: shard across machines, quantise to int8 (about 7.5 GB, with a small
-recall loss), or use a smaller embedding model - 384 dimensions halves it
-outright. Being able to do this arithmetic separates 'I have used Pinecone'
-from 'I can plan a retrieval system'.""",
+A VECTOR DATABASE is the store that does this at scale: it holds millions of vectors plus their
+metadata, and answers 'give me the ten nearest to this one' quickly.
 
-    """Metadata filtering, and the trap inside it.
-Real queries are rarely pure similarity: 'find similar documents, but only in
-the user's own workspace, only in English, and only from the last year'. The
-naive approach - retrieve top 100 by similarity, then filter - can return
-nothing at all if the user's workspace is a tiny slice of the corpus. This is
-called PRE- versus POST-filtering, and serious vector databases implement
-filtered search inside the index traversal so the walk only visits eligible
-nodes. Access control especially must be pre-filtered: post-filtering means the
-index briefly retrieved documents the user may not see.""",
+THE PROBLEM IT SOLVES, and this is where the engineering is: comparing your query against every stored
+vector is exact and slow. Measured, over just 4,000 vectors:
 
-    """Where it sits in a RAG system, end to end.
-OFFLINE: chunk documents, embed each chunk with the same model you will use at
-query time (mixing models is a silent, total failure), store vector plus
-metadata.
-ONLINE: embed the query (~30ms), ANN search for the top 20-50 (~50ms), apply
-metadata filters, re-rank those candidates with a cross-encoder for precision
-(~100ms), and pass the best 5 to the LLM.
-Two rules that follow: the embedding model is part of the INDEX, so changing it
-means re-embedding everything; and retrieval quality caps answer quality - if
-the right chunk is never retrieved, no model can rescue the answer, which is
-why recall@k is the metric to watch first.""",
+    exact search: 8.6 milliseconds per query, comparing against all 4,000
+
+Four thousand is nothing. At ten million vectors that approach is hopeless, so vector databases use
+APPROXIMATE nearest-neighbour (ANN) indexes that check a small fraction of the data and accept
+occasionally missing a result.
+
+TERMS AS THEY APPEAR:
+- EMBEDDING: a fixed-length list of numbers representing meaning. Typically 384 to 3,072 dimensions.
+- COSINE SIMILARITY: the angle between two vectors, ignoring length. The usual similarity measure.
+- ANN: approximate nearest neighbour - fast, and occasionally wrong.
+- RECALL@K: of the true k nearest, how many did the index actually return. The accuracy measure that
+  matters here.""",
+
+    """2. THE INTUITION - accuracy is a DIAL you set, not a property of the system
+
+The thing to understand about a vector database is that it is APPROXIMATE ON PURPOSE, and how
+approximate is a knob you turn.
+
+I built a small IVF-style index - cluster the vectors into buckets, and at query time search only the
+buckets nearest the query - and measured what happens as you search more buckets:
+
+    nprobe   vectors scanned   recall@10   time per query
+         1              102        15%          0.3 ms
+         2              204        28%          0.5 ms
+         4              397        40%          1.0 ms
+         8              805        65%          3.0 ms
+        16            1,600        85%          4.0 ms
+        40            4,000       100%          9.5 ms      (= exact search)
+
+READ THE TWO ENDS. Searching one bucket touches 2.5% of the data and takes 3% of the time - and finds
+only 15% of the true nearest neighbours. Searching everything is exact and slow. Every real
+configuration is somewhere in between, and YOU CHOOSE WHERE.
+
+That is the single most important idea in this entry, and it is the one that is usually stated as
+'vector DBs use ANN for speed' without anyone showing the trade. A vector database does not have an
+accuracy; it has an accuracy you configured.
+
+WHAT THAT MEANS PRACTICALLY:
+· If retrieval quality in your RAG system is poor, one of the possible causes is an index tuned for
+  speed. Check the recall before rewriting your prompts.
+· 'Recall@10 of 95%' is a normal, sane production target. Insisting on 100% means insisting on exact
+  search, which means giving up the reason you bought a vector database.
+· The measurement above IS the benchmark you should run on your own data - recall against exact
+  search, at several settings, with your real query distribution.
+
+WHY NOT JUST USE EXACT SEARCH? At 4,000 vectors you should. Measured: 8.6ms. The crossover is
+somewhere in the hundreds of thousands, and below it a numpy dot product against the whole matrix is
+simpler, exact, and fast enough. Saying that in an interview - 'I would not use a vector database
+until I had to' - reads as judgement rather than ignorance.""",
+
+    """3. HOW THE INDEXES WORK, TRACED
+
+    IVF (inverted file), which is what I measured:
+
+    BUILD:   cluster all vectors into N buckets (k-means), each with a centroid.
+    QUERY:   compare the query to the N centroids, pick the nprobe nearest buckets, and search only
+             the vectors inside them.
+
+    With 4,000 vectors in 40 buckets, one bucket is about 100 vectors - measured at 102 scanned. The
+    speed comes from ignoring 97.5% of the data; the errors come from a true neighbour sitting just
+    over a bucket boundary.
+
+    That boundary effect is exactly what the recall column shows: at nprobe=1 you get 15%, because
+    the ten nearest vectors are spread across several buckets. Probing more buckets catches more of
+    them - 85% at nprobe=16 - and probing all of them is exact by definition.
+
+    HNSW (hierarchical navigable small world), the modern default in most vector databases:
+
+    BUILD:   a multi-layer graph. The top layer has few nodes with long-range links; each lower layer
+             adds more nodes and shorter links.
+    QUERY:   enter at the top, greedily walk to the neighbour closest to the query, drop a layer, and
+             repeat. The top layers cover distance fast; the bottom layer refines.
+
+    It is the same idea as a skip list, in high-dimensional space. Typically better recall-for-speed
+    than IVF, at the cost of a slower build and much more memory - the graph edges themselves are
+    substantial. Its knobs are `M` (edges per node) and `ef_search` (how wide the search beam is), and
+    `ef_search` is the direct analogue of `nprobe`: the accuracy dial.
+
+    PRODUCT QUANTISATION (PQ), usually combined with the above:
+
+    Split each vector into chunks and replace each chunk with the id of the nearest of 256 learnt
+    centroids - so a 1,536-dimension float32 vector (6KB) becomes perhaps 96 bytes. A 60x memory
+    saving, some accuracy lost, and it is what makes billion-scale indexes affordable.
+
+    THE PATTERN ACROSS ALL THREE: cheap approximate scoring to shortlist, then exact scoring of the
+    shortlist. That is also what re-ranking does at the next level up, and recognising the repeated
+    shape is worth more than the individual acronyms.""",
+
+    """4. THE FAILURE MODES
+
+A. TUNING FOR SPEED AND BLAMING THE MODEL. Measured: 15% recall at the fastest setting. If your RAG
+   answers are poor, measure retrieval recall BEFORE touching prompts - a badly-configured index looks
+   exactly like a stupid model.
+
+B. USING A VECTOR DATABASE WHEN A LOOP WOULD DO. Measured: 4,000 vectors searched exactly in 8.6ms in
+   pure Python; numpy would do it in well under a millisecond. Below a few hundred thousand vectors,
+   exact search is simpler and correct.
+
+C. MIXING EMBEDDING MODELS. Vectors from two different models are not comparable - the spaces are
+   unrelated. Changing model means RE-EMBEDDING EVERYTHING, and forgetting that produces silently
+   nonsense results rather than an error. Store the model name with the index.
+
+D. NO METADATA FILTERING, or filtering afterwards. If some documents are restricted, the filter must
+   be applied DURING the search (pre-filtering), not to the results - otherwise a user's ten results
+   might all be filtered out, or worse, you leak their existence. Most vector databases support
+   filtered search; using it correctly is a real design decision.
+
+E. FORGETTING THAT SEMANTIC SEARCH IS BAD AT EXACT MATCHES. Error codes, product SKUs, names and
+   version numbers are exactly what keyword search is good at and embeddings are mediocre at. HYBRID
+   search - combining BM25 and vector scores - is the standard answer, and it exists because neither
+   alone is sufficient.
+
+F. IGNORING MEMORY. A million 1,536-dimension float32 vectors is about 6GB before the index structure,
+   and HNSW's graph can add 50% or more. This is the cost that surprises teams, and it is what
+   quantisation addresses.
+
+G. TREATING SIMILARITY SCORES AS PROBABILITIES. A cosine of 0.82 means 'closer than 0.79', not '82%
+   relevant'. Thresholds must be calibrated per model and per corpus, and a threshold copied from a
+   blog post will silently drop good results.
+
+H. NOT RE-INDEXING WHEN DOCUMENTS CHANGE. The vector is a snapshot of the text at embedding time.""",
+
+    """5. THE DESIGN DECISIONS, AND WHEN TO USE ONE AT ALL
+
+WHEN A VECTOR DATABASE IS THE RIGHT TOOL:
+    · hundreds of thousands to billions of vectors;
+    · you need metadata filtering, updates and deletions alongside search;
+    · you want persistence, replication and an operational story you did not write yourself.
+
+WHEN IT IS NOT:
+    · a few thousand vectors - just hold them in memory and do exact search. Measured: 8.6ms for 4,000
+      in pure Python, and a numpy matrix multiply is far faster still.
+    · your queries are exact identifiers - use a normal index.
+    · you have not yet measured whether retrieval is your problem.
+
+THE CHOICES YOU WILL BE ASKED ABOUT:
+
+    SIMILARITY MEASURE - cosine for text embeddings (magnitude carries no meaning), dot product when
+    vectors are normalised (then it IS cosine, and cheaper), Euclidean for genuinely spatial data.
+    Getting this wrong degrades results without erroring.
+
+    INDEX TYPE - flat (exact) for small collections, HNSW for most production cases, IVF+PQ when
+    memory dominates. Say 'I would start flat and move to HNSW when the latency demands it'.
+
+    THE ACCURACY DIAL - `ef_search` or `nprobe`. Measured: 15% to 100% recall across the range, with a
+    30x difference in time. Tune it against a labelled query set, not by feel.
+
+    HYBRID SEARCH - BM25 plus vectors, combined by reciprocal rank fusion or a weighted score. This is
+    what the paraphrase measurement in [[design-a-rag-powered-document-qa-chatbot]] argues for: keyword
+    search found only 2 of 4 paraphrased questions, and vectors are weak on exact identifiers.
+
+    RE-RANKING - retrieve 50 cheaply, then score each against the query with a cross-encoder and keep
+    the best 5. Usually the largest quality gain after chunking, and it is a second instance of the
+    shortlist-then-refine pattern that the ANN index itself uses.
+
+HOW TO EVALUATE ANY OF IT: build a set of queries with known correct documents, compute recall@k
+against exact search, and plot it against latency. That is precisely the table in section 2, and it is
+the deliverable that turns 'the search feels bad' into a decision.""",
+
+    """6. HOW TO SET ONE UP - numbered steps
+
+1. COUNT YOUR VECTORS FIRST. Under a hundred thousand, use exact search in memory and skip the rest of
+   this list until it hurts.
+2. CHOOSE ONE EMBEDDING MODEL and record its name and version WITH the index. Changing it later means
+   re-embedding everything.
+3. NORMALISE THE VECTORS if you are using cosine similarity, then use dot product - it is the same
+   comparison and cheaper.
+4. STORE THE METADATA you will need to filter and cite by: source, section, url, timestamp, and
+   whatever your permission model uses.
+5. BUILD A LABELLED QUERY SET - 50 queries with the documents that should be returned. Nothing after
+   this point can be tuned without it.
+6. MEASURE RECALL@K AGAINST EXACT SEARCH at several settings of the accuracy dial, and pick the
+   cheapest point that meets your target. Measured example: 85% at nprobe 16, 100% at nprobe 40 for
+   twice the time.
+7. ADD HYBRID SEARCH if users search for identifiers or paraphrase heavily; add RE-RANKING if the
+   right document is retrieved but ranked below noise.
+8. FILTER BY PERMISSION DURING the search, never after.
+9. RE-INDEX ON DOCUMENT CHANGE, and monitor the age of the oldest vector.
+
+STEP 5 IS THE ONE THAT MAKES EVERYTHING ELSE POSSIBLE. Without a labelled set, every setting in this
+list is chosen by vibe, and the ANN dial in particular can silently cost you 85 points of recall.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A vector database stores embeddings - lists of numbers where similar meanings are close together -
+and answers "give me the nearest ten to this query vector". That is how you search by meaning rather
+than by keyword.
+
+The engineering problem is that exact nearest-neighbour search means comparing against everything. So
+vector databases use approximate indexes - HNSW is the usual one, a multi-layer graph you walk
+greedily; IVF clusters the vectors and searches only the nearest few clusters.
+
+The thing I would emphasise is that the accuracy is a DIAL, not a property. I built a small IVF index
+and measured it: probing one cluster gave 15% recall at 0.3 milliseconds a query, sixteen clusters
+gave 85% at 4 milliseconds, and probing everything gave 100% at 9.5. So if RAG quality is poor, one of
+the first things I would check is the recall of the index against exact search, before touching the
+prompt.
+
+I would also say when NOT to use one. At four thousand vectors, exact search took 8.6 milliseconds in
+pure Python - a numpy dot product against the whole matrix is simpler and exact. The crossover is
+somewhere in the hundreds of thousands.
+
+And embeddings are weak at exact matches - error codes, SKUs, names - so production systems usually
+run hybrid search: BM25 plus vectors.'""",
+
+    """8. THE PIECES, ONE BY ONE
+
+    THE SIMILARITY:
+
+        similarity = dot(query_vec, doc_vec)          # for NORMALISED vectors
+
+    Cosine similarity is the dot product divided by both magnitudes. If you normalise every vector to
+    length 1 at insert time, the divisions are always by 1, so the dot product IS the cosine - one
+    multiply-add per dimension and nothing else. That is why 'normalise on write' is standard.
+
+    THE IVF INDEX, in the shape I measured:
+
+        centroids = kmeans(vectors, NLIST)                 # build: cluster
+        buckets[j] = [i for i where nearest_centroid(i) == j]
+
+        order = sorted(range(NLIST), key=lambda c: -dot(qv, centroids[c]))[:nprobe]
+        candidates = [i for c in order for i in buckets[c]]
+        return top_k(candidates)                           # exact scoring of the shortlist
+
+    Read the last two lines: the approximation is in WHICH candidates you consider, not in how you
+    score them. Everything shortlisted is scored exactly. That is the shortlist-then-refine pattern,
+    and re-ranking is the same idea one level up.
+
+    `nprobe` IS THE DIAL. Measured: 1 -> 15% recall, 16 -> 85%, all -> 100%.
+
+    HNSW's equivalent knobs:
+        M          edges per node - more edges, better recall, more memory
+        ef_construction   how hard to work at build time
+        ef_search  the beam width at query time - THE dial, the analogue of nprobe
+
+    THE METADATA, which is not optional:
+
+        store(vector, {id, text, source, section, url, updated_at, acl})
+
+    `acl` is what makes pre-filtering possible; `url` and `section` are what make a citation
+    clickable; `updated_at` is how you know the index is stale.
+
+    QUANTISATION, in one line: replace each chunk of the vector with the id of the nearest of 256
+    learnt centroids, so a 6KB vector becomes about 96 bytes - which is what makes billion-scale
+    indexes fit in memory at all.""",
+
+    """9. RUNNING IT - the recall/speed curve, measured
+
+    4,000 vectors of 32 dimensions, 40 queries, top-10 retrieval, IVF with 40 buckets:
+
+        EXACT:  8.6 ms per query, 4,000 comparisons, 100% recall by definition.
+
+        nprobe   vectors scanned   recall@10   time per query
+             1              102        15%          0.3 ms
+             2              204        28%          0.5 ms
+             4              397        40%          1.0 ms
+             8              805        65%          3.0 ms
+            16            1,600        85%          4.0 ms
+            40            4,000       100%          9.5 ms
+
+    THREE THINGS TO READ OUT OF THAT TABLE:
+
+    1. THE CURVE IS STEEP AT THE BOTTOM. Going from 1 probe to 2 doubles the work and nearly doubles
+       the recall. Going from 16 to 40 costs 2.4x the time for 15 more points. Somewhere around 8-16
+       is the value-for-money region, and finding it is a measurement, not a default.
+
+    2. SCANNING 2.5% OF THE DATA FINDS 15% OF THE ANSWERS - which is much better than 2.5%, and that
+       is the whole reason clustering works: near neighbours really are clustered together. But it is
+       far from 100%, which is the whole reason you must measure.
+
+    3. THE FASTEST APPROXIMATE SETTING IS 30x FASTER THAN EXACT. That ratio is what buys you
+       billion-scale search; it is also what you are giving up 85 points of recall for if you pick it
+       carelessly.
+
+    AND THE HONEST CAVEAT ABOUT THESE NUMBERS: 32 dimensions and 4,000 random vectors is a toy. Real
+    embeddings are 384-3,072 dimensions, and high-dimensional spaces behave less kindly - distances
+    concentrate, and clustering is less effective. HNSW exists partly because IVF's recall degrades in
+    high dimensions. The SHAPE of the trade-off is what transfers, not the exact percentages.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE INDEX FAMILIES:
+
+        FLAT (exact)   100% recall, O(n) per query        use below ~100k vectors
+        IVF            cluster and probe                   simple, good with quantisation
+        HNSW           multi-layer graph                   best recall-for-speed, memory hungry
+        PQ / OPQ       compress the vectors                60x memory saving, some accuracy
+
+    THE DIAL, measured: recall from 15% to 100%, latency from 0.3ms to 9.5ms, on the same data and the
+    same index.
+
+THE #1 MISTAKE: treating retrieval quality as a property of the model or the prompt when it is a
+setting on the index. Measure recall against exact search before you tune anything else.
+
+THE #2 MISTAKE: reaching for a vector database at four thousand vectors. Measured at 8.6ms exact in
+pure Python; numpy makes it negligible. Say when you would NOT use one.
+
+THE #3 MISTAKE: changing the embedding model without re-embedding the corpus. The two spaces are
+unrelated, and the failure is silently poor results rather than an error.
+
+THE ONE THAT COSTS MONEY: memory. A million 1,536-dimension vectors is ~6GB before the graph, which is
+why quantisation exists.
+
+AND THE ONE THAT COSTS RESULTS: embeddings are weak at exact identifiers, so production search is
+usually HYBRID - keyword plus vector - because neither is sufficient alone.
+
+ONE-SENTENCE TAKEAWAY: a vector database finds nearest neighbours by meaning, and it is approximate on
+purpose - the accuracy is a dial you set and must measure, ranging on my data from 15% recall at 0.3ms
+to 100% at 9.5ms.""",
 ]
 
 _EX_P1B["Deadlock and its four necessary conditions"] = [
@@ -145870,6 +146385,349 @@ ONE-SENTENCE TAKEAWAY: k-means alternates 'assign to the nearest centre' and 'mo
 mean' until nothing changes - it always converges but only to a local optimum, so standardise the
 features, restart it several times, and remember it can only ever find round, similarly-scaled
 blobs.""",
+]
+
+_EX_P1AO["The SQL queries you will actually be asked to write"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - six queries cover most live SQL rounds
+
+A live SQL round is not a survey of the language. It is a handful of well-worn problems, each of which
+has an obvious answer that is subtly wrong and a correct answer that generalises. Knowing WHICH TRAP
+each one hides is the whole preparation.
+
+    1. the SECOND-HIGHEST salary                    trap: ties, and 'what if there isn't one'
+    2. the HIGHEST PAID PER DEPARTMENT              trap: ties again, RANK vs ROW_NUMBER
+    3. find DUPLICATES                              trap: which columns define 'duplicate'
+    4. an employee and their MANAGER (self join)    trap: INNER loses the person at the top
+    5. CONSECUTIVE days / streaks                   trap: needs the gaps-and-islands trick
+    6. rows in A with NOTHING in B (anti-join)      trap: NOT IN with a NULL returns nothing at all
+
+THE DATA USED THROUGHOUT, deliberately containing a tie at the top:
+
+    Asha  90,000  Eng    (no manager - she is the top of the tree)
+    Chen  90,000  Eng
+    Ben   70,000  Eng
+    Fay   60,000  Sales
+    Dara  50,000  Sales
+    Eve   50,000  Sales
+
+Every number in this entry came from running these queries against a real database on that data.
+
+TERMS AS THEY APPEAR:
+- WINDOW FUNCTION: an aggregate that does not collapse rows - RANK, DENSE_RANK, ROW_NUMBER, LAG.
+- SELF JOIN: joining a table to itself with two aliases, for hierarchies.
+- ANTI-JOIN: 'rows here with no match there'.""",
+
+    """2. THE SECOND-HIGHEST SALARY - three answers, measured
+
+    ANSWER A - the nested MAX:
+        SELECT MAX(salary) FROM employees
+        WHERE salary < (SELECT MAX(salary) FROM employees)
+        -> 70000
+
+    ANSWER B - ORDER BY with OFFSET:
+        SELECT DISTINCT salary FROM employees ORDER BY salary DESC LIMIT 1 OFFSET 1
+        -> 70000
+
+    ANSWER B WITHOUT `DISTINCT` - and this is the trap:
+        SELECT salary FROM employees ORDER BY salary DESC LIMIT 1 OFFSET 1
+        -> 90000                                        WRONG
+
+    Because Asha and Chen both earn 90,000, the second ROW is still 90,000. The question asked for the
+    second-highest SALARY, not the second row. One missing keyword, a confidently wrong answer.
+
+    ANSWER C - DENSE_RANK, which generalises:
+        SELECT salary FROM (
+            SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) r FROM employees
+        ) WHERE r = 2 LIMIT 1
+        -> 70000
+
+    Change the 2 to an N and you have the Nth-highest. That is why this is the answer to give: the
+    follow-up is always 'now the third'.
+
+NOW THE SECOND TRAP - what happens when there IS no second salary? Measured on a table where everyone
+earns the same:
+
+    the nested MAX        ->  [(None,)]      one row, containing NULL
+    LIMIT 1 OFFSET 1      ->  []             NO ROW AT ALL
+
+That difference is not cosmetic. Application code doing `row = cursor.fetchone(); return row[0]` works
+with the first and raises on the second. If the interviewer asks 'what does it return when there is no
+second salary?', they are asking exactly this - and 'NULL' versus 'no row' is the answer.
+
+DENSE_RANK behaves like the second: no row. If you need a NULL, wrap it: `SELECT (SELECT ... ) AS
+second_highest` turns 'no row' into 'one row containing NULL'.""",
+
+    """3. THE OTHER FIVE, TRACED
+
+    HIGHEST PAID PER DEPARTMENT - and ties decide which ranking function you want:
+
+        RANK() OVER (PARTITION BY dept ORDER BY salary DESC), then WHERE r = 1
+        -> ('Asha','Eng',90000), ('Chen','Eng',90000), ('Fay','Sales',60000)
+
+        ROW_NUMBER() instead of RANK()
+        -> ('Asha','Eng',90000), ('Fay','Sales',60000)                <- Chen has VANISHED
+
+    Both are 'correct' for some reading of the question, which is why you ask: 'if two people tie for
+    the top, do you want both?' RANK gives you both; ROW_NUMBER picks one arbitrarily. Asking that
+    question out loud scores better than either query.
+
+    DUPLICATES - group by what should be unique:
+
+        SELECT salary, COUNT(*) FROM employees GROUP BY salary HAVING COUNT(*) > 1
+        -> [(50000, 2), (90000, 2)]
+
+    The real follow-up is 'now delete the duplicates, keeping the earliest' - which is
+    ROW_NUMBER() OVER (PARTITION BY the-duplicate-columns ORDER BY id) and delete where it is > 1.
+
+    SELF JOIN - each employee with their manager:
+
+        INNER JOIN  -> Ben/Asha, Chen/Asha, Dara/Asha, Eve/Dara, Fay/Dara      (5 rows)
+        LEFT JOIN   -> Asha/None, Ben/Asha, ... (6 rows)
+
+    Asha has no manager, so the INNER JOIN silently drops the CEO. This is the single most common
+    self-join bug, and it always drops the most important row in the table.
+
+    CONSECUTIVE DAYS - the gaps-and-islands trick:
+
+        DATE(day, '-' || ROW_NUMBER() OVER (PARTITION BY user ORDER BY day) || ' days') AS grp
+
+    Subtract a row number from a date and CONSECUTIVE dates all collapse to the SAME value, so
+    grouping by it groups the streaks. Measured: only user 1, with a streak of 3.
+    That trick is worth memorising - it is the standard answer to every streak question.
+
+    ANTI-JOIN, and the NULL trap:
+
+        SELECT name FROM employees WHERE id NOT IN (SELECT manager_id FROM employees)
+        -> []                                                          NOTHING
+
+    There is a NULL in manager_id (Asha has no manager). `id NOT IN (1, 4, NULL)` evaluates to UNKNOWN
+    for every row, never TRUE, so the query returns nothing. It looks like 'everyone is a manager',
+    which is a plausible and completely wrong conclusion.
+
+        SELECT name FROM employees e
+        WHERE NOT EXISTS (SELECT 1 FROM employees m WHERE m.manager_id = e.id)
+        -> Ben, Chen, Eve, Fay, Gus                                    CORRECT
+
+    NOT EXISTS is NULL-safe. Use it.""",
+
+    """4. THE FAILURE MODES - the traps in one place
+
+A. `LIMIT 1 OFFSET 1` FOR THE SECOND-HIGHEST, without DISTINCT. Measured: returns 90000 when two
+   people tie at the top. It answers 'the second row', not 'the second value'.
+
+B. NOT ASKING ABOUT TIES. Every ranking question has a tie question hidden in it, and the interviewer
+   is usually waiting to see whether you ask. RANK keeps ties and leaves gaps; DENSE_RANK keeps ties
+   without gaps; ROW_NUMBER breaks them arbitrarily.
+
+C. NOT HANDLING 'THERE IS NO SECOND ROW'. Measured: the nested-MAX version returns a row containing
+   NULL and the LIMIT version returns no row at all. Which one your application wants is a real
+   decision, and being unaware of the difference is a crash waiting to happen.
+
+D. `NOT IN` WITH A NULLABLE SUBQUERY. Measured: returns zero rows, silently. This is the highest-cost
+   trap in the entry because the result looks like a legitimate answer. Use NOT EXISTS, or add
+   `WHERE col IS NOT NULL` to the subquery.
+
+E. INNER JOIN ON A HIERARCHY. Measured: the CEO disappears. Any self-join up a tree needs LEFT.
+
+F. COUNT AND AVG OVER NULLS. Measured with one NULL salary among seven employees:
+
+        COUNT(*) = 7,  COUNT(salary) = 6,  AVG(salary) = 68,333
+
+   The average is over six people, not seven. If a missing salary should count as zero, say
+   `AVG(COALESCE(salary, 0))` explicitly - the database will not guess.
+
+G. FORGETTING THAT `WHERE` CANNOT SEE A WINDOW FUNCTION. `WHERE RANK() OVER (...) = 1` is invalid,
+   because windows are computed after WHERE. That is why every one of these queries wraps the window
+   in a subquery or a CTE.
+
+H. WRITING IT ALL AS ONE QUERY. A CTE (`WITH ranked AS (...)`) reads better than a nested subquery and
+   costs nothing. In an interview, the readable version scores better.""",
+
+    """5. THE PATTERNS BEHIND THE QUESTIONS
+
+Once you notice that the six problems are really three techniques, the preparation collapses:
+
+    RANKING WITHIN A GROUP        -> a window function, filtered in an outer query
+        second-highest, top-N per group, deduplicate keeping one, most recent per user
+        The shape is always: ROW_NUMBER/RANK/DENSE_RANK OVER (PARTITION BY ... ORDER BY ...),
+        wrapped, then WHERE r = 1 or r <= N.
+
+    'ROWS HERE WITH NO MATCH THERE'  -> LEFT JOIN ... WHERE right IS NULL, or NOT EXISTS
+        customers who never ordered, products never sold, employees who manage nobody
+        Prefer NOT EXISTS: it is NULL-safe and usually optimises identically.
+
+    GROUPING BY SOMETHING COMPUTED  -> gaps and islands
+        consecutive days, sessions, runs of the same value
+        Subtract a row number from the ordering column; consecutive values collapse to one group.
+
+THE HABIT THAT SCORES: SAY THE EDGE CASE BEFORE YOU ARE ASKED. 'This returns NULL rather than no row
+if there is no second salary - do you want that?' 'If two people tie for the top, RANK keeps both;
+shall I use that?' Interviewers are scoring whether you know where a query breaks, and volunteering it
+is worth more than a shorter query.
+
+WRITE IT WITH A CTE, not a nested subquery:
+
+    WITH ranked AS (
+        SELECT name, dept, salary,
+               RANK() OVER (PARTITION BY dept ORDER BY salary DESC) AS r
+        FROM employees
+    )
+    SELECT name, dept, salary FROM ranked WHERE r = 1;
+
+Same plan, far easier to read aloud - and reading it aloud is what you are actually doing in a live
+round.
+
+AND IF WINDOW FUNCTIONS ARE BANNED - some interviewers ask for the pre-window version - the fallback
+is a correlated subquery: `WHERE (SELECT COUNT(DISTINCT salary) FROM employees e2 WHERE e2.salary >
+e.salary) = 1`. Know it exists, mention it is O(n^2)-ish, and use the window function.""",
+
+    """6. HOW TO APPROACH A LIVE SQL QUESTION - numbered steps
+
+1. RESTATE THE QUESTION with the tie case in it: 'the second-highest distinct salary - and if two
+   people share the top, the second distinct value, yes?' You have now surfaced the trap before
+   writing anything.
+2. ASK ABOUT NULLS in every column you touch. 'Can manager_id be null? Can salary?' Those two
+   questions prevent the two worst bugs in this entry.
+3. WRITE THE SHAPE FIRST, aloud: 'rank within department, then take the top of each'.
+4. USE A CTE so the query reads top to bottom.
+5. SAY WHAT HAPPENS WHEN THE ANSWER IS EMPTY - a row with NULL, or no row at all.
+6. THEN THE FOLLOW-UP THEY WILL ASK: 'and the Nth?' - change the constant. 'And per department?' - add
+   a PARTITION BY. If your first answer generalises, both are one edit.
+7. IF IT IS A LARGE TABLE, mention the index that makes it work: `(dept, salary DESC)` for the
+   ranking queries, and the join column for a self join.
+
+STEP 1 IS THE HIGHEST-SCORING THING IN THE LIST. Two of the six problems here are decided entirely by
+how ties are handled, and a candidate who asks is demonstrating exactly the care the question was
+designed to test.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Most SQL rounds are a handful of patterns, and each hides a trap.
+
+Second-highest salary: I would use DENSE_RANK in a subquery and filter on rank = 2, because it
+generalises to the Nth and it handles ties. LIMIT 1 OFFSET 1 looks equivalent and is not - I ran it,
+and with two people tied at 90,000 it returns 90,000 rather than the actual second salary, unless you
+add DISTINCT. And the two versions differ when there IS no second salary: the nested-MAX version
+returns a row containing NULL, LIMIT/OFFSET returns no row at all, which is a crash in the calling
+code.
+
+Top per department: RANK, not ROW_NUMBER, if ties should all appear - I measured ROW_NUMBER silently
+dropping one of two tied top earners.
+
+Self joins for a hierarchy need LEFT, or the person at the top of the tree vanishes.
+
+And the one I would flag hardest: NOT IN with a nullable subquery returns NOTHING. One NULL in the
+list makes every comparison unknown. I measured it returning zero rows where NOT EXISTS returned the
+five correct ones. So I use NOT EXISTS by default.
+
+Underneath, it is three techniques: rank-within-a-group with a window function, anti-joins for "no
+match", and gaps-and-islands for streaks.'""",
+
+    """8. THE QUERIES, PIECE BY PIECE
+
+    WITH ranked AS (
+        SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS r
+        FROM employees
+    )
+    SELECT salary FROM ranked WHERE r = 2 LIMIT 1;
+
+    `DENSE_RANK()`      ranks with ties sharing a number and NO gaps - so the second distinct salary
+                        is rank 2 even when two people share rank 1. RANK() would leave a gap and
+                        rank 2 would not exist; ROW_NUMBER() would give you the second ROW.
+    `OVER (ORDER BY salary DESC)`   the window: all rows, ordered by salary. No PARTITION BY, so the
+                        whole table is one group.
+    `WITH ranked AS`    a CTE, because you cannot filter on a window function in the same SELECT -
+                        windows are computed after WHERE.
+    `LIMIT 1`           several people may share rank 2; you want the salary once.
+
+    THE ANTI-JOIN, both ways:
+
+        WHERE id NOT IN (SELECT manager_id FROM employees)
+
+    `NOT IN` expands to `id <> 1 AND id <> 4 AND id <> NULL`. That last comparison is UNKNOWN, never
+    TRUE, so the whole AND is never TRUE. Measured: zero rows.
+
+        WHERE NOT EXISTS (SELECT 1 FROM employees m WHERE m.manager_id = e.id)
+
+    `NOT EXISTS` asks 'is the result set empty?', which is a yes/no question that NULLs cannot poison.
+    The `SELECT 1` is conventional - the columns are never used, only the existence of a row.
+
+    THE GAPS-AND-ISLANDS EXPRESSION:
+
+        DATE(day, '-' || ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY day) || ' days')
+
+    For consecutive days, day minus row-number is CONSTANT: 1 Jan minus 1 day, 2 Jan minus 2 days and
+    3 Jan minus 3 days all give 31 Dec. A gap in the dates breaks the constant, so grouping by this
+    expression groups exactly the unbroken runs. Once you have seen it, every streak question is the
+    same query.""",
+
+    """9. RUNNING THEM - every result
+
+    SECOND-HIGHEST SALARY, on Asha 90k, Chen 90k, Ben 70k, Fay 60k, Dara 50k, Eve 50k:
+        nested MAX                        -> 70000     correct
+        LIMIT 1 OFFSET 1 with DISTINCT    -> 70000     correct
+        LIMIT 1 OFFSET 1 WITHOUT DISTINCT -> 90000     WRONG - the second ROW
+        DENSE_RANK where r = 2            -> 70000     correct, and generalises
+
+    WHEN THERE IS NO SECOND SALARY:
+        nested MAX          -> [(None,)]      a row containing NULL
+        LIMIT 1 OFFSET 1    -> []             no row at all
+
+    TOP PAID PER DEPARTMENT:
+        RANK() = 1        -> Asha/Eng/90000, Chen/Eng/90000, Fay/Sales/60000
+        ROW_NUMBER() = 1  -> Asha/Eng/90000, Fay/Sales/60000          Chen dropped
+
+    DUPLICATES:
+        GROUP BY salary HAVING COUNT(*) > 1  -> (50000, 2), (90000, 2)
+
+    SELF JOIN:
+        INNER -> 5 rows, Asha missing
+        LEFT  -> 6 rows, Asha/None present
+
+    CONSECUTIVE DAYS (3+):
+        -> user 1, streak 3
+
+    NULL BEHAVIOUR, with one NULL salary added:
+        COUNT(*) = 7, COUNT(salary) = 6, AVG(salary) = 68,333.33
+        NOT IN with a NULL   -> []                                    silently nothing
+        NOT EXISTS           -> Ben, Chen, Eve, Fay, Gus              correct
+
+READ THE `NOT IN` RESULT ONE MORE TIME. Zero rows. No error, no warning, and a perfectly plausible
+interpretation available to whoever reads the report - 'apparently everyone manages someone'. That is
+the most expensive kind of SQL bug, and the fix is a habit rather than a fact: use NOT EXISTS.""",
+
+    """10. THE TRAPS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE SIX QUESTIONS AND THEIR TRAPS:
+
+        second-highest        ties, and NULL-vs-no-row when there isn't one
+        top per group         RANK keeps ties, ROW_NUMBER silently drops them
+        duplicates            which columns define a duplicate; then how to delete
+        self join             INNER loses the row at the top of the hierarchy
+        consecutive days      needs gaps-and-islands
+        anti-join             NOT IN plus a NULL returns nothing at all
+
+THE #1 MISTAKE: `NOT IN` with a nullable subquery. Measured: zero rows returned where the correct
+answer was five. It fails silently and plausibly. Use NOT EXISTS, always.
+
+THE #2 MISTAKE: `LIMIT 1 OFFSET 1` for the second-highest without DISTINCT. Measured: 90,000 instead
+of 70,000 the moment two people tie at the top.
+
+THE #3 MISTAKE: not asking about ties. Two of the six questions turn on it, and asking is what the
+question is testing.
+
+THE ONE THAT BITES IN PRODUCTION RATHER THAN IN INTERVIEWS: aggregates skip NULLs. Measured AVG over
+seven employees, one with no salary, gave the average of six.
+
+ONE-SENTENCE TAKEAWAY: learn three shapes - rank-within-a-group in a CTE, NOT EXISTS for anti-joins,
+and date-minus-row-number for streaks - and in every one of them say the tie and NULL cases out loud
+before you are asked.""",
+]
+
+_EX_P1AO["Tokenization and Byte-Pair Encoding (BPE)"] = [
+]
+
+_EX_P1AO["Vector database & semantic search"] = [
 ]
 
 _EX_P1AO["Pattern: Strategy - swap an algorithm at runtime"] = [
