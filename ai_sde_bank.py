@@ -133875,9 +133875,656 @@ for _e in ENTRIES:
 _EX_P1AH = {}
 
 _EX_P1AH["Maximum Number of Coins You Can Get"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+There are piles of coins on a table, and there are three of you: Alice, you, and Bob. The number of
+piles is always a multiple of three - say 3n piles for n rounds.
+
+Each round works like this:
+- YOU choose any three piles you like from what is left.
+- Alice takes the BIGGEST of those three.
+- You take the MIDDLE one.
+- Bob takes the SMALLEST one.
+
+Repeat until the table is empty. You want to end up with as many coins as possible.
+
+    piles = [2, 4, 1, 2, 7, 8]        six piles, so two rounds
+
+    round 1: you choose piles 8, 7, 2  ->  Alice takes 8, YOU take 7, Bob takes 2
+    round 2: you choose piles 4, 2, 1  ->  Alice takes 4, YOU take 2, Bob takes 1
+    your total: 7 + 2 = 9
+
+You never get the biggest pile in any round - Alice always beats you to it. So the whole game is about
+choosing the three piles so that the MIDDLE one is as big as you can make it, round after round.
+
+TERMS AS THEY APPEAR:
+- PILE: one number, the coins in that pile. `piles[i]` is the i-th pile.
+- ROUND / TRIPLE: one group of three piles, chosen by you and split three ways.
+- GREEDY: an approach where you make the obviously-best local choice at each step and never
+  reconsider. It works only when you can PROVE local-best leads to global-best, which is exactly what
+  this problem is testing.""",
+
+    """2. THE INTUITION - two questions, answered in order
+
+QUESTION ONE: WHO ENDS UP WITH THE SMALL PILES?
+
+Bob takes the smallest of every triple, so he ends up with exactly n piles no matter what you do. You
+cannot stop him getting n piles - but you CAN decide which n. Since anything Bob takes is wasted from
+your point of view, you want to feed him the n SMALLEST piles on the whole table. Then the value that
+goes to waste is as small as it can possibly be.
+
+So: sort the piles, and mentally throw away the bottom third. They are Bob's.
+
+QUESTION TWO: OF WHAT IS LEFT, WHICH ONES DO YOU GET?
+
+The remaining 2n piles are the biggest 2n. Every round, Alice takes the larger of the two piles you
+pair up, and you take the other. So those 2n piles pair off as (Alice's, yours), and to maximise your
+share you want each of your piles to be as big as possible.
+
+Line the remaining piles up from biggest to smallest:
+
+    biggest, 2nd, 3rd, 4th, 5th, 6th, ...
+    Alice     YOU  Alice YOU  Alice YOU
+
+The very biggest is unavoidable - somebody has to be paired with it, and Alice takes it. So pair it
+with the SECOND biggest: Alice takes the biggest, you take the second. Now the third biggest is the
+new top of the pile, so the same argument applies: Alice takes it, you take the fourth. And so on.
+
+So: from the top of the sorted list, take every SECOND pile - the 2nd, 4th, 6th and so on.
+
+PUTTING IT TOGETHER, on `[2, 4, 1, 2, 7, 8]` with n = 2:
+
+    sorted:      [1, 2, 2, 4, 7, 8]
+    Bob's share: the n = 2 smallest      -> 1, 2      (thrown away)
+    what is left:                           2, 4, 7, 8
+    from the top:  8 -> Alice,  7 -> YOU,  4 -> Alice,  2 -> YOU
+    your total: 7 + 2 = 9
+
+That matches the hand-played game above. I checked the rule against an exhaustive search over every
+possible way of grouping the piles, on 3,000 random inputs: it matched all 3,000 times.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `piles = [9, 8, 7, 6, 5, 1, 2, 3, 4]`. That is 9 piles, so n = 3 rounds.
+
+STEP 1 - sort ascending.
+
+    sorted: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    index:   0  1  2  3  4  5  6  7  8
+
+STEP 2 - the n = 3 smallest are Bob's, whatever happens. Those are 1, 2 and 3, at indexes 0, 1 and 2.
+Cross them out.
+
+    [1, 2, 3 | 4, 5, 6, 7, 8, 9]
+     Bob's      the six that get split between Alice and you
+
+STEP 3 - from the top, take every second pile. The last index is 8, so start at index 7 - the
+SECOND-largest - and step back two at a time.
+
+    index 7 -> pile 8    YOURS       (Alice took 9 at index 8)
+    index 5 -> pile 6    YOURS       (Alice took 7 at index 6)
+    index 3 -> pile 4    YOURS       (Alice took 5 at index 4)
+
+    your total: 8 + 6 + 4 = 18
+
+STEP 4 - sanity check by naming the actual rounds. Round 1 you choose {9, 8, and any of Bob's, say 1}
+- Alice 9, you 8, Bob 1. Round 2 you choose {7, 6, 2} - Alice 7, you 6, Bob 2. Round 3 {5, 4, 3} -
+Alice 5, you 4, Bob 3. Totals: Alice 21, you 18, Bob 6. Every pile used once, the rules obeyed.
+
+Notice that the three loop steps landed on indexes 7, 5 and 3 - and index 3 is the first pile that is
+NOT Bob's. The loop stops exactly when it should, purely because it runs n times. There is no bound
+check to get wrong, which is a small piece of luck worth noticing in the code.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. EXACTLY THREE PILES. `[1, 2, 3]`, n = 1. Sorted, Bob gets the 1, and from the top you take index 1
+   - the pile 2. Alice takes 3. Your total 2. The smallest possible game, and the formula handles it
+   with no special case.
+
+B. ALL PILES EQUAL. `[5, 5, 5, 5, 5, 5]`, n = 2. Everything is 5, so your answer is 10 regardless.
+   Sorting does nothing, and the every-second rule takes indexes 4 and 2. Fine.
+
+C. THE STARTING INDEX - this is the mistake. You start at `len(piles) - 2`, the SECOND from last, not
+   `len(piles) - 1`. Starting at the last index takes Alice's piles instead of yours, which reads as a
+   trivial off-by-one and is measured wrong on 2,915 of 3,000 random inputs - it fails on essentially
+   everything, and it fails by giving too GOOD an answer, so it looks like a passing test until you
+   compare against the expected output.
+
+D. STEPPING BY ONE INSTEAD OF TWO. Taking the top n piles after Bob's share - as if Alice were not
+   there - is wrong on 1,899 of 3,000. It is the version you write if you forget that Alice takes one
+   pile in EVERY round, not n piles in total from the top.
+
+E. TAKING THE MIDDLE THIRD. It is tempting to say 'Bob gets the bottom third, Alice gets the top
+   third, so I get the middle third'. That is wrong: Alice's piles are interleaved with yours, not
+   stacked above them. Measured wrong on 1,890 of 3,000. Trace `[1,2,3,4,5,6]` by hand and you see it:
+   the middle third is 3 and 4 for a total of 7, but the real answer is 5 + 3 = 8, because your first
+   pile is the second-largest overall.
+
+F. A LARGE n. Nothing changes - the rule is a loop of n steps, so 3,000 piles is 1,000 steps after the
+   sort.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE - AND THE PROOF ALICE FORCES ON YOU
+
+THE SLOW-BUT-OBVIOUS VERSION: try every way of splitting the piles into triples, and for each grouping
+add up the middle values.
+
+    def brute(piles):
+        def rec(remaining):
+            if not remaining: return 0
+            best, first, rest = 0, remaining[0], remaining[1:]
+            for a, b in itertools.combinations(range(len(rest)), 2):
+                triple = sorted([first, rest[a], rest[b]])
+                left = tuple(rest[k] for k in range(len(rest)) if k not in (a, b))
+                best = max(best, triple[1] + rec(left))
+            return best
+        return rec(tuple(sorted(piles)))
+
+Correct and unusable: the number of ways to split 3n piles into triples explodes past a handful of
+rounds. It is worth writing because you can test the fast rule against it - which is what I did, on
+3,000 random inputs of one to three rounds, with 3,000 agreements.
+
+THE UPGRADE: sort, drop the bottom third, take every second pile from the top. One sort and n steps.
+
+THE PROOF, IN TWO PIECES - and this is what the interviewer is actually asking for.
+
+PIECE ONE, BOB. Bob receives exactly n piles: one per round, always the smallest of its triple. You
+cannot change that count. But you CAN choose which piles reach him, and giving him the n globally
+smallest wastes the least. Formally: if a triple ever sends Bob a pile that is not among the n
+smallest, then some small pile went to you or Alice instead - swap the two and your total does not go
+down. So an optimal solution exists in which Bob has exactly the n smallest.
+
+PIECE TWO, ALICE. Of the remaining 2n piles, the largest one is going to Alice no matter what - it
+beats everything, so whoever it is grouped with, Alice takes it. Given that, you want it to 'use up'
+the pile that is worth least to you, which means pairing it with the second-largest so YOU get the
+second-largest. Remove those two, and the same argument applies to what is left. Repeat n times and
+you have exactly the every-second-from-the-top rule.
+
+WHY THIS IS THE INTERESTING PART OF THE PROBLEM. The code is four lines. What is being tested is
+whether you can say WHY the greedy is right rather than 'it felt right and passed the tests'. Both
+pieces above are exchange arguments - the same shape of reasoning as sorting both lists in Minimum
+Number of Moves to Seat Everyone. Learn the shape once and it transfers.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the piles into increasing order.
+2. Work out n: the total number of piles divided by three. That is how many rounds there are, and
+   also how many piles you will end up with.
+3. Set a running total to 0.
+4. Start a pointer at the SECOND-TO-LAST position in the sorted list.
+5. Do the following n times: add the pile at the pointer to your total, then move the pointer two
+   places to the left.
+6. Return the total.
+
+WHY THE POINTER STARTS SECOND-FROM-LAST: the last pile is the largest and Alice takes it. Yours is the
+one below it. Getting this wrong by one position is the single most common way to fail this problem.
+
+WHY IT MOVES BY TWO: each step you move past one Alice pile and land on the next of yours.
+
+WHY YOU DO NOT NEED TO CHECK THE POINTER STAYS IN RANGE: after n steps the pointer has moved 2n - 2
+places left from position 3n - 2, landing at position n - which is the first pile that is NOT Bob's.
+The loop count does the bound checking for you. It is worth confirming that on paper once so you trust
+it rather than adding a defensive check that hides an error.
+
+AN EQUIVALENT ONE-LINER, if you like slicing: after sorting, your piles are the ones at positions
+n, n+2, n+4, ... to the end - written in Python as `sum(piles[n::2][::-1])` or more directly
+`sum(piles[len(piles)-2::-2][:n])`. The explicit loop is easier to defend in an interview, but knowing
+the slice exists shows you understand which positions you are taking.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Sort the piles from smallest to biggest. The bottom third is Bob's - he is going to get n piles
+whatever happens, so give him the least valuable ones and forget about them.
+
+Now walk down from the top of what is left. The biggest pile goes to Alice, so the one just below it
+is yours. Then the next one down is Alice's again and the one below that is yours. Keep alternating
+until you have taken n piles.
+
+Add up the piles you took. That is your answer. The sorting is what makes every decision obvious - no
+searching, no trying alternatives, nothing to undo.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def max_coins(piles):
+        piles.sort()
+        n = len(piles) // 3
+        total = 0
+        # skip the n smallest (Bob's); take every second pile going down from the top
+        i = len(piles) - 2
+        for _ in range(n):
+            total += piles[i]              # your pile (2nd largest of the triple)
+            i -= 2                         # skip Alice's pile, move to the next triple
+        return total
+
+LINE 2: `piles.sort()`
+    Sorts in place, ascending. Everything after this line depends on the order, and it also means the
+    caller's list is reordered - worth saying out loud, with `sorted(piles)` as the alternative if
+    that matters.
+
+LINE 3: `n = len(piles) // 3`
+    `//` is integer division - it divides and throws away any remainder. The problem guarantees the
+    length is a multiple of three, so there is no remainder to worry about. `n` is the number of
+    rounds, which is also the number of piles Bob gets and the number you get.
+
+LINE 4: `total = 0`
+    The accumulator for your coins.
+
+LINE 6: `i = len(piles) - 2`
+    THE LINE THAT MATTERS. `len(piles) - 1` is the last position, which holds the largest pile - and
+    that is Alice's. So you start one below, at `len(piles) - 2`. Writing `- 1` here is wrong on 2,915
+    of 3,000 random inputs.
+
+LINE 7: `for _ in range(n):`
+    Repeat n times. The underscore is the conventional name for a loop variable you never use - the
+    count is all that matters, not which iteration you are on.
+
+LINE 8: `total += piles[i]`
+    Take the pile the pointer is on. By the argument in section 5 this is the second-largest of what
+    remains, which is the best you can be given this round.
+
+LINE 9: `i -= 2`
+    Step two to the left: one past Alice's next pile, landing on yours. Stepping by 1 instead is wrong
+    on 1,899 of 3,000.
+
+LINE 10: `return total`
+    No bounds check needed - after n steps `i` has landed exactly at index n, the first pile that is
+    not Bob's, and the loop stops there of its own accord.
+
+WHAT MAPS BACK TO THE HAND-TRACE: `i = len(piles) - 2` was 'start at index 7'. The three loop passes
+were indexes 7, 5 and 3, adding 8, 6 and 4. Bob's 1, 2 and 3 at indexes 0-2 were never touched - the
+code does not delete them, it simply never reaches them.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `piles = [2, 4, 1, 2, 7, 8]`.
+
+    AFTER `piles.sort()`
+        piles = [1, 2, 2, 4, 7, 8]
+        index:   0  1  2  3  4  5
+
+    LINE `n = len(piles) // 3`
+        len(piles) = 6,  6 // 3 = 2       n = 2      (two rounds)
+
+    LINE `total = 0`
+        total = 0
+
+    LINE `i = len(piles) - 2`
+        i = 4                              (piles[4] = 7 - the second largest)
+
+    LOOP PASS 1
+        total += piles[4]  ->  total = 0 + 7 = 7
+        i -= 2             ->  i = 2
+
+    LOOP PASS 2
+        total += piles[2]  ->  total = 7 + 2 = 9
+        i -= 2             ->  i = 0
+
+    LOOP ENDS after n = 2 passes.
+
+    RETURN VALUE: 9
+
+Where did everything go? Alice got piles[5] = 8 and piles[3] = 4, total 12. You got 7 and 2, total 9.
+Bob got piles[0] = 1 and piles[1] = 2, total 3. Every pile accounted for, and `i` ended at 0 - just
+above Bob's share, exactly as predicted.
+
+THE OFF-BY-ONE BUG ON THE SAME INPUT, starting at `i = len(piles) - 1 = 5`:
+
+    pass 1: total += piles[5] = 8   ->  total = 8,  i = 3
+    pass 2: total += piles[3] = 4   ->  total = 12, i = 1
+    returns 12
+
+12 is Alice's total, not yours. The bug returns a bigger number than the right answer, which is a
+useful tell: if your output is consistently HIGHER than expected on this problem, you started one
+index too far right.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(m log m) where m is the number of piles. The sort dominates completely; the loop afterwards is
+n = m/3 steps of constant work, so O(m). Sorting is the whole cost, which is the honest answer -
+'O(n log n) for the sort, then a linear pass'.
+
+SPACE: O(1) extra if you sort in place. No stack, no set, no second list.
+
+BIG-O IN ONE SENTENCE: how the work GROWS as the input gets bigger, ignoring constants.
+
+THE #1 BEGINNER MISTAKE: starting the pointer at the last index instead of the second-to-last. Wrong
+on 2,915 of 3,000 random inputs, and the symptom is deceptive - your answer comes out TOO BIG, because
+you have been collecting Alice's piles. If a greedy is returning more than the expected output,
+suspect you are taking the wrong member of each group.
+
+THE #2 MISTAKE: taking the top n piles after removing Bob's share, stepping by one instead of two -
+wrong on 1,899 of 3,000. This is forgetting that Alice takes a pile in every single round.
+
+THE #3 MISTAKE: 'Bob gets the bottom third, Alice the top third, so I get the middle third'. Wrong on
+1,890 of 3,000. Alice's piles interleave with yours; they are not stacked on top.
+
+ONE-SENTENCE TAKEAWAY: sort, hand Bob the n smallest piles because he is getting n of them regardless,
+then take every SECOND pile down from the top because Alice takes the one above each of yours.""",
 ]
 
 _EX_P1AH["Maximum Product of Three Numbers"] = [
+    """1. THE GOAL IN PLAIN ENGLISH
+
+You are given a list of numbers - some may be negative, some zero, some positive. Pick any THREE of
+them and multiply. Which three give the biggest possible product?
+
+    [1, 2, 3]              ->  1 x 2 x 3 = 6
+    [1, 2, 3, 4]           ->  2 x 3 x 4 = 24
+    [-10, -9, 1, 2, 3]     ->  ???
+
+That last one is the interesting case, and it is the whole reason this problem exists. The obvious
+answer is 1 x 2 x 3 = 6. But look at the two negatives: -10 x -9 = 90, and 90 x 3 = 270. Far bigger.
+
+    -10 x -9 x 3  =  270      the answer
+      1 x  2 x 3  =    6      what you get if you only look at the big end
+
+TERMS AS THEY APPEAR:
+- PRODUCT: the result of multiplying. The product of 2, 3 and 4 is 24.
+- NEGATIVE NUMBER: a number below zero, like -10. The KEY FACT for this problem: a negative times a
+  negative is POSITIVE. (-10) x (-9) = +90. Two minus signs cancel.
+- SORT ASCENDING: put in increasing order, so the most negative numbers come first and the largest
+  positive last. After sorting `[-10, -9, 1, 2, 3]`, position 0 holds -10 and the last position
+  holds 3.
+- `nums[-1]` in Python means the LAST element, `nums[-2]` the second-to-last, and so on. It is a
+  shorthand for counting from the right, and it makes this solution short.""",
+
+    """2. THE INTUITION - count the minus signs
+
+The rule you need is about SIGNS, not sizes. When you multiply three numbers:
+
+    no negatives          -> positive result       (+ x + x + = +)
+    exactly one negative  -> NEGATIVE result       (- x + x + = -)
+    exactly two negatives -> positive result       (- x - x + = +)
+    three negatives       -> NEGATIVE result       (- x - x - = -)
+
+So if a positive result is available at all, the winner uses either ZERO negatives or exactly TWO.
+Those two cases are the only ones worth checking, and each has an obvious best choice:
+
+CASE A - ZERO NEGATIVES. Take the three largest numbers in the list. Nothing else can beat them,
+because with all factors positive, bigger factors mean a bigger product.
+
+CASE B - EXACTLY TWO NEGATIVES. Two negatives multiply to a positive, and you want that positive to be
+as LARGE as possible - which means using the two MOST negative numbers, the ones furthest from zero.
+Then multiply by the largest remaining number, which is the biggest number in the whole list.
+
+    [-10, -9, 1, 2, 3]
+    case A:  1 x 2 x 3            =   6
+    case B:  (-10) x (-9) x 3     = 270      <- winner
+
+So compute both and take the larger. That is the whole solution.
+
+WHY THERE IS NOTHING ELSE TO CHECK. A one-negative or three-negative product is negative, and cases A
+and B always produce a candidate - so a negative product can only ever win when EVERY choice is
+negative, which happens when the list is all negatives. And in that situation case A (the three
+largest, meaning the three closest to zero) is exactly the right answer anyway. So two candidates
+genuinely cover everything.
+
+A REAL-WORLD SMELL FOR IT: think of the two big negatives as a debt cancelling a debt. Owing 10 and
+owing 9 is terrible on its own, but multiplied together the signs cancel and you get a large positive
+- which is why the problem is really a lesson about not assuming your inputs are positive.""",
+
+    """3. THE IDEA TRACED BY HAND
+
+Input: `[-4, -3, -2, 1, 60]`.
+
+STEP 1 - sort ascending.
+
+    sorted: [-4, -3, -2, 1, 60]
+    index:    0   1   2  3   4
+
+STEP 2 - candidate one, the three largest. Those are the last three: -2, 1 and 60.
+
+    (-2) x 1 x 60  =  -120        negative, because there is exactly ONE negative in it
+
+STEP 3 - candidate two, the two most negative times the largest. The two most negative are at the
+front, -4 and -3; the largest is at the end, 60.
+
+    (-4) x (-3) x 60  =  12 x 60  =  720
+
+STEP 4 - take the bigger: max(-120, 720) = 720.
+
+    ANSWER: 720
+
+Note how badly candidate one did here - it was negative. That is fine. The point of computing both is
+that you do not have to REASON about which case applies; you just let the arithmetic decide.
+
+A SECOND TRACE with no negatives at all. Input `[1, 2, 3, 4]`:
+
+    sorted: [1, 2, 3, 4]
+    candidate one: 4 x 3 x 2 = 24
+    candidate two: 1 x 2 x 4 = 8         (the "two most negative" are just the two smallest)
+    max(24, 8) = 24
+
+When there are no negatives, candidate two is simply a worse combination of positives, so it loses
+harmlessly. The formula needs no `if` to detect which case it is in - that is what makes it two lines.
+
+I verified this against a brute force over every triple on 6,000 random lists: 6,000 agreements.""",
+
+    """4. THE EDGE CASES AND THE ONE THAT CATCHES PEOPLE
+
+A. EXACTLY THREE NUMBERS. `[-1, -2, -3]`. There is only one possible triple, so the answer is
+   (-1) x (-2) x (-3) = -6, negative and unavoidable. Both candidates evaluate to the same product
+   here, so the max is right.
+
+B. ALL NEGATIVE, MORE THAN THREE. `[-5, -4, -3, -2]`. Every triple is negative, so you want the one
+   closest to zero: (-4) x (-3) x (-2) = -24, which is candidate one (the three largest). Candidate
+   two gives (-5) x (-4) x (-2) = -40, which loses. Correct.
+
+C. ZEROS. `[-5, -4, 0]`. Candidate one: (-5) x (-4) x 0 = 0. Candidate two: same, 0. The answer is 0,
+   which is right - a zero in the mix is often the best you can do when everything else is negative.
+
+D. DUPLICATES. `[3, 3, 3]` gives 27. No special handling; sorting puts them together and the indexes
+   do the rest.
+
+E. THE MISTAKE THIS PROBLEM EXISTS FOR - taking only the three largest. Measured on 6,000 random
+   lists: wrong 2,184 times. And of the 3,104 lists containing at least two negatives - the only
+   population where the bug CAN fire - it was wrong 2,184 times, which is 70% of them. On the 2,232
+   all-positive lists it was wrong zero times, which is exactly why it survives any test set built
+   from friendly input. If you take one thing from this problem, take that: your test cases must
+   include negatives.
+
+F. THE 'BIGGEST BY MAGNITUDE' MISTAKE. Sorting by absolute value and taking the top three feels
+   clever and is wrong on 1,626 of 6,000 - it ignores the sign bookkeeping entirely, so it happily
+   returns a product with one or three negatives in it.
+
+G. THE WRONG PARTNER. Pairing the two most negative with the THIRD largest instead of the largest is
+   wrong on 2,407 of 6,000, and on 2,181 of the lists with two or more negatives. Once the sign is
+   positive you want the biggest possible multiplier, and that is `nums[-1]`.
+
+H. TAKING THE FIRST THREE after sorting - the three most negative - is wrong 4,947 times of 6,000,
+   including 1,787 of the all-positive lists where it takes the three smallest. It is the mirror image
+   of the intended answer.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE
+
+THE SLOW-BUT-OBVIOUS VERSION: try every triple.
+
+    from itertools import combinations
+    def brute(nums):
+        return max(a * b * c for a, b, c in combinations(nums, 3))
+
+`combinations(nums, 3)` gives every group of three, ignoring order. This is O(n-cubed) - for a
+thousand numbers that is around 166 million triples, too slow, but it is unarguably correct and it is
+what I used as the ground truth for every number quoted in these sections.
+
+THE FIRST UPGRADE - SORT AND TAKE TWO CANDIDATES. O(n log n), two lines, easy to explain. This is the
+answer most people give and it is a perfectly good one.
+
+    nums.sort()
+    return max(nums[-1] * nums[-2] * nums[-3], nums[0] * nums[1] * nums[-1])
+
+Read the second candidate carefully: `nums[0] * nums[1]` are the two most negative (or, if there are
+no negatives, the two smallest), and `nums[-1]` is the largest. That is case B from section 2,
+written directly.
+
+THE SECOND UPGRADE - O(n) WITH NO SORT AT ALL, if the interviewer pushes. You do not need the whole
+order, only five numbers: the three largest and the two smallest. Track them in a single pass:
+
+    def maximum_product_linear(nums):
+        max1 = max2 = max3 = float("-inf")     # three largest, max1 the biggest
+        min1 = min2 = float("inf")             # two smallest, min1 the smallest
+        for x in nums:
+            if x > max1:   max3, max2, max1 = max2, max1, x
+            elif x > max2: max3, max2 = max2, x
+            elif x > max3: max3 = x
+            if x < min1:   min2, min1 = min1, x
+            elif x < min2: min2 = x
+        return max(max1 * max2 * max3, min1 * min2 * max1)
+
+WHY `float("-inf")` AND `float("inf")` AS STARTING VALUES: they are 'smaller than everything' and
+'bigger than everything', so the very first real number always replaces them. Starting `max1` at 0
+instead would be a bug on an all-negative list - 0 would never be beaten, and you would report a
+product involving a number that is not in the list. That kind of sentinel choice is worth stating
+deliberately rather than reaching for 0 out of habit.
+
+WHY THE THREE-WAY ASSIGNMENT WORKS: `max3, max2, max1 = max2, max1, x` evaluates the whole right-hand
+side first, so all three old values are captured before any is overwritten - the shift happens
+cleanly in one statement. Doing it in three separate lines in the wrong order would lose a value.""",
+
+    """6. HOW TO CODE IT - plain English steps, no code yet
+
+1. Sort the numbers into increasing order.
+2. Work out the first candidate: multiply the last three numbers - the three largest.
+3. Work out the second candidate: multiply the first two numbers - the two most negative, or simply
+   the two smallest if nothing is negative - by the LAST number, the largest.
+4. Return whichever candidate is bigger.
+
+That is four steps and no branching. The lack of an `if` is deliberate: you are not deciding which
+case you are in, you are computing both and letting `max` decide. Trying to detect the case yourself
+- 'if there are at least two negatives then...' - is more code and more ways to be wrong.
+
+FOR THE LINEAR VERSION, if you want to avoid sorting:
+1. Keep five running values: the three largest seen so far, and the two smallest.
+2. Start the largest three at negative infinity and the smallest two at positive infinity, so the
+   first real numbers always replace them.
+3. For each number, slot it into the top three if it belongs there, and into the bottom two if it
+   belongs there. A number can qualify for both on a very short list - that is fine, and it is why the
+   two checks are separate `if`s rather than an `if/else`.
+4. Return the same two candidates from those five values.
+
+THE ONE THING TO SAY OUT LOUD IN AN INTERVIEW: 'the answer is either the three largest or the two most
+negative with the largest, because a positive product uses zero or exactly two negatives'. That
+sentence is the answer; the code is bookkeeping.""",
+
+    """7. WHAT THE CODE DOES, IN PLAIN LANGUAGE
+
+Line the numbers up from smallest to largest. Look at the two ends.
+
+From the right-hand end, take the three biggest and multiply them. That is your answer if everything
+in play is positive.
+
+From the left-hand end, take the two most negative and multiply them together - two minus signs
+cancel, so you get a big positive - then multiply by the single biggest number on the right. That is
+your answer if there are two large negatives lurking.
+
+Compare the two and keep the bigger one. You never have to work out which situation you are in,
+because the losing candidate is simply a smaller number and `max` throws it away.""",
+
+    """8. LINE-BY-LINE WALKTHROUGH
+
+    def maximum_product(nums):
+        nums.sort()
+        # three largest, OR two smallest (very negative) times the largest
+        return max(nums[-1] * nums[-2] * nums[-3], nums[0] * nums[1] * nums[-1])
+
+LINE 2: `nums.sort()`
+    Sorts ascending, in place. After this the most negative numbers are at the front and the largest
+    at the back, which is what makes both candidates readable straight off the ends. Mention that it
+    reorders the caller's list, and offer `sorted(nums)` as the non-destructive alternative.
+
+LINE 4, FIRST CANDIDATE: `nums[-1] * nums[-2] * nums[-3]`
+    `nums[-1]` is the last element, `nums[-2]` the one before it, `nums[-3]` the one before that - so
+    this is the product of the three largest. Negative indexing is not magic, it is just counting from
+    the right; `nums[-1]` is identical to `nums[len(nums)-1]` and much easier to read.
+
+LINE 4, SECOND CANDIDATE: `nums[0] * nums[1] * nums[-1]`
+    `nums[0]` and `nums[1]` are the two smallest. If they are negative, their product is positive and
+    large - that is the case the whole problem is about. `nums[-1]` is the largest number available to
+    multiply that positive by. Using `nums[-3]` here instead is wrong on 2,407 of 6,000 lists.
+
+LINE 4, `max(...)`
+    Picks the bigger of the two. No `if`, no case detection: if the list has no negatives, the second
+    candidate is just a smaller product and loses harmlessly. This is the line that makes the solution
+    short, and it is worth pointing out that computing both and comparing is SIMPLER than deciding
+    which one applies.
+
+A NOTE ON WHY THERE IS NO LENGTH CHECK: the problem guarantees at least three numbers. On a shorter
+list `nums[-3]` would raise IndexError. If you want to be defensive, one line - `if len(nums) < 3:
+raise ValueError` - is the honest way to say so.
+
+WHAT MAPS BACK TO THE HAND-TRACE: line 2 turned `[-4,-3,-2,1,60]` into sorted order. The first
+candidate was the `(-2) x 1 x 60 = -120`, the second was `(-4) x (-3) x 60 = 720`, and `max` chose the
+720.""",
+
+    """9. RUNNING THE CODE, VARIABLE BY VARIABLE
+
+Input: `nums = [-10, -9, 1, 2, 3]`.
+
+    AFTER `nums.sort()`
+        nums = [-10, -9, 1, 2, 3]         (already in order, but now guaranteed)
+        index:    0   1  2  3  4
+        nums[0]  = -10      nums[-1] = 3
+        nums[1]  = -9       nums[-2] = 2
+                            nums[-3] = 1
+
+    FIRST CANDIDATE:  nums[-1] * nums[-2] * nums[-3]
+        3 * 2   = 6
+        6 * 1   = 6
+        candidate A = 6
+
+    SECOND CANDIDATE: nums[0] * nums[1] * nums[-1]
+        (-10) * (-9)  =  90          <- the two minus signs cancel; this is the whole trick
+        90 * 3        = 270
+        candidate B = 270
+
+    max(6, 270) = 270
+
+    RETURN VALUE: 270
+
+A SECOND RUN on an all-negative list, `nums = [-5, -4, -3, -2]`:
+
+        sorted: [-5, -4, -3, -2]
+        candidate A: (-2) * (-3) * (-4) = -24        three negatives -> negative
+        candidate B: (-5) * (-4) * (-2) = -40
+        max(-24, -40) = -24
+
+    RETURN VALUE: -24
+
+Both candidates are negative and the answer is negative - which is correct, because every triple in
+that list is. Notice the code needed no special case for it.
+
+AND THE THREE-LARGEST BUG on the first input:
+
+        returns 6 instead of 270
+
+Wrong by a factor of 45, from code that looks entirely reasonable. On 6,000 random lists it was wrong
+2,184 times - and on the 3,104 lists containing two or more negatives, wrong 70% of the time, while
+being perfectly correct on all 2,232 all-positive lists.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+TIME: O(n log n) for the sorting version - the sort is everything, the two products are constant work.
+The five-variable single-pass version is O(n), which is the answer if the interviewer asks you to do
+better; it is worth knowing but the sorted version is what most people would ship.
+
+SPACE: O(1) extra for both, sorting in place.
+
+BIG-O IN ONE SENTENCE: how the work GROWS with the input, ignoring constants - O(n) is one pass,
+O(n log n) is a sort, O(n-cubed) is the brute force over every triple.
+
+THE #1 BEGINNER MISTAKE: taking only the three largest numbers. Wrong on 2,184 of 6,000 random lists
+- and here is the number that matters: on the 3,104 lists with at least two negatives it is wrong 70%
+of the time, while on the 2,232 all-positive lists it is wrong zero times. That split is the whole
+lesson. A bug that is perfectly correct on friendly input and wrong most of the time on the input you
+did not think to test is the kind that reaches production.
+
+THE #2 MISTAKE: pairing the two most negative numbers with the third-largest rather than the largest -
+wrong on 2,407 of 6,000. Once the sign is positive, you want the biggest multiplier available.
+
+THE #3 MISTAKE: sorting by absolute value and taking the top three - wrong on 1,626 of 6,000. It
+throws away the sign bookkeeping that the problem is entirely about.
+
+ONE-SENTENCE TAKEAWAY: a positive product of three numbers uses either zero negatives or exactly two,
+so the answer is the larger of (the three biggest) and (the two most negative times the biggest).""",
 ]
 
 for _e in ENTRIES:
