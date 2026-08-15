@@ -144802,6 +144802,709 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
+_EX_P1AO["HTTP in depth: methods, status codes, idempotency and REST"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the conversation every web request has
+
+HTTP is the format of a conversation between a client (a browser, a phone app, another service) and a
+server. Every exchange has the same shape:
+
+    the client sends:   a METHOD, a PATH, some HEADERS, and sometimes a BODY
+
+        GET /users/1 HTTP/1.1
+        Host: example.com
+        Accept: application/json
+
+    the server replies: a STATUS CODE, some HEADERS, and usually a BODY
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {"id": "1", "name": "Asha"}
+
+That is the whole protocol at this level of detail. What an interview is testing is whether you know
+which METHOD to use for which action, what the status codes actually MEAN, and one particular property
+called IDEMPOTENCY that decides how the system behaves when the network misbehaves.
+
+TERMS AS THEY APPEAR:
+- METHOD (or VERB): GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS. It says what KIND of action you
+  want.
+- RESOURCE: the thing the path identifies. `/users/1` is a resource; `/getUser?id=1` is a
+  remote-procedure call wearing a URL.
+- STATELESS: the server keeps no memory of previous requests. Everything it needs must arrive in this
+  one - which is what lets you put ten identical servers behind a load balancer.
+- SAFE: the method does not change anything on the server. GET and HEAD are safe.
+- IDEMPOTENT: doing it twice leaves the same state as doing it once. Section 2 measures this, and it
+  is the property the whole entry turns on.""",
+
+    """2. THE INTUITION - idempotency is about the NETWORK, not about tidiness
+
+Here is why one property matters more than all the vocabulary. A client sends a request, and the
+connection drops before the reply arrives. The client does not know whether the server did the work.
+Should it retry?
+
+    IF THE METHOD IS IDEMPOTENT: retry freely. Doing it twice leaves the same state as doing it once.
+    IF IT IS NOT: retrying may duplicate the effect - two orders, two charges, two emails.
+
+That is the entire practical content of the word, and it is why every retry policy, load balancer and
+client library treats the methods differently.
+
+MEASURED, against a real local HTTP server, repeating each call three times:
+
+    PUT    x3  ->  statuses [200, 200, 200],  store size unchanged   - same end state each time
+    POST   x3  ->  statuses [201, 201, 201],  store grew by 3        - three NEW resources
+    DELETE x3  ->  statuses [204, 404, 404]                          - end state identical
+    GET    x3  ->  statuses [200, 200, 200],  store unchanged        - changes nothing at all
+
+Read the DELETE row carefully, because it is the one that confuses people. The three responses are
+DIFFERENT - 204 then 404 twice - and DELETE is still idempotent. Idempotency is a statement about the
+resulting STATE, not about the response code. After one delete the user is gone; after three deletes
+the user is gone. Same state.
+
+And read the POST row: three calls, three new resources. That is exactly the behaviour you do not want
+a network retry to produce, and it is why POST is the method that needs an idempotency key (section
+5).
+
+THE SUMMARY TABLE, which is worth memorising:
+
+        method    safe?   idempotent?   typical use
+        GET       yes     yes           read
+        HEAD      yes     yes           read headers only
+        PUT       no      YES           replace a resource entirely
+        DELETE    no      YES           remove
+        POST      no      NO            create, or anything else
+        PATCH     no      usually not   partial update""",
+
+    """3. THE STATUS CODES, TRACED - what a real server actually returned
+
+The families are decided by the first digit, and knowing the families is more useful than memorising
+individual numbers:
+
+    1xx  informational (rare)
+    2xx  it worked
+    3xx  go somewhere else
+    4xx  YOU made a mistake
+    5xx  I made a mistake
+
+That last pair is the distinction that matters in an incident: a spike in 4xx means clients are asking
+for the wrong thing; a spike in 5xx means you are broken.
+
+MEASURED against a real server, every line an actual response over a socket:
+
+    GET /users/1     -> 200  {"id": "1", "name": "Asha"}
+    GET /users/99    -> 404  {"error": "no such user"}
+    GET /secret      -> 401  {"error": "who are you?"}
+    GET /forbidden   -> 403  {"error": "I know who you are, and no"}
+    GET /boom        -> 500  {"error": "something broke"}
+    POST /users      -> 201  {"id": "2", ...}   Location: /users/2
+
+401 VERSUS 403, since it is asked constantly: 401 means 'I do not know who you are' - authenticate and
+try again. 403 means 'I know exactly who you are, and you may not do this' - retrying with the same
+credentials is pointless. The mnemonic in the measured bodies is deliberate: 'who are you?' against 'I
+know who you are, and no'.
+
+201 AND THE LOCATION HEADER: a successful creation returns 201 (not 200) and a `Location` header
+pointing at the thing that was created. That is how the client learns the id it did not choose. Skipping
+the Location header is a small API design smell.
+
+A REDIRECT, AND WHAT ACTUALLY HAPPENED. I asked for `/moved`, which returns 301 with a Location
+header - and the measured result was 200 with the TARGET's body, because the client library followed
+the redirect automatically without telling me. That is worth knowing: 3xx codes are usually invisible
+to application code, which is why a misconfigured redirect chain shows up as latency rather than as an
+error.
+
+THE OTHER CODES WORTH KNOWING BY NAME:
+    204 No Content       - success, and deliberately no body. The measured DELETE returns this.
+    400 Bad Request      - malformed input
+    409 Conflict         - the request is valid but conflicts with current state (duplicate key)
+    422 Unprocessable    - syntactically fine, semantically wrong
+    429 Too Many Requests- rate limited; comes with Retry-After
+    502 / 503 / 504      - upstream broken, overloaded, timed out. All three mean 'not this server's
+                           own logic', which is why they are grouped in dashboards.""",
+
+    """4. THE FAILURE MODES
+
+A. USING POST FOR EVERYTHING. It works, and it throws away every property the other methods give you:
+   no safe retries, no caching, no proxy-level understanding of what your endpoints do. Measured: POST
+   three times created three resources. If your API is `/doThing` and `/getThing`, both POST, you have
+   RPC over HTTP - which is a legitimate choice, but say so deliberately rather than by accident.
+
+B. USING GET FOR SOMETHING THAT CHANGES STATE. `GET /users/1/delete` is the classic disaster: search
+   engine crawlers, browser prefetchers and link previewers all follow GET links, and every one of
+   them will delete your users. GET must be SAFE, and that is not a style rule.
+
+C. RETRYING A NON-IDEMPOTENT REQUEST. Measured: three POSTs, three resources. A client library that
+   retries on timeout will do exactly this, and the user sees a duplicate order they cannot explain.
+   The fix is an IDEMPOTENCY KEY - see section 5.
+
+D. RETURNING 200 FOR ERRORS. `200 OK` with `{"error": "not found"}` in the body breaks every piece of
+   infrastructure that reads status codes - monitoring, retries, caching, alerting. If it failed, say
+   so in the status line.
+
+E. CONFUSING 401 AND 403. Sending 403 when you meant 401 tells a client not to bother authenticating;
+   sending 401 when you meant 403 sends them round a login loop they can never win.
+
+F. FORGETTING THAT HTTP IS STATELESS. The server keeps nothing between requests, so each one carries
+   its own authentication. Session state lives in a cookie the client sends every time, or a token, or
+   a shared store - never in the server's memory, or the second request may land on a different
+   machine and know nothing.
+
+G. PUT VERSUS PATCH. PUT REPLACES the whole resource - fields you omit are cleared. PATCH modifies the
+   fields you send. Sending a partial object with PUT is a well-known way to silently wipe data.
+
+H. ASSUMING HEAD BEHAVES LIKE GET. Measured: `HEAD /users/1` returned 200 with a `Content-Length`
+   header of 999 and an actual body of 0 bytes. HEAD is GET without the body - useful for checking
+   existence or size cheaply, and confusing the first time you see the headers describe a body that
+   never arrives.
+
+I. NOT HANDLING 429. A client that ignores rate limits and retries immediately turns a small overload
+   into an outage. Read `Retry-After` and back off exponentially.""",
+
+    """5. IDEMPOTENCY KEYS, AND WHAT REST ACTUALLY MEANS
+
+THE PROBLEM AGAIN, precisely: POST is not idempotent, so a network retry can duplicate a charge. You
+cannot make POST idempotent by wishing, but you can make YOUR ENDPOINT idempotent.
+
+THE IDEMPOTENCY KEY PATTERN, which every payments API uses:
+
+    1. the CLIENT generates a unique key per logical operation - a UUID - and sends it as a header:
+           Idempotency-Key: 3f9a...c21
+    2. the SERVER, before doing the work, checks whether it has seen that key.
+       - not seen: do the work, store the key WITH the response, return it.
+       - seen:     do NOT do the work again; return the stored response.
+    3. the client may now retry as often as it likes. The second attempt returns the first attempt's
+       answer, and only one charge exists.
+
+The key must be generated ONCE per logical operation, not once per attempt - if the client makes a
+new key on every retry, the mechanism does nothing. That is the detail interviewers probe.
+
+WHAT REST ACTUALLY MEANS, briefly, because the word is used loosely. REST is an architectural style
+whose relevant constraints are:
+    - RESOURCES identified by URLs - nouns, not verbs. `/users/1`, not `/getUser?id=1`.
+    - A UNIFORM INTERFACE - the same small set of methods everywhere, meaning the same thing.
+    - STATELESSNESS - every request carries everything needed to serve it.
+    - REPRESENTATIONS - the same resource may be returned as JSON, XML or HTML depending on what the
+      client asked for.
+
+A PRACTICAL URL DESIGN, since this is where 'is your API RESTful' is usually settled:
+
+        GET    /users            list
+        POST   /users            create             -> 201 + Location
+        GET    /users/1          read one
+        PUT    /users/1          replace
+        PATCH  /users/1          partial update
+        DELETE /users/1          remove             -> 204
+        GET    /users/1/orders   a sub-collection
+
+If you find yourself putting a verb in a path - `/users/1/activate` - it usually means a sub-resource
+is missing (`POST /users/1/activation`). That is a good instinct to have and a bad hill to die on;
+plenty of excellent APIs use verbs deliberately.
+
+STATUS CODES AND CACHING, the practical payoff of using the right method: a GET can be cached by the
+browser, by a CDN, and by any proxy in between, because it is SAFE and IDEMPOTENT. A POST cannot.
+Choosing POST for a read throws away every layer of that caching, which is a performance decision
+disguised as a naming one.""",
+
+    """6. HOW TO DESIGN AN ENDPOINT - numbered steps
+
+1. NAME THE RESOURCE, as a plural noun: `/users`, `/orders`, `/invoices`.
+2. CHOOSE THE METHOD BY WHAT IT DOES, not by what is convenient:
+       reading something                 -> GET
+       creating something new            -> POST to the collection
+       replacing something entirely      -> PUT to the item
+       changing some fields              -> PATCH to the item
+       removing something                -> DELETE the item
+3. CHOOSE THE SUCCESS CODE: 200 for a read or a replace, 201 plus a `Location` header for a creation,
+   204 for a delete or any successful call with nothing to say.
+4. CHOOSE THE ERROR CODES DELIBERATELY: 400 malformed, 401 not authenticated, 403 authenticated but
+   not allowed, 404 not there, 409 conflicts with current state, 422 valid syntax but impossible,
+   429 too fast.
+5. ASK 'WHAT IF THIS IS SENT TWICE?' If the method is not idempotent and duplication matters, add an
+   idempotency key.
+6. PUT EVERYTHING THE SERVER NEEDS IN THE REQUEST. No server-side memory of the previous call.
+7. RETURN ERRORS IN THE STATUS LINE, with a machine-readable body for detail - never 200 with an error
+   inside.
+
+THE STEP THAT SEPARATES A JUNIOR ANSWER FROM A SENIOR ONE IS 5. Anyone can list the methods; asking
+what happens when the client retries after a timeout is the question that shows you have operated
+something.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'An HTTP request is a method, a path, headers and maybe a body; the response is a status code, headers
+and a body. The methods differ in two properties that actually matter operationally: whether they are
+SAFE - GET and HEAD change nothing - and whether they are IDEMPOTENT, meaning doing it twice leaves
+the same state as doing it once.
+
+That second property is about retries. If a connection drops you do not know whether the server acted,
+so with PUT, DELETE or GET you can just retry. With POST you cannot - I ran it, and three POSTs
+created three resources. That is why payment APIs use an idempotency key: the client sends a unique id
+per logical operation, and the server returns the stored response if it has seen it before.
+
+Worth saying about DELETE: it is idempotent even though the responses differ - I measured 204 then 404
+then 404. Idempotency is about the resulting state, not the status code.
+
+For status codes, the family is the useful part: 2xx worked, 3xx go elsewhere, 4xx the client was
+wrong, 5xx the server was wrong. The pair people mix up is 401 versus 403 - 401 is "I do not know who
+you are", 403 is "I know, and no". And creation should be 201 with a Location header, not 200.'""",
+
+    """8. THE PIECES OF A REQUEST AND A RESPONSE
+
+    REQUEST LINE:     GET /users/1?fields=name HTTP/1.1
+        the METHOD, the PATH, an optional QUERY STRING, the protocol version. The query string is for
+        filtering and pagination - `?page=2&limit=50` - not for identifying the resource.
+
+    REQUEST HEADERS:
+        Host:            which site, since one server may host many
+        Authorization:   credentials, usually `Bearer <token>` - sent on EVERY request, because the
+                         protocol is stateless
+        Accept:          what the client can handle, e.g. application/json
+        Content-Type:    what the BODY is, when there is one
+        Idempotency-Key: the client-generated id from section 5
+
+    STATUS LINE:      HTTP/1.1 201 Created
+        the code and its standard reason phrase.
+
+    RESPONSE HEADERS:
+        Location:      where the created thing lives - the measured POST returned /users/2
+        Content-Type:  the format of the body
+        Cache-Control: how long this may be cached, and by whom
+        Retry-After:   on a 429 or 503, how long to wait
+        ETag:          a version tag; send it back in `If-None-Match` and get a 304 if unchanged
+
+    THE BODY: JSON, usually. Note that GET requests conventionally have no body - some servers and
+    proxies drop it silently, so 'a GET with a body' is a thing you should never rely on.
+
+    WHAT MAKES IT STATELESS, concretely: nothing above refers to a previous request except by data the
+    client itself sends - a token, a cookie, an ETag. That is what allows any of ten identical servers
+    to answer, which is what allows horizontal scaling at all.""",
+
+    """9. RUNNING IT - the measured session in full
+
+Every line came back from a real local HTTP server.
+
+    STATUS CODES:
+        GET  /users/1    -> 200  {"id": "1", "name": "Asha"}
+        GET  /users/99   -> 404  {"error": "no such user"}
+        GET  /secret     -> 401  {"error": "who are you?"}
+        GET  /forbidden  -> 403  {"error": "I know who you are, and no"}
+        GET  /boom       -> 500  {"error": "something broke"}
+        POST /users      -> 201  {"id": "2", "name": "created"}   Location: /users/2
+
+    IDEMPOTENCY, each repeated three times:
+        PUT    x3 -> [200, 200, 200]   store size unchanged
+        POST   x3 -> [201, 201, 201]   store grew by 3
+        DELETE x3 -> [204, 404, 404]   end state identical
+        GET    x3 -> [200, 200, 200]   store unchanged
+
+    HEAD:
+        HEAD /users/1 -> 200, Content-Length header says 999, actual body 0 bytes
+
+    A METHOD THE SERVER DOES NOT IMPLEMENT:
+        PATCH /users/1 -> 501 Not Implemented
+
+    A REDIRECT, and the surprise:
+        GET /moved was written to return 301 with `Location: /users/1`. The measured result was 200
+        with the TARGET's body - because the client library followed the redirect silently. The 301
+        never reached my code.
+
+THREE THINGS TO TAKE FROM THAT LAST ONE. Redirects are usually invisible to application code, which is
+why a bad redirect shows up as latency rather than an error. Any client that does NOT follow redirects
+- a naive script, a health check - will see the 301 and may treat it as a failure. And a POST that is
+redirected may be re-sent as a GET by some clients, which is a genuinely nasty and very old
+compatibility wart.
+
+AND THE 501: the server simply had no `do_PATCH` method, and the framework answered 'Not Implemented'
+on its behalf. 501 means 'this server does not support that method at all'; 405 Method Not Allowed
+means 'not on THIS resource', which is the one you should return deliberately.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE TABLE WORTH MEMORISING:
+
+        method   safe   idempotent   success code        notes
+        GET      yes    yes          200                 cacheable; never change state
+        HEAD     yes    yes          200                 headers only, no body
+        POST     no     NO           201 + Location      needs an idempotency key
+        PUT      no     yes          200 / 204           REPLACES the whole resource
+        PATCH    no     usually no   200                 partial update
+        DELETE   no     yes          204                 second call may 404; still idempotent
+
+THE #1 MISTAKE: retrying a POST after a timeout without an idempotency key. Measured: three POSTs,
+three resources. The client cannot tell whether the first one worked, so it must either risk a
+duplicate or risk losing the operation - and the idempotency key is what removes that dilemma.
+
+THE #2 MISTAKE: using GET for something that changes state. Crawlers, prefetchers and link previews
+follow GETs, so a `GET /delete` endpoint will eventually be triggered by a robot.
+
+THE #3 MISTAKE: returning 200 with an error in the body. Every retry policy, cache and alert reads the
+status code, and you have just told all of them everything is fine.
+
+THE DISTINCTION PEOPLE GET BACKWARDS: 401 is 'I do not know who you are', 403 is 'I know who you are
+and the answer is no'. And 4xx means the client was wrong while 5xx means you were - which is the first
+thing to look at when a dashboard lights up.
+
+ONE-SENTENCE TAKEAWAY: choose the method by what the operation IS - safe, idempotent, or neither - and
+the status code by what actually happened, because retries, caches and monitoring all read those two
+fields and nothing else.""",
+]
+
+_EX_P1AO["The four pillars of OOP, with one running example"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - four ideas, one example
+
+Object-oriented programming is usually taught as four words: ENCAPSULATION, ABSTRACTION, INHERITANCE
+and POLYMORPHISM. Recited as definitions they are almost meaningless. Attached to one running example
+they are obvious.
+
+THE RUNNING EXAMPLE for this entry is a bank account, because it exercises all four naturally:
+
+    an ACCOUNT holds a balance and can be deposited into and withdrawn from
+    a SAVINGS ACCOUNT is an account that also earns interest
+    a CURRENT ACCOUNT is an account that allows an overdraft
+
+THE FOUR IDEAS, in one line each, against that example:
+
+    ENCAPSULATION   the balance is not a public field you can set to a million - it is reached only
+                    through deposit() and withdraw(), which enforce the rules.
+    ABSTRACTION     the caller says account.withdraw(50) and never learns how overdraft limits,
+                    logging or fees work.
+    INHERITANCE     SavingsAccount and CurrentAccount reuse Account's balance and deposit logic
+                    rather than repeating it.
+    POLYMORPHISM    a single loop over a list of mixed accounts can call withdraw() on each, and each
+                    behaves according to its own type.
+
+TERMS AS THEY APPEAR:
+- CLASS: the template. OBJECT (or INSTANCE): one thing made from it.
+- ATTRIBUTE / FIELD: data held by an object. METHOD: a function belonging to it.
+- INVARIANT: something that must always be true of an object - 'the balance is never below the
+  overdraft limit'. Encapsulation exists to protect invariants, and that is the sentence that makes
+  the first pillar click.""",
+
+    """2. THE INTUITION - what each pillar is actually FOR
+
+Definitions are forgettable; PURPOSES are not. Each pillar exists to prevent a specific kind of mess.
+
+    ENCAPSULATION exists to protect INVARIANTS. If any code anywhere can write `account.balance = -50`,
+    then no rule about balances can ever be relied upon, and the bug could be in any file in the
+    system. Route every change through a method and the rule lives in exactly one place.
+
+    ABSTRACTION exists to limit what you must UNDERSTAND. A car has a steering wheel and pedals; you
+    do not need the engine's internals to drive it. In code: a small public surface over a large
+    private one, so the number of things a caller must know stays constant as the implementation
+    grows.
+
+    INHERITANCE exists to avoid DUPLICATION of genuinely shared behaviour - and it is the pillar most
+    often misused, because people reach for it to get at a method rather than because the sentence
+    'X is a Y' is true.
+
+    POLYMORPHISM exists to eliminate BRANCHING ON TYPE. Without it you write
+    `if isinstance(a, Savings): ... elif isinstance(a, Current): ...` in every place that handles
+    accounts, and every new account type means editing all of them.
+
+THE ONE THAT DOES THE MOST WORK IS POLYMORPHISM, and it is worth seeing it measured. Running one loop
+over three different types, each with its own version of the same method:
+
+        Animal  -> speak(): ...     introduce(): I say ...
+        Dog     -> speak(): woof    introduce(): I say woof
+        Cat     -> speak(): meow    introduce(): I say meow
+
+`introduce()` is written ONCE in the base class and calls `self.speak()`. It produced three different
+sentences without knowing that Dog or Cat exist. Adding a Cow tomorrow requires no change to that
+method at all - which is the OPEN-CLOSED PRINCIPLE, and it is a direct consequence of the call being
+resolved against the actual object at run time.
+
+ENCAPSULATION AND ABSTRACTION ARE OFTEN CONFUSED, so here is the clean split: encapsulation is about
+ACCESS - what can be touched. Abstraction is about ATTENTION - what must be understood. You can have
+one without the other, and the two words are not synonyms even though they usually travel together.""",
+
+    """3. THE FOUR PILLARS, TRACED THROUGH ONE EXAMPLE
+
+    class Account:
+        def __init__(self, balance=0):
+            self._balance = balance                  # ENCAPSULATION: underscore says 'internal'
+
+        @property
+        def balance(self):                           # readable, not writable
+            return self._balance
+
+        def deposit(self, amount):
+            if amount <= 0:
+                raise ValueError("deposit must be positive")
+            self._balance += amount
+
+        def withdraw(self, amount):                  # ABSTRACTION: callers never see the rule
+            if amount > self._available():
+                raise ValueError("insufficient funds")
+            self._balance -= amount
+
+        def _available(self):                        # the hook subclasses change
+            return self._balance
+
+    class CurrentAccount(Account):                   # INHERITANCE
+        def __init__(self, balance=0, overdraft=100):
+            super().__init__(balance)                # never forget this
+            self.overdraft = overdraft
+
+        def _available(self):                        # POLYMORPHISM: same name, different rule
+            return self._balance + self.overdraft
+
+WALK THE FOUR:
+
+    ENCAPSULATION - `_balance` is not written to from outside. `deposit` rejects a negative amount, so
+    the invariant 'you cannot deposit a negative number to steal money' lives in exactly one place. The
+    `@property` makes the balance readable without making it writable, which is the common shape.
+
+    ABSTRACTION - the caller writes `account.withdraw(50)`. They do not know whether an overdraft
+    applies, whether it logs, whether it charges a fee. The public surface is four names; the
+    implementation can grow without changing it.
+
+    INHERITANCE - CurrentAccount did not rewrite deposit, balance, or the withdraw logic. It inherited
+    them and changed ONE method.
+
+    POLYMORPHISM - `withdraw` calls `self._available()`, which resolves to CurrentAccount's version for
+    a current account. The withdraw logic was written once, before overdrafts existed, and it works
+    with them.
+
+THAT LAST POINT IS THE TEMPLATE METHOD PATTERN: a concrete method in the base fixes the SHAPE of an
+algorithm ('check availability, then subtract') and delegates one step to subclasses. Almost every
+good use of inheritance has this shape, and recognising it is worth more than the four definitions.""",
+
+    """4. THE FAILURE MODES - what each pillar looks like when misused
+
+A. ENCAPSULATION AS CEREMONY. A private field with a getter and a setter that do nothing is not
+   encapsulation - it is a public field with extra typing. Encapsulation means the METHODS ENFORCE
+   SOMETHING. If `set_balance` just assigns, delete it and make the field public; you have lost
+   nothing and gained honesty.
+
+B. ENCAPSULATION MISUNDERSTOOD IN PYTHON, which has no private members at all. Measured:
+
+       a.public                -> 1
+       a._internal             -> 2       accessible; the underscore is a CONVENTION
+       a.__mangled             -> AttributeError: 'Account' object has no attribute '__mangled'
+       a._Account__mangled     -> 3       the real name
+
+   The double underscore MANGLES the name to `_ClassName__attr`. It exists to stop subclasses
+   accidentally colliding with a base class's attribute, NOT to prevent access - and the fourth line
+   proves it. Saying 'Python relies on convention, and the double underscore is name mangling rather
+   than privacy' is the correct answer to a very common question.
+
+C. INHERITANCE FOR REUSE RATHER THAN IDENTITY. Making Customer extend DatabaseHelper because you
+   wanted a save() method declares 'a Customer IS A database helper', which is false, and spends the
+   single inheritance slot most languages give you. Compose instead. See
+   [[abstract-class-vs-interface]].
+
+D. DEEP HIERARCHIES. Five levels each adding a little means opening five files to understand one
+   method. Two is usually plenty.
+
+E. FORGETTING `super().__init__()` WHEN INHERITING. Measured:
+
+       Child().log           -> ['Base.__init__', 'Child.__init__']
+       ForgetfulChild().log  -> AttributeError: 'ForgetfulChild' object has no attribute 'log'
+
+   The object constructs successfully and fails later, somewhere else - which is what makes it worth a
+   habit rather than vigilance.
+
+F. THE FRAGILE BASE CLASS. Because subclasses depend on the base's internals, changing the base can
+   break subclasses you have never read. This is the deepest argument for preferring composition, and
+   it is why 'favour composition over inheritance' is the modern default advice.
+
+G. POLYMORPHISM REPLACED BY isinstance CHAINS. If you are writing `if isinstance(x, A): ... elif
+   isinstance(x, B): ...` over a family of types, you have hand-written what the language does for
+   free, and every new type means editing every chain.
+
+H. ABSTRACTION TAKEN TOO FAR. A factory producing a builder returning a strategy is abstraction that
+   costs more than it saves. The test is whether the abstraction lets you IGNORE something. If you
+   must understand all the layers anyway, it is decoration.""",
+
+    """5. HOW THE PILLARS RELATE TO SOLID, AND WHEN NOT TO USE OOP
+
+The four pillars are the mechanisms; SOLID is the advice about using them. The two that follow
+directly:
+
+    LISKOV SUBSTITUTION (L): a subclass must be usable anywhere its parent is. If SavingsAccount
+    throws on withdraw() while Account does not, code holding an Account breaks when handed a
+    Savings - so it is not really a subtype. The classic illustration is Square inheriting from
+    Rectangle: setting the width of a Square must change its height, which violates what Rectangle
+    promised.
+
+    OPEN-CLOSED (O): open for extension, closed for modification - which is exactly what the measured
+    polymorphism example does. Adding an animal changes no existing method.
+
+    And from the previous entry: INTERFACE SEGREGATION (I) says many small interfaces beat one large
+    one, and DEPENDENCY INVERSION (D) says depend on abstractions rather than concrete classes - both
+    of which are about ABSTRACTION rather than inheritance.
+
+WHEN OOP IS NOT THE RIGHT TOOL, which is the judgement half of the answer:
+    - A class with one method and no state is a FUNCTION wearing a costume.
+    - Data with no behaviour is a RECORD - a dataclass, a struct, a dictionary. Wrapping it in getters
+      adds nothing.
+    - Pipelines of transformations often read better as functions than as objects, which is why data
+      code tends to be more functional in style.
+    - Deep hierarchies to model a domain that is really a set of cases are usually better as a tagged
+      union or a simple dispatch table.
+
+WHAT INTERVIEWERS ARE ACTUALLY LISTENING FOR when they ask 'explain the four pillars': not the
+definitions, which anyone can recite, but whether you can attach each to a purpose and name its
+failure mode. 'Encapsulation protects invariants; the failure mode is getters and setters that enforce
+nothing' scores far better than a textbook sentence.
+
+AND THE HONEST NOTE ABOUT INHERITANCE: of the four, it is the one modern practice uses LEAST. The
+other three are near-universal; inheritance is now generally reserved for genuine is-a relationships
+and template-method shapes, with composition preferred elsewhere. Saying that shows you have written
+code rather than only read about it.""",
+
+    """6. HOW TO APPLY THEM - numbered steps for designing a class
+
+1. WRITE DOWN THE INVARIANTS FIRST - the things that must always be true. 'The balance never goes
+   below the overdraft limit.' 'The list is always sorted.' These decide everything else.
+2. MAKE THE DATA PRIVATE and expose METHODS that enforce those invariants. If a method enforces
+   nothing, do not write it - expose the field.
+3. KEEP THE PUBLIC SURFACE SMALL. Every public name is a promise you will have to keep. Ask of each
+   one: could a caller do their job without it?
+4. ONLY THEN CONSIDER INHERITANCE, and only if 'X is a Y' is literally true AND there is shared code
+   or state. Otherwise compose.
+5. IF YOU DO INHERIT, call `super().__init__()`, keep signatures compatible, and make sure any
+   instance of the child is usable wherever the parent was.
+6. LOOK FOR TYPE CHECKS in your code. Every `isinstance` chain over a family of types is a polymorphic
+   method waiting to be written.
+7. RE-READ THE CLASS AND ASK WHAT A CALLER MUST UNDERSTAND. If the answer is 'all of it', the
+   abstraction is not doing its job.
+
+THE FIRST STEP IS THE ONE THAT MAKES THE DIFFERENCE. A class designed around its invariants has
+obvious methods; a class designed around its data ends up as a bag of getters and setters with the
+rules scattered across the callers.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Encapsulation is keeping the data private and exposing methods that enforce the rules - so an account
+has deposit and withdraw rather than a public balance anybody can set. The point is that the
+invariants live in one place. In Python that is a convention rather than a guarantee: a single
+underscore means "please do not", and a double underscore just mangles the name to _ClassName__attr,
+which prevents accidental collisions in subclasses rather than access. I have checked - you can still
+read it through the mangled name.
+
+Abstraction is limiting what a caller has to understand. They call withdraw(50) and never learn about
+overdraft limits or fees.
+
+Inheritance is sharing behaviour when one thing genuinely IS another - a current account is an
+account. It is the pillar I would reach for least; composition is usually better, and inheriting just
+to reuse a method is the classic mistake.
+
+Polymorphism is the one that does the real work: the same call behaving differently depending on the
+object. I ran a loop over three animal types calling one inherited method, and it printed three
+different sentences while the base class mentions none of the subclasses. That is what lets you add a
+new type without editing existing code, and it is what replaces a long isinstance chain.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    self._balance = balance
+
+    One underscore is a CONVENTION meaning 'internal, do not touch from outside'. Nothing enforces it -
+    measured: `a._internal` returned 2 quite happily. Its value is communication, and every Python
+    programmer reads it correctly.
+
+    self.__mangled = 3
+
+    Two underscores trigger NAME MANGLING: the attribute is actually stored as `_ClassName__mangled`.
+    Measured: `a.__mangled` raises AttributeError while `a._Account__mangled` returns 3. So it is not
+    privacy - it is collision avoidance, so that a subclass writing `self.__x` cannot accidentally
+    overwrite a base class's `self.__x`.
+
+    @property
+    def balance(self): return self._balance
+
+    Exposes a read-only view. Callers write `account.balance` and get a value; assigning to it raises,
+    because no setter was defined. This is how Python does 'public getter, private field' without the
+    ceremony - and note it means you can START with a plain attribute and turn it into a property later
+    without changing any caller, which is why Python code rarely has getters up front.
+
+    def withdraw(self, amount):
+        if amount > self._available(): raise ValueError(...)
+        self._balance -= amount
+
+    ENCAPSULATION (the rule is here, not in the caller), ABSTRACTION (the caller passes an amount and
+    learns nothing else) and the hook for POLYMORPHISM (`self._available()` resolves to the subclass's
+    version) in four lines.
+
+    class CurrentAccount(Account):
+        def __init__(self, balance=0, overdraft=100):
+            super().__init__(balance)
+
+    `super().__init__()` runs the parent's setup. Measured consequence of omitting it: `AttributeError:
+    'ForgetfulChild' object has no attribute 'log'` - the parent never got to create its own state.
+
+    def _available(self):
+        return self._balance + self.overdraft
+
+    The override. It is called BY THE PARENT'S withdraw(), which was written before overdrafts
+    existed. That direction of call - base into subclass - is the template method pattern and the
+    reason inheritance is worth having when it is worth having.""",
+
+    """9. RUNNING IT - the measured behaviour behind the claims
+
+    POLYMORPHISM, one loop over three types:
+        Animal  -> speak(): ...     introduce(): I say ...
+        Dog     -> speak(): woof    introduce(): I say woof
+        Cat     -> speak(): meow    introduce(): I say meow
+
+    Three outputs from one inherited `introduce()`. That method does not mention Dog or Cat anywhere.
+
+    ENCAPSULATION IN PYTHON, all four access attempts:
+        a.public              -> 1
+        a._internal           -> 2                        the underscore stops nobody
+        a.__mangled           -> AttributeError: 'Account' object has no attribute '__mangled'
+        a._Account__mangled   -> 3                        the same value, through the real name
+
+    Line three looks like privacy. Line four shows it is not. The double underscore renamed the
+    attribute; it did not protect it.
+
+    ABSTRACTION ENFORCED BY AN ABSTRACT BASE:
+        Shape()              -> TypeError: Can't instantiate abstract class Shape without an
+                                implementation for abstract method 'area'
+        Square(3).describe() -> 'a shape of area 9'
+
+    The second line is abstraction plus polymorphism together: `describe()` lives in the base and calls
+    the subclass's `area()`.
+
+    INHERITANCE DONE WRONG:
+        Child().log           -> ['Base.__init__', 'Child.__init__']
+        ForgetfulChild().log  -> AttributeError: 'ForgetfulChild' object has no attribute 'log'
+
+    Both objects exist. One of them is half-built, and nothing said so at construction time.
+
+    AND THE DIAMOND, for completeness, since inheritance in Python resolves along the MRO:
+        D().who()  ->  'D -> B -> C -> A'      D.__mro__ -> [D, B, C, A, object]
+    B's `super()` reached C, which is not B's parent. Every class in the chain must call `super()` or
+    the cooperation silently stops.""",
+
+    """10. THE SUMMARY, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR, WITH PURPOSE AND FAILURE MODE:
+
+    pillar          what it is                        what it is FOR              failure mode
+    encapsulation   private data, public methods      protecting invariants       getters/setters that
+                                                                                   enforce nothing
+    abstraction     a small surface over a big inside limiting what must be       layers that hide
+                                                       understood                  nothing
+    inheritance     a child reusing a parent          avoiding duplication of     inheriting to reuse
+                                                       genuinely shared behaviour  rather than to be
+    polymorphism    one call, many behaviours         removing type branching     isinstance chains
+
+THE #1 MISTAKE: using inheritance to get at a method rather than because 'X is a Y' is true. It spends
+the single inheritance slot, couples two classes permanently, and creates hierarchies where
+understanding one method means reading five files. Compose, and use an interface to name the part.
+
+THE #2 MISTAKE, in Python specifically: believing the double underscore makes something private.
+Measured: `a._Account__mangled` returns the value. It is name mangling for collision avoidance, and
+saying so correctly is a small but real signal.
+
+THE #3 MISTAKE: reciting the four words without purposes. Anybody can define encapsulation; attaching
+it to 'protecting invariants' and naming its failure mode is what an interviewer is listening for.
+
+ONE-SENTENCE TAKEAWAY: encapsulation protects the invariants, abstraction limits what must be
+understood, inheritance shares genuinely common behaviour, and polymorphism removes the branching on
+type - and of the four, polymorphism is the one that actually changes how a system grows.""",
+]
+
 _EX_P1AO["Abstract class vs interface - and which to reach for"] = [
     """1. THE GOAL IN PLAIN ENGLISH - two ways of saying 'anything of this kind must do X'
 
