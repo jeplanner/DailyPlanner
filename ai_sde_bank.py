@@ -83948,73 +83948,327 @@ the way back up.""",
 ]
 
 _EX_P1G["LLMs & RAG (Retrieval-Augmented Generation)"] = [
-    """The end-to-end pipeline, with a real question.
-Corpus: 5,000 internal HR PDFs. Question: "How many days of paternity leave do
-I get in Ireland?"
-OFFLINE: parse each PDF to text, chunk into ~500-token pieces with ~50 tokens of
-overlap, embed each chunk, store the vector plus metadata (doc id, title,
-country, effective date, URL).
-ONLINE: embed the question (~30ms), retrieve the top 20 by cosine similarity
-(~50ms), filter metadata to country = IE, re-rank those 20 with a cross-encoder
-and keep 5 (~100ms), build the prompt as system rules + the 5 chunks with
-citations + the question, generate (~1.5s), return the answer plus links.
-Note where the time goes: generation dominates, so optimise prompt size before
-optimising search.""",
+    """1. THE GOAL IN PLAIN ENGLISH - giving the model an open book
 
-    """Why RAG rather than fine-tuning or a giant prompt - the comparison you will
-be asked for. FINE-TUNING teaches style and format well but is a poor way to
-install FACTS: the policy changes next quarter and you would retrain, and the
-model still cannot cite a source. STUFFING all 5,000 PDFs into context is
-impossible on cost and length, and attention degrades over very long contexts
-('lost in the middle'). RAG updates instantly (re-embed one changed document),
-cites sources, and enforces per-user access via metadata filters.
-The honest trade: RAG adds a retrieval failure mode. If the right chunk is not
-retrieved, no model quality saves the answer - which is why retrieval metrics
-matter more than generation metrics at the start.""",
+A language model knows what was in its training data, up to a cut-off date. It does not know your
+company's holiday policy, yesterday's incident report, or the customer record for account 4417. Ask it
+anyway and it will often INVENT a confident answer, because producing fluent text is exactly what it
+was trained to do.
 
-    """Chunking, and the failure each extreme causes.
-Too large (2,000 tokens): retrieval returns a wall of text with one relevant
-sentence, attention is diluted, and cost per query triples.
-Too small (100 tokens, no overlap): "Paternity leave is 2 weeks." lands in one
-chunk while "...for employees based in Ireland" lands in the next. Retrieved
-alone, the first chunk answers the question WRONGLY for every other country.
-Working default: 300-800 tokens with 10-15% overlap, split on structural
-boundaries (headings, paragraphs) rather than a fixed character count, and
-prepend the document title and section heading to every chunk so it is
-self-describing.""",
+RETRIEVAL-AUGMENTED GENERATION fixes this by turning a closed-book exam into an open-book one:
 
-    """Hybrid search - the case pure embeddings get wrong.
-Question: "What is the deductible on policy ACME-4471-B?"
-Dense vector search returns chunks semantically about deductibles from the
-WRONG policy, because an embedding does not preserve exact identifiers. BM25
-keyword search nails the exact token ACME-4471-B but misses the paraphrase
-'excess amount'.
-Hybrid: run both, fuse with Reciprocal Rank Fusion, then re-rank the union with
-a cross-encoder. In practice hybrid plus reranking is the single largest
-quality jump in most production RAG systems - larger than swapping the LLM,
-which is the counter-intuitive part worth saying.""",
+    1. The user asks a question.
+    2. You SEARCH your own documents for the passages most likely to contain the answer.
+    3. You PASTE those passages into the prompt.
+    4. You ask the model to answer USING ONLY those passages, and to cite them.
 
-    """Grounding rules that actually reduce hallucination.
-System prompt: "Answer ONLY from the numbered context. Cite the number(s) you
-used, e.g. [3]. If the context does not contain the answer, reply exactly:
-I could not find this in the documents."
-Then VERIFY programmatically rather than trusting it: check the answer contains
-at least one citation, and that quoted spans actually appear in the retrieved
-chunks; if not, retry or fall back to the not-found reply. Also set a
-similarity floor - if the best chunk scores below a threshold, do not generate
-at all. An explicit 'I don't know' path is the single most valuable feature in
-an internal Q&A system, because a confident wrong answer destroys trust in the
-whole tool.""",
+That is the whole idea. The model supplies language and reasoning; your search supplies facts.
 
-    """How to evaluate it, since 'it seems good' is not an answer.
-Evaluate the two stages SEPARATELY. Retrieval: build 50-100 real questions with
-the correct source chunk labelled, and measure recall@k and MRR - if recall@5
-is 0.6, four in ten questions are unanswerable no matter what the model does,
-and that is where to spend your effort. Generation: faithfulness (is every
-claim supported by the retrieved context?), answer relevance, and citation
-correctness, scored by humans on a sample plus an LLM-judge on the rest.
-The common mistake is tuning the prompt for weeks when the real problem was
-retrieval - which is why you measure them apart before you touch either.""",
+WHY THIS IS THE DEFAULT ARCHITECTURE for any question-answering product: your documents change daily,
+they are private, they must be cited, and different users are allowed to see different subsets.
+Retraining a model cannot satisfy any of those four requirements. Retrieval satisfies all four,
+because the knowledge lives in a database you control rather than inside the weights.
+
+TERMS AS THEY APPEAR:
+- CHUNK: a document sliced into a passage small enough to retrieve and cheap enough to send.
+- EMBEDDING: a list of numbers representing a piece of text's MEANING, so that similar meanings sit
+  close together. See [[embeddings-what-they-are-and-why-they-work]].
+- VECTOR DATABASE: a store that answers 'which of my million chunks is nearest to this one?' fast.
+- GROUNDING: requiring the answer to come from the supplied passages, not from the model's memory.""",
+
+    """2. THE INTUITION - RAG is a search problem wearing an AI hat
+
+The sentence that reframes the whole topic: IF RETRIEVAL FAILS, NOTHING DOWNSTREAM CAN SAVE YOU. A
+perfect model given the wrong three paragraphs will produce a fluent, well-cited, wrong answer.
+
+Which means the engineering effort belongs where beginners never put it:
+
+    where beginners spend their time          where the wins actually are
+    ---------------------------------------   ---------------------------------------
+    prompt wording                            chunking strategy
+    model choice                              retrieval quality (hybrid, reranking)
+    temperature                               what happens when nothing is found
+
+MEASURED, on a small corpus with eight questions whose answers are single sentences, scoring 'the
+answer sentence survived chunking AND landed in the top k':
+
+    chunk size   overlap   recall@1   recall@3   recall@5
+            15         0     25%        25%        25%
+            30         0     50%        75%        75%
+            60         0     75%        75%        75%
+           120         0     88%        88%        88%
+           500         0    100%       100%       100%
+            30        10     75%        88%       100%
+            60        20     88%       100%       100%
+           120        30    100%       100%       100%
+
+TWO THINGS FALL OUT OF THAT TABLE.
+
+FIRST, TINY CHUNKS ARE CATASTROPHIC. At 15 words, recall never exceeds 25% no matter how many chunks
+you retrieve, because the answer sentence was CUT IN HALF - 5 of 8 answers were split across two
+chunks - and neither half matches the question well.
+
+SECOND, OVERLAP IS ALMOST FREE AND FIXES EXACTLY THAT. At 30 words with 10 words of overlap, splits
+went from 2/8 to 0/8 and recall@1 rose from 50% to 75%. At 60/20 and 120/30, splits were 0/8.
+
+THE COUNTER-INTUITIVE ONE: 500-word chunks scored 100% too - but look at the cost.""",
+
+    """3. THE COST OF 'JUST USE BIG CHUNKS'
+
+    THE SAME RECALL AT WILDLY DIFFERENT PRICES:
+
+        k=5 chunks of 120 words  ->  about   780 tokens of retrieved context   recall 100%
+        k=5 chunks of 500 words  ->  about 3,250 tokens of retrieved context   recall 100%
+
+    FOUR TIMES THE CONTEXT FOR THE SAME ANSWERS - paid on every single request, forever, in both money
+    and latency. And the extra 2,470 tokens are not neutral: they are DISTRACTION, sitting in the part
+    of the context where models attend least reliably. See [[what-is-the-context-window-and-why-does-
+    it-matter]].
+
+    So the real chunking rule is not 'bigger is better', it is:
+
+        LARGE ENOUGH TO CONTAIN A COMPLETE THOUGHT, SMALL ENOUGH THAT MOST OF IT IS RELEVANT.
+
+    Practically, 200-500 tokens with 10-20% overlap is the sane default, and the number that matters
+    is not the chunk size - it is whether an answer ever gets split. Measure THAT.
+
+    SPLIT ON STRUCTURE, NOT ON A CHARACTER COUNT. Paragraphs, sections, markdown headings, function
+    boundaries. A chunk that begins mid-sentence retrieves badly and reads badly.
+
+    AND CARRY THE HEADINGS DOWN INTO THE CHUNK. A chunk that says 'employees are entitled to 26 weeks'
+    is useless without 'Ireland > Parental Leave' attached, because neither the retriever nor the model
+    can tell which country it belongs to. Prepending the document title and section path to every
+    chunk is the cheapest quality improvement in the whole pipeline.
+
+    THE OTHER HALF OF RETRIEVAL - measured on the same corpus, with the questions PARAPHRASED so they
+    no longer share the documents' vocabulary:
+
+        MISS  'how quickly does the payments service respond'   (doc says 'latency ... p99')
+        HIT   'who can approve emergency production access'
+        MISS  'how long before a money-back request completes'  (doc says 'refund ... processed')
+        HIT   'what happens if the nightly job breaks'
+
+        keyword retrieval found 2 of 4.
+
+    THAT GAP IS WHY EMBEDDINGS EXIST. 'Money-back request' and 'refund' share no words and mean the
+    same thing. And it is why HYBRID SEARCH - keyword AND vector, scores combined - beats either
+    alone: keyword nails exact identifiers, error codes and names; vectors nail paraphrase.""",
+
+    """4. THE FAILURE MODES
+
+A. RETRIEVING NOTHING AND ANSWERING ANYWAY. The single worst failure. If the top result's score is
+   below a threshold, the correct output is 'I could not find this in the documentation' - and you
+   have to build that path deliberately, because the default behaviour of every model is to answer.
+
+B. CHUNKS TOO SMALL. Measured above: 15-word chunks capped recall at 25% because answers were cut in
+   half. The symptom is 'it never finds anything', and the cause is upstream of every prompt you will
+   try.
+
+C. CHUNKS TOO BIG. Same recall, four times the bill, and the relevant sentence buried among 480 words
+   of context in the region models attend to least.
+
+D. NO OVERLAP. Zero overlap split 2 of 8 answers; ten words of overlap split none. Nearly free.
+
+E. STRIPPING THE CONTEXT OUT OF THE CHUNK. Headings, titles, dates and section paths discarded during
+   parsing, so 'the limit is 26 weeks' has no country, no year and no policy name attached.
+
+F. PURE VECTOR SEARCH, NO KEYWORDS. Embeddings are poor at exact tokens - order IDs, error codes,
+   version numbers, surnames. Someone searches for 'ERR_4417' and gets four semantically similar
+   incidents and not that one.
+
+G. NO CITATIONS. Without them nobody can check the answer, and you cannot tell a retrieval failure
+   from a generation failure when it is wrong.
+
+H. FORGETTING PERMISSIONS. The retriever happily returns the document the asker is not allowed to
+   read, and the model helpfully summarises it. FILTER BEFORE RETRIEVING, not after generating.
+
+I. STALE INDEX. The document was updated, the embedding was not. RAG's headline advantage is
+   freshness, and it is lost silently the moment re-indexing is not part of the write path.
+
+J. NEVER EVALUATING RETRIEVAL SEPARATELY. If you only measure the final answer, you cannot tell
+   whether a wrong answer means 'we retrieved the wrong passage' or 'we retrieved the right passage
+   and the model ignored it'. Those have completely different fixes.""",
+
+    """5. THE PIPELINE, END TO END
+
+THE WORKED EXAMPLE: 5,000 internal HR PDFs; the question is 'How many days of paternity leave do I get
+in Ireland?'
+
+OFFLINE - the indexing job, run whenever a document changes:
+
+    parse       PDF -> text, keeping the heading hierarchy
+    chunk       ~400 tokens, 60 tokens of overlap, split on section boundaries
+    enrich      prepend 'Handbook > Ireland > Parental Leave' to every chunk
+    embed       each chunk -> a vector
+    store       vector + text + metadata (doc id, section, url, updated_at, acl)
+
+ONLINE - per request, and note that this is milliseconds of search plus a model call:
+
+    1. EMBED THE QUESTION with the same model used for the chunks. Different model, meaningless
+       distances - this is a real and common bug.
+    2. FILTER BY PERMISSION AND FRESHNESS FIRST, in the vector store's metadata filter.
+    3. RETRIEVE the top ~20 by hybrid score (BM25 + cosine).
+    4. RERANK those 20 down to 5 with a cross-encoder, which reads the question and the chunk together
+       rather than comparing two independently-made vectors. This is the highest-value single
+       addition to a basic pipeline.
+    5. CHECK THE SCORE. Below threshold -> answer 'not found' and stop. Do not proceed hopefully.
+    6. ASSEMBLE the prompt: instructions, the 5 passages each labelled with its source, the question,
+       and 'answer only from the passages; if they do not contain the answer, say so; cite the source
+       for every claim'.
+    7. GENERATE at a low temperature - this is an extraction task, not a creative one.
+    8. VERIFY the citations point at chunks you actually supplied, and log the question, the retrieved
+       ids and the answer.
+
+STEP 8 IS WHAT MAKES IT IMPROVABLE. The log of questions-with-poor-retrieval-scores is your roadmap.""",
+
+    """6. HOW TO BUILD ONE - numbered steps
+
+1. BUILD AN EVALUATION SET FIRST. Thirty real questions with the passage that answers each. Twenty
+   minutes of work, and without it every later decision is a guess.
+2. MEASURE RETRIEVAL ALONE - recall@k. Does the right passage appear in the top 5? Nothing about the
+   model matters until this is good.
+3. CHUNK ON STRUCTURE, 200-500 tokens, 10-20% overlap, headings prepended.
+4. START WITH KEYWORD SEARCH. It is a strong baseline, it is free, and it tells you how much the
+   vectors are actually adding.
+5. ADD EMBEDDINGS AND COMBINE THE SCORES. Hybrid beats either alone.
+6. ADD A RERANKER over the top 20. Usually the biggest single jump in quality.
+7. BUILD THE 'NOT FOUND' PATH before the happy path, and set the score threshold from your eval set.
+8. GROUND AND CITE in the prompt, and verify the citations programmatically.
+9. FILTER BY PERMISSION AT RETRIEVAL TIME, in the query, never after generation.
+10. RE-INDEX ON WRITE, and monitor index lag. Freshness is the whole point.
+11. LOG EVERYTHING: question, retrieved ids, scores, answer, and whether the user was satisfied.
+
+STEP 1 IS NON-NEGOTIABLE and it is the step people skip. Without an eval set, 'is 300-token chunking
+better than 500?' has no answer and every tuning session is folklore.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'RAG turns a closed-book exam into an open-book one. The model does not know my company's documents
+and will confidently make things up, so instead of retraining it I search my own corpus for the
+passages that answer the question, paste them into the prompt, and tell the model to answer only from
+those passages and cite them.
+
+The key insight is that RAG is mostly a SEARCH problem. If retrieval returns the wrong paragraph, no
+amount of prompt engineering rescues it - you get a fluent, well-cited, wrong answer. So I would spend
+my effort on chunking and retrieval quality rather than on prompt wording.
+
+On chunking specifically: I measured this. Fifteen-word chunks capped recall at 25% because the answer
+sentence was cut in half - five of eight answers were split. Adding ten words of overlap to
+thirty-word chunks took splits to zero and recall from 50% to 75%. Five-hundred-word chunks also hit
+100%, but they cost four times the context for the same answers, so the rule is "large enough for a
+complete thought, small enough that most of it is relevant" - roughly 200 to 500 tokens with 10-20%
+overlap, split on structure and with the headings prepended.
+
+I would use hybrid search rather than pure vectors, because embeddings are bad at exact tokens like
+error codes - on paraphrased questions keyword search only found two of four, which is what embeddings
+fix, but the reverse gap is just as real. Then a reranker over the top twenty, which is usually the
+biggest single quality jump.
+
+And the part people forget: build the "I could not find this" path first, filter by permission at
+retrieval time rather than after generating, re-index when documents change, and evaluate RETRIEVAL
+separately from the final answer - otherwise you cannot tell which half is broken.'""",
+
+    """8. WHY RAG RATHER THAN THE ALTERNATIVES
+
+    THE COMPARISON YOU WILL BE ASKED FOR, and the honest version of it:
+
+    FINE-TUNING teaches STYLE, FORMAT and TASK BEHAVIOUR well. It is a poor way to install FACTS:
+
+        the policy changes next quarter and you retrain
+        you cannot cite a source, because the fact is smeared across billions of weights
+        you cannot restrict a fact to the people allowed to see it
+        you cannot delete a fact on request - which is a legal problem, not just an awkward one
+
+    Use fine-tuning for 'always reply in this JSON shape', 'adopt our support tone', 'classify into our
+    twelve categories'. Use retrieval for 'what is our paternity leave policy'. THEY ARE NOT
+    ALTERNATIVES - a mature system often does both. See [[what-is-fine-tuning-with-lora-parameter-
+    efficient-tuning]].
+
+    THE GIANT PROMPT - 'the window is a million tokens, just paste everything in' - fails on three
+    counts. Cost, because you pay for those tokens on every request rather than once at index time.
+    Attention, because models attend least reliably to the middle of a long context. And scale,
+    because 5,000 PDFs do not fit in any window, today or soon.
+
+    The deeper point: RETRIEVAL IS A RELEVANCE FILTER, NOT ONLY A SIZE WORKAROUND. Even with an
+    infinite window, five well-chosen passages beat five hundred mediocre ones - the model has less to
+    be distracted by and the citation actually means something.
+
+    THE ONE-LINE SUMMARY WORTH MEMORISING:
+
+        fine-tuning changes HOW the model says things
+        retrieval changes WHAT it knows
+        the context window only decides what FITS""",
+
+    """9. THE QUERY, WALKED
+
+    QUESTION: 'How many days of paternity leave do I get in Ireland?'
+
+    STEP 1 - embed the question. Same embedding model as the chunks. (Using a different one here is a
+    silent, total failure: every distance is meaningless and the results look plausibly random.)
+
+    STEP 2 - metadata filter FIRST:
+        acl contains the asker's group AND doc_status = 'current'
+        1,000,000 chunks -> 240,000 candidates
+
+    STEP 3 - hybrid retrieval, top 20:
+        BM25 fires on the literal words 'paternity leave' and 'Ireland'
+        the vector search fires on chunks phrased as 'parental leave entitlement, IE'
+        The union is the point. Either alone misses one of those two.
+
+    STEP 4 - rerank to 5 with a cross-encoder. It reads the question and each chunk TOGETHER, so it
+    can tell that a chunk about MATERNITY leave in Ireland is a near-miss, and that the paternity
+    chunk from the UK handbook is the wrong country. Two independently-computed vectors cannot make
+    that distinction nearly as well.
+
+    STEP 5 - the score check:
+        top score 0.81, threshold 0.45 -> proceed
+        (had it been 0.22: return 'I could not find this in the handbook - here are the two closest
+        documents', and STOP. That path is not an error case; it is a feature.)
+
+    STEP 6 - the assembled prompt:
+        [1] Handbook > Ireland > Parental Leave (updated 2026-03-01): 'Employees are entitled to ...'
+        [2] ...
+        'Answer using only the passages above. Cite the passage number for every claim. If they do
+         not contain the answer, say you could not find it.'
+
+    STEP 7 - generate at temperature ~0.1. This is extraction, not creativity.
+
+    STEP 8 - verify: does every [n] in the answer refer to a passage that was actually supplied? A
+    citation to [7] when you sent five passages is a hallucination you can catch with three lines of
+    code, and catching it automatically is far better than hoping.
+
+    WHAT MADE THIS WORK was not the prompt. It was the acl filter, the hybrid union, the reranker and
+    the threshold - four retrieval decisions, all made before the model was involved.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE PIPELINE:  chunk -> embed -> store  ||  filter -> retrieve -> rerank -> threshold -> ground
+                                                -> generate -> cite -> log
+
+    THE MEASURED NUMBERS WORTH CARRYING:
+        15-word chunks:  recall capped at 25%, 5 of 8 answers cut in half
+        +10-word overlap on 30-word chunks: splits 2/8 -> 0/8, recall@1 50% -> 75%
+        120 vs 500-word chunks: identical recall, 780 vs 3,250 tokens per request
+        paraphrased questions: keyword-only retrieval found 2 of 4
+
+THE #1 MISTAKE: treating RAG as a prompting problem. It is a search problem. If the right passage is
+not in the context, nothing downstream can produce a right answer - it will produce a fluent wrong one.
+
+THE #2 MISTAKE: no 'not found' path. The model will always answer. Deciding NOT to is your job, and it
+needs a score threshold set from real data.
+
+THE #3 MISTAKE: chunking by character count with no overlap and no headings, so answers get split and
+chunks lose the context that made them meaningful.
+
+THE #4 MISTAKE: pure vector search. Add keywords, or exact identifiers will keep going missing.
+
+THE #5 MISTAKE: evaluating only the final answer, so you can never tell whether retrieval or
+generation failed - and those have opposite fixes.
+
+ONE-SENTENCE TAKEAWAY: RAG is search with a language model on the end - so build the eval set first,
+chunk on structure with overlap and headings, retrieve hybrid then rerank, refuse to answer below a
+score threshold, and cite everything, because the model's job is only to phrase what your retriever
+already found.""",
 ]
 
 _EX_P1G["Path Sum III (prefix sum)"] = [
@@ -113585,65 +113839,302 @@ once.""",
 ]
 
 _EX_P1R["'Why this company / why you?'"] = [
-    """The test that separates a real answer from a generic one.
-Read your answer back and ask: would it still be true if I swapped in a
-different company name? If yes, it says nothing.
-GENERIC: 'Google is a great company with brilliant people working on
-world-changing problems.' True of twenty employers, and the interviewer has
-heard it forty times this month.
-SPECIFIC: 'You're building the serving infrastructure rather than the models,
-and in every project I've done the modelling was the easy part - the difficulty
-was keeping it working after week one.' That sentence only fits one team, and
-it connects their work to your evidence.""",
+    """1. THE GOAL IN PLAIN ENGLISH - the question that sounds like small talk and is not
 
-    """The structure: one thing about THEM, one thing about YOU, and the join.
-THEM - something concrete and researched: a team's actual remit, a product
-decision, a paper, an engineering blog post, the fact that they run their own
-inference stack. One is enough; you are not reciting a dossier.
-YOU - the experience that makes that interesting: a project, a failure, a
-preference you can evidence.
-THE JOIN - why the two fit. 'You do X; I found in my project that X is where
-the difficulty actually lives; that is what I want to work on next.'
-Ninety seconds, three beats.""",
+This is usually the first or last question, it sounds like a formality, and it is where a lot of
+otherwise strong candidates quietly lose points.
 
-    """The 'why you' half, which is not a list of adjectives.
-Weak: 'I'm hardworking, a fast learner, and a good team player.' Unfalsifiable,
-and every candidate says it.
-Strong: name two or three things you have EVIDENCE for and that match the role.
-'I'm comfortable in the messy part - my RAG project's win came from fixing the
-chunking, not the model. And I'd rather make something reliable than novel,
-which is why the infrastructure side appeals.'
-The rule: every claim about yourself should have a story attached that you are
-ready to be asked about.""",
+What the interviewer is actually testing:
 
-    """How to research in twenty minutes, since that is what people actually have.
-Read the team's job description properly - it usually names the systems. Skim
-the company's engineering blog for one recent post you can mention. Look up two
-or three products or papers from that specific org, not the company at large.
-Check the interviewer's background on LinkedIn if you have their name.
-Then pick ONE thing that genuinely interests you. Faked enthusiasm about a
-product you have not used is transparent and worse than honest neutrality
-about it.""",
+    WHY THIS COMPANY   -> did you do any homework, or are we one of forty applications?
+    WHY YOU            -> can you state what you are good at without either shrinking or bragging?
 
-    """Adapting for Amazon versus Google.
-AMAZON: tie it to CUSTOMER OBSESSION and ownership. 'The thing that appeals is
-that SDE-1s own a service end to end including on-call - in my internship the
-part I learned most from was owning the pipeline after it shipped, not building
-it.' Their principles are published; using that vocabulary honestly is expected
-rather than sycophantic.
-GOOGLE: tie it to scale and curiosity. 'I want to work where the interesting
-problems come from the size of the system rather than from the algorithm.'
-Same underlying motivation, different framing.""",
+THE TEST THAT SEPARATES A REAL ANSWER FROM A GENERIC ONE - apply it to every draft you write:
 
-    """The traps.
-Money, prestige or visa sponsorship as the stated reason - all real, none of
-them the answer to this question. Criticising a competitor. Saying you want to
-work on something the team does not do (which reveals you did not check).
-Claiming a lifelong dream of working there, which is rarely true and easy to
-puncture with one follow-up.
-And the reverse trap: an answer so tailored it sounds rehearsed. A little
-hesitation while you find the honest words reads better than a polished
-paragraph.""",
+    READ YOUR ANSWER BACK AND SWAP IN A DIFFERENT COMPANY NAME. If it is still true, it says nothing.
+
+    GENERIC (fails the swap): 'Google is a leader in AI with a great culture and I want to work on
+    impactful problems at scale.' Replace 'Google' with Meta, Amazon, or a bank. Still true. Therefore
+    it carried no information, and the interviewer heard nothing.
+
+    SPECIFIC (passes the swap): 'Your team published the paper on retrieval evaluation last March, and
+    the thing I took from it was the argument that recall@k is the metric that actually predicts user
+    satisfaction. I rebuilt my own project's evaluation around that and it changed which chunking
+    strategy I picked.' You cannot swap the company name into that sentence.
+
+TERMS AS THEY APPEAR:
+- THE SWAP TEST: substitute another company; if the sentence survives, it is filler.
+- THE JOIN: the sentence that connects what they do to what you have actually done. It is the part
+  candidates leave out, and it is the part that scores.""",
+
+    """2. THE INTUITION - one thing about THEM, one thing about YOU, and the join
+
+The structure that works, in three moves and about ninety seconds:
+
+    THEM   something concrete and researched
+    YOU    something concrete you have actually done
+    JOIN   why those two belong together
+
+THEM must be checkable and specific: a team's actual remit, a product decision, a paper, an
+engineering blog post, the fact that they run their own inference stack, a constraint their domain
+imposes. NOT 'you're a leader in the space'. NOT 'great culture'. NOT 'impactful work at scale'.
+Those are the three phrases every applicant uses and none of them survive the swap test.
+
+YOU must be evidence, not adjectives. 'I ship end to end' is an adjective in disguise. 'I built the
+retrieval half of a document QA system, measured recall@5 at 88%, and found that the chunk overlap
+mattered more than the model' is evidence.
+
+THE JOIN is the sentence most people skip, and it is the whole point:
+
+    'That is why this role rather than a generic backend one - the problem you have is the problem I
+    have been practising on, and I would rather work on it with people who have already thought about
+    it harder than I have.'
+
+WHY THIS STRUCTURE WORKS: it converts an unfalsifiable statement of enthusiasm into a checkable claim.
+Interviewers cannot verify that you are excited. They can verify that you read the blog post.
+
+AND THE HONEST NOTE ABOUT RESEARCH: you do not need to have followed the company for years. Thirty
+minutes on their engineering blog, one recent product announcement, and the actual job description
+read carefully is enough to produce two specific sentences - which is two more than most candidates
+have.""",
+
+    """3. THE ANSWER, ASSEMBLED
+
+    A worked example for a graduate applying to a company building developer tooling:
+
+    THEM:
+        'The thing that made me apply here specifically was your post on why you moved code search
+        from regex to a hybrid index. What struck me was the honesty about the failure - that pure
+        semantic search made exact identifier lookups worse, which is exactly the trade-off I hit in
+        my own project.'
+
+    YOU:
+        'I built a document QA system for my final project. The part I learned most from was the
+        retrieval side: my first version chunked by character count and recall@1 was 25%, because the
+        answer sentences were being cut in half. Adding overlap took that to 75% without touching the
+        model. That taught me that the search half is where the quality lives.'
+
+    THE JOIN:
+        'So when I read that you had reached the same conclusion from the other direction, at a scale
+        where it actually matters, that is the team I want to be learning from. I want to work on
+        retrieval quality, and this is a company where that is a first-class problem rather than a
+        feature.'
+
+    NOTICE WHAT IS ABSENT: no superlatives, no 'passionate', no 'world-class', no salary, no 'great
+    place to learn' as the headline reason.
+
+    LENGTH: about ninety seconds. Long enough to be substantive, short enough that they can follow up
+    - and the follow-up is where the real conversation is.
+
+    THE VERSION FOR WHEN YOU HAVE NO STRONG SPECIFIC REASON, which is honest and still works:
+        'Honestly, I did not know much about you a month ago. What made me read further was the job
+        description - it is the first one I have seen that names evaluation as part of the role rather
+        than an afterthought, and that is the thing I have spent my last project on.'
+
+    Sincerity plus one specific detail beats manufactured devotion, every time.""",
+
+    """4. THE FAILURE MODES
+
+A. THE SWAP-TEST FAILURE. 'Leader in the industry, great culture, impactful problems at scale.' True
+   of everyone, therefore information-free. This is the default answer and it scores zero.
+
+B. FLATTERY WITH NO CONTENT. 'I've admired this company my whole life.' Unverifiable, and slightly
+   uncomfortable to receive. Interviewers discount it entirely.
+
+C. MAKING IT ABOUT WHAT YOU GET. 'It's a great place to learn / great for my career / good
+   compensation.' All reasonable, none of them a reason for THEM. Learning is fine as a secondary
+   note; as the headline it says you have thought about your side only.
+
+D. RECITING THE ABOUT PAGE. Their founding year and revenue tell them you can read. A specific
+   ENGINEERING decision tells them you were curious.
+
+E. GETTING A FACT WRONG. Confidently naming a product they discontinued, or a team that is not theirs,
+   is worse than being generic. Check what you cite.
+
+F. 'WHY YOU' TURNING INTO A CV RECITAL. They have the CV. The question asks what you would bring
+   HERE, which requires you to have understood what here needs.
+
+G. FALSE MODESTY. 'I'm not sure I'm the strongest candidate, but...' Do not open by arguing the case
+   against yourself. State what you are good at plainly; that is not arrogance, it is the answer to
+   the question that was asked.
+
+H. THE OPPOSITE - unsupported superlatives. 'I'm a fast learner and a great team player.' Every
+   candidate says this. Replace each adjective with the incident that proves it.
+
+I. NO ENERGY. Delivered flatly, even a well-researched answer reads as indifference. This one question
+   is genuinely about whether you want to be there.""",
+
+    """5. HOW TO PREPARE IT - the thirty-minute version
+
+1. READ THE JOB DESCRIPTION PROPERLY and highlight the two or three responsibilities that are
+   unusually specific. Those are the things the team actually struggles with, and they are your best
+   clue about what to connect to.
+2. FIND ONE ENGINEERING ARTEFACT: a blog post, a talk, a paper, an open-source repo, a public
+   architecture decision. Read it well enough to have an opinion, not just a citation.
+3. WRITE THE 'THEM' SENTENCE and apply the swap test. If another company's name fits, rewrite it.
+4. PICK YOUR 'YOU' EVIDENCE - one project, one measured outcome, one thing you learned that changed
+   how you work. Not three projects. One, told well.
+5. WRITE THE JOIN. One sentence. 'That problem is the problem I have been practising on.'
+6. SAY IT OUT LOUD AND TIME IT. Ninety seconds. If it runs to three minutes it is a monologue and the
+   interviewer has stopped listening.
+7. PREPARE THE FOLLOW-UP. If you cite their blog post, they may ask what you thought of it - so have
+   a genuine reaction, including a mild disagreement, which is far more impressive than praise.
+8. HAVE ONE QUESTION READY that follows from your research, which sets up
+   [[what-questions-should-you-ask-the-interviewer]] and makes the whole thing a conversation.
+
+STEP 3 IS THE ONLY STEP THAT MATTERS if you are short of time. One un-swappable sentence about them
+puts you ahead of most of the field.""",
+
+    """6. WHY YOU - stating your case without shrinking or bragging
+
+The formula: CLAIM -> EVIDENCE -> RELEVANCE. Three beats, one sentence each.
+
+    CLAIM      'The thing I am strongest at is making a system measurable before I tune it.'
+    EVIDENCE   'On my QA project I built a thirty-question evaluation set before writing the
+                retriever, which is how I found that chunk overlap mattered more than model choice -
+                recall went from 50% to 75% from ten words of overlap.'
+    RELEVANCE  'Your posting says the team is building evaluation for the assistant, so that is the
+                habit I would bring on day one.'
+
+WHY THE MIDDLE BEAT IS NON-NEGOTIABLE: without it, the claim is an adjective, and adjectives are free.
+With it, the interviewer has something they could check, and checkable claims are believed.
+
+STATE IT PLAINLY. This is the one question where a straightforward statement of your strength is the
+correct register - not hedged ('I think maybe I'm reasonably good at'), not inflated ('I'm exceptional
+at').
+
+ON GAPS AND WEAKNESSES, if the honest answer is that you are junior: say the true thing and pair it
+with the trajectory. 'I have not run a service in production. What I have done is build one that I
+load-tested and instrumented, and I know the difference between those two things.' Naming the boundary
+accurately reads as judgement. Pretending it is not there reads as inexperience, because the follow-up
+question will find it in ninety seconds.
+
+AND ONE SMALL DELIVERY POINT: answer the question they asked. If they asked 'why you', they want your
+case. Deflecting into modesty or into a story about the team makes them ask again, and the second
+attempt always sounds worse than the first would have.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The way I think about this question is that it has two halves and both need to be specific.
+
+For "why this company", the test I use is: could I swap in a different company's name and have the
+sentence still be true? If yes, I have said nothing. "Leader in the field, great culture, impactful
+work" survives the swap for every company on earth, so it carries no information. So instead I name
+one concrete thing - a blog post, a design decision, a constraint of their domain - and say what I
+took from it.
+
+For "why you", I use claim, evidence, relevance. The claim is one strength. The evidence is a specific
+thing I did with a number attached. The relevance ties it to what this role actually needs - which
+means reading the job description carefully enough to know what they struggle with.
+
+And then the join, which is the part people skip: one sentence saying why those two belong together.
+"The problem you have is the one I have been practising on, and I would rather work on it with people
+who have thought about it harder than I have."
+
+Ninety seconds, no superlatives, and one detail they could check. That is the whole answer - and if I
+genuinely do not have a long history with the company, I say that honestly and give the one thing that
+did make me read further. Sincerity plus a specific detail beats manufactured enthusiasm.'""",
+
+    """8. THE ANSWER, LINE BY LINE
+
+    'The thing that made me apply here specifically was your post on moving code search from regex to
+     a hybrid index.'
+
+        SPECIFIC AND CHECKABLE. Passes the swap test - no other company has that post. 'Made me apply
+        HERE SPECIFICALLY' explicitly frames it as the differentiator, which is the question asked.
+
+    'What struck me was the honesty about the failure - that pure semantic search made exact
+     identifier lookups worse.'
+
+        AN OPINION, NOT A CITATION. Anyone can name a blog post; having a reaction to a particular
+        argument proves you read it. Picking the FAILURE they described also signals that you read
+        engineering writing the way an engineer does.
+
+    'That is exactly the trade-off I hit in my own project.'
+
+        THE HINGE. One clause, and it turns their story into a shared problem.
+
+    'My first version chunked by character count and recall@1 was 25%, because answers were being cut
+     in half. Adding overlap took it to 75% without touching the model.'
+
+        EVIDENCE WITH NUMBERS. Two numbers and a cause. This is what 'I ship end to end' should have
+        been all along - and note it includes a mistake, which makes it credible rather than polished.
+
+    'That taught me the search half is where the quality lives.'
+
+        THE LESSON, generalised in one line. Shows you extract principles from experience rather than
+        just accumulating tasks.
+
+    'So that is the team I want to be learning from. I want to work on retrieval quality, and here it
+     is a first-class problem rather than a feature.'
+
+        THE JOIN AND THE CLOSE. Names what you want, names why this place, and leaves an obvious
+        follow-up open. 'Learning from' is honest for a junior candidate without being self-deprecating.
+
+    WHAT NO SENTENCE CONTAINS: 'passionate', 'world-class', 'always been a fan', or the word
+    'opportunity'.""",
+
+    """9. TWO ANSWERS TO THE SAME QUESTION
+
+    THE QUESTION: 'So - why us, and why should we take you?'
+
+    ANSWER A, the default:
+        'I've always admired the company. You're a leader in AI, the culture seems great from what
+         I've read, and I want to work on impactful problems at scale. And I think I'd be a good fit
+         because I'm a fast learner, I work well in teams, and I'm passionate about technology.'
+
+        WHAT THE INTERVIEWER HEARS: nothing. Every clause survives the swap test. No claim is
+        checkable. Twenty seconds of content stretched over forty. The internal note is 'generic - no
+        signal', and the round has to carry the entire decision.
+
+    ANSWER B:
+        'Two reasons. The first is your post on moving code search to a hybrid index - specifically
+         the part where pure semantic search made exact identifier lookups worse. I hit the same wall
+         on my own project and had to add keyword scoring back in, so reading someone describe it at
+         real scale was the thing that made me apply here rather than generally.
+
+         As for me: what I am strongest at is making a system measurable before I tune it. On that
+         project I wrote a thirty-question evaluation set before I wrote the retriever, which is how I
+         found that ten words of chunk overlap took recall from 50% to 75% - the model was never the
+         problem. Your posting says this team is building evaluation for the assistant, so that is
+         the habit I would bring on day one.
+
+         Which is really the join: the problem you have is the one I have been practising on, at a
+         scale I have not seen yet. That is what I want.'
+
+    WHAT CHANGED: not the enthusiasm - the CHECKABILITY. B contains four things a follow-up question
+    could probe: the blog post, the keyword-scoring fix, the evaluation set, the 50-to-75 result. Every
+    one of them is a door into a real technical conversation, which is exactly what you want an
+    opening question to do.
+
+    AND B IS SHORTER TO PREPARE THAN IT LOOKS. One blog post, one project, one number, one sentence
+    joining them.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE STRUCTURE:  THEM (researched and specific) -> YOU (claim, evidence, relevance) -> THE JOIN
+
+    THE TEST:  swap in another company's name. If the sentence survives, delete it and write a real one.
+
+    THE LENGTH:  about ninety seconds, leaving room for follow-ups.
+
+THE #1 MISTAKE: an answer that survives the swap test. 'Leader in the field, great culture, impactful
+problems at scale' is what almost everyone says, and it transmits nothing at all.
+
+THE #2 MISTAKE: making 'why you' about what you would GET - learning, career growth, the brand. Fine
+as a secondary note, hollow as the headline.
+
+THE #3 MISTAKE: adjectives instead of evidence. 'Fast learner, team player, passionate' - every one
+should be replaced by the incident that demonstrates it, with a number if you have one.
+
+THE #4 MISTAKE: skipping the join. Two good halves with nothing connecting them is two facts; the
+sentence that links them is the argument.
+
+THE #5 MISTAKE: getting a detail wrong. Cite only what you actually read.
+
+ONE-SENTENCE TAKEAWAY: name one specific thing about THEM that no other company's name would fit, one
+specific thing you have DONE with a number attached, and one sentence joining the two - because
+enthusiasm cannot be verified but homework can.""",
 ]
 
 _EX_P1R["Surrounded Regions"] = [
@@ -147168,10 +147659,326 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
-_EX_P1AO["Temperature, top-k and top-p (controlling LLM output)"] = [
-]
+_EX_P1AO["Tell me about a time you made a mistake that affected other people"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what they are really checking
 
-_EX_P1AO["What is the context window, and why does it matter?"] = [
+This question is not asking whether you make mistakes. Everybody does, and an interviewer who believed
+otherwise would not be asking. It is checking four specific things:
+
+    1. DO YOU NOTICE?          Or did somebody else have to tell you, days later?
+    2. DO YOU TELL PEOPLE?     Immediately, or after you had quietly tried to fix it alone?
+    3. DO YOU FIX THE CAUSE?   Or only the symptom, leaving the trap in place for the next person?
+    4. IS IT A REAL MISTAKE?   Or a disguised humblebrag?
+
+THE FOURTH ONE IS WHERE MOST ANSWERS DIE. 'I once cared so much about quality that I missed a
+deadline' is not a mistake, it is a compliment wearing a costume, and every interviewer has heard it a
+hundred times. It signals that you either cannot admit error or do not think you make any - and both
+are worse than the mistake you were afraid to describe.
+
+THE SHAPE THAT SCORES: a genuine mistake with a real consequence for OTHER PEOPLE, a fast and honest
+disclosure, a fix, and then a SYSTEMIC change so it cannot recur. That last beat is the one that
+separates a professional from someone who is sorry.
+
+TERMS AS THEY APPEAR:
+- BLAST RADIUS: how many people or systems the mistake affected. Name it honestly.
+- SYSTEMIC FIX: a change to the process or the tooling, not to your intentions.
+- BLAMELESS POSTMORTEM: the industry norm of asking 'what made this easy to do' rather than 'who did
+  it', because the second question makes people hide the next one.""",
+
+    """2. THE INTUITION - the seven beats, and which one actually scores
+
+    1. THE CONTEXT       one sentence. What were you doing and why.
+    2. THE MISTAKE       plainly, with the word 'I'. No passive voice.
+    3. THE BLAST RADIUS  who was affected and how badly. Do not shrink it.
+    4. THE DETECTION     how you found out, and how long it took.
+    5. THE RESPONSE      what you did in the first ten minutes, including who you told.
+    6. THE SYSTEMIC FIX  what changed so it cannot happen the same way again.   <- THE SCORING BEAT
+    7. THE PRINCIPLE     one line on what you now do differently by default.
+
+BEAT 6 IS THE ANSWER. Beats 1-5 establish that you are honest; beat 6 establishes that you are an
+engineer. 'I was more careful afterwards' is not a fix - it is a promise, and promises do not survive
+a tired Friday. 'I changed the tool so it cannot be done accidentally' is a fix.
+
+THE TEST TO APPLY TO YOUR OWN STORY: if a new joiner made the identical error next month, would your
+change have stopped them? If the answer is no, you have described remorse rather than a fix.
+
+BEAT 3 IS WHERE HONESTY IS MEASURED. The instinct is to minimise - 'a few records', 'a small delay'.
+Resist it. Saying 'about 12,000 rows' or 'it cost the team two days' is what makes the rest of the
+story credible, and interviewers notice the difference between someone reporting and someone
+managing perception.
+
+BEAT 5 HAS ONE NON-NEGOTIABLE ELEMENT: you told someone quickly. The most damaging version of any
+mistake is the one that was hidden while you tried to fix it alone, and interviewers are listening
+specifically for whether you escalated before or after you had it under control.""",
+
+    """3. THE STORY, ASSEMBLED
+
+    CONTEXT:
+        'I was running a data backfill for a reporting feature - a script that rewrote one column
+         across a table.'
+
+    THE MISTAKE:
+        'I ran it against what I believed was staging. It was production. I had two terminal tabs open
+         and the connection string in my shell history was the wrong one.'
+
+        Note the register: 'I ran it.' Not 'the script was run' or 'the environments got confused'.
+
+    THE BLAST RADIUS:
+        'About 12,000 rows had a column overwritten. Nothing was deleted, but the dashboard the
+         support team uses showed wrong figures for those accounts.'
+
+        A number, and a named group of humans affected. That is what 'affected other people' means.
+
+    THE DETECTION:
+        'I noticed within about two minutes, because the row count in the output was an order of
+         magnitude larger than staging ever is.'
+
+        Self-detected and fast. If somebody else had told you, say that honestly - but say how long it
+        took, because the gap is the interesting part.
+
+    THE RESPONSE:
+        'I stopped the script, posted in the team channel immediately saying exactly what I had done
+         and what I did not yet know, and messaged the on-call engineer. Then we restored the column
+         from the previous night's snapshot and re-derived the day's changes from the event log. It
+         took about forty minutes end to end, and I wrote the summary for the support team myself.'
+
+        THE ORDER MATTERS: stop, disclose, then fix. Disclosing before you know the full extent feels
+        awful and is the correct call, because it gives other people the chance to catch what you have
+        missed.
+
+    THE SYSTEMIC FIX - the beat everything else exists to set up:
+        'The root cause was not carelessness. It was that my shell prompt did not show which
+         environment I was in, and the migration tool accepted a production connection string with no
+         confirmation. So I changed both: the prompt now shows the environment in red for production,
+         and the tool requires you to type the database name to proceed against anything non-staging.
+         Two other people told me afterwards that they had nearly done the same thing.'
+
+    THE PRINCIPLE:
+        'Now I assume that if a mistake was easy to make, it will be made again - so the fix is to
+         change what is easy, not to resolve to be more careful.'""",
+
+    """4. THE FAILURE MODES
+
+A. THE HUMBLEBRAG. 'My mistake was working too hard / caring too much / being too thorough.' This is
+   the most common wrong answer and it scores below a genuine mistake told badly, because it says you
+   will not be honest when something goes wrong.
+
+B. A MISTAKE WITH NO CONSEQUENCE. 'I once had a typo in a variable name.' The question says 'affected
+   other people'. A story with no blast radius has not answered it.
+
+C. BLAMING. 'The documentation was wrong', 'nobody told me', 'the other team's API changed'. Even when
+   true, leading with it is fatal. Own your part first; context can follow, briefly.
+
+D. THE PASSIVE VOICE. 'Mistakes were made', 'the wrong environment got used'. Interviewers hear this
+   very clearly. Say 'I'.
+
+E. MINIMISING THE BLAST RADIUS. Vague quantities - 'a few records', 'a slight delay' - read as
+   managing the interviewer rather than reporting to them.
+
+F. HIDING IT, and saying so without recognising it as the real error. If your story involves trying to
+   fix it quietly first, the mistake to reflect on is the silence, not the original slip.
+
+G. STOPPING AT THE SYMPTOM FIX. 'We restored the data.' Fine, and then? Without beat 6, the story ends
+   with 'and then it could happen again tomorrow'.
+
+H. 'I'LL BE MORE CAREFUL.' A promise, not a control. It fails the new-joiner test.
+
+I. TOO MUCH TECHNICAL DETAIL. Three minutes on the schema and thirty seconds on what you learned is
+   the wrong ratio for a behavioural question. Aim for two minutes total.
+
+J. NO EMOTION AT ALL. Describing a genuinely disruptive incident with total flatness reads as not
+   caring. One honest clause - 'it was a bad afternoon and I did not enjoy writing that message' - is
+   human and costs nothing.""",
+
+    """5. HOW TO BUILD YOUR OWN - numbered steps
+
+1. PICK A REAL ONE. Something where the consequence landed on other people: a broken build that
+   blocked the team, a missed integration that cost a deadline, wrong data in something someone else
+   relied on, a promise you made on behalf of a group.
+2. CHECK IT IS NOT A BRAG IN DISGUISE. If the moral is 'I care too much', discard it.
+3. WRITE THE BLAST RADIUS AS A NUMBER. Rows, hours, people, days of delay. Vagueness reads as evasion.
+4. WRITE HOW YOU FOUND OUT AND HOW LONG IT TOOK, honestly - including if someone else told you.
+5. WRITE WHO YOU TOLD, AND WHEN. Ideally before you had it under control.
+6. FIND THE REAL ROOT CAUSE, and push past 'I was careless'. What made the mistake EASY? A missing
+   confirmation, an ambiguous name, an undocumented assumption, a process with no checkpoint.
+7. WRITE THE SYSTEMIC FIX and apply the new-joiner test: would it stop someone else next month?
+8. END WITH ONE PRINCIPLE LINE. Not a paragraph of reflection - one sentence you now work by.
+9. TIME IT. Two minutes. If it runs longer, cut the technical middle, never the fix.
+10. PREPARE FOR THE FOLLOW-UPS, which are reliably: 'how did the team react?', 'what would you do
+    differently?', and 'did the fix hold?'
+
+STEP 6 IS THE HARD ONE AND THE ONE THAT PAYS. 'I was careless' is where most people stop, and it is
+never the root cause - it is the description of a system that let carelessness be enough.""",
+
+    """6. WHY THE SYSTEMIC FIX IS THE WHOLE ANSWER
+
+The industry norm this question is quietly testing for is the BLAMELESS POSTMORTEM: when something
+breaks, the useful question is not 'who did it' but 'what made this easy to do'.
+
+WHY THE INDUSTRY SETTLED THERE, which is worth being able to explain:
+
+    IF MISTAKES ARE PUNISHED, MISTAKES GET HIDDEN. And a hidden incident is enormously more expensive
+    than a disclosed one, because nobody is fixing it and the same trap catches the next person too.
+
+So an answer that says 'I was careless, I apologised, I'm more careful now' is not humble - it is a
+DEAD END. It leaves the environment exactly as dangerous as it was, and it tells the interviewer you
+think safety is a personality trait.
+
+THE REFRAME THAT MAKES THE STORY LAND:
+
+    'The root cause was not that I was careless. It was that the tool made it possible to run a
+     destructive migration against production without a single confirmation, and my terminal gave me
+     no signal about which environment I was in. Carelessness was the trigger; the missing guardrail
+     was the cause.'
+
+TWO DETAILS THAT MAKE IT CREDIBLE, if they are true:
+
+    'Two other people told me afterwards that they had nearly done the same thing.' - evidence that
+    the cause really was systemic rather than you excusing yourself.
+
+    'I checked six months later and the confirmation is still there.' - evidence the fix held, which
+    almost nobody thinks to include and which answers the follow-up before it is asked.
+
+AND THE BOUNDARY, so this does not become deflection: OWN THE TRIGGER FIRST. 'I ran the wrong command'
+comes before any discussion of guardrails. Root cause analysis after ownership is engineering
+maturity; root cause analysis instead of ownership is blame-shifting, and the difference is entirely
+about which one you say first.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I ran a data backfill against what I thought was staging and it was production. About twelve thousand
+rows had a column overwritten, and the support team's dashboard showed wrong figures for those
+accounts.
+
+I noticed within a couple of minutes because the row count in the output was far bigger than staging
+ever is. I stopped the script, and then - before I knew the full extent - I posted in the team channel
+saying exactly what I had done and what I did not yet know, and pinged the on-call engineer. That was
+uncomfortable, but disclosing early is what gave other people a chance to catch what I had missed. We
+restored the column from the overnight snapshot and re-derived the day's changes from the event log,
+about forty minutes in total, and I wrote the note to the support team myself.
+
+The part I actually think matters is what came next. My first instinct was "I was careless", but that
+is not a root cause - it is a description. The real cause was that my shell prompt gave me no signal
+about which environment I was in, and the migration tool would accept a production connection string
+with no confirmation at all. So I changed both: the prompt shows the environment, red for production,
+and the tool now makes you type the database name before it will touch anything that is not staging.
+Two colleagues told me afterwards they had nearly done the same thing, which told me the cause really
+was the tooling.
+
+What I took from it is that if a mistake was easy to make, it will be made again - so the fix is to
+change what is easy, not to resolve to be more careful.'""",
+
+    """8. THE STORY, LINE BY LINE
+
+    'I ran a data backfill against what I thought was staging and it was production.'
+
+        FIRST PERSON, ACTIVE VOICE, FIRST SENTENCE. No preamble, no scene-setting, no softening. The
+        interviewer knows within four seconds that you can say the thing plainly, and everything after
+        this is read in that light.
+
+    'About twelve thousand rows... the support team's dashboard showed wrong figures.'
+
+        THE BLAST RADIUS, QUANTIFIED, INCLUDING THE HUMANS. The question said 'affected other people';
+        this clause is where you actually answer it. Naming the support team is what turns a database
+        anecdote into an impact story.
+
+    'I noticed within a couple of minutes because the row count was far bigger than staging ever is.'
+
+        DETECTION, WITH A MECHANISM. 'I noticed' alone is a claim; 'because the row count' is how. It
+        also quietly shows you were watching the output rather than walking away from a running script.
+
+    'Before I knew the full extent, I posted in the team channel... and pinged on-call.'
+
+        THE BEAT INTERVIEWERS LISTEN HARDEST FOR. Disclosure BEFORE containment. The phrase 'before I
+        knew the full extent' is doing real work - it is the difference between reporting and
+        confessing after the fact.
+
+    'That was uncomfortable, but it gave other people a chance to catch what I had missed.'
+
+        ONE HONEST EMOTIONAL CLAUSE, immediately turned into a reason. Human, not maudlin, and it
+        gives the principle behind the behaviour rather than just the behaviour.
+
+    'My first instinct was "I was careless", but that is not a root cause - it is a description.'
+
+        THE PIVOT. This single sentence is what separates a good answer from an excellent one. It
+        shows you can analyse your own reflex, and it sets up the fix without excusing the trigger,
+        because you already owned the trigger in sentence one.
+
+    'The prompt shows the environment... the tool makes you type the database name.'
+
+        TWO CONCRETE CONTROLS. Specific enough to be real, and both pass the new-joiner test.
+
+    'Two colleagues told me they had nearly done the same thing.'
+
+        EXTERNAL CORROBORATION that the cause was systemic. Volunteered, not defensive.
+
+    'If a mistake was easy to make, it will be made again.'
+
+        THE PRINCIPLE, in one line, general enough to apply anywhere. This is the sentence the
+        interviewer writes down.""",
+
+    """9. THE SAME INCIDENT, TOLD BADLY
+
+    THE WEAK VERSION:
+        'There was an incident where some data got overwritten in production. The environments were
+         quite confusingly named and there wasn't really any documentation about which connection
+         string was which. Once we realised what had happened we restored from a backup and it was
+         fine in the end. I definitely learned to double-check things after that.'
+
+    WHAT WENT WRONG, clause by clause:
+
+        'There was an incident'          - no 'I'. Nobody did anything; it simply occurred.
+        'some data got overwritten'      - passive, and no number. The blast radius has vanished.
+        'the environments were confusingly named / no documentation'  - blame, before ownership.
+        'once we realised'               - who realised? How long did it take? All hidden.
+        'restored from a backup'         - symptom fix only.
+        'it was fine in the end'         - minimising. Nobody's afternoon was fine.
+        'I learned to double-check'      - a promise. Fails the new-joiner test entirely.
+
+    Every one of the four things the question tests - do you notice, do you tell people, do you fix the
+    cause, is it real - is left unanswered. And notably, the FACTS are identical to the strong version.
+    Same incident, same outcome, same person. The difference is entirely ownership, quantification and
+    the systemic fix.
+
+    THE STRONG VERSION IN ONE LINE PER BEAT:
+        I ran it. 12,000 rows, support team affected. Noticed in two minutes, from the row count.
+        Told the channel before I knew the extent. Restored in forty minutes. Root cause was a missing
+        confirmation and an invisible environment - both now fixed. If it was easy to do, it will be
+        done again.
+
+    THAT IS ABOUT ONE HUNDRED WORDS and it answers everything. The rest of your two minutes is detail
+    and follow-ups, and if you are running short, cut the detail and keep those seven beats.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE SEVEN BEATS:  context · the mistake (say 'I') · blast radius (a number) · detection (and how
+    long) · response (who you told, and when) · THE SYSTEMIC FIX · the principle.
+
+    THE TEST FOR YOUR FIX: if a new joiner made the identical error next month, would your change have
+    stopped them? If not, it is remorse, not a fix.
+
+    THE LENGTH: about two minutes. Cut the technical middle before you cut the fix.
+
+THE #1 MISTAKE: the humblebrag. 'I care too much / work too hard / am too thorough' is not a mistake,
+and choosing it tells the interviewer you will not be straight with them when something breaks - which
+is a far worse signal than any real error you could have described.
+
+THE #2 MISTAKE: stopping at 'I'll be more careful'. A promise is not a control; it does not survive a
+tired Friday, and it leaves the trap in place for everyone else.
+
+THE #3 MISTAKE: the passive voice and vague quantities. 'Mistakes were made', 'a few records
+affected'. Say 'I', and say how many.
+
+THE #4 MISTAKE: leading with blame, even accurate blame. Own the trigger first; root cause analysis
+after ownership is maturity, root cause analysis instead of ownership is deflection.
+
+THE #5 MISTAKE: hiding the disclosure beat. If you told nobody until it was fixed, the real story is
+the silence - and it is still a usable answer, provided that is what you say you learned.
+
+ONE-SENTENCE TAKEAWAY: tell a real mistake in the first person with a number attached, show that you
+disclosed it before you had it under control, and spend most of your answer on the SYSTEMIC fix that
+would stop the next person - because they are hiring for how you behave when something goes wrong, and
+everyone's something goes wrong eventually.""",
 ]
 
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
