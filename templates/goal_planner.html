@@ -73,6 +73,21 @@
   .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 12.5px;
           font-weight: 700; color: var(--color-text-secondary); }
   .meta b { color: var(--color-text); font-weight: 900; }
+  /* The percent is an input that reads as text until you touch it — typing
+     over a number you can already see is the whole interaction. */
+  .pctwrap { display: inline-flex; align-items: baseline; gap: 2px; }
+  input.pct { font: inherit; font-weight: 900; color: var(--color-text); background: transparent;
+              border: 1px solid transparent; border-radius: 6px; width: 3.4em; padding: 1px 3px;
+              text-align: right; font-variant-numeric: tabular-nums; }
+  input.pct:hover { border-color: var(--color-border); }
+  input.pct:focus { border-color: var(--color-primary); background: var(--color-bg); outline: none; }
+  /* Chrome/Safari spinners steal width and look wrong inline. */
+  input.pct::-webkit-outer-spin-button, input.pct::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0; }
+  input.pct { -moz-appearance: textfield; }
+  .meta .src { font-style: normal; font-size: 11px; font-weight: 700; opacity: .7; }
+  .row input.prog.pct { width: 3.6em; font-size: 11.5px; font-weight: 800;
+                        color: var(--color-text-secondary); }
   .pacebar { height: 8px; border-radius: 999px; background: var(--color-border); overflow: hidden;
              margin: 10px 0 4px; position: relative; }
   .pacebar i { display: block; height: 100%; background: #2563eb; }
@@ -202,7 +217,17 @@
     const bar = p ? `<div class="pacebar"><i style="width:${Math.max(0,Math.min(100,p.progress))}%"></i>`
                     + `<span class="mark" style="left:${Math.max(0,Math.min(100,p.expected))}%"></span></div>` : "";
     const meta = [];
-    meta.push(`<span><b>${g.progress}%</b> done${p?` · plan says <b>${p.expected}%</b>`:""}</span>`);
+    // Typeable percent. The source label matters: a typed 60% sitting next to
+    // key results averaging 20% must never look like the same number.
+    const srcNote = g.progress_source === "manual"
+        ? `<em class="src" title="Clear the box to go back to the key-result roll-up">typed${
+             g.kr_count ? ` · key results say ${g.rolled_up_progress}%` : ""}</em>`
+        : (g.kr_count ? `<em class="src">from ${g.kr_count} key result${g.kr_count===1?"":"s"}</em>`
+                      : `<em class="src">type a % or add key results</em>`);
+    meta.push(`<span class="pctwrap">
+        <input class="pct" type="number" min="0" max="100" step="1" inputmode="numeric"
+               value="${g.progress}" data-pct="${g.id}" aria-label="Percent complete">
+        <b>%</b> done${p?` · plan says <b>${p.expected}%</b>`:""} ${srcNote}</span>`);
     if (c.working_days_left) meta.push(`<span><b>${c.working_days_left}</b> working days</span>`);
     if (p && p.gap_days) meta.push(`<span><b>${p.gap_days>0?"+":""}${p.gap_days}</b> days vs plan</span>`);
     if (g.kr_count) meta.push(`<span><b>${g.kr_count}</b> key result${g.kr_count===1?"":"s"}</span>`);
@@ -243,7 +268,9 @@
         <span class="pin ${g.is_primary?'on':''}" data-pin="${g.id}" title="Pin as the main countdown">
           ${g.is_primary?'★ pinned':'☆ pin'}</span>
         <span class="rt">${esc(g.title)}</span>
-        <span class="prog">${g.progress}%</span>
+        <input class="prog pct" type="number" min="0" max="100" step="1" inputmode="numeric"
+               value="${g.progress}" data-pct="${g.id}" aria-label="Percent complete"
+               title="${g.progress_source === 'manual' ? 'Typed' : (g.kr_count ? 'From key results' : 'Not set')}">
         ${d ? `<span class="rc" data-countdown="${esc(c.target_iso)}" data-flash="false"><span data-cd-compact></span></span>`
             : `<span class="ru">no deadline</span>`}
       </div>`;
@@ -251,6 +278,11 @@
 
   function render(){
     if (!DATA) return;
+    /* A background refresh must never rip the field out from under someone
+       mid-type. Remember what was focused and put the cursor back. */
+    const active = document.activeElement;
+    const keepId = (active && active.dataset && active.dataset.pct) ? active.dataset.pct : null;
+    const keepStart = keepId ? active.selectionStart : null;
     // The ticker is an enhancement, not a dependency. If countdown.js failed
     // to load, the server already sent a rendered value and unit for every
     // goal — so the page must still show them, just frozen. Losing the whole
@@ -263,6 +295,13 @@
     $("list").innerHTML = rest.length ? rest.map(rowHTML).join("")
       : (primary ? "" : `<div class="empty">No goals yet. Add one above — a title and a date is enough to start.</div>`);
     if (CD) CD.mountAll(document);
+    if (keepId) {
+      const again = document.querySelector(`[data-pct="${keepId}"]`);
+      if (again) {
+        again.focus();
+        try { again.setSelectionRange(keepStart, keepStart); } catch (e) {}
+      }
+    }
   }
 
   async function load(){
@@ -311,6 +350,34 @@
       ["n-title","n-when","n-amount","n-commit","n-effort"].forEach(i => $(i).value = "");
       load();
     } catch (e) { $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+  });
+
+  /* Save a typed percentage on blur or Enter — not on every keystroke, which
+     would fire a request per digit and re-render the field out from under the
+     cursor. Clearing the box sends null, which returns the goal to its
+     key-result roll-up. */
+  async function savePct(input){
+    const id = input.dataset.pct;
+    const raw = input.value.trim();
+    if (input.dataset.saving === "1") return;
+    input.dataset.saving = "1";
+    try {
+      await api("/api/goal-planner/goals/" + id, {
+        method: "PATCH", body: JSON.stringify({manual_progress: raw === "" ? "" : raw})});
+      await load();          // pace, coach and the budget all move with it
+    } catch (e) {
+      $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`;
+      input.dataset.saving = "";
+    }
+  }
+
+  document.addEventListener("change", (ev) => {
+    const pct = ev.target.closest("[data-pct]");
+    if (pct) savePct(pct);
+  });
+  document.addEventListener("keydown", (ev) => {
+    const pct = ev.target.closest("[data-pct]");
+    if (pct && ev.key === "Enter") { ev.preventDefault(); pct.blur(); }
   });
 
   document.addEventListener("click", async (ev) => {

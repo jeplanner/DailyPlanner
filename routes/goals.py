@@ -1356,7 +1356,26 @@ from utils.user_tz import user_now, user_tz                   # noqa: E402
 _PLANNER_FIELDS = {
     "title", "target_at", "target_date", "start_date",
     "daily_commit_minutes", "effort_minutes", "flash_enabled",
+    "manual_progress",
 }
+
+
+def _clean_manual_progress(value):
+    """Validate a typed percentage. Returns (value_or_None, error_or_None).
+
+    An empty string means "clear it" — the goal goes back to the key-result
+    roll-up. Out-of-range numbers are CLAMPED rather than rejected: someone
+    typing 150 obviously means "done", and refusing the input would be
+    pedantic. Junk that is not a number at all is a real mistake and is
+    rejected, since silently storing 0 would look like lost progress.
+    """
+    if value is None or value == "":
+        return None, None
+    try:
+        pct = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None, "progress must be a number between 0 and 100"
+    return max(0, min(100, pct)), None
 
 #: Relative-deadline inputs, in the units the form offers.
 _RELATIVE_UNITS = {"in_days": "days", "in_hours": "hours", "in_minutes": "minutes"}
@@ -1398,12 +1417,24 @@ def _resolve_relative_deadline(data):
 
 
 def _objective_progress(user_id, objectives):
-    """Percent-complete per objective, averaged over its key results.
+    """Percent-complete per objective, with the SOURCE of the number.
+
+    Precedence, and it is deliberate:
+
+      1. `manual_progress`, when the user has typed one. It wins outright —
+         they looked at the goal and made a judgement, and second-guessing
+         that would make the field pointless.
+      2. otherwise the average over the objective's key results, which is
+         the honest default because a KR is a measurable claim.
+      3. otherwise 0.
+
+    `source` travels with the number so the UI can label it. Showing a
+    typed 60% next to three key results averaging 20% without saying which
+    is which would be the worst of both worlds. Clearing the field returns
+    the goal to the roll-up, so the override is always reversible.
 
     Mirrors the roll-up in `list_objectives` rather than importing it, so
-    the planner cannot be broken by a change to that endpoint's response
-    shape. Objectives with no key results score 0 — an objective nobody
-    has made measurable has not been progressed, whatever it feels like.
+    the planner cannot be broken by a change to that endpoint's shape.
     """
     if not objectives:
         return {}
@@ -1418,8 +1449,18 @@ def _objective_progress(user_id, objectives):
     out = {}
     for o in objectives:
         mine = [k for k in krs if k["objective_id"] == o["id"]]
+        rolled = round(sum(_kr_progress(k) for k in mine) / len(mine)) if mine else 0
+        typed = o.get("manual_progress")
+        if typed is None:
+            progress, source = rolled, ("key_results" if mine else "none")
+        else:
+            progress, source = max(0, min(100, int(typed))), "manual"
         out[o["id"]] = {
-            "progress": round(sum(_kr_progress(k) for k in mine) / len(mine)) if mine else 0,
+            "progress": progress,
+            "source": source,
+            # Kept alongside so the UI can show "you typed 60%, your key
+            # results say 20%" rather than hiding the disagreement.
+            "rolled_up": rolled,
             "kr_count": len(mine),
             "key_results": mine,
         }
@@ -1483,7 +1524,8 @@ def goal_planner_data():
     prog = _objective_progress(user_id, objectives)
     goals, primary = [], None
     for o in objectives:
-        p = prog.get(o["id"], {"progress": 0, "kr_count": 0, "key_results": []})
+        p = prog.get(o["id"], {"progress": 0, "source": "none", "rolled_up": 0,
+                               "kr_count": 0, "key_results": []})
         summary = _countdown(o, now, tz, progress_pct=p["progress"])
         message, tone = _goal_coach(summary, o.get("title") or "", p["progress"])
         row = {
@@ -1499,6 +1541,9 @@ def goal_planner_data():
             "flash_enabled": o.get("flash_enabled", True),
             "is_primary": bool(o.get("is_primary")),
             "progress": p["progress"],
+            "progress_source": p["source"],
+            "rolled_up_progress": p["rolled_up"],
+            "manual_progress": o.get("manual_progress"),
             "kr_count": p["kr_count"],
             "next_checkpoint": _next_checkpoint(p["key_results"], now),
             "countdown": summary,
@@ -1563,6 +1608,11 @@ def goal_planner_create():
     for field in ("target_at", "daily_commit_minutes", "effort_minutes"):
         if data.get(field) not in (None, ""):
             payload[field] = data[field]
+    if data.get("manual_progress") not in (None, ""):
+        cleaned, err = _clean_manual_progress(data["manual_progress"])
+        if err:
+            return jsonify({"error": err}), 400
+        payload["manual_progress"] = cleaned
     try:
         rows = post("objectives", payload)
     except Exception as exc:
@@ -1576,6 +1626,11 @@ def goal_planner_update(goal_id):
     """Update the countdown fields on one goal."""
     data = request.get_json(force=True) or {}
     patch = {k: v for k, v in data.items() if k in _PLANNER_FIELDS}
+    if "manual_progress" in patch:
+        cleaned, err = _clean_manual_progress(patch["manual_progress"])
+        if err:
+            return jsonify({"error": err}), 400
+        patch["manual_progress"] = cleaned
     relative, err = _resolve_relative_deadline(data)
     if err:
         return jsonify({"error": err}), 400

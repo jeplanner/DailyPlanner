@@ -695,3 +695,57 @@ def test_flash_survives_reduced_motion_and_paused_animations():
         # that left nothing visible behind it.
         assert "animation: none" not in css, (
             f"{name} still disables the flash outright under reduced motion")
+
+
+def test_typed_progress_wins_over_the_key_result_rollup(monkeypatch):
+    """A goal created on the planner has no key results, so it scored 0 for
+    ever and the coach scolded it permanently with no way to answer back.
+    A typed percentage overrides the roll-up, and the SOURCE travels with the
+    number so a typed 60% next to key results averaging 20% can be labelled
+    rather than silently conflated. Clearing it restores the roll-up."""
+    import routes.goals as goals
+    krs = [{"id": "k1", "objective_id": "withkr", "start_value": 0,
+            "current_value": 2, "target_value": 10, "direction": "up"},
+           {"id": "k2", "objective_id": "both", "start_value": 0,
+            "current_value": 2, "target_value": 10, "direction": "up"}]
+    monkeypatch.setattr(goals, "get",
+                        lambda table, params=None, **kw: krs if table == "key_results" else [])
+    objectives = [
+        {"id": "withkr", "title": "rollup only"},
+        {"id": "both", "title": "typed beats rollup", "manual_progress": 60},
+        {"id": "bare", "title": "nothing"},
+        {"id": "typed", "title": "typed only", "manual_progress": 40},
+    ]
+    out = goals._objective_progress("u1", objectives)
+    assert (out["withkr"]["progress"], out["withkr"]["source"]) == (20, "key_results")
+    assert (out["both"]["progress"], out["both"]["source"]) == (60, "manual")
+    assert out["both"]["rolled_up"] == 20, "the roll-up must stay visible alongside"
+    assert (out["bare"]["progress"], out["bare"]["source"]) == (0, "none")
+    assert (out["typed"]["progress"], out["typed"]["source"]) == (40, "manual")
+
+
+def test_typed_progress_is_clamped_and_clearable():
+    """150 obviously means "done", so clamp rather than reject — refusing it
+    would be pedantic. An empty value clears the override. Genuine junk IS
+    rejected, because silently storing 0 would look like lost progress."""
+    import routes.goals as goals
+    assert goals._clean_manual_progress(55) == (55, None)
+    assert goals._clean_manual_progress("55") == (55, None)
+    assert goals._clean_manual_progress(150)[0] == 100
+    assert goals._clean_manual_progress(-20)[0] == 0
+    assert goals._clean_manual_progress(33.7)[0] == 34
+    assert goals._clean_manual_progress("") == (None, None)
+    assert goals._clean_manual_progress(None) == (None, None)
+    value, err = goals._clean_manual_progress("abc")
+    assert value is None and err
+
+
+def test_goal_planner_percent_is_typeable_in_the_ui(auth_client):
+    """The number on the page must be an input, and the re-render after a save
+    must put the cursor back — a background refresh that yanks focus mid-type
+    makes the field unusable."""
+    html = auth_client.get("/goal-planner").get_data(as_text=True)
+    assert 'input class="pct"' in html or "input.pct" in html
+    assert "data-pct" in html, "no hook for saving a typed percentage"
+    assert "savePct" in html, "typed percentages are never persisted"
+    assert "setSelectionRange" in html, "re-render does not restore the caret"

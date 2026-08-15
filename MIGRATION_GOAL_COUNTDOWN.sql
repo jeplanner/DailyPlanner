@@ -86,3 +86,36 @@ begin
        and target_at is null;
   end if;
 end $$;
+
+-- ────────────────────────────────────────────────────────────
+--  ADDENDUM — typed percent complete
+--
+--  Progress rolls up from an objective's key results, which is the right
+--  default: a KR is a measurable claim and an average of them is honest.
+--  But a goal entered on the planner has NO key results, so it scored 0
+--  forever and the coach scolded it permanently with no way to answer back.
+--
+--    objectives.manual_progress — 0-100, nullable. When set it WINS over the
+--                                 key-result roll-up and the UI labels the
+--                                 number "typed" so the two can never be
+--                                 silently confused. Clearing it (null)
+--                                 returns the goal to the automatic roll-up,
+--                                 so the override is always reversible.
+--
+--  Safe to re-run: guarded with `if not exists`, and the constraint is added
+--  only when it is absent.
+-- ────────────────────────────────────────────────────────────
+
+alter table objectives
+  add column if not exists manual_progress int;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'objectives_manual_progress_range'
+  ) then
+    alter table objectives
+      add constraint objectives_manual_progress_range
+      check (manual_progress is null or (manual_progress >= 0 and manual_progress <= 100));
+  end if;
+end $$;
