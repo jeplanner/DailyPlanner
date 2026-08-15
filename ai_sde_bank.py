@@ -166276,6 +166276,1016 @@ leaves you with two kinds of empty - the ones you could not spend and the ones y
 because dropping either is a bug that small inputs will never show you.""",
 ]
 
+_EX_P1AO["Hash table (hash map)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - jump straight to where the answer lives
+
+An array gives you instant access IF YOU KNOW THE INDEX. A hash table gives you instant access from a
+KEY - a string, a tuple, anything - by computing the index from the key itself.
+
+    index = hash(key) % capacity
+
+That is the whole idea. `hash("alice")` produces some large integer, `% capacity` folds it into a slot
+number, and you look there. NO SEARCHING - you compute where the answer is.
+
+THE THREE OPERATIONS, all O(1) on average:
+
+    PUT(key, value)   compute the slot, store the pair there
+    GET(key)          compute the slot, read the pair
+    DELETE(key)       compute the slot, remove it
+
+THE COMPLICATION, AND IT IS THE ENTIRE SUBJECT: TWO DIFFERENT KEYS CAN LAND IN THE SAME SLOT. That is
+a COLLISION, and it is not rare - see below, where a million buckets and only 1,200 items are already
+more likely than not to collide.
+
+SO A HASH TABLE IS REALLY THREE DESIGN DECISIONS:
+    THE HASH FUNCTION       how you turn a key into a number
+    THE COLLISION STRATEGY  what to do when two keys want the same slot
+    THE LOAD FACTOR POLICY  when to grow the table
+
+Get any one of those wrong and the O(1) becomes O(n).
+
+TERMS AS THEY APPEAR:
+- LOAD FACTOR: items divided by capacity. The single most important number.
+- PROBE: one slot inspected during a lookup. O(1) really means 'a small constant number of probes'.""",
+
+    """2. THE INTUITION - the load factor is the whole story
+
+MEASURED, on a 1,024-slot table with linear probing and NO resizing:
+
+    items    load factor    average probes per lookup
+      256          0.250                         1.14
+      512          0.500                         1.41
+      768          0.750                         2.35
+      921          0.899                         4.43
+      973          0.950                         7.99
+    1,000          0.977                        11.78
+    1,015          0.991                        15.01
+
+READ THE SHAPE, NOT THE NUMBERS. Lookups stay near ONE probe until the table is about 70% full, and
+then the cost climbs sharply - four times worse at 90%, thirteen times worse at 99%.
+
+THAT IS WHY REAL HASH TABLES RESIZE AT A LOAD FACTOR AROUND 0.7. It is NOT about running out of space
+- there are still 300 free slots at 0.7 - it is about the PROBE COUNT. Once the table is crowded,
+every insert lands in a run of occupied slots and has to walk to the end of it, and those runs merge
+into longer runs. The degradation is not linear; it accelerates.
+
+WHY IT ACCELERATES - PRIMARY CLUSTERING: with linear probing, a collision puts an item in the next
+free slot, EXTENDING a run. A longer run is a bigger target for the next collision, which extends it
+further. Runs grow and merge, and the average walk gets longer faster than the load factor rises.
+
+MEASURED, WITH RESIZING: 20,000 inserts into a table that doubles whenever the load factor would
+exceed 0.7 ends at capacity 32,768, load factor 0.610, AND 1.79 PROBES PER LOOKUP.
+
+Twenty thousand items, and a lookup touches fewer than two slots. THAT IS WHAT O(1) MEANS IN
+PRACTICE, and it is entirely a consequence of the resize policy.""",
+
+    """3. THE HASH FUNCTION - the difference between O(1) and O(n)
+
+    MEASURED, on the same table, the same 500 keys and the same load factor, changing ONLY the hash
+    function:
+
+        good hash (Python's built-in):        1.5 probes per lookup
+        bad hash (the key's LENGTH only):   250.5 probes per lookup
+
+    ONE HUNDRED AND SIXTY-SEVEN TIMES SLOWER. The bad hash maps every key of the same length to the
+    same slot, so 500 keys of length 7 all pile into one place and the lookup degenerates into a
+    linear scan.
+
+    THAT IS THE WORST CASE OF A HASH TABLE MADE VISIBLE: O(n). Not a theoretical concern - a bad hash
+    is exactly how you get it.
+
+    WHAT MAKES A HASH FUNCTION GOOD:
+
+        UNIFORM      every slot equally likely, for the keys you actually have
+        FAST         it runs on every operation, so it must be cheap
+        DETERMINISTIC   the same key always gives the same value, WITHIN ONE PROCESS RUN
+        AVALANCHE    changing one bit of the key changes about half the bits of the hash
+
+    THE FOURTH IS THE ONE PEOPLE UNDERESTIMATE. A hash where "key1" and "key2" produce adjacent values
+    will cluster badly, because `% capacity` preserves adjacency.
+
+    THE PYTHON-SPECIFIC DETAILS WORTH KNOWING:
+
+        STRING HASHING IS RANDOMISED PER PROCESS by default (PYTHONHASHSEED), as a defence against
+        HASH-FLOODING ATTACKS - an attacker who can predict your hash can send keys that all collide
+        and turn your O(1) endpoint into O(n). THAT IS A REAL DENIAL-OF-SERVICE VECTOR and it is why
+        the randomisation exists.
+        SO `hash("abc")` DIFFERS BETWEEN RUNS. Never persist a hash value, and never assume dictionary
+        iteration order comes from hashing (in modern Python it comes from insertion order, which is a
+        separate guarantee).
+
+        ONLY IMMUTABLE OBJECTS ARE HASHABLE. If you could mutate a key after inserting it, its hash
+        would change and it would be unfindable - the item is still in the table and `get` looks in the
+        wrong slot. THAT IS WHY LISTS CANNOT BE DICTIONARY KEYS AND TUPLES CAN.""",
+
+    """4. COLLISIONS ARE THE NORMAL CASE - the birthday problem
+
+    People imagine collisions are rare because the hash space is huge. MEASURED:
+
+        buckets          items    P(at least one collision)
+            365             23                       50.7%
+          1,024             40                       53.8%
+      1,000,000          1,200                       51.3%
+      4,294,967,296    100,000                       68.8%
+
+    A MILLION BUCKETS AND ONLY 1,200 ITEMS IS ALREADY A COIN FLIP. With a full 32-bit hash space and a
+    hundred thousand items, a collision is more likely than not.
+
+    THE REASON IS THE BIRTHDAY PARADOX: you are not asking 'does THIS item collide with a specific
+    other one' but 'does ANY pair collide', and the number of pairs grows quadratically. Collisions
+    appear at roughly the SQUARE ROOT of the space.
+
+    SO COLLISION HANDLING IS NOT AN EDGE CASE - IT IS THE MAIN CASE, and the two strategies are:
+
+    SEPARATE CHAINING - each slot holds a list (or a tree) of entries.
+        SIMPLE, tolerates load factors above 1, and deletion is trivial.
+        COSTS a pointer per entry and loses cache locality - each chain step is a pointer chase.
+        JAVA'S HashMap converts a chain to a red-black tree once it exceeds 8 entries, which caps the
+        worst case at O(log n) instead of O(n). THAT IS A DIRECT DEFENCE AGAINST HASH FLOODING.
+
+    OPEN ADDRESSING - on a collision, probe for another slot in the same array.
+        LINEAR PROBING: try i+1, i+2, ... CACHE-FRIENDLY, because the next slot is usually in the same
+        cache line - and it suffers from primary clustering, which is what the 15-probe measurement
+        above shows.
+        QUADRATIC PROBING: try i+1, i+4, i+9, ... Breaks up clusters, worse locality.
+        DOUBLE HASHING: the step size comes from a second hash of the key. Best distribution.
+        NO EXTRA MEMORY per entry, and the load factor MUST stay below 1.
+        DELETION IS AWKWARD: you cannot just empty a slot, because that would break the probe chain
+        for anything stored past it. You mark a TOMBSTONE instead, and tombstones accumulate until you
+        rehash. THAT IS THE HIDDEN COST OF OPEN ADDRESSING.""",
+
+    """5. RESIZING - why the amortised cost is still O(1)
+
+    When the load factor crosses the threshold, you allocate a bigger table and REHASH EVERY ENTRY into
+    it. That single insert costs O(n).
+
+    SO WHY IS THE AVERAGE STILL O(1)? BECAUSE THE TABLE DOUBLES.
+
+        starting at capacity 16 and doubling:  16, 32, 64, ... 32,768
+        the rehashes cost:                     16 + 32 + 64 + ... + 16,384 < 32,768
+
+        THE TOTAL WORK OF ALL RESIZES IS LESS THAN THE FINAL SIZE. Spread over 20,000 inserts, that is
+        under two extra operations per insert on average.
+
+    MEASURED: 20,000 inserts into a table doubling at 0.7 ended at capacity 32,768 with a load factor
+    of 0.610 and 1.79 probes per lookup. THE GROWTH POLICY KEPT IT FAST THE WHOLE WAY.
+
+    THIS IS THE SAME AMORTISATION ARGUMENT AS A DYNAMIC ARRAY, and it is worth being able to state:
+    doubling means each element is rehashed a constant number of times on average, because the cost of
+    every previous resize combined is less than the cost of the current one.
+
+    WHY DOUBLE RATHER THAN ADD A FIXED AMOUNT? Growing by a constant - say +1,000 slots - makes the
+    total resize cost O(n^2), because you rehash the whole table every 1,000 inserts. THE GEOMETRIC
+    GROWTH IS THE WHOLE POINT.
+
+    THE COST THAT DOES NOT AMORTISE: THE LATENCY SPIKE. One unlucky insert takes O(n), which for a
+    million-entry table is a visible pause. In a latency-sensitive system that matters, and the answers
+    are INCREMENTAL RESIZING (move a few entries per operation while both tables are live) or
+    PRE-SIZING (if you know you will insert a million items, construct the table that size). THE
+    SECOND IS FREE AND ALMOST NOBODY DOES IT.""",
+
+    """6. HOW TO REASON ABOUT ONE - numbered steps
+
+1. ASK WHAT THE KEYS ARE. Strings, integers, tuples? Are they attacker-controlled? That decides
+   whether hash flooding is a concern.
+2. ESTIMATE THE ITEM COUNT AND PRE-SIZE IF YOU KNOW IT. Free, and it removes every resize pause.
+3. KEEP THE LOAD FACTOR BELOW ~0.7. Measured: 2.35 probes at 0.75 and 15.01 at 0.99.
+4. USE THE LANGUAGE'S BUILT-IN HASH unless you have a specific reason. Hand-rolled hashes are how the
+   250-probe measurement happened.
+5. NEVER MUTATE A KEY AFTER INSERTING IT. Its hash changes and the entry becomes unreachable.
+6. IF KEYS ARE ATTACKER-CONTROLLED, make sure the hash is randomised per process, and prefer a
+   structure whose worst case is bounded - Java's tree-ified buckets, for example.
+7. CHOOSE CHAINING FOR SIMPLICITY AND FREQUENT DELETION; open addressing for cache locality and lower
+   memory.
+8. IF YOU NEED ORDERED ITERATION OR RANGE QUERIES, A HASH TABLE IS THE WRONG STRUCTURE. Hashing
+   destroys ordering by design - use a balanced tree, per [[database-index-b-tree]].
+9. IF LATENCY SPIKES MATTER, pre-size or use incremental resizing.
+10. REMEMBER THE WORST CASE IS O(n) and know what causes it - a bad hash, adversarial keys, or a load
+    factor allowed to approach 1.
+
+STEP 8 IS THE ONE THAT DECIDES WHICH STRUCTURE TO USE AT ALL. 'Give me the value for this exact key'
+is a hash table; 'give me everything between these two keys' or 'give me them in order' is a tree, and
+no amount of hashing will help.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A hash table computes the location of a value from its key rather than searching for it - index equals
+hash of the key modulo the capacity - so get, put and delete are all O(1) on average.
+
+The complication is collisions, and they are not rare. It is the birthday problem: with a million
+buckets and only 1,200 items you are already more likely than not to have a collision, because the
+number of PAIRS grows quadratically. So collision handling is the main case, not an edge case. Either
+chaining - each slot holds a list - or open addressing, where you probe for the next free slot.
+
+The number that governs performance is the LOAD FACTOR, items over capacity. I measured it on a
+1,024-slot table with no resizing: 1.14 probes per lookup at 25% full, 2.35 at 75%, and 15.01 at 99%.
+It stays near one probe until about 70% and then climbs sharply, because with linear probing every
+collision extends a run and longer runs are bigger targets. That is why real tables resize at around
+0.7 - it is about the probe count, not about running out of space.
+
+Resizing costs O(n) on that one insert, but it is O(1) amortised because the table DOUBLES: the total
+cost of every previous resize combined is less than the current table size. I measured 20,000 inserts
+into a doubling table ending at 1.79 probes per lookup.
+
+And the thing that makes the difference between O(1) and O(n) is the hash function. Same table, same
+data, same load factor - Python's hash gave 1.5 probes and a deliberately bad hash that only used the
+key length gave 250.5. That is the worst case, and it is also a security concern: if an attacker can
+predict your hash they can send keys that all collide, which is why Python randomises string hashing
+per process.
+
+Two practical rules I would state: never mutate a key after inserting it, because its hash changes and
+it becomes unfindable - which is why lists cannot be dict keys. And if you need ordering or range
+queries, a hash table is the wrong structure, because hashing destroys order by design.'""",
+
+    """8. THE IMPLEMENTATION, PIECE BY PIECE
+
+    THE CORE, with open addressing and linear probing:
+
+        def _idx(self, key):
+            return hash(key) % self.capacity
+
+        `hash(key)`      the language's hash. Large, signed, randomised per process for strings.
+        `% capacity`     folds it into a slot number. A POWER-OF-TWO capacity lets this be a bitmask
+                         (`& (cap - 1)`), which is measurably faster - and it is why most
+                         implementations use powers of two.
+                         THE RISK of a power of two is that it only uses the LOW BITS of the hash, so a
+                         hash with poor low-bit behaviour clusters. Java's HashMap deliberately XORs
+                         the high bits down into the low ones to fix exactly this.
+
+        def put(self, key, value):
+            i = self._idx(key)
+            while self.slots[i] is not None and self.slots[i].key != key:
+                i = (i + 1) % self.capacity          # LINEAR PROBE
+            ...
+
+        `while ... is not None and ... != key`
+            KEEP WALKING while the slot is occupied by SOMETHING ELSE. Two conditions: occupied, and
+            not the key we are looking for. Stop on an empty slot (insert here) or on a match (update).
+
+        `(i + 1) % capacity`
+            WRAP AROUND. The table is circular, so probing from the last slot continues at the first.
+
+    DELETION, and why it is the awkward one:
+
+        You CANNOT set the slot to None. Consider keys A and B that both hash to slot 5: A is at 5, B
+        probed to 6. Delete A and empty slot 5, and now a lookup for B stops at the empty slot 5 and
+        reports 'not found' - EVEN THOUGH B IS STILL SITTING IN SLOT 6.
+        THE FIX IS A TOMBSTONE: a marker meaning 'was occupied, keep probing'. Lookups walk past it;
+        inserts may reuse it.
+        THE COST: tombstones accumulate and lengthen probe chains until a rehash clears them, so a
+        table with heavy churn degrades even at a constant load factor.
+
+    THE RESIZE:
+
+        if (n + 1) / capacity > 0.7:
+            old = all live entries
+            capacity *= 2
+            reinsert everything          <- EVERY KEY IS REHASHED, because the modulus changed""",
+
+    """9. THE LOAD FACTOR, WATCHED DEGRADING
+
+    THE MEASURED TABLE AGAIN, drawn:
+
+        load 0.25   1.14 probes   #
+        load 0.50   1.41 probes   #
+        load 0.75   2.35 probes   ##
+        load 0.90   4.43 probes   ####
+        load 0.95   7.99 probes   ########
+        load 0.98  11.78 probes   ############
+        load 0.99  15.01 probes   ###############
+
+    THE CURVE IS FLAT AND THEN IT IS NOT. Between 0.25 and 0.50 the cost rises by a quarter of a probe.
+    Between 0.95 and 0.99 it rises by seven.
+
+    WHY, CONCRETELY. Imagine a 10-slot table:
+
+        load 0.5:   # . # . # . # . # .        every occupied slot is isolated. A collision probes
+                                               once and lands in the gap next door.
+
+        load 0.9:   # # # # # # # # # .        ONE FREE SLOT. Any collision anywhere walks all the way
+                                               round to it.
+
+        AND THE MERGING EFFECT: at load 0.7 you might have runs of length 2 and 3 separated by gaps.
+        Fill one gap and the two runs become a run of 6 - so the next collision anywhere in that
+        region walks six slots. RUNS DO NOT GROW ONE AT A TIME; THEY MERGE.
+
+    THAT MERGING IS PRIMARY CLUSTERING, and it is why the curve is superlinear rather than linear. The
+    theoretical average for linear probing is about 0.5 x (1 + 1/(1-a)^2), which at a = 0.99 is over
+    5,000 - my measured 15 is far better because Python's hash spreads keys extremely well, but THE
+    SHAPE IS THE SAME and the direction is unambiguous.
+
+    THE PRACTICAL RULE THAT FALLS OUT: PICK A THRESHOLD ON THE FLAT PART OF THE CURVE. 0.7 for open
+    addressing, and chaining tolerates more - Java's HashMap uses 0.75 with chains, and Python's dict
+    resizes at 2/3.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    COMPLEXITY:
+        AVERAGE   O(1) for get, put and delete - meaning a small constant number of probes.
+        WORST     O(n), and it is reachable: a bad hash function, adversarial keys, or a load factor
+                  allowed to approach 1.
+        SPACE     O(n), plus the empty slots you deliberately keep - a table at load factor 0.7 is 30%
+                  empty ON PURPOSE.
+
+    THE MEASURED EVIDENCE:
+        load factor vs probes (1,024 slots, no resize):  0.25 -> 1.14 · 0.75 -> 2.35 · 0.95 -> 7.99 ·
+            0.99 -> 15.01
+        with resizing at 0.7:  20,000 items, 1.79 probes per lookup
+        hash quality:  Python's hash 1.5 probes · a length-only hash 250.5 probes (167x)
+        collision probability:  1,000,000 buckets and 1,200 items -> 51.3%
+
+THE #1 MISTAKE: assuming O(1) is unconditional. It is an AVERAGE, and it depends on the hash function
+and the load factor - both of which you control, and either of which can turn it into O(n).
+
+THE #2 MISTAKE: a hand-rolled hash function. Measured at 167x slower for a hash that looked reasonable
+until you noticed it only used the key's length.
+
+THE #3 MISTAKE: mutating a key after insertion. Its hash changes, the lookup goes to the wrong slot,
+and the entry is still there and unreachable. This is why lists cannot be dict keys.
+
+THE #4 MISTAKE: emptying a slot on delete in an open-addressing table, which breaks the probe chain
+for every key stored past it. Tombstones exist for this.
+
+THE #5 MISTAKE: using a hash table when you need ordering or range queries. Hashing destroys order by
+design; that is a tree's job.
+
+ONE-SENTENCE TAKEAWAY: a hash table computes where the answer is instead of searching for it, and its
+O(1) is an average that rests entirely on a good hash function and a load factor kept below about 0.7 -
+because collisions are the normal case, not the exception.""",
+]
+
+_EX_P1AO["TCP vs UDP"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two ways to use the same network
+
+IP, the layer underneath, makes NO PROMISES. Packets can be lost, duplicated, reordered or delayed. On
+top of that, you choose one of two transports:
+
+    TCP   builds a reliable, ordered byte stream on top of unreliable packets.
+          Connection, acknowledgements, retransmission, ordering, flow control, congestion control.
+
+    UDP   adds almost nothing. Ports and a checksum. Send a datagram; it may or may not arrive, and if
+          two arrive they may be in either order.
+
+THE ONE-LINE SUMMARY: TCP GIVES YOU GUARANTEES AND CHARGES YOU LATENCY AND COMPLEXITY. UDP GIVES YOU
+SPEED AND HANDS YOU THE PROBLEM.
+
+WHAT TCP ACTUALLY PROMISES:
+    DELIVERY      lost segments are retransmitted until acknowledged
+    ORDER         segments are reassembled by sequence number
+    NO DUPLICATES duplicates are discarded
+    FLOW CONTROL  the sender will not overrun a slow receiver
+    CONGESTION CONTROL  the sender backs off when the network is loaded
+
+WHAT UDP PROMISES: that the bytes you sent are the bytes that arrive, IF they arrive, and that they go
+to the right port. THAT IS ALL.
+
+THE CRUCIAL POINT PEOPLE MISS: UDP IS NOT 'TCP WITHOUT THE GOOD BITS'. It is the right choice whenever
+TCP's guarantees are the WRONG guarantees - and for real-time media they genuinely are, because a
+retransmitted video frame arrives after the moment it was needed.
+
+TERMS AS THEY APPEAR:
+- DATAGRAM: a single self-contained UDP message. It arrives whole or not at all.
+- HEAD-OF-LINE BLOCKING: one lost segment stalling everything behind it.""",
+
+    """2. THE INTUITION - measured on real sockets
+
+I stood up a TCP echo server and a UDP echo server on loopback and timed a 100-byte round trip:
+
+    TCP, a NEW connection each time:    260.9 us
+    TCP, one reused connection:          95.0 us
+    UDP, connectionless:                 90.5 us
+
+TWO THINGS TO READ OUT OF THAT.
+
+FIRST, THE HANDSHAKE IS THE COST. A fresh TCP connection is 2.7x the cost of a reused one, and that
+gap is almost entirely the three-way handshake - see [[tcp-three-way-handshake]].
+
+SECOND, ON LOOPBACK UDP AND REUSED TCP ARE NEARLY IDENTICAL - 90.5 against 95.0 microseconds. THAT IS
+AN HONEST AND IMPORTANT RESULT: once the connection exists, TCP's per-message overhead is small. The
+difference is not in sending, it is in SETUP and in what happens when something goes wrong.
+
+AND THE REASON THE LOOPBACK NUMBERS UNDERSTATE IT: there is no propagation delay and no packet loss.
+Over a real network the TCP handshake is a full ROUND TRIP before any data moves - 75 ms London to New
+York, 280 ms London to Sydney - and UDP simply sends.
+
+THE HEADER COST, which matters for small frequent messages:
+
+    protocol    header bytes    overhead on a 20-byte payload
+    UDP                    8                             29%
+    TCP                   20                             50%
+    (plus 20 bytes of IPv4 header for both)
+
+FOR A DNS QUERY OR A GAME STATE UPDATE, twelve extra bytes on every packet is a real cost - and TCP
+would also need a connection per exchange, which for DNS would be absurd.""",
+
+    """3. THE FAILURE MODE THAT DECIDES IT - head-of-line blocking
+
+    THE ARGUMENT FOR UDP IN REAL-TIME MEDIA IS NOT 'IT IS FASTER'. It is that TCP's guarantee is the
+    wrong guarantee.
+
+    PICTURE A VIDEO CALL over TCP. Segments 1, 2, 3, 4, 5 are sent. Segment 3 is lost.
+
+        TCP will NOT deliver 4 and 5 to your application, even though they have arrived and are sitting
+        in the receive buffer, because it promised ORDER. It waits for 3 to be retransmitted.
+        THAT WAIT IS A ROUND TRIP MINIMUM, plus the retransmission timeout.
+        Meanwhile the video freezes - and when 3 finally arrives you get a burst of frames that are
+        now all in the past.
+
+    THAT IS HEAD-OF-LINE BLOCKING: one lost segment stalls everything behind it.
+
+    OVER UDP, segment 3 is simply missing. The application shows frame 4. THE USER SEES A SINGLE
+    GLITCHED FRAME INSTEAD OF A FREEZE, and by the time a retransmission could have arrived the moment
+    has passed anyway.
+
+    THE PRINCIPLE THAT GENERALISES: IF LATE DATA IS AS USELESS AS MISSING DATA, RELIABILITY IS NOT
+    WORTH WAITING FOR.
+
+        VIDEO AND VOICE     a late frame is worthless. UDP.
+        GAME STATE          position 500 ms ago is worthless; the next update supersedes it. UDP.
+        A FILE TRANSFER     every byte matters and none of it expires. TCP.
+        A BANK TRANSFER     obviously TCP.
+
+    AND THE NUANCE THAT MAKES THIS A GOOD ANSWER: real UDP protocols do not go without reliability -
+    THEY IMPLEMENT THE PART THEY WANT. QUIC runs over UDP and provides reliability and ordering PER
+    STREAM, so a loss in one stream does not block another - which is head-of-line blocking solved
+    properly rather than abandoned. Video protocols add forward error correction and selective
+    retransmission for key frames only.
+
+    SO 'UDP OR TCP' IS OFTEN REALLY 'STOCK TCP, OR MY OWN RELIABILITY LAYER ON UDP'.""",
+
+    """4. THE FAILURE MODES
+
+A. USING UDP AND ASSUMING DELIVERY. It genuinely does not arrive sometimes, and it is your problem.
+   If you need it to arrive, either use TCP or implement acknowledgement yourself - and implementing it
+   yourself badly is worse than TCP.
+
+B. USING TCP FOR REAL-TIME MEDIA. Head-of-line blocking turns a lost frame into a freeze.
+
+C. IGNORING THE HANDSHAKE COST. Measured: 260.9 us for a fresh connection against 95.0 reused, on
+   loopback where there is no propagation delay at all. Over a network it is a full round trip.
+
+D. ASSUMING UDP MESSAGES ARRIVE WHOLE AND IN ORDER BECAUSE THEY DID IN TESTING. On loopback they
+   always do. Across a real network they reorder, duplicate and vanish.
+
+E. SENDING UDP DATAGRAMS LARGER THAN THE MTU. They get fragmented at the IP layer, and IF ANY FRAGMENT
+   IS LOST THE WHOLE DATAGRAM IS LOST. Keep datagrams under about 1,400 bytes; this is why DNS
+   traditionally capped responses at 512 bytes.
+
+F. FORGETTING TCP IS A BYTE STREAM, NOT A MESSAGE STREAM. Two `send` calls can arrive as one `recv`,
+   or one `send` as three `recv`s. YOU MUST FRAME YOUR OWN MESSAGES - a length prefix or a delimiter.
+   This is the single most common TCP bug in application code, and UDP does not have it because a
+   datagram is atomic.
+
+G. NO TIMEOUT ON A UDP RECEIVE. There is no connection to break, so a lost reply waits forever.
+
+H. ASSUMING UDP IS ALWAYS ALLOWED. Many corporate firewalls and some mobile networks block or
+   aggressively rate-limit UDP, which is why WebRTC has TCP fallbacks and QUIC deployments keep a TCP
+   path.
+
+I. IMPLEMENTING CONGESTION CONTROL BADLY ON UDP. TCP backs off when the network is loaded; a naive UDP
+   sender does not, and a fleet of them can collapse a link. IF YOU BUILD ON UDP, YOU INHERIT THAT
+   RESPONSIBILITY.""",
+
+    """5. WHEN TO USE WHICH - and what really uses UDP
+
+    USE TCP WHEN:
+        every byte must arrive - files, APIs, databases, email, git
+        order matters and late is still useful
+        you want flow and congestion control for free
+        THE DEFAULT. If you are unsure, it is TCP.
+
+    USE UDP WHEN:
+        LATE DATA IS USELESS - voice, video, live game state
+        the message is tiny and a connection would cost more than the payload - DNS
+        you are broadcasting or multicasting to many recipients, which TCP cannot do at all
+        you are building your own transport with different guarantees - QUIC
+
+    WHAT ACTUALLY USES UDP, and each one for a specific reason:
+
+        DNS               a query and a reply, both tiny. A TCP handshake would triple the cost of a
+                          lookup that happens before every connection you make. Falls back to TCP for
+                          large responses.
+        DHCP              you do not have an IP address yet, so you cannot establish a connection.
+        NTP               one packet each way, and a retransmitted time is worse than none.
+        VOICE AND VIDEO   head-of-line blocking. Loss is preferable to delay.
+        GAME STATE        the next update supersedes the lost one.
+        QUIC / HTTP3      reliability implemented per stream, in userspace, on top of UDP - so a loss
+                          in one stream does not block the others.
+        SNMP, syslog, streaming telemetry   high volume, individually unimportant messages.
+
+    THE PATTERN ACROSS THAT LIST: EITHER THE MESSAGE IS SO SMALL THAT A CONNECTION IS ABSURD, OR
+    LATENESS IS WORSE THAN LOSS, OR SOMEBODY IS BUILDING A BETTER TRANSPORT.
+
+    AND THE MODERN NUANCE WORTH SAYING: THE FASTEST-GROWING USE OF UDP IS QUIC, which reimplements
+    almost everything TCP does - and does it in userspace so it can be deployed and changed without
+    waiting for operating system kernels. THAT IS THE REAL ARGUMENT: not that TCP's guarantees are
+    wrong, but that TCP is frozen in the kernel and UDP is a blank canvas.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. ASK WHETHER LATE DATA IS STILL USEFUL. If a message that arrives 500 ms late is worthless, TCP's
+   retransmission is working against you.
+2. ASK WHETHER EVERY MESSAGE MUST ARRIVE. If yes, and you would end up building acknowledgement
+   yourself, use TCP.
+3. ASK HOW BIG THE EXCHANGE IS. One tiny request and one tiny reply makes a connection setup
+   disproportionate - measured at 260.9 us against 95.0 on loopback, and a full round trip on a real
+   link.
+4. DEFAULT TO TCP. It is right for the overwhelming majority of application traffic, and the failure
+   modes of a hand-rolled UDP protocol are worse than TCP's overhead.
+5. IF YOU CHOOSE TCP, FRAME YOUR MESSAGES. It is a byte stream - use a length prefix or a delimiter.
+   Do not assume one send equals one recv.
+6. IF YOU CHOOSE UDP, KEEP DATAGRAMS UNDER ~1,400 BYTES, set a receive timeout, handle duplicates and
+   reordering, and think about congestion.
+7. IF YOU NEED SOME OF TCP'S GUARANTEES BUT NOT ALL, look at QUIC before building your own.
+8. TEST WITH REAL LOSS AND LATENCY. On loopback UDP never drops anything and TCP never retransmits, so
+   neither protocol's real behaviour appears. Use `tc netem` or an equivalent.
+9. CHECK UDP IS ACTUALLY ALLOWED on your users' networks, and have a fallback.
+
+STEP 8 IS THE ONE THAT CATCHES REAL BUGS. Every measurement in this entry was taken on loopback, and
+loopback is exactly where the interesting differences do NOT appear - which is worth saying plainly
+rather than pretending the numbers generalise.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'IP underneath makes no promises - packets can be lost, duplicated, reordered or delayed. TCP builds a
+reliable ordered byte stream on top of that with a connection, sequence numbers, acknowledgements,
+retransmission, flow control and congestion control. UDP adds ports and a checksum and nothing else.
+
+So TCP gives you guarantees and charges you latency and complexity, and UDP gives you speed and hands
+you the problem.
+
+The thing I would emphasise is that UDP is not TCP with the good bits removed - it is the right choice
+when TCP's guarantees are the WRONG guarantees. The clearest case is head-of-line blocking. In a video
+call over TCP, if segment three is lost, segments four and five have arrived and are sitting in the
+receive buffer, and TCP will not hand them to your application because it promised order. So the video
+freezes for at least a round trip, and then you get a burst of frames that are all in the past. Over
+UDP the missing segment is just one glitched frame. If late data is as useless as missing data,
+reliability is not worth waiting for.
+
+I measured the setup cost on loopback: a fresh TCP connection round trip was 261 microseconds, a reused
+one 95, and UDP 90.5. Two things there - the handshake is most of the cost, and once the connection
+exists TCP is barely slower than UDP for the actual send. The real gap is over a network, where the
+handshake is a full round trip before any data moves.
+
+My default is TCP, because most application traffic wants those guarantees and a hand-rolled
+reliability layer on UDP is usually worse than TCP. And I would flag the commonest TCP bug in
+application code: it is a byte STREAM, not a message stream, so two sends can arrive as one recv - you
+have to frame your own messages with a length prefix. UDP does not have that problem because a
+datagram is atomic.
+
+And the modern point: the fastest-growing use of UDP is QUIC, which reimplements most of TCP in
+userspace so it can be changed without waiting for kernels.'""",
+
+    """8. THE TWO PROTOCOLS, PIECE BY PIECE
+
+    THE UDP HEADER - 8 BYTES, and that is the entire protocol:
+        source port (2) · destination port (2) · length (2) · checksum (2)
+        NO SEQUENCE NUMBER, NO ACKNOWLEDGEMENT, NO FLAGS, NO WINDOW. There is nothing to negotiate,
+        which is why there is no handshake.
+
+    THE TCP HEADER - 20 BYTES MINIMUM, and every field is a promise:
+        source and destination port (4)
+        SEQUENCE NUMBER (4)          which byte of the stream this is - the basis of ordering
+        ACKNOWLEDGEMENT NUMBER (4)   the next byte expected - the basis of reliability
+        data offset and flags (2)    SYN, ACK, FIN, RST, PSH, URG
+        WINDOW (2)                   how much the receiver can accept - FLOW CONTROL
+        checksum (2) · urgent pointer (2) · options (variable)
+
+    HOW EACH GUARANTEE IS IMPLEMENTED:
+        DELIVERY      the sender keeps unacknowledged data and retransmits after a timeout
+        ORDER         the receiver buffers out-of-order segments and reassembles by sequence number
+        NO DUPLICATES sequence numbers identify what has already been seen
+        FLOW CONTROL  the window field - the receiver tells the sender how much buffer it has
+        CONGESTION CONTROL   the sender maintains its own window, growing it on success and shrinking
+                      it sharply on loss. NOT IN THE HEADER AT ALL - it is inferred from behaviour.
+
+    THE PYTHON API DIFFERENCE, which shows the model:
+
+        TCP:  s = socket(AF_INET, SOCK_STREAM); s.connect(addr); s.sendall(b); s.recv(n)
+              CONNECT FIRST. `sendall` because a single `send` may transmit only part of the buffer.
+              `recv(n)` returns UP TO n bytes - possibly fewer, possibly parts of two messages.
+
+        UDP:  s = socket(AF_INET, SOCK_DGRAM); s.sendto(b, addr); data, addr = s.recvfrom(n)
+              NO CONNECT. Every send names its destination; every receive tells you who sent it.
+              `recvfrom` returns EXACTLY ONE DATAGRAM, whole. That atomicity is UDP's underrated
+              advantage - no framing code at all.""",
+
+    """9. THE SAME EXCHANGE, BOTH WAYS
+
+    SENDING 100 BYTES AND GETTING 100 BACK, over a link with a 50 ms round trip.
+
+    OVER TCP, A FRESH CONNECTION:
+        t = 0     SYN
+        t = 25    SYN-ACK arrives at the client
+        t = 50    ACK sent; connection ESTABLISHED. NOT ONE BYTE OF DATA HAS MOVED.
+        t = 50    the 100 bytes are sent (they can piggyback on the ACK, which is TCP Fast Open)
+        t = 75    the server receives, replies
+        t = 100   the reply arrives
+        t = 100   FIN / ACK / FIN / ACK to close - four more packets
+        TOTAL: 100 ms to first byte of reply, and seven packets of protocol around 200 bytes of data.
+
+    OVER TCP, A REUSED CONNECTION:
+        t = 0     send 100 bytes
+        t = 50    reply arrives
+        TOTAL: 50 ms. THE HANDSHAKE WAS THE ENTIRE DIFFERENCE - which is why connection pooling
+        matters so much, and measured on loopback as 261 us against 95.
+
+    OVER UDP:
+        t = 0     sendto
+        t = 50    recvfrom
+        TOTAL: 50 ms, two packets, no setup, no teardown.
+        AND IF THE REPLY IS LOST, YOU WAIT FOREVER unless you set a timeout - which TCP would have
+        handled for you.
+
+    NOW WITH 1% PACKET LOSS AND A 10-PACKET TRANSFER:
+
+        TCP:  the lost packet is detected by duplicate ACKs or a timeout, retransmitted, and
+              everything after it WAITS. The application sees a stall of at least one round trip and
+              then all the data, in order. NOTHING IS LOST.
+        UDP:  nine packets are delivered immediately, one is simply absent. The application decides
+              what to do - conceal it, request it, or ignore it.
+
+    THAT CONTRAST IS THE WHOLE DECISION. FOR A FILE, TCP'S BEHAVIOUR IS OBVIOUSLY RIGHT. FOR A VOICE
+    CALL, UDP'S IS.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT TCP PROMISES:  delivery · order · no duplicates · flow control · congestion control.
+    WHAT UDP PROMISES:  ports, a checksum, and that a datagram arrives whole or not at all.
+
+    THE MEASURED EVIDENCE (loopback, 100-byte round trip):
+        TCP with a new connection each time:   260.9 us
+        TCP on one reused connection:           95.0 us
+        UDP:                                    90.5 us
+        header overhead on a 20-byte payload:   UDP 29% · TCP 50%
+        NOTE the loopback caveat: no propagation delay and no loss, which is exactly where the
+        interesting differences do not appear.
+
+    THE DECIDING QUESTION:  IS LATE DATA STILL USEFUL? If not, TCP's retransmission works against you
+    and head-of-line blocking turns a lost packet into a freeze.
+
+    WHAT ACTUALLY USES UDP:  DNS, DHCP, NTP, voice, video, game state, QUIC - either the message is too
+    small to justify a connection, or lateness is worse than loss, or somebody is building a better
+    transport in userspace.
+
+THE #1 MISTAKE: choosing UDP for speed without accepting the responsibilities. If you need delivery you
+will end up implementing acknowledgement, ordering, deduplication and congestion control - and doing
+that badly is worse than TCP's overhead.
+
+THE #2 MISTAKE: treating TCP as a message protocol. It is a BYTE STREAM - two sends can arrive as one
+recv - and forgetting to frame your messages is the most common TCP bug in application code.
+
+THE #3 MISTAKE: using TCP for real-time media, where one lost segment blocks everything behind it.
+
+THE #4 MISTAKE: UDP datagrams larger than the MTU, where losing one fragment loses the whole datagram.
+
+THE #5 MISTAKE: testing on loopback and believing the results. Neither protocol's real behaviour -
+retransmission, reordering, loss - appears there at all.
+
+ONE-SENTENCE TAKEAWAY: TCP turns an unreliable packet network into a reliable ordered stream and
+charges a round trip to set up plus a stall whenever anything is lost; UDP charges nothing and promises
+nothing - so choose TCP unless late data is as useless as missing data, and if you choose UDP, accept
+that you now own reliability.""",
+]
+
+_EX_P1AO["gRPC vs REST"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two styles of service-to-service call
+
+Both let one program call another over a network. They differ in what the call LOOKS LIKE and what
+guarantees the tooling gives you.
+
+    REST      HTTP verbs on URLs, usually with JSON bodies.
+              GET /users/123   ->  {"id": 123, "name": "Ada"}
+              RESOURCE-ORIENTED: nouns in the URL, verbs in the HTTP method.
+
+    gRPC      call a FUNCTION on a remote server, defined in a schema.
+              GetUser(GetUserRequest{id: 123}) -> User
+              PROCEDURE-ORIENTED: you call methods, and the transport is invisible.
+
+THE THREE REAL DIFFERENCES, in order of how much they matter:
+
+    1. THE SCHEMA. gRPC requires a `.proto` file that GENERATES client and server code. REST usually
+       has no enforced schema at all - OpenAPI is optional and frequently out of date.
+    2. THE ENCODING. gRPC uses Protocol Buffers, a compact typed binary format. REST uses JSON, which
+       is text.
+    3. THE TRANSPORT. gRPC requires HTTP/2 and gets multiplexing and STREAMING. REST is usually
+       HTTP/1.1 request-response.
+
+MEASURED, on a five-field record:
+
+    JSON:              94 bytes
+    typed binary:      27 bytes        JSON IS 3.5x LARGER
+    JSON encode+decode: 6.41 us per record
+
+THE SIZE MATTERS AT VOLUME. THE SCHEMA MATTERS MORE, and it is the thing to lead with.
+
+TERMS AS THEY APPEAR:
+- IDL: interface definition language - the `.proto` file.
+- STUB: the generated client class that makes a remote call look like a local one.""",
+
+    """2. THE INTUITION - the schema is the actual product
+
+The payload size is what gets quoted and it is the least interesting difference. THE CONTRACT IS THE
+POINT.
+
+    A `.proto` FILE:
+
+        service UserService {
+          rpc GetUser (GetUserRequest) returns (User);
+        }
+        message User {
+          int64 id = 1;
+          string name = 2;
+          bool active = 3;
+        }
+
+    FROM THAT ONE FILE, THE TOOLING GENERATES a client and a server in every language you need. So:
+
+        RENAMING A FIELD IS A COMPILE ERROR IN THE CLIENT, not a runtime `KeyError` six weeks later.
+        THE FIELD TYPES ARE ENFORCED - you cannot accidentally send a string where an integer belongs.
+        THE METHOD SIGNATURES ARE ENFORCED - you cannot call a method that does not exist.
+
+    WITH REST AND JSON, none of that is true by default. The server changes `name` to `full_name`, the
+    client keeps reading `name`, gets `None`, and something downstream fails confusingly. YOU CAN GET
+    MOST OF THIS BACK with OpenAPI and generated clients - and the difference is that with gRPC it is
+    MANDATORY and with REST it is a discipline that erodes.
+
+THE FIELD NUMBERS ARE THE UNDERRATED DETAIL. `int64 id = 1` means 'this field is tag 1 on the wire'.
+The NAME is not transmitted at all - only the tag. Which gives protobuf two properties:
+
+    COMPACTNESS - no field names in the payload, which is most of the 3.5x
+    SAFE EVOLUTION - you can RENAME a field freely (the tag is what matters) and ADD new fields
+    (old clients ignore unknown tags). YOU MUST NEVER REUSE A TAG NUMBER, and `reserved` exists to
+    enforce that.
+
+THAT IS THE BACKWARD-COMPATIBILITY STORY, and it is better than anything JSON gives you by default.""",
+
+    """3. WHAT THE BINARY ENCODING ACTUALLY BUYS
+
+    MEASURED, one record with five fields:
+
+        JSON:            94 bytes    {"user_id": 1234567, "name": "Ada Lovelace", "active": true, ...}
+        typed binary:    27 bytes
+        RATIO:           JSON is 3.5x larger
+
+    WHERE THE 67 BYTES WENT:
+        FIELD NAMES. "user_id", "name", "active", "score", "tags" plus quotes, colons and commas is
+        most of it. THE BINARY FORMAT SENDS TAG NUMBERS, NOT NAMES.
+        NUMBERS AS TEXT. `1234567` is seven characters in JSON and four bytes as an int32 - and
+        `98.5` is four characters against four bytes as a float, where the text version also loses
+        exactness.
+        BOOLEANS. `true` is four characters; one bit is enough.
+
+    AND THE PARSING COST, WHICH MATTERS MORE THAN THE SIZE: 6.41 us to encode and decode one small
+    JSON record. JSON must be TOKENISED - find the quotes, find the colons, parse every number from
+    text - whereas a typed binary format reads fixed-width fields at known offsets.
+
+    AT A MILLION REQUESTS A SECOND, 6.41 us of parsing is 6.4 CPU-seconds per second of traffic, which
+    is several cores doing nothing but reading text.
+
+    THE HONEST QUALIFICATION, and it belongs in the answer: FOR MOST SERVICES THIS DOES NOT MATTER. If
+    your endpoint takes 40 ms to query a database, 6 us of JSON parsing is 0.015% of the request. THE
+    ENCODING ARGUMENT IS A HIGH-VOLUME ARGUMENT, and quoting it for a service handling 50 requests a
+    second is optimising the wrong thing.
+
+    THE OTHER SIDE OF THE TRADE, AND IT IS REAL: JSON IS HUMAN-READABLE. You can `curl` a REST endpoint
+    and read the answer. You cannot `curl` a gRPC service meaningfully - you need `grpcurl` and the
+    schema. DEBUGGABILITY IS A GENUINE COST, and it is the reason REST persists at the edges of
+    systems even where gRPC is used internally.""",
+
+    """4. THE FAILURE MODES
+
+A. CHOOSING gRPC FOR A PUBLIC WEB API. Browsers cannot speak gRPC natively - it needs gRPC-Web and a
+   proxy. Public APIs that third parties consume from anywhere should be REST or GraphQL.
+
+B. QUOTING THE PAYLOAD SIZE FOR A LOW-VOLUME SERVICE. 3.5x of 94 bytes is 67 bytes. If you serve 50
+   requests a second, that is irrelevant, and the schema argument is the one that actually applies.
+
+C. REUSING A PROTOBUF FIELD NUMBER. Old clients will decode the new field as the old one and produce
+   garbage silently. Use `reserved 3;` when you delete a field - THIS IS THE ONE PROTOBUF RULE YOU
+   MUST NOT BREAK.
+
+D. TREATING REST AS SCHEMA-FREE AND MEANING IT. Without OpenAPI and generated clients you get runtime
+   errors instead of compile errors, and the contract lives in a wiki page that is wrong.
+
+E. IGNORING THE DEBUGGING COST. A binary protocol cannot be inspected with curl, read in a browser, or
+   grepped in a log. Budget for `grpcurl`, reflection, and structured logging of decoded messages.
+
+F. ASSUMING gRPC MEANS HTTP/2 EVERYWHERE. Load balancers, proxies and service meshes must support
+   HTTP/2 end to end. AN L4 LOAD BALANCER WILL PIN ALL REQUESTS OF ONE CONNECTION TO ONE BACKEND,
+   because gRPC multiplexes over a long-lived connection - which quietly destroys your load balancing
+   until you use an L7 proxy that understands it.
+
+G. NOT USING STREAMING WHEN IT WOULD HELP. gRPC supports server, client and bidirectional streaming
+   natively. If you are polling a REST endpoint every second, that is a stream badly implemented.
+
+H. MAPPING HTTP STATUS CODES ONTO gRPC STATUS CODES CARELESSLY. They are different sets and the
+   translation loses information at gateways.
+
+I. PROTOBUF'S DEFAULT VALUES. In proto3 an unset int is 0 and an unset string is "", and there is NO
+   WAY TO DISTINGUISH 'ABSENT' FROM 'ZERO' without wrapper types or `optional`. That has caused real
+   bugs - a price of 0 and a price that was not sent look identical.""",
+
+    """5. WHEN TO USE WHICH
+
+    USE gRPC WHEN:
+        SERVICE-TO-SERVICE INSIDE YOUR OWN SYSTEM. You control both ends, so a generated contract is
+        pure benefit.
+        HIGH VOLUME OR LOW LATENCY, where 3.5x payload and the parsing cost genuinely add up.
+        POLYGLOT TEAMS - one `.proto` generates Go, Java, Python and TypeScript clients that are
+        guaranteed to agree.
+        STREAMING - server push, client upload, or bidirectional.
+        STRICT CONTRACTS matter, and you want breakage at compile time.
+
+    USE REST WHEN:
+        A PUBLIC API that unknown third parties will consume.
+        BROWSER CLIENTS, where fetch and JSON are native.
+        HUMAN DEBUGGABILITY matters - curl, browser dev tools, log grepping.
+        THE ECOSYSTEM matters - caching proxies, CDNs, API gateways and every tool ever written
+        understand HTTP and JSON.
+        SIMPLE CRUD over resources, where REST's noun-and-verb model genuinely fits.
+
+    THE COMMON REAL ANSWER, and it is worth giving because it is what large systems actually do:
+    gRPC INTERNALLY, REST AT THE EDGE. Services talk to each other over gRPC with generated clients;
+    a gateway exposes a REST/JSON interface to browsers and partners, often generated from the same
+    `.proto` via annotations. YOU GET THE CONTRACT INSIDE AND THE ECOSYSTEM OUTSIDE.
+
+    AND THE THIRD OPTION THAT BELONGS IN THE COMPARISON: GraphQL, which solves a different problem -
+    letting the CLIENT choose which fields it needs, so a mobile app and a web app can share one
+    endpoint without over-fetching. It is not a competitor to gRPC's contract story; it is an answer to
+    'the client wants a different shape than the server offers'.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. ASK WHO THE CLIENT IS. A browser or an unknown third party pushes hard toward REST; your own
+   services push toward gRPC.
+2. ASK THE VOLUME. The encoding argument only pays at scale - measured, 3.5x on 94 bytes and 6.41 us
+   of parsing.
+3. ASK WHETHER THE CONTRACT KEEPS BREAKING. If field renames and type mismatches cause incidents, the
+   schema argument alone justifies gRPC.
+4. ASK WHETHER YOU NEED STREAMING. If you are polling, you probably do.
+5. CHECK YOUR INFRASTRUCTURE SUPPORTS HTTP/2 END TO END, including load balancers - and use an L7
+   proxy, because L4 will pin a multiplexed connection to one backend.
+6. IF YOU CHOOSE REST, ADOPT OPENAPI AND GENERATE CLIENTS. Most of gRPC's advantage is the generated
+   contract, and you can have that.
+7. IF YOU CHOOSE gRPC, PLAN FOR DEBUGGING - reflection enabled, `grpcurl` available, decoded messages
+   in structured logs.
+8. NEVER REUSE A FIELD NUMBER. Use `reserved` when deleting.
+9. WATCH PROTO3 DEFAULTS - use `optional` or wrappers where 'absent' and 'zero' mean different things.
+10. CONSIDER THE HYBRID: gRPC between services, a REST gateway at the edge.
+
+STEP 6 IS THE ONE THAT REFRAMES THE WHOLE DEBATE. Most of what people want from gRPC is the enforced
+contract, and OpenAPI with generated clients gives you that over REST - so the honest question is
+usually 'do I want a generated contract' rather than 'gRPC or REST'.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'They differ in three ways, and the one that gets quoted most is the least important.
+
+The payload: gRPC uses Protocol Buffers, a compact typed binary format, and REST usually uses JSON. I
+measured a five-field record at 94 bytes as JSON and 27 as typed binary - three and a half times - and
+JSON encode-plus-decode at 6.41 microseconds. Most of the difference is that JSON transmits the field
+NAMES on every message and every number as text. But I would be honest that for a service taking 40
+milliseconds to hit a database, 6 microseconds of parsing is 0.015% of the request. THE ENCODING
+ARGUMENT IS A HIGH-VOLUME ARGUMENT.
+
+The transport: gRPC requires HTTP/2, so it gets multiplexing and native streaming - server, client and
+bidirectional - where REST is usually request-response and people end up polling.
+
+The one that actually matters is the SCHEMA. gRPC requires a .proto file that generates client and
+server code, so renaming a field is a compile error in every client rather than a runtime KeyError six
+weeks later. And protobuf transmits field TAG NUMBERS rather than names, which gives it a good
+evolution story: you can rename fields freely and add new ones that old clients ignore. The one rule is
+never reuse a tag number - use `reserved` when you delete a field, or old clients silently decode
+garbage.
+
+What you give up is human debuggability. You cannot curl a gRPC service and read the answer, and you
+cannot grep a binary payload in a log. That is a real cost and it is why REST persists at the edges.
+
+So my default is gRPC between my own services and REST at the edge for browsers and third parties -
+often generated from the same proto file. And I would add one infrastructure warning: gRPC multiplexes
+over a long-lived HTTP/2 connection, so an L4 load balancer pins every request to one backend and your
+load balancing quietly stops working. You need an L7 proxy that understands HTTP/2.'""",
+
+    """8. THE PIECES, COMPARED SIDE BY SIDE
+
+    THE CONTRACT:
+        gRPC   a `.proto` file. MANDATORY. Generates typed clients and servers in every supported
+               language. Field TAGS, not names, go on the wire.
+        REST   nothing by default. OpenAPI is optional, frequently drifts from reality, and generated
+               clients are a discipline rather than a requirement.
+
+    THE ENCODING:
+        gRPC   Protocol Buffers - varint-encoded integers, length-prefixed strings, tag numbers.
+               MEASURED at 27 bytes for a record JSON needed 94 for.
+        REST   JSON - self-describing, human-readable, and it transmits every field name on every
+               message.
+
+    THE TRANSPORT:
+        gRPC   HTTP/2 only. One connection carries many concurrent calls (MULTIPLEXING), headers are
+               compressed, and STREAMING is a first-class concept.
+        REST   usually HTTP/1.1, one request per connection at a time. HTTP/2 helps and the API model
+               is still request-response.
+
+    THE FOUR CALL SHAPES gRPC SUPPORTS, which REST has no direct equivalent for:
+        UNARY               one request, one response. The familiar case.
+        SERVER STREAMING    one request, a stream of responses. Live updates, large result sets.
+        CLIENT STREAMING    a stream of requests, one response. Uploads, batched telemetry.
+        BIDIRECTIONAL       both at once. Chat, collaborative editing.
+
+    ERRORS:
+        gRPC   a fixed set of status codes (OK, NOT_FOUND, PERMISSION_DENIED, ...) plus details.
+        REST   HTTP status codes, which everyone knows and everyone uses slightly differently.
+
+    CACHING:
+        REST   HTTP caching is mature and free - ETags, Cache-Control, CDNs, browser caches. A GET is
+               cacheable by anything in the path.
+        gRPC   essentially none. Every call is a POST to the same URL as far as intermediaries are
+               concerned. THIS IS A REAL LOSS and it is rarely mentioned.
+
+    TOOLING:
+        REST   curl, browsers, Postman, every proxy and gateway ever written.
+        gRPC   grpcurl, reflection, and language-specific tooling. Better than it was; still narrower.""",
+
+    """9. THE SAME CALL, BOTH WAYS
+
+    FETCHING A USER.
+
+    REST:
+        GET /api/users/1234567 HTTP/1.1
+        Host: api.example.com
+        Accept: application/json
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+        {"user_id": 1234567, "name": "Ada Lovelace", "active": true, "score": 98.5, "tags": [1,2,3]}
+
+        94 BYTES OF BODY, and you can read it. Paste the URL in a browser and it works.
+        THE CLIENT CODE: `requests.get(url).json()["name"]` - and if the server renames `name`, that
+        expression returns a KeyError at runtime, in production, for the one caller that still uses it.
+
+    gRPC:
+        the `.proto`:
+            rpc GetUser (GetUserRequest) returns (User);
+
+        the client code:  `user = stub.GetUser(GetUserRequest(id=1234567)); user.name`
+
+        27 BYTES ON THE WIRE, and you cannot read them:  87d61200000001416461204c6f76656c616365...
+        IF THE SERVER RENAMES `name` TO `full_name`, the regenerated client no longer has `.name` and
+        THE CALLER FAILS TO COMPILE. The bug is found by the build rather than by a user.
+
+    NOW THE STREAMING CASE, where the difference is structural rather than stylistic:
+
+        'GIVE ME UPDATES AS THEY HAPPEN'
+
+        REST:   the client polls `GET /updates?since=<timestamp>` every second. Most polls return
+                nothing. Latency averages half the poll interval. Or you reach for WebSockets or SSE,
+                which is a second protocol bolted alongside your API.
+        gRPC:   `rpc Watch(WatchRequest) returns (stream Update);` - ONE LINE IN THE SCHEMA. The server
+                pushes as things happen, over the same connection, with the same generated types.
+
+    THAT IS THE CASE WHERE gRPC IS NOT A STYLISTIC PREFERENCE. If your API has push semantics, REST
+    makes you build them separately and gRPC has them in the contract.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE DIFFERENCES, in order of importance:
+        1. THE SCHEMA        gRPC generates typed clients from a mandatory `.proto`; REST usually has
+                             no enforced contract at all.
+        2. THE TRANSPORT     HTTP/2 with multiplexing and native streaming, versus request-response.
+        3. THE ENCODING      compact typed binary versus text.
+
+    THE MEASURED EVIDENCE:
+        one five-field record:  JSON 94 bytes · typed binary 27 bytes  (3.5x)
+        JSON encode + decode:   6.41 us per record - which is 0.015% of a 40 ms database call, and
+                                several CPU-seconds per second at a million requests
+
+    WHEN TO USE WHICH:
+        gRPC   internal service-to-service · high volume · polyglot teams · streaming · strict
+               contracts
+        REST   public APIs · browsers · human debuggability · HTTP caching · the whole HTTP ecosystem
+        AND THE USUAL REAL ANSWER: gRPC inside, a REST gateway at the edge.
+
+THE #1 MISTAKE: leading with the payload size. It is the least important difference and it is
+irrelevant below high volume - the SCHEMA is the argument that applies to everybody.
+
+THE #2 MISTAKE: reusing a protobuf field number after deleting a field. Old clients decode the new
+field as the old one, silently. `reserved` exists to prevent it.
+
+THE #3 MISTAKE: putting gRPC behind an L4 load balancer. It multiplexes over one long-lived HTTP/2
+connection, so every request pins to one backend and your load balancing stops working.
+
+THE #4 MISTAKE: ignoring the debuggability cost. No curl, no browser, no grepping the payload.
+
+THE #5 MISTAKE: forgetting proto3 cannot distinguish 'absent' from 'zero' without `optional` - a price
+of 0 and a price that was never sent look identical.
+
+ONE-SENTENCE TAKEAWAY: the real difference is that gRPC makes the contract mandatory and machine-
+generated so breakage happens at compile time, while REST makes it optional and human-maintained so
+breakage happens in production - and the compact binary encoding is a genuine bonus that only starts
+to matter at volume.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
