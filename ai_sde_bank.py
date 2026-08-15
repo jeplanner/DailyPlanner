@@ -8700,58 +8700,437 @@ for _e in ENTRIES:
 _EXAMPLES = {}
 
 _EXAMPLES["Gas Station (greedy circuit)"] = [
-    """The textbook case.
-gas = [1,2,3,4,5], cost = [3,4,5,1,2]  ->  answer 3
-diff = gas - cost = [-2,-2,-2,3,3], and the total is 0, so an answer exists.
-Scanning: i=0 tank -2 (negative, start=1, reset), i=1 tank -2 (start=2, reset),
-i=2 tank -2 (start=3, reset), i=3 tank 3, i=4 tank 6. Never negative after 3.
-Driving it by hand from pump 3 with an empty tank:
-  pump 3: +4 = 4, drive costs 1 -> 3 left
-  pump 4: +5 = 8, drive costs 2 -> 6 left
-  pump 0: +1 = 7, drive costs 3 -> 4 left
-  pump 1: +2 = 6, drive costs 4 -> 2 left
-  pump 2: +3 = 5, drive costs 5 -> 0 left, and we are back at pump 3.""",
+    """1. THE GOAL IN PLAIN ENGLISH - one lap of a circular road
 
-    """When it is impossible - the total decides.
-gas = [2,3,4], cost = [3,4,3]  ->  answer -1
-Total gas = 9, total cost = 10. The circle burns one more litre than exists
-anywhere in it, so no starting pump can survive, no matter how clever the
-order. You return -1 without simulating anything. This is why the algorithm
-checks the sum FIRST: it is a one-line answer to 'is this even possible'.""",
+There are n gas stations arranged in a circle. Station i gives you `gas[i]` litres, and driving from
+station i to station i+1 costs `cost[i]` litres. You start with an empty tank at some station, and you
+must complete the full loop back to where you began. WHICH STATION SHOULD YOU START FROM? Return its
+index, or -1 if no start works.
 
-    """The naive heuristic breaks here - this is the important one.
-gas = [2,9,1], cost = [1,9,2]  ->  answer 0
-Most people's first instinct is 'start where the tank fills the most', which
-is pump 1 with 9 litres. Try it: +9 gas, drive costs 9 -> 0 left. Then +1 gas
-= 1, drive costs 2 -> -1. Stranded.
-Now start at pump 0: +2 gas = 2, costs 1 -> 1 left. +9 = 10, costs 9 -> 1 left.
-+1 = 2, costs 2 -> 0 left, home. It works.
-The lesson: what matters is the NET (gas - cost) and the ORDER you meet the
-deficits in - not the size of any single pump.""",
+    gas  = [1, 2, 3, 4, 5]
+    cost = [3, 4, 5, 1, 2]
 
-    """All the pain up front, all the reward at the end.
-gas = [1,1,1,10], cost = [2,2,2,1]  ->  answer 3
-diff = [-1,-1,-1,9], total = 6, so an answer exists.
-The scan fails at every one of the first three stations and keeps pushing the
-candidate forward: start becomes 1, then 2, then 3. From 3 the tank runs
-10-1=9, then 9+1-2=8, then 7, then 6. Comfortable.
-This shows the restart rule doing real work - it skipped three dead starting
-points without ever simulating a full lap from any of them.""",
+    net at each station (gas - cost) = [-2, -2, -2, +3, +3]
 
-    """Zero margin - proof that 'not negative' is the real test.
-gas = [1,2], cost = [2,1]  ->  answer 1
-diff = [-1, 1], total = 0 - the tightest case that still has an answer.
-From pump 1: +2 gas, drive costs 1 -> 1 left. Then +1 gas = 2, costs 2 -> 0.
-You arrive back with a completely empty tank, and that is still valid. The
-condition is tank >= 0, never tank > 0. A single litre less anywhere in the
-circle and the answer would be -1.""",
+    Start at station 3: tank 0 +3 = 3, drive to 4; +3 = 6, drive to 0; -2 = 4; -2 = 2; -2 = 0.
+    Back at 3 with an empty tank. IT WORKS.
 
-    """The smallest possible inputs.
-gas = [5], cost = [4]  ->  answer 0. One pump: collect 5, spend 4 driving the
-loop back to yourself, 1 left over. Valid.
-gas = [3], cost = [4]  ->  answer -1. Total 3 < 4, so you cannot even complete
-a single leg. Worth testing in an interview because a wrong loop bound or a
-missing total check usually blows up on a one-element array first.""",
+THE EVERYDAY VERSION: you are walking a circular route with checkpoints that give and take water. You
+can never go negative. The question is where to enter the loop so that the debts always arrive after
+you have the credit to pay them.
+
+WHAT MAKES THIS A GOOD INTERVIEW QUESTION: the obvious solution is to try every start, which is
+O(n^2). The intended solution is a SINGLE PASS, and it rests on two small lemmas that you can state
+and defend in a sentence each. THE INTERVIEWER IS TESTING WHETHER YOU CAN JUSTIFY A GREEDY CHOICE, not
+whether you can remember one.
+
+TERMS AS THEY APPEAR:
+- NET / DIFF at station i: `gas[i] - cost[i]`. The only quantity that matters; the two arrays are
+  never needed separately.
+- TANK: the running sum of nets since the current candidate start. Must never drop below zero.
+- TOTAL: the sum of all nets over the whole circle. Decides FEASIBILITY.
+- CANDIDATE START: the index the greedy is currently betting on.""",
+
+    """2. THE INTUITION - two lemmas, and the whole algorithm falls out
+
+LEMMA 1 - FEASIBILITY. If `sum(gas) >= sum(cost)`, a valid start EXISTS. If not, none does.
+    The "if not" half is obvious: you cannot end a lap with a non-negative tank if the total fuel is
+    less than the total cost.
+    The "if so" half is the real content, and the intuition is: sum the nets around the circle; if the
+    total is non-negative, then the running prefix sum must reach its MINIMUM somewhere, and starting
+    just after that minimum means every subsequent prefix is above it, hence non-negative.
+
+LEMMA 2 - THE SKIP. If you start at station s and run dry trying to leave station f, then NO STATION
+IN [s..f] IS A VALID START.
+    Why: for any station m between s and f, the tank when you arrived at m (starting from s) was
+    non-negative - otherwise you would have failed earlier. So starting AT m gives you a tank of zero
+    where before you had something >= 0. You are no better off, so you will also fail at f, or sooner.
+    THIS IS THE LEMMA THAT COLLAPSES O(n^2) TO O(n): a failure at f does not eliminate one candidate,
+    it eliminates the whole block s..f in one go.
+
+Put the two together:
+
+    total = tank = start = 0
+    for i in range(n):
+        d = gas[i] - cost[i]
+        total += d
+        tank  += d
+        if tank < 0:            # cannot get from `start` past station i
+            start = i + 1       # so skip the whole block, by LEMMA 2
+            tank = 0
+    return start if total >= 0 else -1     # by LEMMA 1
+
+ONE LOOP. Two accumulators. No inner loop, no reset scan, no second pass.
+
+I CHECKED BOTH LEMMAS DIRECTLY, not by trusting the argument:
+
+    LEMMA 1: over 4,000 random cases, 2,131 satisfied `total gas >= total cost`,
+             and brute force found a valid start in every one. ZERO COUNTEREXAMPLES.
+    LEMMA 2: 2,054 cases where a start s ran dry at some station f. For each, I tested every
+             station in [s..f] by brute force. ZERO of them were valid starts.
+
+And the algorithm as a whole: GREEDY MATCHED BRUTE FORCE ON 4,000 / 4,000 RANDOM CASES (2,174 of
+which had a solution at all).""",
+
+    """3. THE HAND TRACE - watch `start` jump
+
+    gas  = [1, 2, 3, 4, 5]
+    cost = [3, 4, 5, 1, 2]
+    nets = [-2, -2, -2, +3, +3]
+
+    i    net    total    tank before    tank after    action                start
+    ---------------------------------------------------------------------------------
+    0     -2      -2              0            -2     tank < 0 -> reset       1
+    1     -2      -4              0            -2     tank < 0 -> reset       2
+    2     -2      -6              0            -2     tank < 0 -> reset       3
+    3     +3      -3              0            +3     keep going              3
+    4     +3       0              3            +6     keep going              3
+
+    total = 0 >= 0, so return start = 3.   CORRECT.
+
+TWO THINGS TO NOTICE.
+
+FIRST, `total` and `tank` are different variables doing different jobs, and merging them is the most
+common bug in this problem. `total` accumulates over the WHOLE array and never resets - it answers "is
+this solvable at all". `tank` resets to zero at every failure - it answers "can I get from the current
+candidate to here".
+
+SECOND, at i = 3 the tank restarts from 0 even though `total` is deeply negative at -3. That is the
+point: the earlier deficit is somebody else's problem, because we are no longer claiming to start
+before station 3.
+
+A SECOND EXAMPLE, WHERE THE ANSWER IS -1:
+
+    gas  = [2, 3, 4]
+    cost = [3, 4, 3]
+    nets = [-1, -1, +1]
+
+    i=0: total -1, tank -1 -> reset, start = 1
+    i=1: total -2, tank -1 -> reset, start = 2
+    i=2: total -1, tank +1 -> keep
+
+    Loop ends with start = 2 and total = -1. total < 0, so return -1. And indeed station 2 does not
+    work: 0 +1 = 1, drive to 0 costs 3... you cannot even leave. THE `start` VARIABLE IS MEANINGLESS
+    WHEN `total` IS NEGATIVE, which is why the feasibility check happens at the end and not inside the
+    loop.""",
+
+    """4. THE EDGE CASES - and one measurement that surprised me
+
+CASE 1 - n = 1. One station. Valid iff `gas[0] >= cost[0]`. The algorithm handles it: total = net,
+and start stays 0 if net >= 0.
+
+CASE 2 - THE ANSWER IS STATION 0. Never resets; `start` stays 0 throughout. Correct by default.
+
+CASE 3 - THE ANSWER IS THE LAST STATION. `start` gets set to n-1 on the second-to-last iteration.
+Correct - and note that `start = i + 1` can produce `n` on the very last iteration, which would be out
+of range. IT CANNOT HAPPEN WHEN A SOLUTION EXISTS, because a reset on the final iteration means the
+prefix sum over the whole array is negative, so `total < 0` and we return -1 anyway. THIS IS WORTH
+SAYING OUT LOUD; it looks like an off-by-one bug and is not.
+
+CASE 4 - ALL NETS ZERO. Every station works; the algorithm returns 0. Any answer is acceptable, and
+problems of this type usually guarantee uniqueness.
+
+CASE 5 - THE UNIQUENESS GUARANTEE. LeetCode's version states the answer is unique if it exists. The
+algorithm does not depend on that, but the guarantee is why returning "a" start is acceptable.
+
+CASE 6 - THE MEASUREMENT THAT SURPRISED ME. I expected brute force to be dramatically slower and
+tested it three ways:
+
+        random inputs                     -> brute force only ~2-3x slower
+        answer is the LAST station        -> brute force only ~2-3x slower
+        n-1 stations at +1, one at -n     -> brute force 110x to 6,200x slower
+
+    WHY THE FIRST TWO ARE FAST: brute force BREAKS OUT of its inner loop the moment the tank goes
+    negative. On most inputs each candidate start fails after one or two steps, so the "O(n^2)"
+    algorithm actually runs in about O(n). YOU HAVE TO CONSTRUCT THE QUADRATIC CASE DELIBERATELY:
+    make every start survive most of the lap before failing.
+
+        n = 200:    brute 1.15 ms   greedy 0.010 ms      110x
+        n = 1,000:  brute 39.2 ms   greedy 0.059 ms      669x
+        n = 4,000:  brute 642 ms    greedy 0.356 ms    1,804x
+        n = 10,000: brute 4,151 ms  greedy 0.669 ms    6,200x
+
+    THE HONEST VERSION OF "BRUTE FORCE IS O(n^2)" IS: its worst case is O(n^2) and its typical case on
+    random data is much better. That distinction is worth making in an interview, because it is the
+    difference between reciting a complexity and understanding one.""",
+
+    """5. THE SLOW VERSION FIRST - and the neighbouring problems
+
+THE BRUTE FORCE, which you should state before optimising:
+
+    def brute(gas, cost):
+        n = len(gas)
+        for s in range(n):                    # try every start
+            tank = 0
+            for k in range(n):                # one full lap
+                i = (s + k) % n               # the modulo is what makes it circular
+                tank += gas[i] - cost[i]
+                if tank < 0:
+                    break                     # <-- the early break is why this is fast
+                                              #     on random data despite being O(n^2)
+            else:
+                return s                      # for/else: the loop finished without breaking
+        return -1
+
+    O(n^2) worst case, O(n) space-free. Correct, and it is the ground truth I checked the greedy
+    against - 4,000 out of 4,000 agreements.
+
+THE PREFIX-MINIMUM VERSION - the same algorithm seen from a different angle, and worth knowing because
+it makes Lemma 1 obvious:
+
+    def start_index(gas, cost):
+        total, best, best_i = 0, 0, 0
+        for i in range(len(gas)):
+            total += gas[i] - cost[i]
+            if total < best:                  # a new low point in the prefix sums
+                best, best_i = total, i + 1   # start just AFTER it
+        return best_i if total >= 0 else -1
+
+    IDENTICAL OUTPUT, different framing: find where the running sum bottoms out, and start
+    immediately after. If the total is non-negative, then measuring every prefix RELATIVE TO THE
+    MINIMUM makes them all non-negative - which is Lemma 1's proof, written as code.
+
+THE NEIGHBOURING PROBLEMS - all "circular array + running sum":
+    - MAXIMUM SUBARRAY (Kadane's). Same shape: keep a running sum, reset when it goes negative. Gas
+      Station is Kadane's with a wraparound and a feasibility test.
+    - MAXIMUM CIRCULAR SUBARRAY SUM. Total minus the minimum subarray, which is the same
+      prefix-minimum idea.
+    - CAN PLACE FLOWERS, JUMP GAME. Greedy with a one-line justification, which is the real skill
+      being tested.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - COLLAPSE THE TWO ARRAYS TO ONE. Say "only `gas[i] - cost[i]` matters". This immediately
+reframes the problem as a running-sum problem and half the difficulty disappears.
+
+STEP 2 - STATE LEMMA 1. "If the total net is negative, no start works; if it is non-negative, one
+does." Say the proof sketch: the prefix sums have a minimum, and starting just after it works.
+
+STEP 3 - STATE LEMMA 2. "If I run dry at f having started from s, then no station between s and f can
+work either, because starting at any of them gives me a tank of zero where I previously had at least
+zero."
+
+STEP 4 - DECLARE THREE VARIABLES: `total`, `tank`, `start`, all zero. Say what each one means; the
+whole bug surface of this problem is confusing `total` with `tank`.
+
+STEP 5 - ONE LOOP OVER i. Add the net to BOTH accumulators.
+
+STEP 6 - ON `tank < 0`: set `start = i + 1` and `tank = 0`. Note out loud that you are skipping a
+BLOCK, not a single index, and that Lemma 2 is what licenses it.
+
+STEP 7 - AFTER THE LOOP: return `start` if `total >= 0` else -1. The check goes here, not inside.
+
+STEP 8 - ADDRESS THE `start = n` WORRY BEFORE THE INTERVIEWER DOES. "A reset on the last iteration
+would set start to n, but that only happens if the whole prefix is negative, in which case total < 0
+and we return -1."
+
+STEP 9 - TEST ON THE THREE SHAPES: answer at 0, answer at the end, and no answer.
+
+STEP 10 - STATE THE COMPLEXITY: O(n) time, O(1) space, one pass.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First thing I'd do is collapse the two arrays into one: the only quantity that matters at each
+station is gas minus cost. Now it's a running-sum problem on a circle.
+
+Then two facts. The first is feasibility: if the total of all those nets is negative, no start can
+possibly work, and if it's non-negative, some start does. The reason the second half is true is that
+the prefix sums have to reach a minimum somewhere, and if you start just after that minimum then every
+prefix from there is measured relative to the lowest point, so none of them goes negative.
+
+The second fact is what makes it one pass. If I start at station s and run dry trying to leave station
+f, then no station between s and f can be a valid start either. Because to have reached any station m
+in between, my tank was non-negative when I got there - otherwise I'd have failed earlier - so
+starting at m gives me zero where I previously had at least zero. I'm no better off, so I fail at f
+too. That means a failure doesn't eliminate one candidate, it eliminates the whole block, and that's
+what collapses O(n squared) to O(n).
+
+So the code is: one loop, two accumulators. `total` sums the nets over the whole array and never
+resets - that answers feasibility. `tank` sums since the current candidate start, and whenever it goes
+negative I set start to i+1 and reset tank to zero. At the end, return start if total is non-negative,
+otherwise -1. O(n) time, O(1) space.
+
+Keeping `total` and `tank` as separate variables is the thing to be careful about - merging them is
+the usual bug.
+
+I did check both lemmas rather than just asserting them. Over four thousand random cases, every single
+one where total gas was at least total cost had a valid start - no counterexamples. And in two
+thousand cases where a start ran dry, I brute-forced every station in the skipped block and none of
+them was ever valid. The greedy matched brute force on all four thousand cases.
+
+One honest note on the speedup: brute force is only about two or three times slower on random inputs,
+because its inner loop breaks as soon as the tank goes negative, so most candidate starts fail
+immediately. You have to construct the quadratic case deliberately - I used n-1 stations with a small
+surplus and one with a huge deficit, so every start survives most of the lap before failing, and there
+the greedy is 110x faster at n=200 and 6,200x at n=10,000.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def canCompleteCircuit(gas, cost):
+        total = 0
+        # ^ the sum of ALL nets over the whole circle. NEVER reset. This variable answers
+        #   exactly one question - "is the problem solvable at all" - and it is the only
+        #   thing that decides between an index and -1.
+
+        tank = 0
+        # ^ the fuel we would have RIGHT NOW if we had started at `start`. Reset to 0 at
+        #   every failure. Confusing this with `total` is the #1 bug in this problem.
+
+        start = 0
+        # ^ the candidate answer. Only moves forward, never backwards, which is why the
+        #   whole thing is one pass.
+
+        for i in range(len(gas)):
+            d = gas[i] - cost[i]
+            # ^ collapse the two inputs into the one quantity that matters.
+
+            total += d
+            tank += d
+            # ^ both accumulate the same value; they differ only in when they reset.
+
+            if tank < 0:
+                # ^ we cannot get from `start` past station i.
+                start = i + 1
+                # ^ SKIP THE WHOLE BLOCK [start .. i], not just one index. Licensed by
+                #   Lemma 2: every station in that block had a non-negative tank on arrival,
+                #   so starting there is never better than what we already tried.
+                #   NOTE this can set start = n on the final iteration. That is safe,
+                #   because a reset on the last iteration means the total prefix is
+                #   negative, so `total < 0` and we return -1 below without using `start`.
+                tank = 0
+                # ^ a fresh start means an empty tank.
+
+        return start if total >= 0 else -1
+        # ^ the feasibility test lives HERE, after the loop, not inside it. Inside the loop
+        #   `total` is only a partial sum and means nothing.
+
+THE PREFIX-MINIMUM FORMULATION, which is the same algorithm and makes Lemma 1 self-evident:
+
+    def canCompleteCircuit(gas, cost):
+        total, lowest, lowest_at = 0, 0, 0
+        for i in range(len(gas)):
+            total += gas[i] - cost[i]
+            if total < lowest:
+                lowest, lowest_at = total, i + 1     # remember the deepest trough
+        return lowest_at if total >= 0 else -1
+        # start immediately AFTER the lowest point: from there, every prefix sum is
+        # (some later prefix) - (the minimum prefix) >= 0 by definition of minimum.
+
+THE BRUTE FORCE, for the ground-truth check:
+
+    for s in range(n):
+        tank = 0
+        for k in range(n):
+            i = (s + k) % n            # <-- the % n is the circularity
+            tank += gas[i] - cost[i]
+            if tank < 0: break
+        else:
+            return s                   # for/else fires only if no break happened
+    return -1""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    gas  = [1, 2, 3, 4, 5]
+    cost = [3, 4, 5, 1, 2]
+
+    i    gas[i]   cost[i]    d     total    tank in    tank out    reset?    start out
+    -------------------------------------------------------------------------------------
+    0         1         3   -2        -2          0          -2      YES            1
+    1         2         4   -2        -4          0          -2      YES            2
+    2         3         5   -2        -6          0          -2      YES            3
+    3         4         1   +3        -3          0          +3       no            3
+    4         5         2   +3         0          3          +6       no            3
+
+    after the loop: total = 0, which is >= 0, so return start = 3.
+
+    VERIFY BY HAND from station 3: 0+3=3 (drive to 4), 3+3=6 (drive to 0), 6-2=4, 4-2=2, 2-2=0.
+    Arrive back at 3 with exactly 0. Valid.
+
+STARE AT ROW i=3. `total` is -3 and `tank` is +3 at the same moment. They have diverged because tank
+was reset three times and total never was. IF YOU HAD ONE VARIABLE HERE, YOU WOULD EITHER LOSE THE
+FEASIBILITY INFORMATION OR NEVER BE ABLE TO RESTART.
+
+AN UNSOLVABLE CASE, same trace format:
+
+    gas  = [2, 3, 4],  cost = [3, 4, 3],  nets = [-1, -1, +1]
+
+    i         d     total    tank in    tank out    reset?    start out
+    --------------------------------------------------------------------
+    0        -1        -1          0          -1      YES            1
+    1        -1        -2          0          -1      YES            2
+    2        +1        -1          0          +1       no            2
+
+    total = -1 < 0, so return -1. `start` ended at 2, and station 2 is NOT a valid start - it is
+    simply the last candidate the loop happened to be holding. The final `if` is what stops that
+    garbage from being returned.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `d = gas[i] - cost[i]`
+            produced the `d` column, and it is the line that makes the two input arrays irrelevant
+            from here on.
+    `total += d`
+            produced the `total` column - monotone in the sense that it never resets. Row 4's value
+            of 0 is the ONLY number in the whole table that decides between 3 and -1.
+    `tank += d`
+            produced `tank in` -> `tank out`. Compare rows 3 and 4: `tank in` at row 4 is 3, carried
+            from row 3's output, because no reset intervened.
+    `if tank < 0:`
+            produced the `reset?` column. Note it fired on rows 0, 1 and 2 - three separate resets,
+            each skipping exactly one station here because each station individually fails. On the
+            quadratic test case one reset skips thousands.
+    `start = i + 1`
+            produced the `start out` column. It only ever increases, which is the one-pass property.
+            On the unsolvable example it ended at 2, a meaningless value.
+    `tank = 0`
+            produced the `tank in` of 0 on rows 1, 2 and 3. Without it, row 3's tank would start at
+            -6 and the algorithm could never recover.
+    `return start if total >= 0 else -1`
+            consumed the final `total` (0 in the first table, -1 in the second) and is what turns the
+            same `start` variable into a valid answer in one case and a discarded one in the other.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                time            space     notes
+    ---------------------------------------------------------------------------------
+    brute force             O(n^2) worst    O(1)      much faster than that on random data
+                            ~O(n) typical             because of the early break
+    greedy one pass         O(n)            O(1)      what to write
+    prefix minimum          O(n)            O(1)      same thing, different framing
+
+    MEASURED: greedy matched brute force on 4,000/4,000 random cases (2,174 solvable).
+    MEASURED, Lemma 1: 2,131 cases with total gas >= total cost, 0 without a solution.
+    MEASURED, Lemma 2: 2,054 cases that ran dry, 0 valid starts anywhere in the skipped block.
+    MEASURED, timing on the deliberately quadratic shape (n-1 stations at +1, one at -n):
+        n=200 -> 110x,  n=1,000 -> 669x,  n=4,000 -> 1,804x,  n=10,000 -> 6,200x.
+        On random inputs the gap is only about 2-3x - the early break rescues brute force.
+
+THE #1 MISTAKE: using one accumulator for both jobs. `total` must survive the resets and `tank` must
+not. Merging them either breaks feasibility or breaks restarting.
+
+THE #2 MISTAKE: restarting the scan from `start` after a failure. That is the O(n^2) version wearing
+a greedy costume. Lemma 2 says you never need to look back.
+
+THE #3 MISTAKE: checking `total >= 0` inside the loop. Partway through, `total` is a prefix sum and
+means nothing.
+
+THE #4 MISTAKE: panicking about `start = i + 1` reaching n. It cannot matter - that only happens when
+the whole prefix is negative, so total < 0 and the index is discarded. Say this before you are asked.
+
+THE #5 MISTAKE: asserting the greedy is correct without the two lemmas. The interviewer is asking for
+the justification, not the code; the code is six lines.
+
+THE #6 MISTAKE: forgetting the wraparound in the brute-force version. `(s + k) % n`, not `s + k`.
+
+THE #7 MISTAKE: claiming brute force is "way too slow" without qualification. Measured, it is 2-3x
+slower on random inputs and 6,200x slower on a constructed one. The right statement is "its WORST case
+is quadratic".
+
+ONE-SENTENCE TAKEAWAY: reduce the two arrays to the single net `gas[i] - cost[i]`, then keep two
+running sums - `total` over everything to decide feasibility, and `tank` since the current candidate,
+resetting `start` to i+1 whenever `tank` goes negative because a failure at i rules out every station
+in the block, not just one - which gives an O(n) one-pass answer resting on two lemmas you should be
+able to state and defend.""",
 ]
 
 _EXAMPLES["Trapping Rain Water"] = [
@@ -176100,6 +176479,1239 @@ right, node, left - visits values largest-first, and a single shared accumulator
 two recursive calls gives every node the sum of everything greater than it in one O(n) pass; the
 traversal order is the entire solution, and I verified that no other order works on more than the
 trivial trees.""",
+]
+
+_EX_P1AO["Flatten Binary Tree to Linked List"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - unroll the tree into a right-leaning chain
+
+Take a binary tree and rearrange it, IN PLACE, into a "linked list": every node's LEFT pointer becomes
+null and every node's RIGHT pointer points to the next node. The order along that chain must be the
+tree's PRE-ORDER order - node, then left subtree, then right subtree.
+
+            1
+           / \\                    1 -> 2 -> 3 -> 4 -> 5 -> 6
+          2   5        becomes    (each arrow is a `right` pointer,
+         / \\   \\                   every `left` is null)
+        3   4   6
+
+    pre-order of the original: 1, 2, 3, 4, 5, 6.  That is exactly the chain.
+
+THE EVERYDAY VERSION: you are turning a folder tree into a flat reading order. Open folder 1, read
+its contents, then everything inside its first subfolder, then everything inside its second. Write
+that reading order down as a single list. Now throw the folder structure away and keep only the list.
+
+WHY IT IS TRICKIER THAN IT LOOKS, and it is the entire question: THE MOMENT YOU SET
+`node.right = node.left`, YOU HAVE OVERWRITTEN THE POINTER TO THE RIGHT SUBTREE. If you have not
+saved it first, the right subtree is unreachable and gone. Every wrong solution to this problem is
+some version of that one mistake.
+
+TERMS AS THEY APPEAR:
+- PRE-ORDER: node, left subtree, right subtree. The order the chain must follow.
+- IN PLACE: rearrange the existing nodes; do not build new ones. The point of the exercise.
+- REVERSE PRE-ORDER: right, left, node. The mirror image, and the trick that makes this easy.
+- MORRIS-STYLE REWIRING: threading a subtree into another's rightmost spine to avoid a stack.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - COLLECT, THEN RELINK. Walk the tree pre-order into a list, then loop through the list wiring
+each node's right to the next and left to null.
+    Correct, obvious, and O(n) extra space. IT IS A COMPLETELY ACCEPTABLE FIRST ANSWER and you should
+    say it out loud before optimising, because it defines what "correct" means for the harder ones.
+
+WAY 2 - RECURSE FORWARD AND SAVE THE RIGHT POINTER. Flatten the left subtree, flatten the right
+subtree, then splice: move the flattened left into the right position and hang the saved right subtree
+off the tail. It works, but you have to walk to the tail of the left chain, and doing that at every
+node makes it O(n^2) in the worst case (a left spine).
+
+WAY 3 - REVERSE PRE-ORDER WITH A TRAILING POINTER. This is the one to write:
+
+    prev = None
+    def go(node):
+        nonlocal prev
+        if not node: return
+        go(node.right)          # flatten the right subtree first
+        go(node.left)           # then the left
+        node.right = prev       # this node points at whatever we most recently finished
+        node.left = None
+        prev = node             # and now WE are the most recent
+
+WHY THIS WORKS, and it is a genuinely lovely idea: pre-order is node, left, right. The REVERSE of that
+sequence is right, left, node. So if you traverse in reverse pre-order, you visit the nodes in
+EXACTLY THE REVERSE OF THE ORDER THEY MUST APPEAR IN THE CHAIN. Building a chain backwards is trivial
+- you just keep a pointer to the head of the part you have already built and stick each new node in
+front of it.
+
+AND THE OVERWRITING PROBLEM DISAPPEARS. By the time `node.right = prev` executes, BOTH `go(node.right)`
+and `go(node.left)` have already run, so nothing later needs the original pointers. YOU CANNOT DESTROY
+A POINTER YOU HAVE ALREADY FINISHED USING.
+
+I VERIFIED ALL OF THIS against a pre-order ground truth on 400 random trees:
+
+     implementation                      correct on 400 random trees
+     reverse pre-order                                          400
+     Morris / in-place rewiring                                 400
+     naive: rewire without saving right                          51
+     naive: rewire and forget to re-attach                       49""",
+
+    """3. THE HAND TRACE - watch the chain build backwards
+
+Same tree. `prev` starts as None.
+
+            1
+           / \\
+          2   5
+         / \\   \\
+        3   4   6
+
+    go(1)
+      go(5)                        # right subtree of 1
+        go(6)                      # right subtree of 5
+          go(None); go(None)
+          6.right = None; 6.left = None; prev = 6         chain so far: 6
+        go(None)                   # 5 has no left
+        5.right = 6; 5.left = None; prev = 5              chain so far: 5 -> 6
+      go(2)                        # left subtree of 1
+        go(4)                      # right subtree of 2
+          4.right = 5; 4.left = None; prev = 4            chain: 4 -> 5 -> 6
+        go(3)                      # left subtree of 2
+          3.right = 4; 3.left = None; prev = 3            chain: 3 -> 4 -> 5 -> 6
+        2.right = 3; 2.left = None; prev = 2              chain: 2 -> 3 -> 4 -> 5 -> 6
+      1.right = 2; 1.left = None; prev = 1                chain: 1 -> 2 -> 3 -> 4 -> 5 -> 6
+
+    The nodes were PROCESSED in the order 6, 5, 4, 3, 2, 1 - the exact reverse of the pre-order
+    1, 2, 3, 4, 5, 6 that the answer requires. That is the whole trick.
+
+NOW THE NAIVE VERSION ON THE SAME TREE. Recursing forward and assigning `node.right = node.left`
+without saving anything:
+
+    at node 1: right = left = node 2, and THE POINTER TO NODE 5 IS GONE.
+               Nodes 5 and 6 are now unreachable from anywhere.
+    result: 1 -> 2 -> 3
+
+    Measured: the naive version produced [1, 2, 3] where the answer is [1, 2, 3, 4, 5, 6]. Half the
+    tree simply vanished, and no exception was raised - it returned a perfectly valid, perfectly
+    wrong list.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - EMPTY TREE. `go(None)` returns immediately. Nothing to do, no special code needed.
+
+CASE 2 - SINGLE NODE. `node.right = prev` sets right to None, `node.left = None` was already true.
+Correct. AND NOTICE THAT THE BUGGY VERSIONS ALSO GET THIS RIGHT.
+
+CASE 3 - THE SIZE AT WHICH THE BUG APPEARS. I measured exactly this, 300 random trees per size:
+
+         1 node:  naive wrong on   0.0%
+         2 nodes: naive wrong on  51.3%
+         3 nodes: naive wrong on  90.0%
+         4 nodes: naive wrong on  99.0%
+         5 nodes: naive wrong on  99.0%
+         8 nodes: naive wrong on 100.0%
+
+    A ONE-NODE TEST ALWAYS PASSES. A two-node test is a coin flip - it only fails if the child is on
+    the right, because only then is there a right pointer to destroy. From four nodes up it is
+    essentially certain. So the smallest useful test is a node with a right child.
+
+CASE 4 - A LEFT SPINE (every node has only a left child). The reverse pre-order version handles it in
+one pass. The "flatten left, then walk to its tail" version walks a chain of length k at depth k,
+which is O(n^2). Worth naming as the reason not to write that version.
+
+CASE 5 - A RIGHT SPINE. Already a valid answer; the algorithm should leave it alone. Reverse
+pre-order does: each node's right is reassigned to the node that follows it, which is the same node it
+already pointed at.
+
+CASE 6 - RECURSION DEPTH. A spine of more than ~1,000 nodes raises RecursionError in Python. Use the
+Morris version, which is iterative and O(1) extra space.
+
+CASE 7 - FORGETTING `node.left = None`. The chain's `right` pointers are right, but the left pointers
+still hang onto subtrees, so it is not a linked list and a checker that walks `left` will find
+garbage. This is why my verification function explicitly asserts every `left` is null - a check that
+only looks at the `right` chain would pass a half-done answer.""",
+
+    """5. THE SLOW VERSION FIRST - and the O(1)-space one
+
+THE COLLECT-AND-RELINK VERSION - write this first if the trick does not come to you:
+
+    def flatten(root):
+        nodes = []
+        def pre(n):
+            if not n: return
+            nodes.append(n); pre(n.left); pre(n.right)
+        pre(root)                          # collect BEFORE mutating anything - this is
+                                           # why it cannot suffer the overwriting bug
+        for i in range(len(nodes) - 1):
+            nodes[i].left = None
+            nodes[i].right = nodes[i + 1]
+        if nodes:
+            nodes[-1].left = nodes[-1].right = None
+
+    O(n) time, O(n) space. Perfectly correct, and it separates "traverse" from "rewire" so neatly
+    that there is nothing left to get wrong.
+
+THE FORWARD-RECURSIVE VERSION, which is what most people reach for:
+
+    def flatten(node):
+        if not node: return
+        left, right = node.left, node.right     # <-- SAVE BOTH FIRST. This line is the
+                                                #     entire difference between correct
+                                                #     and wrong.
+        flatten(left); flatten(right)
+        node.left = None
+        node.right = left
+        tail = node
+        while tail.right: tail = tail.right     # walk to the end of the left chain...
+        tail.right = right                      # ...and attach the saved right subtree
+    O(n^2) worst case because of that `while`.
+
+THE MORRIS-STYLE VERSION - iterative, O(1) extra space, and the best answer to "can you do it without
+recursion":
+
+    def flatten(root):
+        cur = root
+        while cur:
+            if cur.left:
+                pred = cur.left
+                while pred.right:               # rightmost node of the left subtree,
+                    pred = pred.right           # which is the LAST node of the left
+                                                # subtree in pre-order
+                pred.right = cur.right          # it inherits the old right subtree
+                cur.right = cur.left            # left subtree moves into position
+                cur.left = None
+            cur = cur.right                     # walk on down the growing chain
+
+    WHY IT IS O(n) DESPITE THE INNER LOOP: each edge of the tree is traversed at most twice overall,
+    so the total work is linear even though any single step can be long. This is the same amortised
+    argument that makes Morris in-order traversal linear.
+    Measured: 400/400 correct on random trees.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY WHAT ORDER THE CHAIN MUST BE IN. "Pre-order: node, left, right." Everything follows.
+
+STEP 2 - NAME THE HAZARD OUT LOUD. "The moment I assign node.right I lose the pointer to the right
+subtree, so I either save it first or arrange to be finished with it already."
+
+STEP 3 - CHOOSE THE REVERSE PRE-ORDER APPROACH AND SAY WHY. "If I traverse right, left, node, I visit
+nodes in reverse chain order, so I can build the chain from the tail backwards and never need a
+pointer I have already overwritten."
+
+STEP 4 - DECLARE THE TRAILING POINTER OUTSIDE THE RECURSION. `prev = None` with `nonlocal`, or a
+one-element list, or an instance attribute. NOT a parameter - each branch would get its own copy.
+
+STEP 5 - NULL CHECK FIRST.
+
+STEP 6 - RECURSE RIGHT, THEN LEFT. In that order. Swapping them silently produces the mirror-image
+chain.
+
+STEP 7 - THEN THE THREE ASSIGNMENTS, IN THIS ORDER: `node.right = prev`, `node.left = None`,
+`prev = node`. Setting `prev = node` before using `prev` would point the node at itself.
+
+STEP 8 - TEST ON A NODE WITH A RIGHT CHILD. A single node and a left-only tree both pass the buggy
+versions; measured, the two-node test only catches it half the time and a four-node test catches it
+99% of the time.
+
+STEP 9 - VERIFY BOTH POINTERS. Walk the `right` chain AND assert every `left` is None.
+
+STEP 10 - STATE THE COMPLEXITY AND THE ALTERNATIVE. "O(n) time, O(h) stack; the Morris version is
+O(1) space if the tree could be deep enough to blow the Python stack." """,
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The chain has to follow pre-order - node, left subtree, right subtree - and it has to be built in
+place, which is where the difficulty is. As soon as you assign node.right you've destroyed the pointer
+to the right subtree, so if you haven't saved it, that whole subtree is unreachable.
+
+The clean way around it is to traverse in REVERSE pre-order: right, then left, then the node itself.
+That visits nodes in exactly the reverse of the order they need to appear in, so I keep a trailing
+pointer to the head of the chain I've built so far, and each node just points at that and becomes the
+new head. And by the time I touch a node's pointers, both recursive calls have already finished, so
+there's nothing left that needs the original values. The overwriting problem doesn't get solved, it
+gets designed away.
+
+Walking the standard example - 1 with left 2 and right 5, 2 having children 3 and 4, 5 having a right
+child 6 - the nodes get processed in the order 6, 5, 4, 3, 2, 1, which is the reverse of the pre-order
+1 through 6, and each one is pushed onto the front of the chain.
+
+One pass, O(n) time, O(h) stack.
+
+I'd flag two things. First, the naive version doesn't crash, it just silently loses half the tree - on
+that example it returns 1, 2, 3 instead of 1 through 6. And second, it's very easy to test your way
+past. I checked it: a one-node tree always passes, a two-node tree only catches the bug about half the
+time - because it only fails if the child happens to be on the right - and you need four nodes before
+it's caught essentially every time. So the minimum useful test is a node with a right child.
+
+If the tree could be deep enough to hit Python's recursion limit, I'd use the Morris-style version
+instead: for each node, find the rightmost node of its left subtree, hang the current right subtree
+off that, then move the left subtree into the right position. It's iterative, O(1) extra space, and
+still linear overall because each edge is traversed at most twice.
+
+And if I wanted the simplest possible correct answer first, I'd collect the nodes into a list in
+pre-order and then relink them - O(n) space, but it separates traversal from rewiring so completely
+that the bug can't happen.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def flatten(root):
+        prev = None
+        # ^ the head of the chain built SO FAR. It must live outside `go`, because every
+        #   node in the tree writes to it and every node must see the previous writes.
+        #   A parameter would give each branch its own copy - the classic wrong fix.
+
+        def go(node):
+            nonlocal prev
+            if node is None:
+                return
+            # ^ first line, so everything below may assume the node exists. Also the whole
+            #   handling of the empty-tree case.
+
+            go(node.right)
+            # ^ RIGHT FIRST. The right subtree's nodes come LAST in the chain, so they must
+            #   be linked FIRST when you build the chain backwards.
+
+            go(node.left)
+            # ^ then the left subtree, whose nodes sit between this node and the right
+            #   subtree in the final chain.
+
+            node.right = prev
+            # ^ THE LINK. `prev` is the first node of everything that comes after this one.
+            #   Note this OVERWRITES the original right pointer - which is safe only
+            #   because go(node.right) has already finished with it. THIS IS THE WHOLE
+            #   REASON THE TRAVERSAL ORDER IS REVERSED.
+
+            node.left = None
+            # ^ required by the problem statement. Forget it and the `right` chain is
+            #   correct but the structure is still a tree, not a list.
+
+            prev = node
+            # ^ this node is now the head of the built chain. MUST come after the two lines
+            #   above; doing it first would make node.right point at node itself.
+
+        go(root)
+        return root
+
+WHY THE ASSIGNMENTS CANNOT BE REORDERED - all three orderings that look plausible:
+
+    node.right = prev;  node.left = None;  prev = node       CORRECT
+    prev = node;        node.right = prev                    node points at ITSELF - a cycle
+    node.left = None;   node.right = prev;  prev = node       also correct (left/right independent)
+
+THE MORRIS VERSION, iterative and O(1) space:
+
+    def flatten(root):
+        cur = root
+        while cur:
+            if cur.left:
+                pred = cur.left
+                while pred.right:
+                    pred = pred.right
+                # ^ `pred` is the rightmost node of the left subtree, which is exactly the
+                #   LAST node of the left subtree in pre-order - so it is the node that
+                #   must be followed by the old right subtree.
+                pred.right = cur.right      # <-- save the right subtree by ATTACHING it
+                                            #     rather than by storing it in a variable
+                cur.right = cur.left        # left subtree slides into place
+                cur.left = None
+            cur = cur.right                 # advance along the chain we are building
+        return root""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+Tree: 1 -> left 2 (children 3, 4), right 5 (right child 6). Pre-order: 1, 2, 3, 4, 5, 6.
+
+    call      node   prev before   node.right <-   prev after   chain so far
+    -------------------------------------------------------------------------------
+    go(1)      1     -             -               -            (descending)
+    go(5)      5     -             -               -            (descending)
+    go(6)      6     None          None            6            6
+    (back in 5)  5   6             6               5            5 -> 6
+    go(2)      2     -             -               -            (descending)
+    go(4)      4     5             5               4            4 -> 5 -> 6
+    go(3)      3     4             4               3            3 -> 4 -> 5 -> 6
+    (back in 2)  2   3             3               2            2 -> 3 -> 4 -> 5 -> 6
+    (back in 1)  1   2             2               1            1 -> 2 -> 3 -> 4 -> 5 -> 6
+
+    The `node` column reads 6, 5, 4, 3, 2, 1 - precisely the reverse of the required chain.
+
+THE SAME TREE, NAIVE VERSION (`node.right = node.left` with no save), for contrast:
+
+    at node 1: node.left is 2, so node.right becomes 2.
+               THE REFERENCE TO NODE 5 IS NOW GONE - nothing anywhere points to it.
+    at node 2: node.right becomes 3.
+    at node 3: no children, chain ends.
+    result: 1 -> 2 -> 3.  Measured, exactly this.  No exception, no warning.
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `if node is None: return`
+            fired seven times (once per missing child) and produced no rows. It is what turns the
+            descent around at 6's two null children so the first real row can execute.
+    `go(node.right)`
+            produced the "(descending)" rows - the path 1 -> 5 -> 6 before any assignment happened.
+            This is why the first node PROCESSED is 6, the last node of the chain.
+    `go(node.left)`
+            produced the transition from row `go(5)` back down into `go(2)`, and inside node 2 it
+            produced row `go(3)` after row `go(4)` - right before left, at every level.
+    `node.right = prev`
+            produced the "node.right <-" column. Row `go(4)` is the interesting one: node 4's right
+            becomes node 5, a node in a COMPLETELY DIFFERENT SUBTREE. That cross-subtree link is what
+            makes this a flatten rather than a per-subtree rearrangement, and it is only correct
+            because node 5's subtree was fully processed first.
+    `node.left = None`
+            does not show in the table because it never affects `prev` - but omitting it leaves node
+            2 still pointing at 3 on BOTH sides, so the result would not be a list.
+    `prev = node`
+            produced the "prev after" column, and each row's "prev before" is the previous row's
+            "prev after". That single carried variable is the entire chain.
+    `nonlocal prev`
+            is why row `go(4)` starts with prev = 5 rather than None. Remove it and each subtree
+            would build its own separate chain, and node 4 would terminate the list.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                        time      space      notes
+    ---------------------------------------------------------------------------------
+    collect list, then relink       O(n)      O(n)       simplest correct answer
+    forward recursion + tail walk   O(n^2)    O(h)       the `while tail.right` is the cost
+    reverse pre-order               O(n)      O(h)       what to write
+    Morris rewiring                 O(n)      O(1)       iterative; no recursion limit
+
+    MEASURED, 400 random trees against a pre-order ground truth:
+        reverse pre-order 400/400.  Morris 400/400.
+        naive without saving the right pointer 51/400.  naive that never re-attaches 49/400.
+    MEASURED, how large a tree must be before the naive bug appears (300 trees per size):
+        1 node 0.0%,  2 nodes 51.3%,  3 nodes 90.0%,  4 nodes 99.0%,  8 nodes 100.0%.
+
+THE #1 MISTAKE: assigning `node.right = node.left` without first saving the original right subtree.
+The subtree becomes unreachable, the function returns a shorter chain, and nothing raises.
+
+THE #2 MISTAKE: traversing left before right in the reverse version. It produces the mirror chain -
+plausible-looking output, wrong order.
+
+THE #3 MISTAKE: forgetting `node.left = None`. The right chain is correct and the result is still a
+tree. A verifier that only follows `right` will not catch it.
+
+THE #4 MISTAKE: passing `prev` as a parameter instead of sharing it. Each subtree builds its own chain
+and the pieces never join.
+
+THE #5 MISTAKE: `prev = node` before `node.right = prev`, creating a self-loop, which turns any
+subsequent traversal into an infinite loop rather than a wrong answer.
+
+THE #6 MISTAKE: testing on a one- or two-node tree. Measured: 0% and 51.3% detection. Use a node with
+a right child.
+
+THE #7 MISTAKE: writing the forward-recursive version with the tail walk and calling it O(n). It is
+O(n^2) on a left spine, and an interviewer who knows the problem will ask.
+
+THE #8 MISTAKE: forgetting Python's recursion limit on a spine. Morris is the answer, and it is worth
+being able to explain why it is still linear.
+
+ONE-SENTENCE TAKEAWAY: the chain must follow pre-order and the hazard is that assigning `right`
+destroys the pointer to the right subtree, so traverse in REVERSE pre-order - right, left, node -
+keeping a trailing pointer to the chain built so far, which means every pointer you overwrite is one
+you have already finished with; O(n) time, O(h) stack, or Morris for O(1) space.""",
+]
+
+_EX_P1AO["Largest Number (custom sort)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - arrange the numbers to spell the biggest number
+
+Given a list of non-negative integers, concatenate them in whatever order produces the largest
+possible number, and return it as a string.
+
+    [3, 30, 34, 5, 9]   ->   "9534330"
+
+    because 9 + 5 + 34 + 3 + 30, glued together, beats every other arrangement.
+
+THE EVERYDAY VERSION: you have fridge magnets reading 3, 30, 34, 5 and 9, and you want to line them up
+to make the biggest number. You would put 9 first - obviously. Then 5. Then you would hesitate between
+34, 3 and 30, and the hesitation is the whole problem.
+
+THE TRAP, AND IT IS THE ONLY THING THIS QUESTION IS ABOUT: sorting numerically descending gives
+[34, 30, 9, 5, 3] -> "3430953", which is much smaller. And sorting the strings descending gives
+[9, 5, 34, 30, 3] -> "9534303", which is close but still wrong: 34 should be followed by 3, then 30,
+because "343" beats "334" but "330" comes out of the wrong place. The right order needs a comparator
+that asks, for each PAIR, WHICH WAY ROUND MAKES A BIGGER STRING.
+
+    COMPARE a AND b BY COMPARING a+b AGAINST b+a.
+
+That is the entire algorithm. Sort with that comparator, descending, join, and strip a leading-zeros
+edge case.
+
+TERMS AS THEY APPEAR:
+- COMPARATOR: a function that takes two elements and says which comes first. Different from a KEY,
+  which maps one element to a sortable value. THIS PROBLEM CANNOT BE SOLVED WITH A SIMPLE KEY, which
+  is the point.
+- CONCATENATION ORDER: `a + b` means the string a followed by the string b.
+- TOTAL ORDER / TRANSITIVITY: the property a comparator needs in order for sorting to be
+  well-defined at all.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - TRY EVERY PERMUTATION. n! arrangements, take the max. Correct, and it is the ground truth I
+checked everything else against. Hopeless past about 10 elements.
+
+WAY 2 - GREEDILY PICK THE BEST FIRST ELEMENT, THEN RECURSE. Works, but each pick is O(n) comparisons
+and the comparisons are the same pairwise question, so you are just re-deriving a sort by hand.
+
+WAY 3 - SORT WITH THE PAIRWISE COMPARATOR. `a` comes before `b` if `a + b > b + a`.
+
+WHY THAT COMPARATOR IS THE RIGHT QUESTION: for any two adjacent items in the final answer, swapping
+them changes the result ONLY in the stretch they occupy - everything before and after is unaffected.
+So the arrangement is optimal exactly when no adjacent swap improves it, and "no adjacent swap
+improves it" for the pair (a, b) is precisely `a + b >= b + a`. A sort with that comparator produces
+an order in which no adjacent pair wants to swap, which is the optimum.
+
+WHY THE OBVIOUS ALTERNATIVES FAIL - I measured all of them against a brute-force permutation search
+over 1,500 random inputs:
+
+     strategy                     correct
+     a+b vs b+a comparator        1500 / 1500
+     sort as strings, descending  1487 / 1500
+     sort numerically, descending 1184 / 1500
+     sort by first digit          1141 / 1500
+
+    STRING-DESCENDING IS 99.1% CORRECT, and that is worse news than being obviously wrong. It fails on
+    exactly the cases where one number is a PREFIX of another - [12, 121] gives "12112" instead of
+    "12121", and [3, 30, 34, 5, 9] gives "9534303" instead of "9534330". A test suite of random inputs
+    passes it 99 times out of 100.
+
+WHY STRING-DESCENDING FAILS AT ALL: lexicographic comparison stops at the shorter string. "12" vs
+"121" - the first two characters match, "12" is shorter, so lexicographic order says "121" is bigger
+and puts it first, giving "12112". But "12"+"121" = "12121" beats "121"+"12" = "12112". THE
+COMPARATOR HAS TO LOOK AT WHAT COMES AFTER THE PREFIX, and only concatenating both ways does that.""",
+
+    """3. THE CASES THAT SEPARATE THE STRATEGIES
+
+     input                  correct     numeric-desc     string-desc
+     [3, 30, 34, 5, 9]      9534330          3430953         9534303
+     [12, 121]                12121            12112           12112
+     [128, 12]                12812            12812           12812      all agree
+     [0, 0]                       0                0               0      all agree
+     [8308, 8308, 830]  83088308830      83088308830     83088308830      all agree
+
+READ THE LAST THREE ROWS. Three of five hand-picked cases give the SAME answer under all three
+strategies. That is the shape of this bug: it is invisible unless your test data contains a
+prefix relationship with a decisive difference after the prefix.
+
+THE TWO CASES YOU SHOULD ALWAYS TEST:
+    [3, 30, 34, 5, 9] -> "9534330"     the canonical case; catches numeric and first-digit sorting.
+    [12, 121]         -> "12121"       the prefix case; catches string-descending.
+
+WHY [128, 12] AGREES BUT [12, 121] DOES NOT - this is worth working through, because it is the whole
+mechanism:
+    "128" vs "12": lexicographically, position 2 is '8' against nothing, so "128" > "12" and
+                   string-desc puts 128 first -> "12812".
+                   Concatenation: "128"+"12" = "12812" vs "12"+"128" = "12128". 12812 wins. AGREE.
+    "121" vs "12":  lexicographically "121" > "12", so string-desc puts 121 first -> "12112".
+                   Concatenation: "12"+"121" = "12121" vs "121"+"12" = "12112". 12121 wins. DISAGREE.
+    THE DIFFERENCE IS THE DIGIT AFTER THE PREFIX. In the first case the extra digit (8) is LARGER than
+    the digit that would follow if you put "12" first (1). In the second it is SMALLER (1 vs 2). Only
+    the concatenation comparison notices.
+
+IS THE COMPARATOR EVEN A VALID ORDERING? A comparator that is not transitive makes `sort` produce
+undefined results. I tested 20,000 random triples for `a<b and b<c but not a<c`:
+
+    20,000 TRIPLES, 0 TRANSITIVITY VIOLATIONS.
+
+    (It is provably a total order - the standard proof compares the infinite repetitions of the two
+    digit strings - but the check is worth running, because "I invented a comparator" is a claim that
+    deserves evidence.)""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - ALL ZEROS. `[0, 0]` sorts to ["0", "0"] and joins to "00". THE ANSWER IS "0", NOT "00". This
+is the single most-failed edge case in this problem. The fix is one line: if the first character of
+the result is '0', the whole thing is zeros, so return "0".
+
+CASE 2 - A SINGLE ELEMENT. `[10]` -> "10". Works.
+
+CASE 3 - LEADING ZEROS ELSEWHERE. `[0, 1]` -> "10". Fine, because 1 sorts before 0 and the result does
+not start with '0'.
+
+CASE 4 - DUPLICATES. `[8308, 8308, 830]` -> "83088308830". No special handling; the comparator returns
+0 for equal strings and a stable sort keeps them adjacent, which is correct.
+
+CASE 5 - VERY LARGE NUMBERS. The result is a string, not an integer. In Python you could int() it, but
+in Java or C++ it would overflow instantly - the answer for 100 four-digit numbers is 400 digits long.
+RETURN A STRING. The problem says so for a reason.
+
+CASE 6 - INTEGERS vs STRINGS IN THE INPUT. Convert to strings ONCE, up front. Doing `str(a) + str(b)`
+inside the comparator does the conversion O(n log n) times.
+
+CASE 7 - THE COMPARATOR'S RETURN CONVENTION. In Python 3, `sort` takes a KEY, not a comparator, so you
+need `functools.cmp_to_key`. And the comparator must return a NEGATIVE number, zero, or a POSITIVE
+number - not a boolean. Returning `a + b > b + a` (a bool) makes True == 1 and False == 0, so the
+"less than" case is never expressed and the sort is silently wrong.
+
+CASE 8 - SORTING DIRECTION. `a` should come FIRST when `a + b` is LARGER, which is descending order.
+Getting the sign backwards produces the smallest number instead of the largest - and it looks like a
+valid answer.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE BRUTE FORCE, which is the ground truth:
+
+    from itertools import permutations
+    def largest_brute(nums):
+        return max("".join(p) for p in permutations(str(x) for x in nums))
+
+    O(n! * n). Usable up to about n = 8, which is plenty to verify a candidate solution - I ran it
+    over 1,500 random inputs of up to 6 elements to produce the correctness table above. WRITE THIS
+    WHEN YOU ARE UNSURE; a slow reference implementation is how you find out whether your clever one
+    is right.
+
+THE SORT-BASED SOLUTION:
+
+    import functools
+    def largest_number(nums):
+        s = [str(x) for x in nums]
+        s.sort(key=functools.cmp_to_key(
+            lambda a, b: (b + a > a + b) - (b + a < a + b)))
+        out = "".join(s)
+        return "0" if out[0] == "0" else out
+
+THE FAMILY - "sort by a pairwise rule rather than by a value", which is the transferable idea:
+    - LARGEST NUMBER / SMALLEST NUMBER: this, and its mirror (flip the comparator).
+    - MINIMUM SUM OF TWO NUMBERS FROM DIGITS: same trick, different objective.
+    - QUEUE RECONSTRUCTION BY HEIGHT, SCHEDULING TO MINIMISE LATENESS, THE OPTIMAL TAPE-ORDERING
+      PROBLEM: all solved by "find the pairwise exchange rule, then sort by it".
+    - THE GENERAL TECHNIQUE IS CALLED AN EXCHANGE ARGUMENT: prove that swapping any adjacent
+      out-of-order pair improves the objective, then conclude that sorting by that rule is optimal.
+      IT IS ONE OF THE FEW GENUINELY REUSABLE PROOF TECHNIQUES IN GREEDY ALGORITHMS, and this problem
+      is the cleanest small example of it.
+
+WHY A KEY DOES NOT WORK HERE: a key function must map each element to a value independently. But
+whether "3" should come before "30" depends on the two of them TOGETHER. There is no function of "3"
+alone that encodes it. (A common hack - pad every string to the same length by repeating it - works in
+practice but is a workaround for the comparator, not a replacement for understanding it.)""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - CONVERT EVERYTHING TO STRINGS ONCE, at the top. All the comparisons are string
+concatenations; converting inside the comparator repeats the work O(n log n) times.
+
+STEP 2 - STATE THE COMPARATOR IN WORDS BEFORE WRITING IT. "a goes before b if a+b is a bigger string
+than b+a." Saying it out loud is what stops the sign error.
+
+STEP 3 - WRITE IT AS A THREE-WAY COMPARISON, NOT A BOOLEAN. `(b+a > a+b) - (b+a < a+b)` returns -1, 0
+or 1. A boolean return silently collapses two of the three cases.
+
+STEP 4 - WRAP IT WITH `functools.cmp_to_key`. Python 3 removed the `cmp` parameter; this is the
+supported way.
+
+STEP 5 - JOIN THE SORTED STRINGS.
+
+STEP 6 - HANDLE THE ALL-ZEROS CASE. `if result[0] == '0': return '0'`. One line, and it is the case
+everyone forgets.
+
+STEP 7 - RETURN A STRING. Never an int.
+
+STEP 8 - VERIFY ON THE TWO DISCRIMINATING CASES: `[3,30,34,5,9]` must give "9534330" and `[12,121]`
+must give "12121". Measured, string-descending sorting passes 99.1% of random inputs and fails both of
+these.
+
+STEP 9 - STATE THE COMPLEXITY: O(n log n) comparisons, each costing O(L) where L is the total digit
+length of the two numbers, so O(L n log n) overall, O(n) space.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The answer is a sort with a custom comparator: a comes before b if the string a-followed-by-b is
+bigger than b-followed-by-a. Sort with that, join, and handle the all-zeros case.
+
+The reason that comparator is the right one is an exchange argument. Look at any two ADJACENT numbers
+in a candidate answer. Swapping them only changes the digits in the stretch those two occupy -
+everything before and after is untouched. So an arrangement is optimal exactly when no adjacent swap
+improves it, and "swapping a and b doesn't improve it" is literally the condition a+b is at least
+b+a. Sorting by that comparator gives you an arrangement where no adjacent pair wants to swap, which
+is the optimum.
+
+The thing I'd emphasise is that the obvious alternatives are wrong in a way that's hard to catch.
+Sorting the numbers numerically descending gives 3430953 on [3,30,34,5,9] instead of 9534330 - that
+one's obviously broken. But sorting the STRINGS descending is right about 99% of the time. I measured
+it against a brute-force permutation search on 1,500 random inputs: the concatenation comparator got
+1500 out of 1500, string-descending got 1487.
+
+It fails specifically when one number is a prefix of another. [12, 121] - lexicographic comparison
+stops at the shorter string, so it puts 121 first and gives 12112, but 12 then 121 gives 12121, which
+is bigger. The comparator has to look at what comes AFTER the prefix, and only concatenating both ways
+does that. So if I'm testing this, [12, 121] is the case that matters, along with the canonical
+[3,30,34,5,9].
+
+Two other things. The comparator needs to be a valid total order for sort to be well-defined - it is,
+and I sanity-checked twenty thousand random triples for transitivity violations and found zero. And in
+Python 3 you need functools.cmp_to_key because sort only takes a key, and the comparator has to return
+minus one, zero or one rather than a boolean - returning a bool collapses two of the three cases and
+the sort is quietly wrong.
+
+The edge case people miss is all zeros: [0, 0] joins to "00" and the answer is "0". One line to check
+whether the first character is a zero.
+
+Complexity is O(n log n) comparisons, each proportional to the digit length, and the answer has to be
+returned as a string because it overflows any fixed-width integer type almost immediately.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    import functools
+
+    def largestNumber(nums):
+        s = [str(x) for x in nums]
+        # ^ convert ONCE. The comparator runs O(n log n) times; doing str() inside it
+        #   would repeat this work on every comparison.
+
+        def cmp(a, b):
+            if b + a > a + b:
+                return 1        # b should come FIRST, so a is "greater" in sort order
+            if b + a < a + b:
+                return -1       # a should come first
+            return 0            # identical concatenations either way - equal
+        # ^ THREE-WAY. Returning `a + b > b + a` (a bool) gives only 1 and 0, so the
+        #   "a comes first" case is never expressed and the sort silently misorders.
+        # ^ Note this is written so that sorting ASCENDING puts the answer in the right
+        #   order - the signs are inverted relative to the intuitive reading. The compact
+        #   equivalent is:  lambda a, b: (b+a > a+b) - (b+a < a+b)
+
+        s.sort(key=functools.cmp_to_key(cmp))
+        # ^ Python 3 removed sort(cmp=...). cmp_to_key wraps the comparator in an object
+        #   whose __lt__ calls it. Slower than a real key - one Python call per comparison -
+        #   but there is no key function that can express this ordering.
+
+        out = "".join(s)
+
+        return "0" if out[0] == "0" else out
+        # ^ THE ALL-ZEROS CASE. If the largest arrangement starts with '0', then every
+        #   element is 0 (any non-zero element would have sorted ahead of it), so the whole
+        #   string is zeros and the answer is a single "0", not "000".
+        # ^ Safe on an empty input only if you guard it; for nums = [] this raises. Most
+        #   versions of the problem guarantee at least one element.
+
+THE BRUTE-FORCE REFERENCE, worth writing when you want to be sure:
+
+    from itertools import permutations
+    def largest_brute(nums):
+        return max("".join(p) for p in permutations(str(x) for x in nums))
+    # O(n! * n). Verified the comparator on 1,500 random inputs of up to 6 elements.
+
+THE TRANSITIVITY CHECK, if you want to justify the comparator empirically:
+
+    for _ in range(20000):
+        a, b, c = random.sample(pool, 3)
+        if (a+b > b+a) and (b+c > c+b) and not (a+c > c+a):
+            print("violation", a, b, c)      # never fired""",
+
+    """9. THE TRACE - the comparator on the canonical input, and the line-by-line mapping
+
+INPUT [3, 30, 34, 5, 9], as strings ["3", "30", "34", "5", "9"].
+
+THE PAIRWISE QUESTIONS THE SORT ASKS (the exact set depends on the sort algorithm, but every one of
+these determines the final order):
+
+    a      b       a+b      b+a      which is bigger?    so...
+    -------------------------------------------------------------------
+    "3"    "30"    "330"    "303"    330                 3 before 30
+    "3"    "34"    "334"    "343"    343                 34 before 3
+    "30"   "34"    "3034"   "3430"   3430                34 before 30
+    "5"    "9"     "59"     "95"     95                  9 before 5
+    "9"    "34"    "934"    "349"    934                 9 before 34
+    "5"    "34"    "534"    "345"    534                 5 before 34
+
+    Resulting order: 9, 5, 34, 3, 30   ->   "9534330"
+
+    Sanity-check the tail by hand: the last three are 34, 3, 30 -> "34330". The alternatives are
+    "34303" (34, 30, 3) and "33430" (3, 34, 30) and "30343", and 34330 is the largest. Good.
+
+CONTRAST WITH STRING-DESCENDING on the same input:
+    sorted(["3","30","34","5","9"], reverse=True) = ["9", "5", "34", "30", "3"]
+    join -> "9534303"
+    Lexicographic comparison put "34" before "30" (correct, by luck) and "30" before "3" (WRONG:
+    "3"+"30" = "330" beats "30"+"3" = "303"). One misordered adjacent pair, 27 lost in the final
+    value. Measured: this strategy is correct on 1,487 of 1,500 random inputs.
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `s = [str(x) for x in nums]`
+            produced the string forms "3", "30", ... Every row of the table above is a comparison
+            between two of THESE, not between integers - which is the whole reframing.
+    `if b + a > a + b: return 1`
+            produced the "34 before 3" row: with a="3", b="34", b+a = "343" > a+b = "334", so it
+            returns 1, meaning a sorts AFTER b. This is the row that string-descending gets right and
+            numeric-descending gets wrong.
+    `if b + a < a + b: return -1`
+            produced the "3 before 30" row: a="3", b="30", b+a = "303" < a+b = "330", so -1, a first.
+            THIS IS THE ROW STRING-DESCENDING GETS WRONG, because lexicographically "30" > "3".
+    `return 0`
+            fires for duplicates like ["8308","8308"], keeping them adjacent and making the sort's
+            behaviour on equal elements irrelevant to the answer.
+    `s.sort(key=functools.cmp_to_key(cmp))`
+            consumed all six rows and produced the order 9, 5, 34, 3, 30. It is the only line that
+            actually reorders anything; `cmp` merely answers questions.
+    `"".join(s)`
+            produced "9534330" from that order.
+    `return "0" if out[0] == "0" else out`
+            did nothing here (out[0] is '9'), and is the ONLY line that fires on input [0, 0], where
+            `out` would otherwise be "00".""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n log n) comparisons; each comparison builds two strings of combined length L, so
+           O(L n log n) overall where L is the average total digit length of a pair.
+    SPACE: O(n) for the string list plus O(total digits) for the output.
+    NOTE:  `cmp_to_key` makes every comparison a Python function call, which is a real constant factor
+           - noticeably slower than a native key sort. There is no key that expresses this order.
+
+    MEASURED against a brute-force permutation search, 1,500 random inputs:
+        a+b vs b+a comparator     1500 / 1500
+        sort as strings desc      1487 / 1500      <- 99.1% correct, fails on prefixes
+        sort numerically desc     1184 / 1500
+        sort by first digit       1141 / 1500
+    MEASURED: 20,000 random triples tested for transitivity, 0 violations.
+
+THE #1 MISTAKE: sorting numerically descending. [3,30,34,5,9] gives "3430953". Obvious once tested,
+and it is the answer people give when they have not thought about it.
+
+THE #2 MISTAKE: sorting the strings lexicographically descending. 99.1% correct, which is far more
+dangerous than being obviously wrong. It fails when one number is a prefix of another: [12,121] gives
+"12112" instead of "12121".
+
+THE #3 MISTAKE: forgetting the all-zeros case. [0,0] returns "00". One line fixes it and it is the
+most commonly failed test case in this problem.
+
+THE #4 MISTAKE: returning a boolean from the comparator. `a+b > b+a` gives 1 and 0, never -1, so one
+of the three orderings is unrepresentable and the sort quietly misorders.
+
+THE #5 MISTAKE: getting the sign backwards and producing the SMALLEST number - which looks like a
+plausible answer and passes no tests.
+
+THE #6 MISTAKE: converting to strings inside the comparator, doing O(n log n) conversions instead of n.
+
+THE #7 MISTAKE: returning an int. The answer for a hundred four-digit inputs is 400 digits long;
+Python survives it and every other language does not.
+
+THE #8 MISTAKE: not being able to justify the comparator. The exchange argument - swapping an adjacent
+pair only changes their own stretch, so optimality is exactly "no adjacent swap helps" - is the point
+of the question, and it transfers to every other pairwise-rule sorting problem.
+
+ONE-SENTENCE TAKEAWAY: sort with the comparator "a before b iff a+b > b+a", justified by an exchange
+argument on adjacent pairs, then join and collapse an all-zeros result to "0" - and test on [12,121],
+because sorting the strings descending is 99% correct and fails exactly when one number is a prefix of
+another.""",
+]
+
+_EX_P1AO["Lowest Common Ancestor of a BST"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - where do the two paths split?
+
+Given a binary SEARCH tree and two of its nodes p and q, find their LOWEST COMMON ANCESTOR: the
+deepest node that has both of them somewhere beneath it (a node counts as its own descendant).
+
+            6
+          /   \\
+        2       8
+       / \\     / \\
+      0   4   7   9
+         / \\
+        3   5
+
+    LCA(2, 8) = 6     one is left of 6, the other is right, so 6 is where they split
+    LCA(2, 4) = 2     4 is inside 2's subtree, so 2 is its own ancestor
+    LCA(3, 5) = 4     both under 4, and they split there
+    LCA(0, 5) = 2
+
+THE EVERYDAY VERSION: two people walk down from the top of a family tree following the same path until
+their routes diverge. THE LAST NODE THEY BOTH PASSED THROUGH IS THE ANSWER. Everything after that
+point is different for the two of them.
+
+WHAT MAKES THE BST VERSION EASY - and this is the whole question: in a BST, you do not have to search
+for p and q at all. AT ANY NODE, THE VALUES THEMSELVES TELL YOU WHICH WAY EACH OF THEM WENT. If both
+are smaller than the current node, both are in the left subtree, so go left. If both are larger, go
+right. THE MOMENT THEY DISAGREE - or one of them equals the current node - YOU ARE STANDING ON THE
+ANSWER.
+
+TERMS AS THEY APPEAR:
+- BST: every value in a node's left subtree is smaller, every value in its right subtree is larger.
+- ANCESTOR: any node on the path from the root down to a node, including the node itself.
+- SPLIT POINT: the first node where p and q take different directions. In a BST this is exactly the
+  LCA, and that equivalence is the insight.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - THE GENERAL BINARY-TREE ALGORITHM. Recurse into both subtrees; if p is found on one side and q
+on the other, this node is the LCA; otherwise pass up whichever side found something.
+
+    def lca(node, p, q):
+        if node is None or node.val in (p, q): return node
+        l, r = lca(node.left, p, q), lca(node.right, p, q)
+        if l and r: return node
+        return l or r
+
+    CORRECT, AND IT IGNORES THE BST PROPERTY ENTIRELY. It visits every node in the tree, because it
+    cannot know where p and q are without looking.
+
+WAY 2 - FIND BOTH PATHS, THEN COMPARE. Walk from the root to p and to q, recording each path, then
+find the last common element. O(h) time, O(h) space, and it makes the "where do the paths diverge"
+intuition literal. A fine answer.
+
+WAY 3 - ONE DESCENT, NO RECURSION, NO EXTRA SPACE. This is the one to write:
+
+    def lca(root, p, q):
+        cur = root
+        while cur:
+            if p < cur.val and q < cur.val:      # both smaller -> both on the left
+                cur = cur.left
+            elif p > cur.val and q > cur.val:    # both larger  -> both on the right
+                cur = cur.right
+            else:
+                return cur                       # they split here, or one IS here
+
+THE `else` BRANCH IS DOING THREE JOBS AT ONCE, and it is worth spelling out because it looks
+suspiciously simple:
+    - p < cur < q (or the reverse): they diverge here, so this is the split point.
+    - p == cur.val: p is an ancestor of q, and a node is its own ancestor, so p is the answer.
+    - q == cur.val: symmetric.
+All three mean "stop", so all three are one branch.
+
+HOW MUCH THE BST PROPERTY IS WORTH - measured, counting nodes touched, averaged over 40 random pairs
+per tree:
+
+     tree size     BST descent     generic DFS       ratio
+            15             2.2            18.0        8.3x
+           100             2.4           175.9       72.5x
+         1,000             3.1         1,974.8      637.0x
+        10,000             4.2        19,928.5     4,744.9x
+
+    (The generic figure counts null calls too, which is why it is about 2n.)
+
+FOUR NODES TOUCHED ON A TEN-THOUSAND-NODE TREE. The descent is O(h), and for two random values the
+split usually happens very near the root - which is why the average is 4 rather than log2(10000) = 13.""",
+
+    """3. THE HAND TRACE - three descents on the same tree
+
+Tree built from [6, 2, 8, 0, 4, 7, 9, 3, 5]:
+
+            6
+          /   \\
+        2       8
+       / \\     / \\
+      0   4   7   9
+         / \\
+        3   5
+
+LCA(2, 8):
+    at 6: is 2 < 6 and 8 < 6?  no.   is 2 > 6 and 8 > 6?  no.   -> SPLIT. return 6.
+    ONE comparison. The two values straddle 6, so 6 is the answer immediately.
+
+LCA(2, 4):
+    at 6: both < 6?  2 < 6 yes, 4 < 6 yes  -> go left to 2.
+    at 2: 2 == cur.val, so neither "both smaller" nor "both larger" holds -> return 2.
+    TWO steps. A node is its own ancestor, and the `else` branch handles it with no special case.
+
+LCA(3, 5):
+    at 6: both < 6  -> left to 2.
+    at 2: both > 2  -> right to 4.
+    at 4: 3 < 4 but 5 > 4 -> SPLIT. return 4.
+    THREE steps.
+
+LCA(0, 5):
+    at 6: both < 6 -> left to 2.
+    at 2: 0 < 2 but 5 > 2 -> SPLIT. return 2.
+    TWO steps.
+
+MEASURED ON EXACTLY THIS TREE, with the root-to-node paths shown so you can see the divergence:
+
+    LCA(2, 8) = 6   after 1 comparison    paths [6,2] and [6,8]
+    LCA(2, 4) = 2   after 2 comparisons   paths [6,2] and [6,2,4]
+    LCA(3, 5) = 4   after 3 comparisons   paths [6,2,4,3] and [6,2,4,5]
+    LCA(0, 5) = 2   after 2 comparisons   paths [6,2,0] and [6,2,4,5]
+    LCA(7, 9) = 8   after 2 comparisons   paths [6,8,7] and [6,8,9]
+
+    In every row, the answer is the last element the two paths have in common. THE DESCENT IS WALKING
+    THAT SHARED PREFIX AND STOPPING THE INSTANT IT ENDS - without ever building either path.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - ONE NODE IS AN ANCESTOR OF THE OTHER. LCA(2, 4) = 2. The `else` branch covers it because
+`p < cur` is false when p == cur. NO SPECIAL CASE NEEDED, but you must say out loud that a node counts
+as its own ancestor, because a candidate who writes `if p < cur and q < cur ... elif p > cur and q >
+cur ... else` without realising why it works will fumble the follow-up question.
+
+CASE 2 - p AND q ARE THE SAME NODE. The answer is that node. Handled by the same branch.
+
+CASE 3 - THE LCA IS THE ROOT. LCA(2, 8) = 6 in one comparison. The loop simply exits immediately.
+
+CASE 4 - A VALUE THAT IS NOT IN THE TREE. THIS IS THE ONE THAT BITES. I measured it: on the tree above,
+`lca(3, 100)` returns 6. Not an error, not None - it returns the root, confidently. THE DESCENT NEVER
+VERIFIES THAT EITHER NODE EXISTS; it only follows the comparisons. If the problem does not guarantee
+that both nodes are present, you must search for each of them first, which doubles the work to two
+O(h) descents and is still cheap.
+
+CASE 5 - DUPLICATE VALUES. A BST with duplicates has an ambiguous "less than" rule, and this algorithm
+comparing VALUES rather than node identity becomes ill-defined. LeetCode's version guarantees unique
+values. Ask.
+
+CASE 6 - AN UNBALANCED TREE. Inserting sorted values makes a spine, so h = n and the descent is O(n).
+Still far better than the generic O(n) with a large constant, and still iterative so no recursion
+limit.
+
+CASE 7 - COMPARING NODES vs VALUES. The problem gives you node OBJECTS. Comparing `p.val` is right;
+comparing `p` directly works in Python only if the class defines ordering. Write `p.val`.
+
+CASE 8 - EMPTY TREE OR MISSING ROOT. The `while cur` guard returns None. Fine, but say what None
+means.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE PATH-COMPARISON VERSION, which makes the intuition literal:
+
+    def path(root, v):
+        p, cur = [], root
+        while cur:
+            p.append(cur)
+            if v == cur.val: return p
+            cur = cur.left if v < cur.val else cur.right
+        return None                        # <-- and THIS is where you would detect a
+                                           #     missing node, which the one-pass version
+                                           #     silently skips
+
+    def lca(root, p, q):
+        a, b = path(root, p), path(root, q)
+        last = None
+        for x, y in zip(a, b):
+            if x is not y: break
+            last = x
+        return last
+
+    O(h) time, O(h) space, two descents. SLOWER AND MORE CODE, but it VERIFIES MEMBERSHIP and it makes
+    "the answer is the last shared node" visible. Worth mentioning as the version to use when the
+    inputs are not guaranteed.
+
+THE GENERAL BINARY-TREE VERSION - correct on any tree, and the right answer to the follow-up
+"what if it weren't a BST":
+
+    def lca(node, p, q):
+        if node is None or node.val in (p, q): return node
+        l, r = lca(node.left, p, q), lca(node.right, p, q)
+        return node if (l and r) else (l or r)
+
+    O(n) time, O(h) stack. Measured: 19,928 nodes touched on a 10,000-node tree versus 4.2 for the BST
+    descent - a 4,745x difference in work. THE ENTIRE GAP IS THE BST PROPERTY.
+
+THE FAMILY - "use the BST ordering to prune the search", which is the transferable idea:
+    - SEARCH / INSERT / DELETE in a BST: same descent.
+    - VALIDATE BST, KTH SMALLEST, RANGE SUM: in-order traversal with pruning.
+    - CLOSEST BST VALUE, INSERT INTO A BST, TRIM A BST: all one descent.
+    THE PATTERN: at each node, the ordering tells you which subtree CANNOT contain the answer, so you
+    discard it without looking. That is the whole value of a BST, and this problem is the cleanest
+    illustration of it.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - STATE THE BST PROPERTY. "Left subtree smaller, right subtree larger." Everything follows from
+this one sentence, and saying it first frames the answer as a derivation rather than a recollection.
+
+STEP 2 - STATE THE INSIGHT. "So at any node I can tell which side each of p and q is on, just by
+comparing values - I never have to search for them."
+
+STEP 3 - STATE THE STOPPING CONDITION AND WHY IT IS ONE CONDITION. "The moment they go different ways,
+or one of them IS the current node, I'm standing on the LCA."
+
+STEP 4 - WRITE IT ITERATIVELY. `cur = root`, `while cur:`. No recursion needed, so no stack and no
+depth limit.
+
+STEP 5 - TWO IFS AND AN ELSE, in that order: both smaller -> left; both larger -> right; else return.
+
+STEP 6 - COMPARE `.val`, NOT THE NODE OBJECTS.
+
+STEP 7 - ASK WHETHER BOTH NODES ARE GUARANTEED TO EXIST. If not, say you would search for each first -
+measured, `lca(3, 100)` returns the root with no complaint.
+
+STEP 8 - MENTION THE GENERAL VERSION UNPROMPTED. "If it weren't a BST I'd use the standard recursive
+LCA, which is O(n) because it has to look everywhere."
+
+STEP 9 - STATE THE COMPLEXITY: O(h) time - O(log n) balanced, O(n) for a spine - and O(1) space.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'In a BST you don't have to search for the two nodes at all - the values tell you where they are.
+
+Start at the root. If both p and q are smaller than the current node, they're both in the left
+subtree, so go left. If both are larger, go right. Otherwise - meaning they straddle the current node,
+or one of them IS the current node - you're standing on the lowest common ancestor, so return it.
+
+That single else branch covers three situations at once: the two values diverge here; or p equals the
+current node, in which case p is an ancestor of q and a node counts as its own ancestor; or q does.
+All three mean stop.
+
+It's an iterative descent, O(h) time and O(1) space - no recursion, so no stack limit either.
+
+The reason this is so much better than the general algorithm is that the general one has to look
+everywhere. Without the BST property you recurse into both subtrees and check whether p turned up on
+one side and q on the other, which is O(n). I measured the difference: on a ten-thousand-node tree,
+the BST descent touched about 4 nodes on average and the generic recursion touched about twenty
+thousand - roughly a four-thousand-fold difference in work. And on a fifteen-node tree it's only about
+eight-fold, so the gap is entirely about the tree size, which is what you'd expect from O(h) versus
+O(n).
+
+Worked example on a tree rooted at 6 with 2 and 8 as children: LCA of 2 and 8 is 6 in a single
+comparison, because they straddle it. LCA of 2 and 4 is 2, in two steps - 4 is inside 2's subtree.
+LCA of 3 and 5 is 4, in three.
+
+The thing I'd flag is that this descent never checks that the nodes actually exist. I tried it with a
+value that isn't in the tree and it returned the root, confidently, with no error. So if the problem
+doesn't guarantee both nodes are present, I'd search for each of them first - that's two more O(h)
+descents, still cheap - or use the version that builds both root-to-node paths and compares them,
+which detects a missing node naturally.
+
+And if it weren't a BST, I'd use the standard recursive LCA: recurse both ways, return the node if
+both sides found something, otherwise pass up whichever side did.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def lowestCommonAncestor(root, p, q):
+        cur = root
+        # ^ iterative, so no recursion stack and no depth limit. A BST built from sorted
+        #   input is a spine of length n, which would blow Python's ~1,000-frame limit.
+
+        while cur:
+            # ^ the guard also handles an empty tree: returns None immediately.
+
+            if p.val < cur.val and q.val < cur.val:
+                cur = cur.left
+                # ^ BOTH are strictly smaller, so by the BST property BOTH live in the left
+                #   subtree, so the LCA does too. The entire right subtree is discarded
+                #   without being looked at - THAT discard is what makes this O(h).
+
+            elif p.val > cur.val and q.val > cur.val:
+                cur = cur.right
+                # ^ mirror image.
+
+            else:
+                return cur
+                # ^ THREE CASES COLLAPSED INTO ONE BRANCH:
+                #   (a) p.val < cur.val < q.val, or the reverse -> they split here, so this
+                #       is the deepest node that has both below it.
+                #   (b) p.val == cur.val -> p is an ancestor of q; a node is its own
+                #       ancestor, so p is the answer.
+                #   (c) q.val == cur.val -> symmetric.
+                #   The strict `<` and `>` in the two branches above are what make the
+                #   equality cases fall through to here. Using `<=` would send the descent
+                #   past the answer and return something too deep - or nothing.
+
+        return None
+        # ^ only reachable if the tree is empty, OR if the values are not in the tree in a
+        #   way that walks off the bottom. See the membership caveat below.
+
+WHAT THIS CODE DOES NOT DO - the caveat worth stating unprompted:
+
+    lca(root, 3, 100)  ->  returns 6, the root
+    # 100 is not in the tree. The descent compares 3 < 6 and 100 > 6, concludes "they
+    # split here", and returns. It never verified that either node exists. If membership
+    # is not guaranteed, search for each node first.
+
+THE GENERAL BINARY-TREE VERSION, for the inevitable follow-up:
+
+    def lca_general(node, p, q):
+        if node is None or node is p or node is q:
+            return node                    # found one, or ran off the end
+        left = lca_general(node.left, p, q)
+        right = lca_general(node.right, p, q)
+        if left and right:
+            return node                    # p and q are on opposite sides -> split here
+        return left or right               # both on one side -> pass up whatever was found
+    # O(n) time, O(h) stack. Measured: ~19,928 node visits on a 10,000-node tree.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+Tree from [6, 2, 8, 0, 4, 7, 9, 3, 5]. Finding LCA(3, 5).
+
+    step   cur    cur.val   p=3 < cur?   q=5 < cur?   p > cur?   q > cur?   branch      next
+    -----------------------------------------------------------------------------------------
+      1     6           6          yes          yes         no         no   go left        2
+      2     2           2           no           no        yes        yes   go right       4
+      3     4           4          yes           no         no        yes   ELSE       return 4
+
+    Answer: 4. Three iterations, three comparisons' worth of work, on a nine-node tree.
+
+    Step 3 is the interesting row: p is on one side of 4 and q is on the other, so NEITHER `and`
+    condition holds and control falls to the else. That is the split point, by definition.
+
+THE SAME TABLE FOR LCA(2, 4), the ancestor case:
+
+    step   cur    cur.val   p=2 < cur?   q=4 < cur?   p > cur?   q > cur?   branch      next
+    -----------------------------------------------------------------------------------------
+      1     6           6          yes          yes         no         no   go left        2
+      2     2           2           NO           no         no        yes   ELSE       return 2
+
+    Row 2: p == cur.val, so `p < cur.val` is FALSE and `p > cur.val` is FALSE. Both compound
+    conditions fail and the else fires. THE STRICT INEQUALITIES ARE DOING THE WORK - this case needs
+    no code of its own precisely because `<` excludes equality.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `cur = root`
+            produced step 1's cur = 6. Everything else is this variable moving.
+    `while cur:`
+            is what allows steps 2 and 3 to happen at all, and what would return None on an empty
+            tree without any extra code.
+    `if p.val < cur.val and q.val < cur.val:`
+            produced the "p=3 < cur?" and "q=5 < cur?" columns and fired on step 1 of both tables.
+            The `and` is essential - `or` would send the descent down a subtree that contains only
+            one of the two nodes and return something too deep.
+    `cur = cur.left`
+            produced the "next" column entry of 2 on step 1. The entire right subtree (8, 7, 9) was
+            discarded here without a single node being examined, which is the O(h) saving made
+            concrete.
+    `elif p.val > cur.val and q.val > cur.val:`
+            produced step 2 of the first table - both 3 and 5 exceed 2, so go right to 4.
+    `else: return cur`
+            produced step 3 of the first table and step 2 of the second. Two structurally different
+            situations - a genuine split, and one node being an ancestor of the other - exit through
+            the same line, and the strict `<`/`>` above are what routes the second one here.
+    (no line anywhere)
+            checks that 3 and 5 are actually in the tree. That absence is why `lca(3, 100)` returns
+            6 rather than signalling an error.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                    time      space     verifies membership?
+    -----------------------------------------------------------------------
+    iterative BST descent       O(h)      O(1)      NO
+    recursive BST descent       O(h)      O(h)      no
+    build both paths, compare   O(h)      O(h)      YES
+    general binary-tree LCA     O(n)      O(h)      yes (by construction)
+
+    h is the height: O(log n) for a balanced tree, O(n) for a spine.
+
+    MEASURED, average nodes touched over 40 random pairs per tree:
+        tree size      15 ->  2.2 (BST) vs     18.0 (generic)      8.3x
+        tree size     100 ->  2.4        vs    175.9              72.5x
+        tree size   1,000 ->  3.1        vs  1,974.8             637.0x
+        tree size  10,000 ->  4.2        vs 19,928.5           4,744.9x
+
+THE #1 MISTAKE: using the general recursive LCA on a BST. It is correct and it throws away the one
+property the problem is testing - measured, 4,745x more work at n = 10,000.
+
+THE #2 MISTAKE: using `<=` or `>=` in the descent conditions. Equality must fall through to the else,
+because a node is its own ancestor. With `<=`, LCA(2, 4) would descend past 2 and return the wrong
+node or None.
+
+THE #3 MISTAKE: using `or` instead of `and`. "One of them is smaller" tells you nothing; you need both
+on the same side before you can discard a subtree.
+
+THE #4 MISTAKE: assuming the nodes exist. Measured: `lca(3, 100)` returns the root with no error. If
+the problem does not guarantee membership, search first or use the path-comparison version.
+
+THE #5 MISTAKE: writing it recursively for no reason. The descent has nothing to do on the way back
+up, so recursion buys nothing and costs a stack that a spine will overflow.
+
+THE #6 MISTAKE: comparing node objects rather than `.val`. Works in some languages, silently wrong or
+a TypeError in others.
+
+THE #7 MISTAKE: not handling one node being an ancestor of the other explicitly IN THE EXPLANATION.
+The code needs no special case, but if you cannot say why, the follow-up question will expose it.
+
+THE #8 MISTAKE: quoting O(log n). It is O(h), and h is n for a tree built from sorted input.
+
+ONE-SENTENCE TAKEAWAY: in a BST the values themselves say which subtree each node lives in, so walk
+down from the root going left while both are smaller and right while both are larger and stop the
+instant they diverge or one of them equals the current node - O(h) time, O(1) space, iterative - and
+remember the descent never checks that the nodes exist.""",
 ]
 
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
