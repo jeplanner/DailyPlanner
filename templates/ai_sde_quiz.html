@@ -28,7 +28,11 @@
   .bar { height: 8px; background: var(--color-bg); border-radius: 999px; overflow: hidden; margin: 6px 0 14px; }
   .bar > span { display: block; height: 100%; background: linear-gradient(90deg,#4338ca,#7c3aed); width: 0; transition: width .3s; }
   .qnum { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); }
-  .qprompt { font-size: 16px; line-height: 1.5; margin: 6px 0 14px; font-weight: 500; }
+  /* The bank's answers are written headline-first with labelled lines under
+     them, so both of these must keep their line breaks or the shape collapses
+     back into the paragraph it was rewritten out of. */
+  .qprompt { font-size: 16px; line-height: 1.5; margin: 6px 0 14px; font-weight: 500;
+             white-space: pre-wrap; overflow-x: auto; }
   .opts { display: flex; flex-direction: column; gap: 9px; }
   .opt { text-align: left; padding: 12px 14px; border-radius: 10px; border: 1.5px solid var(--color-border); background: var(--color-surface); color: var(--color-text); font-size: 14.5px; cursor: pointer; transition: background .15s, border-color .15s; }
   .opt:hover:not(:disabled) { border-color: #a5b4fc; background: #eef2ff; }
@@ -39,7 +43,7 @@
   .opt:disabled { cursor: default; }
   .diffbadge { font-size: 10px; font-weight: 800; text-transform: uppercase; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
   .d-easy { color: #047857; background: #d1fae5; } .d-medium { color: #b45309; background: #fef3c7; } .d-hard { color: #b91c1c; background: #fee2e2; }
-  .explain { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: 13.5px; line-height: 1.55; display: none; }
+  .explain { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: 13.5px; line-height: 1.55; display: none; white-space: pre-wrap; overflow-x: auto; }
   .explain.show { display: block; }
   .explain .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #4338ca; display: block; margin: 8px 0 2px; }
   .explain .mnem { background: #fff7ed; border-left: 3px solid #fb923c; padding: 6px 10px; border-radius: 6px; }

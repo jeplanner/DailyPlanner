@@ -54,6 +54,17 @@
   html.dark .code.diagram { background: #0b1220; color: #cbd5e1; }
   .fld.mnem { background: #fff7ed; border-left: 3px solid #fb923c; border-radius: 6px; padding: 6px 10px; }
   html.dark .fld.mnem { background: #2a1a0f; }
+  /* The ANSWER is the field she reads under time pressure, so it is written as
+     a one-line headline followed by short labelled points — and that shape only
+     survives if the line breaks do. Without pre-wrap the whole thing collapses
+     into one unbroken paragraph, which is what it used to do. The first line is
+     given a little more weight so the headline reads as a headline. */
+  .fld.answer { white-space: pre-wrap; background: #f5f7ff; border-left: 3px solid #6366f1;
+                border-radius: 6px; padding: 8px 11px; font-size: 13.5px; line-height: 1.6;
+                overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .fld.answer .head { display: block; font-weight: 700; font-size: 14.5px; line-height: 1.45;
+                      margin-bottom: 6px; color: var(--color-text); }
+  html.dark .fld.answer { background: #131a33; border-left-color: #818cf8; }
   /* Long-form "explain it like I'm new to this" walkthrough: keeps the
      step/section line breaks the text was written with. */
   .fld.deep { white-space: pre-wrap; background: #f5f7ff; border-left: 3px solid #6366f1;
@@ -218,6 +229,7 @@
     :root:not(.light) .code.diagram { background: #0b1220; color: #cbd5e1; }
     :root:not(.light) .fld.mnem { background: #2a1a0f; }
     :root:not(.light) .fld.deep { background: #131a33; border-left-color: #818cf8; }
+    :root:not(.light) .fld.answer { background: #131a33; border-left-color: #818cf8; }
     :root:not(.light) .ex { background: #0e2119; border-left-color: #10b981; }
     :root:not(.light) .q-time { color: #c7d2fe; background: #1e1b4b; }
     :root:not(.light) .fld.recipe { background: #241a06; border-left-color: #fbbf24; }
@@ -468,9 +480,21 @@
     return {title: flat.length > 80 ? flat.slice(0, 78) + "…" : flat, body: text};
   }
 
+  // The answer is written headline-first: one line that states the answer,
+  // then short labelled points. Lift that first line out so it can be set as a
+  // heading — and fall back to plain text for entries not yet rewritten.
+  function answerHTML(val){
+    const nl = val.indexOf("\n");
+    if (nl === -1) return `<div class="fld answer">${esc(val)}</div>`;
+    const head = val.slice(0, nl).trim();
+    const rest = val.slice(nl + 1).replace(/^\n+/, "");
+    return `<div class="fld answer"><span class="head">${esc(head)}</span>${esc(rest)}</div>`;
+  }
+
   function bodyHTML(e, b){
     const fld = (cls,label,val) => val
-      ? sec(cls, label, `<div class="fld ${cls}">${esc(val)}</div>`,
+      ? sec(cls, label,
+            cls === "answer" ? answerHTML(val) : `<div class="fld ${cls}">${esc(val)}</div>`,
             {open: cls === "answer"})
       : "";
     return `

@@ -958,6 +958,45 @@ def test_card_title_is_not_sliced_off_on_a_phone(auth_client):
     assert ".q-head .q-chips" in mobile, "the chips never move to their own row on a phone"
 
 
+def test_answer_field_keeps_its_line_breaks(auth_client):
+    """The answer is the field read under time pressure, and it is now written
+    headline-first with short labelled lines under it. That shape only exists
+    if the line breaks survive - `.fld.answer` had no `white-space: pre-wrap`
+    (unlike `.fld.deep` and `.fld.recipe`), so every rewritten answer would have
+    collapsed straight back into the paragraph it came from."""
+    import re
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    rule = re.search(r"^\s*\.fld\.answer \{[^}]*\}", html, re.M)
+    assert rule, "no .fld.answer block rule at all"
+    assert "pre-wrap" in rule.group(0) and "overflow-x: auto" in rule.group(0)
+    # The first line is lifted out as a heading, so it reads as one.
+    assert "function answerHTML(val)" in html
+    assert 'class="head"' in html
+    # The quiz shows the same text; it must not collapse it either.
+    quiz = auth_client.get("/ai-sde/quiz").get_data(as_text=True)
+    for sel in (r"^\s*\.qprompt \{[^}]*\}", r"^\s*\.explain \{[^}]*\}"):
+        block = re.search(sel, quiz, re.M)
+        assert block and "pre-wrap" in block.group(0), f"quiz rule collapses newlines: {sel}"
+
+
+def test_rewritten_answers_all_match_a_real_entry(auth_client):
+    """Same trap as the `_EX_*` dicts: a mis-keyed title in _ANSWER_V2 rewrites
+    nothing at all, silently, and the entry keeps its old prose."""
+    import ai_sde_bank as bank
+    assert bank.ANSWERS_REWRITTEN == bank.ANSWERS_DECLARED, (
+        f"{bank.ANSWERS_DECLARED - bank.ANSWERS_REWRITTEN} rewritten answers are "
+        "keyed to a title that does not exist"
+    )
+    # And every rewritten answer really is headline-first.
+    for e in bank.ENTRIES:
+        if e["title"] in bank._ANSWER_V2:
+            body = e["answer"]
+            head, sep, rest = body.partition("\n")
+            assert sep, f"{e['title']}: rewritten answer has no headline line"
+            assert len(head) <= 160, f"{e['title']}: headline is a paragraph, not a line"
+            assert "·" in rest, f"{e['title']}: no labelled points under the headline"
+
+
 def test_card_body_is_collapsible_and_the_answer_can_be_re_hidden(auth_client):
     """Two requests, one cause: a written-up topic is ~16k characters and every
     section rendered flat, so the card was a wall to scroll past — and the quiz

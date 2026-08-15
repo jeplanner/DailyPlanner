@@ -153381,3 +153381,187 @@ TOTAL_PREP_MINUTES = sum(e["prep_minutes"] for e in ENTRIES)
 from ai_sde_tags import apply as _apply_tags, TAGS as _TAGS  # noqa: E402
 
 TAGGED_COUNT, UNTAGGED_COUNT = _apply_tags(ENTRIES)
+
+
+# ══ Answers rewritten headline-first ══════════════════════════════════════
+# The "Answer / reasoning" field is what gets read under time pressure, and it
+# was written as dense prose - 3 or 4 sentences run together, unskimmable and
+# impossible to memorise. The target shape, given by the user:
+#
+#     one line that STATES the answer, then a few short labelled points
+#
+# so the first line can be recalled on its own and the rest is scannable. The
+# UI sets that first line as a heading (see `.fld.answer .head`), the recall
+# quiz uses it as its one-line prompt, and both keep the line breaks now.
+#
+# Rewritten by hand, in study order (P0 first). Anything not in this dict keeps
+# its original prose, so the two forms coexist while the pass works down the
+# bank. Patch loop runs LAST so it also supersedes the `_PLAIN` lead-ins.
+_ANSWER_V2 = {}
+
+_ANSWER_V2["Balanced Binary Tree"] = """A tree is balanced when EVERY node's two subtrees differ in height by at most 1.
+
+· HOW — one post-order pass: compute each node's height from its children's.
+· THE TRICK — the moment a subtree is unbalanced, return -1 instead of a height.
+  A real height is never negative, so -1 can never be mistaken for one.
+· WHY IT'S FAST — that -1 travels straight up and short-circuits everything
+  above it: O(n), against the naive O(n^2) that recomputes heights at each node.
+· TRAP — checking only at the root. Balance is a property of every node."""
+
+_ANSWER_V2["Climbing Stairs"] = """The number of ways to climb n stairs in 1- or 2-step moves is Fibonacci.
+
+· WHY — the LAST move was either a 1-step (from n-1) or a 2-step (from n-2),
+  so ways(n) = ways(n-1) + ways(n-2). Nothing else can reach n.
+· BASE — ways(1) = 1, ways(2) = 2. Get these wrong and the whole series shifts.
+· HOW — two rolling variables, no array: O(n) time, O(1) space.
+· CHECK — the sequence is 1, 2, 3, 5, 8 — Fibonacci shifted by one."""
+
+_ANSWER_V2["Diameter of a Binary Tree"] = """The diameter is the number of EDGES on the longest path between any two nodes.
+
+· NOT THROUGH THE ROOT — the longest path can sit entirely in one subtree.
+· THE INSIGHT — at each node, the longest path THROUGH it is
+  left_depth + right_depth. Take the global maximum of that over all nodes.
+· HOW — one post-order DFS that RETURNS 1 + max(left, right) as the node's own
+  depth while UPDATING a running maximum on the side. Two different values.
+· TRAP — returning the diameter instead of the depth. The parent needs the
+  depth; the diameter belongs in the running maximum.
+· EDGES, NOT NODES — a two-node tree has diameter 1."""
+
+_ANSWER_V2["Flood Fill"] = """The paint-bucket tool: recolour a pixel and every same-coloured neighbour it
+touches.
+
+· HOW — DFS or BFS from the start pixel, moving in the four directions, and
+  stopping at any cell whose colour is not the ORIGINAL colour.
+· READ THE ORIGINAL COLOUR FIRST — once you repaint the start cell, the test
+  you are about to make on its neighbours has changed underneath you.
+· THE GUARD THAT MATTERS — if the new colour equals the old one, return
+  immediately. Without it, repainting changes nothing and the recursion never
+  terminates.
+· COST — O(rows x cols); every cell is visited at most once."""
+
+_ANSWER_V2["Invert a Binary Tree"] = """Mirror a tree by swapping every node's two children.
+
+· HOW — swap left and right at this node, then recurse into both. Three lines.
+· ORDER DOES NOT MATTER — swapping before or after the recursion both work,
+  which is unusual and worth noticing.
+· ITERATIVE — a queue or stack does the same job if recursion is banned.
+· COST — O(n) time, O(h) stack, where h is the height.
+· WHY IT IS FAMOUS — the whiteboard question a Homebrew author was rejected
+  over. Trivial once you see it is a pre- or post-order traversal with a swap."""
+
+_ANSWER_V2["Maximum Depth of Binary Tree"] = """The depth is the number of NODES on the longest root-to-leaf path.
+
+· HOW — depth(node) = 1 + max(depth(left), depth(right)), and depth(null) = 0.
+· THAT IS THE WHOLE ANSWER — two lines of recursion.
+· NODES, NOT EDGES — a single node has depth 1. Check which the problem wants.
+· ITERATIVE — BFS level by level, counting levels, is the alternative.
+· COST — O(n) time, O(h) stack; h is n for a degenerate chain."""
+
+_ANSWER_V2["Merge Two Sorted Lists"] = """Walk both sorted lists at once, always taking the smaller front node.
+
+· THE DUMMY HEAD — start with a throwaway node so you never special-case the
+  first append. Return dummy.next at the end. This one trick removes most of
+  the bugs in linked-list problems.
+· THE TAIL — keep a pointer to the last node placed, and advance it each time.
+· THE LEFTOVER — when one list runs out, attach the OTHER list whole. It is
+  already sorted, so there is nothing left to compare.
+· COST — O(n + m) time, O(1) extra space; the nodes are relinked, not copied."""
+
+_ANSWER_V2["Min Cost Climbing Stairs (DP)"] = """The cheapest way onto stair i is cost[i] plus the cheaper of reaching i-1 or
+i-2.
+
+· THE ANSWER IS PAST THE TOP — you finish one step BEYOND the last stair, so
+  the result is min(cost of reaching the last stair, the one before it).
+· START — you may begin on stair 0 or stair 1 for free, so both start at their
+  own cost.
+· HOW — two rolling variables again: O(n) time, O(1) space.
+· TRAP — returning the cost of the last stair. You are allowed to step over it."""
+
+_ANSWER_V2["Path Sum (root-to-leaf boolean)"] = """Does any ROOT-TO-LEAF path add up to the target?
+
+· HOW — recurse downwards, subtracting each node's value from the remaining
+  target as you go.
+· SUCCESS TEST — at a LEAF, ask whether the remaining target equals that
+  leaf's value. Nowhere else counts.
+· A LEAF HAS NO CHILDREN AT ALL — a node with one child is not a leaf, and
+  treating it as one is the single most common bug here.
+· NEGATIVE VALUES — you cannot prune when the running sum exceeds the target;
+  a negative node later can bring it back.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2["Subtree of Another Tree"] = """Ask 'are these two trees identical?' at every node of the bigger tree.
+
+· TWO FUNCTIONS — one walks the big tree; the other, given a pair of nodes,
+  answers whether they match exactly. Keep them separate.
+· IDENTICAL MEANS BOTH — same shape AND same values, everywhere below.
+· SHORT-CUT — only bother with the full comparison where the values match.
+· COST — O(n x m) in the worst case, where n and m are the two sizes.
+· FASTER — serialise both trees with null markers and search for one string
+  inside the other; the markers are what stop a false match."""
+
+_ANSWER_V2["What is a Large Language Model (LLM)?"] = """A giant next-word predictor: trained to guess the next token, which turns out
+to require real grammar, facts and reasoning.
+
+· WHAT IT IS — a transformer network with billions of parameters, PRETRAINED
+  on huge text with one self-supervised objective: predict the next token.
+· THEN ALIGNED — instruction tuning and RLHF turn a text predictor into
+  something that follows instructions helpfully.
+· HOW IT GENERATES — one token at a time, each conditioned on the prompt plus
+  everything it has already written (autoregressive).
+· THREE LIMITS TO NAME — knowledge frozen at the training cutoff, a finite
+  CONTEXT WINDOW, and HALLUCINATION: confident, fluent, wrong."""
+
+_ANSWER_V2["Pretraining vs Fine-tuning vs Prompting (how to adapt an LLM)"] = """Three ways to make an LLM do your task, from most expensive to least.
+
+· PRETRAINING — build the base model on trillions of tokens. Millions of
+  pounds, a handful of labs, not something you do.
+· FINE-TUNING — train a pretrained model further on your data. It CHANGES THE
+  WEIGHTS, so it is the tool for behaviour: a house style, a strict format, a
+  skill. LoRA and friends do it by updating a tiny fraction of the parameters.
+· PROMPTING — change nothing at all, just write a better input: instructions,
+  a few examples, or retrieved context.
+· THE ORDER TO TRY THEM — prompt first, add RAG when the model lacks
+  KNOWLEDGE, fine-tune only when you need different BEHAVIOUR."""
+
+_ANSWER_V2["What is RAG (Retrieval-Augmented Generation)?"] = """Fetch the relevant documents first and paste them into the prompt, so the model
+answers FROM them rather than from memory.
+
+· OFFLINE — chunk the documents, embed each chunk, store the vectors.
+· AT QUERY TIME — embed the question, retrieve the most similar chunks, put
+  them in the prompt, and ask the model to answer using only those and cite
+  them.
+· WHAT IT BUYS — fresh, private or domain knowledge with NO retraining, fewer
+  hallucinations, and an update path that is just re-indexing.
+· WHERE IT FAILS — retrieval, not generation. If the right chunk is not
+  retrieved, no prompt can rescue the answer.
+· NOT A SUBSTITUTE FOR FINE-TUNING — RAG changes what the model KNOWS,
+  fine-tuning changes how it BEHAVES."""
+
+_ANSWER_V2["Why do LLMs hallucinate, and how do you reduce it?"] = """It is trained to produce PLAUSIBLE text, not TRUE text — so when it does not
+know, it still generates a confident, fluent guess.
+
+· THE ROOT CAUSE — the model has no notion of truth, only of likelihood, and
+  no reliable way to say 'I don't know'.
+· GROUND IT — RAG, with an instruction to answer only from the provided text
+  and to cite it. This is the single biggest lever.
+· GIVE IT AN OUT — an explicit permitted failure ('reply I DON'T KNOW') turns
+  an invented answer into a signal your system can act on.
+· TURN THE TEMPERATURE DOWN for factual work, and use tools — a calculator, a
+  database, code — for anything that must be exact.
+· VERIFY — check the citations, validate claims against a source, and show the
+  sources in the UI so a human can catch what you missed.
+· YOU REDUCE IT — you do not eliminate it. Say that out loud."""
+
+
+_ANSWERS_APPLIED = 0
+for _e in ENTRIES:
+    _new = _ANSWER_V2.get(_e["title"])
+    if _new:
+        _e["answer"] = _new
+        _ANSWERS_APPLIED += 1
+
+#: How far the headline-first rewrite has got. Two numbers rather than one,
+#: because a mis-keyed title would silently rewrite nothing at all - the same
+#: trap the `_EX_*` dicts have, and a test pins them equal.
+ANSWERS_REWRITTEN = _ANSWERS_APPLIED
+ANSWERS_DECLARED = len(_ANSWER_V2)
