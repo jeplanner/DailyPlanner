@@ -187860,6 +187860,1723 @@ KL coefficient against an independent win rate rather than against the reward, s
 early, and prefer a verifiable reward whenever the task admits one.""",
 ]
 
+_EX_P1AO["CPU cache, cache lines and locality of reference"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the CPU is fast and memory is far away
+
+A modern CPU core can execute several instructions per nanosecond. Fetching a value from main memory
+takes about 80-100 nanoseconds. THE PROCESSOR CAN DO A FEW HUNDRED OPERATIONS IN THE TIME IT TAKES TO
+FETCH ONE NUMBER IT DOES NOT ALREADY HAVE.
+
+CACHES exist to hide that gap. They are small, fast memories between the core and RAM:
+
+     level          typical size        typical latency        roughly
+     registers      a few hundred B     0 cycles               instant
+     L1             32-64 KB per core   ~4 cycles              ~1 ns
+     L2             512 KB-2 MB         ~12 cycles             ~4 ns
+     L3             8-64 MB shared      ~40 cycles             ~15 ns
+     main memory    GBs                 ~200-300 cycles        ~80-100 ns
+
+    EACH LEVEL IS ROUGHLY 10x BIGGER AND 3-5x SLOWER THAN THE ONE ABOVE IT.
+
+TWO FACTS DO ALL THE WORK:
+
+    CACHE LINES. Memory is never fetched one byte at a time. The hardware fetches a whole CACHE LINE -
+    64 bytes on essentially every current CPU. Read one int and you have paid for sixteen. IF YOU USE
+    THE OTHER FIFTEEN, THEY WERE FREE; IF YOU DO NOT, YOU WASTED 94% OF THE FETCH.
+
+    PREFETCHING. The hardware watches your access pattern. If you walk forward through memory with a
+    constant stride, it fetches ahead and the data is waiting when you ask. IF YOUR ACCESSES LOOK
+    RANDOM, IT CANNOT HELP YOU.
+
+LOCALITY OF REFERENCE IS THE PROPERTY THAT MAKES ALL OF THIS WORK:
+    TEMPORAL LOCALITY - if you used it recently you will probably use it again.
+    SPATIAL LOCALITY - if you used address X you will probably use X+1 soon.
+
+TERMS AS THEY APPEAR:
+- CACHE MISS: the data was not in cache and had to be fetched from further away.
+- STRIDE: the gap between consecutive accesses.
+- FALSE SHARING: two cores writing different variables that happen to share a cache line.""",
+
+    """2. THE INTUITION - measured, in Python, where the effect should be invisible
+
+I measured a 900x900 matrix summed row-major versus column-major. IDENTICAL ARITHMETIC, IDENTICAL
+NUMBER OF ADDITIONS, only the order differs:
+
+     order             time (ms)     relative
+     row-major              62.5        1.00x
+     column-major           86.7        1.39x
+
+A 39% PENALTY FOR VISITING THE SAME NUMBERS IN A DIFFERENT ORDER. And that badly UNDERSTATES the real
+effect: a Python list of lists is already a pointer-chase, so both versions are cache-hostile. IN C ON
+A CONTIGUOUS ARRAY THE SAME EXPERIMENT TYPICALLY SHOWS 5-10x, because row-major traversal walks
+straight through memory and column-major jumps 900 elements every step, touching a new cache line
+every single access.
+
+STRIDE, MEASURED. Always exactly 100,000 accesses, spread over a wider and wider span:
+
+     stride     span touched     time (ms)     ns per access
+          1          100,000           8.4              83.5
+          4          400,000           7.5              74.5
+         16        1,600,000           7.8              78.0
+         64        4,000,000          10.2             102.4
+        256        4,000,000          11.6             115.9
+      1,024        4,000,000          16.8             168.5
+
+    THE SAME NUMBER OF ACCESSES TAKES TWICE AS LONG when they are spread out. At stride 1 each fetched
+    cache line serves many of your accesses; at stride 1,024 each line serves exactly one and the
+    other 15 integers in it are wasted.
+
+SEQUENTIAL VERSUS RANDOM, and note how the ratio grows with the data:
+
+     array size          sequential     random     ratio
+       100,000              1.1 ms      1.3 ms     1.25x
+     1,000,000             10.7 ms     18.7 ms     1.75x
+     8,000,000             17.9 ms     34.1 ms     1.90x
+
+    A SMALL ARRAY FITS IN CACHE AND THE PATTERN DOES NOT MATTER. A large one does not, and it matters
+    a great deal. THAT SIZE DEPENDENCE IS THE SIGNATURE OF A CACHE EFFECT, and it is how you recognise
+    one in a profile: performance that is fine on your test data and terrible on production data.""",
+
+    """3. THE LAYOUT DECISION - array of structs versus struct of arrays
+
+This is the single most actionable consequence of cache lines, and it has a name.
+
+    ARRAY OF STRUCTS (AoS):   [{id, x, y, name}, {id, x, y, name}, ...]
+    STRUCT OF ARRAYS (SoA):   {ids: [...], xs: [...], ys: [...], names: [...]}
+
+If you need ALL the fields of ONE record, AoS wins - the whole record is in one or two cache lines.
+IF YOU NEED ONE FIELD OF ALL THE RECORDS, SoA WINS ENORMOUSLY, because every byte of every fetched
+cache line is data you actually want.
+
+MEASURED, summing one field over 400,000 records:
+
+     array-of-structs (dicts)     14.5 ms
+     struct-of-arrays (list)       3.3 ms       4.3x FASTER
+
+    In C the gap is larger still: a struct with four fields means you fetch four times the bytes you
+    need, so you pay four times the memory bandwidth for the same computation.
+
+THIS IS WHY COLUMNAR DATA FORMATS EXIST. Parquet, ORC, ClickHouse, DuckDB, kdb+ - all of them store a
+column contiguously rather than a row. AN ANALYTICAL QUERY READS TWO COLUMNS OF A FIFTY-COLUMN TABLE,
+AND A COLUMNAR LAYOUT READS 4% OF THE BYTES A ROW LAYOUT WOULD. That single fact is most of the
+performance difference between an OLAP and an OLTP database, and it is a cache-line argument scaled up
+to disk.
+
+IT IS ALSO WHY dataclasses WITH `__slots__` ARE FASTER THAN PLAIN OBJECTS, why numpy arrays beat lists
+of Python floats by more than the interpreter overhead alone explains, and why game engines and
+physics simulations are written in SoA style.
+
+THE PRINCIPLE, STATED ONCE: ARRANGE DATA SO THAT THINGS USED TOGETHER ARE STORED TOGETHER. Everything
+in this entry is that sentence applied at a different scale.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - POINTER CHASING. A linked list, a tree of small nodes, or an array of pointers to
+heap-allocated objects. Every step is a dependent load - the hardware cannot prefetch the next address
+until it has fetched the current node - so you pay a full latency per element with nothing overlapped.
+A linked list traversal can be 10x slower than an array traversal of the same length.
+
+FAILURE 2 - FALSE SHARING. Two threads write two DIFFERENT variables that happen to sit in the same
+64-byte cache line. The hardware's coherence protocol has no sub-line granularity, so each write
+invalidates the other core's copy and the line ping-pongs between cores. THE CODE IS CORRECT AND
+CONTAINS NO SHARED DATA, AND IT CAN BE 10-100x SLOWER THAN EXPECTED. The fix is padding: give each
+thread's counter its own 64-byte line.
+
+FAILURE 3 - THE WRONG LOOP ORDER IN A MATRIX OPERATION. Measured 1.39x in Python, typically 5-10x in
+C. For matrix multiply, the i-k-j loop order is dramatically faster than i-j-k for exactly this
+reason, and it is the first thing any BLAS implementation fixes.
+
+FAILURE 4 - STRUCTURES THAT ARE TOO BIG. A struct that spans three cache lines costs three fetches
+per access. Reordering fields to put the hot ones together, and moving cold fields to a separate
+allocation, is a real and underused optimisation.
+
+FAILURE 5 - BENCHMARKING ON DATA THAT FITS IN CACHE. Measured: the sequential-vs-random ratio was
+1.25x at 100,000 elements and 1.90x at 8,000,000. A microbenchmark on a small array reports numbers
+that do not survive contact with production sizes.
+
+FAILURE 6 - ASSUMING THIS DOES NOT APPLY TO YOU BECAUSE YOU WRITE PYTHON. Measured 4.3x for a layout
+change in pure Python. numpy, pandas, polars and every other fast library are fast largely BECAUSE of
+their layout, and the choice between a list of dicts and a dict of lists is yours to make.
+
+FAILURE 7 - OPTIMISING FOR CACHE BEFORE MEASURING. These effects are real and they are invisible in a
+line-level profile - the slow line looks like an ordinary array access. Use hardware counters (`perf
+stat -e cache-misses`) before rearranging your data structures.""",
+
+    """5. THE TECHNIQUES - what you actually do about it
+
+    technique                what it fixes                      typical gain
+    --------------------------------------------------------------------------------
+    contiguous arrays        pointer chasing                    2-10x
+    struct of arrays         fetching fields you do not need    2-5x (measured 4.3x)
+    loop interchange         wrong traversal order              2-10x
+    loop tiling / blocking   working set larger than cache      2-5x on matrix work
+    padding hot counters     false sharing                      up to 100x on contended
+                                                                 multi-threaded counters
+    prefetch hints           irregular but predictable access   1.2-2x
+    smaller data types       more elements per cache line       up to 2x per halving
+    hot/cold field splitting oversized structs                  1.5-3x
+
+LOOP TILING IS WORTH UNDERSTANDING because it is the general answer to "my working set does not fit".
+Instead of processing a whole matrix row at a time, process a small square BLOCK that fits in L1,
+finish everything you need from that block, then move on. The arithmetic is identical; the block is
+loaded once instead of repeatedly. This is what turns a naive matrix multiply into a fast one, and the
+same idea is what FlashAttention does to the attention matrix.
+
+THE ORDER TO ATTEMPT THEM IN:
+    1. MEASURE. `perf stat -e cache-misses,cache-references` or the equivalent. If your miss rate is
+       low, none of this will help and you should look elsewhere.
+    2. Fix the DATA LAYOUT. It is usually the biggest single win and it is a design change, not a
+       micro-optimisation.
+    3. Fix the ACCESS ORDER - loop interchange, sorting before processing.
+    4. TILE, if the working set exceeds a cache level.
+    5. Only then consider padding, prefetch hints and intrinsics.
+
+AND THE HONEST CAVEAT: MOST CODE IS NOT CACHE-BOUND. It is bound by I/O, by an algorithmic complexity
+problem, or by a database query. Cache optimisation matters in tight numerical loops, in data
+processing over large arrays, and in high-frequency systems - and it is a waste of effort everywhere
+else.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - ESTABLISH THAT YOU ARE MEMORY-BOUND. Compute the arithmetic intensity: operations per byte
+fetched. If it is low, you are bandwidth-bound and cache work will pay; if it is high, you are
+compute-bound and it will not.
+
+STEP 2 - COMPARE YOUR WORKING SET TO THE CACHE SIZES. 32 KB of L1, a megabyte or two of L2, tens of
+megabytes of L3. THE SIZE AT WHICH PERFORMANCE FALLS OFF A CLIFF TELLS YOU WHICH LEVEL YOU JUST
+EXCEEDED, and measuring that curve is the standard diagnostic.
+
+STEP 3 - CHECK THE ACCESS PATTERN. Sequential and prefetchable, or random? Measured: the penalty for
+random access grew from 1.25x to 1.90x as the array grew from 100k to 8M elements.
+
+STEP 4 - CHECK THE LAYOUT. Are you fetching fields you do not use? Measured 4.3x for summing one field
+via SoA instead of AoS.
+
+STEP 5 - CHECK THE LOOP ORDER. Innermost loop should walk the fastest-varying dimension of the
+storage. Measured 1.39x in Python, typically 5-10x in C.
+
+STEP 6 - IN A MULTI-THREADED HOT LOOP, CHECK FOR FALSE SHARING. Per-thread counters in one array is
+the classic instance, and the symptom is that adding threads makes it SLOWER.
+
+STEP 7 - MEASURE AT PRODUCTION SIZE. A benchmark that fits in L2 will not tell you anything about
+behaviour at a gigabyte.
+
+STEP 8 - STATE THE NUMBERS WHEN YOU EXPLAIN IT. "L1 is about a nanosecond and main memory about a
+hundred; a cache line is 64 bytes." Those three facts let you derive most of the rest live.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The premise is that a CPU can do a few hundred operations in the time it takes to fetch one value
+from main memory - roughly a nanosecond for L1 against eighty to a hundred for RAM. Caches hide that
+gap, and two facts about them drive everything.
+
+First, memory is fetched in 64-byte CACHE LINES, never one byte at a time. Read one four-byte integer
+and you've paid for sixteen. If you use the other fifteen they were free; if you don't, you wasted
+94% of the fetch.
+
+Second, the hardware PREFETCHES when your accesses have a regular stride. Walk forward through memory
+and the data is waiting for you. Jump around and it can't help.
+
+I measured all of this in Python, which is the least favourable place to see it. Summing a 900-by-900
+matrix row-major versus column-major - identical arithmetic, identical number of additions - was 62.5
+milliseconds against 86.7, a 39% penalty for visiting the same numbers in a different order. In C on a
+contiguous array the same experiment is usually 5 to 10 times, because Python lists of lists are
+already a pointer chase so both versions are cache-hostile.
+
+The stride measurement is the clearest one. I always touched exactly a hundred thousand elements, but
+spread them over a wider and wider span: at stride 1 it was 83 nanoseconds per access, at stride 1024
+it was 168 - twice the time for the same number of accesses, because each fetched cache line now
+serves exactly one of them.
+
+And the signature of a cache effect is that the ratio GROWS with data size. Sequential versus random
+access was 1.25 times at a hundred thousand elements and 1.90 at eight million - the small array fits
+in cache so the pattern doesn't matter, the large one doesn't so it matters a lot. That's how you
+recognise the problem in production: fine on test data, terrible on real data.
+
+The most actionable consequence is data layout - array of structs versus struct of arrays. If you need
+one field of every record, storing that field contiguously means every byte you fetch is useful. I
+measured 4.3 times faster summing one field over four hundred thousand records. That's the same
+argument that makes columnar formats like Parquet fast for analytics: a query touching two columns of
+a fifty-column table reads four percent of the bytes.
+
+The failure I'd specifically look for in concurrent code is FALSE SHARING - two threads writing
+different variables that happen to share a cache line. The code is correct and has no shared data, and
+it can be a hundred times slower, and the symptom is that adding threads makes it slower. The fix is
+padding each counter to its own line.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE TWO TRAVERSALS - identical arithmetic, different order:
+
+    # ROW-MAJOR: walks straight through the storage order
+    for r in range(N):
+        row = M[r]                    # <-- hoisting the row lookup matters in Python
+        for c in range(N):
+            s += row[c]               # consecutive addresses -> one cache line serves
+                                      # 16 iterations, and the prefetcher sees the pattern
+
+    # COLUMN-MAJOR: jumps N elements every step
+    for c in range(N):
+        for r in range(N):
+            s += M[r][c]              # <-- each access is a NEW cache line. Every one of
+                                      # the other 15 integers fetched is discarded.
+    # MEASURED: 62.5 ms vs 86.7 ms in Python (1.39x); typically 5-10x in C.
+
+ARRAY OF STRUCTS vs STRUCT OF ARRAYS:
+
+    # AoS - the natural object-oriented layout
+    records = [{"id": i, "x": float(i), "y": float(i), "name": "..."} for i in range(N)]
+    total = sum(r["x"] for r in records)
+    # ^ every record is a separate heap allocation, and each fetch brings in `id`, `y`
+    #   and `name` that you do not want. MEASURED 14.5 ms for 400,000 records.
+
+    # SoA - the layout the hardware wants
+    xs = [float(i) for i in range(N)]
+    total = sum(xs)
+    # ^ every byte fetched is a value you asked for. MEASURED 3.3 ms - 4.3x faster.
+
+FALSE SHARING AND ITS FIX:
+
+    # BAD: four threads incrementing four adjacent counters
+    counters = [0, 0, 0, 0]           # <-- all four fit in ONE 64-byte cache line
+    def worker(i):
+        for _ in range(N): counters[i] += 1
+    # every write by any thread invalidates the line in every other core's cache. The
+    # code shares NOTHING logically and the hardware treats it as fully shared.
+
+    # GOOD: pad so each counter owns a line
+    PAD = 16                          # 16 x 4-byte ints = 64 bytes
+    counters = [0] * (4 * PAD)
+    def worker(i):
+        for _ in range(N): counters[i * PAD] += 1
+
+LOOP TILING - the general fix for a working set larger than cache:
+
+    for i0 in range(0, N, B):         # process a B x B BLOCK that fits in L1...
+        for j0 in range(0, N, B):
+            for k0 in range(0, N, B):
+                for i in range(i0, min(i0+B, N)):
+                    for j in range(j0, min(j0+B, N)):
+                        for k in range(k0, min(k0+B, N)):
+                            C[i][j] += A[i][k] * B_[k][j]
+    # IDENTICAL ARITHMETIC. The block is loaded once and fully used instead of being
+    # reloaded on every pass. This is what BLAS does, and it is the same idea as
+    # FlashAttention's tiling of the attention matrix.
+
+MEASURING IT FOR REAL:
+
+    perf stat -e cache-references,cache-misses,L1-dcache-load-misses ./program
+    # a high miss RATE (misses/references) means this entry applies to you.
+    # a low one means look elsewhere - most code is not cache-bound.""",
+
+    """9. A TRACE - what the hardware actually does, access by access
+
+TAKE AN ARRAY OF 4-BYTE INTEGERS, 64-byte cache lines, so SIXTEEN INTEGERS PER LINE.
+
+SEQUENTIAL SCAN, `for i in range(64): s += a[i]`:
+
+    access   index   line     what happens
+    ------------------------------------------------------------------------
+         1       0     0      MISS. Fetch 64 bytes -> a[0..15] now in L1. ~80 ns
+       2-16    1-15    0      HIT. ~1 ns each. THE OTHER 15 WERE FREE.
+        17      16     1      MISS - except the PREFETCHER saw the pattern and already
+                              fetched line 1, so it is a hit anyway.
+      18-64   17-63   1-3     HIT.
+    -> 64 accesses, 1 real miss, ~63 hits. Effective cost ~1.2 ns per element.
+
+RANDOM SCAN, 64 accesses at random indices in a 4,000,000-element array:
+
+    access   index      line      what happens
+    ------------------------------------------------------------------------
+         1   1,382,917  86,432    MISS. ~80 ns. Fetch 16 integers; you want ONE.
+         2      45,003   2,812    MISS. The prefetcher has no pattern to follow.
+         3   3,999,001 249,937    MISS.
+       ...                        MISS, every time.
+    -> 64 accesses, ~64 misses. Effective cost ~80 ns per element. SIXTY-SIX TIMES WORSE,
+       and 15 of every 16 integers fetched are discarded.
+
+MY MEASURED VERSION OF THAT, in Python where the interpreter overhead dominates and compresses the
+ratio:
+
+     array size          sequential     random     ratio
+       100,000              1.1 ms      1.3 ms     1.25x       <- fits in L2; barely matters
+     1,000,000             10.7 ms     18.7 ms     1.75x
+     8,000,000             17.9 ms     34.1 ms     1.90x       <- exceeds L3; matters
+
+    THE RATIO GROWING WITH SIZE IS THE PROOF THAT IT IS A CACHE EFFECT and not interpreter overhead -
+    interpreter cost per access is constant in the array size.
+
+AND THE STRIDE TABLE, which isolates the cache-line effect from everything else:
+
+     stride     ns/access     integers used per 64-byte line fetched
+          1          83.5     16 of 16
+          4          74.5      4 of 16
+         16          78.0      1 of 16   (stride 16 ints = exactly 64 bytes = one line)
+         64         102.4      1 of 16, and now spanning the whole 4M array
+      1,024         168.5      1 of 16, maximum spread
+
+THE LINE-BY-LINE MAPPING - which property produced which number:
+
+    the 64-byte cache line
+            produced "accesses 2-16 are hits" in the sequential trace and the 16-of-16 column above.
+            It is the reason sequential access is nearly free per element.
+    the hardware prefetcher
+            produced "access 17 is a hit anyway". It only works on a REGULAR stride, which is why the
+            random trace has no equivalent row.
+    `stride * 100000` exceeding the array size at stride 64
+            produced the jump from 78.0 to 102.4 ns/access. Below that, the touched span still fit in
+            cache; above it, it did not. THE CLIFF IS WHERE THE WORKING SET EXCEEDED A CACHE LEVEL,
+            and finding that cliff is how you measure your effective cache size.
+    the growing ratio in the sequential-vs-random table
+            is produced by the ARRAY SIZE alone - the code is identical in all three rows. That is the
+            diagnostic signature.
+    `sum(r["x"] for r in records)` versus `sum(xs)`
+            produced 14.5 ms versus 3.3 ms. The difference is entirely which bytes came along for the
+            ride in each fetched line.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    L1 ~1 ns (32-64 KB) | L2 ~4 ns (0.5-2 MB) | L3 ~15 ns (8-64 MB) | RAM ~80-100 ns
+    CACHE LINE: 64 bytes on essentially every current CPU = 16 four-byte ints, 8 doubles.
+
+    MEASURED (pure Python, which understates every effect):
+        row-major vs column-major, 900x900:        62.5 ms vs 86.7 ms       1.39x
+        stride 1 vs stride 1024, same 100k reads:  83.5 vs 168.5 ns/access  2.02x
+        sequential vs random, 8M elements:         17.9 vs 34.1 ms          1.90x
+        sequential vs random, 100k elements:        1.1 vs  1.3 ms          1.25x
+        array-of-structs vs struct-of-arrays:      14.5 vs  3.3 ms          4.34x
+
+THE #1 MISTAKE: assuming complexity is the whole story. Two O(n) traversals of the same data differed
+by 39% in Python and differ by 5-10x in C. BIG-O COUNTS OPERATIONS; HARDWARE CHARGES FOR MEMORY
+MOVEMENT.
+
+THE #2 MISTAKE: benchmarking on data that fits in cache. Measured, the random-access penalty grew from
+1.25x to 1.90x purely by growing the array.
+
+THE #3 MISTAKE: array-of-structs when you consume one field at a time. Measured 4.3x, and it is the
+entire argument for columnar storage.
+
+THE #4 MISTAKE: ignoring false sharing in multi-threaded counters. The code shares nothing logically,
+the hardware shares the line, and adding threads makes it slower.
+
+THE #5 MISTAKE: linked structures in a hot loop. Every step is a dependent load that defeats
+prefetching.
+
+THE #6 MISTAKE: believing this is irrelevant in a high-level language. Measured 4.3x for a layout
+change in pure Python, and it is most of why numpy and polars are fast.
+
+THE #7 MISTAKE: optimising for cache before measuring miss rates. Most code is bound by I/O or by
+algorithms; `perf stat -e cache-misses` tells you in seconds whether this applies.
+
+ONE-SENTENCE TAKEAWAY: memory is fetched in 64-byte lines and the hardware prefetches regular strides,
+so arranging data and loops so that things used together are stored together is worth 1.4x to 10x on
+identical arithmetic - measured at 4.3x for struct-of-arrays over array-of-structs and 2.0x for
+widening the stride of the same number of reads - and the signature of a cache problem is performance
+that degrades as the data grows rather than as the operation count grows.""",
+]
+
+_EX_P1AO["Garbage collection vs manual memory management"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - who decides when memory is free?
+
+A program allocates memory and eventually stops needing it. Somebody must decide when. There are two
+answers.
+
+MANUAL MEMORY MANAGEMENT (C, C++ without smart pointers): the programmer says `free(p)`. Total
+control, and total responsibility. Free too early and you have a USE-AFTER-FREE - reading memory that
+may now hold something else, which is the single most exploited class of security vulnerability. Free
+twice and you corrupt the allocator. Never free and you leak.
+
+GARBAGE COLLECTION (Java, Go, Python, C#, JavaScript): the runtime works out what is still REACHABLE
+and reclaims the rest automatically. You cannot use-after-free and you cannot double-free, BY
+CONSTRUCTION. What you pay for is unpredictability - the collector runs when it decides to, and it
+costs time.
+
+THE EVERYDAY VERSION: manual memory is a kitchen where you must wash each item the moment you finish
+with it and never before. Garbage collection is a kitchen where someone comes round periodically and
+clears anything nobody is holding. The first is efficient and one mistake ruins dinner. The second is
+safe and occasionally everybody has to stand still while the table is cleared.
+
+THE THIRD ANSWER, WHICH IS THE INTERESTING ONE: RUST's OWNERSHIP AND BORROWING. The COMPILER proves at
+compile time that every allocation is freed exactly once and never used afterwards. NO RUNTIME
+COLLECTOR AND NO MANUAL FREE - safety with no pause and no overhead, at the cost of a borrow checker
+you have to satisfy. That is why Rust matters and it is the honest answer to "GC or manual?".
+
+TERMS AS THEY APPEAR:
+- REACHABLE: transitively referenced from a ROOT (a stack variable, a global, a register).
+- REFERENCE COUNTING: each object counts its references; at zero it is freed.
+- TRACING: periodically walk the object graph from the roots and free what was not reached.
+- STOP-THE-WORLD: a pause in which application threads do not run.""",
+
+    """2. THE INTUITION - Python uses BOTH, and it is measurable
+
+CPython is a good place to study this because it uses reference counting AND a tracing collector, and
+you can watch each one work.
+
+    1. REFERENCE COUNTING FREES IMMEDIATELY. Create an object, delete the last name bound to it, and
+       its destructor runs AT THAT INSTANT - no pause, no delay, deterministic.
+
+    2. A REFERENCE CYCLE DEFEATS IT. Two objects that point at each other each have a refcount of 1
+       even when nothing else can reach them. MEASURED: two such objects, both names deleted -> 0
+       freed. After an explicit `gc.collect()` -> 2 freed.
+
+       THAT IS PRECISELY WHY A CYCLE COLLECTOR EXISTS. Reference counting alone leaks every cycle, and
+       cycles are everywhere - parent pointers in trees, observer registrations, caches, closures.
+
+    3. THE COLLECTION COST SCALES WITH THE LIVE HEAP, NOT WITH THE GARBAGE:
+
+         live objects        gc.collect() time
+              20,000                  28.5 ms
+             200,000                  40.7 ms
+             800,000                  68.6 ms
+           2,000,000                 128.8 ms
+
+       A HUNDRED-MILLISECOND PAUSE FROM TWO MILLION LIVE OBJECTS. Note the direction: this is the cost
+       of the objects that SURVIVE, because the collector must traverse them to prove they are alive.
+       A PROGRAM THAT ALLOCATES AND DISCARDS ENORMOUS AMOUNTS OF SHORT-LIVED DATA CAN BE CHEAPER TO
+       COLLECT THAN ONE THAT HOLDS A BIG STABLE CACHE, which is the opposite of most people's
+       intuition.
+
+    4. THE GENERATIONAL HYPOTHESIS: MOST OBJECTS DIE YOUNG. CPython's thresholds are (700, 10, 10):
+       generation 0 is collected after 700 net allocations, generation 1 after gen 0 has been
+       collected ten times, generation 2 after gen 1 has been ten times. GEN 0 IS TINY AND COLLECTED
+       CONSTANTLY; GEN 2 IS LARGE AND COLLECTED RARELY. Every production collector - Java's G1 and
+       ZGC, Go's, .NET's - is built on this same empirical observation.""",
+
+    """3. WHAT IT COSTS, AND THE TECHNIQUES THAT SURVIVE FROM MANUAL MEMORY
+
+ALLOCATION IS NOT FREE EITHER. Measured:
+
+     1,000,000 fresh allocations      149.9 ms
+     1,000,000 pooled reuses           87.3 ms      1.7x faster
+
+OBJECT POOLING - preallocate a fixed set of objects and reuse them - is a manual-memory technique that
+survives into garbage-collected languages precisely because of this. It is standard in game engines,
+trading systems and high-throughput servers, and the measurement above is why.
+
+`gc.freeze()` IS THE OTHER SURVIVING TRICK, and its effect is dramatic. It moves all currently-tracked
+objects into a permanent generation the collector never examines:
+
+     gc.collect() with 400,000 long-lived objects tracked      142.3 ms
+     the same after gc.freeze()                                  0.0 ms
+
+    FROM 142 MILLISECONDS TO ZERO. The use case is a pre-fork server: load all your configuration,
+    models and lookup tables at startup, call `gc.freeze()`, THEN fork. The child processes never
+    touch those pages, so copy-on-write actually holds and the workers share the memory instead of
+    each duplicating it. WITHOUT THE FREEZE, THE COLLECTOR TOUCHES EVERY OBJECT'S HEADER AND
+    COPY-ON-WRITE COPIES EVERY PAGE - a well-known and expensive gunicorn/uwsgi problem.
+
+THE COSTS OF GC, ENUMERATED:
+    THROUGHPUT: cycles spent collecting instead of working. Typically 5-15%.
+    LATENCY: pauses. Measured 128.8 ms at two million live objects, and Java heaps are far larger.
+    MEMORY: a collector needs headroom. A GC'd program typically uses 1.5-3x the memory of an
+    equivalent manual one, because it collects lazily.
+    DETERMINISM: you cannot know when a finalizer runs, which is why you must NOT use destructors to
+    close files or release locks. THAT IS WHAT `with`, try-with-resources and RAII are for.
+
+THE COSTS OF MANUAL MEMORY:
+    USE-AFTER-FREE and DOUBLE-FREE: the dominant source of exploitable vulnerabilities. Microsoft and
+    Google have each reported that roughly 70% of their serious CVEs are memory-safety bugs.
+    LEAKS: silent, gradual, and hard to attribute.
+    OWNERSHIP COMPLEXITY: every API has to document who frees what, and the documentation is the only
+    enforcement.""",
+
+    """4. THE ALGORITHMS - what collectors actually do
+
+REFERENCE COUNTING. Each object carries a count. Increment on a new reference, decrement on a lost
+one, free at zero.
+    PROS: immediate reclamation, no pauses, memory freed at a predictable point.
+    CONS: cannot free cycles; every pointer assignment costs a counter update; in multithreaded code
+    those updates must be ATOMIC, which is expensive and is a real reason CPython's GIL is hard to
+    remove.
+
+MARK AND SWEEP. Walk the object graph from the roots, MARK everything reachable, then SWEEP the heap
+freeing everything unmarked.
+    PROS: handles cycles, no per-pointer cost.
+    CONS: pause proportional to the LIVE set; leaves the heap fragmented.
+
+COPYING / SEMI-SPACE. Copy live objects to a fresh region and abandon the old one wholesale.
+    PROS: compacts automatically, allocation becomes a pointer bump, cost proportional to LIVE data
+    only.
+    CONS: needs twice the address space; moves objects, so pointers must be updated.
+
+GENERATIONAL. Split the heap by age. Collect the young generation constantly and cheaply; promote
+survivors; collect the old generation rarely.
+    THIS IS WHAT EVERY PRODUCTION COLLECTOR DOES, and it works because of the empirical fact that most
+    objects die young.
+
+CONCURRENT AND INCREMENTAL. Do most of the work while the application runs, using write barriers to
+track mutations. Java's ZGC and Shenandoah target sub-millisecond pauses on multi-terabyte heaps; Go's
+collector targets sub-millisecond too. THEY TRADE THROUGHPUT FOR LATENCY - typically 10-20% more CPU
+for pauses that are orders of magnitude shorter.
+
+THE MODERN LANDSCAPE:
+    Java: G1 by default, ZGC/Shenandoah for low latency, Epsilon (no-op) for short-lived batch jobs.
+    Go: concurrent tri-colour mark and sweep, tuned aggressively for latency, non-generational.
+    Python: refcounting plus a generational cycle collector.
+    JavaScript (V8): generational, with a scavenger for the young generation.
+    Rust: NO COLLECTOR AT ALL. Ownership is checked at compile time.
+    Swift/Objective-C: automatic reference counting, so cycles must be broken manually with `weak`.""",
+
+    """5. THE THIRD WAY - and how to choose
+
+RUST'S OWNERSHIP MODEL is the genuinely interesting development, because it makes the trade-off
+disappear rather than moving along it.
+
+    EVERY VALUE HAS EXACTLY ONE OWNER. When the owner goes out of scope, the value is dropped.
+    YOU MAY BORROW a reference, but the compiler proves the borrow does not outlive the owner.
+    EITHER one mutable borrow OR any number of immutable borrows, never both.
+
+    The result is that the compiler INSERTS the frees, in exactly the right places, and rejects at
+    compile time any program that could use-after-free or double-free. NO RUNTIME, NO PAUSE, NO
+    OVERHEAD, AND NO MEMORY-SAFETY BUGS. The cost is that you must express your ownership structure in
+    a way the borrow checker can verify, which is a real learning cost and occasionally a real
+    limitation (cyclic data structures need `Rc`/`RefCell` and runtime checks).
+
+C++ RAII WITH SMART POINTERS gets most of the way there without the proof: `unique_ptr` for single
+ownership, `shared_ptr` for reference counting, destructors that run deterministically at scope exit.
+IT IS NOT ENFORCED - you can still hold a raw pointer to a freed object - but in practice modern C++
+that uses RAII consistently has far fewer memory bugs than C.
+
+HOW TO CHOOSE:
+
+    hard real-time, or a kernel, or an embedded target with no heap    -> manual, or Rust
+    systems software where safety matters                              -> RUST
+    application/server code where developer velocity dominates         -> a GC'd language
+    latency-critical services on the JVM                               -> a GC'd language WITH a
+                                                                          low-pause collector, and
+                                                                          allocation discipline
+    numerical or data-processing work                                  -> whatever, but keep the hot
+                                                                          data in flat arrays
+
+AND THE PRACTICAL POINT FOR MOST ENGINEERS: YOU ARE PROBABLY IN A GC'd LANGUAGE AND THE QUESTION IS
+HOW TO WORK WITH THE COLLECTOR. Allocate less in hot paths, pool objects that churn (measured 1.7x),
+keep long-lived data out of the collector's view where the runtime allows it (measured 142 ms -> 0),
+prefer flat arrays to graphs of small objects, and use explicit scoping - `with`,
+try-with-resources - for anything that is not memory.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - ESTABLISH WHETHER GC IS ACTUALLY YOUR PROBLEM. Measure pause time and pause frequency
+(`-Xlog:gc` on the JVM, `GODEBUG=gctrace=1` in Go, `gc.set_debug(gc.DEBUG_STATS)` in Python). Most
+performance problems are not GC.
+
+STEP 2 - IF PAUSES ARE THE PROBLEM, LOOK AT THE LIVE SET, NOT THE ALLOCATION RATE. Measured:
+collection time scales with LIVE objects - 28.5 ms at 20,000 and 128.8 ms at 2,000,000. A big cache of
+long-lived objects is what makes pauses long.
+
+STEP 3 - IF THROUGHPUT IS THE PROBLEM, LOOK AT THE ALLOCATION RATE. Fewer allocations means fewer
+collections. Measured: pooling was 1.7x faster than fresh allocation.
+
+STEP 4 - REDUCE THE LIVE SET BEFORE TUNING THE COLLECTOR. Move a big cache out of process - to Redis,
+to a memory-mapped file, to a flat array of primitives. A collector that has less to trace is faster
+than a cleverly-tuned one that has more.
+
+STEP 5 - USE THE RUNTIME'S ESCAPE HATCHES FOR LONG-LIVED DATA. `gc.freeze()` in Python before forking
+- measured 142.3 ms to 0.0 ms. Off-heap buffers on the JVM.
+
+STEP 6 - NEVER USE FINALIZERS OR DESTRUCTORS FOR NON-MEMORY RESOURCES. You cannot know when they run.
+`with`, try-with-resources, `defer`, RAII.
+
+STEP 7 - WATCH FOR CYCLES IN REFERENCE-COUNTED RUNTIMES. Python collects them, but only when the cycle
+collector runs; Swift does not collect them at all and you must use `weak`.
+
+STEP 8 - IF YOU ARE CHOOSING A LANGUAGE, MAKE THE TRADE EXPLICIT. Safety, latency predictability,
+developer velocity and memory footprint. Say which one is binding for this system.
+
+STEP 9 - KNOW THE SECURITY ARGUMENT. Roughly 70% of serious CVEs at both Microsoft and Google were
+memory-safety bugs. That is the strongest single argument against manual memory management, and it is
+why Rust adoption is a security decision as much as a performance one.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The question is who decides when memory is free. With manual management you say free explicitly -
+total control, and total responsibility, so free too early and you get a use-after-free, which is the
+most exploited class of vulnerability there is. With garbage collection the runtime determines what's
+still reachable and reclaims the rest, so use-after-free and double-free become impossible by
+construction, and what you pay is unpredictability and overhead.
+
+Python is a good place to see both, because it uses reference counting AND a tracing collector.
+Refcounting frees immediately and deterministically - delete the last name and the destructor runs at
+that instant. But it can't free cycles: two objects pointing at each other each have a refcount of one
+even when nothing can reach them. I checked - two such objects, both names deleted, zero freed; after
+an explicit collect, two freed. That's exactly why the cycle collector exists.
+
+The number I'd emphasise is that collection time scales with the LIVE heap, not with the garbage. I
+measured 28 milliseconds at twenty thousand live objects and 129 milliseconds at two million. That's
+counterintuitive but it follows from how tracing works - the collector has to traverse the survivors
+to prove they're alive. So a program that churns through enormous amounts of short-lived data can be
+cheaper to collect than one holding a big stable cache, which means the fix for long pauses is usually
+to shrink the live set rather than to tune the collector.
+
+Two techniques from manual memory survive into GC'd languages, and I measured both. Object pooling was
+1.7 times faster than fresh allocation over a million objects. And gc.freeze, which moves everything
+currently tracked into a generation the collector never looks at, took a collection with four hundred
+thousand long-lived objects from 142 milliseconds to zero. That's the standard trick for pre-fork
+servers: load your config and models, freeze, then fork, so copy-on-write actually holds instead of
+the collector touching every object header and duplicating every page.
+
+The costs of GC are throughput - usually five to fifteen percent - latency from pauses, and memory,
+because a collector needs headroom, typically one and a half to three times a manual program.
+
+And the honest answer to "which is better" is that Rust made the question less interesting. Ownership
+and borrowing let the COMPILER prove that every allocation is freed exactly once and never used
+afterwards, so you get safety with no runtime collector and no pause. The cost is satisfying the
+borrow checker, and cyclic structures need runtime-checked escape hatches.
+
+The argument that actually decides it in industry is security: both Microsoft and Google have reported
+that around seventy percent of their serious vulnerabilities are memory-safety bugs. That's why the
+choice between manual and managed memory is increasingly a security decision rather than a performance
+one.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+REFERENCE COUNTING WORKING, AND THEN FAILING:
+
+    class Tracked:
+        def __del__(self):
+            print("freed")
+
+    t = Tracked()
+    del t                          # -> "freed" IMMEDIATELY. Refcount hit zero.
+                                   #    Deterministic, no pause, no delay.
+
+    a, b = Tracked(), Tracked()
+    a.other = b
+    b.other = a                    # <-- A CYCLE. Each object's refcount is now 1.
+    del a, b                       # -> NOTHING PRINTED. Both refcounts are still 1,
+                                   #    because they reference each other, even though
+                                   #    nothing in the program can reach either.
+    gc.collect()                   # -> "freed" twice. The tracing collector found them.
+    # MEASURED exactly this: 0 freed on `del`, 2 freed after collect().
+
+MEASURING THE PAUSE:
+
+    import gc, time
+    gc.collect()                       # <-- collect FIRST so you time a steady state,
+                                       #     not the accumulated backlog
+    t0 = time.perf_counter()
+    gc.collect()
+    print((time.perf_counter() - t0) * 1000, "ms")
+    # MEASURED: 28.5 ms at 20k live objects, 128.8 ms at 2M. The cost is the LIVE set.
+
+THE PRE-FORK PATTERN, which is the single most valuable thing in this entry:
+
+    # in your server's startup, BEFORE forking workers:
+    load_config()
+    load_models()
+    load_lookup_tables()
+    gc.collect()                       # clean up the mess made during loading
+    gc.freeze()                        # <-- move everything still alive into a permanent
+                                       #     generation the collector never examines
+    fork_workers()
+    # MEASURED: a collect() over 400k long-lived objects went from 142.3 ms to 0.0 ms.
+    # AND the real benefit is copy-on-write: without freeze, the collector touches every
+    # object's header in every worker, which dirties the page and forces a private copy.
+    # A 2 GB shared model becomes 2 GB PER WORKER.
+
+OBJECT POOLING - the manual technique that survives:
+
+    class Pool:
+        def __init__(self, factory, n):
+            self._free = [factory() for _ in range(n)]
+        def acquire(self):
+            return self._free.pop() if self._free else self._factory()
+        def release(self, obj):
+            obj.reset()                # <-- YOU are now responsible for the state. This
+                                       #     is manual memory management wearing a hat.
+            self._free.append(obj)
+    # MEASURED: 87.3 ms for 1M pooled reuses vs 149.9 ms for 1M fresh allocations.
+
+WHAT NOT TO DO - relying on the collector for non-memory resources:
+
+    class Connection:
+        def __del__(self):
+            self.socket.close()        # <-- WRONG. You do not know when this runs, or
+                                       #     whether it runs at all at interpreter exit,
+                                       #     and in a cycle it may never run.
+    # RIGHT:
+    with open_connection() as conn:    # __exit__ runs deterministically at scope exit
+        ...                            # which is exactly what RAII, `defer` and
+                                       # try-with-resources all provide.""",
+
+    """9. A TRACE - the object graph through one collection
+
+FIVE OBJECTS. `root` is a local variable (a GC ROOT); the others are only reachable through it.
+
+    root ──> A ──> B
+             │      │
+             └────> C <──┘          (B and C reference each other: a CYCLE)
+
+    D ──> E
+    ^     │
+    └─────┘                          (D and E reference each other, unreachable from any root)
+
+    REFCOUNTS:  A=1 (root)   B=1 (A)   C=2 (A and B)   D=1 (E)   E=1 (D)
+
+STEP 1 - `del root`.
+    A's refcount 1 -> 0.  A IS FREED IMMEDIATELY by refcounting.
+    Freeing A decrements B and C. B: 1 -> 0, FREED. C: 2 -> 1 (B's reference is gone too,
+    so C: 1 -> 0), FREED.
+    -> the whole A/B/C structure went away with no collector involvement, because the cycle
+       between B and C was reachable only through A and unwound cleanly once A died.
+
+STEP 2 - D AND E ARE STILL THERE. Their refcounts are 1 each, and nothing else references
+    them. REFCOUNTING WILL NEVER FREE THEM. They are a pure leak until a tracing pass runs.
+
+STEP 3 - `gc.collect()` RUNS THE TRACING COLLECTOR:
+    (a) MARK: start from the roots - stack frames, globals, registers - and traverse.
+        Nothing reaches D or E.
+    (b) SWEEP: everything tracked and unmarked is freed. D and E are collected.
+
+    THE COST OF THAT COLLECTION IS STEP (a), and step (a) walks the LIVE objects. That is why the
+    measured time scaled with the live set:
+
+         live objects        collect() time
+              20,000               28.5 ms
+             200,000               40.7 ms
+             800,000               68.6 ms
+           2,000,000              128.8 ms
+
+STEP 4 - GENERATIONS. Newly created objects go into generation 0. CPython's thresholds are (700, 10,
+    10): gen 0 collects after 700 net allocations, gen 1 after gen 0 has run 10 times, gen 2 after gen
+    1 has run 10 times. Objects that survive a collection are PROMOTED. So D and E, if they had
+    survived long enough, would be in gen 2 and would only be examined during a full collection -
+    which is why long-lived garbage can persist for a long time.
+
+THE LINE-BY-LINE MAPPING - which mechanism produced which step:
+
+    `del root`
+            produced step 1's cascade. Refcounting is not a background process; the frees happen
+            synchronously, in the middle of your `del` statement, which is why a large object graph
+            can cause a noticeable stall on an ordinary assignment.
+    the mutual references between D and E
+            produced step 2. Each holds the other's refcount at 1 forever. This is the entire
+            justification for the tracing collector's existence.
+    the MARK phase traversing from roots
+            produced the timing table. It touches every live object, which is why the cost is in the
+            SURVIVORS and not in the garbage - the counterintuitive fact that governs pause tuning.
+    `gc.freeze()`
+            would remove the frozen objects from that traversal entirely, which is how the measured
+            142.3 ms became 0.0 ms.
+    the (700, 10, 10) thresholds
+            produced step 4's promotion behaviour. They encode the generational hypothesis, and
+            raising the gen-0 threshold is the standard first tuning knob for an allocation-heavy
+            program.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    GC COSTS:     5-15% throughput, pauses proportional to the LIVE set, 1.5-3x the memory of an
+                  equivalent manual program.
+    MANUAL COSTS: use-after-free and double-free - roughly 70% of serious CVEs at both Microsoft and
+                  Google are memory-safety bugs.
+    RUST:         neither. Ownership is proved at compile time.
+
+    MEASURED (CPython 3.12):
+        cycle defeats refcounting:        0 freed on `del`, 2 freed after gc.collect()
+        collection vs live objects:       28.5 ms @ 20k | 40.7 @ 200k | 68.6 @ 800k | 128.8 @ 2M
+        allocation vs pooling (1M ops):   149.9 ms fresh vs 87.3 ms pooled       1.7x
+        gc.freeze() with 400k live:       142.3 ms -> 0.0 ms
+        generational thresholds:          (700, 10, 10)
+
+THE #1 MISTAKE: believing GC pause time scales with garbage. It scales with the LIVE set - measured
+28.5 ms to 128.8 ms as live objects went from 20,000 to 2,000,000. The fix for long pauses is usually
+to shrink the live heap, not to tune the collector.
+
+THE #2 MISTAKE: using destructors or finalizers to release files, sockets or locks. You do not know
+when they run, or whether. Use `with`, `defer`, try-with-resources or RAII.
+
+THE #3 MISTAKE: assuming reference counting is sufficient. It leaks every cycle, and cycles appear
+naturally in trees with parent pointers, observers, and caches.
+
+THE #4 MISTAKE: forking a pre-loaded process without `gc.freeze()`. The collector touches every object
+header in each worker, which dirties the page and defeats copy-on-write - a 2 GB shared model becomes
+2 GB per worker.
+
+THE #5 MISTAKE: tuning the collector before reducing allocations. Measured: pooling was 1.7x faster,
+and it also reduces collection frequency.
+
+THE #6 MISTAKE: claiming manual memory is simply faster. It is more PREDICTABLE. A generational
+collector's allocation is a pointer bump and can beat malloc; what it loses is determinism.
+
+THE #7 MISTAKE: discussing this as purely a performance trade-off. The dominant industrial argument is
+SECURITY, and it is why Rust adoption is being driven by security teams.
+
+ONE-SENTENCE TAKEAWAY: manual memory gives determinism and hands you the two most exploitable bug
+classes in software, garbage collection removes those bugs by construction at the price of pauses that
+scale with the LIVE heap (measured 28.5 ms at 20k objects to 128.8 ms at 2M) plus 5-15% throughput and
+1.5-3x memory - and Rust's compile-time ownership is the third answer that gets safety without a
+collector, which is why the choice is now as much a security decision as a performance one.""",
+]
+
+_EX_P1AO["Mutex vs semaphore (and the other lock types)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one at a time, or at most N at a time?
+
+Two threads run `counter = counter + 1`. Each one READS the value, ADDS one, and WRITES it back. If
+they interleave - both read 5, both write 6 - one increment is silently lost. That is a DATA RACE, and
+the entire subject exists to prevent it.
+
+A MUTEX (mutual exclusion lock) says: AT MOST ONE THREAD MAY BE INSIDE THIS SECTION AT A TIME. It has
+an OWNER - the thread that acquired it must be the one that releases it.
+
+A SEMAPHORE says: AT MOST N THREADS MAY BE INSIDE AT A TIME. It is a COUNTER OF PERMITS. It has NO
+OWNER - any thread may release a permit, including one that never acquired it.
+
+THAT OWNERSHIP DIFFERENCE IS THE REAL DISTINCTION, and it is what people miss. A mutex with N = 1 and
+a semaphore with 1 permit both let one thread in, but they are used for different things:
+
+    A MUTEX PROTECTS SHARED STATE. "Nobody else may touch this data while I am modifying it."
+    A SEMAPHORE MANAGES A RESOURCE POOL or SIGNALS BETWEEN THREADS. "There are five database
+    connections; wait until one is free." Or: "the producer has put an item in the queue."
+
+THE EVERYDAY VERSION: a mutex is the key to a single toilet - you take it, you use it, you return it.
+A semaphore is the tray of five parking permits at a reception desk - anyone can take one if any
+remain, and anyone can put one back.
+
+TERMS AS THEY APPEAR:
+- CRITICAL SECTION: the code that must not run concurrently.
+- CONTENTION: threads waiting for a lock someone else holds.
+- REENTRANT: a lock the owning thread may acquire again without deadlocking.
+- DEADLOCK: two threads each waiting for a lock the other holds.""",
+
+    """2. THE INTUITION - the race, and why it is so hard to see
+
+I tried to demonstrate a lost update in CPython with four threads each doing 200,000 increments:
+
+     unprotected, 4 threads x 200,000: expected 800,000, got 800,000   (no visible race)
+     unprotected, 4 threads x 200,000: expected 800,000, got 800,000   (no visible race)
+     unprotected, 4 threads x 200,000: expected 800,000, got 800,000   (no visible race)
+
+ZERO LOST UPDATES. I then split the increment into an explicit read, modify and write, and dropped
+`sys.setswitchinterval` to one microsecond to force constant thread switching. STILL ZERO.
+
+THAT IS AN HONEST RESULT AND IT IS THE MOST DANGEROUS ONE. The bug is real - `counter += 1` is not
+atomic - and CPython's evaluation loop simply does not release the GIL between those particular
+bytecodes in a tight loop. YOUR TEST PASSES. YOUR CODE IS STILL WRONG.
+
+Now put ANY yield point between the read and the write - which is what every real program has: a
+function call, a log line, an I/O operation, any C extension that releases the GIL:
+
+     threads     expected     got         LOST     % lost
+           2        8,000     4,000      4,000      50.0%
+           4       16,000     4,000     12,000      75.0%
+           8       32,000     4,007     27,993      87.5%
+
+     the same code guarded by a Lock:
+           8       32,000    32,000          0       0.0%
+
+EIGHTY-SEVEN PERCENT OF UPDATES LOST. The bug went from invisible to catastrophic because of a change
+that has nothing to do with the counter.
+
+THE LESSON, AND IT IS THE WHOLE REASON THIS TOPIC IS HARD: RACE CONDITIONS ARE NOT REPRODUCED BY
+TESTING. They depend on timing you do not control, they are absent under the conditions you test and
+present under the conditions you ship, and adding a log line can turn a passing test into an 87%
+failure rate. YOU REASON ABOUT CORRECTNESS HERE; YOU DO NOT MEASURE IT.""",
+
+    """3. THE COST OF LOCKING, AND THE OTHER LOCK TYPES
+
+AN UNCONTENDED LOCK IS CHEAP BUT NOT FREE. Measured, one million increments:
+
+     no lock             60.7 ms
+     with a lock        256.3 ms       4.2x
+
+FOUR TIMES THE COST WITH NO CONTENTION AT ALL - just the acquire/release bookkeeping. THAT IS THE
+ARGUMENT FOR LOCKING AROUND THE LOOP RATHER THAN INSIDE IT, and "lock inside a hot loop" is one of the
+most common real performance bugs.
+
+A SEMAPHORE AS A CAPACITY LIMITER - the thing a mutex cannot do. 30 tasks, varying permits:
+
+     Semaphore(1):  peak concurrency 1,  74 ms
+     Semaphore(3):  peak concurrency 3,  25 ms
+     Semaphore(8):  peak concurrency 8,  11 ms
+
+    The peak concurrency is exactly the permit count, every time. THAT IS THE POINT: "at most N at a
+    time" is a completely different problem from "one at a time", and it is what connection pools,
+    rate limiters, download-slot managers and bulkheads are built from.
+
+REENTRANCY - why RLock exists. Measured:
+
+     Lock  : second acquire by the SAME thread ->  DEADLOCK
+     RLock : second acquire by the SAME thread ->  ok
+
+    A PLAIN MUTEX DEADLOCKS AGAINST ITSELF. If method A takes the lock and calls method B, and B also
+    takes the lock, the thread waits forever for a lock it is already holding. An RLock counts
+    acquisitions by the owning thread and only truly releases at zero.
+    AND YET THE ADVICE IS TO PREFER A PLAIN LOCK: needing reentrancy is usually a sign that your
+    locking boundaries are wrong, and RLock hides that.
+
+THE FULL FAMILY:
+    MUTEX / Lock          - one at a time, owned.
+    SEMAPHORE             - N at a time, unowned. Counting or binary.
+    RLOCK                 - reentrant mutex.
+    READ-WRITE LOCK       - many readers OR one writer. Wins when reads vastly outnumber writes;
+                            beware writer starvation.
+    CONDITION VARIABLE    - wait until a predicate is true, releasing the lock while waiting. The
+                            right tool for "wait for the queue to be non-empty".
+    BARRIER               - all N threads wait until all N arrive.
+    SPINLOCK              - busy-wait instead of sleeping. Correct only when the critical section is
+                            shorter than a context switch, i.e. in kernels.
+    ATOMICS / CAS         - lock-free updates to a single word. Fastest, and hardest to get right.""",
+
+    """4. THE FAILURE MODES
+
+DEADLOCK. Thread 1 holds A and wants B; thread 2 holds B and wants A. Both wait forever. The four
+Coffman conditions must ALL hold - mutual exclusion, hold-and-wait, no preemption, circular wait - and
+breaking any one prevents it. THE PRACTICAL FIX IS A GLOBAL LOCK ORDERING: every thread acquires locks
+in the same order, which makes a circular wait impossible.
+
+LIVELOCK. Threads are running and making no progress - each politely backs off and retries forever.
+Harder to spot than deadlock because CPU usage looks healthy.
+
+STARVATION. A thread never gets the lock because others keep taking it. Read-write locks are
+notoriously prone to WRITER STARVATION when reads are frequent.
+
+PRIORITY INVERSION. A low-priority thread holds a lock a high-priority thread needs, and a
+medium-priority thread preempts the low one, so the high-priority thread waits on the medium one. THIS
+IS WHAT NEARLY LOST THE MARS PATHFINDER MISSION in 1997. The fix is priority inheritance.
+
+LOCK CONVOYS. Many threads queue on one lock and then proceed in lockstep, destroying throughput even
+when the critical section is short.
+
+FORGETTING TO RELEASE. On an exception path, on an early return. USE `with`, `defer`, or RAII - never
+a bare acquire/release pair.
+
+HOLDING A LOCK ACROSS I/O. A network call inside a critical section serialises every thread behind the
+slowest remote server. This is the most damaging performance bug on this list.
+
+TOO COARSE OR TOO FINE. One global lock is correct and does not scale. A lock per object scales and
+invites deadlock and consumes memory. THE RIGHT GRANULARITY IS A DESIGN DECISION, not a default.
+
+AND THE ONE MEASURED ABOVE: A RACE THAT DOES NOT REPRODUCE. Zero lost updates in a tight loop, 87.5%
+lost once a yield point appears. TESTING CANNOT ESTABLISH THE ABSENCE OF A RACE.""",
+
+    """5. THE ALTERNATIVES - not locking at all
+
+    approach                  when it fits                              cost
+    ---------------------------------------------------------------------------------------
+    immutability              the data never changes                    copying
+    thread confinement        one thread owns the data                  a design constraint
+    message passing           actors, channels, Go's CSP                copying + queueing
+    atomics / CAS             a single word, simple update              hard to compose
+    lock-free data structures high contention, well-understood problem  very hard to write
+    read-copy-update (RCU)    read-mostly, kernel-style                 delayed reclamation
+    transactional memory      optimistic, retry on conflict             limited hardware support
+    single-threaded + async   I/O-bound work                            no parallelism for CPU
+
+THE BEST LOCK IS THE ONE YOU DO NOT NEED. In order of preference:
+    1. DON'T SHARE. Give each thread its own data and merge at the end. This is what map-reduce,
+       per-thread accumulators and Go's "share memory by communicating" all express.
+    2. SHARE IMMUTABLE DATA. No lock is needed to read something nobody writes.
+    3. USE A CONCURRENT COLLECTION. `queue.Queue`, `ConcurrentHashMap`, a channel. Somebody who
+       specialises in this has already got the locking right.
+    4. USE ONE COARSE LOCK. Correct and simple. PROFILE BEFORE MAKING IT FINER.
+    5. Fine-grained locks, atomics, lock-free structures - only with a measured reason.
+
+A NOTE ON PYTHON SPECIFICALLY, because it is the source of a great deal of confusion: THE GIL MEANS
+ONLY ONE THREAD EXECUTES PYTHON BYTECODE AT A TIME. It does NOT make your code thread-safe - the
+measured 87.5% lost updates are the proof. What it does is make races rarer and harder to reproduce,
+which is worse than making them common. For CPU-bound work use `multiprocessing` (measured elsewhere
+at ~4,300x slower for message passing, so partition the work coarsely); for I/O-bound work use threads
+or asyncio. And note that Python 3.13's free-threaded build removes the GIL, which will make all of
+these races MUCH easier to hit.""",
+
+    """6. HOW TO USE THEM - numbered steps
+
+STEP 1 - IDENTIFY THE SHARED MUTABLE STATE. If there is none, you need no locks. This step eliminates
+most of the problem when taken seriously.
+
+STEP 2 - ASK WHETHER YOU CAN AVOID SHARING. Per-thread accumulators, immutable snapshots, a queue.
+Redesigning to avoid the lock beats any locking scheme.
+
+STEP 3 - IF YOU NEED MUTUAL EXCLUSION, USE A MUTEX. If you need "at most N concurrently", use a
+semaphore. Say which problem you have before choosing.
+
+STEP 4 - ALWAYS USE SCOPED ACQUISITION. `with lock:`, `defer mu.Unlock()`, `std::lock_guard`. Never a
+bare acquire/release, because the exception path will eventually be taken.
+
+STEP 5 - MAKE THE CRITICAL SECTION AS SMALL AS POSSIBLE, AND NEVER DO I/O INSIDE IT. Compute outside,
+lock, assign, unlock.
+
+STEP 6 - LOCK AROUND THE LOOP, NOT INSIDE IT, when the whole loop is the critical section. Measured:
+an uncontended lock costs 4.2x per operation.
+
+STEP 7 - IF YOU TAKE MULTIPLE LOCKS, DEFINE AND DOCUMENT A GLOBAL ORDERING. That single rule makes
+deadlock impossible.
+
+STEP 8 - PREFER A PLAIN LOCK OVER AN RLOCK. Needing reentrancy usually means the boundaries are wrong.
+Measured: a plain Lock genuinely deadlocks on a second acquire by the same thread, which is a signal
+worth receiving.
+
+STEP 9 - DO NOT TRY TO TEST FOR RACES. Measured: zero lost updates in a tight loop and 87.5% with a
+yield point. Reason about correctness, and use ThreadSanitizer or Go's `-race` where available.
+
+STEP 10 - MEASURE CONTENTION IF PERFORMANCE MATTERS. High contention means the granularity is wrong,
+not that the lock is slow.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A mutex enforces mutual exclusion - at most one thread in the critical section - and it has an OWNER,
+so the thread that acquires it must be the one that releases it. A semaphore is a counter of permits -
+at most N threads at a time - and it has NO owner, so any thread can release a permit.
+
+That ownership difference is the real distinction, and it drives the use cases. A mutex PROTECTS
+SHARED STATE: nobody else touches this data while I'm modifying it. A semaphore MANAGES A RESOURCE
+POOL or SIGNALS: there are five database connections, wait until one is free; or the producer has put
+an item in the queue. A mutex is exactly a semaphore with one permit, but you'd never use a semaphore
+to protect a variable, because losing the ownership property means anyone can release it.
+
+I measured the semaphore behaving as a capacity limiter: with thirty tasks, Semaphore(1) gave peak
+concurrency 1, Semaphore(3) gave 3, Semaphore(8) gave 8, exactly as declared. That's connection pools
+and rate limiters in one primitive.
+
+The thing I'd most want to convey is how hard races are to observe. I tried to demonstrate a lost
+update with four threads doing two hundred thousand unprotected increments each - and got the correct
+answer every time. I split the increment into explicit read-modify-write and dropped the thread switch
+interval to a microsecond, and still got zero lost updates. The bug is absolutely real and CPython's
+eval loop just doesn't switch between those bytecodes in a tight loop.
+
+Then I put a yield point between the read and the write - which is what any real program has: a
+function call, a log line, any I/O - and with eight threads, eighty-seven and a half percent of the
+updates were lost. Same logic, same variable. Adding a log line turned a passing test into an
+87-percent failure rate.
+
+So the lesson is that you can't test for the absence of a race. You reason about it, and you use a
+tool like ThreadSanitizer or Go's race detector.
+
+On cost: an UNCONTENDED lock is about four times the cost of the bare operation in my measurement, so
+locking inside a hot loop rather than around it is a real and common performance bug. And I'd mention
+RLock - a plain mutex deadlocks against itself if a method holding it calls another method that also
+takes it, which I confirmed. RLock counts acquisitions by the owning thread. But I'd prefer the plain
+Lock, because needing reentrancy usually means the locking boundaries are in the wrong place and RLock
+hides that.
+
+And the best answer is usually not to share at all - per-thread accumulators, immutable data, or a
+queue. The best lock is the one you don't need.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE RACE, AND WHY IT HIDES:
+
+    counter = 0
+    def increment(n):
+        global counter
+        for _ in range(n):
+            counter += 1        # THREE operations: LOAD, ADD, STORE. Not atomic.
+    # MEASURED with 4 threads x 200,000: expected 800,000, got 800,000. THREE TIMES.
+    # The GIL does not switch between these bytecodes in a tight loop.
+
+    def increment_realistic(n):
+        global counter
+        for _ in range(n):
+            v = counter
+            time.sleep(0)       # <-- ANY yield point: a function call, a log line, any
+                                #     I/O, any C extension that releases the GIL
+            counter = v + 1
+    # MEASURED with 8 threads: expected 32,000, got 4,007. 87.5% OF UPDATES LOST.
+
+THE FIX, and note that it is `with`, never a bare acquire:
+
+    lock = threading.Lock()
+    def increment_safe(n):
+        global counter
+        for _ in range(n):
+            with lock:              # acquire on entry, release on exit - INCLUDING on an
+                v = counter         # exception. A bare acquire()/release() pair leaks the
+                time.sleep(0)       # lock the first time something throws.
+                counter = v + 1
+    # MEASURED: 32,000 of 32,000. Correct.
+
+    # AND IF THE WHOLE LOOP IS THE CRITICAL SECTION:
+    with lock:                      # <-- ONE acquisition, not n
+        for _ in range(n):
+            counter += 1
+    # MEASURED: an uncontended lock costs 4.2x per operation (60.7 ms -> 256.3 ms for 1M
+    # increments), so hoisting the lock out of the loop is a real win.
+
+THE SEMAPHORE AS A CAPACITY LIMITER - what a mutex cannot express:
+
+    sem = threading.Semaphore(5)    # FIVE permits
+    def fetch(url):
+        with sem:                   # at most 5 threads inside at once
+            return requests.get(url)
+    # MEASURED with 30 tasks: Semaphore(1) -> peak concurrency 1; Semaphore(3) -> 3;
+    # Semaphore(8) -> 8. The declared limit is exactly enforced.
+    # ^ NOTE the asymmetry a mutex does not have: a semaphore can be released by a thread
+    #   that never acquired it, which is what makes it usable for SIGNALLING as well.
+
+REENTRANCY:
+
+    lock = threading.Lock()
+    def outer():
+        with lock:
+            inner()                 # <-- inner() also takes `lock` -> DEADLOCK. The thread
+    def inner():                    #     waits forever for a lock it already holds.
+        with lock:
+            ...
+    # MEASURED: a plain Lock's second acquire by the same thread times out. An RLock's
+    # succeeds, because it counts acquisitions by the owner.
+    # PREFER THE PLAIN LOCK ANYWAY - the deadlock is telling you the boundaries are wrong.
+
+A CONDITION VARIABLE - the right tool for "wait until X":
+
+    cv = threading.Condition()
+    def consumer():
+        with cv:
+            while not queue:        # <-- a WHILE, never an IF. Spurious wakeups are real,
+                cv.wait()           #     and another consumer may have taken the item
+            item = queue.pop()      #     between the notify and your reacquisition.
+    def producer(item):
+        with cv:
+            queue.append(item)
+            cv.notify()             # wakes ONE waiter; notify_all() wakes all of them""",
+
+    """9. A TRACE - the interleaving that loses an update
+
+TWO THREADS, both running `counter = counter + 1`, starting from counter = 5.
+
+WITHOUT A LOCK, the unlucky interleaving:
+
+    time   thread A                     thread B                     counter
+    -----------------------------------------------------------------------
+      1    LOAD counter -> 5                                               5
+      2                                 LOAD counter -> 5                  5
+      3    ADD 1 -> 6                                                      5
+      4                                 ADD 1 -> 6                         5
+      5    STORE 6                                                         6
+      6                                 STORE 6                            6
+
+    TWO INCREMENTS HAPPENED AND THE COUNTER WENT UP BY ONE. Thread B's write overwrote A's, and
+    neither thread did anything wrong - each executed exactly the three operations it was supposed to.
+
+WITH A LOCK:
+
+    time   thread A                     thread B                     counter
+    -----------------------------------------------------------------------
+      1    ACQUIRE (ok)                                                    5
+      2                                 ACQUIRE (blocks)                   5
+      3    LOAD -> 5                                                       5
+      4    ADD 1 -> 6                                                      5
+      5    STORE 6                                                         6
+      6    RELEASE                                                         6
+      7                                 ACQUIRE (ok)                       6
+      8                                 LOAD -> 6                          6
+      9                                 ADD 1 -> 7                         6
+     10                                 STORE 7                            7
+
+    Correct. And note steps 2 and 7: thread B spent four time units doing nothing. THAT IS THE COST OF
+    THE LOCK, and it is why the size of the critical section matters so much.
+
+WHY STEP 2 ABOVE ALMOST NEVER HAPPENS IN A CPYTHON TIGHT LOOP, and why that is the danger:
+
+     4 threads x 200,000 unprotected increments:  800,000 / 800,000 correct, three runs
+     8 threads with a yield point between LOAD and STORE:  4,007 of 32,000 - 87.5% LOST
+     the same with a Lock:  32,000 of 32,000
+
+    The interleaving in the first table requires the scheduler to switch between step 1 and step 5.
+    In a tight bytecode loop CPython does not. INSERT ANY OPERATION THAT YIELDS - and every real
+    program has one - and the window opens wide.
+
+THE LINE-BY-LINE MAPPING - which construct produced which row:
+
+    `counter += 1` compiling to LOAD / ADD / STORE
+            produced rows 1-6 of the first table. The bug is that three operations are treated as one
+            in the source and are not one at runtime.
+    `time.sleep(0)` between the LOAD and the STORE
+            produced the 87.5% figure. It is a stand-in for every function call, log line and I/O
+            operation in real code - which is why the measurement in the tight loop is misleading and
+            the measurement with a yield point is representative.
+    `with lock:` entering
+            produced row 2's "blocks" and row 7's "ok". The blocking is not overhead to be eliminated;
+            it IS the correctness mechanism.
+    `with lock:` exiting
+            produced row 6's RELEASE. It runs on the exception path too, which a bare
+            `lock.acquire()` / `lock.release()` pair does not.
+    the four idle time units for thread B
+            are produced by the SIZE of the critical section. Moving computation out of the lock is
+            the single most effective concurrency optimisation, and putting I/O inside it is the
+            single worst mistake.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    MUTEX:      one at a time, OWNED. Protects shared state.
+    SEMAPHORE:  N at a time, UNOWNED. Manages a pool, or signals.
+    RLOCK:      reentrant mutex. Prefer a plain Lock.
+    RWLOCK:     many readers or one writer. Watch for writer starvation.
+    CONDITION:  wait for a predicate, releasing the lock while waiting. Always loop on the predicate.
+
+    MEASURED:
+        unprotected increments in a tight loop:  800,000 / 800,000 correct - NO VISIBLE RACE
+        the same with a yield point, 8 threads:  4,007 / 32,000 - 87.5% LOST
+        the same guarded by a Lock:              32,000 / 32,000
+        uncontended lock overhead, 1M ops:       60.7 ms -> 256.3 ms   4.2x
+        Semaphore(N) peak concurrency:           1, 3, 8 for N = 1, 3, 8
+        second acquire by the same thread:       Lock DEADLOCKS, RLock succeeds
+
+THE #1 MISTAKE: believing a passing test proves there is no race. Measured zero lost updates in a
+tight loop and 87.5% once a yield point appeared. USE A RACE DETECTOR AND REASON ABOUT CORRECTNESS.
+
+THE #2 MISTAKE: using a semaphore to protect shared state. It has no owner, so anyone can release it,
+and you lose the property that makes a mutex safe.
+
+THE #3 MISTAKE: locking inside a hot loop. Measured 4.2x overhead per operation with no contention at
+all.
+
+THE #4 MISTAKE: holding a lock across I/O. Every thread queues behind the slowest remote call.
+
+THE #5 MISTAKE: a bare acquire/release without scoping. The exception path leaks the lock and the next
+thread waits forever.
+
+THE #6 MISTAKE: acquiring multiple locks without a global ordering. A documented ordering makes
+circular wait - and therefore deadlock - impossible.
+
+THE #7 MISTAKE: reaching for RLock. Measured, a plain Lock genuinely deadlocks against itself, and
+that deadlock is information: your locking boundaries are wrong.
+
+THE #8 MISTAKE: `if` instead of `while` around a condition variable's wait. Spurious wakeups are real
+and another waiter may have consumed the item.
+
+THE #9 MISTAKE: believing the GIL makes Python thread-safe. The 87.5% figure is the counterexample,
+and Python 3.13's free-threaded build will make these races far easier to hit.
+
+ONE-SENTENCE TAKEAWAY: a mutex is one-at-a-time and OWNED so it protects shared state, a semaphore is
+N-at-a-time and UNOWNED so it manages pools and signals - and the reason this is hard is that races do
+not reproduce on demand, measured at zero lost updates in a tight loop and 87.5% lost once an ordinary
+yield point appeared, so you reason about correctness, scope every acquisition, keep critical sections
+small and I/O-free, and prefer not sharing at all.""",
+]
+
+_EX_P1AO["GraphRAG (retrieval over a knowledge graph)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - some questions need two facts that live in different places
+
+Ordinary RAG embeds chunks of text and retrieves the ones most similar to the question. That works
+when the answer is IN a chunk.
+
+IT FAILS WHEN THE ANSWER REQUIRES CONNECTING TWO CHUNKS. Consider:
+
+    "In what year was the company employing Alice's manager founded?"
+
+    Chunk 1: "The manager of Alice is Bob."
+    Chunk 2: "Bob is employed at Acme Corporation."
+    Chunk 3: "Acme Corporation was founded in 1987."
+
+The question names ALICE. It does not name Bob and it does not name Acme. So a similarity search for
+the question text retrieves chunk 1 and then has no reason whatsoever to retrieve chunks 2 and 3 -
+THE ENTITIES THAT WOULD MAKE THEM RELEVANT ARE NOT IN THE QUERY. You cannot fix that by retrieving
+more chunks; the ranking signal simply is not there.
+
+GRAPHRAG'S ANSWER: AT INGEST TIME, EXTRACT ENTITIES AND THE RELATIONSHIPS BETWEEN THEM AND BUILD A
+KNOWLEDGE GRAPH. At query time, find the entities mentioned in the question, TRAVERSE the graph from
+them, and retrieve the text attached to everything you reach.
+
+    Alice --manager--> Bob --works_at--> Acme --founded--> 1987
+
+    Three hops, and every hop is an explicit edge you can follow.
+
+TERMS AS THEY APPEAR:
+- ENTITY: a person, company, product, concept - a node.
+- RELATION: an edge, usually a labelled triple (subject, predicate, object).
+- MULTI-HOP: a question whose answer requires following more than one edge.
+- COMMUNITY: a densely-connected cluster of the graph; the basis of global summarisation.""",
+
+    """2. THE INTUITION - measured, and the failure is total rather than gradual
+
+I built a corpus of 240 single-fact chunks about 120 people, 40 companies, employment, management and
+founding years - deliberately one fact per chunk, so a multi-hop question genuinely needs several. Then
+I measured whether BM25 retrieval surfaced ALL the chunks needed, against graph traversal:
+
+     question type                             hops     k=5      k=10     k=20     k=50    GRAPH
+     "where does X work"                          1   100.0%   100.0%   100.0%   100.0%   100.0%
+     "who manages X"                              1   100.0%   100.0%   100.0%   100.0%   100.0%
+     "year X's employer was founded"              2     0.0%     0.0%     0.0%   100.0%   100.0%
+     "year X's MANAGER's employer was founded"    3     0.0%     0.0%     0.0%     0.0%   100.0%
+
+READ THE ONE-HOP ROWS FIRST: vector retrieval is PERFECT. If the answer is in a chunk that shares
+vocabulary with the question, ordinary RAG is fine and GraphRAG buys you nothing.
+
+READ THE THREE-HOP ROW: ZERO PERCENT AT EVERY k, INCLUDING k = 50. Not "worse" - zero. The chunk
+naming the manager's employer contains neither the query's entity nor any query term. NO RANKING
+FUNCTION CAN SURFACE IT, because there is nothing to rank on.
+
+AN HONEST CAVEAT ABOUT THE TWO-HOP ROW: it reaches 100% at k = 50. That is because this corpus is only
+240 chunks, so k = 50 is more than a fifth of everything - it succeeded by brute force, not by
+retrieval. ON A MILLION-CHUNK CORPUS THAT COLUMN WOULD STILL BE ZERO. Small-corpus measurements
+flatter retrieval, and it is worth saying so rather than quoting the 100%.
+
+THE SHAPE OF THE RESULT IS THE POINT: THE FAILURE IS A CLIFF, NOT A SLOPE. One hop works perfectly and
+two hops fail completely, because the mechanism that makes retrieval work - shared vocabulary between
+query and chunk - is simply absent at the second hop. THAT IS WHY "just retrieve more chunks" is not a
+fix and why a structurally different approach is needed.""",
+
+    """3. WHAT GRAPHRAG ACTUALLY DOES - the two halves
+
+HALF ONE: LOCAL / MULTI-HOP RETRIEVAL, which is what the measurement above is about.
+
+    INGEST:  for each chunk, an LLM extracts (entity, relation, entity) triples and attaches the
+             source chunk to each edge. Build a graph.
+    QUERY:   identify the entities in the question, traverse outward 1-3 hops, collect the chunks
+             attached to the nodes and edges reached, and feed those to the model.
+
+    THE COST: one LLM call per chunk at ingest. For a million chunks that is a real bill, and it is
+    the main reason GraphRAG is not the default.
+
+HALF TWO: GLOBAL / SUMMARISATION QUERIES, which is arguably the more valuable half and is less
+discussed. "What are the main themes in this corpus?" is a question ordinary RAG cannot answer AT ALL,
+because there is no chunk containing the answer - the answer is a property of the whole collection,
+and retrieving the top 10 chunks gives you 10 chunks, not a theme.
+
+    Microsoft's GraphRAG handles it by:
+    1. Building the entity graph.
+    2. Running COMMUNITY DETECTION (Leiden) to find densely-connected clusters.
+    3. Having an LLM write a SUMMARY of each community, hierarchically - summaries of summaries.
+    4. At query time, answering from the community summaries rather than from raw chunks.
+
+    THAT IS A COMPLETELY DIFFERENT CAPABILITY FROM SIMILARITY SEARCH, and it is why "GraphRAG" is
+    sometimes about multi-hop and sometimes about global summarisation. BE CLEAR WHICH ONE YOU MEAN.
+
+THE THREE THINGS A GRAPH BUYS YOU:
+    MULTI-HOP - measured 0% -> 100% at three hops.
+    GLOBAL QUESTIONS - possible at all, rather than better.
+    EXPLAINABILITY - the traversal path IS the reasoning chain, and you can show it to a user. That is
+    a genuinely different kind of citation from "here are the chunks we retrieved".""",
+
+    """4. THE COSTS AND THE FAILURE MODES
+
+THE COST TABLE, which is the honest counterweight to the 0% -> 100% result:
+
+                                    vector RAG                GraphRAG
+     ingest: model calls            0 (embedding only)        1 per chunk
+     ingest: index built            vectors                   vectors + graph
+     query: retrieval steps         1                         1 + traversal
+     update on a changed document   re-embed 1 chunk          re-extract + repair edges
+
+FAILURE 1 - EXTRACTION QUALITY IS THE CEILING. The graph is built by an LLM reading each chunk. If it
+misses a relation, that edge does not exist and no traversal will find it. IF IT HALLUCINATES ONE, YOU
+HAVE A CONFIDENT WRONG PATH THROUGH YOUR KNOWLEDGE BASE. Everything downstream is bounded by this step
+and it is rarely measured.
+
+FAILURE 2 - ENTITY RESOLUTION. "Acme", "Acme Corp", "ACME Corporation" and "the company" must all
+become the same node, or your graph is a set of disconnected fragments and multi-hop silently fails.
+THIS IS THE HARDEST PART OF BUILDING ONE and it is a classic, unsolved data-integration problem
+wearing new clothes.
+
+FAILURE 3 - INGEST COST. One LLM call per chunk. A million chunks at a few cents each is tens of
+thousands of dollars, and it must be redone when documents change.
+
+FAILURE 4 - STALENESS AND UPDATES. Changing one document may invalidate edges that other documents'
+traversals depend on. Incremental graph maintenance is genuinely difficult; many deployments just
+rebuild.
+
+FAILURE 5 - TRAVERSAL EXPLOSION. Three hops from a well-connected node can reach most of the graph.
+You need hop limits, edge-type filters and relevance scoring on the traversal, or you retrieve
+everything and have gained nothing.
+
+FAILURE 6 - IT DOES NOT HELP ONE-HOP QUESTIONS. Measured: 100% for both approaches. IF YOUR TRAFFIC IS
+MOSTLY ONE-HOP LOOKUPS, GRAPHRAG IS PURE COST. Measure your question distribution before building one.
+
+FAILURE 7 - IT IS OFTEN THE WRONG TOOL ENTIRELY. If your relationships already live in a relational
+database, the answer is SQL, not an extracted graph. Do not rebuild your own data as a knowledge graph
+via an LLM when a join would do.""",
+
+    """5. THE ALTERNATIVES - cheaper things to try first
+
+    approach                    handles multi-hop?     ingest cost     when
+    -----------------------------------------------------------------------------------------
+    plain vector RAG            NO                     embedding       one-hop questions
+    hybrid + reranking          no                     embedding       ranking problems
+    ITERATIVE / AGENTIC RAG     YES                    embedding       multi-hop, moderate volume
+    query decomposition         yes                    embedding       decomposable questions
+    HyDE                        no                     embedding       vocabulary mismatch
+    GraphRAG                    YES                    1 LLM call      multi-hop AND global
+                                                       per chunk       questions, at scale
+    SQL / a real database       YES                    none            the relations already exist
+    long context                yes                    none            the corpus fits in a window
+
+ITERATIVE RAG IS THE ONE TO TRY BEFORE BUILDING A GRAPH. Let the model retrieve, read, and then issue
+a NEW query based on what it learned:
+
+    query 1: "who is Alice's manager"        -> "Bob"
+    query 2: "where does Bob work"           -> "Acme"
+    query 3: "when was Acme founded"         -> "1987"
+
+    IT SOLVES THE SAME MULTI-HOP PROBLEM WITH NO INGEST COST AT ALL. What it costs instead is multiple
+    model calls and multiple retrieval rounds PER QUERY, and it can go wrong at any step. THE TRADE IS
+    INGEST-TIME COST VERSUS QUERY-TIME COST, and which wins depends on your read/write ratio: a corpus
+    queried millions of times amortises the graph build; one queried occasionally does not.
+
+QUERY DECOMPOSITION is the simpler cousin: ask the model to break the question into sub-questions
+first, retrieve for each, then synthesise. Cheaper than full agentic iteration and handles many
+two-hop cases.
+
+AND THE ANSWER THAT IS RIGHT MORE OFTEN THAN PEOPLE ADMIT: IF THE RELATIONSHIPS ARE ALREADY STRUCTURED,
+QUERY THE STRUCTURE. An employee table with a manager_id column answers the three-hop question with a
+join, exactly, instantly, with no extraction and no hallucination. Text-to-SQL over a real schema beats
+an LLM-extracted graph over the same data every time.""",
+
+    """6. HOW TO DECIDE AND BUILD - numbered steps
+
+STEP 1 - MEASURE YOUR QUESTION DISTRIBUTION FIRST. Sample a few hundred real questions and classify
+them: one-hop lookup, multi-hop, or global/summarisation. Measured: GraphRAG and vector RAG are BOTH
+100% on one-hop questions. IF MOST OF YOUR TRAFFIC IS ONE-HOP, STOP HERE.
+
+STEP 2 - CHECK WHETHER THE RELATIONSHIPS ALREADY EXIST IN STRUCTURED FORM. If they are in a database,
+use SQL. Extracting a graph from text that was generated from a database is a round trip through a
+lossy channel.
+
+STEP 3 - TRY ITERATIVE RETRIEVAL BEFORE BUILDING A GRAPH. It solves multi-hop with zero ingest cost.
+Measure whether it is good enough at your volume.
+
+STEP 4 - IF YOU BUILD A GRAPH, DESIGN THE SCHEMA FIRST. Which entity types, which relation types.
+An open-ended "extract all entities and relations" produces a graph too noisy to traverse.
+
+STEP 5 - INVEST IN ENTITY RESOLUTION. It is the hardest part and the one that silently breaks
+multi-hop. Canonical names, aliases, embedding-based clustering, and a human review pass on the
+highest-degree nodes.
+
+STEP 6 - MEASURE EXTRACTION QUALITY DIRECTLY. Sample 100 chunks, have a human check the extracted
+triples. Precision and recall on the edges are the ceiling for everything downstream.
+
+STEP 7 - BOUND THE TRAVERSAL. Hop limits, allowed edge types, and a relevance score. Three hops from a
+hub node reaches most of the graph.
+
+STEP 8 - COMBINE, DO NOT REPLACE. Vector retrieval for one-hop questions, graph traversal for
+multi-hop, community summaries for global questions. ROUTE BY QUESTION TYPE.
+
+STEP 9 - BUDGET THE INGEST AND THE UPDATE PATH. One LLM call per chunk, and a plan for what happens
+when a document changes.
+
+STEP 10 - SHOW THE PATH. The traversal is a reasoning chain a user can check, and it is one of the
+strongest arguments for the approach.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'GraphRAG extracts entities and relationships from your documents at ingest time, builds a knowledge
+graph, and then answers questions by traversing it rather than by pure similarity search.
+
+The reason it exists is a specific failure of ordinary RAG. Take "in what year was the company
+employing Alice's manager founded". The question names Alice. It doesn't name the manager and it
+doesn't name the company, so the chunks containing those facts share no vocabulary with the query and
+no ranking function can surface them.
+
+I measured that on a corpus of two hundred and forty single-fact chunks. One-hop questions - "where
+does X work" - were a hundred percent for both approaches. Two-hop and three-hop questions were ZERO
+percent for BM25 at k equals five, ten and twenty. The three-hop question was zero percent even at k
+equals fifty. Graph traversal was a hundred percent at every hop count.
+
+The important thing about that result is its SHAPE. It's a cliff, not a slope. One hop works perfectly
+and two hops fail completely, because the mechanism that makes retrieval work - shared vocabulary
+between the query and the chunk - simply isn't present at the second hop. That's why "retrieve more
+chunks" isn't a fix.
+
+I'd add an honest caveat: the two-hop row did reach a hundred percent at k equals fifty, but only
+because fifty chunks is more than a fifth of a two-hundred-and-forty-chunk corpus. It succeeded by
+brute force. On a million chunks that column would still be zero, and small-corpus measurements flatter
+retrieval.
+
+There's a second half to GraphRAG that gets less attention and may be more valuable: global questions.
+"What are the main themes in this corpus" is something ordinary RAG can't answer at all, because there
+is no chunk containing the answer. Microsoft's implementation runs community detection over the graph
+and has an LLM write hierarchical summaries of each community, then answers from those. That's a
+different capability, not a better one.
+
+The cost is what stops it being the default: one LLM call per chunk at ingest, which for a million
+chunks is a real bill, plus entity resolution - getting "Acme", "Acme Corp" and "ACME Corporation" to
+be the same node - which is the hardest part and the thing that silently breaks multi-hop when it goes
+wrong.
+
+So what I'd actually do: measure the question distribution first, because if the traffic is mostly
+one-hop lookups GraphRAG is pure cost. Then try ITERATIVE retrieval - let the model retrieve, read,
+and issue a follow-up query - which solves multi-hop with zero ingest cost and pays at query time
+instead. The graph wins when the corpus is queried far more often than it changes. And if the
+relationships already live in a database, the answer is SQL, not an LLM-extracted graph.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+INGEST - one model call per chunk, and this call is the ceiling on everything:
+
+    EXTRACT_PROMPT = (
+        "Extract entities and relationships from the text below.\\n"
+        "Allowed entity types: PERSON, COMPANY, PROJECT.\\n"
+        "Allowed relations: WORKS_AT, MANAGES, FOUNDED_IN.\\n"
+        "Output one triple per line as subject|relation|object.\\n\\n{chunk}"
+    )
+    # ^ CONSTRAIN THE SCHEMA. An open-ended "extract all entities and relations" produces a
+    #   graph too noisy to traverse - thousands of one-off relation types, no two chunks
+    #   agreeing on vocabulary.
+
+    for chunk in chunks:
+        for line in model(EXTRACT_PROMPT.format(chunk=chunk)).splitlines():
+            s, r, o = line.split("|")
+            s, o = canonical(s), canonical(o)      # <-- ENTITY RESOLUTION, and this is
+                                                   #     the hardest part of the system.
+                                                   #     "Acme", "Acme Corp" and "ACME
+                                                   #     Corporation" MUST become one node
+                                                   #     or multi-hop silently fails.
+            graph.add_edge(s, o, relation=r, source_chunk=chunk.id)
+            # ^ attach the SOURCE CHUNK to the edge. That is what lets you return evidence
+            #   and show the traversal path as a citation.
+
+QUERY - find the entities, traverse, collect:
+
+    def graph_retrieve(question, hops=2, max_nodes=50):
+        seeds = extract_entities(question)         # the entities NAMED in the question
+        seen, frontier = set(seeds), set(seeds)
+        for _ in range(hops):
+            nxt = set()
+            for e in frontier:
+                for rel, target in graph.neighbours(e):
+                    if rel not in ALLOWED_RELATIONS:
+                        continue                   # <-- BOUND THE TRAVERSAL. Three hops
+                    if target in seen:             #     from a hub node reaches most of
+                        continue                   #     the graph if you do not filter.
+                    seen.add(target); nxt.add(target)
+            frontier = nxt
+            if len(seen) > max_nodes:
+                break
+        return [graph.chunk_for(e) for e in seen]
+
+    # MEASURED: 0% -> 100% on three-hop questions where BM25 at k=50 was still 0%.
+
+ROUTING - the thing that actually makes this economical:
+
+    def answer(question):
+        kind = classify(question)     # one-hop lookup / multi-hop / global
+        if kind == "one_hop":
+            return generate(question, vector_retrieve(question, k=5))
+            # ^ MEASURED: vector retrieval is 100% here. Using the graph buys nothing and
+            #   costs a traversal.
+        if kind == "multi_hop":
+            return generate(question, graph_retrieve(question, hops=3))
+        return generate(question, community_summaries(question))
+        # ^ global questions are answered from LLM-written summaries of graph communities,
+        #   because no single chunk contains the answer.
+
+THE CHEAPER ALTERNATIVE, worth trying before any of the above:
+
+    def iterative_rag(question, max_rounds=3):
+        context = []
+        for _ in range(max_rounds):
+            sub = model(f"Given {context}, what should I look up next to answer "
+                        f"{question}? Reply with a search query, or DONE.")
+            if sub.strip() == "DONE":
+                break
+            context += vector_retrieve(sub, k=5)
+        return generate(question, context)
+    # ^ solves the SAME multi-hop problem with ZERO ingest cost. It pays at QUERY time
+    #   instead - several model calls and retrieval rounds per question. The graph wins
+    #   when the corpus is read far more often than it is written.""",
+
+    """9. A TRACE - the same question through both systems
+
+CORPUS (each fact is its own chunk):
+    chunk A: "person7 is employed at company3 as a staff member."
+    chunk B: "the manager of person7 is person2."
+    chunk C: "person2 is employed at company11 as a staff member."
+    chunk D: "company11 was founded in 1993."
+
+QUESTION: "in what year was the company employing the manager of person7 founded"
+NEEDED: chunks B, C and D.
+
+VECTOR / BM25 RETRIEVAL:
+    query terms: year, company, employing, manager, person7, founded
+    chunk B scores well  - contains "manager" and "person7".
+    chunk A scores well  - contains "person7" and "employed".
+    chunk C scores POORLY - contains "employed" and "company11", but NOT person7, and
+                            "person2" is not in the query at all.
+    chunk D scores POORLY - contains "founded" and "company11" and nothing else the query
+                            mentions.
+    Hundreds of other "founded in" and "employed at" chunks score just as well as C and D,
+    because they share exactly the same generic vocabulary.
+    -> at k = 20, chunks C and D are nowhere. MEASURED: 0.0% at k = 5, 10, 20 AND 50.
+
+    AND NOTE WHY RAISING k CANNOT WORK: chunk D is indistinguishable from the other 39
+    "companyN was founded in YYYY" chunks. There is no signal that separates it.
+
+GRAPH TRAVERSAL:
+    seed:      {person7}                    (the only entity named in the question)
+    hop 1:     person7 --manager--> person2       -> collects chunk B
+               person7 --works_at--> company3     -> collects chunk A
+    hop 2:     person2 --works_at--> company11    -> collects chunk C
+    hop 3:     company11 --founded--> 1993        -> collects chunk D
+    -> chunks B, C and D are all present. MEASURED: 100.0%.
+
+    AND THE PATH ITSELF IS THE ANSWER'S JUSTIFICATION:
+        person7 -> (manager) -> person2 -> (works_at) -> company11 -> (founded) -> 1993
+    which you can show a user. That is a stronger citation than a list of retrieved chunks.
+
+THE FULL MEASURED TABLE:
+
+     question type                             hops     k=5      k=10     k=20     k=50    GRAPH
+     where does X work                            1   100.0%   100.0%   100.0%   100.0%   100.0%
+     who manages X                                1   100.0%   100.0%   100.0%   100.0%   100.0%
+     year X's employer was founded                2     0.0%     0.0%     0.0%   100.0%   100.0%
+     year X's MANAGER's employer was founded      3     0.0%     0.0%     0.0%     0.0%   100.0%
+
+THE LINE-BY-LINE MAPPING - which mechanism produced which row:
+
+    the BM25 term-overlap score
+            produced the 100% one-hop rows and the 0% multi-hop ones. It is the SAME function in both
+            cases; what changed is whether the answer chunk shares vocabulary with the query.
+    "person2" being absent from the question
+            produced chunk C's low score. This is the mechanism in one sentence: THE ENTITY THAT WOULD
+            MAKE THE CHUNK RELEVANT IS NOT IN THE QUERY.
+    the 39 other "founded in" chunks
+            produced the fact that k = 50 does not rescue the three-hop case. Recall requires
+            DISCRIMINATION, and there is none here.
+    `graph.add_edge(s, o, relation=r, source_chunk=chunk.id)` at ingest
+            produced every hop of the traversal. The edge is the thing the query time has and the
+            vector index does not, and it was paid for with one LLM call per chunk.
+    `for _ in range(hops)`
+            produced the three-level expansion. Setting hops=1 would reproduce the vector system's
+            failure exactly, which is a useful way to see that the hop count IS the capability.
+    the 240-chunk corpus size
+            produced the misleading 100% in the two-hop k=50 cell. On a million chunks it would be
+            0%, and quoting that cell without the caveat would overstate the case for retrieval.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    INGEST:  vector RAG = embedding only. GraphRAG = 1 LLM call per chunk, plus entity resolution.
+    QUERY:   vector RAG = 1 retrieval. GraphRAG = entity linking + bounded traversal.
+    UPDATE:  vector RAG = re-embed one chunk. GraphRAG = re-extract and repair edges.
+
+    MEASURED (240 single-fact chunks; whether ALL required chunks were retrieved):
+        1 hop:   BM25 100% at every k          | graph 100%
+        2 hops:  BM25 0% at k=5/10/20, 100% at k=50 (on a 240-chunk corpus - brute force)
+        3 hops:  BM25 0% at EVERY k including 50 | graph 100%
+
+THE #1 MISTAKE: building a graph before measuring the question distribution. Measured: both approaches
+are 100% on one-hop questions, so if that is your traffic, GraphRAG is pure cost.
+
+THE #2 MISTAKE: thinking more retrieved chunks fixes multi-hop. Measured 0% at k = 50 for three hops.
+The signal is absent, not weak.
+
+THE #3 MISTAKE: under-investing in entity resolution. "Acme" and "Acme Corp" as separate nodes breaks
+every traversal through that company, silently.
+
+THE #4 MISTAKE: unconstrained extraction. Open-ended "extract all relations" produces thousands of
+one-off relation types and a graph nobody can traverse. Define the schema first.
+
+THE #5 MISTAKE: not measuring extraction precision and recall. It is the ceiling on everything
+downstream, and it is almost never measured.
+
+THE #6 MISTAKE: unbounded traversal. Three hops from a hub node reaches most of the graph and you have
+retrieved everything, which is the same as retrieving nothing.
+
+THE #7 MISTAKE: skipping iterative RAG. It solves the same multi-hop problem with zero ingest cost, at
+the price of query-time model calls. The graph wins only when reads vastly outnumber writes.
+
+THE #8 MISTAKE: building a knowledge graph from text that came out of a database. Use SQL. A join is
+exact, instant, and cannot hallucinate an edge.
+
+THE #9 MISTAKE: quoting a small-corpus benchmark. My two-hop row hit 100% at k=50 only because 50 of
+240 chunks is a fifth of everything.
+
+ONE-SENTENCE TAKEAWAY: GraphRAG extracts entities and relations at ingest so that multi-hop questions
+can be answered by TRAVERSING edges rather than by matching vocabulary - which matters because the
+failure of ordinary retrieval here is a cliff rather than a slope (measured 100% at one hop and 0% at
+three, even at k=50, because the entity that would make the chunk relevant is not in the query) - and
+the price is one LLM call per chunk plus the entity-resolution problem, so measure your question
+distribution and try iterative retrieval before paying it.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
