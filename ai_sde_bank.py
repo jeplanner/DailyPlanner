@@ -146387,6 +146387,1043 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
+_EX_P1AO["Composition over inheritance - why 'is-a' keeps failing"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - IS-A versus HAS-A
+
+Two ways to reuse code:
+
+    INHERITANCE   'this thing IS A kind of that thing'
+        class Dog(Animal)  - a Dog is an Animal, and can be used anywhere an Animal can.
+
+    COMPOSITION   'this thing HAS A helper it delegates to'
+        class Order:  self.shipping = ExpressShipping()  - an Order HAS a way of shipping.
+
+Beginners reach for inheritance because it removes duplicate code fastest. It is usually the wrong
+tool, and the advice 'favour composition over inheritance' is in every serious design book for reasons
+that are specific rather than stylistic.
+
+THE THREE REASONS, and each is a distinct failure:
+
+1. INHERITANCE IS A PROMISE, NOT A SHORTCUT. `class Penguin(Bird)` commits you to Penguin being usable
+   ANYWHERE a Bird is - including wherever something calls `fly()`.
+2. YOU GET ONE PARENT. Most languages allow one superclass, so the first inheritance you write spends
+   the only slot you have.
+3. THE BASE CLASS BECOMES FRAGILE. Subclasses depend on the parent's internals, so changing the parent
+   breaks classes you may never have read.
+
+TERMS AS THEY APPEAR:
+- SUBTYPE: a type usable wherever its parent is. This is a stronger claim than 'shares some code'.
+- LISKOV SUBSTITUTION (the L in SOLID): the formal name for reason 1 - a subclass must be usable
+  anywhere the parent is, without the caller knowing.
+- DELEGATION: composition's mechanic - the object holds another object and forwards calls to it.
+- FRAGILE BASE CLASS: the problem in reason 3.""",
+
+    """2. THE INTUITION - the tests that expose a bad hierarchy
+
+TEST ONE: SAY THE SENTENCE ALOUD. 'A Penguin IS A Bird.' True in biology. Now say the consequence: 'so
+anything that works with a Bird works with a Penguin' - and if Bird has `fly()`, that is false. The
+hierarchy encoded a taxonomy, not a contract.
+
+The standard fix is to inherit the CONTRACT you actually need: Penguin extends Bird, and only
+FlyingBird has `fly()`. Or, better, composition: a Bird HAS a movement strategy, and a Penguin's is
+swimming.
+
+TEST TWO: THE SQUARE AND THE RECTANGLE, which is the classic because it is so counter-intuitive. A
+square IS a rectangle - every schoolchild knows it. But `Rectangle` promises that setting the width
+leaves the height alone, and `Square` cannot keep that promise. So:
+
+    r = Square(2)
+    r.width = 5          # a Square must also change its height
+    assert r.height == 2 # a test written against Rectangle now FAILS
+
+The subclass broke a promise the parent made. Note what this shows: 'is-a' in ENGLISH is not the same
+as 'is substitutable for' in CODE, and the second is what inheritance means.
+
+TEST THREE: WOULD YOU EVER WANT TO SWAP IT AT RUN TIME? You cannot change an object's superclass. If
+'this order ships express today and standard tomorrow' is meaningful, inheritance cannot express it
+and composition can.
+
+TEST FOUR: ARE YOU INHERITING TO GET AT A METHOD? If `class Customer(DatabaseHelper)` exists so that
+Customer can call `save()`, you have declared that a Customer IS A database helper, which is nonsense,
+and spent your one inheritance slot on a utility. Give Customer a repository object instead.
+
+THE POSITIVE CASE FOR COMPOSITION, stated plainly: behaviour becomes a VALUE. It can be passed in,
+swapped, tested alone, chosen from configuration, and combined - three composed behaviours give you
+eight combinations, where three levels of inheritance give you one path.""",
+
+    """3. TRACED - the same requirement, both ways
+
+THE REQUIREMENT: birds. Some fly, some swim, some do both. Some sing.
+
+    THE INHERITANCE VERSION, done the way people reach for first:
+
+        class Bird:
+            def fly(self): ...
+            def sing(self): ...
+        class Penguin(Bird):
+            def fly(self): raise NotImplementedError    # <- the smell
+        class Ostrich(Bird):
+            def fly(self): raise NotImplementedError    # <- again
+
+    `raise NotImplementedError` in an override is the loudest possible signal that the hierarchy is
+    wrong. It says 'I inherited a promise I cannot keep'. Every caller that holds a Bird must now
+    either know about penguins or handle an exception - which is the exact coupling inheritance was
+    supposed to remove.
+
+    Now add: some birds swim. You cannot put `swim()` on Bird (most do not), and you cannot make
+    SwimmingBird a second parent without multiple inheritance. The hierarchy has run out of room after
+    two requirements.
+
+    THE COMPOSITION VERSION:
+
+        class Bird:
+            def __init__(self, movement, sound):
+                self.movement = movement          # HAS-A
+                self.sound = sound
+            def move(self):  return self.movement.move()
+            def speak(self): return self.sound.make()
+
+        penguin = Bird(Swimming(), Squawk())
+        sparrow = Bird(Flying(),   Song())
+        duck    = Bird(FlyingAndSwimming(), Quack())
+
+    No exceptions, no unusable methods, and the combinations are free. Adding 'runs' is one small
+    class, and it composes with every sound that already exists.
+
+    AND THE RUN-TIME PROPERTY that inheritance cannot offer:
+
+        penguin.movement = Flying()      # if you ever needed it, it is one assignment
+
+THE SAME SHAPE AS STRATEGY, and that is not a coincidence: composition is the mechanism, and Strategy,
+State, Decorator and Adapter are all patterns built on it. See
+[[pattern-strategy-swap-an-algorithm-at-runtime]].""",
+
+    """4. WHEN INHERITANCE IS ACTUALLY RIGHT
+
+The advice is 'FAVOUR composition', not 'never inherit'. Inheritance is the right tool when all three
+of these hold:
+
+1. THE IS-A RELATIONSHIP IS TRUE AS A CONTRACT, not just as English. Anything working with the parent
+   must work with the child, unchanged.
+2. THE SUBCLASSES SHARE REAL IMPLEMENTATION or state you would otherwise duplicate.
+3. THE SET OF SUBCLASSES IS STABLE and small.
+
+THE CASES WHERE IT IS CLEARLY CORRECT:
+
+    · IMPLEMENTING AN INTERFACE or an abstract base class. This is inheritance of a CONTRACT with no
+      implementation, and it has none of the fragility problems - it is the good half.
+    · THE TEMPLATE METHOD SHAPE: a base class fixes the steps of an algorithm and subclasses fill in
+      one or two. `Account.withdraw` calling `self._available()` is the example from
+      [[the-four-pillars-of-oop-with-one-running-example]].
+    · FRAMEWORK EXTENSION POINTS - subclassing a Django view, a unittest.TestCase, an nn.Module. The
+      framework designed the contract and expects you to inherit it.
+    · GENUINE VARIANTS OF ONE THING with shared state: HttpError, TimeoutError and RetryableError all
+      extending AppError.
+
+AND THE ONE THAT LOOKS LIKE INHERITANCE AND IS NOT: 'I want the parent's methods available on my
+object.' That is a HAS-A dressed up. Hold the object and delegate; in Python `__getattr__` can forward
+everything if you really want the syntax.
+
+THE PRACTICAL RULE, worth saying in an interview: 'inherit to be substitutable, compose to reuse'. If
+you are inheriting for reuse rather than for substitutability, you have chosen the wrong axis - and
+the tell is that you find yourself overriding a method to disable it.""",
+
+    """5. THE FAILURE MODES
+
+A. `raise NotImplementedError` IN AN OVERRIDE. The clearest possible signal that the child cannot keep
+   the parent's promise. Restructure rather than document it.
+
+B. THE DEEP HIERARCHY. Five levels each adding a little means opening five files to understand one
+   method, and a change at level two can break level five silently. Two levels is usually enough.
+
+C. THE FRAGILE BASE CLASS. Subclasses come to depend on WHEN the parent calls its own methods, not
+   just what they do - so an innocuous refactor of the parent breaks subclasses that call super() at a
+   different moment. This is the deepest argument for composition, and it is why library authors are
+   so reluctant to change base classes.
+
+D. INHERITING FOR CODE REUSE. `class Customer(DatabaseHelper)`. It spends the single parent slot, ties
+   the classes together permanently, and asserts something false.
+
+E. THE SQUARE-RECTANGLE VIOLATION in disguise: a subclass that STRENGTHENS a precondition (accepts
+   less) or WEAKENS a postcondition (promises less). `ReadOnlyList extends List` where `add()` throws
+   is the same bug - every caller holding a List is now wrong.
+
+F. MULTIPLE INHERITANCE AS A WORKAROUND. Python allows it, and mixins are genuinely useful for small
+   orthogonal behaviours. But once two parents both define the same method you are relying on the MRO,
+   and the resolution order surprises people - see [[abstract-class-vs-interface-and-which-to-reach-
+   for]] where `super()` in one class reaches its SIBLING rather than its parent.
+
+G. COMPOSITION TAKEN TOO FAR. Twelve tiny collaborators, each with one method, injected through four
+   layers, is its own kind of unreadable. If the parts are never swapped, separately tested or
+   configured, they may not need to be parts.""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+1. SAY THE SENTENCE. 'A X IS A Y.' If it needs qualification - 'well, except that it cannot fly' -
+   stop.
+2. ASK THE SUBSTITUTION QUESTION. Can every piece of code that works with Y be handed an X and still
+   be correct? That, not the English, is what inheritance means.
+3. ASK WHETHER YOU WANT THE PARENT'S TYPE OR ITS CODE. Its TYPE - so your object can be passed where
+   the parent is expected - is inheritance. Its CODE is composition.
+4. ASK WHETHER IT MIGHT CHANGE AT RUN TIME. If yes, composition, because you cannot reassign a
+   superclass.
+5. COUNT THE COMBINATIONS. If you have two independent axes of variation - how it moves and what sound
+   it makes - inheritance multiplies into a class per pair and composition does not.
+6. IF YOU INHERIT, KEEP IT TO TWO LEVELS, call super() properly, and never override a method to
+   disable it.
+7. IF YOU COMPOSE, INJECT THE COLLABORATOR through the constructor so it can be substituted in tests.
+
+STEP 2 IS THE ONE THAT SETTLES ARGUMENTS. 'Is a square a rectangle?' produces a debate; 'can I hand a
+Square to every function that takes a Rectangle and still be right?' produces an answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Inheritance says this thing IS A kind of that thing and can be used anywhere it can. Composition says
+this thing HAS A helper and delegates to it.
+
+People reach for inheritance because it removes duplication fastest, and it usually costs more than it
+saves. Three reasons. It is a promise rather than a shortcut - Penguin extends Bird commits you to a
+penguin working anywhere a bird does, including wherever something calls fly, and the moment you write
+"raise NotImplementedError" in an override you have admitted the hierarchy is wrong. You only get one
+parent in most languages, so the first inheritance spends the slot. And subclasses depend on the
+parent's internals, so changing the parent breaks classes you have never read.
+
+The test I would apply is substitutability, not English. A square IS a rectangle in English, and in
+code Rectangle promises that setting the width leaves the height alone - which Square cannot keep. So
+any test written against Rectangle fails when handed a Square.
+
+Composition avoids all of it and makes behaviour a VALUE: it can be passed in, swapped at run time,
+tested on its own, and combined - two independent axes give you every combination for free instead of
+a class per pair.
+
+Where inheritance IS right: implementing an interface, the template-method shape, framework extension
+points, and genuine variants sharing real state. Inherit to be substitutable, compose to reuse.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    THE SMELL:
+
+        class Penguin(Bird):
+            def fly(self):
+                raise NotImplementedError("penguins cannot fly")
+
+    Read what this does to a CALLER. Somewhere there is a function `def migrate(bird): bird.fly()`,
+    written correctly against the Bird contract. It now crashes for one subclass, and the only fix at
+    the call site is an isinstance check - which is the coupling inheritance was meant to remove.
+
+    THE COMPOSED VERSION:
+
+        class Bird:
+            def __init__(self, movement, sound):
+                self.movement = movement
+                self.sound = sound
+
+    The two collaborators arrive through the constructor, which is DEPENDENCY INJECTION - and it is
+    what makes Bird testable with a stub movement that records that it was called.
+
+            def move(self):
+                return self.movement.move()
+
+    THE DELEGATION - one line, no conditional, and Bird has no idea how many kinds of movement exist.
+    Adding one requires no change here.
+
+        penguin = Bird(Swimming(), Squawk())
+        sparrow = Bird(Flying(), Song())
+
+    THE COMBINATIONS ARE FREE. Three movements and three sounds give nine birds with six small
+    classes; an inheritance hierarchy covering the same ground needs nine classes, or multiple
+    inheritance.
+
+    WHERE INHERITANCE IS STILL RIGHT, for contrast:
+
+        class Movement(ABC):
+            @abstractmethod
+            def move(self): ...
+        class Swimming(Movement):
+            def move(self): return "swims"
+
+    Note that the composed design STILL uses inheritance - for the interface. That is the good half:
+    inheritance of a CONTRACT with no implementation and no state, which has none of the fragility
+    problems. 'Favour composition over inheritance' does not mean 'never write a base class'; it means
+    'inherit the contract, compose the behaviour'.""",
+
+    """9. THE SQUARE AND THE RECTANGLE, RUN THROUGH
+
+    class Rectangle:
+        def set_width(self, w):  self.w = w
+        def set_height(self, h): self.h = h
+        def area(self):          return self.w * self.h
+
+    class Square(Rectangle):          # 'a square IS a rectangle'
+        def set_width(self, w):  self.w = self.h = w
+        def set_height(self, h): self.w = self.h = h
+
+    A TEST WRITTEN AGAINST RECTANGLE, by someone who never heard of Square:
+
+        def test_area(r):
+            r.set_width(5)
+            r.set_height(4)
+            assert r.area() == 20
+
+        test_area(Rectangle())   ->  passes
+        test_area(Square())      ->  FAILS: area is 16
+
+    The Square is not defective and the test is not wrong. The INHERITANCE is wrong: Rectangle's
+    contract includes 'width and height are independent', and Square cannot honour it. English said
+    is-a; the code needed substitutable.
+
+    THE FIXES, in order of preference:
+        · make them SEPARATE types with a common `Shape` interface exposing only `area()`;
+        · make them IMMUTABLE - if nothing can be set after construction, the contract is never
+          broken, and this is why value objects sidestep so many hierarchy problems;
+        · compose: a Square HAS a side; a Rectangle HAS a width and a height.
+
+WHY THIS EXAMPLE IS WORTH REMEMBERING despite being a textbook chestnut: it is the cleanest available
+demonstration that the SUBTYPE relationship is about behaviour and promises, not about categories -
+and it gives you a one-sentence answer to 'why not just inherit?' that does not sound like recited
+advice.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    INHERITANCE                                COMPOSITION
+    'IS A' - substitutable for the parent      'HAS A' - delegates to a collaborator
+    one parent, fixed at compile time          many collaborators, swappable at run time
+    shares implementation and state            shares nothing; each part stands alone
+    breaks when the parent changes             parts are independent
+    right for: interfaces, template method,    right for: behaviour that varies, anything
+      framework hooks, genuine variants          you might swap, test or configure
+
+THE #1 MISTAKE: inheriting to reuse a method. It spends the single parent slot, asserts something
+false, and produces hierarchies where understanding one method means reading five files. Hold the
+object and delegate.
+
+THE #2 MISTAKE: `raise NotImplementedError` in an override. That is the hierarchy telling you it is
+wrong, in the loudest way available. Restructure.
+
+THE #3 MISTAKE: treating English 'is-a' as the test. A square is a rectangle in English and not in
+code, and that example exists precisely to break the intuition.
+
+THE #4 MISTAKE, in the other direction: composing everything into a cloud of one-method collaborators
+nobody can follow. If a part is never swapped, tested alone or configured, it may not need to be a
+part.
+
+ONE-SENTENCE TAKEAWAY: inherit to be SUBSTITUTABLE and compose to REUSE - and the moment you find
+yourself overriding a method in order to disable it, the hierarchy has already told you which one you
+needed.""",
+]
+
+_EX_P1AO["SOLID principles - all five, each with the bug it prevents"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - five rules for where to draw class boundaries
+
+SOLID is an acronym for five design principles. Recited as definitions they are forgettable
+abstractions. Learnt as FIVE SPECIFIC BUGS they are genuinely useful, and that is how this entry
+presents them.
+
+    S   SINGLE RESPONSIBILITY   one reason to change
+    O   OPEN-CLOSED             open for extension, closed for modification
+    L   LISKOV SUBSTITUTION     a subclass must be usable wherever the parent is
+    I   INTERFACE SEGREGATION   many small interfaces beat one large one
+    D   DEPENDENCY INVERSION    depend on abstractions, not concrete classes
+
+THE BUG EACH ONE PREVENTS, in one line - this is the version worth memorising:
+
+    S   three teams editing the same file for three unrelated reasons
+    O   adding a feature means editing code that already works
+    L   a subclass that throws where the parent did not, breaking callers
+    I   implementing fifteen methods so you can use one
+    D   your business logic cannot be tested without a database
+
+TERMS AS THEY APPEAR:
+- REASON TO CHANGE: a stakeholder or force that would make you edit this class. Security policy, the
+  database schema, the marketing copy - three different reasons.
+- ABSTRACTION: an interface or abstract base - a promise about behaviour with no implementation.
+- CONCRETION: an actual class - PostgresUserRepository, StripeClient.""",
+
+    """2. S AND O - the two you will use every day
+
+    SINGLE RESPONSIBILITY - 'one reason to change'.
+
+    The wording is not 'does one thing', which is vague enough to justify anything. It is one REASON TO
+    CHANGE, and the test is to ask WHO would make you edit this file.
+
+        class User:
+            def validate_password(self): ...    # changes when SECURITY policy changes
+            def save(self): ...                 # changes when the SCHEMA changes
+            def send_welcome_email(self): ...   # changes when MARKETING changes the template
+
+    Three teams, one file, three chances to break each other's work - and a merge conflict every
+    sprint. Split into User (the data and its rules), UserRepository (persistence) and EmailService.
+
+    THE HONEST CAVEAT: taken too far this produces a class per method and a system nobody can follow.
+    The useful reading is 'group by who changes it', not 'make everything tiny'.
+
+    OPEN-CLOSED - 'open for extension, closed for modification'.
+
+    Adding a new case should mean adding code, not editing code that already works.
+
+        # closed to extension: every new payment type edits this function
+        def fee(kind, amount):
+            if kind == "card":  return amount * 0.02
+            elif kind == "bank": return 0.30
+            elif kind == "wallet": return amount * 0.01
+
+    Every addition risks the cases already working, and you re-test all of them. The fix is the
+    Strategy pattern - a class per variant behind one interface - so a new payment type is a new file.
+    See [[pattern-strategy-swap-an-algorithm-at-runtime]], where the same example is measured in
+    lines-changed.
+
+    WHY THESE TWO COME FIRST: they are the principles you apply weekly. The other three are about
+    inheritance and dependencies, and they matter most when you are designing something others will
+    build on.""",
+
+    """3. L, I AND D - the three about boundaries
+
+    LISKOV SUBSTITUTION - 'a subclass must be usable wherever the parent is'.
+
+    The formal version sounds academic; the practical version is a rule about promises. If code
+    written against the parent breaks when handed the child, the inheritance is wrong.
+
+        class Bird:      def fly(self): ...
+        class Penguin(Bird):
+            def fly(self): raise NotImplementedError    # <- violation
+
+    Every caller holding a Bird is now wrong. The classic illustration is Square extending Rectangle:
+    a test that sets width to 5, height to 4 and asserts area 20 passes for a Rectangle and FAILS for
+    a Square, because Square cannot keep Rectangle's promise that the two are independent. See
+    [[composition-over-inheritance-why-is-a-keeps-failing]].
+
+    THE PRACTICAL FORM: a subclass must not strengthen its preconditions (accept less) or weaken its
+    postconditions (promise less).
+
+    INTERFACE SEGREGATION - 'many small interfaces beat one large one'.
+
+        class Machine(ABC):
+            def print(self): ...
+            def scan(self): ...
+            def fax(self): ...
+
+    Now a simple printer must implement scan and fax, and it does so by raising - which is an L
+    violation created by an I violation. Split it into Printer, Scanner and Fax, and let a
+    multifunction device implement all three.
+
+    THE TEST: are your implementers writing methods that throw, or return None, or do nothing? Then
+    the interface is too fat.
+
+    DEPENDENCY INVERSION - 'depend on abstractions, not concretions'.
+
+        class OrderService:
+            def __init__(self):
+                self.db = PostgresClient(...)      # welded to Postgres
+
+    Nothing about ordering requires Postgres, yet you cannot test this class without one. Invert it:
+
+        class OrderService:
+            def __init__(self, repository: OrderRepository):   # an ABSTRACTION
+                self.repo = repository
+
+    Now the test passes an in-memory fake, and switching database is one line at the composition root.
+    Note the second half of the principle, which people forget: the ABSTRACTION SHOULD BE OWNED BY THE
+    BUSINESS LOGIC, not by the database layer. OrderService defines what it needs; the Postgres
+    implementation conforms.""",
+
+    """4. THE FAILURE MODES - including the failure of applying them
+
+A. TREATING SOLID AS A CHECKLIST. Five principles applied uniformly to a two-page script produces
+   interfaces with one implementation, factories that build one thing and a dependency graph nobody
+   can hold. The principles are a response to CHANGE; if a thing is not changing, they cost more than
+   they save. Saying that in an interview is a maturity signal, not a hedge.
+
+B. SINGLE RESPONSIBILITY READ AS 'ONE METHOD'. It is one REASON TO CHANGE. A class with eight methods
+   that all change when the pricing rules change has one responsibility.
+
+C. OPEN-CLOSED PURSUED SPECULATIVELY. Building an extension point for a variation that never arrives
+   is the classic over-engineering. Apply it when the SECOND variant appears - that is when you know
+   the axis of change is real. 'Two strikes and you refactor' is the practical rule.
+
+D. LISKOV VIOLATIONS THAT LOOK REASONABLE. `ReadOnlyList extends List` with a throwing `add()`. Every
+   caller holding a List is now conditionally wrong, and the type system said it was fine.
+
+E. INTERFACE SEGREGATION MISTAKEN FOR 'ONE METHOD PER INTERFACE'. The unit is a COHERENT ROLE, not a
+   method.
+
+F. DEPENDENCY INVERSION AS CEREMONY. An interface with exactly one implementation, that will only ever
+   have one, and that exists so a DI container can inject it. If it is never substituted - not even in
+   tests - it is a layer of indirection with no payoff.
+
+G. QUOTING THE ACRONYM WITHOUT THE BUGS. 'S is single responsibility, a class should do one thing' is
+   the answer that shows you memorised it. 'S means one reason to change - a class that validates
+   passwords, saves to Postgres and formats HTML has three teams editing one file' is the answer that
+   shows you have felt it.""",
+
+    """5. HOW THEY RELATE - and where they came from
+
+They are not five independent rules. Two of them exist to make the others possible:
+
+    · DEPENDENCY INVERSION is what makes OPEN-CLOSED achievable. You can only extend without modifying
+      if the thing being extended depends on an abstraction rather than on concrete classes.
+    · INTERFACE SEGREGATION protects LISKOV. A fat interface forces implementations to throw, which is
+      a substitution violation - and a small interface has nothing to violate.
+    · SINGLE RESPONSIBILITY is the one that makes all the others easier, because a class with one
+      reason to change has a small surface to keep stable.
+
+THE PATTERNS THEY PRODUCE, which is where they become concrete:
+
+    O and D together give you STRATEGY - a family of variants behind one interface, injected.
+    D gives you the REPOSITORY pattern - business logic depending on an interface, not a database.
+    I gives you the ROLE INTERFACES you see in Go, where interfaces are tiny by convention.
+    L is what tells you when to STOP inheriting and compose instead.
+
+WHERE THEY CAME FROM AND WHAT THAT IMPLIES: Robert Martin assembled them in the early 2000s, from a
+world of large, long-lived, statically typed object-oriented codebases. Some of them read differently
+in other contexts - in a functional style, 'depend on abstractions' is 'take a function as a
+parameter', and 'open-closed' is often achieved by passing behaviour rather than by subclassing. The
+underlying instincts survive; the class-shaped expression of them is period detail.
+
+WHAT TO SAY IN AN INTERVIEW when asked 'do you follow SOLID?': 'I use S, O and D constantly - one
+reason to change, extend rather than edit, and depend on interfaces so things are testable. L and I
+are about inheritance and interface design, and they mostly tell me when NOT to inherit. But I apply
+them in response to actual change - building an extension point for a variation that never arrives is
+its own failure mode.'""",
+
+    """6. HOW TO APPLY THEM - numbered steps
+
+1. FOR EVERY CLASS, ASK WHO WOULD MAKE YOU EDIT IT. If the answer names two different teams or two
+   different reasons, split it. (S)
+2. WHEN A SECOND VARIANT OF SOMETHING APPEARS, extract the interface then rather than at the first.
+   The second occurrence is what tells you the axis of change is real. (O)
+3. BEFORE INHERITING, ask whether every caller of the parent could be handed the child. If not,
+   compose. (L)
+4. WHEN AN INTERFACE GROWS PAST A HANDFUL OF METHODS, look at whether implementers are throwing or
+   no-oping. Split by role. (I)
+5. WHEN A CLASS CONSTRUCTS ITS OWN DEPENDENCIES, take them as constructor parameters instead - and
+   define the interface in terms of what the CALLER needs. (D)
+6. TEST THE RESULT BY WRITING A TEST. If you cannot test the business logic without a database, a
+   network or a clock, D has not been applied.
+7. STOP WHEN THE ABSTRACTION IS NOT EARNING ANYTHING. One implementation, never substituted, not even
+   in tests, means delete the interface.
+
+STEP 6 IS THE BEST SINGLE HEURISTIC IN THE LIST. Testability is the observable consequence of most of
+SOLID, so 'can I test this in isolation?' answers several of the questions at once without any
+theory.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I find SOLID most useful as five specific bugs rather than five definitions.
+
+Single responsibility is one REASON to change, not one thing - a User class that validates passwords,
+saves to Postgres and formats a welcome email has three teams editing one file.
+
+Open-closed means adding a feature should add code rather than edit working code. In practice that is
+the Strategy pattern: an if/elif over payment types becomes a class per type, and a new one is a new
+file.
+
+Liskov is that a subclass must be usable wherever the parent is. The tell is an override that raises
+NotImplementedError, or Square extending Rectangle - a test that sets width and height independently
+passes for a Rectangle and fails for a Square.
+
+Interface segregation is many small interfaces rather than one fat one, and the test is whether
+implementers are writing methods that throw.
+
+Dependency inversion is depending on an interface rather than a concrete class - and the half people
+forget is that the business logic should OWN the interface, so the database conforms to it rather than
+the other way round.
+
+The one I would add is when NOT to apply them. Building an extension point for a variation that never
+arrives is over-engineering; I apply open-closed when the second variant actually appears. And the
+best single test for whether I have got D right is whether I can unit-test the logic with no
+database.'""",
+
+    """8. THE FIVE, WITH THE CODE THAT VIOLATES AND THE CODE THAT FIXES
+
+    S - SINGLE RESPONSIBILITY
+        VIOLATION   class User: validate_password(); save(); send_welcome_email()
+        FIX         User (rules) + UserRepository (persistence) + EmailService (messaging)
+        TEST        who edits this file? If it is three different teams, split it.
+
+    O - OPEN-CLOSED
+        VIOLATION   if kind == "card": ... elif kind == "bank": ...
+        FIX         class CardFee(FeeStrategy) / class BankFee(FeeStrategy), injected
+        TEST        does adding a variant EDIT an existing file, or ADD one?
+
+    L - LISKOV SUBSTITUTION
+        VIOLATION   class Penguin(Bird): def fly(self): raise NotImplementedError
+        FIX         Bird has a movement strategy; or FlyingBird is a separate type
+        TEST        can every caller of the parent be handed the child, unchanged?
+
+    I - INTERFACE SEGREGATION
+        VIOLATION   Machine.print() + scan() + fax(), and SimplePrinter raises on two of them
+        FIX         Printer, Scanner, Fax as separate interfaces; a multifunction device
+                    implements all three
+        TEST        are implementers writing methods that throw or do nothing?
+
+    D - DEPENDENCY INVERSION
+        VIOLATION   class OrderService: self.db = PostgresClient(...)
+        FIX         class OrderService: def __init__(self, repo: OrderRepository)
+        TEST        can I construct this class in a unit test with no database?
+
+    AND NOTE WHAT THE FIXES HAVE IN COMMON: four of the five end in an interface plus injection. SOLID
+    is largely one idea - name the thing that varies, depend on the name rather than the thing, and
+    hand the real one in from outside - approached from five directions.""",
+
+    """9. ONE CLASS, REFACTORED THROUGH ALL FIVE
+
+    THE STARTING POINT, which violates all of them:
+
+        class OrderProcessor:
+            def process(self, order, payment_kind):
+                if payment_kind == "card":
+                    fee = order.total * 0.02
+                elif payment_kind == "bank":
+                    fee = 0.30
+                db = PostgresClient(DSN)                        # D: welded to Postgres
+                db.execute("INSERT INTO orders ...")            # S: persistence lives here
+                smtp = SMTP("mail.example.com")                 # S: and messaging
+                smtp.send(order.email, "<html>Thanks!</html>")  # S: and templating
+                return fee
+
+    WHAT IS WRONG, principle by principle:
+        S - it changes when pricing changes, when the schema changes, and when the email copy changes.
+        O - a new payment type edits `process`, which is the method that already works.
+        D - it constructs a Postgres client and an SMTP client, so it cannot be tested at all.
+
+    AFTER:
+
+        class OrderProcessor:
+            def __init__(self, repo: OrderRepository, mailer: Mailer, fees: FeeStrategy):
+                self.repo, self.mailer, self.fees = repo, mailer, fees
+
+            def process(self, order):
+                fee = self.fees.calculate(order)     # O: a new payment type is a new class
+                self.repo.save(order)                # D: an interface, not Postgres
+                self.mailer.send_confirmation(order) # S: templating lives with the mailer
+                return fee
+
+    NOW THE TEST that was impossible before:
+
+        p = OrderProcessor(InMemoryRepo(), FakeMailer(), CardFee())
+        assert p.process(order) == 2.00
+        assert FakeMailer.sent == 1
+
+    No database, no SMTP server, no network, and it runs in a millisecond. THAT is the observable
+    payoff, and it is why 'can I unit-test this?' is the best proxy for whether the principles were
+    applied.
+
+    WHAT IT COST: three interfaces, three implementations, and a place where the real ones are wired
+    together. On a script that will never change, that cost buys nothing - which is the judgement half
+    of the answer.""",
+
+    """10. THE FIVE BUGS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MEMORABLE FORM - each principle as the bug it prevents:
+
+        S   three teams editing one file for three unrelated reasons
+        O   adding a feature means editing code that already works
+        L   a subclass that throws where the parent did not
+        I   implementing fifteen methods in order to use one
+        D   business logic that cannot be tested without a database
+
+    AND THE ONE-LINE TEST FOR EACH:
+        S   who would make me edit this?
+        O   does a new variant add a file or edit one?
+        L   can every caller of the parent take the child?
+        I   are implementers writing methods that throw?
+        D   can I unit-test this with no I/O?
+
+THE #1 MISTAKE: applying them as a checklist to code that is not changing. Interfaces with one
+implementation, factories that build one thing, and five layers of indirection are all SOLID and all
+worse. The principles are a response to change, and where there is none they are cost without benefit.
+
+THE #2 MISTAKE: reciting the definitions. Every candidate can say 'a class should have one
+responsibility'. Naming the bug - three teams in one file - is what distinguishes having used them.
+
+THE #3 MISTAKE: reading S as 'one method' and I as 'one method per interface'. Both are about COHERENCE
+- one reason to change, one role - not about size.
+
+THE THING TO NOTICE ABOUT ALL FIVE: four of the fixes end in 'define an interface and inject the
+implementation'. If you remember only one move, that is the one.
+
+ONE-SENTENCE TAKEAWAY: learn SOLID as five bugs rather than five definitions - three teams in one
+file, editing working code to add a feature, a subclass that throws, a fat interface, and logic you
+cannot test without a database - and apply each one when its bug actually appears.""",
+]
+
+_EX_P1AO["LLD: Design a Parking Lot"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the most-asked OOD question there is
+
+'Design a parking lot' is the standard low-level-design question at Amazon and many others. You have
+45 minutes, a whiteboard or a shared editor, and the interviewer wants to see how you turn a vague
+sentence into classes.
+
+WHAT IS ACTUALLY BEING TESTED, and it is not parking:
+
+    · Do you CLARIFY before designing, or start writing classes at once?
+    · Can you find the right NOUNS and give each one a single job?
+    · Do you notice where the design will have to CHANGE, and put a seam there?
+    · Can you handle the concurrency question when it arrives - because it always does?
+
+THE FIRST THING TO DO IS NOT DRAW. It is to ask four or five questions and then COMMIT to a scope out
+loud:
+
+    'Multiple floors? Several vehicle sizes? Is pricing hourly or flat? One entrance or many? Do we
+    need the NEAREST free spot or any free spot?'
+
+    then: 'I will design for multi-floor, three vehicle sizes, hourly pricing, several entrances, and
+    any free spot of a fitting size. I will leave nearest-spot as an extension point.'
+
+That paragraph is worth more than the next ten minutes of drawing, because it shows you know a design
+is a set of choices rather than a discovery.
+
+TERMS AS THEY APPEAR:
+- ENTITY: a noun with identity that persists - a Ticket, a Vehicle.
+- VALUE OBJECT: a noun defined only by its values - Money, a TimeRange.
+- SEAM: a place where a future change can be absorbed without editing existing code, usually an
+  interface.""",
+
+    """2. THE NOUNS AND THE VERBS - finding the classes
+
+THE NOUNS, from the problem statement, with ONE JOB each:
+
+    ParkingLot        the top-level container. Knows its floors; provides park() and unpark().
+    Floor             holds spots; can find a free one of a given size.
+    Spot              a physical space. Knows its size and whether it is occupied.
+    Vehicle           the thing being parked. Knows its size and registration.
+    Ticket            issued on entry. Knows spot, vehicle, entry time; later, exit time.
+    PricingStrategy   turns a duration into an amount. INTERFACE, not a method.
+    Payment           records that a ticket was paid, and how.
+    DisplayBoard      shows free counts per size. Optional, and a nice extension.
+
+THE VERBS - what the system does:
+
+    park(vehicle)     -> find a fitting free spot, occupy it, issue a Ticket
+    unpark(ticket)    -> compute the fee, take payment, free the spot
+
+TWO DESIGN DECISIONS TO MAKE OUT LOUD, because the interviewer is listening for them:
+
+1. VEHICLE SIZE VERSUS VEHICLE TYPE. Do not write `if isinstance(v, Motorcycle)`. Give Vehicle a SIZE
+   (an enum: MOTORCYCLE, CAR, LARGE) and let spots have a size too. Then 'can this vehicle use this
+   spot?' is one comparison, and adding a vehicle type does not touch the matching logic. This is the
+   single most valuable simplification in the whole question.
+
+2. PRICING IS A STRATEGY, NOT A METHOD. `Ticket.calculate_fee()` bakes one policy into the entity.
+   Weekends, EV rates, the first fifteen minutes free, monthly passes - all of those are coming, and
+   each would edit that method. An interface with implementations means each is a new class. See
+   [[pattern-strategy-swap-an-algorithm-at-runtime]].
+
+THE FIT RULE, which is worth stating explicitly because it is a real product decision: a small vehicle
+may use a larger spot, but not the reverse. Say whether you allow it - 'a motorcycle can take a car
+spot when no motorcycle spots remain' - because it changes the allocation strategy and the interviewer
+will ask.""",
+
+    """3. THE DESIGN, TRACED
+
+    from enum import IntEnum
+
+    class Size(IntEnum):                 # IntEnum so a comparison expresses "fits"
+        MOTORCYCLE = 1
+        CAR = 2
+        LARGE = 3
+
+    class Vehicle:
+        def __init__(self, plate, size):
+            self.plate, self.size = plate, size
+
+    class Spot:
+        def __init__(self, spot_id, size):
+            self.id, self.size = spot_id, size
+            self.vehicle = None
+
+        def fits(self, vehicle):
+            return self.vehicle is None and vehicle.size <= self.size
+
+    class Floor:
+        def __init__(self, number, spots):
+            self.number, self.spots = number, spots
+
+        def find_spot(self, vehicle):
+            return next((s for s in self.spots if s.fits(vehicle)), None)
+
+    class Ticket:
+        def __init__(self, ticket_id, vehicle, spot, entry_at):
+            self.id, self.vehicle, self.spot = ticket_id, vehicle, spot
+            self.entry_at, self.exit_at, self.paid = entry_at, None, False
+
+    class PricingStrategy(ABC):
+        @abstractmethod
+        def amount(self, ticket, exit_at): ...
+
+    class HourlyPricing(PricingStrategy):
+        def __init__(self, rates): self.rates = rates      # per Size
+        def amount(self, ticket, exit_at):
+            hours = ceil((exit_at - ticket.entry_at).total_seconds() / 3600)
+            return hours * self.rates[ticket.vehicle.size]
+
+    class ParkingLot:
+        def __init__(self, floors, pricing: PricingStrategy):
+            self.floors, self.pricing = floors, pricing
+            self.tickets = {}
+            self._lock = Lock()
+
+        def park(self, vehicle, now):
+            with self._lock:                                  # see section 4
+                for floor in self.floors:
+                    spot = floor.find_spot(vehicle)
+                    if spot:
+                        spot.vehicle = vehicle
+                        t = Ticket(uuid4(), vehicle, spot, now)
+                        self.tickets[t.id] = t
+                        return t
+            raise LotFullError(vehicle.size)
+
+        def unpark(self, ticket_id, now):
+            t = self.tickets[ticket_id]
+            fee = self.pricing.amount(t, now)
+            t.exit_at, t.paid = now, True
+            t.spot.vehicle = None
+            return fee
+
+READ THREE THINGS OUT OF THAT. `fits` is ONE comparison because size is an ordered enum. Pricing
+arrives through the constructor, so a new policy is a new class. And the lock is around the
+find-and-occupy pair, not around each half - which is the subject of the next section.""",
+
+    """4. THE CONCURRENCY QUESTION - which always arrives
+
+The follow-up is always some version of 'two cars arrive at different entrances at the same time'. It
+is the point of the question, and the design above already answers it.
+
+THE BUG WITHOUT A LOCK - and it is exactly the CHECK-THEN-ACT race:
+
+    thread A: find_spot() -> spot 14 is free
+    thread B: find_spot() -> spot 14 is free          <- B checked before A occupied it
+    thread A: spot 14.vehicle = car A
+    thread B: spot 14.vehicle = car B                 <- car A's ticket now points at an occupied spot
+
+Two tickets for one space, and the failure surfaces at the barrier when a driver cannot get in. See
+[[race-condition]], where the same shape is measured losing 75% of its updates once a yield point
+exists.
+
+THE FIX, and the reason its SHAPE matters: the lock must cover FINDING and OCCUPYING together, because
+the invariant spans both. Locking `find_spot` alone protects nothing.
+
+THE FOLLOW-UP TO THAT: 'a single lock across the whole lot serialises every entrance - what if there
+are ten?' Good options, in order of what to say:
+
+    1. A LOCK PER FLOOR. Entrances on different floors proceed in parallel. Simple and usually enough.
+    2. AN ATOMIC CLAIM ON THE SPOT - compare-and-swap on the occupied flag, retrying on failure. No
+       lock at all, and it scales with the number of spots.
+    3. A CONCURRENT QUEUE OF FREE SPOTS PER SIZE, and `pop()` is the atomic claim. This is the answer
+       that makes an interviewer nod: allocation becomes a queue operation and the search disappears.
+
+AND THE DISTRIBUTED VERSION, if they push further: with several servers there is no shared memory, so
+the claim moves to the database - `UPDATE spots SET vehicle = ? WHERE id = ? AND vehicle IS NULL`,
+which succeeds for exactly one caller and returns a row count you check. Or a Redis lock with a TTL.
+Naming that the claim must be a CONDITIONAL WRITE is the important part; which technology does it is
+secondary.""",
+
+    """5. THE EXTENSIONS THEY ASK FOR - and where each one lands
+
+The second half of the interview is a series of 'now add...' requests. A good design absorbs them; the
+point of the seams is that you can say WHERE each one goes without redrawing.
+
+    'NEAREST SPOT TO THE ENTRANCE'
+        -> a SpotAllocationStrategy interface. `FirstFit` today, `NearestToEntrance` tomorrow, backed
+           by a heap of free spots keyed by distance per entrance. Floor.find_spot delegates to it.
+           Nothing else changes.
+
+    'DIFFERENT PRICING AT WEEKENDS / FOR EVs / FIRST 15 MINUTES FREE'
+        -> new PricingStrategy implementations. This is why pricing was an interface from the start,
+           and it is the moment that decision pays off in front of the interviewer.
+
+    'MONTHLY PASS HOLDERS'
+        -> a pricing strategy that returns zero, plus a Subscription entity. Note the temptation to
+           special-case it inside the existing pricing - resist it out loud.
+
+    'ELECTRIC CHARGING SPOTS'
+        -> a spot FEATURE set rather than another size dimension. `spot.features >= vehicle.needs`.
+           If you add a second size-like axis you will regret it; features as a set composes.
+
+    'DISPLAY BOARD SHOWING FREE COUNTS'
+        -> an OBSERVER on park/unpark events, or a counter maintained per size. Say which and why:
+           recomputing by scanning every spot is O(n) per view and fine at small scale.
+
+    'MULTIPLE ENTRANCES AND EXITS'
+        -> already handled; entrances are just callers of park(). This is a good moment to point out
+           that your design did not need changing, which is the payoff for the earlier abstraction.
+
+    'LOST TICKET'
+        -> a business rule, not a structural one: a LostTicketPolicy with a flat maximum-day charge.
+           Worth mentioning because it shows you think about the real world.
+
+    'PERSISTENCE / RESTART'
+        -> a Repository interface for tickets and spot states, so the in-memory version is one
+           implementation. Do not design the schema unless asked.
+
+WHAT NOT TO DO WITH THE EXTENSIONS: do not build them up front. Say 'I would put a seam here' and move
+on. Building nearest-spot allocation before anyone asks is the over-engineering failure, and it costs
+you the time you need for the concurrency discussion.""",
+
+    """6. HOW TO RUN THE 45 MINUTES - numbered steps
+
+1. CLARIFY (3-5 minutes). Floors? Sizes? Pricing model? Entrances? Nearest spot or any spot? Ask, then
+   COMMIT to a scope aloud so the rest of the session has boundaries.
+2. NAME THE NOUNS (3 minutes). ParkingLot, Floor, Spot, Vehicle, Ticket, PricingStrategy, Payment.
+   One job each. Say what each one owns.
+3. NAME THE TWO VERBS: park and unpark. The whole system exists for those two flows.
+4. DRAW THE CLASS DIAGRAM (5-10 minutes) - fields and key methods, not every getter.
+5. WALK THE HAPPY PATH ALOUD: a car arrives, we find a fitting free spot, mark it occupied, issue a
+   ticket; it leaves, we price the duration, take payment, free the spot.
+6. CALL OUT THE SEAMS as you go: pricing is a strategy, allocation is a strategy, persistence is a
+   repository. One sentence each; do not implement them.
+7. HANDLE CONCURRENCY (5-10 minutes) - and do not wait to be asked. Show the check-then-act race, lock
+   the find-and-occupy pair, then offer the per-floor lock and the free-spot queue.
+8. TAKE THE EXTENSIONS and point at the seam each one lands in.
+9. IF TIME REMAINS: persistence, the display board, lost tickets, the distributed version.
+
+THE TWO MOST COMMON WAYS TO LOSE THIS INTERVIEW: starting to draw before clarifying, and never
+mentioning concurrency until asked. Both are avoidable by following the order above.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'First I would clarify: multiple floors, how many vehicle sizes, is pricing hourly or flat, how many
+entrances, and do we need the nearest free spot or any free one. Then I would commit to a scope so we
+have boundaries - say multi-floor, three sizes, hourly pricing, several entrances, any fitting spot.
+
+The nouns are ParkingLot, Floor, Spot, Vehicle, Ticket and PricingStrategy. Two decisions I would make
+early. Vehicle carries a SIZE rather than a type, and Spot carries a size too, so "does this fit" is
+one comparison and adding a vehicle type never touches the matching logic. And pricing is an interface
+rather than a method on Ticket, because weekend rates, EV rates and monthly passes are all coming, and
+each of those should be a new class rather than an edit.
+
+The two flows are park - find a fitting free spot, occupy it, issue a ticket - and unpark - price the
+duration, take payment, free the spot.
+
+Then I would raise concurrency before being asked, because it is the point of the question. Two cars
+at different entrances can both see the same free spot: it is a check-then-act race, so the lock has to
+cover finding AND occupying together, not each half. A single lock serialises all entrances, so I
+would go to a lock per floor, or better, keep a concurrent queue of free spots per size where popping
+IS the atomic claim. And if it is distributed, the claim becomes a conditional UPDATE in the database
+that succeeds for exactly one caller.
+
+For extensions, nearest-spot is an allocation strategy, EV charging is a spot feature set, and the
+display board is an observer on park and unpark.'""",
+
+    """8. THE DESIGN, PIECE BY PIECE
+
+    class Size(IntEnum):  MOTORCYCLE = 1; CAR = 2; LARGE = 3
+
+    An INT enum, deliberately, so `vehicle.size <= spot.size` expresses 'fits' in one comparison. A
+    plain Enum would need a compatibility table, and a set of isinstance checks would need editing
+    every time a vehicle type is added. This one choice removes a whole category of conditional logic.
+
+    def fits(self, vehicle):
+        return self.vehicle is None and vehicle.size <= self.size
+
+    Both halves of the rule in one place, on the object that owns the fact. Note it allows a small
+    vehicle into a large spot - state that as a product decision, because the alternative is
+    defensible too.
+
+    class Ticket:  id, vehicle, spot, entry_at, exit_at, paid
+
+    An ENTITY with identity and a lifecycle. It records FACTS - which spot, which vehicle, when - and
+    deliberately has NO calculate_fee method, because pricing is policy and policy changes at a
+    different rate from the facts.
+
+    class PricingStrategy(ABC):
+        def amount(self, ticket, exit_at): ...
+
+    The seam. HourlyPricing today; WeekendPricing, FreeFirstFifteen and MonthlyPass are new classes.
+    The interviewer's next request almost certainly lands here.
+
+    def park(self, vehicle, now):
+        with self._lock:
+            for floor in self.floors:
+                spot = floor.find_spot(vehicle)
+                if spot:
+                    spot.vehicle = vehicle
+                    ...
+
+    THE LOCK SPANS THE FIND AND THE OCCUPY. That is the whole concurrency answer in one structural
+    detail: the invariant is 'no spot is assigned twice', which spans both operations, so locking
+    either alone protects nothing.
+
+    raise LotFullError(vehicle.size)
+
+    A typed error carrying the size, so the caller can say 'no motorcycle spaces' rather than 'full'.
+    Small, and interviewers notice error design because almost nobody does it.""",
+
+    """9. THE HAPPY PATH AND THE RACE, WALKED
+
+    THE HAPPY PATH:
+
+        car = Vehicle("AB12 CDE", Size.CAR)
+        ticket = lot.park(car, now=10:00)
+            -> floor 0: spots are [M(occupied), C(free), L(free)]
+            -> find_spot returns the CAR spot; occupy it; issue ticket T1
+        fee = lot.unpark(ticket.id, now=12:30)
+            -> hours = ceil(2.5) = 3
+            -> 3 x the CAR rate
+            -> spot freed, ticket marked paid
+
+    Note `ceil` - part-hours round up, which is a business rule and should be said aloud, because the
+    alternative (per-minute) is equally common and the interviewer may have one in mind.
+
+    THE RACE, without the lock:
+
+        t=0.000  entrance A: find_spot -> spot 14 (free)
+        t=0.001  entrance B: find_spot -> spot 14 (free)      <- checked before A wrote
+        t=0.002  entrance A: spot 14.vehicle = car A, ticket T1
+        t=0.003  entrance B: spot 14.vehicle = car B, ticket T2
+
+        Two tickets, one spot. Car A's ticket now refers to a space occupied by car B, and nothing in
+        the system knows - the barrier finds out.
+
+    WITH THE LOCK spanning both operations, entrance B's find_spot cannot run until A has occupied, so
+    B is handed spot 15.
+
+    THE VERSION THAT SCALES, and the one worth reaching:
+
+        free_spots[Size.CAR]  is a concurrent queue
+        park:   spot = free_spots[size].pop()      # popping IS the claim - atomic, no search
+        unpark: free_spots[spot.size].push(spot)
+
+    No lock, no scan, and allocation is O(1). The trade you should name: you have lost control of
+    WHICH spot is chosen, so nearest-to-entrance now needs a priority queue per entrance rather than a
+    plain one.""",
+
+    """10. WHAT IS BEING SCORED, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT THE INTERVIEWER IS ACTUALLY MARKING:
+        1. Did you clarify and commit to a scope, or start drawing?
+        2. Are the nouns right, with one job each?
+        3. Did you put seams where change will come - pricing, allocation, persistence?
+        4. Did you raise concurrency yourself?
+        5. Can you absorb three extensions without redrawing?
+        6. Did you avoid building things nobody asked for?
+
+    Items 3 and 4 are where the differentiation happens. Almost every candidate produces the nouns.
+
+THE #1 MISTAKE: designing before clarifying. Thirty seconds of questions changes the whole shape - flat
+pricing versus hourly, nearest spot versus any spot - and starting without them means designing the
+wrong thing confidently.
+
+THE #2 MISTAKE: not mentioning concurrency until asked. It is the point of the question. Two cars, two
+entrances, one free spot - raise it yourself and you have answered the follow-up before it arrives.
+
+THE #3 MISTAKE: `if isinstance(vehicle, Motorcycle)`. Give Vehicle a size, give Spot a size, and 'fits'
+is one comparison forever.
+
+THE #4 MISTAKE: baking pricing into Ticket. Every pricing question in the second half of the interview
+then becomes an edit to an entity rather than a new class.
+
+THE #5 MISTAKE: over-building. Nearest-spot allocation, a payment gateway integration and a persistence
+schema, unasked, cost you the time you needed for the concurrency discussion. Name the seam and move
+on.
+
+ONE-SENTENCE TAKEAWAY: clarify then commit, give Vehicle and Spot a SIZE so fitting is one comparison,
+make pricing and allocation strategies rather than methods, and raise the two-cars-one-spot race
+yourself - locking the find AND the occupy together, then offering a free-spot queue as the version
+that scales.""",
+]
+
 _EX_P1AO["STAR method + a strong student example"] = [
     """1. THE GOAL IN PLAIN ENGLISH - a shape that stops you rambling
 
