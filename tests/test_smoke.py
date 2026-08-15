@@ -958,6 +958,22 @@ def test_card_title_is_not_sliced_off_on_a_phone(auth_client):
     assert ".q-head .q-chips" in mobile, "the chips never move to their own row on a phone"
 
 
+def test_quick_bucket_top5_wraps_instead_of_truncating(auth_client):
+    """Today's five are the tasks she actually reads, so a long one must WRAP.
+    It used to be white-space: nowrap with an ellipsis, which meant identifying
+    a task required clicking it - the opposite of what the panel is for."""
+    import re
+    html = auth_client.get("/quick-bucket").get_data(as_text=True)
+    rule = re.search(r"^\s*\.qb-top5-text \{[^}]*\}", html, re.M)
+    assert rule, "no .qb-top5-text rule"
+    body = rule.group(0)
+    assert "nowrap" not in body and "text-overflow" not in body, f"still truncating: {body}"
+    assert "overflow-wrap: anywhere" in body, "a long unbroken string could widen the panel"
+    item = re.search(r"^\s*\.qb-top5-item \{[^}]*\}", html, re.M).group(0)
+    assert "align-items: flex-start" in item, \
+        "with wrapped text, centring floats the rank badge to the middle of the row"
+
+
 def test_answer_field_keeps_its_line_breaks(auth_client):
     """The answer is the field read under time pressure, and it is now written
     headline-first with short labelled lines under it. That shape only exists

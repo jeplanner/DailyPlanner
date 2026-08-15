@@ -197,8 +197,11 @@
     border-color: #6366f1;
     background: rgba(99,102,241,.08);
   }
+  /* align-items: flex-start, not center, because the text now WRAPS — with
+     centring, the rank badge and checkbox would float to the middle of a
+     three-line task instead of sitting beside its first line. */
   .qb-top5-item {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: flex-start; gap: 8px;
     padding: 8px 10px; border-radius: 10px;
     border: 1px solid var(--color-border);
     background: var(--color-surface);
@@ -218,13 +221,18 @@
   .qb-top5-check {
     flex-shrink: 0;
     width: 16px; height: 16px;
+    margin-top: 2px;              /* line up with the first line of wrapped text */
     cursor: pointer;
     accent-color: #6366f1;
   }
   .qb-top5-item.is-done .qb-top5-check { accent-color: #10b981; }
+  /* Today's five are the tasks she actually reads, so they WRAP rather than
+     ending in an ellipsis — a truncated task is one you have to click to
+     identify, which defeats the point of the panel. `overflow-wrap: anywhere`
+     keeps a long unbroken string (a URL, a path) from widening the panel. */
   .qb-top5-text {
-    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap;
+    flex: 1; min-width: 0;
+    white-space: normal; overflow-wrap: anywhere;
   }
   .qb-top5-item.is-done {
     cursor: default; opacity: .65;
