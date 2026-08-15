@@ -126677,128 +126677,655 @@ for _e in ENTRIES:
 _EX_P1Y = {}
 
 _EX_P1Y["How do you evaluate an LLM / GenAI system?"] = [
-    """Evaluate the STAGES separately - the single most valuable habit.
-For a RAG system, measure RETRIEVAL and GENERATION apart. Build 50-100 real
-questions with the correct source chunk labelled, and compute recall@k: if
-recall@5 is 0.6, then four questions in ten are unanswerable no matter how good
-the model is, and every hour spent on prompt wording is wasted.
-Teams routinely tune prompts for a month when retrieval was the bottleneck.
-Separating the stages is what prevents that, and saying it first is the answer
-to this question.""",
+    """1. THE GOAL IN PLAIN ENGLISH - there is no accuracy column
 
-    """The four axes for generation, with what each catches.
-FAITHFULNESS / groundedness: is every claim supported by the retrieved context?
-Catches hallucination. Measurable by an LLM judge citing evidence per claim, or
-by checking quoted spans appear in the chunks.
-ANSWER RELEVANCE: does it address the question actually asked?
-COMPLETENESS: does it cover what the sources support, or stop early?
-SAFETY / format: refusals where required, valid JSON where required.
-A system can score well on relevance and badly on faithfulness - fluent,
-on-topic and invented - which is precisely why they are separate axes.""",
+For a classifier you have labels and you compute accuracy. For a generative system there is no single
+right answer: a summary can be good in twenty different ways, and two correct answers to the same
+question can share no words at all.
 
-    """Why BLEU and ROUGE are mostly the wrong tool here.
-They measure n-gram OVERLAP with a reference answer. For summarisation with a
-gold summary that is defensible; for open-ended Q&A it is not, because a
-correct answer phrased differently scores near zero while a wrong answer that
-reuses the question's words scores well.
-Use them where a reference genuinely exists and paraphrase is not expected
-(translation, some summarisation). Otherwise prefer an LLM judge with a rubric,
-plus human review on a sample. Naming why they fail is better than not
-mentioning them.""",
+That is why so many teams ship LLM features with no evaluation at all - they try a few prompts, it
+looks good, they deploy, and then they have no way to tell whether the next prompt change helped or
+broke something. THE SYMPTOM IS UNMISTAKABLE: 'we changed the prompt and it seems better' is a sentence
+from a team with no eval.
 
-    """LLM-as-judge, and the guards it needs.
-Cheap, fast, and correlates reasonably with human judgement IF you constrain
-it: give a rubric with explicit criteria, force it to CITE evidence before
-scoring (which measurably reduces drift), use a small discrete scale rather
-than 1-10, and randomise the order when comparing two outputs.
-Its known biases: position bias (favours the first option), length bias
-(favours longer answers), and self-preference (favours text from the same model
-family). Calibrate against a few hundred human labels before trusting it, and
-re-check when you change judge models.""",
+WHAT EVALUATION HAS TO GIVE YOU, and this is the design brief:
 
-    """The offline/online split, and what only production tells you.
-OFFLINE: a fixed eval set, run on every change, gating deploys. Fast, cheap,
-reproducible - and it cannot tell you whether users are helped.
-ONLINE: thumbs up/down, whether the user rephrased the question (a strong
-implicit failure signal), escalation to a human agent, task completion, and
-latency and cost per query. Plus an A/B test on the business metric for
-anything significant.
-The pairing to state: offline evals catch regressions, online metrics decide
-whether it is worth shipping.""",
+    A NUMBER THAT MOVES when the system gets better or worse
+    REPRODUCIBLE enough that the same system scores the same twice
+    CHEAP enough to run on every change
+    ALIGNED with what a user would call good
 
-    """Building the eval set, which is the actual work.
-Start with 50-100 real questions from logs or from the people who will use it -
-not invented ones, which cluster around what you already handle. Include a
-deliberate mix: easy lookups, multi-hop questions, questions the corpus CANNOT
-answer (to test the refusal path), and adversarial or ambiguous phrasings.
-Label the expected source and a reference answer. Freeze it, version it, and
-add every production failure to it - that growing regression set is worth more
-than any published benchmark, because it is your distribution rather than
-someone else's.""",
+THE CENTRAL DIFFICULTY: those four pull against each other. Human judgement is aligned and expensive.
+Automatic metrics are cheap and often measure the wrong thing. The whole craft is assembling a ladder
+that gets you most of the alignment at a fraction of the cost.
+
+TERMS AS THEY APPEAR:
+- GOLDEN SET: a fixed collection of inputs with known-good outputs or grading criteria. Your regression
+  suite.
+- LLM-AS-JUDGE: using a model to grade another model's output.
+- HALLUCINATION: a confident statement not supported by the source or by fact.""",
+
+    """2. THE INTUITION - split the system before you score it
+
+The single most useful move, and the one that most distinguishes a good answer:
+
+    DO NOT EVALUATE 'THE SYSTEM'. EVALUATE EACH STAGE.
+
+A RAG assistant that gives a wrong answer has at least four possible causes, and they have completely
+different fixes:
+
+    RETRIEVAL FAILED     the right passage was never in the context     -> fix chunking, retrieval
+    GROUNDING FAILED     the passage was there and the model ignored it -> fix the prompt
+    THE ANSWER IS RIGHT BUT BADLY FORMATTED                             -> fix the output contract
+    THE QUESTION WAS UNANSWERABLE and it answered anyway                -> fix the refusal path
+
+IF YOU ONLY MEASURE THE FINAL ANSWER, ALL FOUR LOOK IDENTICAL, and every improvement is guesswork.
+
+SO MEASURE STAGE BY STAGE:
+
+    RETRIEVAL     recall@k - is the right passage in the top k? A clean, cheap, automatic number, and
+                  the single highest-value metric in a RAG system.
+    GROUNDING     is every claim in the answer supported by a retrieved passage? Checkable.
+    CORRECTNESS   does the answer match the known-good one?
+    FORMAT        valid JSON, required fields present, within length. Fully automatic, and it catches
+                  a surprising share of real failures.
+    REFUSAL       when the answer is not in the corpus, does it say so?
+
+THE PAYOFF: when the number drops you know WHICH stage regressed. That converts 'the assistant feels
+worse this week' into 'recall@5 fell from 0.88 to 0.71 when we changed the chunker'.
+
+AND THE PRINCIPLE UNDERNEATH: the more of your evaluation you can express as a DETERMINISTIC CHECK -
+does the passage appear, is the JSON valid, is the number in the answer present in the source - the
+cheaper, faster and more trustworthy your evaluation gets.""",
+
+    """3. THE LADDER OF METHODS - cheapest first
+
+    LEVEL 1 - DETERMINISTIC CHECKS. Free, instant, no model involved.
+        valid JSON? required fields present? within the length limit? contains a citation? no forbidden
+        content? the number quoted appears in the source?
+        SURPRISINGLY POWERFUL. A large share of production failures are format failures, and these
+        catch all of them at zero cost. Run them on every request in production, not just in testing.
+
+    LEVEL 2 - REFERENCE-BASED METRICS. Cheap, automatic, and limited.
+        exact match / F1 for extractive answers - genuinely good when the answer is a span
+        BLEU / ROUGE for summaries - measure word overlap with a reference
+        EMBEDDING SIMILARITY to a reference answer - tolerates paraphrase
+        THE LIMITATION, stated honestly: word overlap punishes a correct paraphrase and rewards a
+        fluent wrong answer that reuses the question's vocabulary. Use them for regression detection,
+        not for judging quality.
+
+    LEVEL 3 - LLM-AS-JUDGE. Moderate cost, scales, and needs care.
+        Give a model the question, the answer, the source, and a RUBRIC; ask for a score and a reason.
+        Works well for: factual grounding ('is every claim supported by the passages? cite which'),
+        instruction following, tone, and pairwise comparison.
+        THE KNOWN BIASES, which you should name before being asked:
+            POSITION BIAS - prefers whichever answer is shown first. Fix: run both orders and average.
+            LENGTH BIAS - prefers longer answers. Fix: rubric that penalises padding; check the
+                          correlation between score and length.
+            SELF-PREFERENCE - models rate their own family's output higher. Fix: judge with a different
+                          family than the one generating, where you can.
+            AGREEABLENESS - a judge asked 'is this good?' says yes. Fix: ask for specific criteria and
+                          require evidence for each.
+        THE RULE THAT MAKES IT TRUSTWORTHY: VALIDATE THE JUDGE AGAINST HUMANS ON A SAMPLE. Have a
+        person grade 100 examples, compare, and quote the agreement rate. An unvalidated judge is a
+        random number with a confident tone.
+
+    LEVEL 4 - HUMAN EVALUATION. Expensive, slow, the ground truth.
+        Use it to build the golden set, to validate the judge, and to arbitrate on releases. Prefer
+        PAIRWISE comparison ('which of these two is better?') over absolute scoring - people are far
+        more consistent at comparing than at assigning a 1-to-5.
+
+    LEVEL 5 - PRODUCTION SIGNALS. The real answer, and the slowest.
+        thumbs up/down, copy rate, edit rate, escalation to a human, task completion, retention.
+        THE MOST HONEST METRIC IN THE WHOLE LIST is usually: did the user have to ask again?""",
+
+    """4. THE FAILURE MODES
+
+A. NO GOLDEN SET. 'We tried some prompts and it looked good.' Every subsequent change is unmeasurable,
+   and regressions are found by users.
+
+B. EVALUATING ONLY THE FINAL OUTPUT. Retrieval failure and grounding failure look identical from the
+   end of the pipeline and have opposite fixes.
+
+C. AN UNVALIDATED LLM JUDGE. If you have never checked it against human judgement, you do not know
+   whether your number means anything. Validate on 100 examples and quote the agreement.
+
+D. IGNORING JUDGE BIASES. Position, length and self-preference are measurable and correctable. Not
+   correcting them means your evaluation quietly prefers long answers from your own model family.
+
+E. A GOLDEN SET OF ONLY EASY CASES. It will saturate at 95% and stop discriminating. Deliberately
+   include the hard cases: ambiguous questions, questions with no answer in the corpus, adversarial
+   phrasings, and the failures your users actually reported.
+
+F. NO 'SHOULD REFUSE' CASES. If every question in your eval set has an answer, you are training
+   yourself to reward a system that always answers - which is the most dangerous behaviour it has.
+
+G. TEMPERATURE > 0 DURING EVALUATION. The same input scores differently across runs and you cannot
+   tell a real regression from noise. Set temperature to 0, or run n times and report the mean and
+   spread.
+
+H. ONE SCORE FOR EVERYTHING. 'Quality: 4.2' hides that correctness fell while fluency rose. Score the
+   dimensions separately: correct, grounded, complete, formatted, safe.
+
+I. CONTAMINATING THE SET. Once you have tuned prompts against your golden set for months, it is a
+   training set. Keep a held-out slice you look at rarely.
+
+J. NOT MEASURING COST AND LATENCY ALONGSIDE QUALITY. A 2% quality gain for 3x the tokens and double
+   the latency is a decision, not a win - and it needs both numbers on the table.""",
+
+    """5. BUILDING THE GOLDEN SET - the part that actually matters
+
+Everything above depends on having a fixed set of inputs you can score. This is 80% of the work and
+the part teams skip.
+
+HOW BIG: 100-200 examples is enough to start and enough to detect meaningful regressions. People
+imagine they need thousands and therefore never begin. START WITH FIFTY.
+
+WHERE THEY COME FROM, best sources first:
+    REAL USER QUERIES, especially the ones that went wrong. Your support queue and your thumbs-down
+    log are the highest-quality eval data you will ever have, and they are free.
+    QUESTIONS FROM DOMAIN EXPERTS - the things they actually get asked.
+    ADVERSARIAL CASES you write deliberately.
+    SYNTHETIC CASES generated from your documents, to get coverage cheaply. Useful for breadth, but
+    they are easier than reality, so never let them be the whole set.
+
+WHAT EACH ENTRY NEEDS:
+    the input
+    the expected answer OR a rubric describing what a good answer contains
+    for RAG, the passage that should have been retrieved - this is what makes recall@k computable
+    a category label, so you can see WHICH KIND of question regressed
+
+THE CATEGORIES TO MAKE SURE YOU HAVE - and the last three are the ones people omit:
+    straightforward lookups
+    questions needing two or more sources combined
+    ambiguous questions where the right answer is a clarifying question
+    QUESTIONS WITH NO ANSWER IN THE CORPUS, where the right output is 'I could not find this'
+    ADVERSARIAL / prompt-injection attempts
+    QUESTIONS THE SYSTEM SHOULD REFUSE on policy grounds
+
+THE 'SHOULD REFUSE' AND 'NOT IN CORPUS' CATEGORIES ARE THE MOST VALUABLE ONES IN THE SET, because
+they are the only place you measure the system's willingness to say no - and every model's default is
+to answer. Aim for something like 15-20% of your set to be cases where the correct behaviour is not to
+produce a confident answer.""",
+
+    """6. HOW TO SET UP EVALUATION - numbered steps
+
+1. WRITE DOWN WHAT 'GOOD' MEANS for your product, in dimensions: correct, grounded, complete,
+   formatted, safe, fast enough.
+2. COLLECT 50-200 REAL INPUTS, weighted toward things that went wrong.
+3. ADD THE HARD CATEGORIES: unanswerable, ambiguous, adversarial, should-refuse.
+4. ANNOTATE each with an expected answer or a rubric, and for RAG the passage that should be retrieved.
+5. BUILD THE LEVEL-1 CHECKS FIRST - format, citations present, length, forbidden content. They are
+   free and they catch real failures immediately.
+6. MEASURE RETRIEVAL SEPARATELY - recall@k. Nothing downstream matters until this is good.
+7. ADD AN LLM JUDGE FOR GROUNDING, with a rubric that asks per-claim support rather than an overall
+   impression.
+8. VALIDATE THE JUDGE against 100 human-labelled examples. Quote the agreement rate whenever you quote
+   the judge.
+9. SET TEMPERATURE TO 0, fix the model version, and record both with every eval run.
+10. RUN IT IN CI on every prompt or model change, and store the history so a regression is visible as
+    a step in a chart.
+11. INSTRUMENT PRODUCTION - thumbs, edits, re-asks, escalations - and feed the failures back into the
+    golden set.
+12. TRACK COST AND LATENCY beside quality, always.
+
+STEP 11 IS THE FLYWHEEL. Every production failure that becomes an eval case is a bug that can never
+silently return, and after six months that set is worth more than any benchmark.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The hard part is that there is no accuracy column - two correct answers can share no words. So the
+first thing I would do is stop evaluating "the system" and evaluate each stage, because a wrong answer
+from a RAG assistant has at least four causes with completely different fixes: retrieval missed the
+passage, the model ignored a passage that was there, the answer was right but badly formatted, or the
+question had no answer and it answered anyway. From the end of the pipeline those look identical.
+
+So: recall@k for retrieval, a grounding check for whether every claim is supported by a retrieved
+passage, deterministic checks for format, and a separate score for whether it correctly refused when
+the answer was not in the corpus.
+
+Then I would build a ladder by cost. Level one is deterministic checks - valid JSON, citations present,
+length, the numbers quoted actually appearing in the source. Those are free and they catch a large
+share of real failures. Level two is reference metrics for regression detection, with the caveat that
+word overlap punishes a correct paraphrase. Level three is LLM-as-judge with a rubric - and I would say
+up front that judges have position bias, length bias and self-preference, so I would randomise the
+order, penalise padding in the rubric, and validate the judge against about a hundred human-labelled
+examples before quoting its numbers. Level four is human pairwise comparison, because people are much
+more consistent comparing two answers than scoring one.
+
+The thing I would actually spend the time on is the golden set - fifty to two hundred real inputs,
+weighted toward things that went wrong, with maybe fifteen percent being questions that have no answer
+in the corpus, because otherwise you are only ever rewarding a system for answering. Temperature zero,
+pinned model version, run in CI on every prompt change, and every production failure gets added so it
+can never silently come back.'""",
+
+    """8. THE METRICS, PIECE BY PIECE
+
+    RECALL@k  -  'is the right passage in the top k?'
+        Fully automatic once your golden set records which passage should be retrieved. The single
+        highest-value number in a RAG system, because nothing downstream can be right without it.
+        Cheap to compute, unambiguous, and it isolates the stage most likely to be broken.
+
+    GROUNDEDNESS / FAITHFULNESS  -  'is every claim supported by the retrieved passages?'
+        Best done per CLAIM rather than per answer: split the answer into statements, ask the judge to
+        point at the supporting passage for each. Per-claim is more reliable than an overall impression
+        AND it tells you exactly which sentence was invented.
+
+    ANSWER CORRECTNESS  -  'does it match the known-good answer?'
+        Exact match for spans and numbers. For prose, a judge with the reference answer supplied - and
+        the rubric should say 'equivalent in meaning' rather than 'similar', or you are back to
+        measuring vocabulary.
+
+    REFUSAL ACCURACY  -  'did it decline when it should have, and only then?'
+        Two numbers, not one: correctly refused when unanswerable, AND did not refuse when the answer
+        was there. Optimising only the first produces a system that refuses everything.
+
+    FORMAT VALIDITY  -  free, deterministic, and it should run in production too.
+
+    COST AND LATENCY  -  tokens in, tokens out, p50 and p95 end to end. Belongs on the same dashboard
+        as quality, because every quality improvement is bought with one of these.
+
+    PRODUCTION SIGNALS  -  thumbs, copy rate, edit rate, escalation, RE-ASK RATE.
+        The re-ask rate is the most honest of them: if a user immediately rephrases the same question,
+        the first answer failed, whatever it scored offline.
+
+    THE ONE THAT SHOULD NOT EXIST: a single blended 'quality score'. It hides the trade you just made.""",
+
+    """9. DIAGNOSING ONE BAD ANSWER
+
+    THE COMPLAINT: 'It told me we offer 30 days of paternity leave in Ireland. We offer 10.'
+
+    WITHOUT STAGE-WISE EVAL you have one data point and a prompt to fiddle with. With it, you walk the
+    pipeline:
+
+    CHECK 1 - WHAT WAS RETRIEVED? Look at the logged passage ids.
+        (a) The Ireland parental-leave passage was NOT in the top 5.
+            -> RETRIEVAL FAILURE. Fix chunking, retrieval, or reranking. The prompt is irrelevant.
+            -> Add this question to the golden set with the correct passage id, so recall@5 now
+               measures it forever.
+
+        (b) It WAS retrieved, in position 2.
+            -> go to check 2.
+
+    CHECK 2 - DOES THE PASSAGE ACTUALLY SAY 10?
+        (a) It says 10 and the answer said 30.
+            -> GROUNDING FAILURE. The model had the fact and produced a different one. Fix the prompt
+               ('answer only from the passages, cite the passage for every number'), consider a
+               per-claim verification pass, lower the temperature.
+        (b) The passage says 30 because the document is out of date.
+            -> A DATA PROBLEM, not a model problem. No prompt change can fix a wrong source, and this
+               is a surprisingly common resolution.
+        (c) The passage covers the UK and the answer conflated the two.
+            -> A CHUNKING FAILURE: the chunk lost its country heading. Fix by prepending the section
+               path to every chunk - see [[rag-chunking-strategies-how-to-split-documents]].
+
+    CHECK 3 - SHOULD IT HAVE ANSWERED AT ALL? If the corpus genuinely does not cover Ireland, the
+    correct output was 'I could not find this'. That is a REFUSAL failure, and it needs a retrieval
+    score threshold, not a better prompt.
+
+    THE POINT: four different root causes - retrieval, grounding, stale data, missing refusal - and
+    from the final answer alone they are indistinguishable. Every one of them would have been 'the
+    model hallucinated' in a team that only measures the output.
+
+    AND THE LAST STEP, EVERY TIME: this case goes into the golden set with its expected behaviour. That
+    is how the eval set becomes the accumulated memory of everything that has ever gone wrong.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE LADDER, CHEAPEST FIRST:  deterministic checks -> reference metrics -> LLM judge (validated) ->
+    human pairwise -> production signals.
+
+    EVALUATE STAGES, NOT SYSTEMS:  recall@k · groundedness · correctness · format · refusal · cost and
+    latency.
+
+    THE GOLDEN SET:  50-200 real inputs, weighted toward failures, with 15-20% being cases where the
+    right answer is 'I could not find this' or a clarifying question.
+
+THE #1 MISTAKE: evaluating only the final output. Retrieval failure and grounding failure look
+identical from there and have opposite fixes, so every improvement becomes guesswork.
+
+THE #2 MISTAKE: no golden set at all. 'We changed the prompt and it seems better' is not a measurement,
+and it means regressions are discovered by users.
+
+THE #3 MISTAKE: an unvalidated LLM judge. Check it against human labels on a sample and quote the
+agreement rate, and correct for position, length and self-preference bias.
+
+THE #4 MISTAKE: an eval set of only answerable questions. You end up rewarding a system for always
+answering, which is its most dangerous instinct.
+
+THE #5 MISTAKE: non-zero temperature during evaluation, so noise and regressions are indistinguishable.
+
+ONE-SENTENCE TAKEAWAY: build a small golden set of real inputs including the ones that should be
+refused, score each STAGE separately so a regression tells you where it happened, climb the cost ladder
+from deterministic checks up to human judgement, and feed every production failure back in - because
+the eval set is the only thing that turns 'it seems better' into a number.""",
 ]
 
 _EX_P1Y["RAG chunking strategies (how to split documents)"] = [
-    """The two failure modes, each with a concrete cost.
-TOO LARGE (2,000 tokens): retrieval returns a wall of text where the relevant
-sentence is one line. Attention is diluted, the prompt cost triples, and
-precision drops because one chunk now matches many unrelated queries.
-TOO SMALL (100 tokens, no overlap): "Paternity leave is 2 weeks." lands in one
-chunk while "...for employees based in Ireland" lands in the next. Retrieved
-alone, the first chunk answers the question WRONGLY for every other country.
-That second example is the one to have ready - it shows chunking as a
-correctness problem, not a tuning knob.""",
+    """1. THE GOAL IN PLAIN ENGLISH - cutting documents into retrievable pieces
 
-    """The working default, and why each part of it.
-300-800 tokens with 10-15% overlap, split on STRUCTURAL boundaries (headings,
-paragraphs, list items) rather than a fixed character count, and prepend the
-document title and section heading to every chunk so it is self-describing.
-The overlap stops a sentence that straddles a boundary from being lost by both
-chunks. The structural split keeps semantically related text together. The
-prepended heading is the cheapest single improvement most RAG systems can make -
-it gives the embedding context the chunk's body assumes.""",
+You cannot retrieve a 40-page PDF. You have to cut it into pieces small enough to embed, rank, and
+paste into a prompt. THAT CUTTING IS CHUNKING, and it is the least glamorous and most consequential
+decision in a RAG system.
 
-    """The strategies, ordered by how much they cost to build.
-FIXED-SIZE with overlap: trivial, works surprisingly well, the right starting
-point.
-RECURSIVE character splitting: try paragraph breaks, then sentences, then
-words - respects structure without needing a parser. This is what most
-frameworks default to.
-DOCUMENT-AWARE: use the real structure - markdown headings, HTML sections, code
-functions, PDF layout. Better, needs a parser per format.
-SEMANTIC: embed sentences and cut where consecutive similarity drops. Elegant,
-noticeably more expensive to build, and the gain over document-aware splitting
-is often small.
-Start simple and escalate only when the eval set says retrieval is the
-bottleneck.""",
+WHY IT MATTERS MORE THAN PEOPLE EXPECT: the chunk is the ATOM of retrieval. If the sentence that
+answers a question is split across two chunks, NEITHER chunk answers the question, and no amount of
+better embedding, reranking or prompting can recover it. The information was destroyed at index time.
 
-    """Chunk size is not one decision - it is two.
-The chunk you EMBED and the chunk you PASS TO THE MODEL need not be the same.
-Small-to-big (parent document) retrieval embeds small precise chunks for
-matching, then hands the model the surrounding PARENT section for context.
-You get the precision of small chunks and the completeness of large ones.
-The variant worth naming alongside it: index a generated SUMMARY or
-hypothetical questions for each chunk and retrieve on those, while returning
-the original text. Both decouple 'what matches well' from 'what reads well'.""",
+THE TWO FORCES PULLING IN OPPOSITE DIRECTIONS:
 
-    """What breaks regardless of strategy, and the fix.
-TABLES split across chunks become meaningless; extract them separately and
-store them whole, or serialise each row with its headers.
-CODE split mid-function loses the signature; split on function boundaries.
-Long documents lose their global context - which is what prepending the title
-and heading recovers.
-Cross-references ('as described in section 3') are unresolvable in isolation;
-either inline the reference during ingestion or accept the limit and let
-retrieval fetch both.""",
+    TOO SMALL   the answer gets cut in half; the chunk loses the context that made it meaningful
+    TOO LARGE   the relevant sentence is buried among 400 words of irrelevance, and you pay for all
+                of it on every request
 
-    """How to actually choose, since guessing is the usual approach.
-Build the retrieval eval set first (questions with the correct source chunk
-labelled), then sweep chunk size and overlap and measure recall@k. That is a
-one-afternoon experiment and it replaces months of opinion.
-Also measure what it costs: smaller chunks mean more vectors, so a 200-token
-chunking of a corpus produces roughly four times the index of an 800-token one -
-more memory, slower search, higher embedding cost. Chunking is a
-quality-versus-cost trade with a measurable answer, which is the point to
-close on.""",
+SO THE RULE IS: LARGE ENOUGH TO CONTAIN A COMPLETE THOUGHT, SMALL ENOUGH THAT MOST OF IT IS RELEVANT.
+
+THE FOUR KNOBS, and each has a measured effect below:
+
+    WHERE TO CUT     fixed word count, sentence boundaries, or section boundaries
+    HOW BIG          the target size
+    HOW MUCH OVERLAP shared text between neighbouring chunks
+    WHAT TO ATTACH   headings, titles, dates, section paths prepended to each chunk
+
+TERMS AS THEY APPEAR:
+- RECALL@k: does the chunk containing the answer appear in the top k results?
+- SPLIT: the answer sentence was cut across a chunk boundary and no chunk contains it whole.""",
+
+    """2. THE INTUITION - cut on structure, not on a character count
+
+MEASURED, on four structured documents and eight questions whose answers are single sentences.
+'Split' counts how often the answer sentence was cut across a boundary:
+
+    strategy          size  overlap   chunks   r@1   r@3   split
+    fixed words         10        0       24   0/8   1/8    4/8
+    fixed words         20        0       13   5/8   6/8    1/8
+    fixed words         20        5       17   5/8   8/8    0/8
+    fixed words         40        0        8   7/8   7/8    1/8
+    fixed words         40       10        9   8/8   8/8    0/8
+
+    sentence-aware      10        0       15   6/8   8/8    0/8
+    sentence-aware      20        0        9   7/8   8/8    0/8
+    sentence-aware      20        5       17   8/8   8/8    0/8
+    sentence-aware      40        0        5   7/8   8/8    0/8
+
+    whole section        -        -        4   8/8   8/8    0/8
+
+THE HEADLINE COMPARISON IS THE TOP OF EACH BLOCK. At a target of 10 words:
+
+    FIXED-WIDTH:     recall@1 = 0/8.  Not one question answered from the top chunk.
+    SENTENCE-AWARE:  recall@1 = 6/8.
+
+SAME TARGET SIZE. SAME DOCUMENTS. SAME RETRIEVER. The only difference is that one respects sentence
+boundaries and the other counts words and cuts. Fixed-width split 4 of 8 answers in half; sentence-aware
+split none, at any size.
+
+THIS IS THE MOST ACTIONABLE FINDING IN THE TOPIC: the boundary rule matters more than the size. A
+sentence-aware splitter at ANY size tested scored 6/8 or better at recall@1; the fixed-width splitter
+needed 40-word chunks to match what sentence-aware achieved at 10.
+
+WHY: a chunk beginning 'in advance through the HR portal. Unpaid parental leave of up to twenty' is
+not a thought. It matches nothing well, because it is half of one idea and half of another.""",
+
+    """3. OVERLAP - the cheapest fix available
+
+    Overlap means neighbouring chunks share some text, so a sentence near a boundary appears WHOLE in
+    at least one of them.
+
+    MEASURED, fixed-width:
+
+        size  overlap    r@1    r@3    split
+          20        0    5/8    6/8      1/8
+          20        5    5/8    8/8      0/8
+          40        0    7/8    7/8      1/8
+          40       10    8/8    8/8      0/8
+
+    IN BOTH PAIRS OVERLAP TOOK SPLITS TO ZERO, and it took recall@3 from 6/8 to 8/8 and recall@1 from
+    7/8 to 8/8. The cost is that the number of chunks rose from 13 to 17 and from 8 to 9 - so you store
+    and search about 20% more, and you might retrieve two overlapping chunks in your top k.
+
+    THAT IS AN EXCELLENT TRADE and it is why 10-20% overlap is the standard default.
+
+    THE HONEST QUALIFICATION: notice that sentence-aware splitting reached 0/8 splits WITHOUT any
+    overlap. Overlap is a patch for cutting in the wrong place. If you split on structure properly you
+    need less of it - though a little is still worth having, because a thought sometimes spans two
+    sentences and the second one starts with 'It'.
+
+    WHAT OVERLAP DOES NOT FIX: a chunk that has lost its heading, or a chunk that is simply too big.
+    It is specifically a boundary remedy.
+
+    A NOTE ON DE-DUPLICATION: with overlap, two retrieved chunks may contain the same sentence. Worth
+    collapsing before you build the prompt, or you pay for the same text twice and give the model the
+    impression that something was said twice.""",
+
+    """4. THE FAILURE MODES
+
+A. SPLITTING BY CHARACTER COUNT. Measured: 10-word fixed chunks scored 0/8 at recall@1 against 6/8 for
+   sentence-aware at the same size. It is the default in a lot of tutorial code and it is the worst
+   available option.
+
+B. NO OVERLAP. Measured: 1/8 answers split at 20 and 40 words; overlap took both to 0/8 for about 20%
+   more chunks.
+
+C. THROWING AWAY THE HEADINGS. A chunk reading 'entitled to ten days of paid paternity leave' has no
+   country, no policy name and no date attached. Prepending the section path costs nothing at index
+   time - see below for what it did and did not fix here.
+
+D. CHUNKS TOO BIG. The whole-section strategy scored 8/8 here, but see the token table: the same
+   answers cost 396 tokens per request at 100-word chunks against 150 at 20-word chunks. On a real
+   corpus that ratio is the difference between a viable product and an expensive one.
+
+E. IGNORING THE DOCUMENT TYPE. Prose, tables, code and transcripts want different rules. A table cut
+   in half loses its header row and becomes meaningless numbers; code cut mid-function is unreadable;
+   a transcript needs speaker turns kept together.
+
+F. ONE STRATEGY FOR EVERY CORPUS. FAQ pages want one chunk per question. Legal contracts want one per
+   clause. Chat logs want one per conversation or per turn-group. The corpus should choose the rule.
+
+G. NOT MEASURING SPLITS. Recall tells you something went wrong; the split count tells you WHY. It is
+   two lines of code - does any chunk contain the answer sentence whole? - and it is the single most
+   diagnostic number in the whole pipeline.
+
+H. RE-CHUNKING WITHOUT RE-EMBEDDING. Change the chunker and every embedding in the store is stale.
+   Version the index and rebuild it.
+
+I. TUNING CHUNK SIZE WITHOUT AN EVAL SET. Every table on this page required eight questions with known
+   answers. Without them, chunk size is chosen by feel and defended by anecdote.""",
+
+    """5. HEADINGS AND METADATA - what they did and did not fix
+
+    THE CLAIM you will read everywhere: prepend the document title and section path to every chunk, so
+    that 'entitled to ten days' carries 'Handbook > Ireland > Parental Leave' with it.
+
+    MEASURED, the same runs with and without the heading prepended:
+
+        strategy          size  ovl   heading   r@1   r@3   wrong document
+        fixed words         10    0     no      0/8   1/8       2/8
+        fixed words         10    0     YES     0/8   3/8       0/8
+        sentence-aware      40    0     no      7/8   8/8       1/8
+        sentence-aware      40    0     YES     8/8   8/8       0/8
+
+    WHERE IT HELPED, CLEARLY: the 'wrong document' column. Prepending the heading eliminated every case
+    where the top result came from the wrong document - 2/8 to 0/8, and 1/8 to 0/8. On tiny 10-word
+    chunks it also took recall@3 from 1/8 to 3/8.
+
+    WHERE IT DID NOTHING: at 20 and 40 words with overlap, the numbers are identical with and without.
+    Once chunks are big enough to contain their own context, the heading is redundant.
+
+    AND AN HONEST NEGATIVE. I isolated the country-confusion case specifically - two near-identical
+    documents differing only in country - expecting to show leave questions being answered from the
+    wrong country without headings. IT DID NOT REPRODUCE: 0 of 4 went to the wrong country either way.
+
+    THE REASON IS INSTRUCTIVE: these documents SAY 'Employees based in Ireland' in the body text, so
+    the country is already in the chunk. The heading was redundant because the author happened to
+    repeat it.
+
+    WHICH IS THE REAL LESSON: HEADINGS MATTER EXACTLY WHEN THE BODY TEXT DOES NOT REPEAT THEM - a table
+    of numbers under a section title, a clause that says 'the aforementioned party', a bullet list
+    under a heading nobody repeats. Those are extremely common in real corpora, which is why the
+    practice is right even though my sample did not punish its absence.
+
+    THE METADATA WORTH STORING ALONGSIDE, separate from the text: document id, section path, updated
+    date, access-control list, source URL. The ACL in particular must be filterable at query time - see
+    [[llms-rag-retrieval-augmented-generation]].""",
+
+    """6. HOW TO CHUNK A CORPUS - numbered steps
+
+1. BUILD THE EVAL SET FIRST. 20-30 real questions and, for each, the sentence that answers it. Every
+   number on this page is impossible without it.
+2. LOOK AT YOUR DOCUMENTS. Are they prose, FAQ, tables, code, transcripts, contracts? The structure
+   present in the source is the structure you should cut on.
+3. SPLIT ON THE LARGEST NATURAL BOUNDARY FIRST - section, then paragraph, then sentence. Only fall
+   back to a word count when a single section exceeds your size limit.
+4. TARGET 200-500 TOKENS as a starting point, and treat it as a starting point rather than an answer.
+5. ADD 10-20% OVERLAP, applied at sentence granularity rather than mid-word.
+6. PREPEND THE TITLE AND SECTION PATH to the indexed text. Costs nothing, and it is the difference
+   between a retrievable chunk and an orphaned one whenever the body does not repeat its context.
+7. STORE METADATA SEPARATELY - doc id, section, date, ACL, URL - so you can filter before searching.
+8. MEASURE THREE THINGS: recall@k, the SPLIT COUNT, and the tokens of context per request.
+9. TRY TWO SIZES AND TWO BOUNDARY RULES and pick from the table, not from the blog post you read.
+10. RE-INDEX WHEN THE CHUNKER CHANGES. Old embeddings from a different chunker are silently wrong.
+
+STEP 8'S MIDDLE ITEM IS THE ONE NOBODY MEASURES AND THE ONE THAT EXPLAINS EVERYTHING ELSE. Recall told
+me the 10-word fixed chunker was bad; the split count - 4 of 8 answers cut in half - told me why, and
+told me the fix was the boundary rule rather than the size.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The chunk is the atom of retrieval, so if the sentence that answers a question gets cut across two
+chunks, neither one answers it and nothing downstream can recover that. The information was destroyed
+at index time.
+
+The thing I would emphasise is that WHERE you cut matters more than HOW BIG the pieces are. I measured
+this: with a ten-word target, a fixed-width splitter scored zero out of eight at recall@1, and a
+sentence-aware splitter at the same target scored six out of eight. Same documents, same retriever. The
+fixed-width version split half the answers across boundaries; the sentence-aware version split none, at
+any size I tried.
+
+So my rule is: split on the largest natural boundary - section, then paragraph, then sentence - and
+only fall back to a word count when a section is too big. Target a few hundred tokens, add ten to
+twenty percent overlap, which took splits from one in eight to zero for about twenty percent more
+chunks, and prepend the document title and section path to each chunk.
+
+On headings I would be honest about what I measured. Prepending them eliminated every case where the
+top result came from the wrong document - two out of eight down to zero. But when I tried to isolate a
+country-confusion case, it did not reproduce, because those documents happened to repeat the country in
+the body text. So the real rule is that headings matter exactly when the body does not repeat its
+context - a table under a section title, a clause saying "the aforementioned party" - which is very
+common in real corpora.
+
+And the number nobody measures is the split count. Recall tells you something is wrong; the split count
+tells you it was the boundary rule rather than the size, and it is two lines of code.'""",
+
+    """8. THE STRATEGIES, PIECE BY PIECE
+
+    FIXED-SIZE (n words or characters, sliding window)
+        PRO: trivial to implement, uniform chunk sizes, works on anything including text with no
+             structure at all.
+        CON: cuts mid-sentence and mid-thought. Measured at 0/8 recall@1 with a 10-word target.
+        USE WHEN: the source genuinely has no structure - OCR output, scraped text, transcripts with
+        no punctuation. And add overlap, because you will be cutting in the wrong place by definition.
+
+    SENTENCE-AWARE (accumulate sentences up to a size limit)
+        PRO: never splits a sentence. Measured at 6/8 to 8/8 recall@1 across every size tested, and
+             0/8 splits without needing overlap at all.
+        CON: chunk sizes vary; one enormous sentence can overflow the target.
+        USE WHEN: prose. This is the sane default for most corpora.
+
+    SECTION / STRUCTURE-AWARE (split on headings, then subdivide if too large)
+        PRO: chunks are semantically complete units, and the heading hierarchy comes free.
+        CON: sizes vary wildly - one section is a paragraph and the next is nine pages, so you still
+             need a subdivision rule underneath.
+        USE WHEN: the documents have real structure - handbooks, runbooks, contracts, documentation.
+        THIS IS THE BEST OPTION WHEN AVAILABLE, with sentence-aware as the fallback inside a section.
+
+    ONE CHUNK PER LOGICAL UNIT (per FAQ entry, per clause, per function, per turn)
+        PRO: perfectly aligned with how people ask questions.
+        CON: only possible when the corpus really is a list of units.
+        USE WHEN: it applies. It usually beats everything else.
+
+    SEMANTIC CHUNKING (split where consecutive sentences' embeddings diverge)
+        PRO: finds topic boundaries that no punctuation marks.
+        CON: expensive to index, non-deterministic, and hard to debug.
+        USE WHEN: you have measured that the simpler options are failing. Not as a starting point.
+
+    THE COST DIMENSION, on the same corpus:
+        20-word chunks, k=5   about 150 tokens of context
+        40-word chunks, k=5   about 218
+        100-word chunks, k=5  about 396
+    Same questions, same answers, 2.6x the context. That is charged on every request, forever.""",
+
+    """9. ONE DOCUMENT, CHUNKED THREE WAYS
+
+    THE SOURCE, under the heading 'Handbook > Ireland > Parental Leave':
+
+        'Employees based in Ireland are entitled to ten days of paid paternity leave in the first six
+         months after the birth. Paternity leave must be taken in one continuous block. Requests should
+         be submitted at least four weeks in advance through the HR portal. Unpaid parental leave of up
+         to twenty six weeks is available separately...'
+
+    THE QUESTION: 'how far in advance must Irish paternity leave be requested?'
+    THE ANSWER SENTENCE: 'Requests should be submitted at least four weeks in advance...'
+
+    FIXED-WIDTH, 10 WORDS, NO OVERLAP:
+        chunk 5: '...in one continuous block. Requests should be submitted at'
+        chunk 6: 'least four weeks in advance through the HR portal. Unpaid'
+
+        THE ANSWER IS SPLIT. Chunk 5 has 'requests should be submitted' and no number. Chunk 6 has
+        'four weeks' and no subject. The question matches chunk 5 slightly better on words and chunk 6
+        contains the actual answer, and the model receives a fragment starting mid-sentence.
+        THIS IS WHY THAT ROW SCORED 0/8.
+
+    SENTENCE-AWARE, 10-WORD TARGET:
+        chunk 3: 'Requests should be submitted at least four weeks in advance through the HR portal.'
+
+        ONE COMPLETE THOUGHT. It matches the question strongly and it answers it entirely on its own.
+        Note the chunk is 14 words, not 10 - the size is a target, and respecting the boundary is worth
+        overshooting it.
+
+    WITH THE HEADING PREPENDED:
+        'Handbook > Ireland > Parental Leave: Requests should be submitted at least four weeks in
+         advance through the HR portal.'
+
+        Now the chunk is retrievable by a query mentioning Ireland even though the sentence itself does
+        not say Ireland, and when it lands in the prompt the model can cite it correctly. THIS IS THE
+        CASE THE HEADING EXISTS FOR - and it is exactly the case my isolated experiment failed to
+        reproduce, because the FIRST sentence of that document happens to repeat 'Ireland' while this
+        one does not.
+
+    THE LESSON IN ONE LINE: look at your actual chunks. Print twenty of them at random. Half the
+    chunking bugs in the world are visible in thirty seconds of reading, and invisible in any metric
+    until you know what to look for.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MEASURED EVIDENCE (4 documents, 8 questions):
+        10-word target:  fixed-width r@1 = 0/8, splits 4/8   ·   sentence-aware r@1 = 6/8, splits 0/8
+        overlap:         20/0 -> 20/5 took splits 1/8 -> 0/8 and r@3 6/8 -> 8/8, for 13 -> 17 chunks
+        headings:        eliminated wrong-document top hits, 2/8 -> 0/8 and 1/8 -> 0/8
+        token cost:      20-word chunks at k=5 ~150 tokens · 100-word chunks at k=5 ~396 tokens
+
+    THE DEFAULTS: split on structure (section -> paragraph -> sentence), 200-500 tokens, 10-20%
+    overlap, headings prepended, metadata stored separately and filterable.
+
+THE #1 MISTAKE: splitting by character or word count. It cuts sentences in half, and a half-sentence
+answers nothing - measured at 0/8 recall@1 where sentence-aware scored 6/8 at the same size.
+
+THE #2 MISTAKE: no overlap. One in eight answers split at both sizes tested, fixed by 10-20% overlap
+at a cost of about 20% more chunks.
+
+THE #3 MISTAKE: discarding the heading hierarchy during parsing, so chunks lose the context that makes
+them meaningful - which bites exactly when the body text does not repeat it.
+
+THE #4 MISTAKE: assuming bigger chunks are safer. They score the same and cost 2.6x the context per
+request, forever.
+
+THE #5 MISTAKE: tuning any of this without an eval set and without counting SPLITS - the one number
+that tells you whether the boundary rule or the size is at fault.
+
+ONE-SENTENCE TAKEAWAY: cut on the largest natural boundary the document offers rather than on a
+character count, overlap by 10-20%, carry the headings into the chunk, and measure both recall@k and
+how often an answer got cut in half - because the chunk is the atom of retrieval and anything destroyed
+at index time cannot be recovered at query time.""",
 ]
 
 _EX_P1Y["Decision Trees & Random Forests"] = [
@@ -150330,6 +150857,340 @@ ONE-SENTENCE TAKEAWAY: tell a real mistake in the first person with a number att
 disclosed it before you had it under control, and spend most of your answer on the SYSTEMIC fix that
 would stop the next person - because they are hiring for how you behave when something goes wrong, and
 everyone's something goes wrong eventually.""",
+]
+
+_EX_P1AO["A/B testing an ML model (and the statistics you must get right)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - proving the new model is actually better
+
+Your offline metrics improved. AUC went from 0.81 to 0.84, or the recommender's held-out precision
+went up. That is NOT evidence that the product got better, because offline metrics measure agreement
+with historical data and the product is about future human behaviour.
+
+AN A/B TEST answers the only question that matters: IF WE SHIP THIS, DOES THE THING WE CARE ABOUT
+IMPROVE?
+
+    randomly split users into two groups
+    group A gets the current model (the CONTROL)
+    group B gets the new one (the TREATMENT)
+    measure ONE primary metric
+    decide whether the difference is bigger than noise
+
+RANDOMISATION IS THE ENTIRE TRICK. Because assignment is random, the two groups are alike in every way
+you thought of AND every way you did not - device, country, tenure, mood, day of week. Any systematic
+difference in outcome must come from the treatment. That is what no amount of offline analysis can give
+you.
+
+WHY ML SYSTEMS NEED THIS MORE THAN MOST FEATURES: a better model can make the product worse. A
+recommender that predicts clicks more accurately can push users toward clickbait and reduce
+satisfaction. A fraud model with better precision can block more good customers if the threshold moved
+too. Offline metrics cannot see any of that.
+
+TERMS AS THEY APPEAR:
+- p-VALUE: if there were truly NO difference, how often would I see a gap this big by luck? Small
+  means 'luck is a poor explanation'.
+- POWER: the chance of detecting a real effect if one exists. Conventionally 80%.
+- MDE: minimum detectable effect - the smallest lift the test can reliably find.""",
+
+    """2. THE INTUITION - the one number that governs everything
+
+Before any statistics, the question that decides whether the experiment is even possible:
+
+    HOW SMALL AN EFFECT DO YOU NEED TO DETECT, AND HOW MANY USERS DOES THAT TAKE?
+
+MEASURED, at a 10% baseline conversion, 5% significance, 80% power:
+
+    relative lift    absolute      users PER ARM     days at 5,000/day/arm
+             50%       5.00pp                686                     0.1
+             20%       2.00pp              3,841                     0.8
+             10%       1.00pp             14,751                     3.0
+              5%       0.50pp             57,763                    11.6
+              2%       0.20pp            356,335                    71.3
+              1%       0.10pp          1,419,073                   283.8
+
+READ THE RELATIONSHIP: HALVING THE EFFECT YOU WANT TO DETECT ROUGHLY QUADRUPLES THE SAMPLE. 10% lift
+needs 15k per arm; 5% needs 58k; 2.5% would need about 230k.
+
+THIS ONE TABLE DECIDES WHICH EXPERIMENTS ARE WORTH RUNNING. If your product has 5,000 users a day per
+arm and someone wants to detect a 1% improvement, that is 284 DAYS. The honest answer is not 'let's run
+it and see' - it is 'we cannot measure an effect that small, so either we accept a bigger risk, or we
+pick a more sensitive metric, or we do not run this test'.
+
+AND THE CONVERSATION THIS ENABLES, which is what makes it a senior answer: 'what lift would make this
+worth shipping?' If the answer is 'anything positive', push back - you cannot measure 'anything
+positive', and a test that cannot resolve the effect you care about is not evidence, it is theatre.""",
+
+    """3. PEEKING - the mistake that ships changes doing nothing
+
+    THE TEMPTATION: the dashboard updates live. You look on day 2, p = 0.31. Day 4, p = 0.12. Day 6,
+    p = 0.04 - ship it!
+
+    MEASURED. 400 simulated A/A tests where THE TWO ARMS ARE IDENTICAL and the true effect is exactly
+    zero. The only thing that varies is how often you look:
+
+        look only at the end          declared a winner in   5.0% of tests
+        look 4 times                                        11.8%
+        look 10 times                                       19.8%
+        look every 200 users                                29.8%
+
+    THE 5% AT THE TOP IS CORRECT AND EXPECTED - that IS what a 5% significance level means. The other
+    three rows are the damage.
+
+    LOOKING EVERY 200 USERS AND STOPPING AT THE FIRST p<0.05 DECLARES A WINNER 30% OF THE TIME WHEN
+    THERE IS NOTHING THERE. Six times the advertised error rate. Nothing about the test changed - only
+    the number of opportunities to catch a lucky moment.
+
+    WHY IT HAPPENS: the p-value wanders as data accumulates. Given enough looks it will eventually
+    dip below 0.05 by chance, and if your rule is 'stop when it does', you have built a machine for
+    finding noise.
+
+    THE FIXES, in order of preference:
+
+        1. FIX THE SAMPLE SIZE AND DURATION IN ADVANCE, and only test at the end. Simple, and it is
+           what the 5.0% row assumes.
+        2. USE A SEQUENTIAL TEST DESIGNED FOR PEEKING - group sequential boundaries, always-valid
+           confidence intervals, Bayesian methods. These exist precisely because everyone peeks; use
+           one rather than pretending you will not.
+        3. IF YOU MUST LOOK EARLY, LOOK FOR HARM ONLY. A guardrail check for 'is this breaking
+           something' is a different decision from 'have we won', and it can use a different rule.
+
+    THE SENTENCE TO SAY IN AN INTERVIEW: 'I would fix the duration up front, because I measured that
+    peeking every 200 users turns a 5% false-positive rate into 30%.'""",
+
+    """4. THE FAILURE MODES
+
+A. PEEKING AND STOPPING EARLY. Measured: 5% becomes 30%. The most common and most damaging error in
+   practice.
+
+B. TRACKING MANY METRICS AND CELEBRATING WHICHEVER WINS. Measured, on tests where every metric had a
+   true effect of ZERO:
+
+        metrics tracked     at least one p < 0.05
+                      1                      5.8%
+                      3                     14.0%
+                      5                     25.0%
+                     10                     35.0%
+                     20                     63.5%
+
+   With 20 metrics you find a 'significant' result from pure noise about two-thirds of the time. PICK
+   ONE PRIMARY METRIC BEFORE THE TEST STARTS and write it down. Everything else is a guardrail or an
+   exploratory note, not a decision input.
+
+C. RUNNING UNDERPOWERED AND BELIEVING THE RESULT. See below - this is the subtle one.
+
+D. NOT RUNNING FOR WHOLE WEEKS. Tuesday users differ from Saturday users. Run in multiples of seven
+   days or day-of-week composition confounds the result.
+
+E. IGNORING THE NOVELTY EFFECT. A new UI gets clicked because it is new. Effects that decay over the
+   first week are common; a one-day test measures curiosity.
+
+F. RANDOMISING THE WRONG UNIT. If a user can be assigned to A on their phone and B on their laptop,
+   the arms leak into each other and the effect shrinks toward zero. Randomise by a stable user id, and
+   remember that if users interact with each other - marketplaces, social feeds - the treatment can
+   spill over and you may need cluster randomisation.
+
+G. NOT RUNNING AN A/A TEST FIRST. Split traffic between two IDENTICAL arms. If it reports a
+   significant difference, your pipeline is broken. This is the cheapest possible sanity check and
+   almost nobody does it.
+
+H. CONFUSING STATISTICAL AND PRACTICAL SIGNIFICANCE. With ten million users, a 0.01% lift is
+   statistically significant and worth nothing. Decide the threshold that justifies shipping BEFORE
+   you see the number.
+
+I. FORGETTING GUARDRAILS. Latency, error rate, unsubscribes, revenue per user. A model that improves
+   engagement while doubling p99 latency is not a win.""",
+
+    """5. UNDERPOWERED TESTS AND THE WINNER'S CURSE
+
+    THE SUBTLE FAILURE. A true lift of 5% exists. How often do we find it, and what do we measure when
+    we do?
+
+        users per arm      detected     missed     measured lift WHEN detected
+                2,000          8.0%      92.0%                        20.3%
+               10,000         19.5%      80.5%                        11.5%
+               50,000         75.5%      24.5%                         6.0%
+              200,000        100.0%       0.0%                         5.0%
+
+    TWO SEPARATE DISASTERS IN THE FIRST ROW.
+
+    FIRST, WITH 2,000 PER ARM YOU MISS A REAL 5% IMPROVEMENT 92% OF THE TIME. The test reports 'no
+    significant difference' and the team concludes the model does not help. It does help. You just
+    could not see it. UNDERPOWERED TESTS DO NOT PRODUCE 'NO RESULT' - THEY PRODUCE WRONG CONCLUSIONS
+    THAT LOOK LIKE CAUTION.
+
+    SECOND, AND WORSE: on the 8% of occasions it DOES reach significance, it measures the lift as
+    20.3% - FOUR TIMES THE TRUTH. This is the WINNER'S CURSE. To clear the significance bar with a
+    small sample, you need a lucky draw, so the only results that survive are the overstated ones.
+
+    THE PRACTICAL CONSEQUENCES ARE EXACTLY WHAT YOU SEE IN REAL COMPANIES:
+        - a portfolio of 'wins' whose promised lifts never appear in the topline numbers
+        - forecasts built on effect sizes that were never real
+        - and a slow loss of trust in experimentation itself
+
+    WATCH THE BIAS DISAPPEAR AS POWER RISES: 20.3%, 11.5%, 6.0%, 5.0%. At 200,000 per arm the test
+    detects the effect every time and measures it correctly. POWER IS NOT A NICETY - IT IS WHAT MAKES
+    THE NUMBER MEAN WHAT IT SAYS.
+
+    THE RULE THAT FOLLOWS: compute the required sample size BEFORE the test. If you cannot reach it,
+    say so out loud and decide what to do - run longer, accept a larger MDE, use a more sensitive
+    metric, or do not run it. Running it anyway and reading the result is worse than not running it,
+    because it produces a number people will quote.""",
+
+    """6. HOW TO RUN ONE PROPERLY - numbered steps
+
+1. WRITE THE HYPOTHESIS DOWN. 'The new ranking model will increase 7-day retention.' Specific enough
+   to be wrong.
+2. PICK ONE PRIMARY METRIC, before the test. Measured above: 20 metrics gives you a false winner 63%
+   of the time.
+3. PICK YOUR GUARDRAILS - latency, error rate, revenue, complaints. These can stop a launch but cannot
+   declare a win.
+4. DECIDE THE MDE FROM THE BUSINESS SIDE. What lift would justify shipping and maintaining this?
+5. COMPUTE THE SAMPLE SIZE AND DURATION. If it is 284 days, you have learned something important
+   before spending anything.
+6. RUN AN A/A TEST or check historical A/A splits. If identical arms differ significantly, fix the
+   pipeline before trusting anything.
+7. RANDOMISE ON A STABLE UNIT - user id, not session, not request. Verify the split is actually 50/50
+   and balanced on known covariates.
+8. RUN FOR WHOLE WEEKS and for the full pre-computed duration. Do not stop early on good news.
+9. CHECK GUARDRAILS DURING THE RUN. Looking for harm is a different decision from looking for a win.
+10. ANALYSE ONCE, at the end. Report the effect size AND the confidence interval, not just the p-value.
+11. IF IT WON, SHIP AND THEN VERIFY. Holdouts and the topline metric. Promised lifts that never appear
+    are the sign of a peeking or power problem upstream.
+
+STEP 5 IS THE ONE THAT SAVES THE MOST TIME. Half the experiments people want to run are not runnable,
+and finding that out costs an afternoon of arithmetic rather than a month of traffic.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Offline metrics tell me the model agrees better with historical data. They do not tell me the product
+got better - a recommender that predicts clicks more accurately can push people toward clickbait and
+reduce satisfaction. So I would A/B test it: random split, one arm on the current model, one on the
+new, and randomisation is what makes the groups comparable on everything including the things I did not
+think to control for.
+
+The first thing I would do is not statistical, it is arithmetic: how many users do I need? At a 10%
+baseline, detecting a 10% relative lift needs about 15,000 per arm, but a 5% lift needs 58,000 and a 1%
+lift needs 1.4 million - halving the effect quadruples the sample. If we only get 5,000 users a day per
+arm, that last one is 284 days, and the useful answer is "we cannot measure that", not "let's run it
+and see".
+
+The two mistakes I would be most careful about are peeking and power. I simulated peeking: 400 A/A
+tests where the true effect was zero, and looking only at the end gave the correct 5% false-positive
+rate, while looking every 200 users and stopping at the first p below 0.05 declared a winner 30% of the
+time. Six times the advertised error rate, from nothing but extra looks. So I would fix the duration up
+front, or use a sequential method actually designed for peeking.
+
+Power is subtler. With a true 5% lift and only 2,000 users per arm, the test misses it 92% of the time
+- and on the occasions it does reach significance it measures the lift as 20%, four times the truth.
+That is the winner's curse: only the luckiest draws clear the bar, so every "win" is overstated. It is
+why companies end up with portfolios of wins whose lifts never show up in the topline.
+
+And I would fix one primary metric in advance, because with 20 metrics you get a significant result
+from pure noise about two-thirds of the time. Everything else is a guardrail.'""",
+
+    """8. THE DESIGN, PIECE BY PIECE
+
+    THE HYPOTHESIS
+        'Ranking model v2 increases 7-day retention.' One sentence, falsifiable, written before the
+        test. It is what stops the analysis becoming a search for something that moved.
+
+    THE PRIMARY METRIC - exactly one
+        It should be as close as possible to what you actually care about, and sensitive enough to move
+        within the test's duration. There is a real tension here: revenue is what matters and is very
+        noisy; click-through is sensitive and is a proxy that can be gamed by the very model you are
+        testing. Name that tension out loud - it is a good discussion.
+
+    THE GUARDRAILS - as many as you like
+        Latency, error rate, unsubscribes, support tickets, revenue per user. ASYMMETRIC BY DESIGN:
+        they can block a launch, they cannot declare a win. That asymmetry is what keeps them from
+        becoming twenty chances at a false positive.
+
+    THE MDE, chosen by the BUSINESS
+        The smallest lift worth shipping. This is not a statistical parameter - it is a product
+        decision, and asking for it is how you find out whether the experiment is worth running.
+
+    THE SAMPLE SIZE, derived from the MDE
+        n per arm grows roughly as 1/effect^2. Measured: 686 for a 50% lift, 1,419,073 for 1%.
+
+    THE UNIT OF RANDOMISATION
+        User id, hashed, stable across sessions and devices. Randomising by session or request means a
+        user experiences both arms and the measured effect shrinks toward zero.
+
+    THE DURATION
+        max(sample-size requirement, whole weeks, long enough for novelty to decay). All three, not
+        whichever is shortest.
+
+    THE ANALYSIS
+        One test, at the end. Report the point estimate AND the confidence interval. 'A 3% lift, 95%
+        CI 0.5% to 5.5%' is honest; 'p = 0.03' alone is not, because it hides how uncertain the size
+        is - and the size is what the business is going to plan around.""",
+
+    """9. ONE TEST, WALKED
+
+    THE SETUP: new ranking model. Primary metric is 7-day retention, currently 10%. The business says a
+    5% relative lift (0.5 percentage points) would justify shipping.
+
+    STEP 1 - SAMPLE SIZE: from the table, a 5% relative lift at a 10% baseline needs 57,763 per arm.
+    At 5,000 users a day per arm that is 11.6 days -> ROUND UP TO 14 DAYS, two whole weeks, so
+    day-of-week composition is balanced.
+
+    STEP 2 - A/A CHECK: split last month's traffic into two arbitrary halves and run the same analysis.
+    p = 0.62. Good - the pipeline is not manufacturing differences.
+
+    STEP 3 - RUN IT. Days 1-14, no analysis of the primary metric. Guardrails checked daily:
+        day 3   p99 latency +8ms. Under the 25ms guardrail. Continue.
+        day 6   the dashboard shows treatment ahead, p = 0.04. DO NOT STOP. This is exactly the moment
+                the peeking simulation is about - and at day 6 the sample is less than half of what was
+                planned, so this is a lucky-draw candidate.
+
+    STEP 4 - ANALYSE, ONCE, ON DAY 14:
+        control    5,812 / 58,104 = 10.00%
+        treatment  6,143 / 58,220 = 10.55%
+        absolute lift 0.55pp, relative 5.5%
+        95% CI on the relative lift: 1.7% to 9.4%
+        p = 0.004
+
+    STEP 5 - READ IT PROPERLY. The point estimate clears the 5% bar, but THE CONFIDENCE INTERVAL
+    INCLUDES VALUES BELOW IT. The honest statement is: 'we are confident there is a real improvement;
+    we are not confident it is as large as 5.5%, and it could plausibly be 2%.' Whether that ships is a
+    business call, and presenting it that way is what makes you trusted.
+
+    STEP 6 - GUARDRAILS AT THE END: latency +6ms, errors flat, revenue per user +1.2% (not
+    significant, and not claimed).
+
+    STEP 7 - SHIP, AND KEEP A 5% HOLDOUT for a month. If the topline retention does not move roughly as
+    predicted, something in the experiment was wrong and you want to know that before the next ten
+    decisions are built on it.
+
+    WHAT MADE THIS A GOOD TEST: the duration was fixed before it started, day 6 was ignored, one metric
+    decided it, and the result was reported as a RANGE.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MEASURED EVIDENCE:
+        peeking (true effect ZERO):   end-only 5.0% · 4 looks 11.8% · 10 looks 19.8% · every 200 29.8%
+        multiple metrics (all null):  1 metric 5.8% · 5 metrics 25.0% · 20 metrics 63.5%
+        sample size at 10% baseline:  50% lift 686/arm · 10% lift 14,751 · 5% lift 57,763 · 1% lift
+                                      1,419,073
+        power, true lift 5%:          2,000/arm detects 8% of the time and measures it as 20.3%;
+                                      200,000/arm detects it always and measures it as 5.0%
+
+THE #1 MISTAKE: peeking and stopping on good news. It converts a 5% error rate into 30% and it is the
+reason organisations accumulate wins that never appear in the topline.
+
+THE #2 MISTAKE: running underpowered and believing the answer. It misses real effects most of the
+time, and overstates them badly when it does not.
+
+THE #3 MISTAKE: many metrics, one winner. Fix the primary metric in writing before the test starts.
+
+THE #4 MISTAKE: confusing statistical with practical significance. Report the effect size and its
+confidence interval, and agree the shipping threshold beforehand.
+
+THE #5 MISTAKE: trusting offline metrics. AUC going up is a reason to run the experiment, not a result.
+
+ONE-SENTENCE TAKEAWAY: decide the primary metric, the minimum effect worth shipping, and the duration
+BEFORE the test starts, then leave it alone until it ends - because every extra look and every extra
+metric is another chance for noise to look like a win, and an underpowered test does not just fail to
+find effects, it exaggerates the ones it does find.""",
 ]
 
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
