@@ -40,22 +40,27 @@ begin
 
   -- Point the plan at her actual target: 15 Nov 2026, 92 days out.
   --
-  -- The daily goal moves 45 -> 90 minutes, and that is arithmetic rather
-  -- than ambition. The bank's own prep_minutes put P0 at 92h35m and P0+P1
-  -- at 284h25m. Over 92 days:
+  -- The daily goal is 240 minutes (4 hours), which is what she says she can
+  -- actually give it. That is a stated capacity, not a derived number — but
+  -- it is worth recording what it buys, because the earlier values did not
+  -- buy enough. The bank's own prep_minutes put P0 at 92h35m and P0+P1 at
+  -- 284h25m. Over the 92 days to 15 Nov:
   --      45 min/day =  69h  -> 75% of P0. Does not even finish the
   --                            must-know band before the interview.
   --      60 min/day =  92h  -> P0 almost exactly, nothing beyond it.
   --      90 min/day = 138h  -> all of P0 plus about a quarter of P1.
-  --     185 min/day = 284h  -> P0+P1 complete, and not realistic alongside
-  --                            a final year of university.
-  -- 90 is the number that clears the must-know band with room to start on
-  -- the core one. Change it here or in the UI if the real week disagrees;
-  -- what matters is that 45 was quietly impossible and nothing said so.
+  --     185 min/day = 284h  -> P0+P1 complete, with nothing spare.
+  --     240 min/day = 368h  -> P0+P1 complete by roughly 20 October, then
+  --                            83h left over, about half of P2.
+  -- So the goal stops being a stretch and becomes a schedule: the binding
+  -- constraint is no longer hours available, it is whether the 4 hours
+  -- actually happen. The budget line on /goal-planner reads feasible at this
+  -- number, and it should start reading short again the moment she slips —
+  -- that is the signal to watch, not the total.
   update interview_prep
      set role_title         = 'AI/ML SDE — New Grad (Amazon / Google)',
          target_date        = date '2026-11-15',
-         daily_goal_minutes = 90,
+         daily_goal_minutes = 240,
          updated_at         = now()
    where user_id = uid;
 
@@ -168,7 +173,7 @@ begin
             'quarterly', 'active',
             current_date, date '2026-11-15',
             (date '2026-11-15' + time '09:00:00') at time zone 'Asia/Kolkata',
-            90, 17065, true, true);
+            240, 17065, true, true);
   end if;
 
   raise notice 'AI SDE prep track seeded for %', uid;
