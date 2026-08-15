@@ -144802,6 +144802,735 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
+_EX_P1AO["Abstract class vs interface - and which to reach for"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two ways of saying 'anything of this kind must do X'
+
+Suppose you are writing code that works with SHAPES, and every shape must be able to report its area.
+You want two things:
+
+    1. a guarantee that anything calling itself a shape really can compute an area, and
+    2. a way for your code to work with any shape without knowing which kind it is.
+
+There are two mechanisms for that, and the difference between them is one of the most common
+interview questions in object-oriented programming.
+
+    AN INTERFACE says WHAT must exist - a list of method names, with no bodies. 'Anything that is a
+    Shape must have an area() method.' It is a contract and nothing else.
+
+    AN ABSTRACT CLASS says what must exist AND provides some of it - it can have real methods with
+    real code, and real data, alongside the ones it leaves for subclasses to fill in.
+
+The short version: use an INTERFACE when you only want to specify a capability; use an ABSTRACT CLASS
+when subclasses genuinely share behaviour you would otherwise write twice.
+
+TERMS AS THEY APPEAR:
+- ABSTRACT METHOD: a method declared with no implementation. Subclasses must supply one.
+- CONCRETE METHOD: an ordinary method with a body, inherited as-is.
+- INSTANTIATE: create an object from a class. Neither an interface nor an abstract class can be
+  instantiated directly - there would be missing pieces.
+- IMPLEMENT / EXTEND: 'implement' is the word for satisfying an interface, 'extend' for inheriting
+  from a class. Different words for what is, in Python, the same syntax.""",
+
+    """2. THE INTUITION - the real distinction is IS-A versus CAN-DO
+
+The textbook answer talks about method bodies. The useful answer is about MODELLING.
+
+    AN ABSTRACT CLASS models an IS-A relationship. A Square IS A Shape. It sits in a family tree,
+    inherits shared machinery, and belongs to a hierarchy.
+
+    AN INTERFACE models a CAN-DO capability. A Square CAN BE serialised, CAN BE compared, CAN BE
+    drawn. Those capabilities cut ACROSS the family tree - a Square, a Customer and a LogEntry might
+    all be serialisable while having nothing else in common.
+
+That distinction decides which one you want. Ask 'is this a KIND of thing, or an ABILITY?'
+
+A REAL-WORLD PICTURE. 'Bird' is an abstract class: all birds have feathers and a beak, and those are
+shared facts worth writing once. 'CanFly' is an interface: some birds can, some cannot, and so can
+aeroplanes and insects, which are not birds at all. Trying to force CanFly into the bird hierarchy
+gives you the classic mess of ostriches inheriting a fly() method that throws.
+
+THE MECHANICAL DIFFERENCE THAT FOLLOWS FROM IT: a class can implement MANY interfaces but, in most
+languages, extend only ONE class. That single-inheritance limit is why capabilities belong in
+interfaces - you can have as many as you like - and identity belongs in the class hierarchy.
+
+IN PYTHON specifically the two blur, because Python has multiple inheritance and duck typing. The
+tools are:
+    - `ABC` with `@abstractmethod` for an abstract class (and for an interface, if you want the
+      enforcement),
+    - `Protocol` for structural typing - 'anything with these methods counts', with no inheritance
+      required at all,
+    - or plain duck typing: just call the method and let it fail if it is missing.""",
+
+    """3. TRACED IN REAL PYTHON - what each mechanism actually does
+
+    from abc import ABC, abstractmethod
+
+    class Shape(ABC):
+        @abstractmethod
+        def area(self): ...
+
+        def describe(self):                      # a CONCRETE method
+            return f"a shape of area {self.area()}"
+
+    class Square(Shape):
+        def __init__(self, side): self.side = side
+        def area(self): return self.side ** 2
+
+    class Broken(Shape):
+        pass                                      # forgot to implement area()
+
+MEASURED - the actual results, including the exact error messages:
+
+    Shape()          -> TypeError: Can't instantiate abstract class Shape without an
+                        implementation for abstract method 'area'
+    Broken()         -> TypeError: Can't instantiate abstract class Broken without an
+                        implementation for abstract method 'area'
+    Square(3).area() -> 9
+    Square(3).describe() -> 'a shape of area 9'
+
+THREE THINGS TO NOTICE, and they are the whole entry:
+
+    1. The error fires at INSTANTIATION, not at definition. `class Broken(Shape): pass` is legal;
+       you only find out when somebody tries to create one. That is later than a compiled language
+       would tell you, and it is worth knowing.
+    2. `describe()` is INHERITED WITH ITS BODY - Square never wrote it. That is what an abstract class
+       gives you that a pure interface cannot: shared implementation.
+    3. `describe()` calls `self.area()`, which resolves to the SUBCLASS's version. The base class
+       calls forward into code that did not exist when it was written. That is the template-method
+       pattern, and it is the main practical reason abstract classes exist.
+
+NOW THE INTERFACE-STYLE ALTERNATIVE, using a Protocol:
+
+    @runtime_checkable
+    class Sized(Protocol):
+        def area(self) -> float: ...
+
+    class Circle:                                 # inherits from NOTHING
+        def area(self): return 3.14159
+
+    MEASURED:
+        isinstance(Circle(), Shape)  -> False     it is not in that family tree
+        isinstance(Circle(), Sized)  -> True      but it satisfies the capability
+        Circle().area()              -> 3.14159   and duck typing simply calls it
+
+Circle passes the capability check while being entirely outside the hierarchy. That is STRUCTURAL
+typing - membership decided by what an object DOES, not by what it inherits - and it is exactly the
+IS-A versus CAN-DO distinction made mechanical.""",
+
+    """4. THE FAILURE MODES - and the one Python does differently from Java
+
+A. THE ERROR ARRIVES LATE. Measured: `class Broken(Shape): pass` is accepted, and the TypeError only
+   appears when something calls `Broken()`. In Java the compiler rejects it immediately. If you are
+   coming from a compiled language, this is the difference that will bite you - the guarantee is real
+   but it is a RUNTIME guarantee.
+
+B. INHERITING FOR CODE REUSE RATHER THAN FOR IDENTITY - the classic design error. If you make Customer
+   extend DatabaseHelper because it needs a save() method, you have declared 'a Customer IS A database
+   helper', which is nonsense, and you have used up your one inheritance slot. Prefer COMPOSITION: give
+   Customer a repository object and call it. The rule of thumb is 'inherit for what a thing IS,
+   compose for what it HAS'.
+
+C. THE DEEP HIERARCHY. Five levels of abstract classes, each adding a little, is a structure nobody
+   can read - to understand one method you must open five files. Two levels is usually plenty; beyond
+   that, ask whether the shared behaviour would be better as a separate collaborator object.
+
+D. FAT INTERFACES. An interface with fifteen methods forces every implementer to supply fifteen, most
+   of which will raise NotImplementedError. Split it. This is the INTERFACE SEGREGATION PRINCIPLE -
+   the I in SOLID - and 'many small interfaces beat one large one' is the whole of it.
+
+E. THE DIAMOND PROBLEM, where multiple inheritance is allowed. If D inherits from both B and C, and
+   both inherit from A, which version of a method does D get?
+
+   MEASURED in Python:
+       D().who()  ->  'D -> B -> C -> A'
+       D.__mro__  ->  [D, B, C, A, object]
+
+   Note what that shows: inside B, `super()` reached C, NOT A - even though C is not B's parent.
+   `super()` follows the METHOD RESOLUTION ORDER of the actual object's class, not the static parent
+   of the class the code is written in. That is the single most surprising fact about Python
+   inheritance, and it is why every class in a cooperative hierarchy must call `super()` - one class
+   that does not silently truncates the chain.
+
+F. FORGETTING `super().__init__()`. Measured: a subclass whose `__init__` does not call it produced
+   `AttributeError: 'ForgetfulChild' object has no attribute 'log'` - the base class's setup simply
+   never ran. The object is constructed, it is half-initialised, and the failure appears later,
+   somewhere else.
+
+G. ASSUMING PYTHON HAS INTERFACES AS A LANGUAGE FEATURE. It does not. `ABC` is the closest thing, and
+   `Protocol` gives you structural checks. Saying 'Python uses ABCs or Protocols; there is no
+   `interface` keyword' is the correct answer and it is a small tell of real experience.""",
+
+    """5. WHICH TO REACH FOR - the decision, and the language differences
+
+USE AN INTERFACE (or a Protocol) WHEN:
+    - you only want to specify a capability, with no shared code;
+    - unrelated classes need the same ability - serialisable, comparable, drawable;
+    - you want implementers to be free to inherit from something else;
+    - you are defining a boundary between modules, and want the dependency to point at an abstraction
+      rather than at a concrete class.
+
+USE AN ABSTRACT CLASS WHEN:
+    - the subclasses genuinely share behaviour and you would otherwise write it twice;
+    - there is common STATE - fields every subclass needs;
+    - you want a TEMPLATE METHOD: a concrete method in the base that calls abstract ones, fixing the
+      shape of an algorithm while letting subclasses fill in steps. The `describe()` calling
+      `self.area()` in section 3 is the smallest possible example.
+
+WHEN IN DOUBT, START WITH THE INTERFACE. It is the weaker commitment. Turning an interface into an
+abstract class later is easy; unpicking an inheritance hierarchy is not.
+
+THE LANGUAGE DIFFERENCES WORTH KNOWING, because interviewers ask across languages:
+    - JAVA: `interface` and `abstract class` are separate keywords. Since Java 8 interfaces may have
+      DEFAULT METHODS with bodies, which narrowed the gap considerably - the remaining differences are
+      that abstract classes can hold state and constructors, and that you may extend only one.
+    - C++: no interface keyword; you use an abstract class with all-pure-virtual methods. Multiple
+      inheritance is allowed, hence the virtual-inheritance machinery for diamonds.
+    - PYTHON: `ABC` plus `@abstractmethod` for enforcement, `Protocol` for structural typing, and duck
+      typing for no enforcement at all.
+    - GO: interfaces are satisfied IMPLICITLY - a type never declares that it implements one, it
+      simply has the methods. That is the same structural idea as Python's Protocol, and it is a good
+      thing to mention because it shows you understand the distinction rather than the syntax.
+
+THE MODERN ADVICE, and it is worth stating because it cuts against the classic teaching: prefer
+COMPOSITION over inheritance in general, and use interfaces to describe the pieces you compose.
+Inheritance is for genuine IS-A relationships and shared implementation you would otherwise duplicate,
+not for reuse in general.""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+1. WRITE DOWN THE SENTENCE. 'A Square is a Shape' or 'A Square can compute an area'. If IS-A reads
+   naturally, you are in class territory; if CAN-DO does, you want an interface.
+2. ASK WHETHER THERE IS SHARED CODE. If two implementers would contain the same method body, an
+   abstract class saves you writing it twice. If there is no shared code, an interface is the honest
+   choice.
+3. ASK WHETHER THERE IS SHARED STATE. Fields belong in a class; an interface cannot hold them (in
+   Python a Protocol can declare attributes, but it stores nothing).
+4. ASK WHETHER IMPLEMENTERS MIGHT NEED ANOTHER PARENT. If so, do not spend their single inheritance
+   slot - use an interface.
+5. KEEP IT SMALL. If your interface has more than a handful of methods, split it by capability.
+6. IN PYTHON, PICK THE TOOL:
+       enforcement at instantiation, plus shared code  -> ABC with @abstractmethod
+       a capability check with no inheritance          -> Protocol (add @runtime_checkable for
+                                                          isinstance)
+       nothing at all                                  -> duck typing, and let it fail at the call
+7. IF YOU CHOSE AN ABSTRACT CLASS, MAKE SURE EVERY SUBCLASS CALLS `super().__init__()` - measured
+   above as an AttributeError that surfaces far from its cause.
+
+THE STEP THAT SAVES THE MOST PAIN IS 1, said out loud. Most bad hierarchies begin with someone
+reaching for inheritance because they wanted a method, not because the sentence 'X is a Y' was ever
+true.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'An interface specifies WHAT something must do - just method names, no bodies. An abstract class does
+that too but can also provide shared implementation and shared state, so it is a partially-built
+parent rather than a pure contract.
+
+The way I choose is IS-A versus CAN-DO. An abstract class models what something IS, so it belongs in a
+family tree - a Square is a Shape. An interface models what something CAN DO, and capabilities cut
+across trees - a Square, a Customer and a log entry might all be serialisable with nothing else in
+common. That also lines up with the mechanics: you can implement many interfaces but usually extend
+only one class, so identity goes in the class and capabilities go in interfaces.
+
+In Python there is no interface keyword. I would use ABC with abstractmethod when I want the
+enforcement and shared code - and note the enforcement is at instantiation, so a subclass that forgets
+a method is a runtime TypeError, not a compile error. For a pure capability I would use a Protocol,
+which is structural: a class satisfies it by having the right methods, without inheriting from
+anything. I checked that - a Circle that inherits from nothing fails isinstance against the abstract
+Shape and passes it against the Protocol.
+
+And in general I would default to composition, using interfaces to describe the parts, and keep
+inheritance for genuine is-a relationships.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    from abc import ABC, abstractmethod
+
+    `ABC` is a base class whose metaclass refuses to instantiate any class that still has unimplemented
+    abstract methods. Inheriting from it is what turns the decorator below from documentation into
+    enforcement - without `ABC`, `@abstractmethod` does nothing at all.
+
+    class Shape(ABC):
+        @abstractmethod
+        def area(self): ...
+
+    The decorator MARKS the method. The body is `...` (Python's Ellipsis) purely because a body is
+    syntactically required; `pass` or a docstring would do equally well. Nothing here is ever called.
+
+    def describe(self):
+        return f"a shape of area {self.area()}"
+
+    A CONCRETE method in the abstract class. It is inherited whole, and it calls `self.area()` - which
+    at run time resolves to the SUBCLASS's implementation. The base class is calling forward into code
+    that did not exist when it was written, which is the template-method pattern in two lines.
+
+    class Square(Shape):
+        def area(self): return self.side ** 2
+
+    Providing the method is what makes the class concrete and instantiable. There is no `implements`
+    keyword and no declaration - the ABC machinery simply checks, at instantiation, whether every
+    abstract name has been supplied.
+
+    THE PROTOCOL VERSION:
+
+    @runtime_checkable
+    class Sized(Protocol):
+        def area(self) -> float: ...
+
+    `Protocol` describes a SHAPE rather than an ancestor. Any class with a matching `area` satisfies
+    it, whether or not it has ever heard of `Sized`. `@runtime_checkable` is needed only if you want
+    `isinstance` to work - without it, the protocol is a static type-checker concept and produces no
+    runtime behaviour at all.
+
+    THE MRO, which is what makes multiple inheritance tractable:
+
+    D.__mro__  ->  [D, B, C, A, object]
+
+    Python linearises the inheritance graph into a single ordered list (C3 linearisation), and
+    `super()` means 'the next class in the MRO of the object's actual type' - not 'my parent'. That is
+    why B's `super()` reached C: in D's MRO, C follows B.""",
+
+    """9. RUNNING IT - the measured behaviour, with the real messages
+
+    ABSTRACT CLASS ENFORCEMENT:
+        Shape()               -> TypeError: Can't instantiate abstract class Shape without an
+                                 implementation for abstract method 'area'
+        Broken()              -> TypeError: Can't instantiate abstract class Broken without an
+                                 implementation for abstract method 'area'
+        Square(3).area()      -> 9
+        Square(3).describe()  -> 'a shape of area 9'
+
+    Read the second line again: `Broken` was DEFINED successfully. The class statement executed, the
+    module imported, and nothing complained. The error waited for somebody to construct one.
+
+    STRUCTURAL VERSUS NOMINAL TYPING:
+        isinstance(Circle(), Shape)  -> False
+        isinstance(Circle(), Sized)  -> True
+        Circle().area()              -> 3.14159
+
+    One object, two answers, because the two questions are different: 'are you descended from Shape?'
+    and 'do you have an area method?'.
+
+    THE DIAMOND AND THE MRO:
+        D().who()   ->  'D -> B -> C -> A'
+        D.__mro__   ->  [D, B, C, A, object]
+
+    B's `super()` reached C. If you expected 'D -> B -> A', that is the intuition to correct.
+
+    FORGETTING super().__init__():
+        Child().log            -> ['Base.__init__', 'Child.__init__']
+        ForgetfulChild().log   -> AttributeError: 'ForgetfulChild' object has no attribute 'log'
+
+    The object exists and is usable - right up to the moment something touches an attribute the base
+    class was supposed to create. That distance between cause and symptom is what makes it worth a
+    checklist item.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+THE COMPARISON:
+
+                            INTERFACE / PROTOCOL          ABSTRACT CLASS
+    method bodies           no (or defaults, in Java 8+)   yes
+    state / fields          no                             yes
+    how many per class      many                           usually one
+    models                  a capability (CAN-DO)          an identity (IS-A)
+    coupling                loose                          tighter - a real hierarchy
+    Python tool             Protocol, or plain duck typing ABC + @abstractmethod
+
+THE #1 MISTAKE: inheriting to reuse code rather than to express an IS-A relationship. It spends the
+single inheritance slot, ties two classes together permanently, and produces hierarchies where you
+must read five files to understand one method. Compose instead, and use an interface to name the part
+you are composing.
+
+THE #2 MISTAKE, specific to Python: expecting the abstract-method check at definition time. Measured -
+`class Broken(Shape): pass` is perfectly legal and fails only at `Broken()`. If that matters, a type
+checker will catch it earlier; the language will not.
+
+THE #3 MISTAKE: a fat interface. Fifteen methods means fourteen NotImplementedErrors in somebody's
+class. Split it by capability.
+
+THE FACT THAT SURPRISES EVERYONE: `super()` follows the MRO of the actual object's class, not the
+parent of the class you are writing in. Measured: inside B, `super()` reached C. Every class in a
+cooperative hierarchy must call `super()`, or the chain quietly stops.
+
+ONE-SENTENCE TAKEAWAY: use an interface to say what something CAN DO and an abstract class to say what
+something IS and to share the code that follows from it - and when the two seem equally good, take the
+interface, because it is the weaker commitment.""",
+]
+
+_EX_P1AO["Overloading vs overriding (compile-time vs runtime polymorphism)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two words that sound alike and mean opposite things
+
+These are two different mechanisms with confusingly similar names, and interviewers ask about them
+precisely because so many people blur them.
+
+    OVERLOADING: several methods with the SAME NAME in the SAME CLASS, distinguished by their
+    PARAMETERS. Which one runs is decided by the COMPILER, from the types you wrote in the call.
+
+        int    add(int a, int b)
+        double add(double a, double b)
+        int    add(int a, int b, int c)     <- three methods, one name
+
+    OVERRIDING: a SUBCLASS replacing a method it inherited, with the same name AND the same
+    parameters. Which one runs is decided at RUN TIME, by the actual type of the object.
+
+        class Animal:  def speak(self): return "..."
+        class Dog(Animal): def speak(self): return "woof"
+
+THE ONE-LINE DISTINCTION: overloading is about the SIGNATURE and is resolved before the program runs;
+overriding is about the OBJECT and is resolved while it runs.
+
+    overloading  = same class,      different parameters,  compile-time,  'static polymorphism'
+    overriding   = parent and child, same parameters,       run-time,      'dynamic polymorphism'
+
+AND THE PYTHON TWIST, which section 3 measures: Python has NO overloading at all. A second `def` with
+the same name simply replaces the first. Knowing that - and knowing what Python offers instead - is
+what the question is really testing when it is asked in a Python interview.
+
+TERMS AS THEY APPEAR:
+- SIGNATURE: the method's name plus the number and types of its parameters.
+- POLYMORPHISM: 'many shapes' - one name behaving differently depending on context.
+- DISPATCH: the act of deciding which piece of code a call actually runs.""",
+
+    """2. THE INTUITION - who decides, and when
+
+Everything follows from one question: WHO CHOOSES which code runs, and WHEN?
+
+    OVERLOADING - THE COMPILER CHOOSES, BEFORE THE PROGRAM RUNS. It looks at the types in your source
+    code and picks the matching method. By the time the program starts, the decision is baked in.
+    Nothing about the running object can change it. This is why it is called STATIC or COMPILE-TIME
+    polymorphism.
+
+    OVERRIDING - THE RUNTIME CHOOSES, AS THE CALL HAPPENS. The variable might be declared as an
+    Animal, but if it is holding a Dog then Dog's method runs. The decision depends on what the object
+    actually is at that moment, which cannot be known in advance.
+
+A REAL-WORLD PICTURE. Overloading is like a form with several versions - short, medium and long. The
+clerk hands you the right one based on what you say you are applying for, before you fill anything in.
+Overriding is like asking a queue of people 'what do you say?' - who is standing in front of you at
+that moment decides the answer, and you did not know when you joined the queue.
+
+WHY OVERRIDING IS THE ONE THAT MATTERS. Overloading is convenience - it saves you inventing
+addInt, addDouble, addThree. Overriding is the mechanism behind almost all object-oriented design: it
+is what lets you write a function that works with any Shape, any Animal, any Handler, without knowing
+which kind. Measured:
+
+    one loop over Animal(), Dog(), Cat() calling the same method:
+        Animal  -> speak(): ...     introduce(): I say ...
+        Dog     -> speak(): woof    introduce(): I say woof
+        Cat     -> speak(): meow    introduce(): I say meow
+
+Look at the `introduce()` column. That method is written ONCE, in the base class, and it calls
+`self.speak()` - which resolves to the subclass's version. Nothing in Animal knows Dog exists. Adding
+a Cow tomorrow needs no change to Animal at all.
+
+That indirection is what people mean by 'program to an interface' and 'the open-closed principle', and
+it is entirely a consequence of overriding being resolved at run time.""",
+
+    """3. TRACED IN REAL PYTHON - including the thing that does not work
+
+FIRST, THE ATTEMPT AT OVERLOADING, and what Python actually does:
+
+    class Calculator:
+        def add(self, a, b):
+            return a + b
+        def add(self, a, b, c):        # this REPLACES the previous definition
+            return a + b + c
+
+    MEASURED:
+        Calculator().add(1, 2)     -> TypeError: Calculator.add() missing 1 required
+                                      positional argument: 'c'
+        Calculator().add(1, 2, 3)  -> 6
+
+The two-argument version is GONE. A class body is executed top to bottom and each `def` binds a name
+in the class dictionary, so the second `add` overwrote the first exactly as `x = 1; x = 2` would.
+Python dispatches on the NAME only. There is no overloading, and writing two defs is not a clever
+trick - it is a silent bug.
+
+THE PYTHONIC REPLACEMENT - default arguments:
+
+    class Calculator2:
+        def add(self, a, b, c=0):
+            return a + b + c
+
+    MEASURED:  add(1, 2) -> 3      add(1, 2, 3) -> 6
+
+One method, both call shapes. This is what people mean when they say Python does not need
+overloading: optional parameters, `*args`, and `**kwargs` cover most of what overloading is used for
+in Java.
+
+AND WHEN YOU GENUINELY WANT TYPE-BASED DISPATCH - `functools.singledispatch`:
+
+    @singledispatch
+    def describe(x):            return f"something else: {x}"
+    @describe.register
+    def _(x: int):              return f"an int: {x}"
+    @describe.register
+    def _(x: list):             return f"a list of {len(x)} items"
+
+    MEASURED:
+        describe(5)          -> 'an int: 5'
+        describe([1, 2, 3])  -> 'a list of 3 items'
+        describe('hello')    -> 'something else: hello'
+
+This IS dispatch on type - but note the crucial difference: it happens at RUN time, by looking at the
+argument, not at compile time by looking at the source. Even Python's closest analogue of overloading
+is dynamic.
+
+NOW OVERRIDING, which works exactly as you would expect:
+
+    class Animal:
+        def speak(self):     return "..."
+        def introduce(self): return f"I say {self.speak()}"
+    class Dog(Animal):
+        def speak(self):     return "woof"
+
+    MEASURED:  Dog().speak() -> 'woof'      Dog().introduce() -> 'I say woof'
+
+`introduce` was inherited unchanged from Animal, and it produced 'woof' - because `self.speak()` looked
+up `speak` on the actual object, found Dog's, and called it.""",
+
+    """4. THE FAILURE MODES
+
+A. WRITING TWO `def`s WITH THE SAME NAME IN PYTHON AND EXPECTING OVERLOADING. Measured: the
+   two-argument call raises `TypeError: missing 1 required positional argument`. The first definition
+   is simply gone. Linters warn about it; the language does not.
+
+B. FORGETTING `super().__init__()` WHEN OVERRIDING A CONSTRUCTOR. Measured:
+
+       Child().log           -> ['Base.__init__', 'Child.__init__']
+       ForgetfulChild().log  -> AttributeError: 'ForgetfulChild' object has no attribute 'log'
+
+   Overriding `__init__` REPLACES the parent's setup rather than adding to it. The object is created
+   successfully and fails later, wherever the missing attribute is first touched - which may be a
+   different file entirely.
+
+C. CHANGING THE SIGNATURE WHEN OVERRIDING. If the parent has `def save(self, path)` and the child
+   writes `def save(self, path, backup)`, then any code holding the parent type will call it with one
+   argument and get a TypeError. Python allows the mismatch; the Liskov substitution principle - the
+   L of SOLID - says a subclass must be usable anywhere the parent is, and this breaks it.
+
+D. CONFUSING OVERRIDING WITH SHADOWING. Assigning an attribute with the same name as a method
+   (`self.speak = something`) hides the method on that instance only, which produces objects of the
+   same class behaving differently. It is legal and almost always a mistake.
+
+E. IN JAVA, OVERLOADING RESOLVED ON THE DECLARED TYPE, WHICH SURPRISES PEOPLE. Given `f(Object)` and
+   `f(String)`, and `Object o = "hello"`, the call `f(o)` runs `f(Object)` - because the COMPILER
+   chose, and the compiler only knew the declared type. Meanwhile an overridden method on that same
+   object would use the runtime type. Overloading looks at the declaration, overriding looks at the
+   object, and that pair of behaviours in one program is the single most confusing thing about the
+   topic.
+
+F. OVERLOADING WITH AMBIGUOUS TYPES. `f(int)` and `f(long)` called with a literal that could be either
+   forces the compiler into a promotion-rules tie-break. If you need to think about which one runs,
+   the overload set is too clever.
+
+G. ASSUMING PYTHON'S `@overload` FROM `typing` DOES ANYTHING AT RUN TIME. It does not - it is
+   documentation for the type checker only, and the implementation is still a single function. Knowing
+   that distinction is a genuine tell.""",
+
+    """5. WHY THE DISTINCTION EARNS ITS PLACE - and the polymorphism it enables
+
+The reason interviewers ask is not the vocabulary. It is that OVERRIDING is the mechanism behind most
+object-oriented design, and knowing it is resolved at run time is what makes that design make sense.
+
+THE OPEN-CLOSED PRINCIPLE, made concrete by the measured example: `Animal.introduce()` calls
+`self.speak()`. You can add a Cow class tomorrow and `introduce` will work with it, unchanged. The
+base class is CLOSED to modification and the system is OPEN to extension - and the whole thing rests
+on the call being resolved against the actual object rather than the declared one.
+
+WHAT THIS REPLACES: without overriding you would write
+
+    if isinstance(a, Dog):     return "woof"
+    elif isinstance(a, Cat):   return "meow"
+    ...
+
+and every new animal means editing that chain, in every place it appears. A long isinstance or switch
+chain over types is almost always a missing polymorphic method, and spotting that is a useful review
+habit.
+
+OVERLOADING, BY CONTRAST, IS CONVENIENCE. It saves you writing `addInt`, `addDouble`, `addThreeInts`.
+Nothing about a program's structure depends on it, which is why languages like Python can omit it
+entirely and lose nothing important.
+
+THE VOCABULARY, so the question does not surprise you in any of its forms:
+    - COMPILE-TIME / STATIC POLYMORPHISM  = overloading
+    - RUN-TIME / DYNAMIC POLYMORPHISM     = overriding
+    - EARLY BINDING                       = the call target is fixed at compile time
+    - LATE BINDING / VIRTUAL DISPATCH     = the call target is found at run time
+In Java every non-final, non-static method is virtual by default. In C++ you must write `virtual`
+explicitly, and forgetting it is a classic bug: the base class's version runs even though the object
+is a subclass. In Python everything is late-bound, always.
+
+THE RELATED PYTHON MECHANISM WORTH NAMING: `singledispatch` gives you type-based dispatch on the first
+argument, and multiple dispatch libraries exist. But because Python resolves types at run time, even
+these are dynamic - there is nothing in the language that decides a call before the program starts.""",
+
+    """6. HOW TO GET IT RIGHT - numbered steps
+
+WHEN OVERRIDING:
+1. KEEP THE SIGNATURE COMPATIBLE with the parent's. Anything holding the parent type must still be
+   able to call it.
+2. CALL `super()` unless you deliberately intend to replace the parent's behaviour entirely - and in
+   `__init__`, essentially always. Measured: forgetting it produced an AttributeError far from the
+   cause.
+3. USE THE `@override` DECORATOR (Python 3.12+, `typing.override`) or Java's `@Override` annotation.
+   It is checked, and it catches the misspelled-method-name bug where you think you are overriding and
+   are actually defining something new.
+4. DO NOT STRENGTHEN PRECONDITIONS OR WEAKEN THE RETURN. Accept at least what the parent accepted, and
+   return something usable wherever the parent's return was usable. That is Liskov substitution stated
+   practically.
+
+WHEN YOU WANT SOMETHING LIKE OVERLOADING IN PYTHON:
+5. REACH FOR DEFAULT ARGUMENTS FIRST. `def add(self, a, b, c=0)` covers most cases in one line.
+6. USE `*args` / `**kwargs` when the shapes genuinely vary, and validate inside.
+7. USE `functools.singledispatch` when the behaviour depends on the argument's TYPE and the branches
+   are substantial. It keeps them as separate functions instead of an isinstance chain.
+8. USE `typing.overload` ONLY as documentation for a type checker - it has no runtime effect at all,
+   and the single real implementation still has to handle every case.
+
+AND THE HABIT THAT PREVENTS MOST OF IT: if you find yourself writing `if isinstance(x, ...)` over a
+family of types, ask whether that should be a method on those types instead. That is the overriding
+answer to a question you were about to solve with a chain.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Overloading is several methods with the same name in the same class, told apart by their parameters,
+and the compiler picks which one runs before the program starts - so it is static polymorphism.
+Overriding is a subclass replacing an inherited method with the same signature, and the runtime picks
+which one runs based on the actual object - dynamic polymorphism.
+
+Overriding is the one that matters, because it is what lets you write code against a base type that
+works with subclasses that did not exist when you wrote it. In my example the base class has an
+introduce() method calling self.speak(), and it prints "I say woof" for a Dog - the base class never
+mentions Dog. That is what replaces a long isinstance chain.
+
+Python does not have overloading at all. If you write two defs with the same name, the second simply
+replaces the first - I have run it, and calling the two-argument form afterwards is a TypeError about
+a missing argument. What Python offers instead is default arguments, *args, and functools.
+singledispatch for real dispatch on the first argument's type - and even that is resolved at run time.
+typing.overload exists but affects only the type checker.
+
+The subtlety worth mentioning is that in Java the two mechanisms coexist and use different information:
+overloading resolves on the DECLARED type and overriding on the RUNTIME type, so an Object variable
+holding a String picks the Object overload while still calling the String's overridden methods.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    THE FAILED OVERLOAD:
+
+        class Calculator:
+            def add(self, a, b):    return a + b
+            def add(self, a, b, c): return a + b + c
+
+    A class body is ORDINARY CODE that runs top to bottom, and `def` is a statement that binds a name
+    in the class namespace. The second `def add` rebinds the same name, so the first function object
+    becomes unreachable. There is no signature table, no dispatch, and no warning.
+
+    THE DEFAULT-ARGUMENT VERSION:
+
+        def add(self, a, b, c=0): return a + b + c
+
+    `c=0` gives the parameter a default, so the caller may omit it. This is one function with one
+    body, which is why it cannot express two genuinely different behaviours - if the two-argument and
+    three-argument cases need different logic, you want singledispatch or two differently-named
+    methods.
+
+    SINGLEDISPATCH:
+
+        @singledispatch
+        def describe(x): ...            # the fallback, for any type not registered
+        @describe.register
+        def _(x: int): ...              # registered against int, read from the annotation
+
+    The decorator builds a registry from type to implementation and, at CALL time, looks up the type
+    of the first argument. The functions are all named `_` because their names never matter - only
+    their registrations do. Dispatch is on the FIRST argument only, hence 'single'.
+
+    THE OVERRIDE:
+
+        class Animal:
+            def speak(self):     return "..."
+            def introduce(self): return f"I say {self.speak()}"
+        class Dog(Animal):
+            def speak(self):     return "woof"
+
+    `Dog.speak` shadows `Animal.speak` in the attribute lookup order, so `self.speak()` inside
+    `introduce` finds Dog's version first. The lookup walks the object's class, then its MRO - and it
+    happens on EVERY call, which is exactly why the behaviour is dynamic.
+
+    `super().speak()` would be the way to call the parent's version deliberately - useful when you
+    want to EXTEND rather than REPLACE, which is almost always what you want in `__init__`.""",
+
+    """9. RUNNING IT - the measured behaviour
+
+    THE OVERLOADING ATTEMPT:
+        Calculator().add(1, 2)     -> TypeError: Calculator.add() missing 1 required
+                                      positional argument: 'c'
+        Calculator().add(1, 2, 3)  -> 6
+
+    The error message is the giveaway: Python is not saying 'no matching overload', it is saying
+    'this one function needs three arguments'. There is only ever one function.
+
+    THE PYTHONIC REPLACEMENTS:
+        default arguments:   add(1, 2) -> 3        add(1, 2, 3) -> 6
+        singledispatch:      describe(5)         -> 'an int: 5'
+                             describe([1, 2, 3]) -> 'a list of 3 items'
+                             describe('hello')   -> 'something else: hello'
+
+    OVERRIDING, one loop over three types:
+        Animal  -> speak(): ...     introduce(): I say ...
+        Dog     -> speak(): woof    introduce(): I say woof
+        Cat     -> speak(): meow    introduce(): I say meow
+
+    The `introduce` column is the point. Three different outputs from ONE inherited method that
+    mentions no subclass anywhere.
+
+    FORGETTING super().__init__():
+        Child().log           -> ['Base.__init__', 'Child.__init__']
+        ForgetfulChild().log  -> AttributeError: 'ForgetfulChild' object has no attribute 'log'
+
+    Both objects were constructed without complaint. Only one of them works.
+
+    AND THE MRO, for completeness, because overriding in a multiple-inheritance hierarchy follows it:
+        D().who()  ->  'D -> B -> C -> A'
+        D.__mro__  ->  [D, B, C, A, object]
+    Inside B, `super()` reached C - not A. Overriding resolves along the MRO of the ACTUAL object's
+    class, which is the same rule as everything else here: the object decides, not the source text.""",
+
+    """10. THE COMPARISON, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    SIDE BY SIDE:
+
+                            OVERLOADING                    OVERRIDING
+    where                   one class                      parent and child
+    signatures              must DIFFER                    must MATCH
+    decided by              the compiler, before running   the runtime, at the call
+    also called             static / compile-time          dynamic / run-time polymorphism
+    resolved using          the DECLARED types             the ACTUAL object
+    in Python               does not exist                 works, and is the default
+    why it matters          convenience                    the basis of OO design
+
+THE #1 MISTAKE IN PYTHON: writing two `def`s with the same name and expecting overloading. Measured -
+the first is silently replaced, and the failure surfaces as a confusing 'missing required positional
+argument' at a call site that looks correct. Use default arguments, `*args`, or `singledispatch`.
+
+THE #2 MISTAKE: overriding `__init__` without calling `super().__init__()`. Measured as an
+AttributeError raised far from the class that caused it.
+
+THE #3 MISTAKE: changing the signature when overriding. It compiles, it runs, and it breaks the moment
+somebody uses the subclass through a parent-typed reference - which is the entire point of having a
+subclass.
+
+THE SUBTLETY WORTH KNOWING FOR JAVA INTERVIEWS: the two mechanisms use different information in the
+same program. Overloading resolves on the DECLARED type, overriding on the RUNTIME type. `Object o =
+"hello"; f(o)` calls the Object overload - while `o.toString()` calls String's override.
+
+ONE-SENTENCE TAKEAWAY: overloading is the compiler choosing between signatures before the program
+runs, overriding is the runtime choosing between implementations based on the real object - and Python
+has only the second, which is the half that actually shapes designs.""",
+]
+
 _EX_P1AO["Neural network basics: from a perceptron to a multi-layer network"] = [
     """1. THE GOAL IN PLAIN ENGLISH - one neuron, and then several
 
