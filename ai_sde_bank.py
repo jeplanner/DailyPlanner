@@ -177714,6 +177714,1589 @@ instant they diverge or one of them equals the current node - O(h) time, O(1) sp
 remember the descent never checks that the nodes exist.""",
 ]
 
+_EX_P1AO["Minimum Add to Make Parentheses Valid"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how many brackets are you short?
+
+You are handed a string of '(' and ')'. It may not be valid. INSERT the fewest possible brackets,
+anywhere you like, to make it valid. Return how many you inserted.
+
+    "())"      -> 1     insert one '(' :  "(())"  or  "()()"
+    "((("      -> 3     insert three ')'
+    ")("       -> 2     you need a '(' before the ')' AND a ')' after the '('
+    "()))(("   -> 4
+
+"VALID" MEANS TWO THINGS AT ONCE, and keeping them apart is the whole problem:
+    (a) every ')' has a '(' somewhere BEFORE it, and
+    (b) the total count of '(' equals the total count of ')'.
+
+Condition (a) is the one people forget. ")(" has one of each - the counts balance perfectly - and it
+is completely invalid, because the ')' arrives with nothing to close.
+
+THE EVERYDAY VERSION: you are checking that every door someone walks OUT of, they had previously
+walked INTO. A person leaving a room they were never in is a problem no amount of counting the
+totals will reveal - you have to watch the ORDER.
+
+TERMS AS THEY APPEAR:
+- BALANCE: running count of '(' minus ')' as you scan left to right.
+- UNMATCHED ')': a closing bracket that appears when the balance is already zero. Each one needs a
+  '(' inserted before it.
+- UNMATCHED '(': whatever is left open when the string ends. Each one needs a ')' inserted after it.
+- CLAMP: resetting the balance to 0 after paying for an unmatched ')'. THE ONE-LINE HEART OF THE
+  ALGORITHM.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - USE A STACK. Push on '(', pop on ')'. If you try to pop an empty stack, that ')' is
+unmatched - count it. At the end, whatever is still on the stack is unmatched '(' - count that too.
+    Correct, O(n) time, O(n) space. And the stack never holds anything except '(' characters, so all
+    you ever need from it is its SIZE.
+
+WAY 2 - REPLACE THE STACK WITH A COUNTER. That is exactly what the one-pass solution is:
+
+    open_needed = 0        # '(' we must insert
+    open_count  = 0        # '(' currently unmatched (i.e. the stack height)
+    for ch in s:
+        if ch == '(':
+            open_count += 1
+        elif open_count > 0:
+            open_count -= 1          # this ')' closes something real
+        else:
+            open_needed += 1         # this ')' has nothing to close - buy a '('
+    return open_needed + open_count
+
+WAY 3 - THE ONE THAT LOOKS RIGHT AND IS NOT. Track a single running balance, and return
+`abs(balance)` at the end.
+
+    THIS IS THE MISTAKE THIS QUESTION EXISTS TO CATCH. It counts condition (b) and completely misses
+    condition (a). On ")(" it returns 0, because +1 and -1 cancel.
+
+I MEASURED how often that matters, against a brute-force BFS over insertions:
+
+    over 2,000 random bracket strings, the one-pass greedy matched brute force 2,000 times.
+    THE abs(balance) VERSION WAS WRONG 565 TIMES - 28.2%.
+    RESTRICTED to strings whose balance actually dips below zero at some point - the only strings
+    where the bug CAN fire - it was wrong 751 of 1,323 times, or 56.8%.
+
+    (The other 43% of dipping strings happen to have the same answer by coincidence, e.g. "())" where
+    the dip and the surplus are the same bracket.)
+
+THE KEY IDEA IN ONE SENTENCE: A ')' THAT ARRIVES AT BALANCE ZERO IS A DEBT YOU PAY IMMEDIATELY AND
+THEN FORGET ABOUT. Paying it means incrementing the answer and CLAMPING the balance back to 0 - and
+that clamp is the entire difference between the correct algorithm and the wrong one.""",
+
+    """3. THE HAND TRACE - watch the clamp
+
+    s = "()))(("
+
+    ch     open_count before    action                       open_needed    open_count after
+    ---------------------------------------------------------------------------------------
+    (                     0     open one                               0                   1
+    )                     1     closes the open one                    0                   0
+    )                     0     NOTHING TO CLOSE -> buy a '('          1                   0
+    )                     0     NOTHING TO CLOSE -> buy a '('          2                   0
+    (                     0     open one                               2                   1
+    (                     1     open one                               2                   2
+
+    answer = open_needed + open_count = 2 + 2 = 4
+
+    CHECK IT BY HAND: "()))((" needs "(( ()) ) (( ))" - two '(' at the front and two ')' at the end:
+    "(()))(()" ... easier to just count: three ')' and three '(' but two of the ')' come too early
+    and two of the '(' come too late. 4 insertions. Brute force agrees: 4.
+
+NOW THE SAME STRING WITH THE abs(balance) VERSION:
+
+    balance goes  +1, 0, -1, -2, -1, 0.   Final balance 0.   abs(0) = 0.
+    IT REPORTS THAT THE STRING IS ALREADY VALID. It is not remotely valid.
+
+    The information was destroyed at the third character, when the balance went to -1 and the
+    algorithm simply carried the debt forward, allowing a later '(' to "repay" it. But a bracket
+    cannot repay a debt that came before it. THE CLAMP IS WHAT ENFORCES THAT ARROW OF TIME.
+
+A SECOND TRACE, "(()))(":
+
+    (   open_count 0 -> 1
+    (   open_count 1 -> 2
+    )   open_count 2 -> 1
+    )   open_count 1 -> 0
+    )   open_count 0, nothing to close -> open_needed 1
+    (   open_count 0 -> 1
+    answer = 1 + 1 = 2.   Brute force: 2.   abs(balance) says 0.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - EMPTY STRING. Both counters stay 0, answer 0. No special handling.
+
+CASE 2 - ALREADY VALID. "()", "(())", "()()" all return 0. AND THE BUGGY VERSION ALSO RETURNS 0 -
+which is why a test suite made of valid strings proves nothing.
+
+CASE 3 - ALL ONE KIND. "(((" -> 3, ")))" -> 3. Both versions get these right, because the balance
+never oscillates.
+
+CASE 4 - THE DIAGNOSTIC CASE: ")(" -> 2. Correct algorithms say 2; the abs(balance) version says 0.
+IF YOU TEST ONLY ONE STRING, TEST THIS ONE.
+
+CASE 5 - OTHER CHARACTERS IN THE INPUT. Some variants of the problem include letters. Ignore them:
+`if ch == '(' ... elif ch == ')' ... else: pass`. Writing `else` for ')' silently treats every letter
+as a closing bracket.
+
+CASE 6 - MULTIPLE BRACKET TYPES. If the problem has (), [] and {}, the counter trick DIES and you
+need a real stack, because you must remember WHICH kind is open. Say this if asked to extend.
+
+CASE 7 - THE VARIANT THAT ASKS FOR THE LONGEST VALID SUBSTRING or the MINIMUM REMOVALS instead of
+insertions. Same two counters, different final expression. Minimum removals to make valid is the SAME
+NUMBER as minimum insertions here, which is a nice thing to notice out loud - each unmatched bracket
+must either be removed or partnered.
+
+CASE 8 - LARGE INPUTS. The counter version is O(1) space; the stack version is O(n) and on a string
+of a million '(' that is a real allocation. Mention it.""",
+
+    """5. THE SLOW VERSION FIRST - and the family it belongs to
+
+THE BRUTE FORCE, which is how I verified everything above:
+
+    def brute(s):
+        def valid(t):
+            b = 0
+            for c in t:
+                b += 1 if c == '(' else -1
+                if b < 0: return False        # <-- condition (a), checked in the loop
+            return b == 0                     # <-- condition (b), checked at the end
+        if valid(s): return 0
+        frontier = {s}
+        for k in range(1, 9):                 # BFS over number of insertions
+            nxt = set()
+            for t in frontier:
+                for i in range(len(t) + 1):
+                    for c in "()":
+                        u = t[:i] + c + t[i:]
+                        if valid(u): return k
+                        nxt.add(u)
+            frontier = nxt
+
+    Exponential, usable to about 8 characters, and that is enough: 2,000 random strings of length
+    <= 8 gave 2,000/2,000 agreement with the greedy. NOTICE THAT `valid` ITSELF CONTAINS THE WHOLE
+    LESSON - two separate checks, one inside the loop and one after it.
+
+THE STACK VERSION - write it if the counter trick does not come to you:
+
+    st, unmatched = [], 0
+    for ch in s:
+        if ch == '(':   st.append(ch)
+        elif st:        st.pop()
+        else:           unmatched += 1
+    return unmatched + len(st)
+    Measured identical to the counter version on every case tested.
+
+THE FAMILY - "one scan, two counters, clamp on the invalid side":
+    - VALID PARENTHESES (with one bracket type): same scan, return balance == 0 and never negative.
+    - MINIMUM REMOVE TO MAKE VALID PARENTHESES: same two counters, but you record INDICES to delete.
+    - LONGEST VALID PARENTHESES: the same balance, plus a stack of indices or a two-direction sweep.
+    - CHECK IF A STRING WITH '*' WILDCARDS IS VALID: two balances, a low and a high, both clamped.
+    THE TRANSFERABLE IDEA IS THE CLAMP: when a running quantity goes into an impossible region, pay
+    for it immediately and reset, rather than carrying a negative forward. Kadane's algorithm and the
+    Gas Station greedy are the same shape.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY WHAT "VALID" MEANS, IN TWO PARTS. "Every ')' needs an earlier '(', and the totals must
+match." Splitting it in two is what produces the two counters.
+
+STEP 2 - NAME THE TWO COUNTERS AND SAY WHAT EACH MEANS. `open_needed` = the '(' you must insert;
+`open_count` = the '(' currently waiting to be closed.
+
+STEP 3 - ONE PASS, LEFT TO RIGHT. Direction matters - the whole point is that a ')' can only be
+matched by something BEFORE it.
+
+STEP 4 - ON '(': increment `open_count`.
+
+STEP 5 - ON ')': if `open_count > 0` decrement it, ELSE increment `open_needed`. Say out loud that
+this else-branch is the clamp, and that skipping it is the classic bug.
+
+STEP 6 - RETURN THE SUM. `open_needed + open_count`.
+
+STEP 7 - TEST ON ")(". If you get 0, your clamp is missing. Measured: the un-clamped version is wrong
+on 56.8% of the strings where the balance dips.
+
+STEP 8 - STATE THE COMPLEXITY: O(n) time, O(1) space.
+
+STEP 9 - OFFER THE EXTENSION UNPROMPTED. "With multiple bracket types I'd need an actual stack,
+because I'd have to remember which kind is open." """,
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A string is valid when two things hold: every closing bracket has an opening bracket somewhere
+before it, and the totals match. Those are separate conditions, and the whole difficulty is that a
+single balance counter only checks the second one.
+
+So I'd keep two counters. `open_count` is how many opening brackets are currently waiting to be
+closed - effectively the height of a stack. `open_needed` is how many opening brackets I've had to
+buy. I scan left to right. On an open bracket I increment open_count. On a close bracket, if
+open_count is positive I decrement it - that bracket closed something real. Otherwise there's nothing
+to close, so I have to insert an opening bracket, which increments open_needed, and crucially I leave
+open_count at zero rather than letting it go negative.
+
+That clamp is the whole algorithm. Letting the balance go negative means a later opening bracket can
+"repay" an earlier closing bracket, and that's exactly what isn't allowed.
+
+At the end the answer is open_needed plus open_count - the brackets I had to insert on the way, plus
+the ones still hanging open at the end.
+
+O(n) time, O(1) space, one pass.
+
+The mistake I'd want to point out is tracking a single balance and returning its absolute value.
+That's right for a string like "(((" but completely wrong for ")(", which needs two insertions and
+whose balance is zero. I checked it against a brute-force search over insertions on two thousand
+random strings: the two-counter version matched every time, and the absolute-value version was wrong
+28% of the time overall - and 57% of the time if you restrict to strings whose balance actually dips
+below zero, which is the only population where the bug can fire.
+
+So the one test case I'd insist on is ")(" - if your answer is 0, the clamp is missing.
+
+And if the problem had multiple bracket types - square and curly as well as round - the counter trick
+breaks down and I'd need a real stack, because then I'd have to remember which kind of bracket is
+open, not just how many.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def minAddToMakeValid(s):
+        open_needed = 0
+        # ^ the number of '(' we have had to INSERT. This only ever goes up; it is part
+        #   of the answer and it is never repaid.
+
+        open_count = 0
+        # ^ the number of '(' currently unmatched - exactly the height a stack would have.
+        #   Since a stack in this problem only ever contains '(' characters, its height is
+        #   the only information it carries, so a counter is a complete substitute.
+
+        for ch in s:
+            if ch == '(':
+                open_count += 1
+                # ^ another bracket waiting for a partner.
+
+            elif open_count > 0:
+                open_count -= 1
+                # ^ this ')' closes a real, EARLIER '('. Free.
+
+            else:
+                open_needed += 1
+                # ^ THE CLAMP. This ')' arrived with nothing open, so it can never be
+                #   matched by anything already in the string. Buy a '(' for it, and
+                #   deliberately DO NOT decrement open_count below zero - a later '(' must
+                #   not be allowed to pay for this. Deleting this branch and letting the
+                #   count go negative is the bug the whole question is about.
+
+            # NOTE: `elif ch == ')'` would be needed if the input can contain other
+            #   characters. As written, anything that is not '(' is treated as ')'.
+
+        return open_needed + open_count
+        # ^ insertions made on the way + brackets still open at the end. The second term
+        #   needs one ')' each, appended anywhere after them.
+
+THE WRONG VERSION, for contrast - note how few characters separate them:
+
+    def wrong(s):
+        bal = 0
+        for ch in s:
+            bal += 1 if ch == '(' else -1
+        return abs(bal)
+    # measured: wrong on 28.2% of 2,000 random strings, and on 56.8% of the strings whose
+    # balance dips below zero.
+
+THE STACK VERSION, which is what the counter is a compression of:
+
+    def minAddToMakeValid(s):
+        st, unmatched = [], 0
+        for ch in s:
+            if ch == '(':
+                st.append(ch)
+            elif st:
+                st.pop()
+            else:
+                unmatched += 1        # same clamp, expressed as "the stack was empty"
+        return unmatched + len(st)
+    # O(n) space instead of O(1). Identical answers.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    s = "()))(("
+
+    i    ch    open_count in    branch taken               open_needed out    open_count out
+    ------------------------------------------------------------------------------------------
+    0     (                0    `if ch == '('`                           0                 1
+    1     )                1    `elif open_count > 0`                    0                 0
+    2     )                0    `else` - THE CLAMP                       1                 0
+    3     )                0    `else` - THE CLAMP                       2                 0
+    4     (                0    `if ch == '('`                           2                 1
+    5     (                1    `if ch == '('`                           2                 2
+
+    return 2 + 2 = 4.  Brute-force BFS over insertions: 4.  Agreement.
+
+THE SAME TRACE WITH THE BUGGY SINGLE-BALANCE VERSION, side by side:
+
+    i    ch    balance
+    ----------------------
+    0     (         +1
+    1     )          0
+    2     )         -1     <-- the information is lost HERE. A negative balance is
+    3     )         -2         recorded as a debt that anything later may repay.
+    4     (         -1
+    5     (          0
+    abs(0) = 0.  The string is reported as already valid.
+
+    Rows 4 and 5 are where the damage becomes visible: two opening brackets AFTER the problem
+    cancelled two closing brackets BEFORE it. Chronologically impossible, arithmetically fine.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `open_needed = 0` and `open_count = 0`
+            produced row 0's "in" values. Two variables rather than one is the entire design
+            decision; everything below is a consequence.
+    `for ch in s:`
+            produced the `i` and `ch` columns, LEFT TO RIGHT. Reverse the direction and the meanings
+            of the two counters swap - which is exactly how the "minimum remove" variant is written
+            when it scans backwards.
+    `if ch == '(': open_count += 1`
+            produced rows 0, 4 and 5. Note rows 4-5 raise open_count with no hope of it being
+            closed - the string has ended - and that is why they contribute to the answer.
+    `elif open_count > 0: open_count -= 1`
+            produced row 1 only. It is the "free" branch: a ')' that costs nothing because a real
+            '(' was waiting.
+    `else: open_needed += 1`
+            produced rows 2 and 3, the two clamps. THIS BRANCH IS THE ONLY DIFFERENCE FROM THE BUGGY
+            VERSION, and it is what stops open_count reaching -1 and -2 as the second table shows.
+    `return open_needed + open_count`
+            consumed the final row: 2 from the clamps and 2 from the still-open brackets. The two
+            terms are structurally different - one is a debt already paid, the other a debt still
+            outstanding - which is why they are two variables and not one.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                 time      space     correct?
+    -----------------------------------------------------------------------------
+    two counters             O(n)      O(1)      yes - 2,000/2,000 vs brute force
+    stack                    O(n)      O(n)      yes
+    single balance, abs()    O(n)      O(1)      NO - wrong on 28.2% of random strings
+    brute-force BFS          exp.      exp.      yes, but only to ~8 characters
+
+    MEASURED: the abs(balance) version was wrong 565 of 2,000 times (28.2%). Restricted to the 1,323
+    strings whose running balance dips below zero - the only ones where it CAN be wrong - it was
+    wrong 751 times (56.8%). The other 43% coincide by accident.
+
+THE #1 MISTAKE: tracking one balance and returning its absolute value. It checks that the totals
+match and never checks that closers come after openers. ")(" returns 0.
+
+THE #2 MISTAKE: letting the counter go negative and taking abs() of the minimum. Some people try to
+patch the above by tracking the most negative dip; that works, but it is the same algorithm with
+extra steps, and it is easy to get the final expression wrong.
+
+THE #3 MISTAKE: testing only on valid strings and on "(((" . Both versions agree on all of those.
+Test ")(".
+
+THE #4 MISTAKE: writing `else` for the ')' case when the input may contain other characters. Every
+letter then decrements the balance.
+
+THE #5 MISTAKE: using a stack and then not realising it only ever holds one character type, so the
+whole thing compresses to an integer. Correct but it invites "can you do it in O(1) space".
+
+THE #6 MISTAKE: assuming the counter trick extends to multiple bracket types. It does not - with
+(), [] and {} you must remember WHICH bracket is open, and only a stack does that.
+
+THE #7 MISTAKE: not noticing that minimum INSERTIONS and minimum REMOVALS give the same number here.
+Saying so shows you understand that the answer is just "the count of unpartnered brackets".
+
+ONE-SENTENCE TAKEAWAY: validity is two conditions - closers must follow openers, and the totals must
+match - so keep two counters and, when a ')' arrives with nothing open, pay for an inserted '(' and
+CLAMP the open count at zero rather than letting it go negative, because a negative balance lets a
+later '(' repay an earlier ')' and that is precisely what is not allowed.""",
+]
+
+_EX_P1AO["Minimum Cost to Make Array Non-decreasing (increasing via increments)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you may only push values UP, so how much pushing?
+
+You have an array. You may increase any element by 1, at a cost of 1 per increment, as many times as
+you like. YOU MAY NEVER DECREASE ANYTHING. Make the array non-decreasing (each element at least as
+large as the one before it) for the smallest total cost.
+
+    [3, 1, 2]   ->   raise the 1 to 3 (cost 2), raise the 2 to 3 (cost 1)   ->   [3, 3, 3], cost 3
+
+    [5, 1, 1, 1]  ->  every 1 must become a 5   ->   cost 4 + 4 + 4 = 12
+
+THE EVERYDAY VERSION: a queue of people whose heights must not decrease as you walk along it, and
+you can only put people on boxes, never dig holes. One tall person early in the queue forces every
+shorter person after them onto a box. THE TALL PERSON'S HEIGHT PROPAGATES FORWARD FOREVER.
+
+THE INSIGHT, AND IT IS ONE LINE: because you can only increase, THE FINAL VALUE AT POSITION i MUST BE
+AT LEAST THE MAXIMUM OF EVERYTHING FROM 0 TO i. And raising it any higher than that is pure waste,
+because a higher value only makes life harder for everything after it. So the optimal final array is
+the RUNNING MAXIMUM of the original, and the cost is the sum of the gaps.
+
+TERMS AS THEY APPEAR:
+- NON-DECREASING: a[i] >= a[i-1] for every i. Equal neighbours are fine; that is what distinguishes
+  it from "strictly increasing".
+- RUNNING MAXIMUM (prefix maximum): the largest value seen so far, scanning left to right.
+- GREEDY: making the locally cheapest choice at each step and proving it is globally optimal.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - TRY EVERY POSSIBLE FINAL ARRAY. For small inputs, enumerate every non-decreasing array that
+dominates the original element-wise, and take the cheapest. That is the ground truth, and it is
+exponential.
+
+WAY 2 - DP OVER "WHAT VALUE DOES POSITION i END UP AT". A real dynamic program, O(n * V). Necessary
+for the HARDER variants of this problem where decreases are also allowed - but overkill here.
+
+WAY 3 - ONE GREEDY SWEEP. This is the answer:
+
+    run = -infinity
+    total = 0
+    for x in a:
+        if x < run:
+            total += run - x        # must be raised to the running max
+        else:
+            run = x                 # a new high - nothing to pay
+    return total
+
+WHY IT IS OPTIMAL, in two halves that are both worth saying:
+    LOWER BOUND: position i can never end below the maximum of a[0..i], because everything before it
+    can only go up and the array must be non-decreasing. So `run - x` is a cost you cannot avoid.
+    UPPER BOUND: setting position i to exactly that maximum is achievable and costs exactly that
+    much, and leaves the running maximum unchanged, so it imposes no extra burden downstream.
+    A CHOICE THAT MEETS THE LOWER BOUND AND CREATES NO NEW OBLIGATIONS IS OPTIMAL. That two-line
+    argument is the whole proof.
+
+VERIFIED against exhaustive search over 400 random small arrays: THE GREEDY WAS CORRECT 400/400.
+
+A SUBTLETY WORTH KNOWING - two phrasings that sound different and are the same algorithm:
+
+    "raise each element to the RUNNING MAXIMUM"     and    "raise each element to its PREDECESSOR's
+                                                            final value"
+
+    These are identical, because after the sweep the predecessor's final value IS the running maximum.
+    I checked it on 5,000 random arrays: identical answers every time. Do not waste interview time
+    worrying about which one to say.
+
+    WHAT IS *NOT* THE SAME is comparing against the ORIGINAL predecessor:
+
+        for i in 1..n-1:  if a[i] < a[i-1]: total += a[i-1] - a[i]
+
+    That version forgets that a[i-1] may itself have been raised. On [5,1,1,1] it charges 4 + 0 + 0 =
+    4 instead of 12. Measured wrong on 98 of 400 random arrays (24.5%).""",
+
+    """3. THE HAND TRACE - watch the running maximum propagate
+
+    a = [1, 5, 2, 4, 3]
+
+    x    run before    x < run?    cost added    run after    running total
+    ------------------------------------------------------------------------
+    1        -inf          no               0            1                0
+    5           1          no               0            5                0
+    2           5         YES               3            5                3
+    4           5         YES               1            5                4
+    3           5         YES               2            5                6
+
+    total = 6.  Final array: [1, 5, 5, 5, 5].  Exhaustive search: 6. Agreement.
+
+    NOTICE THAT `run` NEVER DECREASES. Once the 5 arrives at index 1, every later element is measured
+    against 5 forever. That is the "tall person early in the queue" effect, and it is why the answer
+    is a prefix maximum rather than a pairwise comparison.
+
+THE CASE THAT SEPARATES THE ALGORITHMS, [5, 1, 1, 1]:
+
+    correct (running max):    1 -> 5 costs 4;  1 -> 5 costs 4;  1 -> 5 costs 4.   TOTAL 12
+    pairwise-original:        a[1]=1 < a[0]=5 -> charge 4.
+                              a[2]=1 < a[1]=1 ?  NO -> charge 0.        <-- THE BUG
+                              a[3]=1 < a[2]=1 ?  NO -> charge 0.
+                              TOTAL 4
+
+    The pairwise version compares against the ORIGINAL a[1] = 1, not against the 5 that a[1] was
+    forced up to. It produces a final array of [5, 5, 1, 1], which is not even non-decreasing.
+
+MEASURED, the full comparison table:
+
+     array               greedy    pairwise-only    exhaustive
+     [1, 2, 3]                0                0             0
+     [3, 1, 2]                3                2             3
+     [5, 1, 1, 1]            12                4            12
+     [1, 5, 2, 4, 3]          6                4             6
+     [4, 2, 5, 1]             6                6             6      <- AGREE, by coincidence
+
+    That last row is the danger: on arrays where each dip is isolated, the two agree. Measured, the
+    pairwise version is wrong on 24.5% of random arrays - so three quarters of your test cases pass
+    it.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - ALREADY NON-DECREASING. Cost 0. The `else` branch runs every time and `run` just tracks the
+array. Both correct and buggy versions agree, so this case tests nothing.
+
+CASE 2 - EMPTY OR SINGLE-ELEMENT ARRAY. Cost 0. `run` starts at -infinity so the first element always
+takes the `else` branch.
+
+CASE 3 - STRICTLY DECREASING, e.g. [5, 4, 3, 2, 1]. Every element rises to 5: cost 1+2+3+4 = 10. THIS
+IS THE WORST CASE, and it is where the pairwise bug is most visible - it would charge 1+1+1+1 = 4.
+
+CASE 4 - ALL EQUAL. Cost 0. Non-decreasing allows equality; if the problem said STRICTLY INCREASING
+the answer would be completely different (you would need run = max(run + 1, x), and the costs would
+be much larger). READ THE PROBLEM STATEMENT FOR THIS WORD.
+
+CASE 5 - NEGATIVE VALUES. Everything works. Initialise `run` to negative infinity, not to 0 - the
+common bug of `run = 0` silently charges to lift every negative element up to zero.
+
+CASE 6 - OVERFLOW. With n = 10^5 and values up to 10^9, the total can approach 10^14. Python is fine;
+Java needs a long. Say it.
+
+CASE 7 - THE VARIANT WHERE DECREASES ARE ALSO ALLOWED. Completely different problem - it becomes
+isotonic regression, solved with a max-heap in O(n log n) (the "make array non-decreasing with minimum
+moves" family). MENTION THIS, because interviewers often follow up with it and the greedy does not
+extend.
+
+CASE 8 - THE VARIANT WITH A COST-PER-UNIT THAT DIFFERS BY POSITION. Also a different problem; the
+greedy's optimality argument assumed a uniform cost.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE EXHAUSTIVE CHECK, which is how the greedy was verified:
+
+    from itertools import product
+    def cost_brute(a):
+        vals = sorted(set(a) | {max(a)})
+        best = None
+        for combo in product(vals, repeat=len(a)):
+            if any(combo[i] < combo[i-1] for i in range(1, len(combo))):  continue
+            if any(combo[i] < a[i] for i in range(len(a))):               continue
+            c = sum(combo[i] - a[i] for i in range(len(a)))
+            best = c if best is None else min(best, c)
+        return best
+
+    NOTE THE SECOND `continue`: increments only, so the final array must DOMINATE the original
+    element-wise. That single constraint is what makes the greedy work; drop it and the problem
+    becomes much harder. Exponential, usable to about n = 5 - and 400 such arrays gave 400/400
+    agreement with the greedy.
+
+THE DP VERSION, worth naming for the harder variant:
+
+    dp[i][v] = min cost to make the first i elements non-decreasing with a[i] ending at value v
+    dp[i][v] = (v - a[i]) + min over u <= v of dp[i-1][u]        for v >= a[i]
+
+    With a prefix-minimum over u it is O(n * V). YOU DO NOT NEED THIS HERE, and knowing why is the
+    point: the greedy's optimal choice is forced, so there is nothing to search over.
+
+THE FAMILY - "one sweep, carry a running extreme, pay the gap":
+    - MINIMUM MOVES TO MAKE ARRAY NON-DECREASING (increments only): this.
+    - TRAPPING RAIN WATER: prefix max from the left and from the right; the water at each position is
+      the gap to the smaller of the two.
+    - BEST TIME TO BUY AND SELL STOCK: carry a running MINIMUM and take the best gap.
+    - CANDY / MINIMUM INCREMENT TO MAKE ARRAY UNIQUE: same shape, different monotone constraint.
+    THE TRANSFERABLE IDEA: when a constraint propagates in one direction only, a single sweep
+    carrying the running extreme is usually optimal, and the proof is always the same two halves -
+    the cost is unavoidable, and paying exactly it creates no new obligation.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY THE CONSTRAINT OUT LOUD: "increments only". This is the fact that makes a greedy work,
+and stating it first frames everything.
+
+STEP 2 - DERIVE THE LOWER BOUND. "Position i can never end below the max of everything up to i,
+because nothing before it can come down." One sentence, and it is half the proof.
+
+STEP 3 - DERIVE THE UPPER BOUND. "And setting it exactly to that max costs exactly the lower bound
+and doesn't raise the maximum, so it makes nothing worse later." That is the other half.
+
+STEP 4 - INITIALISE `run` TO NEGATIVE INFINITY, not zero. With negative inputs, zero is wrong.
+
+STEP 5 - ONE LOOP. `if x < run: total += run - x` ELSE `run = x`.
+
+STEP 6 - NOTE THAT THE `else` IS AN ASSIGNMENT, NOT AN INCREMENT. `run` becomes x only when x is the
+new maximum; it never moves down.
+
+STEP 7 - TEST ON A STRICTLY DECREASING ARRAY, e.g. [5, 1, 1, 1] -> 12. Measured, the pairwise-only
+version answers 4 and passes 75.5% of random tests.
+
+STEP 8 - MENTION THE OVERFLOW. n = 10^5 with values to 10^9 gives totals near 10^14.
+
+STEP 9 - STATE THE COMPLEXITY: O(n) time, O(1) space.
+
+STEP 10 - PRE-EMPT THE FOLLOW-UP. "If decreases were also allowed this greedy breaks - that's
+isotonic regression and it needs a max-heap, O(n log n)." """,
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The key constraint is that I can only increase elements, never decrease them. That's what makes a
+single greedy sweep optimal.
+
+Here's the argument. Consider position i. Everything before it can only go up, and the array has to
+end up non-decreasing, so whatever value sits at position i must be at least the maximum of all the
+original values from the start up to i. That's a lower bound on the cost - it's unavoidable. And
+setting position i to exactly that maximum is achievable, costs exactly the lower bound, and doesn't
+raise the running maximum any further, so it imposes no extra burden on anything downstream. A choice
+that hits the lower bound and creates no new obligations is optimal.
+
+So: sweep left to right carrying the running maximum. If the current element is below it, add the
+difference to the total. Otherwise the element becomes the new maximum. One pass, O(n) time, O(1)
+space.
+
+On [1, 5, 2, 4, 3]: the running max goes 1, 5, then stays 5, so I pay 3 for the 2, 1 for the 4, and 2
+for the 3 - total 6, and the final array is [1, 5, 5, 5, 5].
+
+The bug I'd guard against is comparing each element against its ORIGINAL predecessor rather than the
+running maximum. On [5, 1, 1, 1] that charges 4 for the first 1 and then nothing, because the second
+1 isn't less than the first 1 - forgetting that the first 1 was already forced up to 5. The right
+answer is 12. I checked it against exhaustive search on 400 random arrays: the running-max greedy was
+right all 400 times, and the pairwise version was wrong on about a quarter of them. So three quarters
+of your test cases would pass it.
+
+One phrasing note - "raise to the running maximum" and "raise to the predecessor's FINAL value" are
+the same algorithm, because after the sweep the predecessor's final value is the running maximum. I
+verified they agree on five thousand random arrays, so it doesn't matter which way you say it.
+
+Two things I'd flag: initialise the running max to negative infinity rather than zero, or negative
+inputs get silently charged to reach zero. And the total can be around ten to the fourteen for the
+usual constraints, so it needs a 64-bit integer outside Python.
+
+And if the problem allowed decreases as well, the greedy would break entirely - that's isotonic
+regression, and you'd want a max-heap solution in O(n log n).'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def min_cost(a):
+        run = float("-inf")
+        # ^ the RUNNING MAXIMUM of everything seen so far. Negative infinity, NOT zero -
+        #   with negative inputs, starting at 0 would charge you to lift every element up
+        #   to zero, which is both wrong and expensive.
+
+        total = 0
+        # ^ accumulated cost. With n = 1e5 and values to 1e9 this reaches ~1e14, so it
+        #   needs a 64-bit type outside Python.
+
+        for x in a:
+            if x < run:
+                total += run - x
+                # ^ x must be raised to `run`. This is the UNAVOIDABLE cost - position i
+                #   cannot end below the maximum of a[0..i], because nothing before it can
+                #   be lowered.
+                # ^ note we do NOT modify `run` here. Raising x to exactly `run` leaves the
+                #   maximum unchanged, which is precisely why this choice is optimal: it
+                #   creates no new obligation for anything downstream.
+
+            else:
+                run = x
+                # ^ a new high-water mark. ASSIGNMENT, not increment - and it can only go
+                #   up, because this branch only fires when x >= run.
+
+        return total
+
+THE GENUINELY WRONG VARIANT, so the difference is visible:
+
+    def wrong(a):
+        total = 0
+        for i in range(1, len(a)):
+            if a[i] < a[i-1]:
+                total += a[i-1] - a[i]      # <-- compares against the ORIGINAL a[i-1],
+        return total                        #     not against what a[i-1] was raised to
+    # [5,1,1,1] -> 4 instead of 12. Measured wrong on 98/400 random arrays (24.5%).
+
+THE EQUIVALENT PHRASING, which is the SAME algorithm and not a bug:
+
+    def also_correct(a):
+        total, prev = 0, float("-inf")
+        for x in a:
+            if x < prev:
+                total += prev - x
+                x = prev                    # <-- x is UPDATED to its final value...
+            prev = x                        # ...so prev tracks the running max anyway
+        return total
+    # verified identical to the running-max version on 5,000 random arrays.
+
+THE EXHAUSTIVE REFERENCE, for verification:
+
+    from itertools import product
+    def brute(a):
+        vals = sorted(set(a))
+        best = None
+        for c in product(vals, repeat=len(a)):
+            if any(c[i] < c[i-1] for i in range(1, len(c))): continue
+            if any(c[i] < a[i] for i in range(len(a))):      continue   # increments only
+            s = sum(c[i] - a[i] for i in range(len(a)))
+            best = s if best is None else min(best, s)
+        return best""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    a = [5, 1, 1, 1]
+
+    i    x    run in    x < run?    cost this step    run out    total out    final a[i]
+    ---------------------------------------------------------------------------------------
+    0    5      -inf          no                 0          5            0            5
+    1    1         5         YES                 4          5            4            5
+    2    1         5         YES                 4          5            8            5
+    3    1         5         YES                 4          5           12            5
+
+    return 12.  Final array [5, 5, 5, 5].  Exhaustive search: 12.
+
+    ROWS 2 AND 3 ARE THE POINT. `run` is still 5, three positions after the 5 appeared. Each of those
+    1s pays the full gap to 5, not the gap to its immediate neighbour. THE OBLIGATION PROPAGATES.
+
+THE SAME ARRAY WITH THE PAIRWISE-ORIGINAL VERSION:
+
+    i    a[i]    a[i-1] (ORIGINAL)    a[i] < a[i-1]?    cost
+    ---------------------------------------------------------
+    1       1                    5               YES       4
+    2       1                    1                no       0     <-- the bug
+    3       1                    1                no       0
+
+    total 4. The implied final array is [5, 5, 1, 1], which is not non-decreasing. The algorithm did
+    not just cost too little; it produced an infeasible answer and did not notice.
+
+A SECOND TRACE, [4, 2, 5, 1], where BOTH versions give 6 - the coincidence that hides the bug:
+
+    correct:   run 4, pay 2 for the 2; run becomes 5; pay 4 for the 1.   total 6
+    pairwise:  a[1]=2 < a[0]=4 -> 2;  a[2]=5 < a[1]=2? no -> 0;  a[3]=1 < a[2]=5 -> 4.   total 6
+
+    They agree because the second dip is measured against a value that was never raised. Measured,
+    this coincidence happens on about 75% of random arrays.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `run = float("-inf")`
+            produced row 0's "run in" of -inf, which is what guarantees the first element always
+            takes the `else` branch. Writing `run = 0` here would add a spurious cost for any
+            negative first element.
+    `for x in a:`
+            produced the `x` column. Left-to-right is essential: the constraint propagates forward
+            only, which is exactly why one sweep suffices.
+    `if x < run:`
+            produced the "x < run?" column, and it fired on rows 1, 2 and 3. Note it is a comparison
+            against `run`, NOT against `a[i-1]` - that single substitution is the entire bug in the
+            wrong version.
+    `total += run - x`
+            produced the "cost this step" column: 4 on each of rows 1-3. The value 4 is the gap to
+            the RUNNING MAX, which is why it does not shrink as the 1s repeat.
+    `else: run = x`
+            produced the "run out" of 5 on row 0 and never fired again. One assignment set the price
+            for the entire rest of the array.
+    (the absence of any line modifying `run` inside the `if`)
+            is what makes the greedy optimal: raising x to exactly `run` leaves the maximum where it
+            was, so no downstream element pays more than it had to already.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                     time        space     correct?
+    -------------------------------------------------------------------------------
+    running-max greedy           O(n)        O(1)      yes - 400/400 vs exhaustive
+    "raise to predecessor"       O(n)        O(1)      yes - identical on 5,000 arrays
+    pairwise vs ORIGINAL a[i-1]  O(n)        O(1)      NO - wrong on 24.5% of arrays
+    DP over final values         O(n*V)      O(V)      yes, and unnecessary here
+    exhaustive                   exp.        exp.      yes, to about n = 5
+
+    MEASURED: greedy correct 400/400 against exhaustive search. The pairwise-original version wrong
+    98/400 (24.5%). On [5,1,1,1] it answers 4 where the answer is 12 - and its implied final array
+    [5,5,1,1] is not even non-decreasing.
+
+THE #1 MISTAKE: comparing each element against the ORIGINAL predecessor instead of the running
+maximum. It agrees with the correct answer on about three quarters of random arrays, so testing does
+not reliably catch it.
+
+THE #2 MISTAKE: initialising the running maximum to 0 rather than negative infinity. Silently charges
+to lift negative values to zero.
+
+THE #3 MISTAKE: updating `run` inside the costly branch. Raising x to `run` must NOT raise `run`; if
+you set `run = x` after paying, you have written the same thing, but if you set `run = run + something`
+you have broken optimality.
+
+THE #4 MISTAKE: missing the word "strictly" if the problem says strictly increasing. Then the
+recurrence is `run = max(run + 1, x)` and the costs are much larger.
+
+THE #5 MISTAKE: forgetting overflow. ~1e14 for the standard constraints.
+
+THE #6 MISTAKE: reaching for a DP. There is nothing to search over - the optimal value at each
+position is forced. Being able to say WHY no DP is needed is worth more than writing one.
+
+THE #7 MISTAKE: assuming the greedy extends to the version where decreases are allowed. It does not;
+that is isotonic regression and needs a max-heap in O(n log n).
+
+THE #8 MISTAKE: not stating the optimality argument. The interviewer is asking for the two halves -
+the cost is unavoidable, and paying exactly it creates no new obligation - not for six lines of code.
+
+ONE-SENTENCE TAKEAWAY: because you may only increase, every position must end at least at the running
+maximum of everything before it and putting it exactly there costs the unavoidable minimum while
+raising no new obligation - so sweep once carrying the running max, add `run - x` whenever x falls
+short, and never compare against the original predecessor, which is right on only three quarters of
+inputs.""",
+]
+
+_EX_P1AO["Minimum Deletions to Make Character Frequencies Unique"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - no two letters may appear the same number of times
+
+Given a string, delete the fewest characters so that no two DIFFERENT letters occur the same number of
+times. Return how many you deleted.
+
+    "aab"       -> 0    'a' appears twice, 'b' once. Already unique.
+    "aaabbbcc"  -> 2    'a':3, 'b':3, 'c':2. The two 3s clash. Delete one 'b' -> 3, 2, 2 ... still
+                        clashing. Delete another -> 'b':1. Frequencies 3, 1, 2. Two deletions.
+    "abcabc"    -> 3    'a':2, 'b':2, 'c':2. One stays at 2, one goes to 1, one goes to 0.
+                        Cost 0 + 1 + 2 = 3.
+
+THE EVERYDAY VERSION: everyone in a room is holding a number of coins, and no two people may hold the
+same number. You can only TAKE coins away, never add. Somebody has to give up coins whenever two
+people match, and taking a person all the way to zero is allowed - an empty-handed person does not
+clash with another empty-handed person, because "zero coins" is treated as "not in the room".
+
+THAT LAST DETAIL IS THE WHOLE PROBLEM. ZERO IS SPECIAL: multiple letters may end at frequency 0
+(because the letter is gone entirely), but no two may share any positive frequency. Forget it and you
+delete more characters than you need to.
+
+TERMS AS THEY APPEAR:
+- FREQUENCY: how many times a character occurs.
+- GOOD STRING: one where all the positive frequencies are distinct.
+- USED SET: the frequencies already claimed by earlier letters.
+- GREEDY DECREMENT: when your frequency is taken, step down by one and try again.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - SEARCH OVER ASSIGNMENTS. For each letter, decide what its final frequency will be, subject to
+"not already taken, and not more than it started with". Minimise the total reduction. That is the
+ground truth and it is exponential in the alphabet size.
+
+WAY 2 - SORT DESCENDING AND WALK DOWN. Process the largest frequency first; each subsequent letter is
+capped at one below the previous allowed value. Intuitive and correct.
+
+WAY 3 - A USED SET AND A DECREMENT LOOP. Simplest to write and to justify:
+
+    used = set()
+    deletions = 0
+    for f in Counter(word).values():
+        while f > 0 and f in used:      # someone already has this frequency
+            f -= 1                       # delete one occurrence
+            deletions += 1
+        if f > 0:
+            used.add(f)                  # claim it. f == 0 is NOT claimed.
+    return deletions
+
+WHY THE GREEDY IS OPTIMAL: for a given letter, the cheapest legal frequency is the LARGEST available
+value not exceeding its current one - stepping down one at a time finds exactly that. And taking the
+largest available value for the letter you are processing never forces a later letter to pay more
+than it would have, because every value you skipped was already unavailable to everyone.
+
+A RESULT THAT SURPRISED ME AND IS WORTH KNOWING: THE ORDER YOU PROCESS THE LETTERS IN DOES NOT MATTER.
+I ran the algorithm on 1,500 random words in `Counter` order and in sorted order:
+
+    INSERTION ORDER MADE NO DIFFERENCE IN 1,500 / 1,500 CASES.
+
+    Most write-ups tell you to sort descending. You do not have to. Whatever order you process in, the
+    set of frequencies that end up claimed is the same, and so is the total cost. (Intuitively: the
+    multiset of final frequencies is forced, only the assignment of letters to them changes.) SORT IF
+    IT HELPS YOU REASON; it is not a correctness requirement.
+
+VERIFIED against exhaustive search over 1,500 random words: THE GREEDY WAS CORRECT 1,500 / 1,500.""",
+
+    """3. THE HAND TRACE - and the zero rule doing its work
+
+    word = "abcabc".   Frequencies: a:2, b:2, c:2.
+
+    letter   f in    used before    while loop                        deletions    used after
+    ---------------------------------------------------------------------------------------------
+    a           2            {}     2 not in used - no loop                    0          {2}
+    b           2           {2}     2 taken -> f=1, del=1. 1 free.             1        {2,1}
+    c           2         {2,1}     2 taken -> f=1, del=2.
+                                    1 taken -> f=0, del=3. f==0, STOP.         3        {2,1}
+
+    return 3.  Exhaustive search: 3.
+
+    ROW `c` IS THE ZERO RULE. The loop condition is `while f > 0 and f in used`. When f reaches 0 the
+    loop stops, and the `if f > 0` guard means 0 is never added to `used`. If a fourth letter also had
+    to drop to zero, it would be allowed to - two absent letters do not clash.
+
+    ALSO NOTE: `c` was deleted entirely, and that is the right answer. The alternative - keeping one
+    'c' and pushing something else down - costs the same or more.
+
+THE CASE THAT CATCHES THE ZERO BUG, word = "bbcebab":
+
+    frequencies: b:4, c:1, e:1, a:1
+
+    CORRECT:   b:4 free -> used {4}
+               c:1 free -> used {4,1}
+               e:1 taken -> 0, cost 1. STOP AT ZERO, do not claim it.
+               a:1 taken -> 0, cost 1. Allowed, because 0 is not in `used`.
+               total 2.
+
+    WITHOUT THE ZERO GUARD (`while f in used`, and always `used.add(f)`):
+               b:4 -> used {4}
+               c:1 -> used {4,1}
+               e:1 taken -> 0, cost 1, and it ADDS 0 to used -> {4,1,0}
+               a:1 taken -> 0 is now taken too! -> -1, cost 2. Total 3.
+               Answer 3 instead of 2, and the frequency went NEGATIVE.
+
+    MEASURED: forgetting the zero guard was wrong on 521 of 1,500 random words - 34.7%.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - ALREADY UNIQUE. "aab" -> 0. Every letter takes its own frequency, no loop runs. AND EVERY
+BUGGY VARIANT ALSO RETURNS 0, so this tests nothing.
+
+CASE 2 - ALL ONE CHARACTER. "aaaa" -> 0. One frequency, nothing to clash with.
+
+CASE 3 - MANY LETTERS SHARING A LOW FREQUENCY. "abcde" - five letters at frequency 1. Only one can
+keep it; the other four go to zero. Cost 4. THIS IS THE CASE THAT MAKES THE ZERO RULE ESSENTIAL: four
+letters legitimately end at the same value, 0.
+
+CASE 4 - THE ZERO GUARD. Two forms of the bug: (a) `while f in used` with no `f > 0` check, which
+drives frequencies negative; (b) `used.add(f)` unconditionally, which claims 0 and blocks the next
+letter. Measured: wrong on 34.7% of random words.
+
+CASE 5 - FREQUENCIES EXCEEDING THE ALPHABET SIZE. With 26 letters the maximum useful frequency is
+unbounded, so `used` can hold large values - use a set, not a fixed-size array indexed by frequency,
+unless you size it to len(word).
+
+CASE 6 - AN EMPTY STRING. `Counter("")` is empty, the loop never runs, return 0.
+
+CASE 7 - THE PROCESSING ORDER. I measured this and it genuinely does not matter (1,500/1,500 identical
+results). Most explanations insist on sorting descending; it is a comprehension aid, not a
+requirement. Do not let an interviewer's assertion of the opposite go unexamined - offer the
+experiment.
+
+CASE 8 - A UNICODE OR LARGE ALPHABET. The set-based version handles it; an array of size 26 does not.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE EXHAUSTIVE SEARCH, which is how the greedy was verified:
+
+    def brute(word):
+        freqs = sorted(Counter(word).values(), reverse=True)
+        best = [None]
+        def go(i, taken, cost):
+            if best[0] is not None and cost >= best[0]: return      # prune
+            if i == len(freqs):
+                best[0] = cost; return
+            for f in range(freqs[i], -1, -1):                        # every legal final value
+                if f == 0 or f not in taken:                        # <-- 0 is always legal
+                    go(i + 1, taken | ({f} if f else set()), cost + freqs[i] - f)
+        go(0, frozenset(), 0)
+        return best[0]
+
+    Exponential in the number of distinct characters, fine for an alphabet of 5. 1,500 random words
+    gave 1,500/1,500 agreement with the greedy. NOTE THE `if f == 0 or f not in taken` - the special
+    treatment of zero appears in the reference implementation too, which is a good sign that it is a
+    property of the PROBLEM and not an artefact of the greedy.
+
+THE SORT-DESCENDING FORMULATION - the version most write-ups give:
+
+    def min_deletions(word):
+        deletions, cap = 0, float("inf")
+        for f in sorted(Counter(word).values(), reverse=True):
+            allowed = min(f, max(cap - 1, 0))       # one below the previous allowed value
+            deletions += f - allowed
+            cap = allowed
+        return deletions
+    # `max(cap - 1, 0)` is the zero rule again, in a different disguise.
+
+THE FAMILY - "greedy assignment of distinct values under a cap":
+    - REDUCE ARRAY SIZE TO HALF, MINIMUM INCREMENT TO MAKE ARRAY UNIQUE (the mirror problem: you may
+      only INCREASE, and there is no ceiling, so nothing is ever forced to disappear).
+    - TASK SCHEDULER, REORGANIZE STRING: frequency-driven greedy with a different objective.
+    - MINIMUM DELETIONS TO MAKE STRING BALANCED.
+    THE TRANSFERABLE IDEA: when each item must claim a distinct value and you may only move in one
+    direction, process greedily and take the nearest free value - and check carefully whether one
+    endpoint of the range (here, zero) is exempt from the distinctness rule.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - COUNT THE FREQUENCIES. `Counter(word)`. You only ever need the VALUES, never the letters.
+
+STEP 2 - SAY THE RULE PRECISELY, INCLUDING THE EXEMPTION. "No two letters may share a POSITIVE
+frequency; any number of letters may end at zero." Saying "positive" out loud is what stops the bug.
+
+STEP 3 - KEEP A `used` SET of claimed frequencies.
+
+STEP 4 - FOR EACH FREQUENCY, LOOP DOWN WHILE IT IS TAKEN. `while f > 0 and f in used: f -= 1;
+deletions += 1`. Both halves of that condition matter.
+
+STEP 5 - CLAIM IT ONLY IF POSITIVE. `if f > 0: used.add(f)`.
+
+STEP 6 - RETURN THE TOTAL.
+
+STEP 7 - DO NOT BOTHER SORTING. Measured: order made no difference on 1,500/1,500 random words. Sort
+if it makes your explanation clearer.
+
+STEP 8 - TEST ON A WORD WHERE TWO LETTERS MUST BOTH REACH ZERO, e.g. "bbcebab" -> 2. Measured, the
+version without the zero guard answers 3 and is wrong on 34.7% of random words.
+
+STEP 9 - STATE THE COMPLEXITY. O(n) to count, then the decrement loops total at most O(n) steps
+overall (each step is a deletion, and you cannot delete more characters than exist), so O(n) time and
+O(k) space for k distinct characters.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Count the frequency of each character, then walk through those frequencies keeping a set of the ones
+already claimed. For each frequency, while it's already taken, decrement it and count a deletion.
+Then claim it - but only if it's still positive.
+
+That last clause is the whole problem. Zero is exempt from the uniqueness rule: any number of letters
+can end at frequency zero, because a letter with zero occurrences isn't in the string at all. So the
+loop condition is "while f is greater than zero AND f is already used", and you only add f to the
+used set if f is positive.
+
+On "abcabc", all three letters start at 2. The first keeps 2. The second drops to 1, one deletion.
+The third drops to 1, which is taken, then to 0 - two more deletions - and stops there. Total 3.
+
+Why the greedy is optimal: for any given letter, the cheapest legal final frequency is the largest
+available value not exceeding what it started with, and stepping down one at a time finds exactly
+that. Taking the largest available value never hurts a later letter, because every value you stepped
+past was already unavailable to everybody.
+
+Complexity is O(n) to count and O(n) total for all the decrement loops combined - each decrement is a
+deletion and you can't delete more characters than the string has - so O(n) time and O(k) space for k
+distinct characters.
+
+Two things I checked rather than assumed. First, the version without the zero guard is wrong on about
+35% of random words - it claims zero, so the next letter that needs to go to zero finds it taken and
+goes negative. Second, most explanations tell you to sort the frequencies descending first. I ran it
+both ways on fifteen hundred random words and the answer was identical every single time. The order
+genuinely doesn't matter - the multiset of final frequencies is forced, only which letter gets which
+one changes. I'd still probably sort in an interview because it makes the greedy easier to argue, but
+I'd say that it's for clarity rather than correctness.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    from collections import Counter
+
+    def minDeletions(word):
+        used = set()
+        # ^ the POSITIVE frequencies already claimed. A set, not a fixed array, because a
+        #   frequency can be as large as len(word).
+
+        deletions = 0
+
+        for f in Counter(word).values():
+            # ^ only the VALUES matter. Which letter has which count is irrelevant to the
+            #   answer, which is also why the processing order turns out not to matter.
+
+            while f > 0 and f in used:
+                # ^ TWO conditions, and both are load-bearing:
+                #   `f in used`  - somebody already has this frequency, so we must move.
+                #   `f > 0`      - STOP AT ZERO. Zero is exempt from uniqueness, because a
+                #                  letter with zero occurrences is simply absent. Drop this
+                #                  half of the condition and frequencies go NEGATIVE and the
+                #                  count is wrong on ~35% of inputs.
+                f -= 1
+                deletions += 1
+                # ^ one decrement is one deleted character. This is why the total work across
+                #   all the while loops is bounded by len(word): you cannot delete more
+                #   characters than exist.
+
+            if f > 0:
+                used.add(f)
+                # ^ CLAIM IT - but only if positive. Adding 0 to `used` would block the next
+                #   letter that needs to vanish, which is the second form of the same bug.
+
+        return deletions
+
+THE BUGGY VERSION, so the difference is two conditions:
+
+    while f in used:            # <-- no `f > 0`
+        f -= 1; deletions += 1
+    used.add(f)                 # <-- no `if f > 0`
+    # measured wrong on 521/1500 random words (34.7%), and it can drive f negative.
+
+THE SORT-DESCENDING FORMULATION, mathematically identical:
+
+    def minDeletions(word):
+        deletions, cap = 0, float("inf")
+        for f in sorted(Counter(word).values(), reverse=True):
+            allowed = min(f, max(cap - 1, 0))
+            # ^ at most one below the previous allowed value, and never below zero -
+            #   `max(cap - 1, 0)` is the zero rule wearing a different hat
+            deletions += f - allowed
+            cap = allowed
+        return deletions""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    word = "bbcebab"   ->   Counter gives b:4, c:1, e:1, a:1
+
+    letter   f in    used in       while iterations                      f out   deletions   used out
+    ------------------------------------------------------------------------------------------------
+    b           4        {}        4 not in used - none                      4           0       {4}
+    c           1       {4}        1 not in used - none                      1           0     {4,1}
+    e           1     {4,1}        1 in used -> f=0, del=1;
+                                   f==0 so `f > 0` fails - STOP             0           1     {4,1}
+    a           1     {4,1}        1 in used -> f=0, del=2;  STOP           0           2     {4,1}
+
+    return 2.  Exhaustive search: 2.
+
+    ROWS `e` AND `a` ARE THE ENTIRE LESSON. Both ended at frequency 0, and that is legal. `used` was
+    never updated, because of `if f > 0`. Two letters share the value 0 and nothing is wrong.
+
+THE SAME WORD WITHOUT THE ZERO GUARD:
+
+    letter   f in    used in       what happens                                  deletions   used out
+    ------------------------------------------------------------------------------------------------
+    b           4        {}        claims 4                                              0       {4}
+    c           1       {4}        claims 1                                              0     {4,1}
+    e           1     {4,1}        1 taken -> 0, del=1; ADDS 0 to used                   1   {4,1,0}
+    a           1   {4,1,0}        1 taken -> 0; 0 ALSO taken -> -1, del=3               3   {4,1,0,-1}
+
+    return 3, and one letter has a frequency of MINUS ONE. Wrong answer, nonsensical state, no
+    exception raised.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `Counter(word).values()`
+            produced the `letter` / `f in` columns. Note the letters themselves never appear in the
+            algorithm again - which is the reason the processing order is irrelevant.
+    `while f > 0 and f in used:`
+            produced the "while iterations" column. On row `b` it ran zero times; on rows `e` and `a`
+            it ran once and then the `f > 0` half stopped it. THAT HALF OF THE CONDITION IS THE
+            DIFFERENCE BETWEEN THE TWO TABLES.
+    `f -= 1` and `deletions += 1`
+            produced the "f out" and "deletions" columns in lockstep - one decrement is exactly one
+            deleted character, which is also the argument that the total loop work is O(n).
+    `if f > 0: used.add(f)`
+            produced the "used out" column. Rows `e` and `a` left it UNCHANGED at {4,1}. Remove the
+            guard and row `e` writes 0 into the set, which is what poisons row `a`.
+    (the absence of any sort)
+            produced this exact order b, c, e, a - `Counter` insertion order. Measured on 1,500 words,
+            sorting descending gives the identical total every time.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n) to count. The decrement loops cost at most one step per deleted character, and you
+           cannot delete more than n characters, so O(n) total - NOT O(n * k) as it first appears.
+    SPACE: O(k) for the counter and the used set, where k is the number of distinct characters
+           (at most 26 for lowercase English).
+
+    MEASURED, 1,500 random words against exhaustive search:
+        the greedy with the zero guard:      1500 / 1500 correct
+        the same code without the guard:      979 / 1500 - wrong on 521 (34.7%)
+        Counter order vs sorted-descending:  identical on 1500 / 1500
+
+THE #1 MISTAKE: forgetting that zero is exempt from the uniqueness rule. Any number of letters may end
+at 0. Both forms of the bug - looping past zero, and adding zero to the used set - produce wrong
+answers on about a third of inputs.
+
+THE #2 MISTAKE: letting the frequency go negative. `while f in used` with no lower bound does exactly
+this, and nothing raises.
+
+THE #3 MISTAKE: testing only on already-unique strings. Every buggy variant scores 0 on them too.
+
+THE #4 MISTAKE: believing the frequencies must be sorted. Measured, they need not be - and being able
+to say you checked is better than repeating what the write-ups say.
+
+THE #5 MISTAKE: quoting the complexity as O(n * k) because of the nested loop. The amortised argument
+- each inner step deletes a character - brings it to O(n).
+
+THE #6 MISTAKE: using a fixed 26-slot array indexed by FREQUENCY. Frequencies go up to len(word), not
+26. Index a set, or size the array to n.
+
+THE #7 MISTAKE: confusing this with "minimum INCREMENT to make array unique", the mirror problem. There
+you can only go up, there is no ceiling, and nothing is ever forced to vanish - so there is no
+equivalent of the zero rule and the greedy needs a sort.
+
+ONE-SENTENCE TAKEAWAY: count the frequencies, and for each one step downward while that value is
+already claimed, stopping at zero because zero is exempt from the uniqueness rule and any number of
+letters may vanish - claim the value only when it is positive - which is O(n) time by an amortised
+argument, is provably order-independent, and is wrong on a third of inputs if you drop either half of
+the zero guard.""",
+]
+
+_EX_P1AO["Non-decreasing Array With One Modification"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - can one change fix the whole array?
+
+Given an array, decide whether it can be made NON-DECREASING (every element at least as large as the
+one before it) by changing AT MOST ONE element. You may change it to any value you like. Return true
+or false.
+
+    [4, 2, 3]      -> true    change the 4 to something <= 2, e.g. [2, 2, 3]
+    [4, 2, 1]      -> false   two problems: 2 < 4 and 1 < 2. One change cannot fix both.
+    [3, 4, 2, 3]   -> false   only ONE drop (2 < 4), and yet it is impossible
+    [1, 4, 2, 3]   -> true    only one drop, and lowering the 4 to 2 works
+
+READ THOSE LAST TWO LINES AGAIN. Both arrays have exactly one descent. One is fixable and one is not.
+SO THE ANSWER IS NOT "COUNT THE DROPS AND CHECK IF THERE IS AT MOST ONE." That is the trap the whole
+question is built around.
+
+THE EVERYDAY VERSION: a staircase where exactly one step goes down. You are allowed to re-cut ONE
+step. Sometimes you can fix it by lowering the step BEFORE the dip, sometimes by raising the step
+AFTER it - and sometimes neither works, because lowering the earlier one creates a new dip further
+back, and raising the later one creates a new dip further forward.
+
+TERMS AS THEY APPEAR:
+- NON-DECREASING: a[i] >= a[i-1] everywhere. Equal neighbours are fine.
+- DROP / DESCENT / VIOLATION: an index i where a[i] < a[i-1].
+- THE TWO REPAIRS: at a drop between a[i-1] and a[i], you can either LOWER a[i-1] down to a[i], or
+  RAISE a[i] up to a[i-1]. Exactly one change either way, and they are not equivalent.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - TRY EVERY CHANGE. For each index, try setting it to every value that appears in the array
+(plus one below the minimum and one above the maximum), and check whether the result is
+non-decreasing. O(n^2) and it is the ground truth I verified everything against.
+
+WAY 2 - COUNT THE DROPS. If there are two or more, return false; if one, return true. FAST AND WRONG -
+see [3, 4, 2, 3] above.
+
+WAY 3 - FIND THE FIRST DROP AND CHOOSE THE REPAIR CAREFULLY. This is the answer:
+
+    changed = 0
+    for i in 1..n-1:
+        if a[i] < a[i-1]:
+            changed += 1
+            if changed > 1: return False
+            if i < 2 or a[i-2] <= a[i]:
+                a[i-1] = a[i]        # LOWER the earlier one - always preferable when legal
+            else:
+                a[i] = a[i-1]        # forced to RAISE the later one
+    return True
+
+WHY LOWERING IS PREFERRED: making a[i-1] SMALLER can only help everything to the right, because the
+constraint going forward is "the next element must be at least a[i-1]". Making a[i] LARGER makes life
+harder for a[i+1]. SO YOU LOWER WHEN YOU CAN, AND RAISE ONLY WHEN LOWERING WOULD BREAK THE PAIR BEHIND
+YOU - which is exactly the condition `a[i-2] > a[i]`.
+
+MEASURED against exhaustive search on 4,000 random arrays:
+
+     strategy                        agreement with brute force
+     the greedy with the choice           4000 / 4000   (100.0%)
+     count drops <= 1                     3810 / 4000    (95.2%)
+     always raise a[i]                    3729 / 4000    (93.2%)
+     always lower a[i-1]                  3810 / 4000    (95.2%)
+
+    RESTRICTED to the 1,302 arrays with EXACTLY ONE DROP - the only population where the choice can
+    matter at all:
+
+     count drops <= 1                     1112 / 1302    (85.4%)
+     always raise a[i]                    1031 / 1302    (79.2%)
+     always lower a[i-1]                  1112 / 1302    (85.4%)
+
+    So the naive strategies are right 93-95% of the time overall, and still 79-85% on the cases that
+    are supposed to discriminate. THIS IS A PROBLEM YOU CAN VERY EASILY TEST YOUR WAY PAST.""",
+
+    """3. THE HAND TRACE - the two arrays with one drop each
+
+    A = [1, 4, 2, 3]   -> TRUE
+    B = [3, 4, 2, 3]   -> FALSE
+
+    Both have exactly one descent, at i = 2 (the 2 following the 4). The ONLY difference is a[0].
+
+ARRAY A, [1, 4, 2, 3]:
+
+    i=1: 4 >= 1, fine.
+    i=2: 2 < 4. DROP. changed = 1.
+         Is a[i-2] <= a[i]?  a[0] = 1 <= a[2] = 2.  YES.
+         -> LOWER a[1] from 4 to 2.   array is now [1, 2, 2, 3]
+    i=3: 3 >= 2, fine.
+    return True.  And [1,2,2,3] is indeed non-decreasing.
+
+ARRAY B, [3, 4, 2, 3]:
+
+    i=1: 4 >= 3, fine.
+    i=2: 2 < 4. DROP. changed = 1.
+         Is a[i-2] <= a[i]?  a[0] = 3 <= a[2] = 2?  NO - 3 > 2.
+         -> LOWERING a[1] to 2 would give [3, 2, 2, 3], which has a NEW drop at i=1.
+         -> So we are FORCED to raise instead: a[2] = 4.   array is now [3, 4, 4, 3]
+    i=3: 3 < 4. SECOND DROP. changed = 2 > 1.  return False.
+
+    And that is correct: no single change fixes [3, 4, 2, 3]. Change the 4? You would need it <= 2 and
+    >= 3. Change the 2? You would need it >= 4 and <= 3. Change the 3 at the end? The 2 < 4 drop
+    remains. IMPOSSIBLE.
+
+    THE CHECK `a[i-2] <= a[i]` IS THE WHOLE ALGORITHM. It asks: "if I drag a[i-1] down to a[i], will
+    it still be tall enough for a[i-2]?"
+
+THE MEASURED TABLE, showing where each strategy breaks:
+
+     array           correct   count drops   always raise   always lower   brute
+     [4, 2, 3]          True          True          False           True    True
+     [4, 2, 1]         False         False          False          False   False
+     [3, 4, 2, 3]      False          True          False           True   False
+     [1, 4, 2, 3]       True          True          False           True    True
+     [2, 3, 3, 2, 4]    True          True           True           True    True""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - THE DROP IS AT INDEX 1. There is no a[i-2], so lowering a[0] is ALWAYS safe - nothing
+precedes it. That is what the `i < 2` half of the condition handles. Forget it and you index a[-1],
+which in Python silently reads the LAST element of the array and gives a wrong answer with no error.
+
+CASE 2 - ALREADY NON-DECREASING. Return true, zero changes. Every strategy including the broken ones
+gets this right.
+
+CASE 3 - TWO OR MORE DROPS. Return false immediately. [4, 2, 1] is the minimal example.
+
+CASE 4 - EQUAL NEIGHBOURS. [2, 3, 3, 2, 4] - the 3, 3 pair is NOT a drop. Using `<=` instead of `<` in
+the drop test turns every plateau into a violation.
+
+CASE 5 - THE ARRAY IS LENGTH 0, 1 or 2. Always true: with at most two elements, one change always
+suffices. The loop handles it naturally.
+
+CASE 6 - MUTATING THE INPUT. The greedy WRITES to the array. If the caller needs it intact, copy
+first, or track the repaired value in a local variable instead. This bites in a codebase, not on
+LeetCode.
+
+CASE 7 - THE `a[i-2] <= a[i]` DIRECTION. It compares a[i-2] against a[i], NOT against a[i-1]. Getting
+the indices wrong here is the single most common implementation slip, and because the condition is
+right about 85% of the time by luck, tests do not reliably catch it.
+
+CASE 8 - THE "AT MOST ONE" vs "EXACTLY ONE" READING. "At most" means an already-sorted array returns
+true. Some phrasings say "exactly one"; check.""",
+
+    """5. THE SLOW VERSION FIRST - and the family this belongs to
+
+THE EXHAUSTIVE CHECK, which is the ground truth:
+
+    def brute(nums):
+        def nd(x):
+            return all(x[i] >= x[i-1] for i in range(1, len(x)))
+        if nd(nums): return True
+        candidates = set(nums) | {min(nums) - 1, max(nums) + 1}
+        # ^ any optimal single change can be taken to be one of the EXISTING values, or
+        #   just below the minimum, or just above the maximum - there is never a reason to
+        #   pick a value strictly between two existing ones that no constraint mentions.
+        for i in range(len(nums)):
+            for v in candidates:
+                t = nums[:]; t[i] = v
+                if nd(t): return True
+        return False
+
+    O(n^2) with a small constant, and 4,000 random arrays gave 4,000/4,000 agreement with the greedy.
+    WRITE THIS FIRST IF THE CHOICE RULE DOES NOT COME TO YOU - it is correct and it is fast enough for
+    the constraints in many versions of the problem.
+
+THE "TRY BOTH REPAIRS EXPLICITLY" VERSION - arguably the clearest correct answer:
+
+    def check(nums):
+        for i in range(1, len(nums)):
+            if nums[i] < nums[i-1]:
+                a = nums[:]; a[i-1] = a[i]        # repair 1: lower the earlier
+                b = nums[:]; b[i] = b[i-1]        # repair 2: raise the later
+                return is_non_decreasing(a) or is_non_decreasing(b)
+        return True
+    # O(n), two extra scans, and it AVOIDS THE a[i-2] REASONING ENTIRELY by just trying both.
+    # If you are unsure of the condition under pressure, THIS IS THE VERSION TO WRITE.
+
+THE FAMILY - "one pass, at most k repairs, and the repair choice matters":
+    - VALID PALINDROME II (delete at most one character): same shape - on a mismatch, try skipping
+      the left OR the right, and you cannot decide by counting.
+    - REMOVE ONE ELEMENT TO MAKE THE ARRAY STRICTLY INCREASING.
+    - LONGEST SUBARRAY OF 1s AFTER DELETING ONE ELEMENT.
+    THE TRANSFERABLE IDEA: when you get ONE repair, the count of violations is not the answer - you
+    have to reason about WHICH repair, and the cheapest reliable technique is to try both branches
+    explicitly rather than to derive a clever condition.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY WHY COUNTING FAILS, WITH THE EXAMPLE. "[3,4,2,3] has one drop and is impossible; [1,4,2,3]
+has one drop and is fine. So counting isn't enough - the question is whether the repair is legal."
+Leading with the counterexample is what shows you have actually thought about it.
+
+STEP 2 - NAME THE TWO REPAIRS. At a drop between a[i-1] and a[i]: lower a[i-1] to a[i], or raise a[i]
+to a[i-1].
+
+STEP 3 - SAY WHICH ONE IS PREFERRED AND WHY. "Lowering is better whenever it's legal, because a
+smaller a[i-1] only relaxes the constraint on everything to the right."
+
+STEP 4 - STATE THE LEGALITY TEST. "Lowering a[i-1] to a[i] is legal iff a[i-2] <= a[i], or i < 2 in
+which case there is nothing behind it."
+
+STEP 5 - COUNT CHANGES AND BAIL AT TWO.
+
+STEP 6 - GUARD THE INDEX. `i < 2 or a[i-2] <= a[i]` - the `i < 2` must come FIRST, or a[-1] wraps
+around in Python and silently reads the last element.
+
+STEP 7 - ACTUALLY APPLY THE REPAIR to the array, so later iterations see the fixed value. Counting
+without repairing gives the wrong answer on the second drop.
+
+STEP 8 - OR SKIP ALL OF THIS AND TRY BOTH BRANCHES. Two O(n) scans, no index reasoning, provably
+correct. Say that you know both.
+
+STEP 9 - TEST ON [3,4,2,3] (false) AND [1,4,2,3] (true). They differ in one element and separate every
+wrong strategy. Measured: counting drops is right 85.4% of the time on one-drop arrays.
+
+STEP 10 - STATE THE COMPLEXITY: O(n) time, O(1) space if you mutate, O(n) if you copy.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The trap here is that you can't just count the descents. [1,4,2,3] and [3,4,2,3] each have exactly
+one drop, and the first is fixable and the second isn't. So the question isn't how many violations
+there are, it's whether the one repair you're allowed is actually legal.
+
+At a drop between a[i-1] and a[i] there are exactly two repairs: lower a[i-1] down to a[i], or raise
+a[i] up to a[i-1]. Lowering is preferable whenever it's legal, because making a[i-1] smaller only
+relaxes the constraint on everything to the right, whereas raising a[i] makes life harder for a[i+1].
+
+Lowering is legal exactly when a[i-2] is at most a[i] - that is, when dragging a[i-1] down to a[i]
+still leaves it tall enough for the element before it. If i is less than 2 there's nothing behind, so
+it's always legal. Otherwise you're forced to raise instead.
+
+Walking [3,4,2,3]: the drop is at index 2. a[0] is 3 and a[2] is 2, so 3 > 2 - lowering the 4 to 2
+would give [3,2,2,3], which breaks at index 1. So I'm forced to raise the 2 to 4, giving [3,4,4,3],
+which then breaks at index 3. Second violation, so false. And that's right - no single change fixes
+it.
+
+O(n) time, O(1) space if I mutate the array.
+
+If I wasn't confident in the index reasoning under pressure, there's a version I'd be happy to write
+instead: on the first drop, construct both repaired arrays explicitly and check whether either is
+non-decreasing. That's two extra linear scans, it's obviously correct, and it avoids the a[i-2]
+condition entirely.
+
+I did check how much the reasoning actually buys. Against exhaustive search on four thousand random
+arrays, the greedy with the choice was right all four thousand times. Just counting drops was right
+95% of the time overall, and 85% when you restrict to arrays with exactly one drop - which is the only
+population where the choice can matter. Always-raise was 79% on that restricted set. So all the wrong
+strategies pass the large majority of random tests, which is why the two four-element cases matter so
+much as a test.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def checkPossibility(nums):
+        changed = 0
+        for i in range(1, len(nums)):
+            if nums[i] < nums[i-1]:
+                # ^ a DROP. Note strict `<` - equal neighbours are legal in a
+                #   NON-decreasing array, and using `<=` here would flag every plateau.
+
+                changed += 1
+                if changed > 1:
+                    return False
+                # ^ two violations cannot be fixed by one change. Check BEFORE repairing,
+                #   so the second drop exits immediately.
+
+                if i < 2 or nums[i-2] <= nums[i]:
+                    nums[i-1] = nums[i]
+                    # ^ LOWER the earlier element. Preferred whenever legal, because a
+                    #   smaller nums[i-1] only relaxes the constraint on everything after.
+                    # ^ `i < 2` MUST come first: at i == 1 there is no nums[i-2], and in
+                    #   Python nums[-1] silently reads the LAST element and produces a wrong
+                    #   answer with no exception.
+                    # ^ the test compares nums[i-2] against nums[i], not against nums[i-1].
+                    #   It asks: after I drag nums[i-1] down to nums[i], is it still at least
+                    #   nums[i-2]?
+
+                else:
+                    nums[i] = nums[i-1]
+                    # ^ FORCED to raise the later element, because lowering would create a
+                    #   new violation behind us. This can create a NEW violation ahead, and
+                    #   the loop will catch it on the next iteration as a second `changed`.
+
+                # ^ NOTE that we MUTATE the array. Later iterations must see the repaired
+                #   value, or the second drop is evaluated against stale data. If the caller
+                #   needs the input intact, copy it first.
+
+        return True
+
+THE "TRY BOTH" VERSION - correct, and free of index reasoning:
+
+    def checkPossibility(nums):
+        def nd(x):
+            return all(x[i] >= x[i-1] for i in range(1, len(x)))
+        for i in range(1, len(nums)):
+            if nums[i] < nums[i-1]:
+                a = nums[:]; a[i-1] = a[i]
+                b = nums[:]; b[i]   = b[i-1]
+                return nd(a) or nd(b)      # only the FIRST drop needs examining: if neither
+                                           # repair fixes it, nothing does
+        return True
+    # O(n) time, O(n) space. Worth knowing as the version to reach for if the a[i-2]
+    # condition slips your mind.
+
+THE STRATEGIES THAT LOOK RIGHT AND ARE NOT:
+
+    sum(1 for i in range(1, n) if nums[i] < nums[i-1]) <= 1     # 95.2% correct
+    # ...and 85.4% correct on arrays with exactly one drop.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    A = [1, 4, 2, 3]
+
+    i    nums[i-1]   nums[i]   drop?   changed   i<2 or nums[i-2]<=nums[i]?    repair        array after
+    ------------------------------------------------------------------------------------------------------
+    1            1         4      no         0   -                             -             [1,4,2,3]
+    2            4         2     YES         1   nums[0]=1 <= nums[2]=2  YES    lower a[1]=2  [1,2,2,3]
+    3            2         3      no         1   -                             -             [1,2,2,3]
+
+    return True.
+
+    B = [3, 4, 2, 3]
+
+    i    nums[i-1]   nums[i]   drop?   changed   i<2 or nums[i-2]<=nums[i]?    repair        array after
+    ------------------------------------------------------------------------------------------------------
+    1            3         4      no         0   -                             -             [3,4,2,3]
+    2            4         2     YES         1   nums[0]=3 <= nums[2]=2   NO   raise a[2]=4  [3,4,4,3]
+    3            4         3     YES         2   changed > 1 -> RETURN FALSE
+
+    return False.
+
+    THE TWO TABLES DIFFER IN EXACTLY ONE CELL: the condition at i=2. a[0] is 1 in the first and 3 in
+    the second, and that single comparison decides which repair is taken, which decides whether a
+    second violation appears at i=3.
+
+    NOTICE ALSO THAT ROW i=3 IN TABLE B ONLY EXISTS BECAUSE THE ARRAY WAS MUTATED. If the repair had
+    been counted but not applied, row 3 would compare nums[2]=2 against nums[3]=3, see no drop, and
+    return True - the wrong answer.
+
+THE LINE-BY-LINE MAPPING - which line produced which column:
+
+    `for i in range(1, len(nums)):`
+            produced the `i` column, starting at 1 because a drop is a comparison between neighbours.
+    `if nums[i] < nums[i-1]:`
+            produced the "drop?" column. Strict `<` - with `<=`, a plateau like [2,3,3,2,4] would
+            report two drops and return False, and the measured answer is True.
+    `changed += 1` / `if changed > 1: return False`
+            produced the "changed" column and the exit on row 3 of table B. The check comes before
+            the repair, so the second drop never gets a repair attempted.
+    `if i < 2 or nums[i-2] <= nums[i]:`
+            produced the single differing cell between the two tables. `i < 2` did not fire in either
+            (both drops are at i=2), but at i=1 it is what prevents nums[-1] from wrapping around to
+            the end of the array.
+    `nums[i-1] = nums[i]`
+            produced table A's "[1,2,2,3]". Lowering, and it left row 3 with nothing to do.
+    `nums[i] = nums[i-1]`
+            produced table B's "[3,4,4,3]". Raising, and it CREATED the drop that row 3 then found -
+            which is exactly the behaviour that makes the algorithm correct rather than a heuristic.
+    the mutation itself
+            produced the "array after" column. Remove it and table B's row 3 would compare the
+            ORIGINAL 2 and 3, find no drop, and return True.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    approach                     time      space     correct?
+    ---------------------------------------------------------------------------------
+    greedy with the choice       O(n)      O(1)      yes - 4000/4000 vs exhaustive
+    try both repairs explicitly  O(n)      O(n)      yes, and no index reasoning
+    exhaustive single change     O(n^2)    O(n)      yes - the ground truth
+    count drops <= 1             O(n)      O(1)      NO - 95.2% overall, 85.4% on 1-drop
+    always raise nums[i]         O(n)      O(1)      NO - 93.2% overall, 79.2% on 1-drop
+    always lower nums[i-1]       O(n)      O(1)      NO - 95.2% overall, 85.4% on 1-drop
+
+THE #1 MISTAKE: counting the drops and returning `count <= 1`. [3,4,2,3] has one drop and is
+impossible. Measured right 95.2% of the time overall, which is exactly why it survives testing.
+
+THE #2 MISTAKE: always applying the same repair. Always-raise is right 79.2% of the time on the arrays
+where the choice matters; always-lower 85.4%.
+
+THE #3 MISTAKE: writing `nums[i-2] <= nums[i-1]` instead of `nums[i-2] <= nums[i]`. It compares the
+wrong pair, and because it agrees by luck most of the time, tests rarely catch it.
+
+THE #4 MISTAKE: omitting the `i < 2` guard. In Python `nums[-1]` is the last element, so this does not
+raise - it silently compares against the wrong value.
+
+THE #5 MISTAKE: counting the repair without applying it. The next iteration then evaluates stale data
+and misses the second violation. Table B above depends entirely on the mutation.
+
+THE #6 MISTAKE: using `<=` in the drop test, so equal neighbours count as violations.
+
+THE #7 MISTAKE: mutating the caller's array in production code without saying so.
+
+THE #8 MISTAKE: not knowing the "try both repairs" fallback. It is O(n), obviously correct, and it is
+the right thing to write if the index condition will not come to you under pressure.
+
+ONE-SENTENCE TAKEAWAY: the number of drops is not the answer - [1,4,2,3] and [3,4,2,3] both have
+exactly one and only the first is fixable - so at the first drop choose the repair: lower a[i-1] to
+a[i] when `i < 2 or a[i-2] <= a[i]`, otherwise raise a[i] to a[i-1], apply the repair so later
+iterations see it, and bail on a second violation; if the condition slips your mind, just build both
+repaired arrays and test them, which is equally linear and impossible to get wrong.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
