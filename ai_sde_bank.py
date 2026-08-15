@@ -146387,6 +146387,913 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
+_EX_P1AO["STAR method + a strong student example"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a shape that stops you rambling
+
+Behavioural questions are answered in a fixed shape called STAR:
+
+    SITUATION   the context, in two or three sentences. Where, when, who, and what was at stake.
+    TASK        what YOU were responsible for - and whether anyone gave it to you.
+    ACTION      what YOU did. The longest part, in the first person, with the decisions visible.
+    RESULT      what changed, with a number where one exists.
+
+The shape exists because unstructured stories bury the part the interviewer needs. Left to themselves,
+most people spend ninety seconds on background, twenty on what they did, and end with 'and it went
+well'. STAR forces the proportions the other way round.
+
+THE PROPORTIONS THAT ACTUALLY SCORE, out of about 100 seconds:
+
+    Situation   ~15 seconds
+    Task        ~10 seconds
+    Action      ~60 seconds        <- this is where the score is
+    Result      ~15 seconds
+
+AS A STUDENT, YOUR STORIES COME FROM: a capstone project, a hackathon, an internship, research, a
+society, teaching or tutoring, an open-source contribution. Interviewers hiring new graduates expect
+exactly that scope. What they are looking for is the SHAPE - a real situation, a decision you made,
+and something that changed - not the size of the organisation it happened in.
+
+TERMS AS THEY APPEAR:
+- COMPETENCY / PRINCIPLE: the trait being scored - ownership, dealing with ambiguity, conflict.
+- PROBE: the follow-up question. Most of the scoring happens here, not in your prepared answer.
+- SIGNAL: evidence the interviewer can write down. An opinion about yourself is not signal.""",
+
+    """2. THE INTUITION - why they ask, and what they write down
+
+The interviewer is not collecting impressions. They are writing EVIDENCE against a named competency,
+and their notes have to convince other people in a debrief who never met you.
+
+That is why the two commonest answers score nothing:
+
+    'I'm very organised and I always take ownership.'      an opinion. Nothing to write down.
+    'We built a really successful project.'                a team. Nothing about YOU.
+
+And it is why a specific story with a decision in it scores well even when the outcome was mixed: the
+interviewer can write 'chose to rescope rather than ship late; got the supervisor's agreement first;
+delivered 3 of 5 features on time' - that is a sentence a debrief can act on.
+
+THE THREE THINGS THEY ARE LISTENING FOR, in every behavioural answer:
+
+1. IS IT REAL? Specific details - a date, a number, a name of a tool, a constraint. Vague stories
+   sound invented because invented stories are vague.
+2. WHAT DID YOU DECIDE? Not what happened, but what you CHOSE, and what you chose against. 'Rather
+   than X, I did Y because Z' is the highest-value sentence pattern in the whole format.
+3. WHAT CHANGED? A number if you have one; an observable difference if you do not. 'The arguments
+   stopped' is a result. 'We finished the project' is not - you were going to do that anyway.
+
+THE 'I' VERSUS 'WE' RULE, and it is not pedantry. The interviewer cannot score a team. Use 'we' for
+context and 'I' for actions, and expect the probe 'what did YOU do specifically?' if you drift. A good
+habit: after drafting a story, count the sentences that start with 'I did' - if there are fewer than
+three, it is a team story wearing your name.""",
+
+    """3. A FULL STUDENT ANSWER, TRACED
+
+    SITUATION: In my final-year capstone we were building a disease-classification model, and two
+    weeks before the deadline it was stuck at 72% accuracy against a target of 85%.
+
+    TASK: I owned the modelling side. Nobody had worked out WHY it had plateaued, and we were about to
+    spend the last fortnight tuning hyperparameters and hoping.
+
+    ACTION: Rather than keep tuning, I spent a day on error analysis - I pulled the 200 misclassified
+    cases and grouped them by hand. Two thirds were a single class that made up 4% of the data. So the
+    problem was class imbalance, not model capacity. I did three things: added class weights to the
+    loss, switched the metric we reported from accuracy to per-class recall so the failure was visible
+    on our own dashboard, and re-split the data by PATIENT rather than by scan, because I found the
+    same patient appearing in both train and test. That last one dropped our reported accuracy, and I
+    had to explain to the group why a lower number was the honest one.
+
+    RESULT: Per-class recall on the rare class went from 31% to 78%, and overall accuracy settled at
+    83% - two points below target, but a number we could defend. The patient-level split became the
+    standard for the whole cohort the following year, and my supervisor asked me to write it up as a
+    note for the next intake.
+
+NOW MARK WHAT EACH PART IS DOING - this is what makes the story reusable rather than memorised:
+
+    'stuck at 72% against a target of 85%'      the STAKES, as numbers. Immediately concrete.
+    'I owned the modelling side'                 scope, and it is honest - not 'I led the project'.
+    'Rather than keep tuning, I spent a day'     THE DECISION, with the rejected alternative named.
+    'grouped them by hand'                       a specific action a person could picture.
+    'two thirds were a single class at 4%'       the diagnosis, quantified.
+    'three things: ... ... ...'                  countable actions; the interviewer can note them.
+    'that dropped our reported accuracy'         a COST you accepted, which is what makes it credible.
+    'I had to explain why a lower number...'     judgement under social pressure - unasked-for signal.
+    '31% to 78%', '83%, two points below'        a result with a number, INCLUDING the shortfall.
+    'became the standard for the cohort'         it outlived you.
+
+THAT STORY ANSWERS AT LEAST FOUR QUESTIONS: ownership, dealing with ambiguity, a time you improved
+something, and a time you disagreed with your team. Which is the whole idea behind a story bank.""",
+
+    """4. THE FAILURE MODES
+
+A. THE SITUATION THAT NEVER ENDS. Ninety seconds of background and fifteen of action. Interviewers
+   will not interrupt, they will simply have less to write. Two or three sentences of context, then
+   move.
+
+B. 'WE'. If the interviewer cannot tell what you personally did, they cannot score you. Expect the
+   probe; better, pre-empt it: 'the team did X; I specifically wrote Y'.
+
+C. NO RESULT, OR A RESULT THAT IS JUST COMPLETION. 'And we submitted it on time' is not a result - it
+   is the thing that was going to happen anyway. What CHANGED because of your action?
+
+D. NO DECISION. A narrative in which events simply unfold gives nothing to score. Every good answer
+   contains at least one 'rather than X, I did Y'.
+
+E. INVENTED NUMBERS. If you say 40% and the probe asks how you measured it, you must have an answer.
+   'I did not measure it, but the arguments stopped happening' is a perfectly good and honest result.
+   A fabricated number that collapses under one question costs more than no number at all.
+
+F. THE STORY THAT IS TOO BIG. A new graduate claiming to have redesigned a department invites a probe
+   that finds the gap. Understate and evidence.
+
+G. NOT PREPARING THE PROBES. The prepared answer is the easy part; the score is in 'what would you do
+   differently', 'what did the others think', 'how did you measure that'. Prepare three probes per
+   story.
+
+H. THE SAME STORY FOR EVERY QUESTION, told identically. Reusing a story is correct and expected -
+   telling it with the same emphasis regardless of what was asked is not. Re-angle the ACTION section
+   toward whatever competency is being probed.""",
+
+    """5. HOW TO BUILD A STORY THAT SURVIVES PROBING
+
+WRITE THE RESULT FIRST. If you cannot name what changed, choose a different story. This one filter
+removes most weak answers before you have wasted time on them.
+
+THEN THE DECISION. What did you choose, and what did you choose AGAINST? If there was no real
+alternative, there was no decision, and the story is a narrative rather than evidence.
+
+THEN THE ACTION, as three or four countable steps. 'I did three things' is a gift to an interviewer
+taking notes, and it stops you rambling.
+
+THEN THE SITUATION, cut to the minimum that makes the stakes clear. Write it last, and it comes out
+short.
+
+FINALLY, THE PROBE ANSWERS, prepared explicitly:
+    · 'What would you do differently?'  - have a real answer, and make it about YOUR approach, not
+      about other people. This question is not a trap; refusing it is.
+    · 'What did the others think?'      - shows whether you noticed anyone else existed.
+    · 'How did you measure that?'       - the number has to have come from somewhere.
+    · 'What happened afterwards?'       - longevity is cheap evidence of impact.
+
+TIME IT. Ninety seconds to two minutes, spoken aloud, once. Not memorised word for word - a memorised
+answer sounds recited and falls apart when probed - but rehearsed enough that the SHAPE is in your
+mouth.
+
+AND BUILD SIX, NOT THIRTY. Delivery, failure, conflict, ambiguity, learning, helping - see
+[[building-a-story-bank-six-stories-that-cover-thirty-questions]]. Preparing per question means
+memorising thirty answers badly; preparing per story means six you know cold and can re-angle live.
+
+WHAT TO DO IF YOU DRAW A BLANK IN THE ROOM: say 'let me think for a moment' and take five seconds.
+Silence reads as considered; filling it with a false start does not. And if you genuinely have no
+story for the question asked, say what you would do and be explicit that it is hypothetical - that is
+far better than dressing up something that did not happen.""",
+
+    """6. HOW TO PREPARE - numbered steps
+
+1. LIST TEN THINGS YOU ACTUALLY DID over the last two years - projects, fixes, disagreements, things
+   you taught yourself, times you helped someone.
+2. FOR EACH, WRITE THE RESULT IN ONE LINE. Cross out any with no result. You will lose half.
+3. GROUP THE SURVIVORS into the six shapes: delivery, failure, conflict, ambiguity, learning, helping.
+4. FOR THE BEST ONE IN EACH SHAPE, write the four STAR sections with the proportions from section 1 -
+   Action longest.
+5. PUT A NUMBER IN EACH, or an honest observable change.
+6. NAME THE DECISION explicitly in the Action: 'rather than X, I did Y because Z'.
+7. WRITE THREE PROBE ANSWERS per story, including 'what would you do differently'.
+8. SAY EACH ONE ALOUD ONCE and time it. Cut the Situation until you are under two minutes.
+9. WRITE THE INDEX: which questions each story can answer, and what to emphasise for each.
+
+STEP 2 IS THE FILTER THAT SAVES THE MOST TIME. A story with no result cannot be rescued by better
+telling, and finding that out on paper is much cheaper than finding it out in an interview.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'STAR is Situation, Task, Action, Result. The proportions matter more than the letters - about fifteen
+seconds of context, ten on what I was responsible for, a full minute on what I actually did, and
+fifteen on what changed.
+
+The reason for the shape is that the interviewer is writing evidence against a competency, and they
+need something they can put in a debrief. "I'm very organised" gives them nothing. "Rather than keep
+tuning hyperparameters, I spent a day on error analysis and found two thirds of the failures were one
+class making up 4% of the data" is something they can write down.
+
+Three things I would make sure are in every story: a decision with the rejected alternative named, "I"
+rather than "we" for anything I personally did, and a result with a number - or an honest observable
+change if I never measured it, because an invented number collapses on the first probe.
+
+As a student the stories come from a capstone, a hackathon, an internship or a society, and that is
+what interviewers expect at this level. And I would build six stories rather than thirty answers -
+delivery, failure, conflict, ambiguity, learning, helping - because one story re-angled covers several
+questions, and thirty memorised answers all come out flat.'""",
+
+    """8. THE FOUR SECTIONS, PIECE BY PIECE
+
+    SITUATION - two or three sentences, and the job is STAKES.
+
+        'building a disease-classification model, stuck at 72% against a target of 85%,
+         two weeks before the deadline'
+
+    Notice what it contains: a domain, two numbers and a deadline. Notice what it does NOT contain:
+    the module code, who else was in the group, or how the dataset was collected. Every sentence here
+    is a sentence not spent on the Action.
+
+    TASK - one or two sentences, and the job is SCOPE AND OWNERSHIP.
+
+        'I owned the modelling side. Nobody had worked out why it had plateaued.'
+
+    The second sentence is doing the real work: it establishes that the problem was UNOWNED, which is
+    what turns doing your job into taking initiative.
+
+    ACTION - the longest section, and the job is DECISIONS.
+
+        'Rather than keep tuning, I spent a day on error analysis...'
+        'I did three things: ... ... ...'
+        'That last one dropped our reported accuracy, and I had to explain...'
+
+    Three features to copy: the rejected alternative ('rather than'), the countable list ('three
+    things'), and the accepted cost ('dropped our reported accuracy'). The last is what makes an
+    answer sound like something that happened rather than something composed.
+
+    RESULT - the job is CHANGE, with a number.
+
+        'per-class recall 31% to 78%, overall accuracy 83% - two points below target'
+        'the patient-level split became the standard for the cohort'
+
+    Reporting the SHORTFALL as well as the gain is not weakness. It is the detail that makes every
+    other number in your answer believable, and interviewers notice.""",
+
+    """9. THE SAME STORY, RE-ANGLED THREE WAYS
+
+One story, three questions. What changes is which part gets the minute.
+
+    ASKED: 'Tell me about a time you took ownership.'
+        EMPHASISE the Task - nobody owned the problem and you took it - and the fact that you went
+        looking for the cause rather than waiting to be told. The re-split is a detail.
+
+    ASKED: 'Tell me about a time you disagreed with your team.'
+        EMPHASISE the patient-level split. The group wanted the higher number; you argued for the
+        honest one and had to explain why a WORSE-looking result was the right one. Now the Action
+        section is about the conversation, not the code, and the Result includes 'they agreed, and it
+        became the cohort standard'.
+
+    ASKED: 'Tell me about a time you dealt with ambiguity.'
+        EMPHASISE the moment before the diagnosis - a plateau with no known cause, two weeks left, and
+        a choice between tuning blindly and spending a day you did not obviously have on
+        investigation. The Action is the decision to spend that day.
+
+SAME EVENTS. Three different minutes. That is what 'six stories, not thirty answers' means in practice,
+and it is a skill worth rehearsing directly: take one story and say it three ways.
+
+AND THE OPENING LINE THAT MAKES IT LAND: start with a one-sentence headline so the interviewer knows
+which question you think you are answering.
+
+    'This is about a time I argued for reporting a lower number because the higher one was wrong.'
+
+Then tell the story. If you have picked the wrong angle, they can redirect you in five seconds instead
+of ninety.""",
+
+    """10. WHAT IS BEING SCORED, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE INTERVIEWER'S CHECKLIST, roughly:
+        1. Is this a specific real event, with details that could be checked?
+        2. What did this person personally DO?
+        3. Was there a decision, and do they understand the trade-off they made?
+        4. What CHANGED?
+        5. Do they know what they would do differently?
+
+    Only item 4 is the outcome. Two of the five are about judgement, which is where preparation is
+    usually thinnest.
+
+THE #1 MISTAKE: answering with a self-assessment instead of a story. 'I'm someone who takes ownership'
+gives the interviewer nothing to write down, and they will ask again - having already recorded a weak
+first answer.
+
+THE #2 MISTAKE: 'we' throughout. A team cannot be hired. Use 'we' for context and 'I' for actions.
+
+THE #3 MISTAKE: a Situation that eats the answer. If you have not started the Action by thirty
+seconds, cut.
+
+THE #4 MISTAKE: no result, or 'we finished it'. Completion is not change.
+
+THE ONE THAT COSTS MOST WHEN IT GOES WRONG: an invented number. One probe - 'how did you measure
+that?' - and every other number in your loop becomes suspect.
+
+ONE-SENTENCE TAKEAWAY: STAR is a shape for making your DECISIONS visible - fifteen seconds of context,
+a minute of what you personally did with the rejected alternative named, and a result with a number
+you could defend under one more question.""",
+]
+
+_EX_P1AO["Tell me about a time you received difficult feedback (behavioral: feedback)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the question is about what you DID next
+
+'Tell me about a time you received difficult feedback' is not asking whether you can take criticism.
+Everyone says they can. It is asking for EVIDENCE of a specific loop:
+
+    somebody told you something you did not want to hear
+        -> you understood it rather than defending yourself
+        -> you CHANGED something concrete
+        -> and there is evidence the change stuck
+
+Miss any of the four and the answer is incomplete. The one people miss is the last: they describe the
+feedback and the resolution, and never say how anyone knows it worked.
+
+WHAT MAKES THIS QUESTION HARD is that the natural instincts are all wrong. The instinct is to choose
+feedback that was mild, or unfair, or already fixed - because those feel safer. All three produce a
+weak answer, for reasons in section 2.
+
+TERMS AS THEY APPEAR:
+- THE COMPETENCY: usually 'Earn Trust' or self-awareness at Amazon; 'humility' and 'coachability'
+  elsewhere. All of them are asking the same thing.
+- SIGNAL: something the interviewer can write down. 'I took it well' is not signal; 'I changed my code
+  review habit and my reviewer confirmed it three weeks later' is.""",
+
+    """2. THE INTUITION - why the safe choices score badly
+
+THE THREE TEMPTING ANSWERS, and why each one fails:
+
+1. TRIVIAL FEEDBACK. 'I was told my slides had too much text.' Nothing was at stake, so nothing is
+   demonstrated. If the feedback did not sting, it does not answer the question that was asked - and
+   the interviewer will simply ask for another one, with less time left.
+
+2. FEEDBACK YOU DISAGREED WITH AND WERE RIGHT ABOUT. 'My manager said I was too detailed, but actually
+   the details mattered.' This turns the question into an argument you won, which demonstrates the
+   opposite of what is being probed. If you genuinely disagreed, the story only works if you can show
+   you took it seriously first and can articulate what was true in it - see section 5.
+
+3. A HUMBLEBRAG. 'I was told I take on too much work.' Everyone recognises this shape immediately, and
+   it reads as unwillingness to answer.
+
+WHAT A STRONG ANSWER HAS INSTEAD:
+
+    · THE FEEDBACK STATED PLAINLY, in the words it was given in. 'You dominate the discussion and
+      people have stopped contributing' is uncomfortable to say aloud in an interview, and saying it
+      plainly is most of the signal.
+    · YOUR HONEST FIRST REACTION. 'My first reaction was that I was just being enthusiastic' is
+      credible; 'I immediately saw they were right' is not, and interviewers have heard it hundreds of
+      times.
+    · WHAT YOU DID TO UNDERSTAND IT. Asked for an example. Checked with someone else. Looked at the
+      evidence.
+    · THE SPECIFIC CHANGE. A mechanism, not an intention. 'I now ask two people who have not spoken
+      before I give my own view' beats 'I try to listen more'.
+    · EVIDENCE IT STUCK. You went back and asked. Someone told you unprompted. A measurable thing
+      changed.
+
+THE HONEST FIRST REACTION IS THE PART THAT MAKES THE REST BELIEVABLE. An answer where you were
+instantly gracious describes a person who has never received real feedback.""",
+
+    """3. A FULL ANSWER, TRACED
+
+    SITUATION: In my second month of an internship, my mentor asked for a quick word after a design
+    review. She said that in reviews I tended to jump in with my own solution before the person
+    presenting had finished, and that two people had stopped bringing their ideas to the group because
+    of it.
+
+    TASK: I had thought of myself as engaged and helpful, so this was genuinely uncomfortable. My
+    responsibility was to work out whether it was true and, if so, to stop.
+
+    ACTION: My first reaction, honestly, was that I was being enthusiastic rather than dismissive. So
+    instead of arguing I asked her for a specific example, and she gave me two from that week - both
+    of which I remembered, and in both I could see it. I asked one of the two people directly whether
+    they had felt cut off, which was an awkward conversation and worth having; they said yes, and
+    added something I would not have guessed - that it was worse in the group channel than in person.
+    Then I changed one concrete thing rather than resolving to 'listen more': in any review, I would
+    not offer a solution until the presenter had explicitly finished, and I would ask one question
+    first. In the channel I started waiting for two other replies before adding mine.
+
+    RESULT: Three weeks later I asked my mentor whether it had changed, because I did not trust my own
+    assessment of it. She said it had, and that one of the two had brought a proposal to the group
+    unprompted for the first time. I have kept the 'ask a question before offering a solution' habit
+    since - it is the single most useful thing I took from that internship.
+
+WHAT EACH PART IS DOING:
+
+    'two people had stopped bringing their ideas'   the feedback, with its COST stated. Not softened.
+    'I had thought of myself as engaged'            the honest self-image being contradicted.
+    'my first reaction was that I was being...'     the un-gracious first reaction. Credibility.
+    'I asked her for a specific example'            understanding before acting.
+    'I asked one of the two people directly'        an uncomfortable act, and the strongest signal.
+    'worse in the channel than in person'           a detail you could not invent, and it changed the
+                                                     fix.
+    'I would not offer a solution until...'         a MECHANISM, not an intention.
+    'I asked my mentor whether it had changed'      you sought verification rather than assuming.
+    'brought a proposal unprompted'                 evidence from someone else's behaviour.""",
+
+    """4. THE FAILURE MODES
+
+A. NO REAL CHANGE. The story ends with 'I took it on board'. On board is not a mechanism. What did you
+   DO differently on Monday?
+
+B. AN INTENTION INSTEAD OF A MECHANISM. 'I resolved to communicate more clearly' cannot be verified,
+   and probably did not survive the week. 'I started posting a written summary after every meeting' is
+   a thing that either happened or did not.
+
+C. NO VERIFICATION. You changed something and never checked whether it helped. Going back to the
+   person and ASKING is the single strongest element available in this answer, and almost nobody
+   includes it.
+
+D. DEFENDING YOURSELF INSIDE THE STORY. If half the answer explains why the feedback was not quite
+   fair, you have answered a different question. Section 5 covers what to do when you genuinely
+   disagreed.
+
+E. FEEDBACK WITH NO STAKES. If nothing followed from it, it was not difficult feedback.
+
+F. BLAMING THE DELIVERY. 'It would have been easier if she had said it differently' may be true and it
+   is not what is being scored. Notice it, and do not spend the answer there.
+
+G. NO EMOTIONAL HONESTY AT ALL. A perfectly composed reaction reads as either untrue or as not having
+   understood the feedback's weight. One sentence - 'it stung' - costs nothing and buys credibility.
+
+H. CHOOSING FEEDBACK ABOUT A SKILL YOU HAVE SINCE ABANDONED. 'I was told my C++ was weak, so I moved
+   to Python' is not a story about feedback; it is a story about avoidance.""",
+
+    """5. THE HARD VARIANT - when you genuinely disagreed
+
+Sometimes the honest story is one where you did not accept the feedback. That answer CAN be strong,
+and it is the one that separates a rehearsed candidate from a thoughtful one - but only if it has
+three specific parts:
+
+1. YOU TOOK IT SERIOUSLY FIRST. You asked for examples, you checked with someone else, you looked for
+   evidence. If your answer goes straight from 'they said X' to 'but I was right', you have shown
+   nothing.
+
+2. YOU CAN NAME WHAT WAS TRUE IN IT. Almost all feedback has a true observation and an inaccurate
+   explanation. 'She was right that the team did not know what I was working on; the reason was not
+   that I was disorganised, it was that I was not posting updates anywhere.' You accepted the
+   observation and disagreed with the diagnosis - and then you fixed the observation.
+
+3. YOU CHANGED SOMETHING ANYWAY. If several people perceive something, the perception is a fact even
+   when the explanation is wrong. Acting on the perception is what a mature answer looks like.
+
+WHAT NOT TO DO: present it as a disagreement you won. Even if you were right, that is a Have Backbone
+story, not a feedback story, and answering the wrong question is what gets recorded.
+
+A NOTE ON WHERE TO GET A STORY IF YOU HAVE NO WORK EXPERIENCE. Feedback happens in: code review on a
+group project, a supervisor's comments on a draft, a teammate saying you were doing too much of the
+work yourself, a hackathon partner saying you ignored their design, a tutor telling you your
+explanations are too fast for the class. All of those are real, all of them sting, and every one of
+them can carry the four-part loop.
+
+AND THE RELATED QUESTION TO PREPARE AT THE SAME TIME: 'tell me about a time you GAVE difficult
+feedback.' It is the same competency from the other side, it is asked almost as often, and the good
+answer has the same shape - specific, early, private, about behaviour rather than character, with a
+check afterwards that it landed.""",
+
+    """6. HOW TO BUILD YOUR ANSWER - numbered steps
+
+1. LIST THE TIMES SOMEONE TOLD YOU SOMETHING THAT STUNG. Do not filter yet. Code review, a supervisor,
+   a teammate, a manager, a friend on a project.
+2. CROSS OUT ANY WHERE NOTHING FOLLOWED. No change, no story.
+3. FROM WHAT REMAINS, PICK THE ONE WHERE YOU CHANGED A HABIT, not just a document. Habits are harder
+   and therefore better evidence.
+4. WRITE THE FEEDBACK IN THE WORDS IT WAS GIVEN IN. If it is uncomfortable to write down, you have
+   chosen well.
+5. WRITE YOUR HONEST FIRST REACTION, including the defensive part. One sentence.
+6. WRITE WHAT YOU DID TO UNDERSTAND IT - asked for examples, checked with someone else.
+7. WRITE THE MECHANISM you adopted. It must be something an observer could see you doing or not doing.
+8. WRITE THE VERIFICATION. Who told you it had changed, and when? If nobody did, go and ask them now -
+   that is worth doing for its own sake, and it completes the story.
+9. TIME IT. Ninety seconds.
+
+STEP 8 IS THE DIFFERENTIATOR. Most candidates stop at step 7, so an answer that ends with 'I went back
+three weeks later and asked whether it had changed' is immediately in the top few percent of answers
+to this question.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The structure I would use is: what the feedback was, in the words it was given in; my honest first
+reaction, including the defensive bit; what I did to understand it; the specific thing I changed; and
+how I know it worked.
+
+For instance, my mentor told me I jumped in with solutions before people had finished presenting, and
+that two people had stopped bringing ideas to the group. My first reaction was that I was being
+enthusiastic, not dismissive - so rather than argue I asked for examples, and she gave me two from
+that week that I recognised. Then I asked one of those two people directly whether they had felt cut
+off, which was awkward, and they said yes and added that it was worse in the group channel than in
+person, which I would never have guessed.
+
+The change was a mechanism rather than an intention: I would not offer a solution until the presenter
+had finished, and I would ask a question first. Three weeks later I went back and asked my mentor
+whether it had actually changed, because I did not trust my own read on it, and she said one of them
+had brought a proposal to the group unprompted for the first time.
+
+The part I would emphasise is that last step. Most people change something and never check. Going back
+and asking is what turns "I took it on board" into evidence.'""",
+
+    """8. THE ANSWER, SENTENCE BY SENTENCE
+
+    'She said that in reviews I tended to jump in with my own solution before the person presenting
+     had finished, and that two people had stopped bringing their ideas to the group.'
+
+        THE FEEDBACK, unsoftened, WITH ITS COST. 'Two people stopped' is the detail that makes it
+        difficult feedback rather than a style note. Softening this is the commonest way to weaken
+        the whole answer.
+
+    'I had thought of myself as engaged and helpful, so this was genuinely uncomfortable.'
+
+        THE SELF-IMAGE THAT WAS CONTRADICTED. This is what 'difficult' means, and naming it is what
+        makes the story about self-awareness rather than about a task.
+
+    'My first reaction, honestly, was that I was being enthusiastic rather than dismissive.'
+
+        THE DEFENSIVE REACTION, admitted. Counter-intuitively this is a STRENGTH: it is what everyone
+        actually feels, and admitting it is evidence you are describing a real event.
+
+    'So instead of arguing I asked her for a specific example.'
+
+        THE TURN. Note the construction - the defensive feeling and the chosen action are separated.
+        That separation IS emotional maturity, described rather than claimed.
+
+    'I asked one of the two people directly whether they had felt cut off.'
+
+        THE UNCOMFORTABLE ACT. This is the highest-signal sentence in the answer, because almost
+        nobody does it and everybody recognises how hard it is.
+
+    'they said yes, and added ... it was worse in the group channel than in person.'
+
+        THE DETAIL YOU COULD NOT INVENT, and it changed the fix. Specifics like this are what make
+        interviewers believe the rest.
+
+    'I would not offer a solution until the presenter had explicitly finished, and I would ask one
+     question first.'
+
+        THE MECHANISM. Observable, checkable, and small enough to actually survive.
+
+    'Three weeks later I asked my mentor whether it had changed, because I did not trust my own
+     assessment.'
+
+        THE VERIFICATION, plus the reason - which shows you understood that self-report is unreliable
+        on exactly this kind of change.""",
+
+    """9. THE PROBES, AND WHAT EACH ONE IS TESTING
+
+    'HOW DID YOU FEEL WHEN SHE SAID IT?'
+        Testing: honesty. Answer with the real feeling - defensive, embarrassed, deflated - and then
+        what you did with it. 'I was fine with it' is not believable.
+
+    'WHY DO YOU THINK SHE RAISED IT?'
+        Testing: whether you understood the impact rather than just the words. The answer is about the
+        two people who stopped contributing, not about you.
+
+    'WHAT IF YOU HAD DISAGREED?'
+        Testing: judgement. 'I would have asked for examples first, and if several people saw the same
+        thing I would treat the perception as a fact even if I thought the explanation was wrong.'
+
+    'HOW DO YOU KNOW IT ACTUALLY CHANGED?'
+        Testing: rigour, and this is the one your prepared answer should already have answered. If it
+        does, you get credit twice.
+
+    'HAS ANYONE GIVEN YOU THE SAME FEEDBACK SINCE?'
+        Testing: whether the change stuck. An honest 'not that piece, but I have had to be careful
+        about it again in bigger meetings' is stronger than a claim of permanent cure.
+
+    'TELL ME ABOUT A TIME YOU GAVE DIFFICULT FEEDBACK.'
+        The mirror question, asked almost as often. Prepare it at the same time: specific, early,
+        private, about the behaviour and its effect rather than about the person, and with a check
+        afterwards that it landed.
+
+A NOTE ON DELIVERY: this answer benefits from being told slightly slower than a technical one. The
+pauses are part of the signal - they read as someone recalling something real rather than reciting
+something prepared.""",
+
+    """10. WHAT IS BEING SCORED, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR-PART LOOP THEY ARE LOOKING FOR:
+        1. the feedback, stated plainly, with something at stake
+        2. an honest reaction, followed by understanding rather than defending
+        3. a specific, observable CHANGE - a mechanism, not an intention
+        4. evidence it stuck, ideally from someone else
+
+THE #1 MISTAKE: choosing feedback that did not sting. A story about slide density does not answer the
+question, and you will be asked again with less time left. Choose the one that contradicted how you
+saw yourself.
+
+THE #2 MISTAKE: ending at 'I took it on board'. No mechanism, no verification, no evidence. This is
+where most answers stop.
+
+THE #3 MISTAKE: an instantly gracious reaction. Nobody believes it. One sentence of honest defensive
+feeling, followed by what you did instead of acting on it, is worth more than any amount of composure.
+
+THE #4 MISTAKE: turning it into a disagreement you won. If you genuinely disagreed, show that you took
+it seriously, name what was true in it, and change something anyway - see section 5.
+
+ONE-SENTENCE TAKEAWAY: pick the feedback that contradicted your self-image, admit the defensive first
+reaction, describe a MECHANISM you adopted rather than an intention, and finish by going back to ask
+whether it had actually changed - because that last step is what almost nobody does.""",
+]
+
+_EX_P1AO["Tell me about your biggest failure and what you learned (behavioral: failure)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a real failure, owned, and a change that stuck
+
+'Tell me about your biggest failure' is asking for four things, and the answer is incomplete without
+all four:
+
+    1. something that genuinely WENT WRONG, with a real cost
+    2. your part in it, owned WITHOUT hedging
+    3. what you actually did about it at the time
+    4. what CHANGED afterwards - a habit or a mechanism, and evidence it stuck
+
+The instinct is to protect yourself: choose something small, or something that was mostly someone
+else's fault, or a failure that was really a success. All three are recognised instantly, and all
+three cost more than the honest answer would have.
+
+WHY INTERVIEWERS ASK IT, plainly: everybody fails. What varies is whether a person can SEE their own
+contribution, and whether anything changed as a result. A candidate who cannot name a real failure is
+either inexperienced or not self-aware, and both are risks.
+
+THE THING TO INTERNALISE BEFORE PREPARING THIS: an honest failure story is not a confession, it is
+EVIDENCE. The interviewer is not deciding whether to forgive you; they are checking whether you learn.
+A story where you got something badly wrong and fixed the cause is a strong answer, not a damaging
+one - and treating it as damaging is what produces the weak versions in section 2.
+
+TERMS AS THEY APPEAR:
+- THE COMPETENCY: Earn Trust, ownership, or 'learns from mistakes' depending on the company. The same
+  loop underneath.
+- THE MECHANISM: the concrete thing you changed so it cannot happen the same way again. This is what
+  separates a lesson from a regret.""",
+
+    """2. THE INTUITION - the four weak versions, and why each is transparent
+
+1. THE FAKE FAILURE. 'I worked too hard on a project and burned out.' Everyone has heard it, and it
+   reads as an unwillingness to answer. If your failure makes you look good, it is not the answer to
+   this question.
+
+2. THE FAILURE THAT WAS SOMEONE ELSE'S FAULT. 'The other team did not deliver their part.' Even if
+   true, the question was about YOURS. The strong move is to name what you could have done EARLIER -
+   escalated sooner, checked their progress, built a fallback. There is always something, and finding
+   it is the whole exercise.
+
+3. THE TRIVIAL FAILURE. 'I once missed a typo in a report.' Nothing was at stake, so nothing is
+   demonstrated - and you will be asked for another one with less time remaining.
+
+4. THE ANCIENT FAILURE. 'In my first year of university...' If the most recent thing you got wrong was
+   four years ago, either you have not been stretching yourself or you have not been noticing.
+
+WHAT A STRONG ANSWER CONTAINS INSTEAD:
+
+    · A REAL COST, stated in a sentence. Two weeks lost. A demo that failed in front of the
+      supervisor. A dataset that had to be rebuilt.
+    · YOUR CONTRIBUTION, in the first person and without 'but'. The word 'but' is where most of these
+      answers quietly collapse: 'I should have tested it, BUT the requirements were unclear'. Say the
+      first half; stop.
+    · WHAT YOU DID IMMEDIATELY. Failures are also handled well or badly. Telling people early, taking
+      the unglamorous fix, staying to clean up - all of that is signal.
+    · THE MECHANISM AFTERWARDS. Not 'I learnt to be more careful' - a thing you now do. A checklist, a
+      test, a habit of asking one question before starting.
+    · EVIDENCE IT STUCK. A later situation where the mechanism caught something.
+
+THE ASYMMETRY WORTH KNOWING: a candidate who describes a serious failure with clear ownership and a
+concrete fix almost always scores HIGHER than one who describes a mild failure carefully hedged.
+Interviewers are calibrated on this, and hedging is the strongest negative signal in the whole
+question.""",
+
+    """3. A FULL ANSWER, TRACED
+
+    SITUATION: In a group project building a recommendation system, I owned the evaluation. Two days
+    before the demo I reported that we had reached 0.91 AUC, and the team stopped tuning and started
+    writing the report around that number.
+
+    TASK: The evening before the demo I was preparing the slides and re-ran the pipeline from scratch,
+    and got 0.68. The 0.91 had come from a run where I had fitted the scaler on the whole dataset
+    before splitting it - the test set had leaked into the training statistics.
+
+    ACTION: I told the group that night rather than the next morning, which was the single most
+    uncomfortable decision in the story and the one I would repeat. I said plainly that the number was
+    mine and that it was wrong, and that the report's central claim was now false. Then I proposed
+    what we could actually do in the hours available: present the honest 0.68, show the leak as a
+    finding, and explain what it teaches - rather than quietly restating a lower number and hoping
+    nobody asked. I rewrote the evaluation as a scikit-learn Pipeline so the scaler was fitted inside
+    each fold, and re-ran everything so the slides had numbers I could defend.
+
+    RESULT: The demo went worse than it would have with 0.91 and better than it would have with a
+    number we could not explain - the supervisor spent most of the questions on the leak, which we
+    could answer properly. The lasting change is a mechanism rather than a resolution: I do not fit
+    any transform outside a Pipeline any more, and I re-run from a clean state before reporting a
+    number. That habit caught a second leak later that year, in a different project, where a duplicate
+    row was appearing in both splits.
+
+WHAT EACH PART IS DOING:
+
+    'the team stopped tuning and started writing'    THE COST. Other people acted on your error.
+    'I got 0.68'                                     the discovery, with numbers.
+    'the 0.91 had come from a run where I...'        THE CAUSE, named precisely and technically.
+    'I told the group that night'                    the immediate handling - and the harder choice.
+    'the number was mine and that it was wrong'      ownership, in one sentence, with no 'but'.
+    'rather than quietly restating a lower number'   a REJECTED alternative, which shows judgement.
+    'rewrote the evaluation as a Pipeline'           the MECHANISM - structural, not intentional.
+    'that habit caught a second leak later'          EVIDENCE IT STUCK, from a different project.""",
+
+    """4. THE FAILURE MODES
+
+A. THE HEDGE. 'I should have checked, but the deadline was tight and the requirements kept changing.'
+   Everything after 'but' erases everything before it. State your part, then stop. Context can come
+   later if they ask.
+
+B. NO REAL COST. If nothing was lost - no time, no trust, no money, no demo - it was not a failure. It
+   was an inconvenience.
+
+C. A LESSON INSTEAD OF A MECHANISM. 'I learnt the importance of testing' is a sentence, not a change.
+   'I now write the test before the fix, always' is a change. The test for whether you have a
+   mechanism: could an observer tell whether you were doing it?
+
+D. NO EVIDENCE IT STUCK. The strongest version ends with a LATER moment where the new habit caught
+   something. If you have one, it is worth two sentences; if you do not, say what you do now and be
+   honest that it has not been tested yet.
+
+E. BLAMING, EVEN GENTLY. Naming another person as the cause, however accurately, moves the answer away
+   from the competency being scored. If someone else genuinely contributed, the interesting question
+   is what YOU could have done earlier.
+
+F. A FAILURE WITH NO DECISION IN IT. 'The server went down' is an event. What did you decide - to
+   report it early, to take the slower safe fix, to roll back?
+
+G. AN ANSWER THAT IS ALL AFTERMATH. Do not spend the whole ninety seconds on the lesson. Roughly: a
+   quarter setting up the cost, half on what you did, a quarter on the change.
+
+H. CHOOSING A FAILURE THAT REVEALS A DISQUALIFYING PATTERN. Missing a deadline through poor planning
+   is fine. Hiding a problem for weeks is not - unless the entire story is about how you learnt not
+   to, and even then, choose carefully.""",
+
+    """5. HOW TO CHOOSE THE STORY - and what to do if you think you have none
+
+THE FILTER, in order:
+
+1. SOMETHING REAL WENT WRONG and you can say what it cost.
+2. YOUR CONTRIBUTION IS CLEAR and you can state it without qualifying.
+3. YOU DID SOMETHING ABOUT IT at the time, not just afterwards.
+4. YOU CHANGED A MECHANISM, and ideally it has caught something since.
+5. IT IS RECENT - within the last year or two.
+
+'I HAVE NEVER REALLY FAILED AT ANYTHING' is the answer to avoid, and it is usually not true - it is
+usually a definition problem. Failures for a student look like:
+
+    · a project that missed its scope because you planned optimistically;
+    · a bug you shipped to a group repository that cost other people a day;
+    · a result you reported that turned out to be wrong;
+    · a teammate you did not manage well - you did the work yourself instead of unblocking them, and
+      they disengaged;
+    · a technology you chose badly and had to abandon a week in;
+    · an exam or a deadline you handled badly because you did not ask for help early enough.
+
+Every one of those is a genuine, ownable failure with a cost.
+
+THE 'BIGGEST' PART, since people worry about it: you do not need a catastrophe. You need a failure
+that was significant TO YOU and where the learning is visible. If you have a genuinely large one and
+can tell it with ownership, use it - the scale makes the ownership more impressive, not less.
+
+AND THE RELATED QUESTIONS TO PREPARE AT THE SAME TIME, because one story usually covers several:
+    'a time you made a mistake that affected others'
+    'a time you had to admit you were wrong'
+    'a time something did not go to plan'
+    'what would you do differently in your last project'
+The failure story from your story bank answers all four with a change of emphasis - see
+[[building-a-story-bank-six-stories-that-cover-thirty-questions]].""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. LIST THREE THINGS THAT WENT WRONG in the last two years where you were involved.
+2. FOR EACH, WRITE THE COST in one line - hours lost, trust lost, work redone, a demo that failed.
+   Cross out anything with no cost.
+3. WRITE YOUR CONTRIBUTION IN ONE SENTENCE WITH NO 'BUT'. If you cannot, either you have not accepted
+   it or the story is not yours to tell.
+4. WRITE WHAT YOU DID IMMEDIATELY - who you told, how quickly, what you proposed. Handling is half the
+   answer and most people omit it entirely.
+5. WRITE THE MECHANISM you adopted afterwards. It must be observable. 'I use a Pipeline so transforms
+   are fitted inside the fold' rather than 'I am more careful with data now'.
+6. FIND THE EVIDENCE that it stuck - a later moment where it caught something. If there is none yet,
+   say so honestly.
+7. CUT THE CONTEXT until the cost arrives within about twenty seconds.
+8. SAY IT ALOUD ONCE and check for hedges. Every 'but', 'although' and 'to be fair' is a place the
+   answer weakens.
+
+STEP 3 IS THE HARDEST AND THE MOST VALUABLE. Writing your part down with no qualifier is uncomfortable
+on paper, which is exactly why it is convincing out loud.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The structure I would use is: what went wrong and what it cost, my part in it stated plainly, what I
+did about it at the time, and the mechanism I changed afterwards.
+
+Mine is from a group project where I owned the evaluation. I reported 0.91 AUC two days before the
+demo, and the team stopped tuning and started writing the report around that number. The night before,
+I re-ran the pipeline from scratch and got 0.68 - I had fitted the scaler on the whole dataset before
+splitting, so the test set had leaked into the training statistics.
+
+I told the group that night rather than the next morning, said plainly that the number was mine and
+that the report's central claim was now false, and proposed presenting the honest 0.68 with the leak
+as a finding rather than quietly restating a lower number. Then I rewrote the evaluation as a Pipeline
+so transforms are fitted inside each fold.
+
+What I would emphasise is that the change was a mechanism rather than a resolution. "Be more careful
+with data" would not have survived the month. "Never fit a transform outside a Pipeline" did - and it
+caught a second leak later that year in a different project, where a duplicate row was in both splits.
+
+And the part I would not do is hedge it. The deadline was tight and the requirements did move, but
+none of that made the number wrong. I did.'""",
+
+    """8. THE ANSWER, SENTENCE BY SENTENCE
+
+    'I reported that we had reached 0.91 AUC, and the team stopped tuning and started writing the
+     report around that number.'
+
+        THE COST, and note that it is a cost to OTHER PEOPLE. That is what makes it a failure rather
+        than a mistake. Their work was redirected by your error.
+
+    'The evening before the demo I re-ran the pipeline from scratch and got 0.68.'
+
+        THE DISCOVERY, with both numbers. The gap is the story, and a listener does the arithmetic
+        instantly.
+
+    'The 0.91 had come from a run where I had fitted the scaler on the whole dataset before splitting
+     it.'
+
+        THE CAUSE, named technically and precisely. This does two jobs: it demonstrates that you
+        actually understand what happened, and it invites a technical probe you can answer.
+
+    'I told the group that night rather than the next morning.'
+
+        THE HANDLING, and the harder choice. Interviewers notice the timing - the difference between
+        that night and the next morning is the entire difference between owning it and being found
+        out.
+
+    'I said plainly that the number was mine and that it was wrong.'
+
+        OWNERSHIP IN ONE SENTENCE, with no 'but'. Read it aloud and notice how much stronger it is
+        than any version with a qualifier attached.
+
+    'rather than quietly restating a lower number and hoping nobody asked'
+
+        THE REJECTED ALTERNATIVE - and it is a tempting one, which is what makes naming it worth
+        something.
+
+    'I rewrote the evaluation as a Pipeline so the scaler was fitted inside each fold.'
+
+        THE MECHANISM. Structural: the mistake is now difficult to make rather than merely
+        remembered. That distinction is the most transferable idea in the whole answer.
+
+    'That habit caught a second leak later that year, in a different project.'
+
+        THE EVIDENCE. A different project, a different bug, the same habit - which is what makes the
+        learning credible rather than claimed.""",
+
+    """9. THE PROBES, AND WHAT EACH IS TESTING
+
+    'WHY DID YOU NOT CATCH IT EARLIER?'
+        Testing: whether you understand the cause rather than just the symptom.
+        Answer: 'Because I never re-ran from a clean state - I was iterating in a notebook where the
+        scaler was already fitted. That is exactly why the fix is structural.'
+
+    'WHAT DID THE TEAM SAY?'
+        Testing: whether you noticed the human cost, and whether you are honest about it.
+        Answer with the truth, including if they were annoyed. 'Two of them had written a section
+        around the number and had to rewrite it' is a stronger answer than 'they were fine about it'.
+
+    'WOULD YOU DO ANYTHING DIFFERENTLY?'
+        Testing: depth of the lesson. Have a SECOND thing, beyond the mechanism - typically about
+        earlier communication. 'I would have said "this is a preliminary number, do not build on it
+        yet" when I first reported it.'
+
+    'HAS IT HAPPENED AGAIN?'
+        Testing: whether the change was real. The best possible answer is the one about the second
+        leak that the habit caught.
+
+    'WHOSE FAULT WAS IT, REALLY?'
+        Testing: whether you will take the invitation to blame. Do not. 'Mine - I reported it.'
+
+    'WHAT IF YOUR MANAGER HAD ASKED YOU TO PRESENT THE HIGHER NUMBER?'
+        A values probe, and it does get asked. The answer is that you would not, and why - and it is
+        worth having thought about it in advance rather than discovering your answer live.
+
+ONE DELIVERY NOTE: do not rush this answer. The temptation is to get through the uncomfortable part
+quickly, and rushing reads as discomfort with the ownership. Say the cost slowly and plainly; it is
+the part that makes everything after it credible.""",
+
+    """10. WHAT IS BEING SCORED, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR PARTS, and roughly how the time should be spent:
+        the failure and its cost         ~20 seconds
+        your contribution, unhedged      ~10 seconds
+        what you did at the time         ~40 seconds
+        the mechanism, and evidence      ~20 seconds
+
+THE #1 MISTAKE: hedging. 'I should have tested it, BUT the requirements were unclear.' Everything
+before 'but' is deleted by everything after it. State your part and stop; if the context matters, the
+interviewer will ask.
+
+THE #2 MISTAKE: a fake failure. 'I care too much' is recognised instantly and reads as evasion. If
+your failure story makes you look good, it is not answering the question.
+
+THE #3 MISTAKE: a lesson instead of a mechanism. 'I learnt to be more careful' did not survive the
+month, and everybody knows it. Name the thing you now DO.
+
+THE #4 MISTAKE: stopping before the evidence. The strongest ending available is a later moment where
+the new habit caught something - a different project, a different bug, the same discipline.
+
+THE COUNTER-INTUITIVE FACT WORTH TRUSTING: a serious failure owned cleanly scores higher than a mild
+one hedged carefully. Interviewers are calibrated on ownership, not on the size of the disaster.
+
+ONE-SENTENCE TAKEAWAY: pick a real failure with a cost to other people, say your part in one sentence
+with no 'but', describe what you did that same day, and finish with a MECHANISM that has since caught
+something - because a mechanism is a lesson that survived.""",
+]
+
 _EX_P1AO["The SQL queries you will actually be asked to write"] = [
     """1. THE GOAL IN PLAIN ENGLISH - six queries cover most live SQL rounds
 
