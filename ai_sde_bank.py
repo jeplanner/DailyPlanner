@@ -115004,139 +115004,653 @@ for _e in ENTRIES:
 _EX_P1S = {}
 
 _EX_P1S["Attention Mechanism Intuition"] = [
-    """The party analogy, then the mechanics.
-In a noisy room you tune in to the one voice that matters and tune out the
-rest. Attention gives every word that ability: for each position, decide how
-much to listen to every other position.
-Mechanically, each position emits three vectors. QUERY = what am I looking for.
-KEY = what do I offer. VALUE = what I actually contribute if you attend to me.
-Score every (query, key) pair with a dot product, softmax the scores into
-weights summing to 1, and take the weighted sum of the VALUES. That weighted
-sum is the position's new representation.""",
+    """1. THE GOAL IN PLAIN ENGLISH - letting every word look at every other word
 
-    """A worked example on one sentence.
-'The animal didn't cross the street because IT was too tired.'
-When computing the representation of 'it', its query is compared against every
-key. The key for 'animal' matches strongly (both are noun-ish, and training has
-taught the model that 'tired' associates with animate subjects), so the softmax
-puts most weight there - perhaps 0.6 on 'animal', 0.1 on 'street', the rest
-spread thinly.
-The new vector for 'it' is therefore mostly 'animal'. Change the last word to
-'wide' and the weights shift toward 'street'. That is coreference resolved by
-learned weighting rather than by a rule - and it is the standard example
-because you can see the answer change.""",
+Take the sentence:
 
-    """Why divide by sqrt(d_k) - the 'scaled' in scaled dot-product attention.
-Dot products of two random d-dimensional vectors have variance proportional to
-d. With d = 512, raw scores can reach into the tens or hundreds, and softmax of
-large numbers saturates - one weight goes to ~1.0 and the rest to ~0, which
-makes the gradient vanish and training stall.
-Dividing by sqrt(d_k) normalises the variance back to about 1, keeping the
-softmax in its responsive range. It is a one-line fix for a real optimisation
-problem, and it is the detail interviewers use to check whether you have read
-the paper or only the summary.""",
+    'The animal did not cross the street because it was tired.'
 
-    """Why MULTI-head, and what each head does.
-One attention pattern must serve every relationship at once - syntax,
-coreference, topic. Splitting the representation into h heads (say 8), each
-with its own smaller Q/K/V projections, lets each head learn a different
-relation and the outputs are concatenated.
-Empirically some heads track syntactic dependencies, some track positional
-offsets, some attend to delimiters. The cost is unchanged because each head
-works in d/h dimensions - it is a reallocation of the same compute, not extra
-compute, which is the elegant part.""",
+What does 'it' refer to? You know instantly: the animal, because streets do not get tired. Change one
+word - 'because it was wide' - and now 'it' means the street.
 
-    """Self-attention versus cross-attention, and masking.
-SELF-attention: Q, K and V all come from the same sequence - how words in a
-sentence relate to each other. CROSS-attention: Q comes from the decoder and
-K/V from the encoder - how an output token relates to the input, which is how
-translation aligns words.
-CAUSAL masking: in a decoder, position i must not see positions after it, or
-the model could cheat by reading the answer. Implemented by setting those
-scores to negative infinity BEFORE the softmax so their weights become exactly
-zero. That mask is the difference between BERT (bidirectional) and GPT
-(left-to-right).""",
+A model that reads left to right, one word at a time, carrying a fixed-size summary, has a hard time
+with this. By the time it reaches 'it', 'animal' is seven words back and squeezed into a summary
+vector along with everything else.
 
-    """The cost, which is the reason for everything that came after.
-Attention compares every position with every other, so it is O(n^2) in sequence
-length - both in compute and in the memory for the score matrix. Doubling the
-context quadruples the work, which is precisely why context windows were small
-for years and why the field produced FlashAttention (same maths, tiled to fit
-in fast SRAM), sparse and sliding-window attention, and linear-attention
-approximations.
-And why attention replaced RNNs despite that cost: an RNN's path between two
-distant tokens is O(n) sequential steps, so the signal degrades and nothing
-parallelises. Attention connects any two positions in ONE step and computes all
-positions simultaneously - the parallelism is what made training at scale
-possible.""",
+ATTENTION solves it directly: at every position, look at ALL the other positions, decide how relevant
+each one is, and build this position's new representation as a WEIGHTED AVERAGE of them.
+
+    'it' asks:        'which token here is the thing being talked about?'
+    every token answers with how well it matches
+    'it' takes a blend, weighted by those answers
+
+That is the entire mechanism. Not a metaphor - literally a dot product, a softmax, and a weighted sum.
+
+THE THREE ROLES, and the analogy that makes them stick - a library search:
+
+    QUERY  (Q)   what this token is looking for       your search phrase
+    KEY    (K)   what each token advertises itself as  the book's title on the spine
+    VALUE  (V)   what each token actually contributes  the book's contents
+
+You compare your QUERY against every KEY to decide how much of each VALUE to take. Query and key exist
+to compute RELEVANCE; value carries the CONTENT. Keeping those two jobs separate is the design.""",
+
+    """2. THE INTUITION - relevance is a dot product
+
+Why a dot product? Because in an embedding space, similar directions mean similar meaning, and the dot
+product of two vectors is large when they point the same way. It is the cheapest possible 'how much do
+these two things have in common' and it is differentiable, so it can be learned.
+
+THE FORMULA, and it is short:
+
+    Attention(Q, K, V) = softmax( Q K^T / sqrt(d_k) ) V
+
+READ IT RIGHT TO LEFT AND IT IS OBVIOUS:
+
+    Q K^T          every query dotted with every key -> an n x n score matrix
+    / sqrt(d_k)    keep the scores in a range where softmax is not saturated
+    softmax        turn each row of scores into weights that sum to 1
+    ... V          take the weighted average of the values
+
+MEASURED, on a toy four-dimensional embedding where the dimensions are [animate, object, action,
+negation], with one head whose projection keeps only the first two - so it asks 'which token is the
+thing being talked about?'. Querying from 'it':
+
+        token       q.k    /sqrt(d)   weight
+        the        0.00      0.00      0.012  #
+        animal     6.48      3.24      0.302  ##################
+        did        0.00      0.00      0.012  #
+        not        0.00      0.00      0.012  #
+        cross      0.54      0.27      0.015  #
+        the        0.00      0.00      0.012  #
+        street     5.40      2.70      0.176  ###########
+        because    0.00      0.00      0.012  #
+        it         6.48      3.24      0.302  ##################
+        was        0.00      0.00      0.012  #
+        tired      4.86      2.43      0.134  ########
+
+'it' put 30% of its attention on 'animal' and 18% on 'street' - it has NOT fully resolved the
+ambiguity, which is honest and correct for a single hand-built head. What it has done is concentrate
+three quarters of its weight on the four tokens that could possibly be relevant, and near-zero on 'the',
+'did', 'because' and 'was'.
+
+AND THE OUTPUT VECTOR IS THE POINT: 'it' went in as [0.6, 0.6, 0, 0] - equally animate and object,
+maximally ambiguous - and came out as [1.81, 1.26, 0.09, 0.04], leaning animate. THE REPRESENTATION
+MOVED. That is what 'contextual embedding' means, and it is why the same word gets a different vector
+in a different sentence.""",
+
+    """3. WHY DIVIDE BY sqrt(d_k) - the term everyone skips
+
+    It looks like an arbitrary constant. It is the difference between a model that trains and one that
+    does not, and it is a very common follow-up question.
+
+    THE PROBLEM: if query and key components are roughly independent with unit variance, their dot
+    product over d_k dimensions has variance proportional to d_k - so the scores grow like sqrt(d_k).
+    At d_k = 512, scores are about 23 times larger than at d_k = 1.
+
+    WHY THAT MATTERS: softmax of large numbers SATURATES. Measured, on the same underlying score
+    pattern grown to the scale each d_k would produce:
+
+        d_k = 4      unscaled softmax  [0.537, 0.241, 0.133, 0.089]    max 0.537
+        d_k = 64     unscaled softmax  [0.957, 0.039, 0.004, 0.001]    max 0.957
+        d_k = 512    unscaled softmax  [0.9999, 0.0001, 0.000, 0.000]  max 0.9999
+
+        WITH the 1/sqrt(d_k) scaling, all three become  [0.389, 0.261, 0.193, 0.158].
+
+    At d_k = 512 the unscaled softmax is a one-hot vector: it has picked ONE token and given everything
+    else nothing. And a saturated softmax has a gradient of essentially ZERO - the derivative of
+    softmax is p(1-p) per component, and p(1-p) at p = 0.9999 is 0.0001.
+
+    SO THE MODEL STOPS LEARNING. Not 'learns worse'. The gradient through the attention weights
+    vanishes and the head is frozen at whatever random relevance pattern it was initialised with.
+
+    THE ANSWER IN ONE SENTENCE: 'dot products grow like sqrt(d_k), so without the scaling the softmax
+    saturates into a one-hot distribution, the gradient goes to zero, and the head never learns.
+    Dividing by sqrt(d_k) puts the scores back in the range where softmax is soft.'
+
+    NOTICE ALSO WHAT THE SCALED ROW SHOWS: the same distribution at every d_k. The scaling makes
+    attention behave IDENTICALLY regardless of head width, which is what lets you change the
+    architecture without retuning everything else.""",
+
+    """4. THE FAILURE MODES
+
+A. THINKING Q, K AND V ARE THREE DIFFERENT INPUTS. In self-attention they are three different
+   PROJECTIONS of the SAME input. Q = xW_Q, K = xW_K, V = xW_V. The learned matrices are what make
+   them differ.
+
+B. FORGETTING THE MASK IN A DECODER. Without a causal mask, position 5 can attend to position 9, so
+   the model sees the future during training and appears brilliant. At inference the future does not
+   exist and it collapses. This bug trains beautifully and is worthless.
+
+C. DROPPING THE sqrt(d_k). Measured above: the softmax saturates and the gradient vanishes.
+
+D. IGNORING POSITION ENTIRELY. Attention is PERMUTATION-INVARIANT - it sees a bag of tokens. 'Dog
+   bites man' and 'man bites dog' produce identical attention outputs without positional encodings.
+   That is why they exist, and it is a favourite follow-up.
+
+E. CONFUSING ATTENTION WEIGHTS WITH EXPLANATION. A weight of 0.3 on 'animal' is not proof the model
+   'understood' coreference. Attention maps are suggestive and are a poor interpretability tool; there
+   is a real literature saying so.
+
+F. FORGETTING THE QUADRATIC COST. Every token compared with every token. 1,000 tokens is a million
+   pairs; 100,000 tokens is ten billion.
+
+G. ASSUMING MORE HEADS IS STRICTLY BETTER. Heads split the SAME total width - 8 heads of 64 dims, not
+   8 copies of 512. More heads means more perspectives, each narrower. Studies routinely find many
+   heads can be pruned with no loss.
+
+H. THINKING ATTENTION IS THE WHOLE TRANSFORMER. Attention MIXES information between positions; the
+   feed-forward layer then TRANSFORMS each position independently and holds most of the parameters.
+   Both are needed, and 'attention is the mixing step' is the crisp way to say it.""",
+
+    """5. THE COST - and why it dominates every design decision
+
+    Attention compares every token with every other token, so the score matrix has n^2 entries:
+
+        tokens n        pairs n^2         relative
+              10              100               1x
+             100           10,000             100x
+           1,000        1,000,000          10,000x
+          10,000      100,000,000       1,000,000x
+         100,000   10,000,000,000     100,000,000x
+
+    DOUBLING THE CONTEXT QUADRUPLES THIS WORK. That single exponent explains an enormous amount:
+
+    - why long-context models were hard, and expensive when they arrived
+    - why every 'efficient attention' paper of the last several years exists - sparse patterns, sliding
+      windows, linear approximations, FlashAttention's memory-aware exact computation
+    - why the KV CACHE matters at inference: without it, generating token 1,001 recomputes all 1,000
+      previous keys and values; with it you reuse them and generation becomes linear per token
+    - why context length is priced the way it is, and why the window is a budget rather than a free
+      resource - see [[what-is-the-context-window-and-why-does-it-matter]]
+
+    THE KV CACHE IS WORTH ONE MORE SENTENCE because it is the standard follow-up: during generation the
+    keys and values for all previous tokens never change, so you store them and only compute Q, K, V
+    for the ONE new token. The cost of the cache is MEMORY - it grows linearly with context length and
+    with batch size, and it is what limits how many concurrent conversations a GPU can hold.
+
+    So the honest summary of the trade: attention buys you a direct path between any two positions -
+    constant path length, no information squeezed through a bottleneck, and full parallelism during
+    training - and it pays for that with quadratic cost in sequence length. Recurrent networks made the
+    opposite trade: linear cost, but a long and lossy path between distant tokens, and no
+    parallelism.""",
+
+    """6. HOW TO COMPUTE IT BY HAND - numbered steps
+
+1. PROJECT. From each token's embedding x, compute q = xW_Q, k = xW_K, v = xW_V. Three learned
+   matrices, one input.
+2. SCORE. For the position you care about, dot its q with EVERY k. That gives one number per token -
+   'how relevant is that token to me?'
+3. SCALE. Divide every score by sqrt(d_k).
+4. MASK, if this is a decoder. Set the scores for all future positions to negative infinity BEFORE the
+   softmax, so they receive exactly zero weight.
+5. SOFTMAX. The scores become weights summing to 1.
+6. BLEND. Output = sum over tokens of (weight x that token's v).
+7. REPEAT FOR EVERY POSITION - and in practice all positions at once, as one matrix multiply, which is
+   why this parallelises so well on a GPU and recurrence does not.
+8. DO IT h TIMES IN PARALLEL with different projections - that is multi-head - then concatenate the h
+   outputs and pass them through one more learned matrix W_O.
+
+STEP 4 IS THE ONE PEOPLE OMIT AND IT IS THE ONE THAT SILENTLY RUINS A DECODER. Note it happens BEFORE
+the softmax, not after: zeroing weights after softmax would leave them not summing to 1.
+
+STEP 8'S DETAIL WORTH KNOWING: the h heads split the model width rather than multiplying it. A
+512-wide model with 8 heads gives each head 64 dimensions. You are buying diversity of perspective,
+not extra capacity.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Attention lets every token look at every other token and decide how much each one matters to it.
+
+Concretely, each token produces three vectors from learned projections: a query - what am I looking
+for; a key - what do I advertise myself as; and a value - what do I actually contribute. You dot the
+query against every key, which gives a relevance score per token, divide by the square root of the key
+dimension, softmax those into weights that sum to one, and take the weighted average of the values.
+That average becomes the token's new representation.
+
+The classic example is "the animal did not cross the street because it was tired". "It" needs to
+resolve to "animal", and a left-to-right model has to carry that seven words through a fixed-size
+summary. Attention just looks. I built a toy version of this and the token "it" went in with an
+embedding equally split between animate and object - completely ambiguous - and came out leaning
+animate, having put thirty percent of its weight on "animal" and near zero on "the", "did" and
+"because". That movement is what a contextual embedding IS.
+
+On the square root: dot products grow like the square root of the dimension, so at 512 dimensions an
+unscaled softmax saturates to essentially one-hot - I measured 0.9999 on the top token - and a
+saturated softmax has near-zero gradient, so the head never learns. Dividing fixes that, and it makes
+the behaviour identical across head widths.
+
+The cost is that it compares every pair, so it is quadratic in sequence length - doubling the context
+quadruples the work, which is why long context is expensive and why the KV cache exists. And two
+things people forget: a decoder needs a causal mask before the softmax or it sees the future during
+training, and attention is permutation-invariant on its own, so positional encodings are what stop
+"dog bites man" and "man bites dog" being identical.'""",
+
+    """8. THE FORMULA, TERM BY TERM
+
+    Attention(Q, K, V) = softmax( Q K^T / sqrt(d_k) ) V
+
+    Q = x W_Q          n x d_k
+        THE QUESTION each position is asking. W_Q is learned, which means the model learns what each
+        kind of token should look FOR - a pronoun learns to look for nouns.
+
+    K = x W_K          n x d_k
+        THE ADVERTISEMENT each position offers. Separate from Q on purpose: what you are looking for
+        and what you offer are different things, and forcing them to share a matrix (which is what
+        using raw embeddings would do) would make the score matrix symmetric - so 'it' attending to
+        'animal' would force 'animal' to attend equally to 'it'. LANGUAGE IS NOT SYMMETRIC, and this
+        is the actual reason there are two matrices rather than one.
+
+    Q K^T              n x n
+        EVERY QUERY AGAINST EVERY KEY. This matrix is the whole cost story: n^2 entries, and the
+        reason context length is expensive.
+
+    / sqrt(d_k)
+        Measured above: without it, softmax saturates as d_k grows and the gradient vanishes.
+
+    + mask             (decoder only)
+        -infinity on every future position, applied BEFORE softmax so those weights become exactly 0.
+
+    softmax(...)       n x n, each ROW sums to 1
+        Each row is one token's distribution of attention over all tokens.
+
+    ... V              n x d_v
+        THE BLEND. Every position's output is a weighted average of all values. Note what is NOT here:
+        no recurrence, no loop, no sequential dependency. The whole thing is two matrix multiplies with
+        a softmax between, which is precisely why it saturates a GPU and an RNN cannot.
+
+    MULTI-HEAD, in one line:
+        Concat(head_1 ... head_h) W_O, where each head has its OWN W_Q, W_K, W_V of width d_model/h.""",
+
+    """9. TWO HEADS, TWO QUESTIONS
+
+    Same sentence, same toy embeddings, two heads with different projections. Head A keeps the
+    [animate, object] dimensions; head B keeps [action, negation].
+
+        QUERYING FROM 'it':
+            head A (animate-subject)   animal 38%, tired 29%, it 13%
+            head B (action/negation)   the 9%, animal 9%, did 9%   <- near-uniform
+
+        QUERYING FROM 'cross':
+            head A (animate-subject)   the 9%, animal 9%, did 9%   <- near-uniform
+            head B (action/negation)   cross 76%, did 13%, was 3%
+
+    READ THE DIAGONAL. Each head is sharply informative on the token whose subspace it cares about, and
+    SAYS NOTHING AT ALL on the other - the distribution goes flat, which is exactly what 'this head has
+    no opinion here' looks like numerically.
+
+    THAT FLATNESS IS THE ARGUMENT FOR MULTI-HEAD ATTENTION, and it is a stronger argument than the
+    usual hand-wave about 'different relationships'. A single head computes ONE relevance function. It
+    can be a coreference resolver or a verb-argument tracker; it cannot be both, because there is one Q
+    projection and one K projection and they define one notion of 'relevant'.
+
+    Run eight of them in parallel over different subspaces and each can specialise. Concatenate, project
+    with W_O, and the layer as a whole has answered eight different questions at once.
+
+    HEAD A'S RESULT IS ALSO WORTH READING CAREFULLY: 'it' attends 38% to 'animal' and 29% to 'tired'.
+    That is not a bug - those two tokens are exactly the evidence for the coreference. 'It' is animate
+    BECAUSE it is the thing that is tired, and 'animal' is the animate candidate. The head has gathered
+    both halves of the argument into one vector, which is what the next layer gets to work with.
+
+    AND THE HONEST CAVEAT: these projections were hand-built to make the mechanism visible. In a real
+    model nobody assigns heads their jobs - the specialisation emerges from training, some heads turn
+    out to do something recognisable, and many do not do anything a human can name.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MECHANISM:  project to Q, K, V -> score with Q K^T -> scale by 1/sqrt(d_k) -> mask if decoding
+                    -> softmax -> weighted average of V.
+
+    THE MEASURED NUMBERS WORTH CARRYING:
+        'it' put 30% of its weight on 'animal', ~1% on each function word, and its vector moved from
+        [0.6, 0.6, 0, 0] to [1.81, 1.26, 0.09, 0.04] - ambiguous to leaning animate.
+        unscaled softmax at d_k=512: top weight 0.9999, gradient p(1-p) = 0.0001 - dead.
+        1,000 tokens -> 1,000,000 pairs. 100,000 tokens -> 10,000,000,000 pairs.
+
+    WHAT IT BUYS:  a direct, constant-length path between any two positions, and full parallelism
+                   across the sequence during training.
+    WHAT IT COSTS: quadratic time and memory in sequence length.
+
+THE #1 MISTAKE: treating Q, K and V as three different inputs. They are three learned projections of
+the same input, and the reason K and Q are separate matrices is that relevance is not symmetric.
+
+THE #2 MISTAKE: forgetting the causal mask in a decoder. It trains beautifully and is worthless,
+because the model was reading the answer.
+
+THE #3 MISTAKE: dropping the sqrt(d_k), which saturates the softmax and kills the gradient.
+
+THE #4 MISTAKE: forgetting that attention alone is permutation-invariant - it is a bag of tokens until
+positional information is added.
+
+THE #5 MISTAKE: reading attention weights as an explanation of the model's reasoning. They are
+suggestive, not evidence.
+
+ONE-SENTENCE TAKEAWAY: attention is a learned weighted average - each token asks a question with its
+query, every token answers with its key, and the token rebuilds itself out of the values it found most
+relevant - which gives every position a direct path to every other at the price of quadratic cost.""",
 ]
 
 _EX_P1S["Bias-Variance Decomposition"] = [
-    """The decomposition, and what each term means concretely.
-Expected test error = BIAS^2 + VARIANCE + IRREDUCIBLE NOISE.
-BIAS is error from wrong assumptions - your model is too simple to represent
-the truth. Fitting a straight line to a curve: no amount of data helps, because
-the line cannot bend.
-VARIANCE is sensitivity to the particular training set - retrain on a different
-sample and you get a very different model. A depth-30 decision tree memorises
-its sample.
-NOISE is irreducible: measurement error, genuine randomness, missing features.
-It sets the floor - no model beats it, so an error target below the noise level
-is a target you cannot hit.""",
+    """1. THE GOAL IN PLAIN ENGLISH - splitting 'it's wrong' into two different diseases
 
-    """The dartboard picture, which is the one to have ready.
-Low bias, low variance: darts tightly clustered on the bullseye - the goal.
-High bias, low variance: tightly clustered but off to one side - consistently
-wrong in the same way, which is underfitting.
-Low bias, high variance: scattered all around the bullseye, averaging out right
-but individually unreliable - overfitting.
-High bias, high variance: scattered and off-centre - a badly chosen model,
-badly trained.
-Ten seconds to draw, and it makes the two terms independent in a listener's
-head rather than a spectrum.""",
+Your model makes errors. The decomposition says those errors come from three separable sources, and
+that knowing WHICH one dominates tells you what to do next:
 
-    """How you TELL them apart in practice, which is the useful skill.
-Compare training error with validation error, both against the irreducible
-level (human performance is a decent proxy).
-High training error AND high validation error, close together -> BIAS. The
-model cannot even fit what it has seen; more data will not help.
-Low training error, much higher validation error -> VARIANCE. It fits the
-sample and not the pattern; more data WILL help.
-Concrete: training RMSE 12.0, validation 12.4, human 3.0 -> bias, and
-collecting another million rows changes nothing. That diagnosis is what the
-decomposition is FOR.""",
+    BIAS         the model is too simple to represent the truth, so it is wrong even with infinite
+                 data. A straight line trying to fit a curve.
+    VARIANCE     the model is so flexible that it chases the noise in whatever sample it happened to
+                 get, so a different sample would give a very different model.
+    NOISE        the part of the target that nothing could predict. Irreducible.
 
-    """The fixes, which are opposites - so misdiagnosing costs you weeks.
-For BIAS: a more complex model, more or better features, interaction terms,
-LESS regularisation, train longer.
-For VARIANCE: more training data, MORE regularisation (L1/L2, dropout), a
-simpler model, feature selection, early stopping, ensembling (bagging averages
-away variance).
-Note that 'add regularisation' fixes one and worsens the other, which is why
-the diagnosis has to come first. Applying the variance cure to a bias problem
-makes it strictly worse.""",
+THE FORMULA, for squared error at a point:
 
-    """Why the trade-off is a trade-off, and where modern models break it.
-Classically, increasing model complexity lowers bias and raises variance, so
-test error is U-shaped and you pick the bottom. That is the picture the
-decomposition teaches.
-But very large neural networks show DOUBLE DESCENT: past the interpolation
-threshold, test error falls again even though the model fits the training data
-perfectly. Implicit regularisation from SGD and over-parameterisation are the
-usual explanations. So the classical U-curve is the right mental model for
-classical models and an incomplete one for deep learning - saying that
-distinguishes someone who understands the theory from someone reciting it.""",
+    expected error  =  bias^2  +  variance  +  noise
 
-    """Bagging versus boosting, read through this lens.
-BAGGING (random forest) trains many high-variance models on bootstrap samples
-and averages them - averaging cancels variance while leaving bias roughly
-unchanged. That is why the base learner is a deep, unpruned tree: you WANT high
-variance and low bias.
-BOOSTING (gradient boosting) fits each new model to the previous ensemble's
-errors, reducing BIAS - which is why the base learner is a shallow stump and
-why boosting overfits more readily and needs early stopping.
-Same ensemble idea, opposite targets. If you can say which term each method
-attacks, you understand both.""",
+WHY THIS IS WORTH KNOWING RATHER THAN JUST RECITING: the two diseases have OPPOSITE cures.
+
+    high bias      -> a bigger model, more features, less regularisation.   MORE DATA WILL NOT HELP.
+    high variance  -> more data, more regularisation, a simpler model, bagging.
+
+So 'my model is bad, let me collect more data' is a coin flip until you know which one you have. This
+is the single most practically useful diagnosis in supervised learning.
+
+THE EVERYDAY ANALOGY: a bathroom scale that always reads 3 kg heavy has BIAS - weighing yourself a
+thousand times will not fix it. A scale that reads anywhere within 3 kg at random has VARIANCE -
+weighing yourself a thousand times and averaging WILL fix it. The first needs a different scale. The
+second needs more measurements.
+
+TERMS AS THEY APPEAR:
+- EXPECTED over what? Over the random draw of the TRAINING SET. Bias and variance are properties of a
+  training PROCEDURE, not of one fitted model.""",
+
+    """2. THE INTUITION - and the experiment that makes it concrete
+
+Here is the setup that turns the formula into something you can watch happen.
+
+The truth is f(x) = sin(1.6x) on [-3, 3], and observations carry Gaussian noise with sd 0.35 - so
+the irreducible noise term is 0.35^2 = 0.1225, and NO model can beat that.
+
+Now draw 400 INDEPENDENT training sets of 25 points each, fit a polynomial of a given degree to every
+one of them, and at each test point look at the 400 predictions:
+
+    BIAS^2    = (the AVERAGE of those 400 predictions - the truth)^2
+                'where does this procedure aim, on average?'
+    VARIANCE  = the spread of those 400 predictions around their own average
+                'how much does the answer depend on which sample I happened to get?'
+
+MEASURED, averaged over 61 test points:
+
+    degree    bias^2    variance    noise    = total     train MSE
+         0    0.5169      0.0236   0.1225     0.6630        0.6022
+         1    0.5021      0.0559   0.1225     0.6805        0.5557
+         2    0.5100      0.1440   0.1225     0.7765        0.5274
+         3    0.1242      0.0885   0.1225     0.3352        0.1839
+         5    0.0064      0.1506   0.1225     0.2795        0.0975
+         9   18.3461   5468.3749   0.1225  5486.8436        0.0722
+        14    3.9058   8729.7179   0.1225  8733.7462        0.0545
+
+READ IT FROM BOTH ENDS. Degree 0 - predicting one constant - is 96% bias. Degree 14 is essentially all
+variance. The best total sits at degree 5, where bias has nearly vanished (0.0064) and variance has
+not yet exploded.
+
+AND NOW THE LAST COLUMN, which is the most important one on the page.""",
+
+    """3. WHY YOU CANNOT SEE THIS FROM THE TRAINING SET
+
+    Look at the training MSE column again, on its own:
+
+        degree     0      1      2      3      5      9     14
+        train   0.602  0.556  0.527  0.184  0.098  0.072  0.054
+
+    IT FALLS MONOTONICALLY, ALL THE WAY. Every increase in flexibility fits the training data better,
+    including the increases that took total error from 0.28 to 8,733.
+
+    THAT IS THE ENTIRE REASON HELD-OUT DATA EXISTS. The training error is not a weak signal about
+    overfitting - it is an ACTIVELY MISLEADING one, pointing confidently in the wrong direction. A
+    model selected by training error will always pick the most flexible option available.
+
+    THE ODD ROW - degree 2 is WORSE than degree 1:
+
+        degree 1:  bias^2 0.5021,  variance 0.0559
+        degree 2:  bias^2 0.5100,  variance 0.1440
+
+    Bias did not improve at all, and variance nearly tripled. WHY: sin(1.6x) is an ODD function on a
+    symmetric interval, so a quadratic term has nothing useful to contribute - it can only fit noise.
+    You paid for a parameter and received pure variance.
+
+    THE LESSON GENERALISES: capacity that cannot express anything true about your problem is not
+    neutral. It costs variance. This is why feature selection helps even when the extra features are
+    merely useless rather than harmful.
+
+    ONE HONEST CAVEAT ON THE BIG NUMBERS. At degree 9 and 14 with only 25 points the fit is nearly
+    singular, so the occasional training set produces an enormous prediction and the variance estimate
+    swings a lot between runs - a second run measured degree 9 at 168 rather than 5,468. The
+    instability of the number IS the phenomenon: that is what 'this procedure's output depends
+    violently on which sample you got' looks like when you try to summarise it.""",
+
+    """4. THE FAILURE MODES
+
+A. TREATING 'MORE DATA' AS A UNIVERSAL FIX. Measured below: degree 1's bias^2 goes 0.5047 at n=15 to
+   0.5003 at n=1000 - essentially unchanged after a 66x increase in data. More data cures variance, not
+   bias, and collecting it when bias dominates is months of wasted effort.
+
+B. DIAGNOSING FROM TRAINING ERROR. It falls monotonically with capacity. It cannot tell you anything
+   about the trade-off, ever.
+
+C. CONFUSING BIAS-THE-DECOMPOSITION-TERM WITH BIAS-THE-FAIRNESS-PROBLEM. Completely unrelated concepts
+   that share a word. Say 'underfitting' if there is any risk of ambiguity in the room.
+
+D. THINKING OF BIAS AND VARIANCE AS PROPERTIES OF ONE MODEL. They are properties of a PROCEDURE across
+   possible training sets. You cannot compute them from the single model you trained - which is why
+   they are a way of thinking rather than a metric you log.
+
+E. ASSUMING THE TRADE-OFF IS STRICT. It is not a law that reducing one must increase the other. More
+   data reduces variance at no cost in bias. Better features can reduce both. The trade-off binds
+   along the CAPACITY axis specifically, and modern over-parameterised networks visibly break the
+   simple U-shape.
+
+F. IGNORING THE NOISE FLOOR. Here it is 0.1225. A team burning a quarter to get from 0.28 to 0.20 is
+   chasing something that does not exist below 0.1225. Estimate the floor before setting a target.
+
+G. FORGETTING THAT ENSEMBLES TARGET ONE TERM EACH. Bagging averages many high-variance models and
+   attacks VARIANCE. Boosting builds up from weak learners and attacks BIAS. That is the actual
+   distinction between them, and it is the answer to the follow-up question.""",
+
+    """5. MORE DATA, MEASURED - and what it does not fix
+
+    The same experiment at growing training-set sizes:
+
+        n_train   degree      bias^2      variance
+             15        1      0.5047        0.1047
+             25        1      0.5017        0.0570
+             50        1      0.5003        0.0206
+            200        1      0.5003        0.0058
+           1000        1      0.5003        0.0013
+
+    DEGREE 1'S VARIANCE FELL BY 80x. ITS BIAS^2 MOVED BY 0.0044. A straight line cannot represent a
+    sine wave, and a million points will not change that. The error settles at roughly 0.5003 + 0.1225
+    and stops.
+
+        n_train   degree      bias^2      variance
+             15        9   1050.7389    68452.36
+             25        9      0.2592      167.74
+             50        9      0.0175        1.57
+            200        9      0.0001        0.0081
+           1000        9      0.0000        0.0015
+
+    THE OPPOSITE STORY. Degree 9 at n=15 is catastrophic and at n=1000 is essentially perfect - total
+    error 0.1240, which is the noise floor of 0.1225 plus almost nothing.
+
+    THIS IS THE MOST ACTIONABLE PAIR OF TABLES IN THE TOPIC:
+
+        THE SAME MODEL is a disaster at n=15 and optimal at n=1000.
+        THE SAME DATASET makes degree 1 hopeless and degree 9 excellent.
+
+    'Which model should I use' has no answer without 'how much data do I have', and that is the
+    sentence to say out loud in an interview.
+
+    AND THE DIAGNOSTIC THAT FOLLOWS FROM IT - the learning curve. Plot training and validation error
+    against training-set size:
+
+        the two curves converge, both high      -> BIAS. More data will not help. Get a bigger model.
+        a wide gap, validation still falling    -> VARIANCE. More data will help. Keep collecting.
+
+    That is how you decide whether to spend the next quarter on data collection or on modelling, and
+    it is a far better answer than reciting the formula.""",
+
+    """6. HOW TO DIAGNOSE AND FIX - numbered steps
+
+1. ESTIMATE THE NOISE FLOOR. Duplicate inputs with different labels, human disagreement rates, sensor
+   precision. Without it you have no idea what 'good' means.
+2. SPLIT PROPERLY. Train / validation / test. Everything below is measured on held-out data, because
+   training error is misleading by construction.
+3. COMPARE TRAINING AND VALIDATION ERROR:
+       both high, close together   -> HIGH BIAS (underfitting)
+       train low, validation high  -> HIGH VARIANCE (overfitting)
+       both near the noise floor   -> done; stop
+4. IF HIGH BIAS: more capacity, better features, less regularisation, train longer. DO NOT collect
+   more data - measured above, it changes nothing.
+5. IF HIGH VARIANCE, in order of cost: more data, stronger regularisation, fewer features, a simpler
+   model, bagging or an ensemble, early stopping.
+6. PLOT THE LEARNING CURVE to confirm the diagnosis before spending money on it.
+7. TUNE THE REGULARISATION STRENGTH ON VALIDATION DATA - and see below for what that actually does to
+   the two terms.
+8. RE-CHECK THE FLOOR. If validation error is at the noise level, the remaining error is not a
+   modelling problem, and further effort belongs on better labels or better inputs.
+
+STEP 3 IS THE WHOLE TECHNIQUE. Two numbers, compared, and they tell you which of two opposite actions
+to take - which is why this is the first thing to reach for when a model disappoints.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Expected squared error splits into three parts: bias squared, variance, and irreducible noise.
+
+Bias is being wrong because the model is too simple to represent the truth - a straight line fitting a
+sine wave. Variance is being wrong because the model is flexible enough to chase whatever noise
+happened to be in this particular sample, so a different sample would give a very different model.
+Noise is what nothing can predict.
+
+The reason it matters is that the two have opposite cures. High bias needs more capacity - more data
+does nothing. High variance needs more data or more regularisation. So "the model is bad, let me get
+more data" is a coin flip until you have made the diagnosis.
+
+I actually measured this. Fitting polynomials to a sine wave with 25 noisy points: degree 0 is 96%
+bias, degree 5 is the sweet spot, and by degree 14 variance is over 8,700 while bias is almost nothing.
+And the thing that makes the point: training error falls monotonically the whole way, from 0.60 down to
+0.05. It gets better even while the model gets catastrophically worse - which is exactly why you cannot
+detect overfitting without held-out data.
+
+The diagnosis in practice is comparing training and validation error. Both high and close means bias.
+A big gap means variance. And I would use a learning curve to decide whether to spend the next quarter
+collecting data - if the curves have converged, more data is wasted money.
+
+One caveat I would add: the trade-off is not a law. It binds along the capacity axis. More data reduces
+variance at no cost in bias, better features can reduce both, and very over-parameterised networks
+visibly break the simple U-shape.'""",
+
+    """8. WHAT REGULARISATION ACTUALLY DOES, MEASURED
+
+    The same degree-9 polynomial on 25 points, varying only the ridge penalty:
+
+        ridge        bias^2     variance      total
+        1e-9         0.4287      96.0042    96.5554
+        1e-4         0.0061       1.3416     1.4701
+        1e-2         0.0260       0.1750     0.3235      <- best
+        1e-1         0.1427       0.1127     0.3779
+        1.0          0.2501       0.0489     0.4216
+        10.0         0.4020       0.0221     0.5465
+
+    WATCH THE TWO COLUMNS MOVE IN OPPOSITE DIRECTIONS. From 1e-4 to 10, bias^2 rises by 66x while
+    variance falls by 60x. That is the trade-off, made deliberately, with a dial.
+
+    THE SENTENCE THIS TABLE EARNS YOU: regularisation does not make the model better in some vague
+    way - it BUYS a reduction in variance by PAYING in bias, and the optimum is wherever the sum is
+    smallest. Nothing about it is free.
+
+    NOTICE THE SHAPE. Total error is a U: 96.6, 1.47, 0.32, 0.38, 0.42, 0.55. Steep on the
+    under-regularised side, gentle on the over-regularised side. WHICH MEANS: if you must be wrong,
+    be wrong in the direction of too much regularisation. Being 100x under-penalised cost 300x the
+    error; being 1000x over-penalised cost 1.7x.
+
+    That asymmetry is the practical advice hiding in the table, and it is why sensible defaults in
+    real libraries err toward more regularisation rather than less.
+
+    THE CONNECTION BACK TO THE FIRST TABLE: degree 9 unregularised had total error 5,486. Degree 9
+    with ridge 0.01 has 0.32 - which beats the best UNREGULARISED model of any degree (0.28 at degree
+    5 is close, and with tuned ridge the flexible model gets there without you having to guess the
+    degree). MODERN PRACTICE IS EXACTLY THIS: take a model with too much capacity, then constrain it,
+    rather than trying to find the perfect capacity.""",
+
+    """9. ONE TEST POINT, WALKED
+
+    Take the test point x = 1.0, where the truth is sin(1.6) = 0.9996.
+
+    DEGREE 0 - each training set produces one constant, the mean of its 25 y-values:
+
+        set 1 predicts  0.09      set 2 predicts  0.14      set 3 predicts -0.02   ...
+        the AVERAGE of all 400 predictions is about 0.06
+        bias    = 0.06 - 0.9996 = -0.94        bias^2 is large
+        spread of the 400 around 0.06 is tiny  variance is small
+
+        DIAGNOSIS: every single model is wrong in the SAME direction. That is bias. Averaging a
+        thousand of them changes nothing, and neither does a bigger sample.
+
+    DEGREE 14 - each training set produces a wildly wiggly curve:
+
+        set 1 predicts   1.4      set 2 predicts -18.7      set 3 predicts   6.2   ...
+        the AVERAGE of all 400 is roughly right - bias^2 is only 3.9
+        the SPREAD is enormous                 - variance is 8,729
+
+        DIAGNOSIS: the procedure AIMS correctly and lands almost anywhere. That is variance. Averaging
+        many of these WOULD help, which is precisely what bagging does, and more data would help too.
+
+    DEGREE 5:
+        the 400 predictions cluster near 1.0, with modest spread
+        bias^2 0.0064, variance 0.1506 - and the sum is the smallest available.
+
+    THE THREE PICTURES IN ONE LINE EACH:
+        HIGH BIAS      all the darts land together, off-target
+        HIGH VARIANCE  the darts scatter widely, centred on the target
+        GOOD MODEL     they cluster near the target
+        NOISE          the target itself moves a little every throw - nothing to be done
+
+    AND THE REASON THE DARTBOARD PICTURE IS WORTH KEEPING: it tells you immediately why AVERAGING
+    (bagging) fixes the second and not the first, and why a BETTER DART (more capacity) fixes the
+    first and not the second.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE DECOMPOSITION:   error = bias^2 + variance + noise
+
+    THE MEASURED ARC (sin wave, 25 points, 400 training sets):
+        degree 0:  bias^2 0.52, variance 0.02   -> underfit
+        degree 5:  bias^2 0.01, variance 0.15   -> best, total 0.28
+        degree 14: bias^2 3.91, variance 8,730  -> overfit
+        training error the whole way:  0.60 -> 0.05, falling monotonically
+
+    THE CURES, WHICH ARE OPPOSITE:
+        bias      -> bigger model, better features, less regularisation
+        variance  -> more data, more regularisation, simpler model, bagging
+        noise     -> nothing. Estimate it and stop.
+
+THE #1 MISTAKE: reaching for more data without diagnosing first. Measured: 66x more data moved
+degree 1's bias^2 by 0.0044. If bias dominates, data collection is a quarter spent for nothing.
+
+THE #2 MISTAKE: judging capacity by training error. It falls monotonically even as total error grows
+by four orders of magnitude.
+
+THE #3 MISTAKE: believing the trade-off is a law. It binds along the capacity axis; more data and
+better features improve both terms at once.
+
+THE #4 MISTAKE: ignoring the noise floor and chasing error that does not exist.
+
+THE #5 MISTAKE: treating bias and variance as properties of your fitted model. They are properties of
+the PROCEDURE across possible training sets.
+
+ONE-SENTENCE TAKEAWAY: split the error into 'wrong in the same direction every time' (bias) and 'wrong
+in a different direction every time' (variance), diagnose which one you have by comparing training
+against validation error, and then apply the cure for THAT one - because the cure for the other will
+do nothing at all.""",
 ]
 
 _EX_P1S["ROC-AUC vs Precision-Recall Curves"] = [
@@ -115200,65 +115714,323 @@ of people.""",
 ]
 
 _EX_P1S["What questions should you ask the interviewer?"] = [
-    """Why this is scored rather than politeness.
-'I have no questions' reads as no curiosity - and at Google curiosity is a
-named rubric item, not a nicety. It is also often your last few minutes with
-the person writing your feedback, so it is worth using well.
-The interviewer is learning two things: whether you are evaluating THEM (which
-signals you have options and standards), and what you actually care about -
-because the questions you choose reveal your priorities more honestly than any
-answer you gave earlier.""",
+    """1. THE GOAL IN PLAIN ENGLISH - the last five minutes are still the interview
 
-    """Four categories, and one or two from each is plenty.
-THE WORK: 'what does a typical week look like for a new grad here?', 'what
-would I most likely start on?', 'how much is new development versus maintaining
-what exists?'
-THE TEAM AND YOU: 'how does the team decide what to work on?', 'what does
-onboarding look like?', 'how do new engineers get feedback in the first six
-months?'
-THEIR EXPERIENCE: 'what surprised you most in your first year?', 'what is the
-hardest problem the team is working on right now?' - people enjoy answering
-these and you learn a great deal.
-THE HONEST ONE, below.""",
+'Do you have any questions for us?' arrives at the end of every round, and candidates treat it as the
+part where the assessment stops. It is not. It is the part where you stop being assessed on your
+answers and start being assessed on your JUDGEMENT.
 
-    """The best single question, and why it works.
-'What is the most frustrating part of working on this team?'
-A candid answer tells you more than everything else combined - build system,
-on-call load, a legacy service nobody wants to touch, slow decision-making. A
-non-answer ('honestly nothing!') tells you something too.
-It is also disarming in a good way: it signals you are making a real decision
-rather than performing gratitude, and interviewers generally respect it. Ask it
-of the engineer, not the recruiter.""",
+WHAT THE INTERVIEWER LEARNS FROM YOUR QUESTIONS:
 
-    """The one that proves you were listening.
-Adapt at least one question to something they SAID: 'you mentioned you're
-moving the feature pipeline off the nightly batch job - what is driving that,
-latency or cost? And would a new grad be working on the migration or on what
-sits on top of it?'
-That is technically specific, impossible to prepare in advance, and its answer
-tells you exactly what your first year looks like. Prepare six questions
-knowing two will be answered during the interview, and leave room for one that
-is invented on the spot.""",
+    what you care about        you ask about what actually matters to you
+    what you already know      a question reveals the level you are operating at
+    whether you did homework   a question that only makes sense for THIS team
+    whether you are evaluating them, or just hoping to be chosen
 
-    """What not to ask, and why each fails.
-Anything on the careers page or in the job description - it shows you did not
-look.
-Compensation, holidays, promotion timelines - legitimate questions, wrong
-audience; those go to the recruiter, and raising them with your future
-teammate reads as misjudging the room.
-'How did I do?' - puts them in an awkward position and they cannot answer
-honestly anyway.
-And the transparently engineered question designed to show off rather than to
-learn; interviewers can tell, and it costs more than it gains.""",
+THAT LAST ONE IS THE ONE PEOPLE UNDERESTIMATE. A candidate with no questions reads as either
+uninterested or as someone who will accept any job. A candidate with two sharp questions reads as
+someone with options who is deciding.
 
-    """When they have already answered everything.
-Say so honestly and pivot rather than inventing something: 'you covered my main
-ones - can I ask instead what you'd want someone joining to be good at on day
-one?' or 'what separates someone who does well here in their first year from
-someone who struggles?'
-Both are genuine, neither can be pre-answered, and the second doubles as useful
-information if you get the offer. Having one fallback in your pocket removes
-the risk of the awkward silence entirely.""",
+'NO, I THINK YOU'VE COVERED EVERYTHING' IS THE WORST AVAILABLE ANSWER. It costs you real points and it
+is entirely avoidable, because you can prepare it days in advance. Even 'the round covered most of
+what I had - can I ask the one I most wanted to?' is fine.
+
+AND THE SECOND PURPOSE, which is not about scoring at all: YOU ARE ALSO CHOOSING. You are deciding
+whether to spend a year or three of your life here. The questions that get you a real answer about
+that are the ones worth asking.
+
+TERMS AS THEY APPEAR:
+- THE GOOGLEABLE TEST: if the answer is on their website, do not spend a question on it.""",
+
+    """2. THE INTUITION - ask what only THIS person can answer
+
+Every question you consider should pass two filters:
+
+    FILTER 1 - THE GOOGLEABLE TEST. If the answer is on the careers page, the annual report, or the
+    job description, you have wasted a question and shown that you did not read them.
+        'What does your company do?'         fails
+        'How big is the engineering team?'   fails, usually
+        'What is the tech stack?'            fails if the posting listed it
+
+    FILTER 2 - THE PERSON TEST. Is this the right person to ask? Their answer is only useful if it is
+    from experience.
+        an ENGINEER      knows what the code is like, how reviews work, what broke last month
+        a HIRING MANAGER knows the roadmap, the team's remit, what success looks like at six months
+        an HR / RECRUITER knows the process, the timeline, benefits, and levelling
+        a SKIP-LEVEL     knows where the team is going and why it exists
+
+    Asking an engineer about the promotion process gets you a shrug. Asking a recruiter about code
+    review culture gets you a slogan.
+
+THE STRUCTURAL INSIGHT: THE BEST QUESTIONS ASK FOR A SPECIFIC INSTANCE, NOT A GENERAL POLICY. Policies
+produce marketing; instances produce truth.
+
+    weak    'What is the culture like?'                 -> 'collaborative and fast-paced'
+    strong  'What is something that changed on this team in the last six months because
+             somebody pushed back?'                     -> either a real story, or a revealing pause
+
+    weak    'Do you have good work-life balance?'       -> 'yes, we really value that'
+    strong  'When was the last time the team worked a weekend, and what caused it?'
+
+You are not trying to catch anyone out. You are asking a question that CANNOT be answered with a
+slogan, which is the only kind that tells you anything.""",
+
+    """3. QUESTIONS THAT ACTUALLY WORK
+
+    FOR AN ENGINEER on the team - the person who knows what the days feel like:
+
+    'What does the first week of a change look like here - from someone having an idea to it being in
+     front of users?'
+        You learn the review culture, the deploy cadence, how much process there is, and whether
+        anybody actually knows.
+
+    'What is the thing about this codebase that surprises new joiners?'
+        The honest answer is always interesting, and the question gives permission to be honest.
+
+    'What is something you tried that did not work?'
+        Reveals whether trying things is safe here. A blank look is itself an answer.
+
+    'How does code review usually go - what does a disagreement look like?'
+        Specific, unGoogleable, and it tells you more about the culture than any values page.
+
+    FOR THE HIRING MANAGER - the person who decides what you will actually do:
+
+    'What would you want the person in this role to have accomplished six months in?'
+        THE SINGLE BEST QUESTION IN THIS LIST. It gets you the real job description, it tells you
+        whether they have thought about the role, and it hands you the criteria you will be judged on.
+
+    'What is the hardest problem the team is facing right now?'
+        You find out whether the work is interesting, and you often get to say something useful about
+        it - which turns the last five minutes back into a technical conversation.
+
+    'How does this team decide what to work on?'
+        Distinguishes a team with a mandate from one that receives tickets.
+
+    FOR A RECRUITER:
+
+    'What are the next steps and the timeline?'   - practical, expected, always fine to ask
+    'How does levelling work here, and where would this role sit?'
+    'What does the team look like in terms of experience mix?'
+
+    THE ONE QUESTION THAT WORKS ON ANYONE, and is worth keeping in reserve:
+
+    'What is something you would change about working here?'
+        A thoughtful answer tells you they are honest and self-aware. A defensive one tells you
+        something too. Nobody minds being asked it, and almost nobody is asked it.""",
+
+    """4. THE FAILURE MODES
+
+A. HAVING NO QUESTIONS. Reads as disinterest or as having no options. It is the most common mistake
+   and the easiest to fix.
+
+B. ASKING SOMETHING GOOGLEABLE. 'What does the team work on?' when the posting says. Actively negative
+   - it proves you did not prepare.
+
+C. LEADING WITH COMPENSATION, HOLIDAY OR REMOTE POLICY in a technical round. These are legitimate and
+   important questions for the recruiter or the offer conversation. Asked first, to an engineer, they
+   signal that the work is not what interests you. Timing, not taboo.
+
+D. ASKING A QUESTION YOU ALREADY DECIDED THE ANSWER TO. 'I assume you use agile?' is not a question,
+   and interviewers hear the assumption.
+
+E. TOO MANY. You have about five minutes. Two good questions, well followed up, beat six rattled off.
+   Bring five prepared; ask the two that fit what actually happened in the round.
+
+F. NOT LISTENING TO THE ANSWER. If you ask and then move straight to the next item on your list, it
+   was a performance. Follow up on something they said - that is where the conversation gets real.
+
+G. THE 'CLEVER' QUESTION designed to show off. 'How do you handle the CAP theorem trade-offs in your
+   event bus?' asked of a recruiter is not impressive. Ask the right person.
+
+H. NEGATIVITY. 'Why is the turnover so high?' or 'I read some bad reviews' puts them on the defensive.
+   The information is worth having; get it by asking 'what makes people stay?' or 'what would you
+   change?', which invite an honest answer instead of a defence.
+
+I. ASKING NOTHING ABOUT THE PERSON IN FRONT OF YOU. 'What made you join, and has it turned out the way
+   you expected?' is warm, easy to answer, and consistently gets the most candid response of any
+   question on the list.""",
+
+    """5. HOW TO PREPARE - numbered steps
+
+1. WRITE FIVE QUESTIONS BEFORE THE ROUND, and know who each is for. You will ask two.
+2. INCLUDE ONE THAT ONLY THIS COMPANY COULD ANSWER, drawn from your research - a blog post, a product
+   decision, something in the posting. This is the one that also does the work of
+   [[why-this-company-why-you]].
+3. INCLUDE ONE ABOUT THE ROLE'S SUCCESS CRITERIA. 'What would this person have accomplished in six
+   months?' Always relevant, always useful to you.
+4. INCLUDE ONE ABOUT THE PERSON. 'What made you join?' Warm, human, and the most honest answers come
+   from it.
+5. CHECK EACH ONE AGAINST THE GOOGLEABLE TEST, and delete the ones that fail.
+6. PREFER 'TELL ME ABOUT A TIME' OVER 'WHAT IS YOUR POLICY'. Instances beat policies.
+7. LISTEN, THEN FOLLOW UP. One real follow-up is worth more than a third prepared question.
+8. KEEP ONE IN RESERVE for the round where they have already covered everything: 'you have covered
+   most of what I had - can I ask the one I was most curious about?'
+9. ASK ABOUT NEXT STEPS at the end if nobody has said. Practical and expected.
+
+STEP 7 IS THE ONE THAT SEPARATES A CONVERSATION FROM A CHECKLIST. If they mention a migration that
+went badly, ask what they learned. That exchange is the part they will remember, and it is not
+something you can script.""",
+
+    """6. WHAT TO LISTEN FOR IN THEIR ANSWERS
+
+You are gathering information, so read the answers as data. The useful signals:
+
+HESITATION ON AN EASY QUESTION. If 'what would success look like at six months' produces a long pause
+and a vague answer, the role is not well defined. That is a real risk: you would be joining without an
+agreed definition of doing well, which is how people end up being judged against a standard nobody
+told them about.
+
+SLOGANS. 'We're like a family', 'we work hard and play hard', 'we're very fast-paced'. Not
+disqualifying, but they are answers that avoided the question. Follow up once with 'what does that
+look like in a normal week?' and see whether anything concrete appears.
+
+CONSISTENCY ACROSS INTERVIEWERS. Ask two different people the same question - 'what is the hardest
+problem the team has right now' - and compare. Aligned answers mean the team knows what it is doing.
+Wildly different answers tell you something important that no single interview would have shown you.
+
+WHAT THEY VOLUNTEER. If someone answers 'what would you change?' with a specific, unprompted
+frustration, you have both a candid person and a genuine piece of information. If everyone deflects,
+that is a pattern.
+
+ENTHUSIASM ABOUT THE WORK ITSELF. People who are enjoying the problem talk about it differently. It is
+the least fakeable signal available to you and the one most worth weighting.
+
+AND ONE PRACTICAL NOTE ON RED FLAGS: a single bad answer is noise. A pattern across rounds is signal.
+Do not over-read one tired engineer at 5pm on a Friday - but if three people separately struggle to
+describe what the team is for, believe them.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I treat this as still part of the interview, because the questions you ask show what you care about
+and whether you did any homework.
+
+Two filters. First, is it Googleable - if the answer is on the careers page or in the job description,
+it is a wasted question and it shows I did not read them. Second, is this the right person - an
+engineer knows what code review is like, a hiring manager knows what success looks like at six months,
+a recruiter knows the process. Asking an engineer about the promotion ladder gets me a shrug.
+
+And I ask for instances rather than policies, because policies produce marketing. "What's the culture
+like" gets me "collaborative and fast-paced". "What's something that changed on this team because
+somebody pushed back" gets me either a real story or a revealing pause - and both are informative.
+
+The three I would always want in: what would this person have accomplished six months in, which gets
+me the real job description; what is the hardest problem the team has right now, which usually turns
+into an actual technical conversation; and what made you join, and has it been what you expected -
+which gets the most honest answer of anything on my list.
+
+I prepare five and ask two, because there are only about five minutes and two questions followed up
+properly beat six rattled off. And I actually listen - if they mention something that went badly, I
+would rather follow that thread than move to the next item on my list.'""",
+
+    """8. THE THREE BEST QUESTIONS, AND WHY EACH ONE WORKS
+
+    'What would you want the person in this role to have accomplished six months in?'
+
+        WHY IT WORKS FOR YOU: it is the real job description. Postings are written by committee; this
+        answer is what the hiring manager actually has in mind, and it is the standard you will be
+        measured against.
+        WHY IT SCORES: it is the question of someone thinking about DOING the job rather than GETTING
+        it. It also, gently, tests whether they have defined the role - and their answer tells you a
+        great deal either way.
+        THE FOLLOW-UP IT SETS UP: 'what would make that hard?' - which gets you the real obstacles.
+
+    'What is the hardest problem the team is facing right now?'
+
+        WHY IT WORKS FOR YOU: you find out whether the work is interesting before you commit a year to
+        it, and you learn what they consider hard - which tells you the level of the team.
+        WHY IT SCORES: it usually restarts a technical conversation, and the last five minutes becomes
+        you and the interviewer thinking about a real problem together. That is the best possible note
+        to end on, and it is the closest thing to working with them.
+        THE RISK TO MANAGE: do not solve it in ten seconds. Ask about it; offer a thought if you have
+        one, framed as a question.
+
+    'What made you join, and has it been what you expected?'
+
+        WHY IT WORKS FOR YOU: it is the question people answer honestly. The second clause is what
+        makes it work - 'what made you join' alone invites a rehearsed answer, and 'has it been what
+        you expected' quietly invites the caveat.
+        WHY IT SCORES: it is human, it is about them, and interviewers are almost never asked about
+        themselves. It changes the register of the room.
+        WHAT TO LISTEN FOR: whether the caveat comes freely. 'Mostly - I didn't expect how much time
+        goes into X' is a person telling you the truth, and it is worth more than any values page.
+
+    NOTICE WHAT ALL THREE HAVE IN COMMON: none is answerable from the website, each is aimed at
+    someone who knows, and each opens a follow-up rather than closing a topic.""",
+
+    """9. THE LAST FIVE MINUTES, TWO WAYS
+
+    THE WEAK VERSION:
+
+        'Do you have any questions for us?'
+        'Um, not really - I think you covered everything. Oh, actually, what's the tech stack?'
+        'It's in the posting - Python and Go mostly.'
+        'Great, sounds good.'
+
+        WHAT WAS COMMUNICATED: no preparation, no curiosity, no evaluation of them. The interviewer's
+        note is 'no questions', and on a borderline decision that is a small negative for no reason.
+
+    THE STRONG VERSION:
+
+        'Do you have any questions for us?'
+
+        'Two, if there's time. First - what would you want whoever takes this role to have
+         accomplished six months in?'
+
+        'Honestly, if they'd taken ownership of the ingestion pipeline and we'd stopped having the
+         Monday morning fire drill, I'd be delighted.'
+
+        'That's useful - what causes the Monday fire drill?'
+
+        'The weekend batch fails maybe one week in three and nobody owns the retry logic.'
+
+        'That's interesting, because it sounds less like a pipeline problem and more like nobody has
+         defined what "failed" means for it. Is there alerting on it, or does someone notice on
+         Monday?'
+
+        'Ha - someone notices on Monday. Yes. That's exactly the problem.'
+
+        'Then I think I understand the role better than the posting told me. Second question, and it's
+         about you: what made you join, and has it been what you expected?'
+
+    WHAT CHANGED: the candidate learned the real job, demonstrated how they think about an ambiguous
+    problem, and got the interviewer talking about something they genuinely care about. The last five
+    minutes did more work than some of the earlier forty.
+
+    AND NOTE THE MECHANICS: TWO questions, not six. A follow-up on what was actually said, not the next
+    item on a list. And the second question deliberately held back so the round ends on a human note.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO FILTERS:  is it Googleable?   is this the right person to ask?
+
+    THE PRINCIPLE:  ask for an INSTANCE, not a POLICY. Policies produce marketing; instances produce
+    truth.
+
+    THE THREE TO ALWAYS HAVE READY:
+        what would this person have accomplished six months in?
+        what is the hardest problem the team has right now?
+        what made you join, and has it been what you expected?
+
+    THE MECHANICS:  prepare five, ask two, follow up on the answer, hold one in reserve.
+
+THE #1 MISTAKE: having no questions. It reads as disinterest or as having no other options, and it is
+completely avoidable with ten minutes of preparation.
+
+THE #2 MISTAKE: asking something answered on the careers page - actively worse than nothing, because
+it proves you did not read it.
+
+THE #3 MISTAKE: asking the wrong person. An engineer cannot tell you about the promotion ladder and a
+recruiter cannot tell you what code review feels like.
+
+THE #4 MISTAKE: asking a policy question and accepting the slogan. Follow up once with 'what does that
+look like in a normal week?'
+
+THE #5 MISTAKE: treating it as a performance - reading questions off a list without listening to the
+answers. The follow-up is the part that becomes a conversation.
+
+ONE-SENTENCE TAKEAWAY: prepare five questions that could only be answered by the person in front of
+you, ask the two that fit the round you just had, follow up on what they actually say - and remember
+that you are deciding too, so ask the questions whose answers would genuinely change your mind.""",
 ]
 
 _EX_P1S["Best Time to Buy and Sell Stock II (greedy)"] = [
