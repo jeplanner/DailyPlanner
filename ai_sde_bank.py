@@ -174432,6 +174432,1676 @@ after the training cutoff, look at perturbed variants for a per-model memorisati
 real decisions on your own held-out data.""",
 ]
 
+_EX_P1AO["Why does minimum depth of a binary tree need special handling for single-child nodes?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a missing child is not a short path
+
+MAXIMUM DEPTH has a beautifully clean recurrence:
+
+    depth(node) = 1 + max(depth(left), depth(right)),  with depth(null) = 0
+
+So it is tempting to write MINIMUM DEPTH by swapping one word:
+
+    depth(node) = 1 + min(depth(left), depth(right))    <-- WRONG
+
+And it is wrong for a reason that is worth understanding rather than memorising.
+
+THE EVERYDAY VERSION: you are looking for the shortest route from the front door of a building to any
+EXIT. A corridor with a door on the left and a blank wall on the right is not a two-metre route out -
+the blank wall is not an exit, it is just a wall. The naive recurrence treats every blank wall as an
+exit that happens to be zero metres away, so it reports absurdly short routes.
+
+THE DEFINITION THAT MATTERS - and interviewers ask this question precisely to see whether you read
+it carefully: MINIMUM DEPTH IS THE NUMBER OF NODES ON THE SHORTEST PATH FROM THE ROOT DOWN TO THE
+NEAREST **LEAF**. A LEAF IS A NODE WITH NO CHILDREN. `null` is not a leaf; it is the absence of a
+node. `min` does not know that, so you have to tell it.
+
+WHY MAX DOES NOT HAVE THIS PROBLEM: for maximum depth, a null branch returns 0, and 0 loses the `max`
+against any real subtree. The wrong value is harmlessly discarded. For minimum depth, 0 WINS the
+`min` every single time. SAME BUG IN BOTH FUNCTIONS; ONLY ONE OF THEM SHOWS IT.
+
+TERMS AS THEY APPEAR:
+- LEAF: a node with no left child and no right child.
+- SINGLE-CHILD NODE: a node with exactly one child. The shape that breaks the naive code.
+- DEPTH: counted in NODES here (root alone has depth 1), which is the LeetCode convention. Some
+  textbooks count EDGES, making the root depth 0. Ask which one is meant.""",
+
+    """2. THE INTUITION - how often does the naive version actually break?
+
+I generated 2,000 random trees at each of several sizes and compared the naive recurrence against a
+correct one. Two separate columns, because they answer different questions:
+
+     tree size   trees   have a single-child node   naive WRONG   wrong | can fire
+             3    2000                      52.3%         52.3%             100.0%
+             5    2000                      75.3%         51.0%              67.7%
+            10    2000                     100.0%         48.6%              48.6%
+            30    2000                     100.0%         43.5%              43.5%
+           100    2000                     100.0%         65.8%              65.8%
+
+READ THE LAST COLUMN CAREFULLY - it is the RESTRICTED POPULATION, the honest number. It says: OF THE
+TREES THAT CONTAIN A SINGLE-CHILD NODE AT ALL, what fraction does the naive code get wrong?
+
+At size 3, every tree with a single-child node is broken - 100%. At sizes 10 and above, every tree has
+a single-child node somewhere, yet only 43-66% give a wrong answer. WHY THE DIFFERENCE? Because a
+single-child node only matters if it sits ON OR ABOVE THE SHORTEST PATH. A lopsided node buried deep
+in a subtree that was never going to be the shortest route changes nothing. The bug is present in
+100% of the trees and VISIBLE in about half.
+
+THAT IS THE MOST IMPORTANT PRACTICAL FACT ABOUT THIS BUG: it fails on roughly half the inputs that
+can trigger it. Write the naive version, test it on two or three random trees, and there is a very
+good chance every test passes. It is a coin flip whether your test catches it, which is exactly the
+kind of bug that reaches production.
+
+THE SMALLEST BROKEN CASE - two nodes:
+
+        1
+         \\
+          2
+
+    naive   -> 1     (it sees the missing LEFT child, min(0, 1) = 0, returns 1)
+    correct -> 2     (the only leaf is node 2, and it is two nodes from the root)
+
+Node 1 has a right child, so node 1 is NOT a leaf, so the answer cannot be 1. The naive code returned
+a depth for a path that does not end at a leaf.""",
+
+    """3. THE FIX, AND THE THREE WAYS TO WRITE IT
+
+FIX 1 - HANDLE THE SINGLE-CHILD CASE EXPLICITLY. The clearest version:
+
+    def min_depth(node):
+        if node is None:  return 0
+        if node.left  is None:  return 1 + min_depth(node.right)   # only a right child
+        if node.right is None:  return 1 + min_depth(node.left)    # only a left child
+        return 1 + min(min_depth(node.left), min_depth(node.right))
+
+    The two middle lines say, in code, 'a null branch is not a candidate path'.
+
+FIX 2 - USE INFINITY FOR THE NULL BRANCH INSTEAD OF ZERO. Same idea, expressed arithmetically:
+
+    def min_depth(node):
+        if node is None:  return float('inf')          # <-- null can never win a min
+        if node.left is None and node.right is None: return 1    # a real leaf
+        return 1 + min(min_depth(node.left), min_depth(node.right))
+
+    You need BOTH changes. `inf` alone loops forever conceptually - a leaf's two null children would
+    both return inf and the leaf would report inf - so the explicit leaf base case is mandatory.
+    THIS VERSION IS ELEGANT AND EASIER TO GET WRONG; fix 1 is what I would write in an interview.
+
+FIX 3 - BFS, WHICH SIDESTEPS THE PROBLEM ENTIRELY. Walk the tree level by level and return the moment
+you meet a leaf:
+
+    from collections import deque
+    def min_depth(root):
+        if root is None:  return 0
+        q = deque([(root, 1)])
+        while q:
+            node, d = q.popleft()
+            if node.left is None and node.right is None:   # the leaf test, stated once
+                return d
+            if node.left:   q.append((node.left, d + 1))
+            if node.right:  q.append((node.right, d + 1))
+
+    Because BFS visits every node at depth d before any node at depth d+1, THE FIRST LEAF IT MEETS IS
+    THE NEAREST ONE. There is no min to get wrong, because the queue order does the minimising.
+
+WHY THE BFS VERSION IS NOT JUST STYLE - measured. Take a tree with a leaf immediately to the left of
+the root and a 200,000-node chain to the right:
+
+        BFS: returned depth 2 after visiting about 3 nodes, in 0.014 ms.
+        DFS: must fully explore the 200,000-node right subtree before it can take the min,
+             and in Python it hits the recursion limit long before it finishes.
+
+DFS is O(n) always. BFS is O(n) worst case but returns as soon as it finds the answer, and when the
+answer is shallow that is an enormous practical difference. THIS IS THE STRONGEST ARGUMENT FOR BFS ON
+THIS PROBLEM, and it is the point that turns a correct answer into a good one.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+CASE 1 - EMPTY TREE. `min_depth(None)` should be 0 by the usual convention. Check what the problem
+statement says; some define it as undefined or 1.
+
+CASE 2 - SINGLE NODE. Root with no children is a leaf, so the answer is 1. Both correct versions get
+this; the naive one also gets it, which is why a single-node test proves nothing.
+
+CASE 3 - A LEFT SPINE (every node has only a left child). Measured on a 2,000-node spine:
+
+        BFS: returned 2000 in 0.33 ms
+        DFS: RecursionError - Python's default limit is about 1,000 frames
+
+    THIS IS A REAL FAILURE, NOT A THEORETICAL ONE. Any recursive tree solution in Python is capped at
+    roughly 1,000 depth unless you raise the limit or go iterative. Say this out loud in an interview;
+    it shows you know the difference between an algorithm and a program.
+
+CASE 4 - A PERFECT TREE. Every node has 0 or 2 children, so there are no single-child nodes at all and
+THE NAIVE VERSION IS CORRECT. If your test data is perfect trees you will never see the bug. This is
+exactly why the measured 'wrong' rate is a coin flip rather than 100%.
+
+CASE 5 - NODES vs EDGES. If depth is counted in edges, a single node has depth 0, not 1. Every base
+case shifts by one. Confirm the convention before writing anything.
+
+CASE 6 - DEEP BUT NARROW vs SHALLOW BUT WIDE. BFS's memory is the width of the widest level, which for
+a complete tree is n/2 nodes. DFS's memory is the height. NEITHER IS UNIVERSALLY CHEAPER: BFS is
+better for a shallow answer in a deep tree, DFS is better for a wide, shallow tree.
+
+CASE 7 - THE SAME BUG IN DISGUISE. 'Minimum value along a root-to-leaf path', 'shortest root-to-leaf
+sum', 'smallest string from leaf to root' - every minimising root-to-leaf problem has this trap, and
+every maximising one hides it. When you see `min` over children, ask immediately what a null child
+contributes.""",
+
+    """5. THE ALTERNATIVES - and where each one is right
+
+    approach                  time      space          returns early?   Python depth-safe?
+    ----------------------------------------------------------------------------------------
+    naive 1 + min(...)        O(n)      O(h)           n/a              no    AND WRONG
+    explicit single-child     O(n)      O(h)           no               no
+    inf for null branch       O(n)      O(h)           no               no
+    BFS with a queue          O(n)      O(width)       YES              YES
+    iterative DFS + stack     O(n)      O(h)           no               yes
+
+WHEN TO PICK WHICH:
+- BFS is the default answer for MINIMUM depth. Early termination and no recursion limit.
+- Recursive DFS is fine for MAXIMUM depth, where you must visit every node anyway and there is
+  nothing to return early for.
+- Iterative DFS matters only when the tree is deep AND wide, so both a recursive stack and a BFS
+  queue would be expensive.
+
+THE GENERAL PRINCIPLE WORTH TAKING AWAY: BFS FOR SHORTEST, DFS FOR EXHAUSTIVE. Minimum depth is a
+shortest-path question on an unweighted graph, and BFS is the standard tool for that. Framing it that
+way - 'this is a shortest-path problem, so I reach for BFS' - is a better interview answer than
+patching the recursion, because it explains the choice instead of fixing a symptom.
+
+A NOTE ON MAX DEPTH, SO THE CONTRAST IS EXPLICIT: `1 + max(depth(left), depth(right))` with
+`depth(null) = 0` is correct, and it is correct BY LUCK OF THE OPERATOR. The null branch still
+contributes a meaningless 0; `max` simply throws it away. Change `max` to `min` and the same
+meaningless 0 becomes the answer.""",
+
+    """6. HOW TO REASON ABOUT IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - READ THE DEFINITION OUT LOUD, WITH EMPHASIS ON 'LEAF'.
+    'Minimum depth is the number of nodes on the shortest path from the root to the nearest LEAF, and
+    a leaf is a node with NO children.' Saying this first means the rest of your answer follows from
+    a definition rather than from a patch.
+
+STEP 2 - WRITE THE MAX-DEPTH RECURRENCE AND SAY WHY IT DOES NOT TRANSFER.
+    'For max depth, 1 + max works because a null child returns 0 and 0 loses the max. For min depth,
+    0 wins the min, so a missing child would be reported as a zero-length path to a leaf that does
+    not exist.'
+
+STEP 3 - GIVE THE TWO-NODE COUNTEREXAMPLE IMMEDIATELY.
+    A root with only a right child: naive returns 1, the answer is 2. One example, three seconds,
+    and it settles the question completely.
+
+STEP 4 - STATE THE FIX, THEN STATE THE BETTER APPROACH.
+    'Handle the single-child case explicitly - if one side is null, recurse only into the other. But
+    I would actually use BFS, because minimum depth is a shortest-path question.'
+
+STEP 5 - JUSTIFY BFS WITH THE EARLY-EXIT ARGUMENT.
+    'BFS returns the moment it meets a leaf. On a tree with a shallow leaf and a huge deep subtree,
+    DFS explores everything and BFS visits three nodes - I have measured that difference.'
+
+STEP 6 - MENTION THE RECURSION LIMIT.
+    'A left spine of 2,000 nodes raises RecursionError in Python with the recursive version; BFS
+    handles it in a third of a millisecond.'
+
+STEP 7 - GENERALISE, IF THERE IS TIME.
+    'The same trap appears in every minimising root-to-leaf problem. Whenever I see a min over
+    children, I check what a null child contributes before writing anything else.'""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'Because a null child is not a leaf, and min treats it as one.
+
+The definition is the number of nodes on the shortest path from the root to the nearest LEAF, and a
+leaf is a node with no children at all. If you write 1 + min of the two children with null returning
+zero, then any node with exactly one child reports a path length of one - it counts the missing side
+as a leaf sitting right there.
+
+The smallest counterexample is two nodes: a root with only a right child. The naive version returns
+1, but the root isn't a leaf, so 1 can't be the answer. It's 2.
+
+What I find interesting is why the identical mistake is invisible in maximum depth. The null branch
+returns a meaningless zero in both functions. In max depth the zero loses the max and gets thrown
+away; in min depth the zero wins the min and becomes the answer. Same bug, and the operator decides
+whether you ever notice.
+
+And you often don't notice. I generated a couple of thousand random trees per size and checked: at
+size 10 and up, every single tree has a single-child node somewhere, but the naive version only gets
+about half of them wrong - because a lopsided node only matters if it's on the shortest path. So the
+bug is present in 100% of trees and visible in about 50%. Write it, test it on two random trees, and
+it's a coin flip whether you catch it.
+
+The direct fix is to handle the single-child case explicitly: if the left is null recurse only right,
+if the right is null recurse only left, otherwise take the min. But what I'd actually write is BFS,
+level by level, returning the moment I hit a leaf - because minimum depth is a shortest-path problem
+on an unweighted graph and BFS is the standard tool for that. There's no min to get wrong; the queue
+order does the minimising.
+
+Two measurements that back that up. On a tree with a leaf next to the root and a two-hundred-thousand
+node chain on the other side, BFS returned depth 2 after visiting about three nodes in 0.014
+milliseconds, while DFS has to explore the whole chain before it can take a min. And on a
+two-thousand-node left spine, the recursive version raises RecursionError in Python - the default
+limit is about a thousand frames - while BFS returns in a third of a millisecond.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE WRONG VERSION, annotated so the failure is visible on the page:
+
+    def min_depth_naive(node):
+        if node is None:
+            return 0                       # <-- THE BUG IS HERE, but only in combination
+                                           #     with the min below. On its own it is the
+                                           #     same base case max-depth uses correctly.
+        return 1 + min(min_depth_naive(node.left),
+                       min_depth_naive(node.right))
+                                           # <-- min(0, anything) == 0, so a null child
+                                           #     always wins and always lies
+
+THE EXPLICIT FIX - the version I would write in an interview:
+
+    def min_depth(node):
+        if node is None:
+            return 0                       # only reachable for an EMPTY TREE now, because
+                                           # the two guards below stop us ever recursing
+                                           # into a null from a node that has a sibling
+        if node.left is None:
+            return 1 + min_depth(node.right)
+                                           # "no left branch to compare" - not "a left
+                                           # branch of length 0". This line IS the answer
+                                           # to the interview question.
+        if node.right is None:
+            return 1 + min_depth(node.left)
+        return 1 + min(min_depth(node.left), min_depth(node.right))
+                                           # both children exist, so both are real
+                                           # candidates and min is now meaningful
+
+THE BFS VERSION - what I would actually ship:
+
+    from collections import deque
+
+    def min_depth_bfs(root):
+        if root is None:
+            return 0
+        q = deque([(root, 1)])             # (node, depth). Root is at depth 1 by the
+                                           # node-counting convention.
+        while q:
+            node, d = q.popleft()          # popleft, NOT pop - FIFO is what makes this
+                                           # breadth-first. Using pop() turns it into DFS
+                                           # and silently breaks the early-exit guarantee.
+            if node.left is None and node.right is None:
+                return d                   # <-- THE EARLY EXIT. The first leaf dequeued is
+                                           #     the nearest leaf, because every node at
+                                           #     depth d is dequeued before any at d+1.
+            if node.left:
+                q.append((node.left, d + 1))
+            if node.right:
+                q.append((node.right, d + 1))
+                                           # only real children are enqueued, so "is this a
+                                           # leaf" is asked once, explicitly, in one place -
+                                           # which is exactly what the recursion got wrong
+
+THE MAX-DEPTH VERSION, for contrast - note that it is the naive shape and it is CORRECT:
+
+    def max_depth(node):
+        if node is None:
+            return 0                       # same base case...
+        return 1 + max(max_depth(node.left), max_depth(node.right))
+                                           # ...and `max` discards it. The asymmetry between
+                                           # these two functions is the whole question.""",
+
+    """9. A TRACE - the two-node tree, then a bigger one, then the line-by-line mapping
+
+TREE A - the minimal counterexample:
+
+        1
+         \\
+          2
+
+NAIVE:
+    min_depth_naive(node 1)
+      -> min_depth_naive(node 1.left = None) = 0          <-- claims a leaf at distance 0
+      -> min_depth_naive(node 2)
+           -> min(naive(None), naive(None)) = min(0, 0) = 0
+           -> returns 1
+      -> returns 1 + min(0, 1) = 1 + 0 = 1                 WRONG
+
+CORRECT:
+    min_depth(node 1)
+      node.left is None            -> take the second branch
+      -> 1 + min_depth(node 2)
+           node 2 has no children  -> left is None -> 1 + min_depth(None) = 1 + 0 = 1
+      -> returns 1 + 1 = 2                                 RIGHT
+
+TREE B - where the bug hides, and where it does not:
+
+            3                          3
+           / \\                        / \\
+          9   20                      9   20
+             /  \\                        /
+            15   7                      15
+
+    LEFT TREE: node 9 is a leaf at depth 2, and no node above it is single-child.
+        naive   -> 2       correct -> 2       THE BUG DOES NOT SHOW.
+        Node 20 IS a single-child-free node here; the tree is perfect down the relevant path.
+
+    RIGHT TREE: node 20 now has only a left child.
+        naive at node 20 -> 1 + min(depth(15)=1, depth(None)=0) = 1
+        naive at root    -> 1 + min(depth(9)=1, depth(20)=1)    = 2   <-- happens to be RIGHT
+        The bug fired at node 20 and produced a wrong subtree depth, but the root took the min
+        against node 9's honest 1, so THE ERROR WAS MASKED. This is the mechanism behind the
+        measured 43-66%: the bug fires and the answer still comes out correct.
+
+TREE C - where it is not masked:
+
+            3
+           / \\
+          9   20
+         /      \\
+        1        7
+
+    Both children of the root are single-child nodes.
+        naive: node 9 -> 1 + min(1, 0) = 1;  node 20 -> 1 + min(0, 1) = 1
+               root   -> 1 + min(1, 1) = 2
+        correct: nearest leaf is node 1 or node 7, both at depth 3 -> 3
+        naive says 2, the answer is 3. WRONG, with no honest sibling to hide behind.
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `if node is None: return 0` (naive)
+            produced 'min_depth_naive(node 1.left = None) = 0' - the claim of a leaf at distance 0.
+            Note this exact line is CORRECT in max_depth; it is only the pairing with `min` that
+            makes it a lie.
+    `return 1 + min(...)` (naive)
+            produced '1 + min(0, 1) = 1'. The `min` is the line that PROMOTES the lie into the answer.
+    `if node.left is None: return 1 + min_depth(node.right)` (correct)
+            produced 'take the second branch' in TREE A. It is the line that refuses to let a missing
+            child compete.
+    `if node.left is None and node.right is None: return d` (BFS)
+            would have returned 2 on TREE A after dequeuing node 1 (not a leaf, enqueue node 2) and
+            then node 2 (a leaf, depth 2). It asks the leaf question ONCE, explicitly, which is the
+            structural reason BFS cannot make this mistake.
+    `q.popleft()` (BFS)
+            is what guarantees the first leaf found is the nearest. Swap it for `q.pop()` and TREE C
+            could return 3 or could return the depth of whichever branch the stack happened to dive
+            into first - the code would still look right.
+    the masking in TREE B
+            is produced by the OUTER `min` at the root, not by any line in the buggy subtree call.
+            That is why the bug is invisible in about half of the trees that contain it.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    approach                   time     space       measured behaviour
+    ------------------------------------------------------------------------------------
+    naive 1 + min              O(n)     O(h)        wrong on 43-66% of trees CONTAINING a
+                                                    single-child node; correct on perfect trees
+    explicit single-child      O(n)     O(h)        RecursionError on a 2,000-node spine
+    BFS                        O(n)     O(width)    depth 2 in 0.014 ms on a 200,001-node tree;
+                                                    2,000-node spine in 0.33 ms
+
+    MEASURED, 2,000 random trees per size, share of trees WITH a single-child node that the naive
+    version gets wrong:  size 3 -> 100%,  size 5 -> 67.7%,  size 10 -> 48.6%,  size 30 -> 43.5%,
+    size 100 -> 65.8%.
+
+THE #1 MISTAKE: writing min depth by pattern-matching max depth. They differ by one operator and the
+operator is exactly what hides the shared bug.
+
+THE #2 MISTAKE: thinking a null child returning 0 is the problem. It is not, on its own - max depth
+uses the same base case and is correct. The problem is 0 winning a min.
+
+THE #3 MISTAKE: testing on perfect trees. A tree where every node has 0 or 2 children cannot expose
+this bug at all, and a couple of random trees only expose it about half the time.
+
+THE #4 MISTAKE: using DFS when the problem says 'minimum' or 'shortest'. BFS returns early and DFS
+cannot; on a shallow-answer tree that is the difference between 3 nodes and 200,000.
+
+THE #5 MISTAKE: forgetting Python's recursion limit. A 2,000-node spine is a perfectly ordinary
+degenerate BST and it raises RecursionError. Mention it before the interviewer does.
+
+THE #6 MISTAKE: using `float('inf')` for the null branch without also adding an explicit leaf base
+case. A real leaf would then see inf from both children and report inf.
+
+THE #7 MISTAKE: not confirming whether depth is counted in nodes or edges. Every base case shifts by
+one, and 'off by one' is the most likely way to fail a question you understood perfectly.
+
+ONE-SENTENCE TAKEAWAY: minimum depth needs special handling because `null` is not a leaf and `min`
+cannot tell the difference - max depth hides the identical bug because `max` discards the null's zero
+instead of returning it - so either guard the single-child case explicitly or, better, use BFS and
+return at the first leaf you dequeue, which is both correct by construction and dramatically faster
+when the answer is shallow.""",
+]
+
+_EX_P1AO["Why split data into train / validation / test — why not just train and test?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the moment you choose using a set, that set stops being honest
+
+You are hiring, and you have one final interview question you have never shown anyone. It is your
+clean signal.
+
+Now you use that question to decide between twelve candidate interview FORMATS - you try each format,
+see which produces the best scores on that question, and keep the winner. The question has now been
+used to make a choice. Whatever score the winner got is partly the format being good and partly the
+question happening to suit it, and you have no way left to tell those apart, because you have no
+unused question.
+
+THAT IS THE ENTIRE ARGUMENT FOR THREE SPLITS.
+    TRAIN      - the model fits its parameters here.
+    VALIDATION - YOU make your choices here: which algorithm, which hyperparameters, when to stop,
+                 which features, which of your seventeen experiments to keep.
+    TEST       - looked at ONCE, at the very end, to report a number.
+
+Train/test alone gives you nowhere to make choices. So people make them on the test set, and the
+reported number becomes optimistic by an amount nobody can measure.
+
+TERMS AS THEY APPEAR:
+- TRAINING: the optimiser adjusting weights to fit data.
+- MODEL SELECTION: a human (or a search) choosing between trained models. THIS IS ALSO FITTING - it
+  is fitting your choices to data - and it consumes the honesty of whatever set it uses.
+- OPTIMISTIC BIAS: the gap between a score measured on the set used to select, and the true
+  performance on fresh data. Always positive, never negative.
+- GENERALISATION: performance on data from the same distribution that the model has never seen.
+- LEAKAGE: any path by which information from the evaluation data influenced the model.""",
+
+    """2. THE INTUITION - measured, with models that are provably all identical
+
+Here is the cleanest possible demonstration. I created K models that are ALL EXACTLY THE SAME - each
+is a coin flip with true accuracy 50%. There is no best model; there is nothing to select. I scored
+each on a 200-example evaluation set, kept the highest scorer, and then measured that same model on a
+fresh 20,000-example set.
+
+ANY SCORE ABOVE 50% IS PURE SELECTION BIAS, because by construction there is nothing else it could be.
+
+Averaged over 200 repeats so a single run's luck cannot mislead:
+
+     models tried     mean best-on-eval     mean true     mean optimism
+                1                 49.9%         50.0%           -0.1pp
+                2                 51.8%         50.0%            1.8pp
+                5                 54.1%         50.0%            4.1pp
+               20                 56.5%         50.0%            6.5pp
+              100                 58.8%         50.0%            8.8pp
+
+TRY ONE MODEL AND THE MEASUREMENT IS HONEST: 49.9% against a true 50.0%. That is the K=1 row and it
+is the whole point - a single evaluation with no selection is unbiased.
+
+TRY A HUNDRED AND YOU REPORT 58.8% FOR A MODEL THAT IS A COIN FLIP. Nearly nine points of pure
+fantasy, and every model in the pool is worthless.
+
+THE MECHANISM: max() of K noisy estimates is a BIASED estimate of the underlying value. The maximum
+of a sample is systematically above the mean of what was sampled, and the more you sample the further
+above it goes. YOU ARE NOT MEASURING THE BEST MODEL; YOU ARE MEASURING THE LUCKIEST MEASUREMENT.
+
+AND K IS ALWAYS BIGGER THAN YOU THINK. A hyperparameter sweep of 5 learning rates x 4 depths x 3
+regularisation strengths is K = 60. Every 'let me just try one more thing' is another K. Every early
+stopping decision is a selection over epochs. THE NUMBER OF TIMES YOU LOOKED IS THE NUMBER THAT SETS
+THE BIAS, and almost nobody counts it.""",
+
+    """3. THE SECOND QUESTION - does the winner actually turn out to be the best model?
+
+The section above used identical models to isolate the bias. Now the realistic case: ten models with
+genuinely different abilities, from 60% up to 72%. There IS a best model. How often does validation
+find it?
+
+     validation size     picked the truly-best model     mean regret
+                  50                           27.8%          3.91pp
+                 200                           52.8%          1.65pp
+                2000                           90.8%          0.19pp
+
+('Regret' is how much true accuracy you gave up by picking the model you picked instead of the actual
+best one.)
+
+WITH 50 VALIDATION EXAMPLES YOU PICK THE RIGHT MODEL BARELY MORE THAN A QUARTER OF THE TIME, and you
+lose almost 4 points of accuracy on average by choosing wrong. That is a bigger loss than most of the
+differences people agonise over between architectures.
+
+THIS IS THE OTHER HALF OF THE VALIDATION-SET ARGUMENT, and it is the half people forget. A validation
+set does two jobs:
+    (a) it absorbs the optimistic bias so the test set stays clean, and
+    (b) it has to be BIG ENOUGH TO ACTUALLY RANK YOUR CANDIDATES.
+A tiny validation set fails at (b) even though it succeeds at (a). You get an honest test number for a
+model you chose essentially at random.
+
+HOW BIG IS BIG ENOUGH? The standard error of an accuracy estimate on n examples is about
+sqrt(p(1-p)/n). At p = 0.65 that is 6.7pp at n = 50, 3.4pp at n = 200, and 1.1pp at n = 2000. IF YOUR
+MODELS DIFFER BY LESS THAN TWO STANDARD ERRORS, YOUR VALIDATION SET CANNOT TELL THEM APART, and the
+'winner' is noise. My models differed by 1-2 points, which is why n = 50 was hopeless and n = 2000 was
+reliable.
+
+THE PRACTICAL RULE: before you trust a validation comparison, compute the standard error and check
+that the gap you are acting on is bigger than it.""",
+
+    """4. EDGE CASES AND FAILURE MODES
+
+FAILURE 1 - THE TEST SET BECOMES A VALIDATION SET BY EROSION. You look at test once. The number
+disappoints. You change something and look again. Nothing announced itself as a violation, and the
+test set is now a validation set with K = 2. By the tenth time it is worthless. THE ONLY DEFENCE IS
+PROCEDURAL: lock it, and count every look.
+
+FAILURE 2 - THE SPLIT IS RANDOM WHEN THE DATA IS NOT INDEPENDENT.
+    - TIME SERIES: a random split lets the model train on the future and be tested on the past. Split
+      by time, always.
+    - GROUPED DATA: multiple rows per patient, per user, per document. A random split puts the same
+      patient in train and test, and the model recognises the patient rather than the disease. Split
+      by GROUP.
+    - NEAR-DUPLICATES: scraped datasets are full of them. A duplicate straddling the split is leakage.
+
+FAILURE 3 - PREPROCESSING FITTED BEFORE THE SPLIT. Computing a mean and standard deviation, a
+vocabulary, a target encoding, or a feature-selection step on the FULL dataset and then splitting
+leaks test information into training. Fit every transformer on train only, then apply it to
+validation and test.
+
+FAILURE 4 - THE VALIDATION SET IS TOO SMALL TO RANK. Measured above: 27.8% correct selection at
+n = 50. An honest test number for a randomly chosen model is not a success.
+
+FAILURE 5 - DISTRIBUTION SHIFT MAKES ALL THREE SPLITS AGREE AND ALL THREE WRONG. If train, validation
+and test all come from the same historical snapshot and production data has moved, every number is
+optimistic and the splits cannot tell you. THE THREE-WAY SPLIT PROTECTS AGAINST SELECTION BIAS, NOT
+AGAINST THE WORLD CHANGING.
+
+FAILURE 6 - CLASS IMBALANCE AND SMALL SPLITS. With 2% positives and a 200-row validation set you have
+about 4 positive examples. Stratify the split, and expect your recall estimate to be worthless
+regardless.
+
+FAILURE 7 - TREATING THE TEST SCORE AS A POINT ESTIMATE. It has a standard error too. Report a
+confidence interval, or at minimum say the test set size.""",
+
+    """5. THE ALTERNATIVES - when three fixed splits is not the right structure
+
+K-FOLD CROSS-VALIDATION. Split the training data into k parts; train k times, each time holding out
+one part for validation; average. Uses all the data for both roles and gives you a VARIANCE estimate
+as well as a mean. Costs k times the training compute. THE DEFAULT WHEN DATA IS SCARCE AND TRAINING
+IS CHEAP - which is most classical ML and almost no deep learning.
+
+NESTED CROSS-VALIDATION. An outer loop for evaluation, an inner loop for selection. This is the
+statistically correct way to do model selection AND get an unbiased estimate from limited data, and it
+costs k_outer x k_inner trainings. Worth naming in an interview to show you know the fully correct
+answer even if you would not pay for it.
+
+TIME-SERIES / ROLLING-ORIGIN VALIDATION. Train on weeks 1-4, validate on week 5; train on 1-5,
+validate on 6; and so on. Respects causality. THE ONLY CORRECT OPTION FOR TEMPORAL DATA, and using
+plain k-fold there is one of the most common serious mistakes in applied ML.
+
+GROUP K-FOLD. Same as k-fold but every group stays entirely within one fold.
+
+TRAIN / VALIDATION ONLY, WITH THE TEST SET COMING FROM PRODUCTION. Increasingly the honest industrial
+answer: validate offline, then run an A/B test or shadow deployment. The 'test set' is real traffic,
+which cannot be overfitted and measures what actually matters.
+
+A HOLD-OUT YOU NEVER LOOK AT UNTIL LAUNCH. Some teams keep a sealed set opened only once, at the
+release decision. Crude and extremely effective, because the procedure is what protects it, not the
+statistics.
+
+TYPICAL RATIOS: 60/20/20 for a few thousand rows; 80/10/10 for tens of thousands; 98/1/1 for millions,
+because 1% of ten million is 100,000 examples and that is far more than enough precision. THE
+VALIDATION AND TEST SETS SHOULD BE SIZED BY THE PRECISION YOU NEED, NOT BY A PERCENTAGE.""",
+
+    """6. HOW TO SET IT UP - numbered steps
+
+STEP 1 - DECIDE THE SPLIT AXIS BEFORE THE RATIOS. Random? By time? By user or patient or document? By
+geography? THE AXIS IS THE DECISION THAT DETERMINES WHETHER THE SPLIT MEANS ANYTHING; the ratio is a
+detail.
+
+STEP 2 - SPLIT FIRST, BEFORE ANY PREPROCESSING. Any statistic computed over the whole dataset before
+splitting is leakage.
+
+STEP 3 - SIZE THE VALIDATION SET BY THE DIFFERENCE YOU NEED TO DETECT. Standard error is about
+sqrt(p(1-p)/n). To resolve a 2-point difference you want a standard error well under 1 point, so
+n in the low thousands. My measurement: 50 examples picked the best of ten models 27.8% of the time,
+2,000 examples 90.8%.
+
+STEP 4 - PUT THE TEST SET SOMEWHERE AWKWARD TO REACH. A separate file, a locked bucket, a CI job that
+runs once. Make the honest path easier than the dishonest one.
+
+STEP 5 - DO ALL SELECTION ON VALIDATION. Hyperparameters, architecture, features, early stopping,
+threshold tuning, prompt variants. ALL OF IT.
+
+STEP 6 - COUNT YOUR SELECTIONS. Write down K. If K is in the hundreds, your validation score is
+optimistic by several points and you should hold out a second validation set to check it.
+
+STEP 7 - LOOK AT TEST ONCE, AND REPORT IT WITH ITS UNCERTAINTY. 'Test accuracy 84.2% on 2,000
+examples, standard error 0.8pp.' If you then change the model, say plainly that the test number is now
+a validation number.
+
+STEP 8 - EXPECT TEST BELOW VALIDATION, AND SIZE THE GAP. A 1-2 point drop is normal selection bias. A
+10-point drop means something is wrong - too many selections, a leak, or a bad split axis.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would actually say out loud
+
+'Because training isn't the only thing that fits the data - choosing is too.
+
+The test set is meant to be your one honest estimate of performance on data the model has never seen.
+But while building a model you make hundreds of choices: which algorithm, which hyperparameters, when
+to stop, which features. If you make those choices by looking at the test set, you've fitted your
+choices to it, and its score stops being an estimate of generalisation. You need a third set to make
+choices against, so the test set stays untouched.
+
+I measured how bad it gets. I made K models that were all identical - every one a coin flip with true
+accuracy 50% - scored them on a 200-example set, kept the best, and then measured that model properly.
+With one model, the reported score was 49.9% against a true 50%: honest. With five, 54.1%. With a
+hundred, 58.8%. Nearly nine points of pure selection bias on models that are all worthless, because
+the maximum of K noisy estimates is systematically above the truth and grows with K. And K is always
+bigger than people think - a sweep of five learning rates by four depths by three regularisation
+settings is sixty.
+
+There's a second reason for the validation set that people forget, which is that it has to be big
+enough to actually rank the candidates. I took ten models with true abilities from 60% to 72% and
+asked how often validation picks the genuinely best one. With 50 validation examples: 27.8% of the
+time, and the average regret was 3.9 points of accuracy. With 2,000: 90.8%. So a small validation set
+can leave your test number perfectly honest for a model you chose essentially at random. The check is
+whether the gap you're acting on exceeds the standard error, which is roughly sqrt(p times one-minus-p
+over n) - about 6.7 points at n=50 and 1.1 at n=2000.
+
+The failure modes I'd watch for: splitting randomly when the data is temporal or grouped, so the model
+trains on the future or recognises the same patient; fitting a scaler or a vocabulary before the split;
+and the slow erosion where you look at test, get a disappointing number, change something, and look
+again - after ten rounds it's just a validation set with extra steps.
+
+And if data is scarce I'd use k-fold cross-validation instead of a fixed validation split, with a
+sealed test set on top, or nested cross-validation if I need the fully correct version.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE SELECTION-BIAS EXPERIMENT - short enough to reproduce in an interview:
+
+    import random
+
+    def evaluate(true_acc, n):
+        # simulate scoring a model of known true accuracy on n examples
+        return sum(1 for _ in range(n) if random.random() < true_acc) / n
+
+    TRUE = 0.50
+    for k in (1, 2, 5, 20, 100):
+        optimism = []
+        for _ in range(200):                       # repeat so one run's luck cannot mislead
+            scores = [evaluate(TRUE, 200) for _ in range(k)]
+            optimism.append(max(scores) - TRUE)    # <-- THE WHOLE EFFECT IS THIS max()
+        print(k, sum(optimism) / len(optimism))
+
+    # every model has the SAME true accuracy, so there is nothing to select. Whatever
+    # max() returns above TRUE is bias, by construction. That is what makes this a
+    # proof rather than an illustration.
+
+THE CORRECT SPLIT, in the order the steps must happen:
+
+    from sklearn.model_selection import train_test_split
+
+    # 1. SPLIT FIRST. Nothing has been computed over the data yet.
+    train_val, test = train_test_split(data, test_size=0.2, random_state=0,
+                                       stratify=data.label)     # stratify: keep class
+                                                                # balance in every split
+    train, val = train_test_split(train_val, test_size=0.25, random_state=0,
+                                  stratify=train_val.label)     # 0.25 of 0.8 = 0.2 overall
+
+    # 2. FIT PREPROCESSING ON TRAIN ONLY.
+    scaler = StandardScaler().fit(train[features])   # <-- .fit() sees TRAIN. Fitting it on
+                                                     #     `data` would leak test statistics
+                                                     #     into every training example.
+    Xtr = scaler.transform(train[features])
+    Xva = scaler.transform(val[features])            # transform, never fit_transform, here
+    Xte = scaler.transform(test[features])
+
+    # 3. SELECT ON VALIDATION.
+    best = max(candidates, key=lambda m: m.fit(Xtr, ytr).score(Xva, yva))
+
+    # 4. LOOK AT TEST ONCE.
+    print("test:", best.score(Xte, yte))
+
+THE GROUPED / TEMPORAL VERSIONS, which are what real data usually needs:
+
+    from sklearn.model_selection import GroupShuffleSplit, TimeSeriesSplit
+
+    # every row for a given patient lands in exactly one side of the split
+    gss = GroupShuffleSplit(test_size=0.2, random_state=0)
+    tr_idx, te_idx = next(gss.split(X, y, groups=df.patient_id))
+
+    # rolling origin: fold i trains on everything before it and validates on what follows
+    for tr_idx, va_idx in TimeSeriesSplit(n_splits=5).split(X):
+        ...                                          # NEVER shuffle temporal data
+
+THE STANDARD ERROR, so you can size a validation set instead of guessing:
+
+    import math
+    def se(p, n):
+        return math.sqrt(p * (1 - p) / n)
+    # se(0.65, 50)   = 0.067  -> cannot resolve a 2-point difference
+    # se(0.65, 2000) = 0.011  -> can""",
+
+    """9. A TRACE - one run of the experiment, and the line-by-line mapping
+
+A SINGLE RUN, K = 5, evaluation set of 200, every model a true 50% coin flip:
+
+    model 1 scores 96/200 = 48.0%
+    model 2 scores 104/200 = 52.0%
+    model 3 scores  99/200 = 49.5%
+    model 4 scores 106/200 = 53.0%     <-- the winner
+    model 5 scores 101/200 = 50.5%
+
+    reported score for 'the best model': 53.0%
+    the same model on a fresh 20,000 examples: 50.2%
+    OPTIMISM: 2.8 percentage points, from a model that is provably a coin flip.
+
+Model 4 did not do anything. It got six extra heads. And notice that the SPREAD of the five scores -
+48.0% to 53.0% - is not a spread of ability, it is entirely the standard error, which at n = 200 and
+p = 0.5 is 3.5pp. FIVE DRAWS FROM A DISTRIBUTION WITH A 3.5-POINT STANDARD DEVIATION WILL SPAN ABOUT
+FIVE POINTS, EVERY TIME, no matter what the models are.
+
+THE FULL MEASURED TABLE, from 200 repeats of that procedure:
+
+     K       mean best-on-eval     optimism
+     1                   49.9%       -0.1pp     <- one look is honest
+     2                   51.8%        1.8pp
+     5                   54.1%        4.1pp
+    20                   56.5%        6.5pp
+   100                   58.8%        8.8pp
+
+AND THE SELECTION-QUALITY TABLE, ten models spanning 60%-72% true ability:
+
+    validation n = 50    -> picks the truly-best model 27.8% of the time, regret 3.91pp
+    validation n = 200   -> 52.8%, regret 1.65pp
+    validation n = 2000  -> 90.8%, regret 0.19pp
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `evaluate(TRUE, 200)`
+            produced '96/200 = 48.0%' and the other four scores. Its spread is the standard error
+            sqrt(0.5*0.5/200) = 3.5pp, which is where the whole illusion of 'differences between
+            models' comes from.
+    `[evaluate(TRUE, 200) for _ in range(k)]`
+            produced the five-model list. Increasing k is what walked the table from 49.9% to 58.8% -
+            nothing else in the code changed.
+    `max(scores)`
+            produced 53.0%, the reported number. THIS IS THE LINE THAT CREATES THE BIAS. Replace it
+            with `scores[0]` - pick a model without looking - and the optimism column becomes zero at
+            every k.
+    `- TRUE`
+            produced the 2.8pp. In real work you cannot compute this column, because you do not know
+            TRUE - which is exactly why you need a set you have not selected on.
+    `for _ in range(200)` (the repeat loop)
+            turned the single noisy run into the mean column. Without it, K=1 would sometimes show
+            positive optimism by luck and the table would be unreadable.
+    `evaluate(a, size) for a in ABILITIES` then `max(range(...), key=...)`
+            produced the 27.8% / 52.8% / 90.8% selection-quality rows. `size` is the ONLY thing that
+            changed between them, which is the argument for making the validation set large.
+    `stratify=data.label` in the split
+            does not appear in these numbers at all - it matters for imbalanced data, and its absence
+            is a separate failure mode from the one measured here.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    MEASURED - optimism from selecting the best of K identical (true 50%) models on 200 examples,
+    averaged over 200 repeats:
+        K=1: -0.1pp    K=2: +1.8pp    K=5: +4.1pp    K=20: +6.5pp    K=100: +8.8pp
+
+    MEASURED - probability of selecting the truly-best of ten models spanning 60%-72%:
+        n=50: 27.8% (regret 3.91pp)   n=200: 52.8% (1.65pp)   n=2000: 90.8% (0.19pp)
+
+    STANDARD ERROR of an accuracy estimate: sqrt(p(1-p)/n). At p=0.65 -> 6.7pp at n=50, 3.4pp at
+    n=200, 1.1pp at n=2000. Two models closer than about two standard errors are indistinguishable.
+
+THE #1 MISTAKE: tuning on the test set. It converts your one honest number into a validation number
+and you lose the ability to detect that it happened.
+
+THE #2 MISTAKE: not counting K. Every hyperparameter combination, every architecture tried, every
+early-stopping decision. A 60-point sweep carries roughly 6-7 points of optimism at a 200-example
+validation set.
+
+THE #3 MISTAKE: a validation set too small to rank the candidates. 27.8% correct selection at n=50 -
+an honest test score for a model chosen close to at random.
+
+THE #4 MISTAKE: splitting randomly on temporal or grouped data. Training on the future, or on the
+same patient. This is the most damaging error on this list because the resulting numbers look
+excellent.
+
+THE #5 MISTAKE: fitting scalers, vocabularies, imputers or target encodings before the split.
+
+THE #6 MISTAKE: believing three splits protect you from distribution shift. They protect against
+selection bias only. If production has moved away from your snapshot, all three numbers are wrong
+together.
+
+THE #7 MISTAKE: reporting a test score as a point with no uncertainty. Give the set size and the
+standard error, or the number invites false precision.
+
+THE #8 MISTAKE: not knowing the alternatives. K-fold when data is scarce, group k-fold when rows are
+correlated, rolling-origin for time series, nested CV when you need selection AND an unbiased estimate
+from limited data.
+
+ONE-SENTENCE TAKEAWAY: fitting parameters and choosing between models are both fitting, so each needs
+its own data - validation absorbs the optimism of choosing (measured at up to 8.8 points for a hundred
+candidates) and test stays sealed for one honest look at the end, with the validation set sized large
+enough that the winner it picks is actually the best model rather than the luckiest measurement.""",
+]
+
+_EX_P1AO["Coin Change II (count ways)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - count the ways, and decide whether order counts
+
+You have coins of a few denominations, unlimited of each, and a target amount. HOW MANY DIFFERENT WAYS
+CAN YOU MAKE THE TARGET?
+
+Coins [1, 2, 5], amount 5. Write them all out:
+
+    1+1+1+1+1
+    1+1+1+2
+    1+2+2
+    5
+
+FOUR WAYS. Now notice what is NOT in that list: 2+1+2 is not there, because it is the same handful of
+coins as 1+2+2 and money does not care what order you took it out of your pocket.
+
+THAT SENTENCE IS THE ENTIRE PROBLEM. A COMBINATION is a multiset - which coins and how many of each.
+A PERMUTATION is an ordered sequence. Coin Change II asks for COMBINATIONS, and the difference between
+counting combinations and counting permutations is a single decision about which of two nested loops
+goes on the outside.
+
+Get that decision backwards and [1,2,5] with amount 5 returns 9 instead of 4. It returns a number, it
+returns it fast, and it is wrong.
+
+TERMS AS THEY APPEAR:
+- UNBOUNDED KNAPSACK: each item may be used any number of times. (In BOUNDED / 0-1 knapsack each item
+  is used at most once, and it is the same DP with the inner loop reversed.)
+- dp[a]: the number of ways to make amount `a` using the coins considered so far. The 'so far' is
+  doing quiet, essential work in that sentence.
+- BASE CASE dp[0] = 1: there is exactly ONE way to make zero - take nothing. Not zero ways. This trips
+  people up and it is what every other entry in the table is built from.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - BRUTE FORCE, DECIDING COIN BY COIN. At each coin you choose how many to take. Recursively:
+'either skip this coin entirely and move on, or take one of it and stay on the same coin'.
+
+    def ways(i, rem):
+        if rem == 0:            return 1               # made it exactly
+        if i == len(coins) or rem < 0:  return 0
+        return ways(i + 1, rem) + ways(i, rem - coins[i])
+                #  skip this coin      take one more of it
+
+    THIS IS ALREADY THE RIGHT IDEA. The `i + 1` never goes backwards, which is precisely what stops
+    the same multiset being counted in two different orders. Its problem is only that it recomputes
+    the same (i, rem) pairs exponentially often.
+
+WAY 2 - MEMOISE IT. Cache on (i, rem). Correct, O(coins x amount) states, and it is genuinely fine.
+The only downside is recursion depth and a dictionary's constant factor.
+
+WAY 3 - THE BOTTOM-UP TABLE, which is what you should write. Process the coins ONE AT A TIME, and for
+each coin sweep the amounts upward:
+
+    dp = [0] * (amount + 1)
+    dp[0] = 1
+    for c in coins:                          # <-- COINS OUTER
+        for a in range(c, amount + 1):       # <-- AMOUNTS INNER, ascending
+            dp[a] += dp[a - c]
+
+WHY THE COIN LOOP MUST BE OUTSIDE. Think about what dp holds partway through. After the coin-1 pass,
+dp[a] is 'ways to make a using ONLY 1s'. After the coin-2 pass, dp[a] is 'ways to make a using 1s and
+2s'. Each coin is introduced ONCE, and every combination is built in a FIXED CANONICAL ORDER: all the
+1s decided before any 2s, all the 2s before any 5s. A multiset has exactly one canonical order, so it
+is counted exactly once.
+
+Flip the loops and dp[a] means 'ways to make a using any coin, where I just added the last coin'. The
+sequence 1-then-2 and the sequence 2-then-1 are both reachable, both counted, and you have counted
+ORDERED sequences.
+
+WHY THE INNER LOOP GOES UPWARD: dp[a] += dp[a - c] reads a SMALLER index that has ALREADY been updated
+in this same pass. That is what allows the coin to be used again and again - the unbounded part. Sweep
+downward instead and you get 0-1 knapsack, where each coin is used at most once.""",
+
+    """3. THE HAND TRACE - watch the table fill, coin by coin
+
+coins = [1, 2, 5], amount = 5.  Start: dp = [1, 0, 0, 0, 0, 0]
+                                            ^ dp[0] = 1: one way to make nothing
+
+PASS 1 - COIN 1. For a = 1..5: dp[a] += dp[a - 1].
+
+    a=1: dp[1] += dp[0] = 1  ->  dp = [1, 1, 0, 0, 0, 0]
+    a=2: dp[2] += dp[1] = 1  ->  dp = [1, 1, 1, 0, 0, 0]
+    a=3: dp[3] += dp[2] = 1  ->  dp = [1, 1, 1, 1, 0, 0]
+    a=4: dp[4] += dp[3] = 1  ->  dp = [1, 1, 1, 1, 1, 0]
+    a=5: dp[5] += dp[4] = 1  ->  dp = [1, 1, 1, 1, 1, 1]
+
+    MEANING: exactly one way to make any amount out of 1s. Correct, and notice how the ascending sweep
+    let dp[1]'s new value feed dp[2] immediately - that is the coin being reused.
+
+PASS 2 - COIN 2. For a = 2..5: dp[a] += dp[a - 2].
+
+    a=2: dp[2] += dp[0] = 1  ->  dp[2] = 2      {1+1, 2}
+    a=3: dp[3] += dp[1] = 1  ->  dp[3] = 2      {1+1+1, 1+2}
+    a=4: dp[4] += dp[2] = 2  ->  dp[4] = 3      {1x4, 1+1+2, 2+2}
+    a=5: dp[5] += dp[3] = 2  ->  dp[5] = 3      {1x5, 1+1+1+2, 1+2+2}
+
+    dp = [1, 1, 2, 2, 3, 3].  Note dp[4] read dp[2], which was ALREADY 2 in this pass - so 2+2 gets
+    counted. Reuse again.
+
+PASS 3 - COIN 5. For a = 5..5: dp[5] += dp[0] = 1  ->  dp[5] = 4
+
+    dp = [1, 1, 2, 2, 3, 4].  ANSWER: 4, matching the four combinations listed in section 1.
+
+NOW THE WRONG ORDER, same inputs, amounts outer:
+
+    a=1: c=1 -> dp[1] += dp[0]        -> 1
+    a=2: c=1 -> dp[2] += dp[1] = 1;  c=2 -> dp[2] += dp[0] = 1        -> 2
+    a=3: c=1 -> dp[3] += dp[2] = 2;  c=2 -> dp[3] += dp[1] = 1        -> 3
+    a=4: c=1 -> dp[4] += dp[3] = 3;  c=2 -> dp[4] += dp[2] = 2        -> 5
+    a=5: c=1 -> dp[5] += dp[4] = 5;  c=2 -> dp[5] += dp[3] = 3;
+         c=5 -> dp[5] += dp[0] = 1                                     -> 9
+
+    9, not 4. It counted 1+2+2, 2+1+2 and 2+2+1 as three different answers.""",
+
+    """4. THE EDGE CASES - and how often the loop-order bug actually shows
+
+I ran both loop orders over 3,000 random (coins, amount) cases and compared against a brute-force
+combination count:
+
+    THE TWO LOOP ORDERS DISAGREE ON 40.0% OF RANDOM CASES.
+    RESTRICTED TO CASES WITH 2 OR MORE DISTINCT COMBINATIONS, amount-outer is WRONG 47.5% of the time.
+
+They AGREE on the other 60%, and that is the dangerous part - the agreement happens exactly where you
+are most likely to test: tiny amounts, one coin, or an answer of 0 or 1. Here are the concrete cases:
+
+              coins   amount   coins-outer   amount-outer   true combinations
+          [1, 2, 5]        5             4              9                   4
+          [1, 2, 5]       11            11            218                  11
+          [2, 3, 5]        9             3              8                   3
+          [1, 2, 3]        4             4              7                   4
+                [5]       10             1              1                   1        <- AGREE
+     [1, 5, 10, 25]       30            18           4237                  18
+
+LOOK AT THE `[5], 10` ROW. Both orders return 1. With a single coin denomination there is only one
+possible ordering, so combinations and permutations coincide. A test suite built from simple cases
+passes both implementations.
+
+AND LOOK AT `[1,5,10,25], 30`: 18 versus 4,237. The error is not subtle when it shows; it is just
+invisible until it shows.
+
+THE OTHER EDGE CASES:
+- AMOUNT = 0. The answer is 1 (take nothing), which falls straight out of dp[0] = 1. If you initialise
+  dp[0] = 0, every entry is 0 and the whole table collapses. THIS IS THE MOST COMMON SILENT FAILURE.
+- NO COINS, amount > 0. Answer 0. The outer loop never runs, dp stays [1, 0, 0, ...], dp[amount] = 0.
+- A COIN LARGER THAN THE AMOUNT. `range(c, amount+1)` is empty, so the pass does nothing. No guard
+  needed - but only because the range is written that way.
+- DUPLICATE COINS in the input, e.g. [2, 2, 5]. Each is processed as a separate coin and every
+  combination is double counted. Deduplicate the input.
+- A COIN OF VALUE 0. `range(0, amount+1)` makes dp[a] += dp[a], doubling everything forever. The
+  problem constraints exclude it; real input might not.
+- OVERFLOW. The counts grow fast - 4,237 for a trivial case above. In Python integers are unbounded;
+  in Java or C++ this needs a long, and some variants ask for the answer modulo 1e9+7.""",
+
+    """5. THE SLOW VERSION FIRST - and the neighbouring problems it clarifies
+
+THE BRUTE FORCE is worth writing before the DP, because it is the thing the DP is a compression of:
+
+    def brute(coins, amount):
+        def go(i, rem):
+            if rem == 0:                    return 1
+            if i == len(coins) or rem < 0:  return 0
+            return go(i + 1, rem) + go(i, rem - coins[i])
+        return go(0, amount)
+
+    `go(i + 1, rem)` = 'I am done with coin i, permanently'.
+    `go(i, rem - coins[i])` = 'take one more of coin i, still allowed to take more'.
+    The index NEVER DECREASES, which is the canonical-order argument from section 2 expressed as a
+    recursion. THIS IS WHY THE COIN LOOP GOES OUTSIDE - the DP is just this recursion with the states
+    filled in bottom-up.
+
+    Cost: exponential. For [1,5,10,25] and amount 300 it is hopeless; the DP is 4 x 301 operations.
+
+THE THREE NEIGHBOURING PROBLEMS, which interviewers use to check you understand rather than remember:
+
+    COIN CHANGE I (FEWEST COINS). Same table shape, different operator: dp[a] = min(dp[a],
+    dp[a-c] + 1), initialised to infinity with dp[0] = 0. HERE THE LOOP ORDER DOES NOT MATTER, because
+    min does not care how many times you reach the same state. That contrast is worth stating.
+
+    COMBINATION SUM IV (COUNT PERMUTATIONS). Wants ordered sequences - so it wants AMOUNT OUTER, the
+    exact code that is wrong here. THE 'BUG' IS THE CORRECT SOLUTION TO A DIFFERENT PROBLEM, which is
+    the cleanest possible way to remember which is which.
+
+    0-1 KNAPSACK / PARTITION EQUAL SUBSET SUM. Each item once. Coins outer still, but the inner loop
+    sweeps DOWNWARD: `for a in range(amount, c - 1, -1)`. Descending means dp[a - c] still holds the
+    PREVIOUS pass's value, so the item cannot be reused.
+
+    THE COMPLETE MENTAL TABLE:
+        combinations, unlimited use  -> coins outer, amounts ASCENDING
+        combinations, one use each   -> coins outer, amounts DESCENDING
+        permutations, unlimited use  -> amounts outer, coins inner""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY OUT LOUD WHETHER ORDER MATTERS. 'This asks for combinations - 1+2+2 and 2+1+2 are the
+same answer - so coins go on the outside.' Doing this before you type is what makes the loop order a
+decision rather than a coin flip.
+
+STEP 2 - CREATE THE TABLE. `dp = [0] * (amount + 1)`, length amount+1 so index `amount` exists.
+
+STEP 3 - SET dp[0] = 1. One way to make nothing. Say why: it is the empty combination, and every
+other cell is built from it.
+
+STEP 4 - OUTER LOOP OVER COINS. `for c in coins:` - each denomination introduced exactly once, which
+is what fixes the canonical order.
+
+STEP 5 - INNER LOOP OVER AMOUNTS, ASCENDING, STARTING AT c. `for a in range(c, amount + 1):` -
+starting at c removes the need for an `if a >= c` guard, and ascending is what permits reuse.
+
+STEP 6 - THE RECURRENCE. `dp[a] += dp[a - c]`. Say what it means: 'every way of making a - c becomes a
+way of making a by adding one more coin c'.
+
+STEP 7 - RETURN dp[amount].
+
+STEP 8 - VERIFY ON A CASE WHERE THE ORDERS DIFFER. [1,2,5] with amount 5 should give 4. If you get 9,
+your loops are inverted. NEVER verify on [5] with amount 10 - both orders return 1 and the test proves
+nothing.
+
+STEP 9 - STATE THE COMPLEXITY. Time O(coins x amount), space O(amount).""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'This is unbounded knapsack, counting combinations rather than permutations, and the whole problem
+comes down to which loop is on the outside.
+
+I'd use a one-dimensional table where dp of a is the number of ways to make amount a. Base case dp[0]
+equals 1 - there's exactly one way to make zero, which is to take nothing - and every other cell is
+built from that.
+
+Then I loop over the COINS on the outside and the amounts on the inside, ascending, doing dp[a] plus
+equals dp[a minus c].
+
+The coins go outside because it forces a canonical order. After the first pass the table means "ways
+to make each amount using only 1s". After the second, "using 1s and 2s". Each denomination is
+introduced exactly once, so every combination gets built in exactly one order - all the 1s decided
+before any 2s - and a multiset has exactly one canonical order, so it's counted once. If you put the
+amount on the outside instead, you're counting ordered sequences: 1+2+2 and 2+1+2 and 2+2+1 become
+three answers rather than one. On coins [1,2,5] with amount 5 that gives 9 instead of 4, and on
+[1,5,10,25] with amount 30 it gives 4,237 instead of 18.
+
+The inner loop ascending is what makes it unbounded - dp[a minus c] has already been updated in this
+same pass, so the coin can be used again. If I swept downward instead, dp[a minus c] would still hold
+the previous pass's value and each coin could be used at most once, which is exactly 0-1 knapsack.
+So the same six lines solve three different problems depending on loop order and sweep direction.
+
+The thing I'd flag is that this bug is hard to catch by testing. I checked it over 3,000 random cases
+and the two loop orders disagree about 40% of the time - which means they AGREE 60% of the time, and
+they agree precisely on the small cases people test with. With a single coin denomination, for
+instance, both orders return the same answer, because with one denomination there's only one ordering.
+So I'd verify specifically on [1,2,5] with amount 5, where the right answer is 4 and the wrong one
+is 9.
+
+Complexity is O(number of coins times amount) time and O(amount) space.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def change(amount, coins):
+        dp = [0] * (amount + 1)
+        # ^ length amount+1 so that index `amount` exists. dp[a] will hold "the number of
+        #   ways to make amount a USING THE COINS PROCESSED SO FAR" - that trailing clause
+        #   is the invariant, and it is what the outer loop maintains.
+
+        dp[0] = 1
+        # ^ ONE way to make zero: take nothing. If you set this to 0, every dp[a] += dp[a-c]
+        #   adds zero to zero and the function returns 0 for everything. Most common bug
+        #   in this problem after the loop order.
+
+        for c in coins:
+            # ^ COINS OUTER. Each denomination is introduced exactly once and never revisited,
+            #   which forces every combination into one canonical build order and counts it
+            #   once. Swap this loop with the next one and you count permutations.
+
+            for a in range(c, amount + 1):
+                # ^ start at c, so `a - c` is never negative - no guard needed.
+                # ^ ASCENDING. dp[a - c] may already have been updated during THIS pass, so
+                #   coin c can be taken again and again. Reverse to `range(amount, c-1, -1)`
+                #   and dp[a-c] still holds the previous pass's value, giving 0-1 knapsack.
+
+                dp[a] += dp[a - c]
+                # ^ every way of making (a - c) extends to a way of making a by adding one
+                #   coin of value c. `+=` accumulates across coins; `=` would discard
+                #   everything the previous denominations contributed.
+
+        return dp[amount]
+
+THE WRONG VERSION, so the difference is one line and you can see it:
+
+    for a in range(1, amount + 1):        # <-- amount outer
+        for c in coins:
+            if c <= a:                    # <-- now the guard IS needed
+                dp[a] += dp[a - c]
+    # this is the correct solution to Combination Sum IV, which asks for PERMUTATIONS.
+
+THE MEMOISED TOP-DOWN VERSION, if you prefer to derive it from the recursion:
+
+    from functools import lru_cache
+    def change(amount, coins):
+        @lru_cache(None)
+        def go(i, rem):
+            if rem == 0:                    return 1
+            if i == len(coins) or rem < 0:  return 0
+            return go(i + 1, rem) + go(i, rem - coins[i])
+            #       ^ skip coin i forever    ^ take another coin i
+            # `i` never decreases, which is the canonical-order argument in recursive form.
+        return go(0, amount)""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+coins = [1, 2, 5], amount = 5. Every variable at every step.
+
+    c    a    dp before                dp[a-c]   dp[a] after   dp after
+    ----------------------------------------------------------------------------------
+    -    -    [1,0,0,0,0,0]            -         -             [1,0,0,0,0,0]
+    1    1    [1,0,0,0,0,0]            dp[0]=1   0+1 = 1       [1,1,0,0,0,0]
+    1    2    [1,1,0,0,0,0]            dp[1]=1   0+1 = 1       [1,1,1,0,0,0]
+    1    3    [1,1,1,0,0,0]            dp[2]=1   0+1 = 1       [1,1,1,1,0,0]
+    1    4    [1,1,1,1,0,0]            dp[3]=1   0+1 = 1       [1,1,1,1,1,0]
+    1    5    [1,1,1,1,1,0]            dp[4]=1   0+1 = 1       [1,1,1,1,1,1]
+    2    2    [1,1,1,1,1,1]            dp[0]=1   1+1 = 2       [1,1,2,1,1,1]
+    2    3    [1,1,2,1,1,1]            dp[1]=1   1+1 = 2       [1,1,2,2,1,1]
+    2    4    [1,1,2,2,1,1]            dp[2]=2   1+2 = 3       [1,1,2,2,3,1]
+    2    5    [1,1,2,2,3,1]            dp[3]=2   1+2 = 3       [1,1,2,2,3,3]
+    5    5    [1,1,2,2,3,3]            dp[0]=1   3+1 = 4       [1,1,2,2,3,4]
+
+    return dp[5] = 4
+
+TWO ROWS TO STARE AT:
+
+    ROW `c=2, a=4`: it read dp[2], which was set to 2 EARLIER IN THIS SAME PASS. That is the ascending
+    sweep permitting coin 2 to be used twice - 2+2. If the sweep were descending, dp[2] would still
+    have been 1 (the coin-1-only value) and 2+2 would never be counted.
+
+    ROW `c=5, a=5`: it read dp[0] = 1, the base case, contributing the single-coin combination {5}. If
+    dp[0] had been initialised to 0, this row would add nothing and the answer would be 3.
+
+THE LINE-BY-LINE MAPPING - which line of code produced which column:
+
+    `dp = [0] * (amount + 1)`
+            produced the row-zero table [1,0,0,0,0,0] once dp[0] was set. Its LENGTH is why index 5
+            exists at all.
+    `dp[0] = 1`
+            produced the leading 1 that never changes, and it is the value read by every `c, a` row
+            where a == c: rows (1,1), (2,2) and (5,5). Those three rows are the ones that count the
+            'use exactly one of this coin' combinations.
+    `for c in coins:`
+            produced the three BLOCKS of rows. The block boundaries are where the invariant advances
+            from 'using 1s' to 'using 1s and 2s' to 'using 1s, 2s and 5s'.
+    `for a in range(c, amount + 1):`
+            produced the `a` column. Note the c=2 block starts at a=2 and the c=5 block has only one
+            row - that is `range(c, ...)` skipping the amounts the coin cannot reach.
+    `dp[a] += dp[a - c]`
+            produced the 'dp[a-c]' and 'dp[a] after' columns. The `+=` is why row (2,2) gives 1+1=2
+            rather than overwriting to 1 - the previous denominations' contribution is preserved.
+    ascending order of the inner loop
+            produced the dp[2]=2 read in row (2,4). This is the single observable difference between
+            unbounded and 0-1 knapsack in the entire trace.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(len(coins) x amount) - two nested loops, constant work inside.
+    SPACE: O(amount) - one array. The 2D version dp[coin][amount] is O(coins x amount) and is worth
+           writing first if the 1D compression is not obvious to you yet; the 1D version is the 2D
+           version with the coin dimension collapsed, which is legal precisely BECAUSE the coin loop
+           is outermost.
+
+    MEASURED: over 3,000 random cases the two loop orders disagree 40.0% of the time; restricted to
+    cases with 2+ distinct combinations, amount-outer is wrong 47.5% of the time.
+    Concrete: [1,2,5] amount 5 -> 4 vs 9.  [1,5,10,25] amount 30 -> 18 vs 4,237.  [5] amount 10 ->
+    1 vs 1, AGREEING, which is why simple tests do not catch it.
+
+THE #1 MISTAKE: putting the amount loop outside. It counts permutations. It is also the correct
+solution to Combination Sum IV, which is the best way to keep them straight.
+
+THE #2 MISTAKE: dp[0] = 0. There is one way to make nothing, not zero ways. Every cell derives from
+this one, so the whole table collapses to zeros.
+
+THE #3 MISTAKE: sweeping the inner loop downward. That is 0-1 knapsack - each coin usable once. Also
+a correct solution to a different problem.
+
+THE #4 MISTAKE: testing on cases where both orders agree. Single-denomination inputs, amounts smaller
+than the second coin, or answers of 0 or 1 all pass both implementations. Test [1,2,5] with amount 5.
+
+THE #5 MISTAKE: writing `dp[a] = dp[a - c]` instead of `+=`. It discards every combination found with
+the earlier denominations.
+
+THE #6 MISTAKE: not deduplicating the coin list. [2,2,5] double-counts every combination that uses a
+2, because the algorithm has no idea the two entries are the same denomination.
+
+THE #7 MISTAKE: forgetting integer overflow in a typed language, or missing a required modulo. The
+counts grow fast - 4,237 appeared in a five-line test case.
+
+THE #8 MISTAKE: reaching for a 2D table and then being unable to explain why the 1D version is valid.
+The answer is that the coin loop is outermost, so row `c` only ever reads row `c` and row `c-1`, and
+the previous row's values are exactly what the not-yet-overwritten cells hold.
+
+ONE-SENTENCE TAKEAWAY: Coin Change II is unbounded knapsack counting COMBINATIONS, so the coin loop
+goes outside to force one canonical build order per multiset and the amount loop sweeps upward to
+allow reuse - dp[0] = 1, dp[a] += dp[a-c], O(coins x amount) time and O(amount) space - and you verify
+on [1,2,5] with amount 5 because the wrong loop order silently agrees with the right one on 60% of
+inputs.""",
+]
+
+_EX_P1AO["Convert BST to Greater Tree"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - replace every value with itself plus everything bigger
+
+You are given a binary search tree. Replace each node's value with its ORIGINAL value PLUS THE SUM OF
+EVERY VALUE IN THE TREE THAT IS GREATER THAN IT.
+
+Concretely, a tree built from the values 2, 5, 13:
+
+            5                      18
+           / \\      becomes       /  \\
+          2   13                 20    13
+
+    node 13: nothing is bigger    -> 13
+    node 5:  13 is bigger         -> 5 + 13  = 18
+    node 2:  5 and 13 are bigger  -> 2 + 18  = 20      (2 + 5 + 13)
+
+THE EVERYDAY VERSION: it is a RUNNING TOTAL FROM THE TOP. Line the values up largest first - 13, 5, 2 -
+and keep a running sum as you walk down the list: 13, then 13+5 = 18, then 18+2 = 20. Write each
+running total back into the node it came from. That is the whole algorithm.
+
+THE INSIGHT THE PROBLEM IS TESTING: an IN-ORDER traversal of a BST (left, node, right) visits values
+in ASCENDING order - that is the defining property of a BST and the reason it is worth being a BST at
+all. So the MIRROR of it (right, node, left) visits values in DESCENDING order. And descending order
+is exactly the order in which a running total accumulates 'everything greater than me' before it
+reaches me.
+
+TERMS AS THEY APPEAR:
+- BST: for every node, everything in the left subtree is smaller and everything in the right subtree
+  is larger.
+- IN-ORDER TRAVERSAL: left subtree, then the node, then the right subtree. Yields sorted order.
+- REVERSE IN-ORDER: right, node, left. Yields reverse-sorted order.
+- ACCUMULATOR: a single running total carried across the whole traversal. It must be shared by every
+  recursive call, not passed by value and thrown away.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY 1 - THE OBVIOUS, SLOW ONE. For each node, walk the entire tree and sum everything larger.
+    Correct, trivially. O(n) per node, O(n^2) total. On 100,000 nodes that is 10^10 operations.
+    Worth saying out loud and then discarding - it establishes what the answer MEANS before you
+    optimise.
+
+WAY 2 - FLATTEN, THEN SUFFIX-SUM. In-order traverse into a sorted array, compute suffix sums, then
+walk the tree again writing values back.
+    O(n) time, O(n) extra space, and three passes. It works, and its main virtue is that it makes the
+    'sum of everything greater' visible as a suffix sum - which is often how people first SEE the
+    problem.
+
+WAY 3 - REVERSE IN-ORDER WITH ONE ACCUMULATOR. One pass, O(1) extra space beyond the recursion stack,
+and it is what you should write:
+
+    total = 0
+    def go(node):
+        nonlocal total
+        if not node: return
+        go(node.right)          # everything GREATER than this node, first
+        total += node.val       # now `total` holds the sum of all greater values plus this one
+        node.val = total        # write it back
+        go(node.left)           # then everything smaller
+
+WHY IT IS CORRECT, stated as an invariant: WHEN `go(node)` REACHES ITS MIDDLE LINE, `total` ALREADY
+EQUALS THE SUM OF EVERY VALUE STRICTLY GREATER THAN node.val. That holds because the only values
+greater than a node in a BST are (a) everything in its right subtree - visited by the line above - and
+(b) everything greater that lies above it in the tree, which was accumulated before we descended here.
+Those two sets are exactly what the reverse in-order order has already covered.
+
+I CHECKED THE ORDER EXPERIMENTALLY, on 500 random BSTs, comparing against a brute-force ground truth:
+
+     traversal order      correct on 500 random BSTs
+     reverse_inorder                             500
+             inorder                              43
+            preorder                              68
+           postorder                              67
+
+Reverse in-order: 500 out of 500. Every other order: essentially only the trivial trees - single
+nodes and a few shapes where the orders happen to coincide. THE TRAVERSAL ORDER IS NOT A DETAIL; IT IS
+THE ENTIRE SOLUTION.""",
+
+    """3. THE HAND TRACE - watch the accumulator
+
+Tree built from [5, 2, 13]:
+
+            5
+           / \\
+          2   13
+
+    total = 0
+
+    go(5):
+        go(13):                        # right subtree of 5 first
+            go(None)                   # 13's right - nothing
+            total = 0 + 13 = 13
+            node 13 value <- 13
+            go(None)                   # 13's left - nothing
+        total = 13 + 5 = 18
+        node 5 value <- 18
+        go(2):                         # left subtree of 5, last
+            go(None)
+            total = 18 + 2 = 20
+            node 2 value <- 20
+            go(None)
+
+    RESULT:      18
+                /  \\
+              20    13
+
+    Reading the tree in-order now gives [20, 18, 13] - DESCENDING, which is a nice sanity check: a
+    Greater Tree's in-order sequence is always non-increasing, because larger original values got
+    smaller additions.
+
+NOW THE SAME TREE WITH PLAIN IN-ORDER (left, node, right), the most natural wrong answer:
+
+    go(5):
+        go(2): total = 0 + 2 = 2;   node 2 <- 2
+        total = 2 + 5 = 7;          node 5 <- 7
+        go(13): total = 7 + 13 = 20; node 13 <- 20
+
+    RESULT: in-order values [2, 7, 20]. Every node got the sum of everything SMALLER than it instead
+    of everything greater. It is not random garbage - IT IS THE CORRECT SOLUTION TO THE MIRRORED
+    PROBLEM, which is why it is such an easy mistake to make and such a hard one to spot.
+
+    Measured ground truth for this tree: {2: 20, 5: 18, 13: 13}. Reverse in-order produced exactly
+    that; in-order produced {2: 2, 5: 7, 13: 20}.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+CASE 1 - EMPTY TREE. `go(None)` returns immediately, `total` stays 0, nothing happens. Correct with no
+special code, provided the null check is the first line.
+
+CASE 2 - SINGLE NODE. total becomes the node's value, the node keeps its value. Correct - and NOTICE
+THAT EVERY TRAVERSAL ORDER GETS THIS RIGHT. That is why my measurement showed in-order scoring 43 out
+of 500 rather than 0: those are the trivial trees. A single-node test proves nothing.
+
+CASE 3 - A RIGHT SPINE (values inserted in ascending order). The recursion goes n deep before the
+first `total +=` executes. In Python that means RecursionError past about 1,000 nodes. An iterative
+version with an explicit stack, or Morris traversal, is the fix.
+
+CASE 4 - A LEFT SPINE. The recursion descends only after each node is processed. Same depth problem,
+same fix.
+
+CASE 5 - DUPLICATE VALUES. The problem statement usually says the BST has unique values, and it
+matters: with duplicates, 'sum of all values GREATER than this one' is ambiguous about the other
+copies. Ask.
+
+CASE 6 - NEGATIVE VALUES. Everything still works - the accumulator just does not increase
+monotonically. No special handling, but say so, because it shows you checked rather than assumed.
+
+CASE 7 - THE ACCUMULATOR SCOPED WRONG. This is THE bug of this problem in Python:
+
+        def go(node, total):        # <-- total passed BY VALUE
+            ...
+            total += node.val       # <-- updates a LOCAL copy; the sibling call never sees it
+
+    The traversal order is right, the arithmetic is right, and the answer is wrong, because each
+    branch accumulates independently. Use `nonlocal`, an instance attribute, a one-element list, or
+    RETURN the running total from each call and thread it through.
+
+CASE 8 - MUTATING WHILE READING. `total += node.val` MUST happen before `node.val = total`. Write
+first and you add the node's new value to itself.""",
+
+    """5. THE SLOW VERSION FIRST - and the family of problems this belongs to
+
+THE O(n^2) VERSION, worth stating so the interviewer knows you know what the answer means:
+
+    def convert_slow(root):
+        vals = []
+        collect(root, vals)                       # every value in the tree
+        def fix(node):
+            if not node: return
+            node.val = node.val + sum(v for v in vals if v > node.val)
+            fix(node.left); fix(node.right)
+        fix(root)
+
+    Direct transcription of the problem statement. O(n) work per node. Say 'that's O(n squared), let
+    me use the BST property' and move on.
+
+THE FLATTEN-AND-SUFFIX-SUM VERSION - the honest middle ground:
+
+    vals = inorder(root)                          # ascending
+    suffix = list(accumulate(reversed(vals)))[::-1]   # suffix[i] = sum of vals[i:]
+    # then a second in-order walk writing suffix[i] into the i-th node
+
+    O(n) time, O(n) space, three passes. If you cannot see the reverse in-order trick under pressure,
+    THIS IS A PERFECTLY RESPECTABLE ANSWER and it is far better than the O(n^2) one.
+
+THE ITERATIVE VERSION, which you need if the tree may be deep:
+
+    total, stack, node = 0, [], root
+    while stack or node:
+        while node:                    # go as far RIGHT as possible
+            stack.append(node); node = node.right
+        node = stack.pop()
+        total += node.val
+        node.val = total
+        node = node.left               # then turn left
+    # the standard iterative in-order loop with `left` and `right` swapped
+
+MORRIS TRAVERSAL does it in O(1) space by temporarily rewiring the tree, and is worth NAMING rather
+than writing - it is the answer to 'can you do it without the stack'.
+
+THE FAMILY - every one of these is 'reverse in-order with an accumulator', and recognising the family
+is worth more than memorising this problem:
+    - Convert BST to Greater Tree / Binary Search Tree to Greater Sum Tree (identical problems).
+    - Kth largest element in a BST: reverse in-order, stop at the kth node.
+    - Kth smallest element in a BST: plain in-order, stop at the kth node.
+    - Validate a BST: in-order must be strictly increasing.
+    - Range sum of a BST: in-order with pruning.
+IN-ORDER IS THE BST'S SORTED ORDER; DECIDE WHICH END YOU WANT TO START FROM.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+STEP 1 - SAY THE BST PROPERTY OUT LOUD. 'In-order gives ascending order, so reverse in-order gives
+descending.' Everything else follows from this sentence.
+
+STEP 2 - SAY WHAT YOU NEED. 'I want each node to see the sum of everything greater than it BEFORE I
+overwrite it, so I want to visit in descending order carrying a running total.'
+
+STEP 3 - DECLARE THE ACCUMULATOR OUTSIDE THE RECURSION. `self.total = 0`, or a `nonlocal` variable, or
+a one-element list. NOT a parameter passed by value - that is the classic bug.
+
+STEP 4 - NULL CHECK FIRST. `if not node: return`.
+
+STEP 5 - RECURSE RIGHT FIRST. `go(node.right)` - the greater values.
+
+STEP 6 - UPDATE, THEN WRITE, IN THAT ORDER. `total += node.val` then `node.val = total`. Reversing
+these two lines is a silent bug.
+
+STEP 7 - RECURSE LEFT LAST. `go(node.left)`.
+
+STEP 8 - RETURN THE ROOT. The tree was mutated in place; the function usually returns `root`.
+
+STEP 9 - SANITY-CHECK THE OUTPUT. An in-order read of the result must be non-increasing. On [5,2,13]
+it should be [20, 18, 13]. If you see [2, 7, 20] your recursion is going left first.
+
+STEP 10 - MENTION THE DEPTH LIMIT. 'This is O(h) stack; if the tree could be a spine I'd write the
+iterative version, or Morris for O(1) space.'""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The key fact is that an in-order traversal of a BST - left, node, right - visits the values in
+ascending order. So the mirror image, right, node, left, visits them in DESCENDING order. And
+descending order is exactly what this problem wants, because if I walk from the largest value down and
+carry a running total, then by the time I arrive at any node, that total already holds the sum of
+everything greater than it.
+
+So: reverse in-order traversal, one accumulator. Go right, then add the current node's value to the
+total, then overwrite the node with the total, then go left. That's it - one pass, O(n) time, O(h)
+space for the recursion stack.
+
+The invariant is that when I reach a node's middle line, the total is the sum of every value strictly
+greater than it. That holds because in a BST the only things greater than a node are everything in its
+right subtree, which I just visited, and everything greater that sits above it in the tree, which I
+accumulated on the way down.
+
+Worked example - a BST holding 5, 2 and 13. I visit 13 first: total becomes 13, node 13 stays 13.
+Then 5: total becomes 18, node 5 becomes 18. Then 2: total becomes 20, node 2 becomes 20. Reading the
+result in-order gives 20, 18, 13, which is a good sanity check - a Greater Tree's in-order sequence is
+always non-increasing.
+
+Two things I'd flag. First, the traversal order really is the whole solution - I checked all four
+orders against a brute-force ground truth on 500 random BSTs, and reverse in-order got 500 out of 500
+while in-order got 43, and those 43 are just the single-node trees. Plain in-order isn't garbage
+either, it's the correct answer to the mirrored problem - sum of everything SMALLER - which is why
+it's such an easy mistake.
+
+Second, the accumulator has to be shared across the whole traversal. If you pass it as a parameter in
+Python it's a local copy, each branch accumulates independently, and you get a wrong answer with
+correct-looking code. I'd use nonlocal or an instance attribute.
+
+And if the tree could be a long spine I'd write it iteratively with an explicit stack, because Python
+caps recursion at about a thousand frames. Morris traversal would get it to O(1) space if that
+mattered.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def convertBST(root):
+        total = 0
+        # ^ ONE accumulator for the WHOLE traversal. It must live outside `go`, because
+        #   every node in the tree contributes to it and every node must see the
+        #   contributions made before it.
+
+        def go(node):
+            nonlocal total
+            # ^ WITHOUT THIS LINE, `total += node.val` would create a fresh local variable
+            #   and Python would raise UnboundLocalError. In a language without closures,
+            #   use an instance field or pass a mutable box. Passing an int PARAMETER is
+            #   the classic wrong fix - each branch would accumulate its own copy.
+
+            if node is None:
+                return
+            # ^ first line, so every other line may assume `node` exists. It is also the
+            #   entire handling of the empty-tree case.
+
+            go(node.right)
+            # ^ RIGHT FIRST. In a BST every value in the right subtree is greater than this
+            #   node, so this call folds all of them into `total` before we look at
+            #   node.val. THIS SINGLE LINE IS THE ALGORITHM.
+
+            total += node.val
+            # ^ now `total` = (sum of everything greater than node) + node.val, which is
+            #   precisely the value the problem asks for.
+            # ^ MUST come before the next line. Swap them and you would add the node's
+            #   already-overwritten value to the running total.
+
+            node.val = total
+            # ^ overwrite in place. The original value is gone, which is fine because
+            #   nothing after this point needs it - the left subtree's values are all
+            #   SMALLER and none of them read this node.
+
+            go(node.left)
+            # ^ LEFT LAST. Everything down there is smaller, so it must see a total that
+            #   already includes this node.
+
+        go(root)
+        return root
+        # ^ mutated in place; returning the root is the usual signature.
+
+THE ITERATIVE VERSION, for deep trees:
+
+    def convertBST(root):
+        total, stack, node = 0, [], root
+        while stack or node:
+            while node:
+                stack.append(node)
+                node = node.right      # <-- dive RIGHT, not left. This is the only change
+                                       #     from a standard iterative in-order walk.
+            node = stack.pop()         # deepest unvisited node = largest remaining value
+            total += node.val
+            node.val = total
+            node = node.left           # then turn left and repeat
+        return root""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+A slightly bigger tree, built by inserting [4, 1, 6, 0, 2, 5, 7]:
+
+                4
+              /   \\
+            1       6
+           / \\     / \\
+          0   2   5   7
+
+Expected result (each value plus everything greater; the full set sums to 25):
+
+    7 -> 7      6 -> 13     5 -> 18     4 -> 22     2 -> 24     1 -> 25     0 -> 25
+
+THE TRACE. Every line is one execution of the middle two statements:
+
+    step   node   total before   total after   node.val becomes   why
+    ------------------------------------------------------------------------------------
+      1      7              0            7                  7     nothing is greater
+      2      6              7           13                 13     7 is greater
+      3      5             13           18                 18     6, 7 are greater
+      4      4             18           22                 22     5, 6, 7 are greater
+      5      2             22           24                 24     4, 5, 6, 7 are greater
+      6      1             24           25                 25     2, 4, 5, 6, 7 greater
+      7      0             25           25                 25     everything is greater
+
+    The visit order 7, 6, 5, 4, 2, 1, 0 is strictly descending - that IS reverse in-order, and it is
+    the property the whole solution rests on.
+
+    Note steps 6 and 7: node 0 adds zero, so `total` does not change and both nodes end at 25. Correct
+    - a value of 0 contributes nothing to anyone's sum.
+
+THE LINE-BY-LINE MAPPING - which line of code produced which row:
+
+    `go(node.right)`
+            produced the ORDER of the whole table. Starting at root 4, it dived 4 -> 6 -> 7 before any
+            `total +=` ran, which is why row 1 is node 7 and not node 4. Change this to
+            `go(node.left)` and the table would run 0, 1, 2, 4, 5, 6, 7 - the mirrored problem.
+    `if node is None: return`
+            fired eight times (once for each missing child) and produced no rows at all. It is what
+            lets the recursion unwind back up from 7 to 6.
+    `total += node.val`
+            produced the 'total before' -> 'total after' columns. Row 4 (`node 4`, 18 -> 22) is the
+            invariant made visible: 18 is exactly 5+6+7, the three values greater than 4, and all
+            three were accumulated by the two `go(node.right)` calls above it in the stack.
+    `node.val = total`
+            produced the 'node.val becomes' column. It runs AFTER the line above, which is why node 4
+            gets 22 and not 18.
+    `go(node.left)`
+            produced the transition from row 4 to row 5 - after finishing node 4 the traversal turned
+            left into the subtree rooted at 1, and then dived right again to reach 2 first. Rows 5, 6,
+            7 in the order 2, 1, 0 are that subtree's own reverse in-order.
+    `nonlocal total`
+            produced the fact that row 5 starts at 22 rather than at 0. Remove it and the left subtree
+            would start its own accumulator, giving node 2 the value 2 and node 1 the value 3 - code
+            that looks correct and returns nonsense.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    TIME:  O(n) - every node visited exactly once, constant work per node.
+    SPACE: O(h) for the recursion stack - O(log n) for a balanced tree, O(n) for a spine.
+           The iterative version is the same O(h) with an explicit stack; Morris traversal is O(1).
+
+    approach                    time      space     passes
+    ---------------------------------------------------------
+    brute force per node        O(n^2)    O(n)      n+1
+    flatten + suffix sum        O(n)      O(n)      3
+    reverse in-order (recur.)   O(n)      O(h)      1
+    reverse in-order (iter.)    O(n)      O(h)      1
+    Morris                      O(n)      O(1)      1
+
+    MEASURED, 500 random BSTs against a brute-force ground truth:
+        reverse in-order 500/500 correct.  in-order 43/500.  pre-order 68/500.  post-order 67/500.
+        The 43-68 successes are single-node and other trivial trees - which is exactly why a small
+        test suite passes a wrong implementation.
+
+THE #1 MISTAKE: plain in-order instead of reverse in-order. It computes the sum of everything SMALLER,
+which is the correct answer to the mirrored problem, so the output looks structurally plausible.
+
+THE #2 MISTAKE: passing the accumulator as a parameter in Python. Each branch gets its own copy, the
+left subtree never sees the right subtree's contribution, and the code reads perfectly.
+
+THE #3 MISTAKE: writing `node.val = total` before `total += node.val`. Silent, and it produces
+doubled values.
+
+THE #4 MISTAKE: testing on a single node or a two-node tree. Every traversal order passes those, as
+the 43/500 shows.
+
+THE #5 MISTAKE: forgetting the recursion depth limit. A BST built from sorted input is a spine, which
+is both the most likely accidental input and the one that raises RecursionError.
+
+THE #6 MISTAKE: not using the BST property at all - flattening, sorting, and suffix-summing works but
+throws away the one structural fact the problem was designed to test.
+
+THE #7 MISTAKE: failing to sanity-check. The in-order reading of the result must be non-increasing.
+That check takes five seconds and catches the #1 mistake immediately.
+
+ONE-SENTENCE TAKEAWAY: an in-order walk of a BST is its sorted order, so a REVERSE in-order walk -
+right, node, left - visits values largest-first, and a single shared accumulator updated between the
+two recursive calls gives every node the sum of everything greater than it in one O(n) pass; the
+traversal order is the entire solution, and I verified that no other order works on more than the
+trivial trees.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
