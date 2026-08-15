@@ -138,6 +138,15 @@
   .newbox .dl-row select { flex: 0 0 116px; }
   .newbox .dl-row input { flex: 1; min-width: 0; }
   .newbox .dl-row input[hidden] { display: none; }
+  .hero.nodate::before { background: #64748b; }
+  .nodate-msg { font-size: 13.5px; font-weight: 600; color: var(--color-text-secondary);
+                margin-bottom: 10px; }
+  .inline-dl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .inline-dl select, .inline-dl input { font: inherit; font-size: 13.5px; padding: 8px 10px;
+     border-radius: 9px; border: 1px solid var(--color-border);
+     background: var(--color-bg); color: var(--color-text); }
+  .inline-dl select { flex: 0 0 116px; } .inline-dl input { flex: 0 1 150px; }
+  .inline-dl input[hidden] { display: none; }
   .empty { text-align: center; padding: 34px 16px; color: var(--color-text-secondary); font-size: 14px; }
   .warn { background:#fef2f2; border:1px solid #dc2626; color:#7f1d1d; padding:11px 13px; border-radius:10px;
           font-size:13px; font-weight:700; margin-bottom:12px; }
@@ -261,6 +270,28 @@
       </div>`;
   }
 
+  /* The pinned-but-undated hero. Deliberately not a countdown-shaped shell
+     with dashes in it — an empty clock reads as broken. */
+  function heroNoDateHTML(g){
+    return `<div class="hero nodate">
+        <div class="hero-title">${esc(g.title)}</div>
+        <div class="nodate-msg">No deadline yet, so there is nothing to count down.
+          Give it one below and this becomes a plan.</div>
+        <div class="dl-row inline-dl">
+          <select id="h-unit">
+            <option value="days">In days</option>
+            <option value="hours">In hours</option>
+            <option value="minutes">In minutes</option>
+            <option value="date">On a date</option>
+          </select>
+          <input id="h-amount" type="number" min="1" step="1" placeholder="45">
+          <input id="h-when" type="datetime-local" hidden>
+          <button class="btn sm" id="h-set" type="button" data-goal="${g.id}">Set deadline</button>
+        </div>
+        <div class="coach" data-tone="${esc(g.coach.tone)}">${esc(g.coach.message)}</div>
+      </div>`;
+  }
+
   function rowHTML(g){
     const c = g.countdown;
     const d = c.has_deadline ? c.display : null;
@@ -290,7 +321,12 @@
     const CD = (typeof Countdown !== "undefined") ? Countdown : null;
     if (CD) CD.clear();                   // detached nodes must stop ticking
     const primary = DATA.goals.find(g => g.id === DATA.primary_id);
-    $("hero").innerHTML = primary && primary.countdown.has_deadline ? heroHTML(primary) : "";
+    /* A pinned goal with no deadline used to blank the hero entirely — the
+       page looked broken while three dated goals sat below it. Honour the pin
+       either way: show the goal, and ask for the date that is missing rather
+       than silently swapping in a different goal. */
+    $("hero").innerHTML = !primary ? ""
+      : (primary.countdown.has_deadline ? heroHTML(primary) : heroNoDateHTML(primary));
     const rest = DATA.goals.filter(g => !primary || g.id !== primary.id);
     $("list").innerHTML = rest.length ? rest.map(rowHTML).join("")
       : (primary ? "" : `<div class="empty">No goals yet. Add one above — a title and a date is enough to start.</div>`);
@@ -380,7 +416,34 @@
     if (pct && ev.key === "Enter") { ev.preventDefault(); pct.blur(); }
   });
 
+  /* The inline "set a deadline" control on a pinned-but-undated hero. Shares
+     the same relative/absolute payload rules as the main form. */
+  document.addEventListener("change", (ev) => {
+    if (ev.target.id !== "h-unit") return;
+    const byDate = ev.target.value === "date";
+    $("h-amount").hidden = byDate;
+    $("h-when").hidden = !byDate;
+  });
   document.addEventListener("click", async (ev) => {
+    const set = ev.target.closest("#h-set");
+    if (set) {
+      const unit = $("h-unit").value;
+      const body = {};
+      if (unit === "date") {
+        if (!$("h-when").value) return;
+        body.target_at = $("h-when").value;
+      } else {
+        const amount = parseFloat($("h-amount").value);
+        if (isNaN(amount) || amount <= 0) { $("h-amount").focus(); return; }
+        body["in_" + unit] = amount;
+      }
+      try {
+        await api("/api/goal-planner/goals/" + set.dataset.goal,
+                  {method:"PATCH", body: JSON.stringify(body)});
+        load();
+      } catch (e) { $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+      return;
+    }
     const pin = ev.target.closest("[data-pin]");
     if (!pin) return;
     try {

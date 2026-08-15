@@ -749,3 +749,25 @@ def test_goal_planner_percent_is_typeable_in_the_ui(auth_client):
     assert "data-pct" in html, "no hook for saving a typed percentage"
     assert "savePct" in html, "typed percentages are never persisted"
     assert "setSelectionRange" in html, "re-render does not restore the caret"
+
+
+def test_pinned_goal_without_a_deadline_still_renders_a_hero(auth_client, monkeypatch):
+    """Found on live data: a goal was pinned with no target date, so the hero
+    rendered EMPTY while three dated goals sat in the list below it — the page
+    looked broken. Honour the pin either way: show the goal and ask for the
+    missing date, rather than blanking or silently substituting another goal."""
+    import routes.goals as goals
+    objectives = [
+        {"id": "pinned", "title": "No date", "status": "active", "is_primary": True,
+         "created_at": "2026-08-01T00:00:00+00:00"},
+        {"id": "dated", "title": "Has a date", "status": "active",
+         "target_at": "2036-12-31T18:00:00+05:30", "created_at": "2026-08-01T00:00:00+00:00"},
+    ]
+    monkeypatch.setattr(goals, "get",
+                        lambda table, params=None, **kw: objectives if table == "objectives" else [])
+    body = auth_client.get("/api/goal-planner").get_json()
+    assert body["primary_id"] == "pinned", "the pin must be respected, not overridden"
+
+    html = auth_client.get("/goal-planner").get_data(as_text=True)
+    assert "heroNoDateHTML" in html, "no fallback hero for a pinned goal with no deadline"
+    assert "h-set" in html, "the undated hero offers no way to add the missing deadline"
