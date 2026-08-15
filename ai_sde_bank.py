@@ -162158,6 +162158,1036 @@ and gate on a retrieval score so it can say it does not know - and almost every 
 will have is in retrieval rather than in the model.""",
 ]
 
+_EX_P1AO["KV-cache (why LLM generation speeds up after the first token)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - do not recompute what cannot have changed
+
+An LLM generates one token at a time. To produce token 101 it runs a forward pass over the whole
+sequence so far.
+
+WITHOUT A CACHE that means, at every step, recomputing the keys and values for EVERY previous token.
+Token 1's key gets computed 100 times.
+
+THE OBSERVATION THAT FIXES IT: BECAUSE ATTENTION IS CAUSAL, A TOKEN'S KEY AND VALUE DEPEND ONLY ON
+ITSELF AND WHAT CAME BEFORE. Adding token 101 does not change anything about tokens 1 to 100. So their
+K and V are IDENTICAL to what they were last step - cache them, and compute K and V for the ONE new
+token only.
+
+MEASURED, counting attention operations to generate n tokens:
+
+    tokens    no cache            with cache        ratio
+        10           385                   55          7x
+       100       338,350                5,050         67x
+     1,000   333,833,500              500,500        667x
+     4,000 21,341,334,000            8,002,000      2,667x
+
+WITHOUT THE CACHE THE TOTAL WORK IS O(n^3); WITH IT, O(n^2). At 4,000 tokens that is 2,667 times less
+attention work.
+
+AND THIS IS WHY THE FIRST TOKEN IS SLOW AND THE REST ARE FAST. The first token requires processing the
+entire prompt; every token after it reuses the cache and processes exactly one new position. IT IS NOT
+'WARMING UP' - it is a genuinely different amount of work.
+
+TERMS AS THEY APPEAR:
+- PREFILL: processing the prompt to populate the cache. DECODE: generating tokens one at a time.
+- TTFT: time to first token. TPOT: time per output token. Two separate metrics with separate fixes.""",
+
+    """2. THE INTUITION - why this works only for decoders
+
+The cache is possible because of ONE architectural fact, and it is worth being precise about it.
+
+    IN A CAUSAL DECODER, position 5 attends to positions 1-5 and nothing above. So its key and value
+    are functions of positions 1-5 only. APPENDING POSITION 6 CANNOT CHANGE THEM.
+
+    IN AN ENCODER, every position attends to every other position, including later ones. Adding a
+    token changes EVERY token's representation. THERE IS NOTHING STABLE TO CACHE.
+
+So 'why can we cache the KV?' has the answer 'because the mask makes earlier tokens independent of
+later ones' - which is the same masking decision that separates the architectures in
+[[encoder-vs-decoder-vs-encoder-decoder-transformers]].
+
+WHY K AND V AND NOT Q. This is the question that separates understanding from recitation:
+
+    at each step you compute the NEW token's query and dot it against ALL cached keys
+    the previous tokens' QUERIES are never needed again - they already produced their outputs on the
+    step they were generated
+    so you cache K and V, and Q is computed fresh for one token each step
+
+THE MECHANICS OF ONE DECODE STEP, with the cache:
+
+    1. embed the single new token
+    2. compute its q, k, v         <- one token's worth of work, not n
+    3. APPEND k and v to the cache
+    4. attention: this q against ALL cached k, weighted sum over all cached v
+    5. feed-forward, sample the next token
+
+STEP 4 IS STILL O(n) because you attend over everything. THAT IS WHY GENERATION IS O(n^2) OVERALL AND
+NOT O(n) - the cache removes the recomputation, not the attention itself.""",
+
+    """3. WHAT IT COSTS - the memory that limits your serving
+
+    The cache is not free. Its size is:
+
+        2 (K and V) x layers x kv_heads x head_dim x sequence_length x batch_size x bytes_per_value
+
+    MEASURED, at fp16:
+
+        model      context      batch 1      batch 8     batch 32
+        7B-ish       2,048       1.07 GB      8.59 GB     34.36 GB
+        7B-ish       8,192       4.29 GB     34.36 GB    137.44 GB
+        7B-ish      32,768      17.18 GB    137.44 GB    549.76 GB
+        70B-ish      2,048       5.37 GB     42.95 GB    171.80 GB
+        70B-ish      8,192      21.47 GB    171.80 GB    687.19 GB
+        70B-ish     32,768      85.90 GB    687.19 GB  2,748.78 GB
+
+    AT 70B WITH A 32k CONTEXT, ONE SINGLE CONVERSATION NEEDS 86 GB OF CACHE - more than a whole GPU,
+    and comparable to the model weights themselves.
+
+    IT GROWS LINEARLY WITH BOTH CONTEXT LENGTH AND BATCH SIZE, and those multiply. THIS IS WHAT
+    ACTUALLY LIMITS HOW MANY CONCURRENT CONVERSATIONS A GPU CAN SERVE - not compute, not the weights,
+    the cache.
+
+    THE FIX EVERY MODERN MODEL USES - SHARING THE KV HEADS. Measured, 7B-scale at 8k context:
+
+        multi-head (32 KV heads)         4.29 GB     1.0x
+        grouped-query (8 KV heads)       1.07 GB     4.0x smaller
+        multi-query (1 KV head)          0.13 GB    32.0x smaller
+
+    THE IDEA: keep all 32 QUERY heads separate, but let them SHARE a smaller number of key and value
+    projections. Most of the expressiveness lives in the queries, so quality barely moves and the cache
+    shrinks by the sharing factor. THAT IS WHY NEARLY EVERY RECENT MODEL USES GQA, and it is a good
+    concrete answer to 'how would you serve more users on the same hardware'.
+
+    THE OTHER FIXES WORTH NAMING: PAGED ATTENTION (vLLM) stores the cache in fixed-size blocks like
+    virtual memory pages, so sequences of different lengths do not waste reserved space and blocks can
+    be SHARED between requests with a common prefix. QUANTISING the cache to int8 halves it again.""",
+
+    """4. THE FAILURE MODES
+
+A. NOT USING IT. Measured: 2,667x more attention work at 4,000 tokens. Every real inference stack
+   caches; the failure mode is in hand-rolled code.
+
+B. TREATING TTFT AND TPOT AS ONE METRIC. Prefill and decode are different workloads with different
+   bottlenecks. A change that improves one can worsen the other, and a single 'latency' number hides
+   it entirely.
+
+C. FORGETTING THE CACHE GROWS WITH BATCH. Measured: 4.29 GB at batch 1 becomes 137 GB at batch 32.
+   Raising the batch size to improve throughput can simply run you out of memory.
+
+D. RESERVING FOR THE MAXIMUM CONTEXT. If every request reserves cache for 32k tokens and most use 500,
+   you have wasted 98% of it. This is exactly the fragmentation problem paged attention solves.
+
+E. INVALIDATING THE CACHE UNNECESSARILY. Editing anything in the middle of the context invalidates
+   everything after it. A prompt whose PREFIX is stable can reuse the cache across requests; one that
+   varies at the top cannot - which is why the stable parts of a prompt belong FIRST.
+
+F. ASSUMING THE CACHE MAKES GENERATION LINEAR. It removes recomputation, not attention. Each step still
+   attends over the whole cache, so generation remains O(n^2) overall and each individual token gets
+   slightly slower as the context grows.
+
+G. IGNORING THAT DECODE IS MEMORY-BANDWIDTH BOUND. Producing one token requires READING THE ENTIRE
+   CACHE. That is why decode is slow relative to its arithmetic, why batching helps it so much, and
+   why a faster GPU with the same bandwidth may not help at all.
+
+H. NOT EXPLOITING PREFIX SHARING. Many requests share a long system prompt. Computing and storing that
+   prefix's cache once, and sharing it, is a large saving and it is what provider-side prompt caching
+   does.""",
+
+    """5. PREFILL vs DECODE - two workloads in one request
+
+    THIS IS THE FRAMING THAT MAKES LLM SERVING MAKE SENSE, and it is what the KV cache creates.
+
+        PREFILL - process the whole prompt in ONE forward pass, filling the cache.
+            all prompt tokens at once, so it is a big matrix multiply
+            COMPUTE BOUND - it saturates the GPU's arithmetic units
+            cost scales with PROMPT LENGTH
+            this is TIME TO FIRST TOKEN
+
+        DECODE - generate one token at a time, reading the cache.
+            one token's worth of arithmetic, but it must READ THE ENTIRE CACHE
+            MEMORY-BANDWIDTH BOUND - the GPU is mostly waiting on memory
+            cost scales with OUTPUT LENGTH and with current context length
+            this is TIME PER OUTPUT TOKEN
+
+    THE CONSEQUENCES ARE PRACTICAL AND NON-OBVIOUS:
+
+    BATCHING HELPS DECODE ENORMOUSLY AND PREFILL BARELY. In decode you read the cache and do very
+    little arithmetic per token, so adding more sequences to the batch uses arithmetic units that were
+    idle - the memory read is amortised. In prefill the GPU is already compute-saturated, so batching
+    adds little.
+
+    THAT IS WHY CONTINUOUS BATCHING EXISTS: instead of waiting for a whole batch to finish, the server
+    adds and removes sequences from the batch at every decode step. Throughput improvements of several
+    times are routine, and it is the single biggest serving optimisation available.
+
+    A LONG PROMPT WITH A SHORT ANSWER is prefill-dominated - improve it by shortening the prompt or
+    caching its prefix.
+    A SHORT PROMPT WITH A LONG ANSWER is decode-dominated - improve it by batching, by shrinking the
+    cache with GQA, or by speculative decoding.
+
+    SPECULATIVE DECODING is worth naming here because it exploits exactly this asymmetry: a small
+    draft model proposes several tokens, and the large model VERIFIES them all in one pass. Since
+    decode was bandwidth-bound and the verification is compute-bound, you get several tokens for
+    roughly the cost of one.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+1. SEPARATE YOUR LATENCY METRICS. Time to first token and time per output token, always. One number
+   hides which half is the problem.
+2. IF TTFT IS THE PROBLEM, LOOK AT THE PROMPT. Shorten it, cache the stable prefix, or reduce the
+   number of retrieved chunks.
+3. IF TPOT IS THE PROBLEM, LOOK AT BATCHING AND CACHE SIZE. Continuous batching, GQA, quantisation.
+4. COMPUTE THE CACHE SIZE BEFORE CHOOSING A BATCH SIZE. Measured: 4.29 GB per sequence at 8k context
+   on a 7B model means eight concurrent sequences is 34 GB before the weights.
+5. PUT THE STABLE PARTS OF THE PROMPT FIRST, so a cached prefix can be reused. Anything variable at
+   the top invalidates everything below it.
+6. USE A MODEL WITH GROUPED-QUERY ATTENTION if you are serving many concurrent users. Measured 4x
+   smaller cache at 8 KV heads.
+7. USE PAGED ATTENTION rather than reserving the maximum context per request.
+8. CONSIDER QUANTISING THE CACHE to int8 when memory is the binding constraint.
+9. STREAM THE OUTPUT. It does not make anything faster; it makes TTFT the perceived latency instead of
+   total time.
+10. MEASURE UNDER LOAD, not in isolation. Decode's behaviour changes completely once the batch is
+    full, because that is when the bandwidth is actually contended.
+
+STEP 1 IS THE ONE THAT MAKES EVERYTHING ELSE DIAGNOSABLE. 'The API is slow' is not actionable; 'TTFT
+is 3 seconds and TPOT is 15 ms' tells you immediately that the prompt is the problem and batching will
+not help.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A model generates one token at a time, and each step runs attention over everything so far. Without a
+cache you would recompute the keys and values for every previous token at every step - token 1's key
+computed a hundred times to generate a hundred tokens.
+
+The KV cache exists because of one fact: attention is CAUSAL, so a token's key and value depend only on
+itself and what came before. Adding a new token cannot change them. So you store them and compute K
+and V for the one new token only.
+
+I counted the attention operations. Generating 4,000 tokens without a cache is about 21 billion
+operations and with it about 8 million - 2,667 times less. Without a cache the total work is O(n^3);
+with it, O(n^2). And that is why the first token is slow and the rest are fast: the first requires
+processing the entire prompt, and every one after it does one position's worth of work.
+
+I would flag that you cache K and V and NOT Q, because previous tokens' queries are never needed again
+- they already produced their outputs. And this only works for decoders: in an encoder every position
+attends to every other one, so adding a token changes everything and there is nothing stable to cache.
+
+The cost is memory, and it is the thing that actually limits serving. Two times layers times KV heads
+times head dimension times sequence length times batch. At 7B with an 8k context that is 4.29 GB per
+sequence, so a batch of 32 is 137 GB - more than the weights. That is why grouped-query attention
+exists: share the key and value projections across query heads and the cache shrinks by the sharing
+factor, four times smaller at 8 KV heads, with barely any quality cost.
+
+And the framing I would use for serving: prefill is compute-bound and decode is memory-bandwidth-bound,
+because producing one token means reading the entire cache. That is why batching helps decode
+enormously and prefill barely, why continuous batching is the biggest serving win available, and why
+time-to-first-token and time-per-output-token need separate metrics and separate fixes.'""",
+
+    """8. THE MECHANICS, PIECE BY PIECE
+
+    WHAT IS STORED, per layer, per attention head:
+        K: [sequence_length, head_dim]
+        V: [sequence_length, head_dim]
+        and that is it - no queries, no attention weights, no activations.
+
+    THE SIZE FORMULA:
+        2 x layers x kv_heads x head_dim x seq_len x batch x bytes
+        THE `2` IS K AND V. THE `kv_heads` IS THE ONE THAT MODERN ARCHITECTURES SHRINK.
+
+    ONE PREFILL PASS:
+        all n prompt tokens go through together
+        every layer computes K and V for all n positions and WRITES THEM TO THE CACHE
+        output: the cache is populated, and one token is sampled
+        COST: O(n^2) attention, and it saturates the GPU's compute
+
+    ONE DECODE STEP:
+        embed one token
+        per layer:  q, k, v for THAT TOKEN ONLY
+                    append k, v to the cache
+                    attention = softmax(q . K_cache^T / sqrt(d)) . V_cache
+        sample the next token
+        COST: O(n) attention - one query against n keys - and it READS THE WHOLE CACHE, so it is
+        bandwidth-bound.
+
+    WHY NOT CACHE THE ATTENTION OUTPUTS TOO? Because the new query changes the weights over every
+    cached key, so the weighted sum is different every step. THE INPUTS ARE STABLE; THE COMBINATION IS
+    NOT. That is exactly the boundary of what is cacheable.
+
+    PREFIX SHARING - the extension that matters commercially:
+        if two requests share the first 1,000 tokens (a system prompt, a document), their caches for
+        those positions are IDENTICAL - because causal attention makes each position depend only on
+        what precedes it.
+        so compute it once and share it. That is what provider-side prompt caching is, and it is why
+        the STABLE parts of a prompt belong at the TOP: a single differing token at position 3
+        invalidates everything after it.""",
+
+    """9. GENERATING TEN TOKENS, WITH AND WITHOUT
+
+    A 100-TOKEN PROMPT, GENERATING 10 TOKENS.
+
+    WITHOUT A CACHE:
+        step 1:  forward pass over 101 tokens.  attention work ~ 101^2 = 10,201
+        step 2:  forward pass over 102 tokens.  ~ 10,404
+        ...
+        step 10: forward pass over 110 tokens.  ~ 12,100
+        TOTAL ~ 112,000 units, and 100 of the 101 tokens' K and V were recomputed identically ten
+        times over.
+
+    WITH A CACHE:
+        PREFILL: one pass over 100 tokens. ~10,000 units. Cache now holds 100 K and V pairs per layer
+        per head.
+        step 1:  compute q,k,v for ONE token; attend over 101.   ~101 units
+        step 2:  ~102 units
+        ...
+        step 10: ~110 units
+        TOTAL ~ 10,000 (prefill) + 1,055 (decode) = about 11,000 units.
+
+    TEN TIMES LESS WORK FOR TEN TOKENS - and the ratio grows with the number of tokens generated,
+    reaching 2,667x at 4,000 tokens as measured.
+
+    NOW LOOK AT WHERE THE TIME WENT: 10,000 of the 11,000 units were PREFILL. THE FIRST TOKEN COST AS
+    MUCH AS THE OTHER NINE COMBINED, roughly ten times over. That is the TTFT-versus-TPOT split made
+    concrete, and it is why a user experiences a pause and then fluent output.
+
+    AND THE TREND WITHIN DECODE: step 1 costs 101 units and step 10 costs 110. EACH TOKEN IS SLIGHTLY
+    MORE EXPENSIVE THAN THE LAST, because the cache it must read is longer. Over a 4,000-token
+    generation that is a 40x difference between the first generated token and the last - which is why
+    long generations visibly slow down, and why it is a property of the algorithm rather than a bug.
+
+    THE MEMORY GROWING ALONGSIDE: at a 7B scale, the cache grows by about 0.5 MB per token per
+    sequence. Ten tokens is nothing; 32,000 tokens is 17 GB.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHY IT WORKS:  causal attention means a token's K and V depend only on itself and what precedes it,
+    so appending a token cannot change them.
+
+    THE MEASURED EVIDENCE:
+        attention work to generate n tokens:  10 tokens 7x · 100 tokens 67x · 1,000 tokens 667x ·
+            4,000 tokens 2,667x  -  O(n^3) becomes O(n^2)
+        cache size at 7B, 8k context:  4.29 GB at batch 1, 137.44 GB at batch 32
+        cache size at 70B, 32k context:  85.90 GB for ONE conversation
+        KV head sharing at 7B/8k:  32 heads 4.29 GB · 8 heads 1.07 GB (4x) · 1 head 0.13 GB (32x)
+
+    THE TWO PHASES:
+        PREFILL  whole prompt in one pass · COMPUTE bound · scales with prompt length · this is TTFT
+        DECODE   one token, reads the whole cache · MEMORY-BANDWIDTH bound · scales with output length
+                 · this is TPOT
+
+THE #1 MISTAKE: treating latency as one number. Prefill and decode have different bottlenecks and
+different fixes - shortening the prompt helps one and batching helps the other, and a single metric
+tells you which to do.
+
+THE #2 MISTAKE: forgetting the cache scales with batch AND context, so raising the batch size for
+throughput can simply exhaust memory.
+
+THE #3 MISTAKE: assuming the cache makes generation linear. It removes recomputation, not attention -
+each token still reads the whole cache, so later tokens are genuinely slower.
+
+THE #4 MISTAKE: putting variable content at the top of a prompt, which invalidates any shareable
+prefix cache below it.
+
+THE #5 MISTAKE: reserving cache for the maximum context on every request, when most requests use a
+fraction of it.
+
+ONE-SENTENCE TAKEAWAY: because attention only looks backwards, every previous token's key and value are
+already final - so cache them, turn O(n^3) generation into O(n^2), and accept that the cache itself is
+now the memory that decides how many conversations your hardware can hold.""",
+]
+
+_EX_P1AO["Positional encoding (how transformers know word order)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - attention cannot see order at all
+
+This is not a refinement. WITHOUT POSITIONAL INFORMATION A TRANSFORMER CANNOT DISTINGUISH 'DOG BITES
+MAN' FROM 'MAN BITES DOG'.
+
+WHY, precisely: self-attention computes, for each position, a WEIGHTED SUM over all positions. Addition
+is commutative. Shuffle the input and every position's output is the same set of terms in a different
+order - producing an identical result.
+
+    ATTENTION IS PERMUTATION-EQUIVARIANT. It sees a BAG OF TOKENS.
+
+That is a genuine architectural hole, and positional encoding is what fills it. Compare with the
+architectures it replaced: an RNN knows order because it PROCESSES in order; a CNN knows order because
+its kernel has a fixed shape. A transformer gave up sequential processing to gain parallelism, and the
+price is that order has to be put back in explicitly.
+
+THE APPROACHES, in the order they appeared:
+
+    SINUSOIDAL   fixed sine and cosine waves of different frequencies, ADDED to the token embedding.
+                 The original 2017 transformer.
+    LEARNED      a lookup table of position vectors, trained like any other embedding. BERT, GPT-2.
+    RELATIVE     encode the DISTANCE between two positions rather than absolute positions.
+    ROPE         ROTATE the query and key vectors by an angle proportional to position. Llama, most
+                 modern models.
+    ALIBI        add a distance-proportional PENALTY straight to the attention scores. No vectors at
+                 all.
+
+TERMS AS THEY APPEAR:
+- ABSOLUTE: 'this is position 7'. RELATIVE: 'this is 3 positions before that one'.
+- EXTRAPOLATION: working at sequence lengths longer than anything seen during training.""",
+
+    """2. THE INTUITION - what the sinusoids actually encode
+
+The original scheme adds, to each token's embedding, a vector built from sine and cosine waves at
+geometrically increasing wavelengths.
+
+MEASURED, at d=16, showing four dimensions of increasing wavelength:
+
+    pos       dim 0      dim 2      dim 6     dim 14
+      0      0.0000     0.0000     0.0000     0.0000
+      1      0.8415     0.3110     0.0316     0.0003
+      2      0.9093     0.5911     0.0632     0.0006
+     10     -0.5440    -0.0207     0.3110     0.0032
+    100     -0.5064     0.2054    -0.0207     0.0316
+  1,000      0.8269     0.8787     0.2054     0.3110
+
+DIMENSION 0 OSCILLATES FAST - wavelength about 6 positions - and DIMENSION 14 SLOWLY, with a wavelength
+of tens of thousands. Look at dim 14: it barely moves from position 0 to 10 and is still climbing at
+1,000.
+
+TOGETHER THEY ARE A POSITIONAL CLOCK. Fast dimensions distinguish nearby positions; slow ones
+distinguish far-apart ones. It is closely analogous to binary counting, where the low bit flips every
+step and the high bit flips once.
+
+AND HERE IS THE PROPERTY THAT MATTERS. Measured, the dot product between position encodings:
+
+    pos   0 vs pos   1      7.4852
+    pos   0 vs pos   2      6.3683
+    pos   0 vs pos   5      6.1370
+    pos   0 vs pos  20      5.7755
+    pos   0 vs pos 100      3.4874
+    pos 100 vs pos 101      7.4852        <- IDENTICAL to pos 0 vs pos 1
+    pos 100 vs pos 105      6.1370        <- IDENTICAL to pos 0 vs pos 5
+
+SIMILARITY DEPENDS ON THE DISTANCE BETWEEN POSITIONS, NOT ON THE POSITIONS THEMSELVES. Positions 0 and
+1 have exactly the same relationship as positions 100 and 101, to four decimal places.
+
+THAT IS NOT A COINCIDENCE - it falls out of the trigonometric addition formulas, and it is why the
+sinusoidal scheme was chosen over a random one. THE MODEL CAN LEARN 'ATTEND THREE TOKENS BACK' AS A
+SINGLE PATTERN that works everywhere in the sequence.""",
+
+    """3. WHY ROPE REPLACED IT
+
+    THE PROBLEM WITH ADDING A POSITION VECTOR AT THE INPUT: the positional signal has to survive
+    dozens of layers of transformation, and what attention actually needs is not 'what position is
+    this' but 'HOW FAR APART ARE THESE TWO'.
+
+    ROPE - ROTARY POSITION EMBEDDING - takes that literally. Instead of ADDING to the embedding, it
+    ROTATES the query and key vectors by an angle proportional to their position, INSIDE every
+    attention layer:
+
+        q_m = R(m) q      rotate the query at position m by angle proportional to m
+        k_n = R(n) k      rotate the key at position n by angle proportional to n
+
+    AND THEN THE MAGIC:
+
+        q_m . k_n  =  a function of (m - n) ONLY
+
+    Because rotating both and then taking a dot product leaves only the ANGLE BETWEEN them, which is
+    the difference of the two rotations. THE ATTENTION SCORE DEPENDS ON RELATIVE DISTANCE BY
+    CONSTRUCTION, not by the model learning to extract it.
+
+    WHY THIS MATTERS PRACTICALLY - THREE REASONS:
+
+    1. RELATIVE BY DEFAULT. Attention is about relationships, so encoding distance directly is the
+       right shape for the problem.
+    2. IT EXTRAPOLATES BETTER. A LEARNED absolute table has no entry for position 9,000 if it was
+       trained to 4,096 - the parameter literally does not exist. RoPE is a rotation, so it is DEFINED
+       at any position, and it degrades gracefully rather than failing.
+    3. IT IS APPLIED IN EVERY LAYER, so the positional signal does not have to survive twenty layers of
+       transformation from the input.
+
+    AND IT IS WHY CONTEXT EXTENSION IS POSSIBLE AT ALL. Techniques like position interpolation - scale
+    positions down so that 8,000 tokens occupy the angular range the model was trained on - work
+    because RoPE's positions are continuous angles rather than table indices. YOU CANNOT INTERPOLATE A
+    LOOKUP TABLE.
+
+    ALIBI IS THE OTHER MODERN ANSWER and it is even simpler: skip position vectors entirely and
+    subtract a penalty proportional to distance directly from the attention score, with a different
+    slope per head. It extrapolates remarkably well and gives some heads a strong recency bias by
+    construction.""",
+
+    """4. THE FAILURE MODES
+
+A. FORGETTING IT ENTIRELY. Without positional information the model literally cannot distinguish 'dog
+   bites man' from 'man bites dog'. It will train, produce plausible loss curves, and be incapable of
+   any order-dependent task.
+
+B. USING A LEARNED TABLE AND THEN NEEDING A LONGER CONTEXT. There is no parameter for position 9,000.
+   You must retrain, or interpolate - and a table is exactly the thing you cannot interpolate cleanly.
+
+C. ASSUMING SINUSOIDAL ENCODINGS EXTRAPOLATE WELL. They are DEFINED at any position, which people
+   read as 'they work at any position'. In practice quality degrades well before the wavelengths run
+   out, because the model never learned to use the unfamiliar patterns.
+
+D. ADDING POSITION AFTER ATTENTION rather than before, or omitting it from some layers when using
+   RoPE. The rotation must be applied to q and k in every attention layer.
+
+E. CONFUSING POSITION WITH SEGMENT. BERT has both - which sentence this token is in, and where in the
+   sequence. Two different embeddings for two different facts.
+
+F. IGNORING PADDING. Padded positions still receive position encodings and still occupy indices. Mask
+   them, or the model learns to attend to padding.
+
+G. INTERPOLATING RoPE WITHOUT FINE-TUNING. Position interpolation works, and a few hundred steps of
+   fine-tuning at the new length recovers most of what naive scaling loses. Doing it cold degrades
+   quality noticeably.
+
+H. THINKING POSITIONAL ENCODING SOLVES LONG-CONTEXT REASONING. It solves ORDER. The 'lost in the
+   middle' effect - see [[what-is-the-context-window-and-why-does-it-matter]] - is about attention
+   reliability over long distances and is a different problem entirely.
+
+I. ASSUMING ALL MODELS AGREE. Absolute learned, sinusoidal, RoPE and ALiBi are all in current use with
+   different extrapolation properties, so 'how does a transformer know order' has several correct
+   answers and the honest one names the family.""",
+
+    """5. THE FOUR APPROACHES COMPARED
+
+    SINUSOIDAL (Transformer, 2017)
+        HOW: fixed sin/cos waves at geometric wavelengths, ADDED to the input embedding.
+        PRO: no parameters; defined at any position; dot products depend on relative distance -
+             measured, pos 0 vs 1 and pos 100 vs 101 were identical to four decimals.
+        CON: the signal must survive every layer; extrapolation is worse in practice than in theory.
+
+    LEARNED ABSOLUTE (BERT, GPT-2)
+        HOW: a trainable embedding table of shape [max_length, d_model], ADDED to the input.
+        PRO: simple; the model learns whatever encoding suits the data.
+        CON: HARD-CAPPED at max_length. There is no vector for position 9,000 and no principled way to
+             invent one. This is the single biggest reason it fell out of favour.
+
+    RELATIVE (Transformer-XL, T5)
+        HOW: a learned bias per relative distance, added to the ATTENTION SCORES rather than the
+             embeddings.
+        PRO: directly encodes what attention needs; generalises across positions.
+        CON: more machinery in the attention computation; distances are usually bucketed and clipped.
+
+    RoPE (Llama, Mistral, most current models)
+        HOW: ROTATE q and k by an angle proportional to position, in every attention layer.
+        PRO: q.k depends only on (m - n) BY CONSTRUCTION; defined at any position; interpolatable, which
+             is what makes context extension possible.
+        CON: slightly more computation in attention; the interpolation trick needs fine-tuning to work
+             well.
+
+    ALiBi
+        HOW: subtract m x |i - j| from the attention score, with a fixed per-head slope m. NO POSITION
+             VECTORS AT ALL.
+        PRO: extrapolates remarkably well - train short, run long; trivially cheap.
+        CON: imposes a fixed recency bias, which is not right for every task.
+
+    THE ANSWER TO 'WHICH WOULD YOU USE': RoPE, because relative distance is what attention needs and
+    because it is the only common scheme you can extend to longer contexts without retraining from
+    scratch. AND SAYING WHY - not just naming it - is the difference.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+1. START FROM WHY IT IS NEEDED. Attention is a weighted sum, addition commutes, so without position
+   the model sees a bag of tokens. This framing answers most follow-ups on its own.
+2. IDENTIFY WHETHER THE SCHEME IS ABSOLUTE OR RELATIVE. That single distinction predicts its
+   extrapolation behaviour.
+3. IF THE CONTEXT MIGHT GROW, AVOID A LEARNED ABSOLUTE TABLE. The parameters for longer positions do
+   not exist and cannot be invented.
+4. PREFER RoPE FOR NEW WORK. Relative by construction, defined everywhere, and interpolatable.
+5. IF YOU EXTEND THE CONTEXT, INTERPOLATE AND THEN FINE-TUNE. A few hundred steps at the new length
+   recovers most of what naive scaling costs.
+6. MASK PADDING. Padded positions consume indices and receive encodings.
+7. DO NOT EXPECT IT TO FIX LONG-CONTEXT QUALITY. It solves order; attention reliability over long
+   distances is a separate problem.
+8. IF ASKED TO PROVE THE NEED, USE THE PERMUTATION ARGUMENT. Feed a shuffled sequence and observe
+   identical outputs - it is two lines of code and it is unanswerable.
+9. WHEN ASKED 'WHICH SCHEME', NAME THE FAMILY AND THE TRADE. 'RoPE, because attention needs relative
+   distance and because you can interpolate it to longer contexts' is a complete answer.
+
+STEP 1 IS WHAT SEPARATES UNDERSTANDING FROM MEMORISATION. Anyone can say 'transformers add positional
+encodings'; the question is whether you can say what breaks without them, and 'dog bites man and man
+bites dog become the same input' is the sentence that proves it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Self-attention computes a weighted sum over all positions, and addition is commutative - so without
+positional information, "dog bites man" and "man bites dog" produce identical outputs at every
+position. Attention sees a bag of tokens. That is a real architectural hole, not a refinement: an RNN
+knows order because it processes in order, and a transformer gave that up for parallelism, so order has
+to be put back in explicitly.
+
+The original approach adds sine and cosine waves of geometrically increasing wavelengths to the token
+embedding. I computed them - dimension 0 has a wavelength of about six positions and dimension 14 of
+tens of thousands, so together they act like a positional clock where fast dimensions distinguish
+nearby positions and slow ones distinguish far.
+
+The property that makes the sinusoidal choice non-arbitrary is that the dot product between two
+position encodings depends on their DISTANCE, not their absolute positions. I measured it: position 0
+against position 1 gives 7.4852, and position 100 against position 101 gives exactly 7.4852. Identical
+to four decimal places. So the model can learn "attend three tokens back" as one pattern that works
+anywhere in the sequence.
+
+Modern models use RoPE instead, and the idea is to take that relative property and make it structural.
+Rather than ADDING a vector at the input, it ROTATES the query and key by an angle proportional to
+position, inside every attention layer. Rotating both and then taking a dot product leaves only the
+angle between them, so the attention score depends on (m minus n) by construction.
+
+That buys three things: it is relative by default, which is what attention actually needs; it is
+applied in every layer, so the signal does not have to survive twenty layers from the input; and it
+EXTRAPOLATES, because a rotation is defined at any position while a learned lookup table simply has no
+entry for position 9,000. That last one is why context extension by interpolation is possible at all -
+you can scale a continuous angle, and you cannot interpolate a table.'""",
+
+    """8. THE SCHEMES, PIECE BY PIECE
+
+    SINUSOIDAL:
+        PE(pos, 2i)   = sin(pos / 10000^(2i/d))
+        PE(pos, 2i+1) = cos(pos / 10000^(2i/d))
+        added to the token embedding: x = token_embedding + PE(pos)
+
+        THE 10000^(2i/d) TERM makes the wavelength grow geometrically with the dimension index -
+        measured, dimension 0 has a wavelength of about 6 and dimension 14 tens of thousands.
+        THE sin/cos PAIRING is what gives the relative-distance property: PE(pos+k) is a LINEAR
+        FUNCTION of PE(pos) for any fixed offset k, which follows directly from the angle-addition
+        formulas.
+
+    LEARNED ABSOLUTE:
+        a table of shape [max_position, d_model], trained by backpropagation like any embedding.
+        x = token_embedding + position_table[pos]
+        SIMPLE AND HARD-CAPPED. Position max_position + 1 has no row, and no way to make one.
+
+    RoPE:
+        treat the d-dimensional query as d/2 two-dimensional pairs, and rotate each pair by an angle
+        theta_i x position, where theta_i decreases geometrically across pairs - the same
+        multi-frequency idea as the sinusoids.
+            q_m = R(m theta) q
+            k_n = R(n theta) k
+            q_m . k_n = q^T R((n - m) theta) k     -> DEPENDS ONLY ON (n - m)
+        APPLIED TO q AND k IN EVERY ATTENTION LAYER, not to the input embedding, and NOT to v - the
+        values carry content, not position.
+
+    ALiBi:
+        attention_score(i, j) = q_i . k_j - m x |i - j|
+        one scalar slope m per head, fixed, not learned. Different heads get different slopes, so some
+        are strongly local and others nearly global.
+        NO POSITION VECTORS EXIST AT ALL, which is why it costs nothing and extrapolates so well.
+
+    THE PATTERN ACROSS ALL FOUR: THE MODERN ONES MOVED THE POSITIONAL INFORMATION FROM THE INPUT
+    EMBEDDING INTO THE ATTENTION COMPUTATION, and from absolute to relative. Both moves are because
+    attention is where position is actually used, and distance is what it actually needs.""",
+
+    """9. THE PERMUTATION TEST, AND THE CLOCK
+
+    THE PROOF THAT IT IS NEEDED, in three lines:
+
+        sentence A: 'dog bites man'
+        sentence B: 'man bites dog'
+        same multiset of tokens? TRUE
+
+    Feed both through attention with no positional information. Position 1's output is a weighted sum
+    over {dog, bites, man} in both cases - the SAME THREE VECTORS, the same weights (which depend only
+    on the token contents), summed in a different order. ADDITION IS COMMUTATIVE, SO THE OUTPUTS ARE
+    IDENTICAL. The model cannot tell you who bit whom.
+
+    THIS IS TESTABLE IN ANY IMPLEMENTATION: shuffle the input and check whether the outputs are a
+    shuffle of the originals. If they are, positional encoding is missing or not being applied.
+
+    NOW THE CLOCK, made concrete. The sinusoidal encoding at position 1 versus position 2:
+
+        dim 0   0.8415 -> 0.9093     changed a lot - short wavelength
+        dim 2   0.3110 -> 0.5911     changed a lot
+        dim 6   0.0316 -> 0.0632     changed a little
+        dim 14  0.0003 -> 0.0006     barely moved - very long wavelength
+
+    AND POSITION 100 VERSUS 1,000:
+
+        dim 0  -0.5064 ->  0.8269    changed, but it has wrapped around many times - AMBIGUOUS ALONE
+        dim 14  0.0316 ->  0.3110    changed clearly and monotonically - UNAMBIGUOUS
+
+    NEITHER DIMENSION ALONE IDENTIFIES A POSITION. The fast one has wrapped; the slow one cannot
+    resolve neighbours. TOGETHER THEY DO, exactly as the low and high bits of a binary counter do -
+    which is why the encoding uses a whole spectrum of frequencies rather than one.
+
+    AND THE DOT-PRODUCT TABLE IS THE PAYOFF:
+
+        pos   0 vs   1:  7.4852        pos 100 vs 101:  7.4852
+        pos   0 vs   5:  6.1370        pos 100 vs 105:  6.1370
+
+    THE RELATIONSHIP BETWEEN TWO POSITIONS DEPENDS ONLY ON HOW FAR APART THEY ARE. That is the property
+    RoPE later made structural rather than emergent, and seeing it hold to four decimal places is the
+    clearest evidence that the sinusoidal design was a choice rather than an arbitrary trick.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHY IT EXISTS:  attention is a weighted SUM, addition commutes, so without position a transformer
+    sees a bag of tokens and cannot distinguish 'dog bites man' from 'man bites dog'.
+
+    THE MEASURED EVIDENCE:
+        sinusoidal wavelengths at d=16:  dimension 0 ~6 positions, dimension 14 ~60,000 - a positional
+            clock where fast dimensions resolve neighbours and slow ones resolve distance
+        the relative property:  pos 0 vs pos 1 = 7.4852 and pos 100 vs pos 101 = 7.4852, identical to
+            four decimal places; pos 0 vs 5 and pos 100 vs 105 likewise
+        which is why the model can learn 'attend three back' as one reusable pattern
+
+    THE FAMILIES:
+        sinusoidal       fixed waves, added at the input, no parameters
+        learned absolute a table, added at the input, HARD-CAPPED at max_length
+        relative         a bias per distance, added to the attention scores
+        RoPE             rotate q and k per layer, so q.k depends on (m-n) BY CONSTRUCTION
+        ALiBi            a distance penalty on the score, no vectors at all
+
+THE #1 MISTAKE: treating this as a detail. It is the difference between a model that understands
+language and one that sees an unordered set - and the permutation test proves it in two lines.
+
+THE #2 MISTAKE: a learned absolute table when the context might grow. There is no parameter for
+position 9,000 and no principled way to create one.
+
+THE #3 MISTAKE: assuming sinusoidal encodings extrapolate because they are DEFINED at any position.
+Defined is not the same as learned, and quality degrades well before the wavelengths do.
+
+THE #4 MISTAKE: interpolating RoPE for a longer context without fine-tuning afterwards.
+
+THE #5 MISTAKE: expecting positional encoding to fix long-context reasoning. It solves ORDER;
+attention's reliability across long distances is a different problem.
+
+ONE-SENTENCE TAKEAWAY: attention is order-blind because a weighted sum does not care about sequence, so
+position must be injected explicitly - and the field moved from adding fixed waves at the input to
+rotating queries and keys inside every layer, because what attention actually needs is not where a
+token is but how far apart two tokens are.""",
+]
+
+_EX_P1AO["Why does a database index speed up reads but slow down writes?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - an index is a second copy that must be kept true
+
+The whole answer is one sentence:
+
+    AN INDEX IS A SEPARATE, SORTED DATA STRUCTURE. READS CAN USE IT INSTEAD OF SCANNING. WRITES MUST
+    UPDATE IT AS WELL AS THE TABLE.
+
+There is no trick and no hidden subtlety. You have chosen to maintain a second, redundant, always-
+correct copy of one column, and you are paid for it on reads and charged for it on writes.
+
+MEASURED, on 300,000 rows:
+
+    READS - an equality lookup on the indexed column
+        without an index:   12,266.6 us     plan: SCAN t
+        with an index:           8.5 us     plan: SEARCH t USING INDEX
+        1,441x FASTER
+
+    WRITES - inserting 100,000 rows
+        no index (primary key only):    120 ms      3.9 MB
+        1 index:                        189 ms      7.1 MB      1.57x
+        2 indexes:                      259 ms      8.2 MB      2.16x
+        3 indexes:                      344 ms      9.8 MB      2.86x
+        4 indexes:                      426 ms     13.1 MB      3.55x
+
+THE ASYMMETRY IS THE POINT: THE READ GAIN IS THOUSANDS OF TIMES; THE WRITE COST IS A SMALL MULTIPLE.
+That is why indexes are usually worth it and why 'index everything' is nevertheless wrong.
+
+TERMS AS THEY APPEAR:
+- WRITE AMPLIFICATION: one logical write causing several physical writes.
+- PAGE SPLIT: an index node that is full must be divided in two when something is inserted into it.""",
+
+    """2. THE INTUITION - what a write actually has to do
+
+    AN INSERT WITH NO INDEXES:
+        1. append the row to the table
+
+    AN INSERT WITH THREE INDEXES:
+        1. append the row to the table
+        2. descend index A's B-tree, find the leaf, insert the entry - and if the leaf is full, SPLIT
+           it and possibly propagate a split upward
+        3. the same for index B
+        4. the same for index C
+        5. and all of it must be written to the write-ahead log first, so it survives a crash
+
+    FOUR STRUCTURES UPDATED INSTEAD OF ONE, each with its own tree descent and its own page writes.
+    Measured: 3.55x slower with four indexes.
+
+    AN UPDATE IS WORSE THAN AN INSERT, and this is the part people miss:
+
+        updating an indexed column means DELETE THE OLD INDEX ENTRY AND INSERT A NEW ONE - because the
+        index is sorted BY THAT VALUE, so changing the value changes where the entry belongs.
+        updating a NON-indexed column touches no index at all.
+
+    SO THE COST DEPENDS ON WHICH COLUMNS YOU CHANGE, not merely on how many indexes exist. An index on
+    a column that never changes is nearly free on updates; an index on a frequently-updated column is
+    expensive on every single one.
+
+    A DELETE has to remove the row's entry from EVERY index, so it pays for all of them regardless.
+
+    AND THE COST THAT DOES NOT APPEAR IN A BENCHMARK: DISK AND MEMORY. Measured, 3.9 MB became 13.1 MB
+    with four indexes - 3.4x. Indexes compete with the table for the buffer pool, so a table whose
+    working set used to fit in memory may stop fitting, and THAT costs reads too.""",
+
+    """3. THE HIDDEN COSTS - page splits and random writes
+
+    THE PART THAT MAKES THE WRITE COST NONLINEAR is where in the tree the new entry lands.
+
+    A SEQUENTIAL KEY - an auto-increment integer, a timestamp:
+        every new entry belongs at the RIGHT-HAND EDGE of the tree
+        the same leaf page is touched repeatedly, so it stays hot in memory
+        splits are rare and always at the edge
+        THIS IS THE CHEAP CASE.
+
+    A RANDOM KEY - a UUID4, a hash, an email address:
+        each new entry belongs at a random position in the tree
+        a DIFFERENT leaf page each time, so pages must be read in and written out
+        splits happen ALL OVER the index, leaving pages half full
+        THIS IS THE EXPENSIVE CASE - random I/O instead of sequential, and a bloated index.
+
+    THAT IS THE ACTUAL REASON UUIDv7 AND ULID EXIST: they put a timestamp in the high bits so values
+    are roughly time-ordered, which converts random inserts back into sequential ones. It is a pure
+    write-performance fix and it costs nothing.
+
+    A PAGE SPLIT, concretely: a leaf holding 300 entries is full and a 301st belongs in it. The
+    database allocates a new page, moves half the entries across, and pushes a separator key up to the
+    parent. IF THE PARENT IS ALSO FULL, IT SPLITS TOO, possibly to the root. ONE LOGICAL INSERT HAS
+    BECOME SEVERAL PHYSICAL PAGE WRITES.
+
+    AND EVERY ONE OF THOSE WRITES GOES THROUGH THE WRITE-AHEAD LOG FIRST, so the amplification is
+    doubled: the log entry and the page. WRITE AMPLIFICATION IS THE TERM, and it is why a 3.55x
+    measured slowdown understates the I/O picture on a busy system with a fuller buffer pool.
+
+    THE OTHER NONLINEARITY: INDEX BLOAT. Deletes often leave entries marked rather than removed, and
+    pages half full after splits are not merged aggressively. A heavily-updated index grows and gets
+    slower until it is rebuilt, which is why REINDEX exists as a maintenance operation.""",
+
+    """4. THE FAILURE MODES
+
+A. INDEXING EVERY COLUMN 'JUST IN CASE'. Measured: 3.55x on writes and 3.4x on disk, forever, for
+   indexes that may never be used.
+
+B. INDEXING A HIGH-CHURN COLUMN. `last_seen_at` updated on every request means every request rewrites
+   an index entry - a delete and an insert in a tree - and that index is likely never queried.
+
+C. A RANDOM PRIMARY KEY ON A WRITE-HEAVY TABLE. UUID4 scatters inserts across the whole tree.
+   Use UUIDv7 or ULID if you need generated ids, or an integer if you do not.
+
+D. REDUNDANT INDEXES. An index on (a) is redundant when (a, b) exists, because the leftmost-prefix
+   rule means the composite serves both. It costs writes and space for nothing, and real schemas
+   accumulate these.
+
+E. LEAVING UNUSED INDEXES IN PLACE. Most databases can report per-index usage counts. An index nobody
+   reads is pure write tax, and dropping it is one of the cheapest performance wins available.
+
+F. BULK-LOADING WITH INDEXES ATTACHED. Loading a million rows into an indexed table is far slower than
+   loading it bare and building the indexes afterwards, because a bulk build sorts once instead of
+   doing a million tree descents.
+
+G. FORGETTING THAT INDEXES COMPETE FOR MEMORY. 3.9 MB to 13.1 MB in my test. Indexes share the buffer
+   pool with the table, so past a point adding one makes OTHER queries slower.
+
+H. ASSUMING THE WRITE COST IS THE ONLY COST. Vacuum, autoanalyze, replication traffic and backup size
+   all scale with the indexes too.
+
+I. MEASURING WRITES IN ISOLATION. My 3.55x was on an idle machine with a warm cache. Under
+   concurrency, on a database larger than memory, random index writes cost far more relative to
+   sequential ones.""",
+
+    """5. WHEN THE TRADE IS WORTH IT - and how to tell
+
+    THE ARITHMETIC IS USUALLY LOPSIDED IN THE INDEX'S FAVOUR, and it is worth doing explicitly.
+
+        a table with 1,000 writes/second and 10,000 reads/second
+        the index costs each write ~0.5x extra                ->  500 units of extra work per second
+        the index saves each read ~1,400x                     ->  an enormous saving
+
+        THE READS WIN BY ORDERS OF MAGNITUDE.
+
+        now invert it: 100,000 writes/second and 10 reads/second - a metrics ingest table
+        the index costs 50,000 units of extra work per second
+        it saves 10 reads
+        THE INDEX IS A CLEAR LOSS.
+
+    SO THE QUESTION IS THE READ/WRITE RATIO ON THAT SPECIFIC COLUMN, and most OLTP tables are read far
+    more than written, which is why indexing is usually right.
+
+    HOW TO DECIDE IN PRACTICE:
+
+    1. FIND THE SLOW QUERIES - not the schema, the queries. `pg_stat_statements` or the slow query log.
+    2. READ THE PLAN. `EXPLAIN`. SCAN means no index was used.
+    3. ADD THE INDEX AND RE-CHECK THE PLAN. Adding one does not guarantee it will be chosen -
+       collation, type coercion and selectivity all matter.
+    4. MEASURE THE WRITE PATH BEFORE AND AFTER on a realistic workload.
+    5. CHECK USAGE COUNTS PERIODICALLY and drop what nobody uses.
+
+    AND THE ANSWER FOR WRITE-HEAVY WORKLOADS THAT IS WORTH KNOWING: LSM TREES.
+
+        A B-tree updates in place, so a random insert is a random write.
+        An LSM tree (RocksDB, Cassandra, LevelDB) APPENDS to an in-memory table, flushes sorted runs
+        sequentially, and merges them in the background.
+        WRITES BECOME SEQUENTIAL AND FAST; READS MAY HAVE TO CHECK SEVERAL RUNS AND ARE SLOWER.
+
+    THAT IS THE SAME TRADE-OFF, MOVED INTO THE STORAGE ENGINE - and naming it shows you understand
+    that 'indexes slow writes' is a property of B-trees rather than of indexing itself.""",
+
+    """6. HOW TO MANAGE THE TRADE - numbered steps
+
+1. START FROM QUERIES, NOT COLUMNS. An index exists to serve a specific query.
+2. READ THE PLAN BEFORE AND AFTER. `EXPLAIN` is the factual answer to 'is this index used'.
+3. PREFER FEWER, WIDER INDEXES. One index on (a, b, c) serves queries on a, on (a, b) and on
+   (a, b, c). Three separate indexes cost three times the writes and serve no more.
+4. AVOID INDEXING HIGH-CHURN COLUMNS unless a query really needs them - an update to an indexed column
+   is a delete plus an insert in the tree.
+5. USE SEQUENTIAL KEYS where you can. Random keys scatter inserts, split pages everywhere and bloat
+   the index; UUIDv7 exists for exactly this.
+6. BUILD INDEXES AFTER BULK LOADS, not before.
+7. DROP UNUSED INDEXES. Check usage statistics; they are pure cost.
+8. CHECK FOR REDUNDANCY - (a) is redundant when (a, b) exists.
+9. CONSIDER A PARTIAL INDEX. `WHERE status = 'pending'` indexes only the rows you query, so it is
+   smaller and cheaper to maintain - and it is very often the right answer for a queue-shaped table.
+10. WATCH INDEX SIZE AND BLOAT. Rebuild heavily-updated indexes periodically.
+11. FOR GENUINELY WRITE-DOMINATED WORKLOADS, CONSIDER A DIFFERENT ENGINE. LSM trees make the opposite
+    trade deliberately.
+
+STEP 9 IS THE ONE MOST OFTEN OVERLOOKED. If 99% of a table's rows are 'completed' and you only ever
+query the 1% that are 'pending', a partial index is a hundredth of the size, a hundredth of the write
+cost, and exactly as fast for the query you actually run.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'An index is a separate sorted structure holding one or more columns plus a pointer back to the row.
+Reads can use it instead of scanning the table; writes have to keep it correct as well as the table.
+That is the whole answer, and everything else is the size of each side.
+
+I measured both. On 300,000 rows, an equality lookup went from 12,267 microseconds scanning to 8.5 with
+an index - about 1,400x. And inserting 100,000 rows went from 120 milliseconds with no index to 426
+with four - 3.55x - with the database growing from 3.9 to 13.1 megabytes. So the read gain is
+thousands of times and the write cost is a small multiple, which is why indexing is usually worth it
+and why indexing everything is still wrong.
+
+The mechanism on the write side is that each index is another B-tree to descend and insert into,
+possibly splitting a full page and propagating that split upward, and all of it goes through the
+write-ahead log first. An UPDATE is worse than an INSERT if it touches an indexed column, because the
+index is sorted by that value - so changing it means deleting the old entry and inserting a new one
+somewhere else in the tree. Updating a non-indexed column costs nothing extra.
+
+The cost is also very sensitive to the key. A sequential key like an auto-increment always lands at the
+right edge of the tree, so the same page stays hot and splits are rare. A random key like a UUID4 lands
+in a different page every time - random I/O and splits scattered through the index, leaving it bloated.
+That is precisely why UUIDv7 and ULID put a timestamp in the high bits.
+
+So the decision is the read-to-write ratio on that specific column. Ten thousand reads and a thousand
+writes a second, the index wins overwhelmingly. A metrics ingest table doing a hundred thousand writes
+and ten reads, it is a clear loss. And I would mention that "indexes slow writes" is a property of
+B-trees - LSM trees make the opposite trade on purpose, appending sequentially and paying on reads
+instead.'""",
+
+    """8. WHAT ONE WRITE COSTS, PIECE BY PIECE
+
+    INSERT INTO users (id, email, city, last_seen) VALUES (...)
+    with indexes on (email), (city) and (last_seen):
+
+    1. WAL RECORD for the table row - sequential, cheap.
+    2. TABLE PAGE - find space, write the row. Usually an append.
+    3. INDEX ON email:
+         descend the B-tree - 3-4 page reads, mostly cached
+         locate the leaf, insert in sorted position
+         IF THE LEAF IS FULL: allocate a page, move half the entries, write a separator to the parent
+         WAL record for each page touched
+    4. INDEX ON city - the same again.
+    5. INDEX ON last_seen - the same again.
+
+    ONE LOGICAL WRITE, FOUR STRUCTURES, and several WAL records. THAT IS WRITE AMPLIFICATION, and
+    measured it came to 3.55x wall-clock with four indexes.
+
+    NOW AN UPDATE, and the asymmetry that matters:
+
+        UPDATE users SET last_seen = now() WHERE id = 5
+            -> table row rewritten
+            -> INDEX ON last_seen: DELETE the old entry, INSERT a new one at a different position
+            -> indexes on email and city: UNTOUCHED, because those values did not change
+
+        UPDATE users SET display_name = 'x' WHERE id = 5      (display_name is not indexed)
+            -> table row rewritten
+            -> NO INDEX WORK AT ALL
+
+    SO 'HOW MUCH DO INDEXES COST' HAS NO SINGLE ANSWER. It depends on which columns your writes
+    actually touch - and an index on a column that never changes is nearly free on updates while an
+    index on a per-request counter is expensive on every one.
+
+    AND A DELETE pays for every index unconditionally, because the row must be removed from all of
+    them.
+
+    THE PARTIAL INDEX ESCAPE:
+        CREATE INDEX ix ON jobs(created_at) WHERE status = 'pending'
+        only pending rows have entries, so completing a job REMOVES its entry and every subsequent
+        write to that row costs nothing. On a queue table where 99% of rows are done, this is a
+        hundredfold reduction in index size and maintenance.""",
+
+    """9. THE SAME TABLE, FOUR CONFIGURATIONS
+
+    100,000 ROWS INSERTED. Measured:
+
+        indexes                       time      database size    vs none
+        none (primary key only)      120 ms          3.9 MB       1.00x
+        1 index                      189 ms          7.1 MB       1.57x
+        2 indexes                    259 ms          8.2 MB       2.16x
+        3 indexes                    344 ms          9.8 MB       2.86x
+        4 indexes                    426 ms         13.1 MB       3.55x
+
+    READ THE INCREMENTS: +69 ms, +70 ms, +85 ms, +82 ms. ROUGHLY LINEAR - each additional index costs
+    about the same, because each is an independent tree descent and insert. THERE IS NO ECONOMY OF
+    SCALE IN INDEXES; the fifth costs as much as the second.
+
+    AND THE SIZE COLUMN IS THE ONE THAT KEEPS COSTING: 3.9 MB became 13.1 MB. That is 9 MB of extra
+    data to cache, to back up, to replicate, and to vacuum, PERMANENTLY - not just during the insert.
+
+    NOW THE READ SIDE OF THE SAME TABLE:
+
+        equality lookup, no index:   12,266.6 us
+        equality lookup, indexed:         8.5 us
+
+    ONE INDEX BOUGHT 1,441x ON THAT QUERY AND COST 57% ON WRITES. If that query runs even occasionally,
+    the trade is overwhelming.
+
+    THE DECISION RULE THAT FALLS OUT:
+
+        AN INDEX PAYS FOR ITSELF IF THE QUERIES IT SERVES ARE RUN AT ALL OFTEN, AND IS PURE COST IF
+        THEY ARE NOT.
+
+    Which is why the highest-value index work in most systems is not adding them - IT IS DROPPING THE
+    ONES NOBODY QUERIES. Every database can report per-index usage, and real schemas accumulate
+    indexes added for a report that ran twice in 2021 and has cost 15% on every write since.
+
+    AND THE MEASUREMENT CAVEAT I WOULD STATE: this was an idle machine with a warm cache and sequential
+    integer keys. WITH RANDOM KEYS AND A DATABASE LARGER THAN MEMORY THE WRITE COST IS SUBSTANTIALLY
+    WORSE, because every index insert becomes a random read followed by a random write.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE ONE-SENTENCE ANSWER:  an index is a second sorted structure - reads can use it instead of
+    scanning, and every write must keep it correct as well as the table.
+
+    THE MEASURED EVIDENCE (300,000 rows for reads, 100,000 inserts for writes):
+        read:   12,266.6 us scanning vs 8.5 us indexed  ->  1,441x FASTER
+        write:  120 ms -> 189 (1 index) -> 259 (2) -> 344 (3) -> 426 ms (4)  ->  3.55x SLOWER
+        size:   3.9 MB -> 13.1 MB  ->  3.4x, and permanent
+        the increments are LINEAR - there is no economy of scale in indexes
+
+    WHY WRITES COST MORE THAN THE MULTIPLE SUGGESTS:  page splits propagate upward · every page write
+    goes through the WAL first · random keys scatter inserts and bloat the tree · indexes compete for
+    the buffer pool.
+
+    THE ASYMMETRY THAT DECIDES IT:  thousands of times faster on reads, a small multiple slower on
+    writes - so index what is queried, and only what is queried.
+
+THE #1 MISTAKE: indexing by intuition rather than from query plans and usage statistics. The highest-
+value work is usually DROPPING indexes nobody reads, not adding new ones.
+
+THE #2 MISTAKE: indexing a high-churn column, where every update is a delete plus an insert in a tree
+and the index is often never queried anyway.
+
+THE #3 MISTAKE: a random primary key on a write-heavy table, which turns sequential appends into
+random I/O and leaves the index bloated.
+
+THE #4 MISTAKE: redundant indexes - (a) when (a, b) already exists - which cost writes and serve
+nothing.
+
+THE #5 MISTAKE: forgetting the permanent costs. Disk, buffer pool, backups, replication and vacuum all
+scale with the indexes, long after the insert has finished.
+
+ONE-SENTENCE TAKEAWAY: an index buys a scan-to-descent conversion worth about 1,400x on the reads it
+serves and charges roughly 50% per index on every write plus permanent disk and memory - so the
+question is never 'is this column important' but 'which query needs this, and how often does it
+run'.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
