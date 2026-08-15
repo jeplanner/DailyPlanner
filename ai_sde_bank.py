@@ -169483,6 +169483,1043 @@ giving the optimiser a reason to keep the old weights or freezing them so it can
 set that measures the old task being the only thing that tells you which you need.""",
 ]
 
+_EX_P1AO["GPU memory math for serving LLMs"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - four things compete for the same VRAM
+
+'Will this model fit?' is a question with four terms, and people usually count only the first:
+
+    WEIGHTS        the parameters. params x bytes-per-parameter.
+    KV CACHE       one entry per token per layer per attention head, for every concurrent sequence.
+    ACTIVATIONS    the working memory of one forward pass.
+    OVERHEAD       CUDA context, the framework, fragmentation. Call it 1-2 GB.
+
+THE HEADLINE ARITHMETIC IS EASY:
+
+    model      fp32      fp16      int8      int4
+    7B        28.0G     14.0G      7.0G      3.5G
+    13B       52.0G     26.0G     13.0G      6.5G
+    70B      280.0G    140.0G     70.0G     35.0G
+
+TWO BYTES PER PARAMETER AT fp16 - so a 7B model is 14 GB and a 70B model is 140 GB, which is two
+80 GB cards before you have served a single request.
+
+AND THEN THE TERM THAT ACTUALLY DECIDES YOUR CAPACITY. At fp16 with a 4k context:
+
+    model    weights    KV @ batch 1    KV @ batch 32    total @ batch 32
+    7B         14.0G           2.1G            68.7G               83.4G
+    13B        26.0G           3.4G           107.4G              134.7G
+    70B       140.0G          10.7G           343.6G              490.6G
+
+AT BATCH 32, THE KV CACHE EXCEEDS THE WEIGHTS FOR EVERY MODEL HERE. The 7B model's cache is 68.7 GB
+against 14 GB of weights - nearly five times.
+
+SO THE THING THAT LIMITS HOW MANY USERS A GPU SERVES IS NOT THE MODEL. IT IS THE CACHE.
+
+TERMS AS THEY APPEAR:
+- VRAM: the GPU's own memory. It is fixed and it is the binding constraint.
+- KV CACHE: the stored keys and values for previous tokens - see
+  [[kv-cache-why-llm-generation-speeds-up-after-the-first-token]].""",
+
+    """2. THE INTUITION - the formula, and which term dominates when
+
+    WEIGHTS:
+        bytes = parameters x bytes_per_parameter
+        fp32 = 4, fp16/bf16 = 2, int8 = 1, int4 = 0.5
+
+        FIXED. It does not change with load, and it is the number everyone quotes.
+
+    KV CACHE:
+        bytes = 2 x layers x kv_heads x head_dim x sequence_length x batch_size x bytes_per_value
+                ^ K and V
+
+        SCALES WITH BOTH CONTEXT LENGTH AND CONCURRENCY, AND THOSE MULTIPLY. Doubling the context and
+        doubling the batch quadruples it.
+
+    ACTIVATIONS:
+        roughly a few percent of the weights for inference. SMALL, and it is a large term in TRAINING.
+
+    THE CROSSOVER IS WHAT MATTERS. At batch 1 the 7B model's cache is 2.1 GB against 14 GB of weights -
+    15%. At batch 32 it is 68.7 GB against 14 - 490%.
+
+    SO 'HOW MUCH MEMORY DOES A 7B MODEL NEED' HAS NO ANSWER WITHOUT A BATCH SIZE AND A CONTEXT LENGTH,
+    and giving one is the mark of somebody who has not served a model.
+
+    THE THREE LEVERS, and each attacks a different term:
+
+        QUANTISE THE WEIGHTS      14 GB -> 3.5 GB at int4. Attacks the fixed term.
+        GROUPED-QUERY ATTENTION   fewer KV heads, so the cache shrinks proportionally - 4x at 8 heads
+                                  instead of 32. ATTACKS THE TERM THAT ACTUALLY DOMINATES.
+        PAGED ATTENTION           allocate the cache in fixed blocks rather than reserving the maximum
+                                  context per sequence, so short requests do not waste space.
+
+    THE SECOND AND THIRD ARE THE ONES THAT INCREASE THROUGHPUT, because throughput is batch size and
+    batch size is limited by the cache.""",
+
+    """3. TRAINING IS A COMPLETELY DIFFERENT SUM
+
+    MEASURED, for a 7B model with Adam and mixed precision:
+
+        component                        7B model
+        weights (fp16)                      14.0G
+        gradients (fp16)                    14.0G
+        Adam state m and v (fp32)           56.0G
+        master weights (fp32)               28.0G
+        TOTAL before activations           112.0G
+
+    SIXTEEN BYTES PER PARAMETER TO TRAIN, AGAINST TWO TO SERVE. A model that runs comfortably on one
+    consumer card needs a multi-GPU node to fine-tune.
+
+    WHERE IT GOES, and the biggest term surprises people: THE OPTIMISER STATE IS FOUR TIMES THE
+    WEIGHTS. Adam keeps a momentum and a variance estimate PER PARAMETER, both in fp32 for numerical
+    stability - so 8 bytes per parameter for the optimiser alone against 2 for the weights.
+
+    THAT IS WHY EVERY MEMORY-SAVING TRAINING TECHNIQUE TARGETS THE OPTIMISER:
+
+        LoRA                    train a small adapter, so gradients and optimiser state exist only for
+                                ~0.1% of the parameters. Measured elsewhere at 90.66 GB -> 13.05 GB -
+                                see [[what-is-fine-tuning-with-lora-parameter-efficient-tuning]].
+        8-BIT OPTIMISERS        quantise m and v. Roughly halves the total.
+        GRADIENT CHECKPOINTING  recompute activations in the backward pass instead of storing them.
+                                Trades ~30% more compute for a large activation saving.
+        ZeRO / FSDP             shard the optimiser state, gradients and weights across GPUs so each
+                                holds 1/N. This is what makes very large training possible at all.
+        GRADIENT ACCUMULATION   a large effective batch with a small memory footprint, by summing
+                                gradients over several small batches before stepping.
+
+    THE ORDER TO REACH FOR THEM: LoRA FIRST, because it removes the largest term entirely rather than
+    shrinking it. Then gradient checkpointing, then an 8-bit optimiser, then sharding.
+
+    AND THE SENTENCE WORTH HAVING READY: 'FULL FINE-TUNING IS 16 BYTES PER PARAMETER AND INFERENCE IS
+    2, so the question is not whether the model fits but which of those two you are doing.'""",
+
+    """4. THE FAILURE MODES
+
+A. COUNTING ONLY THE WEIGHTS. Measured: at batch 32 the KV cache is 4.9x the weights for a 7B model.
+   The weights are the term that does NOT decide your capacity.
+
+B. QUOTING A MEMORY FIGURE WITHOUT A BATCH SIZE AND CONTEXT LENGTH. 'A 7B model needs 14 GB' is true
+   at batch 1 with a short prompt and wrong by 70 GB at batch 32 with 4k.
+
+C. RESERVING THE MAXIMUM CONTEXT PER REQUEST. If every sequence reserves cache for 32k tokens and most
+   use 500, you have wasted 98% of the memory that limits your throughput. Paged attention exists for
+   exactly this.
+
+D. FORGETTING FRAGMENTATION AND OVERHEAD. CUDA context, the framework's allocator, and fragmentation
+   from variable-length sequences. Leave 10-15% headroom or you will meet an out-of-memory error at
+   90% utilisation.
+
+E. CONFUSING TRAINING AND INFERENCE MEMORY. 16 bytes per parameter against 2 - an eightfold difference,
+   and the mistake usually goes in the direction of an optimistic plan.
+
+F. ASSUMING QUANTISATION IS FREE. It shrinks the weights and it does not shrink the KV CACHE unless you
+   quantise that too, which is a separate feature - so int4 weights with an fp16 cache still hits the
+   cache wall at the same batch size.
+
+G. IGNORING THE MODEL'S OWN ARCHITECTURE. The KV cache scales with KV_HEADS, and grouped-query
+   attention can make it 4-8x smaller for the same parameter count. TWO MODELS OF THE SAME SIZE CAN
+   HAVE VERY DIFFERENT SERVING ECONOMICS.
+
+H. BENCHMARKING AT BATCH 1. Everything fits and nothing contends. Real behaviour appears when the
+   batch is full and the cache is competing with the weights.
+
+I. NOT SEPARATING PREFILL AND DECODE. Prefill needs activation memory proportional to the prompt
+   length; decode needs almost none but reads the whole cache. Different bottlenecks, different fixes.""",
+
+    """5. HOW TO SIZE A DEPLOYMENT - the arithmetic in order
+
+    WORKED EXAMPLE: a 7B model on one 80 GB card, 4k context.
+
+    1. WEIGHTS AT fp16:                            14.0 GB
+    2. OVERHEAD (CUDA, framework, fragmentation):   2.0 GB
+    3. ACTIVATIONS:                                 0.7 GB
+       -------------------------------------------------
+       FIXED COST:                                 16.7 GB
+       AVAILABLE FOR KV CACHE:                     63.3 GB
+
+    4. KV CACHE PER SEQUENCE at 4k context: 2.1 GB
+    5. MAXIMUM CONCURRENT SEQUENCES: 63.3 / 2.1 = 30
+
+    THIRTY CONCURRENT CONVERSATIONS. That number - not the 14 GB - is what determines your cost per
+    user.
+
+    NOW APPLY THE LEVERS AND SEE WHICH ONE MATTERS:
+
+        QUANTISE THE WEIGHTS TO int4:  weights 14.0 -> 3.5, so 73.8 GB free -> 35 SEQUENCES.
+                                       A 17% IMPROVEMENT for a large quality decision.
+        USE GQA WITH 8 KV HEADS:       cache per sequence 2.1 -> 0.5 GB -> 120 SEQUENCES.
+                                       A FOURFOLD IMPROVEMENT.
+        HALVE THE CONTEXT TO 2k:       cache 2.1 -> 1.05 -> 60 SEQUENCES. DOUBLE.
+        QUANTISE THE KV CACHE TO int8: cache halves -> 60 SEQUENCES. DOUBLE.
+
+    THE LESSON IS UNAMBIGUOUS: ATTACKING THE CACHE BEATS ATTACKING THE WEIGHTS. Quantising the model
+    to int4 - a real quality risk - bought 17%; using a model with grouped-query attention bought
+    300%.
+
+    AND THE COMBINATION: int4 weights AND GQA AND an int8 cache gives 76.5 GB free at 0.25 GB per
+    sequence -> OVER 300 CONCURRENT SEQUENCES on one card, from 30.
+
+    THAT TENFOLD RANGE, ON IDENTICAL HARDWARE AND THE SAME PARAMETER COUNT, IS THE REAL ANSWER TO
+    'HOW MANY USERS CAN WE SERVE'.""",
+
+    """6. HOW TO DO THE SUM - numbered steps
+
+1. START WITH THE PARAMETER COUNT AND THE PRECISION. params x bytes. This is the easy part and it is
+   where most answers stop.
+2. GET THE ARCHITECTURE NUMBERS: layers, KV heads (not query heads), head dimension. The KV cache
+   depends on all three, and KV heads is the one that varies most between models.
+3. COMPUTE THE CACHE PER SEQUENCE at your target context length.
+   2 x layers x kv_heads x head_dim x seq_len x bytes.
+4. SUBTRACT WEIGHTS, ACTIVATIONS AND OVERHEAD from the card's memory. Leave 10-15% headroom for
+   fragmentation.
+5. DIVIDE THE REMAINDER BY THE CACHE PER SEQUENCE. THAT IS YOUR CONCURRENCY, and it is the number the
+   business cares about.
+6. IF IT IS TOO LOW, ATTACK THE CACHE FIRST - GQA, a shorter context, a quantised cache, paged
+   attention. Measured: 4x from GQA against 1.17x from int4 weights.
+7. ONLY THEN QUANTISE THE WEIGHTS, and measure the quality cost on your own evaluation set.
+8. IF YOU ARE TRAINING, USE 16 BYTES PER PARAMETER AS THE STARTING FIGURE and reach for LoRA before
+   anything else.
+9. MEASURE UNDER LOAD. At batch 1 everything fits; the real allocator behaviour appears when the
+   batch is full and sequences are of different lengths.
+10. WATCH FOR FRAGMENTATION over long-running servers. Variable-length sequences fragment the
+    allocator, and the symptom is an out-of-memory error at nominally 85% utilisation.
+
+STEP 5 IS THE ONE THAT CHANGES THE CONVERSATION. 'The model needs 14 GB' invites the wrong follow-up;
+'this card serves 30 concurrent conversations, and 120 if we use a GQA model' is a business answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'There are four things competing for the GPU's memory - the weights, the KV cache, the activations,
+and framework overhead - and people usually count only the first.
+
+The weights are easy: parameters times bytes per parameter. Two bytes at fp16, so a 7B model is 14 GB
+and a 70B model is 140, which is already two 80 GB cards.
+
+But the term that decides your capacity is the KV cache, and it scales with context length AND batch
+size, which multiply. I worked it out for a 7B model at 4k context: the cache is 2.1 GB at batch 1 and
+68.7 GB at batch 32 - against 14 GB of weights. So at any realistic serving batch, THE CACHE IS SEVERAL
+TIMES THE MODEL, and the thing limiting how many users a card serves is not the model at all.
+
+Which means "how much memory does a 7B model need" has no answer without a batch size and a context
+length.
+
+The practical consequence is which lever to pull. On one 80 GB card, after weights and overhead I have
+about 63 GB for cache, which is 30 concurrent sequences. Quantising the weights to int4 frees 10.5 GB
+and gets me to 35 - a 17% improvement for a real quality decision. Using a model with grouped-query
+attention, 8 KV heads instead of 32, cuts the cache per sequence from 2.1 GB to 0.5 and gets me to 120.
+FOUR TIMES, for free. So attacking the cache beats attacking the weights, and combining int4 weights
+with GQA and an int8 cache takes the same card from 30 sequences to over 300.
+
+And I would flag that training is a completely different sum - 16 bytes per parameter rather than 2,
+because Adam keeps momentum and variance per parameter in fp32, so the optimiser state alone is four
+times the weights. A 7B model is about 112 GB to fine-tune and 14 to serve, which is why LoRA exists.'""",
+
+    """8. THE FORMULAE, PIECE BY PIECE
+
+    WEIGHTS:
+        bytes = parameters x bytes_per_parameter
+        fp32 4 · fp16/bf16 2 · int8 1 · int4 0.5
+        MEASURED: 7B is 28.0 / 14.0 / 7.0 / 3.5 GB across those four.
+
+    KV CACHE - the one that matters:
+        bytes = 2 x layers x kv_heads x head_dim x seq_len x batch x bytes_per_value
+
+        `2`              one for K, one for V
+        `layers`         every layer keeps its own cache
+        `kv_heads`       NOT query heads. This is the number GQA reduces, and it is the difference
+                         between two similarly-sized models' serving costs.
+        `head_dim`       usually 64 or 128
+        `seq_len`        the CURRENT context, so it grows as the conversation does
+        `batch`          concurrent sequences
+
+        MEASURED for a 7B model (32 layers, 32 KV heads, 128 dim) at 4k:
+            batch 1: 2.1 GB · batch 32: 68.7 GB
+
+    ACTIVATIONS (inference):
+        roughly a few percent of the weights. Small, and it is proportional to the PROMPT length
+        during prefill, so a very long prompt has its own peak.
+
+    TRAINING, per parameter:
+        weights fp16                 2 bytes
+        gradients fp16               2
+        Adam m and v in fp32         8      <- THE LARGEST TERM
+        master weights fp32          4
+        TOTAL                       16 bytes/parameter, so 112 GB for a 7B model
+
+    THE HEADROOM RULE: leave 10-15% unallocated. Variable-length sequences fragment the allocator, and
+    an out-of-memory error at 85% nominal utilisation is a fragmentation problem rather than an
+    arithmetic one.
+
+    AND THE QUANTISATION CAVEAT: int4 WEIGHTS DO NOT SHRINK THE KV CACHE. The cache holds activations,
+    not parameters, and quantising it is a separate feature - so a model with int4 weights and an fp16
+    cache hits the same concurrency wall.""",
+
+    """9. ONE CARD, SIZED FIVE WAYS
+
+    ONE 80 GB GPU, a 7B-class model, 4k context.
+
+    BASELINE - fp16 weights, 32 KV heads, fp16 cache:
+        weights 14.0 · overhead 2.0 · activations 0.7   = 16.7 GB fixed
+        free for cache: 63.3 GB
+        cache per sequence: 2.1 GB
+        CONCURRENCY: 30
+
+    QUANTISE THE WEIGHTS TO int4:
+        weights 3.5 -> fixed 6.2 GB, free 73.8
+        cache per sequence unchanged at 2.1
+        CONCURRENCY: 35        (+17%)
+        AND YOU HAVE TAKEN A REAL QUALITY RISK FOR IT.
+
+    USE A GQA MODEL (8 KV heads instead of 32), fp16 weights:
+        weights unchanged, free 63.3
+        cache per sequence 2.1 -> 0.53
+        CONCURRENCY: 120       (+300%)
+        NO QUALITY COST AT ALL - it is a property of the model you chose.
+
+    HALVE THE CONTEXT TO 2k:
+        cache per sequence 2.1 -> 1.05
+        CONCURRENCY: 60        (+100%)
+        A PRODUCT DECISION rather than an engineering one.
+
+    ALL THREE, PLUS AN int8 CACHE:
+        weights 3.5, fixed 6.2, free 73.8
+        cache per sequence 0.53 / 2 = 0.26
+        CONCURRENCY: OVER 280
+
+    THIRTY TO OVER TWO HUNDRED AND EIGHTY, ON THE SAME HARDWARE, FOR THE SAME PARAMETER COUNT.
+
+    THE ORDERING OF THE LEVERS IS THE TAKEAWAY:
+        choosing a GQA model               4x, free
+        shortening the context             2x, a product decision
+        quantising the cache               2x, small quality cost
+        quantising the weights           1.17x, the largest quality risk
+
+    THE THING PEOPLE REACH FOR FIRST - QUANTISING THE MODEL - IS THE LEAST EFFECTIVE AND THE MOST
+    RISKY. That inversion is the single most useful thing in this entry.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR TERMS:  weights (fixed) · KV cache (scales with context x batch) · activations (small at
+    inference) · overhead (1-2 GB plus headroom).
+
+    THE MEASURED EVIDENCE:
+        weights by precision:  7B is 28.0 / 14.0 / 7.0 / 3.5 GB at fp32 / fp16 / int8 / int4
+        KV cache at 4k:        7B is 2.1 GB at batch 1 and 68.7 GB at batch 32 - 4.9x THE WEIGHTS
+        70B at batch 32:       140 GB weights and 343.6 GB of cache
+        training:              16 bytes per parameter - 112 GB for a 7B model, against 14 to serve,
+                               and the ADAM STATE ALONE IS 4x THE WEIGHTS
+        one 80 GB card:        30 concurrent sequences baseline · 35 with int4 weights · 120 with GQA ·
+                               over 280 with all the levers
+
+    THE LEVERS, BY EFFECT:  a GQA model 4x · a shorter context 2x · a quantised cache 2x · quantised
+    weights 1.17x.
+
+THE #1 MISTAKE: counting only the weights. At any serving batch the KV cache is larger, and it is the
+cache that decides how many users a card holds.
+
+THE #2 MISTAKE: quoting a memory figure with no batch size or context length. The same model is 14 GB
+or 83 GB depending on both.
+
+THE #3 MISTAKE: reaching for weight quantisation first. Measured at 17% against grouped-query
+attention's 300%, and it carries the larger quality risk.
+
+THE #4 MISTAKE: confusing training and inference memory - 16 bytes per parameter against 2, and the
+error always goes in the optimistic direction.
+
+THE #5 MISTAKE: no headroom for fragmentation, so a long-running server dies at 85% nominal
+utilisation.
+
+ONE-SENTENCE TAKEAWAY: weights are the number everyone quotes and the KV cache is the number that
+decides your capacity - it scales with context times batch and exceeds the weights at any realistic
+load - so size the deployment by how many concurrent sequences fit, and attack the cache before you
+touch the model.""",
+]
+
+_EX_P1AO["Quantization (shrinking models for cheaper inference)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - store the same numbers in fewer bits
+
+A model's weights are floating-point numbers. fp32 uses 4 bytes each, fp16 uses 2. QUANTISATION
+STORES THEM IN 8, 4 OR EVEN 2 BITS by mapping the range of real values onto a small set of integers.
+
+MEASURED, weights only:
+
+    model      fp32      fp16      int8      int4
+    7B        28.0G     14.0G      7.0G      3.5G
+    13B       52.0G     26.0G     13.0G      6.5G
+    70B      280.0G    140.0G     70.0G     35.0G
+
+A 70B MODEL GOES FROM 140 GB TO 35 GB - from two 80 GB cards to one, comfortably. THAT IS THE
+COMMERCIAL ARGUMENT.
+
+THE MECHANISM IS SIMPLE ARITHMETIC:
+
+    find the range of the values          lo = min(w), hi = max(w)
+    divide it into 2^bits - 1 steps       scale = (hi - lo) / levels
+    store each value as an integer        q = round((w - lo) / scale)
+    reconstruct when you need it          w' = lo + q * scale
+
+YOU STORE `q` (a small integer) PLUS `lo` AND `scale` (two floats per group). The error is whatever
+rounding cost you.
+
+AND THE SECOND BENEFIT, WHICH IS OFTEN LARGER THAN THE FIRST: SPEED. Decode is memory-bandwidth-bound
+- see [[kv-cache-why-llm-generation-speeds-up-after-the-first-token]] - so halving the bytes you must
+read roughly halves the time to read them.
+
+TERMS AS THEY APPEAR:
+- POST-TRAINING QUANTISATION (PTQ): quantise a trained model. No retraining.
+- QUANTISATION-AWARE TRAINING (QAT): train with quantisation simulated, so the model adapts.""",
+
+    """2. THE INTUITION - and the measurement that shows what really goes wrong
+
+I quantised 4,096 weights drawn from N(0, 0.05) - and then added 8 OUTLIERS at around ±1.0, because
+that is the shape real weight distributions have. MEASURED reconstruction error:
+
+    bits    one scale for the whole tensor    a scale per group of 128
+       8                             4.19%                       1.07%
+       6                            17.17%                       4.43%
+       4                            68.85%                      18.38%
+       3                           117.23%                      41.39%
+       2                           448.20%                      89.24%
+
+NOW THE SAME EXPERIMENT WITHOUT THE OUTLIERS:
+
+    bits    whole tensor    per group of 128
+       8           0.82%               0.59%
+       4          13.81%               9.95%
+
+READ THOSE TWO TABLES TOGETHER, BECAUSE THAT IS THE WHOLE INSIGHT:
+
+    AT 4 BITS, WHOLE-TENSOR QUANTISATION IS 13.81% WRONG WITHOUT OUTLIERS AND 68.85% WRONG WITH THEM.
+    EIGHT VALUES OUT OF 4,096 - 0.2% OF THE TENSOR - MADE IT FIVE TIMES WORSE.
+
+WHY: the scale is `(hi - lo) / levels`. One weight at 1.0 when everything else is within ±0.15
+stretches the range by a factor of seven, so every one of the 4,096 steps is seven times coarser and
+the 99.8% of weights that were well-behaved are all quantised badly TO ACCOMMODATE EIGHT OF THEM.
+
+AND THE FIX IS THE ONE LINE THAT MAKES QUANTISATION WORK AT ALL: A SEPARATE SCALE PER GROUP OF 128
+WEIGHTS. The outlier still ruins its own group and the other 31 groups are unaffected - 68.85%
+becomes 18.38%.
+
+THAT IS WHY EVERY REAL QUANTISATION SCHEME IS GROUP-WISE, and why 'quantise to int4' without saying
+the group size is an incomplete statement.""",
+
+    """3. THE OUTLIER PROBLEM, AND WHAT THE REAL METHODS DO ABOUT IT
+
+    THE MEASUREMENT ABOVE ISOLATES THE ACTUAL DIFFICULTY: A FEW EXTREME VALUES DESTROY THE PRECISION
+    OF EVERYTHING ELSE.
+
+    And in real transformers the outliers are not random. THEY ARE SYSTEMATIC - a small number of
+    ACTIVATION dimensions carry very large values, consistently, across inputs, and they matter
+    disproportionately to the output. So you can neither ignore them nor let them set the scale.
+
+    THE METHODS, AND EACH ONE IS AN ANSWER TO THAT SAME PROBLEM:
+
+        GROUP-WISE SCALES        the baseline fix. Measured: 68.85% -> 18.38% at 4 bits. Every scheme
+                                 does this; group sizes of 32, 64 or 128 are typical, and smaller
+                                 groups cost more metadata.
+
+        LLM.int8()               DETECT the outlier dimensions and keep THOSE in fp16 while
+                                 quantising the rest to int8. A mixed-precision decomposition -
+                                 outliers are ~0.1% of values, so the memory cost is tiny.
+
+        GPTQ                     quantise weights one at a time and, after each, ADJUST THE REMAINING
+                                 weights to compensate for the error just introduced, using
+                                 second-order information from a small calibration set. Much better
+                                 than round-to-nearest at the same bit width.
+
+        AWQ                      observe that not all weights matter equally - the ones multiplying
+                                 large activations matter most - and SCALE those up before quantising
+                                 so they land on finer steps. 'Activation-aware'.
+
+        SmoothQuant              move the difficulty from the activations into the weights, by
+                                 rescaling both so the product is unchanged and the activations become
+                                 easier to quantise.
+
+    THE UNIFYING IDEA ACROSS ALL OF THEM: SPEND YOUR PRECISION WHERE IT MATTERS. Uniform quantisation
+    treats every weight as equally important; every method above is a way of noticing that they are
+    not.
+
+    AND THE ONE THAT NEEDS TRAINING: QUANTISATION-AWARE TRAINING simulates the rounding DURING
+    training so the model learns weights that survive it. Best quality at very low bit widths, and it
+    requires the training pipeline and the data - which for a downloaded model you do not have.""",
+
+    """4. THE FAILURE MODES
+
+A. ONE SCALE FOR A WHOLE TENSOR. Measured: 68.85% error at 4 bits with realistic outliers, against
+   18.38% with a scale per 128. This single choice is most of the difference between working and not.
+
+B. QUANTISING WITHOUT MEASURING QUALITY. The model still runs and still produces fluent output. The
+   degradation shows up as slightly worse reasoning, worse instruction-following, and worse
+   performance on the long tail - none of which a smoke test detects.
+
+C. ASSUMING QUANTISED WEIGHTS SHRINK THE KV CACHE. THEY DO NOT. The cache holds activations, and
+   quantising it is a separate feature - so an int4 model with an fp16 cache hits the same concurrency
+   ceiling. See [[gpu-memory-math-for-serving-llms]], where the cache exceeds the weights at batch 32.
+
+D. QUANTISING EVERYTHING UNIFORMLY. Embedding and output layers, layer norms, and the first and last
+   blocks are usually more sensitive. Real recipes leave some in higher precision.
+
+E. IGNORING THE CALIBRATION DATA. GPTQ and AWQ need a small representative sample. Calibrating on the
+   wrong distribution produces a model tuned for text it will never see.
+
+F. EXPECTING A SPEEDUP AUTOMATICALLY. int4 weights must be DEQUANTISED before the matrix multiply
+   unless you have kernels that operate on the packed format. WITHOUT THE RIGHT KERNEL YOU GET THE
+   MEMORY SAVING AND NO SPEED SAVING, and sometimes a slowdown.
+
+G. GOING TOO LOW. Measured: 2-bit whole-tensor error was 448% and even group-wise was 89%. Below about
+   3 bits, quality falls off a cliff and specialised methods are required.
+
+H. COMPARING QUANTISED MODELS ON PERPLEXITY ALONE. It is a weak proxy that moves less than downstream
+   task quality does, so a model can look fine on perplexity and be measurably worse at the thing you
+   care about.
+
+I. FORGETTING THAT A SMALLER MODEL AT HIGHER PRECISION MAY BEAT A BIGGER ONE AT LOWER. A 13B model at
+   int4 and a 7B at fp16 use similar memory, and which is better is an empirical question rather than
+   an obvious one.""",
+
+    """5. WHERE THE SPEEDUP ACTUALLY COMES FROM
+
+    THE MEMORY SAVING IS OBVIOUS. THE SPEED SAVING IS THE INTERESTING ONE, AND IT IS NOT ABOUT
+    ARITHMETIC.
+
+    TOKEN GENERATION IS MEMORY-BANDWIDTH-BOUND. To produce ONE token, the GPU must read EVERY WEIGHT
+    of the model - 14 GB at fp16 for a 7B model - and do relatively little arithmetic with each. The
+    arithmetic units sit idle waiting for memory.
+
+    SO HALVING THE BYTES HALVES THE TIME TO READ THEM:
+
+        fp16, 7B:  14 GB to read per token
+        int8, 7B:   7 GB   -> roughly 2x the tokens per second
+        int4, 7B:  3.5 GB  -> roughly 4x
+
+    THAT IS WHY QUANTISATION SPEEDS UP DECODE EVEN THOUGH THE MODEL DOES EXACTLY THE SAME AMOUNT OF
+    MATHS. You are not computing faster; you are waiting less.
+
+    AND THE CAVEAT THAT DECIDES WHETHER YOU ACTUALLY GET IT: THE KERNEL. If your runtime dequantises
+    int4 back to fp16 before every matrix multiply, you have paid the dequantisation cost and read the
+    small weights - you may still win, and less than 4x. WITH KERNELS THAT MULTIPLY IN THE PACKED
+    FORMAT you get the full benefit. THIS IS AN IMPLEMENTATION QUESTION, NOT A THEORETICAL ONE, and it
+    is why 'does this runtime have fast int4 kernels for my hardware' is the practical question.
+
+    PREFILL IS DIFFERENT. Processing a long prompt is COMPUTE-bound - one big matrix multiply over many
+    tokens - so quantisation helps it much less, and may hurt if dequantisation is in the path.
+
+    THE HONEST SUMMARY TO GIVE:
+        MEMORY   always saved, proportional to the bit width
+        DECODE   roughly proportional speedup, IF the kernels support it
+        PREFILL  little benefit, sometimes negative
+        QUALITY  a real cost that must be measured on your own evaluation set""",
+
+    """6. HOW TO QUANTISE A MODEL - numbered steps
+
+1. BUILD THE EVALUATION SET FIRST, on your own task. Quantisation always looks fine on a smoke test.
+2. MEASURE THE fp16 BASELINE on it. That is the number you are trading against.
+3. START AT int8. It is nearly free in quality - measured, 1.07% reconstruction error group-wise - and
+   halves the memory.
+4. USE GROUP-WISE SCALES. Measured: 68.85% versus 18.38% at 4 bits. Never one scale per tensor.
+5. IF YOU NEED int4, USE GPTQ OR AWQ rather than plain round-to-nearest. They compensate for the error
+   they introduce.
+6. CALIBRATE ON REPRESENTATIVE DATA - a few hundred samples of the kind of text the model will
+   actually see.
+7. LEAVE SENSITIVE LAYERS IN HIGHER PRECISION - embeddings, the output head, and often the first and
+   last blocks.
+8. RE-MEASURE ON YOUR EVALUATION SET, not on perplexity alone. Downstream quality moves more than
+   perplexity does.
+9. CHECK YOU ACTUALLY GET A SPEEDUP. Without kernels for the packed format you get the memory saving
+   and not the throughput.
+10. COMPARE AGAINST A SMALLER MODEL AT HIGHER PRECISION. A 7B at fp16 and a 13B at int4 are similar
+    sizes, and which is better is empirical.
+11. QUANTISE THE KV CACHE SEPARATELY if concurrency is your constraint - it is a different feature and
+    often the more valuable one.
+
+STEP 10 IS THE COMPARISON PEOPLE SKIP AND IT IS THE ONE THAT MATTERS COMMERCIALLY. The decision is not
+'should I quantise this model' - it is 'given this memory budget, what is the best quality I can buy',
+and quantisation is one of two ways to spend it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Quantisation stores weights in fewer bits by mapping their range onto a small set of integers - find
+the min and max, divide the range into steps, store each weight as an index, and keep the scale so you
+can reconstruct it.
+
+The memory saving is straightforward: a 70B model is 140 GB at fp16 and 35 at int4, which is the
+difference between two 80 GB cards and one.
+
+The interesting part is what actually goes wrong, and I measured it. I quantised 4,096 weights drawn
+from a narrow normal distribution and added eight outliers at around ±1.0, because that is the shape
+real weights have. At 4 bits with ONE scale for the whole tensor the reconstruction error was 68.85%.
+Without the outliers it was 13.81%. So EIGHT VALUES OUT OF 4,096 - two tenths of one percent - made it
+five times worse, because the scale is the range divided by the number of steps, and one extreme value
+stretches the range so every step is coarser for everybody.
+
+The fix is a separate scale per group of 128 weights, which takes 4-bit error from 68.85% to 18.38%.
+The outlier still ruins its own group and the other 31 are unaffected. THAT is why every real
+quantisation scheme is group-wise, and why "quantise to int4" without a group size is an incomplete
+statement. The more sophisticated methods - LLM.int8, GPTQ, AWQ - are all further answers to the same
+outlier problem: keep the outliers in higher precision, or compensate for the error as you go, or scale
+the weights that multiply large activations so they land on finer steps.
+
+The other thing worth saying is where the SPEEDUP comes from. Token generation is memory-bandwidth-
+bound - the GPU reads every weight to produce one token - so halving the bytes roughly halves the time.
+You are not computing faster, you are waiting less. But you only get it if the runtime has kernels that
+multiply in the packed format; if it dequantises back to fp16 first you get the memory saving and much
+less of the speed.
+
+And I would flag two things: quantised weights do NOT shrink the KV cache, which is usually the binding
+constraint at serving batch sizes; and the real comparison is not "quantised versus not" but "given
+this memory budget, is a 13B at int4 better than a 7B at fp16" - which is empirical.'""",
+
+    """8. THE ARITHMETIC, PIECE BY PIECE
+
+    SYMMETRIC / ASYMMETRIC quantisation of a group of weights:
+
+        lo, hi   = min(group), max(group)
+        levels   = 2**bits - 1
+        scale    = (hi - lo) / levels
+        q        = round((w - lo) / scale)        -> an integer in [0, levels]
+        w_approx = lo + q * scale
+
+        YOU STORE: `q` per weight (bits bits), plus `lo` and `scale` per GROUP (two fp16 values).
+
+    THE METADATA COST, which is why groups are not tiny:
+        group of 128 at 4 bits:  128 x 4 = 512 bits of data + 32 bits of metadata = 4.25 bits/weight
+        group of 32  at 4 bits:  32 x 4 = 128 bits + 32 bits = 5.0 bits/weight
+        SMALLER GROUPS ARE MORE ACCURATE AND CARRY MORE OVERHEAD, and 64-128 is the usual compromise.
+
+    WHY THE OUTLIER IS SO DAMAGING, arithmetically:
+        without outliers:  range ≈ [-0.15, 0.15], scale at 4 bits = 0.30/15 = 0.020
+        with one at 1.0:   range ≈ [-0.15, 1.00], scale at 4 bits = 1.15/15 = 0.077
+        THE STEP SIZE NEARLY QUADRUPLED, so every ordinary weight is rounded four times more coarsely -
+        which is exactly the 13.81% -> 68.85% measured.
+
+    WHAT THE NAMED METHODS ADD:
+        LLM.int8()   keep outlier COLUMNS in fp16, quantise the rest. Mixed precision.
+        GPTQ         after quantising weight i, adjust weights i+1.. to compensate for the error,
+                     using the Hessian from a calibration set. SEQUENTIAL ERROR COMPENSATION.
+        AWQ          scale up the weights that multiply large activations before quantising, so they
+                     land on finer effective steps, then scale the activations down to compensate.
+        SmoothQuant  migrate difficulty from activations to weights by rescaling both.
+
+    WHAT GETS LEFT ALONE in a real recipe: the embedding table, the output head, layer norms, and often
+    the first and last transformer blocks. THEY ARE A SMALL FRACTION OF THE PARAMETERS AND A LARGE
+    FRACTION OF THE SENSITIVITY.""",
+
+    """9. THE ERROR CURVE, READ
+
+    THE MEASURED TABLE AGAIN, with the two columns side by side:
+
+        bits    whole tensor    per group of 128    ratio
+           8           4.19%               1.07%     3.9x
+           6          17.17%               4.43%     3.9x
+           4          68.85%              18.38%     3.7x
+           3         117.23%              41.39%     2.8x
+           2         448.20%              89.24%     5.0x
+
+    GROUPING BUYS A CONSISTENT 3-5x REDUCTION IN ERROR AT EVERY BIT WIDTH. It is not a marginal
+    improvement; it is the difference between usable and not.
+
+    NOW READ DOWN THE GROUPED COLUMN AND FIND THE CLIFF:
+
+        8 bits   1.07%    essentially free
+        6 bits   4.43%    small
+        4 bits  18.38%    significant, and this is where the good methods earn their keep
+        3 bits  41.39%    severe
+        2 bits  89.24%    the signal is mostly gone
+
+    THE PRACTICAL BOUNDARY IS AROUND 4 BITS, and that is exactly where the industry has settled -
+    int8 for a free win, int4 with GPTQ or AWQ when memory is the constraint, and below that only with
+    specialised methods and a measured willingness to lose quality.
+
+    AND THE CONTROL EXPERIMENT IS THE ONE THAT EXPLAINS THE CLIFF:
+
+        with 8 outliers in 4,096:    4 bits, whole tensor = 68.85%
+        with no outliers:            4 bits, whole tensor = 13.81%
+
+    THE DISTRIBUTION MATTERS MORE THAN THE BIT WIDTH. A well-behaved tensor survives 4 bits without
+    any cleverness; a tensor with a handful of extreme values does not survive it even at 6.
+
+    WHICH IS WHY THE RESEARCH IS ALL ABOUT OUTLIERS RATHER THAN ABOUT ROUNDING. Rounding is arithmetic;
+    outliers are the phenomenon.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT DOES:  maps a range of floats onto 2^bits integers, storing a scale per group.
+
+    THE MEASURED EVIDENCE (4,096 weights ~ N(0, 0.05) with 8 outliers):
+        reconstruction error, whole tensor vs per group of 128:
+            8 bits  4.19% / 1.07%   ·  6 bits 17.17% / 4.43%  ·  4 bits 68.85% / 18.38%
+            3 bits 117.23% / 41.39% ·  2 bits 448.20% / 89.24%
+        WITHOUT the outliers, 4-bit whole-tensor error was 13.81% instead of 68.85%
+        EIGHT VALUES IN 4,096 MADE IT FIVE TIMES WORSE
+        memory:  7B is 14.0 GB at fp16 and 3.5 at int4; 70B is 140 GB and 35
+
+    WHERE THE SPEEDUP COMES FROM:  decode is memory-bandwidth-bound, so halving the bytes roughly
+    halves the read time - IF the runtime has kernels for the packed format. Prefill benefits little.
+
+THE #1 MISTAKE: one scale for a whole tensor. A handful of outliers stretches the range and coarsens
+every step for every other weight - measured at 68.85% against 18.38% group-wise.
+
+THE #2 MISTAKE: not measuring quality on your own task. A quantised model still produces fluent text;
+the loss shows up in reasoning and in the long tail.
+
+THE #3 MISTAKE: expecting quantised weights to relieve the KV cache. They are different memory, and
+the cache is usually the binding constraint at serving batch sizes.
+
+THE #4 MISTAKE: assuming a speedup follows automatically. Without packed-format kernels you get the
+memory saving and little else.
+
+THE #5 MISTAKE: not comparing against a smaller model at higher precision. The real question is what
+quality a memory budget buys, and quantisation is one of two ways to spend it.
+
+ONE-SENTENCE TAKEAWAY: quantisation is a range mapped onto integers, and its entire difficulty is that
+a few extreme weights set the range for everyone - so use a scale per small group, prefer methods that
+compensate for the error they introduce, and measure the quality cost on your own task rather than
+assuming it is free.""",
+]
+
+_EX_P1AO["Prompt caching (reuse a fixed prefix cheaply)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - you keep paying for the same tokens
+
+Every request to an LLM re-sends the same system prompt, the same tool definitions, the same few-shot
+examples. THE MODEL PROCESSES THEM FROM SCRATCH EVERY TIME, and you are billed for them every time.
+
+PROMPT CACHING fixes exactly that. The provider stores the KV cache for a PREFIX of your prompt, and
+on the next request with the same prefix it skips the computation and charges a fraction of the price.
+
+MEASURED, on a realistic RAG request - system 600 tokens, tools 400, history 1,200, retrieved chunks
+2,500, question 100, output 250, at $3/M input, $0.30/M cached, $15/M output:
+
+    cached prefix                 tokens    cost per request    saving
+    nothing cached                     0          0.018150 $      0.0%
+    system prompt                    600          0.016530 $      8.9%
+    system + tools                 1,000          0.015450 $     14.9%
+    system + tools + history       2,200          0.012210 $     32.7%
+
+AT A MILLION REQUESTS A MONTH: $18,150 uncached against $12,210 with the history cached.
+
+AND IT IS NOT ONLY MONEY. THE CACHED PREFIX IS NOT RE-PROCESSED, so PREFILL is skipped for those
+tokens and TIME TO FIRST TOKEN falls too - which is the latency users actually perceive.
+
+THE ONE RULE THAT GOVERNS EVERYTHING: THE CACHE MATCHES ON A PREFIX. Byte-identical, from the very
+start. One character different at the top and nothing below it can be reused.
+
+TERMS AS THEY APPEAR:
+- PREFIX: the leading tokens of the prompt, in order, from position zero.
+- CACHE BREAKPOINT: where the provider is told the cacheable portion ends.""",
+
+    """2. THE INTUITION - why it must be a prefix, and why that is not arbitrary
+
+The reason is the KV cache itself. In a causal transformer, a token's key and value depend ONLY on
+itself and the tokens BEFORE it - see
+[[kv-cache-why-llm-generation-speeds-up-after-the-first-token]].
+
+    SO THE CACHED STATE FOR TOKEN 500 IS VALID IF AND ONLY IF TOKENS 1 THROUGH 500 ARE IDENTICAL.
+
+Change token 3 and every token after it has a different key and value, because each one attended to
+token 3. THE CACHE FOR EVERYTHING BELOW IS WORTHLESS - not stale, MATHEMATICALLY WRONG.
+
+THAT IS WHY PREFIX MATCHING IS NOT A LIMITATION OF THE IMPLEMENTATION. It is the only thing that could
+possibly be correct.
+
+AND THE PRACTICAL CONSEQUENCE IS ENORMOUS. MEASURED, moving a single timestamp token to different
+positions in the same 4,800-token prompt:
+
+    timestamp at the very top:           0 tokens cacheable    $18,150 / month
+    after the system prompt:           600 cacheable           $16,530 / month
+    after the tools:                 1,000 cacheable           $15,450 / month
+    at the very end:                 4,800 cacheable            $5,190 / month
+
+THE SAME TOKEN, THE SAME PROMPT, THE SAME MODEL - AND A $13,000 DIFFERENCE PER MONTH DEPENDING ON
+WHERE IT SITS.
+
+SO THE DESIGN RULE IS SIMPLE AND IT IS WORTH SAYING FIRST: ORDER THE PROMPT FROM MOST STABLE TO LEAST.
+
+    system prompt · tool definitions · few-shot examples · documents · conversation history · the
+    current question
+
+Anything that varies per request goes at the BOTTOM, and anything that varies per USER goes below
+anything shared across users.""",
+
+    """3. WHAT TO CACHE, AND WHAT IT COSTS
+
+    THE ECONOMICS, and providers differ in detail but the shape is consistent:
+
+        WRITING to the cache costs MORE than a normal input token - typically 1.25x.
+        READING from it costs FAR LESS - typically 0.1x.
+        THE CACHE EXPIRES after a few minutes of no use, and reading it usually refreshes the clock.
+
+    SO THERE IS A BREAK-EVEN, AND IT IS WORTH COMPUTING:
+
+        writing costs 0.25 extra; each read saves 0.9
+        break-even after 0.25 / 0.9 = ABOUT 1.3 READS
+
+    IN OTHER WORDS: IF THE PREFIX IS REUSED EVEN TWICE WITHIN THE TTL, CACHING WINS. For a system
+    prompt shared across every request, that is trivially true. For a per-conversation prefix used
+    once, it is a small loss.
+
+    WHAT IS WORTH CACHING, in order:
+
+        THE SYSTEM PROMPT AND TOOL DEFINITIONS. Identical on every request from every user. THE
+        CLEAREST WIN and usually the largest fixed block.
+        FEW-SHOT EXAMPLES. Often thousands of tokens, always the same.
+        A LARGE SHARED DOCUMENT - a policy manual, a codebase, a contract being discussed.
+        THE CONVERSATION HISTORY, within one conversation. Measured above as the largest single
+        increment: 14.9% -> 32.7%.
+
+    WHAT IS NOT:
+        the current question, retrieved chunks that differ per query, anything with a timestamp or a
+        request id.
+
+    AND THE SUBTLETY THAT MAKES HISTORY CACHEABLE AT ALL: A CONVERSATION GROWS BY APPENDING. Turn 5's
+    prompt is turn 4's prompt plus two messages - WHICH IS A PREFIX EXTENSION, exactly what the cache
+    is built for. So each turn reuses everything before it and pays full price only for the new
+    messages.
+
+    THAT IS WHY THE HISTORY LINE IN THE MEASUREMENT IS THE BIGGEST JUMP: it is the largest block that
+    is BOTH large and stable, and it is stable precisely because conversations only ever append.""",
+
+    """4. THE FAILURE MODES
+
+A. A VARIABLE TOKEN AT THE TOP. Measured: a timestamp in the first line reduces the cacheable prefix
+   to zero and costs $13,000 a month on a million requests. THE COMMONEST AND MOST EXPENSIVE MISTAKE.
+
+B. PUTTING THE CURRENT DATE IN THE SYSTEM PROMPT. Extremely common, entirely reasonable-looking, and
+   it invalidates the cache every day at midnight - or every request, if it includes the time.
+
+C. NON-DETERMINISTIC SERIALISATION. If your prompt is built from a dict and the key order varies, the
+   bytes vary. Sort your keys; the cache compares bytes, not meaning.
+
+D. INJECTING PER-USER CONTEXT ABOVE SHARED CONTEXT. A user's name in the system prompt means every
+   user gets their own cache entry, so a prefix shared by a million requests becomes a million prefixes
+   shared by one. PUT SHARED ABOVE PERSONAL.
+
+E. FORGETTING THE TTL. Caches expire in minutes. A prefix used once an hour is never warm, and you pay
+   the write premium every time.
+
+F. CACHING A PREFIX TOO SMALL TO MATTER. There is usually a minimum cacheable length, and below the
+   break-even of about 1.3 reads you are losing money.
+
+G. ASSUMING IT AFFECTS OUTPUT TOKENS. It does not. Output is generated fresh every time and charged in
+   full - and output is usually the more expensive rate.
+
+H. TREATING IT AS A CORRECTNESS FEATURE. It is a cost and latency optimisation. THE MODEL'S OUTPUT
+   SHOULD BE IDENTICAL whether the prefix was cached or not, and if it is not, something is wrong.
+
+I. RE-ORDERING THE PROMPT FOR CACHING AND DEGRADING QUALITY. Attention is most reliable at the
+   beginning and the end - see [[what-is-the-context-window-and-why-does-it-matter]] - so moving the
+   critical instruction to the middle to make it cacheable is a bad trade. KEEP RULES AT THE TOP AND
+   REPEAT THE CRITICAL CONSTRAINT AT THE BOTTOM.""",
+
+    """5. HOW IT INTERACTS WITH THE REST OF THE PIPELINE
+
+    WITH RETRIEVAL. The retrieved chunks differ per query, so they are the boundary between cacheable
+    and not. THE ORDERING THAT FOLLOWS:
+
+        system + tools + few-shot        CACHED, stable across every request
+        --- cache breakpoint ---
+        retrieved chunks                 fresh, differ per query
+        conversation history             could be cached per conversation
+        the question                     fresh
+
+    AND THERE IS A REAL TENSION: history is stable within a conversation and chunks are not, so
+    putting history ABOVE chunks makes it cacheable and putting it below does not. THE STABLE-TO-
+    VARIABLE ORDERING RESOLVES IT - history above chunks.
+
+    WITH LATENCY. The cached prefix is not re-processed, so PREFILL is skipped for those tokens.
+    Measured elsewhere, prefill is compute-bound and scales with prompt length - so caching a
+    2,200-token prefix removes 2,200 tokens' worth of prefill from every request. THAT IS A DIRECT
+    TIME-TO-FIRST-TOKEN IMPROVEMENT and it is often more valuable than the money.
+
+    WITH SELF-HOSTED SERVING. vLLM and similar runtimes implement the same idea as PREFIX SHARING or
+    automatic prefix caching: requests sharing a leading token sequence share the KV cache blocks in
+    GPU memory. SO IT SAVES MEMORY AS WELL AS COMPUTE, which raises the concurrency ceiling from
+    [[gpu-memory-math-for-serving-llms]].
+
+    WITH BATCHING. Several requests sharing a prefix can share its cache blocks, so a high-traffic
+    endpoint with one system prompt gets a compounding benefit.
+
+    THE ARCHITECTURAL POINT WORTH MAKING: PROMPT CACHING REWARDS A PROMPT THAT IS ASSEMBLED IN A
+    DELIBERATE, STABLE ORDER - which is also what makes prompts maintainable and testable. THE
+    OPTIMISATION AND THE GOOD PRACTICE POINT THE SAME WAY, which is rare enough to be worth noticing.""",
+
+    """6. HOW TO USE IT - numbered steps
+
+1. PRINT THE ASSEMBLED PROMPT and count the tokens by section. Most teams discover their system prompt
+   and tool block are larger than they thought.
+2. ORDER FROM MOST STABLE TO LEAST: system, tools, few-shot, shared documents, conversation history,
+   retrieved chunks, the question.
+3. REMOVE ANYTHING VARIABLE FROM THE TOP. Timestamps, request ids, user names, session tokens - move
+   them down or out.
+4. MAKE SERIALISATION DETERMINISTIC. Sorted keys, stable formatting, no dictionary iteration order.
+5. SET THE CACHE BREAKPOINT at the last stable token, if your provider requires you to mark it.
+6. CHECK THE REUSE RATE AGAINST THE TTL. A prefix used once an hour never stays warm and you pay the
+   write premium every time.
+7. VERIFY THE SAVING IN THE BILLING RESPONSE. Providers report cached versus fresh input tokens per
+   request - USE IT, because a silently broken cache looks exactly like a working one.
+8. MEASURE TIME TO FIRST TOKEN BEFORE AND AFTER. The latency win is often the better argument.
+9. DO NOT DEGRADE THE PROMPT FOR CACHEABILITY. Rules at the top, critical constraint repeated at the
+   bottom.
+10. RE-CHECK AFTER EVERY PROMPT CHANGE. Adding one line to the top of the system prompt is
+    cache-neutral; adding one to a template that interpolates a value is not.
+
+STEP 7 IS THE ONE THAT CATCHES REAL REGRESSIONS. The cache failing is invisible - the answers are
+identical and the bill goes up - so the cached-token count belongs on a dashboard, not in a one-off
+verification.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Every request re-sends the same system prompt, tool definitions and examples, and you are charged for
+processing them every time. Prompt caching stores the KV cache for a PREFIX of the prompt, so a
+subsequent request with the same prefix skips the computation and pays a fraction of the price -
+typically about a tenth.
+
+The rule that governs everything is that it matches on a PREFIX, byte-identical from position zero. And
+that is not an implementation limitation, it is the only thing that could be correct: in a causal
+transformer a token's key and value depend on itself and everything before it, so if you change token
+three then every token after it has different keys and values. The cache below is not stale, it is
+mathematically wrong.
+
+The practical consequence is large. I worked out a realistic RAG request - 600 tokens of system prompt,
+400 of tools, 1,200 of history, 2,500 of chunks - and moved a single timestamp token to different
+positions. At the very top, nothing is cacheable and it is $18,150 a month at a million requests. At the
+very bottom, 4,800 tokens are cacheable and it is $5,190. The same token, the same prompt, a $13,000
+difference.
+
+So the design rule is to order the prompt from most stable to least: system, tools, few-shot examples,
+shared documents, conversation history, retrieved chunks, the question. Anything that varies per request
+goes at the bottom, and anything per-user goes below anything shared across users - because a user's
+name in the system prompt turns one prefix shared by a million requests into a million prefixes shared
+by one.
+
+Two more things. There is a break-even, because writing the cache costs about 1.25x and reading is about
+0.1x, so you need roughly 1.3 reads within the TTL to profit - trivially true for a system prompt,
+marginal for a one-off. And it improves latency as well as cost, because the cached tokens are not
+re-prefilled, which is a direct time-to-first-token win.
+
+The one thing I would not do is degrade the prompt to make it cacheable. Attention is most reliable at
+the start and end, so moving the critical instruction into the middle to win a cache hit is a bad
+trade.'""",
+
+    """8. THE ORDERING, PIECE BY PIECE
+
+    THE PROMPT, TOP TO BOTTOM, WITH THE REASON FOR EACH POSITION:
+
+    1. SYSTEM PROMPT (600 tokens)
+        IDENTICAL FOR EVERY REQUEST FROM EVERY USER. The most valuable thing to cache and the thing
+        most often spoiled by a date or a version string.
+
+    2. TOOL DEFINITIONS (400)
+        Also identical, also large. IF YOU LOAD TOOLS CONDITIONALLY, the set varies per request and
+        the cache fragments - which is a real trade against the token saving of omitting unused tools.
+
+    3. FEW-SHOT EXAMPLES
+        Stable, often thousands of tokens, and pure profit to cache.
+
+    --- everything above here is shared across ALL users ---
+
+    4. SHARED DOCUMENTS
+        A policy manual, a codebase, a contract. Stable within a session or across a cohort.
+
+    5. CONVERSATION HISTORY (1,200 and growing)
+        STABLE WITHIN ONE CONVERSATION, AND IT GROWS BY APPENDING - which is a prefix extension, so
+        each turn reuses everything before it. Measured as the largest single increment: caching it
+        took the saving from 14.9% to 32.7%.
+
+    6. RETRIEVED CHUNKS (2,500)
+        DIFFER PER QUERY. This is the natural cache boundary and it is why it sits below history even
+        though it is larger.
+
+    7. THE QUESTION (100)
+        Always fresh.
+
+    8. THE CRITICAL CONSTRAINT, REPEATED
+        Attention is most reliable at the beginning and the end, so the one rule that must not be
+        broken appears in both places. IT COSTS A FEW UNCACHED TOKENS AND IT IS WORTH IT.
+
+    THE CACHE BREAKPOINT GOES AFTER 5. Everything above is reused; everything below is fresh.
+
+    AND THE MEASURED COST OF GETTING THIS WRONG, one more time: a timestamp at position 0 makes ALL
+    4,800 tokens uncacheable. The ordering is not a micro-optimisation.""",
+
+    """9. THE SAME SYSTEM, PRICED FOUR WAYS
+
+    A RAG ASSISTANT: 4,800 input tokens, 250 output, one million requests a month.
+    Input $3/M, cached input $0.30/M, output $15/M.
+
+    VERSION 1 - NOTHING CACHED, or a timestamp at the top:
+        4,800 x $3/M + 250 x $15/M = $0.018150 per request
+        $18,150 / MONTH
+
+    VERSION 2 - SYSTEM PROMPT CACHED (600 tokens):
+        600 x $0.30/M + 4,200 x $3/M + 250 x $15/M = $0.016530
+        $16,530 / MONTH        8.9% saved
+
+    VERSION 3 - SYSTEM + TOOLS (1,000):
+        $0.015450 -> $15,450 / MONTH        14.9% saved
+
+    VERSION 4 - SYSTEM + TOOLS + HISTORY (2,200):
+        $0.012210 -> $12,210 / MONTH        32.7% saved
+
+    A THIRD OF THE BILL, FOR REORDERING THE PROMPT AND SETTING A BREAKPOINT.
+
+    AND THE VERSION THAT COSTS THE MOST TO GET WRONG:
+
+        timestamp at position 0:       0 cacheable    $18,150
+        timestamp at position 600:   600 cacheable    $16,530
+        timestamp at position 1000: 1,000 cacheable   $15,450
+        timestamp at the very end:  4,800 cacheable    $5,190
+
+    NOTE THE LAST ROW IS BETTER THAN VERSION 4, because with the variable token at the very bottom
+    even the retrieved chunks become part of the cacheable prefix - which is only true if the chunks
+    themselves are stable, so in practice it is an upper bound rather than an achievable figure.
+
+    THE HONEST READING: THE ACHIEVABLE SAVING IS THE 32.7% FROM VERSION 4, and the $5,190 figure shows
+    what perfect stability would be worth if you had it.
+
+    AND THE LATENCY, WHICH IS NOT IN THE TABLE: version 4 skips prefill for 2,200 of 4,800 tokens -
+    roughly 46% of the prefill work - so time to first token improves substantially, and that is what
+    the user actually notices.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT IS:  the provider stores the KV cache for a PREFIX of your prompt and charges roughly a
+    tenth to reuse it, skipping the prefill for those tokens.
+
+    WHY IT MUST BE A PREFIX:  in a causal transformer a token's key and value depend on everything
+    before it, so changing token 3 makes every later cached entry mathematically wrong.
+
+    THE MEASURED EVIDENCE (4,800-token RAG request, 250 output, 1M requests/month):
+        nothing cached                 $18,150 / month
+        system prompt cached           $16,530     8.9%
+        system + tools                 $15,450    14.9%
+        system + tools + history       $12,210    32.7%
+        a timestamp at position 0 vs the very end:  $18,150 vs $5,190 - THE SAME TOKEN, $13,000
+
+    THE ORDERING:  system · tools · few-shot · shared documents · conversation history · retrieved
+    chunks · the question · the repeated critical constraint.
+
+    THE BREAK-EVEN:  writing costs ~1.25x and reading ~0.1x, so about 1.3 reads within the TTL.
+
+THE #1 MISTAKE: a variable token near the top - a timestamp, a request id, a user name. It reduces the
+cacheable prefix to whatever precedes it, and at the very top that is nothing.
+
+THE #2 MISTAKE: per-user content above shared content, which turns one prefix used a million times into
+a million prefixes used once.
+
+THE #3 MISTAKE: non-deterministic serialisation. The cache compares bytes, so unsorted dictionary keys
+break it invisibly.
+
+THE #4 MISTAKE: not monitoring the cached-token count. A broken cache produces identical answers and a
+larger bill, which is the hardest kind of regression to notice.
+
+THE #5 MISTAKE: degrading the prompt to win a cache hit. Attention is most reliable at the top and
+bottom, so burying the critical instruction in the middle costs more than it saves.
+
+ONE-SENTENCE TAKEAWAY: the cache matches a byte-identical prefix because that is the only thing a
+causal model could correctly reuse - so order your prompt from most stable to least, keep every
+variable token at the bottom, and watch the cached-token count, because the same timestamp in the wrong
+place is worth thousands a month.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
