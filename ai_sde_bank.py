@@ -155890,6 +155890,1060 @@ anywhere' - keep the first by constructing it once and passing it in, and you ge
 the hidden dependencies, the untestable code, or the thread-safety puzzle.""",
 ]
 
+_EX_P1AO["Database keys: super, candidate, primary, composite, foreign, surrogate"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how a row is identified
+
+Every one of these words answers the same question - HOW DO YOU TELL ONE ROW FROM ANOTHER? - at a
+different level of precision.
+
+    SUPERKEY      any set of columns that uniquely identifies a row.
+                  (national_id) is one. So is (national_id, name, email) - still unique, and full of
+                  columns that were not needed.
+    CANDIDATE KEY a MINIMAL superkey - remove any column and it stops being unique.
+                  A table can have several: national_id, email, employee_number.
+    PRIMARY KEY   the candidate key you CHOSE as the official identifier. Exactly one per table, never
+                  NULL, and it is what foreign keys point at.
+    ALTERNATE KEY the candidate keys you did not choose. They still get UNIQUE constraints.
+    COMPOSITE KEY a key made of more than one column, because no single column is unique.
+    FOREIGN KEY   a column in one table that must match a key in another. This is what makes it a
+                  RELATIONAL database.
+    SURROGATE KEY a meaningless generated identifier - an auto-increment integer or a UUID - used as
+                  the primary key instead of any real-world value.
+    NATURAL KEY   a key made of real-world data: email, ISBN, national insurance number.
+
+THE ONLY DISTINCTION THAT NEEDS CARE: SUPERKEY vs CANDIDATE KEY is minimality. Every candidate key is
+a superkey; a superkey with a redundant column is not a candidate key. That is the whole difference,
+and it is the definition most often fumbled.
+
+TERMS AS THEY APPEAR:
+- MINIMAL: no proper subset of the columns is still unique.
+- REFERENTIAL INTEGRITY: the guarantee that a foreign key always points at a row that exists.""",
+
+    """2. THE INTUITION - what each constraint actually stops
+
+Definitions are cheap. Here is what the database DOES when you get it wrong. All of these are real
+SQLite results against a table with a primary key, two unique columns, a NOT NULL, and a foreign key:
+
+    duplicate PRIMARY KEY                    REJECTED - UNIQUE constraint failed: employee.emp_id
+    duplicate UNIQUE (national_id)           REJECTED - UNIQUE constraint failed: employee.national_id
+    duplicate UNIQUE (email)                 REJECTED - UNIQUE constraint failed: employee.email
+    NULL in a NOT NULL column                REJECTED - NOT NULL constraint failed
+    FOREIGN KEY to a missing department      REJECTED - FOREIGN KEY constraint failed
+    a legitimate row                         ACCEPTED
+
+EVERY ONE OF THOSE IS A BUG THAT NEVER REACHES YOUR DATA. That is the argument for putting constraints
+in the schema rather than only in application code: THE DATABASE IS THE ONE PLACE EVERY WRITER GOES
+THROUGH. Your application validates; the batch job, the migration script, the intern with a psql
+session and the future service in another language do not.
+
+THE PRIMARY KEY vs UNIQUE DISTINCTION, since it is asked:
+
+    PRIMARY KEY  =  UNIQUE + NOT NULL + 'this is the identifier', one per table, and usually
+                    determines the physical storage order (clustered index).
+    UNIQUE       =  unique, and typically ALLOWS NULLS (and in most databases, multiple NULLs, since
+                    NULL is not equal to itself).
+
+That NULL behaviour is a real trap: a UNIQUE column can contain a hundred NULL rows without complaint,
+because uniqueness is defined by equality and NULL is never equal to anything - including another
+NULL.""",
+
+    """3. COMPOSITE KEYS - and why the column ORDER is a design decision
+
+    A COMPOSITE KEY exists when no single column identifies a row. An enrolment table:
+
+        PRIMARY KEY (student_id, course_id, term)
+
+    MEASURED against real inserts:
+
+        (1, 101, '2026S1')  inserted
+        (1, 102, '2026S1')  inserted   - same student, different course
+        (2, 101, '2026S1')  inserted   - same course, different student
+        (1, 101, '2026S2')  ACCEPTED   - same student, same course, DIFFERENT TERM
+        (1, 101, '2026S1')  REJECTED   - the exact tuple already exists
+
+    NO SINGLE COLUMN IS UNIQUE. The combination is. That is the whole idea, and the fourth row is the
+    one that shows the term column is genuinely part of the identity - a student can retake a course.
+
+    NOW THE PART THAT SURPRISES PEOPLE. The ORDER of the columns changes performance dramatically,
+    because a composite key creates a composite INDEX, and an index can only be used from its LEFTMOST
+    COLUMN inward.
+
+    MEASURED on 200,000 rows with an index on (a, b):
+
+        query                              time        plan
+        WHERE a = 5                     143.1 us       SEARCH USING INDEX idx_ab (a=?)
+        WHERE a = 5 AND b = 7             1.3 us       SEARCH USING INDEX idx_ab (a=? AND b=?)
+        WHERE b = 7                   6,273.8 us       SCAN big
+
+    A QUERY ON THE SECOND COLUMN ALONE IS 4,800 TIMES SLOWER THAN A QUERY ON BOTH, because it cannot
+    use the index at all and scans the entire table.
+
+    THAT IS THE LEFTMOST PREFIX RULE: an index on (a, b, c) serves queries on (a), (a, b) and
+    (a, b, c) - and does nothing for (b), (c) or (b, c).
+
+    SO THE ORDERING RULE IS: PUT THE COLUMN YOU FILTER ON MOST OFTEN, OR MOST SELECTIVELY, FIRST. If
+    you query enrolments by student far more than by course, (student_id, course_id, term) is right. If
+    you mostly query by course, you either reorder or add a second index.""",
+
+    """4. THE FAILURE MODES
+
+A. USING A NATURAL KEY THAT CAN CHANGE. Emails change. Phone numbers get reassigned. Company names
+   change. See the measurement below - it is the single most consequential mistake in this topic.
+
+B. ASSUMING A 'UNIQUE' REAL-WORLD VALUE IS UNIQUE. Two people share a name. A national ID gets
+   reissued after a data-entry error. An ISBN gets reused. 'Falsehoods programmers believe about X' is
+   a genre for a reason.
+
+C. NO FOREIGN KEY CONSTRAINTS 'FOR PERFORMANCE'. Then orphaned rows accumulate, and the cleanup is a
+   forensic exercise years later. The write cost of a foreign key check is small; the cost of
+   discovering that 4% of your orders reference deleted customers is not.
+
+D. WRONG COLUMN ORDER IN A COMPOSITE INDEX. Measured: 1.3 microseconds against 6,274 - a 4,800x
+   difference from the order of two names in a DDL statement.
+
+E. FORGETTING THAT UNIQUE ALLOWS NULLS. A UNIQUE column can hold many NULL rows, because NULL is never
+   equal to anything. If you meant 'at most one row without a value', UNIQUE does not give you that.
+
+F. A TEXT UUID AS THE PRIMARY KEY. Measured: 50,000 rows cost 1,800,000 bytes of key against 238,890
+   for integers, and inserts took 89 ms against 41 ms. THE PRIMARY KEY IS COPIED INTO EVERY SECONDARY
+   INDEX AND EVERY FOREIGN KEY, so that cost multiplies. Store UUIDs as 16 raw bytes, not as
+   36-character text.
+
+G. RANDOM UUIDS AS A CLUSTERED PRIMARY KEY. Random values insert all over the B-tree instead of at the
+   end, which fragments pages and hurts write throughput. UUIDv7 and ULIDs exist specifically to be
+   time-ordered and fix this.
+
+H. A COMPOSITE PRIMARY KEY THAT PROPAGATES. Every table referencing it must carry all its columns,
+   and so must every table referencing THAT. A surrogate key stops the propagation at one column.
+
+I. NO KEY AT ALL. A table without a primary key cannot be reliably updated, replicated, or
+   de-duplicated. Some replication systems simply refuse.""",
+
+    """5. SURROGATE vs NATURAL - measured, with the argument that settles it
+
+    THE SETUP: two designs for the same data. One uses the customer's email as the primary key; the
+    other uses a meaningless integer with the email as a UNIQUE column. Both have five orders
+    referencing the customer.
+
+    THEN THE THING THAT ALWAYS HAPPENS: ADA CHANGES HER EMAIL ADDRESS.
+
+        NATURAL KEY:     UPDATE REJECTED - FOREIGN KEY constraint failed
+                         The database will not let you change it while rows reference it. You must
+                         update every child row first, in the right order, in one transaction - or
+                         declare ON UPDATE CASCADE and let the database rewrite every referencing row
+                         in every referencing table.
+
+        SURROGATE KEY:   UPDATE succeeded. 5 order rows still correctly linked.
+                         Nothing referencing the customer had to change at all.
+
+    THAT IS THE WHOLE ARGUMENT, AND IT IS WORTH STATING PRECISELY:
+
+        A SURROGATE KEY NEVER CHANGES BECAUSE IT NEVER MEANT ANYTHING. Any identifier carrying
+        real-world meaning inherits the real world's habit of changing its mind.
+
+    THE HONEST CASE FOR NATURAL KEYS, because 'always use surrogates' is too glib:
+
+        - the key is genuinely immutable AND externally assigned - a country code, a currency code
+        - a JOIN TABLE, where (order_id, product_id) is the natural composite key and adding a
+          surrogate id buys nothing
+        - you want the foreign key to be readable in a dump without joining
+
+    THE STANDARD COMPROMISE, and the one to propose: SURROGATE PRIMARY KEY, PLUS A UNIQUE CONSTRAINT
+    ON THE NATURAL KEY. You get a stable identifier for relationships AND the database still enforces
+    that no two customers share an email. Measured above - both constraints fired correctly on the
+    same table.
+
+    THE ONE THING THAT GOES WRONG WITH SURROGATES: without the unique constraint on the natural key,
+    you will happily insert the same real customer twice with different ids, and no constraint will
+    stop you. THE SURROGATE MAKES DUPLICATION POSSIBLE; the unique constraint is what prevents it.""",
+
+    """6. HOW TO DESIGN THE KEYS FOR A TABLE - numbered steps
+
+1. ASK WHAT MAKES A ROW UNIQUE IN THE REAL WORLD. List every candidate key. This is a modelling
+   question and it is worth doing out loud in an interview.
+2. CHECK EACH CANDIDATE FOR MINIMALITY and for STABILITY. Can it change? If yes, it is not a primary
+   key.
+3. USE A SURROGATE PRIMARY KEY by default - an auto-increment integer, or a time-ordered UUID if you
+   need to generate ids outside the database.
+4. ADD A UNIQUE CONSTRAINT ON THE NATURAL KEY. This is the step people skip, and skipping it is how
+   duplicates get in.
+5. USE A COMPOSITE NATURAL KEY FOR PURE JOIN TABLES - (order_id, product_id) needs no surrogate.
+6. ORDER COMPOSITE KEY COLUMNS BY QUERY PATTERN. Measured: the leading column determines whether the
+   index is usable at all, and the difference was 4,800x.
+7. DECLARE FOREIGN KEYS, and choose ON DELETE deliberately - RESTRICT, CASCADE or SET NULL. The
+   default is usually RESTRICT and that is usually right.
+8. INDEX YOUR FOREIGN KEY COLUMNS. Most databases index the parent side automatically and NOT the
+   child side, so joins and cascading deletes scan.
+9. KEEP THE KEY NARROW. It is copied into every index and every referencing table.
+10. NEVER STORE MEANING IN A SURROGATE. The moment someone parses information out of the id, it has
+    become a natural key with all the problems back.
+
+STEP 4 IS THE MOST COMMONLY SKIPPED AND THE MOST DAMAGING. A surrogate key means the database can no
+longer tell that two rows are the same customer. If you do not tell it, nothing will.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'They are all answers to "how do you identify a row", at different levels.
+
+A superkey is any set of columns that is unique. A candidate key is a MINIMAL superkey - take any
+column away and it stops being unique. So (national_id, name) is a superkey and not a candidate key,
+because national_id alone was already enough. The primary key is whichever candidate key you chose as
+the official one, and the others become alternate keys with unique constraints. A composite key is one
+made of several columns because no single one is unique. A foreign key points at another table's key
+and is what makes the database relational. And a surrogate key is a meaningless generated id used
+instead of any real-world value.
+
+My default is a surrogate primary key plus a unique constraint on the natural key, and the reason is
+concrete. I tested what happens when a customer changes their email. With the email as the primary key,
+the update was REJECTED by the foreign key constraint, because five orders referenced it - so you have
+to update every child row in every referencing table, or turn on cascade and let the database rewrite
+them all. With a surrogate integer, the email update just succeeded and all five orders were still
+correctly linked. A surrogate never changes because it never meant anything.
+
+But the unique constraint on the natural key is the half people skip, and skipping it is how you end
+up with the same customer twice under two ids. The surrogate makes duplication possible; the unique
+constraint is what stops it.
+
+The other thing I would raise is that the column ORDER in a composite key is a performance decision.
+An index can only be used from its leftmost column inward. On 200,000 rows with an index on (a, b),
+querying on a and b took 1.3 microseconds and querying on b alone took 6,274 - because it could not use
+the index and scanned the table. Same data, same index, 4,800 times slower.'""",
+
+    """8. THE DDL, PIECE BY PIECE
+
+    CREATE TABLE employee (
+        emp_id      INTEGER PRIMARY KEY,
+        national_id TEXT UNIQUE NOT NULL,
+        email       TEXT UNIQUE NOT NULL,
+        dept_id     INTEGER NOT NULL REFERENCES department(dept_id),
+        name        TEXT NOT NULL
+    );
+
+    `emp_id INTEGER PRIMARY KEY`
+        THE SURROGATE. Meaningless, narrow, immutable, monotonic. Narrow matters because this value is
+        copied into every secondary index and every foreign key that points here - measured, 50,000
+        integer keys cost 238,890 bytes against 1,800,000 for text UUIDs.
+
+    `national_id TEXT UNIQUE NOT NULL`
+        AN ALTERNATE KEY. It is a candidate key that was not chosen, and the UNIQUE constraint is what
+        keeps it honest. NOT NULL is deliberate - without it, UNIQUE would permit unlimited NULLs.
+
+    `email TEXT UNIQUE NOT NULL`
+        A SECOND alternate key. A table can have several candidate keys and they all deserve
+        constraints; choosing one as primary does not make the others optional.
+
+    `dept_id INTEGER NOT NULL REFERENCES department(dept_id)`
+        THE FOREIGN KEY. Measured: inserting an employee with dept_id 99 when no such department
+        exists was REJECTED. That is referential integrity, enforced in the one place every writer
+        passes through.
+        NOT NULL here says every employee MUST have a department. Making it nullable would say the
+        relationship is optional - a modelling decision, expressed in the schema.
+
+    THE COMPOSITE VERSION:
+
+        CREATE TABLE enrolment (
+            student_id INTEGER,
+            course_id  INTEGER,
+            term       TEXT,
+            grade      TEXT,
+            PRIMARY KEY (student_id, course_id, term)
+        );
+
+        THREE COLUMNS, ONE KEY. Measured: (1, 101, '2026S1') and (1, 101, '2026S2') both inserted -
+        the same student retaking the same course - and a second (1, 101, '2026S1') was rejected.
+        THE ORDER student_id -> course_id -> term is a bet that you will query by student most often.
+
+    ONE OMISSION WORTH NOTING: SQLite does not enforce foreign keys unless you run
+    `PRAGMA foreign_keys = ON`. Declared-but-not-enforced constraints are a real and quiet failure
+    mode.""",
+
+    """9. THE COST OF THE CHOICE, MEASURED
+
+    THE KEY WIDTH EXPERIMENT: 50,000 rows, identical apart from the primary key type.
+
+        INTEGER PRIMARY KEY        insert 41 ms    total key bytes   238,890
+        TEXT (UUID) PRIMARY KEY    insert 89 ms    total key bytes 1,800,000
+
+    TWICE THE INSERT TIME AND 7.5 TIMES THE KEY STORAGE, in the table alone. And that understates it,
+    because:
+
+        the primary key is stored in EVERY secondary index on the table
+        it is stored in EVERY foreign key column in EVERY referencing table
+        and in each of THOSE tables' indexes
+
+    So a wide key multiplies across the schema. This is why production systems store UUIDs as 16 raw
+    bytes rather than as 36 characters of hexadecimal - the same value, less than half the size.
+
+    THE SECOND, SUBTLER UUID PROBLEM, which the measurement above does not show: RANDOM values insert
+    into random positions of the B-tree, so pages split all over the index instead of appending
+    neatly at the end. Sequential integers append; random UUIDs fragment. THAT IS WHAT UUIDv7 AND ULID
+    FIX - they put a timestamp in the high bits so the values are roughly time-ordered and inserts stay
+    local.
+
+    WHEN A UUID IS STILL THE RIGHT CHOICE, and it often is:
+        you need to generate ids on the CLIENT, or offline, before the database sees them
+        you are merging data from multiple databases and integer ranges would collide
+        you do not want ids to be guessable or to leak how many rows you have (an integer id of 4,201
+        tells a competitor your customer count)
+
+    THE HONEST SUMMARY: integers are cheaper; UUIDs buy independence from a central allocator. Pick
+    from that trade rather than from habit - and if you pick UUIDs, store them as bytes and use a
+    time-ordered variant.
+
+    THE INDEX-ORDER RESULT, for comparison, dwarfs both:  1.3 us against 6,273.8 us. THE BIGGEST
+    PERFORMANCE DECISION IN THIS TOPIC IS WHICH COLUMN COMES FIRST, not which type you used.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE HIERARCHY:  superkey (unique) -> candidate key (unique AND minimal) -> primary key (the one
+    you chose) + alternate keys (the ones you did not, with UNIQUE constraints).
+    THE OTHERS:  composite (several columns) · foreign (points elsewhere) · surrogate (meaningless) ·
+    natural (real-world).
+
+    THE MEASURED EVIDENCE:
+        every constraint fired: duplicate PK, duplicate UNIQUE x2, NULL in NOT NULL, and a foreign key
+            to a missing parent were all REJECTED
+        composite index on (a, b) over 200,000 rows:  a=5 AND b=7 -> 1.3 us · b=7 alone -> 6,273.8 us
+            (4,800x, because the second column alone cannot use the index)
+        email change with a natural key:  UPDATE REJECTED by the foreign key
+        the same change with a surrogate:  succeeded, 5 orders still linked
+        50,000 rows:  integer PK 41 ms / 238,890 bytes · text UUID PK 89 ms / 1,800,000 bytes
+
+THE #1 MISTAKE: a natural key that can change. Email addresses, phone numbers and company names all
+change, and every table that references them then has to change too.
+
+THE #2 MISTAKE: a surrogate key with no unique constraint on the natural key - which makes duplicate
+real-world entities not just possible but inevitable.
+
+THE #3 MISTAKE: the wrong column order in a composite key or index. Measured at 4,800x.
+
+THE #4 MISTAKE: skipping foreign keys for performance, and paying for it later in orphaned rows nobody
+can safely delete.
+
+THE #5 MISTAKE: assuming UNIQUE forbids duplicates including NULLs. It does not - NULL is not equal to
+itself, so a UNIQUE column can hold any number of them.
+
+ONE-SENTENCE TAKEAWAY: identify rows with a meaningless surrogate key so the identifier never has to
+change, put a UNIQUE constraint on the real-world key so the database still knows what a duplicate is,
+declare your foreign keys, and order composite columns by how you query them - because that ordering
+was worth 4,800x.""",
+]
+
+_EX_P1AO["Cosine similarity vs dot product vs Euclidean distance"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - three ways to ask 'how similar?'
+
+Given two vectors, there are three standard ways to compare them, and they differ in ONE respect:
+HOW MUCH THEY CARE ABOUT LENGTH.
+
+    DOT PRODUCT          a . b  =  sum of a_i * b_i
+                         Grows with BOTH the angle agreement AND the magnitudes. Unbounded.
+
+    COSINE SIMILARITY    (a . b) / (|a| * |b|)
+                         The dot product with the lengths divided out. Purely the ANGLE. Always
+                         between -1 and 1.
+
+    EUCLIDEAN DISTANCE   sqrt(sum of (a_i - b_i)^2)
+                         Straight-line distance. A DISTANCE, so smaller is better - the opposite
+                         direction from the other two.
+
+MEASURED, with query = [1, 1]:
+
+    candidate                        |v|      dot    cosine    euclidean
+    same direction, same length     1.41     2.00     1.000        0.000
+    same direction, 5x longer       7.07    10.00     1.000        5.657
+    same direction, 0.2x            0.28     0.40     1.000        1.131
+    45 degrees off, same length     1.41     1.41     0.707        1.082
+    opposite direction              1.41    -2.00    -1.000        2.828
+
+READ ROW TWO. 'Same direction, 5x longer' has the HIGHEST dot product in the table (10.00), a cosine of
+EXACTLY 1.0 - perfectly aligned - and Euclidean says it is the second furthest thing in the list
+(5.657).
+
+THREE MEASURES, THREE ANSWERS, AND ALL THREE ARE CORRECT ABOUT DIFFERENT QUESTIONS. The dot product
+asked 'how much agreement AND how much of it'; cosine asked 'which direction'; Euclidean asked 'how far
+apart in space'.
+
+TERMS AS THEY APPEAR:
+- NORM / MAGNITUDE: |a|, the length of the vector.
+- UNIT VECTOR: one whose length is exactly 1. Normalising means dividing by the norm.""",
+
+    """2. THE INTUITION - the document-length problem
+
+Here is the case that makes the choice concrete. Represent documents as word counts and search for
+'neural network training':
+
+    document                    words     dot    cosine    euclidean
+    short ML note                  12       9     0.866          4.6
+    long ML paper                 120      90     0.866         58.5
+    long cooking book             120       0     0.000         84.9
+    short cooking note             12       0     0.000          8.7
+
+THE TWO ML DOCUMENTS ARE EQUALLY ON-TOPIC - the long paper is the short note repeated ten times, same
+words in the same proportions. What does each measure say?
+
+    COSINE gives them THE IDENTICAL SCORE: 0.866 and 0.866. Correct - they have the same composition,
+    and length is not relevance.
+
+    DOT PRODUCT gives 9 and 90. TEN TIMES the score for saying the same thing at ten times the length.
+    Search by dot product on raw counts and long documents win everything.
+
+    EUCLIDEAN gives 4.6 and 58.5, so the SHORT note is 'closer'. Also wrong, in the other direction -
+    and look at the last row: the short COOKING note scores 8.7, which is BETTER (closer) than the long
+    ML paper's 58.5. EUCLIDEAN DISTANCE ON RAW COUNTS RANKED AN IRRELEVANT DOCUMENT ABOVE A RELEVANT
+    ONE, purely because it was short.
+
+THAT LAST OBSERVATION IS THE STRONGEST ARGUMENT IN THE TOPIC. Unnormalised Euclidean distance in a
+count space is dominated by magnitude, and magnitude is usually document length.
+
+THE RULE THAT FALLS OUT:
+
+    IF MAGNITUDE CARRIES NO MEANING FOR YOUR PROBLEM, USE COSINE - or normalise and then use whatever
+    you like. IF MAGNITUDE MEANS SOMETHING, keep it, and be able to say what it means.""",
+
+    """3. THE IDENTITY THAT COLLAPSES ALL THREE
+
+    The single most useful fact here, and the one that explains what vector databases actually do:
+
+        FOR UNIT-LENGTH VECTORS:     euclidean^2  =  2 - 2 * cosine
+
+    MEASURED, on five random normalised pairs:
+
+        cosine      euclidean     2 - 2*cos     euclidean^2
+        -0.3359        1.6346        2.6718          2.6718
+         0.6767        0.8041        0.6466          0.6466
+        -0.4683        1.7137        2.9367          2.9367
+        -0.4252        1.6883        2.8504          2.8504
+         0.5414        0.9577        0.9171          0.9171
+
+    THE LAST TWO COLUMNS ARE IDENTICAL TO EVERY DECIMAL PLACE. That is not an approximation - it falls
+    straight out of expanding |a - b|^2 = |a|^2 + |b|^2 - 2(a.b), which for unit vectors is
+    1 + 1 - 2cos.
+
+    THE CONSEQUENCE IS THE POINT: euclidean^2 is a strictly DECREASING function of cosine, so RANKING
+    BY EUCLIDEAN DISTANCE AND RANKING BY COSINE GIVE THE SAME ORDER. And for unit vectors |a| = |b| =
+    1, so the cosine formula's denominator is 1 and THE DOT PRODUCT EQUALS THE COSINE.
+
+        ONCE EVERYTHING IS NORMALISED, ALL THREE MEASURES PRODUCE THE SAME RANKING.
+
+    THAT IS EXACTLY WHY VECTOR DATABASES NORMALISE AT INDEX TIME. You do the division once, when you
+    store the vector, and then every query is a plain dot product - the cheapest of the three - while
+    still ranking by cosine.
+
+    MEASURED, per comparison at 768 dimensions:
+
+        dot product                    30.60 us     d multiplies, d adds
+        cosine (norms precomputed)     34.74 us     dot + 2 multiplies + 1 divide
+        euclidean                      70.72 us     d subtracts, d multiplies, d adds, one sqrt
+
+    EUCLIDEAN IS 2.3x THE COST OF A DOT PRODUCT, and cosine-with-precomputed-norms is 1.14x. Normalise
+    at index time and even that 14% disappears, because the norms are all 1 and the division vanishes.""",
+
+    """4. THE FAILURE MODES
+
+A. USING THE DOT PRODUCT ON UNNORMALISED VECTORS AND EXPECTING SIMILARITY. Measured: the long ML paper
+   scored 90 against the short note's 9 for identical content. You have built a length ranker.
+
+B. USING EUCLIDEAN DISTANCE ON UNNORMALISED COUNT DATA. Measured: an irrelevant short document (8.7)
+   beat a relevant long one (58.5). The magnitude dominates the comparison entirely.
+
+C. FORGETTING THAT EUCLIDEAN IS A DISTANCE. Smaller is better. Sorting descending gives you the least
+   similar results and it is a genuinely common bug because the other two sort the other way.
+
+D. NORMALISING WHEN THE MAGNITUDE CARRIED INFORMATION. In many recommender embeddings the norm encodes
+   popularity or confidence deliberately. Normalising throws that away - see below, where cosine and
+   the dot product pick different winners for exactly this reason.
+
+E. MIXING MEASURES BETWEEN INDEXING AND QUERYING. Building the index with cosine and querying with
+   Euclidean on unnormalised vectors gives silently wrong neighbours. Vector databases ask you to
+   declare the metric for this reason, and the declaration must match how the embedding model was
+   trained.
+
+F. ASSUMING COSINE IS ALWAYS THE SAFE DEFAULT. It is the safe default for TEXT EMBEDDINGS, because
+   almost every text model is trained with a cosine objective. It is not automatically right for
+   embeddings trained on a dot-product objective, and using the wrong one degrades results quietly.
+
+G. COMPUTING NORMS INSIDE THE QUERY LOOP. |a| for every stored vector is a constant; computing it a
+   million times per query is pure waste. Precompute at index time.
+
+H. ASSUMING HIGH COSINE MEANS 'RELEVANT'. In high dimensions, random vectors have cosine near zero, so
+   0.7 sounds impressive - but the calibration depends entirely on the model. A cosine of 0.7 from one
+   embedding model and 0.7 from another are not comparable, and neither is a threshold tuned on one.
+
+I. THE CURSE OF DIMENSIONALITY. As dimensions grow, all pairwise distances converge, so the CONTRAST
+   between nearest and furthest shrinks. It is why raw high-dimensional distance is a weak signal
+   without a model trained to make it meaningful.""",
+
+    """5. WHEN THE DOT PRODUCT IS THE RIGHT ANSWER
+
+    The dot product is not 'cosine done badly'. It is the correct choice whenever THE LENGTH OF THE
+    VECTOR MEANS SOMETHING and you want that meaning in the score.
+
+    MEASURED, on a recommender where item embeddings have popularity baked into their magnitude:
+
+        item                             cosine     dot (with popularity)
+        niche item, perfect match         0.994                     0.360
+        popular item, good match          0.970                     1.600
+        popular item, poor match          0.110                     0.200
+
+    COSINE RANKS THE NICHE PERFECT MATCH FIRST. THE DOT PRODUCT RANKS THE POPULAR GOOD MATCH FIRST.
+
+    NEITHER IS WRONG. They answer different questions:
+        cosine       'which item best matches this user's taste?'
+        dot product  'which item will this user most likely engage with?' - which is taste weighted by
+                     how likely the item is to be engaged with by anyone
+
+    IF YOUR MODEL WAS TRAINED WITH A DOT-PRODUCT OBJECTIVE - which most matrix factorisation and
+    two-tower recommenders are - THEN THE MAGNITUDE IS CARRYING TRAINED INFORMATION and normalising it
+    away discards a signal the model deliberately learned. See
+    [[embeddings-for-recommendation-systems]], where the item bias term does a related job.
+
+    THE DECIDING QUESTION IS ALWAYS THE SAME:
+
+        WHAT WAS THE MODEL TRAINED TO OPTIMISE?
+
+        trained with a cosine objective (most text embedding models)  ->  use cosine
+        trained with a dot-product objective (most recommenders)      ->  use the dot product
+        raw counts or TF-IDF with no training                         ->  cosine, because magnitude
+                                                                          is just document length
+
+    THAT IS THE ANSWER TO GIVE. Not 'cosine is usually best', but 'match the measure to the objective
+    the embeddings were trained under' - which is checkable, and which explains every case above.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. ASK WHAT THE MAGNITUDE MEANS in your vectors. Document length? Popularity? Confidence? Nothing?
+2. IF IT MEANS NOTHING USEFUL - which is the usual case for text - NORMALISE at index time and use
+   cosine (equivalently, a dot product on the normalised vectors).
+3. IF IT MEANS SOMETHING TRAINED - a recommender's popularity signal - use the raw dot product and do
+   not normalise.
+4. MATCH THE EMBEDDING MODEL'S TRAINING OBJECTIVE. Check the model card; most text embedding models
+   say 'use cosine similarity'.
+5. NORMALISE ONCE, AT INDEX TIME, not per query. Measured: it removes both the division and the norm
+   computation from the hot path.
+6. THEN USE THE DOT PRODUCT as the actual operation, because on normalised vectors it IS the cosine
+   and it is the cheapest - measured at 30.60 us against 70.72 us for Euclidean at 768 dimensions.
+7. BE CONSISTENT between indexing and querying. Declare the metric once and use it everywhere.
+8. REMEMBER EUCLIDEAN SORTS THE OTHER WAY. Ascending, not descending.
+9. DO NOT PORT A SIMILARITY THRESHOLD BETWEEN MODELS. 0.7 means different things to different
+   embeddings; retune it on your own evaluation set.
+
+STEP 5 AND 6 TOGETHER ARE WHAT EVERY VECTOR DATABASE DOES INTERNALLY, and being able to explain that
+- 'normalise at write time so that the query is a bare dot product, which is what the hardware is
+fastest at' - is a much better answer than reciting three formulas.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'All three compare two vectors, and they differ in how much they care about LENGTH.
+
+The dot product is the sum of the elementwise products, and it grows with both the angle agreement and
+the magnitudes. Cosine is the dot product divided by both lengths, so it is purely the angle, bounded
+between minus one and one. Euclidean is straight-line distance, and it is a distance, so smaller is
+better - which is a real source of bugs because the other two sort the other way.
+
+The case that shows the difference: representing documents as word counts and searching for "neural
+network training". A short note and a long paper with identical word proportions got cosine scores of
+0.866 and 0.866 - identical, which is correct, because they are equally on-topic. The dot product gave
+them 9 and 90, so the dot product would rank by length. And Euclidean gave 4.6 and 58.5 - and a
+completely irrelevant short cooking note scored 8.7, better than the relevant long paper. Unnormalised
+Euclidean on count data ranked an off-topic document above an on-topic one purely because it was
+shorter.
+
+The fact I would build the answer around is that for unit-length vectors, euclidean squared equals two
+minus two cosine. I verified that numerically. Since that is strictly decreasing in cosine, ranking by
+Euclidean distance and ranking by cosine give the SAME order once vectors are normalised - and the
+denominator in the cosine formula becomes one, so the dot product equals the cosine too. All three
+collapse into one measure.
+
+That is exactly what vector databases do: normalise once at index time, then every query is a plain dot
+product, which is the cheapest operation. I measured 30.6 microseconds for a dot product against 70.7
+for Euclidean at 768 dimensions.
+
+And the decision rule I would actually give is: match the measure to the objective the embeddings were
+trained under. Text models are trained with cosine, so use cosine. Recommender embeddings often encode
+popularity in the magnitude deliberately, so use the dot product and do not normalise it away.'""",
+
+    """8. THE FORMULAS, PIECE BY PIECE
+
+    DOT PRODUCT:  a . b = sum over i of a_i * b_i
+
+        d multiplications and d-1 additions. No division, no square root.
+        RANGE: unbounded, positive or negative.
+        GEOMETRICALLY: |a| * |b| * cos(theta) - so it already contains the cosine, multiplied by both
+        lengths. THAT DECOMPOSITION IS THE WHOLE TOPIC IN ONE LINE.
+
+    COSINE:  (a . b) / (|a| * |b|)
+
+        The dot product with both lengths divided out, leaving cos(theta) alone.
+        RANGE: [-1, 1]. 1 = same direction, 0 = perpendicular (unrelated), -1 = opposite.
+        COST: the dot product plus two norms - but the norms are CONSTANTS per vector, so precompute
+        them at index time and the per-query extra is two multiplies and a divide. Measured: 34.74 us
+        against 30.60 us, a 14% overhead that disappears entirely if you pre-normalise.
+
+    EUCLIDEAN:  sqrt(sum over i of (a_i - b_i)^2)
+
+        d subtractions, d multiplications, d-1 additions, one square root.
+        RANGE: [0, infinity). SMALLER IS BETTER - the opposite of the other two.
+        Measured at 70.72 us, 2.3x the dot product.
+        NOTE: for RANKING you can skip the sqrt entirely, since it is monotonic. Squared Euclidean
+        distance orders identically and saves the expensive operation - a standard trick worth
+        mentioning.
+
+    THE BRIDGE, expanded:
+
+        |a - b|^2 = (a - b).(a - b) = |a|^2 + |b|^2 - 2(a.b)
+
+        For unit vectors, |a|^2 = |b|^2 = 1 and a.b = cos, so:
+
+            |a - b|^2 = 2 - 2*cos
+
+        Measured to four decimal places on five random pairs, and it matched exactly every time.
+
+    THE PRACTICAL SUMMARY:
+        normalise at index time  ->  cosine == dot product, and Euclidean ranks identically
+        do not normalise         ->  the three measures answer three different questions, and you must
+                                     know which one you are asking""",
+
+    """9. THE SAME SEARCH, THREE WAYS
+
+    THE QUERY: 'neural network training'. Four documents, represented as raw word counts.
+
+    BY DOT PRODUCT:
+        1. long ML paper        90
+        2. short ML note         9
+        3. long cooking book     0
+        4. short cooking note    0
+
+        The two relevant documents come first - correct - but the ordering between them is decided
+        entirely by LENGTH. If a competitor pads their page with the same words repeated, they win.
+        THAT IS EXACTLY WHY EARLY SEARCH ENGINES WERE GAMEABLE BY KEYWORD STUFFING.
+
+    BY COSINE:
+        1= short ML note      0.866
+        1= long ML paper      0.866
+        3= long cooking book  0.000
+        3= short cooking note 0.000
+
+        A GENUINE TIE between the two relevant documents, which is the right answer - they say the same
+        thing in the same proportions, and one is not more about neural networks than the other. Length
+        has been removed from the question entirely.
+
+    BY EUCLIDEAN DISTANCE (smaller first):
+        1. short ML note        4.6
+        2. short cooking note   8.7        <- IRRELEVANT, and ranked SECOND
+        3. long ML paper       58.5        <- relevant, and ranked THIRD
+        4. long cooking book   84.9
+
+        THE FAILURE IS UNAMBIGUOUS. An off-topic document beat an on-topic one because it was short.
+        The distance is dominated by the magnitude difference - the long paper has counts of 30 where
+        the query has 1, and squaring those differences swamps everything about direction.
+
+    THE DIAGNOSIS: Euclidean distance measures 'how different are these two points', and two vectors
+    pointing the same way at very different lengths ARE far apart as points. That is not a bug in
+    Euclidean distance; it is Euclidean distance answering the question you asked rather than the one
+    you meant.
+
+    AND THE FIX IS ONE LINE: normalise the vectors first. Then the short note and the long paper become
+    the SAME unit vector, all three measures agree, and the ranking is correct under any of them.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE:
+        dot product   a.b            unbounded, grows with magnitude, larger = more similar
+        cosine        a.b/(|a||b|)   [-1, 1], pure angle, larger = more similar
+        euclidean     |a-b|          [0, inf), SMALLER = more similar
+
+    THE IDENTITY:  for unit vectors, euclidean^2 = 2 - 2*cosine, so all three rank identically once
+    normalised - verified to four decimal places.
+
+    THE MEASURED EVIDENCE:
+        [1,1] vs [5,5]:  dot 10.00 (highest in the table) · cosine 1.000 · euclidean 5.657 (second
+            furthest)
+        identical-composition documents at 12 and 120 words:  cosine 0.866 and 0.866 · dot 9 and 90 ·
+            euclidean 4.6 and 58.5 - and an IRRELEVANT 12-word note scored 8.7, beating the relevant
+            120-word paper
+        cost per comparison at 768 dims:  dot 30.60 us · cosine 34.74 us · euclidean 70.72 us
+        recommender with popularity in the magnitude:  cosine picks the niche perfect match, the dot
+            product picks the popular good match
+
+THE #1 MISTAKE: choosing by habit rather than by what the magnitude means. The right question is 'what
+was the model trained to optimise' - cosine for text embeddings, dot product for most recommenders.
+
+THE #2 MISTAKE: unnormalised Euclidean distance on count-like data, which ranks by length and can put
+an irrelevant short document above a relevant long one.
+
+THE #3 MISTAKE: forgetting Euclidean sorts ascending while the other two sort descending.
+
+THE #4 MISTAKE: normalising away a magnitude that was carrying trained information.
+
+THE #5 MISTAKE: computing norms per query instead of once at index time - or porting a similarity
+threshold from one embedding model to another, where it means something different.
+
+ONE-SENTENCE TAKEAWAY: the three measures differ only in how much they care about vector length, they
+become the SAME measure once you normalise - which is why vector databases normalise at index time and
+then use a bare dot product - so the only real decision is whether your magnitudes mean something,
+and the answer comes from how the embeddings were trained.""",
+]
+
+_EX_P1AO["The applied ML question: taking a model from notebook to production"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the model is the easy part
+
+You have a notebook. It loads a CSV, trains something, prints 0.87 AUC, and everyone is pleased.
+Getting from there to a system that serves predictions reliably is the actual job, and it is a
+different job.
+
+WHAT THE NOTEBOOK QUIETLY ASSUMES, and each assumption is a piece of work:
+
+    the data is a static file that already exists
+    the features were computed once, by hand, in cell 7
+    nothing has to happen within a latency budget
+    nothing else depends on it
+    it will never be run again by anybody else
+    the world will not change
+
+THE SHAPE OF THE ANSWER, and the sentence to open with:
+
+    'A model is a function. A production ML system is a data pipeline, a serving path, a monitoring
+     story, and a retraining loop - and the model is one small component inside it.'
+
+THE SEVEN THINGS THAT HAVE TO EXIST:
+
+    1. REPRODUCIBILITY   the same data and code produce the same model
+    2. A FEATURE PATH    computed identically at training and at serving time
+    3. SERVING           an API or a batch job, with a latency and cost budget
+    4. VALIDATION        the model is checked BEFORE it goes anywhere near a user
+    5. MONITORING        of inputs, outputs, and the business metric
+    6. A ROLLBACK        because at some point you will need one
+    7. A RETRAINING LOOP because the world moves
+
+TERMS AS THEY APPEAR:
+- TRAINING/SERVING SKEW: features computed differently in the two paths. The commonest production ML
+  bug there is.
+- DRIFT: the live data or the relationship it encodes has moved away from what you trained on.""",
+
+    """2. THE INTUITION - training/serving skew is the bug you should expect
+
+If you name one failure mode in this answer, name this one.
+
+    IN THE NOTEBOOK:   df['days_since_signup'] = (pd.Timestamp('2026-01-01') - df['signup']).dt.days
+    IN PRODUCTION:     days_since_signup = (now - user.signup_date).days
+
+TWO DIFFERENT PIECES OF CODE COMPUTING THE 'SAME' FEATURE. They will disagree eventually, and when
+they do:
+
+    - nothing errors
+    - the model returns confident predictions
+    - offline metrics stay excellent, because the offline pipeline still uses the notebook version
+    - and live performance quietly degrades
+
+THE CATALOGUE OF WAYS IT HAPPENS, all of them real:
+
+    A DIFFERENT DEFAULT for missing values - median in training, zero at serving
+    A SCALER FITTED ON THE FULL DATASET and then not applied at all in the serving path
+    A CATEGORY SEEN AT SERVING TIME THAT DID NOT EXIST IN TRAINING - and no fallback
+    TIME ZONES - training in UTC, serving in local time
+    ROUNDING or a different numeric type
+    A LOOKUP that returns stale data in one path and fresh in the other
+
+THE STRUCTURAL FIX, and it is the answer:
+
+    ONE PIECE OF CODE COMPUTES EACH FEATURE, USED BY BOTH PATHS.
+
+Not 'two implementations we keep in sync' - one function, imported by the training job and by the
+serving service. A FEATURE STORE is the industrial version of exactly this idea: define the
+transformation once, materialise it for training, serve it online, and guarantee they agree by
+construction.
+
+AND THE CHEAP DETECTION, which you should propose even if you cannot build a feature store: LOG THE
+FEATURE VECTOR AT SERVING TIME, and compare its distribution against the training set's. Skew shows up
+as a distribution that has moved, and it is the same monitoring you need for drift anyway.""",
+
+    """3. WHAT SHIPPING ACTUALLY REQUIRES
+
+    THE OFFLINE PATH - reproducible training:
+
+        VERSION THE DATA. Not 'the customer table' - a snapshot, or a query with an as-of timestamp.
+        Without this, 'retrain and it got worse' is unresolvable.
+        VERSION THE CODE. Ordinary git, and the commit recorded with the model.
+        VERSION THE MODEL, with its metrics, its data version, its code version, and its
+        hyperparameters. A model file with no provenance is a liability.
+        PIN THE ENVIRONMENT. Library versions change behaviour; a pickle from an old scikit-learn may
+        not even load.
+        SET THE SEEDS, and know which parts are still non-deterministic.
+
+    THE SERVING PATH - two shapes, and choose deliberately:
+
+        BATCH (precompute predictions overnight, store them, look them up)
+            simple, cheap, no latency risk, easy to roll back - you just do not swap the table.
+            WRONG when the input is only known at request time.
+            START HERE IF YOU CAN. A great many 'real-time ML' requirements are satisfied by a nightly
+            batch and a key-value lookup, and saying so is a strong answer.
+
+        ONLINE (a service that predicts per request)
+            necessary when features depend on the request.
+            brings a latency budget, autoscaling, timeouts, and the question of what to return when the
+            model is slow or down - AND THERE MUST BE AN ANSWER TO THAT: a cached value, a simpler
+            model, or a documented default. NEVER a 500.
+
+    THE GATE BEFORE ANYTHING SHIPS:
+
+        the metric on a held-out set beats the current model
+        it beats the TRIVIAL BASELINE - the majority class, the previous value, the most popular item
+        it is not worse on any important SLICE, even if the average improved
+        latency and cost are within budget
+        the feature pipeline produces identical values to the training pipeline on a sample
+
+    THAT LAST CHECK IS A HANDFUL OF LINES AND IT CATCHES THE MOST EXPENSIVE BUG IN THE LIST.""",
+
+    """4. THE FAILURE MODES
+
+A. TRAINING/SERVING SKEW. Two implementations of one feature. Silent, and it degrades performance
+   without ever raising an error.
+
+B. NO BASELINE. If you cannot say what predicting the majority class or yesterday's value scores, you
+   cannot say whether the model is worth its operational cost.
+
+C. DATA LEAKAGE. A feature that would not be available at prediction time - a field populated after
+   the event, an aggregate computed over the whole dataset including the future. The symptom is
+   superb offline metrics and no lift in production, and it is the most common reason a project
+   quietly dies.
+
+D. RANDOM SPLITS ON TEMPORAL DATA. Train on next month, predict last month. Split by TIME.
+
+E. NO MONITORING OF INPUTS. Everyone monitors the output metric, which is often only available weeks
+   later. THE INPUTS ARE AVAILABLE IMMEDIATELY: a feature whose distribution shifts, a null rate that
+   jumps, a category that vanishes. That is your early warning.
+
+F. NO ROLLBACK. Keep the previous model deployable and the previous predictions available. 'We will
+   retrain to fix it' is not a rollback - it is a several-hour outage.
+
+G. AN UNVERSIONED MODEL FILE. `model_final_v2_REAL.pkl` on someone's laptop. You cannot reproduce it,
+   cannot audit it, and cannot explain a prediction from six months ago.
+
+H. NO PLAN FOR RETRAINING. How often, triggered by what, validated how, deployed by whom? If nobody
+   owns this, the model decays and everyone gradually stops trusting it.
+
+I. IGNORING THE FEEDBACK LOOP. A model that decides what users see shapes the data it is next trained
+   on. A fraud model that blocks transactions never learns whether they were fraudulent. You need
+   holdouts and exploration to keep learning.
+
+J. OPTIMISING THE MODEL WHEN THE PIPELINE IS THE BOTTLENECK. Two points of AUC are worth much less
+   than a feature that is fresh instead of a day stale.""",
+
+    """5. MONITORING - what to watch and when you find out
+
+    THE PROBLEM: the metric you care about arrives LATE. Did the customer churn? You know in ninety
+    days. Was the transaction fraudulent? You know at the chargeback.
+
+    SO MONITOR IN LAYERS, ordered by how fast they tell you something:
+
+        IMMEDIATELY - OPERATIONAL
+            request rate, error rate, p50/p95/p99 latency, timeouts, cost per prediction.
+            Ordinary service monitoring, and it catches the outages.
+
+        IMMEDIATELY - INPUT DISTRIBUTIONS
+            per feature: mean, standard deviation, null rate, and the share of unseen categories,
+            compared against the training distribution.
+            THIS IS THE EARLY WARNING AND IT IS THE LAYER TEAMS SKIP. An upstream team renames a
+            category or changes a unit, and this is the only thing that notices before the business
+            metric does, weeks later.
+
+        IMMEDIATELY - PREDICTION DISTRIBUTION
+            the mean predicted probability, the share above your threshold, the score histogram.
+            A model that suddenly predicts 'fraud' three times as often has either seen a real attack
+            or received broken inputs, and you want to know which today.
+
+        DAYS - PROXY OUTCOMES
+            click, dismissal, override rate, re-contact. Whatever correlates with the real outcome and
+            arrives sooner.
+
+        WEEKS - THE ACTUAL BUSINESS METRIC
+            the ground truth. Slow, and the only thing that finally settles it.
+
+    THE TWO KINDS OF DRIFT, and they are different problems:
+
+        DATA DRIFT       the inputs have moved. P(X) changed. Detectable immediately, from the inputs.
+        CONCEPT DRIFT    the RELATIONSHIP has moved. P(y|X) changed - the same inputs now mean
+                         something different. Only detectable once you have outcomes, which is why it
+                         is the more dangerous one.
+
+    ALSO MONITOR BY SLICE. An average that holds steady while one segment collapses is a real and
+    common pattern, and the average is exactly the summary that hides it.""",
+
+    """6. HOW TO SHIP IT - numbered steps
+
+1. WRITE DOWN THE DECISION THE MODEL SUPPORTS and what it is worth. If nobody acts differently
+   because of the prediction, do not build it.
+2. ESTABLISH THE BASELINE - the current rule, the majority class, yesterday's value. This is the
+   number you must beat, and it is often surprisingly good.
+3. CHECK FOR LEAKAGE. For every feature, ask 'would I actually have this at prediction time?' Do it
+   feature by feature, out loud.
+4. SPLIT BY TIME, and evaluate on the most recent slice.
+5. MOVE THE FEATURE CODE OUT OF THE NOTEBOOK into a module both paths import. Do this before anything
+   else in the engineering work.
+6. CHOOSE BATCH OR ONLINE DELIBERATELY, and prefer batch when the inputs allow it.
+7. BUILD THE FALLBACK before the model path - what is returned when the model is slow, down, or
+   returns nonsense.
+8. VERSION DATA, CODE, MODEL AND ENVIRONMENT, and record them together.
+9. VALIDATE AGAINST A GATE - beats the current model, beats the baseline, no slice regresses, latency
+   and cost within budget, feature parity verified on a sample.
+10. SHIP TO A SMALL PERCENTAGE, watch the operational and input metrics, then widen. Keep a holdout.
+11. MONITOR IN LAYERS and alert on the INPUTS, not only on the outcome.
+12. DECIDE THE RETRAINING TRIGGER - on a schedule, or when drift crosses a threshold - and who
+    approves it.
+
+STEP 5 IS THE HINGE OF THE WHOLE ANSWER. Until the feature code is shared, every other improvement is
+built on two implementations that will diverge.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The model is the small part. A production ML system is a data pipeline, a serving path, monitoring,
+and a retraining loop, and the model is one component inside it.
+
+The failure I would design against first is training/serving skew - the same feature computed by two
+different pieces of code, one in the notebook and one in the service. When they diverge, nothing
+errors, the offline metrics stay excellent because they still use the notebook version, and live
+performance quietly degrades. So the first engineering step is to move the feature code into a module
+that both the training job and the serving path import. Not two implementations kept in sync - one
+function. A feature store is the industrial version of that same idea.
+
+Before any of that, though, I would check two things. The baseline - what does the current rule, or
+predicting the majority class, actually score? And leakage - for every feature, would I really have
+this value at prediction time? Superb offline metrics with no production lift is almost always leakage,
+and it is the commonest way these projects die.
+
+For serving I would ask whether it can be batch. A nightly job writing predictions into a table, looked
+up by key, is simpler, cheaper, has no latency risk, and rolls back by simply not swapping the table.
+A lot of "real-time" requirements are satisfied by that. Online serving is necessary when the features
+depend on the request, and then I need a latency budget and an explicit answer to what gets returned
+when the model is slow or down - a cached value or a simpler model, never a 500.
+
+On monitoring: the business metric arrives weeks late, so I would monitor in layers. Operational
+metrics immediately. Input distributions immediately - per-feature mean, null rate and unseen-category
+rate against training - because that is the layer that catches an upstream team changing a unit before
+anyone else notices. Prediction distribution immediately. Then proxies in days and ground truth in
+weeks. And I would distinguish data drift, where the inputs moved and you can see it at once, from
+concept drift, where the relationship moved and you cannot see it until outcomes arrive.'""",
+
+    """8. THE COMPONENTS, PIECE BY PIECE
+
+    THE FEATURE MODULE - the thing that is not a notebook:
+
+        # features.py, imported by BOTH the training job and the serving service
+        def days_since_signup(signup_date, as_of):
+            return (as_of - signup_date).days
+
+        ONE DEFINITION. The training job calls it with a historical `as_of`; the service calls it with
+        `now`. Same code, so they cannot disagree. Every feature gets this treatment, and the training
+        job's only special knowledge is what `as_of` to pass.
+
+    THE MODEL ARTEFACT - never just the weights:
+
+        model file + preprocessing (the fitted scaler, the encoder, the vocabulary)
+        + the feature list AND ITS ORDER
+        + training data version, code commit, library versions
+        + the metrics it was accepted on
+
+        THE PREPROCESSING IS PART OF THE MODEL. A scaler fitted at training time and forgotten at
+        serving time is the same class of bug as skew - see
+        [[feature-engineering-scaling-encoding]], where unscaled features cost 26 points of accuracy.
+
+    THE SERVING CONTRACT:
+
+        input schema, validated on arrival - a wrong type or a missing field should be a 400, not a
+        silent NaN that becomes a confident prediction
+        output schema, including a confidence or score, not only a class
+        a latency budget, with a timeout
+        A FALLBACK, decided in advance
+
+    THE GATE - automated, and it runs before anything is promoted:
+
+        beats the current production model on held-out data
+        beats the trivial baseline
+        no important slice regresses
+        p95 latency and cost within budget
+        FEATURE PARITY: run a sample of production inputs through both pipelines and assert the
+        vectors match
+
+    THE MONITORING, which is data the system has to emit on purpose:
+
+        log the input feature vector, the prediction, the model version, and the outcome when it
+        arrives. THAT LOG IS WHAT MAKES EVERYTHING ELSE POSSIBLE - drift detection, debugging, the next
+        training set, and the ability to answer 'why did it say that in March?'""",
+
+    """9. ONE MODEL, SHIPPED
+
+    THE ASK: predict which customers will churn, so the retention team can call them.
+
+    WEEK 1 - IS THIS WORTH DOING?
+        The retention team can call 200 customers a week. So the model does not need to be accurate in
+        general - IT NEEDS THE TOP 200 TO BE BETTER THAN THE TOP 200 THE TEAM PICKS TODAY.
+        The current method: 'customers whose usage dropped'. THAT IS THE BASELINE, and it must be
+        measured before anything is built.
+
+    WEEK 2 - THE LEAKAGE CHECK, feature by feature:
+        `support_tickets_last_30d`     available at prediction time. Fine.
+        `cancellation_reason`          POPULATED WHEN THEY CANCEL. Pure leakage - it would give a
+                                       near-perfect model and zero production value.
+        `account_manager_notes`        written after the retention call. Leakage, and subtler.
+        Catching those two in week 2 rather than after launch is most of the value of this step.
+
+    WEEK 3 - TRAIN AND EVALUATE, split by TIME. Train on Jan-Sep, evaluate on Oct-Dec.
+        Model: precision@200 = 31%. Baseline rule: 19%. WORTH SHIPPING - and expressed in the unit the
+        business actually uses, not as AUC.
+
+    WEEK 4 - THE ENGINEERING:
+        move feature computation into `features.py`
+        this is a BATCH problem - the team works a weekly list, so a weekly job writing to a table is
+        entirely sufficient. No service, no latency budget, no autoscaling.
+        version the training snapshot, the commit, the model, the environment
+        write the gate as a test
+
+    WEEK 5 - SHIP WITH A HOLDOUT:
+        the team gets the model's list for 80% of accounts and the old rule's list for 20%.
+        THAT HOLDOUT IS WHAT LETS YOU MEASURE THE MODEL'S REAL EFFECT LATER, and it is the step most
+        often skipped because it feels like leaving value on the table.
+
+    WEEKS 6+ - MONITORING:
+        immediately: did the job run, how many rows, are the feature distributions stable?
+        weekly:      what share of contacted customers accepted an offer?
+        at 90 days:  actual churn, model list vs holdout list.
+
+    WHAT MADE THIS WORK was not the model. It was measuring the baseline in week 1, finding two leaking
+    features in week 2, choosing batch in week 4, and keeping a holdout in week 5.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE SEVEN THINGS THAT MUST EXIST:  reproducibility · a shared feature path · a serving path ·
+    a validation gate · monitoring · a rollback · a retraining loop.
+
+    THE TWO SERVING SHAPES:  BATCH - simpler, cheaper, no latency risk, roll back by not swapping the
+    table. ONLINE - necessary when features depend on the request, and it needs a fallback.
+
+    THE MONITORING LAYERS:  operational and input distributions immediately · prediction distribution
+    immediately · proxy outcomes in days · the business metric in weeks.
+
+THE #1 MISTAKE: training/serving skew - one feature, two implementations. It produces no error, keeps
+offline metrics healthy, and degrades live performance silently. One shared function, and log the
+served feature vector so you can prove they agree.
+
+THE #2 MISTAKE: no baseline. Without knowing what the current rule scores, 'AUC 0.87' cannot justify
+anything.
+
+THE #3 MISTAKE: leakage. A feature that only exists after the outcome gives a superb offline number
+and no production lift, and it is the commonest way these projects quietly die.
+
+THE #4 MISTAKE: monitoring only the outcome. It arrives weeks late; the inputs arrive immediately and
+they are where you see an upstream change first.
+
+THE #5 MISTAKE: no rollback and no retraining plan, so the first bad day is an outage and the slow
+decay is nobody's job.
+
+ONE-SENTENCE TAKEAWAY: the notebook proves the model is possible, and everything that makes it a
+product is elsewhere - one shared feature implementation, a measured baseline, a leakage check, a
+deliberate choice of batch over online, a validation gate, layered monitoring that watches the inputs
+rather than waiting for the outcome, and a rollback you have actually tested.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
