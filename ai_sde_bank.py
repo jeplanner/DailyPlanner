@@ -156944,6 +156944,1031 @@ deliberate choice of batch over online, a validation gate, layered monitoring th
 rather than waiting for the outcome, and a rollback you have actually tested.""",
 ]
 
+_EX_P1AO["Hybrid search (keyword + vector) and re-ranking"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two retrievers that fail differently
+
+There are two established ways to find documents, and they have opposite blind spots.
+
+    KEYWORD SEARCH (BM25) matches the actual words. It is exact, fast, decades-old, needs no model,
+    and it is unbeatable on identifiers - error codes, product names, version numbers, surnames.
+    IT FAILS ON PARAPHRASE: 'money back' and 'refund' share no characters.
+
+    VECTOR SEARCH (dense embeddings) matches MEANING. It handles paraphrase, synonyms and different
+    languages.
+    IT FAILS ON EXACT TOKENS: ask for ERR_4417 and you may get four semantically similar incidents
+    and not that one, because a rare identifier carries little semantic signal.
+
+HYBRID SEARCH runs both and combines the results, on the bet that the two failure modes do not
+overlap.
+
+MEASURED, on eight documents and ten questions - four containing an exact identifier and six
+paraphrased:
+
+    query type                          BM25      dense
+    with an exact identifier            4/4        4/4
+    paraphrased                         3/6        6/6
+    -------------------------------------------------------
+    overall recall@1                    7/10      10/10
+
+BM25 got every identifier query and missed half the paraphrases - 'how quickly does checkout respond'
+and 'can I stop paying whenever I want' both failed, because the documents say 'latency' and
+'cancel a subscription'.
+
+THAT IS THE COMPLEMENTARITY THE WHOLE TECHNIQUE RESTS ON. And the next section is where my own
+measurement complicated the story.
+
+TERMS AS THEY APPEAR:
+- BM25: the standard keyword ranking function - term frequency, inverse document frequency, and a
+  length normalisation.
+- RRF: reciprocal rank fusion, the usual way to combine two rankings.
+- CROSS-ENCODER: a reranker that reads the query and the document TOGETHER.""",
+
+    """2. AN HONEST RESULT - fusion is not automatically better
+
+I fused the two rankings with reciprocal rank fusion and expected hybrid to beat both. IT DID NOT:
+
+    BM25 alone      7/10
+    dense alone    10/10
+    hybrid          8/10      <- WORSE THAN DENSE ALONE
+
+Two paraphrased queries that dense got right were pulled out of first place by BM25's votes.
+
+WHY THAT HAPPENED, and it is worth understanding rather than hiding: FUSION AVERAGES. It helps when
+both retrievers are individually imperfect and fail on DIFFERENT queries, so each covers the other's
+gaps. It HURTS when one retriever is clearly dominant, because the weaker one's opinions dilute the
+stronger one's.
+
+My dense stand-in was artificially strong on this small corpus - it was built from hand-declared
+concept groups, so it had a perfect view of the synonyms. A real embedding model is not perfect, which
+is exactly the condition under which fusion pays.
+
+SO THE HONEST STATEMENT OF WHEN HYBRID WINS:
+
+    WHEN BOTH RETRIEVERS ARE INDIVIDUALLY IMPERFECT AND THEIR ERRORS ARE UNCORRELATED. That is the
+    normal case on real corpora, which is why hybrid is the standard recommendation. It is not a law,
+    and it is testable on your own data in an afternoon.
+
+WHAT TO DO ABOUT IT IN PRACTICE:
+    MEASURE ALL THREE - keyword, vector, and fused - on your own evaluation set. If fusion does not
+    win, do not ship it.
+    USE WEIGHTED FUSION rather than equal votes. If your vector retriever is stronger, give it more
+    weight, tuned on held-out queries.
+    OR USE FUSION FOR RECALL AND LET A RERANKER DECIDE PRECISION - which, as the next section shows,
+    is what actually fixed it here.
+
+SAYING THIS OUT LOUD IS A STRONGER ANSWER THAN 'HYBRID IS BETTER'. It shows you know what fusion is
+doing and under what condition the benefit exists.""",
+
+    """3. WHY YOU FUSE RANKS AND NOT SCORES
+
+    THE OBVIOUS APPROACH IS TO ADD THE SCORES. Here is why it fails.
+
+    MEASURED, for the query 'how quickly does checkout respond':
+
+        doc    BM25 score    dense score
+        d8          2.172          0.000
+        d2          2.018          1.000        <- the correct answer
+        d1          0.000          0.000
+        d3          0.000          0.000
+
+    BM25 IS UNBOUNDED. Its values depend on term frequencies, document lengths and corpus statistics,
+    and a rare term can produce a score of 12 while a common one produces 0.3. DENSE COSINE IS BOUNDED
+    IN [-1, 1].
+
+    ADD THEM AND BM25 DOMINATES ARBITRARILY - not because keyword matching is more trustworthy, but
+    because its numbers happen to be bigger. Normalising them to a common range is possible and it is
+    fragile: min-max normalisation depends on the candidate set, so the same document gets a different
+    normalised score depending on what else was retrieved.
+
+    RECIPROCAL RANK FUSION SIDESTEPS ALL OF IT:
+
+        score(d) = sum over retrievers of 1 / (k + rank_of_d_in_that_retriever)      k is usually 60
+
+    IT USES ONLY THE POSITION. The two scales never meet, so no calibration is needed and adding a
+    third retriever requires no retuning.
+
+    WHY k = 60: it damps the difference between top positions. Without it, rank 1 would be worth twice
+    rank 2 and a single retriever's confident-but-wrong first place would dominate. With k = 60, ranks
+    1 and 2 score 1/61 and 1/62 - close together - so a document needs to rank well in SEVERAL
+    retrievers to win. THAT IS THE DESIGN INTENT: reward agreement, not one retriever's confidence.
+
+    NOTICE THE ROW THAT SHOWS THE PROBLEM: d8 beats d2 on BM25 (2.172 vs 2.018) because it shares the
+    word 'checkout' and is shorter, while dense gives d2 a cosine of 1.000 and d8 exactly 0.000.
+    A SCORE SUM WOULD HAVE MADE THIS A CLOSE CALL. RRF made it a vote, and the reranker settled it.""",
+
+    """4. THE FAILURE MODES
+
+A. PURE VECTOR SEARCH. Measured: dense handled every paraphrase, and on a real corpus it is exact
+   identifiers - error codes, SKUs, version numbers - where it fails, because a rare token carries
+   little semantic signal.
+
+B. PURE KEYWORD SEARCH. Measured: 3/6 on paraphrased queries. 'How quickly does checkout respond' does
+   not contain the word 'latency'.
+
+C. ADDING RAW SCORES. BM25 is unbounded and cosine is bounded, so the sum is dominated by whichever
+   happens to be numerically larger.
+
+D. ASSUMING FUSION ALWAYS HELPS. Measured: hybrid scored 8/10 against dense's 10/10 on my data,
+   because one retriever was dominant. Fusion averages, and averaging a strong opinion with a weak one
+   makes it weaker.
+
+E. NO RERANKING. Retrieval optimises RECALL cheaply; nothing has optimised precision until a reranker
+   reads the query and the document together.
+
+F. RERANKING TOO FEW CANDIDATES. Measured: reranking the top 2 gave 9/10 and the top 5 gave 10/10.
+   If the right document was not retrieved, the reranker cannot save it - the ceiling is retrieval's
+   recall.
+
+G. RERANKING TOO MANY. A cross-encoder is a full model forward pass PER DOCUMENT. Reranking 1,000
+   candidates is 1,000 model calls per query, which is a latency and cost decision, not a free
+   accuracy gain.
+
+H. NOT MEASURING THE STAGES SEPARATELY. Retrieval recall@k and post-rerank precision are different
+   numbers with different fixes, and a single end-to-end score cannot tell you which one regressed.
+
+I. FORGETTING THE FILTERS. Permissions, freshness, language and product filters must be applied
+   DURING retrieval, not after - filtering afterwards means your top-k is full of results the user
+   cannot see.""",
+
+    """5. THE RERANKER - where precision actually comes from
+
+    THE PIPELINE: retrieve cheaply and broadly, then rerank a small candidate set expensively.
+
+    MEASURED, taking the hybrid candidates and reranking them:
+
+        hybrid alone, no rerank        8/10
+        rerank the top 2               9/10
+        rerank the top 3               9/10
+        rerank the top 5              10/10
+        rerank the top 8              10/10
+
+    RERANKING THE TOP 5 RECOVERED EVERYTHING - including the two queries fusion had got wrong. The
+    reranker fixed exactly the damage that averaging had done.
+
+    WHY A RERANKER CAN DO WHAT A RETRIEVER CANNOT:
+
+        A RETRIEVER computes the document's vector INDEPENDENTLY, offline, before it has ever seen your
+        query. That is what makes it fast - the vectors are precomputed and indexed - and it is also
+        the limitation: the document representation cannot depend on the question.
+
+        A CROSS-ENCODER reads the query and the document TOGETHER, in one forward pass. It can attend
+        from a query term to a document term, notice that a phrase appears intact rather than as
+        scattered words, and tell a near-miss from a match. NONE OF THAT IS EXPRESSIBLE AS A DISTANCE
+        BETWEEN TWO INDEPENDENTLY-COMPUTED VECTORS.
+
+        THE PRICE: it cannot be precomputed. Every (query, document) pair needs its own forward pass,
+        so it is O(k) model calls per query and it is only affordable on a small k.
+
+    THAT ASYMMETRY IS THE WHOLE ARCHITECTURE:
+
+        STAGE 1  bi-encoder / BM25    precomputed, sub-millisecond, optimise RECALL, k ~ 50-200
+        STAGE 2  cross-encoder        k forward passes, optimise PRECISION, output top 3-5
+
+    AND THE SENTENCE THAT MATTERS: THE RERANKER'S CEILING IS THE RETRIEVER'S RECALL. If the answer is
+    not in the candidates, no reranker will find it. So tune stage 1 for recall@k and stage 2 for
+    ordering, and measure them separately.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. BUILD THE EVALUATION SET FIRST. 30-50 real queries with the document that answers each. Every
+   number on this page is impossible without one.
+2. MEASURE BM25 ALONE. It is free, it needs no model, and it is a strong baseline that a lot of vector
+   systems fail to beat.
+3. MEASURE VECTOR SEARCH ALONE. Now you know each retriever's recall and, more usefully, WHICH queries
+   each one fails.
+4. LOOK AT THE FAILURES SIDE BY SIDE. If they fail on the same queries, fusion will not help and you
+   have a data or chunking problem instead.
+5. FUSE WITH RRF, not with summed scores. Measured: BM25 is unbounded and cosine is not.
+6. MEASURE THE FUSION. Measured on my data, it was WORSE than the better retriever alone. Do not ship
+   it on faith.
+7. IF FUSION UNDERPERFORMS, TRY WEIGHTED FUSION - give the stronger retriever more votes, tuned on
+   held-out queries.
+8. ADD A CROSS-ENCODER RERANKER over the top 20-100. Measured: it took 8/10 to 10/10 at k=5.
+9. TUNE k FROM RECALL, NOT FROM FEEL. Plot retrieval recall@k and pick the k where it flattens - that
+   is the smallest candidate set that does not cost you answers.
+10. APPLY FILTERS DURING RETRIEVAL - permissions, freshness, locale.
+11. MEASURE THE STAGES SEPARATELY, forever. Retrieval recall@k and post-rerank precision@1.
+
+STEP 4 IS THE ONE THAT SAVES WASTED WORK. Hybrid search only helps if the two retrievers fail
+DIFFERENTLY, and that is an empirical fact about your corpus that costs one afternoon to establish.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Keyword search and vector search have opposite blind spots. BM25 matches actual words, so it is
+unbeatable on identifiers - error codes, product names, version numbers - and it fails on paraphrase,
+because "money back" and "refund" share no characters. Dense vectors match meaning, so they handle
+paraphrase, and they are weak on rare exact tokens, because an error code carries very little semantic
+signal.
+
+I measured that. On ten queries - four containing an identifier and six paraphrased - BM25 got 4/4 on
+the identifiers and 3/6 on the paraphrases. That complementarity is the argument for running both.
+
+But I would be honest about what my fusion measurement showed: hybrid scored 8/10 and dense alone
+scored 10/10. Fusion made it worse. The reason is that fusion averages, so it helps when both
+retrievers are individually imperfect and fail on different queries, and it hurts when one is clearly
+dominant - the weaker one dilutes the stronger. My dense stand-in was artificially strong on a small
+corpus. So the rule I would state is that hybrid wins when both retrievers are imperfect and their
+errors are uncorrelated, which is the usual case on real data - but it is testable, and I would test
+it rather than assume it.
+
+On the combination itself: fuse RANKS, not scores. BM25 is unbounded and cosine is in [-1, 1], so
+adding them lets BM25 dominate for arbitrary reasons. Reciprocal rank fusion uses one over k plus the
+rank, with k around 60, so only position matters and the scales never meet.
+
+Then the reranker, which is where the precision comes from. Reranking the top 5 with a cross-encoder
+took my numbers from 8/10 to 10/10 - it fixed exactly what fusion had broken. A retriever computes the
+document vector offline, before it has seen the query, which is what makes it fast and also what limits
+it. A cross-encoder reads the query and document together in one pass, so it can use proximity and
+coverage that no distance between two independent vectors can express. The price is a forward pass per
+document, so it only works on a small candidate set - and its ceiling is the retriever's recall.'""",
+
+    """8. THE PIPELINE, PIECE BY PIECE
+
+    STAGE 0 - FILTERS, applied inside the retrieval query, never afterwards:
+        access control, product, locale, freshness, document status.
+        FILTERING AFTER RETRIEVAL means your top-50 can be entirely results the user may not see.
+
+    STAGE 1a - BM25:
+        an inverted index. Sub-millisecond over millions of documents, no model, no GPU.
+        Scores by term frequency x inverse document frequency, with a length normalisation so long
+        documents cannot win by repetition alone (the `b` parameter, usually 0.75).
+        BEST AT: exact tokens, rare terms, quoted phrases, identifiers.
+
+    STAGE 1b - DENSE RETRIEVAL:
+        a bi-encoder embeds the query; an ANN index finds the nearest document vectors.
+        THE DOCUMENT VECTORS ARE PRECOMPUTED - that is what makes it fast, and it is why the document
+        representation cannot depend on the query.
+        BEST AT: paraphrase, synonymy, cross-lingual matching, and vague questions.
+
+    STAGE 2 - FUSION:
+        score(d) = sum over retrievers of 1/(k + rank_of_d), with k around 60.
+        No calibration, no normalisation, and adding a third retriever needs no retuning.
+        WEIGHTED VARIANT: multiply each retriever's contribution by a weight, tuned on held-out
+        queries. Use this when one retriever is measurably stronger - which my numbers showed can
+        happen.
+
+    STAGE 3 - RERANKING:
+        a cross-encoder scores each (query, document) pair with a full forward pass.
+        Measured: top-5 reranking took recall@1 from 8/10 to 10/10.
+        COST: k model calls per query. That is the constraint that sets k.
+
+    STAGE 4 - WHAT YOU RETURN:
+        the top 3-5, with scores, plus a THRESHOLD below which you return nothing at all. The
+        'not found' path is a feature - see [[llms-rag-retrieval-augmented-generation]].
+
+    THE SHAPE TO REMEMBER: CHEAP AND BROAD, THEN EXPENSIVE AND NARROW. Every large retrieval system,
+    and every recommender, is this same funnel.""",
+
+    """9. TEN QUERIES, WALKED
+
+    THE FULL RESULT TABLE:
+
+        query                                            gold   BM25   dense   hybrid
+        what error code means a duplicate idempotency key  d4    HIT    HIT     HIT
+        ERR_4417                                           d4    HIT    HIT     HIT
+        HTTP 429                                           d8    HIT    HIT     HIT
+        how quickly does checkout respond                  d2   miss    HIT     HIT
+        how long before I get my money back                d3   miss    HIT    miss
+        who signs off urgent access to live systems        d6    HIT    HIT     HIT
+        what happens if the overnight batch breaks         d5    HIT    HIT     HIT
+        can I stop paying whenever I want                  d7   miss    HIT    miss
+        what is the requests per second cap                d8    HIT    HIT     HIT
+        503 from payments                                  d1    HIT    HIT     HIT
+
+    BM25'S THREE FAILURES ARE ALL THE SAME SHAPE:
+        'how quickly does checkout respond'   - the document says LATENCY and P99
+        'how long before I get my money back' - the document says REFUNDS and PROCESSED
+        'can I stop paying whenever I want'   - the document says CANCEL A SUBSCRIPTION
+
+        NOT ONE CONTENT WORD IN COMMON. No amount of BM25 tuning fixes a vocabulary mismatch; that is
+        precisely the gap embeddings exist to close.
+
+    BM25'S SUCCESSES ARE INSTRUCTIVE TOO. 'Who signs off urgent access to live systems' worked because
+    'access' and 'systems' happened to appear. That is luck, not understanding, and on a bigger corpus
+    it would not hold.
+
+    THE TWO HYBRID FAILURES are the two dense got right and BM25 got wrong - fusion split the
+    difference and the wrong document won on combined votes.
+
+    AND THAT IS EXACTLY WHAT THE RERANKER FIXED. Both correct documents were in the top 5 candidates -
+    fusion had them retrieved, just not ranked first - so the cross-encoder, reading query and document
+    together, put them back on top. 8/10 -> 10/10.
+
+    THE LESSON IN ONE LINE: FUSION IS FOR RECALL, RERANKING IS FOR PRECISION. Fusion's job is to make
+    sure the right document is in the candidate set; it is not required to get the order right, because
+    something better is about to.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO RETRIEVERS:  BM25 - exact tokens, no model, unbounded scores. DENSE - meaning and
+    paraphrase, precomputed vectors, bounded cosine.
+
+    THE MEASURED EVIDENCE (8 documents, 10 queries):
+        exact-identifier queries:  BM25 4/4 · dense 4/4
+        paraphrased queries:       BM25 3/6 · dense 6/6
+        overall recall@1:          BM25 7/10 · dense 10/10 · HYBRID 8/10 - fusion was WORSE, because
+            one retriever was dominant and averaging diluted it
+        reranking hybrid candidates:  top-2 9/10 · top-5 10/10 · top-8 10/10
+
+    THE ARCHITECTURE:  filter -> BM25 and dense in parallel -> RRF -> cross-encoder over the top
+    20-100 -> threshold -> return 3-5.
+
+THE #1 MISTAKE: assuming hybrid is automatically better. It helps when both retrievers are imperfect
+and fail differently, and it hurt on my data when one was dominant. Measure all three on your own
+evaluation set.
+
+THE #2 MISTAKE: adding raw scores. BM25 is unbounded and cosine is not; fuse RANKS with RRF instead.
+
+THE #3 MISTAKE: no reranker. Retrieval buys recall; only a cross-encoder reading the pair together
+buys precision - and it took 8/10 to 10/10 here.
+
+THE #4 MISTAKE: the wrong k. Too few and the answer was never retrieved; too many and you pay for a
+model call per candidate. Pick it from where recall@k flattens.
+
+THE #5 MISTAKE: filtering after retrieval instead of during it, so your candidate set is full of
+documents the user is not allowed to see.
+
+ONE-SENTENCE TAKEAWAY: run keyword and vector search together because they fail on opposite kinds of
+query, combine them by RANK rather than by score, and then let a cross-encoder that reads the query and
+the document together decide the final order - because retrieval's job is to not lose the answer, and
+reranking's job is to put it first.""",
+]
+
+_EX_P1AO["Encoder vs Decoder vs Encoder-Decoder transformers"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one difference decides everything
+
+All three are transformers. They use the same attention mechanism, the same feed-forward blocks, the
+same residual connections. THE ONLY ARCHITECTURAL DIFFERENCE THAT MATTERS IS WHICH TOKENS EACH
+POSITION IS ALLOWED TO LOOK AT.
+
+    ENCODER          every position sees EVERY other position - left and right. BIDIRECTIONAL.
+    DECODER          every position sees only ITSELF AND WHAT CAME BEFORE. CAUSAL / MASKED.
+    ENCODER-DECODER  an encoder reads the input bidirectionally; a decoder generates the output
+                     causally while attending to the encoder's output (CROSS-ATTENTION).
+
+THAT IS THE WHOLE TAXONOMY. Everything else - what they are good at, how they are trained, why BERT
+cannot write and GPT can - follows from that one masking decision.
+
+THE FAMILIES:
+
+    ENCODER-ONLY          BERT, RoBERTa, and every modern text-embedding model
+    DECODER-ONLY          GPT, Llama, Claude, Mistral - essentially every current generative LLM
+    ENCODER-DECODER       T5, BART, the original 2017 Transformer, most translation models
+
+THE ONE-LINE SUMMARY WORTH MEMORISING:
+
+    ENCODERS UNDERSTAND. DECODERS GENERATE. ENCODER-DECODERS TRANSFORM ONE SEQUENCE INTO ANOTHER.
+
+TERMS AS THEY APPEAR:
+- CAUSAL MASK: setting attention scores for future positions to negative infinity before the softmax,
+  so they receive exactly zero weight. See [[attention-mechanism-intuition]].
+- CROSS-ATTENTION: attention where the queries come from one sequence and the keys and values from
+  another.""",
+
+    """2. THE INTUITION - why the mask determines the training objective
+
+The mask is not just a runtime detail; IT DECIDES WHAT YOU CAN TRAIN THE MODEL ON.
+
+    IF EVERY POSITION SEES EVERYTHING, you cannot train it to predict the next token - the answer is
+    already in the input. So bidirectional models are trained by MASKED LANGUAGE MODELLING: hide 15%
+    of the tokens and train the model to fill them in, using context from both sides.
+
+    'The cat sat on the [MASK] and purred.'
+    To fill that in you may use 'purred', which is AFTER the blank. That two-sided view is what makes
+    the representation good - and it is exactly what makes generation impossible, because at generation
+    time there is no right-hand context.
+
+    IF EVERY POSITION SEES ONLY THE PAST, you can train on NEXT-TOKEN PREDICTION, and here is the
+    property that made decoder-only models win: EVERY POSITION IS A TRAINING EXAMPLE, SIMULTANEOUSLY.
+
+        input:  The cat sat on the mat
+        the model simultaneously learns:
+            The -> cat
+            The cat -> sat
+            The cat sat -> on
+            ... and so on
+
+    A 1,000-token sequence gives 1,000 training signals in ONE forward pass. Masked language modelling
+    gets a signal from only the 15% of positions that were masked. THAT EFFICIENCY DIFFERENCE - roughly
+    6x more learning signal per token of data - is a large part of why the field went decoder-only, and
+    it is a better answer than 'because generation is more useful'.
+
+THE OTHER HALF OF THE ANSWER: a causal decoder can do EVERYTHING an encoder can, imperfectly, by being
+prompted - classification, extraction, summarisation - whereas an encoder can do nothing generative
+at all. ONE ARCHITECTURE, ALL TASKS beat two specialised ones once the models got big enough.""",
+
+    """3. WHAT EACH ONE IS ACTUALLY FOR
+
+    ENCODER-ONLY (BERT, embedding models)
+
+        STRENGTH: the best possible representation of a FIXED, COMPLETE input, because every token
+        sees the whole sentence.
+        USE FOR: classification, named entity recognition, sentence embeddings, retrieval, reranking.
+        CANNOT: generate text. There is no mechanism - it was never trained to continue anything.
+
+        WHY EMBEDDING MODELS ARE STILL ENCODERS, which is a good detail to know: you want a single
+        vector summarising a whole document, and bidirectional attention gives every token the full
+        context. A decoder's first token has seen nothing, so its representation is systematically
+        worse. THAT IS WHY THE RETRIEVAL HALF OF A RAG SYSTEM IS USUALLY A BERT-DESCENDANT WHILE THE
+        GENERATION HALF IS A GPT-DESCENDANT - see [[llms-rag-retrieval-augmented-generation]].
+
+        ALSO: a CROSS-ENCODER RERANKER is an encoder over the query and document CONCATENATED, which
+        is exactly why it can do what two separate embeddings cannot.
+
+    DECODER-ONLY (GPT, Llama, Claude)
+
+        STRENGTH: generation, and - after instruction tuning - almost everything else via prompting.
+        USE FOR: chat, completion, summarisation, code, reasoning, tool use, and classification when
+        you would rather prompt than train.
+        THE KV CACHE lives here: because attention is causal, previous tokens' keys and values never
+        change, so you cache them and each new token is cheap.
+
+    ENCODER-DECODER (T5, BART)
+
+        STRENGTH: a clean separation when the input and output are DIFFERENT SEQUENCES with different
+        lengths and, in translation, different languages.
+        USE FOR: translation, summarisation, grammar correction, structured transformation.
+        THE MECHANISM: the encoder reads the whole input bidirectionally ONCE; the decoder generates
+        while cross-attending to that fixed representation.
+
+        WHY THEY ARE LESS COMMON NOW: decoder-only models do these tasks well enough by putting the
+        input in the prompt, and one architecture is simpler to train, scale and serve than two.
+        THEY REMAIN STRONG where the input is long and fixed and the output is short - the encoder does
+        its work once rather than being re-attended over at every generated token.""",
+
+    """4. THE FAILURE MODES
+
+A. USING A DECODER FOR EMBEDDINGS WITHOUT THINKING. A causal model's early tokens have seen nothing,
+   so pooling its hidden states gives an asymmetric representation. It can be made to work - and there
+   are good decoder-based embedding models - but bidirectional encoders remain the default for a
+   reason.
+
+B. EXPECTING BERT TO GENERATE. It has no such capability. Filling a [MASK] is not generation.
+
+C. FORGETTING THE CAUSAL MASK when implementing a decoder. It trains beautifully and is worthless,
+   because the model was reading the answer - see [[attention-mechanism-intuition]].
+
+D. ASSUMING ENCODER-DECODER IS OBSOLETE. It is less common, not obsolete, and it is still the right
+   shape when the input is long and fixed and re-encoding it per output token would be wasteful.
+
+E. CONFUSING THE ARCHITECTURE WITH THE TRAINING OBJECTIVE. They are linked but distinct: masked
+   language modelling requires bidirectional attention, next-token prediction requires causal
+   attention. The mask enables the objective.
+
+F. THINKING 'DECODER' MEANS 'DECODES SOMETHING'. The name is inherited from the encoder-decoder
+   translation setup. A decoder-only model decodes nothing - it just continues a sequence.
+
+G. IGNORING WHY FINE-TUNING DIFFERS. An encoder is fine-tuned by adding a classification head. A
+   decoder is 'fine-tuned' by prompting, or by LoRA on the existing weights - see
+   [[what-is-fine-tuning-with-lora-parameter-efficient-tuning]]. Different shapes, different workflows.
+
+H. ASSUMING BIGGER IS ALWAYS BETTER FOR CLASSIFICATION. A 110-million-parameter BERT fine-tuned on
+   your labels frequently beats prompting a model a thousand times its size, at a fraction of the
+   latency and cost. THAT IS A REAL ENGINEERING ANSWER and it surprises people.""",
+
+    """5. HOW TO CHOOSE - and the practical decision
+
+THE DECISION TREE, and it is genuinely this short:
+
+    DO YOU NEED TO PRODUCE TEXT?
+        NO  -> encoder. Classification, embeddings, retrieval, reranking, extraction.
+        YES -> continue.
+
+    IS THE OUTPUT A TRANSFORMATION OF A LONG, FIXED INPUT?
+        YES -> encoder-decoder is a clean fit (translation, summarisation of a fixed document).
+        Decoder-only will also work, and usually does.
+        NO  -> decoder-only.
+
+    IN PRACTICE, FOR ALMOST ANYTHING NEW TODAY:
+        generation of any kind          -> decoder-only
+        embeddings and retrieval        -> encoder
+        reranking                       -> cross-encoder (an encoder over the pair)
+        high-volume, narrow classification -> a small fine-tuned encoder, for cost and latency
+
+THE LAST LINE IS THE ONE WORTH ARGUING FOR. If you classify ten million support tickets a day into
+twelve categories:
+
+    A PROMPTED LARGE DECODER    excellent zero-shot, ~500ms, a token bill per ticket, and the answer
+                                can change when the provider updates the model
+    A FINE-TUNED SMALL ENCODER  needs labelled data, ~5ms on a CPU, negligible marginal cost, and it
+                                is deterministic and versioned
+
+BEING ABLE TO MAKE THAT ARGUMENT - and to say 'I'd use the large model to LABEL the training data, then
+distil it into a small encoder for serving' - is a strong, practical answer. It is also what a lot of
+production systems actually do.
+
+AND THE HONEST CAVEAT: if the taxonomy changes monthly, or you have no labels, the prompted decoder
+wins on flexibility and time-to-ship. The decision is about volume, stability and cost, not about
+which architecture is 'better'.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+1. ASK WHETHER THE OUTPUT IS TEXT. That single question eliminates a third of the space.
+2. ASK WHETHER YOU NEED A REPRESENTATION OR A CONTINUATION. A vector to compare, or tokens to emit?
+3. IF A REPRESENTATION: use an encoder, and remember bidirectional attention is why it is good at
+   that.
+4. IF A CONTINUATION: use a decoder, and the causal mask is what makes next-token training possible.
+5. IF THE TASK IS SEQUENCE-TO-SEQUENCE WITH A LONG FIXED INPUT: consider encoder-decoder, and be
+   able to say why - the encoder pays for the input once instead of per generated token.
+6. FOR RERANKING, USE A CROSS-ENCODER, because reading the pair together is exactly what independent
+   embeddings cannot do.
+7. FOR HIGH-VOLUME NARROW TASKS, COMPARE A FINE-TUNED SMALL ENCODER against prompting a large decoder,
+   on accuracy, latency AND cost per call.
+8. CHECK THE TRAINING OBJECTIVE MATCHES THE USE. An embedding model trained with a cosine objective
+   should be queried with cosine - see [[cosine-similarity-vs-dot-product-vs-euclidean-distance]].
+9. IF YOU IMPLEMENT A DECODER, TEST THE MASK. Feed a sequence and confirm that changing a future token
+   does not change an earlier position's output. Two lines, and it catches the worst bug in the topic.
+
+STEP 9 IS THE ONE NOBODY MENTIONS AND IT IS A GENUINELY GOOD TEST. A broken causal mask produces a
+model with beautiful training loss and no ability to generate, and it is otherwise very hard to spot.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'They are all transformers with the same attention mechanism. The only architectural difference that
+matters is which tokens each position is allowed to attend to.
+
+An encoder is bidirectional - every position sees every other position, left and right. A decoder is
+causal - each position sees only itself and what came before, enforced by masking future positions to
+minus infinity before the softmax. An encoder-decoder has both: the encoder reads the input
+bidirectionally, and the decoder generates causally while cross-attending to the encoder's output.
+
+That masking decision determines the training objective, which is the part I find most interesting. If
+every position sees everything, you cannot train on next-token prediction because the answer is in the
+input - so bidirectional models are trained by masking out about 15% of tokens and predicting them.
+If each position sees only the past, you can train on next-token prediction, and then EVERY position is
+a training example at once. A thousand-token sequence gives a thousand learning signals in one forward
+pass, against 15% for masked language modelling. That roughly six-fold difference in learning signal
+per token of data is a big part of why the field went decoder-only.
+
+So: encoders understand, decoders generate, encoder-decoders transform one sequence into another. BERT
+cannot generate at all - it has no mechanism for it. GPT can do classification by prompting, which is
+why one architecture ended up covering everything.
+
+Encoders are still standard for embeddings, though, and the reason is the same masking argument: you
+want one vector summarising a whole document, and bidirectional attention gives every token the full
+context, whereas a decoder's first token has seen nothing. That is why in a RAG system the retrieval
+half is usually a BERT descendant and the generation half is a GPT descendant.
+
+And a practical point: for a high-volume narrow classification task, a small fine-tuned encoder often
+beats prompting a model a thousand times bigger - five milliseconds on a CPU against half a second and
+a token bill. I would use the big model to label the training data and then distil into the small
+one.'""",
+
+    """8. THE ARCHITECTURES, PIECE BY PIECE
+
+    THE SHARED PARTS - identical in all three:
+        multi-head self-attention · a feed-forward block · residual connections · layer normalisation
+        · positional information. See [[attention-mechanism-intuition]] and
+        [[why-residual-skip-connections-enable-very-deep-networks]].
+
+    ENCODER BLOCK:
+        x = x + SelfAttention(LayerNorm(x))        NO MASK - every position attends to every position
+        x = x + FeedForward(LayerNorm(x))
+
+        The attention matrix is fully populated: n x n, all entries live.
+
+    DECODER BLOCK (decoder-only):
+        x = x + MaskedSelfAttention(LayerNorm(x))  future positions set to -inf BEFORE the softmax
+        x = x + FeedForward(LayerNorm(x))
+
+        The attention matrix is LOWER TRIANGULAR. Position 3 attends to 1, 2 and 3, and nothing above.
+        THE MASK GOES BEFORE THE SOFTMAX, not after - zeroing weights afterwards would leave the row
+        not summing to 1.
+
+    ENCODER-DECODER, the decoder block has THREE sub-layers rather than two:
+        x = x + MaskedSelfAttention(LayerNorm(x))       causal, over what has been generated so far
+        x = x + CrossAttention(LayerNorm(x), encoder_output)    <- THE EXTRA ONE
+        x = x + FeedForward(LayerNorm(x))
+
+        IN CROSS-ATTENTION, Q comes from the DECODER and K and V come from the ENCODER. The decoder is
+        asking questions of the input. That asymmetry is the whole mechanism, and it is why translation
+        models can align an output word with a specific input word.
+
+    WHAT DIFFERS AT INFERENCE:
+        ENCODER      one forward pass, out comes a representation per token. Done.
+        DECODER      one forward pass PER GENERATED TOKEN, with a KV cache so previous tokens are not
+                     recomputed. Generation is inherently sequential.
+        ENC-DEC      the encoder runs ONCE; the decoder loops. That is the efficiency argument for
+                     encoder-decoder on long fixed inputs - the input is not re-attended from scratch
+                     at every step.""",
+
+    """9. THE SAME SENTENCE, THREE ARCHITECTURES
+
+    THE INPUT: 'The cat sat on the mat'
+
+    THROUGH AN ENCODER:
+        Every token is processed simultaneously. 'The' at position 1 attends to 'mat' at position 6.
+        OUTPUT: six contextual vectors, one per token.
+        The vector for 'cat' knows it is followed by 'sat on the mat' - it has seen the entire
+        sentence.
+        WHAT YOU DO WITH IT: pool the vectors into one sentence embedding, or attach a classification
+        head, or use the per-token vectors for entity tagging.
+        WHAT YOU CANNOT DO: continue the sentence. There is no next-token head and it was never trained
+        to have one.
+
+    THROUGH A DECODER:
+        'The'                    attends to: The
+        'The cat'                attends to: The, cat
+        'The cat sat'            attends to: The, cat, sat
+        ... a lower-triangular attention matrix.
+        OUTPUT: at each position, a probability distribution over the next token.
+        AT TRAINING TIME all six predictions are computed in ONE pass and all six contribute to the
+        loss. That is the efficiency point made concrete.
+        AT INFERENCE it emits one token, appends it, and runs again - with the KV cache making each
+        step cheap.
+        NOTE the vector for 'cat' here has NOT seen 'mat'. It is a weaker representation than the
+        encoder's, which is the embedding argument.
+
+    THROUGH AN ENCODER-DECODER, translating to French:
+        ENCODER reads all six English tokens bidirectionally, once. Six vectors.
+        DECODER generates: 'Le' -> 'chat' -> 'etait' -> ...
+            at each step it self-attends causally over what it has produced,
+            AND cross-attends over all six English vectors.
+        When producing 'chat', cross-attention lets it look directly at 'cat'.
+
+    THE THREE PICTURES IN ONE LINE EACH:
+        ENCODER      full n x n attention, one pass, produces representations
+        DECODER      triangular attention, one pass per token, produces continuations
+        ENC-DEC      full attention over the input once, triangular over the output, plus a bridge
+
+    AND THE MASK TEST, which is worth writing: change the LAST token of the input and check whether the
+    FIRST position's output changed. In an encoder it will. In a correct decoder it must not.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE ONE DIFFERENCE:  which positions each token may attend to.
+        ENCODER  bidirectional, full attention  ->  representations
+        DECODER  causal, triangular attention   ->  generation
+        ENC-DEC  both, joined by cross-attention ->  sequence-to-sequence
+
+    WHY THE MASK DECIDES THE OBJECTIVE:  bidirectional attention makes next-token prediction
+    impossible (the answer is in the input), so encoders train by masking ~15% of tokens. Causal
+    attention makes EVERY position a training example at once - roughly 6x the learning signal per
+    token of data, which is much of why decoder-only won.
+
+    WHERE EACH IS STILL STANDARD:
+        embeddings and retrieval    encoder
+        reranking                   cross-encoder (an encoder over the concatenated pair)
+        generation of any kind      decoder-only
+        long fixed input, short output   encoder-decoder is still a clean fit
+        high-volume narrow classification   a small fine-tuned encoder, on cost and latency
+
+THE #1 MISTAKE: treating these as three unrelated designs. They are one design with three masking
+choices, and every difference in behaviour follows from that.
+
+THE #2 MISTAKE: forgetting the causal mask when building a decoder. It trains beautifully and cannot
+generate, because it was reading the answer.
+
+THE #3 MISTAKE: expecting an encoder to generate, or assuming a decoder is automatically the best
+choice for embeddings - its early tokens have seen nothing.
+
+THE #4 MISTAKE: believing encoder-decoder is obsolete. It is less common, and it is still right when
+the input is long and fixed and you do not want to re-attend it per output token.
+
+THE #5 MISTAKE: reaching for a huge prompted model for a narrow high-volume task, where a small
+fine-tuned encoder is a hundred times faster and effectively free per call.
+
+ONE-SENTENCE TAKEAWAY: encoders see both directions and produce understanding, decoders see only
+backwards and produce text, encoder-decoders do both and bridge them with cross-attention - and every
+practical difference between the three comes from that single decision about what each position is
+allowed to look at.""",
+]
+
+_EX_P1AO["OSI and TCP/IP models - what each layer actually does"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - dividing an impossible problem into seven possible ones
+
+'Get these bytes from a laptop in Dublin to a server in Oregon' is not one problem. It is: turn bits
+into electrical signals, get a frame to the next device on this cable, find a route across the
+internet, put a stream back in order, encrypt it, and interpret it as HTTP.
+
+LAYERING SPLITS THAT UP so each part can be solved, replaced, and reasoned about independently. THE
+CONTRACT IS: EACH LAYER USES THE ONE BELOW AND SERVES THE ONE ABOVE, AND NEITHER NEEDS TO KNOW HOW THE
+OTHER WORKS.
+
+THE OSI MODEL - seven layers, a teaching and vocabulary model:
+
+    7  APPLICATION    what the data MEANS. HTTP, DNS, SMTP.
+    6  PRESENTATION   encoding, compression, encryption. TLS is usually placed here.
+    5  SESSION        establishing and managing conversations.
+    4  TRANSPORT      end-to-end delivery between PROCESSES. TCP, UDP. Ports live here.
+    3  NETWORK        routing between NETWORKS. IP. Addresses live here.
+    2  DATA LINK      delivery to the next device on this physical link. Ethernet, MAC addresses.
+    1  PHYSICAL       voltages, light, radio. Bits on a wire.
+
+THE TCP/IP MODEL - four layers, what the internet is actually built on:
+
+    APPLICATION   (OSI 5, 6, 7 merged)      HTTP, DNS, TLS
+    TRANSPORT     (OSI 4)                   TCP, UDP
+    INTERNET      (OSI 3)                   IP
+    LINK          (OSI 1, 2)                Ethernet, Wi-Fi
+
+WHY BOTH EXIST, and it is the useful thing to say: OSI IS THE VOCABULARY, TCP/IP IS THE
+IMPLEMENTATION. Nobody built OSI. But everybody says 'that is a layer 4 load balancer' or 'a layer 7
+routing rule', and those numbers come from OSI.
+
+TERMS AS THEY APPEAR:
+- ENCAPSULATION: each layer wraps the layer above's data in its own header.
+- PDU: what a layer's unit of data is called - segment, packet, frame.""",
+
+    """2. THE INTUITION - what actually changes at each hop
+
+The single most clarifying fact in this topic, and it is the one that makes routing make sense:
+
+    THE IP ADDRESSES STAY THE SAME END TO END. THE MAC ADDRESSES CHANGE AT EVERY HOP.
+
+Layer 3 (IP) answers 'where is this ultimately going?' Layer 2 (Ethernet) answers 'who do I hand it to
+NEXT?' Every router strips the old layer-2 frame, looks at the layer-3 destination, decides the next
+hop, and wraps it in a NEW frame addressed to that hop.
+
+    your laptop -> your router:   src MAC laptop,  dst MAC router     | src IP you, dst IP server
+    your router -> ISP router:    src MAC router,  dst MAC ISP        | src IP you, dst IP server
+    ISP -> ... -> final router:   MACs change each time               | IP UNCHANGED
+    final router -> server:       src MAC router,  dst MAC server     | src IP you, dst IP server
+
+THE POSTAL ANALOGY THAT ACTUALLY WORKS: the IP address is the address on the envelope; the MAC address
+is which van it is currently in. The envelope never changes. It goes through a dozen vans.
+
+WHAT EACH LAYER ADDS, going down the stack - ENCAPSULATION:
+
+    application    'GET /index.html HTTP/1.1'
+    transport      + a TCP header: source port, destination port, sequence number   -> a SEGMENT
+    network        + an IP header: source IP, destination IP, TTL                   -> a PACKET
+    link           + an Ethernet header: source MAC, dest MAC, and a trailer        -> a FRAME
+    physical       -> bits
+
+AND ON THE WAY UP THE OTHER SIDE, each layer strips its own header and hands the rest upward. THAT
+SYMMETRY IS THE WHOLE MODEL: each layer talks to its PEER on the other machine, and everything below is
+transport it does not care about.""",
+
+    """3. THE TWO LAYERS YOU WILL ACTUALLY BE ASKED ABOUT
+
+    LAYER 3 vs LAYER 4 vs LAYER 7 is where the real questions live, because it is the distinction that
+    shows up in load balancers, firewalls and debugging.
+
+    LAYER 3 - IP:  'which MACHINE?'
+        addresses: 192.0.2.10
+        BEST EFFORT. No guarantee of delivery, order, or non-duplication. IP will happily drop your
+        packet and tell nobody.
+        WHY THAT IS DELIBERATE: keeping the network simple and stupid is what let it scale. Reliability
+        was pushed to the endpoints - the 'end-to-end principle', and it is why the internet works and
+        the telephone network's clever core did not scale the same way.
+
+    LAYER 4 - TCP/UDP:  'which PROCESS on that machine?'
+        addresses: port 443
+        TCP adds ordering, retransmission, acknowledgement and flow control ON TOP of unreliable IP -
+        see [[tcp-three-way-handshake]]. UDP adds essentially nothing but ports, which is exactly what
+        DNS, video and games want.
+        A LAYER 4 LOAD BALANCER routes on IP and port. It is fast, protocol-agnostic, and cannot see
+        the URL.
+
+    LAYER 7 - HTTP:  'what is this REQUEST?'
+        A LAYER 7 LOAD BALANCER reads the HTTP request, so it can route /api to one pool and /images to
+        another, do TLS termination, rewrite headers and cache.
+        THE COST: it must parse the request, so it is slower and it must terminate the connection.
+
+    THAT COMPARISON IS THE ANSWER TO 'WHAT IS THE DIFFERENCE BETWEEN A LAYER 4 AND A LAYER 7 LOAD
+    BALANCER', and it is a very common question:
+
+        L4:  faster, cheaper, works for any TCP protocol, no visibility into content
+        L7:  content-aware routing, TLS termination, caching, header manipulation - and more work per
+             request
+
+    WHERE TLS SITS is a fair question with an awkward answer: OSI puts encryption at layer 6, but TLS
+    runs over TCP and is used by layer 7 protocols, so in practice people say 'between 4 and 7' or
+    just 'layer 6-ish'. THE HONEST ANSWER IS THAT OSI DOES NOT MAP CLEANLY ONTO THE REAL STACK, and
+    saying so is better than defending a tidy answer.""",
+
+    """4. THE FAILURE MODES
+
+A. TREATING OSI AS AN IMPLEMENTATION. Nothing runs OSI. It is a vocabulary. TCP/IP is what exists.
+
+B. CONFUSING IP ADDRESSES WITH MAC ADDRESSES. IP is end-to-end and constant; MAC is hop-by-hop and
+   changes at every router. Getting this backwards makes routing incomprehensible.
+
+C. ASSUMING IP IS RELIABLE. It is explicitly best-effort. Every reliability guarantee you have comes
+   from TCP above it, and if you use UDP you have none.
+
+D. THINKING LAYERS ARE STRICTLY OBSERVED IN PRACTICE. NAT rewrites layer 3 AND layer 4 headers
+   together. A layer 7 load balancer terminates layer 4. QUIC runs a reliable transport on top of UDP,
+   inside userspace. THE MODEL IS A GUIDE, NOT A LAW, and pretending otherwise makes real systems
+   confusing.
+
+E. NOT KNOWING WHERE A FAILURE IS. 'The site is down' could be DNS (7), TLS (6), a routing problem (3),
+   a firewall dropping a port (4), or a cable (1). The layers are a DIAGNOSTIC CHECKLIST, and that is
+   their most practical use.
+
+F. FORGETTING THE MTU. Layer 2 has a maximum frame size, typically 1500 bytes. Larger IP packets get
+   fragmented, or dropped if 'do not fragment' is set - which is the cause of the classic 'the
+   connection works until you send a big request' bug, and it is invisible at layer 7.
+
+G. MIXING UP A SWITCH AND A ROUTER. A switch is layer 2, forwarding by MAC within one network. A
+   router is layer 3, forwarding between networks by IP.
+
+H. ASSUMING PORTS IDENTIFY MACHINES. A port identifies a PROCESS on a machine; the IP identifies the
+   machine. The pair, plus the source pair, is what identifies a connection - and that four-tuple is
+   why one server can hold many connections on port 443.""",
+
+    """5. THE LAYERS AS A DEBUGGING CHECKLIST
+
+    THIS IS THE MOST USEFUL THING THE MODEL GIVES YOU. 'The service is unreachable' becomes a
+    bottom-up checklist, and each step is one command:
+
+    LAYER 1 - is there a link?      `ip link` - is the interface up? Is the cable in?
+    LAYER 2 - is the local network reachable?   `arp -a` - can you resolve your gateway's MAC?
+    LAYER 3 - is the host routable?  `ping 192.0.2.10`, `traceroute`. Answers 'can packets get there
+              at all'. Note that ICMP is often blocked, so a failed ping is not proof.
+    LAYER 4 - is the PORT open?      `nc -vz host 443`, or `telnet host 443`.
+              MEASURED BEHAVIOUR WORTH KNOWING - see [[tcp-three-way-handshake]]: an instant
+              'connection refused' means nothing is listening on that port; a HANG until timeout means
+              a firewall is silently dropping the SYN. Two completely different problems that both get
+              reported as 'can't connect'.
+    LAYER 6 - is TLS working?        `openssl s_client -connect host:443`. Expired certificate? Name
+              mismatch? Protocol version mismatch?
+    LAYER 7 - is the APPLICATION answering?   `curl -v https://host/health`. A 500 here means
+              everything below worked perfectly.
+
+    AND THE ONE THAT SITS AWKWARDLY: DNS. It is a layer 7 protocol that everything else depends on, so
+    check it first in practice even though it is at the top of the model. `dig example.com`. A
+    surprising share of 'the network is broken' incidents are DNS.
+
+    WHY THIS ORDERING IS WORTH INTERNALISING: each step ELIMINATES everything below it. If curl gets a
+    500, you have proved layers 1 through 6 are fine and you can stop looking at the network entirely.
+    If nc cannot open the port, nothing above layer 4 matters yet.
+
+    THAT IS A GENUINELY BETTER ANSWER TO 'HOW WOULD YOU DEBUG THIS' than any amount of reciting the
+    seven layer names, and it is what the question is usually really asking.""",
+
+    """6. HOW TO REASON WITH THE MODEL - numbered steps
+
+1. IDENTIFY WHICH LAYER YOUR PROBLEM LIVES AT. Is it about bits, the local link, routing, ports,
+   encryption, or meaning?
+2. WORK BOTTOM-UP WHEN DEBUGGING. Each layer that works eliminates everything beneath it.
+3. CHECK DNS FIRST ANYWAY, because it is a dependency of almost everything.
+4. DISTINGUISH REFUSED FROM TIMED OUT at layer 4. Refused means nothing is listening; timeout means
+   something is dropping packets silently.
+5. REMEMBER IP IS BEST-EFFORT. If you are using UDP you have no ordering, no retransmission and no
+   delivery guarantee, and you must handle all three yourself.
+6. WHEN DESIGNING, PICK THE LAYER DELIBERATELY. A layer 4 load balancer if you need raw throughput and
+   protocol independence; layer 7 if you need to route on path, host or header.
+7. MIND THE MTU when tunnelling, using a VPN, or wrapping protocols. The classic symptom is small
+   requests working and large ones hanging.
+8. DO NOT DEFEND THE MODEL'S TIDINESS. TLS does not map cleanly, QUIC deliberately breaks the split,
+   and NAT violates the layering outright. Say so - it demonstrates you have used real systems.
+9. USE THE VOCABULARY. 'L4 vs L7', 'a layer 3 problem' - it is how network conversations are actually
+   conducted, and that is the model's real value.
+
+STEP 2 IS THE WHOLE PRACTICAL POINT. The seven names are trivia; the ORDERED ELIMINATION is a genuine
+technique, and it turns 'the site is down' from a guess into a five-command procedure.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Layering splits an impossible problem into tractable ones - each layer uses the one below and serves
+the one above, and neither needs to know how the other works.
+
+OSI has seven layers: physical, data link, network, transport, session, presentation, application.
+TCP/IP has four, merging OSI's top three into "application" and its bottom two into "link". The
+practical relationship is that OSI is the vocabulary and TCP/IP is the implementation - nobody ever
+built OSI, but everybody says "layer 4 load balancer" or "layer 7 routing rule", and those numbers come
+from OSI.
+
+The fact I find most clarifying is that the IP addresses stay the same end to end while the MAC
+addresses change at every hop. Layer 3 answers "where is this ultimately going" and layer 2 answers
+"who do I hand it to next". Every router strips the old frame, reads the IP destination, and wraps it
+in a new frame for the next hop. The IP address is the address on the envelope; the MAC is which van it
+is currently in.
+
+The distinction I would expect to be asked about is layer 4 versus layer 7. A layer 4 load balancer
+routes on IP and port - fast, protocol-agnostic, and blind to content. A layer 7 one parses the HTTP
+request, so it can route /api and /images to different pools, terminate TLS and rewrite headers, at the
+cost of doing more work per request.
+
+And the most practical use of the model is as a debugging checklist, bottom-up, because each layer that
+works eliminates everything beneath it. Interface up, gateway ARP resolves, ping the host, nc the port,
+openssl the TLS, curl the endpoint. If curl gets a 500 you have just proved the entire network stack is
+fine and the problem is the application.
+
+I would also say the model does not map cleanly onto reality. TLS does not sit neatly at layer 6, NAT
+rewrites layer 3 and 4 headers together, and QUIC deliberately runs a reliable transport over UDP in
+userspace. It is a guide, not a law.'""",
+
+    """8. THE LAYERS, PIECE BY PIECE
+
+    LAYER 1 - PHYSICAL:  voltages, light pulses, radio. Cables, fibre, NICs, the Wi-Fi radio.
+        UNIT: bits. FAILURE: unplugged, damaged, out of range.
+
+    LAYER 2 - DATA LINK:  delivery to the next device on THIS link.
+        ADDRESSES: MAC, 48 bits, burned into the hardware and unique per interface.
+        DEVICES: switches. UNIT: a FRAME.
+        ALSO DOES: error DETECTION via a checksum, and on some media, collision handling.
+        KEY LIMIT: MTU, typically 1500 bytes. Everything above must fit or be fragmented.
+
+    LAYER 3 - NETWORK:  routing between networks.
+        ADDRESSES: IP. DEVICES: routers. UNIT: a PACKET.
+        BEST EFFORT - no delivery, ordering or duplication guarantee.
+        THE TTL FIELD decrements at every hop and the packet dies at zero. That is what stops routing
+        loops, AND it is exactly what `traceroute` exploits: send packets with TTL 1, 2, 3... and each
+        router in turn reports the expiry, revealing the path.
+
+    LAYER 4 - TRANSPORT:  process-to-process.
+        ADDRESSES: ports. UNIT: a SEGMENT (TCP) or DATAGRAM (UDP).
+        TCP: connection, ordering, retransmission, flow control, congestion control.
+        UDP: ports and a checksum, and nothing else - which is the point for DNS, video and games.
+        A CONNECTION IS IDENTIFIED BY THE FOUR-TUPLE (src IP, src port, dst IP, dst port), which is how
+        one server holds a hundred thousand connections on port 443.
+
+    LAYER 5 - SESSION:  establishing, maintaining and tearing down conversations. In practice this is
+        handled inside applications and TLS, which is why TCP/IP does not have this layer at all.
+
+    LAYER 6 - PRESENTATION:  encoding, compression, encryption. TLS is placed here by convention and
+        does not fit cleanly - it runs over TCP and is used by layer 7 protocols.
+
+    LAYER 7 - APPLICATION:  the protocol that gives the bytes MEANING. HTTP, DNS, SMTP, SSH.
+        UNIT: a message. THIS IS WHERE YOUR CODE LIVES.
+
+    THE MNEMONIC, bottom-up:  Please Do Not Throw Sausage Pizza Away.""",
+
+    """9. ONE REQUEST, DOWN THE STACK AND BACK UP
+
+    You type `curl https://example.com/index.html`.
+
+    LAYER 7 - APPLICATION:  build the HTTP request.
+        GET /index.html HTTP/1.1
+        Host: example.com
+        (First, though, DNS - itself a layer 7 protocol over UDP port 53 - turns example.com into
+        93.184.216.34. Everything below depends on that.)
+
+    LAYER 6 - TLS:  handshake, then encrypt the request. From here down, nothing can read it.
+
+    LAYER 4 - TRANSPORT:  wrap in a TCP header.
+        source port 51422 (chosen by your OS), destination port 443, a sequence number.
+        NOW IT IS A SEGMENT. The three-way handshake happened before any of this - one full round trip.
+
+    LAYER 3 - NETWORK:  wrap in an IP header.
+        source 192.168.1.42, destination 93.184.216.34, TTL 64.
+        NOW IT IS A PACKET.
+
+    LAYER 2 - DATA LINK:  wrap in an Ethernet frame.
+        source MAC = your NIC, destination MAC = YOUR ROUTER - not the server. Your machine does not
+        know how to reach the server; it only knows to hand it to the gateway.
+        NOW IT IS A FRAME.
+
+    LAYER 1 - PHYSICAL:  bits on the wire or in the air.
+
+    ACROSS THE INTERNET - and this is the part worth picturing:
+        every router: strip the frame, read the IP destination, decrement the TTL, consult its routing
+        table, wrap in a NEW frame addressed to the next hop, send.
+        THE IP HEADER IS ESSENTIALLY UNCHANGED THE WHOLE WAY. The Ethernet header is rewritten at every
+        single hop, perhaps fifteen times.
+
+    AT THE SERVER, UP THE STACK:
+        NIC receives bits -> frame checksum verified, header stripped
+        -> IP header checked (is this for me?), stripped
+        -> TCP header read: port 443, so hand to whatever is listening there; reorder and acknowledge
+        -> TLS decrypts
+        -> nginx parses 'GET /index.html' and your code runs.
+
+    AND THE DEBUGGING PAYOFF: every one of those steps is a place it can fail, and the checklist walks
+    them in order. If curl returns a 500, all of the above worked.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO MODELS:  OSI's seven layers are the VOCABULARY; TCP/IP's four are the IMPLEMENTATION.
+        OSI 5+6+7 -> TCP/IP application
+        OSI 4     -> transport
+        OSI 3     -> internet
+        OSI 1+2   -> link
+
+    THE FACT THAT MAKES ROUTING MAKE SENSE:  IP addresses are end-to-end and constant; MAC addresses
+    are hop-by-hop and rewritten at every router.
+
+    THE DISTINCTION YOU WILL BE ASKED FOR:
+        L3  which machine        IP, routers, best-effort
+        L4  which process        ports, TCP/UDP, and the (src IP, src port, dst IP, dst port) tuple
+        L7  which request        HTTP, content-aware routing, TLS termination, caching
+
+    THE DEBUGGING CHECKLIST:  link -> ARP -> ping -> nc the port -> openssl -> curl. Each success
+    eliminates everything below it.
+
+THE #1 MISTAKE: treating OSI as something that runs. It is a shared vocabulary; the internet runs
+TCP/IP, and several real technologies violate the layering deliberately.
+
+THE #2 MISTAKE: confusing IP with MAC, or a switch with a router. Layer 2 is 'next hop on this link';
+layer 3 is 'across networks'.
+
+THE #3 MISTAKE: assuming IP is reliable. It is best-effort by design, and every guarantee you have
+comes from TCP above it.
+
+THE #4 MISTAKE: reciting the seven names instead of using them. The value is the ordered elimination
+when something breaks.
+
+THE #5 MISTAKE: forgetting the MTU, which is why small requests succeed and large ones hang in
+tunnelled or VPN setups.
+
+ONE-SENTENCE TAKEAWAY: each layer solves one problem and hands the rest downward - meaning, then
+process, then machine, then next hop, then bits - so when something breaks you can walk up from the
+bottom and let each working layer eliminate everything beneath it.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
