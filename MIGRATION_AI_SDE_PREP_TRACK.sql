@@ -38,11 +38,25 @@ begin
     return;
   end if;
 
-  -- Point the plan at her actual target. Adjust target_date once the
-  -- interview season dates are known; 45 min/day is kept.
+  -- Point the plan at her actual target: 15 Nov 2026, 92 days out.
+  --
+  -- The daily goal moves 45 -> 90 minutes, and that is arithmetic rather
+  -- than ambition. The bank's own prep_minutes put P0 at 92h35m and P0+P1
+  -- at 284h25m. Over 92 days:
+  --      45 min/day =  69h  -> 75% of P0. Does not even finish the
+  --                            must-know band before the interview.
+  --      60 min/day =  92h  -> P0 almost exactly, nothing beyond it.
+  --      90 min/day = 138h  -> all of P0 plus about a quarter of P1.
+  --     185 min/day = 284h  -> P0+P1 complete, and not realistic alongside
+  --                            a final year of university.
+  -- 90 is the number that clears the must-know band with room to start on
+  -- the core one. Change it here or in the UI if the real week disagrees;
+  -- what matters is that 45 was quietly impossible and nothing said so.
   update interview_prep
-     set role_title = 'AI/ML SDE — New Grad (Amazon / Google)',
-         updated_at = now()
+     set role_title         = 'AI/ML SDE — New Grad (Amazon / Google)',
+         target_date        = date '2026-11-15',
+         daily_goal_minutes = 90,
+         updated_at         = now()
    where user_id = uid;
 
   -- Retire the inherited TPM rows. Soft delete, per house rule.
@@ -122,6 +136,26 @@ begin
       ('Acting with incomplete information',             'Bias for Action', 8),
       ('Why software engineering, and why AI/ML',        'Motivation',   9)
     ) as s(title, competency, position);
+
+  -- ── The same target as a goal, so it counts down ──
+  -- Gives her the /goal-planner hero: days:hrs:mins to the interview, pace
+  -- against the plan, and the budget verdict computed from the numbers
+  -- above. effort_minutes is P0+P1 from the bank, so the page can say
+  -- honestly whether the commitment covers the work.
+  if not exists (select 1 from objectives
+                  where user_id = uid and title = 'Crack the AI SDE interview'
+                    and not is_deleted) then
+    insert into objectives (user_id, title, description, time_horizon, status,
+                            start_date, target_date, target_at,
+                            daily_commit_minutes, effort_minutes,
+                            is_primary, flash_enabled)
+    values (uid, 'Crack the AI SDE interview',
+            'Amazon / Google new-grad AI/ML SDE loop. Study bank at /ai-sde.',
+            'quarterly', 'active',
+            current_date, date '2026-11-15',
+            (date '2026-11-15' + time '09:00:00') at time zone 'Asia/Kolkata',
+            90, 17065, true, true);
+  end if;
 
   raise notice 'AI SDE prep track seeded for %', uid;
 end $$;

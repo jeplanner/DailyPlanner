@@ -491,7 +491,9 @@ def test_countdown_budget_flags_an_impossible_goal():
     """The most valuable number on the page: whether the remaining time can
     physically hold the remaining work, while re-scoping is still cheap."""
     from utils.countdown import budget
-    b = budget(working_days_left=31, daily_commit_minutes=120, effort_minutes=139 * 60)
+    # `days_left`, not `working_days_left` — a "per day" commitment is taken
+    # at its word; see test_budget_takes_a_daily_commitment_at_its_word.
+    b = budget(days_left=31, daily_commit_minutes=120, effort_minutes=139 * 60)
     assert b["feasible"] is False
     assert b["shortfall_minutes"] == 139 * 60 - 31 * 120
     assert b["required_daily_minutes"] == round(139 * 60 / 31)
@@ -854,3 +856,40 @@ def test_ai_sde_prep_track_migration_is_derived_and_safe():
     assert seeded, "no derived topics found in the migration"
     unknown = [s for s in seeded if s not in known]
     assert not unknown, f"seeded topics not in the tag vocabulary: {unknown[:5]}"
+
+
+def test_budget_measures_the_work_that_is_LEFT():
+    """Comparing the time remaining against the WHOLE job means the alarm can
+    never clear: a goal at 50% reported the full shortfall and shouted just as
+    loudly as on day one. An alarm that doing the work cannot silence is one
+    you learn to ignore, which defeats the point of having it."""
+    from utils.countdown import budget
+    # 100 days x 90 min = 150h available, against a 200h job.
+    at_zero = budget(100, 90, 200 * 60, progress_pct=0)
+    assert at_zero["feasible"] is False
+    assert at_zero["needed_minutes"] == 200 * 60
+
+    half = budget(100, 90, 200 * 60, progress_pct=50)
+    assert half["needed_minutes"] == 100 * 60, "half done means half the work left"
+    assert half["feasible"] is True, "the alarm must clear once the work is done"
+    assert half["total_effort_minutes"] == 200 * 60, "the whole job stays visible"
+
+    assert budget(100, 90, 200 * 60, progress_pct=100)["needed_minutes"] == 0
+
+
+def test_budget_takes_a_daily_commitment_at_its_word():
+    """"90 minutes a day" means per DAY. Multiplying it by working days
+    quietly assumes weekends off, which understated a student's available
+    time by a third and made a workable plan look impossible."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from utils.countdown import summarise
+    tz = ZoneInfo("Asia/Kolkata")
+    now = datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+    goal = {"title": "T", "start_date": "2026-08-15",
+            "target_at": "2026-11-15T09:00:00+05:30",
+            "daily_commit_minutes": 90, "effort_minutes": 17065}
+    s = summarise(goal, now, tz, progress_pct=0)
+    # 92 calendar days, not the 65 working ones.
+    assert s["budget"]["available_minutes"] == 92 * 90
+    assert s["working_days_left"] == 65, "working days stay reported separately"

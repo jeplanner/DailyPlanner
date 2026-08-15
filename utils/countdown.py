@@ -198,25 +198,42 @@ def pace(start, target, now, progress_pct):
             "gap": gap, "gap_days": gap_days, "behind": gap < 0}
 
 
-def budget(working_days_left, daily_commit_minutes, effort_minutes):
-    """Time available against time required — the re-scope alarm.
+def budget(days_left, daily_commit_minutes, effort_minutes, progress_pct=0):
+    """Time available against time STILL required — the re-scope alarm.
+
+    Two things this has to get right, both learned the hard way:
+
+    DAYS, NOT WORKING DAYS. A commitment written "90 minutes a day" means
+    per day. Multiplying it by working days silently assumes the person
+    rests at weekends, which understated a student's available time by a
+    third. `working_days_left` is still reported separately, because it is
+    the honest number for a goal that really is only worked on weekdays —
+    but the budget takes the commitment at its word.
+
+    REMAINING EFFORT, NOT TOTAL. Comparing the time left against the WHOLE
+    job means the alarm can never clear: a goal at 50% still reported the
+    full shortfall and screamed just as loudly as on day one. An alarm that
+    cannot be silenced by doing the work is one you learn to ignore, which
+    is the opposite of the point.
 
     Returns None unless both a daily commitment and an effort estimate are
-    known, because a budget with a guessed denominator is worse than no
-    budget at all.
+    known, because a budget with a guessed denominator is worse than none.
     """
     if not daily_commit_minutes or not effort_minutes:
         return None
-    available = max(0, int(working_days_left)) * int(daily_commit_minutes)
-    needed = int(effort_minutes)
+    available = max(0, int(days_left)) * int(daily_commit_minutes)
+    done = max(0, min(100, int(progress_pct or 0)))
+    needed = int(round(int(effort_minutes) * (1 - done / 100)))
     shortfall = needed - available
     # What the daily commitment would have to become to close the gap.
     required_daily = (
-        int(round(needed / working_days_left)) if working_days_left > 0 else None
+        int(round(needed / days_left)) if days_left > 0 else None
     )
     return {
         "available_minutes": available,
+        # What is LEFT to do, not the whole job — see the docstring.
         "needed_minutes": needed,
+        "total_effort_minutes": int(effort_minutes),
         "shortfall_minutes": max(0, shortfall),
         "surplus_minutes": max(0, -shortfall),
         "feasible": shortfall <= 0,
@@ -260,8 +277,11 @@ def summarise(goal, now, tz, progress_pct=0, workdays=(0, 1, 2, 3, 4)):
         "display": display(bd),
         "working_days_left": wd,
         "pace": pace(start, target, now, progress_pct),
-        "budget": budget(wd, goal.get("daily_commit_minutes"),
-                         goal.get("effort_minutes")),
+        # Calendar days, matching the "per day" the commitment is written in;
+        # working_days_left above is reported separately for goals that really
+        # are weekdays-only.
+        "budget": budget(bd["total_days"], goal.get("daily_commit_minutes"),
+                         goal.get("effort_minutes"), progress_pct),
         # PERMISSION, not current state. This is the user's per-goal opt-out
         # and nothing else — WHEN to flash is decided live on the client from
         # the ticking tone.
