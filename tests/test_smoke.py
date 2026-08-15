@@ -353,3 +353,17 @@ def test_ai_sde_tag_priority_is_not_a_rubber_stamp():
         f"Rare is only {c['Rare'] / total:.0%} of tagged entries - "
         "nothing is being marked genuinely infrequent"
     )
+
+
+def test_ai_sde_every_tagged_entry_has_a_legal_subtopic():
+    """SUBTOPIC is the seventh column and is scoped per topic - a DSA subtopic
+    on an NLP-LLM row is a mis-tag, not a free-text note. `validate` checks the
+    pairing; this checks nothing was left blank, since a blank subtopic makes
+    the study-page filter silently lose the entry."""
+    import ai_sde_bank as bank
+    blank = [e["title"] for e in bank.ENTRIES
+             if "tag_topic" in e and not e.get("tag_subtopic")]
+    assert not blank, (
+        f"{len(blank)} tagged entries have no subtopic: "
+        f"{blank[:5]}{'...' if len(blank) > 5 else ''}"
+    )
