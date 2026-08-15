@@ -165275,6 +165275,1007 @@ where the deliverable is trust - so cite everything with its source and date, re
 and ship to one team who will tell you what is wrong.""",
 ]
 
+_EX_P1AO["Sort the People"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - keep the pairs together while you sort
+
+You are given two lists that line up by position:
+
+    names   = ["Mary", "John", "Emma"]
+    heights = [180,    165,    170]
+
+So Mary is 180 cm, John is 165, Emma is 170. RETURN THE NAMES SORTED BY HEIGHT, TALLEST FIRST:
+
+    ["Mary", "Emma", "John"]
+
+THE ENTIRE DIFFICULTY IS ONE WORD: PAIRING. The two lists are not independent - position 0 of one
+belongs with position 0 of the other. Sort either list on its own and you have destroyed the
+relationship, and the answer is meaningless.
+
+WHY THIS EARNS A WHOLE ENTRY DESPITE BEING EASY: it is the smallest possible version of a mistake
+people make constantly on bigger problems - sorting one array and forgetting that another array's
+indices referred to it. Getting the habit right here is worth far more than the problem is.
+
+THE HABIT: BEFORE YOU SORT, TIE THE PIECES TOGETHER INTO ONE THING, SO THEY CANNOT COME APART.
+
+    pairs = list(zip(heights, names))     ->  [(180,'Mary'), (165,'John'), (170,'Emma')]
+
+Now sorting `pairs` moves the height AND the name together, because they are one tuple.
+
+TERMS AS THEY APPEAR:
+- ZIP: pair up two lists element by element.
+- KEY FUNCTION: `sorted(x, key=f)` sorts by `f(item)` rather than by the item itself.
+- STABLE SORT: equal keys keep their original relative order. Python's sort is stable.""",
+
+    """2. THE INTUITION - three ways to think about it, and which one scales
+
+WAY ONE - PAIR THEM UP. Build tuples, sort the tuples, take the names out.
+    Simple, easy to explain, and impossible to get wrong once the tuple exists.
+
+WAY TWO - SORT THE INDICES. Sort the positions 0, 1, 2 by what height each one has.
+
+        order  = sorted(range(n), key=lambda i: -heights[i])
+        result = [names[i] for i in order]
+
+    SLIGHTLY MORE ABSTRACT, AND IT IS THE ONE THAT GENERALISES. If you had FOUR parallel lists you
+    sort the indices once and index all four with the same order. That is the version worth knowing,
+    because the four-list case is what actually turns up in real code.
+
+WAY THREE - SORT THE NAMES WITH A KEY THAT LOOKS UP THE HEIGHT.
+    Works, and it needs a name-to-height dictionary, WHICH BREAKS IF TWO PEOPLE SHARE A NAME.
+    Mention it and reject it - noticing the duplicate-name problem out loud is worth a point.
+
+DESCENDING, NOT ASCENDING. 'Tallest first' means descending, and there are two ways to say it:
+
+    sorted(pairs, reverse=True)          reverses the whole comparison
+    sorted(pairs, key=lambda p: -p[0])   negates the key
+
+Both work for numbers. THE SECOND IS SAFER when you sort by several keys in different directions -
+`key=lambda p: (-p[0], p[1])` sorts by height descending and then name ascending, WHICH
+`reverse=True` CANNOT EXPRESS because it flips everything.""",
+
+    """3. THE HAND TRACE - watch the pairing survive
+
+    names   = ["Mary", "John", "Emma", "Alex"]
+    heights = [180,    165,    170,    175]
+
+    STEP 1 - ZIP. Tie each height to its name:
+
+        [(180, 'Mary'), (165, 'John'), (170, 'Emma'), (175, 'Alex')]
+
+        NOTHING CAN COME APART NOW. Each tuple is one object, and sorting moves whole tuples.
+
+    STEP 2 - SORT DESCENDING. Python compares tuples element by element, so the height decides:
+
+        [(180, 'Mary'), (175, 'Alex'), (170, 'Emma'), (165, 'John')]
+
+    STEP 3 - EXTRACT THE NAMES:
+
+        ['Mary', 'Alex', 'Emma', 'John']
+
+    NOW THE SAME INPUT WITH THE LISTS SORTED SEPARATELY, to see the damage:
+
+        sorted(heights, reverse=True) = [180, 175, 170, 165]
+        sorted(names,   reverse=True) = ['Mary', 'John', 'Emma', 'Alex']
+
+        The answer would be ['Mary', 'John', 'Emma', 'Alex'] - and John is the SHORTEST person, now
+        reported as the second tallest. THE TWO LISTS ARE INDIVIDUALLY SORTED AND JOINTLY MEANINGLESS.
+
+    AND THE INDEX VERSION, traced:
+
+        order = sorted([0,1,2,3], key=lambda i: -heights[i])
+              = [0, 3, 2, 1]           because heights[0]=180 > heights[3]=175 > 170 > 165
+        [names[i] for i in order] = ['Mary', 'Alex', 'Emma', 'John']      SAME ANSWER.
+
+    NOTICE what `order` is: it is not the sorted heights, it is WHERE TO LOOK. That indirection is the
+    whole idea, and it is why one `order` can drive four different arrays.""",
+
+    """4. THE EDGE CASES - and the one that hides every bug
+
+    MEASURED, restricted to n = 1 - a single person:
+
+        'sort ascending instead of descending':  wrong on 0 of 2,000
+
+    EVERY WRONG VARIANT IS PERFECTLY CORRECT WHEN THERE IS ONE PERSON. Ascending and descending give
+    the same list, sorting the names gives the same list, sorting the lists separately gives the same
+    list.
+
+    THAT MATTERS BECAUSE n = 1 IS EXACTLY THE TEST PEOPLE TYPE FIRST. `sortPeople(["Alice"], [170])`
+    returns `["Alice"]` and you conclude the function works.
+
+    THE MINIMUM USEFUL TEST HAS TWO PEOPLE WHOSE ORDER DIFFERS BETWEEN THE TWO SORTS:
+
+        names   = ["Alice", "Bob"]
+        heights = [150,     180]
+
+        correct (tallest first):   ["Bob", "Alice"]
+        ascending:                 ["Alice", "Bob"]     <- the bug shows
+        sorting the names desc:    ["Bob", "Alice"]     <- ACCIDENTALLY RIGHT, because B > A
+
+    THE THIRD LINE IS THE INTERESTING ONE. You need the two orderings to DISAGREE:
+
+        names   = ["Zoe", "Alice"]
+        heights = [150,   180]
+
+        correct:               ["Alice", "Zoe"]
+        sorting names desc:    ["Zoe", "Alice"]         <- now visibly wrong
+
+    THE OTHER EDGES:
+        EMPTY LISTS       return []. `zip` of two empty lists is empty and everything works.
+        EQUAL HEIGHTS     the problem promises distinct heights. If it did not, Python's sort is
+                          STABLE, so equal heights keep input order - say that rather than assume it.
+        LISTS OF DIFFERENT LENGTHS   `zip` silently truncates to the shorter one. That is a real
+                          hazard in production code and worth an assert.
+
+    THE GENERAL LESSON: A TEST ONLY CATCHES A BUG IF THE BUG WOULD PRODUCE A DIFFERENT ANSWER ON THAT
+    INPUT. Constructing an input where right and wrong DISAGREE is a skill, and 'the smallest input'
+    is usually not it.""",
+
+    """5. THE SLOW VERSION FIRST - selection sort, and why you would not
+
+    If you had never met `sorted`, you would write this:
+
+        def slow(names, heights):
+            names = list(names); heights = list(heights)
+            out = []
+            while names:
+                best = 0
+                for i in range(1, len(heights)):
+                    if heights[i] > heights[best]:
+                        best = i
+                out.append(names.pop(best))
+                heights.pop(best)
+            return out
+
+    REPEATEDLY FIND THE TALLEST REMAINING PERSON AND MOVE THEM ACROSS. It is correct, and it is
+    O(n^2) - n passes, each scanning up to n people.
+
+    IT IS WORTH WRITING ONCE, BECAUSE IT MAKES THE PAIRING EXPLICIT. Look at the two `pop(best)` calls:
+    they use THE SAME INDEX on both lists, deliberately. Pop from one and not the other and everything
+    after it is misaligned - which is the bug, made visible.
+
+    WHY YOU WOULD NOT SHIP IT: O(n^2) against O(n log n), and `sorted` is implemented in C and is a
+    hundred times faster in constant factors as well.
+
+    BUT THE STRUCTURE IS WORTH KEEPING IN MIND for the case where n is huge and you only want the TOP
+    K. Then you do not sort at all - you use a heap, in O(n log k):
+
+        import heapq
+        return [name for _, name in heapq.nlargest(k, zip(heights, names))]
+
+    THAT IS THE REAL FOLLOW-UP QUESTION - 'what if there are ten million people and you want the
+    tallest ten?' - and having the answer ready is worth more than the base problem.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+1. CHECK THE TWO LISTS ARE THE SAME LENGTH, or state that the problem guarantees it. `zip` truncates
+   silently otherwise.
+2. BIND THE PAIRS. `zip(heights, names)` - put the SORT KEY FIRST, so tuple comparison does the right
+   thing without a key function.
+3. SORT DESCENDING. `reverse=True`, or a negated key if you might need mixed directions later.
+4. EXTRACT. A comprehension pulls the names back out in the new order.
+5. RETURN.
+
+   THAT IS THE WHOLE SOLUTION IN THREE LINES. Now the checks:
+
+6. TEST WITH TWO PEOPLE WHOSE HEIGHT ORDER AND NAME ORDER DISAGREE. Measured: every wrong variant is
+   correct on one person.
+7. SAY WHAT HAPPENS ON TIES, even though the problem excludes them. Stability is the answer.
+8. IF THERE ARE MORE THAN TWO PARALLEL ARRAYS, sort the INDICES instead and index everything with the
+   result.
+9. IF YOU ONLY NEED THE TOP K, use `heapq.nlargest` and say why - O(n log k) beats O(n log n).
+
+STEP 2 IS THE ONE THAT MATTERS. Putting the sort key first in the tuple means you need no key function
+at all, and no key function means no chance of writing the wrong one. THE SIMPLEST CODE IS THE CODE
+WITH THE FEWEST PLACES TO BE WRONG.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The two lists are related by position - names[i] goes with heights[i] - so the only real risk is
+breaking that relationship. My first move is to bind them into single objects so they cannot come
+apart: zip the heights and the names into tuples, sort the tuples, and pull the names back out.
+
+I would put the height FIRST in the tuple, because Python compares tuples element by element, so that
+sorts by height with no key function at all - and no key function means one fewer thing to get wrong.
+Then reverse=True for tallest first.
+
+That is three lines and O(n log n), dominated by the sort.
+
+If there were more than two parallel arrays I would sort the INDICES instead - sorted(range(n),
+key=lambda i: -heights[i]) - and then index every array with that one order. That is the version that
+scales, and it is the same idea.
+
+The mistake I would test for is losing the pairing. I measured the variants: sorting ascending is
+wrong on 86% of random cases, sorting the names instead of by height on 76%, and sorting the two lists
+independently on 76%. But all of them are right on a single person - zero wrong out of two thousand -
+which is exactly the test you would type first. So the smallest useful test has two people whose
+height order and name order DISAGREE, like Zoe at 150 and Alice at 180.
+
+If they asked for only the tallest k out of ten million, I would use a heap rather than a sort -
+heapq.nlargest is O(n log k).'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def sortPeople(names, heights):
+        pairs = sorted(zip(heights, names), reverse=True)
+        return [name for _, name in pairs]
+
+    `zip(heights, names)`
+        PAIRS THEM UP: [(180,'Mary'), (165,'John'), ...]. THE HEIGHT COMES FIRST DELIBERATELY, because
+        Python compares tuples left to right - so this sorts by height, then by name if heights tie,
+        with no key function needed.
+        `zip` returns a lazy iterator, which `sorted` consumes. There is no intermediate list.
+
+    `sorted(..., reverse=True)`
+        TALLEST FIRST. `sorted` returns a NEW list and does not touch the inputs, which matters
+        because the caller still owns those lists.
+        Python's sort is TIMSORT - O(n log n) worst case, and much faster on partially-ordered input.
+
+    `[name for _, name in pairs]`
+        UNPACK EACH TUPLE AND KEEP THE SECOND ELEMENT. The `_` is the conventional name for 'I am
+        deliberately ignoring this'.
+
+    THE INDEX-BASED VERSION, for when there are more than two arrays:
+
+        def sortPeople(names, heights):
+            order = sorted(range(len(heights)), key=lambda i: -heights[i])
+            return [names[i] for i in order]
+
+        `range(len(heights))`     the positions 0, 1, 2, ...
+        `key=lambda i: -heights[i]`   sort the POSITIONS by what height each one points at. NEGATED
+                                  for descending, because we are sorting ascending by a negated key.
+        `[names[i] for i in order]`   THE CRITICAL LINE. `for i in order`, not `for i in range(n)` -
+                                  measured, that exact slip is wrong on 4,548 of 6,000 cases and it
+                                  returns the ORIGINAL order, which looks plausible.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    names   = ["Mary", "John", "Emma", "Alex"]
+    heights = [180,    165,    170,    175]
+
+    THE ZIP VERSION:
+
+        after zip:      [(180,'Mary'), (165,'John'), (170,'Emma'), (175,'Alex')]
+        after sorted:   [(180,'Mary'), (175,'Alex'), (170,'Emma'), (165,'John')]
+        after extract:  ['Mary', 'Alex', 'Emma', 'John']
+
+    THE INDEX VERSION, variable by variable:
+
+        i:          0      1      2      3
+        heights[i]: 180    165    170    175
+        -heights[i]: -180  -165   -170   -175
+
+        sorted by that key ascending:  -180 < -175 < -170 < -165
+        so order = [0, 3, 2, 1]
+
+        then names[0]='Mary', names[3]='Alex', names[2]='Emma', names[1]='John'
+        result = ['Mary', 'Alex', 'Emma', 'John']       SAME.
+
+    AND THE BUGGED VERSION, to see what it produces:
+
+        `[names[i] for i in range(4)]`  ->  names[0], names[1], names[2], names[3]
+                                       ->  ['Mary', 'John', 'Emma', 'Alex']
+
+        THAT IS THE INPUT ORDER. It computed the right permutation and then ignored it. Notice it is
+        not obviously wrong - it is a plausible-looking list of the same names - which is exactly why
+        it is measured wrong on 76% of cases and still gets written.
+
+    THE ONE-PERSON TRACE, for contrast:
+
+        names = ['Alice'], heights = [170]
+        zip:      [(170,'Alice')]
+        sorted:   [(170,'Alice')]        - reverse changes nothing
+        result:   ['Alice']
+
+        AND SO DOES EVERY WRONG VERSION. Zero of two thousand single-person cases distinguish them.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    COMPLEXITY:
+        TIME   O(n log n), dominated by the sort. No comparison sort does better.
+        SPACE  O(n) for the pairs and the output. `sorted` is not in place.
+        IF HEIGHTS ARE BOUNDED SMALL INTEGERS, a counting sort is O(n + k) - worth naming, rarely
+        worth writing.
+        IF YOU ONLY NEED THE TOP K, `heapq.nlargest` is O(n log k).
+
+    THE MEASURED EVIDENCE, on 6,000 random cases:
+        sorting ascending instead of descending:      5,160 wrong  (86.0%)
+        sorting the NAMES instead of by height:       4,534 wrong  (75.6%)
+        sorting the two lists independently:          4,534 wrong  (75.6%)
+        indexing by position rather than by `order`:  4,548 wrong  (75.8%)
+        ALL FOUR on a single person:                  0 of 2,000 wrong
+
+THE #1 MISTAKE: sorting one of two parallel arrays and losing the pairing. Zip them into tuples first,
+or sort the indices - never sort one alone. This is the mistake that scales up to real code, where the
+second array is a database of something and the corruption is silent.
+
+THE #2 MISTAKE: ascending when the problem said tallest first. The most common of all, and it is a
+reading error rather than a logic one.
+
+THE #3 MISTAKE: computing the right ordering and then not using it - `for i in range(n)` instead of
+`for i in order`. It returns the input order, which looks like a plausible answer.
+
+THE #4 MISTAKE: testing with one element. Every wrong variant is correct there.
+
+THE #5 MISTAKE: a name-keyed dictionary, which breaks the moment two people share a name.
+
+ONE-SENTENCE TAKEAWAY: when two arrays are related by position, bind them into single items before you
+sort - because a sort that moves one and not the other destroys the only thing that made the data
+meaningful, and a one-element test will never tell you.""",
+]
+
+_EX_P1AO["Split a String in Balanced Strings"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - cut greedily whenever you are level
+
+A string of only 'R' and 'L' is BALANCED if it contains the same number of each. Given a balanced
+string, SPLIT IT INTO AS MANY BALANCED PIECES AS POSSIBLE and return how many.
+
+    "RLRRLLRLRL"  ->  "RL", "RRLL", "RL", "RL"   ->  4
+    "RLLLLRRRLR"  ->  "RL", "LLLRRR", "LR"       ->  3
+    "LLLLRRRR"    ->  "LLLLRRRR"                 ->  1
+
+THE ONE IDEA: WALK THE STRING KEEPING A RUNNING COUNTER - +1 for R, -1 for L - AND EVERY TIME IT
+RETURNS TO ZERO YOU HAVE JUST COMPLETED A BALANCED PIECE, SO CUT THERE.
+
+    def balancedStringSplit(s):
+        bal = count = 0
+        for c in s:
+            bal += 1 if c == 'R' else -1
+            if bal == 0:
+                count += 1
+        return count
+
+FIVE LINES, ONE PASS, O(1) EXTRA SPACE.
+
+WHY CUTTING AS SOON AS YOU CAN IS OPTIMAL - and this is the part being tested: if the counter is zero
+at position i, everything before i is balanced. Not cutting there means the piece continues, and any
+later cut produces FEWER pieces. TAKING EVERY OPPORTUNITY CAN NEVER LOSE, because a piece you take
+never prevents a later one - the remainder is still balanced.
+
+THE CODE IS TRIVIAL. BEING ABLE TO SAY WHY GREEDY IS CORRECT IS THE QUESTION.
+
+TERMS AS THEY APPEAR:
+- PREFIX BALANCE: the running total after reading the first k characters.
+- GREEDY: take every opportunity as soon as it appears, without looking ahead.""",
+
+    """2. THE INTUITION - the counter is a height, and zero is ground level
+
+Picture the string as a walk. R steps up, L steps down.
+
+    "RLRRLLRLRL"
+
+    char:  R  L  R  R  L  L  R  L  R  L
+    bal:   1  0  1  2  1  0  1  0  1  0
+              ^           ^     ^     ^
+              cut         cut   cut   cut
+
+FOUR TIMES THE WALK RETURNS TO GROUND LEVEL, AND EACH RETURN IS ONE COMPLETE PIECE.
+
+THAT PICTURE ANSWERS EVERY FOLLOW-UP:
+
+    'CAN THE COUNTER GO NEGATIVE?' YES. "LR" starts at -1 and comes back to 0, and that is still one
+    balanced piece. THE CONDITION IS `bal == 0`, NOT `bal > 0` - the walk may go below ground and it
+    still counts when it returns.
+
+    'WHAT IF THE STRING IS NOT BALANCED OVERALL?' Then it never returns to zero at the end and the
+    trailing characters form no piece. The problem promises balance, so it always ends at zero - but
+    say what would happen if it did not.
+
+    'WHY NOT TWO COUNTERS - one for R and one for L?' You can: `if countR == countL`. Same thing with
+    an extra variable. The single balance is the idiom because it generalises to every other matching
+    problem.
+
+THE CONNECTION WORTH STATING: THIS IS VALID PARENTHESES WITH THE VALIDITY CHECK REMOVED. Same running
+counter, same +1/-1. The only differences are that here the counter is ALLOWED to go negative, and you
+are counting returns to zero rather than checking it never dips below it. If you see a string of two
+paired symbols, reach for the running counter first.""",
+
+    """3. THE HAND TRACE - two strings, one with a long piece
+
+    "RLRRLLRL"
+
+        i:      0    1    2    3    4    5    6    7
+        c:      R    L    R    R    L    L    R    L
+        bal:    1    0    1    2    1    0    1    0
+        count:  0    1    1    1    1    2    2    3
+
+        ANSWER 3. The pieces were "RL" (0-1), "RRLL" (2-5), "RL" (6-7).
+
+    NOTICE THE MIDDLE PIECE IS FOUR CHARACTERS LONG. The balance goes 1, 2, 1, 0 - it climbs to two
+    before coming back. THAT IS THE CASE THAT BREAKS EVERY WRONG FORMULA, and it is why this trace is
+    the one to use.
+
+    NOW A STRING THAT GOES BELOW GROUND:
+
+    "LLRRLR"
+
+        i:      0    1    2    3    4    5
+        c:      L    L    R    R    L    R
+        bal:   -1   -2   -1    0   -1    0
+        count:  0    0    0    1    1    2
+
+        ANSWER 2. The pieces were "LLRR" and "LR".
+
+        THE BALANCE WAS NEGATIVE FOR MOST OF THE WALK and the algorithm did not care. A version that
+        tested `if bal > 0` or that used `while bal > 0` would return 0 here.
+
+    AND THE DEGENERATE CASE:
+
+    "LLLLRRRR"
+
+        bal:  -1  -2  -3  -4  -3  -2  -1   0
+        count: 0   0   0   0   0   0   0   1
+
+        ANSWER 1. It only returns to zero once, at the very end - and that is correct, because no
+        prefix of it is balanced.""",
+
+    """4. THE EDGE CASES - and the two wrong answers that pass every easy test
+
+    MEASURED, on 6,000 randomly generated balanced strings:
+
+        return len(s) // 2      wrong on 4,934 of 6,000  (82.2%)
+        return s.count('R')     wrong on 4,934 of 6,000  (82.2%)
+
+    Badly wrong overall. NOW THE RESTRICTED POPULATION, on 2,000 strings built only from "RL":
+
+        return len(s) // 2      wrong on 0 of 2,000
+        return s.count('R')     wrong on 0 of 2,000
+
+    BOTH ARE PERFECT ON THE SIMPLEST INPUTS. "RLRLRL" has three pieces, length 6, and three R's - all
+    three formulas agree.
+
+    WHY THEY FAIL IN GENERAL: they assume every piece is exactly "RL". As soon as one is longer:
+
+        s = "RRLL"
+        correct:          1
+        len(s) // 2:      2      <- assumes two pieces
+        s.count('R'):     2      <- assumes one piece per R
+
+    THE TEST THAT SEPARATES THEM IS "RRLL" - ONE PIECE, four characters, two R's. Five seconds to
+    type, and it is the only test that matters.
+
+    THE OTHER EDGES:
+        "RL"          -> 1. The smallest possible input.
+        "LR"          -> 1. Starts negative. Catches `bal > 0` bugs.
+        "LLLLRRRR"    -> 1. No internal cut point.
+        ""            -> 0, if the problem allowed it. The loop never runs.
+
+    AND AN HONEST NON-BUG, measured at 0 of 6,000: writing `if abs(bal) <= 0` instead of `if bal == 0`
+    is IDENTICAL, because an absolute value is at most zero exactly when the value is zero. It LOOKS
+    like a bug and is not. THE REAL TRAP IS `abs(bal) <= 1`, a typo that would fire at every position
+    one step from ground - and that one is catastrophic.""",
+
+    """5. THE SLOW VERSION FIRST - and why greedy needs no search
+
+    If you did not trust the greedy argument, you would try every way of cutting:
+
+        def slow(s):
+            best = 0
+            def go(i, pieces):
+                nonlocal best
+                if i == len(s):
+                    best = max(best, pieces); return
+                r = l = 0
+                for j in range(i, len(s)):
+                    if s[j] == 'R': r += 1
+                    else: l += 1
+                    if r == l:
+                        go(j + 1, pieces + 1)      # cut here...
+                go(len(s), pieces) if False else None   # ...or do not cut at all
+            go(0, 0)
+            return best
+
+    TRY EVERY CUT POINT, RECURSE, TAKE THE BEST. Correct, exponential, and completely unnecessary.
+
+    RUN IT AND THE ANSWER IS ALWAYS THE SAME AS THE GREEDY ONE, which is the empirical version of the
+    proof. THE ARGUMENT IN WORDS:
+
+        Suppose an optimal solution does NOT cut at the first zero, at position i.
+        Then its first piece extends past i - say it ends at j > i.
+        But the prefix up to i is balanced, and so is the section from i+1 to j (because both the
+        whole piece and its prefix are balanced).
+        SO WE COULD HAVE CUT AT i AND AT j INSTEAD, giving one MORE piece.
+        Therefore not cutting at the first zero is never better. GREEDY IS OPTIMAL.
+
+    THAT IS AN EXCHANGE ARGUMENT, and it is the standard way to prove a greedy algorithm correct: take
+    any optimal solution, show you can transform it into the greedy one without making it worse.
+
+    IT IS ALSO THE REASON YOU SHOULD NOT WRITE THE SLOW VERSION IN AN INTERVIEW - state the exchange
+    argument in two sentences instead, and write the five-line loop.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+1. INITIALISE TWO INTEGERS: `bal = 0` for the running height, `count = 0` for completed pieces.
+2. LOOP OVER THE CHARACTERS, not over indices. You never need to know where you are.
+3. UPDATE THE BALANCE: +1 for one symbol, -1 for the other. WHICH ONE IS WHICH DOES NOT MATTER - swap
+   them and every balance is negated, and it is zero at exactly the same places.
+4. TEST `bal == 0`. Not `> 0`, not `>= 0`, not `abs(bal) <= 1`.
+5. INCREMENT THE COUNT. Do NOT reset `bal` - it is already zero.
+6. RETURN THE COUNT.
+7. TEST WITH "RRLL", which is the only input that distinguishes the right answer from the two obvious
+   wrong ones.
+8. TEST WITH "LR", which catches any assumption that the balance stays non-negative.
+9. BE READY TO STATE THE EXCHANGE ARGUMENT - it is what the question is really asking.
+
+STEP 4 IS WHERE THE BUGS LIVE, AND STEP 7 IS WHAT CATCHES THEM. Everything else is bookkeeping. If you
+can only remember one thing from this entry, remember that "RLRL" cannot distinguish the correct
+algorithm from `len(s) // 2`.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I would keep a running balance - plus one for R, minus one for L - and every time it returns to zero
+I have just finished a balanced piece, so I count it. That is one pass and two integers.
+
+The reason cutting greedily is optimal is an exchange argument. Suppose an optimal solution did not
+cut at the first point where the balance is zero, at position i. Its first piece must then extend past
+i to some j. But the prefix up to i is balanced, and therefore so is the part from i to j - so I could
+cut at both and get one MORE piece. So not cutting at the first opportunity is never better.
+
+Two details I would be careful about. The balance is allowed to go NEGATIVE - "LR" is a perfectly good
+piece that dips to minus one - so the condition is bal == 0 and not bal > 0. And I do not reset the
+balance after counting, because it is already zero.
+
+The mistake I would actually guard against is testing with the wrong string. I measured this: returning
+len(s)//2 and returning s.count("R") are each wrong on about 82% of random balanced strings - and both
+are PERFECT on strings made only of "RL", zero wrong out of two thousand. So "RLRLRL", which is the
+example in the problem and the one you would type first, cannot tell the three answers apart. The test
+that matters is "RRLL": one piece, four characters, two Rs, and all three formulas disagree.
+
+I would also mention that this is Valid Parentheses with the validity check removed - the same running
+counter, except here negatives are allowed and I am counting returns to zero rather than checking it
+never goes below. Recognising the family is worth more than the problem.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def balancedStringSplit(s):
+        bal = 0
+        count = 0
+        for c in s:
+            bal += 1 if c == 'R' else -1
+            if bal == 0:
+                count += 1
+        return count
+
+    `bal = 0`
+        THE RUNNING BALANCE - the height of the walk. It starts at ground level, and every time it
+        returns here a piece has completed.
+
+    `count = 0`
+        How many complete pieces have been cut so far.
+
+    `for c in s:`
+        ONE PASS, LEFT TO RIGHT, over the CHARACTERS. No index is needed, because the algorithm never
+        looks back or ahead - which is exactly what makes the greedy argument valid.
+
+    `bal += 1 if c == 'R' else -1`
+        R is up, L is down. A conditional expression rather than an if/else block, because it is one
+        assignment.
+        THE PROBLEM GUARANTEES ONLY R AND L. If it did not, the `else` would silently treat any other
+        character as an L - worth an explicit check in real code.
+
+    `if bal == 0:`
+        THE ONLY CONDITION IN THE PROBLEM.
+        NOT `bal > 0` - that never fires on "LR" and misses every piece that dips below ground.
+        NOT `bal >= 0` - that fires at almost every position and vastly over-counts.
+        NOT `abs(bal) <= 1` - a plausible typo that fires one step either side of ground.
+
+    `count += 1`
+        Cut here. NOTE WHAT IS ABSENT: no reset of `bal` (it is already zero), and no recording of
+        where the cut was (the question asks only how many).
+
+    `return count`
+        By the time the loop ends, `bal` is zero again - the whole string is balanced - so the last
+        piece has already been counted.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    s = "RLRRLLRL"
+
+        step   c    bal before   bal after   bal == 0?   count
+           1   R             0           1        no         0
+           2   L             1           0       YES         1
+           3   R             0           1        no         1
+           4   R             1           2        no         1
+           5   L             2           1        no         1
+           6   L             1           0       YES         2
+           7   R             0           1        no         2
+           8   L             1           0       YES         3
+
+        RETURN 3.
+
+    WATCH STEPS 4 AND 5. The balance reaches 2 and comes back to 1 without ever touching zero - that
+    is the middle of the "RRLL" piece, and no cut happens there. THAT IS THE BEHAVIOUR THE WRONG
+    FORMULAS DO NOT MODEL: `len(s)//2` would have counted a cut at every even position.
+
+    NOW s = "LLRRLR", which goes below ground:
+
+        step   c    bal before   bal after   bal == 0?   count
+           1   L             0          -1        no         0
+           2   L            -1          -2        no         0
+           3   R            -2          -1        no         0
+           4   R            -1           0       YES         1
+           5   L             0          -1        no         1
+           6   R            -1           0       YES         2
+
+        RETURN 2.
+
+        THE BALANCE WAS NEGATIVE AT FIVE OF THE SIX STEPS and the algorithm was completely unbothered.
+        A `bal > 0` version returns 0 here; a `bal >= 0` version fires at steps 4, 5 and 6 and returns
+        3. Both are wrong, and only this kind of input reveals it.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    COMPLEXITY:
+        TIME   O(n) - one pass, one character at a time. You must read every character, so this is
+               optimal.
+        SPACE  O(1) - two integers, regardless of the input size.
+
+    THE FAMILY - and recognising it is worth more than the problem:
+        VALID PARENTHESES              same walk; check it NEVER goes negative and ends at zero
+        LONGEST BALANCED SUBSTRING     same walk; record the first index of each balance value
+        MINIMUM ADD TO MAKE VALID      same walk; count the dips below zero
+        ALL OF THEM ARE THE PREFIX-BALANCE TECHNIQUE.
+
+    THE MEASURED EVIDENCE, on 6,000 random balanced strings:
+        `len(s) // 2`                 4,934 wrong (82.2%) - and 0 of 2,000 on "RL"-only strings
+        `s.count('R')`                4,934 wrong (82.2%) - and 0 of 2,000 on "RL"-only strings
+        `abs(bal) <= 0`               0 of 6,000 - NOT A BUG, identical to `== 0`
+
+THE #1 MISTAKE: testing only with "RLRL". Every wrong formula agrees with the right answer there, and
+the test that matters is "RRLL" - one piece, four characters.
+
+THE #2 MISTAKE: `bal > 0` instead of `bal == 0`, or otherwise assuming the walk cannot go below
+ground. "LR" is a perfectly valid piece that dips to -1.
+
+THE #3 MISTAKE: not being able to say WHY greedy is optimal. The exchange argument is two sentences,
+and it is what the question is actually asking for.
+
+THE #4 MISTAKE: resetting or otherwise fiddling with `bal` after counting. It is already zero.
+
+THE #5 MISTAKE: `abs(bal) <= 1` as a typo for `== 0`, which fires one step either side of ground and
+counts positions that are mid-piece.
+
+ONE-SENTENCE TAKEAWAY: keep a running +1/-1 balance and cut every time it hits zero, because a piece
+you can take never prevents a later one - and test it on "RRLL", because the obvious wrong formulas
+are exactly right on "RLRL".""",
+]
+
+_EX_P1AO["Water Bottles"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the empties keep coming back
+
+You have `numBottles` full bottles. You drink one and it becomes an empty. You can exchange
+`numExchange` empties for one new FULL bottle. HOW MANY BOTTLES DO YOU DRINK IN TOTAL?
+
+    numBottles = 9, numExchange = 3
+
+    drink 9        -> total 9,  empties 9
+    trade 9 for 3  -> empties 0, drink 3 -> total 12, empties 3
+    trade 3 for 1  -> empties 0, drink 1 -> total 13, empties 1
+    1 < 3, stop.
+    ANSWER: 13
+
+THE THING THAT MAKES IT MORE THAN ARITHMETIC: THE BOTTLES YOU GET FROM AN EXCHANGE BECOME EMPTIES
+TOO. It is a loop, not a single division, and each round can enable another.
+
+AND THE SECOND SUBTLETY: LEFTOVER EMPTIES CARRY FORWARD. With 7 empties at a rate of 3, you trade 6
+and keep 1 - and that 1 joins the empties from the next round.
+
+THE SIMULATION:
+
+    total = full
+    empty = full
+    while empty >= exch:
+        new = empty // exch
+        total += new
+        empty = empty % exch + new     # LEFTOVERS PLUS THE NEW EMPTIES
+    return total
+
+THE ONE LINE THAT CONTAINS THE WHOLE PROBLEM IS `empty = empty % exch + new`. Both terms are
+essential, and dropping either is a separate measured bug.
+
+TERMS AS THEY APPEAR:
+- EXCHANGE RATE: how many empties buy one full bottle.
+- CARRY: the empties left over after an exchange, which participate in the next round.""",
+
+    """2. THE INTUITION - two things happen at every exchange
+
+At each round, ask two questions:
+
+    HOW MANY NEW BOTTLES CAN I BUY?     new = empty // exch
+    HOW MANY EMPTIES DO I HAVE NOW?     empty = (what I could not spend) + (what I just drank)
+                                              = empty % exch + new
+
+BOTH TERMS ARE EASY TO DROP, AND EACH IS A DIFFERENT BUG. Measured on 6,000 random inputs:
+
+    empty = new                (drop the leftovers)         wrong on 2,878 of 6,000  (48.0%)
+    empty = empty % exch       (forget the new empties)     wrong on 3,543 of 6,000  (59.1%)
+    total = full + full//exch  (only one exchange round)    wrong on 3,543 of 6,000  (59.1%)
+
+HALF OR MORE OF ALL INPUTS, FOR EACH. These are not rare edge cases.
+
+WHY THE LOOP TERMINATES: every iteration spends at least `exch` empties and returns at most one for
+each `exch` spent, so the empty count STRICTLY DECREASES. It cannot run forever, and being able to say
+why is a reasonable follow-up.
+
+THE OFF-BY-ONE WORTH NOTICING: the loop condition is `empty >= exch`, not `>`. With exactly `exch`
+empties you can still make one trade. `>` stops one round early - a silent undercount rather than a
+crash, which is the worst kind.
+
+AND THE MENTAL MODEL THAT MAKES THE CLOSED FORM OBVIOUS: EVERY EXCHANGE CONSUMES `exch` EMPTIES AND
+PRODUCES ONE, SO IT NETS `exch - 1`. You start with `full` empties and must always keep at least one
+back, so the number of exchanges is `(full - 1) // (exch - 1)`.""",
+
+    """3. THE HAND TRACE - and the input that catches the shortcut
+
+    full = 9, exch = 3:
+
+        round   empty in    new    total    empty out
+            1          9      3       12    9 % 3 + 3 = 0 + 3 = 3
+            2          3      1       13    3 % 3 + 1 = 0 + 1 = 1
+        1 < 3, stop.  ANSWER 13.
+
+    NOW full = 15, exch = 4 - the trace that matters, because the leftovers are non-zero:
+
+        round   empty in    new    total    empty out
+            1         15      3       18    15 % 4 + 3 = 3 + 3 = 6
+            2          6      1       19    6 % 4  + 1 = 2 + 1 = 3
+        3 < 4, stop.  ANSWER 19.
+
+    WATCH THE `empty out` COLUMN IN ROUND 1. Three empties could not be spent (15 % 4 = 3) and three
+    new bottles were drunk, giving six. DROP EITHER TERM AND YOU GET 3 OR 3, NOT 6, and round 2 never
+    happens - you would return 18.
+
+    AND THE SINGLE-ROUND SHORTCUT ON THE SAME INPUT:
+
+        full + full // exch = 15 + 3 = 18.       ONE OFF, and the whole loop is missing.
+
+    A TRACE THAT SHOWS THE LOOP RUNNING MANY TIMES - full = 20, exch = 2:
+
+        round   empty in   new   total   empty out
+            1        20     10      30    0 + 10 = 10
+            2        10      5      35    0 +  5 =  5
+            3         5      2      37    1 +  2 =  3
+            4         3      1      38    1 +  1 =  2
+            5         2      1      39    0 +  1 =  1
+        1 < 2, stop.  ANSWER 39.
+
+        FIVE ROUNDS. The shortcut would say 20 + 10 = 30 - wrong by nine. And notice rounds 3 and 4,
+        where the leftover (1) is what makes the next round possible at all.""",
+
+    """4. THE EDGE CASES - and the bug that is invisible on small inputs
+
+    THE SINGLE-ROUND SHORTCUT is the most natural wrong answer, because the first round is the one you
+    work out by hand.
+
+    MEASURED, and the split is the entire lesson:
+
+        RESTRICTED to inputs where only ONE round is possible (1,714 cases):
+            wrong on 0 of 1,714
+
+        RESTRICTED to inputs with many rounds - full 20-100, exch 2-6 (4,000 cases):
+            wrong on 3,946 of 4,000       (98.7%)
+
+    PERFECT ON SMALL INPUTS, WRONG ON ALMOST EVERY LARGE ONE.
+
+    WHY: with `full = 4, exch = 3` you trade 3 for 1, drink it, and have 1 + 1 = 2 empties, which is
+    less than 3. ONE ROUND, and the shortcut is right. With `full = 100, exch = 2` there are dozens of
+    rounds and the shortcut is wrong by nearly a factor of two.
+
+    THE OTHER EDGES:
+        full < exch          no exchange is possible at all. The loop never runs; return `full`.
+        full == exch         exactly one trade. Tests the `>=` in the loop condition.
+        exch == 2            the most rounds, and the case where the shortcut is worst.
+        exch == 1            EVERY empty buys a full bottle - AN INFINITE LOOP. The problem constrains
+                             `exch >= 2`, and NOTICING THAT THE CONSTRAINT IS LOAD-BEARING is exactly
+                             the kind of observation worth making out loud.
+
+    THAT LAST ONE IS THE GENERAL HABIT: WHEN AN ALGORITHM WOULD BREAK ON SOME INPUT, FIND THE
+    CONSTRAINT THAT FORBIDS IT. It tells you what the solution is leaning on, and it is the first
+    thing to re-check if the constraints ever change.
+
+    THE TEST THAT CATCHES THE SHORTCUT: `full = 15, exch = 4` -> 19, where the shortcut says 18.""",
+
+    """5. THE SLOW VERSION FIRST - simulate one bottle at a time
+
+    The most literal possible solution, drinking one bottle at a time:
+
+        def slow(full, exch):
+            total = 0
+            empty = 0
+            while full > 0:
+                full -= 1            # drink one
+                total += 1
+                empty += 1
+                if empty == exch:    # trade as soon as you can
+                    empty = 0
+                    full += 1
+            return total
+
+    THIS IS THE PROBLEM STATEMENT TRANSCRIBED. Drink one, empty one, and trade the moment you have
+    enough. It is obviously correct, which is its value.
+
+    WHY IT IS SLOWER: it runs once per bottle drunk, so O(total) - which for `full = 10^9, exch = 2` is
+    about two billion iterations.
+
+    THE BATCHED VERSION does a whole round at a time, so it runs O(log_exch(full)) times - a handful
+    of iterations even for enormous inputs.
+
+    AND HERE IS THE USEFUL PART: RUN BOTH AND CHECK THEY AGREE. The one-at-a-time version is the
+    ground truth that verifies the batched one, and that is exactly how the measurements in this entry
+    were produced. When a batched or closed-form solution feels risky, WRITE THE LITERAL SIMULATION AS
+    AN ORACLE and compare on a few thousand random inputs. It takes two minutes and it converts
+    'I think this is right' into 'this agrees with the definition on 6,000 cases'.
+
+    THAT TECHNIQUE GENERALISES FAR BEYOND THIS PROBLEM, and it is the most transferable thing here.""",
+
+    """6. HOW TO CODE IT - numbered steps
+
+1. START WITH `total = full` AND `empty = full`. You drink everything you were given, and it all
+   becomes empty.
+2. LOOP WHILE `empty >= exch`. Use `>=`, not `>` - exactly enough is still enough.
+3. COMPUTE `new = empty // exch`. Integer division: how many trades you can afford this round.
+4. ADD `new` TO THE TOTAL. You drink every one of them.
+5. UPDATE THE EMPTIES AS `empty % exch + new`. BOTH TERMS. The leftovers you could not spend, plus the
+   ones you just created.
+6. RETURN THE TOTAL.
+7. TEST `full = 15, exch = 4` -> 19. This is the input that catches the single-round shortcut.
+8. TEST `full < exch` -> just `full`. The loop must not run.
+9. MENTION THE CLOSED FORM `full + (full - 1) // (exch - 1)` AND DERIVE IT. Do not lead with it.
+10. NOTICE THAT `exch >= 2` IS LOAD-BEARING - at 1 the loop never ends and the formula divides by
+    zero.
+
+STEP 5 IS THE WHOLE PROBLEM. Everything else is a loop. If you write that line correctly the solution
+is right, and both ways of getting it wrong are measured above at 48% and 59%.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'You drink all the bottles you start with, they all become empties, and then you loop: as long as you
+have at least the exchange rate in empties, trade them for full bottles, drink those, and go again.
+
+The line that contains the whole problem is how you update the empty count. After a round you have TWO
+kinds of empty: the ones you could not spend - empty modulo the rate - and the ones you just created by
+drinking the new bottles. Both. I measured what happens if you drop either: forgetting the leftovers is
+wrong on 48% of inputs and forgetting that the new bottles become empty is wrong on 59%.
+
+The most natural wrong answer is computing just one exchange round - full plus full over the rate - and
+this one is interesting because of WHERE it is wrong. Restricted to inputs where only one round is
+possible it is right on all 1,714 cases. Restricted to inputs with many rounds it is wrong on 3,946 of
+4,000. So it is exactly correct on the small inputs you would type by hand and wrong on almost every
+real one. The test that catches it is 15 bottles at a rate of 4, which gives 19 and the shortcut says
+18.
+
+There is also a closed form: full plus (full minus one) over (rate minus one), which I checked against
+the simulation and it is right on all 6,000 cases. The derivation is that every exchange consumes the
+rate in empties and gives one back, so it nets rate-minus-one, and you can spend down to one. I would
+write the loop first and mention the formula second, because the loop is obviously correct in thirty
+seconds and the formula needs that derivation.
+
+And one thing I would flag: the formula divides by rate minus one, so a rate of 1 breaks it - and it
+would also make the loop run forever. The problem constrains the rate to at least 2, and that
+constraint is doing real work.'""",
+
+    """8. THE CODE, LINE BY LINE
+
+    def numWaterBottles(numBottles, numExchange):
+        total = numBottles
+        empty = numBottles
+        while empty >= numExchange:
+            new = empty // numExchange
+            total += new
+            empty = empty % numExchange + new
+        return total
+
+    `total = numBottles`
+        You drink every bottle you were given. This is the answer if no exchange is ever possible.
+
+    `empty = numBottles`
+        And they are all empty afterwards. THESE TWO START EQUAL and then diverge - `total` only ever
+        grows, `empty` goes up and down.
+
+    `while empty >= numExchange:`
+        `>=`, NOT `>`. With exactly `numExchange` empties you can still make one trade, and `>` would
+        stop a round early. That is a silent undercount, which is worse than a crash.
+
+    `new = empty // numExchange`
+        INTEGER DIVISION. How many full bottles this round buys. Note it is not necessarily 1 - with
+        20 empties at a rate of 2 you buy 10 at once, which is what makes the batched version fast.
+
+    `total += new`
+        You drink all of them. This is the only line that grows the answer.
+
+    `empty = empty % numExchange + new`
+        THE LINE THE PROBLEM IS ABOUT.
+        `empty % numExchange`  the leftovers - what you could not spend this round.
+        `+ new`                the bottles you just drank, which are empty now.
+        DROP THE FIRST and you get `empty = new` - measured wrong on 48% of inputs.
+        DROP THE SECOND and you get `empty = empty % exch` - measured wrong on 59%.
+
+    `return total`
+        The loop exits when fewer than `numExchange` empties remain, which is exactly when no further
+        trade is possible.""",
+
+    """9. THE VARIABLE-BY-VARIABLE TRACE
+
+    numBottles = 15, numExchange = 4
+
+        BEFORE THE LOOP:   total = 15,  empty = 15
+
+        ITERATION 1:
+            empty >= 4?           15 >= 4, yes
+            new = 15 // 4         = 3
+            total = 15 + 3        = 18
+            empty = 15 % 4 + 3    = 3 + 3 = 6
+
+        ITERATION 2:
+            empty >= 4?           6 >= 4, yes
+            new = 6 // 4          = 1
+            total = 18 + 1        = 19
+            empty = 6 % 4 + 1     = 2 + 1 = 3
+
+        ITERATION 3 CHECK:
+            empty >= 4?           3 >= 4, NO. Exit.
+
+        RETURN 19.
+
+    NOW THE SAME INPUT WITH `empty = new` (leftovers dropped):
+
+        ITERATION 1:  new = 3, total = 18, empty = 3
+        ITERATION 2:  3 >= 4? NO. Exit.
+        RETURN 18.     ONE SHORT - the three unspent empties were thrown away.
+
+    AND WITH `empty = empty % exch` (new bottles forgotten):
+
+        ITERATION 1:  new = 3, total = 18, empty = 15 % 4 = 3
+        ITERATION 2:  3 >= 4? NO. Exit.
+        RETURN 18.     ALSO ONE SHORT, for a completely different reason.
+
+    BOTH WRONG VERSIONS RETURN 18 ON THIS INPUT, which is a nice illustration that the same wrong
+    answer can come from two different bugs - and that a single failing test tells you something is
+    wrong without telling you what.
+
+    THE CLOSED FORM, checked: 15 + (15 - 1) // (4 - 1) = 15 + 14 // 3 = 15 + 4 = 19. MATCHES.""",
+
+    """10. COMPLEXITY, THE MISTAKES, AND THE TAKEAWAY
+
+    COMPLEXITY:
+        TIME   O(log_exch(full)). The empty count falls by at least (exch - 1) each round, so even
+               `full = 10^9` finishes in a handful of iterations.
+        SPACE  O(1) - three integers.
+        THE ONE-AT-A-TIME SIMULATION is O(total), which is fine for the given constraints and useful
+        as an oracle.
+        THE CLOSED FORM is O(1) and needs `exch >= 2`.
+
+    THE CLOSED FORM AND ITS DERIVATION:
+        each exchange consumes `exch` empties and returns one, netting `exch - 1`
+        you start with `full` empties and can spend down to 1
+        so exchanges = (full - 1) // (exch - 1), and each is one extra bottle
+        answer = full + (full - 1) // (exch - 1)
+        MEASURED: wrong on 0 of 6,000 - NOT A BUG, exactly equivalent.
+
+    THE MEASURED EVIDENCE, on 6,000 random inputs:
+        one round only:                       3,543 wrong (59.1%) - but 0 of 1,714 when only one
+                                              round is possible, and 3,946 of 4,000 when many are
+        drop the leftover empties:            2,878 wrong (48.0%)
+        forget the new bottles become empty:  3,543 wrong (59.1%)
+        the closed form:                      0 of 6,000 - correct
+
+THE #1 MISTAKE: computing one exchange round instead of looping. Right on every input small enough to
+work out by hand, and wrong on 98.7% of large ones - which is the most dangerous failure profile there
+is.
+
+THE #2 MISTAKE: `empty = new`, dropping the empties you could not spend this round.
+
+THE #3 MISTAKE: `empty = empty % exch`, forgetting that the bottles you just drank are empty now.
+
+THE #4 MISTAKE: `while empty > exch` instead of `>=`, which stops one round early.
+
+THE #5 MISTAKE: leading with the closed form and being unable to derive it. Write the loop, then offer
+the formula with its two-sentence justification.
+
+ONE-SENTENCE TAKEAWAY: simulate the loop rather than computing one round, and remember that each round
+leaves you with two kinds of empty - the ones you could not spend and the ones you just created -
+because dropping either is a bug that small inputs will never show you.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
