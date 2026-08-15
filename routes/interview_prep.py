@@ -262,7 +262,53 @@ def ai_sde_bank():
     return jsonify({
         "categories": [{"key": k, "label": v} for k, v in AI_SDE_CATEGORIES.items()],
         "entries": items, "total": len(items),
+        # The interview-tag vocabulary, so the filter dropdowns are built from
+        # the single source of truth in ai_sde_tags.py rather than a hardcoded
+        # copy in the template that would drift the moment a value is added.
+        "tag_vocab": _ai_sde_tag_vocab(),
     })
+
+
+#: Query-string name -> entry field, for the six filterable interview tags.
+_AI_SDE_TAG_PARAMS = {
+    "tpriority": "tag_priority", "ttopic": "tag_topic", "tsub": "tag_subtopic",
+    "tformat": "tag_format", "tstage": "tag_stage", "ttime": "tag_time",
+    "tlevel": "tag_level",
+}
+
+
+def _ai_sde_tag_vocab():
+    """The controlled vocabulary, plus the per-topic subtopic map."""
+    import ai_sde_tags as tags
+    return {
+        "topic": list(tags.TOPICS), "level": list(tags.LEVELS),
+        "priority": list(tags.PRIORITIES), "format": list(tags.FORMATS),
+        "stage": list(tags.STAGES), "time": list(tags.TIMES),
+        "subtopics": {k: list(v) for k, v in tags.SUBTOPICS.items()},
+    }
+
+
+def _ai_sde_tag_select(items):
+    """Narrow by the interview tags. Returns (items, [label bits]).
+
+    Unknown values are ignored rather than returning an empty page, because a
+    stale bookmark should degrade to a wider list, not to nothing.
+    """
+    vocab = _ai_sde_tag_vocab()
+    legal = {
+        "tag_topic": set(vocab["topic"]), "tag_level": set(vocab["level"]),
+        "tag_priority": set(vocab["priority"]), "tag_format": set(vocab["format"]),
+        "tag_stage": set(vocab["stage"]), "tag_time": set(vocab["time"]),
+        "tag_subtopic": {s for subs in vocab["subtopics"].values() for s in subs},
+    }
+    bits = []
+    for param, field in _AI_SDE_TAG_PARAMS.items():
+        value = (request.args.get(param) or "").strip()
+        if not value or value not in legal[field]:
+            continue
+        items = [it for it in items if it.get(field) == value]
+        bits.append(value)
+    return items, bits
 
 
 @interview_prep_bp.route("/api/ai-sde/entry/<entry_id>", methods=["GET"])
@@ -292,6 +338,12 @@ def ai_sde_pdf():
     if pri:
         selected = [it for it in selected if it.get("priority") == pri]
         label = f"{label} — {pri}" if label else f"Priority {pri}"
+    # The interview tags narrow it further, so "Must-Know / DSA / Graphs" on
+    # the study page exports exactly the revision sheet you are looking at.
+    selected, _tag_bits = _ai_sde_tag_select(selected)
+    if _tag_bits:
+        _tags = " · ".join(_tag_bits)
+        label = f"{label} — {_tags}" if label else _tags
     selected.sort(key=lambda it: it.get("rank") or 0)
     heading = label or "AI SDE Prep Bank"
     _mins = sum(it.get("prep_minutes") or 0 for it in selected)
@@ -314,7 +366,21 @@ def ai_sde_pdf():
             (f"#{it['cat_rank']} within {AI_SDE_CATEGORIES.get(it.get('cat'), '')}"
              if it.get("cat_rank") else ""),
             (it.get("priority_note") or "")] if x)
+        # The seven interview tags, on one line. This is the line you scan when
+        # deciding whether a topic belongs in tonight's revision at all.
+        _tags = " | ".join(x for x in [
+            (f"{it['tag_priority']} for a new grad" if it.get("tag_priority") else ""),
+            (f"{it['tag_topic']} / {it['tag_subtopic']}"
+             if it.get("tag_topic") and it.get("tag_subtopic")
+             else it.get("tag_topic") or ""),
+            (it.get("tag_level") or ""),
+            (f"{it['tag_format']} question" if it.get("tag_format") else ""),
+            (f"{it['tag_stage']} round" if it.get("tag_stage") else ""),
+            (f"{it['tag_time']} to answer" if it.get("tag_time") else "")] if x)
+        if it.get("tag_flag"):
+            _tags = f"{_tags}\nNote: {it['tag_flag']}" if _tags else f"Note: {it['tag_flag']}"
         fields = [("Prep time & priority", _plan or None),
+                  ("Interview tags", _tags or None),
                   ("Difficulty & interview frequency", _diff_freq or None),
                   ("Answer / reasoning", it.get("answer")),
                   ("Explained step by step", it.get("walkthrough")),

@@ -367,3 +367,61 @@ def test_ai_sde_every_tagged_entry_has_a_legal_subtopic():
         f"{len(blank)} tagged entries have no subtopic: "
         f"{blank[:5]}{'...' if len(blank) > 5 else ''}"
     )
+
+
+def test_ai_sde_api_ships_the_tag_vocabulary_and_per_entry_tags(auth_client):
+    """The filter dropdowns are built from the vocabulary the API serves, so a
+    value added to ai_sde_tags.py appears in the UI without touching the
+    template. If this payload loses tag_vocab the tag row silently goes empty."""
+    r = auth_client.get("/api/ai-sde")
+    assert r.status_code == 200
+    body = r.get_json()
+    vocab = body.get("tag_vocab") or {}
+    for key in ("topic", "level", "priority", "format", "stage", "time", "subtopics"):
+        assert vocab.get(key), f"tag_vocab is missing {key}"
+    untagged = [e["title"] for e in body["entries"] if "tag_priority" not in e]
+    assert not untagged, f"{len(untagged)} entries reach the page untagged: {untagged[:5]}"
+
+
+def test_ai_sde_tag_filters_narrow_and_ignore_junk(app):
+    """?tpriority/?ttopic/?tsub narrow the export. An unknown value must widen
+    to everything rather than returning an empty page, so a stale bookmark
+    degrades gracefully instead of looking like a broken bank."""
+    import routes.interview_prep as ip
+    from ai_sde_bank import ENTRIES
+    items = [{"id": f"ai{i}", **e} for i, e in enumerate(ENTRIES)]
+
+    with app.test_request_context("/?tpriority=Must-Know&ttopic=DSA&tsub=Graphs"):
+        narrowed, bits = ip._ai_sde_tag_select(items)
+    assert bits == ["Must-Know", "DSA", "Graphs"]
+    assert narrowed and len(narrowed) < len(items)
+    assert all(e["tag_priority"] == "Must-Know" and e["tag_subtopic"] == "Graphs"
+               for e in narrowed)
+
+    with app.test_request_context("/?tpriority=NotAValue"):
+        wide, bits = ip._ai_sde_tag_select(items)
+    assert len(wide) == len(items) and bits == []
+
+
+def test_ai_sde_pdf_carries_the_interview_tags(auth_client):
+    """The exported sheet must show the tags, not just filter by them."""
+    pytest.importorskip("fpdf", reason="fpdf2 not installed; PDF route falls back to a redirect")
+    r = auth_client.get("/ai-sde/pdf?tpriority=Must-Know&ttopic=DSA&tsub=Graphs")
+    assert r.status_code == 200
+    assert r.mimetype == "application/pdf"
+
+    import re
+    import zlib
+    chunks = []
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", r.get_data(), re.S):
+        try:
+            chunks.append(zlib.decompress(m.group(1)).decode("latin-1"))
+        except Exception:
+            pass
+    text = " ".join(s[1:-1] for s in
+                    re.findall(r"\((?:[^()\\]|\\.)*\)", " ".join(chunks)))
+    assert "INTERVIEW TAGS" in text, "the PDF lost the Interview tags field"
+    assert "Must-Know for a new grad" in text
+    assert "DSA / Graphs" in text
+    # The heading names the filter, so the sheet says what it is.
+    assert "Must-Know" in text[:400]

@@ -65,6 +65,22 @@
   .q-time { font-size: 10.5px; font-weight: 800; color: #4338ca; background: #eef2ff; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
   html.dark .q-time { color: #c7d2fe; background: #1e1b4b; }
   .q-rank { font-size: 10.5px; font-weight: 700; color: var(--color-text-secondary); white-space: nowrap; flex: none; }
+  /* Interview-tag row and chips. The frequency chip is the loud one: it is
+     the single most useful thing on the card when time is short. */
+  .controls.tagrow { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--color-border); }
+  .tagrow-lbl { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em;
+                color: var(--color-text-secondary); align-self: center; }
+  .q-freq { font-size: 10px; font-weight: 900; letter-spacing: .02em; border-radius: 999px;
+            padding: 2px 8px; white-space: nowrap; flex: none; }
+  .freq-must { color: #fff; background: #b91c1c; }
+  .freq-common { color: #fff; background: #7c3aed; }
+  .freq-rare { color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); }
+  .q-sub { font-size: 10px; font-weight: 800; color: #0f766e; background: #ccfbf1; border-radius: 999px;
+           padding: 2px 8px; white-space: nowrap; flex: none; }
+  html.dark .q-sub { color: #5eead4; background: #042f2e; }
+  .fld.tags { background: #fdf4ff; border-left: 3px solid #a855f7; }
+  html.dark .fld.tags { background: #2a1033; }
+  .fld.tags .flagnote { display: block; margin-top: 4px; font-style: italic; color: var(--color-text-secondary); }
   /* The effort readout under the title: total time, and how much is left. */
   .effort { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; font-weight: 700;
             color: var(--color-text-secondary); margin: 0 0 10px; }
@@ -179,6 +195,21 @@
       <a class="btn sm" href="/ai-sde/quiz" title="Daily 25-question quiz">🎯 Daily Quiz</a>
       <button class="btn sm" id="pdf" type="button" title="Open a printable PDF for the current filter">⤓ Export PDF</button>
     </div>
+    <!-- Interview tags. Separate row because these answer a different
+         question from the row above: not "what shall I study next" but
+         "what could actually come up in the round I have on Thursday". -->
+    <div class="controls tagrow">
+      <span class="tagrow-lbl">Interview tags</span>
+      <select id="tpriority" title="How often this is really asked of a new grad">
+        <option value="">Any frequency</option>
+      </select>
+      <select id="ttopic" title="Subject area"><option value="">Any subject</option></select>
+      <select id="tsub" title="Sub-area — narrows to one revision session"><option value="">Any sub-area</option></select>
+      <select id="tformat" title="What the question makes you do"><option value="">Any format</option></select>
+      <select id="tstage" title="Screen or onsite"><option value="">Any round</option></select>
+      <select id="ttime" title="How long it takes to answer"><option value="">Any length</option></select>
+      <button class="btn sm" id="tclear" type="button" title="Clear the tag filters">✕ Clear tags</button>
+    </div>
   </div>
   <div id="list"></div>
 </div>
@@ -191,6 +222,49 @@
   const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
   let BANK = null, shown = []; const catLabel = {};
+
+  // [select id, entry field, PDF query param] for the six filterable tags.
+  const TAG_FILTERS = [
+    ["tpriority", "tag_priority", "tpriority"],
+    ["ttopic",    "tag_topic",    "ttopic"],
+    ["tsub",      "tag_subtopic", "tsub"],
+    ["tformat",   "tag_format",   "tformat"],
+    ["tstage",    "tag_stage",    "tstage"],
+    ["ttime",     "tag_time",     "ttime"],
+  ];
+  const FREQ_CLASS = {"Must-Know":"freq-must", "Common":"freq-common", "Rare":"freq-rare"};
+
+  function fillTagFilters(){
+    const v = (BANK && BANK.tag_vocab) || null;
+    if (!v) return;                       // older cached payload: leave the row empty
+    const opts = (sel, values) => {
+      const keep = sel.value;
+      sel.length = 1;                     // keep the "Any ..." placeholder
+      values.forEach(x => sel.add(new Option(x, x)));
+      if (values.includes(keep)) sel.value = keep;
+    };
+    opts($("tpriority"), v.priority);
+    opts($("ttopic"),    v.topic);
+    opts($("tformat"),   v.format);
+    opts($("tstage"),    v.stage);
+    opts($("ttime"),     v.time);
+    syncSubtopics();
+  }
+
+  // Subtopics are scoped to their topic, so the sub-area list follows the
+  // subject choice. With no subject picked, offer every subtopic in use so the
+  // filter is still usable on its own.
+  function syncSubtopics(){
+    const v = (BANK && BANK.tag_vocab) || null;
+    if (!v) return;
+    const topic = $("ttopic").value;
+    const subs = topic ? (v.subtopics[topic] || [])
+                       : [...new Set(Object.values(v.subtopics).flat())].sort();
+    const sel = $("tsub"), keep = sel.value;
+    sel.length = 1;
+    subs.forEach(x => sel.add(new Option(x, x)));
+    sel.value = subs.includes(keep) ? keep : "";
+  }
 
   // A fully written-up topic runs to ~16k characters of worked examples, and
   // the bank holds over a thousand topics - shipping them all on every page
@@ -258,9 +332,12 @@
     const cat = $("cat").value, term = ($("search").value||"").trim().toLowerCase(), onlyUn = $("unstudied").checked;
     const diff = $("diff") ? $("diff").value : "";
     const pri = $("pri") ? $("pri").value : "", sort = $("sort") ? $("sort").value : "rank";
+    // The six interview-tag filters, applied on top of everything above.
+    const tv = {}; TAG_FILTERS.forEach(([id, field]) => { tv[field] = $(id) ? $(id).value : ""; });
     const list = BANK.entries.filter(e =>
       (!cat || e.cat===cat) && (!onlyUn || !studied.has(e.id)) && (!diff || e.difficulty===diff) &&
       (!pri || e.priority===pri) &&
+      TAG_FILTERS.every(([, field]) => !tv[field] || e[field] === tv[field]) &&
       (!term || e.title.toLowerCase().includes(term) || (e.answer||"").toLowerCase().includes(term) || (e.tags||[]).some(t=>t.includes(term)))
     );
     // "Recommended" is the bank's own stack rank: highest-yield topic first.
@@ -276,6 +353,8 @@
           <span class="q-text">${esc(e.title)}</span>
           ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
           ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
+          ${e.tag_priority ? `<span class="q-freq ${FREQ_CLASS[e.tag_priority]||''}" title="How often this is really asked of a new grad">${esc(e.tag_priority)}</span>` : ""}
+          ${e.tag_subtopic ? `<span class="q-sub" title="${esc(e.tag_topic||'')} — sub-area">${esc(e.tag_subtopic)}</span>` : ""}
           ${e.difficulty ? `<span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>` : ""}
           <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
         </div>
@@ -286,6 +365,12 @@
                 + (e.priority_minutes_total ? ` (${Math.round((e.priority_minutes_cumulative||0)/60)}h of ${Math.round(e.priority_minutes_total/60)}h into ${e.priority})` : "")
                 + (e.cat_rank ? ` · #${e.cat_rank} within ${catLabel[e.cat]||e.cat}` : "")
                 + (e.priority_note ? ` · ${e.priority_note}` : ""))}
+          ${e.tag_priority ? `<div class="fld tags"><span class="lbl">Interview tags</span>${esc(
+                [e.tag_priority + " for a new grad",
+                 e.tag_topic + (e.tag_subtopic ? " / " + e.tag_subtopic : ""),
+                 e.tag_level, e.tag_format + " question",
+                 e.tag_stage + " round", e.tag_time + " to answer"].join("  ·  ")
+              )}${e.tag_flag ? `<span class="flagnote">Note: ${esc(e.tag_flag)}</span>` : ""}</div>` : ""}
           ${fld("freq","Asked in interviews?",e.frequency)}
           ${fld("answer","Answer / reasoning",e.answer)}
           ${fld("deep","Explained step by step",e.walkthrough)}
@@ -333,10 +418,21 @@
   if ($("diff")) $("diff").addEventListener("change", render);
   $("search").addEventListener("input", render);
   $("unstudied").addEventListener("change", render);
+  TAG_FILTERS.forEach(([id]) => {
+    const sel = $(id); if (!sel) return;
+    // Changing the subject re-scopes the sub-area list before re-rendering.
+    sel.addEventListener("change", () => { if (id === "ttopic") syncSubtopics(); render(); });
+  });
+  if ($("tclear")) $("tclear").addEventListener("click", () => {
+    TAG_FILTERS.forEach(([id]) => { if ($(id)) $(id).value = ""; });
+    syncSubtopics(); render();
+  });
   $("pdf").addEventListener("click", () => {
     const p = new URLSearchParams();
     if ($("cat").value) p.set("cat", $("cat").value);
     if ($("pri") && $("pri").value) p.set("pri", $("pri").value);
+    // Export exactly the revision sheet on screen, tag filters included.
+    TAG_FILTERS.forEach(([id, , param]) => { if ($(id) && $(id).value) p.set(param, $(id).value); });
     const term = ($("search").value||"").trim(); if (term) p.set("q", term);
     window.open("/ai-sde/pdf" + (p.toString()?"?"+p.toString():""), "_blank", "noopener");
   });
@@ -346,6 +442,7 @@
       BANK = await api("/api/ai-sde");
       (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);
       $("cat").innerHTML = '<option value="">All topics</option>' + (BANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
+      fillTagFilters();
       render();
       // Per-question Pomodoro timers + actual-effort log.
       if (window.Pomodoro) {
