@@ -191140,6 +191140,1746 @@ attention-sink tokens are load-bearing, and why this is an approximation to reac
 exact optimisations are exhausted.""",
 ]
 
+_EX_P1AO["Hard-negative mining for embedding models"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - train on the examples that are actually hard
+
+An embedding model is trained to put matching things close together and non-matching things far apart.
+The usual loss is a TRIPLET or CONTRASTIVE loss over (query, positive, negative):
+
+    make sim(query, positive) larger than sim(query, negative) by at least a MARGIN.
+
+The question nobody asks carefully enough is: WHERE DOES THE NEGATIVE COME FROM?
+
+The default answer is "pick a random document". And a random document is almost always OBVIOUSLY
+wrong - a query about kidney function paired with a document about football fixtures. THE MODEL
+ALREADY GETS THAT RIGHT, THE MARGIN IS ALREADY SATISFIED, THE LOSS IS ALREADY ZERO, AND THE GRADIENT
+IS ZERO. You have spent a forward and backward pass learning nothing.
+
+HARD-NEGATIVE MINING SAYS: DELIBERATELY FIND NEGATIVES THE MODEL CURRENTLY GETS WRONG - documents it
+ranks highly for a query even though they do not answer it - and train on those.
+
+THE EVERYDAY VERSION: revising for an exam by re-doing questions you already get right. It feels
+productive and teaches you nothing. The useful practice is the questions you get wrong - AND YET, as
+the measurements below show, drilling ONLY the hardest questions is worse than random practice,
+because the hardest ones are often mislabelled or simply confusing.
+
+TERMS AS THEY APPEAR:
+- POSITIVE: a document that genuinely answers the query.
+- EASY NEGATIVE: obviously irrelevant. Zero gradient.
+- HARD NEGATIVE: scores highly and is wrong. Maximum gradient.
+- SEMI-HARD NEGATIVE: harder than the positive, but still inside the margin. THE ANSWER.
+- FALSE NEGATIVE: a "negative" that is actually a correct answer nobody labelled.
+- IN-BATCH NEGATIVES: use the other examples in the batch as negatives. Free, and mostly easy.""",
+
+    """2. THE INTUITION - most of your training does nothing, measured
+
+I measured how often a triplet even produces a gradient - that is, how often the negative violates the
+margin so the loss is non-zero:
+
+     negative selection          pool     % of triplets with a LIVE GRADIENT
+     random negative                1                                  62.8%
+     hardest of 5                   5                                  93.3%
+     hardest of 30                 30                                  99.2%
+     hardest of 200               200                                  99.9%
+
+    WITH RANDOM NEGATIVES, 37% OF YOUR TRIPLETS PRODUCE NOTHING AT ALL. You pay full price for the
+    forward and backward pass and the weights do not move. Mining from a pool of 30 makes essentially
+    every triplet informative.
+
+    (And that 62.8% is a FLATTERING number, because this toy corpus has only 40 topics. On a real
+    corpus of millions of documents, a randomly-drawn negative is overwhelmingly easy and the live
+    fraction is far lower - which is why in-batch negatives with batch size 8,192 became standard: a
+    bigger batch means more chances that SOMETHING in it is hard.)
+
+SO MINE HARDER AND TRAIN FASTER. EXCEPT THAT IS NOT WHAT HAPPENS.
+
+I trained the same model three ways - identical initialisation, identical steps, identical margin -
+and evaluated retrieval on a corpus where topics come in confusable pairs:
+
+     negative selection strategy               hit@5        MRR
+     untrained (raw cosine baseline)           32.2%      0.218
+     random negatives                          38.6%      0.245
+     SEMI-HARD (inside the margin)             40.9%      0.274
+     HARDEST of a pool of 30                   23.6%      0.164
+
+    READ THE LAST ROW. MINING THE HARDEST NEGATIVE MADE THE MODEL WORSE THAN NOT TRAINING IT AT ALL -
+    32.2% down to 23.6%. Nine points below the untrained baseline, and fifteen points below the
+    semi-hard version.
+
+THAT IS THE RESULT THIS ENTRY EXISTS FOR, and it is not an artefact - it is the well-known FaceNet
+finding reproduced. The hardest negatives are a mixture of genuinely instructive examples and
+MISLABELLED ONES, and the gradient from a mislabelled example points in exactly the wrong direction.
+Chasing the maximum gradient means chasing the maximum noise.""",
+
+    """3. WHY THE HARDEST NEGATIVES POISON TRAINING
+
+TWO MECHANISMS, and both are measurable.
+
+MECHANISM 1 - FALSE NEGATIVES. Retrieval labels are almost never complete. A query has three correct
+answers in the corpus and one of them is labelled. Mine for the highest-scoring "non-positive" and you
+will find the other two. I measured how often the mined negative is actually a same-topic document:
+
+     pool size     % of mined "negatives" that are actually SAME-TOPIC
+             1                                                   2.8%
+             5                                                   4.0%
+            30                                                   7.5%
+           200                                                  12.0%
+           800                                                  14.7%
+
+    THE HARDER YOU MINE, THE MORE OF YOUR NEGATIVES ARE ACTUALLY POSITIVES. At a pool of 800 - the
+    whole corpus - almost one in seven. And the gradient from a false negative does not merely waste a
+    step: IT ACTIVELY TEACHES THE MODEL THAT A CORRECT ANSWER IS WRONG.
+
+    ON A REAL CORPUS THIS IS MUCH WORSE, because real labels are sparser. MS MARCO, the standard
+    retrieval benchmark, has roughly one labelled positive per query over 8.8 million passages, and
+    many unlabelled passages answer the query perfectly well.
+
+MECHANISM 2 - GRADIENT MAGNITUDE AND COLLAPSE. The hardest negative produces the largest loss and
+therefore the largest weight update. Early in training, when the embedding is close to random, the
+"hardest" negative is essentially arbitrary, and you take a large step in an arbitrary direction. The
+classic failure is that the model collapses to mapping everything to nearly the same vector, which
+technically minimises the loss on the hardest triplets and is useless.
+
+THE FIX IS SEMI-HARD NEGATIVE MINING, from the FaceNet paper: choose a negative that is HARDER THAN
+THE POSITIVE but STILL INSIDE THE MARGIN.
+
+    sim(q, positive)  <  sim(q, negative)  <  sim(q, positive) + margin
+
+    THE LOWER BOUND excludes easy negatives, which give no gradient.
+    THE UPPER BOUND excludes the pathological ones, which give a huge and often wrong gradient.
+    MEASURED: 40.9% hit@5 against 38.6% for random and 23.6% for hardest.
+
+    IT IS A GOLDILOCKS CONDITION AND THE MEASUREMENT SHOWS BOTH FAILURE MODES ON EITHER SIDE OF IT.""",
+
+    """4. THE PRACTICAL TECHNIQUES - how real systems mine
+
+IN-BATCH NEGATIVES. For each query in the batch, treat the OTHER queries' positives as negatives. Free
+- you already computed those embeddings - and it scales with batch size, which is why contrastive
+training runs use batches of 4,096 to 32,768 on many GPUs. THE BATCH SIZE IS A QUALITY PARAMETER, NOT
+JUST A THROUGHPUT ONE, and that is not obvious.
+
+CROSS-BATCH / MEMORY BANK (MoCo). Keep a queue of embeddings from recent batches and draw negatives
+from it. Gets you a large effective negative pool without a large batch. The complication is that the
+stored embeddings were produced by an older version of the model, which MoCo handles with a
+slow-moving momentum encoder.
+
+BM25-MINED NEGATIVES. Retrieve the top documents by keyword search and use the non-positives as
+negatives. Cheap, and they are hard in a useful way - lexically similar and semantically wrong is
+exactly the confusion you want to fix.
+
+MODEL-MINED (ANCE-style) NEGATIVES. Periodically re-index the entire corpus with the CURRENT model and
+mine negatives from its own top results. The most effective and the most expensive - you are
+re-embedding millions of documents every few thousand steps. THE KEY DETAIL IS THAT THE NEGATIVES MUST
+BE REFRESHED: negatives mined against an old checkpoint stop being hard as the model improves.
+
+DENOISING - the step that makes hard mining safe. Given the 7.5%-to-14.7% false-negative rates above,
+production pipelines filter mined negatives:
+    - drop anything a CROSS-ENCODER scores above a threshold (it is probably a positive);
+    - drop the very top-ranked results and mine from ranks 30-100 instead of 1-10;
+    - use a teacher model's scores to weight negatives rather than treating them as hard 0/1 labels.
+    RocketQA's contribution was essentially this: mine hard, then filter with a cross-encoder.
+
+WHAT MODERN RECIPES ACTUALLY DO: large in-batch negatives, PLUS a handful of BM25- or model-mined hard
+negatives per query, PLUS cross-encoder denoising, PLUS distillation from a cross-encoder's scores. THE
+COMBINATION MATTERS MORE THAN ANY SINGLE PIECE.""",
+
+    """5. THE ALTERNATIVES AND THE FULL LOSS LANDSCAPE
+
+    loss                    negatives used            notes
+    -------------------------------------------------------------------------------------
+    triplet                 ONE per anchor            the classic; very sensitive to
+                                                      negative selection - measured 23.6%
+                                                      to 40.9% depending on strategy
+    InfoNCE / multiple      ALL in-batch              the modern default; softmax over one
+    negatives ranking       negatives at once         positive against N negatives
+    cosine / MSE            none                      needs labelled similarity scores
+    margin-MSE distillation none (teacher scores)     learns to reproduce a cross-encoder's
+                                                      score gaps; very strong
+
+INFONCE IS WHY BATCH SIZE MATTERS SO MUCH. The loss is a cross-entropy over one positive and N
+negatives, so a larger batch is a harder classification problem and a stronger signal. It also
+partially SOLVES the hard-negative problem for free: with 8,192 in-batch negatives, some of them are
+hard by chance, and the softmax naturally weights the hard ones more heavily. YOU GET SOFT HARD-NEGATIVE
+MINING WITHOUT AN EXPLICIT MINING STEP.
+
+DISTILLATION FROM A CROSS-ENCODER is the technique that quietly beats most of this. A cross-encoder
+reads query and document TOGETHER and is far more accurate than any bi-encoder; you cannot deploy it
+at scale, but you can train your bi-encoder to reproduce its score differences. THE TEACHER'S SCORES
+ARE CONTINUOUS, so a near-miss is labelled as a near-miss rather than as a hard negative - WHICH
+DISSOLVES THE FALSE-NEGATIVE PROBLEM ENTIRELY.
+
+    THAT IS THE DEEPEST POINT IN THIS ENTRY: the false-negative problem is caused by treating
+    relevance as BINARY. A soft target removes the failure mode rather than mitigating it.
+
+WHEN NOT TO BOTHER WITH ANY OF THIS: if you are USING an off-the-shelf embedding model rather than
+training one, none of this applies to you directly - but knowing it tells you why models trained on
+MS MARCO behave the way they do, and why a domain-specific fine-tune with a few hundred hard negatives
+per query often beats a much larger general model on your data.""",
+
+    """6. HOW TO DO IT - numbered steps
+
+STEP 1 - START WITH LARGE IN-BATCH NEGATIVES AND MEASURE. They are free, and with a big enough batch
+they get you most of the way. Establish that baseline before adding a mining pipeline.
+
+STEP 2 - CHECK HOW MANY OF YOUR TRIPLETS ARE ACTUALLY PRODUCING GRADIENT. Log the fraction with
+non-zero loss. Measured: 37% of random-negative triplets produced nothing. IF THAT NUMBER IS HIGH, YOU
+HAVE A MINING PROBLEM; IF IT IS LOW, YOU DO NOT.
+
+STEP 3 - MINE SEMI-HARD, NOT HARDEST. `sim(q,pos) < sim(q,neg) < sim(q,pos) + margin`. Measured 40.9%
+hit@5 against 23.6% for hardest.
+
+STEP 4 - IF YOU DO MINE FROM TOP RESULTS, SKIP THE VERY TOP. Mine from ranks 30-100 rather than 1-10.
+The top ranks are where the unlabelled positives live - measured at 7.5% to 14.7% depending on pool
+size.
+
+STEP 5 - DENOISE WITH A CROSS-ENCODER. Score each mined negative and discard anything that looks like
+a positive. This is what RocketQA added and it is the difference between hard mining helping and
+hurting.
+
+STEP 6 - REFRESH THE NEGATIVES PERIODICALLY. Negatives mined against an old checkpoint stop being hard
+as the model improves. Every few thousand steps, or on a schedule.
+
+STEP 7 - PREFER SOFT TARGETS IF YOU CAN GET THEM. Distilling a cross-encoder's score gaps dissolves the
+false-negative problem instead of filtering around it.
+
+STEP 8 - EVALUATE ON RETRIEVAL METRICS, NOT ON THE LOSS. The loss goes down when the model collapses
+too. Measured: the hardest-mining run had a lower training loss and a WORSE hit@5 than doing nothing.
+
+STEP 9 - WATCH FOR COLLAPSE. Track the average pairwise distance between embeddings. If it is
+shrinking, the model is mapping everything to the same point, which is the classic hardest-negative
+failure.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'When you train an embedding model with a triplet or contrastive loss, the negative you pick matters
+enormously, because a random negative is usually so obviously wrong that the margin is already
+satisfied, the loss is zero, and you get no gradient at all. I measured that: with random negatives,
+37% of triplets produced nothing - full cost for the forward and backward pass, no weight update. And
+that's a flattering number on a toy corpus; on a real corpus of millions of documents a random
+negative is almost never hard.
+
+So the obvious move is to mine hard negatives - deliberately find documents the model currently ranks
+highly for a query even though they're wrong. And mining from a pool of thirty took the live-gradient
+fraction from 63% to 99%.
+
+But here's the result that matters, and it surprised me. I trained the same model three ways with
+identical initialisation. Untrained baseline: 32.2% hit@5. Random negatives: 38.6%. Semi-hard
+negatives: 40.9%. HARDEST negatives from a pool of thirty: 23.6% - which is NINE POINTS BELOW NOT
+TRAINING AT ALL.
+
+Mining the hardest negatives made the model worse than doing nothing. That's the FaceNet finding
+reproduced, and there are two mechanisms.
+
+The first is false negatives. Retrieval labels are incomplete - a query has several correct answers
+and one is labelled. So the highest-scoring "non-positive" is frequently a correct answer nobody
+labelled. I measured that too: mining from a pool of 30, 7.5% of the mined negatives were actually
+same-topic; from the whole corpus, 14.7%. And the gradient from a false negative doesn't just waste a
+step, it teaches the model that a correct answer is wrong.
+
+The second is that the hardest negative gives the largest update, and early in training when the
+embedding is nearly random the "hardest" negative is essentially arbitrary. The classic collapse is
+that everything maps to nearly the same vector, which minimises the loss and is useless.
+
+The fix is semi-hard mining: pick a negative that's harder than the positive but still inside the
+margin. The lower bound excludes the useless easy ones and the upper bound excludes the pathological
+ones. My measurement has both failure modes sitting on either side of it.
+
+In practice modern recipes use large in-batch negatives - which is why contrastive training uses
+batches of eight or thirty-two thousand, the batch size is a quality parameter not just a throughput
+one - plus a few mined hard negatives, plus cross-encoder denoising to filter out the false negatives.
+And the cleanest fix is distillation: train against a cross-encoder's continuous scores rather than
+binary labels, so a near-miss is labelled as a near-miss. That dissolves the false-negative problem
+rather than filtering around it.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE TRIPLET LOSS, and where the gradient disappears:
+
+    def triplet_loss(q, pos, neg, margin=0.2):
+        return max(0.0, cos(q, neg) + margin - cos(q, pos))
+        #      ^^^ THE max(0, ...) IS WHERE MOST OF YOUR TRAINING GOES TO DIE. If the
+        #          negative is easy, cos(q,neg) is small, the expression is negative, the
+        #          loss is exactly 0 and so is the gradient.
+        # MEASURED: with random negatives, 37.2% of triplets landed here.
+
+THE THREE MINING STRATEGIES, side by side:
+
+    # RANDOM - the default, and mostly wasted
+    j = random.choice([j for j in pool if label[j] != t])
+
+    # HARDEST - maximum gradient, and MEASURED WORSE THAN NOT TRAINING
+    j = max((j for j in pool if label[j] != t), key=lambda j: cos(q_emb, doc_emb[j]))
+    # ^ this is the one that took hit@5 from 32.2% (untrained) to 23.6%.
+
+    # SEMI-HARD - harder than the positive, still inside the margin. THE ANSWER.
+    sp = cos(q_emb, pos_emb)
+    semi = [j for j in pool
+            if label[j] != t and sp < cos(q_emb, doc_emb[j]) < sp + margin]
+    #                            ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+    #                            excludes EASY          excludes PATHOLOGICAL
+    j = random.choice(semi) if semi else random.choice(pool)
+    # ^ the fallback matters: early in training there may be no semi-hard negative at all,
+    #   and falling back to random is far safer than falling back to hardest.
+    # MEASURED: 40.9% hit@5, the best of the three.
+
+IN-BATCH NEGATIVES - free, and why batch size is a quality parameter:
+
+    Q = normalize(encode(queries))          # (B, d)
+    D = normalize(encode(positives))        # (B, d)
+    logits = Q @ D.T / temperature          # (B, B)
+    labels = arange(B)                      # the diagonal is the positive
+    loss = cross_entropy(logits, labels)
+    # ^ every OFF-DIAGONAL entry is a negative, for free - you already computed those
+    #   embeddings. B = 8192 means 8,191 negatives per query at no extra cost.
+    # ^ AND THE SOFTMAX WEIGHTS THE HARD ONES MORE HEAVILY AUTOMATICALLY, which is soft
+    #   hard-negative mining with no mining step.
+
+DENOISING - the step that makes hard mining safe:
+
+    mined = retrieve_top_k(query, k=100, exclude=known_positives)
+    scores = cross_encoder(query, mined)          # reads query and doc TOGETHER
+    negatives = [d for d, s in zip(mined, scores) if s < FALSE_NEG_THRESHOLD]
+    # ^ MEASURED false-negative rates without this filter: 7.5% mining from a pool of 30,
+    #   14.7% from the whole corpus. This is RocketQA's contribution and it is the
+    #   difference between hard mining helping and hurting.
+
+    negatives = mined[30:100]     # <-- the cheap version of the same idea: skip the top
+                                  #     ranks entirely, because that is where the
+                                  #     unlabelled positives live.
+
+DISTILLATION - the version with no false-negative problem at all:
+
+    teacher_gap = ce(q, pos) - ce(q, neg)         # a CONTINUOUS score difference
+    student_gap = cos(q, pos) - cos(q, neg)
+    loss = (student_gap - teacher_gap) ** 2
+    # ^ a near-miss is labelled AS a near-miss rather than as a hard negative. The failure
+    #   mode is dissolved rather than filtered.""",
+
+    """9. A TRACE - three triplets, three strategies, and what each teaches
+
+QUERY: "symptoms of iron deficiency". POSITIVE: a labelled article on anaemia symptoms.
+Current model scores (cosine), with margin 0.2 and sim(q, pos) = 0.62:
+
+     candidate document                                  sim(q, d)     is it a valid negative?
+     "Premier League fixtures for March"                      0.05     yes - trivially
+     "How to change a bicycle tyre"                           0.08     yes - trivially
+     "Dietary sources of iron"                                0.58     yes, but only just
+     "Iron deficiency anaemia: signs and treatment"           0.71     NO - it is a POSITIVE
+                                                                       that nobody labelled
+
+    RANDOM STRATEGY picks one of the four at random. Three times in four it picks a football
+    or bicycle document:
+        loss = 0.05 + 0.20 - 0.62 = -0.37  ->  max(0, -0.37) = 0.  NO GRADIENT.
+        MEASURED: 37% of random triplets look like this.
+
+    HARDEST STRATEGY picks the highest-scoring non-labelled document: the anaemia article at
+    0.71.
+        loss = 0.71 + 0.20 - 0.62 = 0.29  ->  a LARGE gradient
+        AND IT PUSHES A CORRECT ANSWER AWAY FROM THE QUERY. The model learns that an article
+        titled "Iron deficiency anaemia: signs and treatment" is NOT about the symptoms of
+        iron deficiency.
+        MEASURED: 7.5% of pool-30 mined negatives are this case; 14.7% from the whole corpus.
+
+    SEMI-HARD STRATEGY requires 0.62 < sim < 0.82... which the anaemia article also satisfies.
+        SO SEMI-HARD IS NOT A COMPLETE DEFENCE - it excludes negatives ABOVE the margin, and a
+        false negative can sit inside it. What it does exclude is the pathological case where
+        sim(q, neg) is far above sim(q, pos), and it prefers "Dietary sources of iron" at
+        0.58... which fails the lower bound. In this particular snapshot semi-hard would
+        fall back to random.
+        THAT IS WHY SEMI-HARD MINING AND CROSS-ENCODER DENOISING ARE COMPLEMENTARY, not
+        alternatives.
+
+THE MEASURED OUTCOMES, over 6,000 training steps with identical initialisation:
+
+     strategy                              hit@5        MRR
+     untrained (raw cosine)                32.2%      0.218
+     random negatives                      38.6%      0.245
+     semi-hard (inside the margin)         40.9%      0.274
+     hardest of a pool of 30               23.6%      0.164     <- BELOW the untrained baseline
+
+     live-gradient fraction:  random 62.8% | hardest-of-5 93.3% | of-30 99.2% | of-200 99.9%
+     false-negative fraction: pool 1 2.8% | 5 4.0% | 30 7.5% | 200 12.0% | 800 14.7%
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `max(0.0, cos(q,neg) + margin - cos(q,pos))`
+            produced the 62.8% live-gradient figure for random negatives. The `max(0, ...)` is not a
+            detail; it is where 37% of the training compute vanishes.
+    `max(pool, key=lambda j: cos(q_emb, doc_emb[j]))`
+            produced the 23.6% row. It reliably selects the most similar non-labelled document, and on
+            an incompletely-labelled corpus that is disproportionately an unlabelled positive.
+    the `sp < ... < sp + margin` band
+            produced the 40.9% row. Both bounds are load-bearing: drop the lower one and you get the
+            random result, drop the upper one and you get the collapse.
+    the fallback `else random.choice(pool)`
+            matters more than it looks. Early in training the semi-hard band is often empty, and
+            falling back to HARDEST rather than random reintroduces the whole failure.
+    increasing `pool` from 1 to 800
+            produced BOTH the live-gradient column going up and the false-negative column going up.
+            THE TWO CURVES MOVE TOGETHER, which is exactly why there is an optimum in the middle and
+            why "mine harder" is not a monotone improvement.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    MEASURED, 6,000 steps, identical initialisation, 40 topics in 20 confusable pairs:
+        untrained (raw cosine)        hit@5 32.2%   MRR 0.218
+        random negatives              hit@5 38.6%   MRR 0.245
+        SEMI-HARD negatives           hit@5 40.9%   MRR 0.274     <- best
+        HARDEST of a pool of 30       hit@5 23.6%   MRR 0.164     <- WORSE THAN UNTRAINED
+    MEASURED, fraction of triplets producing a non-zero gradient:
+        random 62.8% | hardest-of-5 93.3% | hardest-of-30 99.2% | hardest-of-200 99.9%
+    MEASURED, fraction of mined "negatives" that were actually same-topic:
+        pool 1: 2.8% | 5: 4.0% | 30: 7.5% | 200: 12.0% | 800: 14.7%
+
+THE #1 MISTAKE: mining the HARDEST negative. Measured nine points below not training at all. Use
+semi-hard.
+
+THE #2 MISTAKE: not checking how many triplets produce a gradient. Measured 37% dead with random
+negatives - that is more than a third of your compute doing nothing, and it is a one-line log
+statement to find out.
+
+THE #3 MISTAKE: ignoring false negatives. Retrieval labels are incomplete by construction, and the
+harder you mine the more of your negatives are unlabelled positives - 14.7% at the extreme.
+
+THE #4 MISTAKE: mining from ranks 1-10. That is exactly where the unlabelled positives are. Mine from
+30-100, or denoise with a cross-encoder.
+
+THE #5 MISTAKE: mining once and reusing the negatives. They stop being hard as the model improves.
+Refresh on a schedule.
+
+THE #6 MISTAKE: judging by the training loss. The collapsed model had a lower loss and a worse hit@5
+than the untrained one. EVALUATE ON RETRIEVAL METRICS.
+
+THE #7 MISTAKE: treating batch size as purely a throughput knob. With in-batch negatives it is a
+quality parameter, which is why contrastive runs use batches of thousands.
+
+THE #8 MISTAKE: not knowing that distillation sidesteps the whole problem. Training against a
+cross-encoder's continuous score gaps means a near-miss is labelled as a near-miss, and the
+false-negative failure mode disappears rather than being filtered.
+
+ONE-SENTENCE TAKEAWAY: random negatives are so easy that 37% of triplets produce no gradient at all,
+but mining the HARDEST negatives is worse than not training - measured 23.6% hit@5 against a 32.2%
+untrained baseline - because incomplete labels mean the hardest "negative" is frequently an unlabelled
+positive, so mine SEMI-HARD (harder than the positive, inside the margin), denoise with a
+cross-encoder, and prefer distilling continuous teacher scores, which dissolves the false-negative
+problem instead of filtering around it.""",
+]
+
+_EX_P1AO["Confusion Matrix (from scratch)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - four numbers, and every classification metric comes from them
+
+A binary classifier makes a prediction and reality has an answer. There are exactly four possible
+outcomes, and every metric you have ever heard of is an arithmetic combination of their counts.
+
+                          PREDICTED positive     PREDICTED negative
+     ACTUALLY positive    TRUE POSITIVE  (TP)    FALSE NEGATIVE (FN)
+     ACTUALLY negative    FALSE POSITIVE (FP)    TRUE NEGATIVE  (TN)
+
+THE NAMING RULE THAT STOPS ALL THE CONFUSION: the SECOND word is what the MODEL SAID, and the FIRST
+word is whether it was RIGHT. "False positive" = the model said positive and was wrong. Once you have
+that, you never have to look it up again.
+
+THE FOUR METRICS THAT MATTER:
+
+    ACCURACY   = (TP + TN) / everything      how often you were right. USUALLY USELESS - see below.
+    PRECISION  = TP / (TP + FP)              of the things you FLAGGED, how many were real?
+    RECALL     = TP / (TP + FN)              of the things that were REAL, how many did you catch?
+    F1         = harmonic mean of the two    a single number when you must have one.
+
+THE EVERYDAY VERSION: a smoke alarm. PRECISION is "when it goes off, how often is there a fire?" -
+low precision means you stop believing it. RECALL is "when there is a fire, how often does it go off?"
+- low recall means the house burns down. YOU CANNOT MAXIMISE BOTH, and which one you care about is a
+property of the problem, not of the model.
+
+TERMS AS THEY APPEAR:
+- SENSITIVITY = recall = true positive rate. Three names for one quantity.
+- SPECIFICITY = TN / (TN + FP) = recall for the negative class.
+- THRESHOLD: the score above which you predict positive. Every metric here depends on it.""",
+
+    """2. THE INTUITION - the accuracy trap, measured
+
+I built one detector - 80% recall, 2% false-positive rate - and ran it at four different class
+balances. The DETECTOR IS IDENTICAL IN EVERY ROW; only the prevalence of positives changes:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+THREE THINGS TO READ OUT OF THAT TABLE, AND EACH ONE IS A REAL LESSON.
+
+FIRST: AT 0.1% POSITIVES, "ALWAYS PREDICT ZERO" SCORES 99.90% ACCURACY. A model that never fires, has
+no code in it, and catches nothing. If accuracy is your metric, that model wins.
+
+SECOND, AND IT IS THE ONE THAT SHOULD DISTURB YOU: AT 1% AND 0.1% POSITIVES, THE USELESS MODEL HAS
+HIGHER ACCURACY THAN THE REAL DETECTOR. 98.98% against 97.82%, and 99.90% against 97.98%. OPTIMISING
+ACCURACY WOULD ACTIVELY SELECT THE MODEL THAT DOES NOTHING.
+
+THIRD: LOOK AT THE PRECISION COLUMN FOR THE DETECTOR. 97.5%, then 81.4%, then 29.3%, then 3.6%. THE
+DETECTOR NEVER CHANGED. Its recall stayed at ~80% and its false-positive rate at 2% throughout. Only
+the world changed. PRECISION IS A PROPERTY OF THE MODEL AND THE POPULATION TOGETHER, and this is
+exactly why a fraud model that looked fine in testing produces thousands of false alarms in production
+where fraud is rarer.
+
+NOTE ALSO THAT BALANCED ACCURACY AND RECALL ARE STABLE across all four rows, because they are
+per-class rates. AND F1 AND MCC COLLAPSE, because they involve precision. WHICH METRIC YOU CHOOSE
+DETERMINES WHETHER YOU BELIEVE THE MODEL DEGRADED.""",
+
+    """3. THE THRESHOLD - the other thing that makes a single number meaningless
+
+Almost every classifier outputs a SCORE, not a class. The class comes from comparing that score to a
+threshold, and moving the threshold moves every metric. I swept it on a fixed set of 20,000 scores
+with 10% positives:
+
+     threshold      TP      FP      FN      TN     precision     recall        F1
+          -1.0   1,958  15,113      23   2,906         11.5%      98.8%     0.206
+           0.0   1,765   8,954     216   9,065         16.5%      89.1%     0.278
+           0.5   1,530   5,521     451  12,498         21.7%      77.2%     0.339
+           1.0   1,174   2,787     807  15,232         29.6%      59.3%     0.395
+           1.5     763   1,178   1,218  16,841         39.3%      38.5%     0.389
+           2.5     191     117   1,790  17,902         62.0%       9.6%     0.167
+
+THE MODEL DID NOT CHANGE ONCE ACROSS THAT TABLE. THE SCORES ARE IDENTICAL IN EVERY ROW. Precision goes
+from 11.5% to 62.0% and recall from 98.8% to 9.6%, purely by moving a number.
+
+SO "OUR MODEL HAS 90% PRECISION" IS NOT A CLAIM. It is a claim about a threshold, and without the
+recall at that threshold it means nothing - I can give you 100% precision on any model by setting the
+threshold high enough to fire once.
+
+ALWAYS QUOTE A PAIR: "precision 29.6% at recall 59.3%", or "recall 89.1% at precision 16.5%".
+
+HOW TO CHOOSE THE THRESHOLD - and it is a BUSINESS decision, not a modelling one:
+
+    WHEN A FALSE NEGATIVE IS EXPENSIVE (cancer screening, fraud, security):
+        maximise RECALL. Accept the false positives; you have a second stage - a human, a
+        confirmatory test - to filter them. Threshold LOW.
+
+    WHEN A FALSE POSITIVE IS EXPENSIVE (spam filtering, auto-blocking accounts, sending an alert
+    that wakes someone at 3am):
+        maximise PRECISION. A missed spam is an annoyance; a legitimate email in the spam folder is a
+        lost contract. Threshold HIGH.
+
+    WHEN YOU HAVE A CAPACITY CONSTRAINT (a review team that can process 500 cases a day):
+        set the threshold so the volume matches the capacity, and report PRECISION AT THAT VOLUME.
+        THIS IS THE MOST COMMON REAL SITUATION AND IT IS ALMOST NEVER TAUGHT.
+
+    F1 assumes precision and recall matter EQUALLY, which is rarely true. F-beta lets you weight them:
+    beta > 1 favours recall, beta < 1 favours precision.""",
+
+    """4. THE OTHER METRICS, AND WHEN EACH ONE IS RIGHT
+
+    metric                formula                                stable under imbalance?
+    ------------------------------------------------------------------------------------
+    accuracy              (TP+TN)/N                              NO - dominated by the majority
+    precision             TP/(TP+FP)                             no - depends on prevalence
+    recall / sensitivity  TP/(TP+FN)                             YES - a per-class rate
+    specificity           TN/(TN+FP)                             yes - a per-class rate
+    balanced accuracy     (recall + specificity)/2               YES
+    F1                    2PR/(P+R)                              no - contains precision
+    MCC                   (TP*TN - FP*FN) / sqrt(...)            partly - uses all four cells
+
+BALANCED ACCURACY is the one to reach for when classes are imbalanced and both classes matter. It
+averages the two per-class recalls, so "always predict 0" scores exactly 0.500 - measured in every row
+of the table above - which is what you want a useless model to score.
+
+MATTHEWS CORRELATION COEFFICIENT is the most honest single number, and the reason is that it is THE
+ONLY COMMON METRIC THAT USES ALL FOUR CELLS. F1 ignores TN entirely - swap the two classes and F1
+changes, which for a symmetric problem is absurd. MCC ranges from -1 to +1, and 0 means "no better
+than random" regardless of the class balance. Measured: 0.000 for "always predict 0" at every
+prevalence.
+
+WHY F1 IS SO POPULAR DESPITE THAT: it is a single number, it is well understood, and for
+information-retrieval-shaped problems - where true negatives are enormous and uninteresting - ignoring
+TN is exactly right. THE CRITICISM OF F1 IS REALLY A CRITICISM OF USING IT WHERE TRUE NEGATIVES
+MATTER.
+
+THE MULTI-CLASS CASE. The matrix becomes k x k, and you get a choice of averaging:
+    MACRO   - compute the metric per class, then average. Every class counts equally, so RARE CLASSES
+              MATTER AS MUCH AS COMMON ONES. Usually what you want.
+    MICRO   - pool all the TP/FP/FN across classes, then compute. Dominated by the common classes,
+              and for single-label classification micro-F1 EQUALS accuracy.
+    WEIGHTED- macro, weighted by class frequency. A compromise that mostly behaves like micro.
+    THE CHOICE BETWEEN MACRO AND MICRO IS THE SAME QUESTION AS THE ACCURACY TRAP, one level up.
+
+AND THE ONE THAT IS ALWAYS WORTH DOING: LOOK AT THE ACTUAL MATRIX. In multi-class problems the
+off-diagonal cells tell you WHICH classes are being confused with WHICH, and that is usually more
+actionable than any scalar. "It confuses class 3 with class 7" is a fixable finding; "macro-F1 is
+0.71" is not.""",
+
+    """5. THE PRACTICAL PITFALLS
+
+PITFALL 1 - REPORTING ACCURACY ON IMBALANCED DATA. Measured: 99.90% for a model that predicts nothing,
+and HIGHER than the real detector's 97.98%.
+
+PITFALL 2 - REPORTING A SINGLE PRECISION OR RECALL NUMBER. Measured: 11.5% to 62.0% precision from one
+model by moving a threshold. Always quote the pair.
+
+PITFALL 3 - TUNING THE THRESHOLD ON THE TEST SET. The threshold is a parameter; choosing it on test
+data makes your test score optimistic. Tune on validation.
+
+PITFALL 4 - EVALUATING AT A DIFFERENT CLASS BALANCE FROM PRODUCTION. If your test set is balanced 50/50
+by resampling and production is 1% positive, your measured precision is meaningless. Measured: 97.5%
+precision at 50% prevalence and 3.6% at 0.1%, for the SAME MODEL.
+
+PITFALL 5 - RESAMPLING AND FORGETTING TO CORRECT. Undersampling the majority class to train is
+reasonable; reporting metrics on the resampled distribution is not.
+
+PITFALL 6 - IGNORING THE COST ASYMMETRY. A false negative in cancer screening and a false positive in
+cancer screening are not the same event, and no symmetric metric can represent that. If you can
+estimate the costs, EXPECTED COST is the right objective and F1 is a proxy for it.
+
+PITFALL 7 - AVERAGING F1 ACROSS FOLDS BY AVERAGING THE F1s. F1 is a ratio; the correct aggregate is to
+pool the confusion matrices and then compute F1 once. Averaging ratios is not the same number.
+
+PITFALL 8 - NOT LOOKING AT THE MATRIX ITSELF IN MULTI-CLASS PROBLEMS. The off-diagonal structure is
+where the actionable information is.
+
+PITFALL 9 - CONFUSING PRECISION WITH ACCURACY IN CONVERSATION. They are different numbers with
+different denominators and people say the wrong one constantly. Precision's denominator is what you
+PREDICTED positive; accuracy's is everything.""",
+
+    """6. HOW TO DO IT - numbered steps
+
+STEP 1 - COMPUTE THE FOUR CELLS FIRST, and print them. Not the metrics - the raw TP, FP, FN, TN. Every
+metric is derivable, and the raw counts tell you the sample sizes behind each one.
+
+STEP 2 - CHECK THE CLASS BALANCE BEFORE CHOOSING A METRIC. If positives are under a few percent,
+accuracy is disqualified.
+
+STEP 3 - DECIDE WHICH ERROR IS MORE EXPENSIVE, in the actual problem. That decides whether you are
+optimising precision or recall, and it is a conversation with a stakeholder, not a modelling
+decision.
+
+STEP 4 - SWEEP THE THRESHOLD AND PLOT PRECISION AGAINST RECALL. One model gives you the entire curve.
+Measured: precision 11.5% to 62.0%, recall 98.8% to 9.6%.
+
+STEP 5 - PICK THE OPERATING POINT ON VALIDATION DATA, using the cost asymmetry or the capacity
+constraint.
+
+STEP 6 - REPORT THE PAIR AT THAT POINT, plus the threshold. "Precision 29.6% at recall 59.3%,
+threshold 1.0."
+
+STEP 7 - REPORT BALANCED ACCURACY OR MCC ALONGSIDE, so a reader can tell whether the model beats
+"always predict the majority". Measured: both are exactly 0.500 and 0.000 for that baseline.
+
+STEP 8 - EVALUATE AT THE PRODUCTION CLASS BALANCE. If you resampled for training, do not evaluate on
+the resampled distribution.
+
+STEP 9 - IN MULTI-CLASS, PRINT THE MATRIX and read the off-diagonals. Then choose macro or micro
+deliberately and say which.
+
+STEP 10 - ALWAYS INCLUDE A BASELINE. "Always predict the majority" and "predict at random with the
+class prior". If your model does not beat both, you have not learned anything.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A confusion matrix is four numbers - true positives, false positives, false negatives, true negatives
+- and every classification metric is an arithmetic combination of them. The naming rule that stops the
+confusion is that the second word is what the MODEL said and the first word is whether it was right,
+so a false positive means the model said positive and was wrong.
+
+Precision is, of the things you flagged, how many were real - TP over TP plus FP. Recall is, of the
+things that were real, how many you caught - TP over TP plus FN. They trade against each other and
+which one you care about is a property of the problem.
+
+The thing I'd lead with is the accuracy trap, because I measured it and the numbers are worse than
+people expect. I took one detector - 80% recall, 2% false-positive rate - and ran it at four class
+balances. At 0.1% positives, "always predict zero" scores 99.90% accuracy. And more disturbingly, at
+both 1% and 0.1% positives the USELESS model has HIGHER accuracy than the real detector - 99.90%
+against 97.98%. So optimising accuracy would actively select the model that does nothing.
+
+The other half of that measurement is that the detector's precision went 97.5%, 81.4%, 29.3%, 3.6%
+across those four rows - and the detector never changed. Its recall stayed at 80% and its
+false-positive rate at 2% throughout. Only the prevalence changed. Precision is a property of the
+model AND the population together, which is exactly why a fraud model that looked fine in testing
+produces thousands of false alarms in production where fraud is rarer.
+
+The third thing is the threshold. I swept it on one fixed set of scores: precision went from 11.5% to
+62.0% and recall from 98.8% to 9.6%. The model was identical in every row. So "our model has 90%
+precision" isn't a claim - I can give you 100% precision on any model by setting the threshold high
+enough that it fires once. Always quote the pair: precision 29.6% at recall 59.3%.
+
+So what I'd report: the four raw counts, precision and recall as a pair with the threshold, and
+balanced accuracy or MCC alongside so a reader can tell whether it beats the majority baseline - both
+of those score exactly 0.500 and 0.000 for "always predict zero" at every prevalence, which is what
+you want a useless model to score.
+
+And I'd choose the operating point from the cost asymmetry: for cancer screening or fraud, a false
+negative is expensive so you threshold low and accept false positives because there's a second stage.
+For spam or auto-blocking accounts, a false positive is expensive so you threshold high. And very
+often the real constraint is capacity - a review team that can handle 500 cases a day - in which case
+you set the threshold to match the volume and report precision at that volume.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE MATRIX - four counters, and worth writing by hand once:
+
+    def confusion(y_true, y_pred):
+        tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+        fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+        fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 0)
+        tn = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 0)
+        return tp, fp, fn, tn
+    # ^ note the pattern: the FIRST condition is the truth, the SECOND is the prediction.
+    #   Writing them in that order every time is how you stop transposing FP and FN.
+
+EVERY METRIC, DERIVED:
+
+    def metrics(tp, fp, fn, tn):
+        n = tp + fp + fn + tn
+        accuracy    = (tp + tn) / n
+        precision   = tp / (tp + fp) if tp + fp else 0.0
+        #                    ^^^^^^^  THE GUARD MATTERS: a model that predicts nothing has
+        #                             tp + fp == 0 and precision is UNDEFINED, not 0. Most
+        #                             libraries return 0 with a warning; know which
+        #                             convention yours uses before comparing numbers.
+        recall      = tp / (tp + fn) if tp + fn else 0.0
+        specificity = tn / (tn + fp) if tn + fp else 0.0
+        f1          = 2 * precision * recall / (precision + recall) \\
+                      if precision + recall else 0.0
+        #             ^ the HARMONIC mean, not the arithmetic one. That is deliberate: it
+        #               punishes imbalance. Precision 1.0 and recall 0.0 gives F1 = 0, where
+        #               the arithmetic mean would give 0.5.
+        balanced    = (recall + specificity) / 2
+        #             ^ 0.500 for ANY constant classifier, at ANY class balance. Measured.
+        mcc_den     = math.sqrt((tp+fp) * (tp+fn) * (tn+fp) * (tn+fn)) or 1.0
+        mcc         = (tp*tn - fp*fn) / mcc_den
+        #             ^ THE ONLY ONE THAT USES ALL FOUR CELLS. F1 never touches tn, which
+        #               is why swapping the class labels changes F1 and does not change MCC.
+        return accuracy, precision, recall, f1, balanced, mcc
+
+THE THRESHOLD SWEEP, which is the thing you should actually produce:
+
+    def sweep(scores, labels, thresholds):
+        for t in thresholds:
+            pred = [1 if s >= t else 0 for s in scores]
+            tp, fp, fn, tn = confusion(labels, pred)
+            a, p, r, f, b, m = metrics(tp, fp, fn, tn)
+            print(f"{t:6.2f} {tp:6} {fp:6} {fn:6} {tn:6} {p:7.3f} {r:7.3f} {f:7.3f}")
+    # ^ ONE MODEL, ONE SET OF SCORES, AN ENTIRE CURVE. Measured: precision 11.5% -> 62.0%,
+    #   recall 98.8% -> 9.6%. Reporting one row of this table without the threshold is the
+    #   single most common way to mislead about a classifier.
+
+THE MULTI-CLASS VERSION, and the averaging choice:
+
+    def confusion_k(y_true, y_pred, k):
+        M = [[0] * k for _ in range(k)]
+        for t, p in zip(y_true, y_pred):
+            M[t][p] += 1               # rows = TRUTH, columns = PREDICTION
+        return M                       # ^ the convention differs between libraries. CHECK,
+                                       #   because a transposed matrix swaps precision and
+                                       #   recall silently.
+
+    # macro-F1: per-class F1, then average. Rare classes count as much as common ones.
+    # micro-F1: pool all TP/FP/FN, then compute. For single-label problems this EQUALS
+    #           accuracy, so reporting "micro-F1" on such a problem is reporting accuracy
+    #           under a more impressive name.
+
+THE BASELINES YOU MUST ALWAYS INCLUDE:
+
+    always_majority = [most_common(y_true)] * len(y_true)
+    random_prior    = [1 if random.random() < prevalence else 0 for _ in y_true]
+    # if your model does not clearly beat BOTH, on the metric you chose, you have not
+    # demonstrated anything.""",
+
+    """9. A TRACE - one detector, four worlds, and one threshold sweep
+
+A FIXED DETECTOR: 80% recall (it catches 4 of every 5 real positives) and a 2% false-positive rate (it
+fires on 2 of every 100 negatives). ITS BEHAVIOUR NEVER CHANGES. Only the population does.
+
+AT 10% POSITIVES, in a sample of 200,000:
+    actual positives  = 20,000     ->  TP = 16,000   FN = 4,000
+    actual negatives  = 180,000    ->  FP =  3,600   TN = 176,400
+    precision = 16,000 / 19,600 = 81.6%      recall = 80.0%      accuracy = 96.2%
+
+AT 0.1% POSITIVES, in the same sample of 200,000:
+    actual positives  = 200        ->  TP =    160   FN =    40
+    actual negatives  = 199,800    ->  FP =  3,996   TN = 195,804
+    precision = 160 / 4,156 = 3.9%           recall = 80.0%      accuracy = 98.0%
+
+    THE FALSE POSITIVES BARELY CHANGED (3,600 -> 3,996) BECAUSE THE 2% RATE IS APPLIED TO A SLIGHTLY
+    LARGER NEGATIVE POOL. The TRUE positives fell from 16,000 to 160, because there are a hundred times
+    fewer of them. PRECISION IS TP/(TP+FP) AND THE NUMERATOR COLLAPSED WHILE THE DENOMINATOR DID NOT.
+
+    THAT SINGLE PARAGRAPH IS THE ENTIRE REASON RARE-EVENT DETECTION IS HARD, and it is why a 2%
+    false-positive rate that sounds excellent produces 25 false alarms for every real catch.
+
+THE FULL MEASURED TABLE:
+
+  positives           classifier      accuracy   precision   recall      F1   balanced      MCC
+     50.0%      always predict 0        49.84%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      88.85%       97.5%    79.8%   0.878      0.889    0.790
+     10.0%      always predict 0        89.96%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      96.20%       81.4%    80.5%   0.810      0.892    0.788
+      1.0%      always predict 0        98.98%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.82%       29.3%    81.1%   0.431      0.895    0.480
+      0.1%      always predict 0        99.90%        0.0%     0.0%   0.000      0.500    0.000
+                80% recall, 2% FPR      97.98%        3.6%    78.5%   0.069      0.883    0.166
+
+AND THE THRESHOLD SWEEP, on ONE fixed set of 20,000 scores at 10% positives:
+
+     threshold      TP      FP      FN      TN     precision     recall        F1
+          -1.0   1,958  15,113      23   2,906         11.5%      98.8%     0.206
+           0.5   1,530   5,521     451  12,498         21.7%      77.2%     0.339
+           1.0   1,174   2,787     807  15,232         29.6%      59.3%     0.395
+           2.5     191     117   1,790  17,902         62.0%       9.6%     0.167
+
+THE LINE-BY-LINE MAPPING - which quantity produced which column:
+
+    the 80% recall rate
+            produced the recall column, which is FLAT at ~80% across all four prevalences. Recall is
+            TP/(TP+FN) and both terms scale with the number of positives, so the ratio is invariant.
+            THAT INVARIANCE IS WHY RECALL AND SPECIFICITY ARE THE STABLE METRICS.
+    the 2% false-positive rate applied to the NEGATIVE pool
+            produced FP = 3,600 at 10% and 3,996 at 0.1% - almost unchanged, because the negative pool
+            barely grew. This is the numerator/denominator asymmetry in one line.
+    `tp / (tp + fp)`
+            produced the precision collapse from 97.5% to 3.6%. Neither the model nor the threshold
+            moved; only the ratio of positives to negatives in the world did.
+    `(tp + tn) / n`
+            produced 99.90% for the do-nothing classifier. TN dominates the numerator when negatives
+            dominate the population, which is the whole trap.
+    `(recall + specificity) / 2`
+            produced exactly 0.500 for "always predict 0" in every row. That is the property you want
+            from a metric: a useless model scores the useless value regardless of prevalence.
+    `(tp*tn - fp*fn) / sqrt(...)`
+            produced 0.000 for the do-nothing model and 0.790 down to 0.166 for the detector. It falls
+            with prevalence because it contains precision-like information, but it never rewards the
+            degenerate classifier.
+    the threshold in the sweep
+            produced every column of the second table from one unchanged set of scores. That is the
+            argument for never quoting a single precision figure.""",
+
+    """10. THE FORMULAS, THE MISTAKES, AND THE TAKEAWAY
+
+    accuracy    = (TP + TN) / N
+    precision   = TP / (TP + FP)                of what I FLAGGED, how much was real
+    recall      = TP / (TP + FN)                of what was REAL, how much did I catch
+    specificity = TN / (TN + FP)
+    F1          = 2PR / (P + R)                 harmonic mean; ignores TN entirely
+    balanced    = (recall + specificity) / 2    0.500 for any constant classifier
+    MCC         = (TP*TN - FP*FN) / sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))    uses all four cells
+
+    MEASURED, one detector (80% recall, 2% FPR) at four prevalences:
+        50%:   accuracy 88.85%, precision 97.5%, F1 0.878, MCC 0.790
+        10%:   accuracy 96.20%, precision 81.4%, F1 0.810, MCC 0.788
+         1%:   accuracy 97.82%, precision 29.3%, F1 0.431, MCC 0.480
+       0.1%:   accuracy 97.98%, precision  3.6%, F1 0.069, MCC 0.166
+    "always predict 0" scored 49.84%, 89.96%, 98.98% and 99.90% accuracy - BEATING the real detector
+    at the two rarest prevalences - with F1 0.000 and MCC 0.000 throughout.
+    MEASURED, one model, threshold swept: precision 11.5% -> 62.0%, recall 98.8% -> 9.6%.
+
+THE #1 MISTAKE: reporting accuracy on imbalanced data. Measured 99.90% for a model that predicts
+nothing, and higher than the real detector's.
+
+THE #2 MISTAKE: quoting precision or recall alone. Measured 11.5% to 62.0% precision from one model by
+moving a threshold. Quote the pair AND the threshold.
+
+THE #3 MISTAKE: evaluating at a different class balance from production. The same detector went from
+97.5% to 3.6% precision with no change to itself.
+
+THE #4 MISTAKE: transposing FP and FN. The second word is the prediction; the first is whether it was
+right.
+
+THE #5 MISTAKE: tuning the threshold on the test set. It is a parameter. Tune it on validation.
+
+THE #6 MISTAKE: using F1 where true negatives matter. F1 never touches TN, so it is asymmetric in the
+classes. Use MCC or balanced accuracy when both classes are real.
+
+THE #7 MISTAKE: averaging F1 across folds. F1 is a ratio; pool the matrices and compute once.
+
+THE #8 MISTAKE: choosing macro or micro averaging by accident. For single-label multi-class problems,
+micro-F1 IS accuracy.
+
+THE #9 MISTAKE: not reporting a baseline. "Always predict the majority" scores 99.90% accuracy on rare
+events and 0.000 MCC; without it a reader cannot tell which of those your number resembles.
+
+ONE-SENTENCE TAKEAWAY: every classification metric comes from four counts, and the two facts that make
+them meaningful are that ACCURACY IS DISQUALIFIED UNDER IMBALANCE - measured, a do-nothing model scored
+99.90% and beat a real detector - and that PRECISION AND RECALL ARE PROPERTIES OF A THRESHOLD, sweeping
+from 11.5%/98.8% to 62.0%/9.6% on one unchanged model, so report the four cells, quote precision and
+recall as a pair with the threshold, and put balanced accuracy or MCC beside them so a reader can see
+you beat the trivial baseline.""",
+]
+
+_EX_P1AO["ROC AUC (rank-based, from scratch)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one number for "does it rank the right things higher?"
+
+A classifier that outputs SCORES can be evaluated in two very different ways.
+
+    AT A THRESHOLD: turn scores into classes, count TP/FP/FN/TN, compute precision and recall. Those
+    numbers depend entirely on the threshold you chose.
+
+    ACROSS ALL THRESHOLDS: ask whether the RANKING is good, independently of where you cut.
+
+ROC AUC IS THE SECOND ONE, and it has an exact and remarkably clean interpretation:
+
+    AUC = THE PROBABILITY THAT A RANDOMLY CHOSEN POSITIVE SCORES HIGHER THAN A RANDOMLY CHOSEN
+          NEGATIVE.
+
+    AUC = 1.0   every positive outranks every negative. Perfect ordering.
+    AUC = 0.5   no better than random ordering.
+    AUC = 0.0   perfectly wrong - which means you can invert the model and get 1.0.
+
+THAT PROBABILITY STATEMENT IS THE DEFINITION WORTH CARRYING. The "area under the curve of true
+positive rate against false positive rate" is where the name comes from, and it is a much harder thing
+to reason about. THE TWO ARE PROVABLY THE SAME QUANTITY.
+
+WHY IT IS USEFUL: it is THRESHOLD-FREE. You can compare two models without having to pick an operating
+point for each, which is exactly what you want during development. AND IT IS THE REASON PEOPLE
+OVER-USE IT - being threshold-free also means it tells you nothing about any threshold you will
+actually deploy at.
+
+TERMS AS THEY APPEAR:
+- TPR = recall = TP/(TP+FN). FPR = FP/(FP+TN).
+- ROC CURVE: TPR plotted against FPR as the threshold sweeps from +infinity to -infinity.
+- PR AUC / AVERAGE PRECISION: the same idea with precision against recall. Behaves completely
+  differently under imbalance.""",
+
+    """2. THE INTUITION - the rank formula, and why it is exactly the pairwise probability
+
+The naive way to compute "probability a random positive beats a random negative" is to compare every
+positive with every negative: O(P x N), which is quadratic and hopeless at scale.
+
+THE RANK TRICK MAKES IT O(n log n):
+
+    1. Sort all n scores ascending and assign ranks 1..n (averaging ranks within ties).
+    2. Sum the ranks of the POSITIVES. Call it R.
+    3. AUC = (R - P(P+1)/2) / (P x N)      where P = number of positives, N = number of negatives.
+
+WHY THAT WORKS: a positive with rank r has r-1 items below it. Some of those are other positives. Sum
+over all positives: R - (1+2+...+P) = R - P(P+1)/2 counts exactly the number of (positive, negative)
+pairs where the positive is higher. Divide by the total number of such pairs, P x N, and you have the
+probability.
+
+    (This is the Mann-Whitney U statistic, which is why the rank-sum test and AUC are the same
+    mathematics. Saying that in an interview is a genuinely good signal.)
+
+I VERIFIED THE EQUIVALENCE numerically against the brute-force pairwise count:
+
+     n         rank formula     brute force P(pos > neg)     difference
+     50            0.893382                     0.893382       0.00e+00
+     200           0.755894                     0.755894       0.00e+00
+     800           0.748917                     0.748917       0.00e+00
+
+    EXACT AGREEMENT TO THE LAST BIT, at every size. It is not an approximation; it is the same quantity
+    computed a cheaper way.
+
+THE TIE HANDLING IS THE PART PEOPLE GET WRONG. If a positive and a negative have the SAME score, that
+pair counts as HALF a win - the model gave you no information about their order. Assigning average
+ranks within a tied block implements exactly that. A model that outputs only 0 and 1 has enormous
+ties, and getting this wrong changes the answer materially.""",
+
+    """3. WHEN AUC LIES - class imbalance, measured
+
+This is the most important practical fact about AUC and it is routinely ignored.
+
+I generated data with the SAME SEPARABILITY between the classes - positives drawn from N(1.5, 1) and
+negatives from N(0, 1) - at four different positive rates, and computed both ROC AUC and PR AUC:
+
+     positive rate     ROC AUC     PR AUC     baseline PR AUC (= prevalence)
+             50.0%      0.8576     0.8551                            0.5000
+             10.0%      0.8565     0.4737                            0.1000
+              1.0%      0.8632     0.1382                            0.0100
+              0.1%      0.8359     0.0180                            0.0010
+
+ROC AUC IS ESSENTIALLY UNCHANGED - 0.858, 0.857, 0.863, 0.836 - across a five-hundred-fold change in
+prevalence. That is by design: TPR and FPR are both per-class rates, so neither depends on how many of
+each class there are.
+
+PR AUC COLLAPSES - 0.855 down to 0.018. Because precision is TP/(TP+FP), and when negatives outnumber
+positives a thousand to one, even a small false-positive rate swamps the true positives.
+
+WHICH ONE IS TELLING THE TRUTH? BOTH, ABOUT DIFFERENT THINGS.
+
+    ROC AUC honestly reports that THE MODEL'S RANKING ABILITY DID NOT CHANGE. It is the same model
+    with the same discriminative power.
+    PR AUC honestly reports that YOUR PRODUCT IS NOW USELESS, because at 0.1% prevalence you cannot
+    build a workflow on 1.8% average precision.
+
+FOR A RARE POSITIVE CLASS, PR AUC IS THE METRIC THAT PREDICTS WHETHER THE SYSTEM WILL WORK. And note
+the last column: PR AUC's baseline is the PREVALENCE, so 0.018 against a 0.001 baseline is an 18x lift
+- genuinely informative, and useless in absolute terms. ALWAYS REPORT PR AUC AGAINST ITS BASELINE, or
+the number is uninterpretable.
+
+    (ROC AUC's baseline is always 0.5 regardless, which is one of its conveniences and part of why it
+    is over-used.)""",
+
+    """4. THE OTHER THINGS AUC DOES NOT TELL YOU
+
+IT SAYS NOTHING ABOUT CALIBRATION. AUC depends only on the ORDER of the scores, not on their values. I
+constructed two models:
+
+     model                            AUC        score range
+     well-separated scores         0.8889          0.40-0.90
+     scores crammed near 0.5       0.8889          0.50-0.55
+
+    IDENTICAL AUC. One model says 0.9 and one says 0.55 for the same item. If you need the score to
+    mean "probability" - for expected-value decisions, for thresholding on cost, for combining with
+    other models - AUC IS BLIND TO THAT ENTIRELY. Use log loss, Brier score, or a calibration plot.
+
+IT WEIGHTS ALL THRESHOLDS EQUALLY, INCLUDING ONES YOU WOULD NEVER USE. AUC integrates over the whole
+FPR range from 0 to 1. If you can only tolerate a 1% false-positive rate in production, 99% of that
+integral is over regions you will never operate in. PARTIAL AUC - restricted to the FPR range you
+actually care about - is the fix, and almost nobody uses it.
+
+IT IS INSENSITIVE TO WHERE THE ERRORS ARE. Two models with the same AUC can have completely different
+behaviour at high precision, which is usually the region you deploy in.
+
+IT DOES NOT REFLECT COST ASYMMETRY. A false negative in cancer screening and a false positive are not
+the same event; AUC treats the ranking symmetrically.
+
+WHAT AUC IS GENUINELY GOOD FOR:
+    COMPARING MODELS DURING DEVELOPMENT, before you have chosen a threshold.
+    DETECTING WHETHER A MODEL HAS ANY SIGNAL AT ALL. 0.5 means none, and that is unambiguous.
+    RANKING PROBLEMS where the output IS a ranking - search, recommendation, lead scoring.
+    MONITORING FOR DRIFT, because it is threshold-independent and so is not confounded by a threshold
+    that someone retuned.
+
+WHAT TO REPORT ALONGSIDE IT, ALWAYS:
+    PR AUC and its baseline, if the classes are imbalanced.
+    Precision and recall AT YOUR ACTUAL OPERATING THRESHOLD.
+    A calibration measure, if the scores will be interpreted as probabilities.""",
+
+    """5. THE ALTERNATIVES AND THE FAMILY
+
+    metric                measures                    imbalance-stable?     threshold-free?
+    -----------------------------------------------------------------------------------------
+    ROC AUC               ranking quality             YES                   yes
+    PR AUC / avg prec.    precision across recall     NO (by design)        yes
+    partial AUC           ranking in an FPR range     yes                   yes, in a range
+    log loss              calibrated probability      no                    yes
+    Brier score           calibrated probability      no                    yes
+    precision @ k         top-k quality               n/a                   fixed k
+    recall @ fixed FPR    the operating constraint    yes                   one point
+    F1 at a threshold     one operating point         no                    NO
+
+RECALL AT A FIXED FALSE-POSITIVE RATE is the metric that most closely matches how these systems are
+actually deployed and it is under-used. "What fraction of fraud do we catch if we can only tolerate
+0.1% false alarms?" is the question the business is asking, and it is a single point on the ROC curve
+rather than the whole area.
+
+PRECISION AT k is the right metric when there is a fixed capacity - a review team, a front page, a
+recommendation slate. AUC over the whole ranking is irrelevant if only the top 20 are ever seen.
+
+LOG LOSS AND BRIER SCORE are the calibration metrics. Note that a model can have a WORSE log loss and
+a BETTER AUC than another - they measure different things, and the two-models-same-AUC measurement
+above is exactly that case.
+
+THE MULTI-CLASS EXTENSIONS: one-vs-rest AUC averaged over classes (macro), or one-vs-one averaged over
+pairs. Macro-averaging treats rare classes as equally important, which is usually what you want and is
+the same choice as macro-versus-micro F1.
+
+THE PRACTICAL RECOMMENDATION: REPORT ROC AUC TO SHOW THE MODEL HAS SIGNAL, PR AUC (with its baseline)
+TO SHOW WHETHER IT IS USABLE ON A RARE CLASS, AND PRECISION AND RECALL AT THE OPERATING THRESHOLD TO
+SHOW WHAT WILL ACTUALLY HAPPEN. Three numbers, and each answers a question the other two cannot.""",
+
+    """6. HOW TO COMPUTE AND USE IT - numbered steps
+
+STEP 1 - USE THE RANK FORMULA, NOT THE CURVE. Sort, assign average ranks within ties, sum the
+positives' ranks, apply `(R - P(P+1)/2) / (P*N)`. O(n log n) and exact - verified to zero difference
+against the pairwise count.
+
+STEP 2 - HANDLE TIES WITH AVERAGE RANKS. A tied (positive, negative) pair is half a win. If your model
+outputs coarse scores this materially changes the answer.
+
+STEP 3 - CHECK THE CLASS BALANCE BEFORE INTERPRETING. Measured: ROC AUC barely moved (0.858 to 0.836)
+across a 500x change in prevalence while PR AUC fell from 0.855 to 0.018.
+
+STEP 4 - IF POSITIVES ARE RARE, REPORT PR AUC TOO, WITH ITS BASELINE. PR AUC's baseline is the
+prevalence, so 0.018 against 0.001 is an 18x lift and still unusable in absolute terms. WITHOUT THE
+BASELINE THE NUMBER CANNOT BE READ.
+
+STEP 5 - IF THE SCORES WILL BE INTERPRETED AS PROBABILITIES, MEASURE CALIBRATION SEPARATELY. Measured:
+two models with identical 0.8889 AUC and completely different score ranges.
+
+STEP 6 - IF YOU HAVE A HARD CONSTRAINT ON FALSE POSITIVES, USE PARTIAL AUC OR RECALL AT A FIXED FPR.
+Most of the ROC curve is territory you will never operate in.
+
+STEP 7 - ALWAYS ALSO REPORT PRECISION AND RECALL AT THE THRESHOLD YOU WILL ACTUALLY DEPLOY AT. AUC
+being threshold-free is a strength for comparison and a blind spot for deployment.
+
+STEP 8 - SANITY-CHECK AGAINST 0.5. An AUC near 0.5 means no signal. An AUC below 0.5 means your labels
+or your sign are inverted - it is almost always a bug rather than a discovery.
+
+STEP 9 - BE SUSPICIOUS OF AUC ABOVE ~0.99 ON REAL DATA. It usually means leakage: a feature that
+encodes the label, or a time-ordered split done randomly.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'ROC AUC is the probability that a randomly chosen positive scores higher than a randomly chosen
+negative. That's the definition I'd give, rather than "area under the curve of true positive rate
+against false positive rate" - they're provably the same quantity and the probability statement is the
+one you can reason with.
+
+So 1.0 means every positive outranks every negative, 0.5 means the ordering is random, and below 0.5
+means you've probably got a sign or label bug rather than a discovery, because you could just invert
+the model.
+
+The way to compute it is the rank formula, not by building the curve. Sort all the scores, assign
+ranks with averaging within ties, sum the ranks of the positives, and then AUC equals the positive
+rank sum minus P times P-plus-one over two, all divided by P times N. That's O(n log n) instead of the
+O(P times N) pairwise comparison, and I checked it against brute force - exact agreement to the last
+bit at n equals 50, 200 and 800. It's the Mann-Whitney U statistic, which is why the rank-sum test and
+AUC are the same mathematics.
+
+The tie handling is the part people get wrong: a positive and a negative with the same score count as
+half a win, because the model gave you no information about their order. Average ranks within a tied
+block implements exactly that, and if your model outputs coarse scores it changes the answer
+materially.
+
+The most important practical thing is what AUC does under class imbalance. I generated data with the
+SAME separability at four prevalences. ROC AUC was 0.858, 0.857, 0.863 and 0.836 - essentially
+unchanged across a five-hundred-fold change in how rare the positives were. PR AUC went 0.855, 0.474,
+0.138, 0.018. Both are telling the truth about different things: ROC AUC correctly reports that the
+model's ranking ability didn't change, and PR AUC correctly reports that your product is now useless
+because you can't build a workflow on 1.8% average precision. For a rare positive class, PR AUC is the
+one that predicts whether the system works - and you have to report it against its baseline, which is
+the prevalence, or the number is uninterpretable.
+
+The other blind spot is calibration. AUC depends only on the ORDER of the scores, not their values. I
+built two models with identical AUC of 0.8889 where one's scores ranged 0.40 to 0.90 and the other's
+0.50 to 0.55. If you need the score to mean a probability - for expected-value decisions or for
+combining models - AUC is completely blind to that, and you need log loss or a calibration plot.
+
+So what I'd report: ROC AUC to show there's signal, PR AUC with its baseline to show whether it's
+usable on a rare class, and precision and recall at the threshold you'll actually deploy at.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE RANK-BASED AUC - the version to write:
+
+    def auc(scores, labels):
+        order = sorted(range(len(scores)), key=lambda i: scores[i])   # ASCENDING
+        ranks = [0.0] * len(scores)
+
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and scores[order[j+1]] == scores[order[i]]:
+                j += 1
+            # ^ [i..j] is a block of TIED scores.
+            avg = (i + j) / 2 + 1
+            # ^ AVERAGE RANK for the whole block, 1-indexed. This is what makes a tied
+            #   (positive, negative) pair count as HALF a win, which is correct: the model
+            #   expressed no preference between them.
+            for k in range(i, j + 1):
+                ranks[order[k]] = avg
+            i = j + 1
+
+        P = sum(labels)
+        N = len(labels) - P
+        if P == 0 or N == 0:
+            return float("nan")
+            # ^ AUC IS UNDEFINED with only one class. Returning 0.5 or 0 here is a common
+            #   and silent bug - it looks like a poor model rather than an invalid split.
+
+        R = sum(ranks[i] for i in range(len(labels)) if labels[i] == 1)
+        return (R - P * (P + 1) / 2) / (P * N)
+        #        ^^^^^^^^^^^^^^^^^^  subtract the ranks the positives occupy among THEMSELVES
+        #                            (1 + 2 + ... + P), leaving only positive-over-negative wins
+        #                                          ^^^^^  the total number of such pairs
+
+THE BRUTE-FORCE DEFINITION, which is what it must equal:
+
+    def auc_pairwise(scores, labels):
+        pos = [scores[i] for i in range(len(labels)) if labels[i] == 1]
+        neg = [scores[i] for i in range(len(labels)) if labels[i] == 0]
+        wins = sum(1 for p in pos for n in neg if p > n) \\
+             + 0.5 * sum(1 for p in pos for n in neg if p == n)
+        #      ^^^ TIES COUNT AS HALF. This line is the definition that the average-rank
+        #          handling above implements.
+        return wins / (len(pos) * len(neg))
+    # VERIFIED: identical to the rank version to 0.00e+00 at n = 50, 200 and 800.
+    # O(P*N) - write it once to check your fast version, never ship it.
+
+PR AUC (average precision), which you should report alongside:
+
+    def pr_auc(scores, labels):
+        order = sorted(range(len(scores)), key=lambda i: -scores[i])   # DESCENDING
+        P = sum(labels)
+        tp = fp = 0
+        prev_recall = 0.0
+        area = 0.0
+        for i in order:
+            if labels[i]: tp += 1
+            else:         fp += 1
+            precision = tp / (tp + fp)
+            recall = tp / P
+            area += precision * (recall - prev_recall)
+            # ^ a step-wise integral: precision times the CHANGE in recall. This is
+            #   "average precision" and it is the standard way to compute PR AUC -
+            #   trapezoidal interpolation on a PR curve is known to be optimistic.
+            prev_recall = recall
+        return area
+    # ITS BASELINE IS THE PREVALENCE, not 0.5. Report it: "PR AUC 0.018 against a 0.001
+    # baseline" is readable; "PR AUC 0.018" is not.
+
+THE SANITY CHECKS TO RUN EVERY TIME:
+
+    assert 0.0 <= auc(s, l) <= 1.0
+    assert abs(auc(s, l) + auc([-x for x in s], l) - 1.0) < 1e-9   # inverting scores
+    assert abs(auc(list(range(n)), [0]*(n//2) + [1]*(n//2)) - 1.0) < 1e-9  # perfect ranking""",
+
+    """9. A TRACE - AUC by hand, both ways, including a tie
+
+SIX ITEMS. Scores and labels:
+
+     item      A     B     C     D     E     F
+     score   0.9   0.8   0.7   0.7   0.5   0.2
+     label     1     0     1     0     1     0
+
+    THREE POSITIVES (A, C, E), THREE NEGATIVES (B, D, F). Nine (positive, negative) pairs.
+
+BRUTE FORCE - compare every positive with every negative:
+
+     pair        scores          result
+     A vs B     0.9 > 0.8        WIN     1.0
+     A vs D     0.9 > 0.7        WIN     1.0
+     A vs F     0.9 > 0.2        WIN     1.0
+     C vs B     0.7 < 0.8        loss    0.0
+     C vs D     0.7 = 0.7        TIE     0.5     <- the model expressed no preference
+     C vs F     0.7 > 0.2        WIN     1.0
+     E vs B     0.5 < 0.8        loss    0.0
+     E vs D     0.5 < 0.7        loss    0.0
+     E vs F     0.5 > 0.2        WIN     1.0
+                                 TOTAL   5.5
+
+     AUC = 5.5 / 9 = 0.6111
+
+RANK FORMULA - sort ascending and assign ranks, averaging within the tie:
+
+     sorted:     F(0.2)   E(0.5)   C(0.7)   D(0.7)   B(0.8)   A(0.9)
+     raw rank:      1        2        3        4        5        6
+     used rank:     1        2       3.5      3.5       5        6
+                                     ^^^^^^^^^^^^ C and D are tied, so both get (3+4)/2
+
+     positives are A (rank 6), C (rank 3.5), E (rank 2).   R = 6 + 3.5 + 2 = 11.5
+     P = 3, N = 3
+     AUC = (11.5 - 3*4/2) / (3*3) = (11.5 - 6) / 9 = 5.5 / 9 = 0.6111       IDENTICAL.
+
+    THE `P(P+1)/2 = 6` TERM IS THE RANKS THE THREE POSITIVES WOULD OCCUPY IF THEY WERE THE THREE
+    LOWEST ITEMS - i.e. the wins they get purely from being above each other, which do not count.
+    Subtracting it leaves exactly the positive-over-negative wins.
+
+    AND NOTE HOW THE TIE FLOWED THROUGH: C's rank of 3.5 instead of 3 or 4 contributed exactly the 0.5
+    that the pairwise version assigned to the C-vs-D tie.
+
+VERIFIED AT SCALE, against the brute-force version:
+
+     n         rank formula     brute force     difference
+     50            0.893382        0.893382       0.00e+00
+     200           0.755894        0.755894       0.00e+00
+     800           0.748917        0.748917       0.00e+00
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `sorted(..., key=lambda i: scores[i])` (ASCENDING)
+            produced the F, E, C, D, B, A order. Ascending matters: the formula assumes higher rank
+            means higher score, and sorting descending silently gives you 1 - AUC.
+    the `while scores[order[j+1]] == scores[order[i]]` tie block
+            produced C and D both getting 3.5. Skip this and C gets 3 or 4 depending on sort
+            stability, and the answer changes by 1/9 on this tiny example.
+    `avg = (i + j) / 2 + 1`
+            produced 3.5 from the block [i=2, j=3]. The `+1` converts 0-indexed positions to 1-indexed
+            ranks, and dropping it shifts every rank by one and breaks the formula.
+    `R = sum(ranks[i] for i where labels[i] == 1)`
+            produced 11.5. Only the positives' ranks are summed; the negatives enter only through N.
+    `- P * (P + 1) / 2`
+            produced the subtraction of 6. It removes the positives' wins over each other, which is
+            why the formula gives a probability over positive-negative pairs specifically.
+    `/ (P * N)`
+            produced the division by 9 - the total number of comparable pairs.
+    `if P == 0 or N == 0: return nan`
+            does not appear in this trace and is the guard that stops a single-class evaluation split
+            returning a plausible-looking 0.5.""",
+
+    """10. THE FORMULA, THE MISTAKES, AND THE TAKEAWAY
+
+    AUC = P(a random positive scores above a random negative), with ties counting as 1/2.
+    RANK FORM: sort ascending, average ranks within ties, then
+        AUC = (sum of positives' ranks - P(P+1)/2) / (P x N)          O(n log n)
+    It is the Mann-Whitney U statistic normalised by P x N.
+
+    MEASURED, rank formula vs brute-force pairwise count: identical to 0.00e+00 at n = 50, 200, 800.
+    MEASURED, same separability at four prevalences:
+        prevalence   50%     10%     1%      0.1%
+        ROC AUC      0.8576  0.8565  0.8632  0.8359      <- essentially unchanged
+        PR AUC       0.8551  0.4737  0.1382  0.0180      <- collapses
+        PR baseline  0.5000  0.1000  0.0100  0.0010
+    MEASURED, two models with identical AUC 0.8889 and score ranges 0.40-0.90 and 0.50-0.55.
+
+THE #1 MISTAKE: using ROC AUC alone on a rare positive class. Measured: it barely moved across a 500x
+prevalence change while PR AUC fell from 0.855 to 0.018. Report both.
+
+THE #2 MISTAKE: reporting PR AUC without its baseline. Its baseline is the PREVALENCE, so 0.018 is
+either terrible or an 18x lift depending on a number you did not print.
+
+THE #3 MISTAKE: mishandling ties. A tied positive-negative pair is half a win. Average ranks within
+tied blocks; anything else is wrong, and coarse-scored models have many ties.
+
+THE #4 MISTAKE: assuming AUC says anything about calibration. It depends only on order. Measured: two
+models, identical 0.8889, wildly different score ranges.
+
+THE #5 MISTAKE: sorting descending in the rank formula. You silently compute 1 - AUC.
+
+THE #6 MISTAKE: returning 0.5 when only one class is present. AUC is undefined there; return NaN and
+raise, or a broken split looks like a mediocre model.
+
+THE #7 MISTAKE: integrating over the whole FPR range when you can only tolerate a fraction of it. Use
+partial AUC or recall at a fixed FPR - the latter is the metric the business is usually actually
+asking about.
+
+THE #8 MISTAKE: not being suspicious of AUC above ~0.99 on real data. It is nearly always leakage - a
+feature encoding the label, or a random split on time-ordered data.
+
+THE #9 MISTAKE: quoting AUC and stopping. It is threshold-free, which is a strength for comparing
+models and a blind spot for deploying one. Give precision and recall at the operating threshold too.
+
+ONE-SENTENCE TAKEAWAY: ROC AUC is exactly the probability that a random positive outranks a random
+negative, computable in O(n log n) by the rank formula (sum of positives' ranks minus P(P+1)/2, over
+P x N, with average ranks for ties) - and because TPR and FPR are per-class rates it is nearly
+invariant to class balance, which is honest about ranking and silent about usability, so on a rare
+positive class report PR AUC against its prevalence baseline and precision and recall at your actual
+threshold alongside it.""",
+]
+
+_EX_P1AO["Model cards and responsible model documentation"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - write down what the model is for, and what it is not for
+
+A trained model is a file of numbers. Somebody downloads it, uses it for something you never
+considered, and it fails in a way that hurts a person. THE FAILURE WAS PREDICTABLE AND NOBODY WROTE IT
+DOWN.
+
+A MODEL CARD IS A SHORT, STRUCTURED DOCUMENT THAT SHIPS WITH A MODEL and answers the questions a
+responsible user needs answered before deploying it:
+
+    WHAT is it, and who made it?
+    WHAT IS IT FOR - and, crucially, WHAT IS IT NOT FOR?
+    WHAT DATA was it trained on?
+    HOW WELL DOES IT WORK - and how well does it work DISAGGREGATED BY GROUP?
+    WHAT ARE THE KNOWN LIMITATIONS AND FAILURE MODES?
+    WHAT ETHICAL CONSIDERATIONS apply?
+
+The analogy the original paper (Mitchell et al., 2019) used is the NUTRITION LABEL. You do not have to
+be a nutritionist to read one; it exists so that the information needed to make a decision travels
+with the product.
+
+THE SINGLE MOST IMPORTANT SECTION, AND THE ONE MOST OFTEN LEFT OUT: OUT-OF-SCOPE USE. A face detector
+trained on well-lit studio portraits is not a surveillance system. A sentiment model trained on
+English product reviews is not a mental-health screening tool. WRITING DOWN WHAT THE MODEL IS NOT FOR
+IS THE HIGHEST-VALUE PARAGRAPH IN THE DOCUMENT, because it is the one that prevents the failure nobody
+anticipated.
+
+TERMS AS THEY APPEAR:
+- DISAGGREGATED EVALUATION: reporting metrics separately per subgroup rather than only in aggregate.
+- DATASHEET: the equivalent document for a DATASET rather than a model.
+- INTENDED USE / OUT-OF-SCOPE USE: the two halves of the scope statement.
+- SYSTEM CARD: documentation for a whole deployed system, not just the model artefact.""",
+
+    """2. THE INTUITION - why aggregate metrics hide the thing you need to know
+
+THE ARGUMENT FOR DISAGGREGATED EVALUATION IS ARITHMETIC, AND IT IS THE HEART OF WHY MODEL CARDS EXIST.
+
+Suppose a model is 95% accurate overall. That single number is compatible with:
+
+    group A (90% of the data):   96.7% accurate
+    group B (10% of the data):   80.0% accurate
+    -> overall 0.9(96.7) + 0.1(80.0) = 95.0%
+
+    AND ALSO WITH:
+
+    group A (90% of the data):   95.0% accurate
+    group B (10% of the data):   95.0% accurate
+    -> overall 95.0%
+
+    THE AGGREGATE NUMBER CANNOT DISTINGUISH THOSE TWO WORLDS, and in one of them the model works
+    substantially worse for a tenth of the people it is applied to. The smaller the group, the more
+    completely its performance is hidden - a group that is 1% of your data can be at CHANCE and move
+    the aggregate by half a point.
+
+THIS IS THE SAME ARITHMETIC AS THE ACCURACY TRAP IN A CONFUSION MATRIX, applied to subgroups instead of
+to classes, and it has the same consequence: A SINGLE AGGREGATE NUMBER IS DOMINATED BY THE MAJORITY AND
+SAYS NOTHING ABOUT THE MINORITY.
+
+THE FAMOUS EMPIRICAL DEMONSTRATION is Gender Shades (Buolamwini and Gebru, 2018): commercial gender
+classifiers were reported at high overall accuracy, and disaggregated evaluation found error rates
+under 1% for lighter-skinned men and up to 34.7% for darker-skinned women. THE AGGREGATE NUMBER WAS
+NOT WRONG. IT WAS INCOMPLETE IN A WAY THAT MATTERED ENORMOUSLY, and that paper is the reason
+disaggregated reporting became a norm.
+
+    THAT IS THE ENTIRE CASE FOR THE EVALUATION SECTION OF A MODEL CARD: not that aggregate metrics
+    lie, but that they average away exactly the information a deployer needs.
+
+THE SECOND ARGUMENT IS ABOUT DISTRIBUTION. A model's performance is a property of the model AND the
+data it is applied to. If the training data was English-language product reviews and someone applies
+it to clinical notes, the reported accuracy is simply not applicable - and the only way they can know
+that is if you wrote down what the training data was.""",
+
+    """3. WHAT A MODEL CARD ACTUALLY CONTAINS
+
+    SECTION                     WHAT GOES IN IT
+    -----------------------------------------------------------------------------------------
+    Model details               who made it, when, version, architecture, licence, citation,
+                                and a contact for questions
+    Intended use                the primary use cases, the intended users, and the context
+    OUT-OF-SCOPE USE            uses the model must NOT be put to. THE HIGHEST-VALUE SECTION.
+    Factors                     the groups, instrument conditions and environments performance
+                                might vary across - decided BEFORE you measure
+    Metrics                     which metrics, at which thresholds, and WHY those
+    Evaluation data             what it is, where it came from, how it was chosen, how it
+                                differs from training data
+    Training data               the same questions for training
+    Quantitative analyses       results, DISAGGREGATED by the factors, with confidence intervals
+    Ethical considerations      risks, who could be harmed, mitigations, and what remains
+    Caveats and recommendations everything else a deployer should know
+
+THE THREE SECTIONS THAT DO THE MOST WORK:
+
+    OUT-OF-SCOPE USE. Specific and concrete, not a disclaimer. "This model must not be used for
+    employment screening, credit decisions, or any application where a false negative denies someone a
+    service" is useful. "Use at your own risk" is not.
+
+    DISAGGREGATED RESULTS. Per-group metrics with sample sizes and confidence intervals. A group with
+    n = 40 has an enormous error bar and reporting a bare percentage for it is misleading in the other
+    direction.
+
+    TRAINING DATA PROVENANCE. Where it came from, what it over- and under-represents, and what was
+    filtered. This is the section that lets someone predict whether the model will work on THEIR data,
+    and it is the section most often reduced to "a large corpus of internet text".
+
+THE RELATED DOCUMENTS, because they are frequently confused:
+    DATASHEETS FOR DATASETS (Gebru et al.) - the same idea for a dataset. Motivation, composition,
+    collection process, preprocessing, uses, distribution, maintenance.
+    SYSTEM CARDS - for a deployed SYSTEM rather than a model artefact: the model plus its filters,
+    retrieval, prompts, human review and fallbacks. What OpenAI and Anthropic publish for their
+    products.
+    FACTSHEETS (IBM), TRANSPARENCY NOTES (Microsoft) - the same genre under different names.""",
+
+    """4. THE FAILURE MODES OF MODEL CARDS THEMSELVES
+
+FAILURE 1 - MARKETING RATHER THAN DOCUMENTATION. A card that lists only favourable results and vague
+limitations is worse than none, because it creates a false impression of diligence. THE TEST IS
+WHETHER THE CARD CONTAINS ANYTHING THAT WOULD DISCOURAGE SOMEONE FROM USING THE MODEL. If not, it is
+not documentation.
+
+FAILURE 2 - "USE AT YOUR OWN RISK" AS THE OUT-OF-SCOPE SECTION. Legal boilerplate transfers liability
+and communicates nothing. The section must name specific applications.
+
+FAILURE 3 - AGGREGATE METRICS ONLY. The central failure, and the one the format was invented to fix.
+An overall 95% is compatible with 80% for a tenth of your users.
+
+FAILURE 4 - DISAGGREGATION WITHOUT SAMPLE SIZES. "94.1% for group C" over 34 examples has a confidence
+interval of roughly plus or minus 8 points. REPORT n AND AN INTERVAL, or the disaggregation creates
+false precision instead of removing false confidence.
+
+FAILURE 5 - CHOOSING THE FACTORS AFTER SEEING THE RESULTS. If you disaggregate by fifteen attributes
+and report the five where the model looks even, that is p-hacking. DECIDE THE FACTORS BEFORE
+MEASURING, and report all of them.
+
+FAILURE 6 - THE CARD GOING STALE. Model v2 ships and the card describes v1. Version the card with the
+model and treat a card update as part of the release, not as documentation debt.
+
+FAILURE 7 - VAGUE TRAINING DATA. "A large corpus of publicly available text" answers nothing. There
+are real reasons for partial disclosure - competitive, legal, privacy - and the honest response is to
+SAY WHAT YOU CANNOT DISCLOSE AND WHY, rather than to be vague and hope nobody notices.
+
+FAILURE 8 - TREATING IT AS A COMPLIANCE ARTEFACT WRITTEN AT THE END. A card written after the model
+ships documents what happened. A card DRAFTED AT THE START, when you write down the intended use and
+the factors you will evaluate across, CHANGES WHAT YOU BUILD - it forces you to decide who the model
+is for before you decide what data to collect.
+
+FAILURE 9 - NO CONTACT AND NO FEEDBACK ROUTE. If someone finds a failure mode you missed, they need
+somewhere to send it.""",
+
+    """5. THE WIDER CONTEXT - why this stopped being optional
+
+REGULATION HAS MADE DOCUMENTATION A REQUIREMENT RATHER THAN A COURTESY:
+    THE EU AI ACT requires technical documentation, risk management, data governance and transparency
+    for high-risk systems, and separate transparency obligations for general-purpose models.
+    NIST'S AI RISK MANAGEMENT FRAMEWORK is voluntary in the US and is being adopted as a de facto
+    standard in procurement.
+    SECTOR RULES - medical devices, financial services, employment - have their own requirements, and
+    they generally predate the AI-specific ones.
+
+PLATFORM NORMS HAVE MADE IT ROUTINE. Hugging Face model cards are effectively mandatory in practice -
+a model without one is treated as unmaintained. That normalisation did more for adoption than any
+paper.
+
+THE COMMERCIAL ARGUMENT, which is the one that actually gets cards written inside companies: A CARD IS
+HOW YOU GET A MODEL APPROVED. Procurement, legal review and security review all ask the same questions
+a card answers. Writing it once, properly, is faster than answering them five times in meetings.
+
+AND THE ENGINEERING ARGUMENT, which is the most underrated: WRITING THE CARD FIRST CHANGES THE MODEL.
+If you have to state the intended use before you start, you have to decide who the users are. If you
+have to state the evaluation factors before you measure, you have to collect data that lets you
+evaluate them - which frequently means going back and getting more data for an under-represented
+group. THE DOCUMENT IS A DESIGN TOOL, NOT A REPORT.
+
+WHAT DOES NOT WORK: a card is not a substitute for evaluation, for red-teaming, for monitoring after
+deployment, or for a decision not to build something. It documents; it does not mitigate. A well-
+documented harmful model is still harmful, and the strongest thing a card does is make that visible
+early enough for someone to say so.""",
+
+    """6. HOW TO WRITE ONE - numbered steps
+
+STEP 1 - WRITE THE INTENDED USE AND OUT-OF-SCOPE SECTIONS FIRST, BEFORE TRAINING. This is the step
+that changes what you build. If you cannot state who the model is for, you are not ready to collect
+data.
+
+STEP 2 - DECIDE THE EVALUATION FACTORS BEFORE YOU MEASURE. Which groups, which conditions, which
+environments. Deciding afterwards is p-hacking, and deciding beforehand often reveals that you cannot
+measure a group because you did not collect enough of it.
+
+STEP 3 - CHECK YOU CAN ACTUALLY EVALUATE THOSE FACTORS. If a group has 34 examples, you cannot report a
+meaningful metric for it. THAT IS A FINDING, and it belongs in the card as a limitation.
+
+STEP 4 - DOCUMENT THE TRAINING DATA HONESTLY. Source, size, time range, languages, what was filtered
+and why, what it over- and under-represents. If you cannot disclose something, say so and say why.
+
+STEP 5 - REPORT DISAGGREGATED METRICS WITH SAMPLE SIZES AND CONFIDENCE INTERVALS. All the factors you
+committed to, not just the flattering ones.
+
+STEP 6 - STATE THE THRESHOLD AND THE OPERATING POINT. "Precision 0.82 at recall 0.61, threshold 0.7"
+rather than a bare number - the same discipline as any classifier report.
+
+STEP 7 - WRITE THE LIMITATIONS SECTION AS IF YOU WERE TRYING TO TALK SOMEONE OUT OF USING IT. If
+nothing in the card would discourage a use, the card is marketing.
+
+STEP 8 - NAME THE FORESEEABLE HARMS AND WHO BEARS THEM. Not "the model may be biased" - who is harmed,
+in what scenario, and what would reduce it.
+
+STEP 9 - GIVE A CONTACT AND A FEEDBACK ROUTE, and a version number tied to the model version.
+
+STEP 10 - UPDATE IT WITH EVERY RELEASE. A stale card is an actively misleading one.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A model card is a short structured document that ships with a model and answers the questions someone
+needs answered before deploying it: what it is, what it's for, what it's explicitly NOT for, what data
+it was trained on, how well it works broken down by group, and what its known limitations are. The
+original paper used the analogy of a nutrition label - the information needed to make a decision
+travels with the product.
+
+The section I'd argue is most valuable is OUT-OF-SCOPE USE, and it's the one most often missing. A
+face detector trained on well-lit studio portraits isn't a surveillance system; a sentiment model
+trained on English product reviews isn't a mental-health screening tool. Writing down what the model
+is not for is what prevents the failure nobody anticipated.
+
+The technical heart of it is disaggregated evaluation, and the argument is arithmetic. A model that's
+95% accurate overall is equally consistent with being 95% accurate for everyone, or with being 96.7%
+for ninety percent of your data and 80% for the other ten. The aggregate number can't distinguish
+those, and the smaller the group, the more completely its performance is hidden - a group that's one
+percent of your data could be at chance and move the aggregate by half a point. It's the same
+arithmetic as the accuracy trap in a confusion matrix, applied to subgroups instead of classes.
+
+The empirical demonstration everyone cites is Gender Shades, where commercial gender classifiers were
+reported at high overall accuracy and disaggregating found error rates under 1% for lighter-skinned
+men and up to about 35% for darker-skinned women. The aggregate number wasn't wrong - it was
+incomplete in a way that mattered enormously.
+
+Two things I'd flag about doing it well. Disaggregation without sample sizes is its own failure - "94%
+for group C" over 34 examples has an error bar of about plus or minus eight points, so you need n and
+a confidence interval or you've replaced false confidence with false precision. And you have to decide
+the evaluation factors BEFORE you measure, otherwise reporting the ones where the model looks even is
+just p-hacking.
+
+The thing that changed my view of these is that writing the card FIRST changes what you build. If you
+have to state the intended use before training, you have to decide who the users are. If you have to
+state the evaluation factors before measuring, you have to collect data that lets you evaluate them -
+which often means going back for more data on an under-represented group. It's a design tool, not a
+report.
+
+And the practical reason they get written inside companies isn't ethics, it's that a card is how you
+get a model through procurement, legal and security review - they all ask the same questions, and
+answering them once properly is faster than five meetings.'""",
+
+    """8. THE STRUCTURE, PIECE BY PIECE - a card that would pass review
+
+    # Model Card: support-ticket-classifier v2.3
+
+    ## Model details
+    - Developed by: Platform ML team, contact: ml-platform@example.com
+    - Version 2.3, released 2026-03-14. Supersedes 2.2.
+    - Architecture: fine-tuned DistilBERT-base, 66M parameters
+    - Licence: internal use only.  Card version: 2.3 (updated with every model release)
+    <- A VERSION AND A CONTACT. A card without them cannot be trusted or corrected.
+
+    ## Intended use
+    - PRIMARY: routing inbound English-language support tickets to one of 9 queues.
+    - INTENDED USERS: the support platform's routing service.
+    - CONTEXT: tickets are re-routable by a human at any point; a misroute costs a delay,
+      not a denial of service.
+    <- STATING THE COST OF AN ERROR is what makes the metrics interpretable.
+
+    ## Out-of-scope use
+    - MUST NOT be used to auto-close tickets or to deny support.
+    - MUST NOT be used for non-English tickets; see the evaluation below.
+    - MUST NOT be used for any decision affecting a customer's account status, billing,
+      or eligibility.
+    - Not evaluated on tickets containing code or log excerpts longer than 512 tokens.
+    <- SPECIFIC APPLICATIONS, NOT A DISCLAIMER. This section is the reason the card exists.
+
+    ## Factors (declared BEFORE evaluation)
+    - ticket language, ticket length, customer tier, product area, presence of an attachment
+    <- COMMITTED IN ADVANCE. Choosing these after seeing results is p-hacking.
+
+    ## Metrics
+    - macro-F1 (all 9 queues weighted equally, so rare queues are not hidden)
+    - per-queue precision and recall at the deployed threshold of 0.55
+    <- MACRO, AND THE THRESHOLD STATED. Both choices are the same discipline as any
+       classifier report.
+
+    ## Evaluation data
+    - 12,400 tickets, 2025-10 to 2026-01, sampled to match production queue distribution.
+    - EXCLUDED: tickets already routed by a rule, which are 18% of production volume and
+      are not seen by this model.
+    <- SAYING WHAT IS EXCLUDED AND WHY. Otherwise the numbers do not describe production.
+
+    ## Quantitative analyses
+      group                    n        macro-F1     95% CI
+      overall             12,400           0.847     +/- 0.011
+      English             11,900           0.856     +/- 0.011
+      non-English            500           0.611     +/- 0.048   <- SEE OUT-OF-SCOPE
+      tickets < 50 words   4,100           0.802     +/- 0.019
+      tickets > 500 words    380           0.694     +/- 0.062   <- WIDE INTERVAL, SMALL n
+      enterprise tier      1,200           0.851     +/- 0.033
+    <- n AND AN INTERVAL ON EVERY ROW. The 380-example row has an interval three times
+       wider than the aggregate, and reporting 0.694 without that would be misleading.
+
+    ## Limitations
+    - Performance degrades substantially on non-English tickets (0.611 vs 0.856) and on
+      tickets over 500 words (0.694).
+    - Training data over-represents the 2 largest product areas (61% of examples for 22%
+      of the catalogue).
+    - The model has not been evaluated on tickets submitted through the mobile app, which
+      launched after the evaluation window.
+    <- SOMETHING HERE SHOULD DISCOURAGE A USE. If nothing does, it is marketing.
+
+    ## Ethical considerations
+    - Misrouting a ticket delays a response. Customers on the lowest support tier already
+      wait longest, so a systematic misroute for that group compounds an existing gap; we
+      report per-tier metrics for this reason and monitor them weekly.
+    - No demographic attributes are used as features, but ticket LANGUAGE correlates with
+      region, so the non-English gap is a fairness concern and not only a coverage one.
+    <- NAMES WHO IS HARMED AND HOW, rather than "the model may be biased".
+
+    ## Caveats and recommendations
+    - Re-evaluate after any change to the queue taxonomy.
+    - Route non-English tickets by rule until a multilingual model is available.
+    - Report failures to ml-platform@example.com; we triage weekly.""",
+
+    """9. A WORKED CONTRAST - the same model, documented two ways
+
+THE BAD VERSION, which is what most cards look like:
+
+    # ticket-classifier
+    A BERT model for classifying support tickets. Achieves 94% accuracy.
+    Trained on internal support data. Use at your own risk.
+
+    WHAT IS WRONG WITH IT, line by line:
+        "94% accuracy"       - on what data? at what threshold? ACCURACY on a 9-class problem with
+                               an unbalanced queue distribution is dominated by the largest queue.
+        "internal support data" - what time range? what languages? what was excluded?
+        "use at your own risk"  - transfers liability and communicates nothing. Someone will now use
+                               it to auto-close tickets, and nothing here told them not to.
+        no version, no contact, no date - it cannot be corrected or trusted.
+        NOTHING IN IT WOULD DISCOURAGE ANY USE. That is the test it fails.
+
+THE GOOD VERSION reports the same model as:
+
+    macro-F1 0.847 overall (n = 12,400, 95% CI +/- 0.011), at threshold 0.55
+    English 0.856 (n = 11,900)   |   non-English 0.611 (n = 500, CI +/- 0.048)
+    OUT OF SCOPE: auto-closing tickets, non-English routing, any account-status decision.
+
+    THE SAME MODEL. The second version tells a deployer three things the first hides:
+        (a) the headline metric is MACRO-F1, not accuracy, so the small queues are not hidden;
+        (b) there is a 24-point gap on non-English tickets, which is a decision-relevant fact;
+        (c) there are specific uses this model must not be put to.
+
+THE ARITHMETIC BEHIND WHY (b) MATTERS, worked through:
+
+    non-English tickets are 500 of 12,400 = 4.0% of the evaluation set.
+    if the model scored 0.856 on English and 0.611 on non-English,
+        aggregate = 0.96(0.856) + 0.04(0.611) = 0.846
+    if it had scored 0.856 on BOTH,
+        aggregate = 0.856
+
+    A 24-POINT PERFORMANCE GAP FOR ONE IN TWENTY-FIVE USERS MOVES THE HEADLINE NUMBER BY ONE POINT.
+    Nobody reading the aggregate would notice, and the deployer routing a region's tickets through it
+    would find out from complaints.
+
+    AND SCALE IT DOWN: if non-English were 1% of the data, a gap of 24 points would move the aggregate
+    by 0.24 points - INDISTINGUISHABLE FROM NOISE. The smaller the group, the more completely the
+    aggregate hides it, which is the precise sense in which aggregate reporting fails the people it
+    fails.
+
+THE CONFIDENCE INTERVAL POINT, also worked:
+
+    the non-English row has n = 500 and a 95% interval of about +/- 0.048.
+    the >500-words row has n = 380 and an interval of about +/- 0.062 - THREE TIMES the aggregate's.
+    reporting "0.694" for that row without the interval implies a precision the data does not support,
+    and someone would reasonably conclude the model is 15 points worse on long tickets when the
+    honest statement is "worse, by somewhere between 4 and 27 points".
+
+    DISAGGREGATION WITHOUT SAMPLE SIZES REPLACES FALSE CONFIDENCE WITH FALSE PRECISION. Both are
+    failures; only one of them looks rigorous.""",
+
+    """10. WHAT GOOD LOOKS LIKE, THE MISTAKES, AND THE TAKEAWAY
+
+    THE TEN SECTIONS: model details | intended use | OUT-OF-SCOPE USE | factors | metrics |
+    evaluation data | training data | quantitative analyses (DISAGGREGATED) | ethical considerations |
+    caveats and recommendations.
+
+    THE THREE TESTS A CARD MUST PASS:
+        1. Does it contain anything that would DISCOURAGE a use? If not, it is marketing.
+        2. Are the results disaggregated, with n and a confidence interval on every row?
+        3. Could a stranger tell from it whether the model will work on THEIR data?
+
+THE #1 MISTAKE: aggregate metrics only. A 95% overall figure is equally consistent with 95% for
+everyone and with 80% for a tenth of your users, and the smaller the group the more completely it is
+hidden.
+
+THE #2 MISTAKE: "use at your own risk" instead of a real out-of-scope section. Name the specific
+applications the model must not be put to.
+
+THE #3 MISTAKE: disaggregating without sample sizes and intervals. A 380-example row can have an
+interval three times the aggregate's, and a bare percentage there is misleading in the opposite
+direction.
+
+THE #4 MISTAKE: choosing the evaluation factors after seeing the results. Commit to them in advance
+and report all of them.
+
+THE #5 MISTAKE: vague training-data description. If you genuinely cannot disclose, say what and say
+why - that is honest; "a large corpus of publicly available text" is not.
+
+THE #6 MISTAKE: writing the card at the end. Written first, it changes what you build: you have to
+decide who the users are, and you have to collect data that lets you evaluate the groups you committed
+to.
+
+THE #7 MISTAKE: letting it go stale. Version it with the model and update it as part of the release.
+
+THE #8 MISTAKE: reporting a bare metric with no threshold. The same discipline as any classifier
+report - precision and recall as a pair, at a stated operating point.
+
+THE #9 MISTAKE: treating the card as a mitigation. It documents risk; it does not reduce it. A
+well-documented harmful model is still harmful, and the card's real value is making that visible early
+enough that somebody can say so.
+
+ONE-SENTENCE TAKEAWAY: a model card is a structured document that travels with a model so a deployer
+can tell whether it will work for THEM - its technical heart is DISAGGREGATED evaluation, because an
+aggregate metric averages away exactly the minority performance that matters (a 24-point gap for 4% of
+users moves the headline by one point, and by 0.24 points if they are 1%), and its highest-value
+section is OUT-OF-SCOPE USE, so write it first, commit to the evaluation factors before measuring,
+report n and a confidence interval on every row, and make sure the document contains something that
+would discourage a use.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
