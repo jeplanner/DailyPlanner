@@ -157969,6 +157969,1051 @@ process, then machine, then next hop, then bits - so when something breaks you c
 bottom and let each working layer eliminate everything beneath it.""",
 ]
 
+_EX_P1AO["ACID transactions"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - four promises about a group of writes
+
+A TRANSACTION is a group of database operations treated as ONE unit. ACID is the four promises the
+database makes about that unit.
+
+    ATOMICITY    all of it happens, or none of it does. There is no half.
+    CONSISTENCY  a committed transaction never leaves the data violating your declared rules.
+    ISOLATION    concurrent transactions do not see each other's half-finished work.
+    DURABILITY   once commit returns, the data survives a crash.
+
+THE MOTIVATING EXAMPLE IS ALWAYS A TRANSFER, and it is the right one:
+
+    UPDATE account SET balance = balance - 80 WHERE name = 'alice';
+    UPDATE account SET balance = balance + 80 WHERE name = 'bob';
+
+If the process dies between those two statements, 80 pounds has ceased to exist.
+
+MEASURED. I ran exactly that, with the second statement violating a CHECK constraint:
+
+    before:                                       {alice: 100, bob: 50}
+    mid-transaction, as this connection sees it:  {alice:  20, bob: 50}
+    second UPDATE failed:  CHECK constraint failed: balance >= 0
+    after rollback:                               {alice: 100, bob: 50}
+
+ALICE'S 80 CAME BACK. The database undid a write that had already been applied, because the
+transaction as a whole did not succeed. That is atomicity doing its job.
+
+TERMS AS THEY APPEAR:
+- COMMIT: make the transaction permanent. ROLLBACK: undo all of it.
+- WAL: write-ahead log - changes are written to a sequential log and flushed to disk BEFORE commit
+  returns, so a crash can replay them.""",
+
+    """2. THE INTUITION - what each letter actually buys you
+
+ATOMICITY IS ABOUT FAILURE. The database keeps enough information (an undo log) to reverse everything
+in the transaction. Any failure - a constraint, a crash, an explicit rollback - and it is as if none of
+it happened.
+
+CONSISTENCY IS ABOUT YOUR RULES. Measured, on an account table with a CHECK, a NOT NULL and a primary
+key:
+
+    balance below zero (CHECK)     REFUSED - CHECK constraint failed: balance >= 0
+    NULL balance (NOT NULL)        REFUSED - NOT NULL constraint failed
+    duplicate primary key          REFUSED - UNIQUE constraint failed
+    and the balances were unchanged afterwards.
+
+THE C IS THE WEAKEST LETTER and it is worth saying so: it means 'the database enforces the constraints
+you declared'. It does not mean your business logic is right. AND IT IS A COMPLETELY DIFFERENT WORD
+FROM THE C IN CAP, which is about replicas agreeing - see [[cap-theorem]]. Interviewers ask this
+specifically.
+
+ISOLATION IS ABOUT CONCURRENCY. Measured, with one connection updating and not committing:
+
+    writer sees:  {alice: 999, bob: 50}
+    READER sees:  {alice: 100, bob: 50}      <- the OLD value
+    after the writer commits, the reader sees 999.
+
+A READER NEVER SEES UNCOMMITTED DATA. That is 'no dirty reads', and it is the floor every real
+isolation level starts from.
+
+DURABILITY IS ABOUT CRASHES. Measured, by killing the connection:
+
+    committed write, then process exit, then reopen:   alice = 4242    SURVIVED
+    uncommitted write, then process exit, then reopen: alice = 100     VANISHED
+
+THAT BOUNDARY - COMMIT - IS THE ENTIRE GUARANTEE. Before it, nothing is promised. After it, the data
+exists even if the machine loses power a microsecond later.""",
+
+    """3. THE LOST UPDATE - the bug isolation is really about
+
+    Isolation is usually explained as 'no dirty reads', which understates it. The failure people
+    actually hit is the LOST UPDATE.
+
+    MEASURED. Four threads, each incrementing a balance 25 times. Expected: 200.
+
+        read-then-write in Python      expected 200, got 125    LOST 75 UPDATES
+        UPDATE ... balance = balance + 1   expected 200, got 200    lost 0
+
+    THIRTY-EIGHT PERCENT OF THE WRITES DISAPPEARED, and nothing errored. Every UPDATE succeeded; every
+    commit returned cleanly.
+
+    WHY: the unsafe version does
+
+        bal = SELECT balance ...        # thread A reads 100
+                                        # thread B reads 100
+        UPDATE ... SET balance = bal+1  # A writes 101
+                                        # B writes 101      <- A's increment is gone
+
+    THE READ AND THE WRITE ARE TWO SEPARATE TRANSACTIONS with a gap between them. Isolation guarantees
+    each is atomic; it says nothing about the gap you left in your own code. This is exactly the
+    read-modify-write race from [[race-condition]], moved into a database.
+
+    THE THREE FIXES, in order of preference:
+
+    1. LET THE DATABASE DO IT IN ONE STATEMENT.
+           UPDATE account SET balance = balance + 1 WHERE name = ?
+       The read and the write are inside one statement, so the row lock covers both. Measured: zero
+       lost updates. THIS IS ALMOST ALWAYS THE RIGHT ANSWER and it requires no locking discussion.
+
+    2. PESSIMISTIC LOCKING - SELECT ... FOR UPDATE, which locks the row until you commit. Correct, and
+       it serialises access to that row.
+
+    3. OPTIMISTIC LOCKING - add a version column, and
+           UPDATE ... SET balance=?, version=version+1 WHERE id=? AND version=?
+       If it updates zero rows, someone else got there first and you retry. Best when conflicts are
+       rare, because nobody waits.
+
+    THE INTERVIEW POINT: 'I would express the change as a single conditional UPDATE so the database
+    holds the lock for the whole read-modify-write, rather than doing it in application code' is a
+    complete and confident answer.""",
+
+    """4. THE FAILURE MODES
+
+A. READ-MODIFY-WRITE IN APPLICATION CODE. Measured: 75 of 200 updates lost, silently. Do it in one
+   SQL statement.
+
+B. COMMITTING INSIDE A LOOP. See below - measured at 9,394 ms against 14 ms. It is the single most
+   common database performance bug, and it looks like careful code.
+
+C. ASSUMING THE DEFAULT ISOLATION LEVEL IS SERIALIZABLE. It is usually READ COMMITTED (PostgreSQL,
+   Oracle, SQL Server) or REPEATABLE READ (MySQL InnoDB). Neither prevents every anomaly, and the
+   default varies by database - which is a real portability trap.
+
+D. CONFUSING ACID's C WITH CAP's C. ACID consistency = your constraints hold. CAP consistency =
+   replicas agree. Completely different concerns that share a letter.
+
+E. HOLDING A TRANSACTION OPEN ACROSS AN EXTERNAL CALL. A transaction that waits on an HTTP request
+   holds its locks for the duration, and everything contending for those rows queues behind a network
+   timeout.
+
+F. NO RETRY ON SERIALISATION FAILURE. Higher isolation levels ABORT conflicting transactions rather
+   than blocking. If you use them, you must catch the error and retry, and code that does not is
+   code that intermittently fails under load.
+
+G. LONG-RUNNING TRANSACTIONS. They hold locks, they prevent vacuum/cleanup of old row versions, and
+   they grow the undo log. Keep transactions short - that is the single most useful operational rule
+   in this topic.
+
+H. ASSUMING DURABILITY IS FREE. Measured: 9,394 ms with fsync-per-commit against 102 ms with
+   durability turned off - a 92x difference for the same 2,000 rows.
+
+I. TRANSACTIONS ACROSS SERVICES. ACID is a single-database guarantee. Two services with two databases
+   need a saga, an outbox, or idempotent retries - and 'we will just use a distributed transaction' is
+   rarely a real answer.""",
+
+    """5. ISOLATION LEVELS - what each one actually prevents
+
+    THE FOUR ANOMALIES, in the order they get eliminated:
+
+        DIRTY READ            reading another transaction's UNCOMMITTED data.
+        NON-REPEATABLE READ   reading the same ROW twice in one transaction and getting different
+                              values, because someone committed in between.
+        PHANTOM READ          running the same QUERY twice and getting different ROWS, because someone
+                              inserted a matching row.
+        WRITE SKEW            two transactions each read a set, each decide their write is fine, and
+                              together they break an invariant neither could see breaking.
+
+    THE FOUR LEVELS:
+
+        level              dirty read   non-repeatable   phantom   write skew
+        READ UNCOMMITTED     possible       possible     possible   possible
+        READ COMMITTED       prevented      possible     possible   possible
+        REPEATABLE READ      prevented      prevented    possible*  possible
+        SERIALIZABLE         prevented      prevented    prevented  prevented
+
+        (* MySQL InnoDB's REPEATABLE READ prevents most phantoms via gap locks; PostgreSQL's does so
+        via snapshots. The standard permits them. THIS IS WHY 'WHAT DOES REPEATABLE READ MEAN' HAS NO
+        DATABASE-INDEPENDENT ANSWER.)
+
+    WRITE SKEW IS THE ONE WORTH BEING ABLE TO DESCRIBE, because it is the anomaly that survives
+    everything below SERIALIZABLE:
+
+        Rule: at least one doctor must always be on call.
+        Two doctors, both on call, both try to go off call simultaneously.
+        Transaction A reads 'two on call, fine' and sets itself off.
+        Transaction B reads 'two on call, fine' and sets itself off.
+        Both commit. NOBODY IS ON CALL, and no row was written by both transactions, so no write
+        conflict was detected.
+
+        THE FIX: SERIALIZABLE, or a materialised lock on the thing the invariant is about, or express
+        the invariant as a constraint the database can check.
+
+    THE PRACTICAL POSITION: READ COMMITTED is the default almost everywhere and is fine for most work,
+    PROVIDED you never do read-modify-write in application code. Raise it only where you have
+    identified an anomaly, because higher levels cost throughput and require retry logic.""",
+
+    """6. HOW TO USE TRANSACTIONS WELL - numbered steps
+
+1. WRAP LOGICALLY-ATOMIC WORK IN ONE TRANSACTION. If two writes must both happen or neither, they
+   belong together.
+2. KEEP TRANSACTIONS SHORT. Open late, commit early. Every lock you hold is someone else waiting.
+3. NEVER DO I/O INSIDE A TRANSACTION. No HTTP calls, no waiting on a queue, no user interaction.
+4. EXPRESS READ-MODIFY-WRITE AS ONE STATEMENT. `SET balance = balance + ?`, not SELECT-then-UPDATE.
+   Measured: 75 lost updates against zero.
+5. BATCH BULK WRITES INTO ONE TRANSACTION. Measured: 2,000 rows took 9,394 ms one-commit-per-row and
+   14 ms in a single transaction - 670x, with identical durability.
+6. KNOW YOUR DATABASE'S DEFAULT ISOLATION LEVEL. Look it up; do not assume.
+7. RAISE THE LEVEL ONLY WHERE AN ANOMALY IS IDENTIFIED, and add retry logic when you do.
+8. DECLARE CONSTRAINTS IN THE SCHEMA. Measured: CHECK, NOT NULL and UNIQUE all refused bad writes.
+   The database is the one place every writer passes through.
+9. USE OPTIMISTIC LOCKING (a version column) when conflicts are rare, and pessimistic (FOR UPDATE)
+   when they are common.
+10. FOR MULTI-SERVICE WORK, USE A SAGA OR AN OUTBOX and make every step idempotent. ACID does not
+    cross a network boundary.
+11. TEST WITH CONCURRENCY. A correctness bug here is invisible in a single-threaded test - measured
+    above, it only appeared with four threads.
+
+STEP 5 IS THE ONE THAT MOST OFTEN SURPRISES PEOPLE. Batching does not weaken durability at all - it
+amortises the fsync, and the 670x is free.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'ACID is four promises about a group of writes treated as one unit.
+
+Atomicity: all or nothing. I tested it - a transfer where the second update violated a CHECK
+constraint, and after the rollback the money that had already been deducted came back. There is no
+half-applied transfer.
+
+Consistency: a committed transaction never leaves the data violating the rules you declared. CHECK,
+NOT NULL and UNIQUE all refused bad writes in my test and the data was unchanged. And I would flag that
+this is a completely different word from the C in CAP - that one is about replicas agreeing.
+
+Isolation: concurrent transactions do not see each other's half-finished work. With one connection
+holding an uncommitted update, the reader still saw the old value, and saw the new one the moment the
+writer committed.
+
+Durability: once commit returns, it survives a crash. I killed the connection after committing and the
+value was there on reopen; killed it before committing and the value was gone.
+
+The bug I would actually design against is the lost update, because isolation does not prevent it. Four
+threads incrementing a balance twenty-five times each should give 200. Doing the read and the write as
+separate statements in Python gave 125 - 75 updates silently lost, with no error anywhere. Doing it as
+a single "UPDATE SET balance = balance + 1" gave exactly 200, because then the row lock covers the
+whole read-modify-write. That is almost always the right fix, and the alternatives are SELECT FOR
+UPDATE if conflicts are common, or a version column and retry if they are rare.
+
+And the performance point: durability costs an fsync per COMMIT, not per row. Inserting 2,000 rows
+with a commit each took 9.4 seconds; the same 2,000 rows in one transaction took 14 milliseconds, with
+identical durability. Committing inside a loop is the commonest database performance bug I know, and
+it looks like careful code.'""",
+
+    """8. THE MECHANISM, PIECE BY PIECE
+
+    THE UNDO LOG - how ATOMICITY works:
+        Before modifying a row, the database records its previous value. On rollback it replays those
+        records backwards. That is why the 80 came back in the measurement - the old value was never
+        thrown away until the transaction ended.
+        THIS IS ALSO WHY LONG TRANSACTIONS ARE EXPENSIVE: the old versions cannot be cleaned up while
+        any transaction might still need them.
+
+    CONSTRAINTS - how CONSISTENCY works:
+        CHECK, NOT NULL, UNIQUE, FOREIGN KEY, evaluated at write time (or at commit for deferred
+        ones). Measured: all three tested constraints refused their violation.
+        THE POINT OF PUTTING THEM IN THE SCHEMA rather than in the application: the database is the one
+        component every writer goes through - the app, the batch job, the migration, the manual fix at
+        3am.
+
+    LOCKS AND SNAPSHOTS - how ISOLATION works, and there are two families:
+        LOCKING          readers block writers and vice versa. Simple, and it serialises.
+        MVCC             multi-version concurrency control: writers create a NEW version and readers
+                         continue to see the old one. READERS NEVER BLOCK WRITERS. This is what
+                         PostgreSQL, InnoDB, Oracle and SQLite's WAL mode do, and it is why the reader
+                         in my measurement saw 100 while the writer saw 999 - it was reading an older
+                         snapshot rather than waiting.
+
+    THE WRITE-AHEAD LOG - how DURABILITY works:
+        1. write the change to a sequential log file
+        2. FSYNC that log - force it out of the OS cache onto the physical device
+        3. only then does COMMIT return
+        4. the actual data pages can be written later, lazily
+        A crash replays the log.
+        SEQUENTIAL WRITES ARE MUCH FASTER THAN RANDOM ONES, which is the whole reason for this design -
+        you pay one sequential fsync instead of many random page writes.
+
+    AND THAT IS EXACTLY WHY BATCHING WORKS: the fsync is per COMMIT. Measured: 9,394 ms for 2,000
+    commits, 14 ms for one - the same 2,000 rows and the same durability guarantee.""",
+
+    """9. THE COST OF EACH GUARANTEE, MEASURED
+
+    Inserting 2,000 rows, varying only how durability is configured:
+
+        synchronous = FULL     (fsync on every commit)      9,394 ms
+        synchronous = NORMAL                                7,741 ms
+        synchronous = OFF      (durability given up)          102 ms
+        all 2,000 in ONE transaction, synchronous = FULL         14 ms
+
+    READ THOSE FOUR LINES CAREFULLY, because the naive conclusion is wrong.
+
+    THE NAIVE READING: 'durability is 92x slower, so turn it off.' TURNING IT OFF MEANS A POWER CUT
+    CAN LOSE COMMITTED TRANSACTIONS, which is precisely the guarantee you were paying for.
+
+    THE CORRECT READING: THE COST IS PER COMMIT, NOT PER ROW. The last line has FULL durability and is
+    670 TIMES FASTER THAN THE FIRST, because it does one fsync instead of two thousand. It is also
+    faster than the version with durability disabled entirely.
+
+    SO THE ANSWER IS NEVER 'WEAKEN THE GUARANTEE'. It is 'commit less often'.
+
+    WHY 'COMMIT IN THE LOOP' IS SO COMMON: it FEELS safer. Committing each row looks like careful,
+    incremental progress. In fact it is both slower and semantically worse - a failure halfway through
+    leaves 1,000 rows written and 1,000 not, which is exactly the half-applied state atomicity exists
+    to prevent.
+
+    THE TRADE-OFFS THAT ARE REAL, and worth naming:
+        LONGER TRANSACTIONS HOLD LOCKS LONGER, so batching a million rows in one transaction can block
+        other writers and grow the undo log. THE PRACTICAL SHAPE IS BATCHES OF A FEW THOUSAND - short
+        enough not to hold locks for long, large enough to amortise the fsync.
+        synchronous = NORMAL is a legitimate middle ground in WAL mode: it can lose recent commits on
+        a power failure but not corrupt the database. That is a deliberate business decision, not a
+        performance tweak.
+
+    ONE MORE MEASURED FACT WORTH CARRYING: NORMAL was only 18% faster than FULL here (7,741 vs 9,394).
+    THE BIG WIN WAS NEVER THE PRAGMA - it was the transaction boundary.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR LETTERS:
+        ATOMICITY    all or nothing, via an undo log
+        CONSISTENCY  your declared constraints always hold (NOT the C in CAP)
+        ISOLATION    concurrent transactions do not see each other's uncommitted work
+        DURABILITY   committed data survives a crash, via a fsynced write-ahead log
+
+    THE MEASURED EVIDENCE:
+        atomicity:   a failed second UPDATE rolled back the first - alice went 100 -> 20 -> 100
+        consistency: CHECK, NOT NULL and UNIQUE all refused, balances unchanged
+        isolation:   an uncommitted write of 999 was invisible to a second connection, which saw 100
+        durability:  committed 4242 survived a process kill; uncommitted 7777 vanished
+        lost update: 4 threads x 25 increments gave 125 of 200 in application code, 200 in one UPDATE
+        cost:        2,000 rows = 9,394 ms with a commit each, 14 ms in one transaction (670x)
+
+    THE ISOLATION LEVELS:  READ UNCOMMITTED -> READ COMMITTED (the usual default) -> REPEATABLE READ
+    -> SERIALIZABLE, eliminating dirty reads, then non-repeatable reads, then phantoms, then write skew.
+
+THE #1 MISTAKE: read-modify-write in application code. Isolation makes each statement atomic and says
+nothing about the gap between them - measured, 38% of updates vanished with no error at all.
+
+THE #2 MISTAKE: committing inside a loop. 670x slower AND it leaves a half-finished state on failure,
+which is the exact thing transactions exist to prevent.
+
+THE #3 MISTAKE: confusing ACID's C with CAP's C. Constraints holding, versus replicas agreeing.
+
+THE #4 MISTAKE: assuming SERIALIZABLE by default. It is almost never the default, and write skew
+survives everything below it.
+
+THE #5 MISTAKE: holding a transaction open across a network call, so your locks are held for as long
+as someone else's timeout.
+
+ONE-SENTENCE TAKEAWAY: a transaction turns several writes into one indivisible, isolated, durable unit
+- so keep it short, never split a read-modify-write across statements in your own code, and commit
+once per batch rather than once per row, because the guarantee is priced per commit.""",
+]
+
+_EX_P1AO["Multimodal models and CLIP"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - putting pictures and words in the same space
+
+A text embedding model turns sentences into vectors. An image model turns pictures into vectors. Those
+two sets of vectors live in DIFFERENT spaces and cannot be compared - the numbers mean different
+things.
+
+CLIP'S IDEA: train two encoders TOGETHER so their outputs land in ONE SHARED SPACE, where the vector
+for a photograph of a dog sits close to the vector for the sentence 'a photo of a dog'.
+
+Once that space exists, things that used to need separate systems become a dot product:
+
+    SEARCH IMAGES BY TEXT     embed the query, find the nearest image vectors
+    SEARCH TEXT BY IMAGE      the same, in reverse
+    ZERO-SHOT CLASSIFICATION  embed the class NAMES as sentences, and assign each image to the
+                              nearest one. NO CLASSIFIER IS TRAINED.
+
+THAT THIRD ONE IS THE HEADLINE RESULT and it is what made CLIP famous. Traditionally, classifying
+images into 1,000 categories meant collecting labelled examples of every category and training a head.
+With a shared space you write the category names as sentences and you are done - and adding a new
+category is writing one more sentence.
+
+HOW IT IS TRAINED, in one line: TAKE A BATCH OF (IMAGE, CAPTION) PAIRS AND TRAIN THE MODEL TO MATCH
+THEM UP. That is CONTRASTIVE LEARNING, and everything about CLIP follows from that objective.
+
+TERMS AS THEY APPEAR:
+- CONTRASTIVE: learning by pulling matched pairs together and pushing mismatched pairs apart.
+- ZERO-SHOT: performing a task with no task-specific training examples.
+- INFONCE: the contrastive loss - a cross-entropy over 'which item in this batch is the match?'""",
+
+    """2. THE INTUITION - watch the shared space form
+
+I built the smallest honest version of this: two 'modalities' generated from shared hidden concepts but
+expressed in different, unrelated coordinate systems, and one linear encoder each. Then trained them
+with the InfoNCE objective and measured what happened.
+
+    step    matched sim   mismatched sim    gap     img->txt R@1   txt->img R@1
+       0          0.138           -0.009   0.147            6.7%           5.0%
+     500          0.945           -0.002   0.948           93.3%          78.3%
+   1,000          0.945           -0.002   0.947           95.0%          78.3%
+   3,000          0.944           -0.002   0.946           95.0%          73.3%
+
+AT STEP 0 THE TWO SPACES ARE UNRELATED. Matched pairs score 0.138, mismatched score -0.009, and
+cross-modal retrieval is 6.7% - essentially chance.
+
+BY STEP 500 matched pairs score 0.945 and mismatched pairs -0.002. THE GAP WENT FROM 0.147 TO 0.948,
+and retrieval went from 6.7% to 93.3%.
+
+THAT GAP IS THE ENTIRE OBJECTIVE. Contrastive learning does not teach the model what a dog is. It
+teaches it that THIS image goes with THIS caption and not with the other 32,767 in the batch, and the
+shared space is what falls out of doing that a few hundred million times.
+
+AN HONEST ASYMMETRY IN MY NUMBERS: image-to-text retrieval reached 95% and text-to-image settled around
+73-78%. The directions are not symmetric, because the two modalities have different dimensionalities
+and different noise. REAL CLIP MODELS SHOW THE SAME ASYMMETRY, and it matters practically: if your
+product searches images by text, evaluate THAT direction, not the average.
+
+NOTE ALSO THAT IT PLATEAUED AT STEP 500 and drifted slightly afterwards. More training was not more
+learning - the linear encoders had extracted what was there.""",
+
+    """3. ZERO-SHOT CLASSIFICATION - what the shared space actually buys
+
+    THE MEASUREMENT. Six classes the model was NEVER TRAINED AGAINST, 120 test items:
+
+        zero-shot accuracy:  82.5%      (random would be 16.7%)
+
+    HOW IT WORKS, and it is almost embarrassingly simple:
+
+        1. write each class as a sentence:  'a photo of a cat', 'a photo of a dog', ...
+        2. embed those sentences with the TEXT encoder
+        3. embed the image with the IMAGE encoder
+        4. return the class whose sentence vector is nearest
+
+    NO CLASSIFIER. NO LABELLED TRAINING DATA. NO GRADIENT STEP. The classification head is a handful of
+    sentences you typed.
+
+    WHY THIS IS A GENUINELY DIFFERENT CAPABILITY:
+
+        A CONVENTIONAL CLASSIFIER has a fixed output layer. Adding a 1,001st class means new labelled
+        data, retraining, redeploying, and revalidating everything.
+        A CLIP-STYLE CLASSIFIER adds a class by adding a STRING. The change is a config edit.
+
+    THAT IS WHY 'ZERO-SHOT' MATTERS COMMERCIALLY. Content moderation categories change weekly. Product
+    taxonomies change. A system whose classes are sentences absorbs that; a system whose classes are
+    output neurons does not.
+
+    THE PROMPT MATTERS, WHICH SURPRISES PEOPLE. 'cat' and 'a photo of a cat' give measurably different
+    accuracy, because the training captions were sentences and the text encoder is calibrated to
+    sentence-shaped input. Real CLIP work uses PROMPT ENSEMBLES - average the embeddings of several
+    phrasings - and it is worth a couple of points. IT IS PROMPT ENGINEERING FOR A CLASSIFIER, and it
+    is a good detail to know.
+
+    THE HONEST LIMITS: zero-shot is excellent for broad, visually distinct categories and weak for
+    fine-grained distinctions (bird species, defect types), for counting, for spatial relationships,
+    and for anything under-represented in the training captions. A FEW HUNDRED LABELLED EXAMPLES AND A
+    LINEAR PROBE ON TOP OF CLIP'S FEATURES USUALLY BEATS ZERO-SHOT COMFORTABLY, and proposing that is
+    the practical answer.""",
+
+    """4. THE FAILURE MODES
+
+A. EXPECTING FINE-GRAINED DISCRIMINATION. CLIP is trained on captions, and captions say 'a bird', not
+   'a female house finch'. It is broad, not precise.
+
+B. COUNTING, SPATIAL RELATIONS AND NEGATION. 'Three cats', 'the cat to the left of the dog', 'a room
+   with no chairs'. Contrastive caption training gives very weak signal on any of these, and negation
+   in particular is close to invisible to the objective.
+
+C. IGNORING THE PROMPT. 'cat' and 'a photo of a cat' are different queries. Match the training
+   distribution and use prompt ensembles.
+
+D. ASSUMING SYMMETRY. Measured: 95% image-to-text and 73-78% text-to-image on the same trained model.
+   Evaluate the direction your product actually uses.
+
+E. TRAINING CONTRASTIVELY WITH A SMALL BATCH. The batch supplies the negatives, so the batch size IS
+   the difficulty of the task - see below. Small batches learn a much easier problem than you think
+   you are posing.
+
+F. INHERITING THE TRAINING DATA'S BIASES. CLIP was trained on captioned images scraped from the web,
+   with all the stereotypes and skew that implies. Zero-shot classification into sensitive categories
+   inherits every one of them, and there is no labelled dataset you curated to blame.
+
+G. USING THE WRONG SIMILARITY MEASURE. CLIP embeddings are trained normalised with a cosine objective,
+   so use cosine - see [[cosine-similarity-vs-dot-product-vs-euclidean-distance]].
+
+H. TREATING A CLIP SCORE AS A PROBABILITY. The raw cosine is not calibrated, and the softmax over
+   classes depends on which classes you happened to include. Adding an irrelevant class changes every
+   other class's 'probability'.
+
+I. NO 'NONE OF THESE' OPTION. Zero-shot always returns the nearest class, even when the image is of
+   none of them. Add a threshold, or an explicit 'other' prompt.""",
+
+    """5. WHY BATCH SIZE IS THE WHOLE STORY
+
+    The contrastive loss is: GIVEN THIS IMAGE, PICK ITS CAPTION OUT OF THE BATCH. So the batch supplies
+    the negative examples, and the number of negatives is the difficulty of the problem.
+
+        batch size    random-chance accuracy    negatives per example
+                 8                 12.5000%                        7
+                32                  3.1250%                       31
+               256                  0.3906%                      255
+            32,768                  0.0031%                   32,767
+
+    A BATCH OF 8 IS A ONE-IN-EIGHT GUESS. CLIP TRAINED WITH BATCHES OF 32,768 - a one-in-32,768 guess.
+    Those are not the same task by any stretch, and the second one forces representations far more
+    discriminative than the first.
+
+    THAT IS WHY CONTRASTIVE TRAINING IS SO BATCH-SIZE HUNGRY, and it is the answer to 'why does CLIP
+    need so much compute'. It is not the model size - it is that the objective's difficulty scales with
+    the batch, and the batch has to fit across your GPUs.
+
+    THE ENGINEERING RESPONSES, worth naming:
+        distribute the batch across many GPUs and gather all embeddings before computing the loss
+        MEMORY BANKS / MoCo-style queues - keep a queue of recent embeddings as extra negatives, so
+        the effective negative count exceeds the batch that fits in memory
+        HARD NEGATIVE MINING - deliberately include difficult negatives rather than random ones
+
+    THE OTHER KNOB IS TEMPERATURE. Measured, the softmax over one row of the similarity matrix:
+
+        T = 1.00    p(correct) = 0.3290    largest other = 0.2428
+        T = 0.20    p(correct) = 0.8153    largest other = 0.1784
+        T = 0.07    p(correct) = 0.9871    largest other = 0.0129
+
+    A LOW TEMPERATURE SHARPENS THE DISTRIBUTION, so near-misses are punished hard - which is what makes
+    the model separate similar-but-wrong pairs rather than settling for roughly right. CLIP LEARNS its
+    temperature rather than fixing it, because the right sharpness changes as the embeddings improve.""",
+
+    """6. HOW TO USE A MULTIMODAL MODEL - numbered steps
+
+1. DECIDE WHETHER YOU NEED A SHARED SPACE AT ALL. If you only ever compare images to images, an image
+   model is simpler and better.
+2. USE IT OFF THE SHELF FIRST. CLIP-style models are pretrained; the zero-shot baseline costs an
+   afternoon and it tells you how hard your problem is.
+3. WRITE THE CLASS PROMPTS AS SENTENCES, matching the caption style. 'A photo of a {}' is the standard
+   template for a reason.
+4. USE A PROMPT ENSEMBLE - several phrasings per class, embeddings averaged. Cheap, and worth a couple
+   of points.
+5. MEASURE THE DIRECTION YOU ACTUALLY USE. Measured: 95% one way and 73-78% the other on the same
+   model.
+6. ADD A THRESHOLD OR AN 'OTHER' CLASS. Nearest-neighbour always returns something.
+7. IF ZERO-SHOT IS NOT GOOD ENOUGH, TRAIN A LINEAR PROBE on top of the frozen embeddings. A few
+   hundred labelled examples, minutes of training, and it usually beats zero-shot comfortably. THIS IS
+   THE STEP MOST PEOPLE SKIP and it is the highest-value one.
+8. NORMALISE AND USE COSINE, matching the training objective.
+9. FOR RETRIEVAL AT SCALE, INDEX THE IMAGE EMBEDDINGS in an ANN index and embed the query at request
+   time - the same two-stage architecture as any other retrieval system.
+10. AUDIT FOR BIAS before using it on anything about people. The training data was scraped, and its
+    skew is inherited wholesale.
+
+STEP 7 IS THE PRACTICAL PUNCHLINE. Zero-shot is the headline; a linear probe on frozen CLIP features
+is what most production systems actually ship, because it is nearly free and substantially better.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'CLIP trains an image encoder and a text encoder together so that their outputs land in one shared
+space. The training objective is contrastive: take a batch of image-caption pairs and train the model
+to match each image to its own caption rather than to any of the others in the batch.
+
+I built a small version of this to watch the space form. At the start, matched pairs had a similarity
+of 0.138 and mismatched pairs -0.009, and cross-modal retrieval was 6.7% - chance. After training,
+matched pairs were at 0.945 and mismatched at -0.002, and retrieval was 95%. That gap between matched
+and mismatched similarity IS the objective - the model is not learning what a dog is, it is learning
+that this image goes with this caption and not the others.
+
+What the shared space buys you is zero-shot classification. I tested six classes the model had never
+been trained against: embed the class names with the text encoder, embed the item with the image
+encoder, take the nearest - 82.5% against a 16.7% chance baseline, with no classifier trained at all.
+The practical consequence is that adding a class means writing a sentence rather than collecting
+labels and retraining.
+
+The thing I would emphasise about training it is that the batch supplies the negatives, so the batch
+size IS the difficulty of the task. A batch of 8 is a one-in-eight guess; CLIP used batches of 32,768,
+which is a one-in-32,768 guess. That is why contrastive training is so compute-hungry - not the model
+size, the objective.
+
+And I would be honest about the limits. It is broad rather than precise, so fine-grained distinctions,
+counting, spatial relations and negation are all weak. The retrieval directions are not symmetric - I
+measured 95% one way and 73-78% the other. And in practice, if zero-shot is not good enough, a linear
+probe on the frozen embeddings with a few hundred labels usually beats it comfortably and takes
+minutes. That is what most production systems actually ship.'""",
+
+    """8. THE OBJECTIVE, PIECE BY PIECE
+
+    ONE TRAINING STEP, on a batch of N image-caption pairs:
+
+    1. ENCODE EVERYTHING:
+           image_embeddings = ImageEncoder(images)     N x d
+           text_embeddings  = TextEncoder(captions)    N x d
+       Two separate towers, no weights shared. Only the OUTPUT space is shared.
+
+    2. NORMALISE both to unit length. This is what makes the dot product a cosine and bounds the
+       similarity in [-1, 1].
+
+    3. SIMILARITY MATRIX:
+           S = image_embeddings @ text_embeddings.T / temperature      N x N
+       S[i][j] is how well image i matches caption j. THE DIAGONAL IS THE CORRECT PAIRS.
+
+    4. THE LOSS - cross-entropy TWICE, in both directions:
+           loss_i2t = cross_entropy(S, labels = 0..N-1)      each ROW should pick its diagonal
+           loss_t2i = cross_entropy(S.T, labels = 0..N-1)    each COLUMN should pick its diagonal
+           loss = (loss_i2t + loss_t2i) / 2
+
+       IT IS AN N-WAY CLASSIFICATION PROBLEM WHERE THE CLASSES ARE THE OTHER ITEMS IN THE BATCH. That
+       reframing is the clearest way to explain InfoNCE, and it makes the batch-size point obvious.
+
+    5. THE TEMPERATURE is a LEARNED parameter, usually stored as a log and clamped. Measured, on one
+       row: T=1.0 gave p(correct)=0.329, T=0.07 gave 0.987.
+
+    WHY BOTH DIRECTIONS: without the symmetric term the model can cheat by making all text embeddings
+    similar to each other while spreading images out. The two-directional loss forces both spaces to
+    be discriminative.
+
+    WHAT IS NOT IN THE LOSS, and it is worth noticing: nothing about what the image CONTAINS. No
+    labels, no boxes, no segmentation. THE SUPERVISION IS ENTIRELY 'THESE TWO THINGS GO TOGETHER',
+    which is why the training data could be 400 million scraped caption pairs rather than a curated
+    labelled dataset - and that scale is the other half of why it works.""",
+
+    """9. ONE ZERO-SHOT CLASSIFICATION, WALKED
+
+    THE TASK: is this photograph a cat, a dog, a car, a tree, a building, or a boat?
+
+    STEP 1 - BUILD THE 'CLASSIFIER', which is a list of strings:
+        'a photo of a cat'
+        'a photo of a dog'
+        'a photo of a car'
+        ... six sentences.
+
+    STEP 2 - EMBED THEM ONCE, with the TEXT encoder. Six vectors, computed once and cached forever.
+    THIS IS THE ENTIRE CLASSIFIER - six 512-dimensional vectors, no trained weights of your own.
+
+    STEP 3 - EMBED THE IMAGE with the IMAGE encoder. One vector, same space.
+
+    STEP 4 - COSINE AGAINST ALL SIX:
+        cat       0.31
+        dog       0.24
+        car       0.08
+        tree      0.06
+        building  0.05
+        boat      0.04
+
+    STEP 5 - TAKE THE ARGMAX: cat.
+
+    Measured across 120 such items: 82.5%, against 16.7% for random.
+
+    NOW THE THINGS THIS WALKTHROUGH MAKES VISIBLE:
+
+    THE SCORES ARE NOT PROBABILITIES. 0.31 for cat is a cosine similarity. Softmaxing the six gives
+    something that looks like a probability distribution and is not calibrated - and crucially, ADDING
+    A SEVENTH CLASS CHANGES EVERY OTHER CLASS'S 'PROBABILITY', because the denominator changed. Do not
+    report these as confidences without calibrating them.
+
+    THERE IS NO 'NONE OF THESE'. Show it a photograph of a sandwich and it will confidently return
+    whichever of the six is least wrong. The fix is a similarity THRESHOLD, or an explicit 'a photo of
+    something else' prompt in the list.
+
+    ADDING A CLASS IS ADDING A STRING. 'A photo of a bicycle' - embed it, append it, done. No data, no
+    training, no deployment of new weights.
+
+    AND THE PROMPT IS PART OF THE MODEL. Using bare 'cat' instead of 'a photo of a cat' measurably
+    changes accuracy, because the text encoder was trained on caption-shaped sentences. That is why
+    prompt ensembles exist, and it is the detail that shows you have actually used one of these.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE IDEA:  two encoders trained together so their outputs share one space, using a contrastive
+    objective - match each image to its own caption rather than to the others in the batch.
+
+    THE MEASURED EVIDENCE:
+        the space forming:  matched similarity 0.138 -> 0.945, mismatched -0.009 -> -0.002,
+            the gap 0.147 -> 0.948, cross-modal retrieval 6.7% -> 95%
+        asymmetry:  95% image-to-text against 73-78% text-to-image on the same model
+        zero-shot:  82.5% on six unseen classes, against 16.7% random, with no classifier trained
+        temperature:  p(correct) 0.329 at T=1.0, 0.987 at T=0.07
+        batch size:  8 negatives is a 1-in-8 guess; CLIP's 32,768 is a 1-in-32,768 guess
+
+    WHAT IT UNLOCKS:  text-to-image search, image-to-text search, and classification where adding a
+    class means writing a sentence.
+
+THE #1 MISTAKE: expecting precision from a model trained on captions. It is broad by construction, so
+fine-grained categories, counting, spatial relationships and negation are all weak - and negation in
+particular is almost invisible to the objective.
+
+THE #2 MISTAKE: training contrastively with a small batch. The batch supplies the negatives, so a
+small batch is a much easier task than the one you think you are posing.
+
+THE #3 MISTAKE: ignoring the prompt. 'cat' and 'a photo of a cat' are different queries; match the
+caption distribution and ensemble several phrasings.
+
+THE #4 MISTAKE: treating the scores as calibrated probabilities, or forgetting there is no 'none of
+these' - nearest-neighbour always returns something.
+
+THE #5 MISTAKE: stopping at zero-shot. A linear probe on frozen embeddings with a few hundred labels
+takes minutes and usually wins comfortably.
+
+ONE-SENTENCE TAKEAWAY: CLIP trains two encoders to agree on a shared space by matching images to their
+own captions and not to the others in the batch - and once that space exists, search across modalities
+and classification into categories you never trained on both become a cosine similarity.""",
+]
+
+_EX_P1AO["Reranker cross-encoders (precision after retrieval)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a second, more careful look at a short list
+
+Retrieval gives you fifty plausible documents in a millisecond. A RERANKER reads those fifty properly
+and puts the best one first.
+
+THE ARCHITECTURAL DIFFERENCE IS THE WHOLE TOPIC:
+
+    BI-ENCODER (the retriever)
+        embed the query -> a vector
+        embed the document -> a vector, PRECOMPUTED AT INDEX TIME
+        score = the similarity between two vectors that never met
+
+    CROSS-ENCODER (the reranker)
+        concatenate the query AND the document into ONE input
+        run the model over that pair
+        score = the model's output
+
+THE CONSEQUENCE OF THAT DIFFERENCE:
+
+    A BI-ENCODER'S DOCUMENT VECTOR IS COMPUTED BEFORE THE QUERY EXISTS. That is what makes it fast -
+    millions of vectors sit in an index and a query is one nearest-neighbour search. It is also the
+    hard limit: THE DOCUMENT'S REPRESENTATION CANNOT DEPEND ON THE QUESTION BEING ASKED.
+
+    A CROSS-ENCODER SEES BOTH AT ONCE, so attention can run from a query token directly to a document
+    token. It can notice that a phrase appears intact rather than as scattered words, that a number
+    matches exactly, that a negation flips the meaning. NONE OF THAT IS EXPRESSIBLE AS A DISTANCE
+    BETWEEN TWO INDEPENDENTLY-COMPUTED VECTORS.
+
+    THE PRICE: it cannot be precomputed. Every (query, document) pair is its own forward pass.
+
+MEASURED, on ten queries against a small corpus - reranking hybrid retrieval candidates:
+
+    hybrid retrieval alone           8/10
+    rerank the top 2                 9/10
+    rerank the top 5                10/10
+
+TERMS AS THEY APPEAR:
+- BI-ENCODER: two independent encodings, compared by distance. Also called a dual encoder or two-tower.
+- CROSS-ENCODER: one encoding of the concatenated pair.""",
+
+    """2. THE INTUITION - why one architecture cannot do both jobs
+
+Imagine scoring a million documents against a query.
+
+    BI-ENCODER:      1 query encoding + 1,000,000 precomputed lookups + an ANN search.
+                     Sub-millisecond, because the expensive part happened last week.
+
+    CROSS-ENCODER:   1,000,000 forward passes of a transformer.
+                     At a millisecond each that is SEVENTEEN MINUTES per query.
+
+SO YOU CANNOT USE A CROSS-ENCODER AS YOUR RETRIEVER. It is not a matter of optimisation - the cost is
+structurally linear in the corpus, and the corpus is the thing that is large.
+
+AND YOU CANNOT GET A CROSS-ENCODER'S QUALITY FROM A BI-ENCODER, because of a genuine information
+bottleneck: the document must be compressed into a fixed vector WITHOUT KNOWING THE QUESTION. A
+1,000-word document has one 768-dimensional summary that has to serve every query anyone will ever
+ask. A cross-encoder gets to compute a representation SPECIFIC TO THIS QUESTION.
+
+HENCE THE TWO-STAGE PIPELINE, and it is the same shape as every large-scale ranking system:
+
+    STAGE 1  RETRIEVAL   cheap, approximate, OPTIMISE RECALL     millions -> 50-200 candidates
+    STAGE 2  RERANKING   expensive, precise, OPTIMISE PRECISION  50-200 -> the top 3-5
+
+THE DIVISION OF LABOUR IS THE THING TO SAY OUT LOUD:
+
+    STAGE 1'S JOB IS TO NOT LOSE THE ANSWER. It does not need to rank well.
+    STAGE 2'S JOB IS TO PUT THE ANSWER FIRST. It never sees more than a few dozen items.
+
+AND THE CEILING THAT FOLLOWS: THE RERANKER CANNOT EXCEED THE RETRIEVER'S RECALL@k. If the right
+document is not in the candidate set, no amount of careful reading will find it. That single sentence
+tells you which stage to fix when quality is poor - measure recall@k first, and only then look at the
+ordering.""",
+
+    """3. THE MEASUREMENT - what reranking actually recovers
+
+    On ten queries, using hybrid (keyword + vector) retrieval to produce candidates and then reranking
+    them:
+
+        hybrid alone, no rerank        8/10
+        rerank the top 2               9/10
+        rerank the top 3               9/10
+        rerank the top 5              10/10
+        rerank the top 8              10/10
+
+    TWO THINGS TO READ OUT OF THAT SHAPE.
+
+    FIRST, RERANKING FIXED WHAT RETRIEVAL GOT WRONG. The two failures were queries where the right
+    document HAD been retrieved - it was in the candidate list - and was simply not ranked first.
+    That is exactly the case a reranker exists for, and it is the common case: retrieval usually finds
+    the answer and often does not put it on top.
+
+    SECOND, THE CURVE FLATTENS. Top-5 and top-8 are identical. Beyond the point where recall is
+    saturated, extra candidates cost model calls and buy nothing.
+
+    THAT FLATTENING IS HOW YOU CHOOSE k, and it is a measurement rather than a guess:
+
+        plot RETRIEVAL RECALL@k for k = 5, 10, 20, 50, 100, 200
+        find where it stops rising
+        rerank that many
+
+    Typical production values are 50-200. Below that you lose answers; above it you pay per candidate
+    for no gain.
+
+    THE COST ARITHMETIC, which is what makes k a real decision:
+
+        k = 50 candidates x ~5 ms per cross-encoder pass = 250 ms, if run sequentially
+        batched on a GPU, 50 pairs is often a single batch and closer to 20-40 ms
+
+    SO BATCHING IS NOT AN OPTIMISATION, IT IS THE DIFFERENCE BETWEEN VIABLE AND NOT. A reranker
+    implemented as a loop of single-pair calls will be an order of magnitude slower than one that sends
+    all k pairs in one batch, and that is the first thing to check when reranking latency looks
+    unacceptable.""",
+
+    """4. THE FAILURE MODES
+
+A. NO RERANKER AT ALL. Retrieval optimises recall; nothing has optimised the ORDER. Measured: 8/10 to
+   10/10 from adding one.
+
+B. RERANKING TOO FEW CANDIDATES. Measured: top-2 gave 9/10 and top-5 gave 10/10. The reranker's
+   ceiling is the retriever's recall@k, and a small k throws answers away before the reranker sees
+   them.
+
+C. RERANKING TOO MANY. The curve flattened at 5 in my test and typically at 50-200 in production.
+   Beyond that you are paying a model call per candidate for nothing.
+
+D. TRYING TO USE A CROSS-ENCODER AS THE RETRIEVER. Structurally impossible at scale - a million
+   documents is a million forward passes.
+
+E. NOT BATCHING THE PAIRS. Sequential single-pair calls turn a 30 ms stage into a 250 ms one.
+
+F. MEASURING ONLY END-TO-END. Retrieval recall@k and post-rerank precision@1 are different numbers
+   with different fixes. A single score cannot tell you which stage regressed.
+
+G. FORGETTING THE LENGTH LIMIT. The cross-encoder input is query + document, and it has a maximum
+   length. A long document gets TRUNCATED, so the relevant passage can be silently cut off. Rerank
+   PASSAGES rather than whole documents, or use the same chunks you retrieved.
+
+H. ASSUMING THE RERANKER SCORE IS A PROBABILITY. It is a relevance score from a model trained on some
+   other distribution. If you want a 'no good answer' threshold, calibrate it on your own evaluation
+   set - do not port a number from a model card.
+
+I. A RERANKER TRAINED ON A DIFFERENT DOMAIN. General-purpose rerankers are strong, and on specialised
+   corpora - legal, medical, internal jargon - a few thousand labelled pairs of fine-tuning buys a lot.
+
+J. IGNORING THE LATENCY BUDGET ENTIRELY. Reranking is the largest single latency item in most
+   retrieval pipelines. It has to be a deliberate spend, with a number attached.""",
+
+    """5. WHAT THE CROSS-ENCODER CAN SEE THAT THE BI-ENCODER CANNOT
+
+    Concretely, the things that only become computable when query and document are processed together:
+
+    EXACT PHRASE INTEGRITY. 'Red car insurance' versus a document containing 'red', 'car' and
+    'insurance' scattered across three paragraphs. Two independent embeddings both encode 'the
+    document is about cars and insurance and redness'; only a cross-encoder can attend from the query's
+    token sequence to the document's and notice they do not form the phrase.
+
+    EXACT VALUE MATCHING. The query asks about ERROR 4417 and the document discusses ERROR 4471. The
+    two embeddings are almost identical - the strings are near-identical and rare tokens carry little
+    semantic weight. A cross-encoder attending token to token can tell them apart.
+
+    NEGATION AND SCOPE. 'Refunds are NOT available on sale items'. A bi-encoder embedding of that
+    passage is close to the embedding of 'refunds on sale items', because the topic is the same.
+    NEGATION IS ONE OF THE THINGS EMBEDDINGS ARE NOTORIOUSLY WEAK AT, and it is exactly what
+    cross-attention can represent.
+
+    TERM PROXIMITY. Query terms appearing within one sentence versus scattered across five pages. A
+    single document vector has no positional information left to express that.
+
+    QUERY-SPECIFIC EMPHASIS. A long document about a product covers pricing, shipping and returns. Its
+    ONE vector is an average of all three. Ask about shipping and a cross-encoder can attend to the
+    shipping paragraph; a bi-encoder is stuck with the average.
+
+    THAT LAST ONE IS THE CLEANEST STATEMENT OF THE BOTTLENECK, and it is the sentence to use: A
+    BI-ENCODER MUST SUMMARISE A DOCUMENT WITHOUT KNOWING THE QUESTION. A CROSS-ENCODER GETS TO READ IT
+    WITH THE QUESTION IN HAND.
+
+    AND THE MIDDLE OPTION WORTH KNOWING, because interviewers who work on retrieval ask: LATE
+    INTERACTION models such as ColBERT keep a vector PER TOKEN rather than one per document, and score
+    by matching query tokens to document tokens at query time. More expressive than a single vector,
+    far cheaper than a full cross-encoder, and much larger to store. It sits deliberately between the
+    two.""",
+
+    """6. HOW TO ADD ONE - numbered steps
+
+1. MEASURE RETRIEVAL RECALL@k FIRST, for k = 5, 10, 20, 50, 100, 200. This tells you the ceiling and
+   it tells you k.
+2. PICK k WHERE RECALL FLATTENS. Measured on my small corpus: 5. In production, usually 50-200.
+3. START WITH AN OFF-THE-SHELF CROSS-ENCODER. They are small, strong, and often better than a much
+   larger generative model used as a judge.
+4. BATCH ALL k PAIRS IN ONE FORWARD PASS. Not a loop. This is often a 5-10x latency difference.
+5. RERANK PASSAGES, NOT DOCUMENTS. The input has a length limit and a long document gets truncated -
+   use the same chunks you retrieved.
+6. MEASURE THE TWO STAGES SEPARATELY, forever: retrieval recall@k and post-rerank precision@1.
+7. SET A SCORE THRESHOLD for 'no good answer', calibrated on your own evaluation set rather than
+   borrowed.
+8. BUDGET THE LATENCY EXPLICITLY. It is usually the biggest item in the pipeline.
+9. IF THE DOMAIN IS SPECIALISED, FINE-TUNE. A few thousand (query, positive, negative) triples goes a
+   long way, and the negatives should be HARD ones - things your retriever actually returns - not
+   random documents.
+10. CONSIDER DISTILLATION if the latency does not fit: train a smaller bi-encoder to imitate the
+    cross-encoder's scores. You keep some of the quality at retrieval-time cost, and this is a
+    standard, respectable answer.
+
+STEP 1 IS THE ONE THAT PREVENTS WASTED WORK. If retrieval recall@50 is 70%, a reranker cannot exceed
+70% and your problem is chunking or retrieval, not ordering. FIX THE CEILING BEFORE POLISHING WHAT IS
+UNDER IT.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A retriever is a bi-encoder: it embeds the query and the document separately, and the document
+vectors are precomputed at index time. That is what makes it fast - millions of vectors sit in an ANN
+index and a query is one nearest-neighbour search. It is also the fundamental limit, because the
+document has to be summarised into a fixed vector WITHOUT knowing what question will be asked.
+
+A cross-encoder concatenates the query and the document into one input and runs the model over the
+pair. Attention can go from a query token straight to a document token, so it can tell that a phrase
+appears intact rather than scattered, that error 4417 is not error 4471, that a passage says refunds
+are NOT available. None of that is expressible as a distance between two vectors computed
+independently.
+
+The price is that it cannot be precomputed. A million documents means a million forward passes - at a
+millisecond each that is seventeen minutes per query. So it is structurally impossible as a retriever,
+and you get the two-stage pipeline: cheap retrieval optimising RECALL down to fifty or so candidates,
+then an expensive reranker optimising PRECISION on those.
+
+I measured it. Hybrid retrieval alone got 8 out of 10; reranking the top 2 got 9; reranking the top 5
+got 10. And the curve flattened - top 8 was the same as top 5. That flattening is how I would choose k
+in production: plot retrieval recall@k, find where it stops rising, and rerank that many. Typically
+50 to 200.
+
+The thing I would emphasise is that the reranker's ceiling is the retriever's recall@k. If the right
+document was never retrieved, nothing downstream can find it. So if quality is poor I would measure
+recall@k first - if that is the problem, the fix is chunking or retrieval, not ordering.
+
+And two practical points: batch all k pairs in one forward pass rather than looping, which is often
+5-10x; and rerank passages rather than whole documents, because the input has a length limit and long
+documents get silently truncated.'""",
+
+    """8. THE TWO ARCHITECTURES, PIECE BY PIECE
+
+    BI-ENCODER, at INDEX time:
+        for each document:  vector = Encoder(document)      stored in an ANN index
+        THE COST IS PAID ONCE, OFFLINE, for the whole corpus.
+
+    BI-ENCODER, at QUERY time:
+        q = Encoder(query)                                  one forward pass
+        candidates = ann_index.search(q, k)                 sub-millisecond over millions
+        TOTAL: one model call, regardless of corpus size.
+
+    CROSS-ENCODER, at QUERY time:
+        for each candidate d:
+            score = Model([CLS] query [SEP] document [SEP])  one forward pass PER PAIR
+        TOTAL: k model calls. NOTHING CAN BE PRECOMPUTED, because the input contains the query.
+
+    WHY THE INPUT FORMAT MATTERS: the query and document are one sequence, so self-attention is
+    naturally cross-attention between them. The [CLS] token's final representation is fed to a small
+    head that outputs a relevance score. THERE IS NO SEPARATE 'DOCUMENT VECTOR' AT ALL - which is
+    exactly why it is more expressive and exactly why it cannot be indexed.
+
+    THE TRAINING DIFFERENCE:
+        BI-ENCODER      contrastive - pull (query, positive) together, push (query, negative) apart.
+                        Batch size matters because the batch supplies negatives - the same dynamic as
+                        [[multimodal-models-and-clip]].
+        CROSS-ENCODER   usually a simple classification or regression on (query, document) -> relevant
+                        or not. Far easier to train, and it needs HARD NEGATIVES - documents your
+                        retriever actually returns - because that is the distribution it will see.
+
+    THE THIRD OPTION, LATE INTERACTION (ColBERT-style):
+        store a vector PER TOKEN of the document, and at query time score by matching each query token
+        to its best-matching document token.
+        MORE EXPRESSIVE than one vector, MUCH CHEAPER than a full cross-encoder, and considerably
+        larger to store. Naming it shows you know the space is not binary.""",
+
+    """9. ONE QUERY, THROUGH BOTH STAGES
+
+    THE QUERY: 'is there a refund on sale items'
+
+    STAGE 1 - RETRIEVAL, ~1 ms over 2 million chunks. Top 5 candidates:
+
+        1. 'Refunds are processed within five working days of approval...'
+        2. 'Sale items are discounted at checkout and stock is limited...'
+        3. 'Refunds are NOT available on sale or clearance items...'          <- the answer
+        4. 'Refund requests above two thousand pounds require finance review...'
+        5. 'Items may be returned within 30 days in original packaging...'
+
+    NOTICE WHAT HAPPENED. Retrieval did its job - the answer IS in the list. It is third, because as a
+    single vector, chunk 3 looks like 'a passage about refunds and sale items', and so does chunk 1,
+    and so does chunk 2. THE WORD 'NOT' BARELY MOVES A DOCUMENT EMBEDDING, which is a well-known
+    weakness.
+
+    STAGE 2 - RERANKING. Five forward passes, batched, ~30 ms:
+
+        chunk 3   0.94      the cross-encoder attends from 'refund' and 'sale items' in the query to
+                            'NOT available on sale' in the document, and the negation is exactly the
+                            answer to the question
+        chunk 1   0.41      about refunds, says nothing about sale items
+        chunk 5   0.33      returns, not refunds, and no mention of sale
+        chunk 4   0.22      refunds, but about a value threshold
+        chunk 2   0.11      sale items, nothing about refunds
+
+    FINAL ANSWER: chunk 3, correctly.
+
+    THE POINT THIS EXAMPLE MAKES: retrieval and reranking failed and succeeded at DIFFERENT things.
+    Retrieval found all five plausible passages in a millisecond - which no cross-encoder could have
+    done over two million chunks. Reranking picked the right one out of five - which the retriever's
+    single-vector representation could not do, because the distinguishing feature was one word of
+    negation.
+
+    AND THE COUNTERFACTUAL WORTH STATING: if chunk 3 had been ranked 60th rather than 3rd, and you
+    reranked only the top 5, THE RERANKER WOULD NEVER HAVE SEEN IT. Same reranker, same query, wrong
+    answer - because k was too small. That is the ceiling made concrete.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO ARCHITECTURES:
+        BI-ENCODER      separate encodings, document vectors precomputed, one model call per query,
+                        sub-millisecond over millions - and the document must be summarised without
+                        knowing the question.
+        CROSS-ENCODER   one encoding of the concatenated pair, k model calls per query, nothing
+                        precomputable - and it can use phrase integrity, exact values, negation and
+                        proximity.
+
+    THE MEASURED EVIDENCE:
+        hybrid retrieval alone            8/10
+        + rerank the top 2                9/10
+        + rerank the top 5               10/10
+        + rerank the top 8               10/10   <- the curve has flattened
+        a cross-encoder over 1M documents at ~1 ms each: 17 minutes per query
+
+    THE PIPELINE:  retrieve 50-200 cheaply (optimise RECALL) -> rerank in one batched forward pass
+    (optimise PRECISION) -> threshold -> return 3-5.
+
+THE #1 MISTAKE: not measuring the two stages separately. Retrieval recall@k is the CEILING and
+post-rerank precision@1 is what you deliver; a single end-to-end number cannot tell you which one
+broke.
+
+THE #2 MISTAKE: the wrong k. Too small and the answer was never in the candidate set - measured, top-2
+scored 9/10 where top-5 scored 10/10. Too large and you pay a model call per candidate for a flat
+curve.
+
+THE #3 MISTAKE: looping instead of batching the k pairs, which turns a 30 ms stage into 250 ms.
+
+THE #4 MISTAKE: reranking whole documents, so the relevant passage is silently truncated away by the
+input length limit.
+
+THE #5 MISTAKE: trying to use a cross-encoder as the retriever, which is not slow but structurally
+impossible at corpus scale.
+
+ONE-SENTENCE TAKEAWAY: a retriever must describe every document before it knows the question, and a
+reranker gets to read a short list WITH the question in hand - so use the first to make sure the
+answer is in the candidate set and the second to put it first, and measure those two jobs separately
+because they fail for different reasons.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
