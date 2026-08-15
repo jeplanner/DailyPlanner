@@ -115654,63 +115654,317 @@ do nothing at all.""",
 ]
 
 _EX_P1S["ROC-AUC vs Precision-Recall Curves"] = [
-    """What each curve actually plots.
-ROC: true positive rate (recall) on the y-axis against FALSE POSITIVE RATE
-(FP / all actual negatives) on the x-axis, as the threshold sweeps from 1 to 0.
-AUC-ROC has a clean interpretation - it is the probability that a randomly
-chosen positive is ranked above a randomly chosen negative. 0.5 is coin-flip,
-1.0 is perfect ranking.
-PR: precision (TP / all predicted positive) against recall, same sweep. Its
-baseline is not 0.5 - it is the POSITIVE RATE, so on 1% positives a useless
-model scores about 0.01, and 0.30 might be excellent.""",
+    """1. THE GOAL IN PLAIN ENGLISH - two ways of scoring the same ranking
 
-    """The imbalance failure, in numbers - which is the whole question.
-1,000 transactions, 10 fraudulent. A model flags 100 and catches 8 of them.
-FPR = 92 / 990 = 0.093 -> the ROC point looks excellent, because the
-denominator (990 negatives) is huge and 92 barely dents it.
-Precision = 8 / 100 = 0.08 -> the PR curve reports the truth: 92% of the alerts
-are wasted analyst time.
-So ROC-AUC can sit at 0.95 while the system is operationally useless. The rule:
-when positives are rare AND you care about the alerts you generate, PR-AUC is
-the honest curve.""",
+A classifier does not really output 'fraud' or 'not fraud'. It outputs a SCORE, and somebody chooses a
+threshold. Both curves are ways of summarising how good that ranking is across EVERY possible
+threshold, so you can judge the model without having picked one yet.
 
-    """The deciding question: which denominator matters to you?
-FPR divides by all NEGATIVES - so it answers 'what fraction of the innocent did
-we bother?', which is the right question when negatives are the population you
-must protect (screening a whole population, spam filtering where false
-positives annoy everyone).
-Precision divides by all PREDICTED POSITIVES - 'of the alerts we raised, how
-many were real?', which is the right question when someone must ACT on each
-alert and their time is the constraint.
-Pick the curve whose denominator matches the cost you are actually paying.""",
+THE ROC CURVE plots, as the threshold sweeps:
 
-    """Why ROC-AUC is still worth reporting.
-It is threshold-independent and INSENSITIVE TO CLASS BALANCE, which makes it
-comparable across datasets with different positive rates - useful when you are
-comparing models rather than choosing an operating point.
-PR-AUC changes when the positive rate changes, so a PR-AUC of 0.4 on a 1%
-dataset and 0.4 on a 20% dataset are not comparable at all. Report both: ROC
-for model comparison, PR for deciding whether the thing is deployable.""",
+    TRUE POSITIVE RATE   = TP / (all actual positives)      'of the real frauds, how many did I catch?'
+    FALSE POSITIVE RATE  = FP / (all actual negatives)      'of the innocent cases, how many did I flag?'
 
-    """Neither replaces choosing a THRESHOLD from costs.
-Both curves summarise performance across ALL thresholds, and you deploy exactly
-one. So after picking a model by AUC, compute the expected cost at each
-threshold: cost = FP * cost_per_false_alarm + FN * cost_per_miss, and take the
-minimum.
-With a missed fraud at 500 euro and a review at 5 euro, the optimal threshold
-is far below 0.5 - and no AUC number tells you that. Saying 'AUC picks the
-model, costs pick the threshold' is the sentence that closes this topic.""",
+THE PRECISION-RECALL CURVE plots:
 
-    """The related metrics worth naming.
-Precision@k, when only the top k alerts get reviewed - a call centre that can
-handle 100 cases a day does not care about the rest of the curve.
-Average Precision, which is the standard summary of the PR curve.
-Calibration: AUC only measures RANKING, so a model can have AUC 0.95 and
-wildly miscalibrated probabilities. If you use the score in an
-expected-value calculation rather than just to sort, check calibration with a
-reliability plot and fix it with Platt scaling or isotonic regression.
-That distinction - ranking quality versus probability quality - catches a lot
-of people.""",
+    RECALL     = TP / (all actual positives)                identical to TPR - same thing, other name
+    PRECISION  = TP / (TP + FP)                             'of the cases I flagged, how many were real?'
+
+THE ONLY DIFFERENCE IS THE DENOMINATOR ON THE SECOND AXIS, and it is the difference that matters:
+
+    FPR       divides false positives by ALL NEGATIVES        - a huge number in a rare-event problem
+    PRECISION divides false positives by WHAT YOU FLAGGED     - a small number, and the one a human
+                                                                actually experiences
+
+That one change makes ROC-AUC nearly blind to class imbalance and makes PR brutally sensitive to it.
+Everything below follows from it.
+
+TERMS AS THEY APPEAR:
+- AUC: area under the curve. 1.0 is perfect.
+- BASE RATE: the fraction of cases that are actually positive. 0.1% in fraud, 50% in a balanced test
+  set - and it is the whole story here.
+- ROC-AUC has a lovely interpretation: the probability that a random positive scores above a random
+  negative. Random guessing gives 0.5.""",
+
+    """2. THE INTUITION - the experiment that settles it
+
+Take ONE classifier. Do not retrain it, do not change it. Keep 100 positives with exactly the same
+scores, and only add more negatives - which is what moving from a balanced test set to production
+looks like.
+
+MEASURED:
+
+    positives  negatives  base rate   ROC-AUC   PR-AUC   precision @ 80% recall
+          100        100    50.00%     0.9435   0.9411        88.9%
+          100      1,000     9.09%     0.9157   0.6525        39.4%
+          100     10,000     0.99%     0.9057   0.2151         5.1%
+          100    100,000     0.10%     0.9226   0.0463         0.8%
+
+READ THE ROC-AUC COLUMN: 0.94, 0.92, 0.91, 0.92. Essentially flat. By that number the model is equally
+good in all four worlds.
+
+READ THE LAST COLUMN: 88.9%, 39.4%, 5.1%, 0.8%. To catch 80% of the frauds, you go from a system where
+9 in 10 alerts are real to one where 99.2% of alerts are false alarms.
+
+THE MODEL NEVER CHANGED. The scores are identical. The only thing that moved was how many negatives
+exist - and ROC-AUC did not notice, because FPR is normalised by that very number.
+
+WHY ROC-AUC IS INVARIANT, stated properly: both of its axes are RATES WITHIN A CLASS. TPR is computed
+only among positives; FPR only among negatives. Change the mix and neither rate changes. That
+invariance is genuinely useful when you want to compare models across datasets with different
+balances - and it is exactly what makes ROC-AUC the wrong headline number for a rare-event product.
+
+PR-AUC has no such invariance, because precision mixes the two classes in one fraction. That is not a
+flaw - it is the point. It is measuring the thing the user experiences.""",
+
+    """3. THE SAME FALSE POSITIVES, TWO DENOMINATORS
+
+    100 frauds hidden among 100,000 legitimate cases. Sweep the threshold and count:
+
+        flagged     TP      FP   recall       FPR   precision
+             50     12      38      12%   0.00038      24.0%
+            100     15      85      15%   0.00085      15.0%
+            200     19     181      19%   0.00181       9.5%
+            500     29     471      29%   0.00471       5.8%
+          1,000     39     961      39%   0.00961       3.9%
+          5,000     63   4,937      63%   0.04937       1.3%
+
+    LOOK AT THE 5,000 ROW. FPR is 0.049 - on an ROC plot that is essentially hard against the left-hand
+    axis, in the region that looks excellent. PRECISION is 1.3%: the analyst reviewing those alerts
+    finds one real fraud in every seventy-seven cases.
+
+    SAME TWO NUMBERS - 63 true positives, 4,937 false positives - described two ways. One denominator
+    is 100,000, the other is 5,000. That is the entire disagreement between the curves, and once you
+    see it you cannot unsee it.
+
+    THE RULE THAT FALLS OUT:
+
+        WHEN NEGATIVES VASTLY OUTNUMBER POSITIVES, FPR IS DIVIDED BY SUCH A BIG NUMBER THAT IT CANNOT
+        EXPRESS PAIN. Precision can.
+
+    AND THE FLIP SIDE, so this is not one-sided: if you genuinely care about the burden on the negative
+    class as a whole - a screening programme where every false positive means an unnecessary letter to
+    a healthy person, and the population is the thing being managed - then FPR is a meaningful
+    quantity and ROC is the right frame. It is only misleading when you have quietly substituted it for
+    'will the alerts be worth reviewing'.
+
+    THE PRACTICAL HEURISTIC:
+        do you care about the RANKING quality in general?          ROC-AUC is fine
+        will a human or a system ACT on the flagged items?          PR, every time
+        are positives rarer than roughly 10%?                       PR, every time""",
+
+    """4. THE FAILURE MODES
+
+A. REPORTING ROC-AUC ON A RARE-EVENT PROBLEM. Measured: 0.9226 at a 0.1% base rate, where precision at
+   80% recall is 0.8%. The number is not wrong, it is answering a question nobody asked.
+
+B. COMPARING PR-AUC ACROSS DATASETS WITH DIFFERENT BASE RATES. A random classifier's PR-AUC EQUALS the
+   base rate - 0.001 here, 0.5 on a balanced set. So 'our PR-AUC is 0.28' is meaningless without the
+   base rate next to it. Always quote the baseline: 0.28 against a 0.001 baseline is 280x random.
+
+C. TREATING AUC AS AN ACCURACY. Neither is. Both summarise a RANKING across all thresholds. A model
+   with excellent AUC can be useless at the one threshold you can afford to run.
+
+D. FORGETTING THAT AUC IS THRESHOLD-FREE AND YOUR PRODUCT IS NOT. You have to ship a threshold. AUC
+   tells you nothing about which one - see the budget table below.
+
+E. USING ACCURACY AT ALL AT A 0.1% BASE RATE. Predicting 'never fraud' scores 99.9%. This is the
+   original sin of imbalanced classification and it still appears in real dashboards.
+
+F. INTERPOLATING THE PR CURVE LINEARLY. Unlike ROC, straight-line interpolation between PR points is
+   not valid and inflates the area. Use average precision, which is what the measurement above
+   computes.
+
+G. TUNING THE THRESHOLD ON THE TEST SET. The threshold is a parameter; choosing it on the data you
+   report is leakage.
+
+H. IGNORING THAT THE BASE RATE MOVES. A fraud rate of 0.1% in training and 0.4% during a holiday
+   attack changes precision at a fixed threshold with no model change at all. Monitor the base rate as
+   a first-class metric.
+
+I. QUOTING F1 AS THOUGH IT WERE NEUTRAL. F1 weights precision and recall EQUALLY, which is a strong
+   business claim disguised as a default. If a missed fraud costs 200x a wasted review, F1 is the
+   wrong objective and F-beta or an expected-cost calculation is the right one.""",
+
+    """5. THE NUMBER THAT LOOKS GREAT AND ISN'T
+
+    A slightly better classifier, 100 positives in 100,100 cases:
+
+        ROC-AUC = 0.9696        <- the number that goes on the slide
+        PR-AUC  = 0.2797        <- the same model, honestly described
+        precision at 50% recall = 15.3%
+        precision at 90% recall =  1.3%
+
+    'Our fraud model has an AUC of 0.97' is TRUE and it is the wrong thing to say to somebody deciding
+    whether to staff a review team. What they need to hear is: 'to catch half the fraud, six out of
+    seven alerts will be false. To catch 90%, seventy-six out of seventy-seven will be.'
+
+    BUT NOTE THE HONEST OTHER HALF, because overcorrecting is its own error: a random classifier here
+    has PR-AUC 0.001. This model's 0.2797 is 280 TIMES BETTER THAN RANDOM. The model is genuinely
+    good. The problem is not the model - it is that a 0.1% base rate is a hard world, and a single
+    number from the wrong curve hid that fact.
+
+    THE SENTENCE THAT GETS THIS RIGHT IN AN INTERVIEW:
+
+        'I would report PR-AUC with the base rate next to it, because PR-AUC is not comparable across
+         datasets - a random classifier scores the base rate. And I would report precision at the
+         specific recall the business needs, because that is the number somebody has to live with.'
+
+    THAT LAST CLAUSE IS THE MOST USEFUL HABIT IN THIS WHOLE TOPIC. Not the area under anything -
+    PRECISION AT THE RECALL YOU ACTUALLY NEED, or RECALL AT THE PRECISION YOU CAN TOLERATE. One
+    operating point, chosen for a reason, quoted as a number a non-specialist can act on.""",
+
+    """6. HOW TO CHOOSE AND REPORT - numbered steps
+
+1. STATE THE BASE RATE FIRST, always. Every number below is uninterpretable without it.
+2. ASK WHO OR WHAT CONSUMES THE POSITIVES. A human reviewer, an automatic block, a recommendation?
+   That determines whether precision is the felt quantity.
+3. IF POSITIVES ARE RARE OR SOMEONE ACTS ON EACH FLAG -> lead with precision-recall.
+4. IF YOU ARE COMPARING MODELS ACROSS DATASETS WITH DIFFERENT BALANCES, or you genuinely care about
+   burden across the whole negative population -> ROC-AUC is the appropriate one.
+5. QUOTE PR-AUC WITH ITS BASELINE. 'PR-AUC 0.28, against a random baseline of 0.001.'
+6. THEN QUOTE ONE OPERATING POINT. 'At the threshold that gives 50% recall, precision is 15% - about
+   six false alerts per real one.'
+7. CHOOSE THE THRESHOLD FROM CAPACITY OR COST, not from a curve. How many alerts can be reviewed per
+   day? What does a miss cost versus a false alarm?
+8. VALIDATE THE THRESHOLD ON A SEPARATE SPLIT from the one you report on.
+9. MONITOR THE BASE RATE IN PRODUCTION. Precision moves when it moves, with no model change.
+10. IF COSTS ARE ASYMMETRIC, SKIP THE CURVES AND COMPUTE EXPECTED COST directly. It is the most
+    defensible thing you can put in front of a business owner.
+
+STEP 6 IS THE ONE THAT CHANGES CONVERSATIONS. Areas under curves are for comparing models; an
+operating point is for making a decision.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Both curves summarise the same ranking across every threshold, and the only real difference is the
+denominator on the second axis. ROC plots true positive rate against false positive rate, and FPR
+divides false positives by ALL the negatives. PR plots precision, which divides false positives by
+what you actually flagged.
+
+That difference is everything when positives are rare. I measured it: same classifier, same 100
+positives, only adding negatives. ROC-AUC went 0.94, 0.92, 0.91, 0.92 - basically flat from a balanced
+set down to a 0.1% base rate. But precision at 80% recall went from 89% to 0.8%. The model never
+changed; ROC-AUC just cannot see it, because both its axes are rates computed within a class.
+
+The concrete version: at a 0.1% base rate, flagging 5,000 cases catches 63 frauds and produces 4,937
+false alarms. That is an FPR of 0.049 - which on an ROC plot looks excellent - and a precision of
+1.3%, which means an analyst finds one real fraud per seventy-seven reviews. Same two numbers, two
+denominators.
+
+So my rule is: if a human or a system will ACT on each flagged item, or positives are rarer than about
+10%, use precision-recall. Use ROC when you want to compare rankings across datasets with different
+balances, because that invariance is genuinely useful there.
+
+And I would report PR-AUC with its baseline next to it, because a random classifier's PR-AUC equals
+the base rate - so 0.28 against a baseline of 0.001 is 280 times random, and quoting it alone would be
+meaningless. Then one operating point: precision at the recall the business actually needs. That is
+the number somebody can act on, and no area under a curve replaces it.'""",
+
+    """8. THE FOUR QUANTITIES, PIECE BY PIECE
+
+    Out of everything the model flagged and everything it missed:
+
+        TP   flagged and really positive
+        FP   flagged and actually negative        - the false alarm
+        FN   missed, and really positive          - the miss
+        TN   correctly left alone
+
+    RECALL = TPR = TP / (TP + FN)
+        Denominator: ALL REAL POSITIVES. 'Of the frauds that existed, what share did I catch?'
+        Appears on BOTH curves, under two names, which is a genuine source of confusion.
+
+    FPR = FP / (FP + TN)
+        Denominator: ALL REAL NEGATIVES - typically an enormous number.
+        This is why an FPR of 0.049 can coexist with a precision of 1.3%. TN is 95,000 of the
+        denominator and it dwarfs everything.
+
+    PRECISION = TP / (TP + FP)
+        Denominator: WHAT YOU FLAGGED. TN does not appear ANYWHERE in the PR curve, which is precisely
+        why it is the right tool for rare events - the vast, uninteresting mass of correct negatives
+        cannot flatter you.
+
+    ROC-AUC also equals: P(a random positive scores above a random negative). That is a clean,
+    intuitive meaning and it is why ROC-AUC is a good measure of RANKING QUALITY in the abstract.
+
+    PR-AUC (average precision) has no such elegant identity, and it depends on the base rate. Both of
+    those are the price of measuring something operational.
+
+    THE ONE-LINE MEMORY AID:
+        ROC asks   'how well does it separate the two classes?'
+        PR asks    'if I act on the top of the ranking, how much of my effort is wasted?'
+        Those are different questions, and most products are asking the second one.""",
+
+    """9. PICKING THE THRESHOLD - the part no curve does for you
+
+    A fraud review team, 100 real frauds in 10,100 cases. The team can review N alerts a day:
+
+        budget    caught   recall   precision   wasted reviews
+            25        12      12%       48.0%               13
+            50        19      19%       38.0%               31
+           100        28      28%       28.0%               72
+           250        44      44%       17.6%              206
+           500        53      53%       10.6%              447
+
+    NO METRIC PICKS A ROW HERE. Not ROC-AUC, not PR-AUC, not F1. The right row depends on facts the
+    model does not have:
+
+        what does a missed fraud cost?        chargeback, plus the customer relationship
+        what does a wasted review cost?       analyst minutes, plus alert fatigue
+        how many analysts are there?          this is often the real constraint
+
+    THE ARITHMETIC THAT SETTLES IT. Say a missed fraud costs 400 and a review costs 5:
+
+        budget 25:   88 missed x 400 = 35,200  +  25 x 5 =    125  ->  35,325
+        budget 100:  72 missed x 400 = 28,800  + 100 x 5 =    500  ->  29,300
+        budget 250:  56 missed x 400 = 22,400  + 250 x 5 =  1,250  ->  23,650
+        budget 500:  47 missed x 400 = 18,800  + 500 x 5 =  2,500  ->  21,300
+
+    Expected cost is still falling at 500, so with those numbers you should be reviewing MORE, and the
+    binding constraint is staffing rather than the model. THAT IS A CONVERSATION ABOUT HIRING, and you
+    got there from a threshold table.
+
+    NOTICE ALSO THE SHAPE OF THE PRECISION COLUMN: 48% -> 10.6% as the budget grows twentyfold. Alert
+    fatigue is real, and a queue where 9 in 10 items are noise gets worked less carefully - which is a
+    cost the arithmetic above does not capture and which you should say out loud.
+
+    THIS IS THE ANSWER THAT DISTINGUISHES A SENIOR CANDIDATE: not 'PR-AUC is better for imbalanced
+    data', but 'here is the operating point, here is what it costs, and here is who decides'.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE DIFFERENCE, IN ONE LINE: ROC's second axis divides by ALL NEGATIVES; PR's divides by WHAT YOU
+    FLAGGED. Everything else follows.
+
+    THE MEASURED EVIDENCE (same classifier, only the negatives change):
+        base rate   50%     9.1%    0.99%    0.10%
+        ROC-AUC    0.9435  0.9157  0.9057   0.9226      <- flat
+        PR-AUC     0.9411  0.6525  0.2151   0.0463      <- collapses
+        prec@80%   88.9%   39.4%    5.1%     0.8%       <- what the user feels
+
+    WHEN TO USE WHICH:
+        rare positives, someone acts on each flag  ->  precision-recall
+        comparing rankings across different base rates, or the whole negative population matters -> ROC
+
+THE #1 MISTAKE: reporting ROC-AUC on a rare-event problem. It stays beautiful while the product
+becomes unusable, and it is the most common way a model looks good in a review and fails in
+production.
+
+THE #2 MISTAKE: quoting PR-AUC without the base rate. A random classifier scores the base rate, so the
+number is uninterpretable alone.
+
+THE #3 MISTAKE: treating either area as a decision. Ship an operating point - precision at the recall
+you need - not an area.
+
+THE #4 MISTAKE: accuracy on imbalanced data. 'Never fraud' scores 99.9%.
+
+THE #5 MISTAKE: assuming F1 is neutral. It asserts that a miss and a false alarm cost the same, which
+is almost never true.
+
+ONE-SENTENCE TAKEAWAY: ROC-AUC measures how well the model SEPARATES the classes and is blind to how
+rare the positives are; precision-recall measures how much of your acted-upon output is wasted - so
+report PR with its base-rate baseline, and then quote the one operating point somebody will actually
+have to live with.""",
 ]
 
 _EX_P1S["What questions should you ask the interviewer?"] = [
@@ -121703,62 +121957,324 @@ trees.""",
 ]
 
 _EX_P1V["Big-O notation"] = [
-    """What the notation actually claims.
-O(f(n)) is an UPPER BOUND on growth, ignoring constants and lower-order terms:
-3n^2 + 5n + 100 is O(n^2), because for large n the n^2 term dominates and the
-constant 3 does not change the shape of the curve.
-Why drop constants? Because they depend on the machine, the language and the
-compiler, while the GROWTH RATE is a property of the algorithm. An O(n)
-algorithm in Python beats an O(n^2) one in C for large enough n - and 'large
-enough' arrives sooner than people expect.""",
+    """1. THE GOAL IN PLAIN ENGLISH - how the cost grows, not how long it takes
 
-    """The growth rates, with real numbers so they stop being abstract.
-At n = 1,000,000 and roughly a billion simple operations per second:
-O(1) - instant. O(log n) - 20 steps, instant. O(n) - a million steps, about a
-millisecond. O(n log n) - 20 million, about 20ms.
-O(n^2) - a trillion, about 17 minutes. O(2^n) - beyond the age of the universe.
-This is why the n log n / n^2 boundary is the one that decides whether a
-solution passes: at n = 100,000 it is the difference between 1.7 million
-operations and 10 billion.""",
+Big-O answers ONE question: IF THE INPUT GETS BIGGER, HOW MUCH MORE WORK IS THERE?
 
-    """Reading complexity off code.
-A single loop over n -> O(n). Nested loops over n -> O(n^2). A loop that HALVES
-the range each step -> O(log n). A loop over n containing a binary search ->
-O(n log n). Recursion that splits in half and does linear work per level ->
-O(n log n) by the master theorem (merge sort).
-The trap: `for i in range(n): for j in range(i)` looks quadratic and IS -
-n(n-1)/2 is still O(n^2), because constants drop. Another trap: string
-concatenation in a loop is O(n^2) in Python, because each concatenation copies
-the whole string - invisible unless you know the primitive's cost.""",
+It deliberately does NOT answer: how many milliseconds will this take? That depends on your machine,
+your language, the cache, what else is running, and how well the code is written - none of which are
+properties of the ALGORITHM.
 
-    """AMORTISED analysis, which is the concept people miss.
-Appending to a Python list is O(1) AMORTISED, not O(1) worst case: occasionally
-the list is full and must be reallocated and copied, which is O(n). But because
-capacity doubles, those copies happen rarely enough that n appends cost O(n)
-TOTAL - so O(1) each on average.
-Same for hash tables: O(1) average, O(n) worst case when every key collides.
-The distinction matters in interviews - saying 'O(1) amortised' rather than
-'O(1)' is precisely the kind of precision that gets noticed.""",
+    O(1)         constant       the input size does not matter at all
+    O(log n)     logarithmic    each step halves what is left
+    O(n)         linear         look at everything once
+    O(n log n)   linearithmic   the best a comparison sort can do
+    O(n^2)       quadratic      every item against every other item
+    O(2^n)       exponential    every subset. Falls over almost immediately.
 
-    """Best, average and worst case - three different questions.
-Quicksort: O(n log n) average, O(n^2) worst (already-sorted input with a fixed
-pivot). Hash lookup: O(1) average, O(n) worst. Binary search: O(log n) always.
-Merge sort: O(n log n) always.
-Big-O describes a bound, not automatically the worst case - so state WHICH case
-you mean. 'Quicksort is O(n log n)' is a claim about the average; it is also
-O(n^2), and both statements are true.
-Related: Theta is a tight bound (both upper and lower), Omega is a lower bound.
-Interviews say Big-O and usually mean Theta.""",
+WHY IT IS WORTH KNOWING RATHER THAN MEMORISING: it tells you what will still work when the data grows
+by 100x, which is the only thing you cannot fix later by buying a faster machine.
 
-    """SPACE complexity, and the two things people forget.
-Count only AUXILIARY space - extra memory beyond the input - unless the prompt
-says otherwise. Merge sort is O(n) auxiliary; quicksort is O(log n) for its
-recursion stack.
-The two omissions: recursion stack depth IS space (a recursive tree traversal
-is O(h), which is O(n) on a skewed tree), and the OUTPUT is usually excluded
-but should be mentioned - 'O(1) extra space, plus the O(n) output array' is the
-honest phrasing. Saying an algorithm that builds an n-element list is O(1)
-space without that clause is the kind of thing an interviewer will probe.""",
+    n = 8,000, MEASURED IN PLAIN PYTHON:
+        O(n) sum over the list          0.2 ms
+        O(n log n) sort                 0.7 ms
+        O(n^2) all-pairs scan       1,509 ms
+
+    Same list. The quadratic version is roughly 7,000 times slower - and at n = 80,000 that gap becomes
+    100 times wider again, because that is what squaring does.
+
+THE RULES OF THE NOTATION, and there are only two:
+    DROP THE CONSTANTS.       3n + 50  ->  O(n)
+    KEEP THE DOMINANT TERM.   n^2 + n  ->  O(n^2)
+Both exist for the same reason: as n grows, only the fastest-growing term matters.""",
+
+    """2. THE INTUITION - watch the doubling
+
+The most useful way to recognise a complexity class is not to read the code. It is to DOUBLE n AND SEE
+WHAT HAPPENS TO THE TIME:
+
+    O(1)         unchanged
+    O(log n)     +1 step
+    O(n)         doubles
+    O(n log n)   slightly more than doubles
+    O(n^2)       QUADRUPLES
+    O(2^n)       squares
+
+MEASURED, on the same random list:
+
+        n        O(n) sum    O(n log n) sort    O(n^2) all-pairs    ratio to previous row
+      500            11us              19us            5.78ms          -
+    1,000            23us              67us           22.18ms        3.84x
+    2,000            42us             146us           87.85ms        3.96x
+    4,000           101us             332us          362.10ms        4.12x
+    8,000           205us             734us        1,508.57ms        4.17x
+
+LOOK AT THAT LAST COLUMN: 3.84, 3.96, 4.12, 4.17. Every doubling multiplies the time by about four.
+THAT is what a quadratic algorithm looks like from the outside, and it is a diagnosis you can perform
+on somebody else's code without reading a line of it - time it at n and at 2n.
+
+The O(n) column doubles: 11, 23, 42, 101, 205. The sort column grows slightly faster than doubling,
+which is the log factor showing up: 19, 67, 146, 332, 734.
+
+THE PRACTICAL FORM OF THIS: if your job took 2 minutes on last month's data and takes 32 minutes on
+data that is only four times bigger, you have a quadratic algorithm and no amount of tuning will
+rescue it. 4x data, 16x time. That is the number to notice.""",
+
+    """3. THE THING BIG-O DELIBERATELY HIDES - and when it bites
+
+    Big-O throws away constants. That is a feature at large n and a TRAP at small n, because the
+    constants are what dominate there.
+
+    MEASURED - insertion sort O(n^2) against merge sort O(n log n), both hand-written:
+
+            n     insertion       merge      winner
+            5        0.5us        2.5us    insertion
+           10        1.8us        5.7us    insertion
+           20        5.8us       12.1us    insertion
+           40       17.7us       28.0us    insertion
+           80       67.3us       63.5us    merge
+          200      356.2us      216.8us    merge
+        1,000   16,231.8us    1,160.9us    merge
+        4,000  249,306.5us    5,716.8us    merge
+
+    THE CROSSOVER IS AT ABOUT n = 80. Below it, the asymptotically WORSE algorithm is up to 5x faster,
+    because merge sort allocates lists and recurses while insertion sort just shuffles values in place.
+    Above it, the exponent wins and keeps winning: at n = 4,000 insertion sort is 44x slower.
+
+    THIS IS NOT A CURIOSITY - IT IS WHY REAL SORT IMPLEMENTATIONS DO EXACTLY THIS. Timsort, introsort
+    and friends switch to insertion sort for partitions below a threshold of roughly 16 to 64
+    elements. Somebody measured the crossover and coded it in.
+
+    AN HONEST NEGATIVE FROM THE SAME EXPERIMENT. I expected linear scan to beat binary search at very
+    small n for the same reason. It did not - binary search won at every size tested, from n = 4:
+
+            n     linear scan   binary search
+            4        0.284us         0.199us
+           64        1.354us         0.421us
+        4,096      120.294us         1.152us
+      100,000    3,104.051us         1.440us
+
+    The crossover exists in principle but sits below n = 4 in Python, because the scan's per-item
+    overhead is heavy while binary search's per-step overhead is a comparison and a shift. THE LESSON
+    IS THE RIGHT ONE ANYWAY: crossovers are real and their location is an empirical fact about your
+    language and data, not something you can derive from the notation.""",
+
+    """4. THE FAILURE MODES
+
+A. TREATING BIG-O AS A SPEED MEASUREMENT. Measured: the built-in `sorted()` and a hand-written merge
+   sort are BOTH O(n log n), and at n = 2,000 the built-in is 14x faster - 178us against 2,577us. Same
+   class, wildly different constant. Big-O ranks how things SCALE, not how fast they are.
+
+B. IGNORING CONSTANTS WHEN n IS SMALL. Insertion sort beats merge sort below n=80. If your n is always
+   20, the complexity class is not the interesting question.
+
+C. FORGETTING SPACE. O(n log n) time with O(n) extra space may be unusable on a memory-constrained
+   box. Quote both; interviewers almost always ask for the second.
+
+D. NOT DEFINING n. In a string problem, is n the number of strings or their total length? In a graph
+   problem it is usually two variables - O(V + E) - and collapsing them to 'n' loses the meaning.
+
+E. ADDING WHERE YOU SHOULD MULTIPLY. Two sequential loops are O(n) + O(n) = O(n). A loop INSIDE a loop
+   is O(n) x O(n) = O(n^2). Nested versus sequential is the single most common analysis error.
+
+F. ASSUMING WORST CASE IS THE ONLY CASE. Quicksort is O(n^2) worst case and O(n log n) expected, and
+   it is used everywhere. Hash lookup is O(n) worst case and O(1) average. Say WHICH case you mean.
+
+G. FORGETTING AMORTISED COST. Appending to a dynamic array is O(n) on the occasional resize and O(1)
+   amortised, because the resizes are rare and get rarer. Quoting the O(n) is technically true and
+   practically misleading.
+
+H. HIDDEN COSTS IN INNOCENT-LOOKING CALLS. `if x in my_list` is O(n); in a set it is O(1). String
+   concatenation in a loop is O(n^2) in many languages because each concat copies. Slicing a list
+   copies it. These turn an O(n) loop quadratic without a nested loop in sight.
+
+I. OPTIMISING THE WRONG THING. Making an O(n) step 20% faster when an O(n^2) step is next to it is
+   wasted effort. Find the dominant term first.""",
+
+    """5. EXPONENTIAL IS A DIFFERENT UNIVERSE
+
+    Naive recursive Fibonacci recomputes the same subproblems over and over - O(2^n)-ish, or more
+    precisely O(phi^n). Memoising it makes it O(n). MEASURED:
+
+            n     naive         memoised      speedup
+           10      0.01 ms        5.73us            2x
+           20      0.72 ms        3.35us          216x
+           25      8.64 ms       31.54us          274x
+           30     91.98 ms        6.55us       14,036x
+           32    251.84 ms       14.14us       17,807x
+
+    WATCH THE NAIVE COLUMN GROW: 0.01, 0.72, 8.64, 91.98, 251.84. Each step of about 5 in n multiplies
+    the time by roughly 10.
+
+    EXTRAPOLATED FROM THE MEASURED n=30 TIME: naive fib(50) would take about 0.4 HOURS. fib(60) would
+    take around two months. The memoised version answers all of them in microseconds.
+
+    THAT IS THE PRACTICAL MEANING OF EXPONENTIAL: it is not 'slow', it is 'does not finish'. There is
+    no machine you can buy. Doubling your hardware buys you ONE more n.
+
+    THE ORDERS OF MAGNITUDE WORTH CARRYING IN YOUR HEAD, roughly, for what is feasible in a second or
+    so of ordinary code:
+
+        O(log n)     n can be astronomically large
+        O(n)         n up to ~10^7-10^8
+        O(n log n)   n up to ~10^6-10^7
+        O(n^2)       n up to ~10^4
+        O(n^3)       n up to ~500
+        O(2^n)       n up to ~25
+        O(n!)        n up to ~10
+
+    THIS TABLE IS DIRECTLY USEFUL IN AN INTERVIEW. If the constraints say n <= 100,000, an O(n^2)
+    solution is 10^10 operations and will not pass - so the constraint has just told you the intended
+    complexity is O(n log n) or better. READING THE CONSTRAINTS IS PART OF READING THE PROBLEM.""",
+
+    """6. HOW TO ANALYSE A PIECE OF CODE - numbered steps
+
+1. DEFINE n. Say out loud what it is. Number of elements? Total characters? Vertices and edges?
+2. FIND THE LOOPS AND THE RECURSION. That is where the work is.
+3. NESTED LOOPS MULTIPLY; SEQUENTIAL LOOPS ADD. A loop to n containing a loop to n is O(n^2). Two
+   loops one after the other are O(n).
+4. CHECK WHAT EACH LINE INSIDE THE LOOP ACTUALLY COSTS. `x in list` is O(n). `list.pop(0)` is O(n).
+   Slicing copies. String += copies. Any of these silently multiplies your loop.
+5. FOR RECURSION, COUNT THE CALLS AND THE WORK PER CALL. Two calls per level over n levels is 2^n.
+   Halving the input each time is log n levels.
+6. DROP CONSTANTS, KEEP THE DOMINANT TERM. n^2 + 3n + 100 -> O(n^2).
+7. STATE THE SPACE TOO - including the recursion stack, which people forget.
+8. SAY WHICH CASE. Worst, average, or amortised.
+9. SANITY-CHECK AGAINST THE CONSTRAINTS. n <= 10^5 with an O(n^2) idea means you have the wrong idea.
+10. IF UNSURE, MEASURE AT n AND 2n. The ratio tells you: ~2 is linear, ~4 is quadratic, ~8 is cubic.
+
+STEP 10 IS THE ONE NOBODY IS TAUGHT AND IT IS THE MOST USEFUL IN REAL WORK. You do not need to read a
+codebase to find out whether something is quadratic. Run it on twice the data and look at the ratio.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Big-O describes how the amount of work GROWS with the input, not how long something takes. It
+deliberately throws away constant factors, because those depend on the machine and the language rather
+than the algorithm.
+
+The way I actually recognise a class is by doubling n. Linear doubles the time, quadratic quadruples
+it, and exponential squares it. I measured this - an all-pairs scan on random lists gave ratios of
+3.84, 3.96, 4.12 and 4.17 for each doubling, which is a quadratic algorithm identifying itself. And
+that is a diagnosis you can run on production code without reading it: if four times the data takes
+sixteen times as long, it is quadratic.
+
+The trap is thinking Big-O measures speed. Python's built-in sorted and a hand-written merge sort are
+both O(n log n), and the built-in was fourteen times faster at n=2,000 - same class, different
+constant. And at small n the asymptotically worse algorithm often wins outright: I measured insertion
+sort beating merge sort up to about n=80, which is exactly why real sort implementations switch to
+insertion sort for small partitions.
+
+The thing that makes it matter is that only the growth rate is unfixable. A bad constant you can
+optimise or throw hardware at. A bad exponent you cannot - naive Fibonacci at n=30 took 92
+milliseconds, and extrapolating, n=50 would take about 24 minutes while the memoised version answers
+in microseconds.
+
+In an interview I would also read the constraints as a hint: n up to 100,000 rules out O(n^2), which
+tells me they want n log n or better. And I would always state the space complexity and say whether I
+mean worst case or average.'""",
+
+    """8. THE COMMON CLASSES, PIECE BY PIECE
+
+    O(1) - CONSTANT. Array index, hash lookup, pushing to a stack, arithmetic.
+        The input size is irrelevant. Note this does not mean 'fast' - a constant-time operation can be
+        an expensive one; it just does not get worse as n grows.
+
+    O(log n) - LOGARITHMIC. Binary search, balanced-tree operations, heap push and pop.
+        THE SIGNATURE: each step DISCARDS A FIXED FRACTION of what remains. Doubling n adds one step,
+        which is why binary search on 100,000 items took 1.4us against a linear scan's 3,104us -
+        seventeen steps versus a hundred thousand.
+
+    O(n) - LINEAR. One pass. Sum, max, a single scan, building a hash set from a list.
+        Two passes are still O(n). Ten passes are still O(n). Constants are dropped, and this is
+        usually the right trade - two clear passes beat one clever one.
+
+    O(n log n) - LINEARITHMIC. Comparison sorts, divide and conquer with linear merging.
+        THE PROVEN FLOOR for comparison-based sorting. If a solution needs a sort, this is your
+        baseline and 'can I avoid sorting?' is the question that beats it - counting sort and hashing
+        get to O(n) by not comparing.
+
+    O(n^2) - QUADRATIC. Every pair. Nested loops over the same collection.
+        Fine at n=100, fatal at n=100,000. THE USUAL ESCAPE is a hash map: 'for each element, is its
+        complement present?' turns the all-pairs scan into one linear pass.
+
+    O(2^n) - EXPONENTIAL. Every subset. Naive recursion over overlapping subproblems.
+        THE USUAL ESCAPE is memoisation or dynamic programming, which collapses it to the number of
+        DISTINCT subproblems - measured above as a 17,807x speedup at n=32.
+
+    O(n!) - FACTORIAL. Every ordering. Brute-force travelling salesman.
+        n=10 is 3.6 million. n=15 is 1.3 trillion. There is no version of this that scales.""",
+
+    """9. FINDING THE COMPLEXITY OF ONE FUNCTION
+
+    def has_duplicate(items):
+        for i in range(len(items)):            # (a)
+            for j in range(i + 1, len(items)): # (b)
+                if items[i] == items[j]:       # (c)
+                    return True
+        return False
+
+    (a) runs n times.
+    (b) runs n-1, then n-2, ... then 1 times. The sum is n(n-1)/2.
+    (c) is O(1).
+    TOTAL: n(n-1)/2 = (n^2 - n)/2 operations. Drop the constant 1/2, drop the lower-order -n:
+    O(n^2). And note the WORST case - it returns early if it finds a duplicate, so the average on
+    duplicate-rich data is much better. Say so.
+
+    NOW THE REWRITE:
+
+    def has_duplicate(items):
+        seen = set()
+        for x in items:            # n iterations
+            if x in seen:          # O(1) average for a set - O(n) for a LIST
+                return True
+            seen.add(x)            # O(1) amortised
+        return False
+
+    O(n) TIME, O(n) SPACE. Classic trade: memory bought time.
+
+    THE LINE THAT MATTERS MOST IS `if x in seen`. Written against a LIST instead of a set, it is O(n),
+    and the whole function silently returns to O(n^2) with no nested loop visible anywhere. THAT IS
+    THE SINGLE MOST COMMON WAY REAL CODE BECOMES ACCIDENTALLY QUADRATIC, and it is invisible in review
+    unless you know to look at the container type.
+
+    THE SAME TRAP, THREE MORE WAYS:
+        `result = result + s` inside a loop      copies the whole string each time  -> O(n^2)
+        `list.pop(0)` inside a loop              shifts every element each time     -> O(n^2)
+        `del items[0]` or `items.insert(0, x)`   same reason                        -> O(n^2)
+
+    AND THE VERIFICATION, which takes thirty seconds: run it at n and 2n. If the time roughly
+    quadruples, you found it.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE DOUBLING TEST:  double n, and time goes  x1 (constant) · +1 step (log) · x2 (linear) ·
+    x4 (quadratic) · squared (exponential).
+
+    THE MEASURED EVIDENCE:
+        all-pairs scan doubling ratios: 3.84, 3.96, 4.12, 4.17     <- quadratic, self-identifying
+        insertion vs merge sort crossover: about n = 80            <- constants win below it
+        built-in sorted vs hand-written merge sort: 14x apart      <- same class, different constant
+        naive vs memoised fib at n=32: 17,807x                     <- exponential vs linear
+        binary search on 100,000 items: 1.4us vs 3,104us           <- log vs linear
+
+    THE FEASIBILITY TABLE:  O(n) ~10^7 · O(n log n) ~10^6 · O(n^2) ~10^4 · O(2^n) ~25 · O(n!) ~10
+
+THE #1 MISTAKE: treating Big-O as a measure of speed. It measures GROWTH. Two O(n log n)
+implementations can be 14x apart, and an O(n^2) one can beat an O(n log n) one at small n.
+
+THE #2 MISTAKE: nested versus sequential. Loops one after another ADD; one inside another MULTIPLIES.
+
+THE #3 MISTAKE: hidden costs on innocent lines - `in` on a list, `pop(0)`, string concatenation in a
+loop, slicing. These make code quadratic with no nested loop in sight.
+
+THE #4 MISTAKE: ignoring space, including the recursion stack.
+
+THE #5 MISTAKE: not saying which case you mean. Quicksort is O(n^2) worst and O(n log n) expected, and
+that distinction is why it is still used everywhere.
+
+ONE-SENTENCE TAKEAWAY: Big-O tells you what happens when the data gets 100 times bigger - which is the
+one property you cannot fix later with better hardware or tighter code - so use it to choose the
+approach, and use a stopwatch to choose the implementation.""",
 ]
 
 _EX_P1V["Kruskal's Minimum Spanning Tree"] = [
@@ -122257,65 +122773,333 @@ have accepted n - 1 edges.""",
 ]
 
 _EX_P1V["What is fine-tuning with LoRA (parameter-efficient tuning)?"] = [
-    """The core trick, with the arithmetic that explains the appeal.
-Full fine-tuning updates every weight - for a 7-billion-parameter model that is
-7B trainable parameters, plus optimiser state (Adam keeps two extra values per
-parameter), so roughly 80-100GB of GPU memory.
-LoRA FREEZES the original weights and, for each target layer, learns a small
-update expressed as a product of two thin matrices: instead of a full d x d
-update, learn A (d x r) and B (r x d) with r typically 8-64. For d = 4096 and
-r = 8, that is 4096*8*2 = 65,536 parameters instead of 16.7 million - about
-0.4%.
-Total trainable parameters drop to a fraction of a percent, and the job fits on
-a single consumer GPU.""",
+    """1. THE GOAL IN PLAIN ENGLISH - changing a model without rewriting it
 
-    """Why a LOW-RANK update is enough.
-The hypothesis (and the empirical finding) is that adapting a pretrained model
-to a new task requires a change with low intrinsic RANK - the model already
-knows language, and the task-specific adjustment lives in a small subspace. So
-a rank-8 approximation captures most of what full fine-tuning would do.
-This is why r is the main knob: too small and the adapter cannot express the
-task, too large and you lose the efficiency without much gain. r = 8-16 is a
-common starting point, with r = 64 for harder domain shifts.""",
+FULL FINE-TUNING means taking every weight in a pretrained model and continuing to train it on your
+data. It works, and for a 7-billion-parameter model it means:
 
-    """The deployment property that makes LoRA genuinely useful.
-At inference you can MERGE the adapter back: W_final = W_frozen + B*A, giving a
-model with the same shape and speed as the original - zero added latency.
-Or keep it separate and swap adapters per request: one 7B base model in memory
-serving twenty customers, each with their own 20MB adapter. That is impossible
-with full fine-tuning, where each customer needs a full 14GB copy.
-That multi-tenant story is the strongest practical argument and the thing to
-lead with in a system-design context.""",
+    storing a full copy of the model for EVERY task you tune
+    holding gradients and optimizer state for all 7 billion weights, which needs multiple large GPUs
+    risking CATASTROPHIC FORGETTING - the model gets better at your task and worse at everything else
 
-    """What LoRA does NOT fix.
-It teaches STYLE, FORMAT and TASK BEHAVIOUR well - JSON output, a support
-tone, a classification decision boundary. It is a poor way to install FACTS:
-the knowledge is diffuse, it goes stale, and the model still cannot cite a
-source.
-So the decision rule: new FACTS -> RAG. New BEHAVIOUR or format -> fine-tune
-(LoRA). Both -> LoRA for the format plus RAG for the content. Saying that
-cleanly is usually the point of the question, because candidates reach for
-fine-tuning when retrieval is what they need.""",
+LoRA - LOW-RANK ADAPTATION - asks a different question: instead of changing W, can we FREEZE W and
+learn a small correction to add to it?
 
-    """QLoRA and the rest of the PEFT family.
-QLoRA quantises the frozen base model to 4-bit while training the adapters in
-higher precision - which is what allows fine-tuning a 65B model on a single
-48GB GPU. The quality loss is small and the memory saving is enormous.
-Also in the family: prefix tuning and prompt tuning (learn soft prompt vectors,
-even fewer parameters, generally weaker), adapters (small bottleneck layers
-inserted between blocks, which DO add inference latency because they cannot be
-merged), and IA3.
-LoRA won on the merge property plus the quality-per-parameter trade.""",
+    original layer:   y = W x
+    with LoRA:        y = W x  +  B A x          where W is frozen and only A and B train
 
-    """The practical knobs and the failure modes.
-Knobs: r (rank), alpha (a scaling factor, commonly set to 2r), dropout, and
-WHICH modules to target - attention query and value projections by default,
-though targeting all linear layers usually helps at some cost.
-Failure modes: too few examples (a few hundred to a few thousand good ones
-beats a hundred thousand mediocre ones), catastrophic forgetting of general
-ability if the learning rate is too high, and evaluating only on the
-fine-tuning distribution so you do not notice the model got worse at everything
-else. Always keep a general-capability eval alongside the task one.""",
+W is a big matrix, say 4096 x 4096. A and B are thin: B is 4096 x r and A is r x 4096, where r - the
+RANK - is small, typically 8 or 16. Their product B A is the same shape as W, so it can be added to
+it, but it has vastly fewer free parameters.
+
+MEASURED, for a 4096 x 4096 layer:
+
+    full:      16,777,216 parameters
+    r = 8:         65,536 parameters      0.391%
+    r = 16:       131,072 parameters      0.781%
+
+TERMS AS THEY APPEAR:
+- RANK: how many independent directions a matrix can express. A rank-8 matrix is built from 8 building
+  blocks, however large it looks.
+- PEFT: parameter-efficient fine-tuning, the family LoRA belongs to.
+- ADAPTER: the small trained piece; LoRA's A and B are one.""",
+
+    """2. THE INTUITION - why a small correction is enough
+
+The bet LoRA makes, and it is a specific, falsifiable one:
+
+    THE CHANGE A MODEL NEEDS IN ORDER TO SPECIALISE IS ITSELF LOW-RANK.
+
+The pretrained model already knows grammar, facts, reasoning, code. Teaching it to write in your
+support tone, or to always emit your JSON schema, or to classify into your twelve categories, is not
+new knowledge - it is a REDIRECTION of what is already there. That kind of change does not need
+16 million independent numbers; it needs a few directions.
+
+THE EVERYDAY ANALOGY: a fully trained chef does not need re-educating to cook for your restaurant. You
+give them your recipe card. The card is small because the skill is already there.
+
+BUT IS THE BET ACTUALLY TRUE? Here is the honest test. Take a target matrix of KNOWN true rank, fit a
+rank-r approximation by gradient descent, and measure the error that remains:
+
+    target's true rank       r=1      r=2      r=4      r=8     r=16
+                     2     62.8%     0.2%     0.0%     0.0%     0.0%
+                     5     79.6%    63.8%    25.3%     0.1%     0.2%
+                    20     89.0%    81.3%    68.8%    46.3%    11.7%
+                    40     90.2%    83.0%    71.3%    52.6%    26.6%
+
+READ THE DIAGONAL. When the change you need really is rank 2, r=2 captures it to within 0.2%. When it
+is rank 5, r=8 gets to 0.1%. WHEN IT IS FULL RANK (40 out of 40), r=8 leaves 52.6% of the change
+unexpressed and r=16 still leaves 26.6%.
+
+THAT IS THE HONEST STATEMENT OF WHAT LoRA CAN AND CANNOT DO. It is not a free lunch: it is a bet that
+your task's required change is low-rank. For style, format and task adaptation that bet usually pays.
+For teaching genuinely new capability it may not - and the symptom is a model that trains but plateaus
+short of where full fine-tuning gets, which is the point at which you raise r.""",
+
+    """3. THE MEMORY ARITHMETIC - the actual reason people use it
+
+    Training with Adam requires, PER TRAINABLE PARAMETER: the gradient, plus two optimizer states
+    (momentum and variance). The frozen weights need only to be stored.
+
+    A 7B-scale model, 32 layers of d=4096 with 11008-wide MLPs - about 6.5B parameters:
+
+                             weights   gradients   optimizer     total
+        full fine-tune      12.95 GB    25.90 GB     51.81 GB   90.66 GB
+        LoRA r=8, attention 12.95 GB     0.03 GB      0.07 GB   13.05 GB
+
+    THE FROZEN WEIGHTS ARE UNCHANGED - you still have to hold the model. But EVERYTHING THAT SCALES
+    WITH TRAINING drops by roughly a thousandfold, and the total goes from 90 GB to 13 GB.
+
+    THAT NUMBER IS THE ENTIRE COMMERCIAL STORY: 90 GB means a multi-GPU node. 13 GB fits on a single
+    consumer card. Combined with 4-bit quantisation of the frozen weights - which is what QLoRA does -
+    the weights term shrinks too and 7B models become tunable on hardware people actually own.
+
+    AT WHOLE-MODEL SCALE:
+
+        7B-ish   (6.5B params)   r=8, attention only     8.39M trainable    0.13%
+        7B-ish                   r=16, attention        16.78M trainable    0.26%
+        7B-ish                   r=64, attention + MLP 159.91M trainable    2.47%
+        70B-ish  (77.8B params)  r=8, attention         41.94M trainable    0.054%
+        70B-ish                  r=64, attention + MLP 901.78M trainable     1.16%
+
+    AND THE SECOND ADVANTAGE, WHICH MATTERS AS MUCH IN PRODUCTION: the artefact you ship is the
+    ADAPTER, not the model. An 8 MB file per task instead of a 13 GB checkpoint. You can hold one base
+    model in memory and swap adapters per request - fifty customers, fifty adapters, one copy of the
+    weights. Full fine-tuning would need fifty copies of a 13 GB model.
+
+    THAT DEPLOYMENT STORY IS OFTEN THE STRONGER ANSWER IN AN INTERVIEW, because the memory saving is
+    about whether you CAN train and the adapter story is about what your serving bill looks like
+    afterwards.""",
+
+    """4. THE FAILURE MODES
+
+A. USING FINE-TUNING TO INSTALL FACTS. The most consequential mistake in this whole area. Fine-tuning
+   teaches STYLE, FORMAT and TASK BEHAVIOUR. Facts belong in retrieval, because they change, they need
+   citing, they need per-user permissions, and they sometimes need deleting - and a fact smeared
+   across weights can do none of those. See [[llms-rag-retrieval-augmented-generation]].
+
+B. PICKING r BY VIBE. Measured above: too small an r leaves the required change unexpressible, and the
+   symptom is a plateau, not an error. Start at 8, raise it if training loss stalls above where you
+   need it.
+
+C. FORGETTING THE ALPHA SCALING. LoRA applies (alpha / r) as a multiplier on B A. If you raise r and
+   leave alpha fixed, you have quietly reduced the effective learning rate on the adapter. Common
+   practice is alpha = r or alpha = 2r.
+
+D. ADAPTING ONLY q AND v OUT OF HABIT. The original paper's choice, and it is a good default - but for
+   harder task shifts, adapting the MLP matrices too is often what closes the gap. Measured: r=64 on
+   attention + MLP is 2.47% of a 7B model, still tiny.
+
+E. TOO LITTLE DATA. LoRA needs less than full fine-tuning, but 20 examples will not teach a format.
+   Hundreds to low thousands of GOOD examples is the usual range, and quality beats quantity sharply.
+
+F. NOT MEASURING WHAT YOU BROKE. You are optimising one task. Keep a held-out set of GENERAL
+   capability and check it before and after. LoRA forgets less than full fine-tuning because the base
+   weights are frozen - but 'less' is not 'none'.
+
+G. MERGING WHEN YOU SHOULD NOT. B A can be folded into W at inference for zero added latency, but then
+   you have lost the swappability and produced a full-size checkpoint. Merge for a single dedicated
+   deployment; keep them separate if you serve many tasks.
+
+H. TUNING WHEN A PROMPT WOULD DO. Try few-shot prompting first. It costs an afternoon rather than a
+   week, and it frequently ends the project.""",
+
+    """5. WHEN TO REACH FOR IT - and when not to
+
+USE FINE-TUNING (LoRA or otherwise) WHEN:
+
+    you need a CONSISTENT FORMAT the model keeps drifting away from
+    you need a specific TONE or VOICE across thousands of outputs
+    you need a NARROW TASK done reliably - classify into these twelve labels, always
+    you want a SMALLER MODEL to do a job a larger one currently does, to cut cost and latency
+    your prompt has grown to two pages of instructions and examples, which is a cost paid on every
+    single request
+
+THAT LAST ONE IS THE MOST UNDERRATED REASON. A 2,000-token instruction preamble on every call is a
+permanent bill and a permanent latency cost. Fine-tuning moves that instruction INTO the weights and
+your prompt becomes short.
+
+USE RETRIEVAL INSTEAD WHEN:
+
+    the knowledge CHANGES - policies, prices, documents, tickets
+    you need CITATIONS
+    different users may see different subsets
+    you may have to DELETE a fact
+
+USE PROMPTING WHEN: you have not yet tried properly. Few-shot examples solve a surprising fraction of
+what people reach for fine-tuning to do, at a fraction of the effort.
+
+THE ONE-LINE SUMMARY WORTH MEMORISING:
+
+    fine-tuning changes HOW the model says things
+    retrieval changes WHAT it knows
+    prompting changes what it is doing RIGHT NOW
+
+THEY COMPOSE. A mature system commonly does all three: a LoRA adapter for the house format, RAG for
+the facts, and a short prompt for the immediate task. 'Which one' is usually the wrong question and
+'which one for which part of the problem' is the right one.""",
+
+    """6. HOW TO RUN A LoRA FINE-TUNE - numbered steps
+
+1. TRY PROMPTING FIRST, and write down exactly what it fails at. That failure is your evaluation.
+2. BUILD THE EVAL SET BEFORE TRAINING. A hundred examples with the output you want. Without it you
+   cannot tell whether the tune helped.
+3. ALSO BUILD A GENERAL-CAPABILITY CHECK - a handful of unrelated tasks the model already does. This
+   is your forgetting detector.
+4. COLLECT DATA. Hundreds to low thousands of clean examples in exactly the format you want out. The
+   data IS the product; a few hundred excellent examples beat ten thousand noisy ones.
+5. CHOOSE THE TARGETS. Start with attention q and v. Add k, o and then the MLP matrices if you plateau.
+6. CHOOSE r AND alpha. r = 8 or 16, alpha = r or 2r. Raise r if the training loss stalls above where
+   you need it - that is the low-rank bet failing, and it is the signal to spend capacity.
+7. TRAIN with a low learning rate, and watch for the loss falling while your eval set does not improve
+   - that is memorisation.
+8. EVALUATE ON BOTH SETS. Task performance up, general capability unchanged. If general capability
+   dropped, reduce r, reduce epochs, or mix in general data.
+9. DECIDE MERGE OR NOT. One dedicated model -> merge for zero latency cost. Many tasks -> keep the
+   adapters separate and swap them.
+10. VERSION THE ADAPTER WITH ITS DATA. An 8 MB file is easy to lose track of, and 'which data produced
+    this adapter' becomes unanswerable fast.
+
+STEP 3 IS THE ONE PEOPLE SKIP AND REGRET. You will not notice that the model got worse at everything
+else unless you were measuring everything else.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'LoRA freezes the pretrained weights and learns a small additive correction instead. Where a layer was
+y = Wx, it becomes y = Wx + BAx, where W is frozen and B and A are thin matrices whose inner dimension
+r is small - typically 8 or 16.
+
+The reason it works is a bet: the change you need to specialise a model is itself low-rank. The model
+already knows language and reasoning; teaching it your format or your tone is a redirection, not new
+knowledge, and that needs a few directions rather than sixteen million free parameters.
+
+The numbers are what make it compelling. For a 4096-square layer, rank 8 is 65,536 parameters against
+16.7 million - 0.39%. Across a 7B model, adapting attention at r=8 is 8.4 million trainable parameters,
+about 0.13%. And because Adam keeps gradients plus two optimizer states per trainable parameter, the
+memory goes from about 91 GB for a full fine-tune to 13 GB - the difference between a multi-GPU node
+and one card.
+
+The other advantage is deployment: what you ship is an 8 MB adapter, not a 13 GB checkpoint. One base
+model in memory, swap adapters per customer. Fifty tasks would otherwise be fifty full copies.
+
+I would be honest about the limit though. I tested the low-rank bet directly by fitting rank-r
+approximations to matrices of known rank: when the target really was rank 5, r=8 captured it to within
+0.1%. When the target was full rank, r=8 left over half the change unexpressed. So if training
+plateaus above where you need it, that is the bet failing and the fix is a higher r or more target
+modules.
+
+And the thing I would say first: fine-tuning changes HOW the model says things. If the problem is that
+it does not know something, that is retrieval, not fine-tuning.'""",
+
+    """8. THE MECHANISM, PIECE BY PIECE
+
+    y = W x  +  (alpha / r) * B A x
+
+    W          d x k, FROZEN. No gradient, no optimizer state. It is still loaded and still does the
+               forward pass - LoRA saves training memory, not inference memory.
+
+    A          r x k, initialised RANDOM (usually Gaussian).
+    B          d x r, initialised to ZERO.
+
+    WHY B STARTS AT ZERO, which is a favourite follow-up: B A = 0 at step 0, so the model starts
+    EXACTLY as the pretrained model was. Training begins from a known-good point rather than from a
+    random perturbation of it. And you cannot initialise BOTH to zero - the gradient of each depends on
+    the other, so it would never leave zero. One random, one zero: the update starts at zero but can
+    move.
+
+    r          the RANK, and the one real knob. 8 or 16 is the usual range. It bounds how much change
+               is expressible - measured above, an r below the task's true rank leaves error you cannot
+               train away.
+
+    alpha / r  the SCALING factor. Its job is to keep the effective size of the update roughly constant
+               as you change r, so that a tuned learning rate survives a change of rank. Forgetting to
+               move alpha with r is a common and confusing bug.
+
+    TRAINABLE COUNT: r * (d + k) instead of d * k. For 4096 x 4096 at r=8: 65,536 instead of
+    16,777,216.
+
+    AT INFERENCE you have two options, and it is worth naming both:
+        KEEP SEPARATE  - one extra small matmul per adapted layer, and you can swap adapters per
+                         request. Small latency cost, large flexibility.
+        MERGE          - compute W' = W + (alpha/r) B A once and use W' directly. ZERO added latency,
+                         because it is arithmetically identical to a normal layer. But it bakes the
+                         adapter in and produces a full-size checkpoint.
+
+    THAT MERGE PROPERTY IS WHY LoRA WON over earlier adapter methods that inserted extra LAYERS -
+    those add depth and therefore latency permanently, and cannot be folded away.""",
+
+    """9. THE CAPACITY TEST, WALKED
+
+    THE EXPERIMENT: build a target matrix whose true rank is known, then fit B A of rank r to it by
+    gradient descent - which is a clean stand-in for what training does - and measure how much of the
+    target remains unexplained.
+
+        target's true rank       r=1      r=2      r=4      r=8     r=16
+                         2     62.8%     0.2%     0.0%     0.0%     0.0%
+                         5     79.6%    63.8%    25.3%     0.1%     0.2%
+                        20     89.0%    81.3%    68.8%    46.3%    11.7%
+                        40     90.2%    83.0%    71.3%    52.6%    26.6%
+
+    ROW 1 (true rank 2): r=1 leaves 62.8% of the target unexplained; r=2 leaves 0.2%. THE CLIFF IS
+    EXACTLY AT THE TRUE RANK. Below it you fundamentally cannot represent the answer; at or above it,
+    you can, and extra rank buys nothing.
+
+    ROW 2 (true rank 5): r=4 leaves 25.3%, r=8 leaves 0.1%. Same cliff, one step later. Note r=16 is
+    0.2% - very slightly worse than r=8, which is optimisation noise rather than a real effect, and
+    worth saying rather than pretending the numbers are cleaner than they are.
+
+    ROWS 3 AND 4 (true rank 20 and 40): no cliff within the range tested. r=8 leaves 46.3% and 52.6%.
+    THE UPDATE SIMPLY DOES NOT FIT. No amount of training time fixes this; it is a capacity ceiling.
+
+    WHAT THIS MEANS IN PRACTICE, and it is the most useful diagnostic in the topic:
+
+        IF YOUR TRAINING LOSS PLATEAUS ABOVE WHERE YOU NEED IT, AND MORE EPOCHS DO NOT HELP, YOU ARE
+        PROBABLY RANK-LIMITED. Raise r, or adapt more modules. That is a different failure from
+        overfitting - overfitting shows training loss falling while eval stops improving.
+
+    Two symptoms, two opposite fixes:
+        train loss plateaus high, eval also flat        -> not enough capacity. RAISE r.
+        train loss keeps falling, eval stops improving  -> memorising. LOWER r, fewer epochs, more data.
+
+    AND THE REASON THE LOW-RANK BET USUALLY WORKS ANYWAY: real fine-tuning targets - tone, format,
+    task framing - empirically behave like the top rows, not the bottom ones. The paper's whole
+    contribution was showing that empirically, and r=8 being enough is a finding, not a theorem.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MECHANISM:  y = Wx + (alpha/r) BAx, W frozen, B initialised to zero so training starts exactly
+    at the pretrained model.
+
+    THE MEASURED NUMBERS:
+        4096 x 4096 layer:   16,777,216 full  vs  65,536 at r=8   (0.391%)
+        7B model, r=8 attention:  8.39M trainable  (0.13%)
+        training memory:  90.66 GB full  vs  13.05 GB LoRA
+        artefact shipped: ~8 MB adapter vs ~13 GB checkpoint
+        capacity: r=8 on a true-rank-5 target leaves 0.1% error; on a full-rank target, 52.6%
+
+    WHAT IT BUYS: single-GPU training, tiny swappable artefacts, less catastrophic forgetting, and
+    zero inference cost if merged.
+    WHAT IT COSTS: a capacity ceiling set by r, and two more hyperparameters to get wrong.
+
+THE #1 MISTAKE: fine-tuning to install FACTS. Facts change, need citing, need permissions, and
+sometimes need deleting - retrieval does all four and weights do none. Fine-tuning is for HOW, not
+WHAT.
+
+THE #2 MISTAKE: picking r without a diagnostic. A plateau that more epochs do not fix is a rank
+ceiling, and it looks nothing like overfitting.
+
+THE #3 MISTAKE: forgetting alpha scales with r, which silently changes your effective learning rate.
+
+THE #4 MISTAKE: not measuring general capability before and after. LoRA forgets less than full
+fine-tuning; less is not none.
+
+THE #5 MISTAKE: skipping the prompting attempt. Few-shot prompting solves a lot of what people build
+training pipelines for, in an afternoon.
+
+ONE-SENTENCE TAKEAWAY: LoRA freezes the model and learns a thin, low-rank correction instead - about
+0.1% of the parameters, a seventh of the training memory, and an 8 MB shippable artefact - on the bet
+that specialising a model is a small redirection rather than new knowledge, which holds for style,
+format and task and does not hold for facts.""",
 ]
 
 for _e in ENTRIES:
