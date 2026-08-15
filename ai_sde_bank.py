@@ -142680,6 +142680,656 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AN[_e["title"]]
 
 
+# ══ P1 NON-DSA ten-section rewrites ═══════════════════════════════════════
+# The dsa band is finished (182/182), so the traversal moves to the 98 P1
+# entries in other categories. The seven/ten sections do not change; what
+# changes is that "the code" becomes "the answer / the artefact in plain
+# language" — for a behavioural entry that is the STAR story itself.
+_EX_P1AO = {}
+
+_EX_P1AO["STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - what this question is actually asking
+
+The interviewer will say something like 'tell me about a time you simplified something complex' or
+'tell me about something you invented'. They are testing one of Amazon's Leadership Principles, and it
+is worth reading its actual wording once:
+
+    INVENT AND SIMPLIFY: 'Leaders expect and require innovation and invention from their teams and
+    always find ways to simplify. They are externally aware, look for new ideas from everywhere, and
+    are not limited by "not invented here". As we do new things, we accept that we may be
+    misunderstood for long periods of time.'
+
+Underneath the corporate language, they want a story where YOU noticed something was needlessly
+painful, built or removed something to fix it, and the pain measurably went away.
+
+TERMS AS THEY APPEAR, because behavioural interviews have their own vocabulary:
+- LP (LEADERSHIP PRINCIPLE): one of Amazon's sixteen stated values. Every behavioural question maps to
+  one, and the interviewer is scoring you against that specific wording, not against 'were you good'.
+- STAR: the four-part shape every answer should take - Situation, Task, Action, Result. It exists
+  because unstructured stories bury the part the interviewer needs.
+- BAR RAISER: an interviewer from outside the hiring team whose job is to keep the standard high. They
+  are the ones most likely to probe the specifics.
+- ARTEFACT: the actual thing you made or deleted - a script, a table, a deleted service. Stories with
+  an artefact are believable; stories about suggestions are not.
+
+WHAT MAKES THIS LP DIFFERENT FROM THE OTHERS: it has TWO halves, invent and simplify, and almost
+everybody answers the first. A story about REMOVING something is rarer and often lands better. Hold on
+to that - section 5 comes back to it.""",
+
+    """2. THE INTUITION - why a story beats a description
+
+The instinct is to answer with a self-assessment: 'I always look for ways to make things simpler.'
+That scores nothing, and it is worth understanding why rather than just being told.
+
+The interviewer is not allowed to record impressions. They are writing down EVIDENCE against a
+specific principle, and evidence means things that happened: a situation with a shape, an action you
+personally took, and an outcome somebody could check. An attitude is not evidence, because everybody
+claims it.
+
+So the unit of a good answer is a STORY, and the story has a shape - STAR:
+
+    SITUATION   the context, in two or three sentences. Enough for the pain to be obvious.
+    TASK        what needed doing, and why it was YOURS to do (or why you took it though it was not).
+    ACTION      what YOU did. Specific, first-person, and the longest part.
+    RESULT      what changed, with a number where one exists.
+
+A REAL-WORLD PICTURE OF WHY THE SHAPE MATTERS. Imagine two people describing the same evening. The
+first says 'the kitchen was a mess so I sorted it out'. The second says 'there were four half-used
+jars of the same spice, so I threw out three, put the rest in one box, and now nobody buys duplicates'.
+The second is the same event, told so you can see it. The first could be anybody, doing anything.
+
+THE PART PEOPLE UNDER-USE: the ACTION section is where the score is, and it should be roughly half
+your answer. Most candidates spend three sentences on the situation and one on what they did.
+
+AND THE PART PEOPLE FORGET: the RESULT must be a CHANGE, not a completion. 'And then we shipped it' is
+not a result. 'Setup dropped from thirty minutes to two, and the whole lab was using it in a week' is.""",
+
+    """3. THE ANSWER, TRACED - a full student-scale story you could adapt tonight
+
+SITUATION: Our six-person capstone had no shared way of running experiments - everyone had their own
+notebook, results were screenshots pasted into the group chat, and we twice spent an entire meeting
+arguing about numbers nobody could reproduce.
+
+TASK: Nobody owned the problem, and we were losing most of a day a week to it. I decided to fix it
+even though it was not assigned to me.
+
+ACTION: Rather than proposing a process, I built the smallest thing that would prove the point. In one
+evening I wrote a script that took a YAML config, logged metrics to a shared CSV, and printed a
+comparison table. Then I re-ran two teammates' existing experiments through it, so they saw their own
+numbers come out identical - which made it concrete instead of a suggestion. I also converted their
+two notebooks myself, so adopting it cost them nothing.
+
+RESULT: All six of us were using it within a week and the reproducibility arguments stopped. The final
+report had a comparison table we could defend to the examiners. A teammate later replaced the CSV with
+proper experiment tracking, which was better than what I built.
+
+NOW LOOK AT WHAT EACH PART IS DOING, because that is what you are really learning here:
+
+    the SITUATION names a concrete pain twice over - screenshots in a chat, and two meetings lost.
+        A vague 'our workflow was inefficient' would carry none of that.
+    the TASK explicitly says nobody owned it. That single clause is what turns a chore into initiative.
+    the ACTION is first person and physical: I wrote, I re-ran, I converted. Notice there are THREE
+        distinct actions, and the third (converting their notebooks) is the one that made adoption
+        happen - it is the mechanism, and it is the sentence most candidates never include.
+    the RESULT has a time-bound adoption number, a knock-on effect on the report, and an ending where
+        somebody replaced your work with something better. That last part reads as maturity, not
+        failure.
+
+The whole thing is about ninety seconds spoken. That is the right length.""",
+
+    """4. WHERE ANSWERS GO WRONG - the weak versions, and how each is diagnosed
+
+A. THE ATTITUDE ANSWER. 'I always try to find simpler ways of doing things.' No situation, no action,
+   no outcome. The interviewer has nothing to write down. This is the single most common failure and
+   it is entirely avoidable - it usually means you did not prepare a story for this LP.
+
+B. THE PROPOSAL ANSWER. 'I suggested we should standardise how we ran experiments and eventually
+   everyone agreed.' There is no artefact, no adoption mechanism, and the passive 'eventually everyone
+   agreed' hides whether anything actually happened. Watch for that construction in your own answers -
+   whenever the verb goes passive, a fact is being smuggled out of the story.
+
+C. THE 'WE' ANSWER. 'We built a shared logging tool.' The interviewer cannot score a team. Say I where
+   it was you and we where it genuinely was, and be ready for 'what specifically did YOU write?'.
+   Using 'we' throughout is the fastest way to sound like a passenger.
+
+D. THE UNQUANTIFIED RESULT. 'It made things much easier.' Any number is better than none - hours
+   saved, people who adopted it, lines deleted, meetings that stopped happening. If you genuinely have
+   no measurement, say so and give the observable change instead: 'we stopped having the argument'.
+
+E. THE INVENTION NOBODY USED. If the story ends with 'but the team kept doing it the old way', it
+   needs a reflective ending explaining WHY - usually you solved a problem people did not feel, or you
+   made adoption expensive. That version can still score well as a learning story, but only if you own
+   the diagnosis rather than blaming the team.
+
+F. THE OVER-CLAIM. 'I redesigned the department's entire workflow.' A new grad claiming institutional
+   change invites a probe that will expose the gap. The modest specific version is more convincing
+   than the grand vague one, every time.
+
+G. THE STORY THAT IS ONLY INVENTION. Not wrong, but a missed opportunity - see the next section.""",
+
+    """5. THE OBVIOUS ANSWER FIRST, THEN THE UPGRADE - simplify beats invent
+
+THE OBVIOUS ANSWER: a story about BUILDING something. That is what everyone brings, and it is
+perfectly acceptable. The trace in section 3 is one.
+
+THE UPGRADE, AND IT IS A CHEAP ONE: the LP says 'always find ways to SIMPLIFY', and interviewers see
+plenty of invention stories and very few simplification ones. A story about REMOVING something is
+therefore more distinctive with no extra effort:
+
+    - deleting a service nobody used
+    - merging three scripts into one
+    - replacing a configuration system with a convention
+    - cutting a feature to make the rest coherent
+    - 'I replaced 200 lines of branching with a lookup table'
+
+That last one is a perfectly good answer to this LP, and it reads as more mature than building
+something new, because deleting requires understanding what is genuinely needed.
+
+THE SECOND UPGRADE - NOT-INVENTED-HERE, which the principle calls out by name. An equally valid story
+is the one where you decided NOT to build:
+
+    'I was about to write a config loader and found the department already had one, so I used it and
+    contributed the two fixes we needed.'
+
+Interviewers like this precisely because most candidates only tell build stories. Choosing not to
+build is usually the more senior decision, and the LP explicitly rewards it.
+
+WHY THE SMALLEST WORKING VERSION BEATS A PROPOSAL - the mechanism behind the story in section 3. A
+proposal invites debate about a thing nobody can see. A working sliver moves the conversation to
+'should we extend this?', which is a far easier argument to win when you have no authority at all.
+
+Say the reasoning out loud in the interview: 'it was one evening, so it was cheaper to build than to
+argue about.' That is the same instinct as a TWO-WAY DOOR - a decision that is cheap to reverse, so it
+needs no permission - and naming it shows you understand why the approach worked rather than that it
+happened to.
+
+WHAT TO DO IF YOU HAVE NO WORK EXPERIENCE. Every example in this entry is student-scale on purpose: a
+capstone, a lab, a society, a hackathon. Interviewers hiring new grads expect that scope. What they
+are looking for is the SHAPE - saw a pain, built the smallest thing, made adoption free, measured the
+change - not the size of the organisation it happened in.""",
+
+    """6. HOW TO BUILD YOUR OWN ANSWER - numbered steps, before you write a word of it
+
+1. LIST THE PAIN. Think of three times something was needlessly annoying and you did something about
+   it: a manual step you automated, a document nobody could find, three tools where one would do,
+   fifty lines you deleted.
+2. PICK THE ONE WITH AN ARTEFACT. Choose the story where something CONCRETE exists at the end - a
+   script, a table, a deleted file, a merged repository. Stories with artefacts survive probing;
+   stories about conversations do not.
+3. WRITE THE RESULT FIRST. Work out what changed and how you would measure it, before writing anything
+   else. If you cannot name a change, pick a different story - this is the single best filter and it
+   saves you preparing an answer that cannot score.
+4. WRITE THE SITUATION IN TWO SENTENCES, containing one concrete detail that makes the pain visible.
+   Not 'our process was inefficient' but 'results were screenshots in a group chat'.
+5. WRITE THE TASK IN ONE SENTENCE, and include whether it was assigned to you. 'Nobody owned it'
+   is worth saying explicitly - unassigned work is what initiative means.
+6. WRITE THE ACTION AS THREE FIRST-PERSON STEPS, and make sure one of them is the ADOPTION MECHANISM -
+   how you got other people to actually use it. That is the sentence that separates a good story from
+   a great one.
+7. ADD ONE REFLECTIVE SENTENCE at the end: what you would do differently, or what happened to the
+   thing afterwards. It makes the story feel finished rather than rehearsed.
+8. TIME YOURSELF. Ninety seconds to two minutes. If it runs to four, the situation is too long -
+   that is almost always where the excess is.
+
+THEN PRACTISE IT OUT LOUD, once. Not memorised word for word, which sounds recited and collapses when
+probed - but out loud, so the shape is in your mouth rather than only on the page.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - the story-level version, before any structure
+
+Strip away the STAR labels and here is what you are actually telling them:
+
+'My project group was wasting a day a week arguing about experiment results that nobody could
+reproduce, because everyone worked in their own notebook and pasted screenshots into the chat. It was
+not anybody's job to fix, so I spent one evening writing a small script that logged everyone's results
+in the same format and printed a comparison table. Then I ran two teammates' existing experiments
+through it so they could see their own numbers come out the same, and I converted their notebooks
+myself so switching cost them nothing. Everyone was using it within a week, the arguments stopped, and
+our final report had a comparison table we could defend. Someone later replaced my CSV with a real
+experiment tracker, which was better than what I built.'
+
+That is one paragraph, ninety seconds, and it contains a situation you can picture, three specific
+things you personally did, a mechanism for why other people came along, and an outcome with a
+timescale.
+
+If you can tell it like this - as a story, not as four labelled sections read aloud - the structure is
+doing its job invisibly, which is what you want.""",
+
+    """8. SENTENCE BY SENTENCE - what each line of the answer is FOR
+
+Take the story from section 3 and mark the job each sentence is doing. This is the equivalent of a
+line-by-line code walkthrough, and it is what lets you build a new answer instead of memorising this
+one.
+
+    'Our six-person capstone had no shared way of running experiments'
+        -> SCOPE. Six people, a real project. Small enough to be credible for a student, big enough to
+           involve other humans, which is what makes influence possible.
+
+    'everyone had their own notebook, results were screenshots pasted into the group chat'
+        -> THE CONCRETE DETAIL. This is the sentence that makes the pain visible. Anyone who has
+           worked in a group can see it immediately. Vague inefficiency claims die here; specifics
+           survive.
+
+    'we twice spent an entire meeting arguing about numbers nobody could reproduce'
+        -> THE COST, quantified in the only unit a student has: time. 'Twice' is a number, and any
+           number beats none.
+
+    'Nobody owned the problem'
+        -> INITIATIVE, stated rather than implied. Unassigned work is the whole point of the LP.
+           Without this clause the story could be you doing your homework.
+
+    'Rather than proposing a process, I built the smallest thing that would prove it'
+        -> THE JUDGEMENT SENTENCE. It names the alternative you rejected and why. Interviewers score
+           reasoning, not just activity, and 'rather than X, I did Y' is the cheapest way to show it.
+
+    'In one evening I wrote a script that took a YAML config, logged metrics to a shared CSV, and
+     printed a comparison table'
+        -> THE ARTEFACT, with enough technical texture to survive a follow-up. 'One evening' quietly
+           makes the point that this was cheap enough not to need permission.
+
+    'Then I re-ran two teammates' existing experiments through it, so they saw their own numbers'
+        -> THE PERSUASION MECHANISM. Not an argument - a demonstration using their own data.
+
+    'I also converted their two notebooks myself, so adopting it cost them nothing'
+        -> THE ADOPTION MECHANISM, and the sentence most candidates leave out. Answering 'how did you
+           get people to use it?' before it is asked is what makes an influence story land.
+
+    'All six of us were using it within a week and the reproducibility arguments stopped'
+        -> THE RESULT: adoption, a timescale, and the disappearance of the original pain.
+
+    'A teammate later replaced the CSV with proper experiment tracking, which was better than what
+     I built'
+        -> THE MATURITY ENDING. It says the goal was the outcome, not the ownership. Very few
+           candidates end this way and it is remembered.""",
+
+    """9. DELIVERING IT UNDER PRESSURE - the probes, and what each one is really testing
+
+Expect to be interrupted. The follow-ups are where the score is decided, and each one is aimed at a
+specific doubt.
+
+    'HOW DID YOU GET PEOPLE TO ADOPT IT?'
+        Testing: influence without authority.
+        Answer: the mechanism, not the persuasion. 'I converted their notebooks for them, so switching
+        cost them nothing, and I showed them their own numbers coming out of it first.'
+
+    'WHAT DID IT REPLACE, AND WHAT DID THAT COST?'
+        Testing: whether the pain was real or invented for the story.
+        Answer: name the before state in time or errors. 'Screenshots in a chat, and two meetings lost
+        to arguing about numbers.'
+
+    'WHAT SPECIFICALLY DID YOU BUILD, AS OPPOSED TO THE TEAM?'
+        Testing: whether you are describing your own work.
+        Answer: be concrete and be honest about the boundary. 'I wrote the config parsing and the
+        comparison table; a teammate later wrote the plotting.'
+
+    'WHAT WOULD YOU DO DIFFERENTLY?'
+        Testing: self-awareness, and it is not a trap - refusing to answer is the trap.
+        Answer here writes itself: 'I would have asked whether a tool already existed before writing
+        one' - which pairs neatly with the not-invented-here half of the LP.
+
+    'WHAT HAPPENED TO IT AFTERWARDS?'
+        Testing: whether the thing outlived your involvement.
+        Answer: 'Someone replaced it with something better and I handed it over.' Strong, because it
+        shows the goal was the outcome rather than being the owner.
+
+    'WHY DID YOU NOT JUST ASK THE SUPERVISOR TO MANDATE IT?'
+        Testing: judgement about authority.
+        Answer: a mandate for a tool nobody has seen is a fight; a working sliver is an easy yes.
+
+A NOTE ON NERVES: if you are asked something you have not prepared, it is entirely acceptable to say
+'let me think for a second' and take it. Silence for three seconds reads as considered. Filling it
+with a guess does not.""",
+
+    """10. WHAT THE INTERVIEWER IS SCORING, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT IS BEING SCORED, in the order they weigh it:
+    1. Was there a real, specific situation with a cost? (Not a hypothetical, not a habit.)
+    2. Did YOU do something, in the first person, that required judgement?
+    3. Did other people change their behaviour, and HOW did you make that happen?
+    4. Did something measurable change?
+    5. Do you understand why it worked - and can you say what you would do differently?
+
+Notice that only item four is about results. Two of the five are about the mechanism, which is the
+part candidates prepare least.
+
+THE #1 MISTAKE: answering with an attitude instead of a story - 'I always look for ways to simplify'.
+There is nothing to write down, and the interviewer will simply ask again, having already recorded a
+weak first answer. Have a specific story ready for this LP before you walk in.
+
+THE #2 MISTAKE: leaving out the adoption mechanism. An invention nobody used is not an
+Invent-and-Simplify story, and 'eventually everyone agreed' is the phrase that reveals it. Say exactly
+what you did to make using it easy.
+
+THE #3 MISTAKE: telling only invention stories. The LP has two halves, and simplification and
+not-invented-here stories are rarer, so they stand out - a deleted service or a reused library scores
+as well as anything you built.
+
+ONE-SENTENCE TAKEAWAY: tell one specific story where you built or deleted the smallest concrete thing
+that removed a real pain, say exactly how you made other people's adoption free, and finish with a
+number and an honest reflection.""",
+]
+
+_EX_P1AO["STAR: Thinking big and influencing beyond your team (Think Big)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - and the anxiety this question causes
+
+The interviewer asks something like 'tell me about a time you took on something beyond your role' or
+'describe a time you set an ambitious direction'. They are scoring one specific Leadership Principle:
+
+    THINK BIG: 'Thinking small is a self-fulfilling prophecy. Leaders create and communicate a bold
+    direction that inspires results. They think differently and look around corners for ways to serve
+    customers.'
+
+THE ANXIETY, and it is worth naming immediately: as a student or new graduate you have not run a
+department, launched a product or moved a budget. It feels like you have nothing to say.
+
+You do not need any of those. 'Big' here does NOT mean headcount or money. It means:
+
+    - you saw past the task you were actually given, and
+    - other people followed, and
+    - the thing outlived your involvement.
+
+A shared evaluation harness that four project groups adopted and a following cohort inherited clears
+that bar completely. 'I made my own project better' does not, however good the project was.
+
+TERMS AS THEY APPEAR:
+- LP (LEADERSHIP PRINCIPLE): one of Amazon's stated values. Every behavioural question maps to one,
+  and the interviewer scores against that wording specifically.
+- STAR: Situation, Task, Action, Result - the four-part shape every answer takes.
+- SCOPE: how far beyond your own assignment the work reached. This is the currency of Think Big.
+- INFLUENCE WITHOUT AUTHORITY: getting people who do not report to you, and are not obliged to listen,
+  to change what they do. It is the mechanism this LP is really about.""",
+
+    """2. THE INTUITION - the two tests, and why the second one is the hard one
+
+Every Think Big story has to pass two tests, and candidates usually pass the first and fail the
+second.
+
+TEST ONE - SCOPE BEYOND YOUR MANDATE. Did you look beyond the task you were handed? If your story is
+entirely inside your own assignment, however excellent, it is an answer to a different LP (Deliver
+Results, or Ownership).
+
+TEST TWO - DID ANYONE FOLLOW? This is where most answers collapse. A bold idea that stayed an idea is
+not evidence of anything. Think Big says leaders 'create and COMMUNICATE a bold direction that
+INSPIRES RESULTS' - so the story must show other people changing what they did.
+
+And because you have no authority over those people, the story must explain HOW. That is the part to
+prepare, and it usually has three moves:
+
+    1. BUILD THE FIRST SLICE YOURSELF, so the idea is concrete rather than a proposal. People argue
+       with proposals; they respond to something they can see working.
+    2. MAKE ADOPTION FREE. Convert their code, write the migration, do the boring part for them. Every
+       unit of effort you remove is a unit of resistance you remove.
+    3. LET THE ARTEFACT ARGUE. A comparison table that visibly answers a question everyone had is more
+       persuasive than any amount of advocacy.
+
+'I suggested we should all standardise' is the version that scores nothing, because the mechanism is
+missing - and the outcome is invariably phrased as 'and eventually everyone agreed', which hides
+whether anything actually happened.
+
+A REAL-WORLD PICTURE. Think of the person in a shared house who does not announce that the kitchen rota
+should change - they just make the rota, fill in their own week, and pin it up. The rota exists, so
+using it is easier than arguing about it. That is influence without authority in one image, and it is
+exactly the shape of the story below.""",
+
+    """3. THE ANSWER, TRACED - a student-scale story that clears both tests
+
+SITUATION: My department ran a yearly project showcase where every group demoed in isolation, and
+nobody could tell which approaches actually worked, because no two groups measured anything the same
+way.
+
+TASK: Nothing about this was my assignment - I was one student with a capstone to finish.
+
+ACTION: I proposed a shared evaluation harness for the four groups working on text classification: one
+held-out test set, one metric definition, one results table. I could not mandate anything, so I built
+the harness first and ran my own group's results through it. Then I took the table to the other three
+groups with an offer to convert their code myself. Two joined immediately; the third joined once they
+saw the comparison in the showcase draft.
+
+RESULT: The showcase had, for the first time, a like-for-like comparison across four projects. The
+supervisor kept the harness for the following year's cohort, and it is what the next intake now starts
+from.
+
+NOW CHECK IT AGAINST THE TWO TESTS FROM SECTION 2:
+
+    SCOPE: the task explicitly says this was not my assignment. Four groups, a department showcase -
+        well beyond one capstone.
+    FOLLOWERS: three other groups changed how they measured their work, and the story says exactly how
+        that happened - built first, offered to convert, let the table argue.
+    OUTLIVED: the supervisor kept it for the next cohort. That single sentence is what makes it a
+        Think Big story rather than a nice piece of tooling.
+
+AND NOTICE WHAT IS NOT CLAIMED. Nobody says 'I transformed how the department runs projects'. The
+scope is described exactly: four groups, one showcase, one harness inherited by one cohort. Understated
+and specific beats grand and vague, every time - see section 4.""",
+
+    """4. WHERE ANSWERS GO WRONG - both directions, and this LP fails in both
+
+A. THE ATTITUDE ANSWER. 'I always try to think about the bigger picture and how my work fits into the
+   company's strategy.' No action, no artefact, no outcome - an attitude described rather than
+   demonstrated. The interviewer has nothing to record.
+
+B. THE OVER-CLAIM, which is specific to this LP. 'I redesigned how the entire department runs
+   projects.' A new grad claiming institutional change invites disbelief and a probe that will find
+   the gap in about two questions. Understate and evidence it: name exactly who adopted it, what
+   changed, and what you personally built.
+
+   That is the trap of Think Big - the LP contains the word 'big', so candidates inflate. The
+   principle rewards SCOPE OF THOUGHT, not scale of claim, and inflation is the fastest way to lose
+   an interviewer's trust in everything else you say.
+
+C. THE STORY WITH NO FOLLOWERS. 'I came up with a plan for how all the groups could share
+   evaluation.' If nobody adopted it, this is not yet a Think Big story. It can still be told, but
+   only with an honest diagnosis of why it did not land - and that diagnosis had better be about your
+   approach rather than about other people being unreceptive.
+
+D. THE MISSING MECHANISM. 'I convinced them it was a good idea.' How? The mechanism IS the answer.
+   Without it, the interviewer cannot distinguish you from someone who was simply lucky in their
+   teammates.
+
+E. THE 'WE' ANSWER. 'We built a shared harness.' The interviewer cannot score a team. Use I where it
+   was you.
+
+F. THE STORY THAT IS REALLY ABOUT DELIVERING RESULTS. If the whole story is 'I worked very hard and
+   finished something difficult', it is a good story for a different question. Think Big needs the
+   scope-beyond-mandate part, and if it is missing, use a different story rather than stretching this
+   one.
+
+G. NO ENDING. Stories that stop at 'and it worked' miss the strongest sentence available: what
+   happened to it after you left. Longevity is the cheapest evidence of scope.""",
+
+    """5. THE OBVIOUS ANSWER FIRST, THEN THE UPGRADE - what 'big' really costs
+
+THE OBVIOUS ANSWER: describe the biggest thing you were involved in. That instinct is wrong twice
+over - the biggest thing is usually the one where your personal contribution is hardest to isolate,
+and it is the one where an over-claim is most tempting.
+
+THE UPGRADE: choose the story where the SCOPE OF THE IDEA was bigger than the scope of your job,
+however small the absolute numbers. Four project groups is fine. A society, a shared lab, a
+hackathon, an open-source repository - all fine. What matters is the gap between what you were asked
+to do and what you took on.
+
+HOW TO MEASURE 'BIG' WITHOUT A BUDGET, three usable proxies:
+    - HOW MANY PEOPLE outside your remit changed their behaviour? (three other groups)
+    - HOW LONG did the thing last? (a following cohort inherited it)
+    - WHAT QUESTION could now be answered that could not before? (which approach actually works)
+
+That third one is the most under-used, and it is the most senior-sounding. A Think Big story is often
+really about making something MEASURABLE that previously was not - which is exactly why the showcase
+story works.
+
+THE MECHANISM, ONCE MORE, BECAUSE IT IS THE WHOLE ANSWER. You had no power to make three other groups
+do anything. What you had was:
+    - a working first slice, so the idea was concrete;
+    - free adoption, because you offered to convert their code;
+    - a visible artefact - the comparison table - that made the benefit obvious without an argument.
+
+Say all three explicitly. 'I built it first, I made joining free, and I let the table do the arguing'
+is a sentence an interviewer will write down.
+
+WHAT IF THE THIRD GROUP HAD REFUSED? Then the story is still tellable and still good: three of four is
+a real outcome, and 'the fourth group declined because their metric genuinely was not comparable' is a
+sign you understand the limits of your own idea. Do not sand the story smooth - the version with a
+rough edge is more believable than the one where everybody agreed.""",
+
+    """6. HOW TO BUILD YOUR OWN ANSWER - numbered steps
+
+1. LIST THE TIMES YOU WORKED OUTSIDE YOUR OWN TASK. A shared tool, a rota, a wiki nobody asked for,
+   a standard you introduced, a comparison nobody had run.
+2. FOR EACH, ASK 'DID ANYONE ELSE CHANGE WHAT THEY DID?'. Cross out every story where the answer is
+   no. That question alone usually leaves you with one candidate, which is fine - one is all you need.
+3. ASK 'DID IT OUTLIVE ME?'. If it did, that is your closing sentence, and it is the strongest
+   sentence in the answer.
+4. WRITE THE TASK SECTION SO IT SAYS THIS WAS NOT YOUR JOB. One clause: 'nothing about this was my
+   assignment'. Without it the scope test is not visibly passed.
+5. WRITE THE ACTION AS THE THREE INFLUENCE MOVES: what you built first, how you made adoption free,
+   and what artefact did the arguing. That is the part being scored.
+6. NAME THE ADOPTION PRECISELY. Not 'everyone got on board' but 'two joined immediately, the third
+   after seeing the draft'. Precision here is what separates a real story from a rehearsed one.
+7. RESIST INFLATION. Say four groups if it was four groups. The interviewer is comparing you against
+   other new grads, not against a director.
+8. TIME IT. Ninety seconds to two minutes.
+
+A GOOD SELF-TEST BEFORE YOU FINISH: can a listener repeat back what you personally built, who adopted
+it, and what changed? If any of the three is missing from their summary, that is the part to rewrite.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - the story-level version
+
+'Every year my department held a project showcase, and every group demoed on their own terms - so
+although we all sat through it, nobody could actually tell which approaches worked, because no two
+groups measured anything the same way. That was not my problem to solve; I had my own capstone to
+finish. But it bothered me, so I built a shared evaluation harness - one test set, one metric, one
+results table - and ran my own group's results through it first. Then I took that table to the three
+other text-classification groups and offered to convert their code myself so joining cost them
+nothing. Two came on board straight away and the third joined once they saw the comparison in the
+showcase draft. For the first time the showcase had a like-for-like comparison across four projects,
+and my supervisor kept the harness for the next year's cohort - it is what the new intake starts from
+now.'
+
+One paragraph. It contains something that was not your job, a thing you built, a specific mechanism
+for bringing other people along, an exact account of who adopted it and when, and an ending where the
+work outlived you.
+
+Told like this - as a story rather than four announced sections - the structure works invisibly, which
+is what you want.""",
+
+    """8. SENTENCE BY SENTENCE - what each line is FOR
+
+    'My department ran a yearly project showcase where every group demoed in isolation'
+        -> SCOPE, established immediately. A department event, not one assignment. The listener now
+           knows the story is bigger than your own project before you claim anything.
+
+    'nobody could tell which approaches actually worked, because no two groups measured anything the
+     same way'
+        -> THE PROBLEM, and note its shape: something IMPORTANT was UNMEASURABLE. That is the most
+           senior-sounding form a problem can take, and it is available to any student.
+
+    'Nothing about this was my assignment - I was one student with a capstone to finish'
+        -> THE SCOPE TEST, passed explicitly in one clause. Do not leave this to be inferred.
+
+    'I proposed a shared evaluation harness ... one held-out test set, one metric definition, one
+     results table'
+        -> THE IDEA, made concrete by naming its three parts. Vague ideas invite probes; specified
+           ones invite follow-up questions you can answer.
+
+    'I could not mandate anything, so I built the harness first'
+        -> THE FIRST INFLUENCE MOVE, with the reason attached. 'I could not mandate anything' shows
+           you understood your position, which is what influence without authority means.
+
+    'and ran my own group's results through it'
+        -> CREDIBILITY. You used it yourself before asking anyone else to. Interviewers notice.
+
+    'with an offer to convert their code myself'
+        -> THE SECOND INFLUENCE MOVE: adoption made free. This is the sentence most candidates never
+           include, and it is the one that answers 'how did you get them to agree?' before it is
+           asked.
+
+    'Two joined immediately; the third joined once they saw the comparison in the showcase draft'
+        -> THE THIRD MOVE, and the precision. Not 'everyone agreed' - a specific sequence with a
+           reason for the holdout. This is what makes a story sound remembered rather than invented.
+
+    'The showcase had, for the first time, a like-for-like comparison across four projects'
+        -> THE RESULT, phrased as the thing that became possible. 'For the first time' is doing real
+           work here.
+
+    'The supervisor kept the harness for the following year's cohort'
+        -> LONGEVITY, the strongest sentence in the answer. It proves the scope claim without you
+           having to make one.""",
+
+    """9. DELIVERING IT UNDER PRESSURE - the probes and what they are testing
+
+    'WHY DID YOU THINK THIS WAS YOUR PROBLEM?'
+        Testing: whether the initiative was genuine or retro-fitted.
+        Answer: name what you personally lost to it. 'I could not tell whether my own approach was
+        better than the group next door, and that was the question my project was about.'
+
+    'HOW DID YOU GET THREE OTHER GROUPS TO CHANGE WHAT THEY DID?'
+        Testing: influence without authority - the heart of this LP.
+        Answer: the three moves. Built the first slice; made joining free by converting their code;
+        let the comparison table make the argument.
+
+    'WHAT DID YOU DO WHEN SOMEONE SAID NO?'
+        Testing: resilience, and honesty.
+        Answer: what actually happened. 'The third group waited until they saw the showcase draft.
+        I did not push - I let the artefact do it, because arguing would have made it a status
+        contest.'
+
+    'WHAT WOULD YOU HAVE DONE IF NOBODY HAD JOINED?'
+        Testing: whether you understand your own mechanism.
+        Answer: 'It still worked for my group, so the downside was one evening. That is why I built
+        before asking.' Naming the small downside is what makes the bet look considered.
+
+    'HOW IS THIS DIFFERENT FROM JUST BUILDING A TOOL?'
+        Testing: whether you can distinguish this LP from Invent and Simplify - and they may well be
+        probing exactly that.
+        Answer: the tool is the vehicle. The point is that a question the whole department cared
+        about could not be answered, and afterwards it could - across four groups and into the next
+        year.
+
+    'HOW DID YOU MEASURE THE IMPACT?'
+        Testing: rigour.
+        Answer: be honest about what you can and cannot measure. 'Adoption - four of four groups by
+        the showcase - and longevity, since the next cohort inherited it. I did not measure time
+        saved, which I would do differently.'
+
+IF YOU ARE PROBED ON SOMETHING YOU DID NOT DO: say so. 'I did not measure that' is a perfectly good
+answer and costs almost nothing. Inventing a number costs everything, because the follow-up question
+will find it.""",
+
+    """10. WHAT THE INTERVIEWER IS SCORING, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT IS BEING SCORED:
+    1. Did you look beyond the task you were given? (scope of thought, not scale of budget)
+    2. Did other people - who did not have to - change what they did?
+    3. Can you explain the MECHANISM by which that happened?
+    4. Did the thing outlive your involvement?
+    5. Is the claim proportionate to the evidence?
+
+Item five is specific to this LP and it is scored silently. An inflated claim damages every other
+answer in the loop, because it tells the interviewer your numbers cannot be taken at face value.
+
+THE #1 MISTAKE: over-claiming. 'I changed how the department works' from a new grad triggers a probe
+that will expose the gap, and the exposure costs more than the claim ever bought. Name exactly who
+adopted it and exactly what changed - the modest, specific version is more convincing than the grand,
+vague one.
+
+THE #2 MISTAKE: describing an attitude rather than an event. 'I always think about the bigger picture'
+gives the interviewer nothing to write down.
+
+THE #3 MISTAKE: omitting the mechanism. Without 'I built the first slice, I made adoption free, I let
+the artefact argue', the story is indistinguishable from having agreeable colleagues.
+
+ONE-SENTENCE TAKEAWAY: pick the story where you took on something nobody assigned you, show exactly
+how you made it free for other people to join, and finish with the fact that it outlived you - scope
+of thought, not size of claim, is what Think Big rewards.""",
+]
+
+# NOTE the threshold: these entries already carry 6-7 examples in the older,
+# terser register, so the ten-section set must REPLACE them rather than fill a
+# gap. Every other _EX_* loop uses < 5, which would silently do nothing here.
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 10 and _e["title"] in _EX_P1AO:
+        _e["examples"] = _EX_P1AO[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
