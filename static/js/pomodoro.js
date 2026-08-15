@@ -332,10 +332,13 @@
   };
 
   Controller.prototype.decorate = function (card) {
-    if (card.getAttribute("data-pom") === "1") return;
     var body = card.querySelector(".q-body");
     var head = card.querySelector(".q-head");
     if (!body) return;
+    /* The flag alone is not enough: a page that fills a card body lazily
+       replaces its innerHTML, which throws away a bar we inserted earlier.
+       Check the bar is still there, not just that we once added it. */
+    if (card.getAttribute("data-pom") === "1" && card.querySelector(".pom")) return;
     card.setAttribute("data-pom", "1");
 
     var bar = document.createElement("div");
@@ -360,8 +363,12 @@
       var chip = document.createElement("span");
       chip.className = "q-spent";
       chip.style.display = "none";
+      /* Insert next to the badge WHEREVER it lives — on a phone the header
+         chips sit inside a wrapper, so the badge is a grandchild of the head
+         and head.insertBefore(chip, badge) would throw NotFoundError. */
       var badge = head.querySelector(".q-badge");
-      if (badge) head.insertBefore(chip, badge); else head.appendChild(chip);
+      if (badge && badge.parentNode) badge.parentNode.insertBefore(chip, badge);
+      else head.appendChild(chip);
     }
   };
 
@@ -544,6 +551,13 @@
       var n = 0, k;
       for (k in e) if (Object.prototype.hasOwnProperty.call(e, k) && e[k] >= 30) n++;
       return n;
+    },
+    /* Re-attach any bar a lazy body render wiped out. The MutationObserver
+       only watches the container's direct children, so filling one card's
+       body is invisible to it — the page calls this instead. */
+    refresh: function (ns) {
+      var c = registry[ns];
+      if (c) c.decorateAll();
     },
     humanMin: humanMin
   };

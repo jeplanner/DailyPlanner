@@ -15,7 +15,7 @@
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0;
          overflow-x: hidden; }
   /* Long unbroken strings in a title or tag must not widen the page. */
-  .q-text, .fld, .exs { overflow-wrap: anywhere; min-width: 0; }
+  .q-text, .fld, .ex-slot { overflow-wrap: anywhere; min-width: 0; }
   .wrap { max-width: 780px; margin: 0 auto; padding: 16px 16px 72px; }
   h1 { font-size: 22px; font-weight: 900; letter-spacing: -.02em; margin: 6px 0 2px; }
   .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 14px; }
@@ -37,7 +37,11 @@
      the side of a phone. */
   .q-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
   .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
-  .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; }
+  .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; min-width: 0; }
+  /* The chips live in their own element so a phone can drop them onto a
+     second line as a group. `display: contents` means the wrapper is invisible
+     to layout on a wide screen, so the row looks exactly as it always did. */
+  .q-head .q-chips { display: contents; }
   .q-head .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
   .q-card.done .q-text { color: var(--color-text-secondary); }
   .q-body { padding: 0 13px 13px 41px; display: none; }
@@ -57,18 +61,60 @@
               overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .fld.deep .lbl { color: #4338ca; }
   html.dark .fld.deep { background: #131a33; border-left-color: #818cf8; }
-  /* Several worked examples per topic, each numbered and independently read. */
-  .exs { margin: 8px 0; }
-  .exs > .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; display: block; margin-bottom: 4px; }
-  .ex { display: flex; gap: 9px; padding: 7px 10px; margin-bottom: 5px; background: #f0fdf4;
-        border-left: 3px solid #34d399; border-radius: 6px; }
+  /* Several worked examples per topic, each numbered and independently read.
+     Each one is a <details>: a ten-section rewrite runs to several thousand
+     characters, so ten of them expanded at once is a wall you scroll past
+     rather than read. Collapsed, their opening lines ("1. THE GOAL IN PLAIN
+     ENGLISH", "5. THE SLOW VERSION FIRST") read as a table of contents. */
+  .ex-slot { margin: 0; }
+  .ex { margin-bottom: 5px; background: #f0fdf4; border-left: 3px solid #34d399;
+        border-radius: 6px; overflow: hidden; }
+  .ex > summary { display: flex; gap: 9px; align-items: center; padding: 8px 10px; cursor: pointer;
+                  list-style: none; font-size: 12.5px; font-weight: 700; line-height: 1.4;
+                  min-height: 36px; }
+  .ex > summary::-webkit-details-marker { display: none; }
+  .ex > summary .caret { margin-left: auto; flex: none; font-size: 11px; color: var(--color-text-secondary);
+                         transition: transform .12s ease; }
+  .ex[open] > summary .caret { transform: rotate(90deg); }
   .ex .n { flex: none; width: 19px; height: 19px; border-radius: 50%; background: #059669; color: #fff;
            font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .ex .exttl { min-width: 0; overflow-wrap: anywhere; }
   /* The worked examples contain ASCII tables and rules ("---+----+---",
      "═══════") that pre-wrap cannot break, so without a scroller they widen
      the whole card and the page gets cut off on a phone. */
   .ex .body { white-space: pre-wrap; font-size: 13px; line-height: 1.6; min-width: 0;
-              overflow-x: auto; -webkit-overflow-scrolling: touch; }
+              overflow-x: auto; -webkit-overflow-scrolling: touch;
+              padding: 0 10px 10px 38px; display: block; }
+
+  /* ── Collapsible sections ───────────────────────────────────────────
+     A written-up topic carries answer + walkthrough + plain-English recipe +
+     code + diagram + ten worked examples + the recall quiz — around 16,000
+     characters. Rendered flat that is a wall on a phone, so every section is
+     a <details> and the labels become a table of contents. The answer opens
+     by default because it is what you came for; everything else is one tap. */
+  .sec { border: 1px solid var(--color-border); border-radius: 9px; margin: 6px 0;
+         background: var(--color-bg); overflow: hidden; }
+  .sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+                   padding: 9px 11px; min-height: 38px; font-size: 10.5px; font-weight: 800;
+                   text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); }
+  .sec > summary::-webkit-details-marker { display: none; }
+  .sec > summary .caret { flex: none; font-size: 11px; transition: transform .12s ease; }
+  .sec[open] > summary .caret { transform: rotate(90deg); }
+  .sec > summary .hint2 { margin-left: auto; flex: none; font-size: 10px; font-weight: 700;
+                          text-transform: none; letter-spacing: 0; color: var(--color-text-muted); }
+  .sec > .secbody { padding: 0 11px 11px; }
+  .sec > .secbody > .fld { margin-top: 0; }
+  .sec > .secbody > .code { margin-top: 0; }
+  .sec-answer > summary { color: #4338ca; } .sec-deep > summary { color: #4338ca; }
+  .sec-recipe > summary { color: #b45309; } .sec-pitfall > summary { color: #b45309; }
+  .sec-follow > summary { color: #047857; } .sec-exs > summary { color: #047857; }
+  .sec-cx > summary { color: #0369a1; } .sec-freq > summary { color: #9333ea; }
+  .sec-mnem > summary { color: #c2410c; }
+  html.dark .sec-answer > summary, html.dark .sec-deep > summary { color: #a5b4fc; }
+  html.dark .sec-recipe > summary, html.dark .sec-pitfall > summary { color: #fcd34d; }
+  html.dark .sec-follow > summary, html.dark .sec-exs > summary { color: #6ee7b7; }
+  /* One tap to open everything, for reading a topic end to end. */
+  .secbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
   html.dark .ex { background: #0e2119; border-left-color: #10b981; }
   /* Planning chips: study priority, stack rank and how long the topic takes. */
   .q-pri { font-size: 10px; font-weight: 900; letter-spacing: .03em; border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; }
@@ -129,17 +175,27 @@
     .controls select, .controls input.search, .controls button { width: 100%; box-sizing: border-box; }
     .only { padding: 2px 0; }
     .q-head { padding: 11px 12px; gap: 7px; }
-    /* Title on its own line, chips wrapped underneath — six chips beside a
-       title is more than 360px can hold. */
-    .q-head .q-text { font-size: 14px; flex: 1 0 100%; order: -1; padding-left: 26px;
-                      margin-top: -24px; }
-    .q-head .q-prac { align-self: flex-start; }
+    /* Checkbox and title on the first line, the six chips wrapped underneath
+       as their own row. This replaces an earlier version that gave the title
+       `order: -1` and pulled it back up with `margin-top: -24px` — that lifted
+       the first line of the title 24px into 11px of padding, so on a phone the
+       top of every question was sliced off by the card's overflow: hidden.
+       Never position a text line with a negative margin larger than the
+       padding it is moving into. */
+    .q-head .q-text { font-size: 14px; flex: 1 1 auto; min-width: 0; }
+    .q-head .q-chips { display: flex; flex-wrap: wrap; align-items: center;
+                       gap: 6px; flex: 1 0 100%; }
+    .q-head .q-prac { align-self: flex-start; margin-top: 2px; }
     .q-body { padding: 0 12px 12px 12px; }
     .q-head .q-badge { font-size: 9px; padding: 2px 6px; }
     .q-body { padding: 0 12px 12px 12px; }   /* drop the big left indent on phones */
     .fld { font-size: 13.5px; }
     .code { font-size: 11.5px; padding: 9px 10px; -webkit-overflow-scrolling: touch; }
     .tag { font-size: 11px; }
+    /* No room to indent an example's body under its number on a phone. */
+    .ex .body { padding: 0 10px 10px 10px; }
+    .sec > .secbody { padding: 0 9px 10px; }
+    .sec > summary, .ex > summary { min-height: 42px; }   /* thumb-sized targets */
   }
   /* Same dark treatment when the OS is set to dark but no explicit
      .dark class is present. Without this, these panels keep their light
@@ -148,7 +204,6 @@
   html.dark .fld.deep .lbl { color: #a5b4fc; }
   html.dark .fld.recipe .lbl { color: #fcd34d; }
   html.dark .fld.plan .lbl { color: #c4b5fd; }
-  html.dark .exs > .lbl { color: #6ee7b7; }
   html.dark .ex .n { background: #10b981; }
   html.dark .fld.answer .lbl { color: #a5b4fc; }
   html.dark .fld.freq .lbl { color: #d8b4fe; }
@@ -157,6 +212,9 @@
   html.dark .fld.pitfall .lbl { color: #fcd34d; }
   html.dark .fld.follow .lbl { color: #6ee7b7; }
   @media (prefers-color-scheme: dark) {
+    :root:not(.light) .sec-answer > summary, :root:not(.light) .sec-deep > summary { color: #a5b4fc; }
+    :root:not(.light) .sec-recipe > summary, :root:not(.light) .sec-pitfall > summary { color: #fcd34d; }
+    :root:not(.light) .sec-follow > summary, :root:not(.light) .sec-exs > summary { color: #6ee7b7; }
     :root:not(.light) .code.diagram { background: #0b1220; color: #cbd5e1; }
     :root:not(.light) .fld.mnem { background: #2a1a0f; }
     :root:not(.light) .fld.deep { background: #131a33; border-left-color: #818cf8; }
@@ -171,7 +229,6 @@
     :root:not(.light) .fld.deep .lbl { color: #a5b4fc; }
     :root:not(.light) .fld.recipe .lbl { color: #fcd34d; }
     :root:not(.light) .fld.plan .lbl { color: #c4b5fd; }
-    :root:not(.light) .exs > .lbl { color: #6ee7b7; }
     :root:not(.light) .ex .n { background: #10b981; }
     :root:not(.light) .fld.answer .lbl { color: #a5b4fc; }
     :root:not(.light) .fld.freq .lbl { color: #d8b4fe; }
@@ -206,9 +263,13 @@
               border: 1px solid var(--color-border); background: var(--color-surface);
               color: var(--color-text); cursor: pointer; min-height: 32px; }
   .qi .qbtn.reveal { border-color: #7c3aed; color: #6d28d9; }
-  .qi .grade { display: none; gap: 6px; }
+  .qi .grade { display: none; gap: 6px; flex-wrap: wrap; }
   .qi.shown .grade { display: flex; }
-  .qi.shown .reveal { display: none; }
+  /* The reveal button STAYS, and becomes "Hide the answer". Removing it left
+     no way back to a hidden answer, so a topic could only be re-attempted by
+     reloading the page — and re-reading an answer you have already seen is
+     exactly what this quiz exists to prevent. */
+  .qi.shown .qbtn.reveal { border-color: var(--color-border); color: var(--color-text-secondary); }
   .qi .qbtn.got { border-color: #059669; color: #047857; }
   .qi .qbtn.miss { border-color: #dc2626; color: #b91c1c; }
   .qi.graded-got { border-color: #6ee7b7; background: #ecfdf5; }
@@ -377,31 +438,73 @@
      card is opened, then kept for the rest of the session. */
   const BODIES = new Map();
 
+  /* ── Everything in the body is collapsible ────────────────────────────
+     A topic written to the ten-section standard is around 16,000 characters.
+     Flat, that is a wall you scroll past instead of reading, and on a phone it
+     is minutes of thumb-work to reach the code. So each section is a <details>
+     and the labels act as a table of contents: the answer is open, the rest is
+     one tap. Native <details> rather than a JS accordion, so keyboard, screen
+     readers and browser find-in-page all keep working.
+     `hint` is the collapsed preview - what the section holds, without opening
+     it, so the list is scannable rather than a row of anonymous labels. */
+  function sec(cls, label, inner, opts){
+    if (!inner) return "";
+    const o = opts || {};
+    return `<details class="sec sec-${cls}"${o.open ? " open" : ""}>`
+         + `<summary><span class="caret">▸</span><span>${label}</span>`
+         + (o.hint ? `<span class="hint2">${esc(o.hint)}</span>` : "")
+         + `</summary><div class="secbody">${inner}</div></details>`;
+  }
+
+  // A worked example's first line is its section title ("3. THE IDEA TRACED BY
+  // HAND"), which makes an ideal summary. Older entries have no such line, so
+  // fall back to a trimmed opening and keep the full text in the body.
+  function exSummary(text){
+    const nl = text.indexOf("\n");
+    const head = nl === -1 ? text : text.slice(0, nl);
+    if (nl !== -1 && head.trim().length <= 95)
+      return {title: head.trim(), body: text.slice(nl + 1).replace(/^\n+/, "")};
+    const flat = text.replace(/\s+/g, " ").trim();
+    return {title: flat.length > 80 ? flat.slice(0, 78) + "…" : flat, body: text};
+  }
+
   function bodyHTML(e, b){
-    const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
+    const fld = (cls,label,val) => val
+      ? sec(cls, label, `<div class="fld ${cls}">${esc(val)}</div>`,
+            {open: cls === "answer"})
+      : "";
     return `
+      <div class="secbar"><button type="button" class="btn sm" data-expand>Expand all</button></div>
       ${fld("plan","Prep time & priority",
             `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
             + (e.priority_label ? ` · ${e.priority_label} in its band` : "")
             + (e.priority_minutes_total ? ` (${Math.round((e.priority_minutes_cumulative||0)/60)}h of ${Math.round(e.priority_minutes_total/60)}h into ${e.priority})` : "")
             + (e.cat_rank ? ` · #${e.cat_rank} within ${catLabel[e.cat]||e.cat}` : "")
             + (e.priority_note ? ` · ${e.priority_note}` : ""))}
-      ${e.tag_priority ? `<div class="fld tags"><span class="lbl">Interview tags</span>${esc(
+      ${e.tag_priority ? sec("tags","Interview tags",
+          `<div class="fld tags">${esc(
             [e.tag_priority + " for a new grad",
              e.tag_topic + (e.tag_subtopic ? " / " + e.tag_subtopic : ""),
              e.tag_level, e.tag_format + " question",
              e.tag_stage + " round", e.tag_time + " to answer"].join("  ·  ")
-          )}${e.tag_flag ? `<span class="flagnote">Note: ${esc(e.tag_flag)}</span>` : ""}</div>` : ""}
+          )}${e.tag_flag ? `<span class="flagnote">Note: ${esc(e.tag_flag)}</span>` : ""}</div>`) : ""}
       ${fld("freq","Asked in interviews?",b.frequency)}
       ${fld("answer","Answer / reasoning",b.answer)}
       ${fld("deep","Explained step by step",b.walkthrough)}
       ${fld("recipe","How to code it — plain English, step by step",b.plain_algo)}
-      ${b.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(b.code)}</div>` : ""}
-      ${b.diagram ? `<div class="fld"><span class="lbl">Diagram</span></div><div class="code diagram">${esc(b.diagram)}</div>` : ""}
+      ${b.code ? sec("code","Code",`<div class="code">${esc(b.code)}</div>`) : ""}
+      ${b.diagram ? sec("diagram","Diagram",`<div class="code diagram">${esc(b.diagram)}</div>`) : ""}
       ${(b.examples && b.examples.length)
-          ? `<div class="exs"><span class="lbl">Worked examples (${b.examples.length})</span><div class="ex-slot">${
-               b.examples.map((x,i)=>`<div class="ex"><span class="n">${i+1}</span><span class="body">${esc(x)}</span></div>`).join("")
-             }</div></div>`
+          ? sec("exs", `Worked examples (${b.examples.length})`,
+              `<div class="ex-slot">${
+                 b.examples.map((x,i) => {
+                   const s = exSummary(x);
+                   return `<details class="ex"><summary><span class="n">${i+1}</span>`
+                        + `<span class="exttl">${esc(s.title)}</span><span class="caret">▸</span></summary>`
+                        + `<div class="body">${esc(s.body)}</div></details>`;
+                 }).join("")
+               }</div>`,
+              {hint: "tap a section"})
           : fld("","Example",b.example)}
       ${fld("mnem","How to remember",b.mnemonic)}
       ${fld("cx","Complexity",b.complexity)}
@@ -485,7 +588,7 @@
             ${q.hint ? `<div class="hint">Nudge: ${esc(q.hint)}</div>` : ""}
             <div class="ans">${esc(q.a)}</div>
             <div class="qbtns">
-              <button type="button" class="qbtn reveal" data-reveal>Show the answer</button>
+              <button type="button" class="qbtn reveal" data-reveal aria-expanded="false">Show the answer</button>
               <span class="grade">
                 <button type="button" class="qbtn got"  data-grade="1">I had it</button>
                 <button type="button" class="qbtn miss" data-grade="0">I missed it</button>
@@ -502,7 +605,13 @@
     const id = card.dataset.id;
     const e = BANK.entries.find(x => x.id === id);
     if (!e) return;
-    const paint = (b) => { slot.innerHTML = bodyHTML(e, b); slot.dataset.loaded = "1"; };
+    // Filling the body replaces its innerHTML, which throws away the Pomodoro
+    // bar that was inserted while the card was still empty — put it back.
+    const paint = (b) => {
+      slot.innerHTML = bodyHTML(e, b);
+      slot.dataset.loaded = "1";
+      if (window.Pomodoro && Pomodoro.refresh) Pomodoro.refresh("ai_sde");
+    };
     if (BODIES.has(id)) { paint(BODIES.get(id)); return; }
     slot.innerHTML = '<div class="fld"><span class="lbl">Loading…</span></div>';
     try {
@@ -698,12 +807,14 @@
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
-          ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
-          ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
-          ${e.tag_priority ? `<span class="q-freq ${FREQ_CLASS[e.tag_priority]||''}" title="How often this is really asked of a new grad">${esc(e.tag_priority)}</span>` : ""}
-          ${e.tag_subtopic ? `<span class="q-sub" title="${esc(e.tag_topic||'')} — sub-area">${esc(e.tag_subtopic)}</span>` : ""}
-          ${e.difficulty ? `<span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>` : ""}
-          <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
+          <span class="q-chips">
+            ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
+            ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
+            ${e.tag_priority ? `<span class="q-freq ${FREQ_CLASS[e.tag_priority]||''}" title="How often this is really asked of a new grad">${esc(e.tag_priority)}</span>` : ""}
+            ${e.tag_subtopic ? `<span class="q-sub" title="${esc(e.tag_topic||'')} — sub-area">${esc(e.tag_subtopic)}</span>` : ""}
+            ${e.difficulty ? `<span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>` : ""}
+            <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
+          </span>
         </div>
         <div class="q-body"></div>
       </div>`).join("") || '<div class="card"><div class="empty">No topics match.</div></div>';
@@ -726,9 +837,22 @@
     // ── Quiz: reveal, then self-grade ────────────────────────────────
     // Handled before anything else in the card so a button press never
     // bubbles into the open/close toggle.
+    // Show/Hide, not show-once: an answer you cannot put away again means the
+    // only way to re-attempt a question is to reload the page.
     const reveal = e.target.closest("[data-reveal]");
     if (reveal) {
-      reveal.closest(".qi").classList.add("shown");
+      const shown = reveal.closest(".qi").classList.toggle("shown");
+      reveal.textContent = shown ? "Hide the answer" : "Show the answer";
+      reveal.setAttribute("aria-expanded", shown ? "true" : "false");
+      return;
+    }
+    // Expand all / collapse all for the sections of one card.
+    const expand = e.target.closest("[data-expand]");
+    if (expand) {
+      const secs = [...card.querySelectorAll(".q-body details")];
+      const opening = secs.some(d => !d.open);
+      secs.forEach(d => { d.open = opening; });
+      expand.textContent = opening ? "Collapse all" : "Expand all";
       return;
     }
     const grade = e.target.closest("[data-grade]");

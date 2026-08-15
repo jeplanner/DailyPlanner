@@ -939,3 +939,38 @@ def test_mobile_layout_cannot_be_cut_off(auth_client):
     # Anchored: an unanchored ".row {" also matches "input.pctrange.row {".
     row = re.search(r"^\s*\.row \{[^}]*\}", planner, re.M).group(0)
     assert "flex-wrap: wrap" in row, "planner rows cannot wrap on a phone"
+
+
+def test_card_title_is_not_sliced_off_on_a_phone(auth_client):
+    """Reported as "question is getting cut off". The mobile rule gave the
+    title `order: -1` so it took its own line, then pulled it back up beside
+    the checkbox with `margin-top: -24px` — a 24px lift into 11px of padding,
+    inside a card with overflow: hidden, so the top of every question was
+    sliced. The chips now sit in their own wrapper instead, which is what lets
+    them drop to a second row without moving the title at all."""
+    import re
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    for rule in re.findall(r"^\s*\.q-head \.q-text \{[^}]*\}", html, re.M):
+        assert "margin-top: -" not in rule, f"title lifted by a negative margin: {rule}"
+        assert "order:" not in rule, f"title reordered away from the checkbox: {rule}"
+    assert '<span class="q-chips">' in html, "the header chips have no wrapper to wrap as a group"
+    mobile = re.search(r"@media \(max-width: 640px\) \{.*?\n  \}", html, re.S).group(0)
+    assert ".q-head .q-chips" in mobile, "the chips never move to their own row on a phone"
+
+
+def test_card_body_is_collapsible_and_the_answer_can_be_re_hidden(auth_client):
+    """Two requests, one cause: a written-up topic is ~16k characters and every
+    section rendered flat, so the card was a wall to scroll past — and the quiz
+    reveal was one-way, so an answer once shown could not be put away without
+    reloading, which turns the next attempt into re-reading."""
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    assert "function sec(cls, label, inner, opts)" in html, "no collapsible section helper"
+    assert '<details class="sec sec-' in html, "sections are not <details>"
+    assert '<details class="ex">' in html, "worked examples are not individually collapsible"
+    assert "function exSummary(text)" in html, "no summary line for a worked example"
+    assert "data-expand" in html, "no expand-all control"
+    # The reveal button must survive being pressed, and say so.
+    assert '"Hide the answer" : "Show the answer"' in html, "reveal does not toggle back"
+    assert ".qi.shown .reveal { display: none; }" not in html, "reveal is still hidden once used"
+    review = auth_client.get("/study/review").get_data(as_text=True)
+    assert "function hideAnswer()" in review, "study review answer cannot be re-hidden"
