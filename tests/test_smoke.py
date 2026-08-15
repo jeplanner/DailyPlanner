@@ -309,3 +309,47 @@ def test_ai_sde_list_payload_excludes_the_heavy_examples():
         f"the AI SDE list payload is {size_mb:.1f}MB even without examples; "
         "another field has grown and needs the same lazy-load treatment"
     )
+
+
+def test_ai_sde_tags_use_only_the_controlled_vocabulary():
+    """Every tag value must come from the six fixed lists, and every key in
+    TAGS must match a real entry title. A mis-keyed title silently drops its
+    tags with no error - exactly the trap that cost a wrong 'complete' claim
+    with the example dicts - so it is checked rather than assumed."""
+    import ai_sde_bank as bank
+    import ai_sde_tags
+    ai_sde_tags.validate(bank.ENTRIES)
+
+
+def test_ai_sde_tagged_entries_carry_all_six_dimensions():
+    """No blanks: an entry is either untagged or has all six columns."""
+    import ai_sde_bank as bank
+    partial = [e["title"] for e in bank.ENTRIES
+               if any("tag_" + d in e for d in ai_sde_dims())
+               and not all("tag_" + d in e for d in ai_sde_dims())]
+    assert not partial, f"entries tagged on some dimensions but not all: {partial[:5]}"
+
+
+def ai_sde_dims():
+    import ai_sde_tags
+    return ai_sde_tags.DIMENSIONS
+
+
+def test_ai_sde_tag_priority_is_not_a_rubber_stamp():
+    """If Must-Know swallows the bank the tagging is worthless. Guard the
+    calibration itself: once a decent slice is tagged, Must-Know must stay a
+    minority and Rare must be genuinely used."""
+    import ai_sde_bank as bank
+    import ai_sde_tags
+    if bank.TAGGED_COUNT < 100:
+        return  # too early in the tagging pass to judge the distribution
+    c = ai_sde_tags.counts(bank.ENTRIES)["priority"]
+    total = sum(c.values())
+    assert c["Must-Know"] / total < 0.40, (
+        f"Must-Know is {c['Must-Know'] / total:.0%} of tagged entries - "
+        "the priority dimension has stopped discriminating"
+    )
+    assert c["Rare"] / total > 0.10, (
+        f"Rare is only {c['Rare'] / total:.0%} of tagged entries - "
+        "nothing is being marked genuinely infrequent"
+    )

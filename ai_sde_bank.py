@@ -137507,3 +137507,12 @@ for _e in ENTRIES:
 #: Total study time for the whole bank, in minutes - the denominator for the
 #: "effort left" readout on the study page.
 TOTAL_PREP_MINUTES = sum(e["prep_minutes"] for e in ENTRIES)
+
+# ══ Six-dimension interview tags ══════════════════════════════════════════
+# Purely additive: attaches tag_topic / tag_level / tag_priority / tag_format
+# / tag_stage / tag_time / tag_flag by exact title. Entries themselves are
+# never reworded, reordered or dropped. Untagged entries simply lack the
+# fields, so the UI can show "untagged" honestly rather than guessing.
+from ai_sde_tags import apply as _apply_tags, TAGS as _TAGS  # noqa: E402
+
+TAGGED_COUNT, UNTAGGED_COUNT = _apply_tags(ENTRIES)
