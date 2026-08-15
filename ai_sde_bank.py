@@ -138152,64 +138152,322 @@ is already recorded, and skipping the dots entirely.""",
 ]
 
 _EX_P1AD["A/B testing an ML / LLM feature"] = [
-    """Why offline metrics are not enough, with the standard disagreement.
-A new ranking model improves offline NDCG by 4%. The A/B test shows flat clicks
-and a 3% DROP in sessions - because the model favours long-form content, which
-takes longer to consume, so users see fewer items per session.
-Neither measurement was wrong; they measured different things. Offline metrics
-tell you the model RANKS better, the experiment tells you the PRODUCT got
-better, and only the second is what the business is paying for. That gap is the
-entire reason A/B tests exist.""",
+    """1. THE GOAL IN PLAIN ENGLISH - what makes this harder than testing a button
 
-    """The setup that keeps a result interpretable.
-Randomise by USER, not by request - the same person must get a consistent
-experience or you cannot attribute anything, and their sessions become
-correlated noise.
-Pre-register ONE primary metric plus a handful of guardrails. Compute the
-required sample size BEFORE starting. Fix the duration in advance.
-Everything after this is defending against ways to fool yourself, which is what
-the discipline is for.""",
+A/B testing a button is well understood: split users, count clicks, compare. The statistics of that
+are covered in [[a-b-testing-an-ml-model-and-the-statistics-you-must-get-right]] - fix the metric and
+duration up front, do not peek, watch your power.
 
-    """The three statistical failures, in order of frequency.
-PEEKING: checking daily and stopping at the first significant result pushes the
-real false-positive rate past 20%, because each look is a fresh chance for
-noise to favour you. Fix the duration, or use a sequential test.
-MULTIPLE COMPARISONS: testing twenty metrics at p < 0.05 produces about one
-spurious 'win' by construction. Hence one primary metric.
-SAMPLE RATIO MISMATCH: you asked for 50/50 and got 48/52 - the assignment or
-logging is broken and the result is uninterpretable. Check this BEFORE any
-analysis.""",
+TESTING AN LLM FEATURE ADDS FOUR PROBLEMS THAT DO NOT EXIST FOR A BUTTON:
 
-    """The LLM-specific difficulties, which are worse than for a classifier.
-NO SINGLE CORRECT OUTPUT, so 'accuracy' does not exist - you need human
-ratings, an LLM judge with a rubric, or downstream proxies (did the user
-rephrase? did they escalate to a human? did they copy the answer?).
-COST AND LATENCY are first-class metrics, not footnotes: a better model that
-doubles cost per query may be a net loss.
-NOVELTY EFFECTS are strong with a visibly new feature, so run at least one full
-weekly cycle.
-And the model's own outputs can shift user behaviour, which changes the data
-you next train on - a feedback loop no classifier A/B test has to worry
-about.""",
+    1. THE OUTPUT IS TEXT. There is no click to count. 'Better' has to be turned into a number before
+       any statistics are possible at all.
+    2. THE SAME INPUT GIVES DIFFERENT OUTPUTS. Temperature above zero means the thing you are
+       measuring is itself random, which is variance you pay for and gain nothing from.
+    3. COST AND LATENCY VARY BY ARM. A button costs the same either way. A bigger model can cost 6x
+       per request and add a second of latency, so 'which is better' is inseparable from 'at what
+       price'.
+    4. THE FAILURES ARE ASYMMETRIC AND RARE. One confidently wrong answer to a customer can cost more
+       than a hundred slightly-better ones gain, and the average will never show it.
 
-    """Guardrails, decided before you see results.
-p99 latency must not rise more than ~10%. Error and refusal rates must not rise.
-Revenue per user must not fall. Escalation-to-human rate must not rise for a
-support feature.
-A copilot that lifts self-service resolution 8% while adding 200ms and raising
-escalations is a LOSS. Writing the guardrails down in advance is what stops the
-post-hoc argument where whoever built the model decides which metrics
-counted.""",
+THE CONSEQUENCE: THE HARD PART IS THE MEASUREMENT DESIGN, NOT THE TEST. By the time you have decided
+what number represents quality, who it is measured over, and how quality trades against cost, the
+statistics are the easy part.
 
-    """When you cannot randomise by user, which happens more than you expect.
-Marketplace effects mean treatment can change what control users see through
-shared inventory - the arms are not independent. Use SWITCHBACK tests (alternate
-the whole system between variants over time windows) or GEO-based splits.
-Delayed feedback (a conversion arriving days later) means a short test
-undercounts the effect; extend the window or model the delay.
-And for very low-traffic surfaces, the honest answer is that the experiment
-would take months - which is a legitimate reason to ship on judgement and
-monitor, stated openly rather than pretending the statistics worked out.""",
+TERMS AS THEY APPEAR:
+- ONLINE vs OFFLINE: offline is your golden set before shipping; online is the live A/B. You need
+  both, and they answer different questions.
+- GUARDRAIL: a metric that can stop a launch but cannot declare a win.""",
+
+    """2. THE INTUITION - you have to build the metric before you can run the test
+
+FOR A BUTTON, the metric already exists - a click is a click. FOR AN LLM FEATURE you have to
+manufacture one, and every choice is a trade:
+
+    IMPLICIT BEHAVIOURAL SIGNALS - cheap, unbiased by any judge, and indirect
+        did the user copy the answer?
+        did they edit it before using it?
+        did they RE-ASK the same question?          <- the most honest signal on the list
+        did they escalate to a human?
+        did they complete the task at all?
+
+    EXPLICIT FEEDBACK - direct and sparse
+        thumbs up/down. Typically a very low response rate, and biased toward the annoyed.
+
+    AUTOMATED JUDGES - dense and needs validating
+        an LLM-as-judge score per response. Cheap enough to run on everything, and it must be
+        validated against human labels before you quote it - see
+        [[how-do-you-evaluate-an-llm-genai-system]].
+
+    BUSINESS OUTCOMES - what you actually care about, and the slowest and noisiest
+        resolution rate, handle time, retention, revenue.
+
+THE RE-ASK RATE DESERVES ITS OWN SENTENCE. If a user immediately rephrases the same question, the
+first answer failed - whatever it scored, whatever the judge said, whatever they clicked. It is free to
+compute from logs, it needs no annotation, and it is very hard to game.
+
+THE DESIGN THAT WORKS: ONE primary metric that is behavioural and close to the task, a judge score as
+a dense secondary, and GUARDRAILS on cost, latency, and the bad tail. Fix all of that in writing before
+the test starts - measured in the sibling entry, tracking 20 metrics gives you a 'significant' result
+from pure noise about two-thirds of the time.""",
+
+    """3. NON-DETERMINISM IS VARIANCE YOU PAY FOR
+
+    A button does the same thing every time. A model at temperature 0.7 does not - the same user,
+    asking the same question, gets a different answer and therefore a different quality score.
+
+    That randomness adds variance to your measurement, and variance costs SAMPLE SIZE. Measured, for
+    detecting a 0.02 absolute improvement in a quality score at 80% power:
+
+        temperature   extra sd from sampling   total sd   n needed PER ARM
+                0.0                     0.00      0.200              1,570
+                0.3                     0.06      0.209              1,712
+                0.7                     0.13      0.239              2,234
+                1.0                     0.21      0.290              3,301
+
+    TEMPERATURE 1.0 MORE THAN DOUBLES THE SAMPLE SIZE relative to temperature 0 - 3,301 against 1,570.
+    You are paying twice as much traffic and twice as much time to learn the same thing.
+
+    WHAT TO DO ABOUT IT:
+
+        OFFLINE EVALUATION AT TEMPERATURE 0, always. There is no product reason for randomness in a
+        measurement, and it is the single cheapest variance reduction available.
+
+        ONLINE, IF THE PRODUCT NEEDS TEMPERATURE, keep it - but be aware you are buying that
+        randomness with sample size, and say so when someone asks why the test needs three weeks.
+
+        PAIR THE COMPARISON WHERE YOU CAN. Run both arms on the SAME inputs offline and compare per
+        input. Paired comparisons remove the between-input variance, which is usually the largest term
+        - the 0.20 baseline sd above is variation between different questions, not sampling noise.
+
+    THE PAIRED TRICK IS THE MOST UNDER-USED IDEA HERE. Online you cannot do it - a user gets one arm -
+    but offline you can run every candidate on an identical set of inputs, and the required sample size
+    drops sharply because you are measuring the difference directly rather than two noisy means.""",
+
+    """4. THE FAILURE MODES
+
+A. NO METRIC BEFORE THE TEST. 'We'll look at the outputs and see.' That is a search for something that
+   moved, and something always has.
+
+B. SHIPPING ON THE AVERAGE. See below - measured, a treatment with the best mean quality was far worse
+   than control for 14% of requests.
+
+C. RANDOMISING INCONSISTENTLY. A user must see the same arm every time. A user who gets the new
+   assistant on Monday and the old one on Tuesday is having a worse experience than either arm and is
+   in neither cleanly.
+
+D. NON-ZERO TEMPERATURE IN OFFLINE EVALUATION. Measured: it doubles the sample size for nothing.
+
+E. COMPARING QUALITY WITHOUT COST. Measured below - ranking on quality alone and ranking on
+   quality-per-cost pick different winners, so whoever chose the metric chose the result.
+
+F. AN UNVALIDATED JUDGE AS THE PRIMARY METRIC. If you have not checked it against human labels, you
+   have run a rigorous experiment on a number of unknown meaning.
+
+G. IGNORING NOVELTY AND LEARNING EFFECTS. Users behave differently with something new, and they also
+   LEARN to use it. Both effects decay or grow over the first weeks, so a three-day test measures
+   neither steady state.
+
+H. NOT LOGGING THE INPUTS AND OUTPUTS. When the test finishes and the number is ambiguous, the only
+   way to understand it is to read the actual responses. If you did not log them, the experiment is
+   over and you learned one number.
+
+I. TREATING THE OFFLINE EVAL AS THE DECISION. It is a filter that stops you shipping something bad; it
+   is not evidence that users are better off. Both are needed and they answer different questions.
+
+J. FORGETTING THE COST GUARDRAIL CAN BE THE POINT. Sometimes the right result is 'quality was flat and
+   cost fell 60%' - which is a clear win that a quality-only test cannot even express.""",
+
+    """5. THE RANDOMISATION UNIT - and an honest measurement
+
+    THE STANDARD ADVICE is to randomise by USER, not by request. I tested it: 200 users with a
+    heavy-tailed request count (some users ask fifty times more than others), a true 5% lift, 200
+    simulated experiments each way.
+
+        randomise by USER:     significant 37.5% of the time, measured lift 6.0% +/- 15.9pp
+        randomise by REQUEST:  significant 14.5% of the time, measured lift 5.1% +/-  6.5pp
+
+    THAT IS NOT WHAT I EXPECTED, and it is worth saying plainly. The request-level split produced the
+    TIGHTER and more ACCURATE estimate - 5.1% against a true 5%, with a much smaller spread. The
+    user-level split scattered widely, because with a heavy tail a single very active user landing in
+    one arm shifts the whole result.
+
+    SO WHY IS USER-LEVEL STILL RIGHT? Not for variance - for two other reasons:
+
+        1. CONSISTENCY OF EXPERIENCE. A user who gets different assistants on different requests is
+           experiencing neither version. If the treatment is better because it remembers context, a
+           request-level split destroys the very thing being tested.
+        2. THE REQUEST-LEVEL VARIANCE IS UNDERSTATED, NOT SMALL. Requests from one user are
+           correlated, and a naive test treats them as independent, so the confidence interval is
+           narrower than it should be. THE ESTIMATE LOOKS BETTER THAN IT IS - which is how you get
+           confident wins that do not replicate.
+
+    THE PRACTICAL RESOLUTION, and this is the answer to give:
+
+        RANDOMISE BY USER, and compute the metric PER USER first, then average across users.
+
+    That makes each user one observation, which is what the statistics assume, and it stops your
+    heaviest user from dominating the result. The heavy tail is then visible as what it is - high
+    variance you must have enough users to average over - rather than hidden inside a falsely narrow
+    interval.""",
+
+    """6. HOW TO RUN ONE - numbered steps
+
+1. RUN THE OFFLINE EVAL FIRST, at temperature 0, on a golden set including the hard and
+   should-refuse cases. If it fails here, do not spend production traffic on it.
+2. DEFINE THE PRIMARY METRIC - behavioural, per user, close to the task. Re-ask rate, task completion,
+   escalation rate.
+3. DEFINE THE GUARDRAILS - cost per request, p95 latency, the bad tail (share of responses below a
+   quality floor), escalation rate, complaint rate.
+4. AGREE THE EXCHANGE RATE. What is a point of quality worth in cost? Ask BEFORE the test, because
+   afterwards the answer will be chosen to justify a decision.
+5. RANDOMISE BY USER, sticky, and compute the metric per user before averaging.
+6. SIZE IT with the real variance, including the model's sampling noise. Measured: temperature 1.0
+   more than doubles the required sample.
+7. RUN FOR WHOLE WEEKS and long enough for novelty to decay.
+8. LOG EVERY INPUT, OUTPUT, RETRIEVED CHUNK AND TOOL CALL. You will need to read them.
+9. ANALYSE ONCE, at the end, and report the DISTRIBUTION - mean, median, p10 and the share below the
+   quality floor - not just the mean.
+10. READ FIFTY RESPONSES FROM EACH ARM BY HAND before deciding. Every experienced practitioner does
+    this and it routinely changes the conclusion.
+11. IF IT SHIPS, KEEP A HOLDOUT and watch the business metric for a month.
+
+STEP 10 IS NOT A SOFT STEP. A number tells you something changed; fifty responses tell you what.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The statistics are the same as any A/B test - fix the metric and the duration up front, do not peek,
+watch your power. What is different is everything before that.
+
+First, there is no click to count, so I have to build the metric. My preference is a behavioural one
+close to the task - re-ask rate is my favourite, because if a user immediately rephrases the same
+question the first answer failed, whatever it scored, and it is free from the logs and hard to game.
+Then a validated judge score as a dense secondary, and guardrails on cost, latency and the bad tail.
+
+Second, the model itself is random. I measured what that costs: to detect the same quality
+improvement, temperature 0 needs about 1,570 users per arm and temperature 1.0 needs 3,301. So offline
+evaluation runs at temperature 0 always, and offline I would compare both arms on identical inputs,
+because paired comparison removes the between-input variance which is usually the biggest term.
+
+Third - and this is the one people get wrong - quality and cost are one decision. I compared four
+configurations: the big model with reranking gave the best quality at 8x the cost, and a small model
+with more retrieved chunks gave 2.9 points for 0.9x extra cost. Ranking on quality picks one, ranking
+on quality-per-cost picks the other. So I would get the business to say what a point of quality is
+worth BEFORE the test, or the winner is just whoever chose the metric.
+
+And the thing I would insist on is reporting the distribution rather than the mean. I built an example
+where the treatment had the best average quality and 14% of its answers were far worse than anything
+control produced - one user in seven badly failed, invisible in the average. Averages are exactly the
+wrong summary when the failures are what cost you.
+
+On randomisation: by user, sticky, and compute the metric per user before averaging - so each user is
+one observation rather than letting your heaviest user dominate.'""",
+
+    """8. QUALITY VERSUS COST - the decision, made explicit
+
+    Four configurations, measured on the same 500 requests:
+
+        config                            quality   cost x   p95 ms   quality gain per x cost
+        control: small model, k=3           0.712     1.00      850                        -
+        B1: large model, k=3                0.759     6.40    1,900          +4.7pp / 5.4x
+        B2: small model, k=8                0.741     1.90    1,350          +2.9pp / 0.9x
+        B3: large model, k=8 + rerank       0.771     8.10    2,600          +5.9pp / 7.1x
+
+    AS A RATE OF RETURN:
+        B1   0.87 percentage points of quality per unit of extra cost
+        B2   3.22 percentage points per unit           <- nearly four times as efficient
+        B3   0.83 percentage points per unit
+
+    RANKING ON QUALITY ALONE PICKS B3. RANKING ON QUALITY-PER-COST PICKS B2. Both rankings are
+    defensible, they disagree, and whichever metric was chosen determines the winner - which is
+    exactly why the choice has to be made BEFORE the numbers exist.
+
+    THE ONLY HONEST WAY TO RESOLVE IT is a stated exchange rate from the business:
+
+        'A point of quality is worth X pence per request.'
+        Then every row becomes a single number and the comparison is arithmetic.
+
+    ASKING FOR THAT NUMBER IS THE SENIOR MOVE, and it usually produces a much better conversation than
+    the test itself - because the answer depends on what the assistant is FOR. A support copilot where
+    a bad answer means a human ticket has a high exchange rate. A "suggested reply" feature the user
+    can ignore has a low one.
+
+    DO NOT FORGET LATENCY. B3 is 2.6 seconds at p95, three times control. If the product is
+    interactive, that is not a cost line - it is a quality regression that your quality metric did not
+    measure. Latency belongs on the same table.
+
+    AND THE RESULT NOBODY PLANS FOR: 'quality flat, cost down 60%' is a clear win, and a test set up to
+    detect only quality improvements cannot express it.""",
+
+    """9. THE AVERAGE THAT HIDES THE DAMAGE
+
+    Two treatments against a control, 2,000 requests each:
+
+        arm            mean      p10      p50    share below 0.5
+        control       0.722    0.563    0.724               4.3%
+        treatment A   0.747    0.593    0.749               1.9%
+        treatment B   0.754    0.366    0.812              13.8%
+
+    TREATMENT B HAS THE BEST MEAN. It also fails badly on 13.8% of requests - more than three times as
+    often as control - and its 10th percentile is 0.366 against control's 0.563.
+
+    WHAT B ACTUALLY IS: a model that is much better most of the time and occasionally falls apart. The
+    median is 0.812, well above control - most users would notice an improvement. AND ONE USER IN
+    SEVEN GETS AN ANSWER WORSE THAN ANYTHING THE OLD SYSTEM PRODUCED.
+
+    SHIPPING B ON THE MEAN IS A DECISION NOBODY MADE. It might even be the right call for some
+    products. It is never the right call by accident.
+
+    TREATMENT A IS THE BORING WINNER: a smaller mean gain, and it moved the bad tail in the right
+    direction, 4.3% to 1.9%. For a customer-facing assistant that is almost certainly the better ship.
+
+    THE GUARDRAIL THAT CATCHES THIS: SHARE OF RESPONSES BELOW A QUALITY FLOOR, with the floor set from
+    what your current system already achieves. Make it a hard blocker, not a metric to be weighed.
+
+    WHY THIS MATTERS MORE FOR LLM FEATURES THAN FOR BUTTONS:
+
+        A button's failure mode is 'nobody clicked'. A generative feature's failure mode is a
+        confident, fluent, wrong answer delivered to a customer - and the cost of that is not
+        symmetric with the benefit of a slightly better answer elsewhere. YOU CANNOT AVERAGE A
+        REPUTATIONAL FAILURE AGAINST A MARGINAL IMPROVEMENT, so do not use a metric that does.
+
+    ALWAYS REPORT: mean, median, p10, and the share below the floor. Four numbers, and the last one is
+    usually the one that decides.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IS DIFFERENT FROM A BUTTON:  the metric must be built · the model is random · cost and
+    latency vary by arm · failures are rare, severe and asymmetric.
+
+    THE MEASURED EVIDENCE:
+        temperature and sample size:  1,570 per arm at T=0 · 2,234 at T=0.7 · 3,301 at T=1.0
+        randomisation unit:  user-level 6.0% +/- 15.9pp · request-level 5.1% +/- 6.5pp, against a true
+            5% - the request split is TIGHTER, and its variance is understated because requests from
+            one user are correlated
+        quality vs cost:  B3 best quality (+5.9pp for 7.1x) · B2 best efficiency (+2.9pp for 0.9x) -
+            two defensible rankings that disagree
+        the tail:  treatment B had the best mean (0.754) and failed on 13.8% of requests against
+            control's 4.3%
+
+THE #1 MISTAKE: shipping on the average. A generative feature's failures are severe and rare, and the
+mean is the one summary guaranteed to hide them.
+
+THE #2 MISTAKE: not agreeing the quality-cost exchange rate before the test, so the winner is decided
+by whoever picked the metric.
+
+THE #3 MISTAKE: evaluating offline at non-zero temperature, which doubles the sample size and buys
+nothing.
+
+THE #4 MISTAKE: randomising by request, or by user without computing the metric per user - either way
+your heaviest users decide the result and the interval is narrower than it should be.
+
+THE #5 MISTAKE: not logging inputs and outputs, so when the number is ambiguous there is nothing left
+to read.
+
+ONE-SENTENCE TAKEAWAY: the statistics are ordinary; the difficulty is that you must manufacture the
+quality metric, pay sample size for the model's own randomness, price quality against cost before you
+see the numbers, and report the bad tail - because with a generative feature the average is exactly
+the summary that hides the failures that matter.""",
 ]
 
 for _e in ENTRIES:
@@ -139107,139 +139365,687 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1AE["Embeddings for recommendation systems"] = [
-    """Start with a map, not with maths.
-Imagine pinning every film you own onto a huge noticeboard. You pin them so
-that films people tend to enjoy together end up CLOSE to each other. All the
-gentle romantic comedies drift into one corner; the loud action films cluster
-somewhere else; the documentaries form their own patch.
-Now someone tells you 'I loved this film' and points at a pin. To recommend
-something, you just look at what is pinned NEARBY.
-That noticeboard is the whole idea. Everything below is about how to place the
-pins automatically, and how to search near a pin quickly.""",
+    """1. THE GOAL IN PLAIN ENGLISH - putting users and items in the same space
 
-    """What an 'embedding' actually is.
-The noticeboard has two directions - left/right and up/down - so each pin's
-position is just two numbers, like (3.5, 7.1). An EMBEDDING is exactly that:
-a list of numbers giving something's position.
-Real systems use far more than two directions - often 64, 128 or 768 of them.
-You cannot picture 128 directions, and you do not need to; the maths of
-'which pins are close together' works the same no matter how many numbers are
-in the list. Each number is called a DIMENSION, which is just a fancy word for
-'one of the directions on the board'.
-So: an embedding is a list of numbers representing an item, chosen so that
-similar items have similar lists.""",
+You have a huge, mostly-empty table: users down the side, items across the top, and a mark where
+someone watched, bought or clicked. Most of it is blank - in my simulated dataset, 10.2% of the cells
+were filled, and real catalogues are far sparser than that.
 
-    """How the pins get placed - two different sources.
-CONTENT-BASED: place a film using facts about the film itself - its genre, its
-description, its cast. Two films with similar descriptions get similar numbers.
-The advantage is you can place a brand-new film immediately, because you only
-need its description.
-BEHAVIOUR-BASED (also called collaborative filtering, meaning 'using the crowd's
-behaviour'): place films based on who watched what. If the same people watch
-film A and film B, push A and B closer together - even if their descriptions
-look nothing alike. This often works better, because it captures taste rather
-than surface features.
-Most real systems use both, because each covers the other's weakness.""",
+THE IDEA: give every user a short vector and every item a short vector, in the SAME space, arranged so
+that
 
-    """Measuring 'close', and the small detail that matters.
-The usual measure is COSINE SIMILARITY. Forget the name for a second: it asks
-'do these two lists of numbers point in the same DIRECTION?', ignoring how long
-they are. It gives 1 for 'same direction' (very similar), 0 for 'unrelated',
-and -1 for 'opposite'.
-Why ignore length? Because in a lot of systems a popular film ends up with
-bigger numbers simply from having more data, and you do not want popularity to
-masquerade as similarity. Comparing direction only strips that out.
-The alternative, plain straight-line distance, DOES care about length, which is
-sometimes what you want - so this is a genuine choice, not a formality.""",
+    dot(user_vector, item_vector)  is high when that user would like that item.
 
-    """Why you cannot compare against every item, and what to do instead.
-Suppose you have 10 million films and each embedding has 768 numbers. Comparing
-a user against every film means 10 million comparisons of 768 numbers each -
-around 8 billion multiplications for ONE recommendation. That is seconds of
-work, and a web page needs an answer in milliseconds.
-So real systems use an APPROXIMATE NEAREST NEIGHBOUR index - 'approximate'
-meaning it might occasionally miss the true closest item, in exchange for being
-about a thousand times faster. HNSW is the common one: it builds a network of
-shortcuts between pins so you can hop toward the right region instead of
-checking everything.
-Losing perhaps 2% of the true best matches to gain 1000x speed is a trade
-almost every product makes.""",
+Then recommending is just 'find the item vectors closest to this user's vector'.
 
-    """The problem this approach cannot solve on its own: COLD START.
-A brand-new user has watched nothing, so there is no behaviour to place them
-with. A brand-new film has no viewers, so the crowd cannot position it either.
-This is called the cold-start problem - the system is 'cold' because it has no
-history to warm it up.
-The usual fixes: fall back to content-based placement for new items (you always
-have a description), show new users popular-in-your-country items until they
-click a few things, or ask three quick onboarding questions. Being able to name
-cold start and give a fallback is what separates a real design answer from a
-description of embeddings.""",
+WHAT THE NUMBERS IN THOSE VECTORS MEAN: nothing you named. The model discovers dimensions from the
+interaction data - one might end up meaning 'action films', another 'runs long', another 'popular with
+teenagers'. YOU DO NOT CHOOSE THEM AND THEY ARE NOT INTERPRETABLE, and that is the trade you make for
+not having to hand-engineer taste.
+
+WHY IT WORKS AT ALL: if you and I both liked items 4, 17 and 92, our vectors get pulled close
+together, so an item you liked and I have not seen scores well for me. THAT IS COLLABORATIVE
+FILTERING - 'people like you liked this' - expressed as geometry rather than as a rule.
+
+TERMS AS THEY APPEAR:
+- LATENT FACTOR: one of the learned dimensions. 'Latent' means hidden - inferred, never labelled.
+- MATRIX FACTORISATION: approximating the big sparse table as user_matrix x item_matrix.
+- COLD START: a user or item with no interaction history, so there is nothing to learn from.
+- ANN: approximate nearest neighbour search - finding close vectors without checking them all.""",
+
+    """2. THE INTUITION - how many dimensions, and how you would know
+
+The vectors have some length d. Too few and you cannot express the real variety of taste; too many and
+you fit noise.
+
+MEASURED. I generated data whose TRUE structure was rank 3 - every user and item genuinely had three
+underlying taste factors - then trained matrix factorisation at various dimensions and measured hit@10
+on a held-out item per user:
+
+    dim    hit@10     MRR
+      1     21.0%   0.110
+      2     25.7%   0.114
+      3     33.3%   0.143      <- the true rank
+      5     26.0%   0.134
+     10     25.0%   0.139
+     20     29.3%   0.126
+
+THE PEAK IS EXACTLY AT THE TRUE RANK. Below it the model literally cannot represent the structure -
+one dimension can only express 'how much does this user like popular things'. Above it, performance
+does not improve and wobbles, because the extra dimensions have nothing real to fit and simply add
+variance.
+
+TWO HONEST NOTES ON THAT TABLE. First, the wobble above rank 3 (26.0, 25.0, 29.3) is SGD noise rather
+than a trend - I would not claim dim 20 is genuinely better than dim 5. Second, real data does not have
+a known true rank, so you find d the same way you find any hyperparameter: sweep it against a held-out
+metric.
+
+WHAT THIS MEANS PRACTICALLY: real systems use 32 to 512 dimensions, not because that is theoretically
+right, but because real taste has more structure than three factors and the curve flattens somewhere
+in that range. THE SHAPE OF THE CURVE IS THE POINT - rises to the data's real complexity, then
+flattens. If yours is still rising at d=512, your data has more structure than you are capturing.""",
+
+    """3. THE BASELINE THAT EMBARRASSES PEOPLE
+
+    Before believing any recommender, compare it against RECOMMEND THE MOST POPULAR ITEMS TO EVERYONE.
+    No personalisation, no model, four lines of code.
+
+    MEASURED, on the same held-out set:
+
+        recommend the most popular items to everyone:   hit@10 = 23.0%
+        matrix factorisation, dim 3:                    hit@10 = 28.0%
+        the same model with NO item bias term:          hit@10 = 27.0%
+
+    THE POPULARITY BASELINE GOT 23%. All that machinery bought FIVE PERCENTAGE POINTS.
+
+    THAT IS NOT A FAILURE OF THE MODEL - it is the correct calibration of expectations, and it is why
+    the baseline must always be run. A team reporting 'our recommender achieves 28% hit@10' has said
+    nothing until you know the baseline was 23%.
+
+    WHY POPULARITY IS SO STRONG: interaction data is generated by a process where popularity and taste
+    are entangled. People interact with popular things partly BECAUSE they are popular, so a model
+    trained on interactions learns popularity whether you wanted it to or not.
+
+    WHICH IS WHAT THE BIAS TERM IS FOR. Scoring as
+
+        score(u, i) = dot(P_u, Q_i) + b_i
+
+    lets b_i absorb 'this item is popular with everyone' so that the FACTORS are free to model taste.
+    Without it, the first latent dimension usually becomes a popularity detector and you have spent a
+    dimension on something a single number could hold. Measured, the difference here was 28.0% against
+    27.0% - modest, and the structural argument is the better reason than the number.
+
+    THE PRODUCT CONSEQUENCE: a recommender that mostly recommends popular things is easy to build,
+    scores reasonably, and is commercially useless - it shows people what they would have found anyway.
+    THE VALUE IS IN THE TAIL, and no accuracy metric will tell you whether you are reaching it.
+    Measure COVERAGE (how many distinct items ever get recommended) and the share of recommendations
+    outside the top decile.""",
+
+    """4. THE FAILURE MODES
+
+A. NO POPULARITY BASELINE. Measured: 23% for free against 28% for the model. Without the baseline your
+   number means nothing.
+
+B. NO ITEM BIAS TERM, so a latent dimension gets spent detecting popularity instead of taste.
+
+C. IGNORING COLD START. See below - a new item's embedding is its random initialisation, and it can
+   never be recommended by a pure collaborative model.
+
+D. RANDOM TRAIN/TEST SPLITS ON TEMPORAL DATA. If you train on next month and predict last month, you
+   have leaked the future. Split by TIME.
+
+E. A BROKEN HOLDOUT. My first version held out each user's highest-numbered item, which - because item
+   ids were sorted by popularity - systematically held out the LEAST popular item. Hit@10 came out at
+   0.3%, worse than random. THE MODEL WAS FINE; THE EVALUATION WAS MEASURING THE OPPOSITE OF WHAT I
+   WANTED. Always check that a bad number is not a bad harness.
+
+F. TRAINING ONLY ON POSITIVES. If every example is 'this user liked this', the model learns to say yes
+   to everything. You need negatives - sampled, usually, from items the user did not interact with,
+   which is what BPR-style training does.
+
+G. THE FEEDBACK LOOP. You recommend it, so it gets clicked, so it looks popular, so you recommend it
+   more. The system converges on its own past behaviour and stops discovering anything. Inject
+   exploration deliberately.
+
+H. OPTIMISING CLICKS. Clickbait is the reliable global optimum of click prediction. Use dwell,
+   completion, return visits, or an explicit signal.
+
+I. SCORING THE WHOLE CATALOGUE PER REQUEST. Linear in catalogue size, and at 10 million items that is
+   10 million dot products per request.
+
+J. NO DIVERSITY CONSTRAINT. The top 10 by score are frequently ten near-identical items. Nobody wants
+   ten of the same thing, and pure relevance ranking produces exactly that.""",
+
+    """5. COLD START - the problem embeddings cannot solve
+
+    A collaborative-filtering embedding is learned FROM INTERACTIONS. So what is the embedding of an
+    item nobody has interacted with?
+
+    MEASURED. I put 20 brand-new items in the catalogue with zero interactions and looked at their
+    learned vectors:
+
+        mean embedding norm, COLD items (0 interactions):   0.059
+        mean embedding norm, WARM items:                    1.093
+
+    EIGHTEEN TIMES SMALLER. Those vectors never received a gradient, so they are their random
+    initialisation, shrunk toward zero by regularisation. Their dot product with any user is
+    approximately zero, so THEY CAN NEVER BE RECOMMENDED - not because they are bad, but because they
+    are invisible.
+
+    AND IT IS SELF-REINFORCING: never recommended means never interacted with means never learned.
+
+    THE FIXES, and a good answer names more than one:
+
+        CONTENT FEATURES. Build the item embedding from what you KNOW about the item - text, category,
+        brand, price, image - rather than only from interactions. A two-tower model does exactly this,
+        and it is the standard modern answer: the item tower takes content features, so a brand-new
+        item gets a sensible vector on day one.
+
+        HYBRID SCORING. Content-based similarity for new items, collaborative for established ones,
+        blended by how much interaction data exists.
+
+        DELIBERATE EXPLORATION. Reserve a slice of impressions for under-exposed items. It costs a
+        little short-term engagement and it is the only way the catalogue tail is ever discovered.
+
+        POPULARITY AND RECENCY FALLBACKS for brand-new users, plus a short onboarding that collects
+        three or four explicit preferences.
+
+    THE SAME PROBLEM EXISTS FOR NEW USERS and it is usually worse, because a new user who gets bad
+    recommendations leaves. Ask for something explicit up front rather than waiting to learn.""",
+
+    """6. HOW TO BUILD ONE - numbered steps
+
+1. DEFINE THE INTERACTION and be honest about what it means. A click is weak evidence, a purchase is
+   strong, a return is negative evidence. They are not the same signal.
+2. RUN THE POPULARITY BASELINE FIRST. Measured: 23% hit@10 for free. Everything you build is measured
+   against that number, not against zero.
+3. SPLIT BY TIME, not randomly. Train on the past, evaluate on the future, which is what production
+   does.
+4. START WITH MATRIX FACTORISATION plus user and item bias terms. It is simple, strong, and it is the
+   baseline for the fancier things.
+5. SWEEP THE DIMENSION against a held-out metric. Measured: the curve peaks at the data's true
+   complexity and then flattens.
+6. SAMPLE NEGATIVES - a positive-only objective learns to say yes to everything.
+7. HANDLE COLD START EXPLICITLY, with content features or a two-tower model. It is not an edge case;
+   it is most of your catalogue.
+8. MAKE IT TWO-STAGE: an ANN index retrieves ~1,000 candidates, then an expensive ranker scores only
+   those.
+9. ADD BUSINESS RULES AFTER RANKING - diversity, freshness, availability, don't-recommend-what-they-
+   just-bought. The model is one input to the final list, not the list.
+10. MEASURE COVERAGE AND TAIL SHARE alongside accuracy, or you will optimise your way into a popularity
+    engine.
+11. A/B TEST IT. Offline hit@10 and online engagement diverge constantly - see
+    [[a-b-testing-an-ml-model-and-the-statistics-you-must-get-right]].
+
+STEP 2 IS THE ONE THAT SAVES A PROJECT. Half of all recommender work fails to beat popularity by a
+worthwhile margin, and finding that out in a day is much better than in a quarter.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The idea is to give every user and every item a short vector in the same space, learned so that the
+dot product is high when that user would like that item. Then recommending is a nearest-neighbour
+search in that space. The dimensions are not named or interpretable - the model discovers them from
+the interaction data.
+
+Two things I would insist on before anything else. First, run the popularity baseline. I measured it -
+recommending the most popular items to everyone got 23% hit@10, and matrix factorisation got 28%. All
+that machinery bought five points, and without the baseline the 28% would have sounded impressive. And
+second, include the item bias term, so that the bias can absorb "everyone likes this" and the latent
+factors are left free to model taste rather than spending a dimension on popularity.
+
+On dimension: I generated data with a known true rank of three and swept it - hit@10 went 21%, 26%,
+33% at rank three, and then flattened and wobbled. The shape is the useful part: it rises to the data's
+real complexity and then stops. Real systems use 32 to 512 because real taste has more structure than
+three factors.
+
+Cold start is the thing embeddings cannot fix on their own. I put twenty items with zero interactions
+in the catalogue, and their learned vectors had a mean norm of 0.059 against 1.093 for the warm items -
+they never received a gradient, so they are just their random initialisation, and their score against
+any user is about zero. They are invisible, and being invisible means never getting interactions, so it
+is self-reinforcing. The fix is content features - a two-tower model where the item tower takes text
+and category and brand, so a new item gets a sensible vector on day one - plus deliberate exploration.
+
+And at scale you cannot score the whole catalogue: ten million items is ten million dot products per
+request. So it is two-stage - an ANN index gets you about a thousand candidates in under a millisecond,
+and an expensive ranker scores only those.'""",
+
+    """8. THE MODEL, PIECE BY PIECE
+
+    THE SCORE:
+        score(u, i) = dot(P_u, Q_i) + b_u + b_i + mu
+
+        P_u    the user's latent vector, d numbers
+        Q_i    the item's latent vector, d numbers
+        b_i    ITEM BIAS - 'this item is liked by everyone'. Absorbs popularity so the factors do not
+               have to.
+        b_u    USER BIAS - 'this user rates everything highly'. Absorbs generosity.
+        mu     the global mean.
+
+        THE BIASES ARE NOT DECORATION. They handle the two largest and least interesting effects in
+        the data, and doing so frees every latent dimension to model something that is actually about
+        taste.
+
+    THE TRAINING OBJECTIVE. Explicit ratings let you minimise squared error against the rating. IMPLICIT
+    feedback - clicks, views, purchases - has no negatives, so you use a RANKING objective instead:
+
+        for each observed (user, item), sample an item the user did NOT interact with, and push the
+        observed one to score higher.
+
+        THAT IS BPR, and it is the right default for implicit data because it optimises the ORDER,
+        which is what a recommendation list actually is.
+
+    REGULARISATION. Add lambda * (|P_u|^2 + |Q_i|^2). Necessary because most users have very few
+    interactions, so their vectors would otherwise overfit badly. It is also what shrinks the cold
+    items to a norm of 0.059.
+
+    THE MODERN VERSION - TWO TOWERS:
+
+        user tower:  user features (history, demographics, context) -> user vector
+        item tower:  item features (text, category, brand, image)   -> item vector
+        score:       dot product, exactly as above
+
+        The important difference: THE TOWERS TAKE FEATURES, NOT IDS. So a brand-new item still gets a
+        meaningful vector, which is the direct fix for the cold-start measurement above. The item
+        tower can be run offline and the vectors indexed; the user tower runs at request time.
+
+    THAT SPLIT - PRECOMPUTED ITEM VECTORS, LIVE USER VECTOR, DOT PRODUCT AT THE END - is what makes
+    ANN retrieval possible, and it is why the architecture is shaped that way.""",
+
+    """9. SERVING IT - why the architecture is two-stage
+
+    THE PROBLEM, stated as arithmetic:
+
+        catalogue size     dot products per request     at 1M requests/day
+             1,000                        1,000              1,000,000,000
+           100,000                      100,000            100,000,000,000
+        10,000,000                   10,000,000         10,000,000,000,000
+     1,000,000,000                1,000,000,000      1,000,000,000,000,000
+
+    Scoring every item for every request is LINEAR IN THE CATALOGUE. Ten million items means ten
+    million dot products before you can return a single recommendation, and you have a latency budget
+    of perhaps 100 milliseconds.
+
+    SO REAL SYSTEMS ARE TWO-STAGE, and this is the architecture to draw:
+
+        STAGE 1 - RETRIEVAL (candidate generation)
+            cheap, approximate, high recall
+            an ANN index over the item vectors - HNSW, IVF, ScaNN - returns ~1,000 candidates in
+            well under a millisecond
+            usually SEVERAL retrievers in parallel: the embedding one, plus 'recently viewed',
+            'trending in your region', 'similar to your last purchase'. Union the results.
+
+        STAGE 2 - RANKING
+            expensive, precise, low latency because there are only ~1,000 items
+            a much richer model - gradient boosting or a neural ranker - using features the retrieval
+            stage could not afford: time of day, device, session context, price, stock, cross features
+
+        STAGE 3 - BUSINESS RULES AND DIVERSITY
+            remove out-of-stock, remove what they just bought, enforce category diversity, blend in
+            fresh items, apply any commercial constraints
+
+    WHY THE SPLIT IS THE RIGHT ANSWER: stage 1 optimises RECALL - do not lose the good item - and can
+    be crude. Stage 2 optimises PRECISION on a thousand items and can be as expensive as your latency
+    budget allows. Trying to do both in one model means either a weak model everywhere or an
+    unaffordable one.
+
+    THE ANN TRADE-OFF WORTH NAMING: approximate means it can MISS a true nearest neighbour. Recall of
+    95-99% against exact search is typical, tuned by the index parameters. You are trading a small
+    amount of recall for orders of magnitude of speed, and at stage 1 - where a reranker follows -
+    that is an easy trade.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MODEL:  score(u,i) = dot(P_u, Q_i) + b_u + b_i, trained on a ranking objective with sampled
+    negatives.
+
+    THE MEASURED EVIDENCE (300 users, 200 items, 10.2% density, true rank 3):
+        dimension sweep:  21.0% (d=1) · 25.7% (d=2) · 33.3% (d=3, the true rank) · then flat
+        popularity baseline:  23.0% hit@10 - against the model's 28.0%
+        item bias term:  28.0% with, 27.0% without
+        cold items:  mean embedding norm 0.059 against 1.093 for warm items - 18x smaller
+        serving cost:  10M items = 10M dot products per request, hence two-stage retrieval
+
+    THE ARCHITECTURE:  ANN retrieval (~1,000 candidates, sub-millisecond) -> expensive ranker ->
+    business rules and diversity.
+
+THE #1 MISTAKE: not running the popularity baseline. It scored 23% for four lines of code, and any
+model that does not clearly beat it is a personalisation system that is not personalising.
+
+THE #2 MISTAKE: ignoring cold start. A new item's vector is its random initialisation - measured 18x
+smaller in norm - so it is invisible, and invisible means it never earns the interactions that would
+fix it. Content features are the answer, not more training.
+
+THE #3 MISTAKE: random train/test splits on data that is inherently temporal, which leaks the future.
+
+THE #4 MISTAKE: optimising accuracy alone and ending up with a popularity engine. Measure coverage and
+tail share too, because the commercial value is in the items people would not have found anyway.
+
+THE #5 MISTAKE: scoring the whole catalogue per request instead of retrieving and then ranking.
+
+ONE-SENTENCE TAKEAWAY: embeddings put users and items in one space so recommendation becomes nearest
+-neighbour search - but the number that matters is how far you beat plain popularity, the items that
+matter most are the cold ones your embeddings cannot see, and the architecture that makes it work is
+cheap approximate retrieval followed by expensive ranking.""",
 ]
 
 _EX_P1AE["Design a customer-support copilot"] = [
-    """Picture the job before designing anything.
-A support agent has a customer asking 'why was I charged twice in March?'. The
-agent currently: searches the help docs, skims three old tickets that look
-similar, checks the billing system, then writes a reply. That takes eight
-minutes.
-The copilot's job is to do the searching and the drafting so the agent spends
-those eight minutes on judgement instead. Note what it is NOT doing: it is not
-deciding to refund anyone. Keeping that boundary clear is the whole design.""",
+    """1. THE GOAL IN PLAIN ENGLISH - clarify the product before drawing any boxes
 
-    """The core piece: answering FROM YOUR DOCUMENTS, not from memory.
-A language model on its own only knows what it read during training - it has
-never seen your refund policy, and if you ask it anyway it will invent
-something plausible. That inventing is called HALLUCINATION.
-The fix is RAG - Retrieval-Augmented Generation. In plain steps: (1) RETRIEVE
-the few most relevant paragraphs from your own help docs and past tickets,
-(2) AUGMENT the question by pasting those paragraphs in alongside it,
-(3) GENERATE the answer from that material.
-Because the model is now reading your actual policy, it can quote it and link
-to it - and if the policy changes tomorrow you update the document, with no
-retraining involved.""",
+'Design a customer-support copilot' is deliberately underspecified, and the first thing being tested
+is whether you notice. THREE COMPLETELY DIFFERENT SYSTEMS hide behind that sentence:
 
-    """Why past TICKETS matter as much as the help docs.
-Help docs describe how things are supposed to work. Old resolved tickets show
-what actually gets said to customers - the phrasing, the exceptions, the
-workaround for the known bug in the March billing run.
-So index both, but tag them: a doc is authoritative policy, a ticket is
-precedent. When they disagree, the policy wins, and the copilot should say so
-rather than repeating what one agent improvised in 2023. Storing that tag
-alongside each chunk of text is a small decision that prevents a whole class of
-wrong answers.""",
+    AGENT ASSIST      the AI drafts, a human agent edits and sends.
+                      Lowest risk. The human is the safety net, and every draft is training data.
+    DEFLECTION BOT    the AI answers customers directly, with escalation to a human.
+                      Much higher risk - a wrong answer reaches the customer with your brand on it.
+    FULL AUTOMATION   the AI resolves tickets end to end, including taking actions.
+                      Highest risk, and rarely the right first version.
 
-    """Actions, and the line you do not cross.
-Beyond answering, the copilot can be given TOOLS - small functions it may call,
-like look_up_order(order_id) or check_refund_eligibility(customer_id).
-Split them into two groups. READ-ONLY tools (looking things up) can run
-automatically; the worst case is a wrong answer. WRITE tools (issue a refund,
-cancel a subscription, email the customer) must never run on the model's own
-judgement - they get drafted for a human to approve with one click.
-The reason is simple: a language model can be talked into things by the text it
-reads, including text a customer wrote. If it can issue refunds, then so, in
-effect, can the customer.""",
+WHICH ONE CHANGES EVERY LATER DECISION - the accuracy bar, the latency budget, whether refusal
+matters, what tools it gets, and what a failure costs.
 
-    """Knowing when to hand over - the feature that earns trust.
-The copilot must be able to say 'I do not know'. Two triggers: the retrieved
-documents are all weakly related (the similarity score is below a threshold you
-set), or the question touches a category you have marked sensitive - billing
-disputes, account closure, anything legal or medical.
-In those cases it escalates to a human instead of guessing. Counter-intuitively
-this makes agents trust it MORE, because a tool that is confidently wrong once
-gets switched off, while a tool that admits its limits gets used daily.""",
+THE OPENING MOVE, and it should be your first sentence: 'Before I design this, is the AI talking to the
+CUSTOMER or to the AGENT? Because those are different products.'
 
-    """How you tell whether it is working.
-Measure the two halves separately. RETRIEVAL: on a set of real past questions
-with the correct source document labelled, how often is that document in the
-top 5? If that number is 60%, four questions in ten are unanswerable no matter
-how good the writing is - and no amount of prompt-tweaking will fix it.
-GENERATION: is every claim supported by the retrieved text (faithfulness), and
-does it answer what was asked?
-Then the numbers the business cares about: average handling time, how often
-agents send the draft unedited, escalation rate, and customer satisfaction. A
-copilot that saves two minutes per ticket but raises escalations is not a
-win.""",
+THEN THE OTHER SCOPING QUESTIONS, quickly:
+
+    CHANNEL       chat (interactive, latency matters), email (batch, latency does not), voice (hard)
+    VOLUME        1,000 tickets a day or 100,000? It changes the architecture and the economics
+    LANGUAGES     one or thirty
+    ACTIONS       read-only, or can it issue a refund? THIS IS THE BIGGEST SINGLE RISK DECISION
+    WHAT SUCCESS MEANS    deflection rate, handle time, CSAT, cost per ticket
+
+TERMS AS THEY APPEAR:
+- DEFLECTION: a ticket resolved without a human.
+- AHT: average handle time - how long an agent spends per ticket.
+- CSAT: customer satisfaction score.""",
+
+    """2. THE INTUITION - build agent-assist first, always
+
+If you take one position into this interview, take this one: START WITH AGENT ASSIST, EVEN IF THE GOAL
+IS DEFLECTION.
+
+THE ARGUMENT, and it is a product argument rather than a technical one:
+
+    1. THE HUMAN IS A FREE SAFETY NET. Every wrong answer is caught before a customer sees it, so
+       your first version cannot embarrass the company.
+    2. YOU GET LABELLED DATA FOR NOTHING. Every time an agent edits a draft you learn exactly what was
+       wrong with it. Every time they send it unchanged you have a positive example. AFTER A MONTH YOU
+       HAVE A GOLDEN SET NOBODY HAD TO ANNOTATE, and it is drawn from real traffic.
+    3. IT SHOWS YOU WHERE DEFLECTION IS SAFE. The categories where agents accept drafts unedited are
+       precisely the categories you can automate next - and you will have measured which those are
+       rather than guessed.
+    4. IT SHIPS VALUE IMMEDIATELY. Handle time falls from day one, which funds the rest.
+
+    5. AND THE ARGUMENT THAT USUALLY LANDS: THE EDIT RATE IS YOUR DEFLECTION READINESS METRIC. If
+       agents send 80% of billing drafts unchanged and rewrite 90% of technical ones, you have your
+       roadmap, measured, with no guessing.
+
+THE ROLLOUT THAT FOLLOWS:
+
+    PHASE 1   suggest to agents. Measure edit rate by category.
+    PHASE 2   auto-resolve only the categories with a high acceptance rate AND low harm if wrong -
+              order status, opening hours, password resets.
+    PHASE 3   widen the categories, keeping a confidence threshold and an escape hatch.
+    PHASE 4   actions - refunds, cancellations - with limits and human approval above a threshold.
+
+PROPOSING THAT SEQUENCE UNPROMPTED IS THE STRONGEST THING YOU CAN DO IN THIS QUESTION, because it
+shows you are thinking about risk and adoption rather than about a diagram.""",
+
+    """3. THE ARCHITECTURE
+
+    OFFLINE - the indexing pipeline, run whenever the sources change:
+
+        SOURCES: help centre articles, internal policy docs, past RESOLVED tickets, product
+                 documentation, release notes.
+        RESOLVED TICKETS ARE THE MOST VALUABLE AND THE MOST DANGEROUS SOURCE. They contain the real
+        answers to the real questions in the real wording - and also customer names, order numbers,
+        and agents' occasional wrong answers. Redact PII at index time, and index only tickets that
+        were resolved AND rated well.
+        CHUNK on structure, prepend headings, embed, store with metadata - see
+        [[rag-chunking-strategies-how-to-split-documents]].
+
+    ONLINE - per ticket:
+
+        1. CLASSIFY THE INTENT and the language. Cheap, and it drives routing.
+        2. FETCH ACCOUNT CONTEXT through your existing APIs, scoped to THIS customer - order history,
+           subscription state, previous tickets.
+        3. RETRIEVE from the knowledge base, hybrid search, filtered by product and locale.
+        4. RERANK to the top 3-5.
+        5. CHECK THE RETRIEVAL SCORE. Below threshold -> do not draft. Route to a human with the
+           closest articles attached, which is still useful.
+        6. GENERATE the draft, grounded in the retrieved passages, with citations, at low temperature,
+           in the customer's language and the company's tone.
+        7. GUARDRAIL CHECKS: no PII of other customers, no promises about refunds or timelines that
+           policy does not support, no competitor mentions, within length.
+        8. PRESENT to the agent with its sources visible, or send if the category is auto-resolve.
+        9. LOG everything - retrieved ids, scores, draft, what was sent, edit distance between them.
+
+    STEP 9 IS THE PRODUCT. The gap between the draft and what the agent actually sent is your quality
+    signal, your training data, and your roadmap, all for free.""",
+
+    """4. THE FAILURE MODES
+
+A. NOT ASKING WHO THE AI IS TALKING TO. Agent-facing and customer-facing are different products with
+   different risk profiles, and designing before asking is the single biggest miss.
+
+B. NO 'I DON'T KNOW' PATH. The model will always produce something. The system must be able to decline
+   and route to a human, and that path needs a score threshold set from real data - it is a feature,
+   not an error case.
+
+C. LETTING IT MAKE PROMISES. 'You will receive your refund in 3-5 days' is a commitment your company
+   now has to honour. Constrain the output: no monetary amounts, no dates, no policy exceptions unless
+   they came from a retrieved policy document.
+
+D. GIVING IT WRITE ACTIONS TOO EARLY. A refund tool is an attack surface and a bug surface. Start
+   read-only; add actions with hard limits and approval thresholds - see
+   [[prompt-injection-and-how-to-defend-against-it]], because a ticket is untrusted text arriving
+   inside your prompt.
+
+E. INDEXING TICKETS WITHOUT REDACTION. You have built a system that will quote one customer's address
+   to another. This is a data-protection incident, not a bug.
+
+F. IGNORING THE STALE-KNOWLEDGE PROBLEM. A policy changed last week and the help centre did not. The
+   copilot confidently cites the old one. Freshness metadata, and prefer recent sources.
+
+G. MEASURING DEFLECTION ONLY. Deflection goes up beautifully if the bot frustrates people into giving
+   up. Pair it with CSAT and with the RE-CONTACT RATE - a ticket 'resolved' that reopens in 24 hours
+   was not resolved.
+
+H. NO ESCAPE HATCH. Every customer-facing conversation needs an obvious, immediate route to a human.
+   Hiding it is the fastest way to turn a small failure into a public complaint.
+
+I. ONE PROMPT FOR EVERY INTENT. Billing, technical troubleshooting and complaints need different
+   tones, different sources and different risk settings. Classify first, then route.
+
+J. FORGETTING THE AGENT'S EXPERIENCE. If the draft takes eight seconds and needs heavy editing, agents
+   stop using it, and adoption - not accuracy - is what kills most agent-assist projects.""",
+
+    """5. THE METRICS - and the trap in the obvious one
+
+    WHAT THE BUSINESS ASKS FOR:  deflection rate, cost per ticket, average handle time.
+    WHAT ACTUALLY TELLS YOU IT IS WORKING:
+
+        AGENT-ASSIST PHASE:
+            EDIT DISTANCE between the draft and what was sent    <- the core metric
+            acceptance rate by category
+            handle time, before and after
+            agent adoption - what fraction of drafts are even opened
+
+        DEFLECTION PHASE:
+            deflection rate            AND
+            RE-CONTACT RATE WITHIN 24-72 HOURS   <- the honesty check
+            CSAT on bot-resolved vs human-resolved tickets
+            escalation rate, and how quickly escalation happens
+
+    THE TRAP IS DEFLECTION RATE ON ITS OWN. It goes up if the bot is good, and it ALSO goes up if the
+    bot is so unhelpful that people give up. Those look identical in the dashboard and are opposite
+    outcomes.
+
+    THE RE-CONTACT RATE IS THE FIX and it is the metric to name unprompted. If someone comes back
+    within 24 hours about the same thing, the first interaction failed, whatever it was scored. It is
+    computed from data you already have and it is very hard to game.
+
+    THE GUARDRAILS THAT CAN BLOCK A LAUNCH:
+        CSAT on handled tickets must not fall
+        share of responses containing an unsupported claim - measured by sampling
+        p95 latency (chat: a few seconds. Email: minutes are fine.)
+        cost per ticket
+        complaint or escalation-to-manager rate
+
+    AND THE ONE PEOPLE FORGET: THE BAD TAIL. Not average quality - the share of interactions that go
+    badly wrong. A copilot that is excellent 95% of the time and offensive 0.1% of the time is not a
+    success, and no average will tell you that. Sample and read real conversations weekly, forever.""",
+
+    """6. HOW TO BUILD IT - numbered steps
+
+1. ASK WHO IT TALKS TO, what actions it may take, and what success means. Three questions, thirty
+   seconds, and they determine everything else.
+2. START WITH AGENT ASSIST regardless of the eventual goal.
+3. BUILD THE EVAL SET FIRST - 100-200 real tickets with the correct answer and the source that
+   supports it, including tickets that should be escalated.
+4. INDEX CAREFULLY. Help centre, policies, and well-rated resolved tickets - redacted, and only
+   tickets that were rated well.
+5. GET RETRIEVAL RIGHT BEFORE ANYTHING ELSE. Measure recall@5 on the eval set. Nothing downstream can
+   be better than this.
+6. BUILD THE REFUSAL PATH SECOND, before the happy path is polished. Below-threshold retrieval routes
+   to a human with the closest articles attached.
+7. CONSTRAIN THE OUTPUT - grounded, cited, no dates, no amounts, no policy exceptions not present in a
+   retrieved document.
+8. SHIP TO A SMALL AGENT COHORT. Watch edit distance by category and interview the agents.
+9. AUTOMATE THE HIGH-ACCEPTANCE, LOW-HARM CATEGORIES ONLY, behind a confidence threshold, with a
+   visible route to a human.
+10. INSTRUMENT RE-CONTACT AND CSAT from day one of any customer-facing traffic.
+11. FEED EVERY FAILURE BACK into the eval set, so it can never silently return.
+12. REVIEW SAMPLED CONVERSATIONS WEEKLY, by hand, permanently.
+
+STEP 8 IS WHERE THE PROJECT SUCCEEDS OR FAILS, and it is not a technical step. Agents will not use a
+tool that is slower than typing the answer themselves, and adoption kills more of these projects than
+accuracy does.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'My first question is who the AI is talking to - the customer or the agent - because those are
+different products. Agent assist means a human catches every mistake. Customer-facing means a wrong
+answer reaches someone with your brand on it. And I would also ask whether it can take actions, like
+issuing a refund, because that is the biggest risk decision in the design.
+
+Whatever the eventual goal, I would build agent assist first. Three reasons. The human is a free safety
+net, so version one cannot embarrass the company. Every time an agent edits a draft I learn exactly
+what was wrong with it, so after a month I have a golden set nobody had to annotate. And the edit rate
+by category IS my deflection readiness metric - if agents send 80% of billing drafts unchanged and
+rewrite 90% of technical ones, I know exactly what to automate first, measured rather than guessed.
+
+Architecturally it is RAG with account context. Index the help centre, the policy docs and well-rated
+resolved tickets - redacted, because those tickets contain customer names and order numbers. Per
+ticket: classify the intent, fetch that customer's account context through the existing APIs, retrieve
+and rerank, and then check the retrieval score. If it is below threshold, do not draft - route to a
+human with the closest articles attached, which is still useful. Then generate grounded and cited, at
+low temperature, and run guardrails: no other customer's data, no dates, no monetary amounts, no policy
+promises that did not come from a retrieved document.
+
+For metrics I would push back on deflection rate alone, because it goes up if the bot is good and also
+if it frustrates people into giving up - those look identical. I would pair it with re-contact rate
+within 72 hours, which is the honesty check, plus CSAT and the share of interactions that go badly
+wrong. And I would sample and read real conversations weekly, permanently - not as a launch activity.'""",
+
+    """8. THE COMPONENTS, PIECE BY PIECE
+
+    INTENT CLASSIFIER
+        Cheap, fast, and it earns its place by ROUTING. Billing, technical, returns, complaint,
+        account access. Each route gets different sources, a different tone, and a different risk
+        setting - a complaint should never be auto-resolved regardless of confidence.
+
+    ACCOUNT CONTEXT FETCHER
+        Order status, subscription, previous tickets, entitlements. SCOPED TO THE CUSTOMER IN THE
+        CONVERSATION, enforced by your permission system rather than by the prompt. This is the
+        component that turns a generic FAQ bot into something useful, and it is also the one that
+        leaks data if it is scoped wrongly.
+
+    RETRIEVER
+        Hybrid keyword + vector, filtered by product, locale and freshness. Keyword matters more here
+        than in most RAG systems, because support text is full of exact tokens - error codes, model
+        numbers, plan names.
+
+    RERANKER
+        Top 20 down to top 3-5. Usually the single biggest quality jump available.
+
+    CONFIDENCE GATE
+        The score threshold below which the system does not answer. TUNE IT FROM YOUR EVAL SET, and
+        recognise that its position is a business decision: lower it for deflection, raise it for
+        safety.
+
+    GENERATOR
+        Low temperature, grounded, cited, in the customer's language and the company's voice. A
+        response template per intent rather than one prompt for everything.
+
+    OUTPUT GUARDRAILS
+        Deterministic checks, run on every response: no PII belonging to anyone else, no monetary
+        amounts, no dates or timelines, no policy claims without a citation, length limits. THESE ARE
+        CHEAP AND THEY CATCH THE EXPENSIVE FAILURES.
+
+    ESCALATION PATH
+        Always available, always visible, and it must carry the full context so the customer does not
+        repeat themselves. A handoff that loses the conversation is worse than no bot.
+
+    FEEDBACK LOOP
+        Draft vs sent, thumbs, re-contact, CSAT - all flowing back into the eval set and the index.""",
+
+    """9. ONE TICKET, WALKED
+
+    THE TICKET: 'I ordered the blue one on Tuesday and it still says processing. This is the second
+    time. Can you just cancel it?'
+
+    STEP 1 - CLASSIFY: intent = order status + cancellation request. Sentiment = negative, repeat
+    contact. THAT SECOND FLAG MATTERS: 'this is the second time' should lower the automation threshold
+    or route to a human outright, because a repeat contact that gets a bot is how complaints escalate.
+
+    STEP 2 - ACCOUNT CONTEXT: order #88213, placed Tuesday, status 'awaiting stock', expected ship
+    date exists in the system. Also: one previous ticket about the same order.
+
+    STEP 3 - RETRIEVE: the cancellation policy, the 'awaiting stock' explanation article, and the
+    refund timeline policy. Hybrid search; the exact phrase 'awaiting stock' is what keyword retrieval
+    is for.
+
+    STEP 4 - CONFIDENCE: high. All three sources are current and directly on point.
+
+    STEP 5 - THE DECISION, and this is the interesting part. The customer asked for TWO things:
+        an explanation  -> safe to answer from the retrieved policy
+        a CANCELLATION  -> a WRITE ACTION with a monetary consequence
+
+    So the correct behaviour is to DRAFT the explanation and STAGE the cancellation for approval, not
+    to perform it. And because the sentiment is negative and this is a repeat contact, route it to a
+    human with everything pre-assembled.
+
+    STEP 6 - WHAT THE AGENT SEES:
+        the customer's message
+        the order state, in a panel, with the previous ticket linked
+        a drafted reply explaining 'awaiting stock', citing the article
+        a one-click 'cancel order #88213' button, pre-filled, requiring their confirmation
+        a note: 'repeat contact - suggest goodwill gesture per policy §4'
+
+    THE AGENT'S JOB IS NOW THIRTY SECONDS INSTEAD OF FIVE MINUTES, and every judgement call that
+    involves money, or an unhappy customer, was left to the human.
+
+    THAT IS THE SHAPE OF A GOOD ANSWER TO THIS QUESTION: the AI did the retrieval, the assembly and
+    the drafting - the parts that are tedious and safe - and it stopped precisely where the risk
+    started.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE PRODUCTS:  agent assist (human sends) · deflection (bot answers, human escapes) · full
+    automation (bot acts). Ask which one before designing anything.
+
+    THE ROLLOUT:  suggest to agents -> measure edit rate by category -> auto-resolve the
+    high-acceptance, low-harm categories -> widen behind a confidence threshold -> actions last, with
+    limits and approval.
+
+    THE ARCHITECTURE:  classify -> account context (scoped to the customer) -> hybrid retrieve ->
+    rerank -> confidence gate -> grounded generation with citations -> deterministic guardrails ->
+    agent or customer -> log everything.
+
+    THE METRICS:  edit distance and acceptance rate by category; then deflection PAIRED WITH
+    re-contact rate, CSAT, escalation rate, and the share of interactions that go badly wrong.
+
+THE #1 MISTAKE: designing before asking who the AI is talking to. Agent-facing and customer-facing
+have different accuracy bars, different failure costs and different architectures.
+
+THE #2 MISTAKE: no refusal path. The model always produces something; deciding NOT to answer is your
+job and it needs a threshold from real data.
+
+THE #3 MISTAKE: optimising deflection rate alone. It rises when the bot is good and when it is so
+unhelpful that people give up, and those are indistinguishable in the dashboard.
+
+THE #4 MISTAKE: write actions too early, or letting the model make promises about money and dates that
+the company then has to honour.
+
+THE #5 MISTAKE: indexing resolved tickets without redaction, which builds a system that quotes one
+customer's details to another.
+
+ONE-SENTENCE TAKEAWAY: ask who it is talking to, ship agent assist first because the human is a free
+safety net and the edit rate is a free roadmap, gate everything behind a retrieval-confidence threshold
+with an honest 'I don't know', keep money and dates out of the model's mouth - and never report
+deflection without re-contact rate beside it.""",
 ]
 
 for _e in ENTRIES:
