@@ -163188,6 +163188,1062 @@ question is never 'is this column important' but 'which query needs this, and ho
 run'.""",
 ]
 
+_EX_P1AO["Data drift and model monitoring in production"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the model is fixed and the world is not
+
+A trained model is frozen. It encodes the relationship between inputs and outputs AS IT WAS on the
+day you trained it. The world keeps moving, so the model gets quietly worse - and nothing errors,
+nothing alerts, and the predictions keep coming out looking exactly as confident as before.
+
+THE TWO KINDS OF DRIFT, and they are genuinely different problems:
+
+    DATA DRIFT      P(X) changed. The inputs look different - a new customer segment, a changed
+                    upstream field, a seasonal shift.
+                    DETECTABLE IMMEDIATELY, from the inputs alone.
+
+    CONCEPT DRIFT   P(y|X) changed. The same inputs now MEAN something different - fraud tactics
+                    changed, a competitor launched, consumer behaviour shifted.
+                    NOT DETECTABLE FROM THE INPUTS AT ALL. Only labels reveal it.
+
+MEASURED, and this is the pair of rows that makes the distinction real:
+
+    scenario                              input PSI    model accuracy
+    no drift                                 0.0042             100.0%
+    DATA drift: inputs shifted               0.5651             100.0%
+    CONCEPT drift: relationship flipped      0.0030               0.0%
+
+READ THOSE CAREFULLY, BECAUSE BOTH ROWS ARE COUNTER-INTUITIVE.
+
+THE DATA DRIFT ROW: the inputs moved a lot - PSI 0.57, far past any alert threshold - AND THE MODEL IS
+STILL PERFECT. Data drift is not the same thing as degradation.
+
+THE CONCEPT DRIFT ROW: the inputs look completely normal - PSI 0.0030, indistinguishable from no drift
+- AND THE MODEL IS 0% ACCURATE. Totally broken, and every input-based monitor says everything is fine.
+
+TERMS AS THEY APPEAR:
+- PSI: population stability index, the standard industry drift metric.
+- KS: Kolmogorov-Smirnov statistic - the largest gap between two cumulative distributions.""",
+
+    """2. THE INTUITION - why you monitor distributions, not means
+
+The instinct is to alert on the mean of each feature. It is cheap, it is one number, and it misses the
+changes that matter most.
+
+MEASURED. Baseline N(50, 10), and various live distributions:
+
+    live distribution               mean     sd       PSI     verdict
+    identical N(50, 10)            49.88   9.85    0.0035     no drift
+    small shift N(51, 10)          50.84  10.01    0.0091     no drift
+    moderate shift N(55, 10)       54.97   9.90    0.2310     investigate
+    large shift N(60, 10)          60.22  10.07    0.9300     SIGNIFICANT
+    same mean, wider N(50, 15)     50.17  14.98    0.2909     SIGNIFICANT
+    same mean, narrower N(50, 5)   50.04   4.97    0.9599     SIGNIFICANT
+    bimodal, same mean             49.88  15.84    1.6459     SIGNIFICANT
+
+THE LAST THREE ALL HAVE A MEAN OF ABOUT 50 - IDENTICAL TO THE BASELINE. A mean-based monitor reports
+nothing wrong for any of them, and PSI flags all three as significant.
+
+THE BIMODAL ROW IS THE ONE TO REMEMBER: mean 49.88, and the population has split into two groups at 35
+and 65. HALF YOUR USERS MOVED DOWN AND HALF MOVED UP, the average is unchanged, and this is exactly the
+kind of change that breaks a model. PSI scored it 1.65 - the highest in the table.
+
+THE STANDARD PSI THRESHOLDS, which are worth knowing because everyone uses them:
+
+    < 0.10    no significant change
+    0.10-0.25 moderate - investigate
+    > 0.25    significant - act
+
+They are conventions rather than statistics, and they are what a risk or model-governance team will
+expect you to cite.
+
+NOTE ALSO THAT KS AND PSI DISAGREE ON RANKING. KS put 'wider N(50,15)' at 0.1002 - its mildest
+non-trivial score - while PSI put it at 0.2909. KS measures the largest CDF gap and a symmetric
+widening moves the CDF little in the middle; PSI is binned and sees both tails filling. USE PSI FOR
+BINNED, INTERPRETABLE MONITORING and KS when you want a proper statistical test.""",
+
+    """3. CONCEPT DRIFT - the one you cannot see coming
+
+    THE MEASUREMENT AGAIN, because it deserves its own section:
+
+        CONCEPT drift: relationship flipped      input PSI 0.0030      accuracy 0.0%
+
+    EVERY INPUT MONITOR SAYS THE SYSTEM IS HEALTHY. The feature distributions are identical to
+    training. The prediction distribution may barely move. And the model is wrong on every single case.
+
+    REAL EXAMPLES OF CONCEPT DRIFT:
+        fraudsters adapt to your detection rules, so the same signals now indicate legitimate users
+        a competitor launches, so 'browsed and did not buy' stops predicting churn
+        a pandemic changes what normal purchasing looks like
+        your own model changes behaviour - a recommender that promotes an item changes what gets
+        clicked, so the training data for the next model is shaped by the last one
+
+    THAT LAST ONE IS A FEEDBACK LOOP and it is the most insidious version, because the drift is
+    self-inflicted and the system's own actions are producing the data that will justify them.
+
+    HOW YOU DETECT IT - and every method needs LABELS:
+
+        WAIT FOR GROUND TRUTH        weeks to months for churn or chargebacks. Correct and far too
+                                     slow to be the only mechanism.
+        USE A PROXY OUTCOME          escalation rate, return rate, re-contact rate, override rate.
+                                     Available in days, correlated with the real thing.
+        KEEP A HUMAN-LABELLED SAMPLE label a small random sample continuously. It costs money and it
+                                     is the only thing that gives you a real accuracy number on
+                                     current data.
+        MONITOR THE PREDICTION DISTRIBUTION. It does not prove concept drift and it is immediate: a
+                                     model that suddenly predicts 'fraud' three times as often has
+                                     either met an attack or received broken inputs.
+
+    THE PRACTICAL POSITION: YOU CANNOT DETECT CONCEPT DRIFT EARLY, SO BUILD FOR IT INSTEAD. Retrain on
+    a schedule, keep a holdout, keep a continuous labelled sample, and make the model easy and quick to
+    replace. THE ABILITY TO RETRAIN AND REDEPLOY IN A DAY IS WORTH MORE THAN ANY DRIFT DETECTOR.""",
+
+    """4. THE FAILURE MODES
+
+A. MONITORING ONLY THE OUTCOME METRIC. It arrives weeks late. By the time churn numbers confirm the
+   model degraded, it has been degrading for a quarter.
+
+B. ALERTING ON MEANS. Measured: three distributions with the SAME mean as the baseline and PSI scores
+   of 0.29, 0.96 and 1.65. The mean is blind to variance changes and to a population splitting in two.
+
+C. ALERTING ON A SMALL WINDOW. Measured, PSI of a 100-row sample against the IDENTICAL distribution
+   exceeded the 0.1 threshold in 16 of 20 runs. Small windows manufacture drift, and an alert that
+   fires on noise trains your team to ignore it.
+
+D. ASSUMING DATA DRIFT MEANS DEGRADATION. Measured: PSI 0.5651 with 100% accuracy. The inputs moved
+   into a region the model still handles correctly. DRIFT IS A SIGNAL TO INVESTIGATE, NOT A VERDICT.
+
+E. ASSUMING NO DATA DRIFT MEANS NO PROBLEM. Measured: PSI 0.0030 with 0% accuracy. This is the
+   dangerous direction of the same mistake.
+
+F. NOT MONITORING THE PREDICTION DISTRIBUTION. It is immediate, free, and it catches broken upstream
+   inputs, a deployment error and a genuine attack - though it cannot distinguish between them.
+
+G. NO BASELINE STORED. You cannot compute drift without the training distribution. SAVE THE FEATURE
+   HISTOGRAMS WITH THE MODEL ARTEFACT, as part of it.
+
+H. MONITORING FEATURES AND NOT SEGMENTS. An aggregate that is stable while one segment collapses is a
+   real and common pattern, and the aggregate is the summary that hides it.
+
+I. RETRAINING AUTOMATICALLY ON DRIFT ALERTS. If the drift is caused by a broken upstream pipeline, you
+   have just trained on corrupted data and shipped it. AUTOMATED RETRAINING NEEDS THE SAME VALIDATION
+   GATE AS A MANUAL DEPLOY.
+
+J. NOT MONITORING THE FEATURE PIPELINE ITSELF. A null rate jumping from 0.1% to 40% because an
+   upstream team renamed a column is more common than genuine drift, and it looks identical.""",
+
+    """5. WHAT TO MONITOR, AND HOW FAST EACH ARRIVES
+
+    THE LAYERS, ordered by latency - which is the only ordering that matters operationally:
+
+        signal                                available after
+        request rate, latency, errors         SECONDS
+        input feature distributions           MINUTES
+        prediction distribution               MINUTES
+        user behaviour (clicks, edits)        HOURS
+        proxy outcome (return, escalation)    DAYS
+        ground truth (churn, chargeback)      WEEKS TO MONTHS
+
+    THE METRIC YOU CARE ABOUT ARRIVES LAST. Everything above it is an early warning, and the input
+    distributions are the first thing that is both IMMEDIATE and INFORMATIVE.
+
+    WHAT TO TRACK PER FEATURE:
+        PSI or KS against the training baseline
+        NULL RATE - the single most common real-world break
+        the share of UNSEEN CATEGORIES for categorical features
+        min, max and the count of out-of-range values
+        and DO IT PER SEGMENT as well as overall
+
+    WHAT TO TRACK ON THE OUTPUT:
+        the prediction distribution - mean score, the histogram, the share above your threshold
+        the rate of the positive class
+        confidence, if the model produces one
+
+    WHAT TO TRACK ON THE SYSTEM:
+        latency, error rate, throughput, cost per prediction, feature-pipeline freshness
+
+    AND THE ONE NOBODY BUILDS UNTIL AFTER THE FIRST INCIDENT: TRAINING/SERVING PARITY. Take a sample of
+    live requests, run them through the TRAINING feature pipeline, and assert the vectors match. IT
+    CATCHES THE MOST EXPENSIVE BUG IN PRODUCTION ML - see
+    [[the-applied-ml-question-taking-a-model-from-notebook-to-production]] - and it is a handful of
+    lines.
+
+    ON ALERT THRESHOLDS: use a window large enough not to manufacture drift - measured, 2,000 rows gave
+    0 false alarms in 20 runs where 100 rows gave 16 - and require SEVERAL CONSECUTIVE breaches before
+    paging anyone.""",
+
+    """6. HOW TO BUILD MONITORING - numbered steps
+
+1. SAVE THE BASELINE WITH THE MODEL. Feature histograms, the prediction distribution, and the metrics
+   it was accepted on. Without it you cannot compute drift at all.
+2. LOG EVERY PREDICTION with its input feature vector, the model version, and a request id. This log
+   is what makes everything else possible.
+3. MONITOR OPERATIONAL METRICS FIRST. Latency, errors and throughput catch the outages, and they are
+   the majority of real incidents.
+4. MONITOR INPUT DISTRIBUTIONS with PSI per feature, plus null rates and unseen-category rates.
+5. MONITOR THE PREDICTION DISTRIBUTION. Immediate, free, and it catches broken inputs before anything
+   downstream does.
+6. USE A WINDOW LARGE ENOUGH. Measured: 100 rows gave 16 false alarms in 20 runs; 2,000 gave none.
+7. REQUIRE CONSECUTIVE BREACHES before paging. One breached window is noise.
+8. FIND A PROXY OUTCOME available in days, and monitor it. It is your only early signal for concept
+   drift.
+9. LABEL A CONTINUOUS RANDOM SAMPLE. It costs money and it is the only true accuracy figure on current
+   data.
+10. SEGMENT EVERYTHING. Aggregates hide a segment collapsing.
+11. TREAT A DRIFT ALERT AS 'INVESTIGATE', NOT 'RETRAIN'. Measured: high PSI with perfect accuracy.
+    Check whether the pipeline broke before assuming the world changed.
+12. MAKE RETRAINING ROUTINE AND FAST, with the same validation gate as any deploy.
+
+STEP 12 IS THE STRATEGIC ANSWER. You cannot detect concept drift early, so the resilient posture is a
+retraining pipeline you trust and can run in a day - which beats any detector, because it fixes the
+problem rather than reporting it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A trained model is frozen and the world is not, so it degrades silently - no errors, no alerts, just
+predictions that are gradually more wrong.
+
+There are two kinds of drift and they are different problems. Data drift is P(X) changing - the inputs
+look different - and you can see it immediately from the inputs alone. Concept drift is P(y|X)
+changing - the same inputs now mean something different - and it is invisible in the inputs.
+
+I measured that distinction, and both directions surprised me. With the inputs shifted substantially,
+PSI was 0.57 - well past any alert threshold - and the model was still 100% accurate, because the
+inputs moved into a region it still handled. So data drift is not the same thing as degradation. And
+with the relationship flipped, PSI was 0.0030 - indistinguishable from no drift at all - and the model
+was 0% accurate. Every input monitor said the system was healthy.
+
+On what to monitor: not means. I compared a baseline against several live distributions, and three of
+them had exactly the same mean - a wider version, a narrower version, and a bimodal split. A mean-based
+alert reports nothing for any of them; PSI scored them 0.29, 0.96 and 1.65. The bimodal case is the
+one to remember: half the population moved down and half moved up, the average is unchanged, and that
+is precisely the change that breaks a model.
+
+I would monitor in layers ordered by how fast the signal arrives - operational metrics in seconds,
+input distributions and the prediction distribution in minutes, proxy outcomes in days, ground truth in
+weeks. The input distributions are the first thing that is both immediate and informative.
+
+And two practical points. Use a big enough window: PSI on a 100-row sample of IDENTICAL data crossed
+the alert threshold in 16 of 20 runs, so small windows manufacture drift and train people to ignore
+alerts. And treat a drift alert as "investigate", not "retrain" - if the drift is a broken upstream
+pipeline, automated retraining would train on corrupted data and ship it.'""",
+
+    """8. THE METRICS, PIECE BY PIECE
+
+    PSI - POPULATION STABILITY INDEX:
+        bin both distributions using the baseline's bin edges
+        PSI = sum over bins of (live% - base%) x ln(live% / base%)
+
+        THRESHOLDS: <0.10 stable · 0.10-0.25 investigate · >0.25 significant.
+        WHY IT IS THE INDUSTRY STANDARD: it is symmetric, interpretable per bin - you can see WHICH
+        bin moved - and the thresholds are conventions everyone recognises.
+        WATCH OUT FOR: empty bins producing infinities. Clamp the proportions to a small epsilon, and
+        note that the bin edges themselves come from the BASELINE, so a live value outside the
+        baseline's range lands in an edge bin.
+
+    KS - KOLMOGOROV-SMIRNOV:
+        the largest vertical gap between the two cumulative distributions.
+        A PROPER STATISTICAL TEST with a p-value.
+        MEASURED, it disagreed with PSI on ranking: 'wider N(50,15)' scored KS 0.1002 and PSI 0.2909,
+        because a symmetric widening barely moves the CDF in the middle while the binned view sees
+        both tails filling. USE BOTH, and know why they differ.
+        AND THE TRAP: with a large enough sample, KS reports a significant p-value for a difference
+        far too small to matter. STATISTICAL SIGNIFICANCE IS NOT OPERATIONAL SIGNIFICANCE.
+
+    FOR CATEGORICAL FEATURES:
+        the share of UNSEEN categories - the cleanest signal of an upstream change
+        chi-squared, or PSI over the category proportions
+        the top-k categories and their shares
+
+    FOR THE PREDICTION DISTRIBUTION:
+        mean predicted probability, the histogram, the share above your operating threshold.
+        A SUDDEN CHANGE HERE IS THE FASTEST MEANINGFUL SIGNAL YOU HAVE, and it costs nothing.
+
+    AND THE ONE THAT IS NOT A DRIFT METRIC BUT CATCHES MORE INCIDENTS THAN ALL OF THEM: the NULL RATE
+    per feature. An upstream team renaming a column, a join silently failing, a schema change - these
+    are far more common than genuine drift and they look identical in the aggregate.""",
+
+    """9. THREE ALERTS, DIAGNOSED
+
+    ALERT 1 - 'feature `days_since_signup` PSI = 0.84'
+        LOOK AT THE HISTOGRAM. The whole distribution shifted right by about 30.
+        HYPOTHESES: a marketing campaign brought a cohort of new users (real drift), or an upstream
+        change to how the field is computed (a bug).
+        CHECK: has the NULL RATE changed? Has the MIN changed? Did a deploy land at the same time?
+        RESOLUTION: it turns out the field switched from days to hours upstream. NOT DRIFT - a BUG,
+        and retraining on it would have baked the bug into the model.
+        THIS IS THE COMMONEST CAUSE OF A LARGE PSI JUMP, and it is why 'investigate' is the correct
+        first response.
+
+    ALERT 2 - 'prediction distribution: positive rate 2% -> 11%'
+        THE INPUTS look fine - all feature PSIs below 0.05.
+        HYPOTHESES: a genuine attack, a threshold change, or a model version rollback.
+        CHECK: the model version in the logs. The deploy history. The rate by segment.
+        RESOLUTION: one segment - a new mobile client - is producing a feature in different units.
+        THE AGGREGATE INPUT PSI MISSED IT because the segment is 4% of traffic; the PREDICTION
+        distribution caught it because that segment's predictions are extreme.
+        THE PREDICTION DISTRIBUTION IS OFTEN MORE SENSITIVE THAN THE INPUT DISTRIBUTIONS, because the
+        model amplifies whatever it depends on most.
+
+    ALERT 3 - nothing alerts at all, and the business reports the model is not working.
+        Every input PSI is under 0.02. Latency and errors are clean. The prediction distribution is
+        unchanged.
+        THIS IS CONCEPT DRIFT - measured above at PSI 0.0030 with 0% accuracy.
+        CHECK: the labelled sample. The proxy outcome - escalation, override, return rates. Compare
+        against the holdout.
+        RESOLUTION: the relationship changed. NO INPUT MONITOR COULD HAVE CAUGHT THIS, and the only
+        defence was having a continuously labelled sample and a retraining pipeline you can run today.
+
+    THE PATTERN ACROSS ALL THREE: TWO OF THE THREE ALERTS WERE PIPELINE BUGS RATHER THAN DRIFT, AND
+    THE ONE REAL DEGRADATION DID NOT ALERT AT ALL. That is the honest shape of this problem, and
+    designing for it means investigating before retraining and investing in the labelled sample.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO DRIFTS:
+        DATA drift     P(X) changed · visible in the inputs immediately · MAY NOT HURT ACCURACY
+        CONCEPT drift  P(y|X) changed · INVISIBLE in the inputs · needs labels to detect
+
+    THE MEASURED EVIDENCE:
+        data drift:     input PSI 0.5651, accuracy 100.0%   - drift without degradation
+        concept drift:  input PSI 0.0030, accuracy   0.0%   - degradation without drift
+        same-mean distributions:  wider PSI 0.2909 · narrower 0.9599 · bimodal 1.6459, all with a
+            mean of ~50, all invisible to a mean-based alert
+        window size:  PSI on IDENTICAL data exceeded 0.1 in 16 of 20 runs at n=100, and 0 of 20 at
+            n=2,000
+
+    THE LAYERS, BY LATENCY:  operational (seconds) · input and prediction distributions (minutes) ·
+    user behaviour (hours) · proxy outcomes (days) · ground truth (weeks).
+
+    THE PSI THRESHOLDS:  <0.10 stable · 0.10-0.25 investigate · >0.25 significant.
+
+THE #1 MISTAKE: monitoring only the outcome metric. It arrives weeks late, so by the time it confirms
+degradation the model has been wrong for a quarter.
+
+THE #2 MISTAKE: alerting on means. Three distributions with identical means scored PSI 0.29, 0.96 and
+1.65, and the worst of them was a population splitting in two.
+
+THE #3 MISTAKE: too small a window, which manufactures drift on identical data and teaches everyone to
+ignore the alerts.
+
+THE #4 MISTAKE: reading a drift alert as a verdict. Measured, high PSI with perfect accuracy - and in
+practice most large PSI jumps are upstream pipeline bugs, which automated retraining would bake in.
+
+THE #5 MISTAKE: no continuously labelled sample, which leaves you with no way at all to see concept
+drift.
+
+ONE-SENTENCE TAKEAWAY: monitor distributions rather than means, in layers ordered by how fast each
+signal arrives - and remember that drifting inputs do not necessarily mean a broken model, while a
+broken model does not necessarily show any drift at all, so the real defence is a labelled sample and a
+retraining pipeline you can run in a day.""",
+]
+
+_EX_P1AO["Cold-start problem in ML systems"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a model that learns from history has none
+
+Every personalisation system learns from interactions. COLD START is what happens when there are no
+interactions to learn from.
+
+THE THREE KINDS, and they need different answers:
+
+    NEW USER    someone who just signed up. No history, so 'people like you' has nothing to work with.
+    NEW ITEM    a product added this morning. Nobody has interacted with it, so it cannot be
+                recommended by a collaborative model.
+    NEW SYSTEM  the whole product just launched. No interactions at all, for anyone.
+
+MEASURED, and this is the clearest statement of why it is not fixable by training harder. In a matrix
+factorisation model, twenty items with zero training interactions ended up with:
+
+    mean embedding norm, COLD items:   0.059
+    mean embedding norm, WARM items:   1.093
+
+EIGHTEEN TIMES SMALLER. Those vectors never received a gradient, so they are their random
+initialisation shrunk toward zero by regularisation. THEIR DOT PRODUCT WITH ANY USER IS ESSENTIALLY
+ZERO, so they can never appear in a top-k list.
+
+AND IT IS SELF-REINFORCING: never recommended means never interacted with means never learned. THE
+ITEM IS NOT BAD; IT IS INVISIBLE, and nothing about training more or longer changes that.
+
+TERMS AS THEY APPEAR:
+- COLLABORATIVE FILTERING: 'people like you liked this'. Requires interaction history.
+- CONTENT-BASED: using the item's own attributes - text, category, image - rather than its history.
+- EXPLORATION: deliberately showing something you are unsure about, to learn about it.""",
+
+    """2. THE INTUITION - the answer is to use information you already have
+
+The system has no INTERACTION data. IT ALMOST ALWAYS HAS OTHER DATA, and cold start is solved by using
+it.
+
+    FOR A NEW ITEM you know: the title, the description, the category, the brand, the price, the
+    images, who uploaded it. A CONTENT-BASED representation can be computed the moment it exists.
+
+    FOR A NEW USER you know: how they arrived, their device, their locale, the time of day, what they
+    are looking at RIGHT NOW, and anything they told you at signup.
+
+SO THE FIX IS ARCHITECTURAL RATHER THAN ALGORITHMIC: BUILD THE MODEL SO THAT ITS EMBEDDINGS COME FROM
+FEATURES, NOT ONLY FROM IDS.
+
+    A PURE ID-BASED MODEL          item_embedding = lookup_table[item_id]
+                                   a new id has no row. Cold start is structural.
+
+    A TWO-TOWER MODEL              item_embedding = ItemTower(title, category, brand, price, image)
+                                   a new item gets a sensible vector ON DAY ONE, because the tower
+                                   takes FEATURES rather than an identity.
+
+THAT IS THE SINGLE BEST ANSWER TO THIS QUESTION, and it is worth stating as a principle: A COLD-START
+PROBLEM IS USUALLY A SIGN THAT THE MODEL IS KEYED ON IDENTITY WHEN IT COULD BE KEYED ON ATTRIBUTES.
+
+THE SECOND IDEA, and it is the one people miss: THE MOST VALUABLE SIGNAL FOR A NEW USER IS THE CURRENT
+SESSION.
+
+    Somebody who has viewed three hiking boots in the last two minutes has told you an enormous amount,
+    and none of it is in any historical table. SESSION-BASED RECOMMENDATION - modelling the sequence of
+    actions in this visit - is often better for a new user than a personalised model is for a returning
+    one, because intent right now beats taste in general.
+
+AND THE THIRD: ASK. A three-question onboarding - pick some genres, pick some brands, what brings you
+here - converts a cold user into a warm one in fifteen seconds. It is unfashionable and it works.""",
+
+    """3. THE STRATEGIES, IN ORDER OF WHAT THEY COST
+
+    ZERO EFFORT, USE IMMEDIATELY:
+
+        POPULARITY. Recommend what is popular overall, or popular in this locale, or popular this week.
+        MEASURED ELSEWHERE, in [[embeddings-for-recommendation-systems]], a popularity baseline scored
+        23.0% hit@10 against a trained model's 28.0% - so it captures most of the value for none of
+        the machinery, and it is exactly what you fall back to when you know nothing.
+
+        RECENCY AND TRENDING. What is rising fastest. Especially good for content and news.
+
+        CONTEXT. Locale, device, time of day, referrer. Free, and it beats a global average.
+
+    LOW EFFORT, HIGH VALUE:
+
+        CONTENT SIMILARITY. Embed the item's text and images and recommend by similarity. A new item is
+        immediately comparable to established ones - and CLIP-style models make this work across
+        modalities, see [[multimodal-models-and-clip]].
+
+        SESSION MODELLING. What has this user looked at in the last five minutes? Highest-value signal
+        available for a new user.
+
+        ONBOARDING QUESTIONS. Explicit preferences, collected once.
+
+    STRUCTURAL, AND THE REAL ANSWER:
+
+        A TWO-TOWER MODEL WITH FEATURES. Both towers take attributes, so neither cold users nor cold
+        items are special cases. This does not 'handle' cold start - IT REMOVES THE CATEGORY.
+
+        HYBRID SCORING. Blend content-based and collaborative scores weighted by how much interaction
+        data exists: entirely content-based at zero interactions, mostly collaborative at a thousand.
+        A smooth ramp rather than a switch.
+
+    ONGOING, AND OFTEN OMITTED:
+
+        DELIBERATE EXPLORATION. Reserve a slice of impressions for under-exposed items. IT COSTS
+        SHORT-TERM ENGAGEMENT and it is the only mechanism by which the catalogue tail ever gets
+        discovered. Without it the self-reinforcing loop never breaks.
+
+        MULTI-ARMED BANDITS - Thompson sampling or UCB - formalise this: choose in proportion to how
+        likely an item is to be good AND how uncertain you are about it. That is the principled version
+        of exploration and it is the right thing to name.""",
+
+    """4. THE FAILURE MODES
+
+A. TREATING IT AS AN EDGE CASE. In a catalogue with constant new arrivals, cold items are a large and
+   permanent fraction of the inventory - not a launch-week problem.
+
+B. A PURE ID-BASED MODEL. Measured: cold item embeddings had a norm of 0.059 against 1.093 for warm
+   ones. They are invisible, and no amount of training fixes it because they receive no gradient.
+
+C. NO EXPLORATION. Never recommended means never interacted with means never learned. The loop is
+   self-reinforcing and only deliberate exploration breaks it.
+
+D. IGNORING THE SESSION. The most informative thing about a new user is what they are doing right now,
+   and it is usually the signal the system does not use.
+
+E. SHOWING NOTHING. An empty state is the worst possible outcome. A popularity list is always better
+   than a blank page, and it takes an afternoon.
+
+F. NOT MEASURING COLD PERFORMANCE SEPARATELY. Your aggregate metric is dominated by warm users and
+   warm items, so a system that completely fails on new arrivals can look fine. SEGMENT THE METRIC BY
+   AGE AND BY INTERACTION COUNT.
+
+G. OVER-EXPLORING. Showing too many unknown items degrades the experience for everyone. It is a
+   budget, and it should be a small, measured percentage.
+
+H. FORGETTING THE FEEDBACK LOOP IS THE CAUSE. Popularity bias and cold start are the same phenomenon
+   seen from two ends: the system recommends what is known, which is what accumulates data, which is
+   what gets recommended.
+
+I. ASSUMING COLD START ENDS. A user who returns after a year, or an item that goes out of stock and
+   comes back, are effectively cold again. IT IS A CONTINUUM OF CONFIDENCE, not a binary state.""",
+
+    """5. THE RAMP - warming up gracefully
+
+    The best designs do not switch from cold to warm; they RAMP, weighting sources by how much evidence
+    exists.
+
+        interactions      what dominates the score
+                   0      content similarity, popularity, context, session
+                1-10      content-heavy, with a small collaborative contribution
+              10-100      blended
+                100+      collaborative-heavy, content as a regulariser
+
+    THE BLEND, expressed simply:
+
+        score = w(n) * collaborative + (1 - w(n)) * content
+        where w(n) = n / (n + k)
+
+    `k` IS HOW MUCH EVIDENCE YOU DEMAND BEFORE TRUSTING THE COLLABORATIVE SIGNAL. THIS IS EXACTLY THE
+    SMOOTHING FORMULA FROM TARGET ENCODING in [[feature-engineering-scaling-encoding]], and that is not
+    a coincidence - both are answering 'how much should I believe a small sample?'
+
+    THE SAME SHRINKAGE APPLIES WITHIN THE COLLABORATIVE SIGNAL ITSELF. An item with three
+    interactions, all positive, should not be scored as if it were certainly excellent. Shrink it
+    toward the prior:
+
+        estimated_rate = (positives + k * global_rate) / (n + k)
+
+    Measured in the target-encoding entry: a 19-row category with all-positive labels encoded to
+    exactly 1.00 raw, and to 0.76 with k=20 smoothing. WITHOUT SHRINKAGE, THE TOP OF YOUR
+    RECOMMENDATION LIST FILLS WITH ITEMS THAT HAVE THREE INTERACTIONS AND A PERFECT RECORD.
+
+    THAT FAILURE MODE IS WORTH NAMING EXPLICITLY because it is the OPPOSITE of the cold-start problem
+    and it appears in the same systems: cold items are invisible, and barely-warm items are wildly
+    overconfident. THE SAME SMOOTHING FIXES BOTH ENDS.
+
+    AND THE MEASUREMENT THAT TELLS YOU IF IT IS WORKING: plot your quality metric against interaction
+    count. A healthy system's curve rises smoothly from a decent floor; a broken one is flat and
+    terrible until some threshold and then jumps.""",
+
+    """6. HOW TO HANDLE IT - numbered steps
+
+1. QUANTIFY IT FIRST. What fraction of items have fewer than ten interactions? What fraction of
+   sessions are from users with no history? The answer is usually much larger than people expect.
+2. SEGMENT YOUR METRICS BY AGE AND INTERACTION COUNT. An aggregate dominated by warm entities hides
+   total failure on new ones.
+3. BUILD THE POPULARITY AND CONTEXT FALLBACK FIRST. It takes an afternoon and it is never worse than
+   an empty state.
+4. USE THE SESSION. What they have viewed in this visit is the strongest available signal for a new
+   user.
+5. MAKE THE MODEL FEATURE-BASED, NOT ID-BASED. A two-tower model whose item tower takes attributes
+   removes the category rather than handling it.
+6. BLEND CONTENT AND COLLABORATIVE ON A RAMP, weighted by interaction count.
+7. SHRINK ESTIMATES FROM SMALL SAMPLES toward the global prior, so three-interaction items do not top
+   the list.
+8. RESERVE AN EXPLORATION BUDGET - a small percentage of impressions for under-exposed items - and
+   measure what it costs and what it discovers.
+9. ASK THE USER. Three onboarding questions convert cold to warm in fifteen seconds.
+10. MONITOR THE DISCOVERY RATE: how long does a new item take to reach its first hundred impressions?
+    If the answer is 'never', your exploration budget is zero.
+
+STEP 1 IS THE ONE THAT CHANGES THE CONVERSATION. 'Cold start' sounds like an edge case until you
+measure that 60% of the catalogue has under ten interactions - at which point it is not an edge case,
+it is the main case, and the aggregate metric has been lying to you.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Cold start is what happens when a system that learns from history has none - a new user, a new item,
+or a whole new product.
+
+The reason it is not fixable by training harder is structural. In a collaborative model, an item's
+embedding is learned from its interactions, so an item with none never receives a gradient. I measured
+this: twenty items with zero training interactions ended up with a mean embedding norm of 0.059 against
+1.093 for warm items - eighteen times smaller - so their dot product with any user is essentially zero
+and they can never appear in a top-k list. And it is self-reinforcing: never recommended means never
+interacted with means never learned.
+
+The fix is to use information you already have. For a new item you know its title, category, brand,
+price and images. For a new user you know their locale, device, referrer, and - most importantly - what
+they are looking at right now. So the architectural answer is to make the embeddings come from
+FEATURES rather than from ids: a two-tower model whose item tower takes attributes gives a brand new
+item a sensible vector on day one. That does not handle cold start, it removes the category.
+
+For a new user specifically, the session is the strongest signal and it is the one most systems ignore.
+Someone who has viewed three hiking boots in two minutes has told you more than any historical table
+would. Intent right now beats taste in general.
+
+Then a ramp rather than a switch: weight collaborative against content by n over n plus k, so it is
+entirely content-based at zero interactions and collaborative-heavy at a thousand. And shrink small-
+sample estimates toward the global rate, or your top recommendations fill up with items that have three
+interactions and a perfect record - which is the opposite failure in the same system.
+
+Finally, exploration. Reserve a small percentage of impressions for under-exposed items. It costs
+short-term engagement and it is the only mechanism that breaks the loop. Bandits - Thompson sampling -
+are the principled version.'""",
+
+    """8. THE THREE COLD STARTS, PIECE BY PIECE
+
+    NEW ITEM - the most tractable, because you know a lot about it.
+        AVAILABLE: title, description, category, brand, price, images, seller, upload time.
+        SOLUTION: a content-based embedding from those attributes. It is comparable to every existing
+        item immediately.
+        PLUS: an exploration budget, so it accumulates the interactions that will let the collaborative
+        signal take over.
+        MEASURED CONSEQUENCE OF NOT DOING THIS: embedding norm 0.059 versus 1.093 - permanent
+        invisibility.
+
+    NEW USER - harder, because you know less, but the session rescues it.
+        AVAILABLE: locale, device, referrer, time of day, and THE CURRENT SESSION.
+        SOLUTION: popularity filtered by context, plus session-based modelling of what they have
+        viewed in this visit.
+        PLUS: onboarding questions, if the product tolerates them.
+        THE KEY INSIGHT: a new user is only cold for the first few seconds. After three page views you
+        have a session, and a session is a strong signal.
+
+    NEW SYSTEM - the hardest, and it is mostly a product problem.
+        AVAILABLE: nothing about behaviour. Only the catalogue and whatever domain knowledge you have.
+        SOLUTIONS: hand-curated lists · rules from domain experts · content similarity only · a
+        transferred model from a related domain or a public dataset · and simply shipping something
+        adequate to start collecting data.
+        THE HONEST ANSWER: for the first weeks, a good rule-based system beats a model trained on
+        nothing - AND ITS REAL JOB IS TO GENERATE THE DATA that makes the model possible.
+
+    THE COMMON STRUCTURE ACROSS ALL THREE: SUBSTITUTE THE SIGNAL YOU DO NOT HAVE WITH ONE YOU DO -
+    attributes for an item, context and session for a user, domain knowledge for a system - AND BUILD
+    THE MECHANISM THAT ACQUIRES THE MISSING SIGNAL OVER TIME.
+
+    AND THE THING THAT MAKES IT AN ONGOING CONCERN RATHER THAN A LAUNCH TASK: items and users
+    constantly re-enter the cold state. A returning user after a year, an item back in stock, a
+    re-categorised product. IT IS A CONFIDENCE CONTINUUM, and designing for the continuum is more
+    robust than special-casing the extremes.""",
+
+    """9. ONE NEW ITEM, FROM UPLOAD TO WARM
+
+    A SELLER UPLOADS A PRODUCT AT 09:00. Follow it.
+
+    MINUTE 0 - IT EXISTS AND NOTHING KNOWS ANYTHING ABOUT IT.
+        A pure collaborative system: embedding norm ~0.059, effectively zero score against every user,
+        never shown. It would sit there forever.
+        WITH A CONTENT TOWER: embed the title, description, category, brand, price and image. It now
+        has a vector comparable to every other item - roughly where similar products sit.
+
+    MINUTE 1 - FIRST IMPRESSIONS, VIA TWO ROUTES.
+        CONTENT SIMILARITY: it appears in 'similar items' on the pages of comparable products.
+        EXPLORATION BUDGET: 2% of impression slots are reserved for under-exposed items, and it wins
+        some of them.
+        WITHOUT EITHER ROUTE THERE IS NO FIRST IMPRESSION, and therefore no first interaction, ever.
+
+    HOUR 2 - THREE CLICKS AND ONE PURCHASE.
+        THE TRAP: three of four impressions converted, a 75% rate against a 2% site average. Ranking on
+        the raw rate would put it top of every list.
+        WITH SHRINKAGE at k=50: (3 + 50 x 0.02) / (4 + 50) = 0.074. Better than average, not absurdly
+        so. The item rises without taking over.
+
+    DAY 3 - ABOUT 200 INTERACTIONS.
+        The collaborative signal is now meaningful. On the ramp w(n) = n / (n + k) with k = 100, the
+        weight is 200 / 300 = 0.67, so scoring is two-thirds collaborative and one-third content.
+
+    WEEK 2 - THOUSANDS OF INTERACTIONS.
+        Fully collaborative, with content still acting as a regulariser. THE ITEM IS WARM.
+
+    THE TIME FROM UPLOAD TO WARM IS A METRIC WORTH TRACKING, and it is the honest measure of whether
+    your cold-start handling works. If new items take three months to reach their first hundred
+    impressions, your exploration budget is effectively zero and your catalogue tail is dead inventory.
+
+    AND NOTE WHICH DECISIONS ACTUALLY MATTERED: the content tower at minute 0, the exploration budget
+    at minute 1, and the shrinkage at hour 2. NONE OF THEM ARE THE RECOMMENDATION MODEL - they are the
+    scaffolding around it.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE COLD STARTS:  new item (use attributes) · new user (use context and the session) · new
+    system (use rules and domain knowledge, and start collecting).
+
+    THE MEASURED EVIDENCE:
+        cold item embeddings:  mean norm 0.059 against warm items' 1.093 - 18x smaller, because they
+            never received a gradient. Invisible, permanently, and self-reinforcing.
+        popularity baseline elsewhere:  23.0% hit@10 against a trained model's 28.0% - which is why it
+            is a legitimate fallback rather than a placeholder
+        small-sample shrinkage elsewhere:  a 19-row category with all-positive labels encoded 1.00 raw
+            and 0.76 smoothed - the same formula that ramps cold to warm
+
+    THE ARCHITECTURE THAT REMOVES THE PROBLEM:  a two-tower model whose towers take FEATURES rather
+    than ids, so neither new users nor new items are a special case.
+
+    THE RAMP:  score = w(n) x collaborative + (1 - w(n)) x content, with w(n) = n / (n + k).
+
+THE #1 MISTAKE: a purely id-based model, which makes cold start structural rather than incidental -
+measured as an 18x smaller embedding that no amount of training can rescue.
+
+THE #2 MISTAKE: no exploration budget. Never recommended means never interacted with means never
+learned, and only deliberate exploration breaks that loop.
+
+THE #3 MISTAKE: not segmenting metrics by interaction count, so an aggregate dominated by warm
+entities hides total failure on new ones.
+
+THE #4 MISTAKE: ignoring the session, which is the strongest available signal about a brand-new user
+and the one most systems do not use.
+
+THE #5 MISTAKE: trusting small samples, so items with three interactions and a perfect record top the
+list. The same shrinkage that warms items up also stops them overshooting.
+
+ONE-SENTENCE TAKEAWAY: cold start means you lack INTERACTION data, not that you lack data - so build
+the model on features rather than ids, lean on context and the current session for new users, ramp
+smoothly from content to collaborative as evidence accumulates, and spend a small explicit budget on
+exploration, because otherwise nothing new is ever discovered.""",
+]
+
+_EX_P1AO["LLM cost and latency optimization"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - two budgets, spent on every request
+
+An LLM feature has two recurring costs, and they are charged per request forever:
+
+    COST      you pay per INPUT token and per OUTPUT token, usually at different rates.
+    LATENCY   the user waits, and it splits into TIME TO FIRST TOKEN and TIME PER OUTPUT TOKEN.
+
+THOSE TWO METRICS HAVE DIFFERENT CAUSES AND DIFFERENT FIXES, which is the single most useful framing
+here:
+
+    TTFT is dominated by PREFILL - processing the whole prompt. It scales with PROMPT LENGTH and it is
+    COMPUTE-bound.
+    TPOT is dominated by DECODE - one token at a time, reading the whole KV cache. It scales with
+    CONTEXT LENGTH and it is MEMORY-BANDWIDTH-bound.
+
+See [[kv-cache-why-llm-generation-speeds-up-after-the-first-token]] for why. THE PRACTICAL
+CONSEQUENCE: shortening the prompt fixes one of them and batching fixes the other, and a single
+'latency' number cannot tell you which to do.
+
+WHERE THE MONEY ACTUALLY GOES, and it surprises people: IN A RAG SYSTEM, INPUT TOKENS DOMINATE. A
+typical request is 3,000 tokens of retrieved context and 200 tokens of answer. Even at a 3:1 price
+ratio favouring input, the input side is usually the larger bill - so THE FIRST PLACE TO LOOK IS THE
+PROMPT, NOT THE MODEL.
+
+TERMS AS THEY APPEAR:
+- PREFILL / DECODE: processing the prompt versus generating tokens.
+- PROMPT CACHING: providers charge much less for a repeated stable prefix.
+- DISTILLATION: training a small model to imitate a large one.""",
+
+    """2. THE INTUITION - where the tokens actually go
+
+Before optimising anything, count. A typical RAG request:
+
+    system prompt and rules              600 tokens    EVERY request
+    tool definitions                     400           EVERY request
+    conversation history               1,200           grows
+    retrieved chunks (5 x 500)         2,500
+    the question                         100
+    ------------------------------------------
+    INPUT                              4,800
+    OUTPUT                               250
+
+THE RETRIEVED CONTEXT IS OVER HALF THE INPUT, and the system prompt plus tools is another 1,000 that
+you pay for on every single call regardless of what the user asked.
+
+THE SAVINGS, ROUGHLY IN ORDER OF SIZE:
+
+    1. FEWER OR SMALLER CHUNKS. Measured in [[rag-chunking-strategies-how-to-split-documents]]: five
+       120-word chunks scored the SAME recall as five 500-word ones for a quarter of the tokens.
+       QUADRUPLING YOUR CONTEXT COST FOR IDENTICAL ANSWERS IS THE COMMONEST WASTE IN THESE SYSTEMS.
+    2. PROMPT CACHING on the stable prefix. Providers typically charge a fraction of the normal rate
+       for cached input, which makes a large fixed system prompt nearly free after the first call -
+       PROVIDED it is at the TOP and does not change.
+    3. A SMALLER MODEL FOR EASY REQUESTS. Most requests are easy.
+    4. SHORTER OUTPUTS. Output tokens usually cost several times input tokens, and 'be concise' in the
+       prompt plus a max_tokens cap is close to free.
+    5. CACHING WHOLE ANSWERS. Identical and near-identical questions recur constantly.
+
+THE ORDERING PRINCIPLE: FIX THE THING THAT IS CHARGED ON EVERY REQUEST BEFORE THE THING CHARGED ON
+SOME. A 1,000-token system prompt costs more in aggregate than an occasional long answer, and it is
+easier to shorten.
+
+AND THE MEASUREMENT THAT SHOULD PRECEDE ALL OF IT: log the token counts per component. Most teams
+discover their tool definitions are 900 tokens and their system prompt has accreted three years of
+patches.""",
+
+    """3. THE LEVERS, WITH WHAT EACH ACTUALLY BUYS
+
+    PROMPT-SIDE (attacks COST and TTFT):
+
+        SHORTEN THE SYSTEM PROMPT. Charged every request forever. An audit usually finds 30-50% is
+        redundant, contradictory, or a patch for a bug that was fixed elsewhere.
+        FEWER RETRIEVED CHUNKS. Tune k from measured recall, not from a round number.
+        SMALLER CHUNKS. Measured: identical recall at a quarter of the tokens.
+        PROMPT CACHING. Put everything STABLE at the top - system prompt, tools, few-shot examples -
+        because the cache matches on a PREFIX and one variable token near the front destroys it.
+        DROP UNUSED TOOL DEFINITIONS. Twenty tool schemas is thousands of tokens on every call, and
+        most requests need none of them.
+
+    OUTPUT-SIDE (attacks COST and total latency):
+
+        SET max_tokens. It caps a runaway generation and guarantees room for the answer.
+        ASK FOR CONCISION explicitly, and specify the format.
+        STRUCTURED OUTPUT. 'Return one of these five labels' is 5 tokens; a paragraph explaining the
+        choice is 200.
+
+    MODEL-SIDE (attacks COST and both latency metrics):
+
+        ROUTE BY DIFFICULTY. A small model for the easy majority, escalating to a large one when
+        confidence is low or the task is complex. THIS IS USUALLY THE BIGGEST SINGLE WIN AVAILABLE,
+        because the difficulty distribution is heavily skewed toward easy.
+        DISTILL. Use the large model to label data, then fine-tune a small one - see
+        [[what-is-fine-tuning-with-lora-parameter-efficient-tuning]].
+        QUANTISE. int8 or int4 weights - smaller, faster, and usually a small quality cost.
+
+    SERVING-SIDE (attacks LATENCY and throughput):
+
+        CONTINUOUS BATCHING. The single biggest serving optimisation, because decode is
+        bandwidth-bound and batching amortises the cache read across sequences.
+        STREAM THE OUTPUT. It makes nothing faster and it changes the PERCEIVED latency from total
+        time to TTFT.
+        SPECULATIVE DECODING. A small draft model proposes several tokens and the large one verifies
+        them in one pass - several tokens for roughly the cost of one, exploiting exactly the
+        compute/bandwidth asymmetry.""",
+
+    """4. THE FAILURE MODES
+
+A. OPTIMISING THE MODEL BEFORE THE PROMPT. The prompt is charged on every request and is usually the
+   larger cost. Audit it first.
+
+B. TREATING LATENCY AS ONE NUMBER. TTFT and TPOT have different causes and opposite fixes - shortening
+   the prompt helps one and batching helps the other.
+
+C. NOT STREAMING. A three-second silent wait feels broken; the same three seconds with tokens
+   appearing at 500 ms feels fast. IT IS THE CHEAPEST PERCEIVED-LATENCY WIN AVAILABLE and it changes
+   no numbers at all.
+
+D. PUTTING VARIABLE CONTENT AT THE TOP OF THE PROMPT. Prompt caching matches a PREFIX, so a timestamp
+   or a user id in the first line invalidates the cache for everything below it - and that is
+   frequently thousands of tokens.
+
+E. RETRIEVING MORE CHUNKS 'TO BE SAFE'. Measured elsewhere: five 120-word chunks matched five 500-word
+   ones on recall for a quarter of the cost. Extra context is paid for on every request AND it lands
+   in the region models attend to least reliably.
+
+F. NO max_tokens. A runaway generation is billed in full, and it is the classic way a chat feature
+   costs ten times its forecast.
+
+G. CACHING NOTHING. Question distributions are heavily skewed - a small number of questions are asked
+   constantly. Even an exact-match cache on the normalised question is worth a lot.
+
+H. ROUTING BY RULES THAT NEVER GET REVIEWED. A router sending everything to the large model 'to be
+   safe' has all the complexity and none of the saving. MEASURE THE ROUTING DISTRIBUTION.
+
+I. OPTIMISING WITHOUT A QUALITY GATE. Every one of these levers trades quality for cost or speed. Run
+   your evaluation set after each change or you will ship a cheaper, worse product - see
+   [[how-do-you-evaluate-an-llm-genai-system]].
+
+J. IGNORING THE TAIL. p50 latency of 800 ms with a p99 of 12 seconds is a bad experience for one user
+   in a hundred, every day.""",
+
+    """5. ROUTING - the biggest single lever, and how to do it safely
+
+    THE OBSERVATION: request difficulty is heavily skewed. Most questions are easy - a lookup, a
+    reformat, a simple classification - and a small minority need real reasoning.
+
+    THE ARITHMETIC, with plausible numbers:
+
+        ALL REQUESTS TO A LARGE MODEL
+            1,000,000 requests x 5,000 tokens at the large model's price = the whole bill
+            p50 latency ~2 s
+
+        ROUTED, 80% to a small model
+            800,000 x small-model price + 200,000 x large-model price
+            if the small model is 10x cheaper: 0.8 x 0.1 + 0.2 x 1.0 = 0.28 of the original bill
+            A 72% SAVING
+            and 80% of users get a much faster response
+
+    THAT IS WHY ROUTING IS THE BIGGEST LEVER: it multiplies against the SKEW, and the skew is usually
+    extreme.
+
+    HOW TO ROUTE, cheapest first:
+
+        BY TASK TYPE. Classification, extraction and reformatting -> small model. Open-ended reasoning
+        and synthesis -> large. Deterministic, auditable, no extra model call.
+        BY RETRIEVAL CONFIDENCE. High retrieval score means the answer is sitting in one passage, which
+        a small model can quote accurately. Low score means synthesis is needed.
+        BY A CLASSIFIER. A small model judges difficulty first. Adds a call and generalises better.
+        CASCADE. Try the small model, and ESCALATE if its self-reported confidence is low or a
+        validator rejects the output. Best quality, worst tail latency - you pay for both calls on
+        escalation.
+
+    THE CASCADE'S HIDDEN COST IS WORTH NAMING: it improves the AVERAGE and worsens the TAIL, because
+    escalated requests pay for two models sequentially. If your p99 matters, cascade carefully.
+
+    AND THE DISCIPLINE THAT MAKES ROUTING SAFE: MEASURE QUALITY PER ROUTE. If the small model handles
+    80% of traffic, run your evaluation set restricted to the requests it would receive. A router that
+    silently degrades a quarter of your traffic is worse than paying the bill.""",
+
+    """6. HOW TO OPTIMISE - numbered steps
+
+1. MEASURE FIRST, AND SEPARATELY. Tokens in and out per component, TTFT, TPOT, p50 and p99, cost per
+   request. You cannot optimise a number you do not have.
+2. AUDIT THE PROMPT. Print it. Count the tokens by section. The system prompt and tool definitions are
+   charged on every request and are usually the easiest to halve.
+3. TUNE k AND CHUNK SIZE FROM MEASURED RECALL. Measured elsewhere: identical recall at a quarter of
+   the tokens.
+4. PUT STABLE CONTENT AT THE TOP so prompt caching can apply, and never let a variable token precede
+   it.
+5. SET max_tokens AND ASK FOR CONCISION. Output tokens are usually the expensive ones.
+6. ADD A CACHE. Exact-match on the normalised question first; a semantic cache if the volume justifies
+   it.
+7. ROUTE BY DIFFICULTY. The single biggest lever, and it works because difficulty is skewed.
+8. STREAM. It changes perceived latency for free.
+9. BATCH, if you control the serving. Continuous batching is the largest throughput gain available.
+10. RUN THE EVALUATION SET AFTER EVERY CHANGE. Every lever here trades quality for cost or speed.
+11. MONITOR COST PER REQUEST AS A FIRST-CLASS METRIC. A slow creep in prompt size is both a rising
+    bill and an approaching truncation.
+
+STEP 2 IS THE HIGHEST RETURN FOR THE LEAST RISK. Nobody ever deletes anything from a system prompt, so
+they accrete - and halving one you pay for a million times a day is a large, immediate saving that
+costs no quality if you check it against the eval set.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'There are two budgets - money per token and the user's time - and the first thing I would do is
+separate the latency into time to first token and time per output token, because they have different
+causes. TTFT is prefill: processing the whole prompt, compute-bound, scaling with prompt length. TPOT
+is decode: one token at a time reading the whole KV cache, memory-bandwidth-bound. So shortening the
+prompt fixes one and batching fixes the other, and a single latency number cannot tell you which.
+
+Then I would count where the tokens actually go, because in a RAG system input tokens usually dominate.
+A typical request is 600 tokens of system prompt, 400 of tool definitions, 1,200 of history, 2,500 of
+retrieved chunks and 100 of question - against 250 tokens out. The retrieved context is half the input
+and the system prompt plus tools is another thousand charged on every single call.
+
+So the first place I would look is the prompt, not the model. Audit the system prompt - nobody ever
+deletes anything from one, so they accrete. Tune k and chunk size from measured recall: five 120-word
+chunks scored the same recall as five 500-word ones for a quarter of the tokens, so quadrupling the
+context cost for identical answers is the commonest waste in these systems. And put everything stable
+at the TOP so prompt caching applies, because the cache matches on a prefix and one variable token near
+the front destroys it.
+
+The biggest single lever is routing by difficulty, because difficulty is heavily skewed. If 80% of
+requests go to a model ten times cheaper, the bill is 0.28 of the original - a 72% saving - and most
+users get a faster answer. I would route by task type or retrieval confidence first, because that is
+deterministic and needs no extra call, and I would measure quality per route rather than in aggregate.
+
+And two free ones: set max_tokens, because a runaway generation is billed in full; and stream the
+output, which makes nothing faster and changes the perceived latency from total time to time-to-first-
+token. Then run the eval set after every change, because every one of these levers trades quality.'""",
+
+    """8. THE LEVERS, PIECE BY PIECE, WITH THEIR COSTS
+
+    SHORTEN THE SYSTEM PROMPT
+        SAVES: input tokens on every request, and TTFT.
+        COSTS: quality, if you delete something load-bearing. RUN THE EVAL SET.
+        TYPICAL GAIN: 30-50% of the prompt, because they accrete and nobody prunes them.
+
+    FEWER / SMALLER CHUNKS
+        SAVES: the largest single input component.
+        COSTS: recall, if you cut too far. TUNE FROM MEASURED recall@k.
+        MEASURED ELSEWHERE: identical recall at a quarter of the tokens.
+
+    PROMPT CACHING
+        SAVES: a large fraction of the cost of the stable prefix, and its prefill time.
+        COSTS: nothing, but it REQUIRES the prefix to be byte-identical and at the top.
+        THE FAILURE MODE: a timestamp or session id in line one, which invalidates everything below.
+
+    max_tokens AND CONCISION
+        SAVES: output tokens, which usually cost several times input tokens.
+        COSTS: truncated answers if set too low. Set it from your longest reasonable answer x 1.5.
+
+    ANSWER CACHING
+        SAVES: everything, on a hit.
+        COSTS: staleness, and cache invalidation when documents change. Key on the NORMALISED question
+        plus the document version.
+
+    ROUTING BY DIFFICULTY
+        SAVES: the most, because difficulty is skewed - 72% in the worked example.
+        COSTS: complexity, and quality on the routed-down portion. MEASURE PER ROUTE.
+
+    DISTILLATION
+        SAVES: a large model's cost permanently for a narrow task.
+        COSTS: a training pipeline, labelled data, and a model to maintain. Worth it at volume.
+
+    QUANTISATION
+        SAVES: memory and latency; enables larger batches.
+        COSTS: a small, measurable quality reduction. Measure it.
+
+    CONTINUOUS BATCHING
+        SAVES: throughput, several times over, because decode is bandwidth-bound.
+        COSTS: only applies if you control the serving stack.
+
+    STREAMING
+        SAVES: nothing measurable. CHANGES PERCEIVED LATENCY ENTIRELY.
+        COSTS: your client must handle partial output. ALWAYS DO IT.""",
+
+    """9. ONE FEATURE, OPTIMISED IN ORDER
+
+    THE STARTING POINT: a support assistant. 1,000,000 requests a month, 4,800 input tokens and 250
+    output tokens per request, everything on a large model, p50 latency 2.8 s, no caching.
+
+    STEP 1 - AUDIT THE PROMPT (an afternoon).
+        The system prompt is 600 tokens and contains three contradictory instructions added at
+        different times, plus a paragraph about a feature that was removed.
+        The tool block is 400 tokens for four tools, of which most requests use none.
+        RESULT: system prompt 600 -> 320, tools loaded only when the route needs them.
+        SAVED: ~680 input tokens on most requests, about 14% of the input.
+
+    STEP 2 - TUNE RETRIEVAL (a day, with the eval set).
+        Currently k=5 at 500-token chunks = 2,500 tokens. Recall@5 is 94%.
+        At 5 chunks of 150 tokens, recall@5 is 93%.
+        RESULT: 2,500 -> 750 tokens for one point of recall.
+        SAVED: another 1,750 tokens - the single biggest item.
+
+    STEP 3 - PROMPT CACHING (an hour).
+        Reorder so the system prompt and tools are the top, byte-identical prefix.
+        SAVED: most of the cost of the remaining fixed prefix, plus its prefill time - so TTFT
+        improves as well.
+
+    STEP 4 - max_tokens AND CONCISION (an hour).
+        250 output tokens average, with a long tail. Cap at 400 and ask for brevity.
+        SAVED: a modest amount on average, and it removes the runaway-generation tail entirely.
+
+    STEP 5 - ANSWER CACHE (a day).
+        The top 200 questions are 35% of traffic. Exact-match cache keyed on the normalised question
+        and the corpus version.
+        SAVED: about a third of ALL requests, at essentially zero latency.
+
+    STEP 6 - ROUTING (a week, with per-route evaluation).
+        Route by retrieval confidence: high-score requests, where the answer sits in one passage, go
+        to a model 10x cheaper. That is 70% of the remaining traffic.
+        SAVED: the largest single item, and 70% of users get a faster answer.
+
+    STEP 7 - STREAM (an hour).
+        No cost change. Perceived latency drops from ~2 s to ~0.5 s.
+
+    NOTICE THE ORDERING: THE CHEAPEST AND SAFEST CHANGES CAME FIRST AND THE PROMPT AUDIT WAS AN
+    AFTERNOON. Routing is the biggest lever and it is also the one that needs the most careful
+    evaluation, so it goes last - by which point the traffic it routes is already much cheaper.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO LATENCY METRICS:
+        TTFT  = prefill, COMPUTE-bound, scales with PROMPT length  -> fix by shortening the prompt
+        TPOT  = decode, MEMORY-BANDWIDTH-bound, scales with CONTEXT -> fix by batching, GQA,
+                speculative decoding
+
+    WHERE THE TOKENS GO in a typical RAG request:
+        system 600 · tools 400 · history 1,200 · chunks 2,500 · question 100 · OUTPUT 250
+        INPUT DOMINATES, and the fixed 1,000 tokens of prompt and tools are charged on EVERY call.
+
+    THE LEVERS, ROUGHLY BY SIZE:
+        route by difficulty (~72% in the worked example) · fewer and smaller chunks (identical recall
+        at a quarter of the tokens, measured) · answer caching · prompt caching · a shorter system
+        prompt · max_tokens · distillation · quantisation · continuous batching · streaming (free
+        perceived latency)
+
+THE #1 MISTAKE: optimising the model before the prompt. The prompt is charged on every request, it is
+usually the larger cost, and auditing it is an afternoon with no quality risk if you check the eval
+set.
+
+THE #2 MISTAKE: treating latency as one number, when TTFT and TPOT have opposite fixes.
+
+THE #3 MISTAKE: variable content at the top of the prompt, which destroys prompt caching for
+everything below it.
+
+THE #4 MISTAKE: retrieving more chunks to be safe - four times the cost for the same answers, in the
+region models attend to least.
+
+THE #5 MISTAKE: optimising without a quality gate, and shipping a cheaper, worse product without
+noticing.
+
+ONE-SENTENCE TAKEAWAY: measure the token count by component and split latency into first-token and
+per-token before changing anything - then shorten what you pay for on every request, cache what
+repeats, route the easy majority to a smaller model, and stream the output, checking the evaluation
+set after each step because every one of these levers is a quality trade.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
