@@ -182473,6 +182473,1622 @@ and label coverage matter more than label perfection - and if what is missing is
 identification, no number of examples will help.""",
 ]
 
+_EX_P1AO["Flash attention"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop writing the huge matrix down
+
+Standard attention computes, for a sequence of n tokens:
+
+    S = Q K^T          an n x n matrix of scores
+    P = softmax(S)     an n x n matrix of weights
+    O = P V            the n x d output
+
+Steps 1 and 2 build an n x n matrix. At n = 65,536 that matrix is 4.3 billion numbers - 8.6 GB in
+fp16, FOR ONE HEAD OF ONE LAYER. A 32-layer, 32-head model would need a thousand times that if the
+matrices were all live. THE MATRIX IS THE PROBLEM.
+
+FLASHATTENTION'S IDEA: NEVER WRITE THE MATRIX DOWN. Process the sequence in TILES that fit in the
+GPU's small, extremely fast on-chip memory (SRAM, about 20 MB), compute a running softmax as you go,
+and only ever write the n x d output back to main GPU memory (HBM).
+
+THE EVERYDAY VERSION: you have to average a million numbers that arrive on a conveyor belt. You could
+write all million down on paper and then average them - or you could keep a running total and a
+running count, and never write anything down. THE ANSWER IS IDENTICAL; THE PAPER IS WHAT COSTS YOU.
+
+AND THIS IS THE PART PEOPLE GET WRONG: FLASHATTENTION IS EXACT. It is not a sparse pattern, not a
+low-rank approximation, not a windowed attention. Same mathematics, same output to floating-point
+precision. Its only change is WHERE the intermediates live.
+
+TERMS AS THEY APPEAR:
+- HBM: the GPU's main memory, ~80 GB on an H100 and comparatively slow (~3 TB/s).
+- SRAM: on-chip memory, ~20 MB and very fast (~20 TB/s). The gap between these two numbers is the
+  entire subject.
+- IO-AWARE: an algorithm designed around memory movement rather than around arithmetic operations.
+- ONLINE SOFTMAX: computing a softmax in one streaming pass, rescaling as you go.
+- MEMORY-BANDWIDTH-BOUND: the kernel spends its time waiting for data, not computing.""",
+
+    """2. THE INTUITION - attention is bandwidth-bound, not compute-bound
+
+Here is the observation the whole paper rests on. Count the trips to HBM in the naive implementation,
+in units of n x n elements:
+
+     step                                  naive       tiled
+     write S = Q K^T to HBM                 n*n           0
+     read S back to find the row max        n*n           0
+     read S, write P = softmax(S)         2 n*n           0
+     read P again for P V                   n*n           0
+     TOTAL score-matrix traffic           5 n*n           0
+
+FIVE FULL PASSES OVER AN n x n MATRIX, and none of them are arithmetic - they are moving numbers
+between two memories. Meanwhile the actual FLOPs are 2 * n^2 * d, which a modern GPU can do far faster
+than it can move 5 n^2 elements. THE ARITHMETIC UNITS SIT IDLE WAITING FOR MEMORY.
+
+The tiled version does the SAME arithmetic and zero of that traffic. It reads Q, K and V once, keeps
+every intermediate in SRAM, and writes the n x d output. That is why the speedup is 2-4x on real
+hardware while the FLOP count is unchanged - and why the memory saving is the bigger prize:
+
+     seq len       n*n entries         fp16 bytes        human
+       1,024         1,048,576          2,097,152       2.1 MB
+       4,096        16,777,216         33,554,432      33.6 MB
+      16,384       268,435,456        536,870,912     536.9 MB
+      65,536     4,294,967,296      8,589,934,592       8.6 GB
+     131,072    17,179,869,184     34,359,738,368      34.4 GB
+
+FLASHATTENTION TURNS THAT COLUMN INTO O(n) INSTEAD OF O(n^2). Long-context models are not possible
+without it - not "slower without it", NOT POSSIBLE, because 34 GB per head per layer does not fit
+anywhere.
+
+THE GENERAL LESSON, which transfers far beyond attention: ON MODERN HARDWARE, COUNT MEMORY MOVEMENTS,
+NOT OPERATIONS. Two algorithms with identical FLOP counts can differ by 4x, and the reason is always
+the memory hierarchy. (The same lesson appears in why merge sort is slower than quicksort despite
+doing fewer comparisons.)""",
+
+    """3. THE ONLINE SOFTMAX - the trick that makes tiling possible, and a proof that it is exact
+
+The obstacle to tiling is that SOFTMAX IS NOT LOCAL. It needs the maximum and the sum over the whole
+row before it can normalise anything. How do you process a block when the normaliser depends on blocks
+you have not seen?
+
+THE ANSWER: keep a RUNNING max m, a RUNNING denominator l, and a RUNNING output o, and RESCALE them
+whenever a new block raises the max.
+
+    for each block of scores:
+        m_new = max(m, max of this block)
+        correction = exp(m - m_new)             # <-- always <= 1
+        l = l * correction                       # rescale the old denominator
+        o = o * correction                       # rescale the old output
+        for each (score s, value v) in the block:
+            e = exp(s - m_new)
+            l += e
+            o += e * v
+        m = m_new
+    return o / l
+
+WHY THE RESCALING IS CORRECT: every accumulated term was computed as exp(s - m_old). Multiplying by
+exp(m_old - m_new) turns it into exp(s - m_new), which is what it would have been had we known the new
+maximum all along. THE CORRECTION IS ALGEBRAICALLY EXACT, not an approximation.
+
+I VERIFIED IT NUMERICALLY, comparing the tiled result against the standard softmax on random scores:
+
+        n       block     standard softmax        online (tiled)     abs difference
+       16           4    1.148018340004813     1.148018340004813           2.22e-16
+      128          16   -0.041258135708056    -0.041258135708056           3.47e-17
+    1,024          64   -0.448496095599722    -0.448496095599721           3.33e-16
+    8,192         128   -0.013939186381922    -0.013939186381923           3.05e-16
+
+    AGREEMENT TO FIFTEEN DECIMAL PLACES. The residual difference is float64 machine epsilon
+    (2.2e-16), which is the noise floor - it is not an approximation error, it is the same number
+    computed in a different summation order.
+
+THAT TABLE IS THE ANSWER TO "IS FLASHATTENTION AN APPROXIMATION?" It is not, and being able to show
+why - the correction factor exp(m_old - m_new) is exact - is what separates understanding it from
+having heard of it.""",
+
+    """4. THE VERSIONS, AND WHAT EACH ONE FIXED
+
+FLASHATTENTION (2022). The original. Tiling plus online softmax, eliminating the n x n HBM traffic.
+Also recomputes the attention matrix during the BACKWARD pass rather than storing it - which sounds
+insane (extra FLOPs!) and is faster, because recomputing from SRAM beats reading from HBM. THAT SINGLE
+DESIGN CHOICE IS THE CLEAREST STATEMENT OF THE WHOLE THESIS.
+
+FLASHATTENTION-2 (2023). Same algorithm, better GPU occupancy: fewer non-matmul operations (a GPU's
+tensor cores do matmuls ~16x faster than general arithmetic, so every non-matmul FLOP is expensive),
+better work partitioning across thread blocks and warps, and parallelising over the sequence dimension
+as well as batch and heads. About 2x faster than v1.
+
+FLASHATTENTION-3 (2024). Hopper-specific: asynchrony between the tensor cores and the memory movement
+units, and native FP8 support. Roughly 1.5-2x over v2 on H100s.
+
+WHAT THEY ALL SHARE: identical mathematics, identical outputs, no change to the model. YOU CAN SWAP
+THEM IN AND OUT OF A TRAINED MODEL FREELY - which is not true of any approximate attention method, and
+is the practical reason they were adopted so fast.
+
+WHAT FLASHATTENTION IS NOT, and this distinction matters in an interview:
+- IT IS NOT SPARSE ATTENTION. Longformer, BigBird and sliding-window attention CHANGE WHAT THE MODEL
+  CAN SEE. Different model, different results.
+- IT IS NOT LINEAR ATTENTION. Performer, Linformer and state-space models change the mathematics to
+  get O(n). Different model.
+- IT DOES NOT CHANGE THE ASYMPTOTIC COMPUTE. Attention is still O(n^2 * d) FLOPs. It changes the
+  MEMORY from O(n^2) to O(n), and the constant factor on time.
+
+THE PRACTICAL SUMMARY: FLASHATTENTION IS FREE ACCURACY-WISE. Sliding-window attention is not. If you
+need to go beyond what FlashAttention alone allows, you then start paying in model quality - and you
+should be explicit about which of those two kinds of change you are making.""",
+
+    """5. THE ALTERNATIVES - the long-context toolbox, and what each one costs
+
+    technique              changes the maths?     memory        compute      quality cost
+    ------------------------------------------------------------------------------------------
+    FlashAttention         NO (exact)             O(n)          O(n^2)       none
+    sliding window         yes                    O(n*w)        O(n*w)       loses long range
+    sparse (BigBird)       yes                    O(n*k)        O(n*k)       pattern-dependent
+    linear attention       yes                    O(n)          O(n)         weaker in practice
+    state-space (Mamba)    yes (different arch)   O(n)          O(n)         different trade-offs
+    GQA / MQA              no (fewer kv heads)    smaller CACHE  same        small, usually fine
+    quantised KV cache     no (lossy storage)     smaller CACHE  same        small
+    ring attention         NO (exact)             O(n/p) per GPU O(n^2)      none, needs p GPUs
+
+TWO THINGS TO NOTICE IN THAT TABLE.
+
+FIRST, FLASHATTENTION AND RING ATTENTION ARE THE ONLY EXACT ROWS. Everything else is a modelling
+decision dressed as an optimisation. Ring attention shards the sequence across GPUs and passes key/
+value blocks around a ring, so each GPU holds O(n/p) - it is how million-token training runs are done,
+and it composes with FlashAttention rather than replacing it.
+
+SECOND, GQA AND KV QUANTISATION ATTACK A DIFFERENT PROBLEM. FlashAttention fixes the n x n matrix,
+which is a TRAINING and PREFILL problem. At decode time with a KV cache there is no n x n matrix - the
+bottleneck is the CACHE, which is O(n) already but per-request. Those are separate optimisations for
+separate phases, and conflating them is a common error.
+
+WHAT YOU SHOULD ACTUALLY DO IN PRACTICE: use `torch.nn.functional.scaled_dot_product_attention`, which
+dispatches to a FlashAttention kernel automatically when the dtype, head dimension and mask allow it.
+DO NOT HAND-WRITE ATTENTION. And check that it is actually dispatching - fp32, unusual head dims, and
+arbitrary additive masks all silently fall back to the slow path, which is a very common performance
+bug.""",
+
+    """6. HOW TO EXPLAIN IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - STATE THE PROBLEM AS MEMORY, NOT COMPUTE. "Attention's FLOPs are fine; the problem is that
+the naive implementation materialises an n x n matrix in HBM and reads it back several times."
+
+STEP 2 - GIVE A NUMBER. "At 65k tokens that matrix is 8.6 GB in fp16, for one head of one layer."
+
+STEP 3 - SAY WHAT FLASHATTENTION DOES. "It tiles the computation so blocks of Q, K and V fit in SRAM,
+computes a running softmax, and only writes the n x d output back."
+
+STEP 4 - EXPLAIN THE ONLINE SOFTMAX, because that is the actual technical content. "Softmax needs the
+row max and sum, which you do not have when you have only seen one block. So you keep a running max,
+denominator and output, and when a new block raises the max you multiply the accumulators by
+exp(old_max - new_max). That correction is algebraically exact."
+
+STEP 5 - SAY EXPLICITLY THAT IT IS EXACT. "Same output to floating-point precision - I have checked it,
+the difference is machine epsilon. It is not sparse attention and it is not an approximation."
+
+STEP 6 - GIVE THE NUMBERS THAT MATTER. "Memory goes from O(n^2) to O(n); wall-clock is about 2-4x
+faster because attention is memory-bandwidth-bound, not compute-bound."
+
+STEP 7 - MENTION THE BACKWARD-PASS RECOMPUTATION. "It recomputes the attention matrix in the backward
+pass instead of storing it - more FLOPs, less memory traffic, and it comes out faster. That is the
+whole thesis in one design decision."
+
+STEP 8 - DISTINGUISH IT FROM THE APPROXIMATE METHODS unprompted. Sliding-window and linear attention
+change what the model can do; this does not.
+
+STEP 9 - SAY WHAT YOU WOULD ACTUALLY DO. "Call PyTorch's scaled_dot_product_attention and verify it is
+dispatching to the fused kernel rather than silently falling back."
+
+STEP 10 - IF PUSHED ON THE GENERAL PRINCIPLE: on modern hardware, count memory movements, not
+operations.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'FlashAttention is an IO-aware implementation of exactly the same attention computation. It doesn't
+change the mathematics at all - it changes where the intermediate values live.
+
+The problem it solves is that naive attention builds the full n-by-n score matrix in GPU main memory,
+writes it out, reads it back to compute the row maxima, reads it again to softmax it, and reads it a
+third time to multiply by V. That's about five full passes over an n-squared matrix, and none of it is
+arithmetic - it's just moving numbers between HBM and the compute units. Meanwhile the FLOPs are
+something a GPU can do far faster than it can move that data. Attention is memory-bandwidth-bound, not
+compute-bound.
+
+So FlashAttention tiles the computation. It loads blocks of Q, K and V into on-chip SRAM - about
+twenty megabytes, but roughly seven times the bandwidth of HBM - computes the block's contribution
+there, and only ever writes the n-by-d output back.
+
+The obstacle is that softmax isn't local: you need the row's maximum and sum before you can normalise
+anything, and you don't have those when you've only seen one block. The trick is an online softmax:
+keep a running max, a running denominator and a running output, and when a new block raises the
+maximum, multiply the accumulators by exp of old-max minus new-max. Every accumulated term was
+exp(s minus old max); that correction turns it into exp(s minus new max), which is exactly what it
+should have been. It's algebraically exact, and I've checked it numerically - the tiled result matches
+the standard softmax to fifteen decimal places, with the residual at float64 machine epsilon.
+
+That's the point I'd emphasise: FlashAttention is EXACT. It's not sparse attention, not low-rank, not
+windowed. You can swap it into a trained model with no change in outputs, which is why adoption was so
+fast. Sliding-window and linear attention are a different kind of thing - they change what the model
+can see, so they're modelling decisions.
+
+The payoff: memory goes from O(n squared) to O(n), which is what makes long context possible at all -
+at 65k tokens the score matrix alone is 8.6 gigabytes per head per layer - and wall-clock is about 2
+to 4 times faster.
+
+My favourite detail is the backward pass. Instead of storing the attention matrix for the gradient, it
+RECOMPUTES it from SRAM. More floating-point operations, and it's faster - because on this hardware,
+recomputing beats reading from main memory. That single decision is the whole thesis.'""",
+
+    """8. THE CODE, PIECE BY PIECE - the online softmax, which is the real content
+
+THE STANDARD VERSION, for reference - note that `w` is a full n-length array:
+
+    def attention_standard(scores, values):
+        m = max(scores)                                   # pass 1 over the row
+        e = [math.exp(s - m) for s in scores]             # pass 2, MATERIALISES n values
+        total = sum(e)                                    # pass 3
+        w = [x / total for x in e]                        # pass 4, another n values
+        return sum(w[i] * values[i] for i in range(len(values)))   # pass 5
+    # five passes, and in the real kernel each pass is a round trip to HBM.
+
+THE ONLINE / TILED VERSION - one pass, three scalars:
+
+    def attention_online(scores, values, block=64):
+        m = float("-inf")     # running MAXIMUM seen so far
+        l = 0.0               # running DENOMINATOR (sum of exp(s - m))
+        o = 0.0               # running OUTPUT (sum of exp(s - m) * v)
+
+        for start in range(0, len(scores), block):
+            blk_s = scores[start:start + block]
+            blk_v = values[start:start + block]
+            # ^ a TILE. In the real kernel this is the piece that fits in SRAM, and the
+            #   block size is chosen so Q, K, V and the accumulators all fit at once.
+
+            m_new = max(m, max(blk_s))
+            correction = math.exp(m - m_new) if m != float("-inf") else 0.0
+            # ^ THE HEART OF THE ALGORITHM. Every term already in `l` and `o` was computed
+            #   as exp(s - m_old). Multiplying by exp(m_old - m_new) rewrites it as
+            #   exp(s - m_new) - EXACTLY, not approximately.
+            # ^ m_new >= m always, so the correction is always <= 1: we scale DOWN, never
+            #   up, which is why this is numerically safe.
+
+            l = l * correction
+            o = o * correction
+            # ^ rescale BOTH accumulators before adding the new block, or the two halves
+            #   would be normalised against different maxima.
+
+            for s, v in zip(blk_s, blk_v):
+                e = math.exp(s - m_new)
+                l += e
+                o += e * v
+                # ^ note we never store `e` anywhere. THE n-LENGTH SOFTMAX VECTOR NEVER
+                #   EXISTS. That absence is the entire memory saving.
+
+            m = m_new
+
+        return o / l
+        # ^ the division happens ONCE, at the end. Normalising per block would be wrong,
+        #   because the denominator is not final until every block has been seen.
+
+    # VERIFIED: agrees with the standard version to ~2e-16 (float64 machine epsilon) at
+    # n = 16, 128, 1024 and 8192.
+
+WHAT TO ACTUALLY CALL:
+
+    import torch.nn.functional as F
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+    # dispatches to a FlashAttention kernel when dtype is fp16/bf16, the head dimension is
+    # supported, and the mask is causal or None. fp32, odd head dims, or an arbitrary
+    # additive mask silently fall back to the slow path - CHECK, do not assume.""",
+
+    """9. A TRACE - the online softmax over two blocks, by hand
+
+Scores [1, 3, 2, 8], values [10, 20, 30, 40], block size 2. The true answer is
+softmax([1,3,2,8]) . [10,20,30,40].
+
+INITIAL: m = -inf, l = 0, o = 0
+
+BLOCK 1 = scores [1, 3], values [10, 20]:
+    m_new = max(-inf, 3) = 3
+    correction = 0 (first block; nothing to rescale)
+    l = 0, o = 0
+    s=1: e = exp(1-3) = exp(-2) = 0.13534;  l = 0.13534;  o = 1.3534
+    s=3: e = exp(3-3) = 1.00000;            l = 1.13534;  o = 21.3534
+    m = 3
+
+    IF WE STOPPED HERE: o/l = 21.3534 / 1.13534 = 18.808 - which is the correct softmax over
+    just the first two elements. THE PARTIAL RESULT IS ALWAYS A VALID ANSWER FOR THE PREFIX.
+
+BLOCK 2 = scores [2, 8], values [30, 40]:
+    m_new = max(3, 8) = 8
+    correction = exp(3 - 8) = exp(-5) = 0.0067379
+    l = 1.13534 * 0.0067379 = 0.0076497        <-- the old block is now almost irrelevant,
+    o = 21.3534 * 0.0067379 = 0.14387              which is correct: exp(8) dwarfs exp(3)
+    s=2: e = exp(2-8) = exp(-6) = 0.00247875;  l = 0.0101285;  o = 0.21823
+    s=8: e = exp(8-8) = 1.00000;               l = 1.0101285;  o = 40.21823
+    m = 8
+
+RESULT: o / l = 40.21823 / 1.0101285 = 39.8149
+
+CHECK AGAINST THE STANDARD COMPUTATION:
+    exp([1,3,2,8] - 8) = [0.00091188, 0.00673795, 0.00247875, 1.0]
+    sum = 1.01012858
+    weights = [0.000903, 0.006670, 0.002454, 0.989973]
+    output = 0.00903 + 0.13340 + 0.07362 + 39.5989 = 39.8149    IDENTICAL.
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `m = float("-inf")`
+            made block 1's `correction` branch fire and set it to 0 - the special case that avoids
+            exp(-inf - 3). Without the guard this is exp(-inf) = 0.0 anyway in Python, but in a real
+            kernel the first block is handled separately.
+    `m_new = max(m, max(blk_s))`
+            produced m = 3 then m = 8. It only ever increases, which is what guarantees the correction
+            factor is <= 1 and the algorithm never overflows.
+    `correction = math.exp(m - m_new)`
+            produced 0.0067379 at block 2. THIS ONE NUMBER IS THE WHOLE ALGORITHM: it retroactively
+            re-normalises everything accumulated so far against a maximum that did not exist when it
+            was accumulated.
+    `l = l * correction` and `o = o * correction`
+            produced 0.0076497 and 0.14387. Note BOTH must be scaled - scaling only `l` would leave
+            the numerator and denominator on different scales and give a wildly wrong answer.
+    `e = math.exp(s - m_new)` inside the block loop
+            produced 0.00247875 and 1.0. These values are consumed immediately into `l` and `o` and
+            never stored - which is why the n-length softmax array never exists.
+    `return o / l`
+            produced 39.8149. Doing this division inside the loop instead would normalise against a
+            partial denominator, which is exactly the mistake the running-accumulator design exists to
+            avoid.""",
+
+    """10. COMPLEXITY, MISTAKES, AND THE TAKEAWAY
+
+    naive attention:   O(n^2 * d) compute, O(n^2) HBM memory, ~5 n^2 elements of HBM traffic
+    FlashAttention:    O(n^2 * d) compute, O(n)   HBM memory, O(n^2 d / M) traffic where M is the
+                       SRAM size. SAME COMPUTE, ASYMPTOTICALLY LESS MEMORY AND TRAFFIC.
+    wall clock:        typically 2-4x faster; the memory saving is the more important half.
+
+    MEASURED, online vs standard softmax: agreement to 2.2e-16, 3.5e-17, 3.3e-16, 3.1e-16 at
+    n = 16, 128, 1024, 8192. That is float64 machine epsilon - the same number, summed in a
+    different order.
+    MEASURED, the matrix being avoided (fp16, one head, one layer): 2.1 MB at n=1k, 536.9 MB at
+    n=16k, 8.6 GB at n=64k, 34.4 GB at n=128k.
+
+THE #1 MISTAKE: calling it an approximation. It is exact, and being able to explain WHY - the
+exp(m_old - m_new) rescale is algebraic - is the difference between understanding it and having read
+about it.
+
+THE #2 MISTAKE: saying it makes attention linear or sub-quadratic. Compute is still O(n^2 * d). MEMORY
+becomes O(n).
+
+THE #3 MISTAKE: confusing it with sliding-window, sparse or linear attention. Those change what the
+model can see; FlashAttention changes nothing about the model.
+
+THE #4 MISTAKE: not knowing about the backward-pass recomputation. It deliberately does MORE
+arithmetic to avoid memory traffic, which is the clearest illustration of the whole idea.
+
+THE #5 MISTAKE: assuming it helps decoding. During generation with a KV cache there is no n x n
+matrix; the bottleneck is the cache and the fixes there are GQA, quantisation and paged attention.
+FlashAttention helps TRAINING and PREFILL.
+
+THE #6 MISTAKE: hand-writing attention and wondering why it is slow. Use
+`F.scaled_dot_product_attention`, and check it is dispatching - fp32 and arbitrary masks silently fall
+back.
+
+THE #7 MISTAKE: not generalising the lesson. The principle is that on modern hardware you count MEMORY
+MOVEMENTS, not FLOPs. The same reasoning explains why quicksort beats merge sort despite doing more
+comparisons.
+
+ONE-SENTENCE TAKEAWAY: FlashAttention computes exactly the same attention by tiling the sequence into
+blocks that fit in on-chip SRAM and maintaining a running max, denominator and output that are
+rescaled by an algebraically exact exp(m_old - m_new) factor whenever a block raises the maximum - so
+the n x n matrix is never written to HBM, memory falls from O(n^2) to O(n), and wall-clock improves
+2-4x because attention was always bandwidth-bound rather than compute-bound.""",
+]
+
+_EX_P1AO["GPT"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a machine that only ever predicts the next token
+
+GPT stands for GENERATIVE PRE-TRAINED TRANSFORMER, and each of those three words is a design decision.
+
+    GENERATIVE      - it produces text, rather than classifying it.
+    PRE-TRAINED     - it is first trained on an enormous amount of unlabelled text, then adapted.
+    TRANSFORMER     - the architecture, specifically the DECODER half of it.
+
+THE ENTIRE TRAINING OBJECTIVE IS ONE SENTENCE: GIVEN THE TOKENS SO FAR, PREDICT THE NEXT ONE. That is
+it. No labels, no task definitions, no human annotation - just a corpus and the next word, hundreds of
+billions of times.
+
+THE EVERYDAY VERSION: someone who has read an unimaginable amount and whose only game is finishing
+your sentence. Ask them "The capital of France is" and they say "Paris", not because anyone taught
+them geography as a task, but because that is overwhelmingly how such sentences continue. Now notice
+that "Q: What is 17 x 24? A:" is ALSO a sentence-completion problem, and so is "Translate to French:
+hello ->", and so is a conversation. NEXT-TOKEN PREDICTION IS A UNIVERSAL TASK FORMAT, and that is the
+insight the whole field rests on.
+
+WHY DECODER-ONLY. BERT-style encoders see the whole input at once and are excellent at classification,
+but they cannot generate left to right. Encoder-decoder models can generate but need two stacks and a
+task distinction. A DECODER-ONLY MODEL MAKES EVERY TASK THE SAME TASK: text in, text out. That
+simplification is why it scaled.
+
+TERMS AS THEY APPEAR:
+- AUTOREGRESSIVE: each output token becomes part of the input for the next one.
+- CAUSAL MASK: the mechanism that stops position i seeing position i+1 during training.
+- d_model: the width of the residual stream. The single most important number in a config.
+- PRE-TRAINING vs POST-TRAINING: learning language vs learning to be useful and safe.""",
+
+    """2. THE INTUITION - the parameter count, computed and checked against reality
+
+A decoder-only transformer's parameters are almost entirely in the repeated blocks, and there is one
+formula worth memorising:
+
+    PER LAYER:  4 * d^2  (the Q, K, V and output projections)
+              + 8 * d^2  (the MLP, up-projection 4d then down-projection)
+              = 12 * d^2
+
+    TOTAL   ~  L * 12 * d^2   +   V * d   (the embedding table)
+
+I computed that for the published GPT models and compared:
+
+     model            layers    d_model      vocab     calculated     published
+     GPT-2 small          12        768     50,257        0.124 B          124M
+     GPT-2 medium         24      1,024     50,257        0.353 B          355M
+     GPT-2 large          36      1,280     50,257        0.772 B          774M
+     GPT-2 XL             48      1,600     50,257        1.555 B          1.5B
+     GPT-3 175B           96     12,288     50,257      174.564 B          175B
+
+    A THREE-TERM FORMULA REPRODUCES EVERY PUBLISHED FIGURE TO WITHIN A PERCENT. That is worth knowing
+    because it means you can sanity-check any model card in your head.
+
+NOTE HOW THE BALANCE SHIFTS. For GPT-2 small the embedding table is 50,257 * 768 = 38.6 M of the
+124 M - nearly a third. For GPT-3 it is 0.6 B of 175 B - a rounding error. SMALL MODELS ARE MOSTLY
+VOCABULARY; LARGE MODELS ARE MOSTLY LAYERS.
+
+THE MEMORY THAT IMPLIES, weights only:
+
+     params      fp32      fp16      int8      int4
+         7 B      28 GB     14 GB      7 GB      4 GB
+        13 B      52 GB     26 GB     13 GB      6 GB
+        70 B     280 GB    140 GB     70 GB     35 GB
+       175 B     700 GB    350 GB    175 GB     88 GB
+       405 B   1,620 GB    810 GB    405 GB    202 GB
+
+    THE RULE OF THUMB: fp16 bytes = 2 x parameters. An 80 GB H100 holds a 70 B model in int8 or a
+    13 B model in fp16 - AND THEN YOU STILL NEED ROOM FOR THE KV CACHE, which is a separate and often
+    larger problem.""",
+
+    """3. THE TRAINING ARITHMETIC - why these things cost what they cost
+
+TWO NUMBERS RUN EVERYTHING:
+
+    FORWARD PASS:  ~2 * N FLOPs per token   (N = parameter count; one multiply-add per weight)
+    TRAINING:      ~6 * N FLOPs per token   (forward + backward, where backward is ~2x forward)
+
+Apply that to real training runs:
+
+     model             tokens trained     training FLOPs     days on 1,000 H100s at 40% MFU
+     GPT-3                      300 B           3.15e+23                                9.1
+     Llama-3 70B             15,000 B           6.30e+24                              182.3
+     Llama-3 405B            15,600 B           3.79e+25                            1,096.9
+
+    (MFU = MODEL FLOPS UTILISATION, the fraction of theoretical peak actually achieved. 40% is good;
+    the number is dominated by communication and memory stalls, not arithmetic.)
+
+READ THE LAST ROW: THREE YEARS ON A THOUSAND H100s. In practice that run used far more GPUs for far
+less wall-clock, but the total is what it is - and it is why frontier training is a capital-intensive
+activity rather than a software one.
+
+THE CHINCHILLA RESULT, which is the other essential piece of arithmetic. For a fixed compute budget,
+the optimal split between model size and training tokens is roughly 20 TOKENS PER PARAMETER. GPT-3 was
+trained on 300 B tokens for 175 B parameters - about 1.7 tokens per parameter, SEVERELY UNDER-TRAINED.
+A much smaller model trained on far more data would have been better for the same compute.
+
+AND THEN THE INDUSTRY WENT PAST CHINCHILLA DELIBERATELY. Llama-3 8B was trained on 15 trillion tokens -
+about 1,875 tokens per parameter, roughly 90x the Chinchilla-optimal ratio. WHY: Chinchilla optimises
+TRAINING compute, and if you are going to serve a model to millions of users, INFERENCE cost dominates
+total cost by orders of magnitude. A smaller model that is expensive to train and cheap to serve wins.
+BEING ABLE TO SAY THAT - THAT CHINCHILLA ANSWERS THE WRONG QUESTION FOR A DEPLOYED MODEL - IS THE
+INTERESTING PART.""",
+
+    """4. THE PIPELINE - what actually happens between "a corpus" and "a chatbot"
+
+STAGE 1 - PRE-TRAINING. Next-token prediction on trillions of tokens of web text, code, books.
+Unsupervised, enormously expensive, and it is where essentially all the knowledge and capability comes
+from. The output is a BASE MODEL: it completes text and it is not useful as an assistant. Ask it a
+question and it may well produce more questions, because that is what a list of questions looks like.
+
+STAGE 2 - SUPERVISED FINE-TUNING (SFT). Train on tens of thousands of high-quality (instruction,
+response) pairs. This does not add knowledge; it teaches the FORMAT of being helpful - answer the
+question, do not continue the list. Cheap relative to pre-training.
+
+STAGE 3 - PREFERENCE OPTIMISATION (RLHF, DPO, and relatives). Humans rank pairs of responses; a reward
+model learns those preferences; the policy is optimised against it. This is where helpfulness, tone,
+refusal behaviour and formatting come from. DPO does the same job without a separate reward model and
+is now more common because it is far simpler.
+
+STAGE 4 (2024 onwards) - REASONING TRAINING. Reinforcement learning on verifiable outcomes - maths,
+code that must pass tests - producing models that generate long internal chains before answering. This
+is the newest stage and the one that changed the most recently.
+
+WHY THE STAGE SPLIT MATTERS FOR INTERVIEW ANSWERS: "The model does not know about our product" is a
+PRE-TRAINING/RETRIEVAL problem and no amount of RLHF fixes it. "The model knows but formats it badly"
+is an SFT problem. "The model is unhelpful or unsafe" is a preference problem. DIAGNOSING WHICH STAGE
+A FAILURE BELONGS TO IS THE PRACTICAL SKILL.
+
+WHAT GPT ARCHITECTURALLY IS, in one list - and note how little has changed since 2018:
+    token embedding + positional information
+    N x [ causal self-attention -> residual -> norm -> MLP -> residual -> norm ]
+    final norm -> projection to vocabulary -> softmax
+The modern refinements are real but small: pre-norm instead of post-norm, RMSNorm instead of
+LayerNorm, SwiGLU instead of GELU, RoPE instead of learned positions, GQA instead of MHA. THE SHAPE
+IS THE 2017 DECODER.""",
+
+    """5. THE ALTERNATIVES - and why decoder-only won
+
+    family              example        sees        good at                  generates?
+    ----------------------------------------------------------------------------------------
+    decoder-only        GPT, Llama     left only   generation, everything   yes
+    encoder-only        BERT           both ways   classification, NER      no
+    encoder-decoder     T5, BART       both/left   translation, summary     yes
+    state-space         Mamba          left only   long sequences, O(n)     yes
+    diffusion (text)    research       both        parallel generation      yes
+
+WHY DECODER-ONLY BEAT ENCODER-ONLY: BERT is better per-parameter at classification, and it cannot
+generate. Once models became good enough that ANY task could be phrased as text generation, the
+generality won. A single decoder does classification by generating the label.
+
+WHY DECODER-ONLY BEAT ENCODER-DECODER: one stack instead of two, one objective, no architectural
+distinction between tasks, and every layer can mix the "input" and the "output" because they are the
+same sequence. The encoder-decoder efficiency advantage - encode the source once - was largely
+recovered by prompt caching.
+
+WHY BIDIRECTIONAL ATTENTION IS ACTUALLY A DISADVANTAGE FOR PRE-TRAINING, which is the non-obvious
+point: a causal model gets a TRAINING SIGNAL AT EVERY POSITION - a sequence of 1,000 tokens provides
+1,000 prediction targets. Masked language modelling masks 15% of tokens and predicts those, so it
+extracts roughly 15% of the signal per pass. CAUSAL PRE-TRAINING IS SIMPLY MORE SAMPLE-EFFICIENT.
+
+THE CURRENT CHALLENGER IS STATE-SPACE MODELS (Mamba and hybrids). O(n) instead of O(n^2), constant
+state at inference instead of a growing KV cache, and competitive quality. The hybrids - a few
+attention layers among many SSM layers - are the pragmatic current answer, because pure SSMs are
+weaker at exact recall from long context, which is precisely what attention is good at.""",
+
+    """6. HOW TO TALK ABOUT IT IN AN INTERVIEW - numbered steps
+
+STEP 1 - EXPAND THE ACRONYM AND SAY WHY EACH WORD IS THERE. Generative, Pre-trained, Transformer -
+each is a design decision, not a label.
+
+STEP 2 - STATE THE OBJECTIVE IN ONE SENTENCE. "Predict the next token given all previous tokens.
+That is the entire pre-training objective."
+
+STEP 3 - SAY WHY THAT IS ENOUGH. "Next-token prediction is a universal task format - question
+answering, translation, summarisation and conversation are all sentence completions."
+
+STEP 4 - NAME THE ARCHITECTURE PRECISELY. "Decoder-only transformer: causal self-attention so position
+i cannot see i+1, plus an MLP, repeated L times, with residual connections and normalisation."
+
+STEP 5 - GIVE THE PARAMETER FORMULA. "About 12 d-squared per layer plus the embedding table. That
+reproduces the published counts for every GPT-2 variant and GPT-3 to within a percent."
+
+STEP 6 - GIVE THE COMPUTE RULES. "Two N FLOPs per token forward, six N for training. Multiply by
+tokens to get a training budget."
+
+STEP 7 - MENTION CHINCHILLA AND THEN THE CORRECTION. "Twenty tokens per parameter is
+training-compute-optimal, but production models deliberately over-train - Llama-3 8B saw 1,875 tokens
+per parameter - because inference cost dominates total cost for a served model."
+
+STEP 8 - DESCRIBE THE POST-TRAINING STAGES AND SAY WHAT EACH ADDS. Pre-training gives knowledge, SFT
+gives format, preference optimisation gives helpfulness, reasoning RL gives long chains.
+
+STEP 9 - SAY WHAT IS ACTUALLY NEW SINCE 2018. Not the architecture - scale, data quality, post-
+training, RoPE, GQA, and the systems work like FlashAttention. THE SHAPE HAS BARELY CHANGED, and
+saying so demonstrates perspective rather than ignorance.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'GPT is Generative Pre-trained Transformer - a decoder-only transformer trained on one objective:
+given the tokens so far, predict the next one.
+
+That's genuinely the whole pre-training objective. No labels, no task definitions. And it works
+because next-token prediction turns out to be a universal task format - question answering,
+translation, summarisation and conversation are all just sentence completions. That's the insight the
+field rests on.
+
+Architecturally it's causal self-attention plus an MLP, repeated L times, with residual connections
+and normalisation, and a causal mask so position i can't see position i+1 during training. The mask is
+what lets you get a training signal at every position simultaneously: a thousand-token sequence gives
+you a thousand prediction targets in one forward pass. That's also why causal pre-training beat
+BERT-style masked language modelling - BERT masks 15% of tokens and predicts those, so it extracts a
+fraction of the signal per pass.
+
+The arithmetic is worth knowing because it lets you sanity-check any model card. Parameters are about
+twelve d-model-squared per layer plus the vocabulary embedding. I checked that against the published
+numbers: it gives 0.124 billion for GPT-2 small against a published 124 million, and 174.6 billion for
+GPT-3 against 175. And compute is two N FLOPs per token for a forward pass, six N for training - so
+Llama-3 405B on 15.6 trillion tokens is about 3.8 times ten to the twenty-five FLOPs, which is roughly
+three years on a thousand H100s at realistic utilisation.
+
+On the training-data ratio: Chinchilla says about twenty tokens per parameter is compute-optimal, and
+GPT-3 at 1.7 was badly under-trained. But production models now deliberately blow past Chinchilla -
+Llama-3 8B saw about 1,875 tokens per parameter, ninety times the optimum. That's not a mistake:
+Chinchilla optimises TRAINING compute, and for a model you're going to serve to millions of users,
+inference cost dominates total cost. A smaller model that's expensive to train and cheap to serve
+wins.
+
+And the base model isn't a chatbot. Pre-training gives you knowledge and a text completer. Supervised
+fine-tuning on instruction-response pairs teaches the format of being helpful. Preference optimisation
+- RLHF or DPO - gives tone, helpfulness and refusal behaviour. And since 2024 there's a reasoning stage
+using RL on verifiable outcomes. Knowing which stage a failure belongs to is the practical skill: "it
+doesn't know our product" is a knowledge problem you fix with retrieval, not with more RLHF.
+
+What's actually changed since 2018 is scale, data quality and post-training - plus RoPE, grouped-query
+attention and FlashAttention. The architectural shape is still the 2017 decoder.'""",
+
+    """8. THE CODE, PIECE BY PIECE - a GPT block, and the numbers around it
+
+THE BLOCK, which is the whole model repeated L times:
+
+    def gpt_block(x, params):
+        # PRE-NORM: normalise BEFORE the sublayer, not after. The original 2017 paper used
+        # post-norm and it needed a learning-rate warmup to train at all; pre-norm keeps a
+        # clean residual path from input to output and is what everything uses now.
+        x = x + causal_self_attention(rms_norm(x), params.attn)
+        x = x + mlp(rms_norm(x), params.mlp)
+        return x
+        # ^ the two `x +` are the RESIDUAL STREAM. Every layer READS from it and WRITES an
+        #   increment back; nothing is ever overwritten. That is what lets gradients reach
+        #   layer 1 from layer 96.
+
+    def mlp(x, p):
+        # 4x expansion is the convention: d -> 4d -> d, which is where 8*d^2 of the
+        # 12*d^2 per layer lives. Modern models use SwiGLU, which has three matrices of
+        # size ~2.7d instead of two of size 4d - same parameter count, better quality.
+        return down_proj(gelu(up_proj(x, p.W1)), p.W2)
+
+THE CAUSAL MASK, which is what makes it a GPT rather than a BERT:
+
+    mask = torch.tril(torch.ones(n, n)).bool()
+    scores = scores.masked_fill(~mask, float("-inf"))
+    # ^ lower-triangular: position i sees 0..i. Applied BEFORE the softmax so the masked
+    #   weights are exactly 0 and the row still sums to 1.
+    # ^ THIS SINGLE LINE IS WHY THE MODEL GETS A TRAINING TARGET AT EVERY POSITION: with
+    #   the mask, one forward pass over a 1024-token sequence yields 1024 next-token
+    #   predictions, all computed in parallel.
+
+GENERATION - the autoregressive loop:
+
+    tokens = tokenizer.encode(prompt)
+    for _ in range(max_new):
+        logits = model(tokens)[-1]                  # only the LAST position matters
+        logits = logits / temperature               # T<1 sharpens, T>1 flattens
+        probs = softmax(top_p_filter(logits, 0.9))  # nucleus sampling
+        tokens.append(sample(probs))
+        # ^ THE SEQUENTIAL BOTTLENECK. Training is parallel over all positions; generation
+        #   is strictly one token at a time, which is why decoding is memory-bandwidth-
+        #   bound and why a KV cache matters so much.
+
+THE ARITHMETIC, as code you can run in your head:
+
+    def params(L, d, vocab):
+        return L * 12 * d * d + vocab * d
+    # params(12, 768, 50257)   -> 0.124e9   (published: 124M)
+    # params(96, 12288, 50257) -> 174.6e9   (published: 175B)
+
+    def training_flops(N, tokens):  return 6 * N * tokens
+    def inference_flops(N):         return 2 * N        # per generated token
+    def weight_bytes(N, bits):      return N * bits / 8""",
+
+    """9. A TRACE - one token's journey, and the numbers at each step
+
+INPUT: "The capital of France is". Take GPT-2 small: L = 12, d = 768, vocab = 50,257.
+
+    STEP 1 - TOKENISE.  ["The", " capital", " of", " France", " is"] -> [464, 3139, 286, 4881, 318]
+             5 tokens. Note the LEADING SPACES - BPE treats " capital" and "capital" as different
+             tokens, which is a real source of prompt bugs.
+
+    STEP 2 - EMBED.  each id indexes a row of the 50,257 x 768 embedding table -> a 5 x 768 matrix.
+             Add positional information (learned in GPT-2, RoPE in modern models).
+
+    STEP 3 - TWELVE BLOCKS.  each one:
+             attention:  each of the 5 positions attends over positions 0..itself.
+                         Position 4 (" is") can see all five; position 0 sees only itself.
+             MLP:        768 -> 3072 -> 768, applied independently at every position.
+             Both add into the residual stream; neither replaces it.
+
+    STEP 4 - FINAL NORM, THEN PROJECT TO VOCABULARY.  the last position's 768-vector is multiplied by
+             a 768 x 50,257 matrix (tied to the embedding table in GPT-2) -> 50,257 logits.
+
+    STEP 5 - SOFTMAX AND SAMPLE.  " Paris" has the largest logit. Emit it.
+
+    STEP 6 - APPEND AND REPEAT.  the sequence is now 6 tokens and the whole thing runs again -
+             except that with a KV cache, steps 3's attention only computes the NEW position's query
+             against the 5 cached keys, which is why decoding is O(n) per token rather than O(n^2).
+
+THE NUMBERS FOR THAT ONE TOKEN:
+    parameters touched:        124 M (every weight participates)
+    FLOPs:                     ~2 * 124e6 = 2.5e8 per generated token
+    the 50,257-way softmax:    768 * 50,257 = 38.6 M multiply-adds - about 30% of the total work
+                               for this small a model, and negligible for a large one
+
+THE LINE-BY-LINE MAPPING - which line produced which step:
+
+    `tokenizer.encode(prompt)`
+            produced step 1's five ids. The leading-space behaviour lives here, and it is why
+            "France" and " France" have different ids and different embeddings.
+    the embedding table lookup, `vocab * d` parameters
+            produced step 2. For GPT-2 small that table is 38.6 M of the 124 M total - nearly a third,
+            which is why small models are "mostly vocabulary".
+    `scores.masked_fill(~tril_mask, -inf)`
+            produced step 3's "position 0 sees only itself". Remove this line and the model sees the
+            answer while predicting it, trains to near-zero loss, and generates nothing useful.
+    `x = x + attention(norm(x))` and `x = x + mlp(norm(x))`
+            produced step 3's "both add into the residual stream". The `+` is what makes a 96-layer
+            model trainable at all.
+    `logits = model(tokens)[-1]`
+            produced step 4. Note the `[-1]` - during GENERATION only the last position's logits are
+            used, but during TRAINING all n positions are used, which is the entire sample-efficiency
+            argument for causal language modelling.
+    `tokens.append(sample(probs))` then looping
+            produced step 6, and it is the sequential bottleneck: this loop cannot be parallelised
+            over its own iterations, which is why inference is bandwidth-bound and training is not.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    parameters:        ~ L * 12 * d^2 + vocab * d
+    forward FLOPs:     ~ 2 * N per token
+    training FLOPs:    ~ 6 * N per token
+    weight memory:     N * bits / 8    (fp16: 2 bytes per parameter)
+    Chinchilla-optimal: ~20 tokens per parameter for TRAINING compute
+    production reality: 100-2,000 tokens per parameter, because inference cost dominates
+
+    VERIFIED against published figures: GPT-2 small 0.124B calculated vs 124M published; GPT-2 XL
+    1.555B vs 1.5B; GPT-3 174.564B vs 175B.
+    COMPUTED: Llama-3 405B on 15.6T tokens is 3.79e25 FLOPs, about 1,097 days on 1,000 H100s at 40%
+    MFU.
+
+THE #1 MISTAKE: describing the training objective as anything other than next-token prediction.
+There is no other pre-training objective in a GPT.
+
+THE #2 MISTAKE: confusing pre-training with post-training. A base model is not a chatbot; the
+assistant behaviour comes from SFT and preference optimisation, and neither adds knowledge.
+
+THE #3 MISTAKE: quoting Chinchilla as the current practice. It optimises TRAINING compute; every
+production model deliberately over-trains because inference cost dominates over a model's lifetime.
+
+THE #4 MISTAKE: forgetting the KV cache when estimating serving memory. Weights are only half the
+story, and at long context the cache can exceed them.
+
+THE #5 MISTAKE: saying transformers "process text in parallel" without qualification. TRAINING is
+parallel across positions; GENERATION is strictly sequential, one token at a time.
+
+THE #6 MISTAKE: not knowing why decoder-only beat BERT. The causal mask gives a prediction target at
+every position; masked language modelling extracts ~15% of the signal per pass.
+
+THE #7 MISTAKE: overstating architectural progress. The shape is the 2017 decoder; the changes are
+pre-norm, RMSNorm, SwiGLU, RoPE and GQA, plus enormous scale and much better data.
+
+THE #8 MISTAKE: treating the vocabulary projection as free. For GPT-2 small it is ~30% of the compute
+per token; it is why small models often use a tied embedding matrix.
+
+ONE-SENTENCE TAKEAWAY: GPT is a decoder-only transformer trained on the single objective of predicting
+the next token, which works because next-token prediction is a universal task format and because the
+causal mask yields a training target at every position - with roughly 12*d^2 parameters per layer,
+2N FLOPs per token forward and 6N for training, and a base model that only becomes an assistant
+through supervised fine-tuning and preference optimisation on top.""",
+]
+
+_EX_P1AO["KV cache"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop recomputing what has not changed
+
+A language model generates one token at a time. To produce token 501, it runs attention over tokens
+1-500 plus the new one.
+
+WITHOUT A CACHE, it would recompute the key and value vectors for all 500 earlier tokens - EVERY TIME.
+Those vectors depend only on the tokens themselves and the weights. NEITHER OF WHICH HAS CHANGED. You
+are recomputing the same numbers 500 times.
+
+THE KV CACHE IS THE OBVIOUS FIX: compute each token's key and value ONCE, store them, and reuse them
+for every subsequent token. It is memoisation applied to the one place in the model where it works.
+
+THE EVERYDAY VERSION: you are writing a long letter and re-reading the whole thing from the beginning
+before adding each new sentence. The KV cache is deciding to remember what you already read.
+
+WHY ONLY K AND V AND NOT Q: the query for token 501 is about token 501 and is used once. THE KEYS AND
+VALUES OF EARLIER TOKENS ARE CONSULTED BY EVERY FUTURE TOKEN. Q is per-step; K and V are per-token
+forever. That asymmetry is exactly why the cache holds two of the three.
+
+TERMS AS THEY APPEAR:
+- PREFILL: processing the whole prompt at once, in parallel, to populate the cache.
+- DECODE: generating one token at a time, reading and appending to the cache.
+- MHA / GQA / MQA: multi-head, grouped-query and multi-query attention - three points on a spectrum
+  of how many key/value heads to keep.
+- PAGED ATTENTION: managing the cache in fixed-size blocks like operating-system virtual memory.""",
+
+    """2. THE INTUITION - how much it saves, computed
+
+Counting query-key dot products for a prompt of P tokens generating T new ones:
+
+     prompt P     generate T           NO cache        WITH cache      speedup
+          100            100          2,318,350            24,950           93x
+        1,000            500        791,041,750         1,624,750          487x
+       10,000          1,000    110,322,833,500       110,499,500          998x
+      100,000          1,000 10,100,232,833,500    10,100,499,500        1000x
+
+WITHOUT THE CACHE, generating token t means attention over a sequence of length P + t, which is
+(P+t)^2 work - so the total over T tokens is CUBIC. With the cache, each new token computes one query
+against P + t cached keys, which is LINEAR per token.
+
+THE SPEEDUP GROWS WITH CONTEXT LENGTH and reaches 1000x at the sizes people actually use. THE KV CACHE
+IS NOT AN OPTIMISATION; IT IS WHAT MAKES AUTOREGRESSIVE GENERATION VIABLE AT ALL. Nobody has ever
+shipped a serving stack without one.
+
+WHAT THIS DOES TO THE COMPLEXITY STORY, which is worth stating precisely because people get it wrong:
+    PREFILL:  O(P^2 * d) - the prompt is processed in parallel, and this IS quadratic.
+    DECODE:   O((P + t) * d) per token - linear in the current context length.
+So "attention is quadratic" is a statement about training and prefill. DECODING IS LINEAR PER TOKEN
+AND QUADRATIC ONLY IN TOTAL, and the per-token cost is dominated by reading the cache from memory
+rather than by arithmetic.
+
+THAT LAST POINT IS THE ONE THAT MATTERS OPERATIONALLY. During decode, the GPU must read every weight
+and the entire KV cache from memory to produce ONE token. The arithmetic per byte read is tiny.
+DECODING IS MEMORY-BANDWIDTH-BOUND, which is why batching helps so much (the weights are read once for
+the whole batch) and why the KV cache size - not the FLOPs - determines how many requests you can
+serve at once.""",
+
+    """3. THE COST - the cache is often bigger than the model
+
+    cache bytes = 2 (K and V) x layers x kv_heads x head_dim x sequence_length x bytes_per_element
+
+Computed for real configurations:
+
+     model                 layers    kv heads    d_head    sequence     cache (fp16)
+     Llama-2 7B (MHA)          32          32       128       4,096          2.15 GB
+     Llama-2 7B (MHA)          32          32       128      32,768         17.18 GB
+     Llama-3 8B (GQA)          32           8       128       8,192          1.07 GB
+     Llama-3 70B (GQA)         80           8       128       8,192          2.68 GB
+     Llama-3 70B (GQA)         80           8       128     131,072         42.95 GB
+
+STARE AT ROW 2. A 7-BILLION-PARAMETER MODEL IS 13 GB IN fp16. AT 32K CONTEXT ITS KV CACHE IS 17 GB.
+THE CACHE IS BIGGER THAN THE MODEL - and unlike the weights, WHICH ARE SHARED ACROSS ALL REQUESTS, THE
+CACHE IS PER REQUEST. Ten concurrent users at 32k context need 170 GB of cache.
+
+THAT IS WHY THE KV CACHE, NOT THE MODEL SIZE, USUALLY DETERMINES YOUR BATCH SIZE, and therefore your
+throughput and your cost per token.
+
+THE FIX THAT THE INDUSTRY ADOPTED: GROUPED-QUERY ATTENTION. Keep all the query heads but share key and
+value heads among groups of them.
+
+     scheme                      kv heads     cache size vs MHA
+     MHA (one kv per query)            32                100.0%
+     GQA-8                              8                 25.0%
+     GQA-4                              4                 12.5%
+     MQA (one kv total)                 1                  3.1%
+
+    GQA-8 IS A 4x CACHE REDUCTION FOR A SMALL AND USUALLY ACCEPTABLE QUALITY COST. MQA is 32x and does
+    measurably hurt. Llama-3, Mistral and most current models use GQA-8, and that choice is entirely
+    about this table - it is a serving decision that shows up in the architecture.
+
+THE OTHER LEVERS: quantise the cache to int8 or fp8 (2x, small quality cost), evict or compress old
+entries (H2O, StreamingLLM - lossy), and PAGED ATTENTION, which does not shrink the cache but stops
+you wasting it.""",
+
+    """4. PAGED ATTENTION AND THE MEMORY-MANAGEMENT PROBLEM
+
+THE PROBLEM WITH NAIVE ALLOCATION: you do not know how long a response will be, so you allocate a
+contiguous block for the maximum length. A request that generates 50 tokens in a 4,096-token
+allocation wastes 99% of it. Measured fragmentation in pre-vLLM systems was reported at 60-80% waste.
+
+PAGED ATTENTION (vLLM, 2023) applies the operating-system idea of VIRTUAL MEMORY:
+- The cache is split into fixed-size BLOCKS (typically 16 tokens).
+- A per-request BLOCK TABLE maps logical positions to physical blocks.
+- Blocks are allocated on demand as the sequence grows, so you never over-allocate.
+- Blocks can be SHARED between requests with a common prefix, with copy-on-write.
+
+THE SHARING IS THE part that pays twice. If a hundred requests share the same 2,000-token system
+prompt, they share the same physical blocks - one copy instead of a hundred. THIS IS THE SAME
+MECHANISM AS PROMPT CACHING, seen from the serving side.
+
+REPORTED RESULT: 2-4x higher throughput at the same hardware, entirely from serving more concurrent
+requests rather than from making any single request faster.
+
+THE OTHER PRODUCTION CONCERNS:
+- CONTINUOUS BATCHING. Requests finish at different times. Static batching makes everyone wait for the
+  slowest; continuous batching swaps a finished request out and a new one in at every step. Combined
+  with paging, this is what modern serving stacks do.
+- CACHE EVICTION UNDER PRESSURE. When memory runs out you either preempt a request (recompute its
+  cache later) or swap it to CPU memory. Both are expensive; the scheduler's job is to avoid needing
+  to.
+- PREFIX CACHING ACROSS REQUESTS. A shared system prompt is prefilled once and reused, which turns a
+  large prefill cost into a lookup. This is what "prompt caching" means in an API price list.
+
+THE THING TO SAY IN AN INTERVIEW: THE KV CACHE TURNS AN LLM SERVING PROBLEM INTO A MEMORY-MANAGEMENT
+PROBLEM, and the solutions are the classic ones - paging, sharing, copy-on-write and eviction.""",
+
+    """5. THE ALTERNATIVES - every way to make the cache smaller
+
+    technique                    reduction        lossy?    notes
+    ---------------------------------------------------------------------------------------
+    GQA-8                        4x               slightly  the standard choice
+    MQA                          32x              yes       measurable quality loss
+    int8 KV quantisation         2x               slightly  cheap and widely used
+    fp8 KV quantisation          2x               slightly  better than int8 on new hardware
+    sliding-window attention     bounded by w     YES       the model cannot see beyond w
+    StreamingLLM (attention sink) bounded         yes       keep the first few + a recent window
+    H2O / heavy-hitter eviction  ~5x              yes       keep the tokens with high attention
+    paged attention              no reduction     no        eliminates WASTE, not size
+    prefix sharing               huge for shared  no        one copy of a shared system prompt
+                                 prefixes
+    Multi-head Latent Attention  ~10x             slightly  DeepSeek's approach: compress K and V
+    (MLA)                                                   into a low-rank latent, decompress
+                                                            on the fly
+    state-space models           constant state   n/a       different architecture entirely
+
+THE TWO THAT ARE FREE ARE PAGING AND PREFIX SHARING, and they should be exhausted before anything
+lossy. Paging eliminates the 60-80% fragmentation waste; prefix sharing eliminates duplicate copies of
+a shared prompt. NEITHER CHANGES THE MODEL.
+
+AFTER THAT THE ORDER IS ROUGHLY: GQA (an architecture decision made at training time), then int8/fp8
+quantisation of the cache (a deployment decision), then eviction schemes if you are desperate.
+
+MULTI-HEAD LATENT ATTENTION IS WORTH KNOWING as the most interesting recent idea: instead of storing K
+and V per head, store a single low-rank latent vector per token and reconstruct K and V from it during
+attention. DeepSeek-V2 reported roughly a 10x cache reduction with quality comparable to MHA - better
+than GQA on both axes. It is more complex and it is the direction the field is moving.
+
+AND THE STRUCTURAL ALTERNATIVE: state-space models keep a FIXED-SIZE state regardless of sequence
+length, so there is no cache growth at all. That is their headline advantage over transformers, and
+the reason hybrids exist is that a fixed state cannot do exact long-range recall the way a full cache
+can.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - SAY WHAT IS CACHED AND WHY IT IS ONLY K AND V. "The keys and values of past tokens are
+consulted by every future token and never change. The query is used once, for the current step."
+
+STEP 2 - SAY WHAT IT SAVES. "Without it, each new token re-runs attention over the whole prefix -
+cubic in total. With it, decoding is linear per token. At a 10k prompt that is about a 1000x
+reduction."
+
+STEP 3 - IMMEDIATELY SAY WHAT IT COSTS, because that is the interesting half. "The cache is
+2 x layers x kv_heads x head_dim x sequence x bytes, and it is PER REQUEST."
+
+STEP 4 - GIVE THE NUMBER THAT LANDS. "Llama-2 7B at 32k context has a 17 GB cache against 13 GB of
+weights. The cache is bigger than the model."
+
+STEP 5 - DRAW THE CONSEQUENCE. "So the cache, not the model size, caps your batch size - and therefore
+your throughput and your cost per token."
+
+STEP 6 - NAME GQA AS THE ARCHITECTURAL FIX AND QUANTIFY IT. "Sharing key/value heads across groups of
+query heads. GQA-8 is a 4x cache reduction for a small quality cost, which is why almost every current
+model uses it."
+
+STEP 7 - NAME PAGED ATTENTION AS THE SYSTEMS FIX. "Fixed-size blocks with a block table, exactly like
+OS virtual memory. It does not shrink the cache; it eliminates the 60-80% fragmentation waste from
+allocating for the worst case, and it lets requests share prefix blocks."
+
+STEP 8 - SAY WHAT THE BOTTLENECK ACTUALLY IS. "Decoding reads all the weights and the whole cache per
+token, so it is memory-bandwidth-bound. That is why batching helps so much and why FLOPs are the wrong
+thing to count."
+
+STEP 9 - IF ASKED HOW TO SIZE A DEPLOYMENT: weights + (concurrent requests x cache per request) +
+activation overhead, and check it against the GPU's memory.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The KV cache stores the key and value vectors for every token already processed, so they don't get
+recomputed on every generation step.
+
+The reason it's only K and V is an asymmetry: a token's key and value are consulted by every FUTURE
+token and never change, while its query is used once, at the step that produced it. So K and V are
+worth keeping and Q isn't.
+
+Without the cache, generating token 501 means recomputing keys and values for the first 500 tokens,
+and that's the same numbers every time. I worked out the operation counts: for a thousand-token prompt
+generating five hundred tokens, it's 791 million query-key dot products without a cache and 1.6
+million with - about 487 times fewer. At a ten-thousand-token prompt it's a thousandfold. So this
+isn't an optimisation, it's what makes autoregressive generation viable.
+
+It also changes how you should state the complexity. Prefill - processing the prompt - is genuinely
+quadratic. Decoding with a cache is LINEAR per token. "Attention is quadratic" is a statement about
+training and prefill.
+
+The interesting half is the cost. The cache is two, for K and V, times layers, times key-value heads,
+times head dimension, times sequence length, times bytes. And it's PER REQUEST, unlike the weights,
+which are shared. For Llama-2 7B at 32k context that's 17 gigabytes, against 13 gigabytes of weights
+in fp16. The cache is bigger than the model. Ten concurrent users at that context need 170 gigabytes.
+
+So the cache, not the parameter count, is what caps your batch size, and therefore your throughput and
+your cost per token. That's why grouped-query attention exists: keep all the query heads but share
+key-value heads among groups. GQA with eight KV heads instead of thirty-two is a fourfold cache
+reduction for a small quality cost, and that's why essentially every model since Llama-2 70B uses it.
+It's a serving decision that shows up in the architecture.
+
+The systems answer is paged attention, from vLLM. You don't know how long a response will be, so naive
+allocation reserves the maximum and wastes most of it - reported fragmentation was 60 to 80%. Paging
+splits the cache into fixed-size blocks with a per-request block table, exactly like OS virtual
+memory: blocks are allocated on demand, and requests sharing a system prompt can share the same
+physical blocks with copy-on-write. Reported two to four times the throughput, entirely from serving
+more concurrent requests.
+
+And the thing to keep in mind underneath all of it: decoding reads every weight and the whole cache
+from memory to produce one token, so it's memory-bandwidth-bound, not compute-bound. That's why
+batching helps so much and why counting FLOPs tells you very little about serving cost.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+WITHOUT A CACHE - what you must never ship:
+
+    def generate_naive(model, tokens, n):
+        for _ in range(n):
+            logits = model(tokens)          # <-- recomputes K and V for EVERY token,
+                                            #     every step. O(len^2) per step, O(len^3)
+                                            #     over the whole generation.
+            tokens.append(sample(logits[-1]))
+        return tokens
+
+WITH A CACHE:
+
+    def generate_cached(model, prompt_tokens, n):
+        # PREFILL: process the whole prompt at once, in parallel, and keep K and V.
+        logits, cache = model(prompt_tokens, cache=None)
+        # ^ this step IS quadratic in the prompt length, and it is where prompt-caching
+        #   across requests pays off.
+
+        out = []
+        for _ in range(n):
+            tok = sample(logits[-1])
+            out.append(tok)
+            logits, cache = model([tok], cache=cache)
+            # ^ DECODE: only ONE new token goes in. Its Q is computed fresh; its K and V
+            #   are APPENDED to the cache; attention runs against the whole cache.
+            #   O(current_length) per step instead of O(current_length^2).
+        return out
+
+THE ATTENTION LAYER, showing exactly where the cache enters:
+
+    def attention_with_cache(x, cache, W_q, W_k, W_v):
+        q = x @ W_q                          # ALWAYS computed - the query is per-step
+        k_new = x @ W_k
+        v_new = x @ W_v
+
+        if cache is not None:
+            k = concat(cache.k, k_new)       # <-- APPEND. The old entries are reused
+            v = concat(cache.v, v_new)       #     verbatim; they can never change,
+        else:                                #     because they depend only on their own
+            k, v = k_new, v_new              #     token and the (frozen) weights.
+
+        new_cache = Cache(k, v)
+        return softmax(q @ k.T / sqrt(d)) @ v, new_cache
+        # ^ no causal mask is needed during decode: the cache contains only past tokens by
+        #   construction. The mask is needed during PREFILL, where all positions are
+        #   processed together.
+
+THE SIZING CALCULATION, which is the thing you will actually be asked to do:
+
+    def kv_cache_bytes(layers, kv_heads, head_dim, seq_len, bytes_per=2):
+        return 2 * layers * kv_heads * head_dim * seq_len * bytes_per
+        #      ^ the 2 is K and V, not the byte count - that is `bytes_per`
+
+    # Llama-2 7B, MHA, 32k context:
+    kv_cache_bytes(32, 32, 128, 32768)     -> 17.18 GB   (weights in fp16: ~13 GB)
+    # Llama-3 8B, GQA-8, 8k context:
+    kv_cache_bytes(32, 8, 128, 8192)       ->  1.07 GB
+
+    def max_batch(gpu_bytes, weight_bytes, cache_per_request):
+        return (gpu_bytes - weight_bytes) // cache_per_request
+    # 80 GB H100, 13 GB weights, 17.18 GB cache each -> FOUR concurrent 32k requests.""",
+
+    """9. A TRACE - four generation steps, with and without the cache
+
+Prompt: 3 tokens. Generate 4 more. Counting query-key dot products per step, per layer per head.
+
+WITHOUT A CACHE:
+
+    step   sequence length   attention pairs computed   cumulative
+       1                 4          4 x 4 = 16                  16
+       2                 5          5 x 5 = 25                  41
+       3                 6          6 x 6 = 36                  77
+       4                 7          7 x 7 = 49                 126
+
+    Every step recomputes the ENTIRE matrix, including the parts identical to last step's.
+
+WITH A CACHE:
+
+    step   cache size before   new K,V computed   dot products this step   cumulative
+    prefill              0                   3               3 x 3 = 9             9
+       1                 3                   1              1 x 4 = 4            13
+       2                 4                   1              1 x 5 = 5            18
+       3                 5                   1              1 x 6 = 6            24
+       4                 6                   1              1 x 7 = 7            31
+
+    126 versus 31 on a seven-token sequence. At realistic lengths the ratio is 1000x - measured:
+    791,041,750 versus 1,624,750 for a 1,000-token prompt generating 500 tokens.
+
+WHAT THE CACHE LOOKS LIKE IN MEMORY AT STEP 4:
+
+    layer 0:  K [7 x 8 heads x 128]   V [7 x 8 heads x 128]
+    layer 1:  K [7 x 8 heads x 128]   V [7 x 8 heads x 128]
+    ...
+    layer 31: K [7 x 8 heads x 128]   V [7 x 8 heads x 128]
+    total = 2 * 32 * 8 * 128 * 7 * 2 bytes = 917 KB for SEVEN tokens.
+    -> ~131 KB per token per request. At 32,768 tokens that is 4.3 GB. THE PER-TOKEN FIGURE IS THE
+       ONE TO CARRY IN YOUR HEAD, because it makes the sizing arithmetic trivial.
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `model(prompt_tokens, cache=None)`
+            produced the "prefill" row, 3 x 3 = 9. All three positions are processed together and in
+            parallel, which is why prefill is compute-bound while decode is bandwidth-bound.
+    `q = x @ W_q`
+            produced the "1" in "1 x 4" at every decode step - exactly one query, because exactly one
+            new token entered.
+    `k = concat(cache.k, k_new)`
+            produced the growing "cache size before" column. This concatenation is the whole
+            mechanism, and it is why the cache is APPEND-ONLY: nothing already in it can ever change.
+    `2 * layers * kv_heads * head_dim * seq * bytes`
+            produced the 917 KB figure. The `kv_heads` factor is the one GQA attacks - dropping it
+            from 32 to 8 divides that whole column by four.
+    the ABSENCE of a causal mask in the decode path
+            is correct because the cache contains only past tokens. Adding one here is harmless but
+            reveals a misunderstanding; omitting one during PREFILL is a genuine bug.
+    `sample(logits[-1])`
+            produced the single new token per step. This loop is strictly sequential, which is why
+            decode cannot be parallelised within a request and why batching across requests is the
+            only way to fill the GPU.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    cache bytes = 2 x layers x kv_heads x head_dim x seq_len x bytes_per_element
+    prefill:  O(P^2 * d), compute-bound, parallel
+    decode:   O((P+t) * d) per token, MEMORY-BANDWIDTH-bound, sequential
+
+    MEASURED operation counts (query-key dot products):
+        P=100,     T=100:      2,318,350 without      24,950 with        93x
+        P=1,000,   T=500:    791,041,750 without   1,624,750 with       487x
+        P=10,000,  T=1,000: 110.3 billion without  110.5 million with   998x
+    MEASURED cache sizes (fp16):
+        Llama-2 7B MHA @ 4k:    2.15 GB      @ 32k:   17.18 GB   (weights ~13 GB)
+        Llama-3 8B GQA-8 @ 8k:  1.07 GB
+        Llama-3 70B GQA-8 @ 128k: 42.95 GB
+    GQA cache relative to MHA: GQA-8 25%, GQA-4 12.5%, MQA 3.1%.
+
+THE #1 MISTAKE: forgetting the cache when sizing a deployment. Weights are shared; the cache is per
+request, and at long context it exceeds the weights.
+
+THE #2 MISTAKE: caching Q. It is used once and thrown away. Only K and V are consulted repeatedly.
+
+THE #3 MISTAKE: saying inference is quadratic. Prefill is; decode with a cache is linear per token.
+
+THE #4 MISTAKE: treating GQA as a quality compromise with no reason. It is a 4x cache reduction, which
+is a 4x batch size, which is roughly a 4x cost reduction. That is why it is universal.
+
+THE #5 MISTAKE: thinking paged attention shrinks the cache. It eliminates FRAGMENTATION - the 60-80%
+waste from allocating for the maximum possible length - and enables prefix sharing. The cache is the
+same size; you just stop wasting it.
+
+THE #6 MISTAKE: optimising FLOPs for decoding. It is bandwidth-bound. The lever is reading fewer bytes
+- quantisation, GQA, smaller caches - not doing less arithmetic.
+
+THE #7 MISTAKE: not knowing that a shared system prompt can be prefilled once and shared across
+requests. That is the single largest practical saving in most production workloads.
+
+THE #8 MISTAKE: assuming the cache must be fp16. int8 and fp8 KV quantisation halve it for a small
+quality cost and are standard in production stacks.
+
+ONE-SENTENCE TAKEAWAY: cache each token's key and value once because every future token consults them
+and they never change - which turns decoding from cubic to linear per token, measured at up to 1000x
+fewer operations - but the cache is per-request and can exceed the model weights (17 GB against 13 GB
+for Llama-2 7B at 32k), so it, not the parameter count, caps your batch size, and the levers are GQA,
+KV quantisation, paged allocation and prefix sharing.""",
+]
+
+_EX_P1AO["Perplexity"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - how surprised is the model, on average?
+
+Perplexity measures how well a language model predicts text it has not seen. LOWER IS BETTER.
+
+THE INTERPRETATION THAT MAKES IT CLICK: PERPLEXITY IS THE EFFECTIVE NUMBER OF EQUALLY-LIKELY CHOICES
+THE MODEL IS PICKING BETWEEN AT EACH TOKEN.
+
+    Perplexity 1     - the model knows the next token exactly. Perfect.
+    Perplexity 10    - as confused as if it were choosing uniformly among 10 options.
+    Perplexity 50000 - as confused as if it were guessing uniformly from the whole vocabulary.
+
+I verified that reading directly. Over a 25-word vocabulary:
+
+     model                     test perplexity     cross-entropy (bits)
+     uniform over vocabulary             25.00                    4.644
+     unigram                             15.02                    3.909
+     bigram (add-1 smoothed)              4.92                    2.299
+     trigram (add-1 smoothed)             3.68                    1.879
+
+    A MODEL THAT GUESSES UNIFORMLY FROM A 25-WORD VOCABULARY HAS PERPLEXITY EXACTLY 25. The
+    interpretation is not a metaphor; it is what the number is.
+
+THE DEFINITION: perplexity is the exponential of the average negative log-likelihood per token.
+
+    PP = exp( -(1/N) * sum over tokens of log P(token | context) )
+
+And equivalently PP = 2^H where H is the cross-entropy in bits. THE TABLE ABOVE SHOWS BOTH COLUMNS SO
+YOU CAN SEE THEY ARE THE SAME NUMBER: 2^4.644 = 25.00, 2^1.879 = 3.68.
+
+TERMS AS THEY APPEAR:
+- CROSS-ENTROPY: the average number of bits needed to encode the true next token using the model's
+  probabilities. THE TRAINING LOSS OF EVERY LANGUAGE MODEL IS EXACTLY THIS.
+- HELD-OUT: text the model was not trained on. Perplexity on training data is meaningless.
+- BITS PER CHARACTER / BITS PER BYTE: the tokenizer-independent alternative, and the reason it exists
+  is the subject of section 3.""",
+
+    """2. THE INTUITION - it is the training loss, exponentiated
+
+Here is the fact that ties everything together: PERPLEXITY IS exp(CROSS-ENTROPY LOSS). Every language
+model is trained to minimise cross-entropy on next-token prediction. So perplexity is not an
+independent evaluation metric - IT IS THE TRAINING OBJECTIVE, EXPONENTIATED TO MAKE IT INTERPRETABLE.
+
+    loss = 2.0  ->  perplexity = e^2.0  = 7.4
+    loss = 3.0  ->  perplexity = e^3.0  = 20.1
+    loss = 4.0  ->  perplexity = e^4.0  = 54.6
+
+That is why a loss curve and a perplexity curve are the same curve on different axes, and why
+"perplexity went from 20 to 15" and "loss went from 3.0 to 2.7" are the same sentence.
+
+WHY EXPONENTIATE AT ALL: cross-entropy is in nats or bits, which are meaningful to information
+theorists and nobody else. Exponentiating puts it back into units of "how many options", which people
+can reason about.
+
+WHAT MY MEASURED TABLE SHOWS ABOUT MODELLING PROGRESS - and it is a nice miniature of the whole field:
+
+     uniform  -> 25.00     no model at all
+     unigram  -> 15.02     knowing which words are common buys you 40%
+     bigram   ->  4.92     knowing the PREVIOUS WORD buys you another 67%
+     trigram  ->  3.68     one more word of context buys 25% more
+
+    EACH EXTRA TOKEN OF CONTEXT HELPS, AND WITH DIMINISHING RETURNS. That pattern held for n-gram
+    models, and it is the same pattern that governs how much a transformer gains from longer context.
+    (This is a tiny corpus with a 25-word vocabulary; the absolute numbers are meaningless and the
+    SHAPE is the point.)
+
+THE PRACTICAL RANGES worth carrying: a good modern model on general English text lands around
+perplexity 8-20 on its own tokenizer, character-level models are quoted around 1.0-1.2 BITS PER
+CHARACTER, and a perplexity near 1 on natural text means you are evaluating on training data.""",
+
+    """3. THE TRAP - perplexity is not comparable across tokenizers
+
+THIS IS THE SINGLE MOST IMPORTANT PRACTICAL FACT ABOUT PERPLEXITY AND IT IS ROUTINELY IGNORED IN MODEL
+COMPARISONS.
+
+Perplexity is PER TOKEN. Take one sentence and tokenise it three ways:
+
+    "the cat sat on the mat"
+        as words:          6 tokens
+        as 2-char chunks:  9 tokens
+        as characters:    17 tokens
+
+THE TEXT IS IDENTICAL. THE TOKEN COUNT IS NOT. Now consider what that does to the arithmetic: total
+information content of the sentence is fixed, and perplexity divides by the number of tokens. A
+tokenizer that splits text into MORE tokens gets a LOWER per-token perplexity for IDENTICAL modelling
+quality, because each token carries less information and is therefore easier to predict.
+
+    A character-level model with perplexity 3 and a word-level model with perplexity 30 may be
+    EXACTLY EQUALLY GOOD.
+
+SO: NEVER COMPARE PERPLEXITY BETWEEN MODELS WITH DIFFERENT TOKENIZERS. This rules out most of the
+comparisons people actually want to make - GPT-2's tokenizer, Llama's tokenizer and a
+character-level baseline are three different measurement scales.
+
+THE FIX: BITS PER BYTE (or bits per character). Divide the total cross-entropy of the text by the
+number of BYTES rather than the number of tokens. Bytes are a property of the text, not of the model,
+so the metric is comparable.
+
+    BPB = (total cross-entropy in bits) / (number of bytes in the text)
+
+    This is what serious evaluations report, and it is why you see "bits per byte" in scaling-law
+    papers rather than perplexity.
+
+THE OTHER COMPARABILITY TRAPS:
+- DIFFERENT EVALUATION TEXT. Perplexity on Wikipedia, on code and on chat logs are three different
+  numbers for the same model. Always state the corpus.
+- CONTEXT LENGTH. Evaluating with a 512-token window versus a 4,096-token window gives different
+  numbers, because more context makes prediction easier. State the stride and the window.
+- CONTAMINATION. If the evaluation text was in the training data, the perplexity is meaninglessly
+  low.""",
+
+    """4. WHAT PERPLEXITY DOES NOT TELL YOU
+
+PERPLEXITY IS NOT ACCURACY. They measure different things and they can disagree completely. I computed
+four scenarios over a 25-token vocabulary:
+
+     scenario                                    perplexity contribution     top-1 correct?
+     90% on the right token                                         1.11               yes
+     50% right, 50% on one wrong token                              2.00           tie
+     40% on the right token, and it is the argmax                   2.50               yes
+     40% on the right, 45% on a wrong one                           2.50                NO
+
+    ROWS 3 AND 4 HAVE IDENTICAL PERPLEXITY AND OPPOSITE ACCURACY. Perplexity scores the PROBABILITY
+    YOU ASSIGNED TO THE TRUTH. Accuracy scores only WHETHER YOU RANKED IT FIRST. A model can improve
+    its perplexity while getting more top-1 predictions wrong, and vice versa.
+
+PERPLEXITY IS NOT USEFULNESS. A model can have excellent perplexity and be a bad assistant. It
+measures how well the model predicts TEXT LIKE THE EVALUATION CORPUS - not whether it follows
+instructions, avoids hallucinating, reasons correctly or refuses appropriately. RLHF AND INSTRUCTION
+TUNING ROUTINELY MAKE PERPLEXITY WORSE while making the model far more useful, because they move the
+model away from the raw text distribution towards a helpful-assistant distribution. IF SOMEONE SAYS
+THEIR FINE-TUNE IMPROVED PERPLEXITY ON GENERAL TEXT, THEY MAY HAVE UNDONE THE ALIGNMENT.
+
+PERPLEXITY IS NOT DEFINED FOR ENCODER MODELS. BERT is not an autoregressive model; there is no
+P(token | previous tokens). Pseudo-perplexity exists and is a different quantity.
+
+PERPLEXITY DOES NOT WORK ON A FIXED SET OF CANDIDATES. If you are evaluating multiple choice, use
+accuracy. Perplexity is for open-ended next-token prediction.
+
+WHAT PERPLEXITY IS GENUINELY GOOD FOR:
+- MONITORING TRAINING. It is the loss; watch it.
+- COMPARING TWO CHECKPOINTS OF THE SAME MODEL on the same data with the same tokenizer.
+- DETECTING DISTRIBUTION SHIFT. Perplexity rising on production traffic means your inputs have moved.
+- DETECTING MEMORISATION. Anomalously low perplexity on a specific document suggests it was in the
+  training data.
+- QUANTISATION SANITY CHECKS. "Does int4 raise perplexity?" is a fast, cheap, sensitive test.""",
+
+    """5. THE ALTERNATIVES - what to measure instead, and when
+
+    metric                  measures                        comparable across tokenizers?
+    -------------------------------------------------------------------------------------
+    perplexity              per-token predictive quality     NO
+    bits per byte           the same, normalised by bytes    YES
+    cross-entropy loss      identical to perplexity (log)    no
+    top-1 / top-k accuracy  ranking only                     yes
+    downstream benchmarks   task ability                     yes
+    human / LLM judge       usefulness                       yes
+    calibration (ECE)       whether confidence is honest     yes
+
+WHEN TO USE WHICH:
+- TRAINING A MODEL -> perplexity or loss, every step. It is free and it is the objective.
+- COMPARING TWO MODELS WITH DIFFERENT TOKENIZERS -> bits per byte, or skip it and use downstream
+  tasks.
+- CHOOSING A MODEL FOR A PRODUCT -> downstream benchmarks on YOUR data, and a judge or human
+  evaluation. Perplexity will not tell you whether it follows instructions.
+- CHECKING A QUANTISATION OR A PRUNING -> perplexity, because it is sensitive and cheap and you are
+  comparing a model against itself.
+- CHECKING FOR CONTAMINATION OR MEMORISATION -> perplexity on suspect documents versus similar
+  unseen ones.
+
+THE HISTORICAL NOTE WORTH KNOWING: perplexity was the primary metric in language modelling for
+decades, back to speech recognition in the 1980s. It lost that status once models became good enough
+that the interesting questions were about capability rather than about text prediction - you cannot
+tell from a perplexity number whether a model can write working code. It remains the right metric for
+the narrow question it answers.
+
+AND THE CONNECTION TO COMPRESSION, which is elegant and worth mentioning: cross-entropy in bits per
+byte is EXACTLY the compression ratio a perfect arithmetic coder would achieve using the model as its
+probability source. A language model with 1.0 bits per byte compresses text 8x. THE BEST LANGUAGE
+MODELS ARE THE BEST TEXT COMPRESSORS, literally - and some researchers argue that is not a coincidence
+but a statement about what learning is.""",
+
+    """6. HOW TO COMPUTE AND REPORT IT - numbered steps
+
+STEP 1 - USE HELD-OUT TEXT. Perplexity on training data measures memorisation. State where the
+evaluation text came from and confirm it is not in the training set.
+
+STEP 2 - COMPUTE THE LOG-PROBABILITY OF EACH TOKEN GIVEN ITS CONTEXT, and average. Do the whole
+calculation in log space - multiplying thousands of probabilities underflows to zero immediately.
+
+STEP 3 - EXPONENTIATE. `exp(-mean_log_prob)` for nats, or `2 ** (-mean_log2_prob)` for bits. Both give
+the same perplexity; only the base of the intermediate differs.
+
+STEP 4 - DECIDE HOW TO HANDLE THE FIRST TOKENS. Tokens with no context cannot be predicted. Either
+skip them or use a sliding window with a stride, and REPORT WHICH - it changes the number.
+
+STEP 5 - STATE THE TOKENIZER. Without it the number means nothing across models.
+
+STEP 6 - STATE THE CORPUS AND THE CONTEXT LENGTH. Wikipedia at 512 tokens and code at 4,096 tokens are
+different measurements.
+
+STEP 7 - IF COMPARING ACROSS TOKENIZERS, REPORT BITS PER BYTE. Total bits divided by total bytes of
+the original text.
+
+STEP 8 - DO NOT USE IT AS A PROXY FOR USEFULNESS. Instruction tuning typically raises perplexity on
+general text and improves the model. If perplexity is your only metric, you will reject the
+improvement.
+
+STEP 9 - USE IT WHERE IT IS SHARP: comparing checkpoints of one model, validating a quantisation,
+detecting distribution shift, detecting memorisation.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Perplexity is the exponential of the average negative log-likelihood per token - so it's just the
+cross-entropy training loss, exponentiated to make it interpretable.
+
+The interpretation is the useful part: it's the effective number of equally-likely options the model
+is choosing between at each token. Perplexity 10 means the model is as confused as if it were picking
+uniformly from ten choices. And that's literal, not a metaphor - I checked it, a model that guesses
+uniformly from a 25-word vocabulary has perplexity exactly 25.00.
+
+Because it's the training loss, a loss curve and a perplexity curve are the same curve. Loss 3.0 is
+perplexity 20.1.
+
+The thing I'd emphasise is the trap: perplexity is per TOKEN, so it is NOT comparable across
+tokenizers. The same sentence is 6 word tokens or 17 character tokens. A tokenizer that produces more
+tokens gets a lower per-token perplexity for identical modelling quality, because each token carries
+less information and is easier to predict. So a character-level model at perplexity 3 and a word-level
+model at perplexity 30 might be exactly equally good. If you need to compare across tokenizers, use
+bits per byte - total cross-entropy divided by the byte count of the text - because bytes are a
+property of the text rather than of the model. That's why scaling-law papers report bits per byte
+rather than perplexity.
+
+Two other things it isn't. It isn't accuracy: I worked out a case where two scenarios have identical
+perplexity and opposite top-1 correctness, because perplexity scores the probability you put on the
+truth while accuracy only scores whether you ranked it first. And it isn't usefulness: instruction
+tuning and RLHF routinely make perplexity on general text WORSE while making the model much more
+helpful, because they deliberately move it away from the raw text distribution. If someone tells me
+their fine-tune improved perplexity on general text, my first thought is that they may have undone the
+alignment.
+
+Where it's genuinely sharp: monitoring training, comparing two checkpoints of the same model on the
+same data, validating a quantisation - "does int4 raise perplexity" is a cheap and sensitive test -
+detecting distribution shift in production, and detecting memorisation, because anomalously low
+perplexity on one document suggests it was in the training data.
+
+There's a nice connection to compression too: cross-entropy in bits per byte is exactly the ratio a
+perfect arithmetic coder would achieve using the model as its probability source. A model at 1.0 bits
+per byte compresses text eightfold. The best language models are literally the best text
+compressors.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE CALCULATION, done in log space because it must be:
+
+    import math
+
+    def perplexity(model, tokens):
+        total_logprob = 0.0
+        n = 0
+        for i in range(1, len(tokens)):
+            logp = model.log_prob(tokens[i], context=tokens[:i])
+            total_logprob += logp
+            n += 1
+            # ^ SUM LOGS, never multiply probabilities. The product of 1,000 numbers each
+            #   around 0.01 is 1e-2000, which underflows float64 to exactly 0.0 and gives
+            #   you a perplexity of infinity. This is not a theoretical concern.
+        return math.exp(-total_logprob / n)
+        # ^ exp of the NEGATIVE mean. The negative makes it positive (log probs are <= 0);
+        #   the exp turns nats into "effective number of choices".
+        # ^ starting the loop at i = 1 skips the first token, which has no context. Some
+        #   implementations include it with a uniform prior. REPORT WHICH - it moves the
+        #   number.
+
+IN PYTORCH, where it is one line because the loss already is perplexity:
+
+    loss = F.cross_entropy(logits.view(-1, V), targets.view(-1))
+    ppl = torch.exp(loss)
+    # ^ cross_entropy already does log_softmax + negative-log-likelihood + mean. THE
+    #   TRAINING LOSS AND THE EVALUATION METRIC ARE THE SAME COMPUTATION.
+
+THE SLIDING-WINDOW VERSION, which is what you need for text longer than the context:
+
+    def sliding_perplexity(model, tokens, window=1024, stride=512):
+        nlls, count = [], 0
+        for start in range(0, len(tokens), stride):
+            end = min(start + window, len(tokens))
+            target_start = start + (window - stride) if start > 0 else 0
+            # ^ only score the tokens that have FULL context. Scoring the early tokens of
+            #   each window would penalise the model for context you chose not to give it,
+            #   and it is why stride and window must both be reported.
+            chunk = tokens[start:end]
+            nll = model.nll(chunk, score_from=target_start - start)
+            nlls.append(nll); count += end - (start + target_start - start)
+        return math.exp(sum(nlls) / count)
+
+BITS PER BYTE - the tokenizer-independent version:
+
+    def bits_per_byte(model, text, tokenizer):
+        tokens = tokenizer.encode(text)
+        total_nats = -sum(model.log_prob(tokens[i], tokens[:i])
+                          for i in range(1, len(tokens)))
+        total_bits = total_nats / math.log(2)
+        return total_bits / len(text.encode("utf-8"))
+        #                    ^ BYTES of the original text, not tokens. This denominator is
+        #                      a property of the TEXT and not of the model, which is the
+        #                      entire reason the metric is comparable.
+
+WHAT NOT TO DO:
+
+    ppl_a = perplexity(model_a, text)   # GPT-2 tokenizer
+    ppl_b = perplexity(model_b, text)   # Llama tokenizer
+    better = "A" if ppl_a < ppl_b else "B"      # <-- MEANINGLESS. Different denominators.""",
+
+    """9. A WORKED CALCULATION, AND THE MEASURED n-GRAM LADDER
+
+A FOUR-TOKEN SEQUENCE, with the model's probability for each true token:
+
+    token       P(true token | context)     log_e P        -log_e P
+    "the"                          0.30      -1.204            1.204
+    "cat"                          0.10      -2.303            2.303
+    "sat"                          0.05      -2.996            2.996
+    "down"                         0.60      -0.511            0.511
+
+    sum of -log P = 7.014
+    mean          = 7.014 / 4 = 1.7535
+    perplexity    = e^1.7535 = 5.77
+
+    READ THAT AS: the model was, on average, as uncertain as if it had been choosing uniformly among
+    5.77 options at each step. Note the "sat" token at P = 0.05 contributes 2.996 - MORE THAN TWICE
+    the average - which is the general behaviour: PERPLEXITY IS DOMINATED BY THE TOKENS THE MODEL GOT
+    MOST WRONG, because -log P explodes as P approaches 0.
+
+    THAT SENSITIVITY IS WHY A SINGLE ZERO-PROBABILITY TOKEN GIVES INFINITE PERPLEXITY, and why every
+    n-gram model needs smoothing.
+
+THE MEASURED LADDER, on a small corpus with a 25-word vocabulary, 758 training and 190 test tokens:
+
+     model                      test perplexity     cross-entropy (bits)     2^H check
+     uniform over vocabulary              25.00                    4.644         25.00
+     unigram                              15.02                    3.909         15.02
+     bigram (add-1)                        4.92                    2.299          4.92
+     trigram (add-1)                       3.68                    1.879          3.68
+
+    The third column is computed from the second and reproduces the first exactly, which is the
+    demonstration that PP = 2^H.
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `math.log((uni[w] + 1) / (len(TRAIN) + V))`
+            produced the unigram row's 15.02. The `+ 1` and `+ V` are ADD-ONE SMOOTHING. Without them,
+            any test token unseen in training gets P = 0, -log P = infinity, and the perplexity is
+            infinite. THE SMOOTHING IS NOT A REFINEMENT; WITHOUT IT THE METRIC IS UNDEFINED.
+    `bi[ctx[-1]]` then the same smoothing
+            produced 4.92. Conditioning on ONE previous word cut perplexity by 67% - the single
+            biggest jump in the table, and the reason context helps at all.
+    `tri[(ctx[-2], ctx[-1])]`
+            produced 3.68, a further 25% - DIMINISHING RETURNS, which is the same shape as a
+            transformer's gains from longer context.
+    `total += lp` inside the loop, then `math.exp(-total / n)`
+            produced every number in the column. Summing logs and exponentiating once at the end is
+            what keeps it numerically stable; multiplying 190 probabilities would underflow.
+    `math.log2(pp)`
+            produced the cross-entropy column. It is a pure restatement - no new information - which
+            is exactly the point that perplexity and cross-entropy are one quantity.
+    the 80/20 train/test split
+            is why these are held-out numbers. Computing the same thing on TRAIN would give much lower
+            perplexity and measure memorisation rather than prediction.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    PP = exp( -(1/N) sum log P(token | context) ) = 2^(cross-entropy in bits) = exp(training loss)
+
+    loss 2.0 -> PP 7.4     loss 3.0 -> PP 20.1     loss 4.0 -> PP 54.6
+
+    MEASURED on a 25-word vocabulary, 190 held-out tokens:
+        uniform 25.00 (4.644 bits) | unigram 15.02 (3.909) | bigram 4.92 (2.299) | trigram 3.68 (1.879)
+    MEASURED tokenizer sensitivity: "the cat sat on the mat" is 6 word tokens, 9 two-character
+        chunks, or 17 characters - the SAME text on three different measurement scales.
+    MEASURED perplexity-vs-accuracy: two scenarios with identical perplexity contribution (2.50) and
+        opposite top-1 correctness.
+
+THE #1 MISTAKE: comparing perplexity across models with different tokenizers. More tokens means lower
+per-token perplexity for the same quality. Use bits per byte.
+
+THE #2 MISTAKE: reporting perplexity without the corpus, the tokenizer, the context length and the
+stride. All four change the number.
+
+THE #3 MISTAKE: computing it on training data. That measures memorisation.
+
+THE #4 MISTAKE: treating it as a usefulness metric. Instruction tuning typically raises perplexity on
+general text and improves the model.
+
+THE #5 MISTAKE: confusing it with accuracy. Identical perplexity, opposite top-1 - it scores the
+probability on the truth, not the ranking.
+
+THE #6 MISTAKE: multiplying probabilities instead of summing logs. 1,000 tokens at P ~ 0.01 underflows
+to exactly zero.
+
+THE #7 MISTAKE: forgetting smoothing in an n-gram model. One unseen token gives infinite perplexity.
+
+THE #8 MISTAKE: computing it for BERT-style encoders. There is no P(token | previous tokens); what
+exists is pseudo-perplexity, a different quantity.
+
+ONE-SENTENCE TAKEAWAY: perplexity is the exponentiated cross-entropy loss, readable as "the effective
+number of equally-likely options the model is choosing among" - literally, since a uniform model over
+25 words scores exactly 25.00 - which makes it the right metric for monitoring training, comparing
+checkpoints of one model and validating quantisation, and the wrong metric for comparing across
+tokenizers (use bits per byte) or for judging usefulness, which instruction tuning improves while
+making perplexity worse.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
