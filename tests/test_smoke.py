@@ -640,3 +640,58 @@ def test_relative_deadlines_resolve_server_side(app):
                     {"in_days": 45000}):
             iso, err = goals._resolve_relative_deadline(bad)
             assert iso is None and err, f"{bad} should have been rejected"
+
+
+def test_countdown_flash_flag_is_permission_not_current_state():
+    """`flash` must mean "this goal is ALLOWED to flash", never "it is
+    flashing right now".
+
+    It used to be `flash_enabled AND tone is urgent`, which reads as
+    equivalent and is not: the client freezes the value at mount, so a page
+    opened 30 hours before a deadline was served flash=False and then never
+    started flashing when it crossed into its last day. Since the planner is
+    meant to sit open all day — on a phone especially — that silently killed
+    the whole feature. `flash_now` carries the render-time state instead."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from utils.countdown import summarise
+    tz = ZoneInfo("Asia/Kolkata")
+    now = datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+
+    far = summarise({"title": "T", "flash_enabled": True,
+                     "target_at": (now + timedelta(hours=30)).isoformat()}, now, tz)
+    assert far["flash"] is True, "permission must not depend on how far away it is"
+    assert far["flash_now"] is False, "30h out is not yet flashing"
+
+    near = summarise({"title": "T", "flash_enabled": True,
+                      "target_at": (now + timedelta(hours=5)).isoformat()}, now, tz)
+    assert near["flash"] is True and near["flash_now"] is True
+
+    # An explicit opt-out switches both off at every distance.
+    off = summarise({"title": "T", "flash_enabled": False,
+                     "target_at": (now + timedelta(hours=5)).isoformat()}, now, tz)
+    assert off["flash"] is False and off["flash_now"] is False
+
+
+def test_flash_survives_reduced_motion_and_paused_animations():
+    """The blink must not be a CSS animation alone.
+
+    iOS Low Power Mode pauses CSS animations and Reduce Motion suppresses
+    them, and the first version's fallback was `animation: none` — i.e. no
+    indication at all on exactly the phones where a deadline matters most.
+    countdown.js therefore toggles a class, and pins it ON (rather than
+    blinking) when the user has asked for reduced motion."""
+    with open("static/js/countdown.js", encoding="utf-8") as fh:
+        js = fh.read()
+    assert "flash-on" in js, "the blink is not driven from JS"
+    assert "prefers-reduced-motion" in js, "reduced motion is not detected in JS"
+    assert "clearInterval(flashTimer)" in js, "the flash timer is never stopped"
+
+    for name in ("templates/goal_planner.html", "templates/interview_prep.html"):
+        with open(name, encoding="utf-8") as fh:
+            css = fh.read()
+        assert ".flash-on" in css, f"{name} has no styling for the JS flash state"
+        # The old failure mode: an animation with a reduced-motion opt-out
+        # that left nothing visible behind it.
+        assert "animation: none" not in css, (
+            f"{name} still disables the flash outright under reduced motion")

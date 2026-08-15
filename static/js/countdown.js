@@ -166,7 +166,14 @@
        pulse is noise, and noise gets ignored precisely when it matters.
        Now that every unit is on screen at once the unit no longer escalates,
        so this colour/pulse change carries the urgency by itself. */
-    inst.el.classList.toggle("flash", !!inst.flash && (d.tone === "urgent" || d.tone === "overdue"));
+    var shouldFlash = !!inst.flash && (d.tone === "urgent" || d.tone === "overdue");
+    if (shouldFlash !== inst.flashing) {
+      inst.flashing = shouldFlash;
+      /* Crossing into (or out of) the last day while the page sits open has
+         to start (or stop) the blink — that transition is the entire point. */
+      scheduleFlash();
+    }
+    inst.el.classList.toggle("flash", shouldFlash);
     if (b.total <= 0 && !inst.firedZero) {
       inst.firedZero = true;
       if (typeof inst.onZero === "function") { try { inst.onZero(inst); } catch (e) {} }
@@ -174,6 +181,60 @@
     /* A visible seconds segment has to be redrawn every second whatever the
        distance, or it sits there frozen and looks broken. */
     inst.tick = (inst.sEl || (b.total < HOUR && b.total > 0)) ? SEC : d.tick;
+  }
+
+  /* ── The flash ─────────────────────────────────────────────────────────
+     Driven from JS, not from a CSS animation, because on phones a CSS-only
+     pulse frequently does nothing at all:
+
+       · iOS Low Power Mode PAUSES CSS animations outright;
+       · "Reduce Motion" (common on phones, and implied by Low Power Mode)
+         suppresses them, and the old rule then fell back to `animation:none`
+         — i.e. no indication whatsoever, on exactly the devices where the
+         deadline matters most.
+
+     Toggling a class instead is a discrete state change, which nothing
+     throttles. At ~0.7s it is well under the 3 Hz accessibility ceiling for
+     flashing content.
+
+     Under Reduce Motion we deliberately do NOT blink — the class is pinned
+     ON so the element sits in its high-contrast alert state permanently.
+     That respects the setting while still being impossible to miss, which
+     the old `animation: none` was not. */
+  var FLASH_MS = 700;
+  var flashTimer = null;
+  var flashOn = false;
+
+  function reduceMotion() {
+    try {
+      return !!(global.matchMedia &&
+                global.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch (e) { return false; }
+  }
+
+  function paintFlash() {
+    for (var i = 0; i < instances.length; i++) {
+      var inst = instances[i];
+      if (!inst.flashing) { inst.el.classList.remove("flash-on"); continue; }
+      inst.el.classList.toggle("flash-on", reduceMotion() ? true : flashOn);
+    }
+  }
+
+  function scheduleFlash() {
+    var any = false;
+    for (var i = 0; i < instances.length; i++) {
+      if (instances[i].flashing) { any = true; break; }
+    }
+    if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+    /* Only run a timer while something is actually flashing, and never while
+       the tab is hidden. */
+    if (!any || (global.document && global.document.hidden)) { paintFlash(); return; }
+    flashOn = true;
+    paintFlash();
+    flashTimer = global.setInterval(function () {
+      flashOn = !flashOn;
+      paintFlash();
+    }, FLASH_MS);
   }
 
   /* One shared timer for every instance on the page, re-armed to the
@@ -212,6 +273,7 @@
         sEl: el.querySelector("[data-cd-s]"),
         compactEl: el.querySelector("[data-cd-compact]"),
         tick: HOUR,
+        flashing: false,
         firedZero: false
       };
       if (isNaN(inst.target)) return null;
@@ -233,6 +295,7 @@
     clear: function () {
       instances.length = 0;
       if (timer) { clearTimeout(timer); timer = null; }
+      if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
     },
 
     /* A one-off string for places that do not need to tick. */
@@ -246,18 +309,23 @@
     _split: split,
     _display: display,
     _segments: segments,
-    _compact: compact
+    _compact: compact,
+    _flashing: function () {
+      return instances.filter(function (i) { return i.flashing; }).length;
+    }
   };
 
   if (global.document) {
     global.document.addEventListener("visibilitychange", function () {
       if (global.document.hidden) {
         if (timer) { clearTimeout(timer); timer = null; }
+        if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
       } else {
         /* Re-render immediately on return: while hidden the clock kept
            moving even though we stopped drawing it. */
         instances.forEach(render);
         schedule();
+        scheduleFlash();
       }
     });
   }

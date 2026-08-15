@@ -51,9 +51,14 @@
   .chip.days[data-tone="soon"] b    { color: #d97706; }
   .chip.days[data-tone="urgent"] b  { color: #dc2626; }
   .chip.days[data-tone="overdue"] b { color: #b91c1c; }
-  @keyframes ip-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
-  .chip.days.flash b, .chip.days.flash span { animation: ip-pulse 1.1s ease-in-out infinite; }
-  @media (prefers-reduced-motion: reduce) { .chip.days.flash b, .chip.days.flash span { animation: none; } }
+  /* Blink via a class toggle from countdown.js, not a CSS animation — iOS
+     Low Power Mode pauses animations and Reduce Motion suppresses them, so
+     the animated version showed nothing on exactly the phones that needed
+     it. Under Reduce Motion the class is pinned on instead of toggling. */
+  .chip.days { transition: background-color .28s ease, border-color .28s ease; }
+  .chip.days.flash { border-color: #dc2626; }
+  .chip.days.flash.flash-on { background: #dc2626; border-color: #dc2626; }
+  .chip.days.flash.flash-on b, .chip.days.flash.flash-on span { color: #fff; }
 
   /* ── Coach banner ── */
   .coach { margin-top: 14px; border-radius: 16px; padding: 15px 16px; border: 1px solid; }

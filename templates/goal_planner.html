@@ -47,10 +47,22 @@
   .clock .seg.secs b { font-size: 26px; color: var(--color-text-secondary); }
   .clock .detail { font-size: 13px; font-weight: 700; color: var(--color-text-secondary);
                    font-variant-numeric: tabular-nums; margin-left: auto; padding-bottom: 6px; }
-  /* Only the last day pulses. Anything more and it becomes wallpaper. */
-  @keyframes gp-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
-  .flash .seg b { animation: gp-pulse 1.1s ease-in-out infinite; color: #dc2626; }
-  @media (prefers-reduced-motion: reduce) { .flash .seg b { animation: none; } }
+  /* Only the last day flashes. Anything more and it becomes wallpaper.
+
+     The blink is a CLASS TOGGLE driven by countdown.js, not a CSS animation:
+     iOS Low Power Mode pauses animations and Reduce Motion suppresses them,
+     which is why the animation-based version showed nothing on phones. A
+     discrete state change is throttled by nothing. Under Reduce Motion the
+     script pins .flash-on rather than toggling it, so the alert is permanent
+     instead of blinking — visible either way. */
+  .flash .seg b { color: #dc2626; }
+  .flash.flash-on { background: #fef2f2; }
+  .flash.flash-on .seg b { color: #b91c1c; }
+  .flash.flash-on::before { background: #dc2626 !important; width: 8px; }
+  html.dark .flash.flash-on { background: #2a0b0b; }
+  /* Transition the swap so it reads as a pulse rather than a strobe. Motion
+     here is a colour fade, which Reduce Motion leaves alone. */
+  .hero { transition: background-color .28s ease; }
   /* The colour escalates even when it is not yet flashing, because with every
      unit on screen the unit itself no longer signals urgency. */
   .hero[data-tone="soon"] .clock .seg b   { color: #d97706; }
@@ -116,8 +128,16 @@
           font-size:13px; font-weight:700; margin-bottom:12px; }
   @media (max-width: 720px) {
     .newbox .grid { grid-template-columns: 1fr 1fr; }
-    .clock .big { font-size: 46px; }
-    .clock .detail { margin-left: 0; flex: 1 0 100%; }
+    .newbox .dl-row select { flex: 0 0 96px; }
+    /* The segmented clock has to shrink or three big numbers plus separators
+       overflow a phone. Sized so DAYS : HRS : MINS still fits one line. */
+    .clock .seg { min-width: 0; flex: 1; }
+    .clock .seg b { font-size: 34px; }
+    .clock .seg i { font-size: 9px; letter-spacing: .06em; }
+    .clock .sep { font-size: 24px; padding-bottom: 12px; }
+    .clock .seg.secs { flex: 0 0 auto; min-width: 34px; margin-left: 4px; }
+    .clock .seg.secs b { font-size: 18px; }
+    .clock .detail { margin-left: 0; flex: 1 0 100%; padding-top: 6px; }
   }
 </style>
 

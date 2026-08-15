@@ -262,8 +262,19 @@ def summarise(goal, now, tz, progress_pct=0, workdays=(0, 1, 2, 3, 4)):
         "pace": pace(start, target, now, progress_pct),
         "budget": budget(wd, goal.get("daily_commit_minutes"),
                          goal.get("effort_minutes")),
-        # A goal can opt out of the pulse; the tone still drives the wording.
-        "flash": bool(goal.get("flash_enabled", True))
+        # PERMISSION, not current state. This is the user's per-goal opt-out
+        # and nothing else — WHEN to flash is decided live on the client from
+        # the ticking tone.
+        #
+        # It used to be `flash_enabled AND tone is urgent`, which looked
+        # equivalent and was not: a page opened 30 hours before a deadline was
+        # served flash=false, the client froze that at mount, and the goal
+        # never started flashing when it crossed into its last day. Since this
+        # page is meant to sit open all day, that was the whole feature
+        # quietly failing.
+        "flash": bool(goal.get("flash_enabled", True)),
+        # The state at render time, for server-side rendering and for tests.
+        "flash_now": bool(goal.get("flash_enabled", True))
         and display(bd)["tone"] in (TONE_URGENT, TONE_OVERDUE),
     }
     return out
