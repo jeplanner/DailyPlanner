@@ -154776,6 +154776,1120 @@ specific thing that happened to you, what it taught you about the work rather th
 you built afterwards - because enthusiasm cannot be verified and experience can.""",
 ]
 
+_EX_P1AO["Dynamic programming"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop solving the same thing over and over
+
+Dynamic programming is one idea, and it is much smaller than its reputation:
+
+    IF A RECURSIVE SOLUTION SOLVES THE SAME SUBPROBLEM MORE THAN ONCE, SOLVE IT ONCE AND REMEMBER
+    THE ANSWER.
+
+That is all. Everything else - top-down, bottom-up, state, transition - is machinery around that
+sentence.
+
+MEASURED, on the standard example. Counting function calls for naive recursive Fibonacci against the
+memoised version:
+
+    n      naive calls    memoised calls    distinct subproblems
+   10             177                 9                       9
+   20          21,891                19                      19
+   25         242,785                24                      24
+   30       2,692,537                29                      29
+
+READ THE LAST TWO COLUMNS: THE MEMOISED CALL COUNT EQUALS THE NUMBER OF DISTINCT SUBPROBLEMS. That is
+not a coincidence - it is the definition of what memoisation does. Each subproblem is computed exactly
+once.
+
+And read the first: 2.7 MILLION CALLS TO COMPUTE 29 DISTINCT VALUES. The naive version recomputes
+fib(5) hundreds of thousands of times.
+
+THE TWO CONDITIONS a problem must satisfy for DP to apply, and being able to state them is worth more
+than knowing twenty problems:
+
+    OVERLAPPING SUBPROBLEMS   the same subproblem comes up repeatedly. If every subproblem is unique,
+                              there is nothing to cache - that is divide and conquer, like mergesort.
+    OPTIMAL SUBSTRUCTURE      the best answer to the whole is built from best answers to the parts.
+
+TERMS AS THEY APPEAR:
+- STATE: what a subproblem is identified by. Usually the arguments to your recursive function.
+- TRANSITION: the recurrence - how a state's answer is built from smaller ones.""",
+
+    """2. THE INTUITION - two questions, and the complexity falls out
+
+Every DP problem is solved by answering two questions, in this order:
+
+    1. WHAT IS THE STATE? 'f(i) = the best answer considering the first i items.' If you cannot write
+       that sentence, you do not have a DP formulation yet, and no amount of coding will produce one.
+    2. WHAT IS THE TRANSITION? How does f(state) depend on smaller states?
+
+THEN THE COMPLEXITY IS AUTOMATIC:
+
+    TIME = (number of states) x (cost of one transition)
+
+That single formula answers 'what is the complexity?' for every DP problem you will meet, and it is a
+far better answer than reciting a memorised number.
+
+THE CATALOGUE, with both questions answered:
+
+    problem                 STATE                                  TRANSITION                 time
+    Fibonacci               f(n) = value at n                      f(n-1) + f(n-2)            O(n)
+    Climbing stairs         f(n) = ways to reach step n            f(n-1) + f(n-2)            O(n)
+    Coin change             f(a) = fewest coins to make a          1 + min over c of f(a-c)   O(a*C)
+    House robber            f(i) = best from house i onward        max(v[i]+f(i+2), f(i+1))   O(n)
+    Longest common subseq   f(i,j) = LCS of the two prefixes       match: 1+f(i-1,j-1)        O(n*m)
+    0/1 knapsack            f(i,w) = best using i items, capacity w  max(skip, take)          O(n*W)
+    Edit distance           f(i,j) = edits between the prefixes    1 + min of three options   O(n*m)
+
+NOTICE THE SHAPE. Every 'time' column is exactly states x transition cost. One-dimensional state gives
+O(n); two-dimensional gives O(n*m); a state with a capacity dimension gives O(n*W).
+
+AND NOTICE WHAT THE STATES HAVE IN COMMON: they are all 'the answer to a smaller version of the same
+question'. If your candidate state does not read like that, it is probably wrong.""",
+
+    """3. TOP-DOWN OR BOTTOM-UP - and the reason it is not just taste
+
+    TWO WAYS TO IMPLEMENT THE SAME RECURRENCE:
+
+    TOP-DOWN (memoisation): write the natural recursion, add a cache.
+
+        def fib(n, cache={}):
+            if n < 2: return n
+            if n not in cache:
+                cache[n] = fib(n-1, cache) + fib(n-2, cache)
+            return cache[n]
+
+        PRO: it is the recursion you already wrote, so it is easy to get right. It only computes the
+             states you actually need, which matters when the state space is large and sparse.
+        CON: recursion depth, and function-call overhead.
+
+    BOTTOM-UP (tabulation): fill an array in dependency order.
+
+        dp = [0]*(n+1); dp[1] = 1
+        for i in range(2, n+1):
+            dp[i] = dp[i-1] + dp[i-2]
+
+        PRO: no stack, faster constants, and the space optimisation below becomes obvious.
+        CON: you have to work out the correct fill order yourself, and you compute every state whether
+             you need it or not.
+
+    MEASURED, all three variants of the same O(n) algorithm:
+
+        n        top-down    tabulation    rolling
+        100       18.1 us        5.0 us     2.5 us
+        1,000    349.2 us       70.2 us    55.3 us
+        10,000  5,611.2 us    2,154.9 us  1,262.6 us
+
+    TOP-DOWN IS 2.6 TO 4.5 TIMES SLOWER at the same complexity - pure constant factor from the
+    function calls and dictionary lookups.
+
+    AND THE DECIDING ARGUMENT IS NOT SPEED, IT IS THE STACK. Measured, on a recursion whose only job
+    is to go deep:
+
+        depth     900:  OK
+        depth   5,000:  OK
+        depth  20,000:  OK
+        depth 100,000:  RecursionError
+
+    Python's default limit is 1,000; even raised to 30,000 the 100,000-deep call failed, because each
+    frame costs real memory. SO A TOP-DOWN DP OVER 100,000 ITEMS WILL CRASH AND A BOTTOM-UP ONE WILL
+    NOT. That is the practical rule: prototype top-down because it is easier to get right, and convert
+    to bottom-up when n is large.""",
+
+    """4. THE FAILURE MODES
+
+A. WRITING CODE BEFORE DEFINING THE STATE. If you cannot say 'f(i) is the answer to...' in one
+   sentence, you do not have a formulation. Everything after that is guessing.
+
+B. A STATE THAT DOES NOT CAPTURE EVERYTHING THAT MATTERS. The commonest real bug: f(i) is not enough
+   because the answer also depends on whether you took item i-1. The fix is to ADD A DIMENSION -
+   f(i, took_previous) - and recognising that you need to is the actual skill.
+
+C. WRONG BASE CASES. dp[0] is almost always where the bug is. Ask what the answer is for the empty
+   input, and write it down deliberately rather than assuming zero.
+
+D. WRONG ITERATION ORDER IN THE BOTTOM-UP VERSION. You must fill a state after everything it depends
+   on. In 0/1 knapsack, iterating the capacity dimension forwards instead of backwards silently turns
+   it into the UNBOUNDED knapsack - it gives a plausible wrong answer with no error at all.
+
+E. CONFUSING DP WITH GREEDY. Measured, with coins [1, 3, 4]: greedy-largest-first needs 3 coins to
+   make 6 (4+1+1) and the optimum is 2 (3+3). GREEDY IS NOT A CHEAP DP - it is a different algorithm
+   that happens to be correct for some inputs, and 'does greedy work here?' has to be checked, not
+   assumed.
+
+F. MEMOISING ON AN INCOMPLETE KEY. If your cache key omits part of the state, you will return an
+   answer computed under different conditions. Silently wrong, and hard to find.
+
+G. IGNORING THE SPACE. An O(n*W) table can be gigabytes. Very often each row depends only on the
+   previous one, so you can keep two rows instead of n.
+
+H. FORGETTING THAT DP RETURNS A VALUE, NOT A SOLUTION. If the question asks WHICH items, you need to
+   store choices and backtrack, or reconstruct from the table. That is a second piece of work and
+   candidates routinely forget it.
+
+I. USING DP WHEN THE SUBPROBLEMS DO NOT OVERLAP. If every subproblem is distinct, the cache never hits
+   and you have added overhead for nothing. That is divide and conquer.""",
+
+    """5. A REAL PROBLEM, MEASURED - fewest coins
+
+    Coins [1, 3, 4]. What is the fewest number of coins that sum to a given amount?
+
+    THE NAIVE RECURSION - for every coin, try using it and recurse on the remainder:
+
+        f(0) = 0
+        f(a) = 1 + min over c of f(a - c)
+
+    Correct, and it re-explores the same amounts astronomically often. MEASURED:
+
+        amount    naive      DP       speedup    answer
+            10     105 us   2.1 us         50x         3
+            15     576 us   3.1 us        185x         4
+            20   6,860 us   3.9 us      1,774x         5
+            25  73,349 us   5.0 us     14,550x         7
+
+    LOOK AT THE TWO COLUMNS SEPARATELY. The naive column multiplies by about ten for every five
+    added to the amount - exponential. The DP column goes 2.1, 3.1, 3.9, 5.0 - LINEAR, and it is
+    linear because there are only amount+1 states and each costs len(coins) work.
+
+    THE DP, in five lines:
+
+        dp = [0] + [INF] * amount
+        for a in range(1, amount + 1):
+            for c in coins:
+                if c <= a and dp[a-c] + 1 < dp[a]:
+                    dp[a] = dp[a-c] + 1
+        return dp[amount]
+
+    STATE: dp[a] = fewest coins to make exactly a.
+    TRANSITION: to make a, use some coin c and then optimally make a-c.
+    TIME: (amount+1) states x len(coins) transitions = O(amount * C).
+    BASE CASE: dp[0] = 0 - zero coins make zero. THE REST ARE INFINITY, meaning 'not yet reachable',
+    and that sentinel is what makes 'impossible' work correctly at the end.
+
+    AND THE GREEDY TRAP, worth carrying: for amount 6, greedy takes 4, then 1, then 1 - THREE coins.
+    The optimum is 3 + 3 - TWO. Greedy is correct for coin systems like [1, 5, 10, 25] and wrong for
+    [1, 3, 4], and nothing about the problem statement tells you which you have.""",
+
+    """6. HOW TO SOLVE ANY DP PROBLEM - numbered steps
+
+1. WRITE THE BRUTE-FORCE RECURSION FIRST. Do not try to leap to the table. The recursion is where the
+   thinking happens, and it is checkable on small inputs.
+2. IDENTIFY WHAT THE RECURSION'S ARGUMENTS ARE. Those arguments are the STATE.
+3. CHECK THE SUBPROBLEMS ACTUALLY REPEAT. Measured: naive fib(30) made 2.7 million calls for 29
+   distinct values. If they do not repeat, DP buys nothing.
+4. ADD A CACHE KEYED ON THE FULL STATE. You now have a correct top-down DP, and you are usually done
+   for interview purposes.
+5. STATE THE COMPLEXITY as states x transition cost.
+6. WRITE THE BASE CASES EXPLICITLY, especially the empty input.
+7. IF n IS LARGE, CONVERT TO BOTTOM-UP - measured, 100,000 deep blows the stack even with the limit
+   raised.
+8. WORK OUT THE FILL ORDER by looking at what each state depends on. Get this wrong and you get a
+   plausible wrong answer with no error.
+9. LOOK FOR THE SPACE REDUCTION. If dp[i] only uses dp[i-1] and dp[i-2], keep two variables instead
+   of n.
+10. IF THEY ASK FOR THE ACTUAL SOLUTION and not just its value, store the choices and backtrack.
+11. TEST THE EDGES: empty input, one element, everything the same, the answer being impossible.
+
+STEP 1 IS THE ONE THAT MAKES THIS TRACTABLE IN AN INTERVIEW. Almost nobody can invent the table
+directly, and almost everybody can write the brute-force recursion. THE PATH FROM BRUTE FORCE TO DP IS
+MECHANICAL - add a cache - so the whole difficulty collapses into 'write the recursion', which is a
+much smaller problem.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Dynamic programming is one idea: if a recursive solution solves the same subproblem more than once,
+solve it once and remember the answer.
+
+I would check two conditions first. Overlapping subproblems - the same subproblem must recur, or there
+is nothing to cache. And optimal substructure - the best answer overall has to be built from best
+answers to the parts.
+
+I measured the classic example: naive Fibonacci at n=30 made 2.7 million calls to compute 29 distinct
+values, and the memoised version made exactly 29. The memoised call count always equals the number of
+distinct subproblems, which is really the definition of what memoisation does.
+
+My approach in an interview is always the same. Write the brute-force recursion first, because that is
+where the thinking is and it is checkable. Then the arguments to that recursion ARE the state. Then
+add a cache keyed on the full state, and I have a correct top-down DP. And the complexity is just the
+number of states times the cost of one transition - so for coin change it is amount times the number
+of coins.
+
+On top-down versus bottom-up: I would prototype top-down because it is the recursion I already wrote
+and it is harder to get wrong. I would convert to bottom-up when n is large, and the reason is the
+stack rather than speed - I measured a recursion 100,000 deep failing with a RecursionError even with
+the limit raised, because every frame costs memory. Bottom-up has no such ceiling, and it is also
+about three times faster from constant factors.
+
+The traps I would watch for: a state that does not capture everything - if the answer depends on
+whether you took the previous item, you need a second dimension. The base case at zero. The fill order
+bottom-up, because getting it wrong turns 0/1 knapsack into unbounded knapsack silently. And confusing
+DP with greedy - with coins one, three and four, greedy needs three coins to make six and the optimum
+is two.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    THE BRUTE FORCE - the thing you write first, always:
+
+        def f(a):
+            if a == 0: return 0
+            if a < 0:  return INF
+            return 1 + min(f(a - c) for c in coins)
+
+        Correct, exponential, and it is the specification for everything below.
+
+    ADD A CACHE - this is the entire transformation:
+
+        def f(a, cache={}):
+            if a == 0: return 0
+            if a < 0:  return INF
+            if a not in cache:
+                cache[a] = 1 + min(f(a - c, cache) for c in coins)
+            return cache[a]
+
+        THE KEY IS `a`, WHICH IS THE FULL STATE. If the recursion took two arguments, the key must be
+        both. A cache keyed on a partial state is the silent-wrong-answer bug.
+
+    BOTTOM-UP - the same recurrence, filled in dependency order:
+
+        dp = [0] + [INF] * amount
+        for a in range(1, amount + 1):          # a is filled AFTER every a-c
+            for c in coins:
+                if c <= a:
+                    dp[a] = min(dp[a], dp[a-c] + 1)
+
+        `dp[0] = 0` IS THE BASE CASE, and INF for everything else means 'unreachable so far'. If
+        dp[amount] is still INF at the end, the amount cannot be made - the sentinel carries that
+        answer for free.
+
+        THE LOOP ORDER: a ascending, because dp[a] depends on dp[a-c] for positive c, which is always
+        smaller. Working out that direction from the dependency is the bottom-up skill.
+
+    SPACE REDUCTION, where it applies:
+
+        a, b = 0, 1
+        for _ in range(n): a, b = b, a + b
+
+        Only possible because fib(i) depends on exactly the two previous states. Measured: 1,262 us
+        against 2,155 us at n=10,000, and O(1) space instead of O(n).
+
+    RECONSTRUCTING THE CHOICE, if asked WHICH coins:
+
+        keep `choice[a] = c` whenever you improve dp[a], then walk backwards from `amount`,
+        subtracting choice[a] each time. TWO EXTRA LINES, and it is the half of the question people
+        forget.""",
+
+    """9. THE TABLE, FILLED IN
+
+    Coins [1, 3, 4], amount 6. dp[a] = fewest coins to make a.
+
+        a:      0    1    2    3    4    5    6
+        dp:     0    ?    ?    ?    ?    ?    ?
+
+    a = 1:  try c=1 -> dp[0]+1 = 1.  c=3, c=4 too big.        dp[1] = 1     (1)
+    a = 2:  c=1 -> dp[1]+1 = 2.                               dp[2] = 2     (1+1)
+    a = 3:  c=1 -> dp[2]+1 = 3.   c=3 -> dp[0]+1 = 1.         dp[3] = 1     (3)
+    a = 4:  c=1 -> dp[3]+1 = 2.   c=3 -> dp[1]+1 = 2.
+            c=4 -> dp[0]+1 = 1.                               dp[4] = 1     (4)
+    a = 5:  c=1 -> dp[4]+1 = 2.   c=3 -> dp[2]+1 = 3.
+            c=4 -> dp[1]+1 = 2.                               dp[5] = 2     (4+1)
+    a = 6:  c=1 -> dp[5]+1 = 3.   c=3 -> dp[3]+1 = 2.
+            c=4 -> dp[2]+1 = 3.                               dp[6] = 2     (3+3)
+
+        final:  0    1    2    1    1    2    2
+
+    THE ANSWER IS 2, AND IT IS 3+3.
+
+    NOW WATCH GREEDY DO IT: take the largest coin that fits. 4, leaving 2. Then 1, leaving 1. Then 1.
+    THREE COINS. Greedy committed to the 4 before it knew that 3+3 existed, and it has no mechanism to
+    reconsider.
+
+    THAT COMPARISON IS THE WHOLE POINT OF DP: it does not commit. dp[6] considered all three coins and
+    took the best, and each of those options was itself an optimal answer already computed. THAT is
+    optimal substructure doing its job.
+
+    THE COUNT: 7 states, 3 transitions each, 21 operations total. The naive recursion for amount 25
+    took 73,349 microseconds; the DP took 5.0.
+
+    AND NOTICE dp[3] = 1 AND dp[4] = 1. Those were computed once and then reused by a=5, a=6 and (for
+    larger amounts) everything above. THAT REUSE IS THE ENTIRE SAVING - the exact thing the naive
+    recursion throws away every time it returns.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO CONDITIONS:  overlapping subproblems · optimal substructure. Without the first there is
+    nothing to cache; without the second the recurrence is wrong.
+
+    THE TWO QUESTIONS:  what is the STATE? what is the TRANSITION?  Then TIME = states x transition
+    cost.
+
+    THE MEASURED EVIDENCE:
+        naive fib(30): 2,692,537 calls · memoised: 29 calls · distinct subproblems: 29
+        top-down vs tabulation vs rolling at n=10,000:  5,611 us · 2,155 us · 1,263 us
+        recursion depth:  20,000 fine · 100,000 RecursionError even with the limit raised
+        coin change at amount 25:  73,349 us naive · 5.0 us DP · 14,550x
+        greedy on coins [1,3,4] for amount 6:  3 coins · optimum 2
+
+THE #1 MISTAKE: writing code before defining the state. 'f(i) = the answer to...' in one sentence, or
+you do not have a formulation yet.
+
+THE #2 MISTAKE: a state that misses something the answer depends on - usually fixed by adding a
+dimension, and noticing that you must is the real skill.
+
+THE #3 MISTAKE: the bottom-up fill order. Wrong direction in 0/1 knapsack silently gives you unbounded
+knapsack - a plausible wrong answer with no error.
+
+THE #4 MISTAKE: assuming greedy works. Measured: [1,3,4] makes 6 in two coins and greedy takes three.
+
+THE #5 MISTAKE: returning the value when they asked for the solution. Store the choices and backtrack.
+
+ONE-SENTENCE TAKEAWAY: write the brute-force recursion, notice its arguments are the state, add a
+cache so each state is solved once - and the complexity is simply how many states there are times what
+one transition costs.""",
+]
+
+_EX_P1AO["Recursion"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - a function that calls itself on a smaller problem
+
+Recursion is solving a problem by expressing it in terms of a SMALLER VERSION OF THE SAME PROBLEM.
+
+    'How many files are in this folder?'
+        = the files directly in it
+        + the number of files in each subfolder      <- the same question, smaller
+
+EVERY RECURSIVE FUNCTION HAS EXACTLY TWO PARTS, and if either is wrong nothing works:
+
+    THE BASE CASE       the smallest input, answered directly without recursing. This is what STOPS
+                        it.
+    THE RECURSIVE CASE  reduce the problem, call yourself, and combine the results.
+
+    def factorial(n):
+        if n <= 1:          # BASE CASE - stops
+            return 1
+        return n * factorial(n - 1)      # RECURSIVE CASE - smaller
+
+THE THREE CONDITIONS FOR CORRECTNESS, and 'it must get smaller' is the one people state too vaguely:
+
+    1. THERE IS A BASE CASE.
+    2. EVERY RECURSIVE CALL MOVES TOWARD IT. Not just 'different' - measurably closer.
+    3. THE COMBINATION IS CORRECT, assuming the recursive call returns the right answer.
+
+CONDITION 3 IS THE ONE THAT MAKES RECURSION EASY TO WRITE ONCE YOU BELIEVE IT. You do not trace the
+whole thing in your head. You ASSUME the recursive call works - the 'recursive leap of faith' - and
+check only that you combined its result correctly. Trying to simulate all the levels mentally is what
+makes recursion feel hard, and it is unnecessary.
+
+TERMS AS THEY APPEAR:
+- CALL STACK: the pile of paused function calls waiting for their results.
+- STACK FRAME: one entry on it - arguments, locals, and where to return to.""",
+
+    """2. THE INTUITION - the call stack is a real object with a real limit
+
+Every call that has not returned yet occupies a STACK FRAME holding its arguments, its locals, and
+where to resume. Recursion depth n means n frames alive at once, and that memory is not free.
+
+MEASURED, on a function whose only job is to recurse to a given depth:
+
+    depth     900:  OK  (199 us)
+    depth   5,000:  OK  (706 us)
+    depth  20,000:  OK  (3,042 us)
+    depth 100,000:  RecursionError
+
+Python's default limit is 1,000. I raised it to 30,000, and 100,000 still failed - because the limit is
+a guard, and past it you meet the actual operating-system stack, where the failure is a segfault
+rather than a polite exception.
+
+THAT IS THE PRACTICAL RULE: RECURSION DEPTH IS BOUNDED BY MEMORY, AND ITERATION IS NOT.
+
+    DEPTH ~log n     (binary search, balanced tree) - completely safe. log2(1,000,000,000) is 30.
+    DEPTH ~n         (a linked list, a linear recursion) - dangerous above a few thousand.
+
+SO THE QUESTION IS NEVER 'IS RECURSION ELEGANT?' IT IS 'HOW DEEP CAN THIS GO?' Recursing over a
+balanced tree of a billion nodes is 30 frames. Recursing over a linked list of a million nodes is a
+million frames and it will crash.
+
+AND THE FOLLOW-UP YOU SHOULD PRE-EMPT: many languages optimise TAIL CALLS - if the recursive call is
+the very last thing the function does, the compiler can reuse the frame and the recursion becomes a
+loop with no stack growth. PYTHON DOES NOT DO THIS, DELIBERATELY - Guido's stated reasoning was that
+it destroys the stack traces that make debugging possible. So in Python, deep recursion is deep
+recursion no matter how you write it.""",
+
+    """3. WHEN RECURSION IS THE RIGHT TOOL
+
+    RECURSION IS NATURAL WHEN THE DATA IS RECURSIVE. That is the whole heuristic.
+
+        TREES               a tree is a node with subtrees, each of which is a tree
+        NESTED STRUCTURES   JSON, file systems, expression syntax
+        DIVIDE AND CONQUER  mergesort, quicksort, binary search - split, solve both halves, combine
+        BACKTRACKING        permutations, N-queens, sudoku - try, recurse, undo
+        GRAPH TRAVERSAL     depth-first search
+
+    ITERATION IS BETTER WHEN THE STRUCTURE IS FLAT OR THE DEPTH IS LARGE:
+
+        walking a list or an array
+        anything with depth proportional to n
+        performance-critical code, where the call overhead matters
+
+    THE HONEST COMPARISON on the same task - factorial:
+
+        RECURSIVE   3 lines, mirrors the mathematical definition, O(n) stack
+        ITERATIVE   4 lines, no stack, faster
+
+        Nobody should write factorial recursively in production. It is a teaching example, and knowing
+        that is worth saying.
+
+    THE ONE WHERE RECURSION GENUINELY WINS - a tree:
+
+        def height(node):
+            if node is None: return 0
+            return 1 + max(height(node.left), height(node.right))
+
+        THE ITERATIVE VERSION NEEDS AN EXPLICIT STACK and is about three times longer, because you end
+        up hand-implementing exactly what the call stack was doing for you. THAT IS THE REAL TEST: if
+        the iterative version needs its own stack, the recursion was carrying real weight.
+
+    AND BACKTRACKING IS THE STRONGEST CASE OF ALL, because the UNDO step is what recursion gives you
+    for free:
+
+        def solve(state):
+            if complete(state): record(state); return
+            for choice in options(state):
+                apply(choice)           # try it
+                solve(state)            # recurse
+                undo(choice)            # BACKTRACK - the line iteration makes painful
+
+    Writing that iteratively means maintaining your own stack of choices AND your own undo history.""",
+
+    """4. THE FAILURE MODES
+
+A. NO BASE CASE, OR AN UNREACHABLE ONE. Infinite recursion until the stack dies. A base case of
+   `n == 0` with an input of -1 never fires.
+
+B. THE ARGUMENT NOT SHRINKING. `f(n)` calling `f(n)`, or a graph traversal that revisits a node it has
+   already seen. On a graph with a cycle, DFS without a `visited` set recurses forever - and this is
+   the single most common recursion bug in real code.
+
+C. RECURSING TOO DEEP. Measured: 20,000 fine, 100,000 RecursionError even with the limit raised. Depth
+   proportional to n is a production incident waiting for a big input.
+
+D. RAISING THE RECURSION LIMIT AS THE FIX. `sys.setrecursionlimit(100000)` moves the failure from a
+   catchable RecursionError to a segfault, because the real OS stack is the binding constraint. It is
+   not a fix, it is a way to make the crash worse.
+
+E. RECOMPUTING SUBPROBLEMS. Naive recursive Fibonacci makes 2.7 million calls at n=30 to compute 29
+   distinct values. If your recursion overlaps, you want memoisation - see [[dynamic-programming]].
+
+F. MUTABLE STATE SHARED BETWEEN BRANCHES. Passing a list down and mutating it means one branch sees
+   another branch's changes. Either copy at each level or undo explicitly after the call - and in
+   backtracking, forgetting the undo is the classic bug.
+
+G. BUILDING THE RESULT BY CONCATENATION. `return f(a) + f(b)` on lists copies at every level, turning
+   an O(n) traversal into O(n^2). Pass an accumulator or use a generator.
+
+H. A MUTABLE DEFAULT AS THE ACCUMULATOR. `def f(n, acc=[])` shares one list across every top-level
+   call - see [[shallow-copy-vs-deep-copy-and-the-aliasing-bug-behind-it]].
+
+I. NOT CONSIDERING THE EMPTY INPUT. `None`, an empty list, a zero. The base case should handle them
+   deliberately rather than by luck.""",
+
+    """5. HOW TO CONVERT RECURSION TO ITERATION - and when you must
+
+    THREE CASES, in increasing difficulty:
+
+    1. TAIL RECURSION - the recursive call is the last thing that happens. Convert to a loop directly:
+
+           def f(n, acc=1):              becomes      acc = 1
+               if n <= 1: return acc                  while n > 1:
+               return f(n-1, acc*n)                      acc *= n; n -= 1
+
+       Mechanical, and it removes the stack entirely.
+
+    2. LINEAR NON-TAIL RECURSION - work happens AFTER the call returns. Usually you can restructure
+       into an accumulator (case 1), or just write the loop from the other end.
+
+    3. TREE RECURSION - two or more recursive calls. You need an EXPLICIT STACK, and what you write is
+       exactly what the call stack was doing:
+
+           stack = [root]
+           while stack:
+               node = stack.pop()
+               visit(node)
+               if node.right: stack.append(node.right)
+               if node.left:  stack.append(node.left)
+
+       NOTE THE ORDER - right pushed before left, so left pops first. That reversal trips everyone up
+       the first time, and it is a good sign you have understood what the stack is doing.
+
+    WHEN YOU MUST CONVERT:
+
+        the depth is proportional to n and n can be large
+        you are in a language or environment with a small stack
+        you have measured the call overhead and it matters
+
+    WHEN YOU SHOULD NOT BOTHER:
+
+        the depth is logarithmic - a balanced tree of a billion nodes is 30 frames
+        the recursive version is clear and the iterative one needs its own stack anyway
+
+    THE HONEST SUMMARY: converting tree recursion to iteration usually makes the code LONGER and
+    HARDER TO READ in exchange for removing a stack limit you may never hit. Do it when you have a
+    reason, and say what the reason is.""",
+
+    """6. HOW TO WRITE A RECURSIVE FUNCTION - numbered steps
+
+1. WRITE THE BASE CASE FIRST. What is the smallest input, and what is its answer? Empty list, null
+   node, n = 0.
+2. ASSUME THE RECURSIVE CALL WORKS. This is the leap of faith and it is what makes recursion writable.
+   Do not trace it mentally.
+3. WRITE THE RECURSIVE CASE using that assumption: 'if f(smaller) gives me X, how do I get f(n)?'
+4. CHECK THE ARGUMENT ACTUALLY SHRINKS on every path. Not 'changes' - shrinks, toward the base case.
+5. CHECK THE BASE CASE IS REACHABLE from every starting input, including negatives and empties.
+6. WORK OUT THE MAXIMUM DEPTH. Is it log n or n? If n, and n can be large, plan to iterate.
+7. CHECK FOR OVERLAPPING SUBPROBLEMS. If the same call recurs, memoise.
+8. FOR GRAPHS, ADD A VISITED SET. Cycles turn recursion into infinite recursion.
+9. TRACE ONE SMALL INPUT BY HAND to verify - n=3, or a three-node tree. Once, on paper, not in your
+   head at full scale.
+10. TEST THE EDGES: empty, one element, and the deepest input you expect.
+
+STEP 2 IS THE ONE THAT MAKES RECURSION FEEL EASY INSTEAD OF HARD. The mistake almost everyone makes
+when learning is trying to simulate all the levels at once. YOU ONLY EVER HAVE TO GET ONE LEVEL RIGHT
+- the base case, and the combination - and induction takes care of the rest. That is not a trick, it is
+literally how the proof of correctness works.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Recursion is solving a problem by expressing it as a smaller version of the same problem. Every
+recursive function has a base case that stops it and a recursive case that shrinks the input and calls
+itself.
+
+The thing that makes it writable is what people call the recursive leap of faith: you assume the
+recursive call returns the right answer and you only check that you combined it correctly. Trying to
+trace every level in your head is what makes recursion feel hard, and it is unnecessary - the
+correctness argument is induction, so you only ever have to get one level right.
+
+The practical constraint is the call stack. Every call that has not returned occupies a frame, so
+depth costs memory. I measured it: 20,000 deep was fine and 100,000 raised a RecursionError even after
+I raised the limit to 30,000 - because past the limit you meet the actual OS stack, where it is a
+segfault rather than an exception. So raising the limit is not a fix, it just makes the crash worse.
+
+Which means the question is never whether recursion is elegant - it is how deep it can go. Recursing
+over a balanced tree of a billion nodes is thirty frames and completely safe. Recursing over a linked
+list of a million nodes is a million frames and it will crash.
+
+So I use recursion when the data is recursive - trees, nested JSON, file systems, divide and conquer,
+backtracking - and iteration when the structure is flat or the depth is proportional to n. The test I
+apply is: if the iterative version needs its own explicit stack, the recursion was carrying real
+weight and I should keep it. If it is a simple loop, I should have written the loop.
+
+And the bugs I check for: a base case that is unreachable for negative or empty inputs, an argument
+that changes but does not shrink, no visited set on a graph so a cycle recurses forever, and
+overlapping subproblems that should have been memoised.'""",
+
+    """8. THE MECHANISM, PIECE BY PIECE
+
+    WHAT HAPPENS ON A CALL:
+        1. push a STACK FRAME containing the arguments, the local variables, and the return address
+        2. run the function body
+        3. on return, pop the frame and resume the caller at the return address
+
+    So `factorial(4)` builds this before anything is computed:
+
+        frame: factorial(1)   <- top, about to return 1
+        frame: factorial(2)   waiting on factorial(1)
+        frame: factorial(3)   waiting on factorial(2)
+        frame: factorial(4)   waiting on factorial(3)
+
+    FOUR FRAMES ALIVE SIMULTANEOUSLY, and none of the multiplications has happened yet. The work
+    happens on the way BACK UP. That is why this is not tail recursive - there is a pending
+    multiplication in every frame.
+
+    THE BASE CASE:
+        if n <= 1: return 1
+        `<=` RATHER THAN `==` IS DELIBERATE. With `==`, factorial(0) recurses to -1, -2, ... forever.
+        Defensive base cases are not clutter; they are the difference between a bug and no bug.
+
+    THE RECURSIVE CASE:
+        return n * factorial(n - 1)
+        `n - 1` IS THE SHRINK. Check it on every path - a recursion with two branches needs both to
+        shrink.
+
+    DEPTH vs BREADTH, which is the distinction that matters for the stack:
+        factorial(n)      makes n calls, depth n           -> n frames alive at once
+        fib(n) naive      makes ~2^n calls, depth n        -> only n frames alive at once
+
+        FIB IS EXPONENTIAL IN TIME AND LINEAR IN SPACE. The 2.7 million calls at n=30 are not 2.7
+        million frames - most have returned. The tree is wide, not deep.
+        CONFUSING TOTAL CALLS WITH MAXIMUM DEPTH IS A COMMON ERROR, and getting it right is how you
+        answer 'what is the space complexity?' correctly.
+
+    THE MEMOISED VERSION collapses the width - 29 calls instead of 2.7 million - and leaves the depth
+    unchanged. So memoisation fixes time, and only iteration fixes depth.""",
+
+    """9. ONE CALL, TRACED
+
+    factorial(4), with the stack drawn at each moment:
+
+        CALL DOWN:
+        factorial(4)  n=4, not base, needs factorial(3)      [4]
+        factorial(3)  n=3, not base, needs factorial(2)      [4, 3]
+        factorial(2)  n=2, not base, needs factorial(1)      [4, 3, 2]
+        factorial(1)  n=1, BASE CASE, returns 1              [4, 3, 2, 1]   <- deepest, 4 frames
+
+        RETURN UP:
+        factorial(1) returns 1
+        factorial(2) computes 2 * 1  = 2,  returns 2         [4, 3]
+        factorial(3) computes 3 * 2  = 6,  returns 6         [4]
+        factorial(4) computes 4 * 6  = 24, returns 24        []
+
+    TWO THINGS TO NOTICE, and they are the two things this trace exists to show:
+
+    1. NOTHING IS MULTIPLIED ON THE WAY DOWN. The whole descent just builds frames. All the arithmetic
+       happens on the way back up, in reverse order.
+    2. THE MAXIMUM DEPTH IS 4 - the input. For factorial(100,000) that is 100,000 frames, and measured
+       above, that fails.
+
+    NOW A TREE, WHERE THE SHAPE IS DIFFERENT:
+
+        height(root) of a balanced tree with 1,000,000 nodes
+
+        the recursion goes down the left spine: root -> left -> left -> ... about 20 levels
+        each returns, then the right subtree is explored, reusing the same depth
+
+        MAXIMUM DEPTH ~20. TOTAL CALLS 1,000,000.
+
+    ONE MILLION CALLS AND TWENTY FRAMES. Compare factorial: 100,000 calls and 100,000 frames, which
+    crashes.
+
+    THAT CONTRAST IS THE WHOLE PRACTICAL LESSON. THE STACK CARES ABOUT DEPTH, NOT ABOUT HOW MANY CALLS
+    YOU MAKE. A recursion over a balanced structure is safe at enormous sizes; a recursion over a
+    linear one is not, and the two look identical in the code.
+
+    AND THE UNBALANCED CASE, which is the trap: a DEGENERATE tree - every node having only a left
+    child - has depth 1,000,000, and the same height() function that was safe now crashes. THE
+    SAFETY CAME FROM THE DATA'S SHAPE, NOT FROM THE CODE.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO PARTS:  a base case that stops it, and a recursive case that shrinks toward it.
+    THE THREE CONDITIONS:  the base case exists · every call moves toward it · the combination is
+    correct assuming the call works.
+
+    THE MEASURED EVIDENCE:
+        recursion depth:  900 OK · 5,000 OK · 20,000 OK · 100,000 RecursionError (limit raised to
+            30,000, and past the limit it becomes a segfault rather than an exception)
+        naive fib(30):  2,692,537 calls, but a maximum depth of only 30
+        balanced tree of 1,000,000 nodes:  ~20 frames. Degenerate tree of 1,000,000: 1,000,000 frames.
+
+    WHEN TO USE IT:  the data is recursive - trees, nested structures, divide and conquer,
+    backtracking, DFS.
+    WHEN NOT TO:  flat structures, or depth proportional to a large n.
+    THE TEST:  if the iterative version needs its own explicit stack, the recursion was earning its
+    place.
+
+THE #1 MISTAKE: trying to trace every level mentally. Assume the recursive call works and check only
+the base case and the combination - that is not a shortcut, it is exactly how the induction proof
+works.
+
+THE #2 MISTAKE: an unreachable base case. `n == 0` with a negative input recurses forever; use `<=`.
+
+THE #3 MISTAKE: no visited set when recursing over a graph. A cycle is infinite recursion.
+
+THE #4 MISTAKE: raising the recursion limit as a fix. It converts a catchable error into a segfault.
+
+THE #5 MISTAKE: confusing total calls with maximum depth. Naive fib makes millions of calls and is
+only n frames deep - which is why memoisation fixes its time and does nothing for its space.
+
+ONE-SENTENCE TAKEAWAY: write the base case, assume the recursive call works, check that the input
+genuinely shrinks - and then ask how deep it can go, because the stack is a real, finite object and
+depth, not the number of calls, is what exhausts it.""",
+]
+
+_EX_P1AO["Pattern: Singleton - and why interviewers are suspicious of it"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one instance, globally reachable
+
+The Singleton pattern does two things at once, and noticing that it is TWO things is the beginning of
+understanding why it is controversial:
+
+    1. GUARANTEES there is only ever ONE instance of a class.
+    2. PROVIDES a global point of access to it.
+
+    class Config:
+        _instance = None
+
+        @classmethod
+        def get(cls):
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+Anywhere in the codebase, `Config.get()` returns the same object. No passing it around, no wiring.
+
+WHY PEOPLE REACH FOR IT: a configuration object, a logger, a database connection pool, a cache. Things
+that feel like there should obviously be one of.
+
+WHY INTERVIEWERS ARE SUSPICIOUS: because that second responsibility - GLOBAL ACCESS - is the actual
+appeal, and it is a global variable wearing a design-pattern costume. Everything that makes global
+variables painful comes with it.
+
+THE SENTENCE THAT REFRAMES THE WHOLE TOPIC, and it is the one to say:
+
+    SINGLETON CONFLATES 'THERE SHOULD BE ONE OF THESE' WITH 'ANYONE MAY REACH IT FROM ANYWHERE'.
+    Those are separate concerns, and the second one is the problem.
+
+You can have the first without the second: create one instance at startup and PASS IT to whatever needs
+it. That is dependency injection, and it is the answer the question is fishing for.
+
+TERMS AS THEY APPEAR:
+- DEPENDENCY INJECTION: passing a component its collaborators rather than letting it fetch them.
+- HIDDEN DEPENDENCY: something a class uses that does not appear in its constructor or signature.""",
+
+    """2. THE INTUITION - the problem is the hidden dependency
+
+Consider a class that uses a singleton:
+
+    class OrderService:
+        def place(self, order):
+            if Config.get().feature_enabled("new_pricing"):     # <- hidden dependency
+                ...
+            Database.get().insert(order)                        # <- another one
+
+LOOK AT THE CONSTRUCTOR: it takes nothing. LOOK AT THE SIGNATURE OF `place`: it takes an order. NEITHER
+TELLS YOU THAT THIS CLASS NEEDS A CONFIG AND A DATABASE. You find out by reading the body, or by
+running it and watching it fail.
+
+THAT IS THE CORE COMPLAINT, and everything else follows from it:
+
+    TESTING BECOMES HARD. To test `place` you must arrange global state - set up Config, set up
+    Database - and then UNSET it, or the next test inherits it. Tests that pass alone and fail in a
+    suite are the classic symptom.
+
+    DEPENDENCIES BECOME INVISIBLE. You cannot tell what a class needs from its interface, which is
+    exactly what an interface is for.
+
+    COUPLING BECOMES CONCRETE. `Database.get()` names a specific class. You cannot substitute a fake,
+    an in-memory version, or a different implementation without changing the code that uses it.
+
+    ORDER OF INITIALISATION BECOMES IMPLICIT. Whoever calls `get()` first creates it, so behaviour
+    depends on call order, which nothing declares.
+
+    IT LIES ABOUT LIFETIME. The instance lives until the process dies. In a test suite, a long-running
+    server, or a notebook, that is often not what you want.
+
+NOW THE VERSION WITHOUT THE SINGLETON:
+
+    class OrderService:
+        def __init__(self, config, database):
+            self.config = config
+            self.database = database
+
+THE CONSTRUCTOR NOW DOCUMENTS THE DEPENDENCIES. Testing is passing two fakes. Substitution is free.
+And there is still exactly one Config in the application - you just made it once, at startup, and
+handed it out.""",
+
+    """3. THE IMPLEMENTATIONS - and the ones that are wrong
+
+    THE NAIVE ONE, which is broken under concurrency:
+
+        if cls._instance is None:
+            cls._instance = cls()          # two threads can both pass the check
+        return cls._instance
+
+    A CHECK-THEN-ACT RACE. Two threads test `is None`, both see True, both construct. You now have two
+    'singletons' - see [[race-condition]] and [[writing-thread-safe-classes-for-an-lld-round]].
+
+    THE LOCKED ONE, correct and slower:
+
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+        return cls._instance
+
+    Correct. Every access takes a lock, which for a hot object is real contention.
+
+    DOUBLE-CHECKED LOCKING, the famous one:
+
+        if cls._instance is None:            # cheap check, no lock
+            with cls._lock:
+                if cls._instance is None:    # authoritative check
+                    cls._instance = cls()
+        return cls._instance
+
+    THE POINT: only the FIRST callers pay for the lock. THE FAMOUS DANGER: in languages with a relaxed
+    memory model this was historically BROKEN, because another thread could see the reference assigned
+    before the constructor had finished, and get a half-built object. Java needed `volatile` to fix it;
+    C++ needed the memory model clarified. IF ASKED ABOUT DOUBLE-CHECKED LOCKING, THAT IS THE ANSWER
+    THEY WANT - it is a memory-visibility problem, not a logic problem.
+
+    THE ONES THAT ARE ACTUALLY BETTER:
+
+        EAGER INITIALISATION - create it at class-definition or module-load time. The language
+        guarantees that happens once. No lock, no race, no double-checked anything. THE COST is that
+        it is created even if never used, which is usually irrelevant.
+
+        IN PYTHON, A MODULE IS ALREADY A SINGLETON. Modules are imported once and cached, so:
+
+            # config.py
+            config = Config()
+
+        `from config import config` gives everyone the same object, thread-safely, with no pattern at
+        all. SAYING THIS IS A STRONG ANSWER - it shows you know the language rather than transcribing
+        a Java pattern.
+
+        IN JAVA, an enum with a single value is the canonical safe form - serialisation-safe and
+        reflection-safe, which the classic implementation is not.
+
+    THE CLASSIC IMPLEMENTATION IS ALSO DEFEATABLE by reflection, serialisation and multiple
+    classloaders, which is worth a sentence if the interviewer is a Java person.""",
+
+    """4. THE FAILURE MODES
+
+A. THE RACE IN THE NAIVE VERSION. Check-then-act, so two threads can both construct.
+
+B. DOUBLE-CHECKED LOCKING WITHOUT THE MEMORY BARRIER. A partially-constructed object visible to
+   another thread - the bug that made this pattern famous.
+
+C. UNTESTABLE CODE. State that persists across tests, so tests pass alone and fail in a suite, or pass
+   in one order and fail in another. This is the symptom you will actually meet.
+
+D. HIDDEN DEPENDENCIES. A class that needs three things and declares none of them in its constructor.
+
+E. IT IS NOT ACTUALLY ONE INSTANCE. Multiple processes (any web server), multiple classloaders,
+   multiple workers, a fork. 'Exactly one' is a guarantee about ONE PROCESS'S MEMORY, and people
+   routinely reason as though it were global to the system.
+
+F. USING IT FOR MUTABLE SHARED STATE. A singleton holding a counter or a cache is a global mutable
+   variable, with all the concurrency problems that implies, and now every part of the codebase can
+   modify it.
+
+G. SUBCLASSING IT. A private constructor and a static accessor make inheritance awkward or impossible,
+   and the accessor returns the base type regardless.
+
+H. LIFECYCLE PROBLEMS. When is it destroyed? What if it needs to be reset - between tests, on
+   reconnection, on a config reload? Singletons have no natural teardown.
+
+I. IT SPREADS. Once one exists, calling `X.get()` from anywhere is easy, so it gets used everywhere and
+   the coupling becomes structural. That is why the objection is architectural rather than about the
+   ten lines of code.""",
+
+    """5. WHAT TO SAY IN THE INTERVIEW
+
+The question is usually 'implement Singleton' or 'when would you use it?', and it is a TRAP IN A
+FRIENDLY DISGUISE - they want to know whether you can implement it AND whether you know its costs.
+
+THE ANSWER THAT SCORES, in four moves:
+
+1. IMPLEMENT IT CORRECTLY, and name the thread-safety issue unprompted.
+   'The naive version has a check-then-act race, so I would either lock, or better, initialise eagerly
+    so the language guarantees it happens once.'
+
+2. SEPARATE THE TWO RESPONSIBILITIES.
+   'The pattern does two things - guarantees one instance, and provides global access. The first is
+    usually what you want and the second is what causes the problems.'
+
+3. GIVE THE ALTERNATIVE.
+   'I would create one instance at composition root and inject it. You still have exactly one, the
+    dependencies are visible in the constructor, and it is trivially testable.'
+
+4. SAY WHEN YOU WOULD STILL USE IT.
+   'Genuinely stateless things where the global access is harmless - a logger, a metrics registry, a
+    connection pool that is expensive to create. And in Python I would use a module-level object, which
+    is already a singleton, rather than writing the pattern at all.'
+
+MOVE 4 MATTERS. Saying 'singletons are bad' with no nuance is its own failure - it reads as repeating
+something you read. THE SENIOR POSITION IS THAT IT IS A TOOL WITH A SPECIFIC, WELL-UNDERSTOOD COST,
+and you can say what the cost is and when it is acceptable.
+
+AND IF THEY PUSH - 'what would you do about testing?' - the answer is that the injected version makes
+it a non-question, and if you are stuck with a singleton you add a `reset()` for tests, which is itself
+an admission that the lifetime was wrong.""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+1. ASK WHY YOU WANT ONE INSTANCE. Expensive to create? Holds a shared resource? Or does it just feel
+   tidy? The first two are reasons; the third is not.
+2. ASK WHETHER 'ONE' IS ACTUALLY TRUE. One per process, or one per machine, or one per system? A
+   web server runs many processes and a singleton is per-process. If you need one per SYSTEM, you need
+   a database row or a distributed lock, not a class-level variable.
+3. ASK WHETHER IT IS STATEFUL. Stateless (a logger, a formatter) is low risk. Mutable state shared
+   globally is where the problems live.
+4. TRY DEPENDENCY INJECTION FIRST. Create it once at startup, pass it in. You get 'exactly one' and
+   visible dependencies.
+5. IF YOU STILL WANT THE PATTERN, PREFER THE LANGUAGE'S IDIOM - a module-level object in Python, an
+   enum in Java, a `static let` in Swift. Not hand-rolled double-checked locking.
+6. IF YOU MUST HAND-ROLL IT, INITIALISE EAGERLY. It sidesteps the entire thread-safety discussion.
+7. MAKE IT IMMUTABLE IF YOU CAN. A frozen config object shared globally causes nobody any trouble.
+8. PLAN THE LIFECYCLE - reset for tests, reload on config change, teardown on shutdown.
+9. WRITE DOWN WHY, in a comment. 'One instance because the connection pool is expensive and shared' -
+   so the next person knows whether they may change it.
+
+STEP 4 IS THE WHOLE ANSWER IN PRACTICE. Almost every case where someone reaches for Singleton is
+better served by making the object once and passing it, and the only thing you lose is the convenience
+of not having to pass it - which is precisely the convenience that causes the damage.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Singleton guarantees one instance of a class and provides global access to it. The implementation is
+simple, but there are two things I would say about it.
+
+First, the thread safety. The naive lazy version is a check-then-act race - two threads can both see
+the instance is None and both construct one, so you get two singletons. You can fix that with a lock,
+or with double-checked locking to avoid taking the lock on every access. And double-checked locking is
+famously subtle: in languages with a relaxed memory model, another thread could see the reference
+assigned before the constructor finished and get a half-built object - that is why Java needs volatile
+there. My preference is to sidestep the whole thing by initialising eagerly, because then the language
+guarantees it happens once.
+
+Second, and more important, the pattern does two things at once - guarantees one instance, and provides
+global access - and it is the global access that causes the trouble. A class that calls Config.get()
+in its body has a dependency that appears nowhere in its constructor or its signature. You cannot tell
+what it needs from its interface, you cannot substitute a fake for testing, and you get tests that pass
+alone and fail in a suite because global state leaks between them.
+
+So my default is to create one instance at startup and inject it. You still have exactly one, the
+dependencies are visible in the constructor, and testing is passing in two fakes.
+
+I would still use it for genuinely stateless things where global access is harmless - a logger, a
+metrics registry. And in Python I would not write the pattern at all, because a module is already a
+singleton: modules are imported once and cached, so a module-level object gives you the same guarantee
+thread-safely with no code.
+
+One more caveat: "exactly one" is a guarantee about one process. A web server runs many, so if you
+actually need one per system, that is a database row or a distributed lock, not a class variable.'""",
+
+    """8. THE IMPLEMENTATIONS, PIECE BY PIECE
+
+    LAZY, NAIVE - the one you write first and should not ship:
+
+        _instance = None
+        if _instance is None:      # thread A and thread B can BOTH be here
+            _instance = Cls()      # and both construct
+        return _instance
+
+        THE WINDOW is between the check and the assignment. It is small, so it works in testing and
+        fails under load - the worst failure profile there is.
+
+    LAZY, LOCKED:
+
+        with _lock:
+            if _instance is None:
+                _instance = Cls()
+        return _instance
+
+        CORRECT. Every single access acquires a lock, forever, to protect an event that happens once.
+        That is the inefficiency double-checked locking exists to remove.
+
+    DOUBLE-CHECKED:
+
+        if _instance is None:          # 1. cheap unsynchronised read
+            with _lock:                # 2. only contenders reach here
+                if _instance is None:  # 3. authoritative re-check inside the lock
+                    _instance = Cls()
+        return _instance
+
+        WHY THE SECOND CHECK: between step 1 and step 2 another thread may have finished. Without it,
+        the second thread through would construct a second instance.
+        WHY IT WAS BROKEN: the assignment at step 3 and the constructor's writes can be REORDERED or
+        become visible out of order, so a thread at step 1 can see a non-null reference to an object
+        whose fields are not yet initialised. `volatile` in Java (and `std::atomic` in C++) forbids
+        that reordering. THIS IS A MEMORY-MODEL ISSUE, NOT A LOGIC ISSUE, and saying so is the answer.
+
+    EAGER - the one to prefer:
+
+        _instance = Cls()      # at class definition / static init / module load
+
+        The runtime guarantees this runs once. No lock, no race, no reordering. The only cost is
+        construction you might not need.
+
+    PYTHON'S IDIOM - no pattern at all:
+
+        # config.py
+        config = Config()
+
+        Modules are executed once and cached in sys.modules, so every importer gets the same object,
+        and the import machinery is thread-safe. THE PATTERN IS ALREADY IN THE LANGUAGE.
+
+    JAVA'S IDIOM:
+
+        public enum Config { INSTANCE; ... }
+
+        Thread-safe, and immune to the reflection and serialisation attacks that defeat the classic
+        private-constructor form.""",
+
+    """9. THE SAME SERVICE, TWO WAYS
+
+    WITH THE SINGLETON:
+
+        class OrderService:
+            def place(self, order):
+                if Config.get().enabled("new_pricing"):
+                    price = PricingEngine.get().compute(order)
+                Database.get().insert(order, price)
+                Logger.get().info("placed %s", order.id)
+
+        THE CONSTRUCTOR TAKES NOTHING. Reading the class signature tells you it needs nothing. It
+        needs four things.
+
+        TO TEST IT you must: set Config's global instance to a fake, set PricingEngine's, set
+        Database's, set Logger's - and then RESET all four, or the next test inherits them. Miss one
+        reset and you get a test that passes alone and fails in the suite, which is among the most
+        annoying bugs to diagnose because the failing test is not the one at fault.
+
+        TO RUN TWO CONFIGURATIONS SIDE BY SIDE - a multi-tenant app, or a migration where old and new
+        pricing run in parallel - YOU CANNOT. There is one Config, by construction.
+
+    WITH INJECTION:
+
+        class OrderService:
+            def __init__(self, config, pricing, database, logger):
+                ...
+
+        THE CONSTRUCTOR IS THE DOCUMENTATION. Four dependencies, visible, typed.
+
+        TO TEST: `OrderService(FakeConfig(), FakePricing(), InMemoryDb(), NullLogger())`. No global
+        state, no teardown, tests run in any order and in parallel.
+
+        TO RUN TWO CONFIGURATIONS: construct two OrderServices. It is not even a feature you had to
+        add.
+
+        AND THERE IS STILL EXACTLY ONE OF EACH IN PRODUCTION - you build them once, in one place at
+        startup (the 'composition root'), and hand them out. THE UNIQUENESS GUARANTEE WAS NEVER THE
+        PROBLEM.
+
+    THE COST OF INJECTION, honestly: more constructor parameters, and something has to wire it all up
+    at startup. In a large application that wiring is real work, which is why DI frameworks exist.
+
+    THE TRADE IN ONE LINE: the singleton moves work from the startup path into every class that uses
+    it, and it pays for that convenience with invisible dependencies and untestable code.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT DOES:  guarantees one instance AND provides global access. TWO responsibilities, and the
+    second is the one that causes harm.
+
+    THE IMPLEMENTATIONS:  naive (racy) · locked (correct, contended) · double-checked (fast, and
+    historically broken without a memory barrier) · EAGER (correct, simple, preferred) · the language's
+    own idiom (a Python module, a Java enum) - preferred over all of them.
+
+    THE ALTERNATIVE:  build it once at the composition root and inject it. Same uniqueness, visible
+    dependencies, testable.
+
+THE #1 MISTAKE: implementing it without mentioning the costs. The question is testing whether you know
+that global access creates hidden dependencies, not whether you can write eight lines of code.
+
+THE #2 MISTAKE: the check-then-act race in the lazy version, and reaching for double-checked locking
+without knowing why it needed `volatile`.
+
+THE #3 MISTAKE: using it for MUTABLE shared state, which is a global variable with extra ceremony.
+
+THE #4 MISTAKE: believing 'exactly one' means one per system. It means one per process, and a web
+server runs many.
+
+THE #5 MISTAKE: the opposite overcorrection - declaring singletons universally bad. It is a tool with
+a known cost, and being able to say when the cost is acceptable is the stronger position.
+
+ONE-SENTENCE TAKEAWAY: Singleton bundles 'there is one of these' with 'anyone can reach it from
+anywhere' - keep the first by constructing it once and passing it in, and you get the guarantee without
+the hidden dependencies, the untestable code, or the thread-safety puzzle.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
