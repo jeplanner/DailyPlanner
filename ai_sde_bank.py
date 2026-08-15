@@ -129665,61 +129665,336 @@ will.""",
 ]
 
 _EX_P1AA["TCP three-way handshake"] = [
-    """The three messages, and what each one proves.
-1. SYN: client -> server, carrying the client's initial sequence number (ISN_c).
-2. SYN-ACK: server -> client, carrying ISN_s and acknowledging ISN_c + 1.
-3. ACK: client -> server, acknowledging ISN_s + 1.
-After message 2 the CLIENT knows the server can hear it. After message 3 the
-SERVER knows the client can hear it. Both directions are now proven, which is
-why it takes three and not two - each side needs its own sequence number
-acknowledged.""",
+    """1. THE GOAL IN PLAIN ENGLISH - agreeing to talk before talking
 
-    """Why sequence numbers are RANDOM rather than starting at 0.
-If ISNs were predictable, an off-path attacker could forge a packet that lands
-in the window and inject data into someone else's connection - the classic TCP
-sequence-prediction attack. Randomising the ISN makes guessing the window
-impractical.
-It also prevents confusion from a previous incarnation of the same
-(ip, port, ip, port) four-tuple: a delayed packet from an old connection has
-sequence numbers far outside the new one's window and is discarded.""",
+TCP promises a RELIABLE, ORDERED byte stream: what you send arrives, once, in order. IP underneath
+promises none of that - packets can be lost, duplicated, reordered or delayed.
 
-    """The cost, and why it matters for latency.
-The handshake costs one full round trip before ANY data can flow. On a 100ms
-RTT link that is 100ms of dead time; add a TLS 1.2 handshake (two more round
-trips) and you are 300ms in before the first byte of HTTP.
-That is why TLS 1.3 cut its handshake to one round trip, why HTTP keep-alive
-matters so much (reuse the connection and pay nothing), why TCP Fast Open
-exists (data in the SYN), and why QUIC folds the transport and crypto
-handshakes into a single round trip. The whole modern protocol stack is shaped
-by wanting these round trips back.""",
+To make that promise, both sides need to agree on where the conversation starts. THE THREE-WAY
+HANDSHAKE is that agreement:
 
-    """The SYN flood, which is the security question that follows.
-An attacker sends many SYNs with spoofed source addresses and never sends the
-final ACK. Each one makes the server allocate a half-open connection entry, and
-the backlog queue fills - legitimate connections are then refused.
-The defence is SYN COOKIES: instead of storing state, the server encodes the
-connection parameters into ISN_s cryptographically and allocates nothing. If a
-valid ACK comes back, the cookie is decoded and the connection is created then.
-No state, nothing to exhaust.""",
+    CLIENT -> SERVER    SYN        'I want to talk. My byte numbering starts at x.'
+    SERVER -> CLIENT    SYN-ACK    'Fine. I heard x. Mine starts at y.'
+    CLIENT -> SERVER    ACK        'I heard y.'
 
-    """The teardown, which is FOUR messages and asymmetric.
-Closing uses FIN, ACK, FIN, ACK - four, not three, because TCP is
-full-duplex and each direction closes independently. One side can finish
-sending (half-close) while still receiving.
-The side that closes first then sits in TIME_WAIT for twice the maximum segment
-lifetime (typically 60s), to absorb any delayed duplicate and to guarantee the
-final ACK arrives. That is why a busy server that initiates closes accumulates
-thousands of TIME_WAIT sockets - a real operational issue, and the reason
-protocols prefer to let the CLIENT close.""",
+Three packets, and after them both sides know: the other side EXISTS, is WILLING, and both have
+confirmed each other's starting sequence number.
 
-    """The states worth naming, since interviewers ask for them.
-Client: SYN_SENT -> ESTABLISHED. Server: LISTEN -> SYN_RECEIVED ->
-ESTABLISHED. Closing walks FIN_WAIT_1 -> FIN_WAIT_2 -> TIME_WAIT on the
-initiator and CLOSE_WAIT -> LAST_ACK on the other side.
-Practical connection: `netstat` or `ss` showing many CLOSE_WAIT entries means
-YOUR application is not calling close() after the peer went away - a file
-descriptor leak in your code, not a network problem. That diagnosis is the most
-useful thing this state machine gives you day to day.""",
+WHY THREE AND NOT TWO - the classic follow-up. After two packets the CLIENT knows the server received
+its SYN, but the SERVER has no confirmation the client received the SYN-ACK. The third packet closes
+that gap. It is the minimum for BOTH sides to know that BOTH sides can hear them, and there is a
+well-known result that no finite protocol makes this fully certain - three is the practical minimum,
+not a proof of perfect knowledge.
+
+WHY THE SEQUENCE NUMBERS ARE RANDOM: if they started at 0 every time, an off-path attacker could guess
+them and inject data into your connection. Randomised initial sequence numbers make that far harder,
+and old stacks with predictable ISNs were genuinely exploitable.
+
+TERMS AS THEY APPEAR:
+- SYN: synchronise. ACK: acknowledge. Both are single flag bits in the TCP header.
+- RTT: round-trip time - how long a packet takes to get there and back.
+- MSL: maximum segment lifetime, the assumed longest a stray packet can live.""",
+
+    """2. THE INTUITION - the handshake costs one round trip, and that is the whole story
+
+The three packets cost ONE ROUND TRIP before a single byte of your actual request is sent. On a fast
+link that is nothing. On a slow one it is everything.
+
+MEASURED, the arithmetic of the handshake at realistic latencies:
+
+    link                  RTT      TCP handshake    + TLS 1.3    + TLS 1.2
+    same datacentre     0.5 ms           0.5 ms       1.0 ms       1.5 ms
+    same city           5.0 ms           5.0 ms      10.0 ms      15.0 ms
+    London-New York    75.0 ms          75.0 ms     150.0 ms     225.0 ms
+    London-Sydney     280.0 ms         280.0 ms     560.0 ms     840.0 ms
+    satellite         600.0 ms         600.0 ms    1200.0 ms    1800.0 ms
+
+LONDON TO SYDNEY WITH TLS 1.2: 840 MILLISECONDS BEFORE THE FIRST BYTE OF YOUR REQUEST IS SENT. Then
+the request and response cost another round trip. Almost all of that is protocol setup, not data.
+
+THAT SINGLE TABLE EXPLAINS AN ENORMOUS AMOUNT OF ENGINEERING:
+    HTTP KEEP-ALIVE - reuse the connection so you pay the setup once
+    CONNECTION POOLS - keep connections warm so requests never pay it
+    TLS SESSION RESUMPTION - skip a round trip on reconnect
+    TLS 1.3 - deliberately cut one round trip out of 1.2
+    QUIC / HTTP/3 - combine transport and crypto setup, and offer 0-RTT resumption
+    CDNs - move the endpoint closer so the RTT itself shrinks
+
+AND AN HONEST MEASUREMENT FROM MY OWN BOX. I timed the same request over loopback, with and without
+reusing the connection:
+
+    connect + close only:                 135.9 us
+    connect + request + reply + close:    166.0 us
+    request + reply on a REUSED connection: 167.7 us
+
+THE REUSED CONNECTION WAS NOT FASTER. On loopback there is no propagation delay, so the handshake is
+essentially free and the whole cost is syscall and scheduling overhead. That is a useful negative
+result: THE ARGUMENT FOR CONNECTION POOLING IS ABOUT NETWORK LATENCY, NOT CPU. If someone benchmarks
+keep-alive on localhost and reports no gain, they have measured the wrong thing.""",
+
+    """3. WHAT 'CONNECTED' ACTUALLY MEANS - the accept queue
+
+    A thing most people get wrong: THE APPLICATION DOES NOT PARTICIPATE IN THE HANDSHAKE. The kernel
+    does it. `accept()` merely takes an already-established connection off a queue.
+
+    MEASURED. I started a server that calls `listen(backlog=2)` and then NEVER calls `accept()`, and
+    tried to connect twelve times:
+
+        3 connections COMPLETED THE HANDSHAKE successfully
+        connection 4 timed out after 401 ms
+
+    THREE CLIENTS BELIEVE THEY ARE CONNECTED TO AN APPLICATION THAT HAS NEVER LOOKED AT THEM. They can
+    call send() and it will succeed - the data sits in the kernel's receive buffer.
+
+    THE TWO QUEUES INVOLVED, and this is worth being precise about:
+
+        SYN QUEUE (incomplete)     connections that have sent SYN and not yet completed. A connection
+                                   sits here between SYN and the final ACK.
+        ACCEPT QUEUE (complete)    fully established connections waiting for the application to call
+                                   accept(). `backlog` sizes this one.
+
+    WHAT THIS EXPLAINS IN PRODUCTION:
+
+        'THE NETWORK IS FINE BUT REQUESTS ARE TIMING OUT.' A slow application stops draining the accept
+        queue, the queue fills, and new SYNs are dropped. Every network-level check looks perfect
+        because the network IS perfect - the problem is a thread pool that is blocked.
+
+        'CONNECTED' IS NOT 'BEING SERVED'. A health check that only opens a TCP connection will report
+        a completely wedged application as healthy, because the KERNEL answered. A useful health check
+        has to make a request and read a reply.
+
+    AND THE SECURITY CONSEQUENCE: the SYN queue is what a SYN FLOOD attacks. Send SYNs, never send the
+    final ACK, and each one occupies a half-open slot until it times out. THE DEFENCE IS SYN COOKIES:
+    the server encodes the connection state into its own sequence number and keeps NO state until the
+    final ACK arrives, so there is nothing to exhaust.""",
+
+    """4. THE FAILURE MODES
+
+A. THINKING THE APPLICATION DOES THE HANDSHAKE. The kernel does it; accept() just dequeues. Measured:
+   three clients completed the handshake to a server that never called accept().
+
+B. A TCP-ONLY HEALTH CHECK. It proves the kernel is alive, not the application. Make a real request.
+
+C. IGNORING THE ROUND TRIP. Measured: 840 ms of pure setup for a London-Sydney TLS 1.2 connection. A
+   service that opens a fresh connection per call is paying that every time.
+
+D. BENCHMARKING KEEP-ALIVE ON LOOPBACK. Measured: no gain at all, because there is no propagation
+   delay to save. The benefit is proportional to RTT.
+
+E. LEAKING SOCKETS - the CLOSE_WAIT pile-up. CLOSE_WAIT means THE OTHER SIDE SENT FIN AND YOUR CODE
+   HAS NOT CALLED close(). Hundreds of them is always your bug, and it ends in 'too many open files'.
+
+F. MISREADING TIME_WAIT. TIME_WAIT is on the side that closed FIRST, and it is CORRECT behaviour - it
+   waits 2*MSL so that stray packets from the old connection cannot be mistaken for a new one on the
+   same port pair. Thousands of them means you are opening too many short-lived connections; the fix
+   is connection reuse, not disabling the state.
+
+G. NOT DISTINGUISHING 'REFUSED' FROM 'TIMED OUT'. Measured: connecting to a closed local port raised
+   ConnectionRefusedError in 471 microseconds, because the kernel sent RST immediately. A FIREWALL
+   usually DROPS the SYN silently, so you hang for the full timeout. Instant refusal means 'nothing is
+   listening'; a hang means 'something ate the packet'. That distinction saves hours.
+
+H. SETTING NO CONNECT TIMEOUT. The default can be more than a minute. A dependency that becomes
+   unreachable then holds your threads for a minute each, and the outage spreads.
+
+I. ASSUMING send() MEANS DELIVERED. It means 'copied into the kernel's send buffer'. Delivery is
+   acknowledged later, and a close() can discard buffered data.""",
+
+    """5. THE FULL LIFECYCLE - and where each state comes from
+
+    OPENING - three packets:
+        CLOSED -> SYN_SENT -> ESTABLISHED                  (client)
+        LISTEN -> SYN_RECEIVED -> ESTABLISHED              (server)
+
+    CLOSING - FOUR packets, not three, and this is the detail people miss:
+        FIN, ACK, FIN, ACK
+
+    WHY FOUR? Because TCP is FULL DUPLEX and each direction is closed independently. When A sends FIN
+    it is saying 'I have no more data', not 'this conversation is over'. B can keep sending - the
+    HALF-CLOSE state - until B sends its own FIN.
+
+    THE STATES, and which ones you will actually meet:
+
+        LISTEN          server waiting; listen() has been called
+        SYN_SENT        client sent SYN, waiting for SYN-ACK
+        SYN_RECEIVED    server sent SYN-ACK, waiting for the final ACK  <- the SYN-flood target
+        ESTABLISHED     data can flow both ways
+        FIN_WAIT_1/2    we sent FIN, waiting for the other side
+        CLOSE_WAIT      THEY sent FIN and OUR application has not called close()
+        LAST_ACK        we sent our FIN in response, waiting for the final ACK
+        TIME_WAIT       we closed first; waiting 2*MSL before releasing the port
+
+    THE TWO THAT APPEAR IN INCIDENTS, and being able to read them is a genuinely useful skill:
+
+        MANY CLOSE_WAIT  -> YOUR BUG. The peer hung up and your code never closed the socket. Look for
+                            a missing close(), a connection not returned to a pool, or an exception
+                            path that skips cleanup.
+        MANY TIME_WAIT   -> NOT A BUG, a design smell. You are opening and closing too many
+                            connections. Use keep-alive or a pool. TIME_WAIT is on whoever closed
+                            first, which is usually the client - if it is on your SERVER, your server
+                            is initiating the closes, which is itself informative.
+
+    `ss -tan | awk '{print $1}' | sort | uniq -c` prints the distribution. It is thirty seconds of
+    work and it frequently identifies the problem outright.""",
+
+    """6. HOW TO REASON ABOUT A CONNECTION PROBLEM - numbered steps
+
+1. IS IT REFUSED, OR DOES IT HANG? Refused in microseconds means nothing is listening on that port.
+   Hanging until timeout means a firewall or a dropped packet. Measured: 471 microseconds for the
+   refusal.
+2. IS THE PROCESS LISTENING ON THE INTERFACE YOU THINK? Bound to 127.0.0.1 rather than 0.0.0.0 is one
+   of the commonest 'works locally, not in the container' causes.
+3. CHECK THE STATE DISTRIBUTION with `ss -tan`. A pile of CLOSE_WAIT or TIME_WAIT names the problem.
+4. CHECK THE ACCEPT QUEUE. `ss -ltn` shows Recv-Q against the backlog for listening sockets. Full means
+   the application is not calling accept() fast enough - a thread pool problem, not a network one.
+5. SEPARATE CONNECT TIME FROM RESPONSE TIME in your metrics. They fail for completely different
+   reasons and blending them hides both.
+6. SET EXPLICIT TIMEOUTS - connect, read, and total - on every client. Defaults are far too long.
+7. REUSE CONNECTIONS. Keep-alive and a pool, sized deliberately. Measured: the saving is one RTT per
+   request, which is 280 ms London-Sydney and nothing on loopback.
+8. MAKE HEALTH CHECKS DO REAL WORK. A TCP connect proves the kernel is up.
+9. IF YOU ARE EXHAUSTING PORTS, count them: a client has roughly 28,000 ephemeral ports per
+   destination pair, and TIME_WAIT holds each for tens of seconds. Connection reuse is the fix.
+
+STEP 1 IS THE ONE THAT SAVES THE MOST TIME AND COSTS NOTHING. 'Refused instantly' and 'hangs for
+thirty seconds' are two completely different bugs, and a lot of people report both as 'can't
+connect'.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The handshake is three packets. The client sends SYN with its initial sequence number, the server
+replies SYN-ACK acknowledging that and giving its own, and the client sends ACK. After that both sides
+know the other exists, is willing, and has agreed where the byte numbering starts.
+
+It is three rather than two because after two packets only the client knows its message got through -
+the server has no confirmation the client heard the SYN-ACK. The third packet closes that. And the
+initial sequence numbers are randomised so an off-path attacker cannot guess them and inject data.
+
+The thing I would actually emphasise is the cost: it is one full round trip before any data moves. On
+loopback that is nothing, but London to Sydney is 280 milliseconds for TCP alone, and TLS 1.2 adds two
+more round trips, so you are at 840 milliseconds before the first byte of the request is sent. That
+one number explains HTTP keep-alive, connection pools, TLS 1.3 cutting a round trip out, QUIC, and
+CDNs.
+
+I measured that on loopback, and interestingly a reused connection was NOT faster than a fresh one -
+about 167 microseconds either way - because there is no propagation delay to save and the cost is all
+syscall overhead. That is worth knowing: if someone benchmarks keep-alive on localhost and sees no
+gain, they have measured the wrong thing.
+
+The other thing worth knowing is that the application does not participate in the handshake at all -
+the kernel does it, and accept() just takes an established connection off a queue. I tested that with
+a server that listened and never accepted, and three clients completed the handshake successfully. So
+a TCP-only health check will report a completely wedged application as healthy, and a full accept
+queue looks like a network problem when it is actually a blocked thread pool.
+
+And closing takes four packets rather than three, because each direction closes independently - a FIN
+means "I have no more data", not "we are done".'""",
+
+    """8. THE PACKETS, PIECE BY PIECE
+
+    PACKET 1 - CLIENT -> SERVER:  SYN
+        flags: SYN=1
+        seq = x, a randomly chosen initial sequence number
+        Also carries the client's OPTIONS - maximum segment size, window scaling, selective
+        acknowledgement, timestamps. THE HANDSHAKE IS ALSO A NEGOTIATION, not just a greeting; this is
+        where both sides agree on the features the connection will use, and it is why an option has to
+        be requested before any data flows.
+        Client state: CLOSED -> SYN_SENT
+
+    PACKET 2 - SERVER -> CLIENT:  SYN-ACK
+        flags: SYN=1, ACK=1
+        seq = y  (the server's own random ISN)
+        ack = x + 1  ('I have everything up to and including x')
+        The +1 is because SYN itself consumes one sequence number, even though it carries no data.
+        Server state: LISTEN -> SYN_RECEIVED, and this is where server-side state is created - hence
+        the SYN flood.
+
+    PACKET 3 - CLIENT -> SERVER:  ACK
+        flags: ACK=1
+        seq = x + 1, ack = y + 1
+        Both sides: ESTABLISHED. THIS PACKET MAY CARRY DATA - the client can piggyback its request on
+        the final ACK, which is exactly what TCP Fast Open generalises.
+
+    WHAT EACH SIDE KNOWS AFTER EACH PACKET:
+        after 1:  server knows the client can send
+        after 2:  client knows the server received its SYN and can send
+        after 3:  SERVER knows the client received its SYN-ACK
+        Three is the minimum for that last line to be true.
+
+    THE ACK NUMBER CONVENTION worth having straight: ack is the NEXT byte expected, not the last byte
+    received. So ack = x+1 means 'I have x, send me x+1'.
+
+    AND THE CLOSE, for completeness: FIN / ACK / FIN / ACK, four packets, because each direction is
+    shut down separately.""",
+
+    """9. ONE CONNECTION, WALKED
+
+    `socket.create_connection(("example.com", 443))` from London, RTT 75 ms.
+
+    t = 0 ms      DNS lookup (a separate matter, and often another round trip)
+    t = 75 ms     SYN sent, seq = 1,247,283,910 (random), with MSS and window-scale options
+                  client: SYN_SENT
+    t = 112 ms    SYN-ACK arrives: seq = 3,981,224,001, ack = 1,247,283,911
+                  client: ESTABLISHED
+    t = 150 ms    ACK sent. Server: ESTABLISHED.
+                  ONE FULL RTT HAS PASSED AND NOT ONE BYTE OF HTTP HAS MOVED.
+
+    t = 150 ms    TLS ClientHello (piggybacked or immediately after)
+    t = 225 ms    ServerHello etc.
+    t = 300 ms    TLS 1.3 finished - one extra RTT. On TLS 1.2 this would be t = 375 ms.
+
+    t = 300 ms    finally: GET / HTTP/1.1
+    t = 375 ms    the first byte of the response arrives.
+
+    375 MILLISECONDS, OF WHICH 300 WAS SETUP. Eighty percent of the time to first byte was protocol
+    handshaking.
+
+    NOW THE SECOND REQUEST ON THE SAME CONNECTION:
+        t = 375 ms    GET /page2
+        t = 450 ms    response
+
+    75 MILLISECONDS. FIVE TIMES FASTER, and nothing about the server or the network changed - you
+    simply did not throw the connection away. THAT IS THE ENTIRE VALUE OF KEEP-ALIVE, and it is why an
+    HTTP client that opens a fresh connection per call can be five times slower than one that pools.
+
+    AND THE FAILURE VERSION, so you can recognise it: if the SYN-ACK never arrives, the client
+    retransmits the SYN - typically at 1 s, 3 s, 7 s, with exponential backoff - before giving up
+    after tens of seconds. THAT IS WHY AN UNREACHABLE HOST 'HANGS' WHILE A CLOSED PORT 'REFUSES
+    INSTANTLY': one is silence and retries, the other is an immediate RST. Measured: 471 microseconds
+    for the refusal on loopback.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE PACKETS:  SYN (seq=x) · SYN-ACK (seq=y, ack=x+1) · ACK (ack=y+1). Then ESTABLISHED.
+    THE CLOSE:  FIN / ACK / FIN / ACK - four, because each direction closes independently.
+
+    THE MEASURED EVIDENCE:
+        handshake cost by link:  0.5 ms same datacentre · 75 ms London-New York · 280 ms
+            London-Sydney · and TLS 1.2 triples it, to 840 ms before any request data is sent
+        loopback:  connect+request+close 166.0 us vs reused connection 167.7 us - NO GAIN, because
+            there is no propagation delay to save
+        a server that never called accept():  3 clients still completed the handshake
+        connecting to a closed port:  ConnectionRefusedError in 471 us, via RST
+
+THE #1 MISTAKE: forgetting that the handshake is a full round trip. A client that opens a fresh
+connection per request pays it every time, and over a long link that is most of the latency.
+
+THE #2 MISTAKE: believing 'connected' means 'being served'. The kernel completes the handshake and
+queues the connection; a wedged application still looks healthy to a TCP-level check.
+
+THE #3 MISTAKE: misreading the states. CLOSE_WAIT is your socket leak; TIME_WAIT is correct behaviour
+telling you to reuse connections.
+
+THE #4 MISTAKE: treating 'refused' and 'timed out' as the same symptom. One means nothing is
+listening, the other means something is silently dropping packets.
+
+THE #5 MISTAKE: no explicit connect timeout, so an unreachable dependency holds your threads for a
+minute at a time and the outage spreads.
+
+ONE-SENTENCE TAKEAWAY: three packets buy you a mutually-confirmed, ordered byte stream at the price of
+one round trip before any data moves - which is free on loopback, is most of your latency across an
+ocean, and is entirely done by the kernel, so 'connected' tells you nothing about whether the
+application is actually reading you.""",
 ]
 
 _EX_P1AA["Daily Temperatures (monotonic stack)"] = [
@@ -153363,6 +153638,336 @@ returns the live list is an invitation to have your invariants broken from outsi
 ONE-SENTENCE TAKEAWAY: assignment shares, a shallow copy shares everything below the top level, and a
 deep copy shares nothing - so decide which level you will mutate and copy exactly that far, and where
 you can, make the data immutable so the question never arises.""",
+]
+
+_EX_P1AO["Why software engineering, and why AI/ML specifically?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - can you explain your own choice?
+
+This arrives early, sounds soft, and is one of the easiest questions to answer badly - because almost
+everyone reaches for the same three sentences.
+
+WHAT THE INTERVIEWER IS CHECKING:
+
+    IS THIS CONSIDERED OR DEFAULT?   Did you choose this, or did you drift into it because you were
+                                     good at maths and someone suggested it?
+    DO YOU KNOW WHAT THE JOB IS?     'AI' as a glamorous idea, or as the thing it actually involves -
+                                     data cleaning, evaluation, failures, iteration?
+    WILL YOU STILL BE HERE IN THREE YEARS? Motivation that survives the boring parts.
+
+THE ANSWERS THAT SAY NOTHING, and one of them is almost certainly your first draft:
+
+    'I've always been fascinated by technology.'
+    'AI is the future / it's going to change everything.'
+    'I like solving problems.'
+    'I want to work on impactful things at scale.'
+
+Every candidate says these. They are unfalsifiable, they describe no experience, and the interviewer
+has heard each of them a hundred times this month.
+
+THE STRUCTURE THAT WORKS: A SPECIFIC MOMENT, WHAT IT REVEALED, AND WHAT YOU DID NEXT.
+
+    the moment     something concrete that happened
+    the realisation  what it told you about the work, not about the field
+    the evidence   what you did afterwards, because a real interest produces artefacts
+
+THAT THIRD BEAT IS THE ONE THAT SEPARATES A REAL ANSWER FROM A PLEASANT ONE. Enthusiasm is a claim.
+Projects, courses finished, things built, hours spent - those are evidence.""",
+
+    """2. THE INTUITION - the answer has to be about the WORK, not the field
+
+The trap is describing why the FIELD is exciting. AI being transformative is a fact about the world,
+not a fact about you, and it is equally true for the ten thousand other applicants.
+
+    WEAK, AND ABOUT THE FIELD:
+        'AI is transforming every industry and I want to be part of it.'
+        -> true, says nothing, could have been written by someone who has never trained a model.
+
+    STRONG, AND ABOUT THE WORK:
+        'What hooked me was the debugging. My first classifier got 94% accuracy and I was delighted -
+         until I realised it was predicting the majority class on data that was 94% one label. Finding
+         that out was more interesting than the original result, and that pattern - the model is
+         confidently wrong and you have to work out why - is what I now actually enjoy.'
+
+WHY THE SECOND ONE WORKS: it demonstrates something. The interviewer learns that you have trained a
+model, that you check your own results, that you understand class imbalance, AND that you are honest
+about a mistake - four things, in one anecdote, none of them asserted.
+
+THE TEST TO APPLY TO YOUR DRAFT:
+
+    COULD SOMEONE WHO HAS NEVER DONE THIS WORK HAVE WRITTEN MY ANSWER?
+
+If yes, it is about the field. Rewrite it around something that happened to you.
+
+AND THE SECOND HALF OF THE QUESTION MATTERS TOO. 'Why software engineering' and 'why AI specifically'
+are separate, and a good answer joins them:
+
+    SOFTWARE ENGINEERING because you like building things that work, and you can see whether they do.
+    AI SPECIFICALLY because of what makes it DIFFERENT from ordinary software - and being able to name
+    that difference precisely is the strongest move available here.""",
+
+    """3. WHAT MAKES ML DIFFERENT - the part that shows you understand the job
+
+The best 'why AI' answers name something that is genuinely different about the work, rather than
+something exciting about the outcome. Four options, all true, all rarely said:
+
+    1. THE BEHAVIOUR IS LEARNED, NOT WRITTEN. In ordinary software, if the output is wrong you find
+       the line that is wrong. In ML there is no line - the behaviour came from data, so debugging
+       means investigating the DATA and the EVALUATION rather than the code. That is a genuinely
+       different intellectual activity and it is the one most people find out about late.
+
+    2. IT IS EMPIRICAL. You cannot reason your way to the answer; you have to run the experiment.
+       Which means the skill is designing experiments that give trustworthy answers - splits,
+       baselines, held-out data - and that is closer to science than to construction.
+
+    3. IT FAILS SOFTLY. Ordinary software crashes; a model returns a confident, plausible, wrong
+       answer. Nothing errors. So the engineering problem becomes 'how do I know it is working', which
+       is why evaluation is most of the actual job.
+
+    4. THE PROBLEM IS OFTEN THE DATA. Most real improvements come from better labels, better features,
+       or noticing leakage - not from a better architecture. Saying this out loud signals that you
+       know what the days look like.
+
+PICK ONE AND ATTACH IT TO SOMETHING YOU EXPERIENCED. Not all four - one, with an incident behind it.
+
+AND THE HONEST VERSION, IF IT IS TRUE FOR YOU: it is completely fine to say that the field's pace is
+part of the appeal, or that you like that the tools are improving under you. What is not fine is
+stopping there, because that is a reason to READ about AI, not a reason to build it.
+
+A GOOD JOIN SENTENCE: 'I like software engineering because you can tell whether the thing works. I
+like ML specifically because working out whether it works is the hard part.'""",
+
+    """4. THE FAILURE MODES
+
+A. THE UNIVERSAL ANSWER. 'Fascinated by technology', 'AI is the future', 'I like solving problems'.
+   True of everyone, therefore information-free.
+
+B. NO EVIDENCE. Enthusiasm with no artefacts. A real interest produces things - projects, a course
+   finished, a paper read properly, a bug chased down. Name one.
+
+C. TALKING ABOUT THE FIELD RATHER THAN THE WORK. Anyone can find AI exciting from the outside; the
+   question is whether you know what a Tuesday looks like.
+
+D. ONLY THE GLAMOROUS PART. If your answer is entirely about model architectures and none of it about
+   data, evaluation or things not working, it reads as someone who has watched talks rather than built
+   anything.
+
+E. A STORY THAT IS TOO NEAT. 'I wrote my first program at seven and never looked back' is either
+   unusual or embellished, and it is not more impressive than an honest later start.
+
+F. NOT ANSWERING THE SECOND HALF. They asked two things. If you only explain 'why software', the
+   'why AI' half is missing and they will ask again - and the second attempt always sounds thinner.
+
+G. TRASHING ALTERNATIVES. 'I didn't want a boring corporate job' or 'web development seemed
+   pointless'. It reads as disdain and someone in the room probably did that job.
+
+H. PURELY EXTRINSIC MOTIVATION. Salary and demand are real and reasonable, and as the headline they
+   suggest you will leave for whatever is hot next.
+
+I. NO PRESENT TENSE. An origin story from four years ago with nothing about what interests you NOW
+   suggests the interest peaked. Say what you are currently curious about.""",
+
+    """5. HOW TO BUILD YOUR OWN - numbered steps
+
+1. FIND THE REAL MOMENT. Not the first time you heard about AI - the first time it stopped being
+   abstract. A model that worked and you did not know why. A result you did not believe. A dataset
+   that turned out to be broken.
+2. WRITE WHAT IT REVEALED ABOUT THE WORK. 'It taught me the interesting part is figuring out whether
+   the number is real.' One sentence.
+3. NAME THE ARTEFACT. What did you do next? Built something, took a course, read a paper, rewrote the
+   project properly. This is the evidence beat and it is the one that gets skipped.
+4. ANSWER THE 'WHY SOFTWARE' HALF TOO, briefly. Usually: you like building things whose correctness
+   you can check.
+5. JOIN THE TWO HALVES IN ONE SENTENCE.
+6. ADD SOMETHING PRESENT-TENSE. What are you curious about right now? It shows the interest is live.
+7. APPLY THE TEST: could someone who has never done this work have written it? If yes, go back to
+   step 1.
+8. INCLUDE ONE UNGLAMOROUS THING - data cleaning, evaluation, a bug that took two days. It is the
+   fastest way to sound like someone who has actually done the work.
+9. KEEP IT TO NINETY SECONDS. It is an opening question, not a life story.
+10. PREPARE THE FOLLOW-UP: 'what would you want to work on?' and 'what did you find hardest?' both
+    come next.
+
+STEP 8 IS THE CHEAPEST CREDIBILITY YOU CAN BUY. Everyone talks about the exciting part. Mentioning the
+tedious part - accurately - is what makes the exciting part believable.""",
+
+    """6. THE HONEST VERSIONS - answers that are true rather than impressive
+
+Not everyone has a dramatic origin story, and a manufactured one is worse than a plain one. Three
+honest shapes that work:
+
+THE LATE START:
+    'I did not come to this early. I did a maths degree because I was good at it and I assumed I would
+     end up in finance. What changed it was a module where we had to build something rather than prove
+     something - and the difference between a proof and a system that actually runs turned out to be
+     the thing I liked. I have been building since, and I would rather do that than prove things.'
+
+    STRONG BECAUSE: it is specific, it names a real preference, and it is clearly not the answer
+    someone would invent.
+
+THE PRACTICAL ONE:
+    'Honestly, the first reason was that it was where the interesting jobs were. What kept me was
+     different from what started me - I found that I liked the empirical part, running an experiment
+     and having the data tell me I was wrong. That is not what I expected to enjoy.'
+
+    STRONG BECAUSE: it acknowledges an extrinsic start without stopping there, and 'what kept me was
+    different from what started me' is a genuinely thoughtful sentence.
+
+THE ONE THAT NAMES A LIMIT:
+    'I am more interested in the applied side than the research side. I have read the papers and I do
+     not think I want to be the person inventing the next architecture - I want to be the person who
+     makes one work reliably for something real, which from what I have seen is mostly data and
+     evaluation work.'
+
+    STRONG BECAUSE: it says what you do NOT want, which almost nobody does, and it demonstrates you
+    know the two are different jobs.
+
+THE COMMON THREAD: each names something SPECIFIC that could be false. That is what makes an answer
+information-bearing, and it is why sincerity outperforms polish here.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Two halves, and they are connected.
+
+Software engineering, because I like building things where you can tell whether they work. I did a lot
+of maths before this, and the thing I kept wanting was for the answer to DO something.
+
+AI specifically, because of one moment that changed what I thought the work was. My first classifier
+got 94% accuracy and I was thrilled - until I looked and realised the data was 94% one class, so the
+model had learned to predict the majority label and nothing else. Working out WHY the number was
+meaningless was more interesting than getting the number, and that turned out to be the pattern of the
+whole field for me: the model is confidently wrong and you have to figure out why.
+
+What I took from that is that ML is different from ordinary software in a specific way. If normal
+software gives a wrong output you find the wrong line. There is no wrong line here - the behaviour came
+from the data, so debugging means investigating the data and the evaluation. And it fails softly:
+nothing crashes, you just get a plausible wrong answer. So most of the real work is figuring out
+whether it is actually working.
+
+After that project I rebuilt it properly - I wrote an evaluation set first, used precision and recall
+instead of accuracy, and it scored much worse and I trusted it much more. That is roughly how I have
+worked since.
+
+At the moment what I am most curious about is retrieval evaluation, because it is the part of a RAG
+system where the quality actually lives and it is the part people spend least time on.'""",
+
+    """8. THE ANSWER, LINE BY LINE
+
+    'Two halves, and they are connected.'
+
+        SIGNALS YOU HEARD BOTH PARTS OF THE QUESTION. Small, and it stops the interviewer having to
+        ask the second half again.
+
+    'I like building things where you can tell whether they work.'
+
+        A SPECIFIC PREFERENCE, not an enthusiasm. And it is falsifiable - somebody could reasonably
+        prefer the opposite - which is what makes it informative.
+
+    'My first classifier got 94% accuracy and I was thrilled.'
+
+        THE MOMENT, WITH A NUMBER. Also quietly admits to having been thrilled by a bad result, which
+        is honest and immediately more believable than a story of instant insight.
+
+    'Until I realised the data was 94% one class.'
+
+        THE REVEAL. In one clause it demonstrates that you have trained a model, met class imbalance,
+        and check your own results - three technical facts, none of them claimed.
+
+    'Working out why the number was meaningless was more interesting than getting the number.'
+
+        THE PREFERENCE, DERIVED FROM THE EXPERIENCE rather than asserted before it. This is the
+        sentence the whole story exists to earn.
+
+    'There is no wrong line - the behaviour came from the data.'
+
+        THE STRUCTURAL INSIGHT. This is the sentence that shows you understand what the job IS, and
+        it is what separates this from an answer about how exciting AI is.
+
+    'It fails softly - nothing crashes, you get a plausible wrong answer.'
+
+        A SECOND, DIFFERENT INSIGHT, and one that leads naturally into evaluation - which is where the
+        conversation should go next.
+
+    'I rebuilt it properly - evaluation set first, precision and recall instead of accuracy. It scored
+     much worse and I trusted it much more.'
+
+        THE EVIDENCE BEAT. Something you DID, with a specific technical change, and a result that is
+        the opposite of flattering. 'Scored worse and I trusted it more' is the line an interviewer
+        remembers.
+
+    'At the moment I am most curious about retrieval evaluation.'
+
+        PRESENT TENSE. It shows the interest is live rather than historical, and it hands the
+        interviewer an obvious next question on a topic you are ready for.""",
+
+    """9. THE SAME CANDIDATE, TWO ANSWERS
+
+    THE WEAK VERSION:
+        'I've always been fascinated by technology and how it can change the world. AI especially -
+         I think it's going to transform every industry, and I want to be part of that. I like solving
+         complex problems and I'm a fast learner, so I think software engineering is a great fit for
+         me. And obviously the opportunities in this space are huge right now.'
+
+    CLAUSE BY CLAUSE:
+
+        'always been fascinated by technology'   - unfalsifiable, and true of every applicant
+        'transform every industry'               - about the FIELD, not about you or the work
+        'want to be part of that'                - a spectator's sentence
+        'like solving complex problems'          - so does everyone who applied
+        'I'm a fast learner'                     - an adjective with no evidence
+        'opportunities are huge right now'       - extrinsic, and it says you will follow the next
+                                                   trend too
+
+    FORTY SECONDS, ZERO INFORMATION. Nothing here could be checked, nothing describes an experience,
+    and the interviewer's note is 'generic'.
+
+    THE STRONG VERSION uses the SAME PERSON'S SAME BACKGROUND and simply anchors every claim:
+
+        instead of 'fascinated by technology'    -> the 94% classifier and what was wrong with it
+        instead of 'transform every industry'    -> ML has no wrong LINE, so debugging is different
+        instead of 'like solving problems'       -> 'working out why the number was meaningless was
+                                                    more interesting than the number'
+        instead of 'fast learner'                -> 'I rebuilt it with an evaluation set first'
+        instead of 'huge opportunities'          -> 'right now I am curious about retrieval
+                                                    evaluation'
+
+    NOTHING WAS ADDED TO THE CANDIDATE'S EXPERIENCE. The weak version had the same project behind it;
+    it just never mentioned it. That is the actual failure mode - not a lack of material, but reaching
+    for the general statement when the specific one was available.
+
+    THE HABIT TO BUILD: every time you write a sentence about yourself, ask 'what happened that makes
+    this true?' and put THAT in instead.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE STRUCTURE:  a specific moment -> what it revealed about the WORK -> what you did next (the
+    evidence) -> one present-tense curiosity.
+
+    THE TEST:  could someone who has never done this work have written my answer? If yes, it is about
+    the field and not about you.
+
+    THE 'WHY AI' ANGLES THAT SHOW YOU KNOW THE JOB - pick ONE and attach an incident:
+        the behaviour is learned, so there is no wrong line to find
+        it is empirical - you run the experiment rather than reasoning to the answer
+        it fails softly, so knowing whether it works IS the engineering problem
+        most improvements come from the data, not the architecture
+
+THE #1 MISTAKE: the universal answer. 'Fascinated by technology, AI is the future, I like solving
+problems.' Every applicant says it, so it transmits nothing at all.
+
+THE #2 MISTAKE: describing the FIELD instead of the WORK. Anyone can find AI exciting from outside;
+the question is whether you know what the days involve.
+
+THE #3 MISTAKE: enthusiasm with no artefacts. Name the project, the course, the bug you chased.
+
+THE #4 MISTAKE: only the glamorous half. Mentioning data cleaning and evaluation is the cheapest
+credibility available.
+
+THE #5 MISTAKE: answering only one of the two questions, or leaving out the present tense so the
+interest sounds historical.
+
+ONE-SENTENCE TAKEAWAY: replace every general statement about why the field is exciting with one
+specific thing that happened to you, what it taught you about the work rather than the field, and what
+you built afterwards - because enthusiasm cannot be verified and experience can.""",
 ]
 
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
