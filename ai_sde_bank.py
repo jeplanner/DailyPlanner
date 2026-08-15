@@ -144802,10 +144802,684 @@ features, restart it several times, and remember it can only ever find round, si
 blobs.""",
 ]
 
-# These entries' examples are declared INLINE on their Q(...) in
-# ai_sde_bank_ml.py, so there is no earlier _EX_* block to splice into — the
-# override has to live here, and it needs this dict's `< 10` condition to beat
-# the six inline ones.
+_EX_P1AO["Neural network basics: from a perceptron to a multi-layer network"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one neuron, and then several
+
+A single NEURON does something you already know. It takes some inputs, multiplies each by a WEIGHT,
+adds them up along with a BIAS, and squashes the result into a probability.
+
+    output = squash(w1 x1 + w2 x2 + ... + b)
+
+That is exactly logistic regression. One neuron IS logistic regression, and it can only ever draw a
+STRAIGHT boundary between the classes - a line in two dimensions, a plane in three.
+
+A NEURAL NETWORK stacks these into LAYERS: several neurons side by side, the outputs of one layer
+becoming the inputs of the next, with a non-linear squash in between. That stacking is what lets the
+boundary BEND, and the bending is the entire reason networks are more powerful than the single neuron.
+
+    inputs -> [layer of neurons] -> squash -> [layer of neurons] -> squash -> ... -> output
+
+TERMS AS THEY APPEAR:
+- WEIGHT: a number multiplying an input; what the network learns.
+- BIAS: a number added on; it lets the boundary sit somewhere other than through the origin.
+- HIDDEN LAYER: any layer between the input and the output. 'Hidden' only means you never see its
+  values directly.
+- ACTIVATION FUNCTION: the non-linear squash between layers - sigmoid, tanh, ReLU. Without it, depth
+  buys nothing at all, which section 2 proves.
+- FORWARD PASS: computing the prediction, layer by layer.
+- BACKPROPAGATION: computing how much each weight contributed to the error, working backwards from
+  the output, so every weight can be nudged in the right direction.""",
+
+    """2. THE INTUITION - XOR, the problem that defines the subject
+
+XOR ('exclusive or') is the smallest problem a single neuron cannot solve, and it is why hidden layers
+exist.
+
+    input (0,0) -> 0        input (0,1) -> 1
+    input (1,0) -> 1        input (1,1) -> 0
+
+Plot the four points. The two 1s sit on one diagonal, the two 0s on the other. There is NO straight
+line that puts the 1s on one side and the 0s on the other - try it on paper for thirty seconds and the
+impossibility becomes obvious.
+
+    (0,1)=1     (1,1)=0
+    (0,0)=0     (1,0)=1
+
+MEASURED, training a single neuron with gradient descent, 20 independent runs:
+
+    best accuracy across all 20 runs on XOR:  50%
+    the same single neuron on AND:           100%
+    the same single neuron on OR:            100%
+
+AND and OR ARE linearly separable, so one neuron nails them. XOR is not, so it fails - and note it
+settles at 50%, not the 75% a cleverly-placed line could achieve, because logistic loss pulls it to
+the symmetric solution where it outputs 0.5 for everything.
+
+NOW ADD A HIDDEN LAYER. Two hidden units are enough:
+
+    TWO HIDDEN UNITS on XOR: solved perfectly on 15 of 20 random starts.
+    FOUR hidden units, one run:  (0,0) -> 0.000,  (0,1) -> 1.000,  (1,0) -> 0.999,  (1,1) -> 0.000
+
+WHY IT WORKS, intuitively: the hidden units learn intermediate questions - roughly 'is at least one
+input on?' and 'are both inputs on?' - and the output neuron combines them as 'the first but not the
+second'. Each of those IS linearly separable; the network has broken one impossible problem into two
+possible ones. That is what every hidden layer does, and in an image network the same mechanism turns
+edges into shapes into faces.""",
+
+    """3. THE MECHANICS, TRACED - a forward and backward pass by hand
+
+A tiny network: two inputs, two hidden units with sigmoid, one output.
+
+    FORWARD PASS on input x = (1, 0), with weights invented for the trace:
+
+        hidden unit 1:  z = (0.5)(1) + (-0.5)(0) + 0.0 = 0.5      a = sigmoid(0.5)  = 0.622
+        hidden unit 2:  z = (0.3)(1) + ( 0.8)(0) + 0.0 = 0.3      a = sigmoid(0.3)  = 0.574
+        output:         z = (1.2)(0.622) + (-0.9)(0.574) + 0.0 = 0.230
+                        prediction = sigmoid(0.230) = 0.557
+
+        the target is 1, so the error is 0.557 - 1 = -0.443
+
+    BACKWARD PASS - how much is each weight to blame?
+
+        at the output, the error signal is simply (prediction - target) = -0.443.
+        (That clean form is not luck: with a sigmoid output and cross-entropy loss the messy
+        derivative terms cancel exactly, which is why that pairing is standard.)
+
+        each output weight's gradient  = error signal x the activation that fed it
+            for w to hidden 1:  -0.443 x 0.622 = -0.276
+            for w to hidden 2:  -0.443 x 0.574 = -0.254
+
+        each hidden unit's error signal = (output error) x (its output weight) x (its own derivative)
+            hidden 1:  -0.443 x 1.2 x [0.622 x (1 - 0.622)] = -0.125
+            hidden 2:  -0.443 x -0.9 x [0.574 x (1 - 0.574)] = 0.098
+
+        each input weight's gradient = that hidden signal x the input that fed it
+            hidden 1 from x1:  -0.125 x 1 = -0.125
+            hidden 1 from x2:  -0.125 x 0 = 0        <- an input of 0 contributes NO gradient
+
+    UPDATE: every weight moves against its gradient, scaled by the learning rate.
+        w := w - 0.5 x gradient
+
+THE SHAPE TO REMEMBER: an error signal flows backwards, and at each step it is multiplied by the
+weight it travelled along and by the local derivative of the activation. That chain of
+multiplications is why activation choice decides whether deep networks train at all - see
+[[activation-functions]], where the same product is measured across many layers.
+
+NOTE THE ZERO GRADIENT for the weight fed by x2 = 0. A weight attached to an input that is zero
+receives no update from that example. That is not a bug; it is the chain rule being honest.""",
+
+    """4. THE FAILURE MODES - measured, including the one that looks like nothing
+
+A. NO NON-LINEARITY MEANS NO NETWORK. Remove the activation and two layers compute
+   W2(W1 x) = (W2 W1) x, which is a single matrix - one linear map, however many layers you stack. Its
+   best possible XOR accuracy is the single neuron's. The activation is not a detail; it IS the reason
+   depth exists.
+
+B. IDENTICAL INITIAL WEIGHTS - the failure that produces no error message at all.
+
+   MEASURED, 10 runs each on XOR with four hidden units:
+       all weights 0     : solved 0/10
+       all weights 0.3   : solved 0/10
+       random weights    : solved 10/10
+
+   WHY: if every hidden unit starts with the same weights, they compute the same thing, so they
+   receive the same gradient, so they update identically - and they remain copies of each other for
+   ever. A network of four identical units has the power of one. This is called the SYMMETRY-BREAKING
+   problem, and it is why initialisation is random rather than zero. Note that the loss does fall a
+   little, so nothing looks broken.
+
+C. THE INITIALISATION LOTTERY, even done correctly. Measured: two hidden units solved XOR on 15 of 20
+   random starts - so a quarter of runs got stuck in a local optimum. More hidden units make this
+   rarer (four units solved it 10/10), which is one practical reason for over-provisioning width.
+
+D. VANISHING GRADIENTS in deep stacks - the reason ReLU replaced sigmoid in hidden layers. Measured in
+   [[activation-functions]]: sigmoid passes on about 1.4e-07 of the gradient through ten layers.
+
+E. USING A NETWORK ON SMALL TABULAR DATA. On 500 rows with mixed numeric and categorical columns, a
+   gradient-boosted tree will usually beat a neural network with far less effort. Networks earn their
+   keep on images, text, audio and very large datasets - places where the structure of the data
+   matches the architecture's assumptions. Saying this out loud is the judgement half of the answer.
+
+F. FORGETTING TO SCALE THE INPUTS. Features on wildly different scales produce wildly different
+   gradient magnitudes, and the optimiser zig-zags. Standardise, exactly as for k-means.
+
+G. THE UNIVERSAL APPROXIMATION THEOREM MISREAD. It says one hidden layer with ENOUGH neurons can
+   approximate any continuous function. It does not say how many neurons ('enough' can be
+   astronomically many), and it does not say gradient descent will find them. It is an existence
+   result, not a recipe - and quoting it as a reason to use shallow networks is a small tell.""",
+
+    """5. DEPTH VERSUS WIDTH, AND THE TRAINING LOOP
+
+WHY DEPTH WON, given that one hidden layer is theoretically enough. Certain functions need
+EXPONENTIALLY many neurons in a shallow network and only linearly many in a deep one. Intuitively,
+depth lets you REUSE intermediate results: layer one learns edges, layer two combines edges into
+corners, layer three combines corners into shapes. A shallow network must build every shape directly
+from pixels, without ever naming an edge.
+
+That is the same argument as writing functions in a program. You could inline everything into one
+enormous function; you do not, because composition lets you reuse the parts.
+
+THE TRAINING LOOP, named so you can narrate it in an interview:
+
+    1. FORWARD: compute the prediction layer by layer, CACHING each layer's output - you will need
+       them in step 3.
+    2. LOSS: compare the prediction with the target. Cross-entropy for classification, mean squared
+       error for regression.
+    3. BACKWARD: propagate the error signal backwards, multiplying by each weight and each local
+       derivative, to get a gradient for every weight.
+    4. UPDATE: nudge every weight against its gradient, scaled by the LEARNING RATE.
+    5. REPEAT over mini-batches, for many epochs.
+
+WHY MINI-BATCHES rather than one example at a time or the whole dataset: single examples give very
+noisy gradients, the whole dataset is slow and does not fit in memory, and a batch of 32 to 512 is the
+compromise everyone uses. The noise is not purely a cost either - it helps escape poor local optima.
+
+THE HYPERPARAMETERS THAT ACTUALLY MATTER, roughly in order: the learning rate (by a wide margin), the
+architecture size, the batch size, and the regularisation. If a network is not training, the learning
+rate is the first thing to change - and the classic symptom pair is 'loss does not move' (too small)
+against 'loss becomes NaN' (too large).
+
+WHAT MAKES A NETWORK THE RIGHT CHOICE: lots of data, and structure the architecture can exploit -
+spatial locality for a CNN, sequence for an RNN or transformer. On a few hundred rows of tabular data
+you are usually better off elsewhere.""",
+
+    """6. HOW TO BUILD ONE - numbered steps
+
+1. DECIDE THE OUTPUT FIRST, because it fixes two other choices: the final activation and the loss.
+   Regression -> no activation, mean squared error. Binary -> one sigmoid, binary cross-entropy.
+   One-of-N -> softmax, categorical cross-entropy. Any-of-N -> N sigmoids, binary cross-entropy per
+   label.
+2. STANDARDISE THE INPUTS - subtract the mean, divide by the standard deviation of each feature.
+3. CHOOSE A SIZE. Start small: one or two hidden layers, width in the same order as your input
+   dimension. Make it bigger only when it underfits.
+4. INITIALISE RANDOMLY, never to a constant. Measured: constant initialisation solved XOR on 0 of 10
+   runs, random on 10 of 10. Use the framework default (He for ReLU, Glorot for tanh) rather than
+   inventing one.
+5. PICK A LEARNING RATE and be prepared to change it. It is the single most important number; try
+   powers of ten and watch the first few hundred steps.
+6. TRAIN IN MINI-BATCHES, watching training AND validation loss together. Training loss alone tells
+   you nothing about overfitting.
+7. STOP WHEN THE VALIDATION LOSS STOPS IMPROVING - early stopping is the cheapest regulariser there
+   is.
+8. ONLY THEN reach for dropout, weight decay, or more layers.
+
+THE STEP PEOPLE SKIP IS 1, and skipping it produces the softmax-on-multi-label bug from
+[[activation-functions]] - a model that trains perfectly and cannot express the answer.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'A single neuron is logistic regression - weights, a bias, and a squash - so it can only draw a
+straight boundary. XOR is the standard demonstration: the two positive points sit on one diagonal and
+the two negatives on the other, so no line separates them. I have trained a single neuron on it twenty
+times and the best it reaches is 50%, while it gets AND and OR perfectly, because those are
+separable.
+
+Add a hidden layer with two units and it solves XOR on about three quarters of random starts; four
+units and it is reliable. The hidden units learn intermediate questions that ARE separable - roughly
+"is at least one on" and "are both on" - and the output combines them.
+
+Training is four steps: forward pass caching each layer's output, compute the loss, backpropagate the
+error signal backwards multiplying by each weight and each local derivative, then nudge every weight
+against its gradient.
+
+Two things that look like nothing and are fatal: initialising all the weights to the same value, which
+makes every hidden unit compute the same thing for ever - I measured that as zero successes out of
+ten, against ten out of ten for random - and removing the activation, which collapses the whole stack
+back to a single linear map.'""",
+
+    """8. THE ARITHMETIC, PIECE BY PIECE
+
+    ONE NEURON:
+        z = w1 x1 + w2 x2 + b
+        a = sigmoid(z) = 1 / (1 + e^-z)
+    Identical to logistic regression. The weights say how much each input matters; the bias shifts the
+    boundary away from the origin.
+
+    ONE LAYER of h neurons is the same thing h times, which is a matrix multiply:
+        z = W x + b        W is h-by-n, x is n long, z is h long
+        a = f(z)           applied elementwise
+    This is why frameworks are built on matrix libraries, and why GPUs matter.
+
+    STACKING WITHOUT AN ACTIVATION, written out to show the collapse:
+        layer 1:  h = W1 x
+        layer 2:  y = W2 h = W2 (W1 x) = (W2 W1) x
+    `W2 W1` is a single matrix. Two layers, one linear map, no gain whatsoever.
+
+    THE BACKWARD PASS, three rules that generate everything:
+        1. at the output (sigmoid + cross-entropy):   delta = prediction - target
+        2. gradient for a weight:                     delta x (the activation that fed that weight)
+        3. delta for a unit one layer back:           (delta ahead) x (the weight between them)
+                                                       x (this unit's activation derivative)
+    Rule 3 is the chain rule, and the reason a product of small derivatives kills deep sigmoid
+    networks.
+
+    THE UPDATE:
+        w := w - learning_rate x gradient
+    Minus, because the gradient points uphill and you want to go down.
+
+    WHY SIGMOID PLUS CROSS-ENTROPY GIVES delta = prediction - target: the derivative of the loss with
+    respect to the prediction is (p - y) / (p(1 - p)), and the derivative of the sigmoid is p(1 - p).
+    They cancel exactly. That cancellation is why the pairing is standard, and why using mean squared
+    error with a sigmoid output trains badly - the p(1-p) term survives and vanishes when the model is
+    confident and wrong, which is the worst possible time to stop learning.""",
+
+    """9. RUNNING IT - all the measured numbers
+
+    A SINGLE NEURON, 20 independent runs:
+        XOR: best accuracy across all 20 runs      50%
+        AND: 100%          OR: 100%
+    XOR is not linearly separable, so no setting of two weights and a bias can score above 75% - and
+    trained with logistic loss it converges to the symmetric solution and scores 50%.
+
+    A HIDDEN LAYER:
+        two hidden units on XOR:   solved perfectly on 15 of 20 random starts
+        four hidden units, one run: (0,0) -> 0.000   (0,1) -> 1.000
+                                    (1,0) -> 0.999   (1,1) -> 0.000
+
+    Read those four outputs. They are not 'close to' 0 and 1 - they are 0.000 and 1.000 to three
+    decimal places, because the network has been trained to convergence on four points. It has
+    memorised XOR, which is exactly what was asked.
+
+    INITIALISATION, 10 runs each, four hidden units:
+        all weights 0      solved 0/10
+        all weights 0.3    solved 0/10
+        random             solved 10/10
+
+    The second row is the interesting one. The weights are not zero - they are a perfectly reasonable
+    0.3 - and it still fails completely, because every hidden unit is identical to every other. The
+    problem is SAMENESS, not smallness, and that is the point people miss when they are told 'do not
+    initialise to zero'.
+
+    AND THE 15/20 IN THE FIRST EXPERIMENT is worth not glossing over: even with correct random
+    initialisation, a quarter of runs on a four-point problem got stuck. Neural network training is
+    not deterministic, and a single failed run is not evidence that your architecture is wrong.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+WHAT A NETWORK COSTS: a forward pass is O(number of weights) per example, and training multiplies that
+by the number of examples and epochs. Memory holds the weights plus every cached activation for the
+backward pass - which is why batch size is limited by memory rather than by mathematics.
+
+WHEN IT IS THE RIGHT TOOL: lots of data, and structure the architecture can exploit - spatial locality
+for images, sequence for text. WHEN IT IS NOT: a few hundred rows of tabular data, where gradient
+boosting wins with less effort and gives you feature importances for free.
+
+THE #1 BEGINNER MISTAKE: initialising all the weights identically. Measured: 0 of 10 successes with
+constant weights against 10 of 10 with random ones, and note that 0.3 fails exactly as badly as 0.0 -
+the problem is that the units are the SAME, so they receive identical gradients and never differentiate.
+Nothing errors, the loss falls slightly, and the network has the capacity of a single unit.
+
+THE #2 MISTAKE: leaving out the activation, or using a linear one, and expecting depth to help.
+Measured in principle and in arithmetic: two linear layers are one linear layer, so the whole stack
+scores what a single neuron scores.
+
+THE #3 MISTAKE: quoting the universal approximation theorem as if it were practical advice. It is an
+existence result about one wide hidden layer; it says nothing about how many neurons, and nothing
+about whether gradient descent will find them.
+
+ONE-SENTENCE TAKEAWAY: one neuron is logistic regression and can only draw a straight line, so XOR
+needs a hidden layer whose units learn intermediate questions that ARE separable - and the two things
+that silently destroy that are identical initial weights and a missing activation.""",
+]
+
+_EX_P1AO["SQL JOINs - all of them, with one worked example"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one question, five answers
+
+Data lives in separate tables. Employees are in one, departments in another, and the employee table
+holds only a department NUMBER. To produce a list of employees with their department NAMES you must
+JOIN the two tables - line them up on the column they share.
+
+The joins all do the same thing when rows match. They differ on exactly one question:
+
+    WHAT DO I DO WITH ROWS THAT HAVE NO MATCH ON THE OTHER SIDE?
+
+That is the whole subject. Once you can ask that question you can derive every join type instead of
+memorising them.
+
+THE EXAMPLE USED THROUGHOUT, small enough to hold in your head:
+
+    employees                    departments
+    ---------                    -----------
+    Asha   -> dept 10            10  Engineering
+    Ben    -> dept 10            20  Sales
+    Chen   -> dept 20            30  Legal        <- nobody works here
+    Dara   -> dept NULL          <- has no department
+
+Note the two deliberate awkward rows: Dara has no department, and Legal has no employees. Those two
+rows are what tell the joins apart, and any example without them teaches you nothing.
+
+TERMS AS THEY APPEAR:
+- THE JOIN KEY: the column being matched on. Here `employees.dept_id` against `departments.id`.
+- NULL: SQL's 'no value here'. It is not zero and not an empty string, and crucially NULL never
+  matches anything - not even another NULL.
+- LEFT and RIGHT: which side of the word JOIN the table is written on. `FROM employees LEFT JOIN
+  departments` makes employees the left table.""",
+
+    """2. THE INTUITION - derive the five from one question
+
+Start with the rows that DO match. Every join includes those - Asha/Engineering, Ben/Engineering,
+Chen/Sales. Three rows, always.
+
+Now the only decision: which unmatched rows do you keep?
+
+    keep no unmatched rows                     -> INNER JOIN
+    keep unmatched rows from the LEFT table    -> LEFT JOIN
+    keep unmatched rows from the RIGHT table   -> RIGHT JOIN
+    keep unmatched rows from BOTH              -> FULL OUTER JOIN
+    do not match at all - every combination    -> CROSS JOIN
+
+MEASURED, running each of them against a real SQLite database on the data above:
+
+    join               rows   result
+    INNER JOIN            3   Asha/Engineering, Ben/Engineering, Chen/Sales
+    LEFT JOIN             4   ... plus Dara/NULL
+    RIGHT JOIN            4   ... plus NULL/Legal
+    FULL OUTER JOIN       5   ... plus BOTH Dara/NULL and NULL/Legal
+    CROSS JOIN           12   every employee paired with every department (4 x 3)
+
+Read the row counts down the column: 3, 4, 4, 5, 12. Each join adds exactly the unmatched rows it
+promises, and the CROSS JOIN abandons matching entirely.
+
+WHERE THE NULLS COME FROM: when you keep an unmatched left row, there is no right row to supply the
+right columns - so SQL fills them with NULL. That is why 'Dara/NULL' appears in the LEFT JOIN. Those
+manufactured NULLs are the source of both useful patterns and nasty bugs, and sections 4 and 9 measure
+both.
+
+A NOTE ON RIGHT JOIN: it is the mirror image of LEFT, and it is rare in practice because you can
+always swap the two tables and write a LEFT JOIN instead - which reads better, since the table you
+care about comes first. Knowing it exists is enough.""",
+
+    """3. THE JOINS, TRACED ROW BY ROW
+
+Data again: Asha(10), Ben(10), Chen(20), Dara(NULL); departments 10 Engineering, 20 Sales, 30 Legal.
+
+    INNER JOIN - keep only matches.
+        Asha  dept 10 -> Engineering exists        KEEP    Asha/Engineering
+        Ben   dept 10 -> Engineering exists        KEEP    Ben/Engineering
+        Chen  dept 20 -> Sales exists              KEEP    Chen/Sales
+        Dara  dept NULL -> NULL matches nothing    DROP
+        Legal has no employee                      DROP
+        -> 3 rows
+
+    LEFT JOIN (employees on the left) - keep every employee.
+        the same three matches, plus:
+        Dara  no match  -> KEEP, with the department columns filled with NULL
+        Legal still dropped, because it is on the right
+        -> 4 rows:  Asha/Engineering, Ben/Engineering, Chen/Sales, Dara/NULL
+
+    RIGHT JOIN - keep every department.
+        the same three matches, plus:
+        Legal no match -> KEEP, with the employee columns NULL
+        Dara dropped, because it is on the left
+        -> 4 rows:  Asha/Engineering, Ben/Engineering, Chen/Sales, NULL/Legal
+
+    FULL OUTER JOIN - keep everything.
+        -> 5 rows: the three matches, plus Dara/NULL, plus NULL/Legal
+
+    CROSS JOIN - no matching at all, every pair.
+        4 employees x 3 departments = 12 rows: Asha/Engineering, Asha/Sales, Asha/Legal,
+        Ben/Engineering, ... and so on.
+
+WHY DARA IS DROPPED BY THE INNER JOIN, spelled out, because it surprises people: her `dept_id` is
+NULL, and in SQL `NULL = 10` is not false - it is UNKNOWN, which is not true, so the row does not
+match. NULL never equals anything, including another NULL. That single rule explains most surprising
+join results.
+
+THE COUNTS AGAIN: 3, 4, 4, 5, 12. If you can reproduce those five numbers from the four-employee
+example, you understand joins.""",
+
+    """4. THE FAILURE MODES - four bugs, all measured on this data
+
+A. `COUNT(*)` AFTER A LEFT JOIN - the single most common LEFT JOIN mistake.
+
+        SELECT d.name, COUNT(*)     FROM departments d LEFT JOIN employees e ON ...
+            -> [('Engineering', 2), ('Legal', 1), ('Sales', 1)]     Legal reports ONE employee
+        SELECT d.name, COUNT(e.id)  FROM departments d LEFT JOIN employees e ON ...
+            -> [('Engineering', 2), ('Legal', 0), ('Sales', 1)]     correct
+
+   WHY: the LEFT JOIN manufactures one row for Legal with all the employee columns NULL. `COUNT(*)`
+   counts ROWS, and that row exists - so Legal counts 1. `COUNT(e.id)` counts NON-NULL VALUES of a
+   column from the right table, and there are none - so Legal counts 0. The rule: after an outer
+   join, always count a column from the OUTER side, never `*`.
+
+B. A FILTER IN `WHERE` INSTEAD OF `ON` - silently converts your LEFT JOIN into an INNER JOIN.
+
+        ... LEFT JOIN departments d ON e.dept_id = d.id AND d.name = 'Engineering'
+            -> 4 rows: Asha/Engineering, Ben/Engineering, Chen/NULL, Dara/NULL
+        ... LEFT JOIN departments d ON e.dept_id = d.id WHERE d.name = 'Engineering'
+            -> 2 rows: Asha/Engineering, Ben/Engineering
+
+   WHY: `ON` decides what COUNTS AS A MATCH, and unmatched left rows are kept anyway. `WHERE` filters
+   the result AFTER the join, and the manufactured NULL rows fail `d.name = 'Engineering'`, so they
+   are discarded - which is exactly what an INNER JOIN would have done. Measured: 4 rows against 2,
+   from moving one condition.
+
+C. FAN-OUT, which quietly inflates every aggregate.
+
+        3 orders and 4 payments joined on customer -> 7 rows
+            (customer 1 has 2 orders and 3 payments, so 2 x 3 = 6 rows, plus customer 2's single pair)
+        SUM(o.id) over the joined rows = 12, but the true total over orders is 6
+
+   WHY: joining on a non-unique key MULTIPLIES rows. Every order is repeated once per matching
+   payment, so any SUM, AVG or COUNT over the joined table is double-counting. The fix is to aggregate
+   each side FIRST and then join the aggregates, or to use a subquery. This is the bug that produces
+   'our revenue report is exactly 2.3 times too big'.
+
+D. THE CARTESIAN EXPLOSION - forgetting the `ON` clause entirely.
+
+        1,000 rows x 500 rows with no ON clause -> 500,000 rows      (measured)
+        the same shape at 10,000 x 5,000 would be 50,000,000
+
+   The query does not fail; it runs, slowly, and returns nonsense. If a query is unexpectedly slow and
+   returns far too many rows, count them and compare against the product of the table sizes.
+
+E. NULLS IN THE JOIN KEY, as with Dara. They match nothing, in any join, ever. If rows are quietly
+   disappearing from an INNER JOIN, check for NULL keys before anything else.""",
+
+    """5. THE PATTERNS WORTH MEMORISING
+
+THE ANTI-JOIN - 'find the rows on this side with nothing on that side'. It is the single most useful
+join pattern and it is worth being able to write without thinking:
+
+    SELECT e.name
+    FROM employees e
+    LEFT JOIN departments d ON e.dept_id = d.id
+    WHERE d.id IS NULL;
+
+    measured: [('Dara',)]
+
+READ THE MECHANISM: the LEFT JOIN keeps every employee, filling the department columns with NULL where
+there was no match. Then `WHERE d.id IS NULL` keeps exactly those manufactured rows. So 'LEFT JOIN
+plus WHERE right-side IS NULL' means 'rows with no partner'. That is how you answer 'customers who
+never ordered', 'products never sold', 'users with no login'.
+
+    (Note the interaction with bug B in section 4: here the WHERE filter is DELIBERATELY converting
+    the result, and it works because `IS NULL` selects precisely the rows an inner join would drop.
+    The same mechanism, used on purpose.)
+
+THE SELF JOIN - the same table twice, with different aliases.
+
+    SELECT e.name, m.name AS manager
+    FROM employees e
+    LEFT JOIN employees m ON e.manager_id = m.id;
+
+Use LEFT, not INNER, or you silently lose whoever has no manager - which is usually the CEO, and
+usually the row someone notices is missing.
+
+AGGREGATE BEFORE JOINING, the fix for fan-out:
+
+    SELECT d.name, x.n
+    FROM departments d
+    LEFT JOIN (SELECT dept_id, COUNT(*) AS n FROM employees GROUP BY dept_id) x
+      ON x.dept_id = d.id;
+
+Each department now matches at most one row, so nothing multiplies. Whenever you are joining two
+tables that both have many rows per key, do this instead.
+
+CHOOSING BETWEEN A JOIN AND A SUBQUERY: `EXISTS` and `NOT EXISTS` express the anti-join too and are
+often clearer, and on most modern databases the optimiser produces the same plan. `NOT IN` is the one
+to avoid - if the subquery returns even a single NULL, `NOT IN` returns no rows at all, silently. That
+is a genuine, famous footgun and it is worth naming.
+
+THE ORDER OF THE CLAUSES, since it explains bug B: the database conceptually evaluates FROM and JOIN
+first, then WHERE, then GROUP BY, then HAVING, then SELECT, then ORDER BY. `ON` runs during the join;
+`WHERE` runs after it. Every ON-versus-WHERE confusion follows from that one ordering.""",
+
+    """6. HOW TO WRITE ONE - numbered steps
+
+1. NAME THE TWO TABLES and which column links them. Write the ON clause first, before anything else.
+2. ASK THE KEY QUESTION: do you need rows that have no partner? If not, INNER. If you need every row
+   from your main table, LEFT, and put that table first. If you need unmatched rows from both sides,
+   FULL OUTER.
+3. ALIAS BOTH TABLES with short names (`e`, `d`) and prefix every column. It is not decoration - with
+   two tables that both have a `name` column, unprefixed columns are ambiguous and the error message
+   is unhelpful.
+4. IF YOU ARE FILTERING, decide whether the condition belongs in ON or WHERE. A condition on the
+   RIGHT table of a LEFT JOIN almost always belongs in ON - putting it in WHERE turns the join into an
+   INNER JOIN. Measured: 4 rows against 2.
+5. IF YOU ARE COUNTING after an outer join, count a specific column from the outer side, never `*`.
+   Measured: `COUNT(*)` reports 1 employee for an empty department.
+6. IF EITHER SIDE HAS MANY ROWS PER KEY, aggregate first and then join, or you will silently multiply
+   your rows.
+7. CHECK THE ROW COUNT of the result against what you expected. A join should rarely surprise you; if
+   it does, it is fanning out or dropping NULL keys.
+
+THE HABIT WORTH BUILDING is step 7. Run `SELECT COUNT(*)` before you run the real query. If a
+LEFT JOIN returns MORE rows than the left table has, you have fan-out. If an INNER JOIN returns fewer
+than you expected, look for NULLs in the key.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Every join keeps the rows that match. The only question is what happens to the rows that do not.
+Inner drops them all, left keeps the unmatched rows from the first table and fills the other side with
+nulls, right is the mirror image, full outer keeps both, and cross does not match at all - it returns
+every combination.
+
+On a four-employee, three-department example where one employee has no department and one department
+has no employees, the counts come out 3, 4, 4, 5 and 12.
+
+Two things bite people. First, counting after a left join: COUNT(*) counts the manufactured null row,
+so an empty department reports one employee - you have to count a column from the joined side instead.
+Second, putting a filter on the right-hand table in WHERE rather than in ON: the null rows fail the
+filter, so your left join silently becomes an inner join. I have measured that as four rows becoming
+two.
+
+And the pattern worth memorising is the anti-join: left join plus WHERE right-side IS NULL gives you
+the rows with no partner - customers who never ordered, and so on.'""",
+
+    """8. THE SQL, PIECE BY PIECE
+
+    SELECT e.name, d.name
+    FROM employees e
+    LEFT JOIN departments d ON e.dept_id = d.id;
+
+    `FROM employees e`
+        The LEFT table, and `e` is an alias so later columns can be written `e.name`. With two tables
+        that both have a `name` column, unprefixed names are ambiguous and the query simply fails.
+
+    `LEFT JOIN departments d`
+        The RIGHT table. LEFT means 'keep every row from the table already in play, matched or not'.
+        The word refers to which side of the JOIN keyword the table is written on - nothing else.
+
+    `ON e.dept_id = d.id`
+        The matching rule. This is what runs DURING the join, deciding which pairs of rows are
+        matches. Adding a condition here - `AND d.name = 'Engineering'` - narrows what counts as a
+        match while still keeping unmatched left rows.
+
+    `WHERE ...` (if present)
+        Runs AFTER the join, on the result. This is why a WHERE condition on a right-hand column
+        discards the manufactured NULL rows and turns a LEFT JOIN into an INNER JOIN.
+
+    THE ANTI-JOIN, piece by piece:
+
+        LEFT JOIN departments d ON e.dept_id = d.id       -> every employee, with NULLs where no match
+        WHERE d.id IS NULL                                -> keep only the ones with no match
+
+        `IS NULL`, not `= NULL`. Comparing anything to NULL with `=` yields UNKNOWN, never true, so
+        `WHERE d.id = NULL` returns no rows at all and looks like an empty table rather than a bug.
+
+    THE COUNT FIX, piece by piece:
+
+        COUNT(*)      counts rows, including the row invented for an unmatched department
+        COUNT(e.id)   counts non-NULL values of e.id, and the invented row has none
+
+    THE FAN-OUT FIX, piece by piece:
+
+        LEFT JOIN (SELECT dept_id, COUNT(*) AS n FROM employees GROUP BY dept_id) x ON ...
+
+        The subquery collapses the many employee rows per department into ONE row per department
+        before the join happens, so the join cannot multiply anything.""",
+
+    """9. RUNNING IT - every number in this entry, produced by SQLite
+
+    THE FIVE JOINS on employees Asha(10), Ben(10), Chen(20), Dara(NULL) and departments
+    10 Engineering, 20 Sales, 30 Legal:
+
+        INNER JOIN           3 rows   Asha/Engineering, Ben/Engineering, Chen/Sales
+        LEFT JOIN            4 rows   + Dara/NULL
+        RIGHT JOIN           4 rows   + NULL/Legal
+        FULL OUTER JOIN      5 rows   + both
+        CROSS JOIN          12 rows   every pair (4 x 3)
+
+    THE ANTI-JOIN:
+        SELECT e.name FROM employees e LEFT JOIN departments d ON e.dept_id = d.id
+        WHERE d.id IS NULL
+        -> [('Dara',)]
+
+    THE COUNT(*) BUG:
+        COUNT(*)    -> [('Engineering', 2), ('Legal', 1), ('Sales', 1)]
+        COUNT(e.id) -> [('Engineering', 2), ('Legal', 0), ('Sales', 1)]
+        Legal has no employees. One of these two queries says it has one.
+
+    ON VERSUS WHERE, the same condition in two places:
+        in ON    -> 4 rows: Asha/Engineering, Ben/Engineering, Chen/NULL, Dara/NULL
+        in WHERE -> 2 rows: Asha/Engineering, Ben/Engineering
+        The second is an INNER JOIN wearing a LEFT JOIN's clothes.
+
+    FAN-OUT, on 3 orders and 4 payments:
+        joined on customer -> 7 rows      (customer 1: 2 orders x 3 payments = 6, plus 1)
+        SUM(o.id) over those rows = 12, where the true total is 6
+
+    THE CARTESIAN PRODUCT:
+        1,000 x 500 with no ON clause -> 500,000 rows
+        10,000 x 5,000 would be 50,000,000
+
+READ THE FAN-OUT RESULT AGAIN, because it is the one that reaches production. Nothing errored. The
+query returned rows. Every aggregate computed over those rows was exactly twice the truth, and the
+only way to notice was to know how many rows there should have been.""",
+
+    """10. THE COSTS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+PERFORMANCE, briefly, because it is the usual follow-up: a join is fast when the join key is INDEXED
+on at least the larger side - the database can then look each row up instead of scanning. Without an
+index it may fall back to a hash join (build a hash table of one side) or a nested loop, which on
+large tables is where 'the report takes forty minutes' comes from. If a join is slow, check the
+indexes on the join columns first, and read the query plan.
+
+THE #1 MISTAKE: `COUNT(*)` after a LEFT JOIN. Measured on this data: an empty department reports one
+employee. It looks right, it never errors, and it is wrong by exactly one in every empty group. Count
+a column from the joined side instead.
+
+THE #2 MISTAKE: a filter on the right-hand table placed in `WHERE` rather than `ON`. Measured: 4 rows
+become 2, and your LEFT JOIN has silently become an INNER JOIN. Remember the evaluation order - ON
+runs during the join, WHERE runs after it.
+
+THE #3 MISTAKE: fan-out on a non-unique key. Measured: a SUM of 12 where the truth is 6. Aggregate
+before joining.
+
+THE RULE THAT EXPLAINS THE STRANGE RESULTS: NULL never equals anything, not even NULL. That is why
+Dara vanishes from the inner join, why `= NULL` returns nothing, and why `NOT IN` with a NULL in the
+subquery returns no rows at all.
+
+ONE-SENTENCE TAKEAWAY: every join keeps the matching rows and differs only in which UNMATCHED rows it
+keeps - so decide that first, put filters on the outer table's columns in ON rather than WHERE, and
+never `COUNT(*)` after an outer join.""",
+]
+
+# These entries' examples are declared INLINE on their Q(...) in the
+# expansion-pack modules (ai_sde_bank_ml.py, ai_sde_bank_cs.py), so there is no
+# earlier _EX_* block to splice into — the override has to live here, and it
+# needs this dict's `< 10` condition to beat the six inline ones.
 _EX_P1AO["Data leakage - the bug that makes a terrible model look excellent"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the bug that looks like success
 
