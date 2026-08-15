@@ -153399,6 +153399,352 @@ TAGGED_COUNT, UNTAGGED_COUNT = _apply_tags(ENTRIES)
 # bank. Patch loop runs LAST so it also supersedes the `_PLAIN` lead-ins.
 _ANSWER_V2 = {}
 
+_ANSWER_V2["Tell me about your most challenging technical project (and how to go deep)"] = """An ability probe wearing a behavioural costume - they will go two or three
+levels below whatever you claim.
+
+· WHAT IS BEING TESTED — technical depth (every claim must survive a follow-up),
+  YOUR role specifically (they will separate 'the team built' from 'I built'),
+  and whether you understand the TRADE-OFFS rather than just the choices.
+· THE STRUCTURE — 30 seconds of context, the specific thing that made it hard,
+  what you tried that did NOT work, what did and why, then the result.
+· THE FAILED ATTEMPT IS THE PART PEOPLE OMIT, and it is what makes the rest
+  believable.
+· PICK A PROJECT YOU CAN GO DEEP ON, not the most impressive one. Depth beats
+  scale, and a probe into something you half-remember costs more than a smaller
+  project fully understood.
+· KNOW THE NUMBERS — size of data, latency, how many users, what it cost. Not
+  knowing them is the commonest way this question goes wrong."""
+
+_ANSWER_V2["Backtracking — subsets, permutations, combinations"] = """Make a choice, recurse, then UNDO it - the undo is what makes it backtracking.
+
+· WHEN TO REACH FOR IT — 'generate ALL subsets / permutations / combinations',
+  or a constraint puzzle like N-Queens, Sudoku or word search.
+· THE TEMPLATE, always the same: if the state is complete, record a COPY;
+  otherwise for each valid choice - apply it, recurse, undo it.
+· THE MENTAL MODEL is a decision tree, and the undo is how you walk back up to
+  try the next branch.
+· PRUNE EARLY — abandon a partial solution the moment it cannot possibly work.
+  That is the difference between usable and exponential-with-a-large-constant.
+· THE INDEX ARGUMENT decides the shape: pass i+1 for combinations (no reuse),
+  the same i for unlimited reuse, and a used[] set for permutations.
+· RECORD A COPY, not the working list - you are about to mutate it."""
+
+_ANSWER_V2["Binary Tree Maximum Path Sum"] = """Each node RETURNS its best downward gain, while a global maximum tracks paths
+that TURN through a node.
+
+· THE TWO DIFFERENT VALUES — what you return (a path going down one side only,
+  because the parent can only extend one branch) and what you record (this
+  node plus BOTH children, which the parent could never use).
+· CLAMP NEGATIVES TO ZERO — a subtree that hurts is simply not taken. That one
+  max(0, gain) removes every special case for negative values.
+· A PATH NEED NOT TOUCH THE ROOT, which is why the answer lives in a running
+  maximum rather than in the return value.
+· ALL-NEGATIVE TREES — the answer is the least negative single node, which the
+  clamping still handles correctly.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2["Dijkstra's Shortest Path (min-heap)"] = """Always expand the closest unfinished node - a min-heap keyed by tentative
+distance.
+
+· THE LOOP — pop the nearest node, relax each neighbour (if this route is
+  shorter, record it and push), repeat.
+· WHY GREEDY IS CORRECT — with NON-NEGATIVE weights, the first time a node is
+  popped its distance is final; nothing later can be shorter.
+· NEGATIVE EDGES BREAK IT — use Bellman-Ford there. This is the follow-up
+  question, so say it before it is asked.
+· STALE ENTRIES — you cannot cheaply decrease a key in a heap, so push
+  duplicates and skip any popped entry whose distance is worse than the best
+  known.
+· COST — O((V + E) log V) with a binary heap.
+· UNWEIGHTED GRAPH? Use plain BFS - Dijkstra is what you need when the edges
+  have weights."""
+
+_ANSWER_V2["Dynamic Programming — the 4-question method"] = """Say four things out loud and the problem is solved: STATE, TRANSITION, BASE
+CASE, ANSWER.
+
+· STATE — what exactly does dp[i] mean? Write the sentence. Most DP failures
+  are a state that means two things at once.
+· TRANSITION — how does dp[i] use smaller states? This is the recurrence.
+· BASE CASE — the smallest input, answered directly.
+· ANSWER — which dp value is the result. Often dp[n], sometimes the maximum
+  over the table.
+· WHEN DP APPLIES — overlapping subproblems and optimal substructure, usually
+  phrased 'number of ways', 'min/max cost', or 'can we reach'.
+· HOW TO GET THERE — write the recursion with memoisation first, because
+  finding the recurrence is the hard part; convert to a bottom-up table
+  afterwards to escape the recursion limit."""
+
+_ANSWER_V2["Word Ladder (shortest transformation, BFS)"] = """BFS over words, where an edge means 'differs by exactly one letter'.
+
+· WHY BFS — it explores level by level, so the first time you reach the target
+  you have used the fewest steps. DFS gives you a path, not the shortest.
+· GENERATING NEIGHBOURS — for each position, try all 26 letters and keep the
+  words that are in the dictionary. That is 26 x length per word, which beats
+  comparing against every word in the dictionary.
+· REMOVE WORDS AS YOU VISIT them, or the search revisits and blows up.
+· FASTER — bidirectional BFS from both ends, meeting in the middle, roughly
+  square-roots the work.
+· COST — O(N x L x 26) where N is the dictionary size and L the word length."""
+
+_ANSWER_V2["Binary Search — including 'search on the answer'"] = """Halve the search space each step - and the powerful version searches the
+ANSWER, not the array.
+
+· THE OBVIOUS TRIGGER — a SORTED array. O(log n).
+· THE REAL TRIGGER — 'minimise the maximum' or 'maximise the minimum', where
+  you can write a feasible(x) check that is MONOTONIC: false, false, ..., true,
+  true. Then binary-search the smallest x for which it is true.
+· EXAMPLES — Koko eating bananas, splitting an array into k parts, capacity to
+  ship packages in d days. All the same shape.
+· THE INVARIANT DECIDES THE TEMPLATE — decide whether the answer can still be
+  at mid before writing lo = mid + 1 or hi = mid, and be consistent.
+· AVOID THE OVERFLOW — mid = lo + (hi - lo) // 2 in languages with fixed-width
+  integers.
+· THE OFF-BY-ONE IS THE WHOLE DIFFICULTY. Trace a two-element case by hand."""
+
+_ANSWER_V2["Binary Tree Level Order Traversal"] = """BFS with a queue, taking one whole level at a time.
+
+· THE ONE TRICK — record the queue's length BEFORE the inner loop and pop
+  exactly that many. The queue grows as you enqueue children, so a live length
+  merges the levels into one.
+· EACH LEVEL becomes its own list in the output.
+· VARIANTS ARE THE SAME LOOP — zig-zag reverses alternate levels, right-side
+  view keeps the last of each, minimum depth stops at the first leaf.
+· DFS CAN DO IT TOO by passing the depth down and appending into a list per
+  depth - worth knowing when recursion is more natural.
+· COST — O(n) time, O(width) space."""
+
+_ANSWER_V2["Combination Sum (reusable candidates)"] = """Backtrack, and recurse with the SAME index so a candidate can be reused.
+
+· THE INDEX RULE IS THE WHOLE PROBLEM — pass i (not i+1) to allow unlimited
+  reuse; pass i+1 when each may be used once. Starting from 0 each time
+  produces permutations of the same combination instead.
+· PRUNE when the remaining target goes negative - and if the candidates are
+  sorted, break out of the loop entirely at that point.
+· BASE CASE — remaining hits exactly 0: record a copy.
+· DUPLICATE CANDIDATES in the II variant need a sort plus 'skip a value equal
+  to the previous one at this level'.
+· COST — exponential in the target-to-candidate ratio; that is inherent."""
+
+_ANSWER_V2["Container With Most Water"] = """Two pointers at the ends; always move the SHORTER wall inward.
+
+· THE AREA — min(height[l], height[r]) x (r - l). Bounded by the shorter side.
+· WHY MOVING THE SHORTER ONE IS SAFE — the width shrinks with every move, so
+  the only way to gain is a taller bound. Moving the TALLER wall keeps the same
+  shorter bound and a smaller width, so it can never improve. Moving the
+  shorter one at least has a chance.
+· THAT ARGUMENT IS THE ANSWER — the code is three lines; the exchange argument
+  is what is being tested.
+· NOT TRAPPING RAIN WATER — that is a different problem with a different shape.
+· COST — O(n) time, O(1) space, against O(n^2) for every pair."""
+
+_ANSWER_V2["Course Schedule (topological sort)"] = """You can finish all the courses if and only if the prerequisite graph has NO
+CYCLE.
+
+· KAHN'S ALGORITHM — count prerequisites per course, queue the ones with zero,
+  and each time you 'complete' one, decrement its dependents and enqueue any
+  that reach zero.
+· THE TEST — if you completed every course, there was no cycle. If some are
+  left, they are waiting on each other.
+· DIRECTION MATTERS — an edge prerequisite -> course, and getting it backwards
+  produces a plausible wrong answer rather than a crash.
+· THE DFS ALTERNATIVE — three-colour marking, where finding a grey node again
+  means a cycle. Same result, and it gives the ordering in reverse.
+· COURSE SCHEDULE II asks for the order itself, which is the same code
+  returning the list rather than a boolean.
+· COST — O(V + E)."""
+
+_ANSWER_V2["Design an LRU Cache"] = """A hash map for O(1) lookup, plus a doubly linked list ordered by recency.
+
+· WHY BOTH — the map finds a node instantly but knows nothing about order; the
+  list keeps order but cannot search. Together each operation is O(1).
+· ON GET — find the node through the map and MOVE IT to the front.
+· ON PUT — insert at the front; if over capacity, drop the node at the BACK and
+  delete its key from the map. Forgetting that second half leaks the map.
+· WHY DOUBLY LINKED — removing a node from the middle needs its predecessor,
+  and a singly linked list would make that O(n).
+· SENTINEL HEAD AND TAIL nodes remove every empty-list and single-element
+  special case.
+· IN PYTHON, OrderedDict.move_to_end does it in a line - say so, then write the
+  real version, because that is what is being asked."""
+
+
+_ANSWER_V2["Tell me about yourself / walk me through your resume (the two-minute answer)"] = """Present, past, why here - in 90 to 120 seconds. Never chronologically from
+school.
+
+· WHAT IS BEING TESTED — whether you can be concise under NO pressure (if not,
+  the design round will be painful), what you choose to emphasise, and whether
+  there is a coherent line leading to THIS role.
+· PRESENT (20 seconds) — one sentence on who you are now. 'I'm a final-year
+  computer science student specialising in AI and data science.'
+· PAST (60 seconds) — two or three specific things that built toward this role,
+  each with a concrete outcome. Not a list of everything you have done.
+· WHY HERE (20 seconds) — something true and specific about this team or
+  product, not flattery.
+· THE TEST TO APPLY — could this answer be given by anyone else in your cohort?
+  If yes, it is a CV summary rather than an answer.
+· PRACTISE IT ALOUD ONCE. It is the only question you know is coming."""
+
+_ANSWER_V2["What 'Googleyness' actually means, and how to show it"] = """Google scores four axes, and Googleyness is only one of them.
+
+· THE FOUR — General Cognitive Ability (how you STRUCTURE an unfamiliar
+  problem), Role-Related Knowledge, Leadership, and Googleyness.
+· LEADERSHIP MEANS EMERGENT LEADERSHIP — you step up when your skill is what
+  the situation needs, and step BACK when someone else's is. They are watching
+  for both halves.
+· GOOGLEYNESS DECOMPOSES into things you can demonstrate: comfort with
+  ambiguity, bias to action balanced with humility, intellectual curiosity,
+  collaboration, and doing the right thing when nobody is checking.
+· HOW TO SHOW IT — the same STAR stories, angled at the moment you changed
+  course because the evidence said to, or handed something over.
+· WHAT NOT TO DO — describe yourself as passionate and collaborative. Every
+  candidate does; none of it is evidence."""
+
+_ANSWER_V2["Evaluation metrics: the complete map, and how to choose"] = """Pick the metric that matches the DECISION and the COST of each kind of error -
+then justify it.
+
+· ACCURACY only means something on balanced data. At 1% positives, predicting
+  'no' for everything scores 99%.
+· PRECISION — of what we flagged, how much was real. Optimise it when a FALSE
+  POSITIVE is expensive: blocking a genuine customer's card.
+· RECALL — of the real cases, how many we caught. Optimise it when a FALSE
+  NEGATIVE is expensive: missing a tumour.
+· F1 is their harmonic mean, so it stays low if either is bad; F-beta lets you
+  weight one over the other deliberately.
+· ROC-AUC is threshold-free and measures RANKING; on heavy imbalance prefer
+  PR-AUC, because the false-positive rate has a huge denominator that flatters.
+· REGRESSION — MAE for 'average error in the unit', RMSE when large errors
+  matter more, MAPE only when nothing is near zero, R^2 for variance explained.
+· ALWAYS ASK WHAT THE DECISION IS. A metric with no decision attached is a
+  number nobody can act on."""
+
+_ANSWER_V2["Overfitting — what it is and how to prevent it"] = """The model has learnt the training data's NOISE - excellent on training, poor on
+anything new.
+
+· THE TELL — a widening gap between training and validation curves. Plot both;
+  one curve tells you nothing.
+· THE FIX LIST, in rough order of what to try: more or augmented data;
+  regularisation (L1/L2, dropout); a simpler model; early stopping when
+  validation loss turns upward; for trees, pruning or a depth limit.
+· UNDERFITTING IS THE OPPOSITE — both curves bad, model too simple. The fix is
+  the reverse: more capacity, better features, longer training.
+· CROSS-VALIDATION DETECTS it; it does not prevent it.
+· THE VARIANCE END OF THE BIAS-VARIANCE TRADE — that is the vocabulary to use."""
+
+_ANSWER_V2["ROC curve, AUC & choosing a threshold"] = """A classifier outputs a PROBABILITY; the threshold that turns it into yes/no is
+a separate decision, and 0.5 is rarely the right one.
+
+· THE ROC CURVE plots true-positive rate against false-positive rate across
+  every threshold.
+· AUC is the area under it, and it has a clean meaning: the probability that
+  the model ranks a random positive above a random negative. 1.0 perfect, 0.5
+  a coin flip.
+· AUC MEASURES RANKING, not calibration - a model can have a superb AUC and
+  probabilities that mean nothing.
+· ON IMBALANCED DATA use the PRECISION-RECALL curve instead. ROC flatters,
+  because the false-positive rate divides by an enormous number of negatives.
+· CHOOSING THE THRESHOLD is a business decision: what does a false positive
+  cost against a false negative? Sweep the curve and pick the operating point
+  deliberately.
+· MOVING THE THRESHOLD IS FREE — no retraining, and it is usually the first
+  thing to try on a model that 'catches nothing'."""
+
+_ANSWER_V2["The Transformer & self-attention (the big one)"] = """It reads the whole sequence at once and lets every token weigh every other one
+- no recurrence, so it parallelises.
+
+· SELF-ATTENTION — each token is projected into a QUERY, a KEY and a VALUE.
+  Score = softmax(Q . K^T / sqrt(d)), and the output is that weighted sum of
+  VALUES.
+· WHY DIVIDE BY sqrt(d) — without it the dot products grow with dimension, the
+  softmax saturates, and the gradients vanish.
+· MULTI-HEAD — several attentions in parallel in different subspaces, so one
+  head can track syntax while another tracks reference.
+· POSITIONAL ENCODINGS — with no recurrence the model has no idea of order, so
+  position is added to the embeddings explicitly.
+· WHY IT WON — RNNs process one token at a time and cannot parallelise across
+  a sequence; attention does the whole sequence in one matrix multiply, which
+  is what made training on internet-scale data possible.
+· THE COST — attention is O(n^2) in sequence length, which is why context
+  windows are expensive and why every 'efficient attention' paper exists."""
+
+_ANSWER_V2["How does self-attention work (the Transformer core)?"] = """Each token asks every other token 'how relevant are you to me?', then mixes in
+their meaning by that weight.
+
+· THE THREE VECTORS — QUERY (what I am looking for), KEY (what I offer), VALUE
+  (what I pass on). Every token has all three.
+· THE FOUR STEPS — dot each query with every key to get scores; divide by
+  sqrt(d_k) for stability; softmax into weights that sum to 1; take the
+  weighted sum of VALUES.
+· WHAT COMES OUT is a new, context-aware representation of that token - which
+  is how 'it' comes to mean 'the animal' rather than 'the street'.
+· MULTI-HEAD runs several in parallel, each learning a different kind of
+  relationship, and concatenates them.
+· MASKED ATTENTION in a decoder hides future tokens, so a model that predicts
+  the next word cannot simply read it.
+· COST — every token attends to every other, so O(n^2) in sequence length."""
+
+_ANSWER_V2["Middle of the Linked List"] = """Fast and slow pointers: fast moves two, slow moves one, and when fast reaches
+the end slow is at the middle.
+
+· WHY IT WORKS — fast covers exactly twice the ground, so it hits the end when
+  slow is halfway.
+· EVEN LENGTHS — this returns the SECOND middle. For the first, stop while
+  fast.next.next exists instead.
+· ONE PASS, no length computed first - which is the point of the question.
+· THE SAME TWO POINTERS detect a cycle and find the nth node from the end; it
+  is one technique, not three.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2["Move Zeroes"] = """A write pointer marks the next slot for a non-zero; scan and pack them forward,
+then fill the rest with zeros.
+
+· HOW — for each element, if it is non-zero, write it at the write pointer and
+  advance that pointer. At the end, everything from the write pointer onward
+  becomes 0.
+· ORDER IS PRESERVED because you copy in the order you meet them.
+· THE ONE-PASS VARIANT swaps the current element with the write position
+  instead, which avoids the second loop.
+· IN PLACE — no second array; that is the constraint being tested.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2["Palindrome Linked List"] = """Find the middle, reverse the second half, then walk the two halves together.
+
+· WHY REVERSE — a singly linked list cannot be read backwards, so you make the
+  back half readable forwards instead. That is the whole idea.
+· THE THREE STEPS — fast/slow to the middle, reverse from there, compare pair
+  by pair until one half runs out.
+· ODD LENGTHS — the middle element belongs to neither comparison, and the loop
+  ends naturally without special-casing it.
+· BE POLITE and reverse it back afterwards if the caller keeps the list;
+  mention it even if you do not do it.
+· COST — O(n) time, O(1) space. The easy version - copy to an array and use two
+  pointers - is O(n) space, and the whole question is avoiding that."""
+
+_ANSWER_V2["Reverse Linked List"] = """Walk with prev, curr and next, flipping each node's pointer backwards.
+
+· THE ORDER INSIDE THE LOOP — save next, point curr at prev, move prev to curr,
+  move curr to next. Saving next FIRST is what stops you losing the rest of the
+  list.
+· THE NEW HEAD is prev when curr falls off the end - not curr, which is null.
+· RECURSIVE VERSION — reverse the rest, then make the next node point back at
+  this one. Elegant, O(n) stack, and worth being able to write both.
+· THIS IS THE BUILDING BLOCK for palindrome checks, reversing in k-groups, and
+  reordering - learn it until it is muscle memory.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2["Squares of a Sorted Array"] = """The biggest squares are at the ENDS, so fill the answer from the BACK with two
+pointers.
+
+· WHY THE ENDS — the array is sorted but may be negative, so the largest
+  magnitude is either the most negative number or the largest positive one.
+· HOW — compare the squares at the two ends, write the larger into the last
+  free slot of the result, and move that pointer inward.
+· FILLING FROM THE BACK is what makes it one pass; filling forward would need
+  the smallest first, which is in the middle and hard to find.
+· THE OBVIOUS ALTERNATIVE — square everything and sort - is O(n log n), and
+  beating that is the point.
+· COST — O(n) time, O(n) for the output."""
+
+
 _ANSWER_V2["Merge Intervals"] = """Sort by START, then sweep: if the next interval begins at or before the last
 one's end, extend that end instead of starting a new interval.
 
