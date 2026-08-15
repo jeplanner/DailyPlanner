@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Goal Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='components.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<style>
+  .gp-wrap { max-width: 940px; margin: 0 auto; padding: 0 4px 40px; }
+  .gp-wrap h1 { font-size: 22px; margin: 0 0 4px; }
+  .gp-sub { font-size: 13px; color: var(--color-text-secondary); margin: 0 0 14px; }
+
+  /* ── The hero: one pinned goal, the only place that gets to be loud ── */
+  .hero { border: 1px solid var(--color-border); border-radius: 16px; padding: 20px 20px 16px;
+          margin-bottom: 14px; background: var(--color-surface); position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: #64748b; }
+  .hero[data-tone="soon"]::before    { background: #d97706; }
+  .hero[data-tone="urgent"]::before  { background: #dc2626; }
+  .hero[data-tone="overdue"]::before { background: #7f1d1d; }
+  .hero[data-tone="done"]::before    { background: #059669; }
+  .hero-title { font-size: 17px; font-weight: 800; margin: 0 0 10px; }
+  .clock { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .clock .big { font-size: 62px; font-weight: 900; line-height: 1; letter-spacing: -.03em;
+                font-variant-numeric: tabular-nums; }
+  .clock .unit { font-size: 15px; font-weight: 800; color: var(--color-text-secondary);
+                 text-transform: uppercase; letter-spacing: .06em; }
+  .clock .detail { font-size: 13px; font-weight: 700; color: var(--color-text-secondary);
+                   font-variant-numeric: tabular-nums; margin-left: auto; }
+  /* Only the last day pulses. Anything more and it becomes wallpaper. */
+  @keyframes gp-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .flash .big, .flash .unit { animation: gp-pulse 1.1s ease-in-out infinite; color: #dc2626; }
+  @media (prefers-reduced-motion: reduce) { .flash .big, .flash .unit { animation: none; } }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 12.5px;
+          font-weight: 700; color: var(--color-text-secondary); }
+  .meta b { color: var(--color-text); font-weight: 900; }
+  .pacebar { height: 8px; border-radius: 999px; background: var(--color-border); overflow: hidden;
+             margin: 10px 0 4px; position: relative; }
+  .pacebar i { display: block; height: 100%; background: #2563eb; }
+  /* The notch is where the plan says you should be — the gap to the fill
+     is the whole story, and it reads instantly. */
+  .pacebar .mark { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--color-text); }
+
+  .coach { margin-top: 12px; padding: 11px 13px; border-radius: 10px; font-size: 13.5px;
+           font-weight: 700; line-height: 1.55; border-left: 4px solid; }
+  .coach[data-tone="celebrate"] { background: #ecfdf5; border-color: #059669; color: #065f46; }
+  .coach[data-tone="cheer"]     { background: #eff6ff; border-color: #2563eb; color: #1e3a8a; }
+  .coach[data-tone="push"]      { background: #fffbeb; border-color: #d97706; color: #78350f; }
+  .coach[data-tone="scold"]     { background: #fef2f2; border-color: #dc2626; color: #7f1d1d; }
+  .coach[data-tone="alarm"]     { background: #fef2f2; border-color: #991b1b; color: #7f1d1d; }
+  html.dark .coach[data-tone="celebrate"] { background:#052e21; color:#a7f3d0; }
+  html.dark .coach[data-tone="cheer"]     { background:#0b1f3f; color:#bfdbfe; }
+  html.dark .coach[data-tone="push"]      { background:#2a1e05; color:#fde68a; }
+  html.dark .coach[data-tone="scold"], html.dark .coach[data-tone="alarm"] { background:#2a0b0b; color:#fecaca; }
+
+  .budget { margin-top: 10px; font-size: 13px; font-weight: 700; padding: 9px 12px; border-radius: 9px;
+            background: var(--color-bg); border: 1px dashed var(--color-border); }
+  .budget.bad { border-color: #dc2626; color: #991b1b; } html.dark .budget.bad { color:#fca5a5; }
+
+  /* ── The quiet list ── */
+  .row { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border: 1px solid var(--color-border);
+         border-radius: 11px; margin-bottom: 7px; background: var(--color-surface); }
+  .row .rt { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; }
+  .row .rc { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 15px; white-space: nowrap; }
+  .row .ru { font-size: 10.5px; font-weight: 800; color: var(--color-text-secondary);
+             text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  .row[data-tone="urgent"] .rc, .row[data-tone="overdue"] .rc { color: #dc2626; }
+  .row .pin { font-size: 11px; font-weight: 800; border: 1px solid var(--color-border); background: var(--color-bg);
+              border-radius: 999px; padding: 3px 9px; cursor: pointer; color: var(--color-text-secondary); }
+  .row .pin.on { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+  .row .prog { font-size: 11.5px; font-weight: 800; color: var(--color-text-secondary); white-space: nowrap; }
+
+  .newbox { border: 1px solid var(--color-border); border-radius: 12px; padding: 12px; margin-bottom: 14px;
+            background: var(--color-surface); }
+  .newbox .grid { display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr auto; gap: 8px; }
+  .newbox input, .newbox select { font: inherit; font-size: 13.5px; padding: 8px 10px; border-radius: 9px;
+            border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text); width: 100%; box-sizing: border-box; }
+  .newbox label { display: block; font-size: 10.5px; font-weight: 800; text-transform: uppercase;
+            letter-spacing: .05em; color: var(--color-text-secondary); margin-bottom: 3px; }
+  .empty { text-align: center; padding: 34px 16px; color: var(--color-text-secondary); font-size: 14px; }
+  .warn { background:#fef2f2; border:1px solid #dc2626; color:#7f1d1d; padding:11px 13px; border-radius:10px;
+          font-size:13px; font-weight:700; margin-bottom:12px; }
+  @media (max-width: 720px) {
+    .newbox .grid { grid-template-columns: 1fr 1fr; }
+    .clock .big { font-size: 46px; }
+    .clock .detail { margin-left: 0; flex: 1 0 100%; }
+  }
+</style>
+
+<div class="gp-wrap">
+  <h1>⏳ Goal Planner</h1>
+  <p class="gp-sub">Give a goal a deadline and it stops being a wish. These are the same objectives as
+    <a href="/goals">/goals</a> — add key results there and progress here fills in by itself.</p>
+
+  <div id="warn"></div>
+
+  <div class="newbox">
+    <div class="grid">
+      <div><label>Goal</label><input id="n-title" type="text" placeholder="e.g. Crack the TPM loop"></div>
+      <div><label>Deadline</label><input id="n-when" type="datetime-local"></div>
+      <div><label>Mins/day</label><input id="n-commit" type="number" min="0" step="15" placeholder="120"></div>
+      <div><label>Total hours needed</label><input id="n-effort" type="number" min="0" step="1" placeholder="139"></div>
+      <div style="align-self:end"><button class="btn sm" id="n-add" type="button">Add goal</button></div>
+    </div>
+  </div>
+
+  <div id="hero"></div>
+  <div id="list"></div>
+</div>
+
+<script src="{{ url_for('static', filename='js/countdown.js') }}"></script>
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const hhmm = (m) => { m=Math.round(m||0); const h=Math.floor(m/60), r=m%60;
+                        return h&&r ? h+"h "+r+"m" : (h? h+"h" : r+"m"); };
+  let DATA = null;
+
+  const api = async (path, opts) => {
+    const r = await fetch(path, Object.assign({credentials:"same-origin",
+      headers:{"Content-Type":"application/json",
+               "X-CSRFToken":(document.querySelector('meta[name=csrf-token]')||{}).content||""}}, opts||{}));
+    const body = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.error || "request failed");
+    return body;
+  };
+
+  function heroHTML(g){
+    const c = g.countdown, d = c.display, p = c.pace, b = c.budget;
+    // The notch marks where the plan says you should be; the bar is where
+    // you are. The distance between them is the point of the whole widget.
+    const bar = p ? `<div class="pacebar"><i style="width:${Math.max(0,Math.min(100,p.progress))}%"></i>`
+                    + `<span class="mark" style="left:${Math.max(0,Math.min(100,p.expected))}%"></span></div>` : "";
+    const meta = [];
+    meta.push(`<span><b>${g.progress}%</b> done${p?` · plan says <b>${p.expected}%</b>`:""}</span>`);
+    if (c.working_days_left) meta.push(`<span><b>${c.working_days_left}</b> working days</span>`);
+    if (p && p.gap_days) meta.push(`<span><b>${p.gap_days>0?"+":""}${p.gap_days}</b> days vs plan</span>`);
+    if (g.kr_count) meta.push(`<span><b>${g.kr_count}</b> key result${g.kr_count===1?"":"s"}</span>`);
+    if (g.next_checkpoint) meta.push(`<span>next: <b>${esc(g.next_checkpoint.title)}</b> in ${g.next_checkpoint.days}d</span>`);
+
+    let budget = "";
+    if (b) {
+      budget = b.feasible
+        ? `<div class="budget">🟢 <b>${hhmm(b.available_minutes)}</b> available at ${hhmm(b.commit_minutes)}/day ·
+             needs <b>${hhmm(b.needed_minutes)}</b> · <b>${hhmm(b.surplus_minutes)}</b> of slack</div>`
+        : `<div class="budget bad">🔴 <b>${hhmm(b.available_minutes)}</b> available at ${hhmm(b.commit_minutes)}/day
+             but this needs <b>${hhmm(b.needed_minutes)}</b> — short by <b>${hhmm(b.shortfall_minutes)}</b>.
+             Go to <b>${hhmm(b.required_daily_minutes)}/day</b> or cut scope.</div>`;
+    }
+    return `<div class="hero" data-tone="${esc(d.tone)}" data-countdown="${esc(c.target_iso)}"
+                 data-flash="${c.flash?'true':'false'}">
+        <div class="hero-title">${esc(g.title)}</div>
+        <div class="clock">
+          <span class="big" data-cd-big>${d.value}</span>
+          <span class="unit" data-cd-unit>${esc(d.unit)}</span>
+          <span class="detail" data-cd-detail></span>
+        </div>
+        ${bar}
+        <div class="meta">${meta.join("")}</div>
+        ${budget}
+        <div class="coach" data-tone="${esc(g.coach.tone)}">${esc(g.coach.message)}</div>
+      </div>`;
+  }
+
+  function rowHTML(g){
+    const c = g.countdown;
+    const d = c.has_deadline ? c.display : null;
+    return `<div class="row" data-tone="${d?esc(d.tone):''}">
+        <span class="pin ${g.is_primary?'on':''}" data-pin="${g.id}" title="Pin as the main countdown">
+          ${g.is_primary?'★ pinned':'☆ pin'}</span>
+        <span class="rt">${esc(g.title)}</span>
+        <span class="prog">${g.progress}%</span>
+        ${d ? `<span class="rc">${d.value}</span><span class="ru">${esc(d.unit)}</span>`
+            : `<span class="ru">no deadline</span>`}
+      </div>`;
+  }
+
+  function render(){
+    if (!DATA) return;
+    // The ticker is an enhancement, not a dependency. If countdown.js failed
+    // to load, the server already sent a rendered value and unit for every
+    // goal — so the page must still show them, just frozen. Losing the whole
+    // planner because a script 404'd would be a bad trade.
+    const CD = (typeof Countdown !== "undefined") ? Countdown : null;
+    if (CD) CD.clear();                   // detached nodes must stop ticking
+    const primary = DATA.goals.find(g => g.id === DATA.primary_id);
+    $("hero").innerHTML = primary && primary.countdown.has_deadline ? heroHTML(primary) : "";
+    const rest = DATA.goals.filter(g => !primary || g.id !== primary.id);
+    $("list").innerHTML = rest.length ? rest.map(rowHTML).join("")
+      : (primary ? "" : `<div class="empty">No goals yet. Add one above — a title and a date is enough to start.</div>`);
+    if (CD) CD.mountAll(document);
+  }
+
+  async function load(){
+    try {
+      DATA = await api("/api/goal-planner");
+      $("warn").innerHTML = "";
+      render();
+    } catch (e) {
+      $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`;
+    }
+  }
+
+  $("n-add").addEventListener("click", async () => {
+    const title = ($("n-title").value||"").trim();
+    if (!title) { $("n-title").focus(); return; }
+    const when = $("n-when").value;
+    const commit = parseInt($("n-commit").value, 10);
+    const effortH = parseFloat($("n-effort").value);
+    const payload = {title: title};
+    // datetime-local has no zone; the server stores it against the user's
+    // timezone, which is the reading the person typing it intends.
+    if (when) payload.target_at = when;
+    if (!isNaN(commit)) payload.daily_commit_minutes = commit;
+    if (!isNaN(effortH)) payload.effort_minutes = Math.round(effortH * 60);
+    try {
+      await api("/api/goal-planner/goals", {method:"POST", body: JSON.stringify(payload)});
+      ["n-title","n-when","n-commit","n-effort"].forEach(i => $(i).value = "");
+      load();
+    } catch (e) { $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+  });
+
+  document.addEventListener("click", async (ev) => {
+    const pin = ev.target.closest("[data-pin]");
+    if (!pin) return;
+    try {
+      await api("/api/goal-planner/goals/" + pin.dataset.pin + "/primary", {method:"POST"});
+      load();
+    } catch (e) { $("warn").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+  });
+
+  load();
+})();
+</script>
+
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
+</body>
+</html>

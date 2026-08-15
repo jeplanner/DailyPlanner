@@ -425,3 +425,138 @@ def test_ai_sde_pdf_carries_the_interview_tags(auth_client):
     assert "DSA / Graphs" in text
     # The heading names the filter, so the sheet says what it is.
     assert "Must-Know" in text[:400]
+
+
+# ═══════════════════════════════════════════════════
+# Goal planner — countdown maths, coach calibration, page
+# ═══════════════════════════════════════════════════
+
+def _tz_and_now():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Asia/Kolkata")
+    return tz, datetime(2026, 8, 15, 9, 0, tzinfo=tz)
+
+
+def test_countdown_resolves_a_bare_date_to_end_of_day():
+    """A date means "by the end of that day". Treating it as midnight would
+    silently steal the last 24 hours of every goal."""
+    from utils.countdown import resolve_target
+    tz, _ = _tz_and_now()
+    got = resolve_target(None, "2026-08-20", tz)
+    assert (got.hour, got.minute, got.second) == (23, 59, 59)
+    # An explicit moment must win over the date and keep its own time.
+    exact = resolve_target("2026-08-20T14:30:00+05:30", "2026-08-20", tz)
+    assert (exact.hour, exact.minute) == (14, 30)
+
+
+def test_countdown_unit_escalates_towards_the_deadline():
+    """The headline unit getting finer IS the urgency signal, so nothing has
+    to flash while a goal is still weeks away. Also pins the tick rate: a
+    per-second redraw six weeks out is pure battery burn."""
+    from datetime import timedelta
+    from utils.countdown import breakdown, display, TICK_SECOND, TICK_HOUR
+    _, now = _tz_and_now()
+    far = display(breakdown(now + timedelta(days=45), now))
+    near = display(breakdown(now + timedelta(hours=12), now))
+    assert (far["unit"], far["tone"], far["tick"]) == ("weeks", "calm", TICK_HOUR)
+    assert near["tone"] == "urgent" and near["tick"] == TICK_SECOND
+    late = display(breakdown(now - timedelta(days=2), now))
+    assert late["tone"] == "overdue" and late["value"] == 2
+
+
+def test_countdown_split_is_complementary():
+    """16 days must read "2w 2d", never "2w 16d" — the parts sum to the whole."""
+    from datetime import timedelta
+    from utils.countdown import breakdown
+    _, now = _tz_and_now()
+    b = breakdown(now + timedelta(days=16), now)
+    assert (b["weeks"], b["days"]) == (2, 2)
+    assert b["total_days"] == 16
+
+
+def test_countdown_working_days_excludes_weekends():
+    """"44 days" quietly includes a dozen days nobody was going to work."""
+    from datetime import date
+    from utils.countdown import working_days
+    # Mon 17 Aug 2026 → Fri 28 Aug is 12 calendar days, 10 working.
+    assert working_days(date(2026, 8, 17), date(2026, 8, 28)) == 10
+    assert working_days(date(2026, 8, 15), date(2026, 8, 16)) == 0   # a weekend
+    assert working_days(date(2026, 8, 20), date(2026, 8, 10)) == 0   # end before start
+    # A six-day study week loses only the Sunday.
+    assert working_days(date(2026, 8, 17), date(2026, 8, 28), (0, 1, 2, 3, 4, 5)) == 11
+
+
+def test_countdown_budget_flags_an_impossible_goal():
+    """The most valuable number on the page: whether the remaining time can
+    physically hold the remaining work, while re-scoping is still cheap."""
+    from utils.countdown import budget
+    b = budget(working_days_left=31, daily_commit_minutes=120, effort_minutes=139 * 60)
+    assert b["feasible"] is False
+    assert b["shortfall_minutes"] == 139 * 60 - 31 * 120
+    assert b["required_daily_minutes"] == round(139 * 60 / 31)
+    # Without both halves the answer would be a guess, so there isn't one.
+    assert budget(31, 120, None) is None
+    assert budget(31, None, 8340) is None
+
+
+def test_goal_coach_judges_slippage_relatively_not_in_raw_points():
+    """14 points behind at 24% expected means only 40% of the work is done —
+    serious. The same 14 points at 90% expected is a rounding error. Absolute
+    gaps get this backwards, which is why severity is a ratio."""
+    from utils.countdown import summarise
+    from services.goal_coach import coach
+    tz, now = _tz_and_now()
+    goal = {"title": "T", "start_date": "2026-08-01",
+            "target_at": "2026-09-28T18:00:00+05:30"}
+    early_bad = coach(summarise(goal, now, tz, progress_pct=10), "T", 10)
+    assert early_bad[1] == "scold"
+    late = {"title": "T", "start_date": "2026-01-01",
+            "target_at": "2026-09-01T18:00:00+05:30"}
+    late_slip = coach(summarise(late, now, tz, progress_pct=76), "T", 76)
+    assert late_slip[1] == "push", "a late-stage 14-point gap is not a scolding"
+    # Day one of a long goal must not be scolded for 0% against 0% expected.
+    fresh = {"title": "T", "start_date": "2026-08-14",
+             "target_at": "2027-08-14T18:00:00+05:30"}
+    assert coach(summarise(fresh, now, tz, progress_pct=0), "T", 0)[1] == "cheer"
+
+
+def test_goal_coach_puts_infeasibility_above_being_on_pace():
+    """Being "on pace" for something arithmetically impossible is the most
+    dangerous state a plan can be in, so the budget alarm outranks pace."""
+    from utils.countdown import summarise
+    from services.goal_coach import coach
+    tz, now = _tz_and_now()
+    goal = {"title": "T", "start_date": "2026-08-01",
+            "target_at": "2026-09-28T18:00:00+05:30",
+            "daily_commit_minutes": 120, "effort_minutes": 139 * 60}
+    msg, tone = coach(summarise(goal, now, tz, progress_pct=33), "T", 33)
+    assert tone == "alarm" and "short" in msg
+
+
+def test_goal_planner_page_and_api(auth_client, monkeypatch):
+    """The page renders and the API shapes one goal per objective, sorted by
+    urgency with undated goals last."""
+    import routes.goals as goals
+
+    objectives = [
+        {"id": "g1", "title": "Dated", "status": "active", "start_date": "2026-08-01",
+         "target_at": "2036-09-28T18:00:00+05:30", "created_at": "2026-08-01T00:00:00+00:00"},
+        {"id": "g2", "title": "Undated", "status": "active",
+         "created_at": "2026-08-01T00:00:00+00:00"},
+    ]
+    krs = [{"id": "k1", "objective_id": "g1", "start_value": 0, "current_value": 5,
+            "target_value": 10, "direction": "up", "title": "Half done"}]
+    monkeypatch.setattr(goals, "get", lambda table, params=None, **kw:
+                        objectives if table == "objectives"
+                        else (krs if table == "key_results" else []))
+
+    assert auth_client.get("/goal-planner").status_code == 200
+    body = auth_client.get("/api/goal-planner").get_json()
+    assert [g["title"] for g in body["goals"]] == ["Dated", "Undated"], \
+        "undated goals must sink below dated ones — they cannot be urgent"
+    dated = body["goals"][0]
+    assert dated["progress"] == 50, "progress must roll up from key results"
+    assert dated["countdown"]["has_deadline"] is True
+    assert body["goals"][1]["countdown"]["has_deadline"] is False
+    assert dated["coach"]["message"]

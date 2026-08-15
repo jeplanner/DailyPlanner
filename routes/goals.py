@@ -1332,3 +1332,257 @@ def project_hierarchy(project_id):
             "sprints":     len(sprints),
         },
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# GOAL PLANNER — the deadline / countdown view over the same objectives
+#
+# Deliberately NOT a second goals table. A goal entered here is an
+# `objectives` row, so it shows up on /goals with its key results, and an
+# objective created there counts down here the moment it gets a date.
+#
+# Every countdown column is optional: if MIGRATION_GOAL_COUNTDOWN.sql has
+# not been run yet, the reads simply return None for those keys and the
+# page falls back to `target_date` with the budget line hidden. Writes to
+# the new columns are the only thing that hard-fails, and they say so.
+# ══════════════════════════════════════════════════════════════════════
+
+from services.goal_coach import coach as _goal_coach          # noqa: E402
+from utils.countdown import summarise as _countdown           # noqa: E402
+from utils.user_tz import user_now, user_tz                   # noqa: E402
+
+#: Columns the planner is allowed to write. Anything else must go through
+#: the existing objective PATCH so validation stays in one place.
+_PLANNER_FIELDS = {
+    "title", "target_at", "target_date", "start_date",
+    "daily_commit_minutes", "effort_minutes", "flash_enabled",
+}
+
+
+def _objective_progress(user_id, objectives):
+    """Percent-complete per objective, averaged over its key results.
+
+    Mirrors the roll-up in `list_objectives` rather than importing it, so
+    the planner cannot be broken by a change to that endpoint's response
+    shape. Objectives with no key results score 0 — an objective nobody
+    has made measurable has not been progressed, whatever it feels like.
+    """
+    if not objectives:
+        return {}
+    ids = [o["id"] for o in objectives]
+    krs = get("key_results", params={
+        "user_id": f"eq.{user_id}",
+        "objective_id": f"in.({','.join(ids)})",
+        "is_deleted": "eq.false",
+        "select": "id,objective_id,start_value,current_value,target_value,direction,due_at,title",
+        "limit": 5000,
+    }) or []
+    out = {}
+    for o in objectives:
+        mine = [k for k in krs if k["objective_id"] == o["id"]]
+        out[o["id"]] = {
+            "progress": round(sum(_kr_progress(k) for k in mine) / len(mine)) if mine else 0,
+            "kr_count": len(mine),
+            "key_results": mine,
+        }
+    return out
+
+
+def _next_checkpoint(krs, now):
+    """The soonest not-yet-passed key-result due date, as {title, iso, days}.
+
+    A six-month countdown is useless for five of those months; the next
+    checkpoint is what makes a distant goal actionable this week.
+    """
+    upcoming = []
+    for k in krs:
+        raw = k.get("due_at")
+        if not raw:
+            continue
+        try:
+            when = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=now.tzinfo)
+        if when >= now:
+            upcoming.append((when, k))
+    if not upcoming:
+        return None
+    when, kr = min(upcoming, key=lambda p: p[0])
+    return {"title": kr.get("title") or "Checkpoint",
+            "iso": when.isoformat(),
+            "days": (when - now).days}
+
+
+@goals_bp.route("/goal-planner")
+@login_required
+def goal_planner_page():
+    return render_template("goal_planner.html")
+
+
+@goals_bp.route("/api/goal-planner", methods=["GET"])
+@login_required
+def goal_planner_data():
+    """Every dated goal with its countdown, pace, budget and coach line.
+
+    Sorted by urgency — soonest deadline first, undated goals last — so
+    the top of the page is always the thing closest to being late.
+    """
+    user_id = session["user_id"]
+    now = user_now()
+    tz = user_tz()
+
+    objectives = get("objectives", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
+        "status": "eq.active",
+        "select": "*",
+        "order": "order_index.asc,created_at.asc",
+        "limit": 500,
+    }) or []
+
+    prog = _objective_progress(user_id, objectives)
+    goals, primary = [], None
+    for o in objectives:
+        p = prog.get(o["id"], {"progress": 0, "kr_count": 0, "key_results": []})
+        summary = _countdown(o, now, tz, progress_pct=p["progress"])
+        message, tone = _goal_coach(summary, o.get("title") or "", p["progress"])
+        row = {
+            "id": o["id"],
+            "title": o.get("title"),
+            "description": o.get("description"),
+            "status": o.get("status"),
+            "start_date": o.get("start_date"),
+            "target_date": o.get("target_date"),
+            "target_at": o.get("target_at"),
+            "daily_commit_minutes": o.get("daily_commit_minutes"),
+            "effort_minutes": o.get("effort_minutes"),
+            "flash_enabled": o.get("flash_enabled", True),
+            "is_primary": bool(o.get("is_primary")),
+            "progress": p["progress"],
+            "kr_count": p["kr_count"],
+            "next_checkpoint": _next_checkpoint(p["key_results"], now),
+            "countdown": summary,
+            "coach": {"message": message, "tone": tone},
+        }
+        goals.append(row)
+        if row["is_primary"]:
+            primary = row
+
+    # Soonest deadline first; undated goals sink to the bottom, since a goal
+    # with no date cannot be urgent by definition.
+    goals.sort(key=lambda g: (
+        not g["countdown"].get("has_deadline"),
+        g["countdown"].get("breakdown", {}).get("total_seconds", 1 << 62),
+    ))
+    # Nothing pinned: the most urgent dated goal stands in, so the page has
+    # a hero without forcing the user to choose one first.
+    if primary is None:
+        primary = next((g for g in goals if g["countdown"].get("has_deadline")), None)
+
+    return jsonify({
+        "goals": goals,
+        "primary_id": primary["id"] if primary else None,
+        "now": now.isoformat(),
+        "counts": {
+            "total": len(goals),
+            "dated": sum(1 for g in goals if g["countdown"].get("has_deadline")),
+            "overdue": sum(1 for g in goals
+                           if g["countdown"].get("breakdown", {}).get("overdue")),
+            "at_risk": sum(1 for g in goals if g["coach"]["tone"] in ("scold", "alarm")),
+        },
+    })
+
+
+@goals_bp.route("/api/goal-planner/goals", methods=["POST"])
+@login_required
+def goal_planner_create():
+    """Create a goal from the planner's one-line form.
+
+    Only a title is required. Everything else sharpens the countdown, and
+    the page nags for the missing pieces rather than blocking on them.
+    """
+    data = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title required"}), 400
+
+    payload = {
+        "user_id": session["user_id"],
+        "title": title,
+        "description": (data.get("description") or "").strip() or None,
+        "time_horizon": "ongoing",
+        "status": "active",
+        "start_date": data.get("start_date") or user_now().date().isoformat(),
+        "target_date": data.get("target_date") or None,
+    }
+    for field in ("target_at", "daily_commit_minutes", "effort_minutes"):
+        if data.get(field) not in (None, ""):
+            payload[field] = data[field]
+    try:
+        rows = post("objectives", payload)
+    except Exception as exc:
+        return _planner_schema_error(exc)
+    return jsonify({"status": "ok", "goal": rows[0] if rows else None})
+
+
+@goals_bp.route("/api/goal-planner/goals/<goal_id>", methods=["PATCH"])
+@login_required
+def goal_planner_update(goal_id):
+    """Update the countdown fields on one goal."""
+    data = request.get_json(force=True) or {}
+    patch = {k: v for k, v in data.items() if k in _PLANNER_FIELDS}
+    if not patch:
+        return jsonify({"error": "nothing to update"}), 400
+    # Empty string means "clear it" — otherwise a cleared date would be
+    # stored as "" and every parse downstream would have to defend itself.
+    for k, v in list(patch.items()):
+        if v == "":
+            patch[k] = None
+    try:
+        update("objectives", params={
+            "id": f"eq.{goal_id}", "user_id": f"eq.{session['user_id']}",
+        }, json=patch)
+    except Exception as exc:
+        return _planner_schema_error(exc)
+    return jsonify({"status": "ok"})
+
+
+@goals_bp.route("/api/goal-planner/goals/<goal_id>/primary", methods=["POST"])
+@login_required
+def goal_planner_pin(goal_id):
+    """Pin one goal as the hero countdown, unpinning whatever held it.
+
+    Unpin first, then pin: the partial unique index in the migration
+    allows only one primary per user, so doing it the other way round
+    would collide.
+    """
+    user_id = session["user_id"]
+    try:
+        update("objectives", params={
+            "user_id": f"eq.{user_id}", "is_primary": "eq.true",
+        }, json={"is_primary": False})
+        update("objectives", params={
+            "id": f"eq.{goal_id}", "user_id": f"eq.{user_id}",
+        }, json={"is_primary": True})
+    except Exception as exc:
+        return _planner_schema_error(exc)
+    return jsonify({"status": "ok", "primary_id": goal_id})
+
+
+def _planner_schema_error(exc):
+    """Turn the Postgres 'column does not exist' 400 into a real instruction.
+
+    Without this the page shows a bare 500 and the cause — an unrun
+    migration — is invisible.
+    """
+    text = str(exc)
+    if "column" in text and ("does not exist" in text or "schema cache" in text):
+        logger.warning("goal planner: countdown columns missing - %s", text)
+        return jsonify({
+            "error": "The goal countdown columns are missing. Run "
+                     "MIGRATION_GOAL_COUNTDOWN.sql in Supabase, then reload.",
+            "migration": "MIGRATION_GOAL_COUNTDOWN.sql",
+        }), 503
+    raise exc
