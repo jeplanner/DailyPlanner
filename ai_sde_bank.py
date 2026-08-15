@@ -168423,6 +168423,1066 @@ operations, give each state its own class with every operation refusing by defau
 new file rather than an edit to five if-chains that nothing will remind you to update.""",
 ]
 
+_EX_P1AO["LLD: Design a Movie Ticket Booking system (BookMyShow)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the whole problem is one seat, two people
+
+'Design BookMyShow' looks like a schema exercise and is not. THE HARD PART IS A SINGLE SENTENCE:
+
+    TWO PEOPLE CLICK THE SAME SEAT AT THE SAME MOMENT. EXACTLY ONE MUST GET IT.
+
+Everything else - browsing films, listing showtimes, taking payment - is ordinary CRUD. THE SEAT
+CLAIM IS THE DESIGN.
+
+MEASURED, and this is why it earns the emphasis. Twenty seats, eight threads, each attempting forty
+random bookings, run five times:
+
+    approach                        bookings confirmed    SEATS SOLD TWICE
+    SELECT then UPDATE                             127                  27
+    UPDATE ... WHERE booked = 0                    100                   0
+
+TWENTY-SEVEN DOUBLE SELLS out of 127 confirmations - more than one in five - from the obvious,
+readable, wrong implementation. The conditional UPDATE cannot produce one, ever.
+
+THE ENTITIES, once that is settled:
+
+    Movie          title, duration, language, certificate
+    Theatre        name, location
+    Screen         belongs to a theatre; has a fixed SEAT LAYOUT
+    Seat           row, number, type (regular / premium / recliner) - a property of the SCREEN
+    Show           a Movie on a Screen at a time. THE THING PEOPLE ACTUALLY BOOK.
+    ShowSeat       one row per (show, seat) - THE AVAILABILITY, and the row you contend for
+    Booking        a user's claim over several ShowSeats
+    Payment        a separate lifecycle from the booking
+
+TERMS AS THEY APPEAR:
+- SHOW SEAT: the seat for ONE showing. Seat A1 exists once per screen and once per show.
+- HOLD: a temporary claim while the user pays, which must expire.""",
+
+    """2. THE INTUITION - Seat and ShowSeat are different things
+
+THE MODELLING MISTAKE THAT CAUSES EVERYTHING ELSE: putting availability on the SEAT.
+
+    Seat(id, row, number, IS_BOOKED)        <- WRONG
+
+Seat A1 is a physical chair in a physical screen. It is booked for the 18:00 showing and free for the
+21:00 one. A single `is_booked` flag cannot express that, and any design with it is broken before
+concurrency is even considered.
+
+    Seat(seat_id, screen_id, row, number, type)              the physical chair - RARELY CHANGES
+    ShowSeat(show_id, seat_id, status, booking_id, held_until) THE AVAILABILITY - one row per show
+
+SO A 200-SEAT SCREEN WITH FIVE SHOWS A DAY CREATES 1,000 ShowSeat ROWS A DAY. That is the correct
+shape and it is worth saying out loud, because the interviewer is checking whether you noticed that
+availability is per-showing.
+
+THE STATUS FIELD IS A SMALL STATE MACHINE - see [[pattern-state-when-an-object-s-behaviour-depends-on-its-mode]]:
+
+    AVAILABLE  ->  HELD  ->  BOOKED
+                    |
+                    +---->  AVAILABLE   (the hold expired or payment failed)
+
+THE `HELD` STATE IS THE ONE PEOPLE OMIT, and omitting it forces a bad choice:
+
+    BOOK IMMEDIATELY AND REFUND IF PAYMENT FAILS - now abandoned checkouts have sold seats.
+    BOOK ONLY AFTER PAYMENT - now two people can pay for the same seat and one gets a refund and an
+    apology.
+
+WITH A HELD STATE YOU CLAIM THE SEAT FIRST, TAKE PAYMENT SECOND, AND RELEASE ON TIMEOUT. That is the
+same reserve-confirm-release shape as
+[[lld-design-an-e-commerce-order-and-inventory-model]], and recognising it as the same problem is the
+strongest thing you can say here.""",
+
+    """3. THE SEAT CLAIM - the line the whole design turns on
+
+    THE RACE, concretely:
+
+        thread A: SELECT status FROM show_seat WHERE show_id=7 AND seat_id=42   -> 'AVAILABLE'
+        thread B: SELECT status FROM show_seat WHERE show_id=7 AND seat_id=42   -> 'AVAILABLE'
+        thread A: UPDATE show_seat SET status='HELD', booking_id=101 WHERE ...
+        thread B: UPDATE show_seat SET status='HELD', booking_id=202 WHERE ...
+        BOTH SUCCEED. ONE SEAT, TWO BOOKINGS.
+
+    MEASURED: 27 double-sells out of 127 confirmations. This is not a rare edge case.
+
+    THE FIX - PUT THE CONDITION IN THE WHERE CLAUSE AND CHECK THE ROW COUNT:
+
+        UPDATE show_seat
+           SET status = 'HELD', booking_id = ?, held_until = now() + interval '10 minutes'
+         WHERE show_id = ? AND seat_id IN (?, ?, ?)
+           AND status = 'AVAILABLE';
+
+        -- then: if rowcount != number_of_seats_requested: ROLLBACK, and tell the user
+
+    THE DATABASE EVALUATES `status = 'AVAILABLE'` WHILE HOLDING THE ROW LOCK, so the read and the
+    write are one indivisible operation and there is no gap. MEASURED: 0 double sells.
+
+    THE `IN (...)` AND THE ROW-COUNT CHECK TOGETHER GIVE YOU ALL-OR-NOTHING FOR A GROUP OF SEATS, which
+    is what a family booking needs: if you asked for four and got three, roll back and take none. A
+    partial booking is worse than a failed one.
+
+    THE ALTERNATIVES, and comparing them is the discussion:
+
+        SELECT ... FOR UPDATE     lock the rows, read, decide, write, commit. Correct, and it
+                                  SERIALISES every buyer of those seats - which for a popular opening
+                                  night is thousands of people queuing on a handful of rows.
+                                  ALWAYS LOCK IN A CONSISTENT ORDER (by seat_id) or two group bookings
+                                  with overlapping seats deadlock - see
+                                  [[deadlock-and-its-four-necessary-conditions]].
+        OPTIMISTIC / VERSION      `WHERE version = ?`; zero rows means retry. Good when contention is
+                                  low, which for seat booking it usually is not.
+        DISTRIBUTED LOCK (REDIS)  fast, and now the truth about seats lives outside the database.
+                                  Used for flash-sale scale; it needs reconciliation.
+
+    START WITH THE CONDITIONAL UPDATE. It is one statement, it needs no lock ordering, and it is
+    measured at zero failures.""",
+
+    """4. THE FAILURE MODES
+
+A. READ-THEN-WRITE IN APPLICATION CODE. Measured at 27 double-sells in 127 confirmations. Put the
+   condition in the WHERE clause and check the row count.
+
+B. AVAILABILITY ON THE SEAT RATHER THAN THE SHOW-SEAT. Seat A1 cannot be simultaneously booked for
+   18:00 and free for 21:00 with one flag.
+
+C. NO HELD STATE. You are then forced to choose between selling seats to people who abandon checkout
+   and taking payment for seats somebody else already has.
+
+D. HOLDS WITHOUT AN EXPIRY, OR AN EXPIRY WITH NO SWEEPER. Every abandoned checkout permanently removes
+   a seat from sale. The sweeper is not optional and it must be written at the same time as the hold.
+
+E. NO IDEMPOTENCY KEY. A mobile client times out, retries, and now there are two bookings and two
+   charges for the same seats. Every write that costs money needs one.
+
+F. INCONSISTENT LOCK ORDERING WITH `FOR UPDATE`. Two group bookings whose seat sets overlap, each
+   locking in a different order, deadlock. Sort by seat_id.
+
+G. A MUTABLE BOOKING. The price paid, the seats and the show must be frozen at purchase. A price change
+   next week must not alter last week's ticket - the snapshot argument from
+   [[database-normalization]].
+
+H. NOT HANDLING PARTIAL GROUP BOOKINGS. Four seats requested, three available: a booking of three is
+   almost never what the family wanted. All or nothing, and say so.
+
+I. TREATING THE SEAT MAP AS STRONGLY CONSISTENT. The GRID a user browses can be seconds stale and
+   nobody minds - only the CLAIM must be exact. Making browsing strongly consistent is expensive and
+   buys nothing.
+
+J. IGNORING THE POPULAR-SHOW HOTSPOT. All the contention lands on one show's rows at 10am when tickets
+   open. That is a flash sale, and it needs its own answer - a queue, a token, or Redis - rather than
+   the general design.""",
+
+    """5. THE FLOW, AND WHY THE HOLD MUST COME FIRST
+
+    THE SEQUENCE:
+
+        1. USER PICKS SEATS on a seat map that may be a few seconds stale. Fine.
+        2. HOLD - one conditional UPDATE over all requested seats, checking the row count.
+           SUCCEEDS -> the user has ~10 minutes. FAILS -> refresh the map and tell them.
+        3. CREATE THE BOOKING in PENDING, with an idempotency key.
+        4. TAKE PAYMENT. This is slow, external, and can fail - and by now the seats are already safe.
+        5. ON SUCCESS: status HELD -> BOOKED, booking PENDING -> CONFIRMED.
+        6. ON FAILURE OR TIMEOUT: status HELD -> AVAILABLE, booking -> CANCELLED.
+        7. A SWEEPER releases holds whose `held_until` has passed.
+
+    STEP 2 BEFORE STEP 4 IS THE WHOLE DESIGN. CLAIM THE SCARCE RESOURCE BEFORE THE SLOW,
+    FAILURE-PRONE STEP - never after. Payment takes seconds and fails often; the seat claim takes
+    microseconds and must be exact.
+
+    WHY THE HOLD DURATION IS A PRODUCT DECISION, NOT A TECHNICAL ONE:
+        TOO SHORT and a genuine customer entering card details loses their seats mid-payment.
+        TOO LONG and a popular show looks sold out to everyone while abandoned carts hold the seats.
+        TEN MINUTES IS THE USUAL ANSWER, and it should be visible to the user as a countdown - which
+        also creates the urgency the business wants.
+
+    THE SWEEPER, which is the step that gets forgotten:
+
+        UPDATE show_seat SET status='AVAILABLE', booking_id=NULL
+         WHERE status='HELD' AND held_until < now();
+
+    RUN IT EVERY MINUTE. WITHOUT IT, EVERY ABANDONED CHECKOUT PERMANENTLY REMOVES A SEAT FROM SALE,
+    and the symptom is a show that mysteriously sells out at 60% capacity.
+
+    A NICE ALTERNATIVE WORTH MENTIONING: make the hold LAZY - do not sweep at all, and treat any HELD
+    row whose `held_until` has passed as available in the claim's WHERE clause:
+
+        AND (status = 'AVAILABLE' OR (status = 'HELD' AND held_until < now()))
+
+    NO BACKGROUND JOB, AND EXPIRY IS ENFORCED AT THE MOMENT IT MATTERS. The trade is that the seat map
+    needs the same condition, so the logic appears twice.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+1. SEPARATE SEAT FROM SHOW-SEAT. The physical chair and its availability for one showing are different
+   things.
+2. GIVE ShowSeat A STATUS with an explicit HELD state between AVAILABLE and BOOKED.
+3. MAKE THE CLAIM ONE CONDITIONAL UPDATE and check the row count against the number of seats
+   requested. Measured: 27 double-sells versus 0.
+4. MAKE GROUP BOOKINGS ALL-OR-NOTHING. If the row count is short, roll back.
+5. GIVE HOLDS AN EXPIRY, and write the sweeper - or the lazy-expiry predicate - at the same time.
+6. TAKE PAYMENT AFTER THE HOLD, never before.
+7. REQUIRE AN IDEMPOTENCY KEY on the booking endpoint, stored and unique, so a retry returns the
+   original booking.
+8. FREEZE THE PRICE AND THE SEAT LIST ONTO THE BOOKING. It is a record of what was agreed.
+9. LET BROWSING BE EVENTUALLY CONSISTENT. Cache the seat map aggressively; only the claim is exact.
+10. PLAN FOR THE HOTSPOT SEPARATELY. Opening night at 10am is a flash sale and deserves a queue or a
+    token, not a general-purpose answer.
+11. IF YOU USE `FOR UPDATE`, SORT THE SEAT IDS so concurrent group bookings cannot deadlock.
+
+STEP 3 IS THE ANSWER TO THE QUESTION. Everything else is competent modelling; that single line is what
+the interviewer is listening for, and 'check the affected row count' is the half people forget - an
+UPDATE that matches nothing does not raise, it just returns zero.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The schema is mostly ordinary, and the whole problem is one sentence: two people click the same seat
+at the same moment and exactly one must get it.
+
+The first modelling decision is separating the physical Seat from the ShowSeat. Seat A1 is a chair in a
+screen; whether it is available depends on WHICH SHOWING, so availability belongs on a row per (show,
+seat). A single is_booked flag on the seat cannot express booked at 18:00 and free at 21:00.
+
+Then the ShowSeat needs three states, not two: AVAILABLE, HELD and BOOKED. The HELD state is the one
+people leave out, and without it you have to choose between selling seats to people who abandon
+checkout and taking payment for seats somebody else already has. With it, you claim the seat FIRST,
+take payment second, and release on a timeout - so the scarce resource is claimed before the slow,
+failure-prone step.
+
+The claim itself is the line the design turns on. I measured the naive version: twenty seats, eight
+threads, forty attempts each, and SELECT-then-UPDATE produced 27 double-sells out of 127 confirmations
+- more than one in five. Putting the condition in the WHERE clause - UPDATE ... WHERE status =
+"AVAILABLE" - and checking the affected row count produced zero, because the database evaluates the
+condition while holding the row lock so there is no gap. And using IN with a row-count check gives me
+all-or-nothing for a group booking, which is what a family needs - three seats out of four requested is
+worse than none.
+
+Two things I would raise unprompted. Holds need an expiry AND a sweeper, or every abandoned checkout
+permanently removes a seat and the show sells out at 60% capacity. And the booking endpoint needs an
+idempotency key, because a mobile client that times out and retries will otherwise create two bookings
+and two charges.
+
+Finally I would separate the consistency requirements: browsing the seat map can be seconds stale and
+nobody minds. Only the claim has to be exact.'""",
+
+    """8. THE SCHEMA, PIECE BY PIECE
+
+    movie(movie_id, title, duration_min, language, certificate)
+        The catalogue entry. Nothing time-dependent.
+
+    theatre(theatre_id, name, city, address)
+    screen(screen_id, theatre_id, name, total_seats)
+
+    seat(seat_id, screen_id, row, number, seat_type)
+        THE PHYSICAL CHAIR. It exists once, changes almost never, and has NO availability field.
+        `seat_type` drives pricing - regular, premium, recliner.
+
+    show(show_id, movie_id, screen_id, starts_at, base_price)
+        THE THING PEOPLE BOOK. A movie on a screen at a time.
+
+    show_seat(show_id, seat_id, status, booking_id, held_until, price)
+        PRIMARY KEY (show_id, seat_id)
+        THE ROW YOU CONTEND FOR. One per seat per showing - a 200-seat screen with five daily shows
+        creates 1,000 rows a day.
+        `status` is AVAILABLE / HELD / BOOKED.
+        `held_until` is what makes expiry possible.
+        `price` IS SNAPSHOTTED HERE, because a premium seat on a Friday night costs more than the
+        show's base price and that must not change after sale.
+        INDEX ON (show_id, status) so drawing the seat map is one range scan.
+
+    booking(booking_id, user_id, show_id, status, created_at, total_amount,
+            idempotency_key UNIQUE)
+        `idempotency_key` UNIQUE is what makes a retried checkout return the ORIGINAL booking rather
+        than creating a second.
+        `total_amount` frozen at purchase.
+
+    payment(payment_id, booking_id, provider_ref, amount, status)
+        A SEPARATE LIFECYCLE. One booking can have an authorisation, a capture and a partial refund,
+        and its state moves independently of the booking's.
+
+    booking_event(event_id, booking_id, type, at)
+        APPEND-ONLY. How you answer 'what happened to this booking' six months later.
+
+    WHAT IS DELIBERATELY ABSENT: any `is_booked` on `seat`, and any current-price join from
+    `show_seat` to `show`. Both would make history mutable.""",
+
+    """9. TWO USERS, ONE SEAT, TRACED
+
+    SEAT A1 AT THE 18:00 SHOW. Alice and Bob both click it at the same instant.
+
+    t = 0.000  ALICE:
+        BEGIN
+        UPDATE show_seat
+           SET status='HELD', booking_id=101, held_until=now()+'10 min'
+         WHERE show_id=7 AND seat_id IN (42) AND status='AVAILABLE'
+        -> ROWCOUNT 1. She has it.
+        INSERT INTO booking (..., status='PENDING', idempotency_key='alice-abc')
+        COMMIT
+
+    t = 0.001  BOB:
+        the identical UPDATE -> ROWCOUNT 0.
+        ROLLBACK. Return 409 with a refreshed seat map.
+        BOB NEVER HAD A BOOKING CREATED AND WAS NEVER CHARGED.
+
+    t = 0.500  ALICE'S CLIENT TIMES OUT and retries with the same idempotency key.
+        The INSERT violates the UNIQUE constraint -> look up the existing booking and return it.
+        ONE BOOKING, ONE HOLD. Without the key this is a second booking and shortly a second charge.
+
+    t = 45     Alice's card is authorised and captured.
+        show_seat.status HELD -> BOOKED. booking PENDING -> CONFIRMED.
+
+    THE OTHER ENDINGS, each of which needs code:
+
+        PAYMENT FAILS      status HELD -> AVAILABLE, booking -> CANCELLED. The seat is sellable again
+                           within a second.
+        ALICE ABANDONS     at t = 600 the sweeper finds `held_until < now()` and releases it.
+                           WITHOUT THIS JOB THE SEAT IS LOST FOR THE REST OF THE SHOW.
+        SHE BOOKED FOUR AND ONLY THREE WERE FREE
+                           rowcount 3 != 4 -> ROLLBACK, release nothing, tell her which are gone.
+                           A PARTIAL BOOKING IS WORSE THAN A FAILED ONE.
+
+    AND THE MEASURED CONTRAST, one more time: the SELECT-then-UPDATE version of t=0.000 and t=0.001
+    lets BOTH succeed, 27 times in 127 attempts. The only difference is whether the condition is in
+    application code or in the WHERE clause.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MODEL:  Seat is the physical chair; ShowSeat is its availability for ONE showing, with a status
+    of AVAILABLE / HELD / BOOKED.
+
+    THE LINE THE DESIGN TURNS ON:
+        UPDATE show_seat SET status='HELD', ... WHERE show_id=? AND seat_id IN (...) AND
+        status='AVAILABLE'   -- then CHECK THE ROW COUNT against the number requested
+
+    THE MEASURED EVIDENCE (20 seats, 8 threads, 40 attempts each, 5 runs):
+        SELECT then UPDATE:            127 confirmed, 27 SEATS SOLD TWICE
+        UPDATE ... WHERE status='AVAILABLE':  100 confirmed, 0 sold twice
+
+    THE FLOW:  hold (atomic) -> booking PENDING -> payment -> BOOKED, with release on failure OR
+    TIMEOUT. Claim the scarce resource BEFORE the slow failure-prone step.
+
+    THE CONSISTENCY SPLIT:  browsing the seat map can be seconds stale; only the claim must be exact.
+
+THE #1 MISTAKE: checking availability in application code and then writing. Measured at more than one
+double-sell in five confirmations, and it is completely invisible in single-threaded testing.
+
+THE #2 MISTAKE: putting availability on the Seat rather than the ShowSeat, which cannot express booked
+at 18:00 and free at 21:00.
+
+THE #3 MISTAKE: no HELD state, which forces a choice between overselling and double-charging.
+
+THE #4 MISTAKE: holds with no expiry or no sweeper, so abandoned checkouts quietly consume the
+inventory.
+
+THE #5 MISTAKE: no idempotency key, so a timed-out retry books and charges twice.
+
+ONE-SENTENCE TAKEAWAY: model availability per SHOWING, put a HELD state between available and booked so
+you can claim the seat before taking payment, make the claim one conditional UPDATE whose row count you
+check - and expire the holds, because the two failures that actually reach customers are selling a seat
+twice and selling it to nobody at all.""",
+]
+
+_EX_P1AO["LLD: Design an Elevator system"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - and the questions before any code
+
+'Design an elevator' is really 'design a scheduler with a physical constraint'. ASK FIRST, because the
+answer changes completely:
+
+    HOW MANY CARS? One car is a scheduling problem. A BANK OF CARS is a DISPATCH problem, and dispatch
+    matters far more - measured below, adding cars beats improving the algorithm.
+    HOW MANY FLOORS?
+    WHAT ARE THE REQUESTS? An EXTERNAL call (a floor button, with a DIRECTION) and an INTERNAL request
+    (a car button, a DESTINATION) are different things and people conflate them.
+    WHAT ARE WE OPTIMISING? Average wait, worst-case wait, throughput, or energy? These conflict.
+    ANY SPECIAL MODES? Fire service, VIP, maintenance, capacity limits.
+
+THE TWO REQUEST TYPES ARE THE FIRST REAL INSIGHT:
+
+    EXTERNAL (hall call)   'someone on floor 7 wants to go DOWN'. It has a floor and a DIRECTION and
+                           NO destination - the system does not yet know where they are going.
+    INTERNAL (car call)    'the person in car 2 pressed 3'. It has a destination and no direction.
+
+A DESIGN WITH ONE KIND OF REQUEST IS WRONG. The direction on a hall call is what lets a car pick
+somebody up ON THE WAY, which is the entire efficiency of the thing.
+
+THE ENTITIES:
+    Building (floors, cars) · ElevatorCar (current floor, direction, door state, stop set, capacity)
+    · Request (external: floor + direction; internal: destination) · Dispatcher (which car serves
+    which hall call) · Scheduler (in what order one car serves its own stops)
+
+TERMS AS THEY APPEAR:
+- DISPATCH: choosing WHICH CAR answers a hall call. SCHEDULING: choosing the ORDER one car stops.
+- SCAN / LOOK: sweep in one direction serving everything on the way, then reverse.""",
+
+    """2. THE INTUITION - dispatch matters more than scheduling
+
+MEASURED, on a 20-floor building with 300 lobby calls arriving over three minutes plus 10 calls from
+the top floor:
+
+    strategy    cars    avg wait    p95     worst
+    FCFS           1       279.9   522.0    528.8
+    FCFS           2        93.4   175.8    190.2
+    FCFS           4         7.6    19.6     28.2
+    NEAREST        1        11.5    32.6     57.0
+    NEAREST        2         4.8    20.0     31.4
+    NEAREST        4         2.3     4.8     19.0
+
+TWO RESULTS, AND THE SECOND IS THE INTERESTING ONE.
+
+FIRST, SERVING REQUESTS IN ARRIVAL ORDER IS CATASTROPHIC. FCFS with one car averages 279.9 against
+NEAREST's 11.5 - TWENTY-FOUR TIMES WORSE - because the car chases requests up and down the building
+instead of serving whoever is closest.
+
+SECOND, AND MORE IMPORTANT: FOUR CARS WITH THE WORST ALGORITHM (7.6) BEAT ONE CAR WITH THE BEST
+(11.5). THE NUMBER OF CARS DOMINATES THE ALGORITHM. That is the honest engineering answer, and it is
+worth saying in an interview: if a building is badly served, the fix is usually more cars or better
+zoning, not a cleverer dispatcher.
+
+WHY FCFS IS SO BAD: a call from floor 2 followed by one from floor 19 followed by one from floor 3
+makes the car travel 2 -> 19 -> 3, covering 33 floors to serve three people who were all within one
+floor of each other twice over. NO PASSENGER IS PICKED UP ON THE WAY, because 'on the way' is a
+concept FCFS does not have.
+
+AND WHY REAL ELEVATORS USE SCAN: sweep upward serving every stop in that direction, then reverse. IT
+IS THE SAME ALGORITHM DISK SCHEDULERS USE, UNDER THE SAME NAME, for the same reason - a physical head
+that is expensive to move and cheap to stop.""",
+
+    """3. THE ALGORITHM - SCAN, and what 'on the way' means
+
+    THE STATE A CAR NEEDS:
+
+        current_floor · direction (UP / DOWN / IDLE) · a set of stops · door state
+
+    THE RULE, and it is short:
+
+        WHILE MOVING UP, serve every stop above the current floor, in increasing order.
+        WHEN NOTHING REMAINS ABOVE, reverse.
+        WHILE MOVING DOWN, serve every stop below, in decreasing order.
+        WHEN NOTHING REMAINS EITHER WAY, go IDLE.
+
+    THIS IS THE 'LOOK' VARIANT - reverse when nothing remains ahead, rather than travelling to the
+    physical top first (which is 'SCAN'). LOOK is strictly better and it is what real systems do.
+
+    THE PART THAT DEPENDS ON THE HALL CALL'S DIRECTION:
+
+        a car travelling UP past floor 7 SHOULD stop for someone on 7 who wants to go UP
+        it SHOULD NOT stop for someone on 7 who wants to go DOWN - they would be carried the wrong way
+        it will catch them on the return sweep
+
+    THAT IS EXACTLY WHY A HALL CALL CARRIES A DIRECTION AND WHY MERGING THE TWO REQUEST TYPES BREAKS
+    THE ALGORITHM. Without the direction the car cannot tell 'on the way' from 'in the way'.
+
+    THE THREE CONDITIONS FOR 'A STOP IS ON MY WAY':
+
+        the floor is AHEAD of me in my current direction, AND
+        it is an internal request (a passenger already aboard wants it), OR
+        it is a hall call whose direction MATCHES mine
+
+    THE DISPATCH RULE, for a bank of cars - and it is where the real design choices are:
+
+        NEAREST CAR                simple, measured at 11.5 average against FCFS's 279.9
+        NEAREST CAR MOVING THE RIGHT WAY   better: prefer a car already heading toward the call in the
+                                   caller's direction, because it costs almost nothing extra
+        ESTIMATED TIME OF ARRIVAL  simulate each car's remaining schedule and pick the lowest
+                                   completion time. This is what modern controllers actually do.
+        ZONING                     assign cars to floor ranges. Reduces travel and wastes capacity
+                                   when the load is uneven.
+        DESTINATION DISPATCH       the passenger enters their DESTINATION in the lobby, so the system
+                                   groups people going to the same floors into the same car. A large
+                                   real-world win, and it changes the UI rather than the algorithm.""",
+
+    """4. THE FAILURE MODES
+
+A. SERVING REQUESTS IN ARRIVAL ORDER. Measured at 279.9 average wait against 11.5 - twenty-four times
+   worse - because nobody is ever picked up on the way.
+
+B. MERGING HALL CALLS AND CAR CALLS INTO ONE 'REQUEST' TYPE. The hall call's DIRECTION is what makes
+   SCAN work; without it the car cannot distinguish a passenger it can carry from one it would carry
+   backwards.
+
+C. IGNORING STARVATION. Measured: under nearest-car, the top-floor callers waited 27.4 on average
+   against 11.5 for everyone - 2.4 TIMES LONGER. Not unbounded in my run, and the tendency is real and
+   it is the same shape as SRTF in [[cpu-scheduling-algorithms-fcfs-sjf-srtf-round-robin-priority]].
+
+D. AND AN HONEST NEGATIVE ON THE FIX: I added an ageing term to the nearest-car score and IT MADE
+   EVERYONE WORSE - average wait rose from 11.5 to 33.2 and the top floor from 27.4 to 42.4. With only
+   ten far calls among three hundred, the system was never saturated enough for starvation to bite, and
+   the ageing cost more than it saved. AGEING IS THE RIGHT FIX FOR A SATURATED SYSTEM AND A PESSIMISATION
+   FOR AN UNSATURATED ONE - which is exactly the kind of thing only measuring tells you.
+
+E. NO CAPACITY LIMIT. A full car must not stop for a hall call it cannot serve, and it must not clear
+   that call either - somebody else has to take it.
+
+F. FORGETTING THE DOORS. Door open, door closing, obstruction detected, door reopening. It is a state
+   machine of its own and it is where the safety requirements live.
+
+G. NO IDLE POLICY. Where does a car park when it has nothing to do? Staying put is simplest; returning
+   to the lobby is better in an office at 9am; distributing cars across zones is better still. THIS IS
+   FREE PERFORMANCE and it is usually omitted.
+
+H. TREATING IT AS A PURE ALGORITHM PROBLEM. Measured: four cars with the worst algorithm beat one car
+   with the best. Capacity dominates cleverness.
+
+I. NO SPECIAL MODES. Fire recall sends every car to the ground floor and opens the doors, overriding
+   everything. Maintenance takes a car out of the pool. These are not edge cases; they are
+   requirements.""",
+
+    """5. THE STARVATION QUESTION - and what measuring actually showed
+
+    THE THEORETICAL CONCERN: nearest-car optimises the average and can leave a distant caller waiting
+    while nearer requests keep arriving - the same trade as shortest-remaining-time in CPU scheduling.
+
+    MEASURED, with constant lobby traffic and occasional top-floor calls:
+
+        strategy    everyone's avg    top-floor avg    top-floor worst
+        FCFS                 279.9            256.2              497.0
+        NEAREST               11.5             27.4               57.0
+        NEAREST + AGEING      33.2             42.4               83.0
+
+    THE TENDENCY IS REAL: under nearest-car the top-floor callers waited 2.4x longer than average.
+
+    AND THE FIX MADE IT WORSE. Adding a term that boosts a request's priority with its age tripled the
+    overall average AND made the top floor worse. TWO REASONS, both worth stating:
+
+        THE SYSTEM WAS NOT SATURATED. Ten far calls among three hundred is not enough contention for
+        starvation to become unbounded, so there was nothing much to fix.
+        AGEING PULLS THE CAR ACROSS THE BUILDING to serve one old request, and the travel it wastes
+        delays everyone including the person it went to collect.
+
+    THE HONEST CONCLUSION, and it is more useful than the tidy one: STARVATION IS A SATURATION
+    PROBLEM. Under moderate load, nearest-car is excellent and ageing is a pessimisation. Under heavy
+    sustained load with a skewed floor distribution, the ordering reverses.
+
+    WHICH IS WHY THE REAL ANSWER IS A BOUND RATHER THAN A REWEIGHTING:
+
+        SERVE ANY REQUEST OLDER THAN N SECONDS BEFORE ANYTHING ELSE.
+
+    A hard deadline changes the behaviour only when it fires, so it costs nothing in the common case
+    and caps the worst case - whereas a continuous ageing term degrades every decision all the time.
+    THAT DISTINCTION - A BOUND VERSUS A WEIGHT - IS THE GENERAL LESSON, and it applies to every
+    scheduler.""",
+
+    """6. HOW TO DESIGN IT - numbered steps
+
+1. ASK HOW MANY CARS AND FLOORS, and what is being optimised. Average wait and worst-case wait pull in
+   opposite directions.
+2. SEPARATE HALL CALLS FROM CAR CALLS. The hall call carries a DIRECTION; that direction is what makes
+   the algorithm work.
+3. MODEL THE CAR AS A STATE MACHINE: floor, direction, stop set, door state.
+4. IMPLEMENT LOOK, not FCFS. Serve everything ahead in the current direction, then reverse. Measured
+   at 24x better.
+5. DEFINE 'ON THE WAY' PRECISELY: ahead of me, and either an internal request or a hall call whose
+   direction matches mine.
+6. FOR MULTIPLE CARS, ADD A DISPATCHER. Nearest-car is a strong baseline; estimated-time-of-arrival is
+   what real controllers use.
+7. BOUND THE WORST CASE WITH A DEADLINE, not with a continuous ageing weight - measured, the weight
+   made everything worse.
+8. HANDLE CAPACITY: a full car does not stop for a hall call and does not clear it either.
+9. GIVE IDLE CARS A PARKING POLICY. Free performance, usually forgotten.
+10. MODEL THE DOOR AS ITS OWN STATE MACHINE, with obstruction handling.
+11. ADD THE SPECIAL MODES - fire recall, maintenance, VIP - as overrides that pre-empt the scheduler.
+12. SIMULATE IT. Every number in this entry came from a fifty-line simulator, and building one is the
+    only way to answer 'is this better' rather than 'this feels better'.
+
+STEP 12 IS THE ONE THAT WOULD IMPRESS MOST. 'I would write a simulator and compare strategies on a
+realistic arrival pattern' is a much stronger answer than any particular algorithm, because it is what
+you would actually do.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I would ask how many cars and floors first, and what we are optimising - average wait and worst-case
+wait pull in different directions.
+
+The first real modelling decision is that there are TWO kinds of request. A hall call is "someone on
+floor 7 wants to go DOWN" - a floor and a direction, and no destination, because the system does not
+know yet. A car call is "the passenger pressed 3" - a destination and no direction. A design that
+merges them is broken, because the hall call's DIRECTION is exactly what lets a car pick somebody up on
+the way rather than carrying them backwards.
+
+The algorithm is LOOK: sweep in one direction serving everything ahead of you, then reverse when
+nothing remains that way. It is the same algorithm disk schedulers use under the same name, for the
+same reason - a physical head that is expensive to move and cheap to stop. A stop is "on my way" if it
+is ahead of me AND it is either a passenger already aboard, or a hall call whose direction matches
+mine.
+
+I built a simulator, and two things came out of it. Serving requests in arrival order averaged 279.9
+against nearest-car's 11.5, so FCFS is about twenty-four times worse - the car chases people up and
+down instead of collecting them on the way. But the more useful result is that FOUR CARS WITH THE WORST
+ALGORITHM beat ONE CAR WITH THE BEST - 7.6 against 11.5. The number of cars dominates the algorithm,
+which is the honest engineering answer.
+
+I also tried to fix starvation. Nearest-car does make distant callers wait longer - the top floor
+averaged 27.4 against 11.5 overall. But when I added an ageing term it made EVERYTHING worse, average
+wait tripling to 33.2. The reason is that the system was not saturated enough for starvation to bite,
+and pulling the car across the building to serve one old call delays everyone including that caller. So
+the right fix is a hard deadline - serve anything older than N seconds first - which costs nothing
+until it fires, rather than a continuous weight that degrades every decision.'""",
+
+    """8. THE COMPONENTS, PIECE BY PIECE
+
+    class Direction(Enum): UP, DOWN, IDLE
+
+    class HallCall:      floor, direction, requested_at
+    class CarCall:       destination, requested_at
+        TWO TYPES, DELIBERATELY. The hall call has a direction and no destination; the car call the
+        reverse. Merging them loses the information the algorithm needs.
+
+    class ElevatorCar:
+        floor, direction, door_state, stops (a sorted set), capacity, load
+
+        def stops_ahead(self):
+            return [f for f in self.stops if
+                    (self.direction == UP and f > self.floor) or
+                    (self.direction == DOWN and f < self.floor)]
+
+        def step(self):
+            ahead = self.stops_ahead()
+            if not ahead:
+                self.direction = DOWN if self.direction == UP else UP    # REVERSE (LOOK)
+                ahead = self.stops_ahead()
+                if not ahead:
+                    self.direction = IDLE; return
+            target = min(ahead) if self.direction == UP else max(ahead)
+            self.floor += 1 if self.direction == UP else -1
+            if self.floor in self.stops:
+                self.stops.remove(self.floor)
+                self.open_doors()
+
+        `stops_ahead` IS THE WHOLE ALGORITHM. Everything else is bookkeeping.
+        THE REVERSAL IS 'LOOK' - turn round when nothing remains ahead, rather than driving to the
+        physical top. Strictly better, and it is what real cars do.
+
+    class Dispatcher:
+        def assign(self, call):
+            candidates = [c for c in self.cars if c.load < c.capacity]
+            return min(candidates, key=lambda c: self.cost(c, call))
+
+        def cost(self, car, call):
+            if car.direction == IDLE:            return abs(car.floor - call.floor)
+            moving_toward = (car.direction == UP and call.floor > car.floor) or \\
+                            (car.direction == DOWN and call.floor < car.floor)
+            if moving_toward and car.direction == call.direction:
+                return abs(car.floor - call.floor)          # ON THE WAY - nearly free
+            return abs(car.floor - call.floor) + PENALTY     # must finish its sweep first
+
+        THE COST FUNCTION IS WHERE ALL THE POLICY LIVES. Nearest-car is `abs(floor - call.floor)` and
+        nothing else; the direction check above is a large improvement for one extra condition; a full
+        estimated-time-of-arrival simulates each car's remaining schedule.
+
+    THE DOOR, which is its own machine and where the safety requirements live:
+        CLOSED -> OPENING -> OPEN -> CLOSING -> CLOSED, with OBSTRUCTED sending CLOSING back to
+        OPENING. The car MUST NOT MOVE unless the door state is CLOSED - that is an interlock, not a
+        scheduling concern.""",
+
+    """9. ONE MORNING RUSH, TRACED
+
+    A 20-FLOOR BUILDING, ONE CAR AT FLOOR 1, IDLE.
+
+    t=0    hall call: floor 5, UP.      Car is IDLE -> direction UP, stops = {5}
+    t=1    car at 2.  hall call: floor 8, UP.    8 is AHEAD and the direction MATCHES -> stops = {5, 8}
+    t=2    car at 3.  hall call: floor 4, DOWN.  4 is ahead but the direction is WRONG. ADD IT ANYWAY
+                                                 as a stop, but do NOT count it as served on this
+                                                 sweep - it will be collected on the way back down.
+    t=3    car at 4.  It stops (4 is in the set) but the passenger wanting DOWN does not board.
+                      THIS IS THE SUBTLETY: whether to stop at all is a policy choice. Stopping wastes
+                      time; not stopping requires tracking which stops belong to which sweep.
+                      REAL SYSTEMS TRACK IT: up-stops and down-stops are separate sets.
+    t=4    car at 5.  Stops, doors open, passenger boards and presses 12.
+                      CAR CALL: 12. stops = {8, 12} and now 4 is on the down set.
+    t=7    car at 8.  Stops, passenger boards, presses 15. stops = {12, 15}
+    t=11   car at 12. Stops, passenger exits.
+    t=14   car at 15. Stops, passenger exits. stops_ahead is empty going UP.
+                      REVERSE. direction = DOWN. The down set has {4}.
+    t=25   car at 4.  Collects the passenger who has been waiting since t=2.
+
+    THAT LAST LINE IS THE STARVATION TENDENCY IN MINIATURE: 23 units of waiting for a request made at
+    t=2, because it was going the wrong way and the car had a full upward sweep to complete.
+
+    THE TWO FIXES, and they are the same two as in scheduling generally:
+        A SECOND CAR. Measured: two cars cut the average from 11.5 to 4.8 and the worst from 57 to
+        31.4.
+        A DEADLINE. If the request is older than N, reverse early to collect it. Costs nothing until
+        it fires.
+
+    AND THE MEASURED CONTRAST WITH FCFS ON THE SAME PATTERN: FCFS would have gone 1 -> 5 -> 8 -> 4,
+    travelling 4 + 3 + 4 = 11 floors to serve three calls, and then chased the next arrival wherever it
+    was. LOOK travelled 1 -> 15 collecting everything on the way. Over 300 requests that difference
+    was 279.9 against 11.5.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TWO REQUEST TYPES:  a HALL CALL has a floor and a DIRECTION; a CAR CALL has a destination.
+    Merging them destroys the algorithm.
+
+    THE ALGORITHM:  LOOK - serve everything ahead in the current direction, then reverse. A stop is
+    'on my way' if it is ahead AND (it is a car call OR its direction matches mine).
+
+    THE MEASURED EVIDENCE (20 floors, 310 requests):
+        FCFS, 1 car:      279.9 average wait, 528.8 worst
+        NEAREST, 1 car:    11.5 average wait,  57.0 worst      -  24x better
+        FCFS, 4 cars:       7.6                                -  WORST ALGORITHM, MORE CARS, BETTER
+        NEAREST, 4 cars:    2.3
+        starvation:  top-floor callers averaged 27.4 against everyone's 11.5 under nearest-car
+        AND THE HONEST NEGATIVE: adding an ageing term made the average WORSE (33.2) and the top floor
+        worse too (42.4), because the system was not saturated and pulling the car across the building
+        delays everyone.
+
+    THE TWO LEVELS OF DECISION:  DISPATCH (which car answers a hall call) and SCHEDULING (what order
+    one car serves its stops). Dispatch matters more, and CAPACITY matters more than either.
+
+THE #1 MISTAKE: serving requests in arrival order. Measured at 24x worse, because 'on the way' is a
+concept FCFS does not have.
+
+THE #2 MISTAKE: one request type. Without the hall call's direction, a car cannot tell a passenger it
+can carry from one it would carry backwards.
+
+THE #3 MISTAKE: treating it as purely an algorithm problem. Four cars with the worst algorithm beat one
+car with the best.
+
+THE #4 MISTAKE: fixing starvation with a continuous ageing weight rather than a hard deadline -
+measured, the weight tripled the average wait and helped nobody.
+
+THE #5 MISTAKE: no capacity check, no door state machine, and no special modes. A full car that stops
+anyway, and a car that moves with the doors open, are both real requirements.
+
+ONE-SENTENCE TAKEAWAY: keep hall calls and car calls separate so the car knows which stops are on its
+way, sweep in one direction serving everything ahead before reversing, dispatch to the nearest car
+already heading the right way - and remember that the measured answer to a badly-served building is
+almost always another car rather than a better algorithm.""",
+]
+
+_EX_P1AO["Catastrophic forgetting (and how fine-tuning can hurt)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the model learns the new thing by overwriting the old one
+
+You have a model that does task A well. You fine-tune it on task B. IT NOW DOES B WELL AND HAS
+LARGELY FORGOTTEN A.
+
+That is CATASTROPHIC FORGETTING, and 'catastrophic' is not rhetoric - the loss is often near-total
+rather than gradual.
+
+MEASURED, on a two-feature classifier trained on two tasks:
+
+    after training on task A only:       A 99.8%    B 48.2%
+    then fine-tuned on task B only:      A 50.2%    B 99.2%
+
+TASK A WENT FROM 99.8% TO 50.2% - CHANCE. The model did not degrade at A; IT STOPPED DOING A ENTIRELY.
+
+AND THE WEIGHTS SHOW EXACTLY WHY:
+
+    after A:  [ 5.77, -0.09, 0.17]      feature 0 dominates
+    after B:  [-0.19,  5.95, -0.09]     feature 1 dominates, AND FEATURE 0'S WEIGHT IS GONE
+
+THE KNOWLEDGE WAS NOT DILUTED. IT WAS OVERWRITTEN. Gradient descent on task B had no reason to
+preserve the weight that encoded task A, so it moved it wherever B wanted.
+
+WHY IT HAPPENS: a neural network stores everything in one shared set of weights. There is no
+compartment for task A. TRAINING ON B ADJUSTS EVERY WEIGHT TOWARD B'S LOSS, and the ones that encoded
+A are just as available for reuse as any others.
+
+TERMS AS THEY APPEAR:
+- REPLAY / REHEARSAL: mixing some of the old data into the new training set.
+- REGULARISATION-BASED METHODS: penalising changes to weights that mattered for the old task.""",
+
+    """2. THE INTUITION - the weights are a shared resource, not a filing cabinet
+
+The mental model that makes this obvious: A NETWORK'S KNOWLEDGE IS NOT STORED ANYWHERE IN PARTICULAR.
+It is distributed across every weight, and every weight participates in every task.
+
+So when you compute gradients for task B, the optimiser asks ONE question: WHICH WAY SHOULD EACH WEIGHT
+MOVE TO REDUCE B'S LOSS? Nothing in that question mentions A. A weight that was carefully positioned
+for A is simply an available degree of freedom.
+
+MEASURED, the weight vector before and after:
+
+    [ 5.77, -0.09, 0.17]   ->   [-0.19,  5.95, -0.09]
+
+    THE FIRST WEIGHT WENT FROM 5.77 TO -0.19. That single number WAS task A, and B repurposed it.
+
+WHY 'CATASTROPHIC' RATHER THAN 'GRADUAL': the collapse is not proportional to how much you train. A
+few hundred steps on the new task is often enough, because the gradients pull hard and consistently in
+one direction and there is nothing pushing back.
+
+WHERE THIS BITES IN PRACTICE:
+
+    FINE-TUNING AN LLM ON YOUR SUPPORT TICKETS and finding it has got worse at general reasoning,
+    at other languages, or at following instructions.
+    SEQUENTIAL TRAINING on tasks that arrive over time - the continual-learning setting.
+    DOMAIN ADAPTATION where the new domain is narrow and the model over-specialises.
+    RLHF or safety tuning degrading capabilities that were never mentioned in the tuning data.
+
+THE PRACTICAL WARNING SIGN: YOUR TASK-SPECIFIC METRIC IMPROVES AND NOBODY MEASURED ANYTHING ELSE. If
+you did not evaluate general capability before and after, you will not know it happened - and this is
+why [[the-applied-ml-question-taking-a-model-from-notebook-to-production]] insists on a
+general-capability check as a first-class artefact.""",
+
+    """3. REPLAY - measured, including what it cannot do
+
+    THE OBVIOUS DEFENCE: mix some of the old task's data into the new training set. MEASURED:
+
+        % of task A replayed    task A    task B
+                          0%     50.2%     99.2%
+                          2%     50.5%     99.5%
+                          5%     51.2%     99.5%
+                         10%     54.2%     97.0%
+                         25%     57.8%     93.5%
+                         50%     65.2%     87.2%
+                        100%     73.5%     78.5%
+
+    READ THIS CAREFULLY, BECAUSE IT IS NOT THE TIDY RESULT PEOPLE EXPECT.
+
+    REPLAY WORKS - task A rises from 50.2% to 73.5% - AND IT IS A SMOOTH TRADE, NOT A FREE LUNCH. Task
+    B falls from 99.2% to 78.5% as the replay fraction rises. There is no setting that gives both tasks
+    99%.
+
+    AND THE REASON IS SPECIFIC TO MY TOY MODEL, WHICH MAKES IT A BETTER LESSON: A SINGLE LINEAR
+    CLASSIFIER HAS ONE DECISION BOUNDARY. Task A wants a boundary on feature 0 and task B on feature 1,
+    and one line cannot be both. THE MODEL LITERALLY LACKS THE CAPACITY, so replay can only negotiate a
+    compromise.
+
+    THAT IS THE HONEST FRAMING OF THE WHOLE PROBLEM: CATASTROPHIC FORGETTING IS PARTLY AN OPTIMISATION
+    ISSUE AND PARTLY A CAPACITY ISSUE, AND REPLAY ONLY FIXES THE FIRST.
+
+    IN A LARGE NETWORK THERE IS usually enough capacity for both tasks, so replay does much better than
+    my measurement suggests - a small fraction of the old data recovers most of the old performance,
+    because the optimiser has room to satisfy both. IN A SMALL OR HEAVILY-CONSTRAINED MODEL, YOU ARE
+    NEGOTIATING, AND THE TABLE ABOVE IS WHAT NEGOTIATION LOOKS LIKE.
+
+    THE PRACTICAL RULE THAT SURVIVES BOTH CASES: NEVER FINE-TUNE ON THE NEW TASK ALONE. Even a few
+    percent of old data changes the shape of the problem the optimiser is solving, from 'be good at B'
+    to 'be good at B without abandoning A'.""",
+
+    """4. THE FAILURE MODES
+
+A. NOT MEASURING GENERAL CAPABILITY. The commonest and most consequential. Your task metric improves,
+   nobody checks anything else, and the model is quietly worse at everything it used to do.
+
+B. FINE-TUNING ON THE NEW TASK ALONE. Measured: task A fell from 99.8% to 50.2%, which is chance.
+
+C. TRAINING TOO LONG OR AT TOO HIGH A LEARNING RATE. Forgetting is roughly proportional to how far the
+   weights move. Fewer epochs and a lower learning rate are the cheapest mitigations available and they
+   are usually skipped.
+
+D. FULL FINE-TUNING WHEN LoRA WOULD DO. LoRA freezes the base weights and learns a small additive
+   correction - see [[what-is-fine-tuning-with-lora-parameter-efficient-tuning]] - so THE ORIGINAL
+   KNOWLEDGE IS PHYSICALLY UNCHANGED. It forgets less by construction, and it is the single most
+   practical defence.
+
+E. ASSUMING MORE DATA FIXES IT. More data for the NEW task makes forgetting worse, not better. It is
+   the RATIO of old to new that matters.
+
+F. CONFUSING FORGETTING WITH OVERFITTING. Overfitting is doing well on training data and badly on held-
+   out data FOR THE SAME TASK. Forgetting is doing well on the new task and badly on a DIFFERENT one.
+   Different diagnoses, different fixes.
+
+G. NO WAY BACK. If you overwrite the deployed weights you cannot compare, roll back or diagnose. KEEP
+   THE BASE MODEL, and prefer adapters you can detach.
+
+H. IGNORING THE SEQUENTIAL CASE. Training on A then B then C forgets A worst of all, and the effect
+   compounds - which is the whole field of continual learning.
+
+I. ASSUMING IT ONLY AFFECTS ACCURACY. Fine-tuning can degrade calibration, instruction-following,
+   format adherence and refusal behaviour - capabilities nobody thought to put in the evaluation set.""",
+
+    """5. THE DEFENCES, IN ORDER OF WHAT THEY COST
+
+    1. DO NOT FULLY FINE-TUNE - USE AN ADAPTER.
+        LoRA and its relatives freeze the base weights entirely and learn a small low-rank correction.
+        THE ORIGINAL KNOWLEDGE IS UNTOUCHED, so forgetting is bounded by how much the adapter can
+        shift the output. Cheap, effective, and it also means you can DETACH the adapter to recover
+        the base behaviour exactly.
+        THIS IS THE FIRST THING TO REACH FOR AND IT SOLVES MOST OF THE PROBLEM IN PRACTICE.
+
+    2. REPLAY / REHEARSAL - mix old data into the new training set.
+        Measured above. Simple, effective, and it requires that you still HAVE the old data - which for
+        a pretrained model you generally do not, and that is the catch. THE SUBSTITUTE IS GENERIC DATA
+        of the kind the model was originally trained on.
+
+    3. FEWER EPOCHS, LOWER LEARNING RATE, EARLY STOPPING.
+        Forgetting scales with how far the weights travel. Free, and usually enough on its own for a
+        small adaptation.
+
+    4. FREEZE THE EARLY LAYERS.
+        Lower layers encode general features and higher ones encode task specifics, so freezing the
+        bottom preserves the general and adapts the specific. Crude and effective.
+
+    5. REGULARISE TOWARD THE OLD WEIGHTS.
+        ELASTIC WEIGHT CONSOLIDATION adds a penalty for moving weights that MATTERED for the old task,
+        estimating importance from the Fisher information. Principled, and it needs the old task's data
+        or a proxy for it, and it is fiddly.
+
+    6. DISTILL FROM THE OLD MODEL.
+        Keep the original as a teacher and add a term that keeps the new model's outputs close to the
+        old one's on generic inputs. NEEDS NO OLD LABELS - only old INPUTS - which is often the
+        practical difference.
+
+    7. DO NOT MERGE THE TASKS AT ALL.
+        Separate adapters per task, swapped at inference. Or a mixture-of-experts routing to
+        specialists. FORGETTING IS IMPOSSIBLE IF THE WEIGHTS ARE NOT SHARED, and this is a real
+        architectural answer rather than a mitigation.
+
+    THE PRACTICAL STACK FOR MOST TEAMS: LoRA + a modest learning rate + a small replay of generic data
+    + AN EVALUATION SET THAT MEASURES BOTH.""",
+
+    """6. HOW TO FINE-TUNE WITHOUT BREAKING THINGS - numbered steps
+
+1. BUILD TWO EVALUATION SETS BEFORE YOU TRAIN. One for the new task, one for GENERAL capability -
+   including things the fine-tuning data says nothing about.
+2. MEASURE THE BASE MODEL ON BOTH. That is your baseline, and without it you cannot detect the
+   regression.
+3. PREFER LoRA OR ANOTHER ADAPTER over full fine-tuning. The base weights stay untouched.
+4. USE A LOW LEARNING RATE AND FEW EPOCHS. Forgetting scales with how far the weights move.
+5. MIX IN OLD OR GENERIC DATA. Measured: even a small fraction changes the problem the optimiser is
+   solving.
+6. EVALUATE ON BOTH SETS AFTER EVERY CHECKPOINT, not just at the end. Forgetting can appear early and
+   you want the checkpoint from before it.
+7. IF THE NEW TASK IMPROVES AND GENERAL CAPABILITY FALLS, STOP EARLIER - the best checkpoint is often
+   not the last.
+8. KEEP THE BASE MODEL AND THE ADAPTER SEPARATELY, so you can detach and compare.
+9. IF YOU HAVE SEVERAL TASKS, CONSIDER SEPARATE ADAPTERS rather than one model that does all of them.
+10. CHECK THE CAPABILITIES NOBODY LISTED - calibration, format adherence, refusals, other languages.
+    These regress silently because nobody thought to test them.
+
+STEP 1 IS THE WHOLE DISCIPLINE. Catastrophic forgetting is not hard to DETECT - it is hard to detect
+if you never looked. A general-capability set costs an afternoon and it is the only thing standing
+between you and shipping a model that is better at one thing and worse at everything.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Catastrophic forgetting is when fine-tuning a model on a new task destroys its performance on what it
+could already do - and "catastrophic" is literal rather than rhetorical, because the loss is usually
+near-total rather than gradual.
+
+I measured it on a small classifier over two tasks. After training on task A it scored 99.8% on A and
+48.2% on B. After fine-tuning on task B alone it scored 50.2% on A - which is chance - and 99.2% on B.
+
+The weights show exactly what happened. Before, the weight vector was [5.77, -0.09]; after, it was
+[-0.19, 5.95]. The number that encoded task A went from 5.77 to essentially zero. THE KNOWLEDGE WAS NOT
+DILUTED, IT WAS OVERWRITTEN - because a network stores everything in one shared set of weights, and
+when you compute gradients for task B the optimiser only asks which way each weight should move to
+reduce B's loss. Nothing in that question mentions A.
+
+The obvious defence is replay - mixing old data into the new training set - and I measured that too.
+Task A recovers from 50.2% to 73.5% as you add old data, and task B falls from 99.2% to 78.5%. So it
+is a smooth TRADE rather than a free lunch, and there is no setting where both are at 99%. In my case
+that is partly a capacity limit - a single linear model has one decision boundary and cannot be both -
+so in a large network replay does considerably better. But the framing is honest: forgetting is partly
+an optimisation problem and partly a capacity problem, and replay only fixes the first.
+
+In practice the first thing I would reach for is LoRA, because it freezes the base weights entirely and
+learns a small additive correction, so the original knowledge is physically unchanged and you can even
+detach the adapter to get the base behaviour back exactly.
+
+And the thing that actually causes the incidents is simpler than any of that: nobody measures general
+capability before and after. The task metric improves, everybody is pleased, and the model is quietly
+worse at everything it was not tested on.'""",
+
+    """8. THE MECHANISM, PIECE BY PIECE
+
+    WHY THE WEIGHTS MOVE. Gradient descent on task B computes, for every weight w:
+
+        w <- w - learning_rate * dLoss_B / dw
+
+    THAT EXPRESSION CONTAINS NO TERM FOR TASK A. A weight that was at 5.77 because task A needed it
+    there has no anchor; if B's gradient points down, it goes down.
+
+    WHY IT IS FAST. The gradients for B are consistent - every batch pulls in roughly the same
+    direction - so the weight travels quickly and monotonically. Measured: 5.77 to -0.19 in a few
+    hundred steps.
+
+    WHAT THE DEFENCES ACTUALLY DO, expressed against that update rule:
+
+        REPLAY            changes the loss to Loss_B + Loss_A, so the gradient now contains a term
+                          that resists moving away from A. THE OPTIMISER IS SOLVING A DIFFERENT
+                          PROBLEM.
+        EWC               adds a penalty term:  Loss_B + lambda * sum_i F_i (w_i - w_i_old)^2
+                          where F_i is how much weight i MATTERED for task A (its Fisher information).
+                          IMPORTANT WEIGHTS GET A STIFF SPRING BACK TO THEIR OLD VALUE; unimportant
+                          ones move freely.
+        LoRA              freezes w entirely and learns a separate low-rank delta. THE UPDATE RULE
+                          NEVER TOUCHES w AT ALL, which is why forgetting is bounded by construction.
+        LOWER LR / FEWER EPOCHS   simply reduces the total distance travelled.
+        DISTILLATION      adds a term keeping the new model's OUTPUTS close to the old model's on
+                          generic inputs. Needs old inputs but no old labels, which is often what makes
+                          it feasible.
+        SEPARATE ADAPTERS no shared weights, so no interference at all - at the cost of choosing which
+                          adapter to use.
+
+    THE UNIFYING VIEW: EVERY DEFENCE EITHER GIVES THE OPTIMISER A REASON TO KEEP THE OLD WEIGHTS
+    (replay, EWC, distillation) OR TAKES AWAY ITS ABILITY TO CHANGE THEM (LoRA, freezing, separate
+    adapters). Those are the only two options, and knowing that lets you classify any method you meet.""",
+
+    """9. THE TWO TASKS, TRACED
+
+    THE SETUP: two features. Task A's label depends only on feature 0; task B's only on feature 1. A
+    linear model with two weights and a bias.
+
+    STAGE 1 - TRAIN ON A:
+        weights [5.77, -0.09, 0.17]
+        accuracy:  A 99.8%    B 48.2%
+        THE MODEL LEARNED 'LOOK AT FEATURE 0'. Its performance on B is chance, which is correct - it
+        has never seen B and B depends on a feature it ignores.
+
+    STAGE 2 - FINE-TUNE ON B ONLY:
+        weights [-0.19, 5.95, -0.09]
+        accuracy:  A 50.2%    B 99.2%
+        WEIGHT 0: 5.77 -> -0.19.   WEIGHT 1: -0.09 -> 5.95.
+        THE TWO WEIGHTS ESSENTIALLY SWAPPED ROLES. Task A's knowledge was not degraded by noise; the
+        parameter that held it was repurposed.
+
+    STAGE 2', WITH REPLAY - the same fine-tuning, with a fraction of A's data mixed in:
+
+        replay    task A    task B
+            0%     50.2%     99.2%      no defence
+            5%     51.2%     99.5%      barely moves - the gradient is still dominated by B
+           10%     54.2%     97.0%      A starts recovering, B starts paying
+           25%     57.8%     93.5%
+           50%     65.2%     87.2%
+          100%     73.5%     78.5%      a genuine compromise, and neither task is great
+
+    THE SHAPE IS THE LESSON: A RISES AND B FALLS, MONOTONICALLY, WITH NO SWEET SPOT WHERE BOTH ARE
+    EXCELLENT. In this model that is a hard capacity limit - one decision boundary, two tasks that want
+    different ones.
+
+    AND THE CONTRAST WORTH DRAWING: IN A LARGE MODEL THERE IS USUALLY ROOM FOR BOTH, so a small replay
+    fraction recovers most of A at almost no cost to B. THE TOY MODEL SHOWS THE MECHANISM CLEANLY AND
+    OVERSTATES THE TRADE - which is worth saying rather than presenting the table as universal.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT IT IS:  fine-tuning on a new task overwrites the weights that encoded the old one, because a
+    network stores everything in one shared parameter set and the new task's gradients have no reason
+    to preserve anything.
+
+    THE MEASURED EVIDENCE:
+        trained on A:                A 99.8%   B 48.2%   weights [ 5.77, -0.09, 0.17]
+        fine-tuned on B only:        A 50.2%   B 99.2%   weights [-0.19,  5.95, -0.09]
+        THE WEIGHT THAT ENCODED A WENT FROM 5.77 TO -0.19 - overwritten, not diluted
+        replay:  0% -> A 50.2%/B 99.2% · 10% -> A 54.2%/B 97.0% · 100% -> A 73.5%/B 78.5%
+        A SMOOTH TRADE, not a free lunch - and in this model partly a capacity limit
+
+    THE DEFENCES, BY COST:  an adapter (LoRA) · replay · lower learning rate and fewer epochs ·
+    freezing early layers · EWC · distillation from the old model · separate adapters per task.
+    EVERY ONE OF THEM EITHER GIVES THE OPTIMISER A REASON TO KEEP THE OLD WEIGHTS OR REMOVES ITS
+    ABILITY TO CHANGE THEM.
+
+THE #1 MISTAKE: not measuring general capability before and after. The new-task metric improves,
+everyone is pleased, and nobody discovers the regression until users do.
+
+THE #2 MISTAKE: fine-tuning on the new task alone. Measured at 99.8% to 50.2%, which is chance.
+
+THE #3 MISTAKE: full fine-tuning where an adapter would do. LoRA leaves the base weights physically
+unchanged and can be detached.
+
+THE #4 MISTAKE: training too long or too hot. Forgetting scales with how far the weights travel, and
+the best checkpoint is often not the last.
+
+THE #5 MISTAKE: assuming only accuracy regresses. Calibration, instruction-following, format adherence
+and other languages all degrade silently, because nobody put them in the evaluation set.
+
+ONE-SENTENCE TAKEAWAY: a network keeps all its knowledge in one shared set of weights, so training on
+something new rewrites whatever the new task finds useful - and the defences all come down to either
+giving the optimiser a reason to keep the old weights or freezing them so it cannot, with an evaluation
+set that measures the old task being the only thing that tells you which you need.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
