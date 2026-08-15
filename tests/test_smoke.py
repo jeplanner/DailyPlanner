@@ -771,3 +771,54 @@ def test_pinned_goal_without_a_deadline_still_renders_a_hero(auth_client, monkey
     html = auth_client.get("/goal-planner").get_data(as_text=True)
     assert "heroNoDateHTML" in html, "no fallback hero for a pinned goal with no deadline"
     assert "h-set" in html, "the undated hero offers no way to add the missing deadline"
+
+
+def test_ai_sde_progress_is_keyed_by_title_not_the_positional_id(auth_client, monkeypatch):
+    """The list endpoint hands out ids as "ai0", "ai1", ... derived from the
+    entry's INDEX in the bank. That index shifts whenever a topic is added or
+    deduped — and the bank grew from ~500 to 1,120 entries with 57 duplicates
+    folded out, so anything stored against those ids now points at a
+    different topic. Progress is therefore stored by title, and a title the
+    bank no longer has is DROPPED rather than mapped onto its neighbour."""
+    import routes.interview_prep as ip
+    real = next(iter(ip._AI_SDE_TITLES))
+    rows = [
+        {"entry_title": real, "studied": True, "minutes_focused": 25},
+        {"entry_title": "A topic that was renamed away", "studied": True,
+         "minutes_focused": 99},
+    ]
+    monkeypatch.setattr(ip, "get", lambda table, params=None, **kw: rows)
+    body = auth_client.get("/api/ai-sde/progress").get_json()
+    assert body["studied"] == [real]
+    assert body["minutes"] == {real: 25}
+    assert body["total_rows"] == 2, "the stale row is dropped from the answer, not the count"
+
+
+def test_ai_sde_progress_rejects_unknown_topics(auth_client, monkeypatch):
+    """A title that is not in the bank is a bug or a stale client, never
+    something to store — otherwise the table slowly fills with orphans."""
+    import routes.interview_prep as ip
+    monkeypatch.setattr(ip, "post", lambda *a, **kw: [{}])
+    r = auth_client.post("/api/ai-sde/progress", json={"title": "nope", "studied": True})
+    assert r.status_code == 400
+
+    real = next(iter(ip._AI_SDE_TITLES))
+    saved = {}
+    monkeypatch.setattr(ip, "post",
+                        lambda table, payload, **kw: saved.update(payload) or [{}])
+    r = auth_client.post("/api/ai-sde/progress", json={"title": real, "studied": True})
+    assert r.status_code == 200
+    assert saved["entry_title"] == real and saved["studied"] is True
+    assert saved["studied_at"], "ticking must stamp when it happened"
+
+
+def test_ai_sde_page_persists_by_title_and_survives_a_missing_table(auth_client):
+    """The page must keep working when progress sync is unavailable — the
+    localStorage mirror is what makes a tick feel instant, and a 503 from an
+    unrun migration must not take the study page down with it."""
+    html = auth_client.get("/ai-sde").get_data(as_text=True)
+    assert "ai_sde_studied_titles" in html, "still keying local storage on positional ids"
+    assert "pushProgress" in html and "syncStudied" in html
+    # Union, not replace: an offline tick must not be erased by an older
+    # server row when the two are reconciled.
+    assert "!studied.has(id)" in html, "server sync overwrites local state instead of merging"

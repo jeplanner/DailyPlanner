@@ -178,9 +178,21 @@
       inst.firedZero = true;
       if (typeof inst.onZero === "function") { try { inst.onZero(inst); } catch (e) {} }
     }
-    /* A visible seconds segment has to be redrawn every second whatever the
-       distance, or it sits there frozen and looks broken. */
-    inst.tick = (inst.sEl || (b.total < HOUR && b.total > 0)) ? SEC : d.tick;
+    /* THE REDRAW RATE MUST MATCH THE FINEST UNIT ON SCREEN, not the distance
+       to the deadline.
+
+       display() picks a rate suited to a single dominant unit — hourly when
+       something is weeks away, which is right if the only thing showing is
+       "19 weeks". But the D/H/M readout and the compact form both show
+       MINUTES at every distance, so an hourly redraw left the minutes stale
+       for up to an hour and the whole clock looked frozen. Seconds are worse
+       again. So: ask what is actually rendered. */
+    var finest = d.tick;
+    if (inst.mEl || inst.compactEl) finest = Math.min(finest, MIN);
+    if (inst.sEl) finest = SEC;
+    /* Inside the last hour the compact form switches to showing seconds. */
+    if (inst.compactEl && b.total < HOUR && b.total > 0) finest = SEC;
+    inst.tick = finest;
   }
 
   /* ── The flash ─────────────────────────────────────────────────────────

@@ -292,9 +292,45 @@
     }
   }
 
-  const PKEY = "ai_sde_studied"; const studied = new Set();
-  try { (JSON.parse(localStorage.getItem(PKEY)||"[]")||[]).forEach(x=>studied.add(x)); } catch(_){}
-  const saveP = () => { try { localStorage.setItem(PKEY, JSON.stringify([...studied])); } catch(_){} };
+  /* ── Studied state ────────────────────────────────────────────────────
+     Held in memory as entry IDs (that is what the DOM uses), but PERSISTED
+     BY TITLE, because the id is the entry's index in the bank and shifts
+     every time a topic is added or deduped — so ids stored yesterday point
+     at different topics today. Titles are stable.
+
+     The server is the source of truth so progress follows the user between
+     phone and laptop; localStorage stays on as an offline mirror, which is
+     also what makes the first paint instant instead of waiting on a fetch. */
+  const PKEY = "ai_sde_studied_titles"; const studied = new Set();
+  const LEGACY_PKEY = "ai_sde_studied";
+  let progressSynced = false;
+
+  const titleOf = (id) => (BANK && (BANK.entries.find(x => x.id === id) || {}).title) || null;
+  const idOfTitle = (t) => (BANK && (BANK.entries.find(x => x.title === t) || {}).id) || null;
+
+  const saveLocal = () => {
+    try {
+      const titles = [...studied].map(titleOf).filter(Boolean);
+      localStorage.setItem(PKEY, JSON.stringify(titles));
+    } catch(_) {}
+  };
+
+  /* Persist one topic. Fire-and-forget: a tick must feel instant, and the
+     local mirror already holds it if the request fails. */
+  async function pushProgress(id, isStudied){
+    const title = titleOf(id);
+    if (!title) return;
+    try {
+      await fetch("/api/ai-sde/progress", {
+        method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json",
+                  "X-CSRFToken": (document.querySelector('meta[name=csrf-token]')||{}).content || ""},
+        body: JSON.stringify({title: title, studied: !!isStudied}),
+      });
+    } catch(_) { /* offline — the mirror keeps it until the next load */ }
+  }
+
+  const saveP = () => { saveLocal(); };
   const prog = () => { if(BANK) $("prog").textContent = `${studied.size} / ${BANK.total} studied`; };
   // Minutes -> "3h 20m", the unit a study plan is actually made of.
   const hrs = (m) => m < 60 ? `${m}m` : (m%60 ? `${Math.floor(m/60)}h ${m%60}m` : `${Math.floor(m/60)}h`);
@@ -325,6 +361,46 @@
       actualPart +
       `<span>≈ <b>${(left/60/2).toFixed(0)}</b> days at 2 h/day</span>` +
       `<span class="bar"><i style="width:${pct}%"></i></span>`;
+  }
+
+  /* Seed `studied` from the local mirror first (instant), then reconcile
+     with the server. Titles that no longer exist in the bank are dropped
+     rather than silently marking whatever now sits at that position. */
+  function loadStudied(){
+    studied.clear();
+    let titles = [];
+    try { titles = JSON.parse(localStorage.getItem(PKEY) || "[]") || []; } catch(_) {}
+    if (!titles.length) {
+      /* One-time rescue of the old id-keyed store. Those ids were index
+         based and the bank has been reordered since, so they cannot be
+         trusted — we migrate the COUNT of nothing and simply drop them,
+         rather than mark the wrong topics as done. */
+      try {
+        const legacy = JSON.parse(localStorage.getItem(LEGACY_PKEY) || "[]") || [];
+        if (legacy.length) console.info(
+          `[ai-sde] discarding ${legacy.length} legacy id-keyed ticks — the ids ` +
+          `were positional and no longer identify the same topics`);
+      } catch(_) {}
+    }
+    titles.forEach(t => { const id = idOfTitle(t); if (id) studied.add(id); });
+    syncStudied();
+  }
+
+  /* Pull the server's copy and merge. Union, not replace: a tick made
+     offline on this device must not be erased by an older server row. */
+  async function syncStudied(){
+    try {
+      const r = await fetch("/api/ai-sde/progress", {credentials: "same-origin"});
+      if (!r.ok) return;                       // 503 = migration not run yet
+      const data = await r.json();
+      let added = 0;
+      (data.studied || []).forEach(t => {
+        const id = idOfTitle(t);
+        if (id && !studied.has(id)) { studied.add(id); added++; }
+      });
+      progressSynced = true;
+      if (added) { saveLocal(); prog(); render(); }
+    } catch(_) { /* offline: the mirror stands in */ }
   }
 
   function render(){
@@ -401,7 +477,8 @@
         Gamify.studied(id, ent.prep_minutes, {difficulty: ent.difficulty, priority: ent.priority});
       }
       // Re-read the effort line so "prep left" drops the moment you tick a box.
-      saveP(); card.classList.toggle("done", e.target.checked); prog(); effort(shown); return;
+      saveP(); pushProgress(id, e.target.checked);
+      card.classList.toggle("done", e.target.checked); prog(); effort(shown); return;
     }
     const tag = e.target.closest("[data-tag]");
     if (tag) { $("search").value = tag.dataset.tag; $("cat").value=""; render(); window.scrollTo({top:0,behavior:"smooth"}); return; }
@@ -440,6 +517,7 @@
   (async () => {
     try {
       BANK = await api("/api/ai-sde");
+      loadStudied();
       (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);
       $("cat").innerHTML = '<option value="">All topics</option>' + (BANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       fillTagFilters();

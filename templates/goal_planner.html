@@ -277,6 +277,16 @@
         <div class="hero-title">${esc(g.title)}</div>
         <div class="nodate-msg">No deadline yet, so there is nothing to count down.
           Give it one below and this becomes a plan.</div>
+        <div class="meta">
+          <span class="pctwrap">
+            <input class="pct" type="number" min="0" max="100" step="1" inputmode="numeric"
+                   value="${g.progress}" data-pct="${g.id}" aria-label="Percent complete">
+            <b>%</b> done
+            <em class="src">${g.progress_source === "manual" ? "typed"
+                : (g.kr_count ? `from ${g.kr_count} key result${g.kr_count===1?"":"s"}`
+                              : "type a % or add key results")}</em>
+          </span>
+        </div>
         <div class="dl-row inline-dl">
           <select id="h-unit">
             <option value="days">In days</option>

@@ -325,6 +325,101 @@ def ai_sde_entry(entry_id):
                     "examples": AI_SDE_ENTRIES[idx].get("examples") or []})
 
 
+# ══════════════════════════════════════════════════════════════════════
+# AI SDE PROGRESS — server-side, so study follows the user between devices
+#
+# Keyed by TITLE, never by the "ai{i}" id the list endpoint hands out: that
+# id is the entry's INDEX in the bank, and the index shifts every time an
+# entry is added or deduped. See MIGRATION_AI_SDE_PROGRESS.sql.
+# ══════════════════════════════════════════════════════════════════════
+
+_AI_SDE_TITLES = {e["title"] for e in AI_SDE_ENTRIES}
+
+
+@interview_prep_bp.route("/api/ai-sde/progress", methods=["GET"])
+@login_required
+def ai_sde_progress():
+    """Every topic this user has ticked or clocked time against.
+
+    Returns titles, not ids, and the client maps them onto whatever the
+    bank currently holds — so a topic that has since been renamed or
+    removed simply drops out instead of silently marking its neighbour.
+    """
+    try:
+        rows = get("ai_sde_progress", params={
+            "user_id": f"eq.{session['user_id']}",
+            "is_deleted": "eq.false",
+            "select": "entry_title,studied,studied_at,minutes_focused",
+            "limit": 5000,
+        }) or []
+    except Exception as exc:
+        return _ai_sde_progress_schema_error(exc)
+
+    studied, minutes = [], {}
+    for r in rows:
+        title = r.get("entry_title")
+        if title not in _AI_SDE_TITLES:
+            continue          # renamed or removed since it was recorded
+        if r.get("studied"):
+            studied.append(title)
+        if r.get("minutes_focused"):
+            minutes[title] = int(r["minutes_focused"])
+    return jsonify({"studied": studied, "minutes": minutes,
+                    "total_rows": len(rows)})
+
+
+@interview_prep_bp.route("/api/ai-sde/progress", methods=["POST"])
+@login_required
+def ai_sde_progress_save():
+    """Upsert one topic's progress. Body: {title, studied?, minutes?}."""
+    data = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    if title not in _AI_SDE_TITLES:
+        return jsonify({"error": "unknown topic"}), 400
+
+    payload = {"user_id": session["user_id"], "entry_title": title,
+               "updated_at": _iso_now()}
+    if "studied" in data:
+        payload["studied"] = bool(data["studied"])
+        # Stamp the moment it was ticked; clear it when un-ticked so the
+        # column never claims a date for something not actually done.
+        payload["studied_at"] = _iso_now() if data["studied"] else None
+    if "minutes" in data:
+        try:
+            payload["minutes_focused"] = max(0, int(data["minutes"]))
+        except (TypeError, ValueError):
+            return jsonify({"error": "minutes must be a number"}), 400
+    if len(payload) <= 3:
+        return jsonify({"error": "nothing to save"}), 400
+
+    try:
+        # Upsert on (user_id, entry_title) — the unique index in the
+        # migration is what makes merge-duplicates the right resolution.
+        post("ai_sde_progress", payload,
+             prefer="resolution=merge-duplicates,return=minimal")
+    except Exception as exc:
+        return _ai_sde_progress_schema_error(exc)
+    return jsonify({"status": "ok"})
+
+
+def _iso_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ai_sde_progress_schema_error(exc):
+    """A missing table should name the migration, not surface a bare 500."""
+    text = str(exc)
+    if "ai_sde_progress" in text or "does not exist" in text or "schema cache" in text:
+        logger.warning("ai-sde progress: table missing - %s", text)
+        return jsonify({
+            "error": "Progress sync is not set up yet. Run "
+                     "MIGRATION_AI_SDE_PROGRESS.sql in Supabase.",
+            "migration": "MIGRATION_AI_SDE_PROGRESS.sql",
+        }), 503
+    raise exc
+
+
 @interview_prep_bp.route("/ai-sde/pdf", methods=["GET"])
 @login_required
 def ai_sde_pdf():
