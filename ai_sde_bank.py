@@ -189577,6 +189577,1569 @@ the price is one LLM call per chunk plus the entity-resolution problem, so measu
 distribution and try iterative retrieval before paying it.""",
 ]
 
+_EX_P1AO["How do you handle competing priorities and deadlines?"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - show that you decide, rather than that you cope
+
+This question is not asking whether you are hard-working. Everybody says they are hard-working. IT IS
+ASKING WHETHER YOU CAN MAKE AN EXPLICIT TRADE-OFF AND OWN IT.
+
+The weak answer is "I make a list, I prioritise, and I work hard until it is done." That describes
+effort, not judgement, and it implies you believe everything can be finished if you try enough.
+
+THE STRONG ANSWER HAS THREE MOVES IN IT:
+    1. YOU FOUND OUT WHAT ACTUALLY MATTERED, rather than assuming the loudest request was the most
+       important.
+    2. YOU MADE A DECISION THAT SOMETHING WOULD BE LATE OR SMALLER, and you said so out loud.
+    3. YOU TOLD THE AFFECTED PEOPLE EARLY, and you told them what you were doing instead.
+
+THAT SECOND MOVE IS THE ONE CANDIDATES SKIP. "I worked the weekend and delivered both" is a worse
+answer than "I asked which one mattered more, dropped the other to a stub, and shipped the important
+one on time" - because the first one is not repeatable and the second one is a skill.
+
+THE EVERYDAY VERSION: two people ask you for a lift at the same time, to different places, and you
+have one car. The answer is not "I drove very fast". The answer is "I asked who had a fixed
+appointment and who was flexible, took the first one, and told the second one twenty minutes ahead so
+they could book a taxi."
+
+WHAT THE INTERVIEWER IS LISTENING FOR:
+- Did you ESCALATE or did you silently absorb it?
+- Did you communicate BEFORE the deadline or after it?
+- Was the criterion you used defensible - impact, dependency, reversibility - or was it "whoever asked
+  most recently"?""",
+
+    """2. THE INTUITION - why they ask, and what they write down
+
+INTERVIEWERS ASK THIS BECAUSE OVER-COMMITMENT IS THE MOST COMMON WAY A NEW ENGINEER FAILS, and it
+fails quietly. Someone accepts three tasks, all three slip, nobody hears about it until the deadline,
+and the team discovers on the day that nothing is ready. The engineer worked hard the whole time.
+
+They are checking four things, and the scoring rubric at most companies has words like these in it:
+
+    PRIORITISATION - is there a stated criterion, or is it vibes?
+    COMMUNICATION - did the affected people find out early enough to act?
+    OWNERSHIP - did they decide, or wait to be told?
+    OUTCOME - what actually happened, and what did they change afterwards?
+
+WHAT THEY WRITE ON THE FEEDBACK FORM WHEN IT GOES BADLY:
+    "Describes effort rather than judgement."
+    "No evidence of escalation - absorbed the conflict silently."
+    "Could not say what was deprioritised."
+    "Everything succeeded; unclear what the trade-off actually was."
+
+THAT LAST ONE IS WORTH DWELLING ON. A STORY IN WHICH NOTHING WAS SACRIFICED IS NOT A STORY ABOUT
+COMPETING PRIORITIES. If your answer ends "and I delivered everything on time", you have either
+answered a different question or you did not actually have a conflict. THE TENSION IS THE CONTENT.
+
+THE CRITERION IS THE THING TO PREPARE. You need one sentence that explains how you chose, and it
+should be about consequences rather than preferences:
+
+    "What breaks if this is late?" - a demo for a customer beats an internal refactor.
+    "What is blocking someone else?" - unblocking three people beats finishing one thing.
+    "What is reversible?" - a decision you can undo cheaply can be made fast and revisited.
+    "What has a hard external date?" - a compliance deadline does not negotiate; a nice-to-have does.
+
+HAVING ONE OF THOSE READY, WITH A CONCRETE INSTANCE, IS MOST OF THE PREPARATION.""",
+
+    """3. A FULL ANSWER, TRACED - a student-scale example
+
+The example below is deliberately at the scale a student or new graduate actually has. INTERVIEWERS DO
+NOT EXPECT YOU TO HAVE MANAGED A PRODUCT LAUNCH; they expect the same reasoning at your scale.
+
+SITUATION (2 sentences):
+    "In my final-year project I was the only person on the backend. Three weeks before the demo, my
+    supervisor asked for a new export feature, and at the same time our integration tests started
+    failing intermittently on CI."
+
+TASK (1 sentence, and it must contain the CONFLICT):
+    "I had about fifteen working days, and doing both properly needed closer to twenty-five - the
+    export was maybe eight days and chasing a flaky test could be anything."
+
+ACTION (the bulk, and note where the DECISION is):
+    "First I checked what each one actually cost us. The flaky test was failing about one run in five,
+    which meant every merge needed a retry - annoying, maybe twenty minutes a day across the team of
+    four. The export feature was the thing my supervisor was going to click on in the demo.
+
+    So I went back to him and said I could do one properly or both badly, and asked which mattered. He
+    said the demo. THAT CONVERSATION TOOK FOUR MINUTES AND I HAD BEEN AVOIDING IT FOR TWO DAYS.
+
+    I did three things. I built the export feature first, because it had the hard external date. For
+    the flaky test, instead of debugging it, I marked it as a known flake with a retry and opened an
+    issue documenting the failure pattern - so we stopped losing twenty minutes a day without me
+    spending a week on the root cause. And I told the other three people on the team in our stand-up
+    that the test was quarantined and why, so nobody thought it had been fixed."
+
+RESULT (concrete, and includes what was NOT done):
+    "The export shipped with four days to spare and the demo went fine. THE FLAKY TEST WAS STILL
+    BROKEN - I fixed it in the week after the demo, and it turned out to be a shared fixture with a
+    timestamp in it, which took about half a day once I had time to look properly."
+
+REFLECTION (one sentence, and this is where the marks are):
+    "The thing I would do differently is have that conversation with my supervisor on day one instead
+    of day three. I spent two days trying to find a way to do both, and that was two days I could have
+    spent on the thing that mattered."
+
+WHY THAT ANSWER WORKS: it names a criterion (hard external date), it makes an explicit sacrifice, it
+communicates the sacrifice, it quantifies both sides (one run in five, twenty minutes a day, eight
+days), and the reflection is about a DECISION rather than about working harder.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - THE HERO ANSWER. "I worked evenings and weekends and got both done." It answers a
+different question, it signals that you will burn out, and it tells the interviewer you will not warn
+them when something is going wrong. IT ALSO USUALLY MEANS YOU DID BOTH BADLY and nobody has told you
+yet.
+
+FAILURE 2 - NO SACRIFICE. If everything succeeded, there was no conflict. Say what was dropped,
+delayed, or shipped smaller. THE SACRIFICE IS THE EVIDENCE THAT YOU PRIORITISED.
+
+FAILURE 3 - NO CRITERION. "I did the most important one first" is circular. Say HOW you knew - hard
+date, blocking others, reversibility, cost of being wrong.
+
+FAILURE 4 - THE INVISIBLE STAKEHOLDER. You decided and did not tell the person whose work was
+deprioritised. That converts a good decision into a surprise, and surprises are what damage trust.
+COMMUNICATION EARLY IS WORTH MORE THAN A SLIGHTLY BETTER CHOICE MADE SILENTLY.
+
+FAILURE 5 - ESCALATING TOO LATE OR NOT AT ALL. New engineers avoid saying "I cannot do both" because
+it feels like admitting failure. Interviewers read the opposite: an engineer who flags a conflict on
+day one is more valuable than one who discovers it on the deadline.
+
+FAILURE 6 - ESCALATING WITHOUT A PROPOSAL. "I have too much work" is a complaint. "I can do A by
+Friday or B by Friday, not both - I would suggest A because of the customer demo, but you have more
+context" is a decision request. THE SECOND ONE IS WHAT A SENIOR ENGINEER SOUNDS LIKE.
+
+FAILURE 7 - AN EXAMPLE WITH NO NUMBERS. "It was quite a lot of work" tells them nothing. Days, tickets,
+percentage of test runs, people blocked - any number at all makes the story concrete.
+
+FAILURE 8 - BLAMING. "My manager gave me too much" or "the other team was disorganised". Even if true,
+it reads as someone who does not own their situation. STATE THE CONSTRAINT NEUTRALLY AND MOVE TO WHAT
+YOU DID.""",
+
+    """5. HOW TO BUILD A STORY THAT SURVIVES PROBING
+
+The follow-up questions are where these answers fall apart. Prepare for these five, because they are
+asked almost every time:
+
+    "WHAT DID YOU DEPRIORITISE, AND WHAT HAPPENED TO IT?"
+        -> the killer question if you skipped the sacrifice. Have the answer, including what happened
+           to the dropped item afterwards. "It was still broken; I fixed it the following week."
+
+    "WHO DID YOU TELL, AND WHEN?"
+        -> name the person and the timing relative to the deadline. "My supervisor, on day three -
+           though it should have been day one."
+
+    "WHAT IF YOUR MANAGER HAD SAID BOTH WERE CRITICAL?"
+        -> the right answer is that you make the trade-off VISIBLE rather than accepting it. "I would
+           have laid out what each one would look like if I split the time, and asked them to choose
+           which version they preferred - because both-at-full-quality was not one of the options."
+
+    "HOW DID YOU KNOW YOUR ESTIMATE WAS RIGHT?"
+        -> you did not, exactly. Say what you based it on and what the uncertainty was. "Eight days
+           was based on a similar feature I had done in about six, plus buffer."
+
+    "WHAT WOULD YOU DO DIFFERENTLY?"
+        -> ALWAYS have this ready, and make it about the decision, not about effort. "Escalate on day
+           one" is a good answer. "Work harder" is not.
+
+THE STRUCTURAL ADVICE THAT MAKES ALL OF THIS EASIER: PREPARE THE STORY AS A SET OF FACTS, NOT AS A
+SCRIPT. Write down the situation, the two competing items, the numbers on each side, the criterion,
+who you told and when, what happened, and what you would change. Seven facts. THEN YOU CAN ANSWER ANY
+ORDERING OF THE FOLLOW-UPS, whereas a memorised paragraph falls apart the moment they interrupt it.
+
+AND ONE STORY CAN COVER SEVERAL QUESTIONS. The same project can answer "competing priorities",
+"a time you had to say no", "a time you missed a deadline" and "a time you escalated" - by emphasising
+a different part. Two or three well-prepared stories cover most of a behavioural round.""",
+
+    """6. HOW TO PREPARE - numbered steps
+
+STEP 1 - FIND A REAL CONFLICT FROM THE LAST TWO YEARS. Coursework, an internship, a side project, a
+club. It does not need to be big; it needs to be REAL, because invented stories collapse under
+follow-ups.
+
+STEP 2 - CHECK IT HAS A GENUINE SACRIFICE. If everything got done, pick a different story.
+
+STEP 3 - WRITE DOWN THE NUMBERS ON BOTH SIDES. Days of work, people affected, frequency of the
+problem, how far ahead the deadline was. You need at least two numbers.
+
+STEP 4 - NAME YOUR CRITERION IN ONE SENTENCE. Hard external date, blocking others, reversibility, cost
+of being wrong. Pick the one that actually applied.
+
+STEP 5 - WRITE DOWN WHO YOU TOLD AND WHEN, relative to the deadline. If the answer is "nobody", that
+is your reflection point.
+
+STEP 6 - WRITE THE RESULT INCLUDING THE THING THAT DID NOT GET DONE. What happened to it afterwards?
+
+STEP 7 - WRITE ONE SENTENCE OF REFLECTION ABOUT THE DECISION. Not about effort.
+
+STEP 8 - PRACTISE IT OUT LOUD IN NINETY SECONDS. Situation and task in twenty seconds, action in
+fifty, result and reflection in twenty. IF IT TAKES THREE MINUTES YOU ARE INCLUDING DETAIL THAT NOBODY
+NEEDS.
+
+STEP 9 - PRACTISE THE FIVE FOLLOW-UPS from section 5, out loud, from the FACTS rather than from the
+script.
+
+STEP 10 - HAVE A SECOND STORY. Interviewers sometimes say "give me another example", and the second
+one is where prepared candidates separate from rehearsed ones.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'My general approach is that when two things genuinely conflict, the useful move isn't to work harder,
+it's to make the trade-off explicit and get it decided quickly - because the worst outcome is that
+both slip and nobody finds out until the deadline.
+
+Concretely: in my final-year project I was the only person on the backend, and three weeks before the
+demo my supervisor asked for a new export feature at the same time our integration tests started
+failing intermittently. I had about fifteen working days and doing both properly needed closer to
+twenty-five.
+
+So the first thing I did was work out what each one actually cost. The flaky test was failing about
+one run in five, so every merge needed a retry - roughly twenty minutes a day across a team of four.
+The export feature was the thing my supervisor was going to click on in the demo.
+
+Then I went and asked him directly: I could do one properly or both badly, which mattered? He said the
+demo. That conversation took four minutes, and I'd been avoiding it for two days.
+
+So I built the export first, because it had the hard external date. For the flaky test I didn't debug
+it - I quarantined it with a retry and opened an issue documenting the failure pattern, which stopped
+us losing twenty minutes a day without costing me a week. And I told the other three people in
+stand-up that it was quarantined and why, so nobody assumed it was fixed.
+
+The export shipped with four days to spare and the demo went fine. The flaky test was still broken - I
+fixed it the week after, and it turned out to be a shared fixture with a timestamp in it, about half a
+day's work once I could look at it properly.
+
+The thing I'd do differently is have that conversation on day one rather than day three. I spent two
+days looking for a way to do both, and that was two days I could have spent on the thing that
+mattered.
+
+More generally the criterion I reach for first is what has a hard external date and what's blocking
+other people, because those are the two that get worse if you delay them - and if my manager tells me
+both are critical, I'd lay out what each one looks like if I split the time and ask them to pick,
+because "both at full quality" wasn't one of the available options.'""",
+
+    """8. THE STRUCTURE, PIECE BY PIECE
+
+THE SHAPE, with target lengths:
+
+    SITUATION   (~20 seconds)  Where, when, what your role was. Two sentences maximum.
+                               THE MOST COMMON MISTAKE IS SPENDING A MINUTE HERE.
+
+    TASK        (~10 seconds)  The conflict, stated as a conflict, WITH NUMBERS.
+                               "Fifteen days available, twenty-five days of work" is a task
+                               statement. "It was very busy" is not.
+
+    ACTION      (~50 seconds)  What YOU did, in first person singular. Four beats:
+                               (a) how you worked out what mattered - the criterion
+                               (b) the conversation you had, and when
+                               (c) the decision, INCLUDING what you dropped
+                               (d) how you communicated it to the people affected
+                               THE WORD "WE" IS THE ENEMY HERE. The interviewer is scoring you,
+                               not your team.
+
+    RESULT      (~15 seconds)  What happened, with a number. AND what happened to the thing you
+                               deprioritised - this is the part that proves the sacrifice was real.
+
+    REFLECTION  (~10 seconds)  One sentence, about a DECISION you would make differently.
+
+THE FOUR CRITERIA WORTH MEMORISING, so you always have a defensible answer to "how did you choose":
+
+    HARD EXTERNAL DATE     - a demo, a customer, a compliance deadline. Does not move.
+    BLOCKING OTHERS        - one day of your work unblocking three people beats three days of yours.
+    REVERSIBILITY          - a cheap-to-undo decision can be made fast; an expensive one deserves the
+                             time. (This is Amazon's "one-way vs two-way door" framing and it is
+                             widely understood.)
+    COST OF BEING WRONG    - a bug in billing beats a bug in a tooltip.
+
+THE ESCALATION SENTENCE, worth having memorised almost word for word:
+
+    "I can do A by Friday or B by Friday, not both at the quality I would want. My suggestion is A
+     because of [criterion], but you have more context than me - which would you prefer?"
+
+    THAT SENTENCE DOES FOUR THINGS: states the constraint, offers a recommendation, defers the
+    decision to the person who owns it, and does it early enough to be useful. IT IS THE SINGLE MOST
+    USEFUL THING IN THIS ENTRY.""",
+
+    """9. THE SAME STORY, RE-ANGLED
+
+One well-prepared project answers several different behavioural questions, because you change which
+part you emphasise. Take the story above:
+
+    "HOW DO YOU HANDLE COMPETING PRIORITIES?"
+        EMPHASISE: the criterion (hard external date) and the explicit trade-off.
+        OPEN WITH: "I try to make the trade-off explicit early rather than absorb it."
+
+    "TELL ME ABOUT A TIME YOU HAD TO SAY NO."
+        EMPHASISE: the conversation with the supervisor, and the fact that you offered an alternative
+        rather than a refusal.
+        OPEN WITH: "I told my supervisor I couldn't do both well, and proposed which one to drop."
+
+    "TELL ME ABOUT A TIME YOU MADE A DECISION WITH INCOMPLETE INFORMATION."
+        EMPHASISE: the estimate (eight days, based on a similar feature) and the uncertainty on the
+        flaky test ("could be anything").
+        OPEN WITH: "I had to commit to a plan without knowing how long the debugging would take."
+
+    "TELL ME ABOUT A TIME YOU ESCALATED SOMETHING."
+        EMPHASISE: the four-minute conversation, and the two days you wasted before having it.
+        OPEN WITH: "I should have escalated on day one and I escalated on day three."
+
+    "TELL ME ABOUT A TIME YOU CUT SCOPE."
+        EMPHASISE: quarantining the test with a retry instead of fixing it - a deliberate,
+        documented, temporary compromise.
+        OPEN WITH: "I shipped a known-imperfect fix on purpose and wrote down why."
+
+FIVE QUESTIONS, ONE PROJECT. AND NOTE THAT EACH VERSION OPENS WITH A DIFFERENT SENTENCE - that first
+sentence is what tells the interviewer you are answering THEIR question rather than reciting a
+prepared story.
+
+THE PRACTICAL PREPARATION THIS IMPLIES: prepare THREE projects, not fifteen stories. For each project
+write down the seven facts (situation, the two competing items, the numbers, the criterion, who you
+told and when, the result including what was dropped, the reflection). Then in the room, pick a
+project and pick an angle. THAT IS FAR LESS MEMORISATION AND IT SURVIVES INTERRUPTION.""",
+
+    """10. WHAT IS BEING SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+    WHAT THE RUBRIC ACTUALLY CONTAINS:
+        did they state a CRITERION for choosing, or was it arbitrary?
+        did they make a real TRADE-OFF, or claim to have done everything?
+        did they COMMUNICATE it, to whom, and how early?
+        did they ESCALATE with a proposal, or absorb it silently, or complain?
+        is there a NUMBER anywhere in the story?
+        is the REFLECTION about a decision or about effort?
+
+THE #1 MISTAKE: the hero answer. "I worked the weekend and delivered both." It answers a different
+question, it signals burnout risk, and it tells the interviewer you will not warn them when something
+is slipping.
+
+THE #2 MISTAKE: no sacrifice. If nothing was dropped, delayed or shrunk, you did not have competing
+priorities and the story does not answer the question.
+
+THE #3 MISTAKE: no criterion. "I did the most important one first" is circular. Name the rule: hard
+date, blocking others, reversibility, cost of being wrong.
+
+THE #4 MISTAKE: deciding without telling the affected person. A good decision delivered as a surprise
+is worse than an adequate decision flagged early.
+
+THE #5 MISTAKE: escalating as a complaint rather than as a proposal. "I have too much work" versus "A
+or B by Friday, I suggest A because of the customer date - which would you prefer?"
+
+THE #6 MISTAKE: saying "we" throughout the action section. The interviewer is scoring what YOU did.
+
+THE #7 MISTAKE: no numbers. Days, people, frequency, how far ahead the deadline was. At least two.
+
+THE #8 MISTAKE: a reflection about working harder or being more organised. Make it about a decision
+you would take differently - "escalate on day one" is a good reflection.
+
+THE #9 MISTAKE: preparing a script instead of facts. Interviewers interrupt, and a script that gets
+interrupted collapses. Seven facts survive any ordering of follow-ups.
+
+ONE-SENTENCE TAKEAWAY: this question is testing whether you can make an explicit trade-off, name the
+criterion you used, sacrifice something on purpose, and tell the affected people early enough to act -
+so prepare a real story with numbers on both sides, a stated criterion, a named sacrifice, a
+timestamped escalation with a PROPOSAL rather than a complaint, and a reflection about a decision
+rather than about effort.""",
+]
+
+_EX_P1AO["Tell me about a time you helped a teammate succeed"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - show that you make other people better, without taking over
+
+The trap in this question is that it invites you to describe a rescue. "My teammate was stuck, so I
+fixed it for them." That is not helping a teammate succeed; THAT IS DOING THEIR WORK, and the credit
+goes to you rather than to them.
+
+WHAT THE QUESTION IS ACTUALLY ASKING: can you increase someone else's capability or output in a way
+that leaves THEM with the win?
+
+THE THREE THINGS A GOOD ANSWER SHOWS:
+    1. YOU NOTICED. Somebody was stuck, or blocked, or about to make an expensive mistake, and you
+       spotted it - often before they asked.
+    2. YOU CHOSE THE RIGHT LEVEL OF HELP. Sometimes that is unblocking them in ten minutes; sometimes
+       it is pairing for an hour; sometimes it is deliberately NOT giving them the answer.
+    3. THE CREDIT LANDED WITH THEM. You can say what THEY achieved, not what you achieved.
+
+THE EVERYDAY VERSION: someone is struggling to assemble a flat-pack wardrobe. You can build it for
+them - fastest, and they still cannot build the next one. Or you can notice they are holding the
+instructions upside down, say so, and leave. THE SECOND ONE TOOK THIRTY SECONDS AND WAS WORTH MORE.
+
+WHY THIS QUESTION IS ASKED OF JUNIOR CANDIDATES AT ALL: because engineering is a team activity and the
+single strongest signal of a good hire at any level is that the people around them get more done. AT
+YOUR LEVEL NOBODY EXPECTS YOU TO HAVE MENTORED ANYONE FORMALLY - they expect one concrete instance of
+you making a specific person's work go better.
+
+TERMS AS THEY APPEAR:
+- BLOCKED: unable to make progress until something outside your control changes.
+- PAIRING: two people working at one problem together, in real time.
+- THE CREDIT TEST: at the end of your story, whose achievement is it?""",
+
+    """2. THE INTUITION - why they ask, and what they write down
+
+THIS IS A COLLABORATION SIGNAL, and at most companies it maps onto a named value - "earns trust",
+"grows others", "team player". It is scored, and the scoring is more specific than candidates expect.
+
+WHAT THEY ARE CHECKING:
+
+    DID YOU NOTICE UNPROMPTED?  Someone who helps when asked is fine. Someone who spots that a
+    colleague has been quiet in stand-up for three days and asks is better, and that difference is the
+    single biggest discriminator in this question.
+
+    DID YOU MATCH THE HELP TO THE NEED?  Taking over is the wrong level for someone learning. Writing
+    a paragraph of explanation is the wrong level for someone who is blocked on a broken credential.
+    JUDGEMENT ABOUT HOW MUCH TO HELP IS THE SKILL.
+
+    DID THEY END UP MORE CAPABLE, OR JUST UNBLOCKED?  Both are legitimate; the good answer says which
+    one you were going for and why.
+
+    WHOSE WIN IS IT?  If your result sentence is about what YOU delivered, you have answered the wrong
+    question.
+
+WHAT THEY WRITE WHEN IT GOES BADLY:
+    "Described taking over the task rather than enabling the teammate."
+    "Help was reactive - only when directly asked."
+    "Unclear what the teammate actually achieved."
+    "Slightly condescending about the colleague's ability."
+
+THAT LAST ONE IS A REAL RISK AND IT IS EASY TO TRIP OVER. Describing your teammate as struggling,
+confused, or not very strong technically reads badly even when it is true. THE FIX IS TO DESCRIBE THE
+SITUATION RATHER THAN THE PERSON: "the setup instructions were three years out of date" rather than
+"they could not get it working."
+
+THE OTHER THING THEY LISTEN FOR IS WHETHER YOU HAD ANYTHING TO LOSE. Helping when it costs you nothing
+is easy. THE STRONGER STORY INVOLVES YOU SPENDING TIME YOU DID NOT REALLY HAVE, and being able to say
+what it cost you makes it credible.""",
+
+    """3. A FULL ANSWER, TRACED - a student-scale example
+
+SITUATION (2 sentences):
+    "On my summer internship there was another intern on a different team who joined two weeks after
+    me. In our second week I noticed in stand-up that he had said 'still setting up' three days in a
+    row."
+
+TASK (1 sentence - what you decided to do, and it should include that nobody asked you):
+    "Nobody had asked me to help and it wasn't my team, but I had lost a day and a half to the same
+    setup the fortnight before, so I offered."
+
+ACTION (the bulk - and note the choice about HOW MUCH to help):
+    "I messaged him and asked if he wanted twenty minutes on a call. It turned out the internal setup
+    guide had a step that referenced a service that had been renamed, so the command in the docs
+    failed with an error that didn't mention the rename at all - which is exactly where I had got
+    stuck.
+
+    I DELIBERATELY DIDN'T JUST SEND HIM THE WORKING COMMAND. I shared my screen and walked through how
+    I had found it - which log to look at, and the fact that the internal wiki had a newer page that
+    the onboarding doc didn't link to. That took about thirty minutes instead of two, and the reason I
+    did it that way was that he was going to hit three more stale steps in the same guide, and I
+    wanted him to be able to get through those himself.
+
+    Then I did the thing that actually mattered more: I opened a pull request against the onboarding
+    doc fixing the step, and added a line at the top saying which pages were current. And I asked him
+    to review it, partly because he had just been through it and would spot anything else, and partly
+    so his name was on the fix."
+
+RESULT (whose win is it?):
+    "He was running the service that afternoon and unblocked for the rest of the internship. He found
+    two more stale steps while reviewing my PR and fixed them himself. And when the next two interns
+    joined a month later, neither of them lost a day on setup - one of them mentioned it in their
+    wrap-up presentation. IT COST ME ABOUT AN HOUR IN A WEEK WHERE I WAS ALREADY BEHIND ON MY OWN
+    TICKET, and I stayed an hour later that day to make it up."
+
+REFLECTION (one sentence):
+    "What I took from it is that I had lost a day and a half to that same step and just worked around
+    it privately - the fix was ten minutes and I should have made it the first time, for the person
+    coming after me."
+
+WHY THAT ANSWER WORKS: you noticed unprompted, you chose to teach rather than to solve, the credit
+lands with him (he was unblocked, HE found two more issues), it scaled beyond one person (the next two
+interns), it cost you something real, and the reflection is about your own earlier failure to act.""",
+
+    """4. THE FAILURE MODES
+
+FAILURE 1 - THE RESCUE STORY. "They couldn't figure it out so I did it." You have described doing
+someone else's work. Even when that is the right call under a deadline, SAY THAT IT WAS A DELIBERATE
+CHOICE and what you did afterwards to leave them more capable.
+
+FAILURE 2 - THE CREDIT LANDING ON YOU. If the result sentence is "and so I delivered the feature", the
+answer has failed the credit test. The result should be something THEY achieved.
+
+FAILURE 3 - SOUNDING CONDESCENDING. "He was struggling", "she didn't really understand it", "they were
+quite junior". Describe the SITUATION, not the person: "the documentation was three years out of
+date".
+
+FAILURE 4 - PURELY REACTIVE HELP. "They asked me and I answered." Fine, and unremarkable. The stronger
+version is that you noticed before they asked, or you asked whether they wanted help.
+
+FAILURE 5 - NO COST TO YOU. Helping when you were idle is easy. Say what it cost - an hour you did not
+have, a deadline you had to work around. That is what makes it a choice rather than a convenience.
+
+FAILURE 6 - NO SPECIFIC PERSON OR PROBLEM. "I always try to help my teammates" is not a story. One
+person, one problem, one afternoon.
+
+FAILURE 7 - STOPPING AT THE ONE PERSON. The strongest versions of this answer scale: you fixed the
+documentation, wrote the runbook, added the test, so the next person never hits it. THAT IS THE
+DIFFERENCE BETWEEN BEING HELPFUL AND BEING A MULTIPLIER, and interviewers notice it explicitly.
+
+FAILURE 8 - A STORY WHERE YOU WERE THE SENIOR PERSON AND YOU ARE APPLYING FOR A JUNIOR ROLE. It can
+read as inflated. A peer-to-peer story is entirely sufficient and often more credible.
+
+FAILURE 9 - NO EVIDENCE THE HELP WORKED. "I explained it to them" - and then what? Did they finish it?
+Did they do the next one alone? The outcome for them is the point.""",
+
+    """5. HOW TO BUILD A STORY THAT SURVIVES PROBING
+
+THE FOLLOW-UPS YOU WILL BE ASKED:
+
+    "HOW DID YOU KNOW THEY NEEDED HELP?"
+        -> the best answer is an observation, not a request. "Three stand-ups in a row saying 'still
+           setting up'." Have the specific signal.
+
+    "WHY DIDN'T YOU JUST GIVE THEM THE ANSWER?"
+        -> this is the judgement question and it is asked often. Have a reason: they were going to hit
+           the same class of problem again; they needed to be able to do it without me; it was their
+           project and I did not want to take it over.
+
+    "WHAT IF THEY HADN'T WANTED YOUR HELP?"
+        -> the right answer involves asking rather than assuming. "I offered rather than jumped in,
+           and if he had said he was fine I would have left it and maybe fixed the doc anyway."
+
+    "WHAT DID IT COST YOU?"
+        -> have a real answer. An hour in a busy week, staying late, a ticket that slipped a day.
+
+    "DID THEY ACTUALLY IMPROVE, OR JUST GET UNBLOCKED?"
+        -> the strongest evidence is something they did LATER, without you. "He found two more stale
+           steps while reviewing my PR and fixed them himself."
+
+THE THREE LEVELS OF HELP, and being able to name them is itself a good signal:
+
+    UNBLOCK   - remove the obstacle. Right when they are stuck on something incidental - a
+                credential, a broken environment, a permission. Do it fast and move on.
+    TEACH     - show them how you would find the answer. Right when they will meet the same class of
+                problem again. Slower, and it compounds.
+    SCALE     - fix the thing that caused it - documentation, a test, a script, a lint rule - so
+                nobody hits it again. THE HIGHEST-VALUE VERSION, and the one most candidates omit.
+
+A GREAT ANSWER OFTEN DOES ALL THREE IN SEQUENCE, and saying so explicitly ("I unblocked him, then
+showed him how I'd found it, then fixed the doc so nobody else would") is a very strong structure.
+
+AND ONE PIECE OF PRACTICAL ADVICE: THE STORY DOES NOT HAVE TO BE ABOUT CODE. Helping someone prepare
+for a presentation, restructuring a shared spreadsheet everyone was fighting, taking notes for a
+teammate who was ill - all valid, PROVIDED there is a concrete outcome for them.""",
+
+    """6. HOW TO PREPARE - numbered steps
+
+STEP 1 - LIST THREE TIMES SOMEONE ELSE'S WORK WENT BETTER BECAUSE OF SOMETHING YOU DID. Coursework,
+internship, a club, an open-source issue. Small is fine.
+
+STEP 2 - FOR EACH, CHECK THE CREDIT TEST. Can you state the result as something THEY achieved? If the
+result is about what you shipped, it is the wrong story.
+
+STEP 3 - IDENTIFY THE SIGNAL THAT MADE YOU NOTICE. Three stand-ups in a row, a PR that had been open
+for a week, someone quiet in a group chat. THE SPECIFIC SIGNAL IS WHAT MAKES THE STORY CREDIBLE.
+
+STEP 4 - DECIDE WHICH LEVEL OF HELP YOU GAVE - unblock, teach, or scale - AND WHY THAT LEVEL. This is
+the judgement the question is really about.
+
+STEP 5 - FIND THE SCALING BEAT. Did you fix the documentation, write the script, add the test? If you
+did not, that is a legitimate reflection point.
+
+STEP 6 - WRITE DOWN WHAT IT COST YOU. An hour, a late evening, a slipped ticket.
+
+STEP 7 - WRITE THE OUTCOME AS SOMETHING THEY DID AFTERWARDS, ideally without you.
+
+STEP 8 - CHECK YOUR LANGUAGE FOR CONDESCENSION. Read it back. Replace every description of the person
+with a description of the situation.
+
+STEP 9 - PRACTISE IN NINETY SECONDS, OUT LOUD. Situation twenty, action fifty, result and reflection
+twenty.
+
+STEP 10 - PRACTISE "WHY DIDN'T YOU JUST DO IT FOR THEM?" It is the most common follow-up and the one
+that separates a rehearsed answer from a considered one.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'On my summer internship there was another intern on a different team who joined about two weeks after
+me, and in our second week I noticed he'd said "still setting up" in stand-up three days running.
+Nobody had asked me to help and it wasn't my team, but I'd lost a day and a half to the same setup a
+fortnight earlier, so I offered him twenty minutes.
+
+It turned out the internal onboarding guide had a step referencing a service that had been renamed, so
+the command failed with an error that didn't mention the rename at all. Exactly where I'd got stuck.
+
+I deliberately didn't just send him the working command. I shared my screen and walked through how I'd
+found it - which log to look at, and the fact that there was a newer wiki page the onboarding doc
+didn't link to. That took half an hour instead of two minutes, and the reason I did it that way is
+that the guide had several more stale steps in it and I wanted him to be able to get through those
+himself.
+
+Then I did the thing that mattered more: I opened a pull request against the onboarding doc fixing the
+step and flagging which pages were current, and I asked him to review it - partly because he'd just
+been through it and would spot anything else, and partly so his name was on the fix.
+
+He was running the service that afternoon and unblocked for the rest of the internship. While
+reviewing the PR he found two more stale steps and fixed those himself. And when the next two interns
+joined a month later neither of them lost a day on setup - one of them actually mentioned it in her
+wrap-up presentation.
+
+It cost me about an hour in a week where I was already behind on my own ticket, and I stayed an hour
+later that day to make it up.
+
+The thing I took away is that I'd lost a day and a half to that same step and just worked around it
+privately. The fix was ten minutes and I should have made it the first time, for whoever came after
+me.
+
+Generally I think about it as three levels - unblock someone if they're stuck on something incidental,
+teach them if they're going to hit the same class of problem again, and fix the underlying cause so
+nobody hits it at all. The third one is the one I try to remember to do, because it's the one that
+keeps paying after I've moved on.'""",
+
+    """8. THE STRUCTURE, PIECE BY PIECE
+
+THE SHAPE, with target lengths:
+
+    SITUATION   (~20s)  Who, where, and THE SIGNAL that made you notice.
+                        "Three stand-ups in a row saying 'still setting up'" is a situation.
+                        "A teammate was struggling" is not.
+
+    TASK        (~10s)  What you decided to do, AND the fact that nobody asked you.
+                        "Nobody had asked me and it wasn't my team, but..." - that clause is worth
+                        real marks and takes two seconds.
+
+    ACTION      (~50s)  Four beats:
+                        (a) what you actually found the problem to be
+                        (b) THE CHOICE ABOUT HOW MUCH TO HELP, and the reason for it
+                        (c) the scaling move - the doc, the script, the test
+                        (d) how you made sure the credit was theirs
+                        BEAT (b) IS WHERE THE JUDGEMENT IS SCORED and it is the one most often
+                        missing.
+
+    RESULT      (~15s)  What THEY achieved. Ideally something they did later, without you.
+                        Plus what it cost you, in one clause.
+
+    REFLECTION  (~10s)  One sentence. The strongest version is about something YOU should have done
+                        earlier.
+
+THE CREDIT TEST, applied to a result sentence:
+
+    FAILS:  "...and so we shipped the feature on time."          (your win)
+    FAILS:  "...and I ended up fixing it for him."               (your work)
+    PASSES: "...he was unblocked that afternoon, and he found two more issues himself."
+    PASSES: "...she presented it to the team and got the design approved."
+
+THE THREE LEVELS, as a phrase to have ready:
+
+    "The way I think about it is unblock, teach, or fix the cause - and which one is right depends on
+     whether they're going to hit this again and whether it's their project or mine to own."
+
+    NAMING THE LEVELS EXPLICITLY IS A STRONG SIGNAL, because it shows the help was a decision rather
+    than an instinct.
+
+THE LANGUAGE FIX, applied:
+
+    condescending: "He couldn't get the environment working."
+    neutral:       "The onboarding guide had a step that referenced a renamed service."
+    SAME FACTS, AND ONLY ONE OF THEM MAKES YOU SOUND LIKE SOMEONE PEOPLE WANT TO ASK FOR HELP.""",
+
+    """9. THE SAME STORY, RE-ANGLED
+
+The onboarding story above answers at least five different behavioural questions, depending on which
+beat you lead with:
+
+    "TELL ME ABOUT A TIME YOU HELPED A TEAMMATE SUCCEED."
+        LEAD WITH: noticing unprompted, and the choice to teach rather than solve.
+        RESULT EMPHASIS: he was unblocked and found two more issues himself.
+
+    "TELL ME ABOUT A TIME YOU IMPROVED A PROCESS."
+        LEAD WITH: the pull request against the onboarding doc.
+        RESULT EMPHASIS: the next two interns did not lose a day.
+
+    "TELL ME ABOUT A TIME YOU TOOK INITIATIVE / WENT BEYOND YOUR REMIT."
+        LEAD WITH: it was not my team and nobody asked me.
+        RESULT EMPHASIS: what it cost you, and that you did it anyway.
+
+    "TELL ME ABOUT A TIME YOU DEALT WITH BAD DOCUMENTATION / TECHNICAL DEBT."
+        LEAD WITH: the stale guide and the renamed service.
+        RESULT EMPHASIS: the fix, and the fact that you had worked around it privately the first time.
+
+    "WHAT WOULD YOU CHANGE ABOUT HOW YOU WORKED LAST YEAR?"
+        LEAD WITH: the reflection - I hit this myself and worked around it silently.
+        THIS IS THE SAME STORY USED AS A WEAKNESS ANSWER, and it is a good one because the weakness is
+        real and the correction is demonstrated.
+
+FIVE QUESTIONS, ONE HOUR OF YOUR LIFE. THAT IS THE ARGUMENT FOR PREPARING PROJECTS RATHER THAN
+ANSWERS.
+
+THE PRACTICAL METHOD: for each of three or four real experiences, write down eight facts -
+    who was involved,
+    the signal that made you notice,
+    what the actual problem turned out to be,
+    the level of help you chose and why,
+    the scaling move (or its absence),
+    what it cost you,
+    what THEY achieved afterwards,
+    what you would do differently.
+THEN PICK A PROJECT AND AN ANGLE IN THE ROOM. Eight facts per project survive interruption in a way a
+memorised paragraph does not, and they let you answer a question you did not prepare for.""",
+
+    """10. WHAT IS BEING SCORED, THE MISTAKES, AND THE TAKEAWAY
+
+    WHAT THE RUBRIC ACTUALLY CONTAINS:
+        did they notice UNPROMPTED, or only help when asked?
+        did they choose the level of help deliberately, and can they justify it?
+        did the teammate end up MORE CAPABLE, or merely unblocked - and do they know the difference?
+        does the RESULT belong to the teammate?
+        did the help SCALE beyond one person?
+        did it cost them anything?
+        do they describe the SITUATION rather than the person's shortcomings?
+
+THE #1 MISTAKE: the rescue story. Doing their work is not helping them succeed, and the credit lands
+in the wrong place.
+
+THE #2 MISTAKE: a result sentence about what YOU delivered. Apply the credit test to that one sentence
+before anything else.
+
+THE #3 MISTAKE: condescending language. "They were struggling" versus "the documentation was out of
+date" - same facts, completely different impression.
+
+THE #4 MISTAKE: purely reactive help. Being asked and answering is unremarkable; noticing is the
+signal.
+
+THE #5 MISTAKE: no cost. If it was free, it was not a choice. An hour you did not have makes it one.
+
+THE #6 MISTAKE: stopping at the one person. Fixing the doc, writing the script, adding the test is
+what turns helpful into multiplier, and it is the beat most candidates leave out.
+
+THE #7 MISTAKE: no evidence it worked. Something they did LATER, without you, is the strongest
+possible result.
+
+THE #8 MISTAKE: "I always help my teammates." One person, one problem, one afternoon, or it is not a
+story.
+
+THE #9 MISTAKE: not preparing the "why didn't you just do it for them" follow-up. It is the most
+common one and it is where the judgement is scored.
+
+ONE-SENTENCE TAKEAWAY: this question is scoring whether you make other people better rather than
+whether you are useful, so tell a story where you NOTICED unprompted, deliberately chose between
+unblocking, teaching and fixing the underlying cause, describe the situation rather than the person's
+shortcomings, state the result as something THEY achieved afterwards without you, and mention what it
+cost you - and if you also fixed the thing that caused it, lead with that, because it is the beat that
+turns helpful into multiplier.""",
+]
+
+_EX_P1AO["Grouped-Query Attention (GQA) and Multi-Query Attention"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop storing a separate key and value for every head
+
+Standard multi-head attention gives each head its OWN query, key and value projections. With 32 heads
+you have 32 sets of keys and 32 sets of values.
+
+At inference those keys and values are CACHED - every past token's K and V are kept so they do not
+have to be recomputed. THAT CACHE IS THE PROBLEM. It grows linearly with the sequence, it is PER
+REQUEST, and at long context it can exceed the model weights.
+
+MULTI-QUERY ATTENTION (MQA) is the extreme fix: keep all 32 QUERY heads, but share ONE key head and
+ONE value head across all of them. The cache shrinks by 32x.
+
+GROUPED-QUERY ATTENTION (GQA) is the compromise that actually won: split the query heads into G
+groups, and give each GROUP its own key and value head. With 32 query heads and 8 KV heads, four
+queries share each KV pair, and the cache shrinks by 4x.
+
+    MHA:    32 query heads, 32 KV heads     the original
+    GQA-8:  32 query heads,  8 KV heads     Llama-3, Mistral, most current models
+    MQA:    32 query heads,  1 KV head      PaLM, Falcon
+
+THE THING TO UNDERSTAND: THIS IS NOT A PARAMETER-COUNT OPTIMISATION. It barely changes the model size.
+IT IS ENTIRELY ABOUT THE KV CACHE AND THEREFORE ABOUT SERVING COST, and it is a rare case of a
+DEPLOYMENT concern reaching back and changing the ARCHITECTURE.
+
+TERMS AS THEY APPEAR:
+- KV CACHE: stored keys and values for every past token, per layer, per KV head.
+- MEMORY-BANDWIDTH-BOUND: the bottleneck is reading bytes, not doing arithmetic.
+- UPTRAINING: converting an existing MHA checkpoint to GQA with a small amount of extra training.""",
+
+    """2. THE INTUITION - the cache table, which is the whole argument
+
+Cache bytes = 2 (K and V) x layers x KV_HEADS x head_dim x sequence x bytes_per_element.
+
+Only ONE term changes. Computed for a 32-layer model with 128-dimensional heads, fp16:
+
+     scheme      query heads     kv heads     @8k        @32k        @128k     vs MHA
+     MHA                  32           32     4.29 GB    17.18 GB    68.72 GB   100.0%
+     GQA-16               32           16     2.15 GB     8.59 GB    34.36 GB    50.0%
+     GQA-8                32            8     1.07 GB     4.29 GB    17.18 GB    25.0%
+     GQA-4                32            4     0.54 GB     2.15 GB     8.59 GB    12.5%
+     GQA-2                32            2     0.27 GB     1.07 GB     4.29 GB     6.2%
+     MQA                  32            1     0.13 GB     0.54 GB     2.15 GB     3.1%
+
+NOW TURN THAT INTO THE NUMBER THAT MATTERS - concurrent requests on one 80 GB GPU holding a 13 GB
+model, at 32k context:
+
+     scheme      cache per request     concurrent requests
+     MHA                  17.18 GB                       3
+     GQA-8                 4.29 GB                      15
+     MQA                   0.54 GB                     124
+
+    THREE CONCURRENT REQUESTS BECOMES FIFTEEN. That is a 5x throughput increase and therefore roughly
+    a 5x reduction in cost per token, from one architectural decision made before training started.
+    MQA gets you 124 - and that is where the quality cost starts to bite.
+
+AND THE PARAMETER SAVING IS ALMOST NOTHING, which is the point people miss. At d_model = 4096:
+
+     scheme        W_q          W_k + W_v         W_o          total/layer     vs MHA
+     MHA        16,777,216      33,554,432     16,777,216       67,108,864     100.0%
+     GQA-8      16,777,216       8,388,608     16,777,216       41,943,040      62.5%
+     MQA        16,777,216       1,048,576     16,777,216       34,603,008      51.6%
+
+    MQA SAVES 48% OF THE ATTENTION PARAMETERS, WHICH IS ABOUT 16% OF A LAYER once the MLP is included.
+    The CACHE saving is 97%. IF YOU CANNOT SAY WHICH OF THOSE TWO NUMBERS MOTIVATED THE DESIGN, YOU
+    HAVE NOT UNDERSTOOD IT.""",
+
+    """3. WHY IT BARELY HURTS QUALITY - and why MQA hurts more than GQA
+
+THE OBVIOUS OBJECTION: surely giving 32 query heads only 1 key head destroys the point of multi-head
+attention?
+
+THE ANSWER IS THAT THE HEADS' INDEPENDENCE LIVES MOSTLY IN THE QUERIES. Each query head still has its
+own projection, so each head still asks a DIFFERENT QUESTION. What they share is the set of things
+being asked ABOUT. Empirically, much of the redundancy in multi-head attention is in the key and value
+projections rather than the queries - several heads end up attending to broadly similar content and
+differing in what they extract.
+
+THE REPORTED RESULTS (Ainslie et al., 2023, the GQA paper):
+    MQA loses a small but MEASURABLE amount of quality relative to MHA, and is less stable to train.
+    GQA-8 is essentially indistinguishable from MHA on their benchmarks while getting most of MQA's
+    speed.
+    THAT IS WHY GQA WON AND MQA DID NOT. It is an interior point on the curve that captures most of
+    the benefit and almost none of the cost.
+
+THE OTHER RESULT FROM THAT PAPER, WHICH IS THE PRACTICAL ONE: UPTRAINING. You can take an existing
+MHA checkpoint, MEAN-POOL the key and value projections within each group to initialise the shared
+heads, and continue training for about 5% of the original pre-training compute. The result recovers
+almost all of the original quality. THAT IS WHY GQA SPREAD SO FAST - nobody had to retrain from
+scratch.
+
+WHY THE MEAN-POOL INITIALISATION WORKS: averaging the key projections of four heads that were already
+attending to similar things produces something close to what all four were doing. It is a warm start,
+not a random one, which is why 5% of the compute suffices rather than 100%.
+
+WHERE THE QUALITY COST ACTUALLY SHOWS UP, when it does: tasks needing many DISTINCT retrieval patterns
+simultaneously - long-context exact recall, multi-fact reasoning. Those are precisely the tasks where
+having several genuinely different key spaces matters, and they are the ones to evaluate on if you are
+choosing G yourself.""",
+
+    """4. WHY IT MATTERS SO MUCH - decoding is bandwidth-bound
+
+Here is the fact that turns a memory saving into a SPEED saving. During generation, producing ONE
+token requires reading:
+    every model weight (13 GB for a 7B model in fp16), and
+    the entire KV cache for that request.
+
+Computed at 32k context:
+
+     scheme      KV bytes read per generated token     weights read
+     MHA                                   17.18 GB           13 GB
+     GQA-8                                  4.29 GB           13 GB
+     MQA                                    0.54 GB           13 GB
+
+    AT 32K CONTEXT, MHA READS MORE CACHE PER TOKEN THAN IT READS MODEL WEIGHTS. The arithmetic done
+    with those bytes is trivial by comparison.
+
+DECODING IS MEMORY-BANDWIDTH-BOUND, NOT COMPUTE-BOUND. An H100 has roughly 3 TB/s of memory bandwidth,
+so reading 30 GB per token is about 10 ms of pure memory traffic - and that, not the FLOPs, is your
+token latency. CUTTING THE CACHE FROM 17 GB TO 4 GB CUTS THE BYTES READ PER TOKEN BY 43%, AND
+THEREFORE CUTS THE LATENCY BY ROUGHLY THE SAME.
+
+SO GQA BUYS TWO THINGS AT ONCE, and both are large:
+    MORE CONCURRENT REQUESTS (3 -> 15 in the table above), which is throughput and cost.
+    FEWER BYTES READ PER TOKEN, which is latency.
+
+AND THIS IS WHY IT IS AN ARCHITECTURAL DECISION RATHER THAN A DEPLOYMENT ONE. You cannot bolt GQA onto
+a trained MHA model at serving time - the weights have the wrong shape. It has to be chosen before (or
+uptrained into) the model, which is a rare case of INFERENCE ECONOMICS REACHING BACK INTO TRAINING.
+The same logic explains why models are now deliberately over-trained relative to Chinchilla: for a
+model that will be served to millions of users, inference cost dominates total cost, so decisions get
+made in inference's favour.""",
+
+    """5. THE ALTERNATIVES - the rest of the KV-cache toolbox
+
+    technique                    cache reduction     lossy?      where it happens
+    ---------------------------------------------------------------------------------------
+    GQA-8                        4x                  slightly    ARCHITECTURE (training time)
+    MQA                          32x                 yes         architecture
+    Multi-head Latent (MLA)      ~10x                slightly    architecture
+    int8 / fp8 KV quantisation   2x                  slightly    deployment
+    paged attention              0x (removes waste)  NO          deployment
+    prefix sharing               huge, for shared    NO          deployment
+                                 prefixes
+    sliding-window attention     bounded by w        YES         architecture
+    H2O / eviction               ~5x                 yes         deployment
+    state-space models           constant state      n/a         a different architecture
+
+TWO OF THOSE ARE FREE AND SHOULD BE EXHAUSTED FIRST: PAGED ATTENTION eliminates the 60-80%
+fragmentation waste from allocating for the maximum possible response length, and PREFIX SHARING means
+a system prompt shared by a thousand requests is stored once. NEITHER CHANGES THE MODEL, and together
+they often beat any architectural change.
+
+MULTI-HEAD LATENT ATTENTION (MLA), DeepSeek's approach, is the most interesting recent alternative.
+Instead of sharing KV heads, it COMPRESSES K and V into a single low-rank latent vector per token and
+reconstructs them during attention. Reported around a 10x cache reduction with quality comparable to
+full MHA - better than GQA on both axes. More complex, and it is where the field appears to be
+heading.
+
+HOW TO CHOOSE G, IF YOU ARE ACTUALLY MAKING THE DECISION:
+    G = number of KV heads. Common choice is 8, or "one per GPU in the tensor-parallel group", which
+    is a systems constraint rather than a quality one - it means each GPU holds a whole KV head and no
+    cross-device communication is needed for the cache.
+    Below G = 4 the reported quality cost grows and training stability degrades.
+    G = 1 (MQA) only if the cache is genuinely your binding constraint and you have evaluated the
+    loss.
+
+THE PRACTICAL ANSWER FOR ALMOST EVERYONE: YOU ARE USING A MODEL SOMEBODY ELSE TRAINED, so G is fixed
+and your levers are paged attention, prefix caching, KV quantisation and context length. Knowing WHY
+the model you are serving has 8 KV heads is what lets you reason about the rest.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - COMPUTE THE CACHE SIZE FOR YOUR MODEL AND YOUR CONTEXT LENGTH.
+`2 * layers * kv_heads * head_dim * seq * bytes`. It is one line and it tells you almost everything.
+
+STEP 2 - COMPARE IT TO THE MODEL WEIGHTS. If the cache is larger, the cache is your problem. Measured:
+17.18 GB of cache against 13 GB of weights for a 32-layer MHA model at 32k.
+
+STEP 3 - COMPUTE HOW MANY CONCURRENT REQUESTS FIT. `(GPU memory - weights) / cache per request`.
+Measured: 3 for MHA, 15 for GQA-8, 124 for MQA on an 80 GB card.
+
+STEP 4 - SAY EXPLICITLY THAT THIS IS A CACHE OPTIMISATION AND NOT A PARAMETER ONE. MQA saves 48% of
+the attention parameters and 97% of the cache; only one of those motivated the design.
+
+STEP 5 - CONNECT IT TO BANDWIDTH. Decoding reads all the weights plus the whole cache per token, so a
+smaller cache is directly less latency, not just less memory.
+
+STEP 6 - IF ASKED WHY IT DOES NOT DESTROY QUALITY: the heads' independence lives mostly in the QUERY
+projections; the redundancy is in the keys and values. GQA-8 is reported as essentially matching MHA
+while MQA measurably loses a little.
+
+STEP 7 - MENTION UPTRAINING UNPROMPTED. Mean-pool the KV projections within each group and continue
+training for ~5% of the original compute. That is why GQA spread across the industry in a year.
+
+STEP 8 - IF YOU ARE THE ONE SERVING A MODEL, EXHAUST THE FREE LEVERS FIRST. Paged attention and prefix
+sharing change nothing about the model and often beat an architectural change.
+
+STEP 9 - KNOW ONE ALTERNATIVE. MLA compresses K and V into a latent instead of sharing heads, for
+~10x, and is where the field is going.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'In standard multi-head attention every head has its own query, key and value projections. Grouped-
+query attention keeps all the query heads but has several of them SHARE a key and value head.
+Multi-query attention is the extreme version where all the query heads share one KV head.
+
+The reason to do it is entirely the KV cache. At inference you cache the keys and values of every past
+token so you don't recompute them, and that cache is proportional to the number of KV heads. It grows
+with the sequence length and it's PER REQUEST, unlike the weights which are shared.
+
+The numbers make the case. A 32-layer model with 128-dimensional heads at 32k context: full MHA is a
+17.2 gigabyte cache per request. GQA with 8 KV heads is 4.3. On an 80 gigabyte GPU holding a 13
+gigabyte model, that's the difference between THREE concurrent requests and FIFTEEN - a five-fold
+throughput increase and roughly a five-fold cost reduction, from one decision made before training
+started.
+
+What I'd emphasise is that this is NOT a parameter-count optimisation. MQA saves about 48% of the
+attention parameters, which is maybe 16% of a layer once you include the MLP. It saves 97% of the
+cache. If you can't say which of those motivated the design you haven't understood it.
+
+And it's a latency win as well as a memory one, because decoding is memory-bandwidth-bound. Generating
+one token means reading every model weight plus the whole cache for that request. At 32k context, MHA
+reads MORE cache per token than it reads weights - 17 gigabytes against 13. So cutting the cache cuts
+the bytes read per token by nearly half, and that's your token latency, not the arithmetic.
+
+On why it doesn't wreck quality: the heads' independence lives mostly in the QUERY projections - each
+head still asks a different question, they just share what they're asking about. Empirically most of
+the redundancy in multi-head attention is in the keys and values. The GQA paper found MQA loses a
+small but measurable amount and is less stable to train, while GQA with 8 groups is essentially
+indistinguishable from full MHA. That's why GQA won and MQA didn't - it's an interior point that gets
+most of the benefit and almost none of the cost.
+
+The practical detail that made it spread so fast is UPTRAINING: you can take an existing MHA
+checkpoint, mean-pool the key and value projections within each group to initialise the shared heads,
+and continue training for about 5% of the original compute. Nobody had to retrain from scratch.
+
+And this is a rare case of inference economics reaching back into architecture - you can't bolt GQA
+onto a trained model at serving time, the weights are the wrong shape.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE SHAPES ARE THE WHOLE STORY:
+
+    # MHA:   Q (n, 32, 128)   K (n, 32, 128)   V (n, 32, 128)
+    # GQA-8: Q (n, 32, 128)   K (n,  8, 128)   V (n,  8, 128)
+    # MQA:   Q (n, 32, 128)   K (n,  1, 128)   V (n,  1, 128)
+    # ^ ONLY K AND V CHANGE. The query projection is untouched, which is why each head
+    #   still asks its own question.
+
+THE PROJECTIONS:
+
+    self.Wq = Linear(d_model, n_heads * d_head)       # 32 * 128 = 4096. Full width.
+    self.Wk = Linear(d_model, n_kv_heads * d_head)    # 8 * 128 = 1024. ONE QUARTER.
+    self.Wv = Linear(d_model, n_kv_heads * d_head)    # 8 * 128 = 1024.
+    self.Wo = Linear(n_heads * d_head, d_model)       # full width again
+    # ^ this is where the ~38% attention-parameter saving comes from, and it is the LESS
+    #   important of the two savings.
+
+THE FORWARD PASS - the only new line is the repeat:
+
+    def forward(self, x, kv_cache=None):
+        n = x.shape[0]
+        q = self.Wq(x).view(n, self.n_heads,    self.d_head)
+        k = self.Wk(x).view(n, self.n_kv_heads, self.d_head)
+        v = self.Wv(x).view(n, self.n_kv_heads, self.d_head)
+
+        if kv_cache is not None:
+            k = cat([kv_cache.k, k]); v = cat([kv_cache.v, v])
+            # ^ THE CACHE STORES THE SMALL VERSION - 8 heads, not 32. That is the entire
+            #   point, and it is why the repeat below happens AFTER the cache.
+
+        k = k.repeat_interleave(self.n_heads // self.n_kv_heads, dim=1)
+        v = v.repeat_interleave(self.n_heads // self.n_kv_heads, dim=1)
+        # ^ THE ONE NEW LINE. Expand 8 KV heads to 32 so the shapes match the queries.
+        # ^ repeat_interleave, NOT repeat: heads 0-3 must all see KV head 0, so the
+        #   pattern is [0,0,0,0,1,1,1,1,...] and NOT [0,1,...,7,0,1,...,7]. Getting this
+        #   wrong pairs each query head with the wrong KV group and the model trains to
+        #   something subtly worse rather than erroring.
+        # ^ efficient kernels never materialise this - they index into the shared KV
+        #   directly. The repeat is a readable stand-in.
+
+        return self.Wo(scaled_dot_product_attention(q, k, v, is_causal=True))
+
+THE SIZING CALCULATION, which is what you will actually be asked to do:
+
+    def kv_cache_gb(layers, kv_heads, d_head, seq, bytes_per=2):
+        return 2 * layers * kv_heads * d_head * seq * bytes_per / 1e9
+
+    kv_cache_gb(32, 32, 128, 32768)   # MHA   -> 17.18 GB
+    kv_cache_gb(32,  8, 128, 32768)   # GQA-8 ->  4.29 GB
+    kv_cache_gb(32,  1, 128, 32768)   # MQA   ->  0.54 GB
+
+    def concurrent(gpu_gb, weights_gb, cache_gb):
+        return int((gpu_gb - weights_gb) // cache_gb)
+    # concurrent(80, 13, 17.18) -> 3      concurrent(80, 13, 4.29) -> 15
+
+UPTRAINING AN EXISTING MHA CHECKPOINT:
+
+    # group the 32 existing KV heads into 8 groups of 4 and MEAN-POOL each group
+    new_Wk = old_Wk.view(8, 4, d_head, d_model).mean(dim=1)
+    new_Wv = old_Wv.view(8, 4, d_head, d_model).mean(dim=1)
+    # ^ a WARM start, not a random one - averaging four heads that already attended to
+    #   similar things. Then continue pre-training for ~5% of the original compute.""",
+
+    """9. A TRACE - one attention step, three ways
+
+SETUP: 8 query heads, head dimension 4, a sequence of 3 tokens. Compare MHA, GQA-4 and MQA.
+
+MHA - 8 query heads, 8 KV heads:
+
+    head:      0     1     2     3     4     5     6     7
+    query:    q0    q1    q2    q3    q4    q5    q6    q7      (8 distinct projections)
+    key:      k0    k1    k2    k3    k4    k5    k6    k7      (8 distinct projections)
+    cache:  3 tokens x 8 heads x 4 dims x 2 (K and V) = 192 values
+
+GQA-4 - 8 query heads, 4 KV heads, so TWO queries per KV head:
+
+    head:      0     1     2     3     4     5     6     7
+    query:    q0    q1    q2    q3    q4    q5    q6    q7      (STILL 8 distinct)
+    key:      k0    k0    k1    k1    k2    k2    k3    k3      (4 distinct, each used twice)
+    cache:  3 x 4 x 4 x 2 = 96 values                            HALVED
+
+    NOTE THE PAIRING: heads 0 and 1 share k0; heads 2 and 3 share k1. That is
+    `repeat_interleave`, giving [0,0,1,1,2,2,3,3]. A plain `repeat` would give
+    [0,1,2,3,0,1,2,3] and pair head 1 with k1 instead of k0 - which trains, and trains to
+    something worse, with no error.
+
+MQA - 8 query heads, 1 KV head:
+
+    head:      0     1     2     3     4     5     6     7
+    query:    q0    q1    q2    q3    q4    q5    q6    q7      (still 8 distinct)
+    key:      k0    k0    k0    k0    k0    k0    k0    k0      (ONE, shared by all)
+    cache:  3 x 1 x 4 x 2 = 24 values                            EIGHT TIMES SMALLER
+
+    EACH HEAD STILL COMPUTES A DIFFERENT ATTENTION DISTRIBUTION, because q0 . k0 and
+    q3 . k0 are different numbers. What is lost is the ability for two heads to attend to
+    DIFFERENT ASPECTS of the same token - they all see the same key space.
+
+SCALED UP TO A REAL MODEL, 32 layers, 128-dim heads, fp16:
+
+     scheme     kv heads     @8k        @32k        @128k     concurrent @32k on 80 GB
+     MHA              32     4.29 GB    17.18 GB    68.72 GB                          3
+     GQA-8             8     1.07 GB     4.29 GB    17.18 GB                         15
+     MQA               1     0.13 GB     0.54 GB     2.15 GB                        124
+
+THE LINE-BY-LINE MAPPING - which line produced which number:
+
+    `self.Wk = Linear(d_model, n_kv_heads * d_head)`
+            produced the "4 distinct keys" row and the ~38% attention-parameter saving. It is the only
+            projection whose SHAPE changes.
+    `k = cat([kv_cache.k, k])` happening BEFORE the repeat
+            produced the cache column. If you repeated first and cached after, you would store 32
+            heads again and the entire optimisation would evaporate - a real and easy implementation
+            bug.
+    `repeat_interleave(n_heads // n_kv_heads, dim=1)`
+            produced the [0,0,1,1,2,2,3,3] pairing. `repeat` instead of `repeat_interleave` gives
+            [0,1,2,3,0,1,2,3], which is silently wrong.
+    `q = self.Wq(x).view(n, self.n_heads, self.d_head)` being UNCHANGED
+            produced "still 8 distinct queries" in every row. That is the reason quality holds up:
+            the heads' independence is in the queries.
+    `2 * layers * kv_heads * d_head * seq * bytes`
+            produced the GB columns. `kv_heads` is the ONLY term GQA touches, and it appears once,
+            linearly.
+    `(80 - 13) // cache`
+            produced 3, 15 and 124. That column is the business case, and it is the one to quote.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    cache bytes = 2 x layers x KV_HEADS x head_dim x seq x bytes_per_element
+    ONLY `KV_HEADS` CHANGES. Everything else about the model is identical.
+
+    MEASURED/COMPUTED (32 layers, d_head 128, fp16):
+        cache per request @32k:  MHA 17.18 GB | GQA-8 4.29 GB | MQA 0.54 GB
+        cache @128k:             MHA 68.72 GB | GQA-8 17.18 GB | MQA 2.15 GB
+        concurrent requests on 80 GB with 13 GB of weights, @32k: MHA 3 | GQA-8 15 | MQA 124
+        attention parameters per layer (d=4096): MHA 67.1M | GQA-8 41.9M (62.5%) | MQA 34.6M (51.6%)
+        bytes read per generated token @32k: cache 17.18 / 4.29 / 0.54 GB against 13 GB of weights
+
+THE #1 MISTAKE: describing it as a parameter-count optimisation. It saves 38-48% of the attention
+parameters and 75-97% of the cache; only the second one is the reason it exists.
+
+THE #2 MISTAKE: not knowing why quality survives. Each query head keeps its own projection, so each
+still asks a different question; the redundancy that gets removed is in the keys and values.
+
+THE #3 MISTAKE: caching AFTER the repeat. You then store the full 32 heads and the optimisation
+disappears entirely, with no error and no obvious symptom except that nothing got faster.
+
+THE #4 MISTAKE: `repeat` instead of `repeat_interleave`. It pairs query heads with the wrong KV group.
+The model trains, and trains slightly worse.
+
+THE #5 MISTAKE: assuming MQA is simply GQA taken further with no downside. It is measurably worse and
+less stable to train, which is exactly why GQA-8 became the standard and MQA did not.
+
+THE #6 MISTAKE: not knowing about uptraining. Mean-pool the KV projections within each group and
+continue training for ~5% of the original compute - that is why the industry converted so quickly.
+
+THE #7 MISTAKE: reaching for an architectural change when the free deployment levers are untouched.
+Paged attention removes 60-80% fragmentation waste and prefix sharing deduplicates system prompts;
+neither changes the model.
+
+THE #8 MISTAKE: forgetting that this is a LATENCY win too. Decoding reads all the weights plus the
+whole cache per token, and at 32k the MHA cache exceeds the weights.
+
+ONE-SENTENCE TAKEAWAY: GQA keeps every query head's own projection and shares one key/value head
+across a group of them, which changes the KV cache by exactly the group factor - 17.18 GB to 4.29 GB
+at 32k context, turning 3 concurrent requests into 15 on an 80 GB GPU - while barely changing the
+parameter count and barely changing quality, because the heads' independence lives in the queries and
+the redundancy lives in the keys and values.""",
+]
+
+_EX_P1AO["Sliding-window and sparse attention (long context cheaply)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - stop every token looking at every other token
+
+Full self-attention compares every position with every other position. That is n^2 comparisons, and
+at a million tokens it is 10^12 per head per layer. THE COST IS NOT THE ARITHMETIC SO MUCH AS THE
+MEMORY: the n x n score matrix at n = 131,072 is 34 GB in fp16 for a single head of a single layer.
+
+SPARSE ATTENTION SAYS: MOST OF THOSE COMPARISONS ARE NOT WORTH MAKING. Restrict each token to a subset
+of positions and the cost falls from n^2 to n times the subset size.
+
+THE SIMPLEST AND MOST WIDELY USED VERSION IS THE SLIDING WINDOW: each token attends only to the
+previous w tokens.
+
+    full attention:     token 5,000 sees tokens 1 .. 5,000
+    window w = 4,096:   token 5,000 sees tokens 904 .. 5,000
+
+THE OBVIOUS OBJECTION IS THE INTERESTING PART: does that not mean the model can never connect two
+tokens more than w apart? NO - because attention is STACKED. Layer 1 lets token 5,000 see back 4,096
+positions. Layer 2 lets it see what THOSE tokens saw, which reaches back another 4,096. THE EFFECTIVE
+RECEPTIVE FIELD IS LAYERS x WINDOW, exactly as in a convolutional network.
+
+TERMS AS THEY APPEAR:
+- WINDOW w: how many previous tokens a position may attend to directly.
+- RECEPTIVE FIELD: how far information can travel, counting all the layers.
+- ATTENTION SINK: the first few tokens, which models attend to disproportionately and which cannot be
+  evicted without breaking the model.
+- EXACT vs APPROXIMATE: FlashAttention is exact; everything in this entry is not.""",
+
+    """2. THE INTUITION - the saving, and the receptive field, computed
+
+With a window of 4,096:
+
+     sequence length     full n^2 pairs     windowed n*w        ratio     layers to span n
+               4,096         16,777,216       16,777,216         1.0x                    1
+              16,384        268,435,456       67,108,864         4.0x                    4
+              65,536      4,294,967,296      268,435,456        16.0x                   16
+             131,072     17,179,869,184      536,870,912        32.0x                   32
+           1,000,000  1,000,000,000,000    4,096,000,000       244.1x                  245
+
+TWO COLUMNS TO READ TOGETHER.
+
+THE RATIO COLUMN IS THE SAVING, and it grows linearly with n because n^2/(n*w) = n/w. AT THE WINDOW
+SIZE ITSELF THERE IS NO SAVING AT ALL - a 4,096-token sequence with a 4,096 window is just full
+attention. THE TECHNIQUE ONLY PAYS BEYOND THE WINDOW, which is worth saying because people apply it at
+context lengths where it does nothing.
+
+THE LAST COLUMN IS THE CATCH. To connect token 1 to token n you need n/w layers. At 131,072 tokens with
+w = 4,096 that is 32 layers - which a 32-layer model has, exactly. AT A MILLION TOKENS YOU WOULD NEED
+245 LAYERS, and no model has that. SO THE RECEPTIVE FIELD IS A HARD ARCHITECTURAL LIMIT: layers times
+window, and beyond it the model genuinely cannot connect two tokens at all.
+
+AND EVEN WITHIN THE RECEPTIVE FIELD, INDIRECT ATTENTION IS LOSSY. Token 131,072 reaching token 1
+through 32 layers of averaging is not the same as attending to it directly. Each hop is a weighted
+average over 4,096 things, so the signal from any single distant token is attenuated enormously.
+FULL ATTENTION GIVES YOU EXACT RECALL OF A SPECIFIC DISTANT TOKEN; A WINDOW GIVES YOU A BLURRED
+SUMMARY OF A DISTANT REGION.
+
+THAT IS WHY REAL MODELS INTERLEAVE. Mistral 7B uses a 4,096 window in every layer. Others - Gemma 2,
+Character.AI's models, several recent releases - alternate: a few local layers, then one FULL
+attention layer, repeating. THE FULL LAYERS PROVIDE THE EXACT LONG-RANGE LOOKUPS AND THE LOCAL LAYERS
+PROVIDE THE CHEAP BULK.""",
+
+    """3. THE PATTERNS - what "sparse" can mean
+
+SLIDING WINDOW (LOCAL). Each token attends to the previous w. O(n*w). Mistral, Longformer's local
+component. Simple, cache-friendly, and the KV cache is BOUNDED at w rather than growing with n - which
+is often the bigger practical win.
+
+DILATED / STRIDED WINDOW. Attend to every k-th token within a wider span. Covers more ground for the
+same budget, at the cost of skipping positions. Used in Sparse Transformer.
+
+GLOBAL TOKENS. A small set of positions that attend to EVERYTHING and are attended to BY everything -
+typically the first few tokens, a CLS token, or question tokens in a QA task. O(n*g). Longformer and
+BigBird both include this, and it is what lets a windowed model still have a "broadcast" channel.
+
+RANDOM ATTENTION. Each token attends to a few random positions. BigBird's contribution, with a
+theoretical argument: local + global + random makes the attention graph a small-world graph, so any
+two tokens are a small number of hops apart, which preserves the expressive power of full attention in
+principle.
+
+ATTENTION SINKS - the empirical discovery that matters most in practice. Models attend
+disproportionately to the FIRST FEW TOKENS regardless of content. If you evict them from a sliding
+window, the model's output degrades catastrophically. STREAMINGLLM's finding was that keeping just the
+first four tokens plus a recent window lets a model generate over millions of tokens without collapse.
+THE MECHANISM IS BELIEVED TO BE THAT SOFTMAX MUST PUT ITS MASS SOMEWHERE, and the early tokens act as
+a "no-op" destination when a head has nothing relevant to attend to.
+
+    THAT IS A LOVELY RESULT BECAUSE IT IS PURELY EMPIRICAL AND COMPLETELY NON-OBVIOUS, and it turns a
+    broken technique into a working one by keeping four tokens.
+
+THE COMBINATIONS ACTUALLY SHIPPED:
+    Longformer:   sliding window + global tokens on task-specific positions.
+    BigBird:      window + global + random.
+    Mistral:      pure sliding window, 4,096, every layer.
+    Gemma 2:      alternating local (4,096) and global layers.
+    StreamingLLM: 4 sink tokens + a recent window, for infinite streaming.""",
+
+    """4. WHAT IT COSTS YOU - and the crucial distinction from FlashAttention
+
+THIS IS THE POINT THAT SEPARATES A GOOD ANSWER FROM A LIST OF TECHNIQUES:
+
+    FLASHATTENTION IS EXACT. It computes the same attention, tiling the work so the n x n matrix never
+    reaches main memory. The model is unchanged, the outputs are identical to floating-point
+    precision, and you can swap it in and out of a trained model freely.
+
+    SLIDING-WINDOW AND SPARSE ATTENTION ARE APPROXIMATIONS. They change WHAT THE MODEL CAN SEE. It is
+    a different model with different capabilities, and it must be trained (or at least fine-tuned)
+    that way.
+
+    EXHAUST THE EXACT OPTIMISATIONS BEFORE PAYING IN CAPABILITY. FlashAttention, paged attention,
+    prefix caching and GQA are all free in quality terms. Sparsity is not.
+
+WHERE THE QUALITY COST LANDS - and it is not uniform:
+    RETRIEVAL FROM LONG CONTEXT. "What was the account number mentioned on page 40" is exactly the
+    task a window destroys and full attention does perfectly. Needle-in-a-haystack evaluations are
+    designed to measure this and they are the right benchmark for any windowed model.
+    MULTI-FACT REASONING over a long document. Each hop is attenuated.
+    ANYTHING BEYOND LAYERS x WINDOW. Not degraded - impossible.
+
+WHERE IT COSTS ALMOST NOTHING:
+    LOCAL COHERENCE, GRAMMAR, LOCAL STYLE. Overwhelmingly the bulk of what a language model does.
+    SUMMARISATION, where a blurred distant summary is genuinely what you want.
+    STREAMING GENERATION over an unbounded conversation, which is StreamingLLM's target.
+
+THE OTHER BENEFIT PEOPLE FORGET: THE KV CACHE BECOMES BOUNDED. With a sliding window you only need to
+keep the last w tokens' keys and values, so the cache is O(w) rather than O(n). For a long
+conversation that is the difference between a cache that grows forever and one that does not - and at
+serving time that is often worth more than the attention FLOPs.
+
+AND THE HONEST FRAMING OF THE ALTERNATIVE: state-space models get O(n) with a CONSTANT-SIZE state, no
+window parameter and no receptive-field limit - and they pay for it in exact long-range recall, which
+is the same currency. THE HYBRIDS EXIST BECAUSE NOBODY HAS FOUND A WAY TO AVOID THAT TRADE.""",
+
+    """5. THE ALTERNATIVES - the long-context toolbox, ranked by what they cost
+
+    technique              exact?     memory        compute      what you give up
+    ------------------------------------------------------------------------------------
+    FlashAttention         YES        O(n)          O(n^2)       nothing
+    ring attention         YES        O(n/p)/GPU    O(n^2)       needs p GPUs
+    paged attention        YES        removes waste same         nothing
+    GQA                    ~yes       smaller cache same         a little quality
+    KV quantisation        ~yes       2x smaller    same         a little quality
+    sliding window         NO         O(n*w)        O(n*w)       exact recall beyond L*w
+    dilated / strided      no         O(n*w)        O(n*w)       skipped positions
+    global tokens          no         O(n*g)        O(n*g)       (adds capability back)
+    random (BigBird)       no         O(n*k)        O(n*k)       determinism
+    StreamingLLM           no         O(w)          O(n*w)       everything outside the window
+    linear attention       no         O(n)          O(n)         expressiveness
+    state-space (Mamba)    n/a        O(1) state    O(n)         exact long-range recall
+    RAG                    n/a        O(k chunks)   O(k^2)       needs a retrieval step
+
+THE ORDER TO APPLY THEM:
+    1. FLASHATTENTION. Exact, free, and it is the default in every serious stack. If you are not sure
+       it is dispatching, check - fp32 and arbitrary masks silently fall back.
+    2. PAGED ATTENTION AND PREFIX CACHING. Also exact, also free, and they attack the cache rather
+       than the attention.
+    3. GQA AND KV QUANTISATION. Nearly free, and they attack the cache.
+    4. ONLY NOW consider sparsity, and evaluate on needle-in-a-haystack tasks before shipping it.
+
+AND THE QUESTION WORTH ASKING BEFORE ANY OF IT: DO YOU ACTUALLY NEED THE LONG CONTEXT? Retrieval over
+a chunked corpus is frequently better AND cheaper than putting a million tokens in the window - the
+model attends over 5,000 relevant tokens instead of 1,000,000 mostly-irrelevant ones, and attention
+quality degrades over very long inputs regardless of the mechanism ("lost in the middle"). LONG
+CONTEXT AND RAG ARE COMPETING SOLUTIONS TO THE SAME PROBLEM, and the cheap one is often the better
+one.""",
+
+    """6. HOW TO REASON ABOUT IT - numbered steps
+
+STEP 1 - COMPUTE THE ACTUAL SAVING FOR YOUR CONTEXT LENGTH. It is n/w. At n = 16,384 with w = 4,096 it
+is 4x; at n = 4,096 it is 1x - NOTHING. The technique does not pay at or below the window size.
+
+STEP 2 - COMPUTE THE RECEPTIVE FIELD: layers x window. If it is smaller than your context length, the
+model CANNOT connect the ends of its own input. 32 layers x 4,096 = 131,072, which is why that is a
+common context length for windowed models.
+
+STEP 3 - ASK WHETHER YOUR TASK NEEDS EXACT LONG-RANGE RECALL. Retrieval and multi-fact reasoning over
+a long document do. Summarisation and streaming chat largely do not.
+
+STEP 4 - EXHAUST THE EXACT OPTIMISATIONS FIRST. FlashAttention, paged attention, prefix caching, GQA.
+None of them cost quality. Sparsity does.
+
+STEP 5 - IF YOU DO GO SPARSE, ADD GLOBAL TOKENS OR ATTENTION SINKS. StreamingLLM's result is that
+keeping four sink tokens is the difference between working and collapsing.
+
+STEP 6 - CONSIDER INTERLEAVING RATHER THAN GOING FULLY LOCAL. A few full-attention layers among many
+local ones gives exact long-range lookups where they are needed at a fraction of the cost.
+
+STEP 7 - NOTE THE KV-CACHE BENEFIT EXPLICITLY. A window bounds the cache at O(w) instead of O(n),
+which at serving time is frequently the larger win.
+
+STEP 8 - EVALUATE ON NEEDLE-IN-A-HAYSTACK, not on perplexity. Perplexity is dominated by local
+prediction and will barely move; the capability you removed is exactly the one perplexity does not
+measure.
+
+STEP 9 - COMPARE AGAINST RAG BEFORE COMMITTING. Retrieving 5,000 relevant tokens usually beats
+attending over 1,000,000 mostly-irrelevant ones, in both cost and quality.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Sliding-window attention restricts each token to attending over only the previous w tokens instead of
+everything before it, which turns the cost from n squared into n times w.
+
+The obvious objection is that the model then can't connect anything more than w apart - and the answer
+is that attention is stacked. Layer one lets a token see back w positions; layer two lets it see what
+those tokens saw, which reaches back another w. So the effective receptive field is layers times
+window, exactly the same argument as a convolutional network's. With a 4,096 window and 32 layers
+that's 131,072 tokens, which is not a coincidence - that's why it's a common context length for these
+models.
+
+Two things about that I'd want to be precise on. First, the saving is n over w, so at or below the
+window size there is NO saving at all - a 4,096-token sequence with a 4,096 window is just full
+attention. The technique only pays beyond the window, and people apply it where it does nothing.
+
+Second, the receptive field is a HARD limit. To span a million tokens with a 4,096 window you'd need
+245 layers, and no model has that. And even inside the receptive field, indirect attention is lossy -
+reaching a distant token through 32 layers of weighted averaging is not the same as attending to it
+directly. Full attention gives exact recall of a specific distant token; a window gives a blurred
+summary of a distant region. That's why real models interleave - Gemma 2 alternates local and global
+layers, so the full-attention layers provide the exact long-range lookups and the local layers provide
+the cheap bulk.
+
+The distinction I'd most want to make is between this and FlashAttention. FlashAttention is EXACT - it
+computes the same attention with a different memory access pattern, so it's free and you can swap it
+into a trained model. Sliding-window and sparse attention are APPROXIMATIONS: they change what the
+model can see, so it's a different model and it has to be trained that way. Exhaust the exact
+optimisations - FlashAttention, paged attention, prefix caching, GQA - before paying in capability.
+
+The empirical result I find most interesting is attention sinks. Models attend disproportionately to
+the first few tokens regardless of content, and if you evict them from a sliding window the output
+collapses. StreamingLLM found that keeping just the first four tokens plus a recent window lets a
+model generate over millions of tokens without degrading. The explanation is that softmax has to put
+its mass somewhere, so early tokens act as a no-op destination when a head has nothing relevant to
+attend to.
+
+And the other benefit people forget: a window BOUNDS the KV cache at w instead of growing with n,
+which at serving time is often worth more than the attention FLOPs.
+
+I'd also ask whether the long context is needed at all. Retrieving five thousand relevant tokens
+usually beats attending over a million mostly-irrelevant ones, in cost and in quality.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+THE MASK IS THE WHOLE TECHNIQUE:
+
+    # FULL CAUSAL: position i sees 0..i
+    mask = torch.tril(torch.ones(n, n)).bool()
+
+    # SLIDING WINDOW: position i sees max(0, i-w+1)..i
+    idx = torch.arange(n)
+    mask = (idx[:, None] >= idx[None, :]) & (idx[:, None] - idx[None, :] < w)
+    #        ^ causal: no looking forward     ^ AND no further back than w
+    # ^ ONE EXTRA CONDITION. That is the entire difference from full attention.
+
+    # + ATTENTION SINKS: always keep the first `s` positions visible
+    mask = mask | (idx[None, :] < s)
+    #              ^ StreamingLLM's discovery: s = 4 is the difference between generating
+    #                coherently over millions of tokens and collapsing entirely.
+
+    # + GLOBAL TOKENS: chosen positions see everything and are seen by everything
+    mask = mask | is_global[None, :] | is_global[:, None]
+
+    scores = scores.masked_fill(~mask, float("-inf"))
+    # ^ BEFORE the softmax, as always, so masked weights are exactly 0 and the row still
+    #   sums to 1.
+
+BUT A MASK IS NOT AN OPTIMISATION. Building an n x n mask and filling it with -inf still allocates and
+computes an n x n matrix - you have paid the full quadratic cost for a windowed result. THE MASK IS
+HOW YOU EXPRESS THE SEMANTICS; THE SAVING REQUIRES A KERNEL THAT NEVER FORMS THE BLOCKS IT WOULD
+DISCARD:
+
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+    # ^ FlashAttention with a causal mask already skips the upper-triangular blocks.
+    #   FlashAttention-2 and the Mistral kernels take a window parameter and skip the
+    #   out-of-window blocks too. THAT is where the n/w saving actually comes from.
+
+THE ROLLING KV CACHE - the other half of the win, and the part people forget:
+
+    class RollingCache:
+        def __init__(self, w, layers, kv_heads, d_head):
+            self.k = zeros(layers, w, kv_heads, d_head)   # <-- FIXED SIZE. Does not grow.
+            self.v = zeros(layers, w, kv_heads, d_head)
+            self.pos = 0
+        def append(self, k_new, v_new):
+            i = self.pos % self.w                          # <-- a RING BUFFER
+            self.k[:, i] = k_new
+            self.v[:, i] = v_new
+            self.pos += 1
+    # ^ O(w) memory instead of O(n). For an unbounded conversation this is the difference
+    #   between a cache that grows forever and one that does not, and at serving time it
+    #   is frequently worth more than the attention FLOPs.
+    # ^ AND IT IS WHY ATTENTION SINKS MATTER: a naive ring buffer evicts positions 0-3,
+    #   and the model falls apart. StreamingLLM pins them.
+
+THE ARITHMETIC YOU WILL BE ASKED FOR:
+
+    saving      = n / w                     # 1x at n=w, 32x at n=131072 with w=4096
+    receptive   = layers * w                # 32 * 4096 = 131,072 - a HARD limit
+    cache_size  = min(n, w)                 # bounded, which is the serving win""",
+
+    """9. A TRACE - information travelling through a windowed stack
+
+SETUP: window w = 4, and we want token 12 to receive information from token 0.
+
+LAYER 1 - each token attends to itself and the 3 before it:
+
+    token:      0    1    2    3    4    5    6    7    8    9   10   11   12
+    t12 sees:                                            9   10   11   12
+    t9  sees:                          6    7    8    9
+    t6  sees:            3    4    5    6
+    t3  sees:  0    1    2    3
+
+    TOKEN 12 CANNOT SEE TOKEN 0. Its window reaches back only to token 9.
+
+LAYER 2 - token 12 attends to tokens 9-12, but those tokens' representations now CONTAIN
+information from THEIR windows:
+
+    t12 <- {9,10,11,12}, and t9 already absorbed {6,7,8,9} in layer 1
+    -> after layer 2, t12's representation contains information from tokens 6-12.
+
+LAYER 3 - t12 <- {9..12}, and t9 now contains {3..9}
+    -> t12 contains information from tokens 3-12.
+
+LAYER 4 - t12 contains information from tokens 0-12.  REACHED.
+
+    LAYERS NEEDED = ceil(12 / 4) = 3, plus the first layer = 4. In general ceil(n/w).
+
+    AND NOTICE WHAT ACTUALLY ARRIVED. Token 0's contribution reached token 12 through four
+    successive weighted averages, each over four items. Its influence is roughly a 1/4^4 = 1/256
+    share, and it has been mixed with everything else at every step. THE INFORMATION IS PRESENT AND IT
+    IS NOT RECOVERABLE AS A SPECIFIC FACT. That is precisely why needle-in-a-haystack retrieval fails
+    on windowed models while perplexity looks fine.
+
+SCALED UP, with w = 4,096:
+
+     sequence     full n^2          windowed n*w      saving     layers needed to span
+        4,096     16,777,216          16,777,216       1.0x                          1
+       16,384    268,435,456          67,108,864       4.0x                          4
+      131,072 17,179,869,184         536,870,912      32.0x                         32
+    1,000,000  1e12                4,096,000,000     244.1x                        245
+
+THE LINE-BY-LINE MAPPING - which line produced which row:
+
+    `idx[:, None] - idx[None, :] < w`
+            produced "t12 sees 9,10,11,12". It is the only condition that distinguishes this from full
+            causal attention, and everything else in the entry follows from it.
+    stacking layers at all
+            produced the layer-2, -3 and -4 rows. There is no explicit long-range mechanism anywhere
+            in the code - the receptive field is an emergent property of depth.
+    `ceil(n / w)`
+            produced the last column. At a million tokens it is 245, and a 32-layer model simply
+            cannot connect the ends of its input. NOT DEGRADED - IMPOSSIBLE.
+    the repeated weighted averaging
+            produced the 1/256 attenuation. This is the part no complexity table shows and it is why
+            you evaluate with needle-in-a-haystack rather than perplexity.
+    `mask | (idx[None, :] < s)` (attention sinks)
+            would keep tokens 0-3 visible from EVERY position at EVERY layer, which is why four tokens
+            can rescue a model that would otherwise collapse.
+    `RollingCache` with a fixed size w
+            produced the O(w) cache. It is the benefit that survives even when the receptive-field
+            limit bites, and for streaming chat it is often the whole reason to use a window.""",
+
+    """10. THE NUMBERS, THE MISTAKES, AND THE TAKEAWAY
+
+    COST:            O(n * w) instead of O(n^2). Saving = n/w.
+    RECEPTIVE FIELD: layers x window. A HARD limit.
+    KV CACHE:        O(w) instead of O(n) - often the larger practical win.
+
+    COMPUTED (w = 4,096):
+        n=4,096   -> 1.0x saving,   1 layer to span
+        n=16,384  -> 4.0x,          4 layers
+        n=131,072 -> 32.0x,        32 layers   (a 32-layer model spans exactly this)
+        n=1,000,000 -> 244.1x,    245 layers   (IMPOSSIBLE for any real model)
+
+THE #1 MISTAKE: confusing this with FlashAttention. FlashAttention is EXACT and free; sliding-window
+is an APPROXIMATION that changes the model. Exhaust the exact optimisations first.
+
+THE #2 MISTAKE: applying a window at or below the window size. The saving is n/w, which is 1 at n = w.
+
+THE #3 MISTAKE: forgetting the receptive-field limit. Beyond layers x window the model cannot connect
+two tokens at all - it is not a degradation, it is an impossibility.
+
+THE #4 MISTAKE: assuming that being inside the receptive field means the information is usable.
+Reaching a distant token through many layers of averaging attenuates it enormously; exact recall is
+the specific capability you removed.
+
+THE #5 MISTAKE: evaluating with perplexity. Perplexity is dominated by local prediction and barely
+moves. Use needle-in-a-haystack.
+
+THE #6 MISTAKE: evicting the first few tokens from the window. StreamingLLM's result is that four sink
+tokens are the difference between coherent generation over millions of tokens and total collapse.
+
+THE #7 MISTAKE: building an n x n mask and calling it an optimisation. You have paid the quadratic
+cost to get a windowed answer; the saving needs a kernel that skips the blocks.
+
+THE #8 MISTAKE: not mentioning the bounded KV cache. O(w) instead of O(n) is frequently the bigger
+serving win.
+
+THE #9 MISTAKE: not comparing against retrieval. Attending over 5,000 relevant tokens usually beats
+attending over 1,000,000 mostly-irrelevant ones, in cost and in quality.
+
+ONE-SENTENCE TAKEAWAY: a sliding window restricts each token to the previous w positions, cutting cost
+from n^2 to n*w - a saving of exactly n/w, so nothing at n = w and 32x at 131,072 with w = 4,096 -
+and depth restores long-range reach only up to layers x window, through successive averaging that
+blurs rather than recalls, which is why models interleave a few full-attention layers, why four
+attention-sink tokens are load-bearing, and why this is an approximation to reach for only after the
+exact optimisations are exhausted.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
