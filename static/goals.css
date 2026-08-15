@@ -221,6 +221,24 @@ html.dark .goal-horizon { background: #172554; }
 .goal-due.overdue { color: #dc2626; font-weight: 600; }
 .goal-due.soon    { color: #d97706; font-weight: 600; }
 
+/* Live countdown on an objective card. The tone comes from countdown.js as a
+   data-tone attribute, so the colour escalates on its own as the deadline
+   nears. Deliberately quieter than the /goal-planner hero — this is the
+   planning surface, and one loud place in the app is enough. */
+.goal-due.goal-countdown {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.goal-due.goal-countdown b { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.goal-due.goal-countdown span { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.goal-due.goal-countdown i { font-style: normal; font-size: 10.5px; opacity: .75; margin-left: 2px; }
+.goal-due.goal-countdown[data-tone="soon"]    { color: #d97706; }
+.goal-due.goal-countdown[data-tone="urgent"]  { color: #dc2626; }
+.goal-due.goal-countdown[data-tone="overdue"] { color: #b91c1c; font-weight: 700; }
+.goal-due.goal-countdown[data-tone="done"]    { color: #059669; }
+
 .goal-progress-wrap {
   display: flex;
   align-items: center;

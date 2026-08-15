@@ -125,13 +125,15 @@ function renderObjectives() {
   }
 
   container.innerHTML = sections.join("");
+  // Re-mount the tickers: the previous nodes are detached now and would keep
+  // ticking against DOM nobody can see.
+  if (typeof Countdown !== "undefined") { Countdown.clear(); Countdown.mountAll(container); }
   if (window.feather) feather.replace();
 }
 
 function renderObjectiveCard(o) {
   const color = o.color || "#2563eb";
   const progress = Math.round(o._progress || 0);
-  const dueLabel = formatDueLabel(o.target_date);
   const statusClass = o.status && o.status !== "active" ? o.status : "";
   const projectBadge = o.project_name
     ? `<span class="goal-category" style="background:#eef2ff;color:#4338ca;">📁 ${esc(o.project_name)}</span>`
@@ -149,7 +151,7 @@ function renderObjectiveCard(o) {
             ${o.time_horizon ? `<span class="goal-horizon">${esc(o.time_horizon)}</span>` : ""}
           </div>
           ${o.description ? `<div class="goal-description">${esc(o.description)}</div>` : ""}
-          ${dueLabel ? `<div class="goal-due ${dueLabel.cls}">${dueLabel.text}</div>` : ""}
+          ${renderDueBlock(o)}
           <div class="goal-progress-wrap">
             <div class="progress-bar"><div class="progress-bar-fill" style="width:${progress}%;background:${esc(color)}"></div></div>
             <div class="progress-label">${progress}%</div>
@@ -238,6 +240,33 @@ function formatDueLabel(dateStr) {
   if (days === 0) return { text: "Due today", cls: "soon" };
   if (days <= 14) return { text: `Due in ${days} day${days === 1 ? "" : "s"}`, cls: "soon" };
   return { text: `Due ${target.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`, cls: "" };
+}
+
+/* The deadline as an ISO moment, from whichever field the objective has.
+   `target_at` only exists once MIGRATION_GOAL_COUNTDOWN.sql has been run, so
+   a bare `target_date` is resolved to the END of that day — treating it as
+   midnight would quietly drop the last 24 hours of every objective. */
+function objectiveDeadlineIso(o) {
+  if (o.target_at) return o.target_at;
+  if (o.target_date) return `${String(o.target_date).slice(0, 10)}T23:59:59`;
+  return null;
+}
+
+/* The live ticker, when countdown.js is present. Falls back to the static
+   label above so an objective still shows its deadline if the script is
+   missing — the OKR page must not depend on an enhancement. */
+function renderDueBlock(o) {
+  const iso = objectiveDeadlineIso(o);
+  if (!iso) return "";
+  const fallback = formatDueLabel(o.target_date || iso);
+  if (typeof Countdown === "undefined") {
+    return fallback ? `<div class="goal-due ${fallback.cls}">${fallback.text}</div>` : "";
+  }
+  /* No flash here: /goals is a planning surface, not the urgency surface.
+     The pulsing hero lives on /goal-planner, and one loud place is enough. */
+  return `<div class="goal-due goal-countdown" data-countdown="${esc(iso)}" data-flash="false">
+            <b data-cd-big></b><span data-cd-unit></span><i data-cd-detail></i>
+          </div>`;
 }
 
 function populateCategorySuggest() {

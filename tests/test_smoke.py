@@ -560,3 +560,50 @@ def test_goal_planner_page_and_api(auth_client, monkeypatch):
     assert dated["countdown"]["has_deadline"] is True
     assert body["goals"][1]["countdown"]["has_deadline"] is False
     assert dated["coach"]["message"]
+
+
+def test_countdown_widget_is_wired_into_goals_and_interview_prep(auth_client):
+    """The ticker is shared by three pages. These assertions are the contract
+    between countdown.js and its hosts: the script must load, and each page
+    must expose the mount points it reads ([data-cd-big] / [data-cd-unit]).
+    Rename one of those hooks and the countdown silently shows nothing, which
+    is exactly the kind of breakage nobody notices until a deadline passes."""
+    for path, hooks in (
+        ("/goal-planner", ("data-cd-big", "data-cd-unit", "data-cd-detail")),
+        ("/interview-prep", ("data-cd-big", "data-cd-unit")),
+    ):
+        html = auth_client.get(path).get_data(as_text=True)
+        assert "js/countdown.js" in html, f"{path} does not load countdown.js"
+        for hook in hooks:
+            assert hook in html, f"{path} is missing the {hook} mount point"
+
+    # /goals builds its cards in static/goals.js, so the hooks live there.
+    goals_html = auth_client.get("/goals").get_data(as_text=True)
+    assert "js/countdown.js" in goals_html, "/goals does not load countdown.js"
+    with open("static/goals.js", encoding="utf-8") as fh:
+        js = fh.read()
+    assert "data-cd-big" in js and "renderDueBlock" in js
+    assert "Countdown.mountAll" in js, "goals.js never mounts the tickers it renders"
+    # Re-rendering the list must drop the old instances or detached nodes keep
+    # ticking; that leak is invisible until the page has been open for hours.
+    assert "Countdown.clear()" in js
+
+
+def test_countdown_hosts_degrade_without_the_script(auth_client):
+    """Every host must guard `typeof Countdown` — the ticker is an
+    enhancement, and a failed script load must not blank the page. This
+    already happened once on the planner during development."""
+    with open("templates/goal_planner.html", encoding="utf-8") as fh:
+        planner = fh.read()
+    with open("templates/interview_prep.html", encoding="utf-8") as fh:
+        prep = fh.read()
+    with open("static/goals.js", encoding="utf-8") as fh:
+        goals_js = fh.read()
+    for name, src in (("goal_planner.html", planner),
+                      ("interview_prep.html", prep),
+                      ("goals.js", goals_js)):
+        # Either spelling of the guard is fine (=== undefined, or !== to take
+        # the happy path); what matters is that the reference is guarded at
+        # all rather than assumed.
+        assert 'typeof Countdown' in src, \
+            f"{name} uses Countdown without guarding for it being absent"

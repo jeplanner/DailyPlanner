@@ -46,6 +46,14 @@
   .chip span { font-size: 11px; color: var(--color-text-secondary); font-weight: 600; }
   .chip.count b { color: #b91c1c; }
   .chip.streak b { color: #ea580c; } .chip.days b { color: #4338ca; }
+  /* The days chip escalates with the deadline, and pulses only on the last
+     day - the one deadline this whole page exists to serve. */
+  .chip.days[data-tone="soon"] b    { color: #d97706; }
+  .chip.days[data-tone="urgent"] b  { color: #dc2626; }
+  .chip.days[data-tone="overdue"] b { color: #b91c1c; }
+  @keyframes ip-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .chip.days.flash b, .chip.days.flash span { animation: ip-pulse 1.1s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .chip.days.flash b, .chip.days.flash span { animation: none; } }
 
   /* ── Coach banner ── */
   .coach { margin-top: 14px; border-radius: 16px; padding: 15px 16px; border: 1px solid; }
@@ -262,7 +270,9 @@
           <div class="field-inline"><label>&nbsp;</label><span class="mini-lbl" style="padding:7px 0;">min/day</span></div>
         </div>
         <div class="chips">
-          <div class="chip days"><b id="days-left">–</b><span>days left</span></div>
+          <!-- Live ticker when a target date is set; falls back to the plain
+               server-computed day count if countdown.js is unavailable. -->
+          <div class="chip days" id="days-chip"><b id="days-left" data-cd-big>–</b><span id="days-unit" data-cd-unit>days left</span></div>
           <div class="chip streak"><b id="streak">0</b><span>day streak 🔥</span></div>
           <div class="chip"><b id="mastered">0</b><span>topics mastered</span></div>
         </div>
@@ -347,6 +357,7 @@
   <div id="sessions"></div>
 </div>
 
+<script src="{{ url_for('static', filename='js/countdown.js') }}"></script>
 <script>
 (function(){
   const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
@@ -368,6 +379,31 @@
 
   const fmtDate = (iso) => { if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return isNaN(d)?iso:d.toLocaleDateString("en-IN",{day:"numeric",month:"short"}); };
 
+  /* The days-left chip, upgraded to a live ticker.
+
+     The server already computes `days_left`, and that stays the fallback —
+     the chip must still read correctly if countdown.js is missing or the
+     plan has no target date. When it IS available the chip escalates on its
+     own: weeks out it says "6 weeks", the last day it counts hours, and on
+     interview morning it counts down in seconds. Flash is left ON here,
+     unlike /goals, because this particular deadline genuinely is the one
+     thing the page exists to serve. */
+  function mountDaysCountdown(targetDate, daysLeft){
+    const chip = $("days-chip");
+    if (!chip) return;
+    if (typeof Countdown === "undefined" || !targetDate) {
+      $("days-left").textContent = (daysLeft == null) ? "–" : daysLeft;
+      $("days-unit").textContent = "days left";
+      return;
+    }
+    Countdown.clear();
+    // A bare date means the interview is at the END of that day as far as
+    // the countdown is concerned; the exact hour is not in the plan.
+    chip.dataset.countdown = String(targetDate).slice(0, 10) + "T23:59:59";
+    chip.dataset.flash = "true";
+    Countdown.mount(chip);
+  }
+
   function render(){
     const p = data.plan||{}, s = data.stats||{};
     if (data.migration_pending) {
@@ -382,7 +418,7 @@
     $("readiness").textContent = rd + "%";
     $("ring-fill").style.strokeDashoffset = (RING_C * (1 - rd/100)).toFixed(1);
     $("ring-fill").style.stroke = rd>=70 ? "#10b981" : rd>=40 ? "#f59e0b" : "#ef4444";
-    $("days-left").textContent = (s.days_left==null) ? "–" : s.days_left;
+    mountDaysCountdown(p.target_date, s.days_left);
     $("streak").textContent = s.streak || 0;
     $("mastered").textContent = `${s.topics_mastered||0}/${s.topics_total||0}`;
     // Coach
