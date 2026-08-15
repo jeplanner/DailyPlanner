@@ -153399,6 +153399,304 @@ TAGGED_COUNT, UNTAGGED_COUNT = _apply_tags(ENTRIES)
 # bank. Patch loop runs LAST so it also supersedes the `_PLAIN` lead-ins.
 _ANSWER_V2 = {}
 
+_ANSWER_V2["Merge Intervals"] = """Sort by START, then sweep: if the next interval begins at or before the last
+one's end, extend that end instead of starting a new interval.
+
+· WHY SORTING IS THE WHOLE TRICK — in start order, an overlap can only be with
+  the interval you just placed, so one pass suffices.
+· THE MERGE — new end = max(old end, this end). Taking `this end` blindly
+  shrinks an interval that was already longer.
+· TOUCHING COUNTS — [1,3] and [3,5] overlap at 3, so the test is `start <= end`,
+  not `<`. Check which the problem wants.
+· COST — O(n log n), all of it the sort; the sweep is O(n)."""
+
+_ANSWER_V2["Number of Connected Components"] = """Count how many times you have to START a fresh traversal.
+
+· HOW — build an adjacency list, then walk every node; if it is unvisited,
+  add one to the count and DFS or BFS everything reachable from it.
+· THE COUNT IS THE NUMBER OF LAUNCHES, not the number of nodes visited.
+· UNION-FIND ALTERNATIVE — union every edge, then count distinct roots. Better
+  when edges arrive one at a time or you also need connectivity queries.
+· UNDIRECTED ONLY — for a directed graph 'connected' splits into weakly and
+  strongly connected, which is a different algorithm.
+· COST — O(V + E)."""
+
+_ANSWER_V2["Number of Islands (DFS flood-fill)"] = """Scan every cell; each unvisited '1' is a new island, and a flood fill sinks the
+rest of it.
+
+· HOW — on hitting land, add one to the count and DFS/BFS its whole landmass,
+  setting each visited cell to '0' as you go.
+· SINKING THE LAND IS THE VISITED SET — no extra array needed, and it is why
+  the same island is never counted twice. Say out loud that it mutates the
+  input, and offer a separate visited grid if that is not acceptable.
+· FOUR DIRECTIONS unless the problem says diagonals count.
+· BFS IF THE GRID IS HUGE — a DFS on a 1000x1000 all-land grid can overflow
+  the stack.
+· COST — O(rows x cols); every cell is visited at most once."""
+
+_ANSWER_V2["Pacific Atlantic Water Flow"] = """Reverse the flow: instead of asking where each cell drains to, start AT each
+ocean and walk uphill.
+
+· WHY — asking 'can this cell reach both oceans' from every cell is O(cells^2).
+  Starting from the borders and climbing to higher-or-equal neighbours does it
+  in one pass per ocean.
+· TWO SEARCHES — one from the top and left edges (Pacific), one from the bottom
+  and right (Atlantic), each producing a set of reachable cells.
+· THE ANSWER is the INTERSECTION of the two sets.
+· HIGHER-OR-EQUAL — equal heights must be traversable, or flat plateaus break.
+· COST — O(rows x cols), visited twice."""
+
+_ANSWER_V2["Partition Equal Subset Sum"] = """Can any subset reach half the total? That is subset-sum, and the DP is one
+boolean array.
+
+· FIRST CHECK — if the total is ODD, stop: no split can be equal.
+· THE DP — dp[s] is 'some subset sums to s'. Start with dp[0] = True and, for
+  each number, mark every newly reachable sum.
+· ITERATE SUMS DOWNWARD — from high to low - or the same number gets used
+  twice, which silently solves the unbounded problem instead of this one.
+· THE ANSWER is dp[total / 2].
+· COST — O(n x total/2) time, O(total/2) space; pseudo-polynomial, so it is
+  fine for small totals and hopeless for large ones."""
+
+_ANSWER_V2["Permutations (backtracking)"] = """Choose an unused element, recurse, then UNDO the choice.
+
+· THE STATE — which elements are already used. A boolean array, a set, or
+  swapping elements into place.
+· THE BASE CASE — the current arrangement is as long as the input; record a
+  COPY of it, not the list itself, which you are about to mutate.
+· UNDO IS THE HALF PEOPLE FORGET — after the recursive call, remove the element
+  and unmark it, or later branches inherit your state.
+· DUPLICATES — sort first and skip a value equal to its predecessor when that
+  predecessor is unused, or you will emit the same permutation repeatedly.
+· COST — n! results, so exponential is the floor, not a failing."""
+
+_ANSWER_V2["Remove Nth Node From End of List"] = """Two pointers n apart: when the fast one reaches the end, the slow one is just
+before the node to remove.
+
+· HOW — advance fast n steps, then move both together until fast falls off the
+  end.
+· THE DUMMY HEAD makes removing the FIRST node ordinary rather than a special
+  case, and it is why the answer is dummy.next.
+· OFF BY ONE — advance fast n steps from the dummy, so slow ends up BEFORE the
+  target rather than on it. Trace n = length by hand once to be sure.
+· ONE PASS — that is the point of the question; counting the length first is
+  correct but not what is being asked.
+· COST — O(n) time, O(1) space."""
+
+_ANSWER_V2["Topological Sort (Kahn's algorithm)"] = """Repeatedly take a node with no remaining prerequisites.
+
+· SET-UP — count in-degrees; the queue starts with every node whose in-degree
+  is 0.
+· THE LOOP — pop a node into the order, decrement each neighbour's in-degree,
+  and enqueue any that reach 0.
+· CYCLE DETECTION FOR FREE — if the finished order is shorter than the node
+  count, the leftovers are in a cycle, so no valid ordering exists.
+· NOT UNIQUE — several orders are usually valid; a heap instead of a queue
+  gives the lexicographically smallest.
+· USES — build systems, course prerequisites, task scheduling, dependency
+  resolution.
+· COST — O(V + E)."""
+
+_ANSWER_V2["Trees — BFS vs DFS"] = """LEVELS mean BFS with a queue; PATHS and SUBTREE work mean DFS with recursion.
+
+· BFS — process a whole level at a time by freezing the queue length before the
+  inner loop. Level order, right-side view, minimum depth, zig-zag.
+· DFS HAS THREE ORDERS — preorder (root first: copy, serialise), inorder (left,
+  root, right: SORTED for a BST), postorder (children first: heights,
+  diameters, anything that combines children's results).
+· MOST TREE PROBLEMS ARE POSTORDER — 'compute something at each node from its
+  children' is the shape, and recognising it saves inventing an approach.
+· COST — O(n) time either way; BFS uses O(width) memory, DFS O(height)."""
+
+_ANSWER_V2["Word Break (DP)"] = """dp[i] = 'the first i characters can be fully segmented'.
+
+· THE STEP — for each end i, look for a split point j where dp[j] is already
+  True AND s[j:i] is a dictionary word.
+· SET-UP — dp[0] = True, the empty prefix. That is what seeds everything.
+· THE DICTIONARY IS A SET so each lookup is O(1); a list makes it O(words).
+· WHY NOT GREEDY — 'aaaaab' with words {a, aa} shows that taking the longest
+  match first can strand you, and backtracking without memoisation is
+  exponential.
+· COST — O(n^2) substrings times the hashing cost."""
+
+_ANSWER_V2["Word Search (backtracking)"] = """From every cell, walk the word letter by letter, marking cells used and
+UNMARKING them on the way back.
+
+· THE UNMARK IS THE POINT — a cell used by a failed path must be free for a
+  different path. Forget it and you get false negatives.
+· MARK IN PLACE — overwrite the cell with a sentinel like '#' and restore it
+  afterwards; no extra visited grid needed.
+· FOUR CHECKS BEFORE RECURSING — inside the grid, not already used, and the
+  letter matches.
+· PRUNE — if a letter of the word does not appear in the grid at all, fail
+  immediately; and search from the rarer end of the word.
+· COST — O(cells x 4^len(word)) worst case."""
+
+_ANSWER_V2["Building a story bank: six stories that cover thirty questions"] = """There are not thirty behavioural questions - there are about six story SHAPES,
+and one good story answers several with a shift of emphasis.
+
+· THE SIX TO BUILD — DELIVERY (shipped something hard under a real
+  constraint), FAILURE (got it wrong and fixed the cause), CONFLICT (disagreed
+  and resolved it), AMBIGUITY (moved without complete information), LEARNING
+  (taught yourself something fast because you had to), HELPING (made someone
+  else more effective).
+· WHAT EACH ONE COVERS — delivery answers Ownership, prioritisation and 'most
+  challenging project'; conflict answers difficult teammate, Have Backbone and
+  disagreeing with a manager; and so on. Write that index out.
+· HOW TO BUILD ONE — STAR, under two minutes spoken, containing a NUMBER, a
+  DECISION you made, and something you would do differently.
+· THE DELIVERY SKILL — take two seconds to pick the story AND the angle, then
+  open with a one-sentence headline so the interviewer knows where you are
+  going.
+· WHY THIS BEATS PREPARING PER QUESTION — thirty memorised answers come out
+  flat and collapse under a follow-up; six stories you know cold can be
+  re-angled live."""
+
+
+_ANSWER_V2["3Sum"] = """Sort, then fix one number and two-pointer the rest for a pair summing to its
+negation.
+
+· WHY SORT — it gives you a direction: if the running sum is too small move the
+  left pointer right, if too big move the right pointer left.
+· THE OUTER LOOP fixes nums[i]; the inner two pointers scan what is after it,
+  so nothing is ever counted twice.
+· DUPLICATES — skip a value equal to the previous one, both for the fixed
+  element and after recording a triplet. This is where the bugs are.
+· EARLY EXIT — once nums[i] > 0 the rest are all positive and cannot sum to 0.
+· COST — O(n^2) time, O(1) beyond the sort."""
+
+_ANSWER_V2["Binary Tree Right Side View"] = """The right-side view is the LAST node of every level.
+
+· HOW — BFS level by level, recording the final node dequeued in each level.
+· FREEZE THE LEVEL SIZE before the inner loop; the queue grows as you push
+  children, and a live length() turns levels into mush.
+· DFS ALTERNATIVE — go right first, and record a node whenever its depth is
+  greater than any depth seen so far.
+· TRAP — assuming it is the rightmost branch. A short right subtree lets a
+  deeper left node be visible.
+· COST — O(n) time, O(width) for the queue."""
+
+_ANSWER_V2["Clone Graph (DFS)"] = """Deep-copy a graph with a map from each ORIGINAL node to its clone.
+
+· THE ORDER THAT MATTERS — put the clone in the map BEFORE recursing into
+  neighbours. That is what stops a cycle from looping for ever.
+· EACH NEIGHBOUR — look it up in the map, and only create a clone if it is
+  absent. The map is both the visited set and the result.
+· BFS WORKS TOO with a queue; the map rule is identical.
+· EDGE CASE — a null start node returns null, and a single node with no
+  neighbours still needs its clone registered.
+· COST — O(V + E) time and space."""
+
+_ANSWER_V2["Coin Change (fewest coins)"] = """dp[a] = the fewest coins making amount a; try every coin at every amount.
+
+· THE RECURRENCE — dp[a] = min over coins of 1 + dp[a - coin], skipping coins
+  bigger than a.
+· SET-UP — dp[0] = 0, everything else infinity. The infinity is what lets an
+  unreachable amount stay unreachable instead of quietly becoming 0.
+· UNBOUNDED — coins may be reused, so iterate amounts OUTWARD and coins inside;
+  there is no 'used it already' state.
+· ANSWER — dp[target], or -1 if it is still infinity.
+· GREEDY DOES NOT WORK — with coins 1, 3, 4 and target 6, greedy takes 4+1+1
+  where the answer is 3+3.
+· COST — O(amount x coins)."""
+
+_ANSWER_V2["Decode Ways (DP)"] = """Fibonacci-shaped DP: at each position take one digit, or two if they form 10-26.
+
+· THE RECURRENCE — dp[i] = dp[i-1] (if this digit is not '0') + dp[i-2] (if the
+  two digits together are between 10 and 26).
+· '0' IS THE WHOLE PROBLEM — a zero cannot stand alone, so it must pair with
+  the digit before it, and '30' or a leading '0' decodes zero ways.
+· SET-UP — dp[0] = 1, the empty prefix, which is what makes the first real
+  digit come out as 1 way.
+· SPACE — two rolling values, O(1).
+· COST — O(n) time."""
+
+_ANSWER_V2["Generate Parentheses (backtracking)"] = """Build the string one bracket at a time, with two counters and two rules.
+
+· THE RULES — you may add '(' while open < n, and ')' only while close < open.
+  Never close more than you have opened.
+· BASE CASE — length 2n means a complete, valid string; record it.
+· WHY NO VALIDATION IS NEEDED — the two rules make an invalid string
+  unreachable, so nothing generated ever has to be checked.
+· BACKTRACK — append, recurse, remove. Or pass an immutable string down, which
+  is slower but impossible to get wrong.
+· COST — Catalan(n) results; roughly 4^n / n^1.5."""
+
+_ANSWER_V2["Graphs — BFS, DFS, and when to use each"] = """BFS explores level by level with a QUEUE; DFS goes deep with a STACK or
+recursion.
+
+· BFS IS FOR SHORTEST PATHS in an UNWEIGHTED graph — the first time you reach a
+  node is by a shortest route, which is not true of DFS.
+· DFS IS FOR CONNECTIVITY — components, cycle detection, topological order,
+  and anything that wants the recursion's natural backtracking.
+· MARK VISITED WHEN YOU ENQUEUE, not when you dequeue, or a node can enter the
+  queue several times before it is ever processed.
+· ON A GRID — 'neighbours' means up, down, left, right (plus diagonals if the
+  problem says so), and the grid IS the graph; no adjacency list needed.
+· COST — O(V + E) either way; BFS needs O(width) memory, DFS O(depth)."""
+
+_ANSWER_V2["Linked Lists — reversal & fast/slow pointers"] = """Two techniques cover most linked-list questions: three-pointer reversal, and
+fast/slow pointers.
+
+· REVERSAL — walk with prev, curr and next, flipping each node's .next
+  backwards. SAVE next BEFORE overwriting the pointer, or the rest of the list
+  is gone.
+· FAST AND SLOW — move one pointer one step and the other two. When fast hits
+  the end, slow is at the MIDDLE.
+· CYCLE DETECTION (Floyd's) — the same two pointers. In a cycle the fast one
+  laps the slow one and they meet; with no cycle, fast simply runs off the end.
+· THE DUMMY HEAD — a throwaway node in front removes every special case where
+  the head itself might change. Return dummy.next.
+· COST — O(n) time, O(1) space, for all of them."""
+
+_ANSWER_V2["Longest Increasing Subsequence (patience + binary search)"] = """Keep `tails`, where tails[i] is the SMALLEST possible tail of an increasing
+subsequence of length i+1.
+
+· THE STEP — binary-search each number's insertion point in tails. If it goes
+  past the end, the LIS just got longer; otherwise it REPLACES a tail.
+· WHY REPLACING HELPS — a smaller tail at the same length leaves more room for
+  what comes next. You are keeping options open, not building the answer.
+· THE ANSWER is len(tails). Note that tails is NOT the subsequence itself - to
+  recover the actual sequence you need parent pointers.
+· COST — O(n log n), against O(n^2) for the dp[i] = 1 + max(dp[j]) version.
+· NAME — it is the patience-sorting card game, which is worth saying."""
+
+_ANSWER_V2["Longest Substring Without Repeating Characters"] = """A sliding window plus a map of each character's last position.
+
+· EXPAND the right edge one character at a time.
+· WHEN A REPEAT IS INSIDE THE WINDOW, jump the left edge to just past that
+  character's previous position - do not step it one at a time.
+· THE GUARD — only jump FORWARD. A stale entry from before the window would
+  otherwise drag the left edge backwards and let a duplicate back in.
+· TRACK THE BEST as you go; the final window is not necessarily the longest.
+· COST — O(n) time, O(alphabet) space."""
+
+_ANSWER_V2["Lowest Common Ancestor of a Binary Tree"] = """Recurse; a node whose two subtrees each found one of p and q IS the answer.
+
+· THE BASE CASE — null, or the node is p or q: return it and stop descending.
+· THE COMBINE — if both sides came back non-null, p and q are on opposite
+  sides, so this node is the LCA. If only one side did, pass that result up.
+· WHY IT NEEDS NO PARENT POINTERS or second pass - the two return values carry
+  everything.
+· ASSUMES BOTH NODES EXIST — if one might be missing you need a second pass to
+  confirm, or you will return an ancestor of the one that is there.
+· IN A BST it is easier: walk down while both values are on the same side.
+· COST — O(n) time, O(h) stack."""
+
+_ANSWER_V2["Maximum Product Subarray"] = """Track the running MAX and the running MIN together, because a negative flips
+them.
+
+· WHY THE MIN — a very negative product times a negative number becomes a very
+  positive one. The worst candidate is a contender for best.
+· THE STEP — the new max is the largest of (this number, max x this, min x
+  this); the new min is the smallest of the same three.
+· COMPUTE BOTH BEFORE ASSIGNING either, or the second uses the first's new
+  value.
+· ZERO resets both to this number, which the 'this number alone' branch handles
+  automatically.
+· COST — O(n) time, O(1) space. Same shape as Kadane, one extra variable."""
+
+
 _ANSWER_V2["Balanced Binary Tree"] = """A tree is balanced when EVERY node's two subtrees differ in height by at most 1.
 
 · HOW — one post-order pass: compute each node's height from its children's.
