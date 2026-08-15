@@ -160034,6 +160034,1069 @@ later - and the best designs shrink the set of operations that have to be strong
 almost everything can stay available.""",
 ]
 
+_EX_P1AO["Process vs Thread (and why it matters)"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - one difference, and everything follows from it
+
+    A PROCESS has its OWN memory. A THREAD SHARES its process's memory.
+
+That is the whole distinction. Every other difference - cost, safety, communication, isolation - is a
+consequence.
+
+    PROCESS   its own address space, its own file descriptors, its own heap. The OS's unit of
+              RESOURCE OWNERSHIP.
+    THREAD    a separate execution path INSIDE a process. Its own stack, program counter and
+              registers; everything else is shared with its siblings.
+
+MEASURED, and this is the single clearest demonstration:
+
+    a THREAD sets a shared variable to 999, and the parent then sees:   999
+    a PROCESS sets the same variable to 999, and the parent sees:         0
+
+The thread mutated THE PARENT'S OWN MEMORY. The process mutated A COPY, and the parent never saw it.
+
+WHAT THAT COSTS AND BUYS:
+
+    creating and joining a THREAD:     418 us
+    creating and joining a PROCESS:  2,127 us      about 5x
+
+The process is more expensive because the OS must build a new address space, page tables and file
+descriptor table. The thread inherits all of it.
+
+    THREADS ARE CHEAP AND DANGEROUS. PROCESSES ARE EXPENSIVE AND ISOLATED.
+
+TERMS AS THEY APPEAR:
+- ADDRESS SPACE: the memory a process can see. Two processes with the same address 0x1000 are looking
+  at different physical memory.
+- CONTEXT SWITCH: saving one execution's state and restoring another's. Cheaper between threads,
+  because the address space does not change.""",
+
+    """2. THE INTUITION - the GIL, and why 'just use threads' fails in Python
+
+The question that actually decides your choice: IS THE WORK CPU-BOUND OR I/O-BOUND?
+
+MEASURED, four CPU-bound tasks on a machine with 8 cores:
+
+    sequential:       556 ms
+    4 THREADS:        598 ms      speedup 0.93x      <- SLOWER THAN DOING IT ONE AT A TIME
+    4 PROCESSES:      263 ms      speedup 2.12x
+
+FOUR THREADS MADE IT SLOWER. Not marginally better - actually worse, because of the coordination
+overhead on top of no parallelism at all.
+
+WHY: CPython has a GLOBAL INTERPRETER LOCK. Only one thread may execute Python bytecode at a time, so
+four CPU-bound threads take turns on one core and pay switching costs for the privilege. Processes each
+have their own interpreter and their own GIL, so they run genuinely in parallel.
+
+NOW THE SAME TEST WITH I/O:
+
+    8 tasks that each wait 50 ms
+    sequential:   405 ms
+    8 THREADS:     56 ms      speedup 7.2x
+
+THREADS PARALLELISED I/O ALMOST PERFECTLY. Because a thread waiting on the network, the disk or a
+database RELEASES THE GIL, so the others run. The GIL protects the interpreter's internal state, and a
+thread blocked in a system call is not touching it.
+
+    THE RULE THAT FALLS OUT, and it is the answer to the question:
+
+        CPU-BOUND in Python  ->  PROCESSES (or a library that releases the GIL)
+        I/O-BOUND            ->  THREADS, or async, and they are cheap and effective
+
+AND THE CAVEAT THAT MAKES IT A REAL ANSWER: THE GIL IS A CPYTHON IMPLEMENTATION DETAIL, NOT A PROPERTY
+OF THREADS. Java, C++, Go and Rust threads use all your cores. NumPy, PyTorch and most compiled
+extensions release the GIL during heavy computation, so 'threads are useless for CPU work' is true of
+pure-Python loops and false of the libraries you would actually use for numerical work.""",
+
+    """3. COMMUNICATION - the cost that decides architectures
+
+    Threads share memory, so passing data between them is passing a pointer. Processes do not, so
+    passing data means SERIALISING it, copying it through a pipe, and DESERIALISING it.
+
+    MEASURED, passing a 50,000-element list:
+
+        between PROCESSES (a multiprocessing Queue, pickled):   2,494.5 us
+        between THREADS (a shared list under a lock):                0.6 us
+
+    FOUR THOUSAND THREE HUNDRED TIMES. That is not a tuning difference; it is a different category of
+    operation.
+
+    WHY THIS MATTERS MORE THAN THE STARTUP COST: process creation is a one-off 2 ms. THE COPYING COST IS
+    PAID ON EVERY MESSAGE. If your parallel tasks exchange a lot of data, the serialisation can exceed
+    everything you gained by parallelising - which is why 'just use multiprocessing' sometimes makes
+    a program slower, and why that outcome surprises people.
+
+    LOOK AGAIN AT THE CPU RESULT WITH THAT IN MIND: four processes gave 2.12x on 8 cores, not 4x. The
+    missing speedup is process startup plus pickling the arguments and results. THE OVERHEAD IS REAL
+    AND IT IS NOT SMALL.
+
+    THE WAYS AROUND IT, worth naming:
+        SHARED MEMORY - `multiprocessing.shared_memory`, or memory-mapped files. Processes map the same
+        physical pages, so large arrays are not copied. This is what numerical libraries do.
+        FORK's COPY-ON-WRITE - on Linux, a forked child initially shares the parent's pages and only
+        copies a page when it writes to it. Read-only data is effectively free to share, which is why
+        loading a big model in the parent before forking workers is a standard trick.
+        SEND LESS - a task that takes a file path and returns a summary copies almost nothing; a task
+        that takes a dataframe and returns a dataframe copies everything.
+
+    THAT LAST ONE IS THE DESIGN PRINCIPLE: WITH PROCESSES, MAKE THE MESSAGES SMALL AND THE WORK LARGE.
+    The break-even is entirely about the ratio between the two.""",
+
+    """4. THE FAILURE MODES
+
+A. USING THREADS FOR CPU-BOUND PYTHON. Measured: 0.93x - actively slower than sequential. The GIL
+   means they take turns.
+
+B. USING PROCESSES FOR CHATTY WORK. Measured: 4,333x more expensive per message. If the tasks talk
+   constantly, the copying dominates.
+
+C. SHARED MUTABLE STATE BETWEEN THREADS WITHOUT SYNCHRONISATION. This is the entire class of bugs in
+   [[race-condition]] and [[writing-thread-safe-classes-for-an-lld-round]] - and it exists ONLY because
+   threads share memory. Processes are immune by construction.
+
+D. ASSUMING THE GIL MAKES YOUR CODE THREAD-SAFE. It does not. It guarantees one BYTECODE at a time,
+   not one OPERATION - `count += 1` is three bytecodes and can be interrupted between them.
+
+E. CREATING A THREAD OR PROCESS PER REQUEST. Measured: 418 us and 2,127 us respectively. At a thousand
+   requests a second that is 0.4 and 2.1 seconds of pure creation overhead. USE A POOL.
+
+F. UNBOUNDED THREAD COUNTS. Each thread has its own stack - typically 1-8 MB of virtual address space
+   reserved. Ten thousand threads is a lot of memory and a great deal of scheduler contention. This is
+   the problem async I/O and green threads exist to solve.
+
+G. FORGETTING THAT A THREAD CRASH KILLS EVERYTHING. Measured: a child process exiting with code 1 left
+   the parent running. A segfault in any thread takes the whole process with it - which is why browsers
+   isolate tabs and web servers run worker processes.
+
+H. FORKING A PROCESS THAT HOLDS LOCKS OR THREADS. `fork()` copies only the calling thread, so a lock
+   held by another thread at fork time is copied in the LOCKED state and can never be released. This
+   is a real and nasty class of hang, and it is why `spawn` is the safer default on some platforms.
+
+I. IGNORING async/await AS A THIRD OPTION. For high-concurrency I/O, an event loop handles tens of
+   thousands of connections in one thread with no per-connection stack at all.""",
+
+    """5. HOW TO CHOOSE - and the third option
+
+    THE DECISION, and it is short:
+
+        CPU-BOUND, pure Python           -> PROCESSES. Measured 2.12x against threads' 0.93x.
+        CPU-BOUND, via NumPy/PyTorch/C   -> THREADS are fine; those libraries release the GIL.
+        I/O-BOUND, moderate concurrency  -> THREADS. Measured 7.2x on eight tasks.
+        I/O-BOUND, very high concurrency -> ASYNC. No per-connection stack, one thread.
+        NEEDS ISOLATION or fault tolerance -> PROCESSES, always.
+        NEEDS SHARED MUTABLE STATE       -> THREADS, with locks and great care.
+
+    THE THIRD OPTION - ASYNC I/O - deserves proper treatment because it is often the right answer and
+    is frequently omitted:
+
+        ONE THREAD, an EVENT LOOP, and cooperative multitasking. A coroutine that awaits I/O yields
+        control and the loop runs another. No OS thread per connection, no per-connection stack, no
+        locking - because only one thing runs at a time and switches happen only at `await`.
+
+        WHY IT WINS AT SCALE: 10,000 threads means 10,000 stacks and a scheduler managing 10,000
+        entities. 10,000 coroutines is 10,000 small objects in one thread's heap. THE C10K PROBLEM WAS
+        SOLVED BY EVENT LOOPS FOR EXACTLY THIS REASON.
+
+        WHAT IT COSTS: everything must be async all the way down. ONE BLOCKING CALL IN A COROUTINE
+        BLOCKS THE ENTIRE EVENT LOOP AND EVERY OTHER CONNECTION WITH IT - which is the characteristic
+        async bug and it is much worse than the equivalent mistake with threads.
+
+    THE HYBRID THAT REAL SERVERS USE, and it is worth being able to describe:
+
+        N WORKER PROCESSES (one per core, for parallelism and fault isolation),
+        each running THREADS or an EVENT LOOP (for concurrency within the worker).
+
+        Gunicorn, Puma, Unicorn and nginx are all shaped this way. IT TAKES PARALLELISM FROM PROCESSES
+        AND CONCURRENCY FROM THREADS OR ASYNC, and it means a crash costs you one worker rather than
+        the service.""",
+
+    """6. HOW TO DECIDE - numbered steps
+
+1. MEASURE WHETHER YOU ARE CPU-BOUND OR I/O-BOUND. Profile before choosing. This single fact
+   determines the answer and people guess it wrongly all the time.
+2. IF I/O-BOUND, START WITH THREADS. Measured 7.2x, and they are far simpler than processes.
+3. IF CONCURRENCY IS IN THE THOUSANDS, USE ASYNC. Per-thread stacks stop being affordable.
+4. IF CPU-BOUND IN PURE PYTHON, USE PROCESSES. Measured 2.12x against 0.93x.
+5. IF CPU-BOUND VIA NUMPY OR TORCH, THREADS ARE FINE - those libraries release the GIL during
+   computation.
+6. CHECK THE MESSAGE SIZE BEFORE COMMITTING TO PROCESSES. Measured 2,494 us to pass a 50,000-element
+   list. Small messages and big work, or use shared memory.
+7. ALWAYS USE A POOL. Creating a worker per task costs 418 us or 2,127 us every time.
+8. IF FAULT ISOLATION MATTERS, USE PROCESSES regardless of the performance argument. One crashed
+   worker beats one crashed service.
+9. IF YOU SHARE MUTABLE STATE BETWEEN THREADS, PROTECT IT - and prefer immutability or a queue over
+   locks where you can.
+10. CONSIDER THE HYBRID: worker processes, each with threads or an event loop. It is what production
+    servers do.
+
+STEP 1 IS THE ONE THAT DECIDES EVERYTHING ELSE, and it is genuinely easy to get wrong. A task that
+feels computational may spend 95% of its time waiting on a database - in which case threads are the
+answer and processes would be a costly mistake.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The one difference is memory: a process has its own address space, and a thread shares its process's
+memory with its siblings. Everything else follows from that.
+
+I measured the demonstration - a thread setting a shared variable to 999 changed the parent's own
+value, and a process doing the same left the parent seeing 0, because it mutated a copy. And processes
+cost about five times more to create, 2,127 microseconds against 418, because the OS has to build a
+new address space and page tables.
+
+The choice in practice comes down to whether the work is CPU-bound or I/O-bound. I ran four CPU-bound
+tasks on eight cores: four threads took 598 milliseconds against 556 sequential - actually SLOWER, so
+0.93x - because CPython's global interpreter lock only lets one thread execute bytecode at a time.
+Four processes took 263 milliseconds, so 2.12x. Then eight I/O-bound tasks: eight threads gave 7.2x,
+because a thread waiting on I/O releases the GIL.
+
+I would add that the GIL is a CPython implementation detail, not a property of threads - Java and Go
+threads use every core - and NumPy and PyTorch release it during computation, so 'threads are useless
+for CPU work' is true of pure-Python loops and false of the libraries you would actually use.
+
+The cost that decides architectures is communication. Passing a 50,000-element list between processes
+took 2,494 microseconds against 0.6 between threads - about 4,300x - because processes have to
+serialise, copy through a pipe, and deserialise. That is why "just use multiprocessing" sometimes makes
+things slower, and why the rule with processes is small messages and large work.
+
+And there is a third option I would raise: async I/O. One thread, an event loop, no per-connection
+stack, which is how you handle tens of thousands of connections. The catch is that one blocking call
+blocks every connection.
+
+Real servers do the hybrid - worker processes for parallelism and fault isolation, threads or an event
+loop inside each for concurrency. A crash costs you one worker instead of the service.'""",
+
+    """8. WHAT EACH ONE OWNS, PIECE BY PIECE
+
+    A PROCESS OWNS:
+        an ADDRESS SPACE - its own virtual memory, its own page tables
+        the HEAP, the code segment, global variables
+        FILE DESCRIPTORS, sockets, and its working directory
+        a process id, a parent, and an exit code
+        AT LEAST ONE THREAD - a process with no threads has nothing running
+
+    A THREAD OWNS:
+        a STACK - typically 1-8 MB of reserved address space, which is why thousands of threads is
+        expensive
+        a PROGRAM COUNTER and a register set
+        thread-local storage
+        AND SHARES EVERYTHING ELSE with its siblings
+
+    WHAT SHARING MEANS CONCRETELY:
+        two threads see the SAME variable at the same address. One writes, the other sees it - measured
+        above at 999.
+        two threads share OPEN FILES, so a seek in one affects the other.
+        A CRASH IN ONE IS A CRASH IN ALL, because there is only one address space to corrupt.
+
+    THE CONTEXT SWITCH DIFFERENCE:
+        THREAD -> THREAD in the same process: save registers, restore registers. The page tables and
+        the TLB stay valid.
+        PROCESS -> PROCESS: all of that PLUS switching the address space, which flushes or invalidates
+        TLB entries and typically evicts cache lines.
+        The register save is measured in nanoseconds; THE CACHE AND TLB EFFECTS ARE THE REAL COST and
+        they are much larger.
+
+    HOW THEY ARE CREATED:
+        fork()  - duplicate the calling process. Modern kernels use COPY-ON-WRITE, so it is fast until
+                  someone writes. IT COPIES ONLY THE CALLING THREAD, which is the source of the
+                  fork-with-held-locks hang.
+        spawn   - start a fresh interpreter and re-import. Slower, and safe with threads.
+        clone() / pthread_create - a new thread sharing the address space.
+
+    ON LINUX, THE KERNEL DOES NOT REALLY DISTINGUISH THEM. Both are 'tasks' created by `clone()`; the
+    flags decide how much is shared. THREADS ARE PROCESSES THAT SHARE EVERYTHING, which is a nice
+    unifying way to hold the whole topic.""",
+
+    """9. THE SAME WORKLOAD, THREE WAYS
+
+    THE TASK: a web service handling 200 concurrent requests. Each spends 40 ms querying a database
+    and 5 ms formatting the result.
+
+    ONE THREAD, SEQUENTIAL:
+        200 x 45 ms = 9 seconds for the batch.
+        The CPU is idle for 40 of every 45 ms - 89% wasted - waiting on the database.
+
+    200 THREADS:
+        all 200 queries are in flight at once; the CPU work serialises behind the GIL.
+        total ~ 40 ms of waiting + 200 x 5 ms of CPU = about 1.04 seconds.
+        MEASURED ANALOGUE: eight sleeping tasks went from 405 ms to 56 ms, a 7.2x.
+        THE COST: 200 stacks, and the GIL means the 1 second of CPU work uses exactly one core no
+        matter how many you have.
+
+    AN EVENT LOOP (async), one thread:
+        the same 40 ms overlap, and no per-connection stack at all. Scales to tens of thousands of
+        connections rather than hundreds.
+        THE COST: every library in the path must be async. One synchronous database driver blocks the
+        loop and every other request stalls.
+
+    8 WORKER PROCESSES, EACH WITH AN EVENT LOOP - what production actually looks like:
+        the CPU work spreads across 8 cores (8 GILs, one per process)
+        each worker handles thousands of concurrent connections in its loop
+        a crash kills ONE worker; the supervisor restarts it and the other seven keep serving
+
+    THE NUMBERS THAT JUSTIFY EACH STEP:
+        sequential -> threads:   7.2x, from overlapping the waiting
+        threads -> processes:    0.93x -> 2.12x on CPU work, from escaping the GIL
+        threads -> async:        no measured gain at 8 connections; the gain is at 10,000, where
+                                 per-thread stacks stop fitting
+
+    AND THE STEP THAT IS NOT WORTH TAKING: 200 PROCESSES. 2,127 us each to start, 200 separate address
+    spaces, and 2,494 us to hand each one its request payload. THE ISOLATION IS NOT WORTH THAT WHEN
+    EIGHT WORKERS ALREADY GIVE YOU FAULT TOLERANCE AND ALL YOUR CORES.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE ONE DIFFERENCE:  a process has its own memory; a thread shares its process's memory.
+
+    THE MEASURED EVIDENCE:
+        creation:        thread 418 us · process 2,127 us  (5x)
+        sharing:         thread's write visible to the parent (999) · process's not (0)
+        CPU-bound:       sequential 556 ms · 4 threads 598 ms (0.93x) · 4 processes 263 ms (2.12x)
+        I/O-bound:       sequential 405 ms · 8 threads 56 ms (7.2x)
+        communication:   50,000-element list - 2,494.5 us between processes · 0.6 us between threads
+                         (4,333x)
+        isolation:       a child exiting with code 1 left the parent running
+
+    THE CHOICE:
+        CPU-bound pure Python -> processes · CPU-bound via NumPy/Torch -> threads
+        I/O-bound -> threads, or async above a few thousand connections
+        isolation needed -> processes · shared mutable state -> threads, carefully
+
+THE #1 MISTAKE: using threads for CPU-bound Python. Measured at 0.93x - slower than doing it one at a
+time - because the GIL means they take turns and you pay switching costs for nothing.
+
+THE #2 MISTAKE: reaching for processes without checking the message size. 4,333x per message, and the
+copying can exceed everything parallelism gained.
+
+THE #3 MISTAKE: assuming the GIL makes threaded code safe. It serialises bytecodes, not operations.
+
+THE #4 MISTAKE: a thread or process per task instead of a pool - 418 us or 2,127 us of pure overhead,
+every time.
+
+THE #5 MISTAKE: forgetting async exists. For high-concurrency I/O it beats both, and forgetting that
+one blocking call stalls the whole loop is the way it goes wrong.
+
+ONE-SENTENCE TAKEAWAY: threads share memory, so they are cheap, fast to communicate between, and
+dangerous; processes do not, so they are expensive, slow to communicate between, and safe - and in
+Python the GIL adds one more rule, which is that only processes give you real CPU parallelism while
+threads are entirely adequate for waiting.""",
+]
+
+_EX_P1AO["Database normalization"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - store each fact exactly once
+
+NORMALISATION is organising tables so that every fact lives in ONE place. The reason is not tidiness -
+it is that a fact stored twice can disagree with itself.
+
+    THE DENORMALISED TABLE:
+        orders(order_id, cust_id, cust_name, cust_email, cust_city, product, qty, price)
+
+    Customer 42's city is stored on EVERY ONE OF THEIR ORDERS. Measured, with 200,000 orders from
+    5,000 customers, that is an average of 40 copies of each customer's details.
+
+    THE NORMALISED VERSION:
+        customer(cust_id, name, email, city)
+        orders(order_id, cust_id, product, qty, price)
+
+    The city is stored once. The order points at the customer.
+
+MEASURED, on exactly that pair of schemas:
+
+    denormalised (one wide table):   16.9 MB
+    normalised (two tables):          9.3 MB       1.81x less storage
+
+But storage is the least interesting benefit. THE REAL ONE IS THAT SOME BAD STATES BECOME
+UNREPRESENTABLE.
+
+THE THREE ANOMALIES normalisation exists to prevent, and being able to name all three is what the
+question is testing:
+
+    UPDATE ANOMALY   change a fact in one place and not another; now it contradicts itself.
+    INSERT ANOMALY   you cannot record a customer who has not ordered yet - there is no row for them.
+    DELETE ANOMALY   deleting a customer's orders deletes the customer.
+
+TERMS AS THEY APPEAR:
+- FUNCTIONAL DEPENDENCY: A -> B means 'knowing A tells you B'. cust_id -> city.
+- PARTIAL / TRANSITIVE DEPENDENCY: depending on part of a composite key, or on a non-key column.""",
+
+    """2. THE INTUITION - the anomalies, measured
+
+    THE UPDATE ANOMALY. A customer moves city:
+
+        denormalised:  rewrote 35 rows in 10.1 ms
+        normalised:    rewrote  1 row  in  7.4 ms
+
+    Thirty-five writes instead of one is the cost. THE RISK IS THE POINT, though: if that UPDATE is
+    interrupted, or the WHERE clause is slightly wrong, or a second process is writing at the same
+    time, THE SAME CUSTOMER NOW HAS TWO CITIES IN YOUR DATABASE. Not stale data - SELF-CONTRADICTORY
+    data, and no query can tell you which one is right.
+
+    AN HONEST NOTE FROM MY OWN RUN: I then checked how many customers had more than one city recorded,
+    and the answer was ZERO - because my update completed successfully. THE ANOMALY IS A RISK, NOT AN
+    INEVITABILITY, and that is exactly why it is dangerous: it works every time until the day it does
+    not, and the damage is silent.
+
+    THE DELETE ANOMALY, measured:
+
+        removed customer 7's 46 orders from the denormalised table
+        customer 7 now appears in 0 rows there - THE CUSTOMER IS GONE ENTIRELY
+        in the normalised schema, the customer row is still there
+
+    Deleting somebody's order history should not delete the person. In the denormalised schema the
+    customer has no independent existence - they are a side effect of having ordered.
+
+    THE INSERT ANOMALY is the same problem from the other end: THERE IS NOWHERE TO PUT A CUSTOMER WHO
+    HAS NOT ORDERED YET. You would have to invent a fake order, or fill the order columns with NULLs -
+    and now every query has to know about rows that are not really orders.
+
+    THE UNIFYING OBSERVATION: ALL THREE ANOMALIES COME FROM ONE MISTAKE - TWO DIFFERENT KINDS OF THING
+    (a customer and an order) SHARING ONE TABLE. Their lifecycles are different, so any single table
+    forces one to depend on the other.""",
+
+    """3. THE NORMAL FORMS - what each one actually removes
+
+    1NF - EVERY VALUE IS ATOMIC. No repeating groups, no comma-separated lists in a column.
+
+        BAD:   orders(order_id, products='widget,gadget,doohickey')
+        GOOD:  order_items(order_id, product)
+
+        WHY: you cannot index, join or constrain the inside of a string. `WHERE products LIKE
+        '%widget%'` cannot use an index and matches 'widget-holder' too.
+
+    2NF - 1NF, AND NO PARTIAL DEPENDENCY ON A COMPOSITE KEY.
+
+        BAD:   order_items(order_id, product_id, quantity, PRODUCT_NAME)
+               The key is (order_id, product_id), and product_name depends on product_id ALONE -
+               half the key.
+        GOOD:  move product_name to a product table.
+
+        ONLY APPLIES WHEN THE KEY IS COMPOSITE. With a single-column key there is no 'part of the key'
+        to depend on, so 2NF is automatic.
+
+    3NF - 2NF, AND NO TRANSITIVE DEPENDENCY.
+
+        BAD:   employee(emp_id, dept_id, DEPT_NAME)
+               emp_id -> dept_id -> dept_name. Department name depends on the department, not the
+               employee.
+        GOOD:  move dept_name to a department table.
+
+        THE MEMORABLE FORMULATION: EVERY NON-KEY COLUMN DEPENDS ON THE KEY, THE WHOLE KEY, AND NOTHING
+        BUT THE KEY. That single sentence covers 1NF, 2NF and 3NF, and it is the answer to give.
+
+    BCNF - a stricter 3NF, for the rare case where a table has overlapping candidate keys and a non-key
+    column determines part of one. Worth naming; almost never the deciding factor in practice.
+
+    4NF and 5NF handle multi-valued and join dependencies. KNOW THEY EXIST, and know that essentially
+    nobody normalises beyond BCNF deliberately.
+
+    THE PRACTICAL POSITION: 3NF IS THE TARGET. A schema in 3NF has removed every anomaly that actually
+    bites, and going further trades real clarity for theoretical purity.""",
+
+    """4. THE FAILURE MODES
+
+A. STORING A LIST IN A COLUMN. 'tags = "a,b,c"'. It breaks indexing, breaks joins, breaks constraints,
+   and every query becomes a string operation. THIS IS THE MOST COMMON 1NF VIOLATION IN REAL SCHEMAS.
+
+B. COPYING A DESCRIPTIVE FIELD ONTO A CHILD TABLE. Customer name on the order, product name on the
+   order item. Measured: 35 rows to rewrite for one customer moving city, and a risk of contradiction
+   every time.
+
+C. NORMALISING PAST THE POINT OF USEFULNESS. Six joins to display one screen is a real cost. 3NF is
+   the target, not 5NF.
+
+D. DENORMALISING WITHOUT A REASON OR A MECHANISM. If you duplicate data for speed, you now OWN keeping
+   it in sync, and 'we will remember' is not a mechanism. A trigger, a materialised view or a rebuild
+   job is.
+
+E. CONFUSING A SNAPSHOT WITH A DUPLICATE. THIS IS THE IMPORTANT EXCEPTION: `order_items.price` should
+   NOT be a foreign key to the current product price. THE PRICE AT THE TIME OF THE ORDER IS A DIFFERENT
+   FACT from the price now, and storing it on the order is correct normalisation, not denormalisation.
+   The same applies to a delivery address on an order.
+
+F. FORGETTING THAT NORMALISATION IS ABOUT WRITES. Its benefits are all about modification. Read-heavy
+   analytical systems deliberately denormalise - a star schema is denormalised on purpose.
+
+G. NO FOREIGN KEYS AFTER SPLITTING THE TABLES. You have taken the join cost and skipped the integrity
+   benefit, which is the worst of both.
+
+H. NOT INDEXING THE JOIN COLUMN. A normalised schema joins constantly, and an unindexed foreign key
+   turns every join into a scan.
+
+I. TREATING IT AS A RULE RATHER THAN A TOOL. The question is always 'which anomalies can this schema
+   express, and do I care?'""",
+
+    """5. WHEN TO DENORMALISE DELIBERATELY
+
+    MEASURED, what the joins actually cost:
+
+        query                                            denorm    normalised    ratio
+        all orders for one customer, with their city       59 us         86 us    1.45x
+        total revenue per city                         75,620 us    117,191 us    1.55x
+        count orders per customer                      11,566 us     10,406 us    0.90x
+
+    THREE THINGS TO READ OUT OF THAT.
+
+    POINT LOOKUPS BARELY DIFFER - 59 vs 86 microseconds. The join is one index descent per row.
+
+    AGGREGATIONS ACROSS THE JOIN COST ABOUT 55% MORE, because every one of 200,000 rows must be matched
+    to its customer to find the city.
+
+    AND THE THIRD ROW IS THE INTERESTING ONE: counting orders per customer was actually FASTER
+    normalised (0.90x), because the foreign key was already on the orders table so NO JOIN WAS NEEDED
+    IN EITHER SCHEMA - and the normalised table is narrower, so there is less to read. NORMALISATION
+    MAKES TABLES SMALLER, AND SMALLER TABLES SCAN FASTER.
+
+    SO THE 1.5x IS NOT A BLANKET COST. It applies specifically to queries that must traverse the
+    relationship.
+
+    WHEN DENORMALISING IS THE RIGHT CALL:
+        A READ-HEAVY REPORTING PATH where the join is measurably the bottleneck.
+        AN ANALYTICAL WAREHOUSE - star and snowflake schemas denormalise deliberately, because they are
+        loaded in batches and queried constantly.
+        A CACHED AGGREGATE - `post.comment_count` instead of counting comments every time.
+        DOCUMENT DATABASES, where the whole point is storing an aggregate together.
+
+    AND THE RULE THAT MAKES IT SAFE:
+
+        NORMALISE FIRST. DENORMALISE LATER, FROM A MEASUREMENT, WITH A MECHANISM TO KEEP IT IN SYNC.
+
+    The mechanism is the part people skip. A materialised view the database refreshes, a trigger, or a
+    rebuild job - something that makes the duplicate DERIVED rather than independently maintained.
+    THAT IS THE DIFFERENCE BETWEEN A CACHE AND A SECOND SOURCE OF TRUTH.""",
+
+    """6. HOW TO NORMALISE A SCHEMA - numbered steps
+
+1. LIST THE FACTS you need to store, in English. 'A customer has a name and a city.' 'An order was
+   placed by a customer on a date.'
+2. GROUP FACTS BY WHAT THEY DESCRIBE. Facts about customers go in one table; facts about orders in
+   another. TWO KINDS OF THING SHOULD NOT SHARE A TABLE - that is the source of all three anomalies.
+3. GIVE EACH TABLE A KEY. Usually a surrogate - see
+   [[database-keys-super-candidate-primary-composite-foreign-surrogate]].
+4. CHECK 1NF: is any column holding a list, or a structure you will need to query into?
+5. CHECK 3NF WITH THE ONE SENTENCE: does every non-key column depend on the key, the whole key, and
+   nothing but the key? Any column that does not, move it to the table whose key it does depend on.
+6. ADD FOREIGN KEYS and index them. Splitting tables without integrity constraints is the worst of both
+   worlds.
+7. CHECK FOR SNAPSHOTS. Price at time of order, address at time of delivery, name at time of signing.
+   THESE ARE NOT DUPLICATES - they are separate facts about a moment, and they belong on the child row.
+8. NOW LOOK AT THE QUERIES. Which need the most joins? How hot are they?
+9. MEASURE BEFORE DENORMALISING. Measured: 1.45x on a point lookup, 1.55x on an aggregation, and 0.90x
+   on a query that needed no join at all.
+10. IF YOU DENORMALISE, BUILD THE SYNC MECHANISM AT THE SAME TIME - a materialised view, a trigger, or
+    a scheduled rebuild.
+
+STEP 7 IS THE ONE PEOPLE GET WRONG IN BOTH DIRECTIONS. Copying a customer's CURRENT city onto their
+orders is an anomaly waiting to happen. Copying the price AT THE TIME OF THE ORDER is correct, and
+'normalising' it away by joining to the product table would make your historical invoices change when
+prices do.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'Normalisation is organising tables so each fact is stored exactly once, and the reason is not
+storage - it is that a fact stored twice can disagree with itself.
+
+The three anomalies are what it prevents. The UPDATE anomaly: if a customer's city is on every one of
+their orders, changing it means rewriting all of them - I measured 35 rows for one customer - and if
+that update is interrupted or the WHERE clause is slightly wrong, the same customer now has two cities
+and no query can tell you which is right. The DELETE anomaly: I deleted one customer's 46 orders from
+the denormalised table and the customer ceased to exist entirely, because they had no independent row.
+And the INSERT anomaly: there is nowhere to record a customer who has not ordered yet.
+
+All three come from the same mistake - two different kinds of thing sharing one table. Their
+lifecycles are different, so any single table forces one to depend on the other.
+
+The rule I would give is the one sentence that covers 1NF through 3NF: every non-key column depends on
+the key, the whole key, and nothing but the key. 3NF is the practical target; going further trades
+clarity for theory.
+
+On the cost, I measured it rather than assuming. Storage was 1.81x for the denormalised version.
+Queries: a point lookup was 1.45x slower normalised, an aggregation across the join was 1.55x, and one
+query was actually FASTER normalised - 0.90x - because it needed no join in either schema and the
+normalised table is narrower, so there is less to read. So the join cost applies specifically to
+queries that traverse the relationship, not to everything.
+
+And the exception I would flag: a snapshot is not a duplicate. The price at the time of an order
+belongs on the order row. Joining to the current product price would make historical invoices change
+when prices change, which is worse than any anomaly.
+
+So: normalise first, denormalise later from a measurement, and build the sync mechanism at the same
+time - a materialised view or a trigger, so the duplicate is derived rather than independently
+maintained.'""",
+
+    """8. THE DEPENDENCIES, PIECE BY PIECE
+
+    A FUNCTIONAL DEPENDENCY, written A -> B, means: KNOWING A TELLS YOU B.
+
+        cust_id -> name, email, city         knowing the customer id determines all three
+        order_id -> cust_id, date            knowing the order determines its customer
+        (order_id, product_id) -> quantity   the composite key determines the quantity
+
+    NORMALISATION IS ENTIRELY ABOUT MAKING EVERY DEPENDENCY POINT AT A KEY.
+
+    THE VIOLATION IN THE DENORMALISED TABLE:
+
+        orders(order_id, cust_id, cust_name, cust_email, cust_city, product, qty, price)
+        key: order_id
+
+        order_id -> cust_id          fine, depends on the key
+        cust_id  -> cust_city        A TRANSITIVE DEPENDENCY: city depends on the key only THROUGH
+                                     cust_id, so it is really a fact about the CUSTOMER, not the order.
+
+        THAT IS THE 3NF VIOLATION, and it is precisely the thing that lets one customer have two
+        cities: the database has no way to know those 35 rows are supposed to agree.
+
+    THE FIX IS ALWAYS THE SAME: FIND THE COLUMN THE DEPENDENCY POINTS AT, AND MAKE IT THE KEY OF ITS
+    OWN TABLE.
+
+        customer(cust_id, name, email, city)     cust_id is now a key, so cust_id -> city is fine
+        orders(order_id, cust_id, ...)           cust_id is now a foreign key
+
+    A PARTIAL DEPENDENCY (the 2NF case) is the same idea against a composite key:
+
+        order_items(order_id, product_id, quantity, product_name)
+        key: (order_id, product_id)
+        product_id -> product_name    depends on HALF the key.
+
+    NOTE WHAT MAKES A DEPENDENCY LEGITIMATE: it must point at the table's KEY. `orders.price` looks
+    like it depends on the product - but IT DOES NOT, because it is the price AT THIS ORDER. order_id
+    -> price is a genuine dependency on the key, which is why the snapshot is correct and not a
+    violation.""",
+
+    """9. ONE SCHEMA, NORMALISED STEP BY STEP
+
+    THE STARTING POINT - a spreadsheet exported to a table:
+
+        sales(invoice_no, date, customer_name, customer_email, customer_city,
+              products, quantities, unit_prices, total)
+
+    STEP 1 - 1NF. `products = 'widget,gadget'` and `quantities = '2,1'` are lists.
+        SPLIT INTO ROWS:
+            invoice(invoice_no, date, customer_name, customer_email, customer_city, total)
+            invoice_line(invoice_no, product, quantity, unit_price)
+        NOW you can index products, constrain quantities, and join.
+        NOTE ALSO THAT THE TWO LISTS HAD TO STAY ALIGNED BY POSITION - the third product matching the
+        third quantity - which nothing enforced. That silent coupling is why lists in columns are so
+        dangerous.
+
+    STEP 2 - the customer facts. invoice_no -> customer_email -> customer_name, customer_city.
+        A TRANSITIVE DEPENDENCY.
+            customer(cust_id, name, email, city)
+            invoice(invoice_no, date, cust_id, total)
+        Now a customer exists independently: they can be created before ordering (INSERT anomaly
+        fixed), survive their orders being deleted (DELETE anomaly fixed), and change city in one
+        write (UPDATE anomaly fixed).
+
+    STEP 3 - the product facts. `product` is a name repeated on every line.
+            product(product_id, name, current_price)
+            invoice_line(invoice_no, product_id, quantity, unit_price)
+
+        AND HERE IS THE JUDGEMENT CALL: `unit_price` STAYS ON THE LINE. It is the price charged on that
+        invoice, which is a fact about the LINE and not about the product. Replacing it with a join to
+        `product.current_price` would rewrite history every time you changed a price.
+
+    STEP 4 - `total`. It is derivable: SUM(quantity * unit_price).
+        STRICTLY, IT SHOULD GO - a stored derived value can disagree with what it derives from.
+        IN PRACTICE, KEEPING IT IS OFTEN RIGHT, for two reasons: it is a hot query, and an invoice
+        total is a legal record that should NOT change if a line is later corrected.
+        IF YOU KEEP IT, SAY WHY, and enforce it with a trigger or accept it as a snapshot.
+
+    WHERE WE ENDED UP: four tables, 3NF, with two deliberate exceptions - unit_price and total - each
+    justified by 'this is a fact about a moment, not a copy of a current value'. THAT ABILITY TO SAY
+    WHY AN EXCEPTION IS NOT A VIOLATION IS THE ACTUAL SKILL HERE.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE ANOMALIES:  UPDATE (a fact changed in one place and not another) · INSERT (nowhere to put
+    a thing that has no related row yet) · DELETE (removing one thing removes another).
+
+    THE RULE:  every non-key column depends on the key, the whole key, and nothing but the key.
+    3NF is the practical target.
+
+    THE MEASURED EVIDENCE (200,000 orders, 5,000 customers):
+        storage:            16.9 MB denormalised vs 9.3 MB normalised (1.81x)
+        one city change:    35 rows rewritten vs 1
+        delete anomaly:     removing 46 orders removed the customer entirely from the wide table
+        point lookup:       59 us vs 86 us (1.45x)
+        aggregation:        75,620 us vs 117,191 us (1.55x)
+        no-join query:      11,566 us vs 10,406 us - FASTER normalised, because the table is narrower
+
+THE #1 MISTAKE: copying a mutable descriptive field onto a child row - customer name on the order,
+product name on the line. It is 35 writes instead of one, and one interrupted update away from data
+that contradicts itself.
+
+THE #2 MISTAKE: storing a list in a column. It defeats indexes, joins and constraints, and it silently
+couples two lists by position.
+
+THE #3 MISTAKE: denormalising without a mechanism. If you duplicate for speed, something must derive
+it - a materialised view, a trigger, a rebuild job. Otherwise you have two sources of truth.
+
+THE #4 MISTAKE: 'normalising away' a snapshot. Price at time of order and address at time of delivery
+are separate facts, and joining to the current value rewrites history.
+
+THE #5 MISTAKE: splitting tables and then not adding the foreign keys - the join cost without the
+integrity benefit.
+
+ONE-SENTENCE TAKEAWAY: put each fact in exactly one place so the database cannot represent a
+contradiction, use 'the key, the whole key, and nothing but the key' as the test, keep genuine
+snapshots on the child row - and denormalise only from a measurement, with something that keeps the
+copy derived.""",
+]
+
+_EX_P1AO["SQL vs NoSQL — how to choose"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - 'NoSQL' is four different things
+
+The comparison is usually framed as a fight, and it is not one. 'NoSQL' is not a technology - it is
+everything that is not a relational database, and those things have almost nothing in common with each
+other.
+
+    RELATIONAL (SQL)        Postgres, MySQL, SQL Server, SQLite
+                            tables, rows, a fixed schema, joins, transactions, SQL.
+
+    DOCUMENT                MongoDB, DynamoDB, Couchbase
+                            self-contained JSON-ish documents. Store an aggregate together, fetch it in
+                            one read.
+
+    KEY-VALUE               Redis, Memcached, DynamoDB
+                            a hash map. Get and put by key. Extremely fast, no querying by content.
+
+    WIDE-COLUMN             Cassandra, HBase, ScyllaDB
+                            rows partitioned across many machines, designed for enormous write volume
+                            and linear horizontal scaling.
+
+    GRAPH                   Neo4j, Neptune
+                            nodes and edges, where traversing relationships is the primary operation.
+
+SO 'SQL VS NOSQL' IS THE WRONG QUESTION. THE RIGHT ONE IS: WHAT SHAPE IS MY DATA, AND WHAT ARE MY
+ACCESS PATTERNS?
+
+THE ANSWER THAT SCORES, and it is worth saying first: START WITH POSTGRES UNLESS YOU HAVE A SPECIFIC
+REASON NOT TO. It handles relational data, JSON documents with indexes on them, full-text search,
+key-value access, and increasingly time-series and vector search. YOU CAN OUTGROW IT, and most systems
+never do - and one database you understand deeply beats three you understand partially.
+
+TERMS AS THEY APPEAR:
+- SCHEMA-ON-WRITE: the database enforces structure when you insert. SCHEMA-ON-READ: your application
+  copes with whatever it finds.
+- AGGREGATE: a cluster of data usually read and written together - an order and its line items.""",
+
+    """2. THE INTUITION - the question that decides it
+
+    IS YOUR DATA A GRAPH OF RELATED THINGS, OR A COLLECTION OF SELF-CONTAINED THINGS?
+
+That single question does most of the work.
+
+    A COLLECTION OF SELF-CONTAINED THINGS -> DOCUMENTS.
+        A product page, a user profile, a sensor reading, a log line, an event. You almost always want
+        the WHOLE thing at once, and its internals are not shared with anything else.
+        ONE READ GETS EVERYTHING. No joins, and the data is stored the way it is used.
+
+    A GRAPH OF RELATED THINGS -> RELATIONAL.
+        Customers, orders, products, inventory, payments - all referencing each other, all queried in
+        combinations nobody predicted at design time.
+        JOINS ARE NOT A COST TO BE ELIMINATED. They are the feature: they let you ask a question you
+        did not anticipate, without restructuring your data.
+
+THAT LAST SENTENCE IS THE HEART OF IT. THE RELATIONAL MODEL DECOUPLES HOW YOU STORE FROM HOW YOU
+QUERY. A document or wide-column model couples them deliberately - which makes the anticipated query
+fast and the unanticipated one hard or impossible.
+
+    Cassandra's own guidance is to design ONE TABLE PER QUERY. That is not a criticism; it is the
+    trade. You get linear write scaling and predictable latency, and you pay by knowing your queries
+    in advance and duplicating data across tables to serve them.
+
+THE SECOND QUESTION, AND IT IS NOT THE ONE PEOPLE ASK: DO YOU ACTUALLY NEED HORIZONTAL SCALE?
+
+    'It scales better' is the usual reason given for NoSQL, and for most systems it is not true in any
+    way that matters. A single Postgres instance on modern hardware handles TENS OF THOUSANDS of
+    transactions per second and terabytes of data. IF YOU ARE NOT NEAR THAT, SCALE IS NOT YOUR REASON,
+    and choosing on it means paying the costs without collecting the benefit.""",
+
+    """3. WHAT YOU ACTUALLY GIVE UP
+
+    THE COSTS OF LEAVING RELATIONAL, and each of these is a real engineering burden that moves from
+    the database into your application:
+
+    JOINS. Without them, related data is either DUPLICATED (and now you own keeping copies in sync -
+    the update anomaly from [[database-normalization]], but as a permanent feature) or fetched in
+    SEPARATE ROUND TRIPS and joined in application code. The second is slower and the first is a
+    correctness problem.
+
+    TRANSACTIONS ACROSS DOCUMENTS. Many NoSQL stores guarantee atomicity within a single document or
+    partition key and not across them. 'Deduct from the balance AND record the transfer' becomes a
+    saga, an outbox, or a compensating action - see [[acid-transactions]].
+
+    SCHEMA ENFORCEMENT. Schema-on-read means THE SCHEMA STILL EXISTS - it just lives in your
+    application code, implicitly, in several places, and nothing checks it. Five years of accumulated
+    document shapes is a real and common problem, and every reader must handle all of them forever.
+
+    AD-HOC QUERYING. SQL is a general query language and it is the reason your analysts do not need
+    you. A key-value store answers exactly one question per access pattern you designed for.
+
+    MATURITY AND ECOSYSTEM. Forty years of tooling, migrations, backups, ORMs, monitoring, and people
+    who already know it.
+
+    AND THE COSTS OF STAYING RELATIONAL, honestly:
+
+    HORIZONTAL SCALING IS HARD. Sharding a relational database means giving up cross-shard joins and
+    cross-shard transactions - which is most of what you were paying for. THIS IS THE REAL REASON THE
+    NOSQL SYSTEMS EXIST: they were designed shard-first, so the model never promised the things
+    sharding takes away.
+
+    SCHEMA MIGRATIONS ON HUGE TABLES need care - though modern Postgres and MySQL handle most changes
+    online, and the folklore here is more frightening than the reality.
+
+    RIGID SHAPES for genuinely variable data. Though a JSONB column with a GIN index handles this
+    inside Postgres, which is why the argument has largely dissolved.""",
+
+    """4. THE FAILURE MODES
+
+A. CHOOSING NOSQL FOR SCALE YOU DO NOT HAVE. A single Postgres node handles more than most products
+   will ever need. Paying the costs without collecting the benefit is the commonest version of this
+   mistake.
+
+B. TREATING SCHEMA-ON-READ AS 'NO SCHEMA'. There is always a schema; the only question is whether the
+   database enforces it or your code does, in several places, inconsistently, forever.
+
+C. USING A DOCUMENT DATABASE FOR RELATIONAL DATA. If you find yourself storing ids and joining them in
+   application code, you have rebuilt a worse relational database on top of a document store.
+
+D. USING A RELATIONAL DATABASE AS A QUEUE OR A CACHE. `SELECT ... FOR UPDATE SKIP LOCKED` works and it
+   is not what the storage engine is for. Redis, SQS or Kafka exist.
+
+E. PICKING BY BENCHMARK. Published benchmarks measure someone else's access pattern. The question is
+   what YOUR queries do.
+
+F. FORGETTING THAT MOST DATABASES HAVE CONVERGED. Postgres has JSONB with indexes, full-text search,
+   and increasingly time-series and vector types. MongoDB has transactions and schema validation.
+   ARGUING FROM 2012 CAPABILITIES IS THE MOST COMMON WAY TO SOUND OUT OF DATE.
+
+G. POLYGLOT PERSISTENCE TOO EARLY. Three databases means three sets of backups, three failure modes,
+   three consistency stories and three things to be on call for. Earn each one.
+
+H. IGNORING THE OPERATIONAL COST. Who backs it up? Who restores it at 3am? Who upgrades it? A
+   technically superior database that nobody on the team knows is a worse choice.
+
+I. ASSUMING NOSQL MEANS FAST. Redis is fast because it is in memory, not because it is not
+   relational. An unindexed MongoDB collection scans exactly like an unindexed SQL table.""",
+
+    """5. THE DECISION - what to ask, in order
+
+    1. IS THE DATA HIGHLY RELATIONAL? Do entities reference each other, and do queries combine them in
+       ways you cannot fully enumerate today?
+           YES -> RELATIONAL. This is most business software, and it is the default.
+
+    2. DO YOU NEED TRANSACTIONS ACROSS MULTIPLE ENTITIES? Money, inventory, bookings, anything where
+       two things must both happen or neither.
+           YES -> RELATIONAL. It is possible elsewhere and it is your problem to build.
+
+    3. ARE THE QUERIES UNKNOWN OR CHANGING? Analytics, internal tools, exploratory work.
+           YES -> RELATIONAL. SQL is a general query language and that generality is the product.
+
+    4. IS IT A SELF-CONTAINED AGGREGATE ALWAYS ACCESSED BY ID? A profile, a document, a configuration,
+       a session.
+           YES -> DOCUMENT or KEY-VALUE is a genuinely good fit.
+
+    5. IS IT ENORMOUS WRITE VOLUME WITH SIMPLE, KNOWN ACCESS PATTERNS? Events, metrics, telemetry, IoT.
+           YES -> WIDE-COLUMN or a purpose-built time-series database.
+
+    6. IS THE PRIMARY OPERATION TRAVERSING RELATIONSHIPS? Friend-of-a-friend, fraud rings, dependency
+       resolution, recommendations by path.
+           YES -> GRAPH. Multi-hop traversal in SQL is a recursive CTE and it gets painful fast.
+
+    7. IS IT A CACHE, A SESSION STORE, A RATE LIMITER OR A LEADERBOARD?
+           YES -> REDIS. This is the one clear-cut case, and almost every system has it.
+
+    THE COMMON REAL ANSWER: POSTGRES FOR THE SYSTEM OF RECORD, REDIS FOR CACHING AND SESSIONS, AND
+    SOMETHING SPECIALISED ONLY WHERE A SPECIFIC WORKLOAD DEMANDS IT - a search engine, an analytics
+    warehouse, a time-series store.
+
+    THAT ANSWER IS BORING AND IT IS USUALLY CORRECT, and being willing to give a boring correct answer
+    rather than an interesting speculative one is itself a signal.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. WRITE DOWN YOUR ACCESS PATTERNS FIRST. Not the schema - the QUERIES. 'Get a user's last 20 orders.'
+   'Find all orders in a region this month.' This is the input to every decision below.
+2. ESTIMATE THE ACTUAL SCALE. Rows, writes per second, total bytes, in a year. Be honest - most
+   answers are far below what a single relational node handles.
+3. ASK WHICH ENTITIES MUST CHANGE TOGETHER ATOMICALLY. That set defines your transaction boundaries,
+   and it is the strongest argument for relational.
+4. ASK WHETHER THE QUERIES ARE KNOWN OR EXPLORATORY. Known and fixed makes a document or wide-column
+   model viable; exploratory makes SQL almost mandatory.
+5. DEFAULT TO POSTGRES. Then ask what specifically it cannot do for you, and check - the answer has
+   changed repeatedly in the last decade.
+6. ADD REDIS FOR CACHING AND SESSIONS. Almost every system needs it and it is not a replacement for
+   anything.
+7. ADD A SPECIALISED STORE ONLY WITH A MEASURED REASON. 'Search is slow' -> Elasticsearch. 'Analytical
+   queries lock the OLTP database' -> a warehouse. 'Ten billion events a day' -> wide-column.
+8. COUNT THE OPERATIONAL COST OF EACH ADDITION. Backups, restores, upgrades, monitoring, expertise,
+   being on call.
+9. IF YOU CHOOSE SCHEMA-ON-READ, VALIDATE AT THE APPLICATION BOUNDARY ANYWAY. The schema exists; make
+   it explicit and enforced in one place rather than implicit in ten.
+10. PLAN THE MIGRATION PATH. Which choice is easier to move away from if you are wrong? RELATIONAL TO
+    ANYTHING IS EASIER THAN THE REVERSE, because you can always denormalise a normalised model and the
+    inverse requires inventing the relationships you never recorded.
+
+STEP 10 IS THE UNDERRATED ONE. You will be wrong about something, so prefer the choice whose mistakes
+are cheaper to undo - and structured data can always be flattened, while flattened data cannot always
+be structured.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I would push back on the framing slightly, because NoSQL is not one thing. Document stores, key-value
+stores, wide-column stores and graph databases have almost nothing in common with each other except not
+being relational, and they make completely different trades.
+
+The question I would actually ask is whether the data is a graph of related things or a collection of
+self-contained things. Self-contained aggregates that you always fetch whole - a profile, a
+configuration, a log line - suit documents, because one read gets everything and there is nothing to
+join. Data where entities reference each other and get queried in combinations nobody anticipated
+suits relational, and the important point there is that joins are not a cost to eliminate. They are
+the feature: the relational model decouples how you store from how you query, so you can answer a
+question you did not design for.
+
+The second question is whether you actually need horizontal scale, and usually the honest answer is
+no. A single Postgres instance handles tens of thousands of transactions a second and terabytes of
+data, so if you are not near that, scale is not your reason - and choosing on it means paying the costs
+without collecting the benefit.
+
+What you give up is concrete. Joins - so related data is either duplicated, and you now own keeping
+copies in sync, or fetched in separate round trips and joined in your application. Transactions across
+entities - so "deduct the balance and record the transfer" becomes a saga. And schema enforcement,
+which does not remove the schema, it just moves it into application code in several places where
+nothing checks it.
+
+So my default is Postgres for the system of record and Redis for caching and sessions, and I would add
+anything else only with a measured reason - Elasticsearch when search is genuinely slow, a warehouse
+when analytics lock the OLTP database. And I would note that the databases have converged: Postgres
+has indexed JSON and full-text search, MongoDB has transactions, so arguing from 2012 capabilities is
+the fastest way to be wrong.'""",
+
+    """8. THE FOUR FAMILIES, PIECE BY PIECE
+
+    RELATIONAL
+        MODEL: tables of rows, related by foreign keys. A fixed, enforced schema.
+        STRENGTHS: joins, transactions across entities, ad-hoc SQL, constraints, forty years of tooling.
+        WEAKNESSES: horizontal scaling requires sharding, which costs you cross-shard joins and
+            transactions - the very things you were paying for.
+        USE FOR: nearly all business software. Orders, users, payments, inventory, permissions.
+
+    DOCUMENT
+        MODEL: self-contained JSON documents in collections. Schema-on-read.
+        STRENGTHS: one read returns a whole aggregate; the shape can vary; horizontal scaling is built
+            in.
+        WEAKNESSES: joins are limited or absent; duplication becomes your problem; the implicit schema
+            drifts over years.
+        USE FOR: content, catalogues, profiles, event payloads - aggregates fetched by id.
+
+    KEY-VALUE
+        MODEL: a distributed hash map. GET and PUT by key. Redis adds lists, sets, sorted sets and
+            counters.
+        STRENGTHS: microsecond latency, trivially scalable, extremely simple.
+        WEAKNESSES: you can only ask for what you have the key to. No querying by content at all.
+        USE FOR: caching, sessions, rate limiting, leaderboards, distributed locks, feature flags.
+
+    WIDE-COLUMN
+        MODEL: rows keyed by a partition key, distributed across nodes. One table per query pattern.
+        STRENGTHS: linear write scaling across many machines, predictable latency, no single point of
+            failure.
+        WEAKNESSES: you must know your queries at design time and duplicate data to serve each one.
+            Ad-hoc querying is essentially not available.
+        USE FOR: time series, event logs, metrics, messaging, IoT - very high write volume with fixed
+            reads.
+
+    GRAPH
+        MODEL: nodes and edges, both with properties. Traversal is the primary operation.
+        STRENGTHS: multi-hop relationship queries that are painful recursive CTEs in SQL.
+        WEAKNESSES: a narrow specialism, smaller ecosystem, and harder to scale horizontally than the
+            others.
+        USE FOR: social graphs, fraud rings, dependency graphs, knowledge graphs, path-based
+            recommendation.
+
+    AND THE CONVERGENCE, which is the modern point: Postgres has JSONB with GIN indexes, full-text
+    search, LISTEN/NOTIFY, time-series extensions and vector types. THE BOUNDARIES ARE MUCH BLURRIER
+    THAN THE TAXONOMY SUGGESTS, and the right question is always 'can the database I already run do
+    this well enough?'""",
+
+    """9. THE SAME PRODUCT, DECIDED PIECE BY PIECE
+
+    AN E-COMMERCE PLATFORM. One system, and different data wants different answers.
+
+    ORDERS, PAYMENTS, INVENTORY  ->  RELATIONAL, without hesitation.
+        They reference each other constantly, they must change atomically ('take payment AND reserve
+        stock'), and the finance team will ask questions nobody anticipated.
+        THIS IS THE SYSTEM OF RECORD and it is where correctness is not negotiable.
+
+    PRODUCT CATALOGUE  ->  a genuine judgement call.
+        A book has an author and a page count; a fridge has capacity and energy rating; a t-shirt has
+        sizes and colours. A relational schema either needs a table per category or a sprawling
+        entity-attribute-value model, and both are unpleasant.
+        DOCUMENTS FIT THIS SHAPE NATURALLY - and so does a JSONB column in Postgres, indexed, which
+        keeps it in the database you already run.
+        I WOULD START WITH JSONB and move only if it proved insufficient.
+
+    SESSIONS AND CART  ->  REDIS.
+        Ephemeral, accessed by key, high volume, and losing one is an annoyance rather than a
+        correctness failure. Native expiry means no cleanup job.
+
+    SEARCH  ->  ELASTICSEARCH, but only when it earns it.
+        Postgres full-text search is genuinely good, and a great many catalogues never outgrow it.
+        Add a search engine when relevance tuning, faceting or typo tolerance become real requirements.
+
+    CLICKSTREAM AND EVENTS  ->  WIDE-COLUMN, or a warehouse.
+        Enormous write volume, append-only, never updated, queried in aggregate. This is the workload
+        relational databases genuinely handle badly, and it is where the scale argument is real.
+
+    RECOMMENDATIONS  ->  whatever the model needs, plus a vector index.
+        Precomputed and served from a key-value store, or nearest-neighbour search over embeddings -
+        see [[embeddings-for-recommendation-systems]].
+
+    THE SHAPE OF THE ANSWER: ONE RELATIONAL SYSTEM OF RECORD, ONE CACHE, AND SPECIALISED STORES ONLY
+    WHERE A WORKLOAD GENUINELY DIFFERS.
+
+    AND THE DISCIPLINE THAT MAKES IT SAFE: the relational database remains the SOURCE OF TRUTH, and
+    everything else is DERIVED - rebuildable from it. If the search index is corrupted you reindex; if
+    the cache is lost you repopulate. The moment a second store becomes independently authoritative,
+    you have two sources of truth and no way to reconcile them.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    'NOSQL' IS FOUR FAMILIES:  document (self-contained aggregates) · key-value (get by key, very fast)
+    · wide-column (huge write volume, one table per query) · graph (traversal).
+
+    THE DECIDING QUESTION:  is the data a GRAPH OF RELATED THINGS or a COLLECTION OF SELF-CONTAINED
+    THINGS? And are the queries known in advance, or exploratory?
+
+    WHAT LEAVING RELATIONAL COSTS:  joins (so duplication becomes yours to keep in sync) · transactions
+    across entities (so you build sagas) · enforced schema (which moves into your code, unchecked) ·
+    ad-hoc SQL (so every access pattern must be designed for).
+
+    WHAT STAYING COSTS:  horizontal scaling is genuinely hard, and sharding removes the cross-shard
+    joins and transactions you were paying for.
+
+    THE USUAL RIGHT ANSWER:  Postgres for the system of record, Redis for caching and sessions, and
+    something specialised only where a measured workload demands it - with everything non-relational
+    being DERIVED and rebuildable.
+
+THE #1 MISTAKE: choosing for scale you do not have. A single relational node handles more than most
+products ever reach, and choosing otherwise means paying every cost and collecting no benefit.
+
+THE #2 MISTAKE: believing schema-on-read means no schema. It exists either way; the only question is
+whether the database enforces it or your application does, inconsistently, in ten places.
+
+THE #3 MISTAKE: using a document store for relational data, and then joining by hand in application
+code - a worse relational database, built by you.
+
+THE #4 MISTAKE: arguing from a decade-old feature matrix. Postgres has indexed JSON and full-text
+search; MongoDB has transactions; the families have converged.
+
+THE #5 MISTAKE: polyglot persistence before it is earned. Every additional store is another set of
+backups, failure modes and 3am pages.
+
+ONE-SENTENCE TAKEAWAY: ask what shape your data is and which queries you cannot enumerate in advance,
+default to a relational system of record with a cache beside it, and add a specialised store only when
+a measured workload genuinely differs - because joins and transactions are the features you are giving
+up, not the costs you are avoiding.""",
+]
+
 _EX_P1AO["Writing thread-safe classes for an LLD round"] = [
     """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
 
