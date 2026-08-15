@@ -104979,132 +104979,631 @@ THE FOLLOW-UPS, WITH THEIR ANSWERS:
 ]
 
 _EX_P1N["Temperature, top-k and top-p (controlling LLM output)"] = [
-    """What temperature actually does to the numbers.
-The model produces logits; softmax turns them into probabilities. Temperature
-DIVIDES the logits before that softmax, so it stretches or flattens the
-distribution.
-Logits [3.0, 2.0, 1.0]. At T = 1.0 the probabilities are roughly
-[0.67, 0.24, 0.09]. At T = 0.5 (divide by 0.5, i.e. double them) they sharpen
-to about [0.87, 0.12, 0.02]. At T = 2.0 they flatten toward
-[0.51, 0.31, 0.19].
-So low temperature concentrates mass on the top token and high temperature
-shares it out. T = 0 is the degenerate case: always take the argmax, which is
-greedy decoding.""",
+    """1. THE GOAL IN PLAIN ENGLISH - three dials on the same decision
 
-    """Top-k and top-p, and why top-p usually wins.
-TOP-K keeps only the k highest-probability tokens and renormalises. The flaw is
-that k is fixed regardless of how confident the model is: when one token
-deserves 99% of the mass, k = 40 still admits 39 poor alternatives; when the
-distribution is genuinely flat, k = 40 may cut off good options.
-TOP-P (nucleus) keeps the smallest set of tokens whose probabilities SUM to p.
-That adapts automatically - a confident step keeps one or two tokens, an
-uncertain step keeps many. This is why top-p around 0.9-0.95 is the modern
-default and top-k is largely legacy.
-They compose: filter by top-k, then top-p, then sample with temperature.""",
+At every step a language model produces a score for EVERY token in its vocabulary, turns those scores
+into probabilities, and picks one. Temperature, top-k and top-p are three different ways of
+interfering with that pick.
 
-    """Settings by task, which is the practically useful part.
-Extraction, classification, SQL generation, tool arguments, anything parsed by
-code: temperature 0 (or very near). You want determinism and the single most
-likely token; creativity here is a bug.
-Summarisation, general Q&A, RAG answers: 0.2-0.5. Slight variation, still
-grounded.
-Brainstorming, story writing, generating diverse test data: 0.8-1.2 with
-top-p 0.95.
-The mistake to avoid is leaving a default of 0.7 on an extraction endpoint and
-then debugging 'why does my JSON parser fail one time in twenty'.""",
+    TEMPERATURE  reshapes the probabilities - sharper or flatter
+    TOP-K        keeps only the k most likely tokens and renormalises
+    TOP-P        keeps the smallest set of tokens whose probabilities sum to p, and renormalises
 
-    """Temperature 0 is NOT fully deterministic in production, and knowing why
-matters. Even at T = 0 the same prompt can give different outputs across calls,
-because floating-point reductions on GPUs are not associative and batching
-changes the summation order, mixture-of-experts routing can vary with batch
-composition, and providers update model versions silently.
-So T = 0 means 'as deterministic as we can offer', not 'reproducible'. If you
-need reproducibility for tests, pin the model version, set a seed where the API
-supports one, and still assert on SEMANTICS rather than exact strings.""",
+Take a concrete distribution. After 'The cat sat on the ___', a plausible set of scores gives:
 
-    """The failure modes at each extreme.
-Too HIGH: incoherence, invented facts, and drifting off the instruction -
-because a token with 2% probability is now getting picked regularly.
-Too LOW (or T = 0): repetition loops, where the model gets stuck emitting the
-same phrase because the greedy choice at each step leads back into the same
-state. This is why frequency and presence PENALTIES exist - they subtract from
-the logits of tokens already used, breaking the loop without adding randomness.
-Recognising a repetition loop as a decoding problem rather than a model
-weakness is the useful diagnosis.""",
+    mat 46.4%   floor 20.9%   chair 14.0%   sofa 10.4%   roof 4.1%   table 3.4%
+    ... and a long tail: moon, algorithm, Tuesday, quark
 
-    """How this interacts with RAG and structured output, which is where you will
-meet it. In a RAG system the retrieved context should be doing the work, so
-temperature stays low - high temperature makes the model paraphrase away from
-its sources and undermines the grounding you paid for.
-For structured output, prefer the API's JSON mode or schema-constrained
-decoding over merely lowering the temperature: constrained decoding masks
-invalid tokens at each step and cannot produce malformed JSON, whereas T = 0
-just makes malformed JSON rarer. 'Constrain, do not persuade' is the rule.""",
+Everything in this entry is about what happens to that list before one is chosen.
+
+MEASURED, the probability of the top token as temperature changes:
+
+    T = 0.2   ->  97.9%
+    T = 0.5   ->  73.7%
+    T = 1.0   ->  46.4%
+    T = 1.5   ->  34.9%
+    T = 2.0   ->  28.9%
+
+TERMS AS THEY APPEAR:
+- LOGIT: the raw score a model gives a token, before it becomes a probability.
+- SOFTMAX: the function turning logits into probabilities that sum to 1.
+- GREEDY DECODING: always take the highest-probability token. Equivalent to temperature 0.
+- THE TAIL: the thousands of tokens with tiny probabilities. Individually negligible; collectively
+  not, which is the whole problem.""",
+
+    """2. THE INTUITION - temperature divides the scores
+
+The mechanism is one division. Softmax turns logits into probabilities; temperature divides every
+logit by T before that happens:
+
+    p_i = exp(logit_i / T) / sum over j of exp(logit_j / T)
+
+    T < 1  makes every logit BIGGER in magnitude, so the gaps between them grow -> SHARPER
+    T = 1  leaves them alone -> the model's own distribution
+    T > 1  shrinks the gaps -> FLATTER, so unlikely tokens become reachable
+    T -> 0 the largest logit dominates completely -> greedy
+
+That is the entire definition, and it explains the measured numbers: at T = 0.2 the gaps are five
+times larger, so the top token takes 97.9% of the mass; at T = 2.0 the gaps are halved and it holds
+only 28.9%.
+
+NOW THE PART THAT MATTERS PRACTICALLY - what happens to the TAIL. Measured, the probability of 'quark'
+(a token that makes no sense in the sentence):
+
+    T = 0.5   1 in 32,760,838 tokens
+    T = 1.0   1 in 10,583
+    T = 1.5   1 in 828
+    T = 2.0   1 in 243
+    T = 3.0   1 in 75
+
+Read that column downward. At T = 1.5, a nonsense token appears roughly once every 828 tokens - which,
+in a page of generated text, is about once a page. That is why 'crank the temperature up for
+creativity' produces output that is more varied AND occasionally deranged: you did not make the model
+more imaginative, you made the tail reachable.
+
+THIS IS EXACTLY THE PROBLEM top-k AND top-p SOLVE. They do not reshape anything - they DELETE the tail
+first, so you can raise the temperature for variety among the SENSIBLE options without ever sampling a
+quark.""",
+
+    """3. TOP-K AND TOP-P, TRACED
+
+    TOP-K: keep the k highest-probability tokens, throw the rest away, renormalise so the survivors
+    sum to 1. Measured on the same distribution:
+
+        k = 1    kept  1 token    mat 100.0%                              (= greedy)
+        k = 3    kept  3 tokens   mat 57.1%  floor 25.7%  chair 17.2%
+        k = 5    kept  5 tokens   mat 48.4%  floor 21.8%  chair 14.6%  sofa 10.8%
+        k = 10   kept 10 tokens   mat 46.4%  floor 20.9%  ...
+
+    Note that the survivors' probabilities RISE, because the tail's mass is redistributed among them.
+    mat goes from 46.4% to 57.1% at k = 3 without its logit changing at all.
+
+    TOP-P (nucleus sampling): sort by probability, keep taking tokens until their total reaches p,
+    then stop. Measured:
+
+        p = 0.5   kept 2 tokens
+        p = 0.8   kept 3 tokens
+        p = 0.9   kept 4 tokens
+        p = 0.99  kept 6 tokens
+
+    THE DIFFERENCE THAT MATTERS, and it is the reason top-p is now the default nearly everywhere:
+    TOP-K KEEPS A FIXED NUMBER; TOP-P ADAPTS TO THE SHAPE.
+
+    Measured on two deliberately different distributions:
+
+        a PEAKED distribution (the model is confident):
+            top-k k=3  keeps 3 tokens        <- two of them are junk it was not going to pick anyway
+            top-p p=0.9 keeps 1 token        <- correctly recognises there is only one good option
+
+        a FLAT distribution (the model is genuinely unsure):
+            top-k k=3  keeps 3 tokens        <- throws away five equally plausible options
+            top-p p=0.9 keeps 8 tokens       <- keeps them
+
+    That is the whole argument. When the model is confident, a fixed k admits nonsense; when it is
+    unsure, a fixed k discards good options. top-p asks 'how many tokens does it take to cover 90% of
+    the model's belief?' and the answer changes at every step, which is what you want.""",
+
+    """4. THE FAILURE MODES
+
+A. RAISING TEMPERATURE FOR 'CREATIVITY' WITHOUT CAPPING THE TAIL. Measured: at T = 1.5 a nonsense
+   token is reachable about once in 828, and over 2,000 sampled tokens I got 62 off-topic draws. Add
+   top-p 0.9 to the SAME temperature and the count is ZERO, while still using five different tokens.
+   Variety and nonsense are separable, and this is how.
+
+B. TEMPERATURE 0 FOR EVERYTHING. Correct for extraction, classification and code, where you want the
+   same answer every time. But greedy decoding can also get stuck in loops and produce flat, repetitive
+   prose - and it is not fully deterministic in practice anyway, because floating-point
+   non-associativity and batching mean identical requests can differ. Do not promise determinism you
+   cannot deliver; see [[ieee-754-floating-point-and-why-0-1-0-2-0-3]].
+
+C. TUNING BOTH top-k AND top-p AND TEMPERATURE AT ONCE. Three interacting dials and no measurement is
+   how people end up with folklore settings. Change one, measure, keep or revert.
+
+D. ASSUMING TEMPERATURE MAKES THE MODEL SMARTER OR MORE HONEST. It does neither - it only changes how
+   sharply it commits to what it already believed. Lowering it reduces obvious nonsense; it does not
+   reduce confident hallucination, which is a different problem entirely.
+
+E. USING A HIGH TEMPERATURE WITH STRUCTURED OUTPUT. If you need valid JSON, sampling from the tail is
+   pure downside. Use a low temperature, or better, a constrained/structured output mode.
+
+F. FORGETTING THAT SELF-CONSISTENCY NEEDS T > 0. Sampling the same prompt five times and taking the
+   majority answer only works if the samples can DIFFER. At temperature 0 you get the same answer five
+   times and an expensive illusion of agreement - a genuinely common bug.
+
+G. COPYING SETTINGS FROM A BLOG POST. The right values depend on the task and change between model
+   families. The defaults - roughly T = 1.0 with top-p 0.9 - are sensible starting points, not
+   universal truths.""",
+
+    """5. WHAT TO ACTUALLY SET, AND WHEN
+
+    THE TASK                              SETTINGS                        WHY
+    extraction, classification, parsing   T = 0 (or 0.1)                  one right answer
+    code generation                       T = 0 to 0.2                    same
+    factual Q&A over retrieved text       T = 0 to 0.3                    grounded, not inventive
+    summarisation                         T = 0.3 to 0.7                  some phrasing freedom
+    conversational assistant              T ~ 1.0, top-p 0.9              the usual default
+    brainstorming, creative writing       T = 1.0 to 1.3, top-p 0.95      variety, tail still capped
+    self-consistency voting               T = 0.7, several samples        they must differ to vote
+
+THE COMBINATION THAT WORKS, and it is the one to recommend: SET TOP-P AND LEAVE TOP-K ALONE. top-p
+adapts to the model's confidence, which top-k cannot, and using both means the tighter one silently
+wins - so you are tuning a dial whose effect depends on the other dial's value.
+
+THE MEASURED CASE FOR PAIRING TEMPERATURE WITH TOP-P, from 2,000 sampled tokens each:
+
+    T = 0.2                   4 distinct tokens,   0 off-topic
+    T = 1.0                   9 distinct tokens,  11 off-topic
+    T = 1.5                  10 distinct tokens,  62 off-topic
+    T = 1.5 with top-p 0.9    5 distinct tokens,   0 off-topic
+
+That last row is the whole recommendation. You keep five genuinely different continuations - real
+variety - and the nonsense rate goes to zero. Temperature alone cannot do that, because it has no way
+to distinguish 'the fourth-best sensible option' from 'a token with no relationship to the sentence'.
+
+WHAT ABOUT OTHER PENALTIES: frequency and presence penalties reduce repetition by lowering the score
+of tokens already used. They address a different failure - loops and repeated phrases - and are worth
+naming, but they are not a substitute for the tail-capping that top-p does.
+
+AND FOR REASONING MODELS: several of them ignore or fix these parameters, because the sampling
+behaviour is part of what was trained. Check the documentation rather than assuming the dials are
+there.""",
+
+    """6. HOW TO CHOOSE - numbered steps
+
+1. ASK WHETHER THERE IS ONE RIGHT ANSWER. If yes - extraction, classification, code, arithmetic -
+   start at temperature 0 and stop reading.
+2. IF VARIETY IS GENUINELY WANTED, set top-p FIRST, around 0.9, and leave top-k unset.
+3. THEN RAISE TEMPERATURE gradually and look at real outputs. Measured: with top-p in place, T = 1.5
+   produced five distinct continuations and zero nonsense.
+4. CHANGE ONE DIAL AT A TIME and keep the examples you judged, so you can tell whether the last change
+   helped.
+5. IF YOU ARE PARSING THE OUTPUT, use a structured-output mode rather than a low temperature and hope.
+6. IF YOU ARE DOING SELF-CONSISTENCY, temperature MUST be above zero or the samples are identical.
+7. RECORD THE SETTINGS WITH YOUR EVALUATION RESULTS. A prompt's quality numbers are meaningless
+   without them, and this is the commonest way an evaluation becomes unreproducible.
+
+STEP 2 IS THE ONE PEOPLE GET BACKWARDS. Temperature is the famous dial, so it gets turned first, and
+then the tail causes trouble and everyone concludes the model is unreliable. Cap the tail, then turn
+the dial.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'At each step the model has a probability for every token. Temperature reshapes that distribution -
+it divides the logits before the softmax, so below 1 the gaps grow and it gets sharper, above 1 they
+shrink and it flattens. Top-k keeps only the k most likely tokens; top-p keeps the smallest set that
+covers p of the probability mass. Both then renormalise.
+
+The number I would quote is what temperature does to the tail. On a sample distribution, a nonsense
+token was one in 32 million at temperature 0.5, one in ten thousand at 1.0, and one in 828 at 1.5 -
+which is about once a page. So turning the temperature up for creativity is also turning up the
+nonsense, and that is why you cap the tail separately.
+
+Top-p is better than top-k because it ADAPTS. On a peaked distribution top-p 0.9 kept one token, where
+top-k 3 would have kept two junk ones; on a flat distribution top-p kept eight where top-k 3 would
+have thrown five good options away.
+
+Combining them is the recommendation, and I measured it: sampling 2,000 tokens at temperature 1.5 gave
+62 off-topic draws, and the same temperature with top-p 0.9 gave zero while still producing five
+distinct continuations. So you get the variety without the nonsense.
+
+Practically: temperature 0 for extraction and code, around 1.0 with top-p 0.9 for conversation, and
+set top-p rather than top-k. And self-consistency needs temperature above zero, or all your samples
+are identical.'""",
+
+    """8. THE MATHS, PIECE BY PIECE
+
+    THE SOFTMAX with temperature:
+
+        p_i = exp(logit_i / T) / sum_j exp(logit_j / T)
+
+    `logit_i / T` is the whole intervention. Dividing by a number below 1 multiplies the differences
+    between logits, and since exp is convex the biggest logit gains disproportionately. Dividing by a
+    number above 1 compresses them toward each other.
+
+    Why T = 0 is 'greedy': as T approaches 0, `logit / T` approaches infinity for the largest and
+    negative infinity for everything else, so the softmax approaches 1 for the maximum and 0 for the
+    rest. In code it is special-cased as argmax to avoid dividing by zero.
+
+    Note what temperature does NOT do: it never changes the ORDER of the tokens. The most likely token
+    is the most likely at every temperature. That is worth saying, because people talk as though high
+    temperature makes the model prefer different things - it only makes it commit less.
+
+    TOP-K:
+
+        keep = the k tokens with the highest probability
+        renormalise: p_i / sum(kept)
+
+    Measured consequence: at k = 3, `mat` rises from 46.4% to 57.1% - its logit is unchanged; it has
+    simply absorbed the deleted tokens' share.
+
+    TOP-P:
+
+        sort descending; accumulate until the running total >= p; keep those.
+
+    The size of the kept set is DATA-DEPENDENT, which is the entire point. Measured: 1 token on a
+    peaked distribution, 8 on a flat one, at the same p = 0.9.
+
+    THE ORDER OF OPERATIONS, since it is asked: temperature is applied FIRST (it reshapes), then the
+    truncation (top-k / top-p), then renormalisation, then the draw. So raising temperature widens the
+    nucleus that top-p then measures - the two interact, which is why you change one at a time.""",
+
+    """9. RUNNING IT - 2,000 tokens at each setting
+
+    THE DISTRIBUTION at T = 1.0: mat 46.4%, floor 20.9%, chair 14.0%, sofa 10.4%, roof 4.1%,
+    table 3.4%, and a tail containing moon, algorithm, Tuesday and quark.
+
+    THE TOP TOKEN'S SHARE, by temperature:
+        T = 0.2  97.9%      T = 1.0  46.4%      T = 2.0  28.9%
+
+    'quark', THE NONSENSE TOKEN:
+        T = 0.5  1 in 32,760,838        T = 1.5  1 in 828
+        T = 1.0  1 in 10,583            T = 2.0  1 in 243        T = 3.0  1 in 75
+
+    SAMPLING 2,000 TOKENS AT EACH SETTING:
+
+        setting              distinct tokens   most common     off-topic draws
+        T = 0.2                     4          mat x1959              0 / 2000
+        T = 1.0                     9          mat x931              11 / 2000
+        T = 1.0 + top-k 3           3          mat x1158              0 / 2000
+        T = 1.5                    10          mat x688              62 / 2000
+        T = 1.5 + top-p 0.9         5          mat x746               0 / 2000
+
+    READ THE LAST TWO ROWS TOGETHER, because they are the practical conclusion. Same temperature. One
+    produces 62 pieces of nonsense in 2,000 tokens; the other produces none, while still using five
+    different continuations. The variety survived; the garbage did not.
+
+    AND READ THE T = 0.2 ROW for the opposite lesson: four distinct tokens over two thousand draws,
+    with 'mat' 98% of the time. That is what 'deterministic' costs - the output is reliable and it is
+    the same every time, which is exactly right for extraction and lifeless for prose.
+
+    ONE HONEST CAVEAT ABOUT THESE NUMBERS: they come from a hand-made ten-token distribution, not from
+    a real model with a 100,000-token vocabulary. Real tails are far longer, which makes the case for
+    truncation STRONGER, not weaker - there are simply more ways to be wrong.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE DIALS:
+
+        TEMPERATURE   reshapes the whole distribution   sharper or flatter, never reorders
+        TOP-K         keeps a FIXED number               ignores how confident the model is
+        TOP-P         keeps a fixed PROBABILITY MASS     adapts: 1 token when sure, 8 when unsure
+
+    MEASURED: top token 97.9% at T=0.2 against 28.9% at T=2.0; a nonsense token 1-in-32-million at
+    T=0.5 and 1-in-243 at T=2.0.
+
+THE #1 MISTAKE: raising temperature for creativity without capping the tail. Measured at 62 off-topic
+draws per 2,000 tokens at T=1.5 - and zero at the same temperature with top-p 0.9. Cap first, then
+turn the dial.
+
+THE #2 MISTAKE: setting top-k and top-p together. They interact, the tighter one wins, and you can no
+longer tell which dial you are tuning. Use top-p.
+
+THE #3 MISTAKE: temperature 0 for self-consistency. If all five samples are identical, the majority
+vote is one sample wearing a costume.
+
+THE #4 MISTAKE: promising determinism. Temperature 0 is greedy, which is not the same as reproducible
+- batching and floating-point non-associativity mean identical requests can still differ.
+
+THE THING TEMPERATURE DOES NOT DO: make the model more accurate, more creative in any real sense, or
+less prone to confident hallucination. It only changes how sharply it commits to what it already
+believed.
+
+ONE-SENTENCE TAKEAWAY: temperature reshapes the distribution and top-p truncates it, so set top-p
+around 0.9 to delete the nonsense tail FIRST and then use temperature for variety - measured, that
+combination gave five distinct continuations and zero off-topic tokens where temperature alone gave
+62.""",
 ]
 
 _EX_P1N["What is the context window, and why does it matter?"] = [
-    """What is actually inside the window - the accounting people get wrong.
-The window holds EVERYTHING for a single call: the system prompt, the entire
-conversation history you resend, any retrieved documents, tool schemas, tool
-results, and the model's own output. It is not 'how much the user typed'.
-A 128k window with a 2k system prompt, 40k of chat history, 20k of retrieved
-chunks and 4k of tool definitions leaves about 62k for everything else -
-including the answer, since output tokens come out of the same budget on most
-APIs.
-Running out mid-generation truncates the answer, which is why long agent traces
-fail in the middle rather than at the start.""",
+    """1. THE GOAL IN PLAIN ENGLISH - everything the model can see at once
 
-    """Why the model has no memory between calls, and what that implies.
-The model is stateless. A chat 'remembering' turn 1 at turn 20 only happens
-because your client RESENDS the whole transcript every time. So cost and
-latency grow with conversation length, and once the transcript exceeds the
-window something must be dropped.
-The three standard strategies: sliding window (keep the last N turns - simple,
-loses early context), summarisation (compress old turns into a running summary -
-keeps the gist, loses detail and can compound errors), and retrieval over the
-history (embed past turns and pull back only the relevant ones - best for long
-sessions, more machinery).""",
+A language model has NO MEMORY between calls. Whatever it knows about your conversation, your
+documents and your instructions has to be sent to it, as text, every single time.
 
-    """'Lost in the middle', which is the fact that surprises people.
-Filling a large window does not mean the model attends to all of it evenly.
-Measured across models, recall is strongest for material at the START and END
-of the context and measurably weaker in the MIDDLE. So burying the key document
-at position 40 of 80 retrieved chunks is worse than returning 5 well-ranked
-ones.
-The practical consequences: rerank so the best evidence sits first, put
-critical instructions at the beginning AND restate them at the end, and treat
-'just stuff more context in' as a strategy with diminishing and sometimes
-negative returns.""",
+THE CONTEXT WINDOW is the maximum amount of that text it can hold - measured in TOKENS, not words or
+characters. Everything competes for the same budget:
 
-    """Why a bigger window does not make RAG obsolete - the comparison to have ready.
-Cost: attention work grows quadratically with sequence length, so a 100k-token
-prompt is dramatically more expensive per call than a 5k one carrying the same
-5 relevant chunks. Latency follows. Quality: lost-in-the-middle means precision
-often DROPS as you add marginal context. And you still cannot cite sources or
-enforce per-user access control by stuffing everything in.
-So the honest position is that large windows raise the ceiling on how much RAG
-can pass through, rather than replacing retrieval.""",
+    the system prompt          the rules and persona you set
+    the conversation history   every previous turn, both sides
+    the retrieved documents    whatever RAG pasted in
+    the tool definitions       the JSON schemas of every function you exposed
+    the user's question
+    THE MODEL'S ANSWER         <- this comes out of the same budget
 
-    """The numbers worth carrying.
-Roughly 0.75 words per token in English, so ~750 words per 1,000 tokens and
-about 500 tokens per page of prose. A 128k window is therefore something like
-250 pages - large, but a single codebase or a year of chat history exceeds it
-easily.
-Non-Latin scripts consume two to five times more tokens for the same content,
-so a multilingual product's effective window is smaller for some users - a real
-architecture consideration, not trivia.
-Code tokenizes densely because of indentation and punctuation, so a file is
-usually more tokens than its character count suggests.""",
+That last line surprises people constantly. If a model has a 128,000-token window and your prompt uses
+127,000, you have room for a very short reply and nothing else.
 
-    """How the limit is engineered around, named so the follow-up is easy.
-RAG (retrieve only what is relevant), chunking with overlap, reranking to put
-the best material first, conversation summarisation, prompt caching (providers
-cache a long stable prefix so resending it is cheaper), and streaming so the
-user sees output before the full budget is consumed.
-On the model side: sparse and sliding-window attention, and positional schemes
-like RoPE with interpolation that let a model trained at one length generalise
-to longer ones. Knowing that the window is an architectural CHOICE with a
-quadratic cost - not a hard law - is what the question is really probing.""",
+THE ARITHMETIC TO INTERNALISE: roughly 0.75 words per token for English prose, so 1,000 tokens is
+about 750 words, or a page and a half. Code, names, JSON and non-English text are DENSER - see
+[[tokenization-and-byte-pair-encoding-bpe]], where a word the tokeniser had not seen cost 21 tokens
+against 1 for a common one.
+
+TERMS AS THEY APPEAR:
+- TOKEN: the unit the model reads. Roughly three quarters of a word for English.
+- TRUNCATION: dropping part of the context to make it fit. Silent unless you make it loud.
+- LOST IN THE MIDDLE: the measured tendency of models to attend less reliably to material in the
+  middle of a long context.""",
+
+    """2. THE INTUITION - why it is finite, and why bigger is not simply better
+
+WHY THERE IS A LIMIT AT ALL: self-attention compares every token with every other token, so the cost
+grows with the SQUARE of the sequence length. Doubling the context quadruples that part of the work.
+Every 'efficient attention' paper of the last few years exists because of that one exponent - see
+[[the-transformer-self-attention-the-big-one]].
+
+So a long context costs:
+
+    MONEY      you pay per input token, on every single request
+    LATENCY    time to first token grows with the prompt
+    MEMORY     the KV cache holds state for every token; it is what limits how many concurrent
+               requests a server can hold
+
+WHY BIGGER WINDOWS DO NOT SOLVE EVERYTHING, which is the part worth being able to argue:
+
+1. ATTENTION IS NOT UNIFORM. Models attend most reliably to the BEGINNING and the END of a long
+   context and least reliably to the middle - the 'lost in the middle' effect, which is well
+   replicated. Putting your critical instruction in the middle of 100,000 tokens is a real risk.
+2. RELEVANT BEATS PLENTIFUL. Ten well-chosen chunks generally beat a hundred mediocre ones, and this
+   is why RAG did not become obsolete when windows grew: retrieval is a RELEVANCE filter as much as a
+   size workaround.
+3. COST SCALES WITH USE, NOT WITH CAPACITY. Sending 100,000 tokens on every request because you can is
+   a bill, repeated per call.
+
+THE PRACTICAL CONSEQUENCE: treat the window as a BUDGET you allocate deliberately - so much for the
+system prompt, so much for retrieved context, so much reserved for the answer - rather than as a
+ceiling you approach until something breaks.""",
+
+    """3. THE BUDGET, TRACED
+
+    A realistic RAG assistant on a 16,000-token window:
+
+        system prompt and rules                    600 tokens
+        tool definitions (4 tools)                 900
+        conversation history (8 turns)           2,400
+        retrieved chunks (5 x 400 tokens)        2,000
+        the user's question                        150
+        ----------------------------------------------
+        input total                              6,050
+        reserved for the answer                  1,000
+        ----------------------------------------------
+        used                                     7,050 of 16,000
+
+    Comfortable. Now watch it fail, over a long session:
+
+        conversation history (40 turns)         12,000     <- grows every turn, unbounded
+        everything else                          3,650
+        ----------------------------------------------
+        input total                             15,650
+        room for the answer                        350     <- the reply is now truncated mid-sentence
+
+    NOTHING ERRORED. The history simply grew until the answer had nowhere to go, and the symptom the
+    user reports is 'it stopped finishing its sentences'.
+
+    THE FOUR STRATEGIES for keeping history bounded, in the order to reach for them:
+
+    1. TRUNCATE - keep the last N turns. Simple, and it forgets the beginning, which often contains
+       the actual task.
+    2. SUMMARISE - periodically replace old turns with a summary. Cheap, lossy, and the standard
+       answer for long chats.
+    3. RETRIEVE - store all turns and retrieve only the relevant ones. This is RAG applied to the
+       conversation, and it scales best.
+    4. KEEP A STRUCTURED STATE - extract the facts that matter (the user's name, the goal, decisions
+       made) into a small block you always include, and let the raw turns go. Often the best of the
+       four, and the least used.
+
+    ALWAYS PIN THE SYSTEM PROMPT AND THE CURRENT QUESTION. Whatever you drop, those two stay.""",
+
+    """4. THE FAILURE MODES
+
+A. FORGETTING THAT THE OUTPUT SHARES THE WINDOW. The single most common bug in this area. A prompt
+   that fits leaves no room for the reply, and the reply stops mid-sentence with no error.
+
+B. ESTIMATING TOKENS FROM CHARACTERS. `len(text) // 4` is fine for English prose and wrong for code,
+   identifiers, JSON and every non-Latin script - which is exactly where the truncation happens. Count
+   with the model's own tokeniser.
+
+C. SILENT TRUNCATION. Some libraries and APIs quietly drop the middle or the start of an
+   over-long prompt. Your instructions vanish, the model behaves strangely, and nothing in the
+   response says why. Count before sending, and log when you had to cut.
+
+D. UNBOUNDED CONVERSATION HISTORY. It grows every turn and the failure arrives suddenly, in a long
+   session, in production, at the worst moment. Bound it from the first version.
+
+E. PUTTING THE CRITICAL INSTRUCTION IN THE MIDDLE. Beginning and end are attended to most reliably.
+   Put the rule at the top AND repeat the critical constraint at the bottom.
+
+F. STUFFING BECAUSE THE WINDOW IS BIG. Twenty retrieved chunks 'to be safe' costs money, adds
+   latency, and buries the relevant one among nineteen distractions. Measured in
+   [[design-a-rag-powered-document-qa-chatbot]]: five 120-word chunks scored the same as five
+   500-word ones for a quarter of the tokens.
+
+G. IGNORING THE TOOL SCHEMAS. Every function definition sits in the context on every call. Twenty
+   tools is a real chunk of the budget before the conversation has started.
+
+H. ASSUMING WINDOWS ARE COMPARABLE ACROSS MODELS. Each family tokenises differently, so the same text
+   is a different number of tokens - a prompt that fits one may not fit another.""",
+
+    """5. HOW TO MANAGE IT PROPERLY
+
+BUDGET EXPLICITLY. Decide the allocation before you build:
+
+    system prompt         fixed, small, and version-controlled
+    tools                 only the ones this step needs
+    history               capped - by turns, by tokens, or by summarisation
+    retrieved context     top-k, tuned by measured recall rather than by feel
+    RESERVED FOR OUTPUT   set it FIRST and never spend it
+
+Reserving the output budget first is the discipline that prevents the commonest failure. Everything
+else negotiates for what is left.
+
+COUNT, DO NOT ESTIMATE. `tiktoken` for OpenAI models, the tokeniser that ships with the model
+otherwise. Count the assembled prompt, not the pieces.
+
+DEGRADE DELIBERATELY. When it does not fit, decide the order in advance: drop the oldest history
+first, then reduce retrieved chunks, then summarise. Never drop the system prompt or the question, and
+LOG every time you cut - that log is how you discover the limit is being hit in production.
+
+USE PROMPT CACHING. Most providers now cache a stable prefix, so a large unchanging system prompt or
+tool block is charged and processed once rather than per request. That changes the economics of a big
+fixed preamble entirely, and it is why the STABLE parts should come first in the prompt.
+
+PUT STRUCTURE AT THE EDGES. Rules at the top, data fenced in the middle, the question and the critical
+reminder at the bottom - which lines up with where attention is most reliable.
+
+AND THE ARCHITECTURAL POINT WORTH MAKING IN AN INTERVIEW: 'a bigger context window is not a substitute
+for retrieval. Retrieval decides what is RELEVANT; the window only decides what FITS. Even with a
+million-token window I would still retrieve, because ten good chunks beat a hundred mediocre ones and
+cost a hundredth as much.'""",
+
+    """6. HOW TO SIZE A PROMPT - numbered steps
+
+1. RESERVE THE OUTPUT FIRST. How long is the longest reasonable answer? Multiply by 1.5 and set it
+   aside before allocating anything else.
+2. MEASURE THE FIXED PARTS with the real tokeniser: system prompt, tool schemas, any boilerplate. They
+   are paid on every call.
+3. DECIDE THE HISTORY POLICY - last N turns, a token cap, or summarise-above-a-threshold. Write it
+   down; it is a product decision about what the assistant remembers.
+4. SET THE RETRIEVAL BUDGET from what is left, and choose k from measured recall rather than from a
+   round number.
+5. ASSEMBLE, THEN COUNT THE WHOLE THING. Not the pieces - the assembled string, including whatever
+   your library adds.
+6. IF IT DOES NOT FIT, apply the degradation order you decided in advance, and LOG it.
+7. PUT THE RULES AT THE TOP AND REPEAT THE CRITICAL CONSTRAINT AT THE BOTTOM.
+8. MONITOR TOKENS PER REQUEST in production. A slow creep in prompt size is the shape of both a
+   growing bill and an approaching truncation.
+
+STEP 1 IS THE ONE THAT PREVENTS THE COMMONEST BUG, and it costs nothing: decide what the answer needs
+before deciding what the prompt gets.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'The context window is the maximum number of tokens the model can see at once, and everything competes
+for it - the system prompt, the tool definitions, the conversation history, the retrieved documents,
+the question, AND the answer. That last one is what people forget: if the prompt nearly fills the
+window there is no room for a reply, and the model stops mid-sentence with no error.
+
+It is finite because attention compares every token with every other one, so cost grows with the
+square of the length. That is why a long prompt costs money and latency on every call.
+
+And bigger is not simply better. Models attend most reliably to the start and the end of a long
+context and least reliably to the middle - the "lost in the middle" effect - so I would put the rules
+at the top and repeat the critical constraint at the bottom. And relevance beats volume: ten
+well-chosen chunks beat a hundred mediocre ones, which is why retrieval did not become obsolete when
+windows got big. The window decides what FITS; retrieval decides what is RELEVANT.
+
+Practically I would budget it explicitly - reserve the output allowance first, then the fixed system
+prompt and tools, then cap the history by summarising or retrieving over it, and give retrieval what
+is left. Count tokens with the real tokeniser rather than dividing characters by four, decide the
+degradation order in advance, and log every time you have to cut something.'""",
+
+    """8. THE BUDGET, PIECE BY PIECE
+
+    THE FIXED COSTS, paid on every single call:
+
+        system prompt      600 tokens      keep it short; it is charged forever
+        tool schemas       900 tokens      four tools; twenty would be 4,500
+
+    These are the ones prompt CACHING helps with, which is why they belong at the START of the prompt
+    - a cache matches on a stable prefix, so anything variable in front of them defeats it.
+
+    THE GROWING COST:
+
+        conversation history     grows by ~300 tokens per turn, unbounded
+
+    This is the one that ends sessions. Three policies, and pick one before you ship:
+        last N turns              simple, forgets the original task
+        summarise above X tokens  lossy, cheap, standard
+        retrieve relevant turns   scales, more machinery
+
+    THE TUNABLE COST:
+
+        retrieved chunks    k x chunk_size
+
+    Both factors are yours. Measured elsewhere: five 120-word chunks scored identically to five
+    500-word ones for a quarter of the tokens, so 'more context' was pure cost.
+
+    THE RESERVED COST:
+
+        max_tokens for the answer
+
+    Set this EXPLICITLY on the request. It does two jobs: it guarantees room for the reply, and it
+    caps a runaway generation. Leaving it unset is how a chat costs ten times what you expected.
+
+    THE COUNTING:
+
+        enc = tiktoken.encoding_for_model(model)
+        n = len(enc.encode(assembled_prompt))
+
+    Count the ASSEMBLED prompt. Counting the pieces misses the separators, the role markers and
+    whatever your framework adds, and those add up to more than you would guess.""",
+
+    """9. A SESSION HITTING THE LIMIT
+
+    TURN 1, on a 16,000-token window:
+        system 600 + tools 900 + history 0 + chunks 2,000 + question 150 = 3,650
+        answer budget 1,000        total 4,650 / 16,000        comfortable
+
+    TURN 20:
+        history has grown to 6,000
+        total 9,650 / 16,000       still fine
+
+    TURN 40:
+        history 12,000
+        system 600 + tools 900 + chunks 2,000 + question 150 = 3,650
+        input 15,650, leaving 350 for the answer
+
+        SYMPTOM: replies get shorter and then stop mid-sentence.
+        NOT AN ERROR: no exception, no warning, no field in the response saying 'I ran out of room'.
+
+    TURN 45, with the history at 14,000:
+        the library silently drops the OLDEST messages to make it fit - which on many stacks means
+        the SYSTEM PROMPT goes first if it is stored as message zero.
+
+        SYMPTOM: the assistant abruptly forgets its persona and its rules, and nobody can reproduce it
+        because it only happens in long conversations.
+
+    THAT SECOND FAILURE IS THE ONE WORTH REMEMBERING. It is not that the model 'got confused' - its
+    instructions were literally removed from the input. The fixes are structural: pin the system
+    prompt so it can never be dropped, cap the history yourself rather than letting a library decide,
+    and log every truncation with the conversation id.
+
+    THE SAME SESSION WITH A POLICY:
+
+        history capped at 4,000 tokens, summarising the overflow into 300
+        -> input settles around 7,750 of 16,000, permanently
+        -> the answer budget is untouched at turn 5 and at turn 500
+
+    Nothing clever happened. Somebody decided the allocation in advance instead of letting it grow.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    WHAT COMPETES FOR THE WINDOW:
+        system prompt · tool schemas · history · retrieved context · question · THE ANSWER
+
+    WHAT A LONGER CONTEXT COSTS: money per token on every call, latency to first token, and server
+    memory for the KV cache - and attention cost grows with the SQUARE of the length.
+
+    WHAT IT DOES NOT BUY: reliability in the middle. Models attend best at the beginning and the end.
+
+THE #1 MISTAKE: forgetting that the output comes out of the same budget. The prompt fits, the answer
+does not, and the failure is a sentence that stops rather than an error.
+
+THE #2 MISTAKE: estimating tokens from characters. Fine for English prose, wrong for code, JSON and
+non-English text - which is exactly where you overflow.
+
+THE #3 MISTAKE: unbounded conversation history. It works for twenty turns and fails at forty, in
+production, and on some stacks it silently drops the system prompt first.
+
+THE #4 MISTAKE: filling a big window because it is there. Relevance beats volume, and every extra
+token is paid for on every request.
+
+THE ARCHITECTURAL POINT: a bigger window is not a substitute for retrieval. The window decides what
+FITS; retrieval decides what is RELEVANT.
+
+ONE-SENTENCE TAKEAWAY: the context window is a BUDGET shared by your prompt, your history, your
+retrieved documents and the model's reply - so reserve the output allowance first, cap the history
+deliberately, count tokens with the real tokeniser, and put the critical instruction where attention is
+most reliable, which is the top and the bottom.""",
 ]
 
 for _e in ENTRIES:
@@ -146667,6 +147166,353 @@ ONE-SENTENCE TAKEAWAY: k-means alternates 'assign to the nearest centre' and 'mo
 mean' until nothing changes - it always converges but only to a local optimum, so standardise the
 features, restart it several times, and remember it can only ever find round, similarly-scaled
 blobs.""",
+]
+
+_EX_P1AO["Temperature, top-k and top-p (controlling LLM output)"] = [
+]
+
+_EX_P1AO["What is the context window, and why does it matter?"] = [
+]
+
+_EX_P1AO["Writing thread-safe classes for an LLD round"] = [
+    """1. THE GOAL IN PLAIN ENGLISH - the follow-up you will always get
+
+Every low-level-design round ends the same way: 'now suppose two threads use this at once'. Parking
+lot, vending machine, rate limiter, cache, connection pool - the question always arrives, and it is
+where the interview is actually decided.
+
+THREAD SAFETY means: the class behaves correctly no matter how its methods are interleaved by
+different threads. Not 'usually'. Not 'we tested it'. Correctly, by construction.
+
+THE THREE ANSWERS, in the order you should offer them:
+
+    1. DO NOT SHARE MUTABLE STATE. If threads have nothing in common, there is nothing to protect.
+       Immutable objects, per-thread data, and a queue for handing work over.
+    2. USE AN ATOMIC OPERATION where the language provides one. A compare-and-swap, an atomic counter,
+       a concurrent collection, `UPDATE ... SET n = n + 1` in a database.
+    3. USE A LOCK, covering the whole invariant rather than each statement.
+
+Reaching straight for a lock is a fine answer; offering the ordering above is a better one, because
+the first option is always cheaper and interviewers are listening for whether you know it exists.
+
+TERMS AS THEY APPEAR:
+- INVARIANT: the thing that must always be true - 'no spot is assigned twice', 'the count matches the
+  entries'. Thread safety is entirely about protecting invariants.
+- CRITICAL SECTION: the code that must not be interleaved.
+- ATOMIC: happens all at once, from every other thread's point of view.""",
+
+    """2. THE INTUITION - find the invariant, then find where it is briefly false
+
+A class is thread-safe when no other thread can OBSERVE a moment where its invariant does not hold.
+
+So the method is mechanical:
+
+    1. WRITE THE INVARIANT DOWN. 'The counter equals the number of increments.' 'A spot is assigned to
+       at most one vehicle.' 'The cache size never exceeds the capacity.'
+    2. FIND EVERY PLACE IT IS TEMPORARILY FALSE. Between reading a value and writing it back. Between
+       checking a spot is free and marking it occupied. Between adding an entry and evicting the
+       oldest.
+    3. MAKE THOSE WINDOWS ATOMIC - by removing them, by using an atomic primitive, or by locking them.
+
+STEP 2 IS THE SKILL. The two shapes that produce almost every bug:
+
+    READ-MODIFY-WRITE      count = count + 1     three operations wearing one line
+    CHECK-THEN-ACT         if free: occupy()     the check is stale the instant it finishes
+
+Both are in [[race-condition]], where the read-modify-write is measured losing 75% of its updates once
+a yield point exists between the read and the write.
+
+THE MISTAKE THAT LOOKS LIKE A FIX: locking each METHOD instead of the invariant.
+
+    def is_free(self):  with lock: return self.vehicle is None
+    def occupy(self, v): with lock: self.vehicle = v
+
+Both methods are individually synchronised and the class is still broken, because a caller does
+`if spot.is_free(): spot.occupy(v)` and another thread runs between the two calls. THE INVARIANT SPANS
+BOTH CALLS, so the lock must too - which usually means the class should expose a single
+`try_occupy(v)` that does both inside one lock.
+
+That is the single most useful thing to say in this discussion: SYNCHRONISE THE OPERATION, NOT THE
+STATEMENT.""",
+
+    """3. THE PATTERNS, TRACED
+
+    THE CHECK-THEN-ACT FIX - one method instead of two:
+
+        class Spot:
+            def __init__(self):
+                self._lock = Lock()
+                self._vehicle = None
+
+            def try_occupy(self, vehicle):        # returns True if it won the spot
+                with self._lock:
+                    if self._vehicle is not None:
+                        return False
+                    self._vehicle = vehicle
+                    return True
+
+    The caller can no longer misuse it, because the check and the act are not separately available.
+    Designing the INTERFACE so the race is unrepresentable beats documenting that callers must hold a
+    lock.
+
+    THE READ-MODIFY-WRITE FIX:
+
+        with self._lock:
+            self._count += 1
+
+    Trivial, and the thing to notice is what it is NOT: locking only the write, or only the read,
+    protects nothing.
+
+    THE LOCK-FREE ALTERNATIVE, which is the answer that impresses:
+
+        free_spots = Queue()                     # a concurrent queue
+        spot = free_spots.get_nowait()           # popping IS the claim - atomic, no lock, no scan
+
+    Instead of searching and then claiming, you keep the free ones in a structure whose REMOVE
+    operation is already atomic. This removes the race by removing the check, and it scales far better
+    than a lock over a scan. It is the same move as the parking-lot answer in
+    [[lld-design-a-parking-lot]].
+
+    THE READ-HEAVY FIX:
+
+        a ReadWriteLock - many readers OR one writer
+
+    Right when reads vastly outnumber writes (a config cache, a routing table). Worth naming, with the
+    caveat that it is slower than a plain lock under write contention and can starve writers.
+
+    THE IMMUTABLE FIX, which is the best one when it applies:
+
+        @dataclass(frozen=True)
+        class PricingRules: ...
+
+        # to change them, replace the whole object
+        self._rules = new_rules        # a single reference assignment, atomic in practice
+
+    Nothing can observe a half-updated object because objects are never updated - they are replaced.
+    This is why configuration, snapshots and value objects should be immutable by default.""",
+
+    """4. THE FAILURE MODES
+
+A. SYNCHRONISING METHODS INSTEAD OF OPERATIONS. Every method locked, the class still broken, because
+   callers compose two calls. The commonest wrong answer in the whole topic.
+
+B. LOCKING TOO MUCH. One global lock over the whole class serialises everything and turns a
+   correctness fix into a throughput problem. Lock per SHARED THING - per spot, per bucket, per
+   account - not per class.
+
+C. TWO LOCKS IN TWO ORDERS. You have swapped a race for a deadlock. Impose a global order, and never
+   call code you do not control while holding a lock - see
+   [[deadlock-and-its-four-necessary-conditions]], where opposite orders left 0 of 2 threads finishing
+   in three seconds.
+
+D. HOLDING A LOCK ACROSS I/O. A network call inside a critical section holds it for milliseconds
+   instead of microseconds, and every other thread queues behind it. Compute inside, call outside.
+
+E. FORGETTING THE ITERATOR. Iterating a shared collection while another thread mutates it raises in
+   most languages and corrupts in some. Snapshot under the lock, then iterate the copy outside it.
+
+F. ASSUMING A LANGUAGE PRIMITIVE MAKES YOU SAFE. Python's GIL means one bytecode at a time, NOT one
+   operation - `count += 1` is three bytecodes. Java's `synchronized` on a method locks `this`, which
+   is a lock other people can also take. Neither gives you an invariant for free.
+
+G. DOUBLE-CHECKED LOCKING WRITTEN NAIVELY. `if x is None: with lock: if x is None: x = create()` is
+   correct in Python and famously subtle in languages with weaker memory models, where the reference
+   can be visible before the constructor has finished. Use the language's idiom - a module-level
+   value, a `Lazy`, an enum singleton - rather than writing it by hand.
+
+H. NOT TESTING IT. Concurrency bugs pass tests: measured in [[race-condition]], 40 runs of a
+   vulnerable loop lost nothing at all. If you must demonstrate one, WIDEN THE WINDOW deliberately
+   with a sleep between the check and the act.""",
+
+    """5. WHAT TO SAY WHEN THE FOLLOW-UP ARRIVES
+
+A four-move script that works for any LLD object:
+
+1. NAME THE SHARED MUTABLE STATE. 'The spot's occupancy, and the ticket map.' If you cannot name it,
+   you are guessing.
+
+2. NAME THE INVARIANT AND THE RACE. 'A spot must be assigned once. Between finding a free spot and
+   marking it occupied, another thread can find the same one - it is a check-then-act.'
+
+3. GIVE THE SIMPLE FIX AND ITS COST. 'A lock spanning the find and the occupy. That is correct, and it
+   serialises every entrance.'
+
+4. GIVE THE ONE THAT SCALES. 'A lock per floor, or better a concurrent queue of free spots per size,
+   where popping is the atomic claim - then allocation is O(1) and there is no lock at all.'
+
+That escalation - correct, then correct-and-fast - is the shape of a strong answer, and it works for
+every object in an LLD round.
+
+THEN THE DISTRIBUTED VERSION, if they push: with several servers there is no shared memory, so the
+claim moves to the database - `UPDATE spots SET vehicle=? WHERE id=? AND vehicle IS NULL`, which
+succeeds for exactly one caller and returns a row count you check. Or a Redis lock with a TTL, or an
+optimistic version column. The important sentence is that THE CLAIM MUST BE A CONDITIONAL WRITE;
+which technology performs it is secondary.
+
+AND THE HONEST BOUNDARY: say when you would NOT make something thread-safe. An object created per
+request and never shared does not need a lock, and adding one costs performance and suggests you have
+not thought about ownership. 'This is confined to one request, so it needs no synchronisation' is a
+strong sentence.""",
+
+    """6. HOW TO MAKE A CLASS THREAD-SAFE - numbered steps
+
+1. WRITE THE INVARIANT as a sentence. Everything follows from it.
+2. LIST THE SHARED MUTABLE FIELDS. If the list is empty, you are done - say so.
+3. CAN YOU MAKE IT IMMUTABLE? Replace-the-whole-object beats every locking strategy when it applies.
+4. CAN YOU AVOID SHARING? Per-thread instances, or a queue handing work between threads.
+5. FOR WHAT REMAINS, FIND THE READ-MODIFY-WRITE AND CHECK-THEN-ACT WINDOWS.
+6. CLOSE EACH WINDOW with the cheapest sufficient tool: an atomic operation, a concurrent collection,
+   or a lock spanning the whole operation.
+7. RESHAPE THE INTERFACE so the race is unrepresentable - `try_occupy()` rather than `is_free()` plus
+   `occupy()`.
+8. CHECK THE LOCK GRANULARITY. Per shared thing, not per class.
+9. CHECK FOR TWO LOCKS, and if there are, define the order and write it in a comment.
+10. NEVER CALL OUT - no I/O, no callbacks - while holding one.
+
+STEP 7 IS THE ONE THAT DISTINGUISHES A DESIGN ANSWER FROM A CODING ANSWER. Locks make correct usage
+possible; interface design makes incorrect usage impossible, and in an LLD round that is the level you
+are being asked to work at.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I would start by naming the invariant - what must always be true - because thread safety is entirely
+about making sure nobody can observe a moment when it is not.
+
+Then I look for the two shapes that cause almost every bug: read-modify-write, where "count = count +
+1" is three operations, and check-then-act, where you check a spot is free and then occupy it, and the
+check is stale the moment it finishes.
+
+The fix I would reach for first is not a lock - it is removing the sharing. Immutable objects,
+per-thread state, or a queue for handing work over. Then an atomic operation if the language has one.
+Then a lock.
+
+And the mistake I would call out is locking each METHOD rather than the operation. If a class has a
+synchronised is_free and a synchronised occupy, it is still broken, because the caller does both and
+another thread runs in between. The invariant spans both calls, so the class should expose a single
+try_occupy that does the check and the claim inside one lock. Designing the interface so the race
+cannot be expressed is better than documenting that callers must be careful.
+
+For the parking lot specifically: a lock around find-and-occupy is correct and serialises every
+entrance, so I would move to a lock per floor, or better a concurrent queue of free spots where
+popping IS the claim - no lock, no scan, O(1). And distributed, the claim becomes a conditional UPDATE
+that succeeds for exactly one caller.'""",
+
+    """8. THE CODE, PIECE BY PIECE
+
+    class Spot:
+        def __init__(self):
+            self._lock = Lock()
+            self._vehicle = None
+
+    ONE LOCK PER SPOT, not one for the whole lot. Granularity is the difference between correct and
+    correct-and-usable: two cars taking two different spots should not queue behind each other.
+
+        def try_occupy(self, vehicle):
+            with self._lock:
+                if self._vehicle is not None:
+                    return False
+                self._vehicle = vehicle
+                return True
+
+    THE CHECK AND THE CLAIM ARE INSIDE ONE LOCK, and - more importantly - inside ONE METHOD. There is
+    no way for a caller to do the check, wander off, and come back. The API shape is the real fix; the
+    lock is the mechanism.
+
+    RETURNING A BOOLEAN rather than raising: contention is expected, not exceptional. The caller loops
+    to the next spot.
+
+    `with self._lock:` rather than acquire/release, because an exception between them would leak the
+    lock permanently and every subsequent caller would block forever.
+
+    THE LOCK-FREE VERSION:
+
+        self._free = Queue()                  # thread-safe by construction
+        spot = self._free.get_nowait()        # exactly one caller can receive any given spot
+
+    No lock, no scan, and the atomicity is the queue's problem rather than yours. The trade to name:
+    you have lost control of WHICH spot is returned, so 'nearest to the entrance' now needs a priority
+    queue.
+
+    THE IMMUTABLE VERSION, for configuration-shaped state:
+
+        @dataclass(frozen=True)
+        class Rules: ...
+        self._rules = new_rules               # replace, never mutate
+
+    A reader either sees the old object or the new one, never a half-updated one, because there is no
+    such thing as a half-updated frozen object.
+
+    WHAT IS DELIBERATELY ABSENT: a lock on the whole ParkingLot. It would be simpler and it would mean
+    one car at a time across the entire building.""",
+
+    """9. THE RACE, AND THE FIX, WALKED
+
+    THE BROKEN VERSION - two synchronised methods:
+
+        t=0.000  thread A: spot.is_free()      -> True   (lock taken and released)
+        t=0.001  thread B: spot.is_free()      -> True   (lock taken and released)
+        t=0.002  thread A: spot.occupy(carA)            (lock taken and released)
+        t=0.003  thread B: spot.occupy(carB)            (lock taken and released)
+
+        Both methods were synchronised. Every individual operation was atomic. The class is broken,
+        because the INVARIANT spans two calls and the lock did not.
+
+    THE FIXED VERSION:
+
+        t=0.000  thread A: try_occupy(carA)  -> takes lock, sees None, sets carA, returns True
+        t=0.001  thread B: try_occupy(carB)  -> blocks, then sees carA, returns False
+                 thread B moves on to the next spot
+
+    One method, one lock, one winner. Note that B is not an error case - it is the normal outcome of
+    contention, and the caller simply tries the next spot.
+
+    THE LOCK-FREE VERSION:
+
+        t=0.000  thread A: free.get_nowait()  -> spot 14
+        t=0.001  thread B: free.get_nowait()  -> spot 15
+
+        No waiting at all, and no possibility of both receiving 14, because a queue removes each item
+        exactly once. The race was not solved - it was designed out.
+
+    WHY THIS SEQUENCE IS WORTH REHEARSING: the interviewer's follow-up is 'what if two cars arrive at
+    once', and the three-step answer - here is the race, here is the correct fix, here is the fix that
+    also scales - covers everything they were going to ask next. Offering all three unprompted is what
+    a strong answer looks like.
+
+    AND THE TESTING NOTE, because they sometimes ask how you would verify it: you cannot rely on the
+    bug appearing - measured elsewhere, 40 runs of a vulnerable counter lost nothing. You widen the
+    window deliberately, with a sleep between the check and the act, and assert the invariant. That
+    turns an intermittent bug into a deterministic test.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE TOOLBOX, cheapest first:
+
+        no sharing            immutable objects, per-thread state, queues     always try first
+        atomic primitive      CAS, atomic counter, concurrent collection      no lock at all
+        one lock per thing    the standard answer                             mind the granularity
+        read-write lock       many readers or one writer                      read-heavy only
+        conditional write     the distributed version: UPDATE ... WHERE       across processes
+
+THE #1 MISTAKE: synchronising METHODS instead of OPERATIONS. Two individually-locked methods called in
+sequence is still a race, because the invariant spans both. Expose one method that does both.
+
+THE #2 MISTAKE: one lock for the whole object. Correct and serialising; lock per shared thing instead.
+
+THE #3 MISTAKE: holding a lock across I/O or a callback. Microseconds become milliseconds, and a
+callback may take locks of its own - which is how order inversions appear in code nobody wrote
+deliberately.
+
+THE #4 MISTAKE: believing a language feature gives you safety. Python's GIL serialises BYTECODES, not
+your read-modify-write.
+
+THE ANSWER THAT SCORES HIGHEST: the escalation. Name the invariant, name the race, give the correct
+fix, then give the one that scales - and say when you would NOT synchronise at all, because an object
+confined to one request needs no lock.
+
+ONE-SENTENCE TAKEAWAY: write the invariant down, find the read-modify-write and check-then-act windows
+where it is briefly false, and close them by removing the sharing, using an atomic operation, or
+locking the whole OPERATION - and reshape the interface so the race cannot be expressed at all.""",
 ]
 
 _EX_P1AO["LLD: Design a Vending Machine (the state-machine question)"] = [

@@ -162,7 +162,22 @@
       "Bash(ONLY=174 timeout 300 python3 m172.py)",
       "Bash(ONLY=175 timeout 400 python3 m172.py)",
       "Bash(ONLY=193 timeout 400 python3 m176.py)",
-      "Bash(ONLY=194 timeout 500 python3 m176.py)"
+      "Bash(ONLY=194 timeout 500 python3 m176.py)",
+      "Bash(ONLY=195 timeout 300 python3 m195.py)",
+      "Bash(ONLY=196 timeout 400 python3 m195.py)",
+      "Bash(cd *)",
+      "Bash(SUPABASE_URL=http://x SUPABASE_KEY=x python3 -c ' *)",
+      "Bash(SUPABASE_URL=http://x SUPABASE_KEY=x FLASK_SECRET_KEY=testing-only-not-a-real-secret-value-1234567890 FLASK_ENV=development timeout 300 python3 -c ' *)",
+      "Bash(./pdfvenv/bin/pip install *)",
+      "Bash(./pdfvenv/bin/python -c \"import fpdf; print\\('fpdf', fpdf.__version__\\)\")",
+      "Bash(PYTHONPATH=./pdflib python3 -c \"import fpdf; print\\('fpdf', fpdf.__version__\\)\")",
+      "Bash(PYTHONPATH=$SCRATCH/pdflib python3 *)",
+      "Bash(PYTHONPATH=/tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/48289314-9edb-4138-ae15-82b3c1aa0284/scratchpad/pdflib python3 -c ' *)",
+      "Bash(PYTHONPATH=/tmp/claude-1000/-mnt-c-Users-vengh-OneDrive-Documents-GitHub-DailyPlanner/48289314-9edb-4138-ae15-82b3c1aa0284/scratchpad/pdflib timeout 900 python3 -m pytest tests/test_smoke.py -q -k tag)",
+      "Bash(SUPABASE_URL=http://x SUPABASE_KEY=x FLASK_SECRET_KEY=t-e-s-t-1234567890-abcdefghijklmnop timeout 300 python3 -c ' *)",
+      "Bash(SUPABASE_URL=http://x SUPABASE_KEY=x FLASK_SECRET_KEY=t-e-s-t-1234567890-abcdefghijklmnop timeout 200 python3 -c ' *)",
+      "Bash(28 Sep\"\\), because the remainder after the headline \\(\"2d 08h\" under \"6)",
+      "Bash('weeks\\) reads as the total and is actively misleading. Ticks per hour when *)"
     ]
   }
 }
