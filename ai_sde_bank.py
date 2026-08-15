@@ -125683,195 +125683,990 @@ fail silently.""",
 ]
 
 _EX_P1X["Tell me about a time you dealt with ambiguity or unclear requirements"] = [
-    """A full answer, with the beat that scores.
-SITUATION: My internship task was 'improve the recommendations' - no metric, no
-baseline, and the product owner who could define it was on leave for two weeks.
-TASK: I had six weeks total, so waiting would have left four.
-ACTION: I separated what was genuinely unknown (what 'better' means) from what
-was not (the data, the model, the serving path). I asked the two engineers who
-talk to users what people complained about - the answer was repetitive results,
-not irrelevant ones. So I made the assumption EXPLICIT: 'better means more
-diverse', wrote it at the top of a one-page doc, and messaged the product owner
-so it was on the record. Then I built the smallest thing that would test it - a
-diversity re-ranker behind a flag, measuring both diversity and click-through
-offline.
-RESULT: She confirmed the priority on return; category coverage rose 40% with
-click-through flat, and it shipped behind the flag.""",
+    """1. THE GOAL IN PLAIN ENGLISH - can you start when nobody has told you what to build?
 
-    """Why 'I asked for clarification' is only half an answer.
-Anyone can ask a question. The graded half is what you did when the answer was
-'nobody knows yet'. Stopping at the question means you were blocked for two
-weeks and produced nothing, which is the outcome the interviewer is checking
-for.
-The five-step shape that scores: identify WHAT is ambiguous (and what is not),
-ask the two or three questions whose answers would change your approach, state
-an explicit ASSUMPTION for the rest, build the smallest thing that tests it,
-and set a checkpoint to revisit.""",
+Real work does not arrive as a specification. It arrives as 'can you make the dashboard better', 'we
+need something for the sales team', or a two-line ticket written by someone who has since gone on
+holiday.
 
-    """The sentence that lands, and why.
-'I decided X assuming Y; if Y turned out to be wrong the fix would cost about
-three days, so it was worth starting rather than waiting.'
-That shows you SIZED THE COST of being wrong - which is exactly what
-distinguishes a considered bet from recklessness, and it is what senior
-engineers actually do. Without the cost estimate, 'I made an assumption and
-carried on' reads as guessing.
-Writing the assumption down is the other half: a stated assumption is
-reversible and reviewable, a silent one is a landmine.""",
+This question checks whether you FREEZE, GUESS, or NARROW.
 
-    """Where student-scale material comes from, since this worries people.
-An open-ended capstone brief. A hackathon with a vague theme. An internship
-task whose owner was unavailable. A research question with no agreed evaluation.
-A group project where the requirements changed mid-way.
-All of these are legitimate. What is NOT legitimate is claiming ambiguity when
-the requirements were actually clear and you simply had not read them - that
-tends to come out under a follow-up.""",
+    FREEZE   'I asked for clarification and waited.' Sometimes correct, usually not - it moves the
+             work to somebody else and nothing happens until they get back to you.
+    GUESS    Build something, hope it is right. Fast, and frequently wrong in a way you find out about
+             at the demo.
+    NARROW   Reduce the ambiguity yourself with cheap moves - look at what exists, talk to whoever
+             uses it, write down what you have decided, and build the smallest thing that tests
+             whether you understood.
 
-    """The probes, and the answers to have ready.
-'What if your assumption had been wrong?' - this IS the story, so answer with a
-COST in days and what you would have thrown away.
-'How did you decide when to stop asking and start building?' - when the next
-question's answer would not change what you built first.
-'Who did you tell?' - the record matters; an assumption nobody else knows about
-is indistinguishable from a guess.
-'What would you do differently?' - 'write the assumption down on day one rather
-than day two' is honest and specific.""",
+NARROWING IS THE ANSWER, and the specific skill is that you can make progress WITHOUT the answer while
+staying cheap to correct.
 
-    """The Amazon and Google framings of the same story.
-AMAZON hears Bias for Action plus Are Right A Lot: lead with the decision, the
-reversibility, and the number. 'It was a two-way door - the flag meant backing
-it out was a config change.'
-GOOGLE hears dealing with ambiguity, a named Googleyness signal: lead with how
-you FRAMED the problem and who you consulted. 'I turned the ambiguity into a
-testable assumption rather than a blocker, and I checked it against the people
-who actually talk to users.'
-Same three days of work; different opening sentence.""",
+THE KEY SENTENCE THAT MOST CANDIDATES NEVER SAY:
+
+    'I wrote down my assumptions and shared them, so that if I was wrong, someone could correct me
+     cheaply.'
+
+That single move - making your interpretation VISIBLE before it is expensive - is what senior people do
+and what the question exists to detect.
+
+TERMS AS THEY APPEAR:
+- ASSUMPTION LOG: a written list of what you decided in the absence of an answer. Two lines in a
+  ticket is enough.
+- REVERSIBLE vs IRREVERSIBLE: decisions you can undo cheaply should be made fast; the others deserve
+  the wait.""",
+
+    """2. THE INTUITION - three questions that dissolve most ambiguity
+
+Before asking anybody anything, three cheap moves usually collapse the problem:
+
+    1. WHO IS THIS FOR, AND WHAT WILL THEY DO WITH IT?
+       'Make the dashboard better' is unanswerable. 'The support team can't tell which tickets are
+       breaching SLA' is a specification. Almost all ambiguity is a missing USER and a missing TASK.
+
+    2. WHAT DOES DONE LOOK LIKE?
+       If you cannot describe the state of the world when it is finished, you do not have a task yet.
+       'A support agent can see, in one screen, which tickets breach in the next hour' - now you can
+       build.
+
+    3. WHAT IS THE SMALLEST THING THAT WOULD TELL US WE UNDERSTOOD?
+       A mock, a query, a one-page prototype. Something that costs a day and provokes 'no, not like
+       that' - which is the most valuable sentence in the whole process and the one you want EARLY.
+
+THE ASYMMETRY THAT MAKES THIS WORK: a wrong prototype after one day costs a day. A wrong feature after
+three weeks costs three weeks and somebody's confidence in you. So the goal is not to be right - it is
+to be WRONG CHEAPLY AND EARLY.
+
+AND THE ONE ABOUT WHEN TO ACTUALLY STOP AND ASK - because 'never block' is bad advice too:
+
+    IS THE DECISION REVERSIBLE?  If yes, decide, write it down, and keep moving.
+    IS IT EXPENSIVE TO UNDO?     A schema, a public API, a data migration, anything customer-facing.
+                                 Then it is worth blocking for a real answer, and you should say so
+                                 explicitly rather than quietly waiting.
+
+Being able to name that distinction out loud is what separates 'I just got on with it' from
+judgement.""",
+
+    """3. THE STORY, ASSEMBLED
+
+    CONTEXT:
+        'I picked up a ticket that said, in full: "Add reporting for the ops team." No acceptance
+         criteria, and the person who filed it had left the team.'
+
+    WHAT I DID FIRST - and note that none of this required anybody's time:
+        'I looked at what already existed. There were two ad-hoc SQL queries in a shared folder that
+         somebody ran manually every Monday, and a spreadsheet that was being emailed around. That
+         told me more about what was actually needed than the ticket did.'
+
+        ARTEFACTS BEFORE PEOPLE. The manual workaround is the requirements document - somebody built it
+        because they needed it, and it is free to read.
+
+    THEN THE CHEAPEST POSSIBLE CONVERSATION:
+        'I found the person who ran those queries and asked what they did with the output. It turned
+         out they were looking for one thing: which orders had been stuck in "processing" for more than
+         a day. Everything else in the spreadsheet was noise they scrolled past.'
+
+        THAT ONE ANSWER COLLAPSED THE WHOLE PROBLEM. 'Reporting for the ops team' was really 'a list
+        of stuck orders'.
+
+    WRITING IT DOWN, WHICH IS THE MOVE THAT MATTERS:
+        'I put four assumptions in the ticket: that the audience was the two ops people and not
+         management, that "stuck" meant more than 24 hours in processing, that a daily email was
+         enough and it did not need to be a live dashboard, and that historical data before this
+         quarter was not needed. Then I said I would build to those unless someone corrected me by
+         Wednesday.'
+
+        THE DEADLINE IS THE TRICK. 'Tell me if I am wrong' gets silence. 'I will proceed on Wednesday
+         unless corrected' gets replies - and either way you are unblocked.
+
+    ONE CORRECTION ARRIVED, WHICH IS THE POINT:
+        'The ops manager replied that stuck orders over four hours mattered for the priority customers.
+         That was a small change while it was still a query, and it would have been a rewrite after I
+         had built the email.'
+
+    THE OUTCOME AND THE COST:
+        'I shipped a daily email in about three days rather than a dashboard in three weeks. They used
+         it for a couple of months and then asked for a dashboard, which we built once we knew exactly
+         what belonged on it. The honest cost is that we did the work twice - but the second version
+         was right, and the first version was three days.'""",
+
+    """4. THE FAILURE MODES
+
+A. WAITING FOR SOMEONE TO SPECIFY IT. The most common weak answer. 'I asked my manager to clarify and
+   they got back to me the following week.' Sometimes that is genuinely the right call - but as the
+   whole story it says you cannot move without instructions.
+
+B. BUILDING THE MAXIMAL VERSION. Ambiguity often triggers over-building: covering every possible
+   interpretation with configuration options. You get three weeks of work, most of it unused, and the
+   ambiguity is still unresolved - it has just been made permanent in the code.
+
+C. NOT WRITING THE ASSUMPTIONS DOWN. If your interpretation lives only in your head, nobody can correct
+   it until the demo. Two lines in the ticket is the cheapest insurance in software.
+
+D. ASKING BROAD QUESTIONS. 'What exactly do you want?' puts the work back on someone who does not know
+   either. 'Would this screen answer your question - yes or no?' gets an answer in thirty seconds.
+
+E. ASKING THE WRONG PERSON. Whoever FILED the ticket is often not whoever will USE the thing. Find the
+   user.
+
+F. NOT LOOKING FOR THE EXISTING WORKAROUND. Manual spreadsheets, saved queries, a channel where people
+   ask each other the same question every week. The workaround is a specification somebody has already
+   written and tested.
+
+G. TREATING ALL DECISIONS AS EQUALLY REVERSIBLE. Column names in a table you can rename. A public API
+   or a customer-facing behaviour you cannot, quietly. Block on those and say why.
+
+H. NO COST IN THE STORY. If the ambiguity never cost anything, it was not ambiguous.
+
+I. PRESENTING IT AS A HEROIC SOLO CALL. 'Nobody knew what they wanted so I decided.' Deciding is fine;
+   deciding INVISIBLY is the problem.""",
+
+    """5. THE MOVES THAT NARROW AMBIGUITY - cheapest first
+
+1. READ WHAT EXISTS. Old tickets, the code, the manual workaround, the spreadsheet being emailed
+   around. Costs an hour, and frequently answers the question outright.
+2. FIND THE ACTUAL USER, not the requester. 'What do you do today, and what is annoying about it?'
+   People are unreliable at describing what they WANT and excellent at describing what ANNOYS them.
+3. ASK A CLOSED QUESTION, NOT AN OPEN ONE. 'Is this for the two ops people or for management?' beats
+   'who is the audience?' Closed questions get answered; open ones get 'good question, let me think'.
+4. SHOW SOMETHING. A sketch, a mock, a query result. 'Is it more like this or more like that?' is the
+   fastest ambiguity-resolver in existence, and it does not require the other person to be articulate.
+5. WRITE THE ASSUMPTIONS DOWN, WITH A DEADLINE. 'Proceeding on these Wednesday unless corrected.'
+6. BUILD THE SMALLEST USEFUL VERSION. Something real in days, not something complete in weeks.
+7. SPLIT REVERSIBLE FROM IRREVERSIBLE. Decide the first kind yourself; escalate the second kind
+   explicitly, naming what it would cost to undo.
+8. SHIP AND WATCH. Real usage settles arguments that no meeting will.
+
+STEP 3 IS THE MOST UNDERRATED. Vague questions get vague answers, and then people conclude the
+requirements are unclear - when actually the QUESTIONS were.
+
+STEP 5 IS THE ONE THAT SCORES IN THE INTERVIEW. Almost nobody says it, and it is the single behaviour
+that most distinguishes people who are good at ambiguous work.""",
+
+    """6. HOW TO BUILD YOUR OWN ANSWER - numbered steps
+
+1. PICK A SITUATION WHERE THE GOAL WAS GENUINELY UNCLEAR, not one where it was merely hard. A vague
+   ticket, an open-ended project brief, a client who said 'make it look modern'.
+2. QUOTE THE ORIGINAL ASK VERBATIM if it was short. 'Add reporting for the ops team' does more work
+   than a paragraph describing how vague it was.
+3. SAY WHAT YOU DID BEFORE ASKING ANYONE. Reading, searching, finding the workaround. This is the beat
+   that shows initiative rather than dependence.
+4. GIVE THE ONE QUESTION THAT COLLAPSED IT, and say why you asked that one.
+5. STATE YOUR ASSUMPTIONS AS A LIST, and say where you wrote them.
+6. SAY WHAT YOU DELIBERATELY DID NOT BUILD. Scope you cut is evidence of judgement; it is also the
+   thing that made the timeline possible.
+7. MENTION THE CORRECTION YOU RECEIVED. If someone changed your assumption, that is PROOF the method
+   worked - it is not an admission that you were wrong.
+8. GIVE THE HONEST COST. Rework, a wrong turn, a version thrown away.
+9. NAME THE REVERSIBILITY JUDGEMENT if there was one. 'I decided the email format myself but waited on
+   the schema, because renaming a column later is cheap and migrating one is not.'
+10. END WITH ONE PRINCIPLE.
+
+STEP 7 IS COUNTER-INTUITIVE AND WORTH GETTING RIGHT. Candidates hide the correction because it feels
+like being wrong. It is the opposite: it demonstrates that the assumption log did its job, cheaply,
+before the code existed.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'I picked up a ticket that said, in full, "Add reporting for the ops team". No acceptance criteria, and
+the person who wrote it had left.
+
+Before asking anyone anything, I looked at what already existed - and there were two SQL queries in a
+shared folder that someone ran manually every Monday, plus a spreadsheet being emailed around. The
+manual workaround told me far more than the ticket did, because somebody had already built the thing
+they actually needed.
+
+Then I found the person running those queries and asked one closed question: what do you do with the
+output? It turned out they were looking for exactly one thing - orders stuck in processing for more
+than a day. Everything else was noise they scrolled past. That collapsed the whole problem.
+
+The part I think matters most is what I did next. I wrote four assumptions into the ticket - who the
+audience was, what "stuck" meant, that a daily email was enough rather than a live dashboard, and that
+we did not need historical data - and said I would build to those unless someone corrected me by
+Wednesday. Putting a deadline on it is the trick; "tell me if I'm wrong" gets silence.
+
+And I did get one correction: the ops manager said four hours mattered for priority customers. That was
+a trivial change while it was still a query, and it would have been a rewrite after the email was
+built. That correction is the whole reason for writing assumptions down.
+
+So I shipped a daily email in three days instead of a dashboard in three weeks. They used it for a
+couple of months and then we built the dashboard, knowing exactly what belonged on it. The honest cost
+is that we did some of it twice - but the first version was three days and the second one was right.'""",
+
+    """8. THE ASSUMPTION LOG, PIECE BY PIECE
+
+    What actually went into the ticket - and why each line is shaped the way it is:
+
+        'Building to these assumptions unless corrected by Wednesday:'
+
+            THE DEADLINE. Without it this is a request for attention that nobody prioritises. With it,
+            silence becomes a valid answer and you are unblocked either way. It is also polite: you
+            are not demanding a meeting, you are giving people the option to ignore you safely.
+
+        '1. Audience is the two ops coordinators, not management.'
+
+            WHO. Almost every ambiguity is a missing user. Naming a specific person makes it instantly
+            correctable - management would have said 'actually I want this too'.
+
+        '2. "Stuck" means >24h in processing state.'
+
+            THE DEFINITION OF THE KEY WORD. Every vague requirement has one word doing all the
+            damage - 'better', 'faster', 'stuck', 'modern'. Pin that word to a number and most of the
+            ambiguity evaporates.
+            THIS IS THE LINE THAT GOT CORRECTED, which is exactly what it was there for.
+
+        '3. A daily email is sufficient; not building a live dashboard.'
+
+            THE SCOPE YOU ARE NOT DOING, stated positively. This is the assumption people most want to
+            challenge, so surfacing it deliberately is how you find out in a day rather than at the
+            demo.
+
+        '4. Historical data before this quarter is out of scope.'
+
+            THE EXPENSIVE THING. Backfilling history is usually the biggest hidden cost in any
+            reporting request, so it goes in the log explicitly rather than being quietly skipped.
+
+    WHAT MAKES THIS A GOOD LOG: four lines, each one FALSIFIABLE, each one about a decision that
+    changes what gets built. It took five minutes to write.
+
+    WHAT A BAD LOG LOOKS LIKE: 'Assuming standard requirements, will follow existing patterns, let me
+    know if any questions.' Nothing there can be disagreed with, so nobody will.""",
+
+    """9. TWO PATHS FROM THE SAME TICKET
+
+    THE TICKET: 'Add reporting for the ops team.'
+
+    PATH A - the freeze:
+        day 1     message the team lead asking for clarification
+        day 4     lead replies: 'ask Priya, she requested it'
+        day 6     Priya is on leave
+        day 11    Priya replies: 'something like a dashboard with the order stats'
+        day 12    start building a dashboard with order stats
+        day 26    demo. 'This is nice but I really just needed the stuck ones flagged.'
+        TOTAL: four weeks, and the wrong thing.
+
+    PATH B - the narrow:
+        day 1     read the shared folder, find the manual queries and the emailed spreadsheet
+        day 1     ask the person who runs them one closed question
+        day 1     write four assumptions into the ticket with a Wednesday deadline
+        day 2     ops manager corrects assumption 2 (four hours for priority customers)
+        day 4     daily email shipped
+        week 10   'this is great, can we have it as a dashboard now?' - and now everyone knows
+                  exactly what goes on it
+        TOTAL: four days to something used, and the dashboard built later on real knowledge.
+
+    THE DIFFERENCE IS NOT INTELLIGENCE OR EFFORT. Path A did everything reasonably: it asked, it
+    waited, it built what it was told. The difference is that Path B TREATED THE UNCERTAINTY AS THE
+    WORK rather than as a blocker on the work.
+
+    AND NOTE THE ONE PLACE PATH B WOULD HAVE BEEN WRONG: if this had been a database schema change, or
+    a customer-facing behaviour, or something with a migration attached, 'proceed Wednesday unless
+    corrected' would be reckless. Cheap to reverse, decide it. Expensive to reverse, block and say
+    clearly that you are blocked and why.
+
+    THAT DISTINCTION IS THE MOST SENIOR THING YOU CAN SAY IN THIS ANSWER, because it shows you are not
+    applying 'just get on with it' as a reflex.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE THREE QUESTIONS: who is it for and what will they do with it? · what does done look like? ·
+    what is the smallest thing that tells us we understood?
+
+    THE MOVES, CHEAPEST FIRST: read what exists · find the real user · ask CLOSED questions · show a
+    sketch · write assumptions with a deadline · build the smallest useful version · ship and watch.
+
+    THE JUDGEMENT CALL: reversible -> decide and log it. Expensive to undo -> block, and say why.
+
+THE #1 MISTAKE: waiting to be told. It looks diligent and it means nothing happens, and it hands the
+problem to someone who is probably no clearer than you are.
+
+THE #2 MISTAKE: not writing the assumptions down. An interpretation that lives only in your head
+cannot be corrected until it is expensive.
+
+THE #3 MISTAKE: over-building to cover every interpretation. Configuration is not a substitute for a
+decision, and it makes the ambiguity permanent.
+
+THE #4 MISTAKE: open questions. 'What do you want?' gets vagueness back; 'is it this or that?' gets an
+answer.
+
+THE #5 MISTAKE: hiding the correction you received. It is the evidence that your method worked.
+
+ONE-SENTENCE TAKEAWAY: treat the ambiguity as the first piece of work rather than a blocker - narrow it
+with what already exists and one closed question, write your assumptions down with a date, and build
+the smallest thing that provokes 'no, not like that' while being wrong is still cheap.""",
 ]
 
 _EX_P1X["How do you handle a group project where someone is not pulling their weight?"] = [
-    """The answer most students give, and why it fails.
-'I just did their part myself so the project wouldn't suffer.' It sounds
-responsible and it tells the interviewer three bad things: you will silently
-absorb an underperformer's work, you will hide the problem from whoever could
-help, and you will burn out doing it. None of those scale to a team.
-Doing the work is sometimes the right SHORT-TERM call for a deadline - but only
-alongside addressing the cause, and only if someone who needs to know is told.""",
+    """1. THE GOAL IN PLAIN ENGLISH - the question is about you, not about them
 
-    """The order that scores: WHY before WHAT.
-Find out the reason before deciding what kind of problem it is. In practice the
-common causes are: stuck and embarrassed to say so, unclear what was expected,
-a genuine personal crisis - and only occasionally indifference.
-A full answer: 'Rather than assuming he had checked out, I messaged him
-directly and asked if he was okay. He was dealing with a family illness and had
-been too embarrassed to say anything in front of four people.'
-That single move changes the whole story from a complaint into a collaboration
-story, and it is the beat interviewers listen for.""",
+This is asked of students and graduates constantly, and it is a trap in a very specific way: it INVITES
+you to complain, and complaining is the thing being tested for.
 
-    """What to do once you know, with the concrete mechanisms.
-Talk privately and directly first - not in the group chat, not to the
-supervisor. Make the work SMALLER and VISIBLE: a shared board with named,
-small tasks so drift shows up in days rather than weeks, and so a stuck person
-has a rung to grab. Replan HONESTLY if they genuinely cannot deliver - cut
-scope rather than pretend. Escalate only after a direct attempt, and frame it
-as 'here is what we tried' rather than as a complaint.
-Every one of those is checkable by a follow-up question, which is why vague
-answers ('we communicated better') do not survive.""",
+WHAT THE INTERVIEWER IS ACTUALLY CHECKING:
 
-    """A full worked answer.
-SITUATION: In a five-person systems project one member missed two consecutive
-integration deadlines and stopped replying, with the demo two weeks out.
-TASK: His component sat between mine and the front end, so nothing could be
-tested end to end.
-ACTION: I asked him directly and privately what was going on - family illness,
-and embarrassment about saying so. So we changed the plan rather than pretended:
-I took the integration layer since it was on my critical path anyway, we cut one
-optional feature to shrink his piece to something finishable, and I told the
-supervisor we were RESCOPING - not that someone had failed, because that framing
-would have been both unkind and inaccurate. We also moved to a shared board with
-small named tasks.
-RESULT: Demoed on time with one fewer feature; he delivered the reduced scope;
-the supervisor's feedback singled out that the rescope was made early enough to
-be useful.""",
+    1. DO YOU FIND OUT WHY, or do you assume laziness?
+    2. DO YOU TALK TO THE PERSON, or around them?
+    3. DO YOU PROTECT THE DELIVERABLE, or let it fail to prove a point?
+    4. DO YOU ESCALATE WELL - late enough to have tried, early enough to matter?
+    5. CAN YOU DESCRIBE A COLLEAGUE FAIRLY when they let you down?
 
-    """The probe that tests whether you are just being nice.
-'What if the reason had been that they simply did not care?' Then the process is
-IDENTICAL - ask, adjust the plan, make the work visible - and only the
-conclusion differs: you escalate with a factual record rather than
-accommodating.
-Being able to say that shows the approach is a method rather than an assumption
-of good faith. A candidate whose whole answer depends on the teammate having a
-sympathetic reason has not actually thought about the hard case.""",
+POINT 5 IS THE HIDDEN ONE. The interviewer is imagining you describing THEM to someone in six months.
+A candidate who says 'he was lazy and useless' has told them exactly how that conversation will sound.
 
-    """What NOT to say.
-Contempt in any form - lazy, useless, didn't care - because the interviewer is
-assessing how you talk about absent colleagues.
-Escalating to the supervisor as the first step, which reads as someone who
-creates political problems.
-A public confrontation.
-And a story with no change to how the team worked afterwards: if the same drift
-could recur unnoticed, you fixed an instance rather than the process, and the
-follow-up 'how would you prevent it next time?' will find that out.""",
+THE STRUCTURE THAT WORKS: assume a REASON before assuming a CHARACTER FLAW, ask privately, agree
+something concrete and small, keep the project safe, and escalate only with facts and without heat.
+
+AND THE ANSWER MUST INCLUDE A REAL COST. 'It all worked out and we were fine' is not a story. Something
+was at risk, you did something, and here is what it cost - that is a story.
+
+TERMS AS THEY APPEAR:
+- ESCALATION: telling someone with authority. Not tattling - it is a normal, expected engineering
+  behaviour, and doing it too LATE is the more common mistake.""",
+
+    """2. THE INTUITION - the four causes, and why the diagnosis comes first
+
+Almost every 'not pulling their weight' situation is one of four things, and they have completely
+different fixes:
+
+    THEY ARE STUCK           they do not know how to do it and are embarrassed to say so.
+                             FIX: pair for an hour. This is the most common cause by a distance, and
+                             the one people never guess.
+
+    THEY ARE OVERLOADED      something else - another module, a job, a family situation - is eating
+                             their time.
+                             FIX: reallocate scope, or agree a smaller piece they can actually do.
+
+    THEY ARE UNCLEAR         they genuinely do not know what they own, because nobody wrote it down.
+                             FIX: write down who owns what. Astonishingly often this is the whole
+                             problem.
+
+    THEY ARE DISENGAGED      they do not care, or have decided the project does not matter.
+                             FIX: this is the one that needs escalation, and it is the rarest.
+
+WHY THE ORDER MATTERS: three of the four are fixed by a conversation and cost nothing. Jumping to the
+fourth - which is what 'they were lazy' assumes - skips all three and creates a conflict where there
+was a solvable problem.
+
+THE SENTENCE THAT DOES THE WORK, and it is worth having ready verbatim:
+
+    'I noticed the parser piece hasn't moved this week and I wanted to check - is it harder than we
+     thought, or has something else come up? Either way I'd rather know now than at the deadline.'
+
+WHY THAT WORDING: it states an OBSERVATION rather than an accusation ('hasn't moved', not 'you haven't
+done it'). It offers two non-shameful explanations. It puts the deadline rather than the person at the
+centre. And it makes it easy to say 'I'm stuck', which is what people mostly cannot bring themselves
+to volunteer.""",
+
+    """3. THE STORY, ASSEMBLED
+
+    CONTEXT:
+        'Four-person final-year project, a web app with a data pipeline. We split it into four
+         components and one person had the ingestion piece.'
+
+    THE PROBLEM, STATED WITHOUT CHARACTER JUDGEMENT:
+        'Two weeks in, three components were roughly on track and ingestion had no commits. I could
+         see it in the repo, so this was not a rumour or a feeling.'
+
+        A FACT, OBSERVABLE BY ANYONE. Not 'he wasn't doing anything'.
+
+    THE PRIVATE CONVERSATION:
+        'I messaged him directly rather than raising it in the group chat, and asked whether it was
+         harder than we thought or whether something else had come up. It turned out he had never used
+         the framework we picked and had spent two weeks not wanting to admit he was stuck.'
+
+        THE DIAGNOSIS WAS THE FIRST OF THE FOUR CAUSES, and no amount of pressure would have fixed it.
+        Privately matters: a public version of that question makes admitting it impossible.
+
+    WHAT WE ACTUALLY DID:
+        'We paired for about two hours and got the first endpoint working together. Then we split his
+         piece into three smaller chunks with a checkpoint each, rather than one deliverable due at the
+         end - so we would find out in three days rather than three weeks if it stalled again.'
+
+        TWO MOVES: unblock, then RESTRUCTURE SO THE FAILURE IS VISIBLE EARLIER. The second is the
+        engineering move and it is the one that scores.
+
+    THE HONEST OUTCOME:
+        'He delivered the rest of it. It was still late by about four days and I picked up the tests
+         for that component, which I had not planned to do. So it cost us something - but we shipped,
+         and I would rather that than have made the point that it was his fault.'
+
+        A REAL COST, ADMITTED. This is what makes the story credible rather than tidy.
+
+    THE PRINCIPLE:
+        'What I took from it is that "not pulling their weight" is usually "stuck and embarrassed",
+         and the only way to find out is to ask privately, early, in a way that makes it easy to say
+         so.'""",
+
+    """4. THE FAILURE MODES
+
+A. TELLING IT AS A COMPLAINT. Any version where the other person is simply lazy or useless fails. The
+   interviewer is not assessing them; they are assessing how you talk about people who disappoint you.
+
+B. GOING PUBLIC FIRST. Raising it in the group chat or the standup makes it a confrontation and makes
+   'I'm stuck' impossible to say. Private, then group, then escalate.
+
+C. SILENTLY DOING THEIR WORK. The most common student answer - 'so I just did it myself'. It rescues
+   the deadline once and it guarantees the same thing next time. It also means the person never
+   learned, and nobody with authority ever found out there was a problem.
+
+D. ESCALATING FIRST. Going to the lecturer or the manager before speaking to the person is the fastest
+   way to make an enemy, and every interviewer will notice.
+
+E. NEVER ESCALATING. The opposite failure and the more common one in practice. If two conversations
+   have not changed anything and the deadline is real, someone with authority needs to know while
+   there is still time to act. Late escalation is worse than early.
+
+F. LETTING IT FAIL TO PROVE A POINT. 'I decided it wasn't my problem.' Occasionally satisfying, always
+   the wrong answer.
+
+G. NO COST IN THE STORY. If nothing was ever at risk and nothing was lost, there was no problem and
+   therefore no story.
+
+H. ASSUMING THE CAUSE. 'He clearly just didn't care.' You cannot know that without asking, and saying
+   it reveals that you did not.
+
+I. NO SYSTEMIC CHANGE. If the answer ends with the immediate rescue, it is incomplete. Smaller chunks,
+   earlier checkpoints, written ownership - something about how the team worked should have changed.""",
+
+    """5. HOW TO ESCALATE PROPERLY - the part people get wrong
+
+Escalation has a bad reputation among students because it feels like telling on someone. In a
+workplace it is a NORMAL, EXPECTED behaviour, and the failure mode is doing it too late.
+
+THE THREE CONDITIONS FOR ESCALATING - all three, not any one:
+
+    1. You have spoken to the person directly, more than once.
+    2. Something concrete was agreed and did not happen.
+    3. The deadline or the deliverable is genuinely at risk.
+
+HOW TO DO IT WELL - and the difference is entirely in the framing:
+
+    BAD:  'Sam isn't doing any work and we're all covering for him.'
+          A complaint about a person. It puts the manager in the position of judging character, and it
+          makes you sound like the problem's narrator rather than its owner.
+
+    GOOD: 'The ingestion component is about two weeks behind and it is the dependency for the demo. I
+           have spoken to Sam twice and we agreed a smaller scope last Friday which has not landed. I
+           can pick up part of it but then the API testing slips. What would you like to prioritise?'
+
+    WHAT MAKES THE SECOND ONE WORK:
+        it leads with the DELIVERABLE, not the person
+        it shows what you already tried, so nobody wonders whether you did
+        it names the real trade-off - you are not asking them to punish anyone, you are asking them to
+        make a call only they can make
+        it ends with a QUESTION, which is what makes it a request for a decision rather than a
+        complaint
+
+THE PHRASE WORTH MEMORISING: 'I have tried X and Y, here is the risk, and here is the decision I need
+from you.' That sentence is how escalation is done at every level of every organisation, and being
+able to produce it as a graduate is a genuinely strong signal.
+
+AND THE THING TO SAY OUT LOUD: 'I would raise the situation, not the person.' It is the whole
+distinction in five words.""",
+
+    """6. HOW TO BUILD YOUR OWN ANSWER - numbered steps
+
+1. PICK A REAL SITUATION. A group project, a society, a part-time job, a hackathon. It does not have
+   to be dramatic - it has to be true.
+2. STATE THE PROBLEM AS AN OBSERVABLE FACT. 'No commits in two weeks', 'the slides weren't started
+   three days out'. Not 'he wasn't contributing'.
+3. NAME WHAT YOU ASSUMED FIRST, and whether you were right. If you assumed laziness and it turned out
+   to be a family emergency, SAY SO - being wrong about someone and correcting yourself is a strong
+   beat, not a weak one.
+4. DESCRIBE THE PRIVATE CONVERSATION, including roughly what you said. The wording is the skill.
+5. SAY WHAT YOU AGREED - something small, concrete and soon. 'The first endpoint by Wednesday' beats
+   'he'd catch up'.
+6. SAY WHAT YOU CHANGED ABOUT HOW THE TEAM WORKED. Smaller chunks, a checkpoint, written ownership.
+   This is the beat that separates a rescue from a fix.
+7. GIVE THE HONEST COST. Late by four days, you picked up the tests, the scope shrank.
+8. IF YOU ESCALATED, GIVE THE FRAMING you used - deliverable-first, not person-first.
+9. END WITH ONE PRINCIPLE. One sentence.
+10. CHECK THE TONE. Read it back and ask: does the other person come out of this with their dignity?
+    If not, rewrite it.
+
+STEP 10 IS THE ONE THAT DECIDES THE ANSWER. Everything else can be competent and a contemptuous tone
+will still sink it.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'My starting assumption is that someone who has stopped delivering is usually stuck rather than lazy,
+and in my experience that has been true more often than not.
+
+In our final-year project, two weeks in, three components had progress and one had no commits at all -
+so it was an observable fact rather than a feeling. I messaged that person directly rather than
+raising it in the group chat, and asked whether it was harder than we expected or whether something
+else had come up. Both of those are easy to say yes to. It turned out he had never used the framework
+we picked and had spent two weeks not wanting to admit he was stuck.
+
+So we paired for a couple of hours and got the first endpoint working. And then we did the thing I
+actually think mattered: we split his component into three smaller pieces with a checkpoint each,
+instead of one deliverable at the end. That way, if it stalled again we would know in three days
+rather than three weeks.
+
+It still cost us. It was about four days late and I picked up the tests for that component, which I
+had not planned on. But we shipped, and I would rather that than have let it fail to make a point.
+
+If it had not improved, I would have escalated - and I would have raised the situation rather than the
+person. Something like: this component is two weeks behind and it blocks the demo, I have spoken to
+him twice and we agreed a smaller scope that has not landed, I can cover part of it but then the API
+testing slips - what would you like to prioritise? That is a request for a decision, not a complaint
+about a colleague.'""",
+
+    """8. THE ANSWER, LINE BY LINE
+
+    'My starting assumption is that someone who has stopped delivering is usually stuck rather than
+     lazy.'
+
+        OPENS WITH A PRINCIPLE, AND A GENEROUS ONE. The interviewer now knows your default reading of
+        a colleague before you have described anyone. Everything that follows is heard through it.
+
+    'Three components had progress and one had no commits at all.'
+
+        AN OBSERVABLE FACT. Anyone could check it. Compare 'he wasn't really contributing', which is a
+        judgement dressed as an observation.
+
+    'I messaged that person directly rather than raising it in the group chat.'
+
+        THE JUDGEMENT CALL, MADE EXPLICIT. Naming the alternative you rejected shows it was a decision
+        rather than an accident.
+
+    'Was it harder than we expected, or has something else come up?'
+
+        TWO NON-SHAMEFUL EXITS. This is the actual craft in the whole answer - the question is built so
+        that the true answer is the easy one to give. A question like 'why haven't you done it?' has no
+        good answer, so people invent one.
+
+    'He had never used the framework and had spent two weeks not wanting to admit he was stuck.'
+
+        THE DIAGNOSIS - and note it is told WITHOUT contempt. That is deliberate and the interviewer
+        will register it.
+
+    'We paired for a couple of hours and got the first endpoint working.'
+
+        THE IMMEDIATE FIX. Cheap, and it would never have happened without the conversation.
+
+    'We split it into three pieces with a checkpoint each, so we'd know in three days rather than three
+     weeks.'
+
+        THE SYSTEMIC FIX, AND THE BEST LINE IN THE ANSWER. It changes how the team detects trouble
+        rather than fixing one instance of it. This is the sentence an engineer says.
+
+    'It was four days late and I picked up the tests, which I had not planned on.'
+
+        THE HONEST COST. Without it the story is too tidy to believe.
+
+    'I would have raised the situation rather than the person.'
+
+        THE ESCALATION PRINCIPLE IN SIX WORDS, offered before being asked. It closes off the obvious
+        follow-up by answering it.""",
+
+    """9. THE SAME SITUATION, TOLD BADLY
+
+    THE WEAK VERSION:
+        'We had one guy in our group who basically did nothing the whole semester. We kept asking him
+         in the group chat and he'd say he was on it and then nothing would happen. In the end the
+         rest of us just split up his part and did it ourselves the weekend before the deadline. It
+         was annoying but we got a good grade in the end.'
+
+    CLAUSE BY CLAUSE:
+
+        'one guy who basically did nothing'      - character judgement, no diagnosis, no curiosity
+        'we kept asking him in the group chat'   - public pressure, which guarantees he cannot say
+                                                   he is stuck
+        'he'd say he was on it'                  - and nobody asked why that was not true
+        'we just split up his part ourselves'    - the deadline was rescued and nothing was fixed
+        'the weekend before the deadline'        - discovered far too late, because there were no
+                                                   checkpoints
+        'it was annoying but we got a good grade' - no cost acknowledged, no lesson, and the whole
+                                                   story reads as a grievance with a happy ending
+
+    NOBODY EVER ESCALATED, nobody ever had a one-to-one conversation, and the team's process is
+    unchanged, so the identical thing happens on the next project.
+
+    AND THE PART THE CANDIDATE CANNOT HEAR: they have spent forty seconds being uncharitable about a
+    colleague to a stranger. That is the lasting impression, regardless of whether it was deserved.
+
+    THE SAME FACTS, REFRAMED HONESTLY - because you can tell this version truthfully even if you
+    handled it badly at the time:
+        'Looking back, we handled it poorly. We chased him in the group chat, which made it impossible
+         for him to admit he was struggling, and then we absorbed his work the weekend before the
+         deadline - which rescued the grade and fixed nothing. What I would do now is talk to him
+         privately in week two, and put checkpoints in so we found out in days rather than at the end.'
+
+    THAT IS A GENUINELY STRONG ANSWER. Reflecting accurately on a badly-handled situation scores
+    higher than a polished story about a well-handled one, because it is far harder to fake.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE FOUR CAUSES:  stuck (most common) · overloaded · unclear ownership · disengaged (rarest).
+    Three are fixed by a conversation; only the fourth needs escalation.
+
+    THE SEQUENCE:  observe a fact -> ask privately, with two non-shameful exits -> agree something
+    small and soon -> restructure so the next stall is visible in days -> escalate the SITUATION if
+    nothing changes -> report the honest cost.
+
+    THE ESCALATION SENTENCE:  'I have tried X and Y, here is the risk to the deliverable, and here is
+    the decision I need from you.'
+
+THE #1 MISTAKE: telling it as a complaint. The interviewer is assessing how you describe someone who
+let you down, and contempt in your voice is the answer they will remember.
+
+THE #2 MISTAKE: silently absorbing their work. It rescues one deadline, teaches nobody anything, and
+guarantees a repeat - and it hides the problem from the person who could have solved it.
+
+THE #3 MISTAKE: going public before going private. It makes 'I'm stuck' unsayable, which is the very
+admission you need.
+
+THE #4 MISTAKE: never escalating, or escalating first. Both are timing errors, and never-escalating is
+the one that actually sinks projects.
+
+THE #5 MISTAKE: a story with no cost and no change to how the team worked.
+
+ONE-SENTENCE TAKEAWAY: assume 'stuck' before 'lazy', ask privately in a way that makes the truth easy
+to say, agree something small and soon, change the structure so the next stall shows up in days rather
+than weeks - and if you must escalate, raise the situation and the decision you need, never the
+person.""",
 ]
 
 _EX_P1X["Tell me about a time you led without authority"] = [
-    """A full worked answer.
-SITUATION: Our six-person capstone had no shared way of running experiments -
-everyone had a notebook, results were screenshots in the group chat, and we
-twice argued about numbers nobody could reproduce. Nobody owned it and there was
-no team lead.
-TASK: I was not in charge of anything, but we were losing about a day a week.
-ACTION: Instead of proposing a process, I built the smallest version in one
-evening - a script taking a config file, logging metrics to a shared CSV, and
-printing a comparison table - and re-ran two teammates' existing experiments
-through it so they saw their OWN numbers come out identical. Then I made
-adoption free by converting their two notebooks myself. When a teammate better
-at infrastructure than me offered to add proper experiment tracking, I handed
-it over and went back to my own module.
-RESULT: All six were using it within a week, the reproducibility arguments
-stopped, and the final report had a comparison table we could defend. She later
-extended it to log to a database, which was better than what I built.""",
+    """1. THE GOAL IN PLAIN ENGLISH - getting things to happen when you cannot tell anyone to do anything
 
-    """The four mechanisms of influence, since 'I convinced them' is not an answer.
-Do the first slice YOURSELF so the idea is concrete rather than a proposal -
-people argue with suggestions and react to artefacts.
-Bring DATA so the discussion stops being about opinions.
-Make adoption CHEAP - converting their notebooks meant nobody paid a migration
-cost to try it.
-Give CREDIT away publicly.
-Naming which of these you used is what turns a leadership claim into evidence.""",
+'Leading without authority' means: you had no title, no power to assign work, no ability to say 'do
+this', and something happened anyway because of you.
 
-    """The step-BACK beat, which Google's rubric names explicitly.
-Emergent leadership is 'step up when your skill is needed and step BACK when
-someone else's is'. So the ending matters: handing the tool to the teammate who
-was better at it, and saying their version was better, is the part that
-distinguishes leadership from wanting to be in charge.
-Most candidates omit this entirely and their story reads as territorial. One
-sentence fixes it.""",
+WHY COMPANIES ASK IT: it is the actual shape of most engineering influence. Almost nobody can order
+anybody to do anything, including managers most of the time. Work gets done because someone made a
+case, made it easy, or went first.
 
-    """Why the story must not involve actual authority.
-If you were the elected team lead, the appointed PM, or the person the
-supervisor put in charge, this is a different question - you had a mandate, and
-the interesting part (getting people to follow you without one) is missing.
-If your only leadership experience came with a title, reframe: find the moment
-within it where you had to persuade rather than direct, and tell that instead.""",
+WHAT IS BEING CHECKED:
 
-    """Student-scale material that works.
-Taking over coordination of a stalled group project. Setting up CI for a class
-repo nobody had touched. Organising a study group. Running a retrospective after
-a bad hackathon. Writing the README that stopped the same question being asked
-five times. Standardising how a lab recorded results.
-The common shape: a gap nobody owned, that you noticed, that cost the group
-something measurable, and that outlived your involvement.""",
+    DID YOU SEE THE PROBLEM BEFORE ANYONE ASKED?
+    DID YOU MAKE IT EASY FOR OTHERS TO SAY YES?
+    DID YOU DO THE UNGLAMOROUS PART YOURSELF?
+    DID YOU SHARE THE CREDIT?
 
-    """The probes.
-'How did you get people to go along?' - the mechanisms above, named
-specifically.
-'What did it cost you?' - usually time taken from your own graded work, and
-saying so shows you weighed it.
-'What if they had ignored you?' - find one ally, shrink the ask, or accept the
-problem was not painful enough yet. NOT 'escalate', which is the opposite of
-influence.
-'What happened afterwards?' - the strongest ending is that it outlived you,
-which is why the teammate improving on it is the best possible close.""",
+THAT LAST ONE IS DISQUALIFYING IF YOU FAIL IT. A story where you led and everyone else was a passenger
+is not a story about influence, it is a story about a person who does not work well with others.
+
+THE THREE MECHANISMS THAT ACTUALLY WORK, and a good answer names at least one explicitly:
+
+    1. GO FIRST. Do the thing yourself, visibly, at small scale. A working example beats a proposal.
+    2. MAKE THE RIGHT THING EASIER THAN THE WRONG THING. If your way saves people effort, adoption
+       needs no persuasion at all.
+    3. GIVE THEM THE PROBLEM, NOT YOUR SOLUTION. People adopt conclusions they helped reach and
+       resist ones handed to them finished.
+
+TERMS AS THEY APPEAR:
+- INFLUENCE: getting an outcome without the power to compel it.
+- BUY-IN: the difference between people agreeing and people actually changing what they do.""",
+
+    """2. THE INTUITION - why 'go first' beats 'propose'
+
+The instinct when you spot a problem is to raise it: a message, a meeting, a document explaining what
+everyone should do differently. That almost never works from a position without authority, for a
+simple reason:
+
+    A PROPOSAL ASKS EVERYONE TO SPEND EFFORT ON YOUR CONFIDENCE. A working example asks them to spend
+    nothing on evidence.
+
+Consider the difference concretely:
+
+    'We should have tests on the API layer, they'd catch these regressions.'
+        -> everyone agrees in principle, nobody does it, because it is work with a diffuse benefit and
+           you are the only one who is sure.
+
+    'I added tests for the three endpoints I was already touching. They caught two bugs in the first
+     week. Here's the file - copying it for a new endpoint takes about ten minutes.'
+        -> the cost is now known and small, the benefit is demonstrated rather than argued, and the
+           template removes the hardest part, which is starting.
+
+THE UNDERLYING PRINCIPLE: YOU CANNOT ORDER PEOPLE, SO YOU HAVE TO LOWER THE PRICE. Every act of
+influence without authority is some version of making the desired behaviour cheaper - in effort, in
+risk, or in social cost.
+
+THE SECOND PRINCIPLE, WHICH IS ABOUT EGO: give people the problem, not your solution. 'We keep breaking
+the same endpoint, what should we do?' produces a group decision that people defend. 'I've written a
+testing standard, please follow it' produces compliance at best and quiet resentment at worst - and
+you have made yourself the owner of every future objection.
+
+AND THE THIRD, WHICH IS ABOUT CREDIT: influence compounds if you give the credit away and evaporates if
+you collect it. This is not just decency; it is the mechanism by which people help you the second
+time.""",
+
+    """3. THE STORY, ASSEMBLED
+
+    CONTEXT - and note that nobody asked for any of this:
+        'On my industrial placement I was on a team of six. Nobody owned the deployment process - it
+         was a document with eleven manual steps that whoever was on duty followed on a Friday.'
+
+    THE PROBLEM, WITH A NUMBER:
+        'In my first two months it went wrong three times, and each time it cost somebody an evening.
+         Twice it was the same step - an environment variable people forgot to update.'
+
+        A COUNT AND A PATTERN. Not 'deployments were painful' - three times, twice the same step.
+        That specificity is what turns a grumble into a case.
+
+    WHY I HAD NO AUTHORITY, STATED PLAINLY:
+        'I was the most junior person there and I was leaving in ten months. Nobody was going to
+         restructure their process because the intern had an opinion.'
+
+        SAYING THIS EXPLICITLY IS IMPORTANT - it is the premise of the question, and skipping it makes
+        the story sound like ordinary work.
+
+    WHAT I DID FIRST - the small, cheap, visible thing:
+        'I did not propose anything. I wrote a script that did the four steps I understood best,
+         including the environment variable one, and I used it for my own deploys. It was about forty
+         lines and it took an afternoon.'
+
+    HOW IT SPREAD - and note that the spreading was not my doing:
+        'The next person on duty asked what I was running. I showed them, they used it, and then they
+         added the two steps they knew better than I did. Within about a month four of the eleven steps
+         were automated, and I had written maybe half of that.'
+
+        THE OTHER PEOPLE IMPROVED IT. That sentence is the strongest one in the story, because it is
+        the evidence that this became THEIRS.
+
+    THE MOMENT IT BECAME REAL:
+        'When we had a team retro I did not present it as my project. I said we had accidentally
+         automated a third of the deploy and asked whether we wanted to finish it. The team decided to,
+         and someone senior volunteered to own the remaining steps, which meant it survived after I
+         left.'
+
+        GIVING AWAY OWNERSHIP IS WHAT MADE IT PERMANENT. Had I kept it, it would have left with me.
+
+    THE HONEST COST:
+        'One of my early scripts had a bug that skipped a migration step, and a deploy went out
+         incomplete. We caught it in about twenty minutes but I had to explain it, and it made me add
+         a check that the script had actually run each step rather than assuming it had.'
+
+    THE PRINCIPLE:
+        'You cannot tell people to change how they work. You can make the better way cheaper than the
+         current way and let them choose it.'""",
+
+    """4. THE FAILURE MODES
+
+A. A STORY WHERE YOU ACTUALLY HAD AUTHORITY. Team captain, society president, project lead. If you
+   could assign work, it does not answer the question. Say so and pick a different one.
+
+B. 'I TOLD THEM WHAT TO DO AND THEY DID IT.' That is not influence, and if it is true it usually means
+   you had authority you have not mentioned.
+
+C. NO EVIDENCE OF THE PROBLEM. 'I felt our process was inefficient' persuades nobody, in the story or
+   in the room. Three failures, two of them the same step - that is a case.
+
+D. THE HERO NARRATIVE. Everyone else was oblivious, you saw it, you fixed it. Interviewers hear this
+   as poor collaboration, and they are usually right.
+
+E. TAKING ALL THE CREDIT. If nobody else in your story contributed anything, either it was not
+   collective or you did not notice what they did. Both are bad.
+
+F. STOPPING AT THE PROPOSAL. 'I suggested we should have better testing.' What HAPPENED? If nothing
+   happened, this is a story about having an opinion.
+
+G. NO ADOPTION MECHANISM. Something changed and you cannot explain WHY people went along with it. The
+   mechanism - it saved them effort, you did the boring part, you asked rather than told - is the
+   actual content of the answer.
+
+H. NOTHING SURVIVED YOU. If the change died when you left, you did the work; you did not lead. The
+   handover - somebody else owning it - is the proof.
+
+I. NO COST OR MISTAKE. Every real initiative has a wrong turn, a resister you had to win over, or a
+   bug. A frictionless story is a rehearsed one.""",
+
+    """5. THE PATTERNS THAT WORK - and when to use each
+
+GO FIRST, SMALL AND VISIBLE. Best when the change is cheap to demonstrate and the benefit is
+immediate. A script, a test file, a template, a dashboard. The move is to do it for YOURSELF first so
+that nobody has to agree to anything.
+    THE PHRASE: 'I'm doing this for my own work anyway - here's the file if it's useful.'
+
+MAKE THE RIGHT THING EASIER. Best when people already agree in principle and nobody does it. The
+obstacle is not belief, it is friction. Remove the friction and adoption is automatic.
+    THE PHRASE: 'Copying this for a new endpoint takes about ten minutes.'
+
+BRING THE PROBLEM, NOT THE SOLUTION. Best when the change affects how OTHER people work, and
+especially when someone senior will have to live with it. Ownership follows participation.
+    THE PHRASE: 'We've broken this endpoint three times this quarter - what do we want to do about it?'
+
+FIND THE ONE PERSON WHO ALREADY AGREES. Best when the group is large or the change is contentious. Two
+people saying it is a completely different thing from one person saying it, and it costs one
+conversation to arrange.
+
+DO THE UNGLAMOROUS PART. Best when the initiative is stalling. Someone has to write the documentation,
+do the migration, or clean up the old data. Volunteering for that is the most reliable way to be
+trusted with the direction.
+
+AND THE ONE THAT DOES NOT WORK, so you can name it as something you learned: WRITING A LONG DOCUMENT
+EXPLAINING WHY EVERYONE SHOULD CHANGE. It feels like leadership and it is the least effective option
+available, because it asks for maximum agreement before any evidence exists.
+
+MENTIONING THAT YOU TRIED THAT FIRST AND IT DID NOT WORK is a genuinely strong beat - it shows you
+learned the difference from experience rather than from a book.""",
+
+    """6. HOW TO BUILD YOUR OWN ANSWER - numbered steps
+
+1. PICK A SITUATION WHERE YOU HAD NO POWER. Junior, new, an intern, a peer among peers, a volunteer.
+   Say so explicitly at the start - it is the premise of the question.
+2. STATE THE PROBLEM WITH A COUNT. Three failures, two hours a week, four people doing the same manual
+   step. Numbers are what turned it from your opinion into a shared fact.
+3. SAY WHAT YOU DID FIRST, AND MAKE IT SMALL. The credible version is always 'I did a small piece
+   myself', not 'I convened a working group'.
+4. NAME THE MECHANISM. Why did anyone go along with it? Because it saved them effort? Because you did
+   the boring part? Because you asked instead of telling? This is the substance of the answer.
+5. INCLUDE SOMEONE ELSE IMPROVING IT. The moment another person adds to your thing is the moment it
+   stopped being yours, and it is the best evidence in the story.
+6. INCLUDE A RESISTER, if there was one, and how you handled them. Ideally by understanding their
+   objection rather than overruling it.
+7. SAY WHO OWNS IT NOW. Survival after you left is the proof that you led rather than laboured.
+8. GIVE THE HONEST COST - a bug, a wasted first attempt, a week spent on something that did not land.
+9. SHARE THE CREDIT EXPLICITLY, by name if you can. 'Half of it was written by someone else.'
+10. END WITH ONE PRINCIPLE ABOUT INFLUENCE.
+
+STEP 4 IS THE ANSWER. Everything else is scaffolding. If you can say WHY people changed, you have
+understood the thing the question is about.""",
+
+    """7. THE ANSWER IN PLAIN LANGUAGE - what you would say out loud
+
+'On my placement I was the most junior person on a team of six and I was there for ten months, so I had
+no authority at all.
+
+Deployment was eleven manual steps in a document, and in my first two months it went wrong three times
+- twice on the same step, an environment variable people forgot to update. Each failure cost somebody
+an evening.
+
+My first instinct was to write a document proposing we automate it, and I am glad I did not, because
+nobody restructures their process because the intern wrote a document. What I did instead was write a
+forty-line script that handled the four steps I understood best, including the one that kept breaking,
+and I used it for my own deploys. That took an afternoon and required nobody's permission.
+
+The next person on duty asked what I was running. They used it, and then they added two steps they knew
+better than I did. Within a month about four of the eleven steps were automated and I had written maybe
+half of that - which is the part I think actually mattered, because it meant it was not my project any
+more.
+
+At the retro I deliberately did not present it as mine. I said we had accidentally automated a third of
+the deploy and asked whether we wanted to finish it. The team decided to, and someone senior took
+ownership of the rest, which is why it was still there after I left.
+
+It was not clean. One of my early scripts skipped a migration step and a deploy went out incomplete -
+we caught it in twenty minutes, but I had to explain it, and it taught me to verify each step had
+actually run rather than assuming.
+
+What I took from it is that you cannot tell people to change how they work. You can make the better way
+cheaper than the current way, and then let them choose it.'""",
+
+    """8. THE ANSWER, LINE BY LINE
+
+    'I was the most junior person on a team of six and I was there for ten months, so I had no
+     authority at all.'
+
+        ESTABLISHES THE PREMISE IMMEDIATELY. The question is specifically about the absence of power,
+        so naming it in the first sentence tells the interviewer you understood what was asked.
+
+    'It went wrong three times - twice on the same step.'
+
+        THE EVIDENCE. A count and a pattern. Note this is a fact anyone on the team could verify, which
+        is exactly what makes it usable as an argument.
+
+    'My first instinct was to write a document proposing we automate it, and I am glad I did not.'
+
+        NAMES THE WRONG APPROACH AND REJECTS IT. This is a small masterstroke in a behavioural answer:
+        it shows you know the difference between the instinctive move and the effective one, and it
+        makes the rest sound considered rather than lucky.
+
+    'A forty-line script... I used it for my own deploys.'
+
+        SMALL, CHEAP, AND REQUIRING NOBODY'S PERMISSION. 'For my own deploys' is the key phrase - there
+        was nothing to approve, so there was nothing to refuse.
+
+    'The next person on duty asked what I was running.'
+
+        PULL, NOT PUSH. They came to it. That is what a working example does and a proposal cannot.
+
+    'They added two steps they knew better than I did.'
+
+        THE BEST LINE IN THE ANSWER. Someone else improved it, which means it became shared property.
+        It also quietly credits a colleague with knowing something you did not.
+
+    'I said WE had accidentally automated a third of the deploy.'
+
+        THE PRONOUN IS DELIBERATE AND THE INTERVIEWER WILL HEAR IT. 'We', at the moment where claiming
+        'I' would have been easiest and most tempting.
+
+    'Someone senior took ownership of the rest, which is why it was still there after I left.'
+
+        SURVIVAL AS PROOF. Handing it away is what made it permanent, and saying so shows you
+        understand that influence is not the same as possession.
+
+    'One of my early scripts skipped a migration step.'
+
+        THE COST, VOLUNTEERED. It also sets up a small systemic fix - verify rather than assume - which
+        is the engineering habit underneath the story.
+
+    'Make the better way cheaper than the current way, and let them choose it.'
+
+        THE PRINCIPLE, GENERAL ENOUGH TO APPLY ANYWHERE. This is the sentence they write down.""",
+
+    """9. THE SAME SITUATION WITHOUT THE INFLUENCE
+
+    A version where the same person notices the same problem and nothing happens:
+
+        WEEK 1   notices deploys keep breaking
+        WEEK 2   mentions it in standup: 'we should really automate the deploy'
+                 everyone agrees. Nothing follows, because agreeing is free and doing is not.
+        WEEK 4   writes a two-page document: 'Proposal: Deployment Automation'. Sends it to the
+                 channel. Two thumbs-up emoji.
+        WEEK 6   raises it again. The lead says 'yes, we should look at that after the release'.
+        WEEK 10  deploy breaks again, on the same step.
+        MONTH 10 leaves. The document is still in the channel. The process is unchanged.
+
+    NOTHING HERE IS UNREASONABLE. They identified a real problem, communicated it clearly, and followed
+    up politely. It failed anyway, and it failed for a structural reason:
+
+        EVERY STEP ASKED SOMEONE ELSE TO SPEND EFFORT ON A BENEFIT THEY HAD NOT SEEN, ON THE STRENGTH
+        OF A JUNIOR PERSON'S CONFIDENCE.
+
+    The successful version inverted exactly that: it spent the junior person's OWN effort first, on a
+    piece small enough to need no permission, and produced evidence before asking for anything.
+
+    THE COMPARISON IS WORTH HAVING READY, because interviewers often follow up with 'what would you do
+    differently?' or 'did you try anything that didn't work?'. Being able to describe the failed
+    approach - and why it failed structurally rather than because people were unreasonable - is a
+    stronger answer than the success story alone.
+
+    AND THE HONEST CAVEAT: going first does not always work either. Sometimes the small visible thing
+    is ignored, and then the move is to find one person who already agrees, or to wait for the next
+    failure and have the fix ready that day. Influence is opportunistic; the failure is treating one
+    rejected proposal as the end of it.""",
+
+    """10. THE TRADE-OFFS, THE #1 MISTAKE, AND THE TAKEAWAY
+
+    THE MECHANISMS:  go first, small and visible · make the right thing easier · bring the problem not
+    the solution · find the one person who already agrees · do the unglamorous part.
+
+    THE SHAPE OF THE STORY:  no authority (say so) · the problem with a COUNT · the small thing you did
+    yourself · someone else improving it · handing over ownership · the honest cost · the principle.
+
+    THE PROOF IT WAS LEADERSHIP:  it survived you, and other people's fingerprints are on it.
+
+THE #1 MISTAKE: picking a story where you had authority. Team captain, project lead, society
+president. It does not answer the question, and the interviewer will notice within a sentence.
+
+THE #2 MISTAKE: stopping at the proposal. 'I suggested we should...' with no outcome is a story about
+having an opinion.
+
+THE #3 MISTAKE: the hero narrative - everyone oblivious, you enlightened. It reads as poor
+collaboration, and it usually is.
+
+THE #4 MISTAKE: taking all the credit. If nobody else contributed, it was not influence; and 'we'
+where 'I' was available is one of the strongest signals you can give.
+
+THE #5 MISTAKE: no mechanism. If you cannot say WHY people changed what they were doing, you have not
+understood your own story.
+
+ONE-SENTENCE TAKEAWAY: you cannot make anyone do anything, so influence works by lowering the price -
+do a small visible piece yourself, let people improve it, hand the ownership away so it outlives you,
+and give the credit to everyone who touched it.""",
 ]
 
 for _e in ENTRIES:
